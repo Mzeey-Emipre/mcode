@@ -1968,6 +1968,66 @@ describe("preview-browser", () => {
       expect(view.setBounds).toHaveBeenCalledTimes(1);
     });
 
+    it("allows the active user toolbar to override a newer agent target generation", async () => {
+      const win = createWindow();
+      await showPreview(win);
+      const view = createdViews[0]!;
+      view.webContents.getURL.mockReturnValue("https://example.com");
+      const activeTabId = sessions.get(win.id)!.tabsByThread.get("thread-1")!.activeTabId!;
+
+      await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
+        widthOverride: 640,
+        heightOverride: 480,
+        operationId: "viewport-agent-newer",
+        source: "agent",
+        targetGeneration: 5,
+        operationGeneration: 1,
+        threadId: "thread-1",
+        tabId: activeTabId,
+      });
+      const userResult = await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
+        widthOverride: 800,
+        heightOverride: 1_280,
+        operationId: "viewport-user-visible-target",
+        source: "user",
+        targetGeneration: 1,
+        operationGeneration: 2,
+        threadId: "thread-1",
+        tabId: activeTabId,
+      });
+
+      expect(userResult).toMatchObject({
+        ok: true,
+        data: { width: 800, height: 1_280 },
+        source: "user",
+        targetGeneration: 1,
+      });
+      expect(sessions.get(win.id)!.tabsByThread.get("thread-1")!.tabs[0]).toMatchObject({
+        viewportTargetGeneration: 5,
+      });
+
+      const presentationResult = await ipcHandlers["preview:design.set-presentation"]!(fakeEvent(win), {
+        presentation: "150%",
+        operationId: "viewport-user-visible-presentation",
+        source: "user",
+        targetGeneration: 1,
+        operationGeneration: 3,
+        threadId: "thread-1",
+        tabId: activeTabId,
+      });
+      expect(presentationResult).toMatchObject({ ok: true, presentation: "150%" });
+
+      const resetResult = await ipcHandlers["preview:design.reset-viewport"]!(fakeEvent(win), {
+        operationId: "viewport-user-visible-reset",
+        source: "user",
+        targetGeneration: 1,
+        operationGeneration: 4,
+        threadId: "thread-1",
+        tabId: activeTabId,
+      });
+      expect(resetResult).toMatchObject({ ok: true, appliedViewport: null });
+    });
+
     it("retains stale-operation rejection for every live preview tab", async () => {
       const win = createWindow();
       await showPreview(win);
@@ -2140,6 +2200,32 @@ describe("preview-browser", () => {
         y: 0,
         width: 1_200,
         height: 800,
+      });
+
+      const zoomed = await ipcHandlers["preview:design.set-presentation"]!(fakeEvent(win), {
+        presentation: "150%",
+        operationId: "viewport-presentation-zoomed",
+        source: "user",
+        targetGeneration: 3,
+        operationGeneration: 4,
+        threadId: "thread-1",
+        tabId: activeTabId,
+      });
+      expect(zoomed).toMatchObject({
+        ok: true,
+        presentation: "150%",
+        appliedViewport: { width: 1_200, height: 800 },
+      });
+      expect(view.webContents.enableDeviceEmulation).toHaveBeenLastCalledWith(expect.objectContaining({
+        viewSize: { width: 1_200, height: 800 },
+        screenSize: { width: 1_200, height: 800 },
+        scale: 1.5,
+      }));
+      expect(view.setBounds).toHaveBeenLastCalledWith({
+        x: -400,
+        y: -200,
+        width: 1_800,
+        height: 1_200,
       });
     });
 

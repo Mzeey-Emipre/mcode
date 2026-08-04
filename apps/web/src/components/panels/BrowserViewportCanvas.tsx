@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
-import { MoveHorizontal } from "lucide-react";
 import { BROWSER_AUTOMATION_VIEWPORT_CANVAS_PADDING_PX } from "@mcode/contracts";
 import { cn } from "@/lib/utils";
 import {
@@ -14,6 +13,26 @@ import {
 } from "@/services/browser-automation/viewportCoordinator";
 
 type DragAxis = "width" | "height" | "both";
+type DragHandlePosition =
+  | "top"
+  | "right"
+  | "bottom"
+  | "left"
+  | "top-left"
+  | "top-right"
+  | "bottom-right"
+  | "bottom-left";
+
+const DRAG_HANDLE_POSITIONS: readonly DragHandlePosition[] = [
+  "top",
+  "right",
+  "bottom",
+  "left",
+  "top-left",
+  "top-right",
+  "bottom-right",
+  "bottom-left",
+];
 
 /** Props for the responsive Browser viewport canvas and its resize affordances. */
 export interface BrowserViewportCanvasProps {
@@ -45,50 +64,72 @@ interface DragStart {
   readonly size: ViewportSize;
 }
 
-function axisLabel(axis: DragAxis): string {
-  return axis === "both" ? "both" : axis;
+function dragAxis(position: DragHandlePosition): DragAxis {
+  const horizontal = position.includes("left") || position.includes("right");
+  const vertical = position.includes("top") || position.includes("bottom");
+  if (horizontal && vertical) return "both";
+  return horizontal ? "width" : "height";
 }
 
-function resizeFromPointer(axis: DragAxis, start: DragStart, event: PointerEvent<HTMLDivElement>, scale: number): ViewportSize {
+function dragDirection(position: DragHandlePosition): { readonly x: -1 | 0 | 1; readonly y: -1 | 0 | 1 } {
+  return {
+    x: position.includes("left") ? -1 : position.includes("right") ? 1 : 0,
+    y: position.includes("top") ? -1 : position.includes("bottom") ? 1 : 0,
+  };
+}
+
+function resizeFromPointer(
+  position: DragHandlePosition,
+  start: DragStart,
+  event: PointerEvent<HTMLDivElement>,
+  scale: number,
+): ViewportSize {
   const divisor = scale > 0 ? scale : 1;
-  const deltaX = (event.clientX - start.x) / divisor;
-  const deltaY = (event.clientY - start.y) / divisor;
+  const direction = dragDirection(position);
+  const deltaX = ((event.clientX - start.x) / divisor) * direction.x;
+  const deltaY = ((event.clientY - start.y) / divisor) * direction.y;
   return clampViewportSize({
-    width: axis === "height" ? start.size.width : start.size.width + deltaX,
-    height: axis === "width" ? start.size.height : start.size.height + deltaY,
+    width: direction.x === 0 ? start.size.width : start.size.width + deltaX,
+    height: direction.y === 0 ? start.size.height : start.size.height + deltaY,
   });
 }
 
-function resizeFromKeyboard(axis: DragAxis, size: ViewportSize, event: KeyboardEvent<HTMLDivElement>): ViewportSize | null {
+function resizeFromKeyboard(
+  position: DragHandlePosition,
+  size: ViewportSize,
+  event: KeyboardEvent<HTMLDivElement>,
+): ViewportSize | null {
   const step = event.shiftKey ? 48 : 16;
-  if (axis !== "height" && event.key === "ArrowRight") {
-    return clampViewportSize({ ...size, width: size.width + step });
+  const direction = dragDirection(position);
+  if (direction.x !== 0 && event.key === "ArrowRight") {
+    return clampViewportSize({ ...size, width: size.width + step * direction.x });
   }
-  if (axis !== "height" && event.key === "ArrowLeft") {
-    return clampViewportSize({ ...size, width: size.width - step });
+  if (direction.x !== 0 && event.key === "ArrowLeft") {
+    return clampViewportSize({ ...size, width: size.width - step * direction.x });
   }
-  if (axis !== "width" && event.key === "ArrowDown") {
-    return clampViewportSize({ ...size, height: size.height + step });
+  if (direction.y !== 0 && event.key === "ArrowDown") {
+    return clampViewportSize({ ...size, height: size.height + step * direction.y });
   }
-  if (axis !== "width" && event.key === "ArrowUp") {
-    return clampViewportSize({ ...size, height: size.height - step });
+  if (direction.y !== 0 && event.key === "ArrowUp") {
+    return clampViewportSize({ ...size, height: size.height - step * direction.y });
   }
   return null;
 }
 
 function BrowserViewportDragHandle({
-  axis,
+  position,
   coordinator,
   state,
   scale,
   onUserViewportChange,
 }: {
-  readonly axis: DragAxis;
+  readonly position: DragHandlePosition;
   readonly coordinator: ViewportCoordinator;
   readonly state: ViewportCoordinatorState;
   readonly scale: number;
   readonly onUserViewportChange?: () => void;
 }) {
+  const axis = dragAxis(position);
   const startRef = useRef<DragStart | null>(null);
   const frameRef = useRef<number | null>(null);
   const pendingSizeRef = useRef<ViewportSize | null>(null);
@@ -118,7 +159,7 @@ function BrowserViewportDragHandle({
     const start = startRef.current;
     if (!start) return;
     if (event.currentTarget.hasPointerCapture && !event.currentTarget.hasPointerCapture(event.pointerId)) return;
-    const nextSize = resizeFromPointer(axis, start, event, scale);
+    const nextSize = resizeFromPointer(position, start, event, scale);
     if (typeof requestAnimationFrame !== "function") {
       requestResize(nextSize);
       return;
@@ -148,7 +189,7 @@ function BrowserViewportDragHandle({
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>): void => {
-    const next = resizeFromKeyboard(axis, state.confirmed, event);
+    const next = resizeFromKeyboard(position, state.confirmed, event);
     if (!next) return;
     event.preventDefault();
     requestResize(next);
@@ -158,28 +199,50 @@ function BrowserViewportDragHandle({
     <div
       role="separator"
       tabIndex={0}
-      aria-label={`Resize viewport ${axisLabel(axis)}`}
-      aria-orientation={axis === "height" ? "horizontal" : "vertical"}
-      aria-valuemin={MIN_VIEWPORT_CSS_PX}
-      aria-valuemax={MAX_VIEWPORT_CSS_PX}
-      aria-valuenow={state.confirmed[axis === "height" ? "height" : "width"]}
+      aria-label={`Resize viewport from ${position}`}
+      aria-orientation={axis === "both" ? undefined : axis === "height" ? "horizontal" : "vertical"}
+      aria-valuemin={axis === "both" ? undefined : MIN_VIEWPORT_CSS_PX}
+      aria-valuemax={axis === "both" ? undefined : MAX_VIEWPORT_CSS_PX}
+      aria-valuenow={axis === "both" ? undefined : state.confirmed[axis === "height" ? "height" : "width"]}
+      aria-valuetext={axis === "both" ? `${state.confirmed.width} by ${state.confirmed.height} pixels` : undefined}
+      data-position={position}
       className={cn(
-        "absolute z-20 flex items-center justify-center text-muted-foreground opacity-60 outline-none hover:opacity-100 focus-visible:ring-2 focus-visible:ring-ring",
-        axis === "width" && "inset-y-8 -right-4 w-8 cursor-ew-resize",
-        axis === "height" && "inset-x-8 -bottom-4 h-8 cursor-ns-resize",
-        axis === "both" && "-bottom-4 -right-4 size-8 cursor-nwse-resize rounded-sm",
+        "absolute z-30 flex touch-none select-none items-center justify-center text-muted-foreground opacity-75 outline-none transition-colors hover:bg-accent/70 hover:text-foreground hover:opacity-100 focus-visible:bg-accent/70 focus-visible:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring",
+        position === "top" && "inset-x-8 -top-4 h-8 cursor-ns-resize",
+        position === "right" && "inset-y-8 -right-4 w-8 cursor-ew-resize",
+        position === "bottom" && "inset-x-8 -bottom-4 h-8 cursor-ns-resize",
+        position === "left" && "inset-y-8 -left-4 w-8 cursor-ew-resize",
+        position === "top-left" && "-left-4 -top-4 size-8 cursor-nwse-resize rounded-sm",
+        position === "top-right" && "-right-4 -top-4 size-8 cursor-nesw-resize rounded-sm",
+        position === "bottom-right" && "-bottom-4 -right-4 size-8 cursor-nwse-resize rounded-sm",
+        position === "bottom-left" && "-bottom-4 -left-4 size-8 cursor-nesw-resize rounded-sm",
       )}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
       onKeyDown={onKeyDown}
     >
-      {axis === "width" ? (
-        <MoveHorizontal size={14} aria-hidden />
-      ) : axis === "height" ? (
-        <span className="h-1 w-5 rounded-full bg-current" />
+      {position === "left" || position === "right" ? (
+        <span className="flex gap-1" aria-hidden>
+          <span className="h-8 w-px rounded-full bg-current" />
+          <span className="h-8 w-px rounded-full bg-current" />
+        </span>
+      ) : position === "top" || position === "bottom" ? (
+        <span className="flex flex-col gap-1" aria-hidden>
+          <span className="h-px w-8 rounded-full bg-current" />
+          <span className="h-px w-8 rounded-full bg-current" />
+        </span>
       ) : (
-        <span className="size-2 border-b-2 border-r-2 border-current" />
+        <span
+          className={cn(
+            "size-3",
+            position === "top-left" && "border-l-2 border-t-2 border-current",
+            position === "top-right" && "border-r-2 border-t-2 border-current",
+            position === "bottom-right" && "border-b-2 border-r-2 border-current",
+            position === "bottom-left" && "border-b-2 border-l-2 border-current",
+          )}
+        />
       )}
     </div>
   );
@@ -250,11 +313,16 @@ export function BrowserViewportCanvas({
             {children}
           </div>
           {responsive && coordinator ? (
-            <>
-              <BrowserViewportDragHandle axis="width" coordinator={coordinator} state={currentState} scale={safeScale} onUserViewportChange={onUserViewportChange} />
-              <BrowserViewportDragHandle axis="height" coordinator={coordinator} state={currentState} scale={safeScale} onUserViewportChange={onUserViewportChange} />
-              <BrowserViewportDragHandle axis="both" coordinator={coordinator} state={currentState} scale={safeScale} onUserViewportChange={onUserViewportChange} />
-            </>
+            DRAG_HANDLE_POSITIONS.map((position) => (
+              <BrowserViewportDragHandle
+                key={position}
+                position={position}
+                coordinator={coordinator}
+                state={currentState}
+                scale={safeScale}
+                onUserViewportChange={onUserViewportChange}
+              />
+            ))
           ) : null}
         </div>
       </div>

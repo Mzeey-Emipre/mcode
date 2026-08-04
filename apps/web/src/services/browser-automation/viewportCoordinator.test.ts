@@ -244,5 +244,8 @@ describe("ViewportCoordinator", () => {
     expect(coordinator.getPresentationScale({ width: 600, height: 400 })).toBe(1);
     coordinator.setPresentation("fit");
     expect(coordinator.getPresentationScale({ width: 600, height: 400 })).toBe(0.5);
+    coordinator.setPresentation("150%");
+    expect(coordinator.snapshot().presentation).toBe("150%");
+    expect(coordinator.getPresentationScale({ width: 600, height: 400 })).toBe(1.5);
   });
 });

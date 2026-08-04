@@ -12,7 +12,11 @@ import type {
   McodeBrowserCaptureV2,
   PreviewPageStatus,
 } from "@mcode/contracts";
-import { BROWSER_AUTOMATION_VIEWPORT_CANVAS_PADDING_PX } from "@mcode/contracts";
+import {
+  BROWSER_AUTOMATION_VIEWPORT_CANVAS_PADDING_PX,
+  resolveBrowserAutomationViewportPresentationScale,
+  type BrowserAutomationViewportPresentation,
+} from "@mcode/contracts";
 import {
   pageStatusReducer,
   initialPageStatus,
@@ -33,7 +37,7 @@ export type CaptureFinishResult =
 export type Bounds = { x: number; y: number; width: number; height: number };
 
 /** Presentation mode used when a confirmed CSS viewport is shown in the panel. */
-export type ViewportPresentation = "fit" | "actual";
+export type ViewportPresentation = BrowserAutomationViewportPresentation;
 
 /**
  * Per-tab record held inside a thread's tab set. Phase A keeps a single backing
@@ -274,14 +278,12 @@ export function viewportBoundsForTarget(
   const presentation = s.viewportPresentationByTarget.get(key) ?? "fit";
   const fitWidth = Math.max(0, panel.width - BROWSER_AUTOMATION_VIEWPORT_CANVAS_PADDING_PX);
   const fitHeight = Math.max(0, panel.height - BROWSER_AUTOMATION_VIEWPORT_CANVAS_PADDING_PX);
-  const rawScale = presentation === "actual"
-    ? 1
-    : Math.min(fitWidth / viewport.width, fitHeight / viewport.height);
-  const scale = presentation === "actual"
-    ? 1
-    : Math.min(1.25, Math.max(0.2, Number.isFinite(rawScale) && rawScale > 0 ? rawScale : 0.2));
-  const width = presentation === "actual" ? viewport.width : Math.max(1, Math.round(viewport.width * scale));
-  const height = presentation === "actual" ? viewport.height : Math.max(1, Math.round(viewport.height * scale));
+  const fixedScale = resolveBrowserAutomationViewportPresentationScale(presentation);
+  const rawScale = fixedScale ?? Math.min(fitWidth / viewport.width, fitHeight / viewport.height);
+  const scale = fixedScale ??
+    Math.min(1.25, Math.max(0.2, Number.isFinite(rawScale) && rawScale > 0 ? rawScale : 0.2));
+  const width = Math.max(1, Math.round(viewport.width * scale));
+  const height = Math.max(1, Math.round(viewport.height * scale));
   return {
     bounds: {
       x: panel.x + Math.floor((panel.width - width) / 2),

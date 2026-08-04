@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -22,7 +22,7 @@ function setup() {
 }
 
 describe("BrowserViewportCanvas", () => {
-  it("resizes through the coordinator from side, bottom, and corner keyboard handles", async () => {
+  it("exposes every edge and corner as a keyboard resize zone", async () => {
     const user = userEvent.setup();
     const { apply, coordinator } = setup();
     render(
@@ -36,17 +36,33 @@ describe("BrowserViewportCanvas", () => {
       </BrowserViewportCanvas>,
     );
 
-    await user.click(screen.getByRole("separator", { name: "Resize viewport width" }));
-    await user.keyboard("{ArrowRight}");
-    await user.click(screen.getByRole("separator", { name: "Resize viewport height" }));
-    await user.keyboard("{ArrowDown}");
-    await user.click(screen.getByRole("separator", { name: "Resize viewport both" }));
-    await user.keyboard("{ArrowRight}");
-    await user.keyboard("{ArrowDown}");
+    for (const position of [
+      "top",
+      "right",
+      "bottom",
+      "left",
+      "top-left",
+      "top-right",
+      "bottom-right",
+      "bottom-left",
+    ]) {
+      expect(screen.getByRole("separator", { name: `Resize viewport from ${position}` })).toBeInTheDocument();
+    }
 
-    expect(apply).toHaveBeenLastCalledWith(expect.objectContaining({
-      requested: { width: 832, height: 632 },
-    }));
+    await user.click(screen.getByRole("separator", { name: "Resize viewport from right" }));
+    await user.keyboard("{ArrowRight}");
+    await user.click(screen.getByRole("separator", { name: "Resize viewport from bottom" }));
+    await user.keyboard("{ArrowDown}");
+    await user.click(screen.getByRole("separator", { name: "Resize viewport from bottom-right" }));
+    await user.keyboard("{ArrowRight}");
+    await user.keyboard("{ArrowDown}");
+    await user.click(screen.getByRole("separator", { name: "Resize viewport from top-left" }));
+    await user.keyboard("{ArrowLeft}");
+    await user.keyboard("{ArrowUp}");
+
+    await waitFor(() => expect(apply).toHaveBeenLastCalledWith(expect.objectContaining({
+      requested: { width: 848, height: 648 },
+    })));
   });
 
   it("uses pointer capture and coalesces drag requests through the same coordinator", () => {
@@ -61,7 +77,7 @@ describe("BrowserViewportCanvas", () => {
         <div data-testid="viewport-content" />
       </BrowserViewportCanvas>,
     );
-    const handle = screen.getByRole("separator", { name: "Resize viewport width" });
+    const handle = screen.getByRole("separator", { name: "Resize viewport from right" });
     Object.defineProperty(handle, "setPointerCapture", { value: vi.fn() });
     Object.defineProperty(handle, "hasPointerCapture", { value: vi.fn(() => true) });
     Object.defineProperty(handle, "releasePointerCapture", { value: vi.fn() });

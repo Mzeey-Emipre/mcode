@@ -30,8 +30,10 @@ import {
   BrowserAutomationTargetSchema,
   BrowserAutomationUrlSchema,
   BrowserAutomationViewportRequestSchema,
+  BrowserAutomationViewportPresentationRequestSchema,
   BrowserAutomationViewportResetRequestSchema,
   BrowserAutomationViewportResetResultSchema,
+  resolveBrowserAutomationViewportPresentationScale,
 } from "../browser-automation.js";
 
 const requestBase = {
@@ -902,5 +904,28 @@ describe("browser automation boundaries", () => {
       ok: true,
       appliedViewport: null,
     }).success).toBe(false);
+  });
+
+  it("allows only supported viewport zoom presentations", () => {
+    const identity = {
+      operationId: "presentation-1",
+      source: "user" as const,
+      targetGeneration: 3,
+      operationGeneration: 8,
+      threadId: "thread-1",
+      tabId: "tab-1",
+    };
+
+    expect(BrowserAutomationViewportPresentationRequestSchema().safeParse({
+      ...identity,
+      presentation: "150%",
+    }).success).toBe(true);
+    expect(BrowserAutomationViewportPresentationRequestSchema().safeParse({
+      ...identity,
+      presentation: "175%",
+    }).success).toBe(false);
+    expect(resolveBrowserAutomationViewportPresentationScale("fit")).toBeNull();
+    expect(resolveBrowserAutomationViewportPresentationScale("actual")).toBe(1);
+    expect(resolveBrowserAutomationViewportPresentationScale("200%")).toBe(2);
   });
 });

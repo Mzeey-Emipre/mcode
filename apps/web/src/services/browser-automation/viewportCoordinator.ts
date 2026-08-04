@@ -1,6 +1,8 @@
 import {
   BROWSER_AUTOMATION_MAX_VIEWPORT_PX,
   BROWSER_AUTOMATION_MIN_VIEWPORT_PX,
+  resolveBrowserAutomationViewportPresentationScale,
+  type BrowserAutomationViewportPresentation,
 } from "@mcode/contracts";
 
 /** Lower bound for a renderer CSS viewport dimension. */
@@ -33,7 +35,7 @@ export type ViewportPreset = (typeof VIEWPORT_PRESETS)[number];
 export type ViewportMode = "regular" | "responsive";
 
 /** Browser viewport presentation mode exposed by the toolbar. */
-export type ViewportPresentation = "fit" | "actual";
+export type ViewportPresentation = BrowserAutomationViewportPresentation;
 
 /** Identifies whether an operation was initiated by an agent or a human. */
 export type ViewportSource = "agent" | "user";
@@ -185,13 +187,14 @@ function scaleWithinBounds(value: number): number {
   return Math.min(MAX_VIEWPORT_PRESENTATION_SCALE, Math.max(MIN_VIEWPORT_PRESENTATION_SCALE, value));
 }
 
-/** Calculate Fit or Actual scale without mutating coordinator state. */
+/** Calculate Fit, Actual, or fixed zoom scale without mutating coordinator state. */
 export function calculateViewportPresentationScale(
   size: ViewportSize,
   bounds: ViewportCanvasBounds,
   presentation: ViewportPresentation,
 ): number {
-  if (presentation === "actual") return 1;
+  const fixedScale = resolveBrowserAutomationViewportPresentationScale(presentation);
+  if (fixedScale !== null) return fixedScale;
   const width = Number.isFinite(bounds.width) ? bounds.width : 0;
   const height = Number.isFinite(bounds.height) ? bounds.height : 0;
   if (width <= 0 || height <= 0 || size.width <= 0 || size.height <= 0) {

@@ -27,6 +27,30 @@ export const BROWSER_AUTOMATION_MIN_VIEWPORT_PX = 240;
 export const BROWSER_AUTOMATION_MAX_VIEWPORT_PX = 2_560;
 /** Total CSS-pixel inset reserved around a responsive viewport canvas frame. */
 export const BROWSER_AUTOMATION_VIEWPORT_CANVAS_PADDING_PX = 64;
+/** Allowed responsive viewport presentation modes across renderer and Electron hosts. */
+export const BROWSER_AUTOMATION_VIEWPORT_PRESENTATIONS = [
+  "fit",
+  "actual",
+  "50%",
+  "75%",
+  "100%",
+  "125%",
+  "150%",
+  "200%",
+] as const;
+/** One responsive viewport presentation mode. */
+export type BrowserAutomationViewportPresentation =
+  (typeof BROWSER_AUTOMATION_VIEWPORT_PRESENTATIONS)[number];
+
+/** Resolve a fixed viewport presentation scale, or null when Fit owns the scale. */
+export function resolveBrowserAutomationViewportPresentationScale(
+  presentation: BrowserAutomationViewportPresentation,
+): number | null {
+  if (presentation === "fit") return null;
+  if (presentation === "actual") return 1;
+  return Number.parseInt(presentation, 10) / 100;
+}
+
 const viewportOperationIdentityShape = {
   operationId: z.string().trim().min(1).max(256),
   source: z.enum(["user", "agent"]),
@@ -79,7 +103,7 @@ export type BrowserAutomationViewportRequest = z.infer<
 export const BrowserAutomationViewportPresentationRequestSchema = lazySchema(() =>
   z
     .object({
-      presentation: z.enum(["fit", "actual"]),
+      presentation: z.enum(BROWSER_AUTOMATION_VIEWPORT_PRESENTATIONS),
       ...viewportOperationIdentityShape,
     })
     .strict(),
@@ -130,7 +154,7 @@ export const BrowserAutomationViewportPresentationResultSchema = lazySchema(() =
     z
       .object({
         ok: z.literal(true),
-        presentation: z.enum(["fit", "actual"]),
+        presentation: z.enum(BROWSER_AUTOMATION_VIEWPORT_PRESENTATIONS),
         appliedViewport: viewportSizeSchema,
         ...viewportOperationIdentityShape,
       })
@@ -139,7 +163,7 @@ export const BrowserAutomationViewportPresentationResultSchema = lazySchema(() =
       .object({
         ok: z.literal(false),
         error: z.string().min(1).max(128),
-        presentation: z.enum(["fit", "actual"]).optional(),
+        presentation: z.enum(BROWSER_AUTOMATION_VIEWPORT_PRESENTATIONS).optional(),
         appliedViewport: viewportSizeSchema.nullable().optional(),
         ...viewportOperationMetadataShape,
       })

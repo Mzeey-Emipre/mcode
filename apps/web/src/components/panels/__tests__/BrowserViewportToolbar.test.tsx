@@ -40,7 +40,10 @@ describe("BrowserViewportToolbar", () => {
     expect(toolbar).not.toHaveClass("overflow-x-auto");
     expect(toolbar).not.toHaveClass("overflow-x-scroll");
     expect(screen.queryByRole("button", { name: "Regular" })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Viewport preset" })).toHaveTextContent("Responsive");
+    const presetTrigger = screen.getByRole("button", { name: "Viewport preset" });
+    expect(presetTrigger).toHaveTextContent("Responsive");
+    expect(presetTrigger).toHaveClass("w-32");
+    expect(presetTrigger.className).toContain("@max-[520px]:w-24");
     const widthInput = screen.getByRole("textbox", { name: "Viewport width" });
     expect(widthInput).toBeInTheDocument();
     expect(widthInput.parentElement).toHaveClass("shrink-0");
@@ -48,6 +51,42 @@ describe("BrowserViewportToolbar", () => {
     expect(screen.getByRole("button", { name: "Rotate viewport to landscape" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Viewport scale and presentation" })).toHaveTextContent("100%");
     expect(screen.getByRole("button", { name: "Close viewport toolbar" })).toBeInTheDocument();
+  });
+
+  it("activates Responsive from the full preset menu click target", async () => {
+    const user = userEvent.setup();
+    const apply = vi.fn(async (operation: ViewportHostOperation) => ({
+      status: "applied" as const,
+      applied: operation.requested,
+    }));
+    const coordinator = createCoordinator(apply);
+    const { rerender } = render(
+      <BrowserViewportToolbar
+        coordinator={coordinator}
+        state={coordinator.snapshot()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Viewport preset" }));
+    const responsiveItem = within(await screen.findByRole("menu")).getByRole("menuitem", {
+      name: "Responsive",
+    });
+    expect(responsiveItem).toHaveClass("w-full");
+    await user.click(responsiveItem);
+
+    await waitFor(() => expect(apply).toHaveBeenCalledWith(
+      expect.objectContaining({ requested: { width: 1280, height: 800 } }),
+    ));
+    expect(coordinator.snapshot().mode).toBe("responsive");
+    rerender(
+      <BrowserViewportToolbar
+        coordinator={coordinator}
+        state={coordinator.snapshot()}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Viewport preset" })).toHaveTextContent("Responsive");
   });
 
   it("submits presets and bounded custom dimensions through the coordinator", async () => {
@@ -100,6 +139,29 @@ describe("BrowserViewportToolbar", () => {
     expect(coordinator.snapshot().presentation).toBe("fit");
     await user.click(screen.getByRole("button", { name: "Close viewport toolbar" }));
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("offers the complete fixed zoom scale", async () => {
+    const user = userEvent.setup();
+    const coordinator = createCoordinator(async (operation) => ({
+      status: "applied",
+      applied: operation.requested,
+    }));
+    render(
+      <BrowserViewportToolbar
+        coordinator={coordinator}
+        state={coordinator.snapshot()}
+        onClose={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Viewport scale and presentation" }));
+    const zoomMenu = await screen.findByRole("menu");
+    for (const zoom of ["50%", "75%", "100%", "125%", "150%", "200%"]) {
+      expect(within(zoomMenu).getByRole("menuitem", { name: zoom })).toBeInTheDocument();
+    }
+    await user.click(within(zoomMenu).getByRole("menuitem", { name: "150%" }));
+    expect(coordinator.snapshot().presentation).toBe("150%");
   });
 
   it("toggles each controlled menu from its trigger", async () => {

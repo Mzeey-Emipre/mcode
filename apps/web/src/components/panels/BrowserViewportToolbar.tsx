@@ -6,6 +6,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
@@ -17,6 +18,8 @@ import {
   type ViewportPresentation,
   type ViewportSize,
 } from "@/services/browser-automation/viewportCoordinator";
+
+const VIEWPORT_ZOOM_PRESETS = ["50%", "75%", "100%", "125%", "150%", "200%"] as const;
 
 /** Props for the responsive Browser viewport toolbar. */
 export interface BrowserViewportToolbarProps {
@@ -49,6 +52,11 @@ export function BrowserViewportToolbar({
   const [height, setHeight] = useState(String(requested.height));
   const [presetOpen, setPresetOpen] = useState(false);
   const [scaleOpen, setScaleOpen] = useState(false);
+  const [selectedPresetId, setSelectedPresetId] = useState<string | null>(() => (
+    state.mode === "responsive"
+      ? VIEWPORT_PRESETS.find((preset) => sameSize(preset, requested))?.id ?? null
+      : null
+  ));
 
   useEffect(() => {
     setWidth(String(requested.width));
@@ -56,13 +64,14 @@ export function BrowserViewportToolbar({
   }, [requested.height, requested.width]);
 
   const selectedPreset = state.mode === "responsive"
-    ? VIEWPORT_PRESETS.find((preset) => sameSize(preset, requested))
+    ? VIEWPORT_PRESETS.find((preset) => preset.id === selectedPresetId && sameSize(preset, requested))
     : undefined;
   const isLandscape = state.mode === "responsive" && requested.width > requested.height;
   const scaleLabel = `${Math.round(scale * 100)}%`;
 
-  const submitSize = (size: ViewportSize) => {
+  const submitSize = (size: ViewportSize, presetId: string | null = null) => {
     setPresetOpen(false);
+    setSelectedPresetId(presetId);
     onUserViewportChange?.();
     coordinator.setUserMode("responsive");
     void coordinator.requestUserResize(clampViewportSize(size));
@@ -98,7 +107,7 @@ export function BrowserViewportToolbar({
               type="button"
               size="xs"
               variant="outline"
-              className="min-w-0 max-w-40 shrink-0 justify-between gap-1 px-2 @max-[520px]:max-w-16 @max-[520px]:px-1"
+              className="w-32 shrink-0 justify-between gap-1 px-2 @max-[520px]:w-24 @max-[520px]:px-1"
               aria-label="Viewport preset"
             >
               <span className="truncate">{selectedPreset?.label ?? "Responsive"}</span>
@@ -108,9 +117,10 @@ export function BrowserViewportToolbar({
         />
         <DropdownMenuContent align="start" className="min-w-[210px]">
           <DropdownMenuItem
-            className="justify-between gap-3 text-xs"
+            className="w-full justify-between gap-3 text-xs"
             onClick={() => {
               setPresetOpen(false);
+              setSelectedPresetId(null);
               onUserViewportChange?.();
               void coordinator.requestUserMode("responsive");
             }}
@@ -121,8 +131,8 @@ export function BrowserViewportToolbar({
           {VIEWPORT_PRESETS.map((preset) => (
             <DropdownMenuItem
               key={preset.id}
-              className="justify-between gap-3 text-xs"
-              onClick={() => submitSize(preset)}
+              className="w-full justify-between gap-3 text-xs"
+              onClick={() => submitSize(preset, preset.id)}
             >
               <span className="min-w-0 truncate">{preset.label}</span>
               <span className="shrink-0 font-mono text-muted-foreground">
@@ -185,7 +195,7 @@ export function BrowserViewportToolbar({
               type="button"
               size="xs"
               variant="outline"
-              className="min-w-0 shrink-0 gap-1 px-2 @max-[520px]:max-w-12 @max-[520px]:px-1"
+              className="w-16 shrink-0 justify-between gap-1 px-2 @max-[520px]:w-14 @max-[520px]:px-1"
               aria-label="Viewport scale and presentation"
             >
               {scaleLabel}
@@ -208,6 +218,17 @@ export function BrowserViewportToolbar({
             <span>Actual size</span>
             {state.presentation === "actual" && <Check size={14} aria-hidden />}
           </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          {VIEWPORT_ZOOM_PRESETS.map((presentation) => (
+            <DropdownMenuItem
+              key={presentation}
+              className="justify-between gap-3 text-xs"
+              onClick={() => setPresentation(presentation)}
+            >
+              <span>{presentation}</span>
+              {state.presentation === presentation && <Check size={14} aria-hidden />}
+            </DropdownMenuItem>
+          ))}
         </DropdownMenuContent>
       </DropdownMenu>
 

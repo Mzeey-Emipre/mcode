@@ -53,7 +53,7 @@ interface ViewportOperationResult extends ViewportOperationMetadata {
 }
 
 interface ViewportPresentationResult extends ViewportOperationMetadata {
-  readonly presentation?: "fit" | "actual";
+  readonly presentation?: BrowserAutomationViewportPresentationRequest["presentation"];
   readonly appliedViewport: { readonly width: number; readonly height: number } | null;
 }
 
@@ -74,7 +74,7 @@ function viewportMetadata(
 
 function presentationMetadata(
   payload: ViewportOperationMetadata,
-  presentation: "fit" | "actual" | undefined,
+  presentation: BrowserAutomationViewportPresentationRequest["presentation"] | undefined,
   appliedViewport: { readonly width: number; readonly height: number } | null,
 ): ViewportPresentationResult {
   return {
@@ -121,12 +121,17 @@ function rememberAppliedViewport(
 
 function admitViewportOperation(
   tab: TabState | null,
+  source: ViewportSource,
   targetGeneration: number,
   operationGeneration: number,
 ): "stale-target-generation" | "stale-operation-generation" | null {
   if (!tab) return "stale-target-generation";
   const admittedTargetGeneration = tab.viewportTargetGeneration;
   if (admittedTargetGeneration !== null && admittedTargetGeneration > targetGeneration) {
+    // The active thread and tab were already verified by the IPC handler. A
+    // direct user action must be able to take over from a newer agent epoch,
+    // while the retained watermark continues to reject stale agent work.
+    if (source === "user") return null;
     return "stale-target-generation";
   }
   if (
@@ -317,6 +322,7 @@ export function registerDesignModeHandlers(): void {
         }
         const admissionError = admitViewportOperation(
           activeTab,
+          source,
           targetGeneration,
           operationGeneration,
         );
@@ -390,6 +396,7 @@ export function registerDesignModeHandlers(): void {
         }
         const admissionError = admitViewportOperation(
           activeTab,
+          request.source,
           request.targetGeneration,
           request.operationGeneration,
         );
@@ -460,6 +467,7 @@ export function registerDesignModeHandlers(): void {
       }
       const admissionError = admitViewportOperation(
         activeTab,
+        request.source,
         request.targetGeneration,
         request.operationGeneration,
       );
