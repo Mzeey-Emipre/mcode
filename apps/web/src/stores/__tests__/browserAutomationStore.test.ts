@@ -4,6 +4,8 @@ import {
   browserAutomationRequestKey,
   browserAutomationTargetKey,
   onBrowserAutomationScopeRelease,
+  invalidateBrowserAutomationTargetObservation,
+  onBrowserAutomationObservationInvalidation,
   releaseBrowserAutomationThreadScope,
   releaseBrowserAutomationWorkspaceScopes,
   resolveBrowserAutomationControllerTarget,
@@ -334,5 +336,50 @@ describe("browser automation renderer scope", () => {
     unsubscribe();
     releaseBrowserAutomationThreadScope("thread-b");
     expect(listener).toHaveBeenCalledTimes(2);
+  });
+
+  it("notifies exact human-input listeners without changing controller state", () => {
+    useBrowserAutomationStore.getState().registerTarget("workspace-a", "thread-a", "tab-a");
+    useBrowserAutomationStore.getState().setControllerForTarget("thread-a", "tab-a", {
+      tabId: "tab-a",
+      controller: "agent",
+      controlEpoch: 3,
+    });
+    const listener = vi.fn();
+    const unsubscribe = onBrowserAutomationObservationInvalidation(listener);
+
+    invalidateBrowserAutomationTargetObservation("thread-a", "tab-a");
+
+    expect(listener).toHaveBeenCalledOnce();
+    expect(listener).toHaveBeenCalledWith("thread-a", "tab-a");
+    expect(useBrowserAutomationStore.getState().controllers.get(
+      browserAutomationTargetKey("thread-a", "tab-a"),
+    )).toEqual({ tabId: "tab-a", controller: "agent", controlEpoch: 3 });
+    unsubscribe();
+  });
+
+  it("shows agent control on only the latest Browser page in one thread", () => {
+    const store = useBrowserAutomationStore.getState();
+    store.registerTarget("workspace-agent", "thread-agent", "tab-first");
+    store.registerTarget("workspace-agent", "thread-agent", "tab-second");
+    store.setControllerForTarget("thread-agent", "tab-first", {
+      tabId: "tab-first",
+      controller: "agent",
+      controlEpoch: 1,
+    });
+    store.setControllerForTarget("thread-agent", "tab-second", {
+      tabId: "tab-second",
+      controller: "agent",
+      controlEpoch: 2,
+    });
+
+    expect(useBrowserAutomationStore.getState().controllers.get(
+      browserAutomationTargetKey("thread-agent", "tab-first"),
+    )).toEqual({ tabId: "tab-first", controller: "none", controlEpoch: 1 });
+    expect(useBrowserAutomationStore.getState().controllers.get(
+      browserAutomationTargetKey("thread-agent", "tab-second"),
+    )).toEqual({ tabId: "tab-second", controller: "agent", controlEpoch: 2 });
+
+    store.releaseThreadTargets("thread-agent");
   });
 });

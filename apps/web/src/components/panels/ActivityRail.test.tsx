@@ -2,6 +2,10 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BrowserTabSet } from "@mcode/contracts";
 import { rightPanelSingletonId, type RightPanelTab } from "@/stores/diffStore";
+import {
+  browserAutomationTargetKey,
+  useBrowserAutomationStore,
+} from "@/stores/browserAutomationStore";
 import { usePreviewSuppressionStore } from "@/stores/previewSuppressionStore";
 import { ActivityRail } from "./ActivityRail";
 
@@ -61,6 +65,7 @@ describe("ActivityRail expansion", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
+    useBrowserAutomationStore.setState({ controllers: new Map() });
     usePreviewSuppressionStore.setState({ count: 0 });
   });
 
@@ -79,15 +84,12 @@ describe("ActivityRail expansion", () => {
 
     act(() => vi.advanceTimersByTime(1));
     expect(rail).toHaveAttribute("data-expanded", "true");
-    expect(usePreviewSuppressionStore.getState().count).toBe(1);
-
     fireEvent.pointerLeave(rail, { pointerType: "mouse" });
     act(() => vi.advanceTimersByTime(EXPECTED_COLLAPSE_DELAY_MS - 1));
     expect(rail).toHaveAttribute("data-expanded", "true");
 
     act(() => vi.advanceTimersByTime(1));
     expect(rail).toHaveAttribute("data-expanded", "false");
-    expect(usePreviewSuppressionStore.getState().count).toBe(0);
   });
 
   it("keeps a fixed collapsed footprint above right-panel content", () => {
@@ -216,17 +218,40 @@ describe("ActivityRail expansion", () => {
     expect(rail).toHaveAttribute("data-expanded", "false");
   });
 
-  it("releases preview suppression when an expanded rail unmounts", () => {
+  it("floats the expanded rail above preview content without suppressing it", () => {
     const { unmount } = renderRail();
     const rail = screen.getByTestId("activity-rail");
 
     fireEvent.pointerEnter(rail, { pointerType: "mouse" });
     act(() => vi.advanceTimersByTime(EXPECTED_EXPAND_DELAY_MS));
-    expect(usePreviewSuppressionStore.getState().count).toBe(1);
+    expect(rail).toHaveAttribute("data-expanded", "true");
+    expect(rail).toHaveClass("z-30");
+    expect(usePreviewSuppressionStore.getState().count).toBe(0);
 
     unmount();
+  });
 
-    expect(usePreviewSuppressionStore.getState().count).toBe(0);
+  it("uses the amber pointer favicon and accessible name for an agent-controlled page", () => {
+    const page = browserTabSet.tabs[0]!;
+    useBrowserAutomationStore.setState({
+      controllers: new Map([
+        [
+          browserAutomationTargetKey(page.threadId, page.id),
+          { tabId: page.id, controller: "agent", controlEpoch: 1 },
+        ],
+      ]),
+    });
+
+    render(
+      <ActivityRail
+        {...railElement(["preview"]).props}
+        browserTabSet={browserTabSet}
+      />,
+    );
+
+    expect(screen.getByTestId("browser-agent-control-indicator")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Browser page: Example, agent controls Browser" })).toBeInTheDocument();
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
   });
 
   it("reorders only from a focused rail tab keyboard shortcut", () => {

@@ -8,7 +8,7 @@ import {
 import type { PreviewPageStatus } from "@mcode/contracts";
 import {
   browserAutomationTargetKey,
-  invalidateBrowserAutomationObservationTarget,
+  invalidateBrowserAutomationTargetObservation,
   useBrowserAutomationStore,
 } from "@/stores/browserAutomationStore";
 import {
@@ -447,7 +447,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       if (!message || typeof message !== "object" || Array.isArray(message)) return;
       const kind = (message as { kind?: unknown }).kind;
       if (typeof kind !== "string" || !HUMAN_INPUT_KINDS.has(kind)) return;
-      invalidateBrowserAutomationObservationTarget(threadId, tabId);
+      invalidateBrowserAutomationTargetObservation(threadId, tabId);
     };
     el.addEventListener("did-start-loading", onStart);
     el.addEventListener("dom-ready", onDomReady);

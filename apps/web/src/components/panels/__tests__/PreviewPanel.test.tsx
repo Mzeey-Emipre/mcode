@@ -99,7 +99,10 @@ import { usePreviewDesignModeStore } from "@/stores/previewDesignModeStore";
 import { useProviderCatalogStore } from "@/stores/providerCatalogStore";
 import { usePreviewTabsStore } from "@/stores/previewTabsStore";
 import { useDiffStore } from "@/stores/diffStore";
-import { useBrowserAutomationStore } from "@/stores/browserAutomationStore";
+import {
+  browserAutomationTargetKey,
+  useBrowserAutomationStore,
+} from "@/stores/browserAutomationStore";
 
 function mockBridgeState(overrides: Record<string, unknown> = {}) {
   const state = {
@@ -520,6 +523,7 @@ describe("PreviewPanel: full panel state", () => {
     usePreviewDesignModeStore.setState({ modes: {} });
     usePreviewTabsStore.setState({ tabSetByScope: {}, liveChromeByScope: {}, persistentTabIdsByScope: {} });
     useDiffStore.setState({ previewUrlByThread: {} });
+    useBrowserAutomationStore.setState({ controllers: new Map() });
     useProviderCatalogStore.getState().reset();
     mockUsePreviewBridge.mockReturnValue(mockBridgeState());
     mockUsePreviewTabs.mockReturnValue({
@@ -539,6 +543,7 @@ describe("PreviewPanel: full panel state", () => {
     usePreviewAnnotationStore.setState({ byThread: {}, drafts: {} });
     usePreviewDesignModeStore.setState({ modes: {} });
     usePreviewTabsStore.setState({ tabSetByScope: {}, liveChromeByScope: {}, persistentTabIdsByScope: {} });
+    useBrowserAutomationStore.setState({ controllers: new Map() });
     useProviderCatalogStore.getState().reset();
     mockUsePreviewBridge.mockClear();
     mockUsePreviewTabs.mockClear();
@@ -549,6 +554,31 @@ describe("PreviewPanel: full panel state", () => {
   it("renders the full panel when desktopBridge is present", () => {
     render(<PreviewPanel threadId="thread-1" />);
     expect(screen.getByTestId("preview-panel")).toBeInTheDocument();
+  });
+
+  it("uses a prominent frame and edge wash while the agent controls Browser", () => {
+    useBrowserAutomationStore.setState({
+      controllers: new Map([
+        [
+          browserAutomationTargetKey(
+            "thread-1",
+            PREVIEW_WEBVIEW_FALLBACK_TAB_ID,
+          ),
+          {
+            tabId: PREVIEW_WEBVIEW_FALLBACK_TAB_ID,
+            controller: "agent",
+            controlEpoch: 1,
+          },
+        ],
+      ]),
+    });
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    const overlay = screen.getByTestId("browser-automation-overlay");
+    expect(overlay).toHaveClass("border-2", "border-primary");
+    expect(overlay.style.backgroundImage).toContain("transparent 32px");
+    expect(overlay.style.boxShadow).toContain("inset 0 0 40px");
   });
 
   it("does not render the unavailable state when desktopBridge is present", () => {

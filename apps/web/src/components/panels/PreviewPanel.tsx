@@ -18,6 +18,7 @@ import {
   Globe,
   GripVertical,
   Link2,
+  MousePointer2,
   Pipette,
   SlidersHorizontal,
   Trash2,
@@ -80,8 +81,8 @@ import type { MentionSuggestion } from "@/components/chat/useFileAutocomplete";
 import { useWorkspaceThread } from "@/stores/workspace-selectors";
 import {
   browserAutomationTargetKey,
-  invalidateBrowserAutomationObservationTarget,
   interruptBrowserAutomationTarget,
+  invalidateBrowserAutomationTargetObservation,
   selectWarmBrowserTabIds,
   useBrowserAutomationStore,
 } from "@/stores/browserAutomationStore";
@@ -1659,7 +1660,7 @@ function WebRuntimePreview({
 
   const noOp = (): void => undefined;
   const invalidateViewportObservation = (): void => {
-    invalidateBrowserAutomationObservationTarget(threadId, WEB_RUNTIME_PREVIEW_TAB_ID);
+    invalidateBrowserAutomationTargetObservation(threadId, WEB_RUNTIME_PREVIEW_TAB_ID);
   };
   const iframeStyle: CSSProperties | undefined = responsiveViewportSize
     ? {
@@ -1719,14 +1720,14 @@ function WebRuntimePreview({
         captureBusy={false}
         regionBusy={false}
         onNavigate={(url) => {
-          invalidateBrowserAutomationObservationTarget(threadId, WEB_RUNTIME_PREVIEW_TAB_ID);
+          invalidateBrowserAutomationTargetObservation(threadId, WEB_RUNTIME_PREVIEW_TAB_ID);
           setInputUrl(url);
           navigate(url);
         }}
         onGoBack={noOp}
         onGoForward={noOp}
         onReload={() => {
-          invalidateBrowserAutomationObservationTarget(threadId, WEB_RUNTIME_PREVIEW_TAB_ID);
+          invalidateBrowserAutomationTargetObservation(threadId, WEB_RUNTIME_PREVIEW_TAB_ID);
           setSrc((current) => current ?? fixtureUrl);
         }}
         onOpenExternal={noOp}
@@ -1734,7 +1735,7 @@ function WebRuntimePreview({
         onScreenshot={noOp}
         onNewPage={noOp}
         onForceReload={() => {
-          invalidateBrowserAutomationObservationTarget(threadId, WEB_RUNTIME_PREVIEW_TAB_ID);
+          invalidateBrowserAutomationTargetObservation(threadId, WEB_RUNTIME_PREVIEW_TAB_ID);
           setSrc((current) => current ?? fixtureUrl);
         }}
         onRegionCapture={noOp}
@@ -1751,7 +1752,7 @@ function WebRuntimePreview({
         onToggleViewportToolbar={onToggleViewportToolbar}
         viewportToolbarVisible={viewportToolbarOpen || responsiveViewportSize !== null}
         suppressPreviewForOverlays={false}
-        onHumanFocus={() => invalidateBrowserAutomationObservationTarget(threadId, WEB_RUNTIME_PREVIEW_TAB_ID)}
+        onHumanFocus={() => invalidateBrowserAutomationTargetObservation(threadId, WEB_RUNTIME_PREVIEW_TAB_ID)}
       />
       {viewportToolbarOpen || responsiveViewportSize ? (
         viewportCoordinator && viewportState ? (
@@ -2019,7 +2020,7 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
     threadId,
   ]);
   const invalidateActiveViewportObservation = useCallback((): void => {
-    invalidateBrowserAutomationObservationTarget(threadId, activeWebviewTabId);
+    invalidateBrowserAutomationTargetObservation(threadId, activeWebviewTabId);
   }, [activeWebviewTabId, threadId]);
   const toggleViewportToolbar = useCallback((): void => {
     const next = !(viewportToolbarOpen || activeViewportState?.mode === "responsive");
@@ -2141,15 +2142,8 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
     ({ dispatch }) =>
       dispatch.target.threadId === threadId && dispatch.target.tabId === activeWebviewTabId,
   );
-  const automationPointer = (() => {
-    if (activeAutomationController?.pointer) return activeAutomationController.pointer;
-    const request = activeAutomationRequest?.dispatch.request;
-    if (!request || !("target" in request.args)) return null;
-    const target = request.args.target;
-    return target && "x" in target && "y" in target
-      ? { x: target.x, y: target.y }
-      : null;
-  })();
+  const agentControlsBrowser = activeAutomationController?.controller === "agent";
+  const automationPointer = activeAutomationController?.pointer ?? null;
   const activeWebviewRef = useCallback(
     (): PreviewWebviewHandle | null =>
       webviewRefs.current[activeWebviewTabId] ?? null,
@@ -2907,30 +2901,30 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
             regionBusy={capture.regionBusy}
             focusRequest={omniboxFocusTick}
             onNavigate={(url) => {
-              invalidateBrowserAutomationObservationTarget(threadId, activeWebviewTabId);
+              invalidateBrowserAutomationTargetObservation(threadId, activeWebviewTabId);
               effectiveNavigate(url);
             }}
             onGoBack={() => {
-              invalidateBrowserAutomationObservationTarget(threadId, activeWebviewTabId);
+              invalidateBrowserAutomationTargetObservation(threadId, activeWebviewTabId);
               effectiveGoBack();
             }}
             onGoForward={() => {
-              invalidateBrowserAutomationObservationTarget(threadId, activeWebviewTabId);
+              invalidateBrowserAutomationTargetObservation(threadId, activeWebviewTabId);
               effectiveGoForward();
             }}
             onReload={() => {
-              invalidateBrowserAutomationObservationTarget(threadId, activeWebviewTabId);
+              invalidateBrowserAutomationTargetObservation(threadId, activeWebviewTabId);
               effectiveReload();
             }}
             onOpenExternal={effectiveOpenExternal}
             onToggleDesign={onToggleDesignMode}
             onScreenshot={capture.onAddPictureReference}
             onNewPage={() => {
-              invalidateBrowserAutomationObservationTarget(threadId, activeWebviewTabId);
+              invalidateBrowserAutomationTargetObservation(threadId, activeWebviewTabId);
               tabs.newTab();
             }}
             onForceReload={() => {
-              invalidateBrowserAutomationObservationTarget(threadId, activeWebviewTabId);
+              invalidateBrowserAutomationTargetObservation(threadId, activeWebviewTabId);
               effectiveForceReload();
             }}
             onRegionCapture={capture.onAddRegionPictureReference}
@@ -2952,7 +2946,7 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
             automationBusy={activeAutomationRequest !== undefined}
             onHumanFocus={() => {
               if (activeAutomationController?.controller !== "agent") return;
-              invalidateBrowserAutomationObservationTarget(threadId, activeWebviewTabId);
+              invalidateBrowserAutomationTargetObservation(threadId, activeWebviewTabId);
             }}
             onStopAutomation={() =>
               interruptBrowserAutomationTarget(
@@ -3063,13 +3057,40 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
           </BrowserViewportCanvas>
           </div>
         ) : null}
-        {activeAutomationController?.controller === "agent" && automationPointer ? (
+        {agentControlsBrowser ? (
           <div
-            data-testid="browser-automation-pointer"
-            className="pointer-events-none absolute z-20 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-amber-200 bg-amber-500 shadow-sm motion-reduce:transition-none"
-            style={{ left: automationPointer.x, top: automationPointer.y }}
-            aria-hidden
-          />
+            data-testid="browser-automation-overlay"
+            className="pointer-events-none absolute inset-0 z-20 rounded-tl-md border-2 border-primary"
+            style={{
+              backgroundImage: [
+                "linear-gradient(to right, color-mix(in oklab, var(--primary) 26%, transparent), transparent 32px)",
+                "linear-gradient(to left, color-mix(in oklab, var(--primary) 26%, transparent), transparent 32px)",
+                "linear-gradient(to bottom, color-mix(in oklab, var(--primary) 26%, transparent), transparent 32px)",
+                "linear-gradient(to top, color-mix(in oklab, var(--primary) 26%, transparent), transparent 32px)",
+              ].join(", "),
+              boxShadow: [
+                "inset 0 0 0 1px color-mix(in oklab, var(--primary) 88%, white 12%)",
+                "inset 0 0 40px color-mix(in oklab, var(--primary) 30%, transparent)",
+                "0 0 24px color-mix(in oklab, var(--primary) 28%, transparent)",
+              ].join(", "),
+            }}
+          >
+            <span className="sr-only" role="status" aria-live="polite">
+              Agent controls Browser
+            </span>
+            {automationPointer ? (
+              <MousePointer2
+                data-testid="browser-automation-pointer"
+                className="absolute size-5 fill-primary text-primary motion-reduce:transition-none"
+                style={{
+                  left: automationPointer.x,
+                  top: automationPointer.y,
+                  filter: "drop-shadow(0 0 5px color-mix(in oklab, var(--primary) 72%, transparent)) drop-shadow(0 2px 5px rgb(0 0 0 / 0.35))",
+                }}
+                aria-hidden
+              />
+            ) : null}
+          </div>
         ) : null}
         {visiblePageAnnotations.map((annotation) => {
           const targetLabel =

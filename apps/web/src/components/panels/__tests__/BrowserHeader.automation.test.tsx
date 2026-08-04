@@ -38,7 +38,13 @@ function renderHeader(overrides: Partial<BrowserHeaderProps> = {}) {
   return props;
 }
 
-describe("BrowserHeader automation controls", () => {
+describe("BrowserHeader", () => {
+  it("does not render a browser-local automation controller capsule", () => {
+    renderHeader();
+    expect(screen.queryByTestId("browser-controller-badge")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Stop browser automation" })).not.toBeInTheDocument();
+  });
+
   it("keeps takeover in overflow instead of the header badge", async () => {
     const user = userEvent.setup();
     const onStopAutomation = vi.fn();
@@ -84,13 +90,5 @@ describe("BrowserHeader automation controls", () => {
     await user.click(screen.getByRole("button", { name: "More browser tools" }));
     await user.click(await screen.findByText("Developer tools"));
     expect(onOpenDevTools).toHaveBeenCalledOnce();
-  });
-
-  it("transfers control when the human focuses the browser omnibox", async () => {
-    const user = userEvent.setup();
-    const onHumanFocus = vi.fn();
-    renderHeader({ onHumanFocus });
-    await user.click(screen.getByRole("textbox", { name: "Preview URL" }));
-    expect(onHumanFocus).toHaveBeenCalledOnce();
   });
 });

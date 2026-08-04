@@ -19,27 +19,7 @@ import {
  * A no-op in non-desktop builds (the bridge is absent, so `tabSet` stays null).
  */
 export function usePreviewTabs(scopeId: string) {
-  const tabSet = usePreviewDisplayTabSet(scopeId);
-  const bridge = window.desktopBridge?.preview?.tabs;
-
-  useEffect(() => {
-    if (!bridge) return;
-    let cancelled = false;
-    const { setTabSet } = usePreviewTabsStore.getState();
-    void bridge.list(scopeId).then((r) => {
-      if (cancelled) return;
-      if (r.ok) setTabSet(scopeId, r.data);
-    });
-    const off = bridge.onUpdated((payload: BrowserTabSet) => {
-      if (cancelled) return;
-      if (payload.threadId === scopeId) setTabSet(scopeId, payload);
-    });
-    return () => {
-      cancelled = true;
-      off();
-    };
-  }, [bridge, scopeId]);
-
+  const tabSet = usePreviewTabSet(scopeId);
   const newTab = useCallback(
     () => usePreviewTabsStore.getState().createPage(scopeId),
     [scopeId],
@@ -55,4 +35,29 @@ export function usePreviewTabs(scopeId: string) {
   );
 
   return { tabSet, newTab, activateTab, closeTab };
+}
+
+/** Keeps Electron Browser tab membership synchronized for an optional panel scope. */
+export function usePreviewTabSet(scopeId: string | null): BrowserTabSet | null {
+  const tabSet = usePreviewDisplayTabSet(scopeId);
+  const bridge = window.desktopBridge?.preview?.tabs;
+
+  useEffect(() => {
+    if (!bridge || !scopeId) return;
+    let cancelled = false;
+    const { setTabSet } = usePreviewTabsStore.getState();
+    void bridge.list(scopeId).then((r) => {
+      if (cancelled) return;
+      if (r.ok) setTabSet(scopeId, r.data);
+    });
+    const off = bridge.onUpdated((payload: BrowserTabSet) => {
+      if (cancelled) return;
+      if (payload.threadId === scopeId) setTabSet(scopeId, payload);
+    });
+    return () => {
+      cancelled = true;
+      off();
+    };
+  }, [bridge, scopeId]);
+  return tabSet;
 }

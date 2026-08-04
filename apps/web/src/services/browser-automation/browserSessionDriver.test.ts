@@ -455,62 +455,62 @@ describe("BrowserSessionDriver", () => {
     expect(execute).toHaveBeenCalledTimes(2);
   });
 
-  it("invalidates an observation without advancing control or cancelling the current path", async () => {
-    const execute = vi.fn(async (value: BrowserAutomationHostDispatch) => (
-      value.request.operation === "inspect"
-        ? { ok: true, result: { operation: "inspect" } }
-        : { ok: true, result: { operation: value.request.operation } }
-    ) as unknown as BrowserAutomationResponse);
+  it("cooperatively stops an act batch after trusted human input invalidates its target", async () => {
+    const execute = vi.fn(async (value: BrowserAutomationHostDispatch) => {
+      if (value.request.operation === "inspect") {
+        return { ok: true, result: { operation: "inspect" } } as unknown as BrowserAutomationResponse;
+      }
+      driver.invalidateTargetObservations("thread", "tab");
+      return { ok: true, result: { operation: value.request.operation } } as unknown as BrowserAutomationResponse;
+    });
     const driver = new BrowserSessionDriver({
       web: { execute },
       electron: { execute },
       isElectron: () => false,
-      supportedActOperations: ["click"],
+      supportedActOperations: ["click", "type"],
     });
-    const inspect = await driver.execute({
-      connection: { connectionGeneration: 1, capabilityRevision: 1 },
-      target: { threadId: "thread", tabId: "tab", targetGeneration: 1 },
-      request: { contractVersion: 1, requestId: "inspect", sequence: 1, operation: "inspect", expectedControlEpoch: 0 },
-    } as unknown as BrowserAutomationHostDispatch, new AbortController().signal);
+    const inspect = await driver.execute(inspectDispatch(), new AbortController().signal);
     const observationRef = (inspect as { result: { observationRef: string } }).result.observationRef;
+    const result = await driver.execute(actDispatch(observationRef, [
+      { operation: "click", target: { cssSelector: "#save" } },
+      { operation: "type", text: "human-safe" },
+    ]), new AbortController().signal);
 
-    driver.invalidateObservationsForTarget("thread", "tab");
-
-    const result = await driver.execute(actDispatch(observationRef, [{ operation: "click", target: { cssSelector: "#save" } }]), new AbortController().signal);
-    expect(result).toMatchObject({ ok: false, error: { code: "STALE_TARGET_GENERATION" } });
-    expect(execute).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({
+      ok: true,
+      result: {
+        outcome: "interrupted",
+        effect: "partial",
+        receipts: [
+          { index: 0, operation: "click", status: "applied" },
+          { index: 1, operation: "type", status: "interrupted" },
+        ],
+      },
+    });
+    expect(execute).toHaveBeenCalledTimes(2);
   });
 
-  it("does not remember an inspect that resolves after cooperative invalidation", async () => {
-    let resolveInspect!: (response: BrowserAutomationResponse) => void;
-    const inspectResponse = new Promise<BrowserAutomationResponse>((resolve) => {
-      resolveInspect = resolve;
-    });
-    const execute = vi.fn((value: BrowserAutomationHostDispatch) => (
-      value.request.operation === "inspect"
-        ? inspectResponse
-        : Promise.resolve({ ok: true, result: { operation: value.request.operation } } as unknown as BrowserAutomationResponse)
-    ));
+  it("clears invalidation state for a read-only target when its provider session ends", async () => {
+    const execute = vi.fn().mockResolvedValue({
+      ok: true,
+      result: { operation: "inspect" },
+    } as unknown as BrowserAutomationResponse);
     const driver = new BrowserSessionDriver({
       web: { execute },
       electron: { execute },
       isElectron: () => false,
-      supportedActOperations: ["click"],
     });
-    const inspectPromise = driver.execute({
-      connection: { connectionGeneration: 1, capabilityRevision: 1 },
-      target: { threadId: "thread", tabId: "tab", targetGeneration: 1 },
-      request: { contractVersion: 1, requestId: "late-inspect", sequence: 1, operation: "inspect", expectedControlEpoch: 0 },
-    } as unknown as BrowserAutomationHostDispatch, new AbortController().signal);
 
-    driver.invalidateObservationsForTarget("thread", "tab");
-    resolveInspect({ ok: true, result: { operation: "inspect" } } as unknown as BrowserAutomationResponse);
-    const inspect = await inspectPromise;
-    const observationRef = (inspect as { result: { observationRef: string } }).result.observationRef;
+    await driver.execute(inspectDispatch(), new AbortController().signal);
+    driver.invalidateTargetObservations("thread", "tab");
+    const interactionRevisions = (
+      driver as unknown as { humanInteractionRevisions: Map<string, number> }
+    ).humanInteractionRevisions;
+    expect(interactionRevisions.size).toBe(1);
 
-    const result = await driver.execute(actDispatch(observationRef, [{ operation: "click", target: { cssSelector: "#save" } }]), new AbortController().signal);
-    expect(result).toMatchObject({ ok: false, error: { code: "STALE_TARGET_GENERATION" } });
-    expect(execute).toHaveBeenCalledOnce();
+    await driver.releaseProviderSession("session");
+
+    expect(interactionRevisions.size).toBe(0);
   });
 
   it("fails before adapter execution when descriptor revision drifts", async () => {
@@ -1066,10 +1066,18 @@ describe("BrowserSessionDriver", () => {
       expect.objectContaining({ tabId: "user-tab", provenance: "claimed-user", ownership: "claimed" }),
     ]));
 
+    driver.invalidateTargetObservations("thread", "agent-tab");
+    driver.invalidateTargetObservations("thread", "user-tab");
+    const interactionRevisions = (
+      driver as unknown as { humanInteractionRevisions: Map<string, number> }
+    ).humanInteractionRevisions;
+    expect(interactionRevisions.size).toBe(2);
+
     await driver.releaseProviderSession("session");
     expect(close).toHaveBeenCalledWith(agent);
     expect(close).not.toHaveBeenCalledWith(user);
     expect(projections.at(-1)).toEqual([]);
+    expect(interactionRevisions.size).toBe(0);
   });
 
   it("does not claim a target when a control operation fails or an observation is read-only", async () => {

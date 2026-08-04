@@ -504,7 +504,7 @@ describe("BrowserAutomationKernel", () => {
     currentWebContents!.emit("did-start-navigation", {}, "https://example.test/next", false, true);
     await expect(kernel.execute(event(), payload(request("status", {}, { requestId: "status-after-click-navigation" })))).resolves.toMatchObject({
       ok: true,
-      result: { controller: { controller: "none", controlEpoch: 0 } },
+      result: { controller: { controller: "agent", controlEpoch: 0 } },
     });
     await vi.advanceTimersByTimeAsync(251);
     expect(kernel.interrupt(event(), { threadId: "thread", tabId: "tab" })).toBe(true);
@@ -557,6 +557,77 @@ describe("BrowserAutomationKernel", () => {
       expect.objectContaining({ kind: "pointer", count: 1 }),
     );
     unsubscribe();
+  });
+
+  it("retains agent control between Browser calls until the renderer releases the turn", async () => {
+    await expect(kernel.execute(event(), payload(request("press", {
+      key: "A",
+      modifiers: [],
+    }, { requestId: "retained-agent-control" })))).resolves.toMatchObject({ ok: true });
+
+    await expect(kernel.execute(event(), payload(request("status", {}, {
+      requestId: "status-during-agent-turn",
+    })))).resolves.toMatchObject({
+      ok: true,
+      result: { controller: { controller: "agent", controlEpoch: 0 } },
+    });
+
+    expect(kernel.releaseAgentControl(event(), {
+      threadId: "thread",
+      tabId: "tab",
+      controlEpoch: 0,
+      providerSessionId: "provider-session",
+    })).toBe(true);
+    await expect(kernel.execute(event(), payload(request("status", {}, {
+      requestId: "status-after-agent-turn",
+    })))).resolves.toMatchObject({
+      ok: true,
+      result: { controller: { controller: "none", controlEpoch: 0 } },
+    });
+  });
+
+  it("rejects sessionless and stale same-epoch releases after a newer inspect turn", async () => {
+    const oldInspect = {
+      ...request("inspect", {}, { requestId: "inspect-old-turn" }),
+      providerSessionId: "provider-session-old",
+    } as BrowserAutomationRequest;
+    const newInspect = {
+      ...request("inspect", {}, { requestId: "inspect-new-turn" }),
+      providerSessionId: "provider-session-new",
+    } as BrowserAutomationRequest;
+
+    await expect(kernel.execute(event(), payload(oldInspect))).resolves.toMatchObject({ ok: true });
+    await expect(kernel.execute(event(), payload(newInspect))).resolves.toMatchObject({ ok: true });
+
+    expect(kernel.releaseAgentControl(event(), {
+      threadId: "thread",
+      tabId: "tab",
+      controlEpoch: 0,
+    })).toBe(false);
+    expect(kernel.releaseAgentControl(event(), {
+      threadId: "thread",
+      tabId: "tab",
+      controlEpoch: 0,
+      providerSessionId: "provider-session-old",
+    })).toBe(false);
+    await expect(kernel.execute(event(), payload(request("status", {}, {
+      requestId: "status-after-stale-release",
+    })))).resolves.toMatchObject({
+      ok: true,
+      result: {
+        controller: {
+          controller: "agent",
+          controlEpoch: 0,
+          providerSessionId: "provider-session-new",
+        },
+      },
+    });
+    expect(kernel.releaseAgentControl(event(), {
+      threadId: "thread",
+      tabId: "tab",
+      controlEpoch: 0,
+      providerSessionId: "provider-session-new",
+    })).toBe(true);
   });
 
   it("distinguishes attached, visible, hidden, and detached wait states", async () => {

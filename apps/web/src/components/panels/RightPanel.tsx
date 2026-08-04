@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useUiStore } from "@/stores/uiStore";
 import {
@@ -18,10 +18,7 @@ import { ActivityRail, type ScopeProgress } from "./ActivityRail";
 import type { PanelScope } from "@/lib/panel-tabs";
 import { DiffPanel } from "@/components/diff";
 import { PreviewPanel } from "@/components/panels/PreviewPanel";
-import {
-  usePreviewDisplayTabSet,
-  usePreviewTabsStore,
-} from "@/stores/previewTabsStore";
+import { usePreviewTabsStore } from "@/stores/previewTabsStore";
 import { TerminalPoolSlot } from "@/components/terminal/TerminalPoolSlotContext";
 import { createTerminalForScope } from "@/lib/ensure-terminal";
 import {
@@ -37,6 +34,7 @@ import {
   BROWSER_AUTOMATION_WARM_TARGET_LIMIT,
   useBrowserAutomationStore,
 } from "@/stores/browserAutomationStore";
+import { usePreviewTabSet } from "./hooks/usePreviewTabs";
 
 /** One thread/workspace Browser panel retained by the warm LRU pool. */
 export interface WarmPreviewScope {
@@ -191,7 +189,38 @@ export function RightPanel() {
   // page entries (and the active-page favicon glyph) even while another tab is
   // active. Null in web builds with no bridge, where the rail keeps the single
   // Browser glyph.
-  const browserTabSet = usePreviewDisplayTabSet(panelScopeId);
+  const browserTabSet = usePreviewTabSet(panelScopeId);
+
+  // Keep hidden agent activity background-only. Once the human can see an
+  // otherwise empty panel, project any recorded Browser page immediately,
+  // including a page published after the default screen was already visible.
+  const revealExistingPreview =
+    panelVisible &&
+    openTabs.length === 0 &&
+    (browserTabSet?.tabs.length ?? 0) > 0;
+  const renderedTabInstances = revealExistingPreview
+    ? [{ id: "singleton:preview", type: "preview" as const }]
+    : tabInstances;
+  const renderedOpenTabs = renderedTabInstances.map((instance) => instance.type);
+  const renderedActiveTabId = revealExistingPreview ? "singleton:preview" : activeTabId;
+  const renderedActiveTab = revealExistingPreview ? "preview" : activeTab;
+
+  useLayoutEffect(() => {
+    if (!revealExistingPreview || !activeWorkspaceId) return;
+    const current = useDiffStore.getState().getRightPanel(activeWorkspaceId, activeThreadId);
+    if (!current.visible || current.openTabs.length > 0) return;
+    useDiffStore.getState().setRightPanelTab(activeWorkspaceId, activeThreadId, "preview");
+    const existingPageId = browserTabSet?.activeTabId ?? browserTabSet?.tabs[0]?.id;
+    if (panelScopeId && existingPageId) {
+      void usePreviewTabsStore.getState().activatePage(panelScopeId, existingPageId);
+    }
+  }, [
+    activeThreadId,
+    activeWorkspaceId,
+    browserTabSet,
+    panelScopeId,
+    revealExistingPreview,
+  ]);
 
   // Zustand action refs are stable (same identity for the store's lifetime),
   // so destructuring from getState() at render time is safe and avoids
@@ -226,12 +255,12 @@ export function RightPanel() {
   // A tab's content renders only when it is both the active tab and actually
   // open. Guards against a persisted/default activeTab leaking content behind
   // the card-grid empty state when its type is not in the open set.
-  const changesActive = activeTab === "changes" && openTabs.includes("changes");
-  const previewActive = activeTab === "preview" && openTabs.includes("preview");
+  const changesActive = renderedActiveTab === "changes" && renderedTabInstances.some((instance) => instance.type === "changes");
+  const previewActive = renderedActiveTab === "preview" && renderedTabInstances.some((instance) => instance.type === "preview");
   const terminalActive =
-    activeTab === "terminal" && openTabs.includes("terminal");
+    renderedActiveTab === "terminal" && renderedTabInstances.some((instance) => instance.type === "terminal");
   const subagentsActive =
-    activeTab === "subagents" && openTabs.includes("subagents");
+    renderedActiveTab === "subagents" && renderedTabInstances.some((instance) => instance.type === "subagents");
 
   useEffect(() => {
     const next = previewActive && panelScopeId && activeWorkspaceId
@@ -328,8 +357,8 @@ export function RightPanel() {
           keeps those panel actions beside the empty-state create list. */}
       <div className="flex min-h-0 flex-1 flex-row overflow-hidden">
         <ActivityRail
-          tabInstances={tabInstances}
-          activeTabId={activeTabId}
+          tabInstances={renderedTabInstances}
+          activeTabId={renderedActiveTabId}
           scope={panelScope}
           scopeProgress={scope}
           changesCount={changesCount}
@@ -342,7 +371,7 @@ export function RightPanel() {
           onToggleMaximized={toggleMaximized}
           onSelect={(instanceId) => {
             setRightPanelTabInstance(activeWorkspaceId!, activeThreadId, instanceId);
-            const terminal = tabInstances.find((instance) => instance.id === instanceId);
+            const terminal = renderedTabInstances.find((instance) => instance.id === instanceId);
             if (terminal?.type === "terminal" && panelScopeId) {
               useTerminalStore
                 .getState()
@@ -351,7 +380,7 @@ export function RightPanel() {
           }}
           onClose={(instanceId) =>
             {
-              const terminal = tabInstances.find((instance) => instance.id === instanceId);
+              const terminal = renderedTabInstances.find((instance) => instance.id === instanceId);
               if (terminal?.type === "terminal") {
                 const ptyId = instanceId.slice("terminal:".length);
                 void getTransport().terminalKill(ptyId).then(() => {
@@ -411,10 +440,10 @@ export function RightPanel() {
             and workspace thread switches. With no tab open the panel shows the
             card-grid empty state, which is itself the create surface. */}
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-          {openTabs.length === 0 && (
+          {renderedOpenTabs.length === 0 && (
             <PanelEmptyState
               scope={panelScope}
-              openTabs={openTabs}
+              openTabs={renderedOpenTabs}
               onOpen={(id) =>
                 id === "terminal" && panelScopeId
                   ? createTerminalForScope(panelScopeId)
@@ -422,14 +451,14 @@ export function RightPanel() {
               }
             />
           )}
-          {activeTab === "tasks" &&
-            openTabs.includes("tasks") &&
+          {renderedActiveTab === "tasks" &&
+            renderedOpenTabs.includes("tasks") &&
             activeThreadId && <PlanPanel threadId={activeThreadId} />}
           {subagentsActive && activeThreadId && (
             <SubagentsPanel key={activeThreadId} threadId={activeThreadId} />
           )}
-          {activeTab === "coordination" &&
-            openTabs.includes("coordination") &&
+          {renderedActiveTab === "coordination" &&
+            renderedOpenTabs.includes("coordination") &&
             activeThreadId &&
             activeWorkspaceId && (
               <CoordinationPanel

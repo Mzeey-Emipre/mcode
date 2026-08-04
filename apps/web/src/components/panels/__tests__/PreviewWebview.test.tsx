@@ -51,10 +51,9 @@ describe("PreviewWebview", () => {
   });
 
   it("invalidates exact tab observations only for the trusted guest input channel", () => {
-    const interrupt = vi.fn().mockResolvedValue(true);
     const invalidate = vi.fn();
     window.desktopBridge = {
-      preview: { automation: { interrupt } },
+      preview: {},
     } as unknown as NonNullable<typeof window.desktopBridge>;
     const unsubscribe = onBrowserAutomationObservationInvalidation(invalidate);
     render(
@@ -85,7 +84,6 @@ describe("PreviewWebview", () => {
     unsubscribe();
     expect(invalidate).toHaveBeenCalledOnce();
     expect(invalidate).toHaveBeenCalledWith("thread-1", "tab-1");
-    expect(interrupt).not.toHaveBeenCalled();
   });
 
   it("does not call Electron navigation methods before dom-ready", async () => {
