@@ -253,7 +253,7 @@ function MarkdownLink({
   const anchor = (
     <a
       href={safeHref}
-      className="inline-flex max-w-full items-center gap-1 align-baseline text-link no-underline transition-colors hover:underline"
+      className="inline-flex max-w-full items-center gap-1 align-baseline text-primary no-underline transition-colors hover:underline"
       target="_blank"
       rel="noopener noreferrer"
       data-testid="markdown-link"
