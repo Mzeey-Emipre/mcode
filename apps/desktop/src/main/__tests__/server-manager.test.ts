@@ -71,7 +71,7 @@ vi.mock("@mcode/shared", () => ({
 vi.mock("net", () => ({
   createServer: vi.fn().mockReturnValue({
     once: vi.fn(),
-    listen: vi.fn((_port: number, cb: () => void) => cb()),
+    listen: vi.fn((_port: number, _host: string, cb: () => void) => cb()),
     address: vi.fn().mockReturnValue({ port: 19600 }),
     close: vi.fn((cb: () => void) => cb()),
   }),
@@ -160,6 +160,7 @@ import {
 } from "fs";
 import { readFile } from "fs/promises";
 import { join } from "path";
+import { createServer } from "net";
 import {
   SERVER_HEAP_DEFAULT_MB,
   SERVER_HEAP_LEGACY_DEFAULT_MB,
@@ -233,6 +234,12 @@ describe("ServerManager", () => {
     expect(opts.stdio).toEqual(["ignore", "ignore", "pipe"]);
     expect(result.port).toBe(19600);
     expect(result.authToken).toBe("test-auth-token");
+    const portProbe = vi.mocked(createServer).mock.results[0]?.value;
+    expect(portProbe.listen).toHaveBeenCalledWith(
+      19600,
+      "127.0.0.1",
+      expect.any(Function),
+    );
   });
 
   it("calls unref() on the child process after spawning", async () => {

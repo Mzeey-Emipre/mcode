@@ -76,6 +76,7 @@ import { normalizeAgentProviderError } from "./services/provider-agent-error-nor
 import type Database from "better-sqlite3";
 import type { JobObject } from "./services/job-object.js";
 import { resolveWebAutomationFlag } from "./startup-policy.js";
+import { listenWithPortRetry } from "./http-listener.js";
 import {
   BrowserAutomationBroker,
   BrowserAutomationCredentialRegistry,
@@ -694,41 +695,46 @@ const { httpServer, wss } = createWsServer({
  * Attempt to bind to the preferred port, incrementing on EADDRINUSE.
  * Logs the actual port so the client can discover it.
  */
-function listen(port: number, attempt = 1): void {
-  httpServer.once("error", (err: NodeJS.ErrnoException) => {
-    if (err.code === "EADDRINUSE" && attempt < MAX_PORT_ATTEMPTS) {
-      logger.warn(`Port ${port} in use, trying ${port + 1}`);
-      listen(port + 1, attempt + 1);
-    } else {
-      logger.error(`Failed to bind to port ${port}`, { error: String(err) });
-      process.exit(1);
-    }
-  });
-  httpServer.listen(port, HOST, () => {
-    externalThreadControlMcpRuntime.setPort(port);
-    logger.info(`Mcode server listening on ${HOST}:${port}`);
-
-    const browserMcpHost = HOST === "::1" ? "[::1]" : "127.0.0.1";
-    browserAutomationSessionLease.configure({
-      mcpUrl: `http://${browserMcpHost}:${port}/mcp`,
-      worktreeIdentity: WORKTREE_IDENTITY ?? "shared-server",
-    });
-
-    // Write lock file so other instances can discover this server
-    try {
-      const lockData = JSON.stringify({
-        port,
-        ...(!SINGLE_INSTANCE && { authToken: AUTH_TOKEN }),
-        pid: process.pid,
-        startedAt: new Date().toISOString(),
-        version: process.env.MCODE_VERSION ?? "0.0.0",
-        ipcPath,
+function listen(port: number): void {
+  listenWithPortRetry(httpServer, {
+    host: HOST,
+    port,
+    maxAttempts: MAX_PORT_ATTEMPTS,
+    onRetry: (occupiedPort, nextPort) => {
+      logger.warn(`Port ${occupiedPort} in use, trying ${nextPort}`);
+    },
+    onFailure: (failedPort, err) => {
+      logger.error(`Failed to bind to port ${failedPort}`, {
+        error: String(err),
       });
-      writeFileSync(LOCK_FILE_PATH, lockData, { mode: 0o600 });
-      logger.info("Server lock file written", { path: LOCK_FILE_PATH });
-    } catch (err) {
-      logger.warn("Failed to write server lock file", { error: String(err) });
-    }
+      process.exit(1);
+    },
+    onListening: (listeningPort) => {
+      externalThreadControlMcpRuntime.setPort(listeningPort);
+      logger.info(`Mcode server listening on ${HOST}:${listeningPort}`);
+
+      const browserMcpHost = HOST === "::1" ? "[::1]" : "127.0.0.1";
+      browserAutomationSessionLease.configure({
+        mcpUrl: `http://${browserMcpHost}:${listeningPort}/mcp`,
+        worktreeIdentity: WORKTREE_IDENTITY ?? "shared-server",
+      });
+
+      // Write lock file so other instances can discover this server
+      try {
+        const lockData = JSON.stringify({
+          port: listeningPort,
+          ...(!SINGLE_INSTANCE && { authToken: AUTH_TOKEN }),
+          pid: process.pid,
+          startedAt: new Date().toISOString(),
+          version: process.env.MCODE_VERSION ?? "0.0.0",
+          ipcPath,
+        });
+        writeFileSync(LOCK_FILE_PATH, lockData, { mode: 0o600 });
+        logger.info("Server lock file written", { path: LOCK_FILE_PATH });
+      } catch (err) {
+        logger.warn("Failed to write server lock file", { error: String(err) });
+      }
+    },
   });
 }
 

@@ -201,7 +201,7 @@ async function findAvailablePort(min: number, max: number): Promise<number> {
     const available = await new Promise<boolean>((resolve) => {
       const srv = createServer();
       srv.once("error", () => resolve(false));
-      srv.listen(port, () => {
+      srv.listen(port, "127.0.0.1", () => {
         const addr = srv.address() as AddressInfo;
         srv.close(() => resolve(addr.port === port));
       });
