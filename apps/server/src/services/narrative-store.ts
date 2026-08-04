@@ -37,6 +37,7 @@ import { injectable, inject } from "tsyringe";
 import { randomUUID } from "crypto";
 import { logger } from "@mcode/shared";
 import {
+  resolveBrowserNarrativeTool,
   resolveProviderAgentKey,
   resolveSubagentDisplayName,
   resolveSubagentMetadata,
@@ -460,7 +461,8 @@ export class NarrativeStore {
     const buffer = this.turnToolCalls.get(threadId) ?? [];
     for (let i = buffer.length - 1; i >= 0; i--) {
       if (buffer[i].toolCallId === toolCallId) {
-        buffer[i].outputSummary = output.slice(0, 500);
+        const outputLimit = resolveBrowserNarrativeTool(buffer[i].toolName) ? 4_000 : 500;
+        buffer[i].outputSummary = output.slice(0, outputLimit);
         buffer[i].outputTruncated = outputMeta?.outputTruncated === true;
         delete buffer[i].outputTotalBytes;
         delete buffer[i].outputArtifactPath;
@@ -719,6 +721,9 @@ export class NarrativeStore {
 
   /** Generate a human-readable summary of tool input. */
   private summarizeInput(toolName: string, input: Record<string, unknown>): string {
+    if (resolveBrowserNarrativeTool(toolName)) {
+      return JSON.stringify(input).slice(0, 4_000);
+    }
     switch (toolName.toLowerCase()) {
       case "read":
       case "edit":

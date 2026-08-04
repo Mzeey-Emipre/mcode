@@ -10,6 +10,7 @@ import type { ToolCall } from "@/transport/types";
 import { extractToolInputDetail } from "./tool-detail";
 import { NARRATIVE_TOOL_ROW, narrativeToolDetailClass } from "./narrative-layout";
 import { CommandExecutionCard } from "./CommandExecutionCard";
+import { BrowserActivitySummary, isBrowserNarrativeCall } from "./BrowserActivityRow";
 
 interface ActiveToolRowProps {
   toolCall: ToolCall;
@@ -20,6 +21,10 @@ interface ActiveToolRowProps {
  * No background tint - the spinning icon alone signals activity.
  */
 export function ActiveToolRow({ toolCall }: ActiveToolRowProps) {
+  if (isBrowserNarrativeCall(toolCall)) {
+    return <BrowserActivitySummary calls={[toolCall]} active />;
+  }
+
   if (isShellTool(toolCall.toolName)) {
     return <CommandExecutionCard toolCall={toolCall} isActive />;
   }

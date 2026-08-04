@@ -1,6 +1,4 @@
 import { useState } from "react";
-import type { ReactNode } from "react";
-import { ChevronRight } from "lucide-react";
 import { AnimatedCollapsible } from "@/components/ui/animated-collapsible";
 import {
   TOOL_ICONS,
@@ -16,6 +14,11 @@ import { extractToolInputDetail } from "./tool-detail";
 import { NARRATIVE_TOOL_ROW, narrativeToolDetailClass } from "./narrative-layout";
 import { ToolOutputTruncationNotice } from "./ToolOutputTruncationNotice";
 import { ShellToolCallRow } from "./ShellToolCallRow";
+import {
+  BrowserActivitySummary,
+  isBrowserNarrativeCall,
+} from "./BrowserActivityRow";
+import { NarrativeSummaryLine } from "./NarrativeSummaryLine";
 
 interface ToolSummaryLineProps {
   /** The group of consecutive tool calls to summarize. */
@@ -24,57 +27,6 @@ interface ToolSummaryLineProps {
   hasError: boolean;
   /** Whether any call in the group was cancelled. */
   hasCancelled: boolean;
-}
-
-interface NarrativeSummaryLineProps {
-  /** Whether the row is currently expanded. */
-  open: boolean;
-  /** Called when the row is clicked. */
-  onToggle: () => void;
-  /** Leading status or type icon. */
-  icon: ReactNode;
-  /** Primary summary text. */
-  children: ReactNode;
-  /** Optional status badge rendered before the chevron. */
-  badge?: ReactNode;
-  /** Whether the row can be expanded. */
-  expandable?: boolean;
-  /** Whether clicking the row is disabled. */
-  disabled?: boolean;
-}
-
-/** Shared compact narrative summary row used by tool and hook groups. */
-export function NarrativeSummaryLine({
-  open,
-  onToggle,
-  icon,
-  children,
-  badge,
-  expandable = true,
-  disabled = false,
-}: NarrativeSummaryLineProps) {
-  return (
-    <button
-      type="button"
-      onClick={onToggle}
-      disabled={disabled}
-      className={`${NARRATIVE_TOOL_ROW} w-full rounded-md px-2 py-1 text-left text-sm transition-colors duration-100 ${
-        disabled ? "cursor-default" : "hover:bg-muted/30"
-      }`}
-      aria-expanded={expandable ? open : undefined}
-    >
-      {icon}
-      {children}
-      {badge}
-      {expandable && (
-        <ChevronRight
-          className={`h-3 w-3 text-muted-foreground/30 shrink-0 transition-transform duration-150 ${
-            open ? "rotate-90" : ""
-          }`}
-        />
-      )}
-    </button>
-  );
 }
 
 /**
@@ -113,6 +65,41 @@ function StatusBadge({ status }: StatusBadgeProps) {
   );
 }
 
+function ToolCallDetailRow({ toolCall: tc }: { toolCall: ToolCall }) {
+  if (isShellTool(tc.toolName)) {
+    return (
+      <li className="min-w-0 max-w-full">
+        <ShellToolCallRow toolCall={tc} />
+      </li>
+    );
+  }
+
+  const canonicalName = resolveToolName(tc.toolName);
+  const Icon = TOOL_ICONS[canonicalName] ?? DEFAULT_ICON;
+  const label = TOOL_LABELS[canonicalName] ?? tc.toolName;
+  const detail = extractToolInputDetail(tc);
+  const status = getCallStatus(tc);
+
+  return (
+    <li className="flex min-w-0 max-w-full flex-col gap-1 py-1">
+      <div className={`${NARRATIVE_TOOL_ROW} text-sm`}>
+        <Icon className="size-3.5 shrink-0 text-muted-foreground/75" />
+        <span className="shrink-0 font-medium text-foreground/65">{label}</span>
+        <span className={narrativeToolDetailClass("md")} title={detail}>{detail}</span>
+        {status !== "completed" ? <StatusBadge status={status} /> : null}
+      </div>
+      {tc.isError && tc.output ? (
+        <div className="flex min-w-0 max-w-full flex-col gap-1">
+          <ToolOutputTruncationNotice toolCall={tc} />
+          <pre className="max-h-40 max-w-full overflow-x-auto whitespace-pre-wrap break-words rounded bg-[var(--diff-remove)]/10 px-2 py-1 font-mono text-sm text-[var(--diff-remove)]">
+            {tc.output}
+          </pre>
+        </div>
+      ) : null}
+    </li>
+  );
+}
+
 /**
  * Renders a compact one-liner summarizing a group of consecutive tool calls.
  *
@@ -127,6 +114,16 @@ export function ToolSummaryLine({
   hasCancelled,
 }: ToolSummaryLineProps) {
   const [open, setOpen] = useState(false);
+  const hasBrowserActivity = group.calls.some(isBrowserNarrativeCall);
+
+  if (hasBrowserActivity) {
+    return (
+      <BrowserActivitySummary
+        calls={group.calls}
+        renderOtherCall={(call) => <ToolCallDetailRow key={call.id} toolCall={call} />}
+      />
+    );
+  }
 
   const firstCall = group.calls[0];
   const LeadingIcon = firstCall
@@ -158,48 +155,7 @@ export function ToolSummaryLine({
       {/* Expanded detail list */}
       <AnimatedCollapsible open={open}>
         <ul className="mt-1 min-w-0 max-w-full space-y-1 pb-2 pl-6">
-          {group.calls.map((tc) => {
-            const canonicalName = resolveToolName(tc.toolName);
-
-            if (isShellTool(tc.toolName)) {
-              return (
-                <li key={tc.id} className="min-w-0 max-w-full">
-                  <ShellToolCallRow toolCall={tc} />
-                </li>
-              );
-            }
-
-            const Icon = TOOL_ICONS[canonicalName] ?? DEFAULT_ICON;
-            const label = TOOL_LABELS[canonicalName] ?? tc.toolName;
-            const detail = extractToolInputDetail(tc);
-            const status = getCallStatus(tc);
-
-            return (
-              <li key={tc.id} className="flex min-w-0 max-w-full flex-col gap-1 py-1">
-                {/* Row: icon + label + detail + badge */}
-                <div className={`${NARRATIVE_TOOL_ROW} text-sm`}>
-                  <Icon className="w-[14px] h-[14px] text-muted-foreground/75 shrink-0" />
-                  <span className="text-foreground/65 font-medium shrink-0">
-                    {label}
-                  </span>
-                  <span className={narrativeToolDetailClass("md")} title={detail}>
-                    {detail}
-                  </span>
-                  {status !== "completed" && <StatusBadge status={status} />}
-                </div>
-
-                {/* Inline content blocks */}
-                {tc.isError && tc.output && (
-                  <div className="flex min-w-0 max-w-full flex-col gap-1">
-                    <ToolOutputTruncationNotice toolCall={tc} />
-                    <pre className="max-w-full text-sm font-mono rounded px-2 py-1 bg-[var(--diff-remove)]/10 text-[var(--diff-remove)] overflow-x-auto whitespace-pre-wrap break-words max-h-40">
-                      {tc.output}
-                    </pre>
-                  </div>
-                )}
-              </li>
-            );
-          })}
+          {group.calls.map((tc) => <ToolCallDetailRow key={tc.id} toolCall={tc} />)}
         </ul>
       </AnimatedCollapsible>
     </div>

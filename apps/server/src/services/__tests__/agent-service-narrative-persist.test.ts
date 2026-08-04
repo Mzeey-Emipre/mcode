@@ -360,13 +360,65 @@ describe("AgentService narrative persistence", () => {
     const toolCalls: CreateToolCallRecordInput[] = toolBulk.mock.calls[0][0];
     expect(toolCalls[0]).toMatchObject({
       toolName: "mcp__mcode-browser__browser_evaluate",
-      inputSummary: "{}",
-      outputSummary: "",
+      inputSummary: '{"operation":"browser_evaluate"}',
+      outputSummary: '{"operation":"browser_evaluate","outcome":"completed"}',
       outputTruncated: false,
     });
     expect(toolCalls[0].outputArtifactPath).toBeUndefined();
     expect(JSON.stringify(toolCalls[0])).not.toContain("SECRET_SOURCE");
     expect(JSON.stringify(toolCalls[0])).not.toContain("SECRET_RESULT");
+  });
+
+  it("persists Browser actions as content-free narrative receipts", async () => {
+    const { providerEmitter, toolBulk } = build();
+
+    providerEmitter.emit("event", {
+      type: AgentEventType.ToolUse,
+      threadId: THREAD_ID,
+      toolCallId: "act-1",
+      toolName: "mcp__mcode-browser__browser_act",
+      toolInput: {
+        observationRef: "SECRET_OBSERVATION",
+        steps: [{ operation: "type", text: "SECRET_TYPED_VALUE" }],
+      },
+    });
+    providerEmitter.emit("event", {
+      type: AgentEventType.ToolResult,
+      threadId: THREAD_ID,
+      toolCallId: "act-1",
+      output: JSON.stringify({
+        operation: "act",
+        outcome: "completed",
+        effect: "complete",
+        recovery: "inspect",
+        receipts: [
+          { index: 0, operation: "type", status: "applied", message: "SECRET_RESULT" },
+        ],
+        finalObservation: { visibleText: "SECRET_PAGE_BODY" },
+      }),
+      isError: false,
+      outputArtifactPath: "C:\\SECRET_RESULT.txt",
+    });
+    providerEmitter.emit("event", {
+      type: AgentEventType.TurnComplete,
+      threadId: THREAD_ID,
+      tokensIn: 0,
+      tokensOut: 0,
+      contextWindow: 0,
+    });
+
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(toolBulk).toHaveBeenCalledOnce();
+    const toolCalls: CreateToolCallRecordInput[] = toolBulk.mock.calls[0][0];
+    expect(toolCalls[0]).toMatchObject({
+      inputSummary: '{"operation":"browser_act","steps":[{"operation":"type"}]}',
+      outputSummary: '{"operation":"browser_act","outcome":"completed","effect":"complete","recovery":"inspect","receipts":[{"index":0,"operation":"type","status":"applied"}]}',
+      outputTruncated: false,
+    });
+    expect(toolCalls[0].outputArtifactPath).toBeUndefined();
+    expect(JSON.stringify(toolCalls[0])).not.toContain("SECRET");
   });
 
   it("applies a TaskUpdate status transition to the persisted task by harness id", () => {

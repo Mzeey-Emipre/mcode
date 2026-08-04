@@ -1,0 +1,145 @@
+import { describe, expect, it } from "vitest";
+import {
+  projectBrowserNarrativeInput,
+  projectBrowserNarrativeResult,
+  resolveBrowserNarrativeTool,
+  serializeBrowserNarrativeResult,
+} from "../browser-narrative.js";
+
+describe("Browser narrative projection", () => {
+  it.each([
+    ["browser_open", "browser_open"],
+    ["mcp__mcode-browser__browser_status", "browser_status"],
+    ["mcp:mcode-browser:browser_navigate", "browser_navigate"],
+    ["browser_resize", "browser_resize"],
+    ["mcode-browser.browser_snapshot", "browser_snapshot"],
+    ["browser_screenshot", "browser_screenshot"],
+    ["browser_click", "browser_click"],
+    ["MCP__MCODE-BROWSER__BROWSER_TYPE", "browser_type"],
+    ["browser_press", "browser_press"],
+    ["browser_scroll", "browser_scroll"],
+    ["browser_wait_for", "browser_wait_for"],
+    ["browser_console", "browser_console"],
+    ["browser_network", "browser_network"],
+    ["browser_accessibility", "browser_accessibility"],
+    ["browser_performance", "browser_performance"],
+    ["browser_recording_start", "browser_recording_start"],
+    ["browser_recording_stop", "browser_recording_stop"],
+    ["mcp__mcode-browser__browser_inspect", "browser_inspect"],
+    ["mcp:mcode-browser:browser_act", "browser_act"],
+    ["mcode-browser.browser_tabs", "browser_tabs"],
+    ["MCP__MCODE-BROWSER__BROWSER_EVALUATE", "browser_evaluate"],
+  ])("resolves %s", (toolName, expected) => {
+    expect(resolveBrowserNarrativeTool(toolName)).toBe(expected);
+  });
+
+  it("keeps only action identity and resize dimensions from Browser input", () => {
+    const input = projectBrowserNarrativeInput("mcp__mcode-browser__browser_act", {
+      observationRef: "SECRET_OBSERVATION",
+      idempotencyKey: "SECRET_KEY",
+      steps: [
+        { operation: "type", text: "SECRET_TYPED_VALUE", target: { accessibleName: "Password" } },
+        { operation: "navigate", url: "https://example.test/?token=SECRET_TOKEN" },
+        { operation: "resize", width: 390, height: 844 },
+      ],
+    });
+
+    expect(input).toEqual({
+      operation: "browser_act",
+      steps: [
+        { operation: "type" },
+        { operation: "navigate" },
+        { operation: "resize", width: 390, height: 844 },
+      ],
+    });
+    expect(JSON.stringify(input)).not.toContain("SECRET");
+    expect(JSON.stringify(input)).not.toContain("Password");
+  });
+
+  it.each([
+    ["browser_navigate", { url: "https://example.test/?token=SECRET_TOKEN" }, "navigate"],
+    ["browser_type", { text: "SECRET_TYPED_VALUE", target: { accessibleName: "Password" } }, "type"],
+    ["browser_click", { target: { accessibleName: "SECRET_BUTTON" } }, "click"],
+    ["browser_wait_for", { text: "SECRET_PAGE_TEXT" }, "wait"],
+  ])("reduces granular %s input to one content-free action", (toolName, rawInput, operation) => {
+    const input = projectBrowserNarrativeInput(toolName, rawInput);
+
+    expect(input).toEqual({ operation: toolName, steps: [{ operation }] });
+    expect(JSON.stringify(input)).not.toContain("SECRET");
+    expect(JSON.stringify(input)).not.toContain("Password");
+  });
+
+  it("keeps typed receipts and drops Browser result content", () => {
+    const result = projectBrowserNarrativeResult(
+      "mcp__mcode-browser__browser_act",
+      JSON.stringify({
+        operation: "act",
+        outcome: "interrupted",
+        effect: "partial",
+        recovery: "yield_to_user",
+        receipts: [
+          { index: 0, operation: "click", status: "applied", message: "SECRET_PAGE_TEXT" },
+          { index: 1, operation: "type", status: "interrupted", message: "SECRET_TYPED_VALUE" },
+        ],
+        finalObservation: { visibleText: "SECRET_BODY" },
+        nextObservationRef: "SECRET_OBSERVATION",
+      }),
+      false,
+    );
+
+    expect(result).toEqual({
+      operation: "browser_act",
+      outcome: "interrupted",
+      effect: "partial",
+      recovery: "yield_to_user",
+      receipts: [
+        { index: 0, operation: "click", status: "applied" },
+        { index: 1, operation: "type", status: "interrupted" },
+      ],
+    });
+    expect(serializeBrowserNarrativeResult(result!)).not.toContain("SECRET");
+  });
+
+  it("reduces inspection output to readiness and bounded counts", () => {
+    const result = projectBrowserNarrativeResult("browser_inspect", JSON.stringify({
+      operation: "inspect",
+      readiness: { ready: true, state: "ready", reason: "SECRET_REASON" },
+      tabs: [{ tabId: "SECRET_TAB", url: "https://example.test/?token=SECRET" }],
+      capabilities: ["inspect", "act"],
+      snapshot: { visibleText: "SECRET_BODY" },
+      diagnostics: ["SECRET_DIAGNOSTIC"],
+    }), false);
+
+    expect(result).toEqual({
+      operation: "browser_inspect",
+      outcome: "completed",
+      readiness: "ready",
+      tabCount: 1,
+      capabilityCount: 2,
+    });
+    expect(JSON.stringify(result)).not.toContain("SECRET");
+  });
+
+  it("keeps only allowlisted recovery metadata from Browser errors", () => {
+    const result = projectBrowserNarrativeResult("browser_act", JSON.stringify({
+      code: "STALE_TARGET_GENERATION",
+      message: "SECRET_PAGE_DETAILS",
+      retryable: true,
+      recovery: "inspect",
+      correlationId: "SECRET_CORRELATION",
+    }), true);
+
+    expect(result).toEqual({
+      operation: "browser_act",
+      outcome: "failed",
+      recovery: "inspect",
+      errorCode: "STALE_TARGET_GENERATION",
+    });
+    expect(JSON.stringify(result)).not.toContain("SECRET");
+  });
+
+  it("does not project unrelated tools", () => {
+    expect(projectBrowserNarrativeInput("Read", { text: "SECRET" })).toBeNull();
+    expect(projectBrowserNarrativeResult("Read", "SECRET", false)).toBeNull();
+  });
+});
