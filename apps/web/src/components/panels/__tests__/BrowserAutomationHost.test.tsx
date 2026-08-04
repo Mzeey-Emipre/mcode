@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useThreadStore } from "@/stores/threadStore";
 import {
+  browserAutomationTargetKey,
   interruptBrowserAutomationTarget,
   releaseBrowserAutomationThreadScope,
   useBrowserAutomationStore,
@@ -84,6 +85,7 @@ import {
   BrowserSessionDriver,
   type BrowserSessionLifecycleTab,
 } from "@/services/browser-automation/browserSessionDriver";
+import { ViewportCoordinator } from "@/services/browser-automation/viewportCoordinator";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -100,6 +102,8 @@ function dispatch(
 ): BrowserAutomationHostDispatch {
   const threadId = options.threadId ?? "thread-1";
   const tabId = options.tabId ?? "tab-1";
+  const targetGeneration = options.targetGeneration ??
+    useBrowserAutomationStore.getState().liveTargets.get(browserAutomationTargetKey(threadId, tabId))?.revision ?? 1;
   return {
     scope: {
       workspaceId: "workspace-1",
@@ -111,7 +115,7 @@ function dispatch(
       desktopInstanceId: `desktop-${generation}`,
       windowId: 7,
       connectionGeneration: generation,
-      targetGeneration: options.targetGeneration ?? 3,
+      targetGeneration,
     },
     request: {
       contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
@@ -132,7 +136,7 @@ function dispatch(
       connectionGeneration: generation,
       threadId,
       tabId,
-      targetGeneration: options.targetGeneration ?? 3,
+      targetGeneration,
       active: true,
       focused: true,
       lastUsedAt: 10,
@@ -265,6 +269,8 @@ describe("BrowserAutomationHost", () => {
       lifecycleTabs: new Map(),
       registered: false,
       viewportByTarget: new Map(),
+      viewportStateByTarget: new Map(),
+      viewportCoordinators: new Map(),
       hostedScopeIds: new Set(),
     });
     usePreviewTabsStore.setState({ tabSetByScope: {}, liveChromeByScope: {}, persistentTabIdsByScope: {} });
@@ -355,6 +361,65 @@ describe("BrowserAutomationHost", () => {
     view.unmount();
     driverExecute.mockRestore();
     execute.mockReset();
+  });
+
+  it("returns a failure when a completed act cannot restore the user viewport", async () => {
+    const coordinator = new ViewportCoordinator({
+      apply: async (operation) => ({ status: "applied", applied: operation.requested }),
+      reset: async () => ({
+        status: "failed",
+        applied: { width: 1_200, height: 800 },
+        error: "native reset failed",
+      }),
+      initial: { width: 800, height: 600 },
+      targetGeneration: 1,
+    });
+    await coordinator.requestAgentResize({ width: 1_200, height: 800 });
+    useBrowserAutomationStore.getState().setViewportCoordinator("thread-1", "tab-1", coordinator);
+    useBrowserAutomationStore.getState().setViewportState(
+      "thread-1",
+      "tab-1",
+      coordinator.snapshot(),
+      coordinator,
+    );
+
+    const actDispatch = {
+      ...dispatch(1, 92),
+      request: {
+        ...dispatch(1, 92).request,
+        operation: "act",
+        args: {
+          idempotencyKey: "restore-failure",
+          observationRef: "observation-1",
+          deadlineMs: 1_000,
+          steps: [{ operation: "click", target: { cssSelector: "#button" } }],
+        },
+      },
+    } as BrowserAutomationHostDispatch;
+    const completedResponse = {
+      contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
+      requestId: actDispatch.request.requestId,
+      sequence: actDispatch.request.sequence,
+      ok: true,
+      result: { operation: "act", outcome: "completed" },
+    } as unknown as BrowserAutomationResponse;
+    const driverExecute = vi.spyOn(BrowserSessionDriver.prototype, "execute")
+      .mockResolvedValue(completedResponse);
+
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: actDispatch }));
+
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
+    expect(harness.transport.respondToBrowserAutomationRequest.mock.calls[0]?.[2]).toMatchObject({
+      ok: false,
+      error: { code: "INTERNAL_ERROR", message: "native reset failed" },
+    });
+    expect(coordinator.snapshot()).toMatchObject({ mode: "responsive", agentActive: false });
+
+    view.unmount();
+    driverExecute.mockRestore();
   });
 
   it("keeps Electron agent control visible between Browser calls while the turn is running", async () => {
@@ -2231,9 +2296,16 @@ describe("BrowserAutomationHost", () => {
     frameDocument.addEventListener("mousedown", () => frameDocument.dispatchEvent(new frameDocument.defaultView!.Event("pointerdown", { bubbles: true })), true);
     act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: clickDispatch }));
     await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
-    expect(harness.transport.cancelBrowserAutomationRequest).not.toHaveBeenCalled();
+    await waitFor(() => expect(useBrowserAutomationStore.getState().activeRequests.size).toBe(0));
     expect(clicked).toHaveBeenCalledOnce();
-    expect(useBrowserAutomationStore.getState().controllers).toHaveLength(0);
+    expect(harness.transport.cancelBrowserAutomationRequest).not.toHaveBeenCalled();
+    expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledWith(
+      hostId,
+      1,
+      expect.objectContaining({ ok: true, result: expect.objectContaining({ operation: "click" }) }),
+      clickDispatch.target,
+    );
+    expect(useBrowserAutomationStore.getState().controllers.size).toBe(0);
     view.unmount();
     frame.remove();
   });

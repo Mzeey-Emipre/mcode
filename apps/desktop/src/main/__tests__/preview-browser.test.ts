@@ -64,6 +64,8 @@ function makeWebContentsView() {
     session: previewPartition,
     getZoomFactor: vi.fn().mockReturnValue(1),
     setZoomFactor: vi.fn(),
+    enableDeviceEmulation: vi.fn(),
+    disableDeviceEmulation: vi.fn(),
     on: vi.fn(),
     once: vi.fn(),
     removeListener: vi.fn(),
@@ -177,7 +179,11 @@ vi.mock("node:fs/promises", async () => {
 
 import { BrowserWindow } from "electron";
 import { registerPreviewBrowserHandlers, disposePreviewForWindow } from "../preview/index.js";
-import { sessions } from "../preview/preview-session.js";
+import {
+  sessions,
+  viewportBoundsForTarget,
+  type PreviewSession,
+} from "../preview/preview-session.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -304,6 +310,21 @@ it("denies clipboard permissions and downloads in the preview partition", () => 
 // ---------------------------------------------------------------------------
 
 describe("preview-browser", () => {
+  describe("viewport presentation geometry", () => {
+    it("fits native presentation inside the shared responsive canvas inset", () => {
+      const session = {
+        viewportAppliedByTarget: new Map([[JSON.stringify(["thread", "tab"]), { width: 1_200, height: 800 }]]),
+        viewportPresentationByTarget: new Map([[JSON.stringify(["thread", "tab"]), "fit"]]),
+      } as PreviewSession;
+
+      expect(viewportBoundsForTarget(session, { x: 100, y: 100, width: 800, height: 600 }, "thread", "tab"))
+        .toEqual({
+          bounds: { x: 132, y: 154, width: 736, height: 491 },
+          scale: 736 / 1_200,
+        });
+    });
+  });
+
   describe("host shortcut forwarding", () => {
     it("reserves only the platform navigation chords from the preview guest", async () => {
       const cases = [
@@ -1399,6 +1420,82 @@ describe("preview-browser", () => {
   });
 
   describe("design mode (Phase G)", () => {
+    it("applies the responsive viewport lifecycle to an adopted webview", async () => {
+      const win = createWindow();
+      const ev = fakeEvent(win);
+
+      await ipcHandlers["preview:sync"]!(ev, {
+        visible: false,
+        bounds: VALID_BOUNDS,
+        threadId: "thread-webview",
+        hideReason: "renderer-webview",
+        workspaceId: "ws-1",
+      });
+
+      const adopted = makeWebContentsView().webContents;
+      adopted.getURL.mockReturnValue("https://example.com/page");
+      mockWebContentsById.set(47, adopted);
+      const session = sessions.get(win.id)!;
+      const tabId = session.tabsByThread.get("thread-webview")!.activeTabId!;
+      expect(session.view).toBeNull();
+      await ipcHandlers["preview:adopt-webview"]!(ev, {
+        threadId: "thread-webview",
+        tabId,
+        webContentsId: 47,
+      });
+
+      const viewport = await ipcHandlers["preview:design.set-viewport"]!(ev, {
+        widthOverride: 393,
+        heightOverride: 852,
+        operationId: "adopted-viewport",
+        source: "user",
+        targetGeneration: 1,
+        operationGeneration: 1,
+        threadId: "thread-webview",
+        tabId,
+      });
+      expect(viewport).toMatchObject({
+        ok: true,
+        data: { width: 393, height: 852 },
+        appliedViewport: { width: 393, height: 852 },
+      });
+      expect(adopted.enableDeviceEmulation).toHaveBeenLastCalledWith(expect.objectContaining({
+        viewSize: { width: 393, height: 852 },
+        screenSize: { width: 393, height: 852 },
+        scale: 1,
+      }));
+
+      const presentation = await ipcHandlers["preview:design.set-presentation"]!(ev, {
+        presentation: "actual",
+        operationId: "adopted-presentation",
+        source: "user",
+        targetGeneration: 1,
+        operationGeneration: 2,
+        threadId: "thread-webview",
+        tabId,
+      });
+      expect(presentation).toMatchObject({
+        ok: true,
+        presentation: "actual",
+        appliedViewport: { width: 393, height: 852 },
+      });
+
+      const inspect = await ipcHandlers["preview:design.set-inspect"]!(ev, { enabled: true });
+      expect(inspect).toEqual({ ok: true });
+      expect(adopted.executeJavaScript).toHaveBeenCalledTimes(1);
+
+      const reset = await ipcHandlers["preview:design.reset-viewport"]!(ev, {
+        operationId: "adopted-reset",
+        source: "user",
+        targetGeneration: 1,
+        operationGeneration: 3,
+        threadId: "thread-webview",
+        tabId,
+      });
+      expect(reset).toMatchObject({ ok: true, appliedViewport: null });
+      expect(adopted.disableDeviceEmulation).toHaveBeenCalledTimes(1);
+    });
+
     it("viewport screenshot uses the active adopted webview when no native view exists", async () => {
       const win = createWindow();
       const ev = fakeEvent(win);
@@ -1719,55 +1816,494 @@ describe("preview-browser", () => {
       }
     });
 
-    it("setViewport applies a named preset and centers within panel bounds", async () => {
+    it("setViewport applies the shared iPhone 15 Pro dimensions and centers within panel bounds", async () => {
       const win = createWindow();
       await showPreview(win);
       const view = createdViews[0]!;
+      view.webContents.getURL.mockReturnValue("https://example.com");
       view.setBounds.mockClear();
 
       const ev = fakeEvent(win);
+      const activeTabId = sessions.get(win.id)!.tabsByThread.get("thread-1")!.activeTabId!;
       const result = await ipcHandlers["preview:design.set-viewport"]!(ev, {
-        presetId: "phone",
+        widthOverride: 393,
+        heightOverride: 852,
+        operationId: "viewport-iphone-15-pro",
+        source: "user",
+        targetGeneration: 1,
+        operationGeneration: 1,
+        threadId: "thread-1",
+        tabId: activeTabId,
       });
-      expect(result).toMatchObject({ ok: true, data: { width: 390, height: 844 } });
+      expect(result).toMatchObject({ ok: true, data: { width: 393, height: 852 } });
       expect(view.setBounds).toHaveBeenCalledWith(
-        expect.objectContaining({ width: 390, height: 844 }),
+        { x: 376, y: 132, width: 247, height: 536 },
       );
+      expect(view.webContents.enableDeviceEmulation).toHaveBeenCalledWith(expect.objectContaining({
+        viewSize: { width: 393, height: 852 },
+        screenSize: { width: 393, height: 852 },
+        scale: 536 / 852,
+      }));
     });
 
-    it("setViewport rejects unknown preset", async () => {
+    it("setViewport rejects legacy preset payloads", async () => {
       const win = createWindow();
       await showPreview(win);
       const result = await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
-        presetId: "fridge",
+        presetId: "phone",
       });
-      expect(result).toMatchObject({ ok: false, error: "unknown-preset" });
+      expect(result).toEqual({ ok: false, error: "invalid-viewport-request" });
     });
 
-    it("setViewport with explicit dimensions clamps to panel bounds", async () => {
+    it("rejects malformed viewport IPC payloads before touching the session", async () => {
       const win = createWindow();
       await showPreview(win);
       const view = createdViews[0]!;
+      view.webContents.getURL.mockReturnValue("https://example.com");
       view.setBounds.mockClear();
-      // VALID_BOUNDS is 800x600; ask for 10000x10000 -> should clamp.
+
+      const result = await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
+        operationId: 42,
+        widthOverride: 640,
+        heightOverride: 480,
+      });
+
+      expect(result).toEqual({ ok: false, error: "invalid-viewport-request" });
+      expect(view.setBounds).not.toHaveBeenCalled();
+    });
+
+    it("rejects malformed presentation IPC payloads before applying native state", async () => {
+      const win = createWindow();
+      await showPreview(win);
+      const view = createdViews[0]!;
+      view.webContents.enableDeviceEmulation.mockClear();
+
+      const result = await ipcHandlers["preview:design.set-presentation"]!(fakeEvent(win), {
+        presentation: "zoom",
+        targetGeneration: 1,
+      });
+
+      expect(result).toEqual({ ok: false, error: "invalid-viewport-presentation-request" });
+      expect(view.webContents.enableDeviceEmulation).not.toHaveBeenCalled();
+    });
+
+    it("setViewport with explicit dimensions clamps to the CSS viewport bounds", async () => {
+      const win = createWindow();
+      await showPreview(win);
+      const view = createdViews[0]!;
+      view.webContents.getURL.mockReturnValue("https://example.com");
+      view.setBounds.mockClear();
+      const activeTabId = sessions.get(win.id)!.tabsByThread.get("thread-1")!.activeTabId!;
+      // VALID_BOUNDS is 800x600; CSS viewport bounds are independent of it.
       const result = await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
         widthOverride: 10_000,
         heightOverride: 10_000,
+        operationId: "viewport-clamped",
+        source: "user",
+        targetGeneration: 1,
+        operationGeneration: 1,
+        threadId: "thread-1",
+        tabId: activeTabId,
       });
-      expect(result).toMatchObject({ ok: true, data: { width: 800, height: 600 } });
+      expect(result).toMatchObject({ ok: true, data: { width: 2_560, height: 2_560 } });
+      expect(view.setBounds).toHaveBeenCalledWith(
+        { x: 232, y: 132, width: 536, height: 536 },
+      );
+      expect(view.webContents.enableDeviceEmulation).toHaveBeenCalledWith(expect.objectContaining({
+        viewSize: { width: 2_560, height: 2_560 },
+        screenSize: { width: 2_560, height: 2_560 },
+        scale: 536 / 2_560,
+      }));
+    });
+
+    it("echoes viewport operation identity and rejects stale generations", async () => {
+      const win = createWindow();
+      await showPreview(win);
+      const view = createdViews[0]!;
+      view.webContents.getURL.mockReturnValue("https://example.com");
+      const activeTabId = sessions.get(win.id)!.tabsByThread.get("thread-1")!.activeTabId!;
+      view.setBounds.mockClear();
+      const applied = await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
+        widthOverride: 640,
+        heightOverride: 480,
+        operationId: "viewport-user-5",
+        source: "user",
+        targetGeneration: 5,
+        operationGeneration: 1,
+        threadId: "thread-1",
+        tabId: activeTabId,
+      });
+      expect(applied).toMatchObject({
+        ok: true,
+        data: { width: 640, height: 480 },
+        operationId: "viewport-user-5",
+        source: "user",
+        targetGeneration: 5,
+        operationGeneration: 1,
+        threadId: "thread-1",
+        tabId: activeTabId,
+        appliedViewport: { width: 640, height: 480 },
+      });
+      const stale = await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
+        widthOverride: 700,
+        heightOverride: 500,
+        operationId: "viewport-agent-4",
+        source: "agent",
+        targetGeneration: 4,
+        operationGeneration: 2,
+        threadId: "thread-1",
+        tabId: activeTabId,
+      });
+      expect(stale).toMatchObject({
+        ok: false,
+        error: "stale-target-generation",
+        appliedViewport: { width: 640, height: 480 },
+        operationId: "viewport-agent-4",
+        source: "agent",
+        targetGeneration: 4,
+        operationGeneration: 2,
+        threadId: "thread-1",
+        tabId: activeTabId,
+      });
+      expect(view.setBounds).toHaveBeenCalledTimes(1);
+    });
+
+    it("allows the active user toolbar to override a newer agent target generation", async () => {
+      const win = createWindow();
+      await showPreview(win);
+      const view = createdViews[0]!;
+      view.webContents.getURL.mockReturnValue("https://example.com");
+      const activeTabId = sessions.get(win.id)!.tabsByThread.get("thread-1")!.activeTabId!;
+
+      await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
+        widthOverride: 640,
+        heightOverride: 480,
+        operationId: "viewport-agent-newer",
+        source: "agent",
+        targetGeneration: 5,
+        operationGeneration: 1,
+        threadId: "thread-1",
+        tabId: activeTabId,
+      });
+      const userResult = await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
+        widthOverride: 800,
+        heightOverride: 1_280,
+        operationId: "viewport-user-visible-target",
+        source: "user",
+        targetGeneration: 1,
+        operationGeneration: 2,
+        threadId: "thread-1",
+        tabId: activeTabId,
+      });
+
+      expect(userResult).toMatchObject({
+        ok: true,
+        data: { width: 800, height: 1_280 },
+        source: "user",
+        targetGeneration: 1,
+      });
+      expect(sessions.get(win.id)!.tabsByThread.get("thread-1")!.tabs[0]).toMatchObject({
+        viewportTargetGeneration: 5,
+      });
+
+      const presentationResult = await ipcHandlers["preview:design.set-presentation"]!(fakeEvent(win), {
+        presentation: "150%",
+        operationId: "viewport-user-visible-presentation",
+        source: "user",
+        targetGeneration: 1,
+        operationGeneration: 3,
+        threadId: "thread-1",
+        tabId: activeTabId,
+      });
+      expect(presentationResult).toMatchObject({ ok: true, presentation: "150%" });
+
+      const resetResult = await ipcHandlers["preview:design.reset-viewport"]!(fakeEvent(win), {
+        operationId: "viewport-user-visible-reset",
+        source: "user",
+        targetGeneration: 1,
+        operationGeneration: 4,
+        threadId: "thread-1",
+        tabId: activeTabId,
+      });
+      expect(resetResult).toMatchObject({ ok: true, appliedViewport: null });
+    });
+
+    it("retains stale-operation rejection for every live preview tab", async () => {
+      const win = createWindow();
+      await showPreview(win);
+      const session = sessions.get(win.id)!;
+      const set = session.tabsByThread.get("thread-1")!;
+      const originalTab = set.tabs[0]!;
+
+      await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
+        widthOverride: 640,
+        heightOverride: 480,
+        operationId: "viewport-original-newer",
+        source: "user",
+        targetGeneration: 5,
+        operationGeneration: 1,
+        threadId: "thread-1",
+        tabId: originalTab.id,
+      });
+
+      for (let index = 0; index < 128; index += 1) {
+        const tabId = `viewport-live-${index}`;
+        set.tabs.push({
+          id: tabId,
+          threadId: "thread-1",
+          view: null,
+          resumeUrl: null,
+          title: null,
+          faviconUrl: null,
+          lastActiveAt: Date.now(),
+          viewportTargetGeneration: null,
+          viewportOperationGeneration: null,
+        });
+        set.activeTabId = tabId;
+        await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
+          widthOverride: 640,
+          heightOverride: 480,
+          operationId: `viewport-live-${index}`,
+          source: "user",
+          targetGeneration: 1,
+          operationGeneration: 1,
+          threadId: "thread-1",
+          tabId,
+        });
+      }
+
+      set.activeTabId = originalTab.id;
+      const stale = await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
+        widthOverride: 700,
+        heightOverride: 500,
+        operationId: "viewport-original-stale",
+        source: "agent",
+        targetGeneration: 4,
+        operationGeneration: 2,
+        threadId: "thread-1",
+        tabId: originalTab.id,
+      });
+
+      expect(stale).toMatchObject({ ok: false, error: "stale-target-generation" });
+    });
+
+    it("preserves the CSS viewport while panel resize updates native presentation scale", async () => {
+      const win = createWindow();
+      await showPreview(win);
+      const view = createdViews[0]!;
+      view.webContents.getURL.mockReturnValue("https://example.com");
+      const activeTabId = sessions.get(win.id)!.tabsByThread.get("thread-1")!.activeTabId!;
+
+      await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
+        widthOverride: 1200,
+        heightOverride: 800,
+        operationId: "viewport-panel-resize",
+        source: "user",
+        targetGeneration: 3,
+        operationGeneration: 1,
+        threadId: "thread-1",
+        tabId: activeTabId,
+      });
+      view.setBounds.mockClear();
+      view.webContents.enableDeviceEmulation.mockClear();
+
+      await ipcHandlers["preview:sync"]!(fakeEvent(win), {
+        visible: true,
+        bounds: { x: 100, y: 100, width: 600, height: 400 },
+        threadId: "thread-1",
+        workspaceId: "ws-1",
+      });
+
+      expect(sessions.get(win.id)!.viewportAppliedByTarget.get(
+        JSON.stringify(["thread-1", activeTabId]),
+      )).toEqual({ width: 1200, height: 800 });
+      expect(view.webContents.enableDeviceEmulation).toHaveBeenLastCalledWith(expect.objectContaining({
+        viewSize: { width: 1_200, height: 800 },
+        screenSize: { width: 1_200, height: 800 },
+        scale: 0.42,
+      }));
+      expect(view.setBounds).toHaveBeenLastCalledWith({
+        x: 148,
+        y: 132,
+        width: 504,
+        height: 336,
+      });
+    });
+
+    it("applies Fit and Actual presentation through native emulation IPC", async () => {
+      const win = createWindow();
+      await showPreview(win);
+      const view = createdViews[0]!;
+      view.webContents.getURL.mockReturnValue("https://example.com");
+      const activeTabId = sessions.get(win.id)!.tabsByThread.get("thread-1")!.activeTabId!;
+
+      await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
+        widthOverride: 1_200,
+        heightOverride: 800,
+        operationId: "viewport-presentation-base",
+        source: "user",
+        targetGeneration: 3,
+        operationGeneration: 1,
+        threadId: "thread-1",
+        tabId: activeTabId,
+      });
+      view.webContents.enableDeviceEmulation.mockClear();
+      view.setBounds.mockClear();
+
+      const fit = await ipcHandlers["preview:design.set-presentation"]!(fakeEvent(win), {
+        presentation: "fit",
+        operationId: "viewport-presentation-fit",
+        source: "user",
+        targetGeneration: 3,
+        operationGeneration: 2,
+        threadId: "thread-1",
+        tabId: activeTabId,
+      });
+      expect(fit).toMatchObject({
+        ok: true,
+        presentation: "fit",
+        appliedViewport: { width: 1_200, height: 800 },
+      });
+      expect(view.webContents.enableDeviceEmulation).toHaveBeenLastCalledWith(expect.objectContaining({
+        viewSize: { width: 1_200, height: 800 },
+        screenSize: { width: 1_200, height: 800 },
+        scale: 736 / 1_200,
+      }));
+      expect(view.setBounds).toHaveBeenLastCalledWith({
+        x: 132,
+        y: 154,
+        width: 736,
+        height: 491,
+      });
+
+      const actual = await ipcHandlers["preview:design.set-presentation"]!(fakeEvent(win), {
+        presentation: "actual",
+        operationId: "viewport-presentation-actual",
+        source: "user",
+        targetGeneration: 3,
+        operationGeneration: 3,
+        threadId: "thread-1",
+        tabId: activeTabId,
+      });
+      expect(actual).toMatchObject({
+        ok: true,
+        presentation: "actual",
+        appliedViewport: { width: 1_200, height: 800 },
+      });
+      expect(view.webContents.enableDeviceEmulation).toHaveBeenLastCalledWith(expect.objectContaining({
+        viewSize: { width: 1_200, height: 800 },
+        screenSize: { width: 1_200, height: 800 },
+        scale: 1,
+      }));
+      expect(view.setBounds).toHaveBeenLastCalledWith({
+        x: -100,
+        y: 0,
+        width: 1_200,
+        height: 800,
+      });
+
+      const zoomed = await ipcHandlers["preview:design.set-presentation"]!(fakeEvent(win), {
+        presentation: "150%",
+        operationId: "viewport-presentation-zoomed",
+        source: "user",
+        targetGeneration: 3,
+        operationGeneration: 4,
+        threadId: "thread-1",
+        tabId: activeTabId,
+      });
+      expect(zoomed).toMatchObject({
+        ok: true,
+        presentation: "150%",
+        appliedViewport: { width: 1_200, height: 800 },
+      });
+      expect(view.webContents.enableDeviceEmulation).toHaveBeenLastCalledWith(expect.objectContaining({
+        viewSize: { width: 1_200, height: 800 },
+        screenSize: { width: 1_200, height: 800 },
+        scale: 1.5,
+      }));
+      expect(view.setBounds).toHaveBeenLastCalledWith({
+        x: -400,
+        y: -200,
+        width: 1_800,
+        height: 1_200,
+      });
+    });
+
+    it("rejects stale native presentation requests before applying them", async () => {
+      const win = createWindow();
+      await showPreview(win);
+      const view = createdViews[0]!;
+      view.webContents.getURL.mockReturnValue("https://example.com");
+      const activeTabId = sessions.get(win.id)!.tabsByThread.get("thread-1")!.activeTabId!;
+      await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
+        widthOverride: 1_200,
+        heightOverride: 800,
+        operationId: "viewport-presentation-generation",
+        source: "user",
+        targetGeneration: 5,
+        operationGeneration: 1,
+        threadId: "thread-1",
+        tabId: activeTabId,
+      });
+      view.webContents.enableDeviceEmulation.mockClear();
+
+      const result = await ipcHandlers["preview:design.set-presentation"]!(fakeEvent(win), {
+        presentation: "actual",
+        operationId: "viewport-presentation-stale",
+        source: "agent",
+        targetGeneration: 4,
+        operationGeneration: 2,
+        threadId: "thread-1",
+        tabId: activeTabId,
+      });
+
+      expect(result).toMatchObject({ ok: false, error: "stale-target-generation" });
+      expect(view.webContents.enableDeviceEmulation).not.toHaveBeenCalled();
     });
 
     it("resetViewport restores the panel bounds", async () => {
       const win = createWindow();
       await showPreview(win);
       const view = createdViews[0]!;
+      const activeTabId = sessions.get(win.id)!.tabsByThread.get("thread-1")!.activeTabId!;
       await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
-        presetId: "phone",
+        widthOverride: 393,
+        heightOverride: 852,
+        operationId: "viewport-before-reset",
+        source: "user",
+        targetGeneration: 1,
+        operationGeneration: 1,
+        threadId: "thread-1",
+        tabId: activeTabId,
       });
       view.setBounds.mockClear();
-      const reset = await ipcHandlers["preview:design.reset-viewport"]!(fakeEvent(win), {});
-      expect(reset).toEqual({ ok: true });
+      const reset = await ipcHandlers["preview:design.reset-viewport"]!(fakeEvent(win), {
+        operationId: "viewport-reset",
+        source: "user",
+        targetGeneration: 1,
+        operationGeneration: 2,
+        threadId: "thread-1",
+        tabId: activeTabId,
+      });
+      expect(reset).toMatchObject({ ok: true, appliedViewport: null });
       expect(view.setBounds).toHaveBeenCalledWith(VALID_BOUNDS);
+
+      const lateResize = await ipcHandlers["preview:design.set-viewport"]!(fakeEvent(win), {
+        widthOverride: 700,
+        heightOverride: 500,
+        operationId: "viewport-late-after-reset",
+        source: "agent",
+        targetGeneration: 1,
+        operationGeneration: 1,
+        threadId: "thread-1",
+        tabId: activeTabId,
+      });
+      expect(lateResize).toMatchObject({
+        ok: false,
+        error: "stale-operation-generation",
+        appliedViewport: null,
+      });
+      expect(view.setBounds).toHaveBeenCalledTimes(1);
     });
 
     it("setInspect runs executeJavaScript on the guest", async () => {

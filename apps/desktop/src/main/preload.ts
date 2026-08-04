@@ -6,6 +6,14 @@
  */
 
 import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
+import type {
+  BrowserAutomationViewportRequest,
+  BrowserAutomationViewportResult,
+  BrowserAutomationViewportPresentationRequest,
+  BrowserAutomationViewportPresentationResult,
+  BrowserAutomationViewportResetRequest,
+  BrowserAutomationViewportResetResult,
+} from "@mcode/contracts";
 
 contextBridge.exposeInMainWorld("desktopBridge", {
   /** Platform facts and allowlisted native window actions for the custom title bar. */
@@ -381,21 +389,22 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         return () => ipcRenderer.removeListener("preview:automation.controller", listener);
       },
     },
-    /**
-     * Phase G design mode: stretch the panel to one of the named viewport
-     * presets ("phone" | "tablet" | "desktop") or pass explicit dimensions.
-     * Use design.reset() to restore the bounds the React shell last synced.
-     */
+    /** Phase G design mode: apply explicit CSS viewport dimensions. */
     design: {
-      setViewport(payload: {
-        presetId?: string;
-        widthOverride?: number;
-        heightOverride?: number;
-      }): Promise<unknown> {
+      setViewport(
+        payload: BrowserAutomationViewportRequest,
+      ): Promise<BrowserAutomationViewportResult> {
         return ipcRenderer.invoke("preview:design.set-viewport", payload);
       },
-      resetViewport(): Promise<unknown> {
-        return ipcRenderer.invoke("preview:design.reset-viewport");
+      setPresentation(
+        payload: BrowserAutomationViewportPresentationRequest,
+      ): Promise<BrowserAutomationViewportPresentationResult> {
+        return ipcRenderer.invoke("preview:design.set-presentation", payload);
+      },
+      resetViewport(
+        payload: BrowserAutomationViewportResetRequest,
+      ): Promise<BrowserAutomationViewportResetResult> {
+        return ipcRenderer.invoke("preview:design.reset-viewport", payload);
       },
       setInspect(enabled: boolean): Promise<unknown> {
         return ipcRenderer.invoke("preview:design.set-inspect", { enabled });

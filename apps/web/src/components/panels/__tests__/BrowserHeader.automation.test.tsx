@@ -45,6 +45,44 @@ describe("BrowserHeader", () => {
     expect(screen.queryByRole("button", { name: "Stop browser automation" })).not.toBeInTheDocument();
   });
 
+  it("keeps takeover in overflow instead of the header badge", async () => {
+    const user = userEvent.setup();
+    const onStopAutomation = vi.fn();
+    renderHeader({
+      automationController: {
+        tabId: "tab-1",
+        controller: "agent",
+        controlEpoch: 1,
+        providerSessionId: "provider-session",
+        operation: "click",
+      },
+      automationBusy: true,
+      onStopAutomation,
+    });
+    expect(screen.queryByTestId("browser-controller-badge")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "More browser tools" }));
+    await user.click(await screen.findByText("Take control"));
+    expect(onStopAutomation).toHaveBeenCalledOnce();
+  });
+
+  it("keeps takeover available while an agent-owned tab is idle", async () => {
+    const user = userEvent.setup();
+    const onStopAutomation = vi.fn();
+    renderHeader({
+      automationController: {
+        tabId: "tab-1",
+        controller: "agent",
+        controlEpoch: 1,
+      },
+      automationBusy: false,
+      onStopAutomation,
+    });
+
+    await user.click(screen.getByRole("button", { name: "More browser tools" }));
+    await user.click(await screen.findByText("Take control"));
+    expect(onStopAutomation).toHaveBeenCalledOnce();
+  });
+
   it("opens adopted guest DevTools from the enabled menu item", async () => {
     const user = userEvent.setup();
     const onOpenDevTools = vi.fn();
@@ -53,5 +91,4 @@ describe("BrowserHeader", () => {
     await user.click(await screen.findByText("Developer tools"));
     expect(onOpenDevTools).toHaveBeenCalledOnce();
   });
-
 });

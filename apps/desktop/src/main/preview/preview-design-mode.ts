@@ -13,18 +13,166 @@
  * same IPC channels will keep working once Slice 2 lands per-tab runtimes.
  */
 
-import { BrowserWindow, ipcMain } from "electron";
+import { BrowserWindow, ipcMain, type WebContents } from "electron";
+import {
+  BROWSER_AUTOMATION_MAX_VIEWPORT_PX,
+  BROWSER_AUTOMATION_MIN_VIEWPORT_PX,
+  BrowserAutomationViewportPresentationRequestSchema,
+  BrowserAutomationViewportPresentationResultSchema,
+  BrowserAutomationViewportRequestSchema,
+  BrowserAutomationViewportResetRequestSchema,
+  BrowserAutomationViewportResetResultSchema,
+  BrowserAutomationViewportResultSchema,
+  type BrowserAutomationViewportPresentationRequest,
+  type BrowserAutomationViewportRequest,
+} from "@mcode/contracts";
 import { logger } from "@mcode/shared";
-import { getSession } from "./preview-session.js";
+import {
+  applyViewportPresentation,
+  getActiveTab,
+  getSession,
+  type TabState,
+  viewportTargetKey,
+} from "./preview-session.js";
 import { resolveActivePreviewWebContents } from "./preview-active-webcontents.js";
+import { applyPreviewViewportEmulation } from "../preview-device-emulation.js";
 
-/** Built-in viewport presets surfaced to the design bar. */
-export const DESIGN_VIEWPORT_PRESETS = [
-  { id: "phone", label: "Phone", width: 390, height: 844 },
-  { id: "tablet", label: "Tablet", width: 1024, height: 768 },
-  { id: "desktop", label: "Desktop", width: 1440, height: 900 },
-] as const;
-export type DesignViewportPresetId = (typeof DESIGN_VIEWPORT_PRESETS)[number]["id"];
+type ViewportSource = NonNullable<BrowserAutomationViewportRequest["source"]>;
+
+interface ViewportOperationMetadata {
+  readonly operationId: string;
+  readonly source: ViewportSource;
+  readonly targetGeneration: number;
+  readonly operationGeneration: number;
+  readonly threadId: string;
+  readonly tabId: string;
+}
+
+interface ViewportOperationResult extends ViewportOperationMetadata {
+  readonly appliedViewport: { readonly width: number; readonly height: number } | null;
+}
+
+interface ViewportPresentationResult extends ViewportOperationMetadata {
+  readonly presentation?: BrowserAutomationViewportPresentationRequest["presentation"];
+  readonly appliedViewport: { readonly width: number; readonly height: number } | null;
+}
+
+function viewportMetadata(
+  payload: ViewportOperationMetadata,
+  appliedViewport: { readonly width: number; readonly height: number } | null,
+): ViewportOperationResult {
+  return {
+    operationId: payload.operationId,
+    source: payload.source,
+    targetGeneration: payload.targetGeneration,
+    operationGeneration: payload.operationGeneration,
+    threadId: payload.threadId,
+    tabId: payload.tabId,
+    appliedViewport,
+  };
+}
+
+function presentationMetadata(
+  payload: ViewportOperationMetadata,
+  presentation: BrowserAutomationViewportPresentationRequest["presentation"] | undefined,
+  appliedViewport: { readonly width: number; readonly height: number } | null,
+): ViewportPresentationResult {
+  return {
+    ...(presentation === undefined ? {} : { presentation }),
+    ...viewportMetadata(payload, appliedViewport),
+  };
+}
+
+function currentViewportSize(
+  session: ReturnType<typeof getSession>,
+  key: string | null,
+): { width: number; height: number } | null {
+  const size = key
+    ? session.viewportAppliedByTarget.get(key) ?? null
+    : session.lastBounds
+      ? { width: session.lastBounds.width, height: session.lastBounds.height }
+      : null;
+  if (!size) return null;
+  if (
+    !Number.isSafeInteger(size.width) ||
+    !Number.isSafeInteger(size.height) ||
+    size.width < BROWSER_AUTOMATION_MIN_VIEWPORT_PX ||
+    size.height < BROWSER_AUTOMATION_MIN_VIEWPORT_PX ||
+    size.width > BROWSER_AUTOMATION_MAX_VIEWPORT_PX ||
+    size.height > BROWSER_AUTOMATION_MAX_VIEWPORT_PX
+  ) return null;
+  return size;
+}
+
+function rememberAppliedViewport(
+  session: ReturnType<typeof getSession>,
+  key: string | null,
+  appliedViewport: { width: number; height: number },
+): void {
+  if (!key) return;
+  session.viewportAppliedByTarget.delete(key);
+  session.viewportAppliedByTarget.set(key, appliedViewport);
+  while (session.viewportAppliedByTarget.size > 128) {
+    const oldest = session.viewportAppliedByTarget.keys().next().value as string | undefined;
+    if (!oldest) break;
+    session.viewportAppliedByTarget.delete(oldest);
+  }
+}
+
+function admitViewportOperation(
+  tab: TabState | null,
+  source: ViewportSource,
+  targetGeneration: number,
+  operationGeneration: number,
+): "stale-target-generation" | "stale-operation-generation" | null {
+  if (!tab) return "stale-target-generation";
+  const admittedTargetGeneration = tab.viewportTargetGeneration;
+  if (admittedTargetGeneration !== null && admittedTargetGeneration > targetGeneration) {
+    // The active thread and tab were already verified by the IPC handler. A
+    // direct user action must be able to take over from a newer agent epoch,
+    // while the retained watermark continues to reject stale agent work.
+    if (source === "user") return null;
+    return "stale-target-generation";
+  }
+  if (
+    admittedTargetGeneration === targetGeneration &&
+    (tab.viewportOperationGeneration ?? -1) > operationGeneration
+  ) return "stale-operation-generation";
+  tab.viewportTargetGeneration = targetGeneration;
+  tab.viewportOperationGeneration = operationGeneration;
+  return null;
+}
+
+function applyViewportToActiveHost(
+  session: ReturnType<typeof getSession>,
+  webContents: WebContents,
+  threadId: string,
+  tabId: string,
+): void {
+  if (session.view?.webContents === webContents) {
+    if (!session.lastBounds) return;
+    applyViewportPresentation(session, session.lastBounds, threadId, tabId);
+    return;
+  }
+
+  const viewport = session.viewportAppliedByTarget.get(viewportTargetKey(threadId, tabId));
+  if (!viewport) {
+    webContents.disableDeviceEmulation();
+    return;
+  }
+  applyPreviewViewportEmulation(webContents, {
+    active: true,
+    cssViewport: viewport,
+    scale: 1,
+  });
+}
+
+function activeHostNeedsBounds(
+  session: ReturnType<typeof getSession>,
+  webContents: WebContents,
+): boolean {
+  return session.view?.webContents === webContents && !session.lastBounds;
+}
 
 const INSPECT_SCRIPT = String.raw`(() => {
   if (window.__mcodeInspectActive) return;
@@ -133,67 +281,225 @@ const ANNOTATION_GUARD_TEARDOWN_SCRIPT = String.raw`(() => {
 export function registerDesignModeHandlers(): void {
   ipcMain.handle(
     "preview:design.set-viewport",
-    (event, payload: { presetId?: string; widthOverride?: number; heightOverride?: number }) => {
-      const win = BrowserWindow.fromWebContents(event.sender);
-      if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
-      const s = getSession(win);
-      if (!s.view || s.view.webContents.isDestroyed())
-        return { ok: false, error: "no-view" };
-      if (!s.lastBounds) return { ok: false, error: "no-bounds" };
-
-      let width: number;
-      let height: number;
-      if (payload?.presetId) {
-        const preset = DESIGN_VIEWPORT_PRESETS.find((p) => p.id === payload.presetId);
-        if (!preset) return { ok: false, error: "unknown-preset" };
-        width = preset.width;
-        height = preset.height;
-      } else {
-        const w = Number(payload?.widthOverride);
-        const h = Number(payload?.heightOverride);
-        if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) {
-          return { ok: false, error: "invalid-dimensions" };
+    (event, payload: unknown) => {
+      const parsedPayload = BrowserAutomationViewportRequestSchema().safeParse(payload);
+      if (!parsedPayload.success) {
+        return BrowserAutomationViewportResultSchema().parse({
+          ok: false,
+          error: "invalid-viewport-request",
+        });
+      }
+      return BrowserAutomationViewportResultSchema().parse((() => {
+        const request: BrowserAutomationViewportRequest = parsedPayload.data;
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
+        const s = getSession(win);
+        const { operationId, source, targetGeneration, operationGeneration, threadId, tabId } = request;
+        const activeThreadId = s.lastPreviewThreadId;
+        const activeTab = activeThreadId ? getActiveTab(s, activeThreadId) : null;
+        const activeTabId = activeTab?.id ?? null;
+        const resolvedThreadId = threadId;
+        const resolvedTabId = tabId;
+        const key = viewportTargetKey(resolvedThreadId, resolvedTabId);
+        const metadata: ViewportOperationMetadata = {
+          operationId,
+          source,
+          targetGeneration,
+          operationGeneration,
+          threadId,
+          tabId,
+        };
+        const appliedBefore = currentViewportSize(s, key);
+        if (
+          (resolvedThreadId !== activeThreadId ||
+            resolvedTabId !== activeTabId)
+        ) {
+          return {
+            ok: false,
+            error: "stale-target",
+            ...viewportMetadata(metadata, appliedBefore),
+          };
         }
-        width = Math.min(w, s.lastBounds.width);
-        height = Math.min(h, s.lastBounds.height);
-      }
+        const admissionError = admitViewportOperation(
+          activeTab,
+          source,
+          targetGeneration,
+          operationGeneration,
+        );
+        if (admissionError) {
+          return {
+            ok: false,
+            error: admissionError,
+            ...viewportMetadata(metadata, appliedBefore),
+          };
+        }
+        const webContents = resolveActivePreviewWebContents(s);
+        if (!webContents || webContents.isDestroyed()) {
+          return { ok: false, error: "no-view", ...viewportMetadata(metadata, appliedBefore) };
+        }
+        if (activeHostNeedsBounds(s, webContents)) {
+          return { ok: false, error: "no-bounds", ...viewportMetadata(metadata, appliedBefore) };
+        }
 
-      // Center the constrained viewport inside the panel bounds so the user
-      // sees breathing room around the device frame, not a top-left crop.
-      const x = s.lastBounds.x + Math.floor((s.lastBounds.width - width) / 2);
-      const y = s.lastBounds.y + Math.floor((s.lastBounds.height - height) / 2);
-      try {
-        s.view.setBounds({ x, y, width, height });
-      } catch {
-        return { ok: false, error: "set-bounds-failed" };
-      }
-      return { ok: true, data: { width, height } };
+        const width = Math.min(
+          BROWSER_AUTOMATION_MAX_VIEWPORT_PX,
+          Math.max(BROWSER_AUTOMATION_MIN_VIEWPORT_PX, Math.round(request.widthOverride)),
+        );
+        const height = Math.min(
+          BROWSER_AUTOMATION_MAX_VIEWPORT_PX,
+          Math.max(BROWSER_AUTOMATION_MIN_VIEWPORT_PX, Math.round(request.heightOverride)),
+        );
+
+        const appliedViewport = { width, height };
+        rememberAppliedViewport(s, key, appliedViewport);
+        if (key && !s.viewportPresentationByTarget.has(key)) {
+          s.viewportPresentationByTarget.set(key, "fit");
+        }
+        applyViewportToActiveHost(s, webContents, resolvedThreadId, resolvedTabId);
+        return { ok: true, data: { width, height }, ...viewportMetadata(metadata, appliedViewport) };
+      })());
     },
   );
 
-  ipcMain.handle("preview:design.reset-viewport", (event) => {
-    const win = BrowserWindow.fromWebContents(event.sender);
-    if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
-    const s = getSession(win);
-    if (!s.view || s.view.webContents.isDestroyed())
-      return { ok: false, error: "no-view" };
-    if (!s.lastBounds) return { ok: false, error: "no-bounds" };
-    try {
-      s.view.setBounds(s.lastBounds);
-    } catch {
-      return { ok: false, error: "set-bounds-failed" };
+  ipcMain.handle(
+    "preview:design.set-presentation",
+    (event, payload: unknown) => {
+      const parsedPayload = BrowserAutomationViewportPresentationRequestSchema().safeParse(payload);
+      if (!parsedPayload.success) {
+        return BrowserAutomationViewportPresentationResultSchema().parse({
+          ok: false,
+          error: "invalid-viewport-presentation-request",
+        });
+      }
+      return BrowserAutomationViewportPresentationResultSchema().parse((() => {
+        const request: BrowserAutomationViewportPresentationRequest = parsedPayload.data;
+        const win = BrowserWindow.fromWebContents(event.sender);
+        if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
+        const s = getSession(win);
+        const activeThreadId = s.lastPreviewThreadId;
+        const activeTab = activeThreadId ? getActiveTab(s, activeThreadId) : null;
+        const activeTabId = activeTab?.id ?? null;
+        const resolvedThreadId = request.threadId;
+        const resolvedTabId = request.tabId;
+        const key = viewportTargetKey(resolvedThreadId, resolvedTabId);
+        const metadata: ViewportOperationMetadata = request;
+        const appliedBefore = currentViewportSize(s, key);
+        if (
+          (resolvedThreadId !== activeThreadId ||
+            resolvedTabId !== activeTabId)
+        ) {
+          return {
+            ok: false,
+            error: "stale-target",
+            ...presentationMetadata(metadata, request.presentation, appliedBefore),
+          };
+        }
+        const admissionError = admitViewportOperation(
+          activeTab,
+          request.source,
+          request.targetGeneration,
+          request.operationGeneration,
+        );
+        if (admissionError) {
+          return {
+            ok: false,
+            error: admissionError,
+            ...presentationMetadata(metadata, request.presentation, appliedBefore),
+          };
+        }
+        const webContents = resolveActivePreviewWebContents(s);
+        if (!webContents || webContents.isDestroyed()) {
+          return {
+            ok: false,
+            error: "no-view",
+            ...presentationMetadata(metadata, request.presentation, appliedBefore),
+          };
+        }
+        if (activeHostNeedsBounds(s, webContents)) {
+          return {
+            ok: false,
+            error: "no-bounds",
+            ...presentationMetadata(metadata, request.presentation, appliedBefore),
+          };
+        }
+        if (!s.viewportAppliedByTarget.has(key)) {
+          return {
+            ok: false,
+            error: "no-viewport",
+            ...presentationMetadata(metadata, request.presentation, appliedBefore),
+          };
+        }
+
+        s.viewportPresentationByTarget.set(key, request.presentation);
+        const appliedViewport = s.viewportAppliedByTarget.get(key) ?? null;
+        applyViewportToActiveHost(s, webContents, resolvedThreadId, resolvedTabId);
+        return {
+          ok: true,
+          ...presentationMetadata(metadata, request.presentation, appliedViewport),
+        };
+      })());
+    },
+  );
+
+  ipcMain.handle("preview:design.reset-viewport", (event, payload: unknown) => {
+    const parsedPayload = BrowserAutomationViewportResetRequestSchema().safeParse(payload);
+    if (!parsedPayload.success) {
+      return BrowserAutomationViewportResetResultSchema().parse({
+        ok: false,
+        error: "invalid-viewport-reset-request",
+      });
     }
-    return { ok: true };
+    return BrowserAutomationViewportResetResultSchema().parse((() => {
+      const request = parsedPayload.data;
+      const metadata: ViewportOperationMetadata = request;
+      const win = BrowserWindow.fromWebContents(event.sender);
+      if (!win || win.isDestroyed()) {
+        return { ok: false, error: "no-window", ...viewportMetadata(metadata, null) };
+      }
+      const s = getSession(win);
+      const activeThreadId = s.lastPreviewThreadId;
+      const activeTab = activeThreadId ? getActiveTab(s, activeThreadId) : null;
+      const activeTabId = activeTab?.id ?? null;
+      const key = viewportTargetKey(request.threadId, request.tabId);
+      const appliedBefore = currentViewportSize(s, key);
+      if (request.threadId !== activeThreadId || request.tabId !== activeTabId) {
+        return { ok: false, error: "stale-target", ...viewportMetadata(metadata, appliedBefore) };
+      }
+      const admissionError = admitViewportOperation(
+        activeTab,
+        request.source,
+        request.targetGeneration,
+        request.operationGeneration,
+      );
+      if (admissionError) {
+        return {
+          ok: false,
+          error: admissionError,
+          ...viewportMetadata(metadata, appliedBefore),
+        };
+      }
+      const webContents = resolveActivePreviewWebContents(s);
+      if (!webContents || webContents.isDestroyed()) {
+        return { ok: false, error: "no-view", ...viewportMetadata(metadata, appliedBefore) };
+      }
+      if (activeHostNeedsBounds(s, webContents)) {
+        return { ok: false, error: "no-bounds", ...viewportMetadata(metadata, appliedBefore) };
+      }
+      s.viewportAppliedByTarget.delete(key);
+      s.viewportPresentationByTarget.delete(key);
+      applyViewportToActiveHost(s, webContents, activeThreadId, activeTabId);
+      return { ok: true, ...viewportMetadata(metadata, null) };
+    })());
   });
 
   ipcMain.handle("preview:design.set-inspect", async (event, payload: { enabled?: boolean }) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
     const s = getSession(win);
-    if (!s.view || s.view.webContents.isDestroyed())
-      return { ok: false, error: "no-view" };
+    const webContents = resolveActivePreviewWebContents(s);
+    if (!webContents || webContents.isDestroyed()) return { ok: false, error: "no-view" };
     try {
-      await s.view.webContents.executeJavaScript(
+      await webContents.executeJavaScript(
         payload?.enabled === false ? TEARDOWN_SCRIPT : INSPECT_SCRIPT,
         true,
       );

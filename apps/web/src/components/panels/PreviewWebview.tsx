@@ -7,9 +7,17 @@ import {
 } from "react";
 import type { PreviewPageStatus } from "@mcode/contracts";
 import {
+  browserAutomationTargetKey,
   invalidateBrowserAutomationTargetObservation,
   useBrowserAutomationStore,
 } from "@/stores/browserAutomationStore";
+import {
+  DEFAULT_VIEWPORT_SIZE,
+} from "@/services/browser-automation/viewportCoordinator";
+import {
+  getOrCreateViewportCoordinator,
+  waitForViewportLayout,
+} from "@/services/browser-automation/viewportCoordinatorFactory";
 
 const PREVIEW_GUEST_HUMAN_INPUT_CHANNEL = "mcode:browser-human-input";
 const HUMAN_INPUT_KINDS = new Set(["keyboard", "pointer", "touch", "wheel"]);
@@ -120,6 +128,60 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
   const domReadyRef = useRef(false);
   const pendingReloadRef = useRef(false);
   const faviconRef = useRef<string | null>(null);
+  const initialViewportRef = useRef(viewport ?? DEFAULT_VIEWPORT_SIZE);
+  const ensureViewportCoordinator = useCallback((targetGeneration: number) => {
+    const key = browserAutomationTargetKey(threadId, tabId);
+    const store = useBrowserAutomationStore.getState();
+    const existing = store.viewportCoordinators.get(key);
+    const coordinator = getOrCreateViewportCoordinator({
+      existing,
+      target: { threadId, tabId },
+      initial: store.viewportStateByTarget.get(key)?.confirmed ??
+        store.viewportByTarget.get(key) ?? initialViewportRef.current,
+      mode: store.viewportStateByTarget.get(key)?.mode,
+      presentation: store.viewportStateByTarget.get(key)?.presentation,
+      targetGeneration,
+      nativeHost: () => window.desktopBridge?.preview?.design,
+      rendererHost: {
+        setViewport: (size, operation, coordinator) => useBrowserAutomationStore.getState().applyViewportIfCurrent(
+          threadId,
+          tabId,
+          coordinator,
+          operation.targetGeneration,
+          size,
+        ),
+        resetViewport: (operation, coordinator) =>
+          useBrowserAutomationStore.getState().resetViewportIfCurrent(
+            threadId,
+            tabId,
+            coordinator,
+            operation.targetGeneration,
+          ),
+        readViewport: () => useBrowserAutomationStore.getState().viewportByTarget.get(key) ?? null,
+        waitForLayout: waitForViewportLayout,
+        isCurrent: (operation, coordinator) => {
+          const current = useBrowserAutomationStore.getState();
+          return current.viewportCoordinators.get(key) === coordinator &&
+            current.liveTargets.get(key)?.revision === operation.targetGeneration;
+        },
+      },
+      readConfirmed: () =>
+        useBrowserAutomationStore.getState().viewportStateByTarget.get(key)?.confirmed ??
+        useBrowserAutomationStore.getState().viewportByTarget.get(key) ?? null,
+      onStateChange: (state, coordinator) => useBrowserAutomationStore.getState().setViewportState(
+        threadId,
+        tabId,
+        state,
+        coordinator,
+      ),
+      onCreated: (created) => useBrowserAutomationStore.getState().setViewportCoordinator(
+        threadId,
+        tabId,
+        created,
+      ),
+    });
+    return coordinator;
+  }, [tabId, threadId]);
 
   const readUrl = useCallback((): string | null => {
     const el = ref.current;
@@ -268,6 +330,10 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
     if (isIframeElement(el)) {
       domReadyRef.current = true;
       useBrowserAutomationStore.getState().registerTarget(workspaceId, threadId, tabId);
+      const revision = useBrowserAutomationStore.getState().liveTargets.get(
+        browserAutomationTargetKey(threadId, tabId),
+      )?.revision ?? 1;
+      ensureViewportCoordinator(revision);
       const onLoad = () => {
         emitStatus("loaded");
       };
@@ -292,6 +358,10 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
           }).then((result) => {
             if (cancelled || !result.ok) return;
             useBrowserAutomationStore.getState().registerTarget(workspaceId, threadId, tabId);
+            const revision = useBrowserAutomationStore.getState().liveTargets.get(
+              browserAutomationTargetKey(threadId, tabId),
+            )?.revision ?? 1;
+            ensureViewportCoordinator(revision);
           });
         }
       } catch {
@@ -310,7 +380,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       useBrowserAutomationStore.getState().detachTarget(threadId, tabId);
       void window.desktopBridge?.preview?.releaseWebview?.({ threadId, tabId });
     };
-  }, [threadId, tabId, workspaceId]);
+  }, [ensureViewportCoordinator, threadId, tabId, workspaceId]);
 
   useEffect(() => {
     const el = ref.current;
@@ -321,7 +391,12 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
     const onStart = () => emitStatus("loading");
     const onDomReady = () => {
       domReadyRef.current = true;
-      useBrowserAutomationStore.getState().refreshTarget(threadId, tabId);
+      const store = useBrowserAutomationStore.getState();
+      store.refreshTarget(threadId, tabId);
+      const revision = useBrowserAutomationStore.getState().liveTargets.get(
+        browserAutomationTargetKey(threadId, tabId),
+      )?.revision;
+      if (revision !== undefined) ensureViewportCoordinator(revision);
       if (pendingReloadRef.current) {
         pendingReloadRef.current = false;
         el.reload?.();
@@ -394,7 +469,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       el.removeEventListener("did-fail-load", onFail);
       el.removeEventListener("ipc-message", onIpcMessage);
     };
-  }, [emitNavigationState, emitStatus, onPageStatus, readTitle, readUrl, tabId, threadId]);
+  }, [emitNavigationState, emitStatus, ensureViewportCoordinator, onPageStatus, readTitle, readUrl, tabId, threadId]);
 
   // Use createElement via React JSX since <webview> is a custom Chromium
   // element; React 19 will pass unknown attributes through unchanged.

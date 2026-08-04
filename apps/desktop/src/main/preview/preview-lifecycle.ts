@@ -18,6 +18,7 @@ import {
   clearIdle,
   clearDiscardTimers,
   applyPageStatus,
+  applyViewportPresentation,
   setPreviewLoading,
   isAllowedPreviewUrl,
 } from "./preview-session.js";
@@ -288,6 +289,7 @@ export function ensureTabView(
   });
   view.webContents.on("did-finish-load", () => {
     if (isActiveView()) {
+      if (s.lastBounds) applyViewportPresentation(s, s.lastBounds, tab.threadId, tab.id);
       void injectPreviewScrollbarStyles(s);
     }
   });
@@ -388,7 +390,7 @@ export function ensureTabView(
       s.lastCrashRecoveryAt = now;
       const fresh = ensureTabView(win, s, tab);
       s.view = fresh;
-      if (s.lastBounds) fresh.setBounds(s.lastBounds);
+      if (s.lastBounds) applyViewportPresentation(s, s.lastBounds, tab.threadId, tab.id);
       mountView(win, fresh);
       setPreviewLoading(win, s, true);
       trustMainProcessFileNavigation(s, url);
@@ -427,6 +429,8 @@ export function ensureView(win: BrowserWindow, s: PreviewSession): WebContentsVi
     title: null,
     faviconUrl: null,
     lastActiveAt: Date.now(),
+    viewportTargetGeneration: null,
+    viewportOperationGeneration: null,
   };
   const view = ensureTabView(win, s, synthetic);
   s.view = view;

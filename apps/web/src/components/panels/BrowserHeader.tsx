@@ -7,6 +7,7 @@ import {
   PenTool,
   RotateCw,
 } from "lucide-react";
+import type { BrowserAutomationControllerState } from "@mcode/contracts";
 import { cn } from "@/lib/utils";
 import { ICON_HIT_SLOP } from "@/lib/ui-hit-target";
 import { Button } from "@/components/ui/button";
@@ -71,8 +72,20 @@ export interface BrowserHeaderProps {
   readonly onSetZoom: (factor: number) => Promise<number>;
   /** Open detached DevTools for the active adopted guest. */
   readonly onOpenDevTools?: () => void;
+  /** Toggle the responsive viewport toolbar below this header. */
+  readonly onToggleViewportToolbar?: () => void;
+  /** Whether the responsive viewport toolbar is visible. */
+  readonly viewportToolbarVisible?: boolean;
   /** Whether overflow overlays must hide the native preview layer. */
   readonly suppressPreviewForOverlays?: boolean;
+  /** Current controller for the active visible Browser tab. */
+  readonly automationController?: BrowserAutomationControllerState | null;
+  /** True while the active tab owns an in-flight browser operation. */
+  readonly automationBusy?: boolean;
+  /** Transfer the active tab back to human control from the overflow menu. */
+  readonly onStopAutomation?: () => void;
+  /** Transfer browser control when the human focuses the omnibox. */
+  readonly onHumanFocus?: () => void;
 }
 
 /**
@@ -117,7 +130,13 @@ export function BrowserHeader({
   onGetZoom,
   onSetZoom,
   onOpenDevTools = () => undefined,
+  onToggleViewportToolbar,
+  viewportToolbarVisible = false,
   suppressPreviewForOverlays = true,
+  automationController = null,
+  automationBusy = false,
+  onStopAutomation,
+  onHumanFocus,
 }: BrowserHeaderProps) {
   const {
     displayValue,
@@ -254,6 +273,7 @@ export function BrowserHeader({
             onChange={(e) => onChange(e.target.value)}
             onFocus={() => {
               setFocused(true);
+              onHumanFocus?.();
               onFocus();
             }}
             onBlur={() => {
@@ -306,7 +326,7 @@ export function BrowserHeader({
         </div>
       </div>
 
-      {/* Right cluster: page actions (loaded) + the overflow kebab. */}
+      {/* Right cluster: page actions (loaded) plus overflow tools. */}
       {hasLoadedPage ? (
         <>
           <Tooltip>
@@ -388,7 +408,12 @@ export function BrowserHeader({
         onGetZoom={onGetZoom}
         onSetZoom={onSetZoom}
         onOpenDevTools={onOpenDevTools}
+        onToggleViewportToolbar={onToggleViewportToolbar}
+        viewportToolbarVisible={viewportToolbarVisible}
         suppressPreviewForOverlays={suppressPreviewForOverlays}
+        automationController={automationController}
+        automationBusy={automationBusy}
+        onStopAutomation={onStopAutomation}
       />
     </div>
   );

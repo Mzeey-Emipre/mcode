@@ -13,11 +13,17 @@ import type {
   PreviewPageStatus,
 } from "@mcode/contracts";
 import {
+  BROWSER_AUTOMATION_VIEWPORT_CANVAS_PADDING_PX,
+  resolveBrowserAutomationViewportPresentationScale,
+  type BrowserAutomationViewportPresentation,
+} from "@mcode/contracts";
+import {
   pageStatusReducer,
   initialPageStatus,
   type PageStatusEvent,
 } from "./page-status-reducer.js";
 import { bumpPerf } from "./preview-perf.js";
+import { applyPreviewViewportEmulation } from "../preview-device-emulation.js";
 
 /**
  * Result of a picture-reference capture; defined here so PreviewSession can reference
@@ -29,6 +35,9 @@ export type CaptureFinishResult =
 
 /** CSS-pixel rectangle used for WebContentsView bounds and capture regions. */
 export type Bounds = { x: number; y: number; width: number; height: number };
+
+/** Presentation mode used when a confirmed CSS viewport is shown in the panel. */
+export type ViewportPresentation = BrowserAutomationViewportPresentation;
 
 /**
  * Per-tab record held inside a thread's tab set. Phase A keeps a single backing
@@ -45,6 +54,10 @@ export interface TabState {
   faviconUrl: string | null;
   /** Epoch ms when this tab was last activated. Drives memory-saver LRU ordering (ADR 0002). */
   lastActiveAt: number;
+  /** Latest viewport target generation admitted while this tab remains live. */
+  viewportTargetGeneration: number | null;
+  /** Latest viewport operation generation admitted for the current target generation. */
+  viewportOperationGeneration: number | null;
   /**
    * True for a page the user explicitly opened as a new, blank tab. Such a tab
    * must stay on its empty "Enter a URL" state and must NOT adopt the thread's
@@ -126,6 +139,10 @@ export interface PreviewSession {
   lastPreviewThreadId: string | null;
   /** Active workspace id from the renderer; scopes spill files under getMcodeDir(). */
   workspaceId: string | null;
+  /** Renderer-confirmed responsive viewport dimensions by exact thread/tab target. */
+  viewportAppliedByTarget: Map<string, { width: number; height: number }>;
+  /** Presentation mode for each exact responsive viewport target. */
+  viewportPresentationByTarget: Map<string, ViewportPresentation>;
   /** Favicon URLs from the last page-favicon-updated event. */
   lastFavicons: string[];
   /** Timestamp of the last renderer crash auto-recovery; used to rate-limit retries. */
@@ -172,6 +189,8 @@ export function getSession(win: BrowserWindow): PreviewSession {
       failedRequestBuffer: [],
       lastPreviewThreadId: null,
       workspaceId: null,
+      viewportAppliedByTarget: new Map(),
+      viewportPresentationByTarget: new Map(),
       lastFavicons: [],
       lastCrashRecoveryAt: 0,
       trustedFileNavigationBudget: 0,
@@ -201,6 +220,8 @@ export function ensureThreadTabSet(s: PreviewSession, threadId: string): ThreadT
       title: null,
       faviconUrl: isActiveThread ? (s.lastFavicons[0] ?? null) : null,
       lastActiveAt: Date.now(),
+      viewportTargetGeneration: null,
+      viewportOperationGeneration: null,
     };
     set = { threadId, tabs: [firstTab], activeTabId: tabId };
     s.tabsByThread.set(threadId, set);
@@ -224,12 +245,76 @@ export function getActiveTab(s: PreviewSession, threadId: string): TabState {
       title: null,
       faviconUrl: null,
       lastActiveAt: Date.now(),
+      viewportTargetGeneration: null,
+      viewportOperationGeneration: null,
     };
     set.tabs.push(tab);
     set.activeTabId = id;
     return tab;
   }
   return active;
+}
+
+/** Stable key for one native preview target's viewport state. */
+export function viewportTargetKey(threadId: string, tabId: string): string {
+  return JSON.stringify([threadId, tabId]);
+}
+
+/**
+ * Computes the native presentation bounds for one confirmed CSS viewport.
+ * Device emulation scales the guest content while its fixed CSS viewport stays
+ * independent from the surrounding panel size.
+ */
+export function viewportBoundsForTarget(
+  s: PreviewSession,
+  panel: Bounds,
+  threadId: string | null,
+  tabId: string | null,
+): { bounds: Bounds; scale: number } {
+  if (!threadId || !tabId) return { bounds: panel, scale: 1 };
+  const key = viewportTargetKey(threadId, tabId);
+  const viewport = s.viewportAppliedByTarget.get(key);
+  if (!viewport) return { bounds: panel, scale: 1 };
+  const presentation = s.viewportPresentationByTarget.get(key) ?? "fit";
+  const fitWidth = Math.max(0, panel.width - BROWSER_AUTOMATION_VIEWPORT_CANVAS_PADDING_PX);
+  const fitHeight = Math.max(0, panel.height - BROWSER_AUTOMATION_VIEWPORT_CANVAS_PADDING_PX);
+  const fixedScale = resolveBrowserAutomationViewportPresentationScale(presentation);
+  const rawScale = fixedScale ?? Math.min(fitWidth / viewport.width, fitHeight / viewport.height);
+  const scale = fixedScale ??
+    Math.min(1.25, Math.max(0.2, Number.isFinite(rawScale) && rawScale > 0 ? rawScale : 0.2));
+  const width = Math.max(1, Math.round(viewport.width * scale));
+  const height = Math.max(1, Math.round(viewport.height * scale));
+  return {
+    bounds: {
+      x: panel.x + Math.floor((panel.width - width) / 2),
+      y: panel.y + Math.floor((panel.height - height) / 2),
+      width,
+      height,
+    },
+    scale,
+  };
+}
+
+/** Apply the current target presentation to the active native view. */
+export function applyViewportPresentation(
+  s: PreviewSession,
+  panel: Bounds,
+  threadId: string | null,
+  tabId: string | null,
+  updateBounds = true,
+): { bounds: Bounds; scale: number } {
+  const presentation = viewportBoundsForTarget(s, panel, threadId, tabId);
+  if (s.view && !s.view.webContents.isDestroyed()) {
+    const key = threadId && tabId ? viewportTargetKey(threadId, tabId) : null;
+    const viewport = key ? s.viewportAppliedByTarget.get(key) : undefined;
+    applyPreviewViewportEmulation(s.view.webContents, {
+      active: viewport !== undefined,
+      cssViewport: viewport ?? panel,
+      scale: presentation.scale,
+    });
+    if (updateBounds) s.view.setBounds(presentation.bounds);
+  }
+  return presentation;
 }
 
 /** Serializable view of a thread's tab set for IPC and renderer reconciliation. */

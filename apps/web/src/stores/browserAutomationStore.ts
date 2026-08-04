@@ -5,6 +5,10 @@ import type {
 import { BROWSER_AUTOMATION_MAX_INSPECT_TABS, BROWSER_AUTOMATION_MAX_PENDING_REQUESTS } from "@mcode/contracts";
 import { create } from "zustand";
 import { browserTargetRegistry } from "@/services/browser-automation/browserTargetRegistry";
+import type {
+  ViewportCoordinator,
+  ViewportCoordinatorState,
+} from "@/services/browser-automation/viewportCoordinator";
 import type { BrowserSessionLifecycleTab } from "@/services/browser-automation/browserSessionDriver";
 
 /** Maximum number of inactive, non-busy Browser targets retained warm. */
@@ -36,6 +40,8 @@ interface BrowserAutomationState {
   readonly registered: boolean;
   readonly status: BrowserAutomationHostStatus;
   readonly viewportByTarget: ReadonlyMap<string, { readonly width: number; readonly height: number }>;
+  readonly viewportStateByTarget: ReadonlyMap<string, ViewportCoordinatorState>;
+  readonly viewportCoordinators: ReadonlyMap<string, ViewportCoordinator>;
   readonly hostedScopeIds: ReadonlySet<string>;
   registerTarget: (workspaceId: string, threadId: string, tabId: string) => void;
   refreshTarget: (threadId: string, tabId: string) => void;
@@ -55,6 +61,27 @@ interface BrowserAutomationState {
   setRegistered: (registered: boolean) => void;
   setStatus: (status: BrowserAutomationHostStatus) => void;
   setViewport: (threadId: string, tabId: string, width: number, height: number) => void;
+  applyViewportIfCurrent: (
+    threadId: string,
+    tabId: string,
+    coordinator: ViewportCoordinator,
+    targetGeneration: number,
+    size: { readonly width: number; readonly height: number },
+  ) => boolean;
+  resetViewportIfCurrent: (
+    threadId: string,
+    tabId: string,
+    coordinator: ViewportCoordinator,
+    targetGeneration: number,
+  ) => boolean;
+  setViewportState: (
+    threadId: string,
+    tabId: string,
+    state: ViewportCoordinatorState,
+    coordinator?: ViewportCoordinator,
+  ) => void;
+  setViewportCoordinator: (threadId: string, tabId: string, coordinator: ViewportCoordinator) => void;
+  clearViewportCoordinator: (threadId: string, tabId: string) => void;
   setHostedScopeIds: (scopeIds: ReadonlySet<string>) => void;
 }
 
@@ -86,6 +113,10 @@ export function resolveBrowserAutomationControllerTarget(
   return candidates.length === 1 ? candidates[0]! : null;
 }
 
+function interruptViewportCoordinator(coordinator: ViewportCoordinator | undefined): void {
+  coordinator?.interrupt();
+}
+
 /** Shared renderer state for browser host discovery, control, and warm leases. */
 export const useBrowserAutomationStore = create<BrowserAutomationState>((set, get) => ({
   liveTargets: new Map(),
@@ -95,6 +126,8 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set, ge
   registered: false,
   status: "unavailable",
   viewportByTarget: new Map(),
+  viewportStateByTarget: new Map(),
+  viewportCoordinators: new Map(),
   hostedScopeIds: new Set(),
   registerTarget: (workspaceId, threadId, tabId) =>
     set((state) => {
@@ -103,7 +136,10 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set, ge
       if (previous?.attached && !state.liveTargets.has(key)) {
         browserTargetRegistry.releaseTarget(threadId, tabId);
       }
-      const current = browserTargetRegistry.register(workspaceId, threadId, tabId);
+      const currentRecord = browserTargetRegistry.register(workspaceId, threadId, tabId);
+      const current = previous?.attached === false
+        ? browserTargetRegistry.refresh(threadId, tabId) ?? currentRecord
+        : currentRecord;
       const liveTargets = new Map(state.liveTargets);
       liveTargets.set(key, {
         workspaceId,
@@ -112,7 +148,11 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set, ge
         revision: current.revision,
         lastUsedAt: current.lastUsedAt,
       });
-      return { liveTargets };
+      if (state.liveTargets.has(key)) return { liveTargets };
+      const viewportCoordinators = new Map(state.viewportCoordinators);
+      interruptViewportCoordinator(viewportCoordinators.get(key));
+      viewportCoordinators.delete(key);
+      return { liveTargets, viewportCoordinators };
     }),
   refreshTarget: (threadId, tabId) =>
     set((state) => {
@@ -129,23 +169,35 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set, ge
       return { liveTargets };
     }),
   detachTarget: (threadId, tabId) => {
+    const key = browserAutomationTargetKey(threadId, tabId);
+    const coordinator = useBrowserAutomationStore.getState().viewportCoordinators.get(key);
+    interruptViewportCoordinator(coordinator);
     browserTargetRegistry.detach(threadId, tabId);
     set((state) => {
-      const key = browserAutomationTargetKey(threadId, tabId);
       if (!state.liveTargets.has(key)) return state;
       const liveTargets = new Map(state.liveTargets);
       liveTargets.delete(key);
       const controllers = new Map(state.controllers);
       controllers.delete(key);
+      const viewportCoordinators = new Map(state.viewportCoordinators);
+      viewportCoordinators.delete(key);
+      const viewportState = coordinator?.snapshot();
+      const viewportStateByTarget = new Map(state.viewportStateByTarget);
       const viewportByTarget = new Map(state.viewportByTarget);
-      viewportByTarget.delete(key);
-      return { liveTargets, controllers, viewportByTarget };
+      if (viewportState) {
+        viewportStateByTarget.set(key, viewportState);
+        if (viewportState.mode === "responsive" || viewportByTarget.has(key)) {
+          viewportByTarget.set(key, viewportState.confirmed);
+        }
+      }
+      return { liveTargets, controllers, viewportByTarget, viewportStateByTarget, viewportCoordinators };
     });
   },
   unregisterTarget: (threadId, tabId) => {
+    const key = browserAutomationTargetKey(threadId, tabId);
+    interruptViewportCoordinator(useBrowserAutomationStore.getState().viewportCoordinators.get(key));
     browserTargetRegistry.releaseTarget(threadId, tabId);
     set((state) => {
-      const key = browserAutomationTargetKey(threadId, tabId);
       if (!state.liveTargets.has(key)) return state;
       const liveTargets = new Map(state.liveTargets);
       liveTargets.delete(key);
@@ -153,11 +205,22 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set, ge
       controllers.delete(key);
       const viewportByTarget = new Map(state.viewportByTarget);
       viewportByTarget.delete(key);
+      const viewportStateByTarget = new Map(state.viewportStateByTarget);
+      viewportStateByTarget.delete(key);
+      const viewportCoordinators = new Map(state.viewportCoordinators);
+      viewportCoordinators.delete(key);
       const lifecycleTabs = new Map(state.lifecycleTabs);
       for (const [lifecycleKey, tab] of lifecycleTabs) {
         if (tab.threadId === threadId && tab.tabId === tabId) lifecycleTabs.delete(lifecycleKey);
       }
-      return { liveTargets, controllers, viewportByTarget, lifecycleTabs };
+      return {
+        liveTargets,
+        controllers,
+        viewportByTarget,
+        viewportStateByTarget,
+        viewportCoordinators,
+        lifecycleTabs,
+      };
     });
   },
   setLifecycleTabs: (tabs) =>
@@ -173,11 +236,21 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set, ge
       return { lifecycleTabs };
     }),
   releaseThreadTargets: (threadId) => {
+    const current = useBrowserAutomationStore.getState();
+    for (const target of current.liveTargets.values()) {
+      if (target.threadId === threadId) {
+        interruptViewportCoordinator(current.viewportCoordinators.get(
+          browserAutomationTargetKey(target.threadId, target.tabId),
+        ));
+      }
+    }
     browserTargetRegistry.releaseThread(threadId);
     set((state) => {
       const liveTargets = new Map(state.liveTargets);
       const controllers = new Map(state.controllers);
       const viewportByTarget = new Map(state.viewportByTarget);
+      const viewportStateByTarget = new Map(state.viewportStateByTarget);
+      const viewportCoordinators = new Map(state.viewportCoordinators);
       const lifecycleTabs = new Map(state.lifecycleTabs);
       for (const target of state.liveTargets.values()) {
         if (target.threadId !== threadId) continue;
@@ -185,19 +258,38 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set, ge
         liveTargets.delete(key);
         controllers.delete(key);
         viewportByTarget.delete(key);
+        viewportStateByTarget.delete(key);
+        viewportCoordinators.delete(key);
       }
       for (const [lifecycleKey, tab] of lifecycleTabs) {
         if (tab.threadId === threadId) lifecycleTabs.delete(lifecycleKey);
       }
-      return { liveTargets, controllers, viewportByTarget, lifecycleTabs };
+      return {
+        liveTargets,
+        controllers,
+        viewportByTarget,
+        viewportStateByTarget,
+        viewportCoordinators,
+        lifecycleTabs,
+      };
     });
   },
   releaseWorkspaceTargets: (workspaceId) => {
+    const current = useBrowserAutomationStore.getState();
+    for (const target of current.liveTargets.values()) {
+      if (target.workspaceId === workspaceId) {
+        interruptViewportCoordinator(current.viewportCoordinators.get(
+          browserAutomationTargetKey(target.threadId, target.tabId),
+        ));
+      }
+    }
     browserTargetRegistry.releaseWorkspace(workspaceId);
     set((state) => {
       const liveTargets = new Map(state.liveTargets);
       const controllers = new Map(state.controllers);
       const viewportByTarget = new Map(state.viewportByTarget);
+      const viewportStateByTarget = new Map(state.viewportStateByTarget);
+      const viewportCoordinators = new Map(state.viewportCoordinators);
       const lifecycleTabs = new Map(state.lifecycleTabs);
       for (const target of state.liveTargets.values()) {
         if (target.workspaceId !== workspaceId) continue;
@@ -205,11 +297,20 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set, ge
         liveTargets.delete(key);
         controllers.delete(key);
         viewportByTarget.delete(key);
+        viewportStateByTarget.delete(key);
+        viewportCoordinators.delete(key);
       }
       for (const [lifecycleKey, tab] of lifecycleTabs) {
         if (tab.workspaceId === workspaceId) lifecycleTabs.delete(lifecycleKey);
       }
-      return { liveTargets, controllers, viewportByTarget, lifecycleTabs };
+      return {
+        liveTargets,
+        controllers,
+        viewportByTarget,
+        viewportStateByTarget,
+        viewportCoordinators,
+        lifecycleTabs,
+      };
     });
   },
   setController: (controller) => {
@@ -269,6 +370,83 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set, ge
       viewportByTarget.set(key, { width, height });
       return { viewportByTarget };
     }),
+  applyViewportIfCurrent: (threadId, tabId, coordinator, targetGeneration, size) => {
+    let applied = false;
+    set((state) => {
+      const key = browserAutomationTargetKey(threadId, tabId);
+      const liveTarget = state.liveTargets.get(key);
+      if (
+        !liveTarget ||
+        liveTarget.revision !== targetGeneration ||
+        state.viewportCoordinators.get(key) !== coordinator
+      ) return state;
+      const viewportByTarget = new Map(state.viewportByTarget);
+      viewportByTarget.set(key, size);
+      applied = true;
+      return { viewportByTarget };
+    });
+    return applied;
+  },
+  resetViewportIfCurrent: (threadId, tabId, coordinator, targetGeneration) => {
+    let reset = false;
+    set((state) => {
+      const key = browserAutomationTargetKey(threadId, tabId);
+      const liveTarget = state.liveTargets.get(key);
+      if (
+        !liveTarget ||
+        liveTarget.revision !== targetGeneration ||
+        state.viewportCoordinators.get(key) !== coordinator
+      ) return state;
+      const viewportByTarget = new Map(state.viewportByTarget);
+      viewportByTarget.delete(key);
+      reset = true;
+      return { viewportByTarget };
+    });
+    return reset;
+  },
+  setViewportState: (threadId, tabId, viewportState, coordinator) =>
+    set((state) => {
+      const key = browserAutomationTargetKey(threadId, tabId);
+      if (!state.liveTargets.has(key)) return state;
+      if (
+        coordinator &&
+        (state.viewportCoordinators.get(key) !== coordinator ||
+          state.liveTargets.get(key)?.revision !== viewportState.targetGeneration)
+      ) return state;
+      const viewportStateByTarget = new Map(state.viewportStateByTarget);
+      viewportStateByTarget.set(key, viewportState);
+      const viewportByTarget = new Map(state.viewportByTarget);
+      if (viewportState.mode === "responsive" || viewportByTarget.has(key)) {
+        viewportByTarget.set(key, viewportState.confirmed);
+      }
+      return { viewportStateByTarget, viewportByTarget };
+    }),
+  setViewportCoordinator: (threadId, tabId, coordinator) =>
+    set((state) => {
+      const key = browserAutomationTargetKey(threadId, tabId);
+      if (!state.liveTargets.has(key)) return state;
+      const viewportCoordinators = new Map(state.viewportCoordinators);
+      viewportCoordinators.set(key, coordinator);
+      const viewportStateByTarget = new Map(state.viewportStateByTarget);
+      const snapshot = coordinator.snapshot();
+      viewportStateByTarget.set(key, snapshot);
+      const viewportByTarget = new Map(state.viewportByTarget);
+      if (snapshot.mode === "responsive" || viewportByTarget.has(key)) {
+        viewportByTarget.set(key, snapshot.confirmed);
+      }
+      return { viewportCoordinators, viewportStateByTarget, viewportByTarget };
+    }),
+  clearViewportCoordinator: (threadId, tabId) =>
+    set((state) => {
+      const key = browserAutomationTargetKey(threadId, tabId);
+      if (!state.viewportCoordinators.has(key)) return state;
+      interruptViewportCoordinator(state.viewportCoordinators.get(key));
+      const viewportCoordinators = new Map(state.viewportCoordinators);
+      viewportCoordinators.delete(key);
+      const viewportStateByTarget = new Map(state.viewportStateByTarget);
+      viewportStateByTarget.delete(key);
+      return { viewportCoordinators, viewportStateByTarget };
+    }),
 }));
 
 type BrowserAutomationInterruptionReason = "human-interrupted" | "user-stopped";
@@ -279,7 +457,6 @@ type InterruptionListener = (
 ) => void;
 const interruptionListeners = new Set<InterruptionListener>();
 const pendingInterruptions = new Map<string, Promise<boolean>>();
-
 type ObservationInvalidationListener = (threadId: string, tabId: string) => void;
 const observationInvalidationListeners = new Set<ObservationInvalidationListener>();
 

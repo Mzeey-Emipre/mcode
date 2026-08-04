@@ -29,6 +29,11 @@ import {
   BrowserAutomationTargetIdentitySchema,
   BrowserAutomationTargetSchema,
   BrowserAutomationUrlSchema,
+  BrowserAutomationViewportRequestSchema,
+  BrowserAutomationViewportPresentationRequestSchema,
+  BrowserAutomationViewportResetRequestSchema,
+  BrowserAutomationViewportResetResultSchema,
+  resolveBrowserAutomationViewportPresentationScale,
 } from "../browser-automation.js";
 
 const requestBase = {
@@ -863,5 +868,64 @@ describe("browser automation boundaries", () => {
     expect(BrowserAutomationRequestSchema().safeParse({ ...valid, args: { ...valid.args, deadlineMs: 0 } }).success).toBe(false);
     expect(BrowserAutomationRequestSchema().safeParse({ ...valid, args: { ...valid.args, deadlineMs: 60_001 } }).success).toBe(false);
     expect(BrowserAutomationRequestSchema().safeParse({ ...valid, args: { ...valid.args, steps: [valid.args.steps[0], { operation: "click", target, clickCount: 4 }] } }).success).toBe(false);
+  });
+
+  it("requires complete operation identity on native viewport mutations", () => {
+    const identity = {
+      operationId: "viewport-1",
+      source: "user" as const,
+      targetGeneration: 3,
+      operationGeneration: 7,
+      threadId: "thread-1",
+      tabId: "tab-1",
+    };
+    const request = { ...identity, widthOverride: 393, heightOverride: 852 };
+
+    expect(BrowserAutomationViewportRequestSchema().safeParse(request).success).toBe(true);
+    expect(BrowserAutomationViewportRequestSchema().safeParse({
+      widthOverride: 393,
+      heightOverride: 852,
+    }).success).toBe(false);
+    expect(BrowserAutomationViewportRequestSchema().safeParse({
+      ...request,
+      widthOverride: 0,
+    }).success).toBe(false);
+    expect(BrowserAutomationViewportRequestSchema().safeParse({
+      ...request,
+      operationGeneration: -1,
+    }).success).toBe(false);
+    expect(BrowserAutomationViewportResetRequestSchema().safeParse(identity).success).toBe(true);
+    expect(BrowserAutomationViewportResetResultSchema().safeParse({
+      ok: true,
+      appliedViewport: null,
+      ...identity,
+    }).success).toBe(true);
+    expect(BrowserAutomationViewportResetResultSchema().safeParse({
+      ok: true,
+      appliedViewport: null,
+    }).success).toBe(false);
+  });
+
+  it("allows only supported viewport zoom presentations", () => {
+    const identity = {
+      operationId: "presentation-1",
+      source: "user" as const,
+      targetGeneration: 3,
+      operationGeneration: 8,
+      threadId: "thread-1",
+      tabId: "tab-1",
+    };
+
+    expect(BrowserAutomationViewportPresentationRequestSchema().safeParse({
+      ...identity,
+      presentation: "150%",
+    }).success).toBe(true);
+    expect(BrowserAutomationViewportPresentationRequestSchema().safeParse({
+      ...identity,
+      presentation: "175%",
+    }).success).toBe(false);
+    expect(resolveBrowserAutomationViewportPresentationScale("fit")).toBeNull();
+    expect(resolveBrowserAutomationViewportPresentationScale("actual")).toBe(1);
+    expect(resolveBrowserAutomationViewportPresentationScale("200%")).toBe(2);
   });
 });

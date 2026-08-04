@@ -5,7 +5,7 @@
  * 1. Unavailable state - when desktopBridge.preview is absent.
  * 2. Full panel state - when desktopBridge.preview is present (hooks mocked).
  */
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
@@ -103,6 +103,7 @@ import {
   browserAutomationTargetKey,
   useBrowserAutomationStore,
 } from "@/stores/browserAutomationStore";
+import { ViewportCoordinator } from "@/services/browser-automation/viewportCoordinator";
 
 function mockBridgeState(overrides: Record<string, unknown> = {}) {
   const state = {
@@ -420,6 +421,132 @@ describe("PreviewPanel: unavailable state", () => {
       "src",
       `${window.location.origin}/browser-automation-fixture.html`,
     );
+  });
+
+  it("keeps the responsive toolbar available through the web Browser overflow menu", async () => {
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    const user = userEvent.setup();
+    render(<PreviewPanel threadId="thread-1" workspaceId="workspace-1" />);
+
+    await waitFor(() => {
+      expect(useBrowserAutomationStore.getState().viewportCoordinators.size).toBeGreaterThan(0);
+    });
+    const iframe = screen.getByTestId("web-runtime-preview-iframe");
+    await user.click(screen.getByRole("button", { name: "More browser tools" }));
+    const menu = await screen.findByTestId("browser-overflow-menu");
+    await user.click(within(menu).getByRole("menuitem", { name: "Show device toolbar" }));
+
+    const toolbar = await screen.findByTestId("browser-viewport-toolbar");
+    expect(toolbar).toBeInTheDocument();
+    await user.click(within(toolbar).getByRole("button", { name: "Viewport preset" }));
+    await user.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "Responsive" }));
+    await waitFor(() => {
+      expect(
+        useBrowserAutomationStore.getState().viewportStateByTarget.get(
+          JSON.stringify(["thread-1", "web-preview"]),
+        ),
+      ).toMatchObject({ mode: "responsive" });
+    });
+    expect(screen.getByTestId("web-runtime-preview-iframe")).toBe(iframe);
+
+    await user.click(within(toolbar).getByRole("button", { name: "Close viewport toolbar" }));
+    await waitFor(() => {
+      expect(
+        useBrowserAutomationStore.getState().viewportStateByTarget.get(
+          JSON.stringify(["thread-1", "web-preview"]),
+        ),
+      ).toMatchObject({ mode: "regular" });
+    });
+    expect(screen.queryByTestId("browser-viewport-toolbar")).not.toBeInTheDocument();
+    expect(screen.getByTestId("web-runtime-preview-iframe")).toBe(iframe);
+  });
+
+  it("opens the toolbar in Fit presentation after a previous fixed zoom", async () => {
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    const user = userEvent.setup();
+    render(<PreviewPanel threadId="thread-1" workspaceId="workspace-1" />);
+
+    await waitFor(() => {
+      expect(useBrowserAutomationStore.getState().viewportCoordinators.size).toBeGreaterThan(0);
+    });
+    await user.click(screen.getByRole("button", { name: "More browser tools" }));
+    await user.click(within(await screen.findByTestId("browser-overflow-menu")).getByRole(
+      "menuitem",
+      { name: "Show device toolbar" },
+    ));
+    let toolbar = await screen.findByTestId("browser-viewport-toolbar");
+    await user.click(within(toolbar).getByRole("button", { name: "Viewport scale and presentation" }));
+    await user.click(within(await screen.findByRole("menu")).getByRole("menuitem", { name: "150%" }));
+    await waitFor(() => {
+      expect(
+        useBrowserAutomationStore.getState().viewportStateByTarget.get(
+          JSON.stringify(["thread-1", "web-preview"]),
+        ),
+      ).toMatchObject({ presentation: "150%" });
+    });
+
+    await user.click(within(toolbar).getByRole("button", { name: "Close viewport toolbar" }));
+    await user.click(screen.getByRole("button", { name: "More browser tools" }));
+    await user.click(within(await screen.findByTestId("browser-overflow-menu")).getByRole(
+      "menuitem",
+      { name: "Show device toolbar" },
+    ));
+    toolbar = await screen.findByTestId("browser-viewport-toolbar");
+
+    await waitFor(() => {
+      expect(
+        useBrowserAutomationStore.getState().viewportStateByTarget.get(
+          JSON.stringify(["thread-1", "web-preview"]),
+        ),
+      ).toMatchObject({ mode: "responsive", presentation: "fit" });
+    });
+    expect(within(toolbar).getByRole("button", { name: "Viewport preset" })).toHaveTextContent("Responsive");
+  });
+
+  it("shows the responsive toolbar when the agent resizes the viewport", async () => {
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    render(<PreviewPanel threadId="thread-1" workspaceId="workspace-1" />);
+
+    await waitFor(() => {
+      expect(useBrowserAutomationStore.getState().viewportCoordinators.size).toBeGreaterThan(0);
+    });
+    const coordinator = useBrowserAutomationStore.getState().viewportCoordinators.get(
+      JSON.stringify(["thread-1", "web-preview"]),
+    );
+    expect(coordinator).toBeDefined();
+    await coordinator!.requestAgentResize({ width: 393, height: 852 });
+
+    expect(await screen.findByTestId("browser-viewport-toolbar")).toBeInTheDocument();
+  });
+
+  it("shows the toolbar from live agent state before the stored viewport projection catches up", async () => {
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    render(<PreviewPanel threadId="thread-1" workspaceId="workspace-1" />);
+
+    const targetKey = JSON.stringify(["thread-1", "web-preview"]);
+    await waitFor(() => {
+      expect(useBrowserAutomationStore.getState().liveTargets.has(targetKey)).toBe(true);
+    });
+    const targetGeneration = useBrowserAutomationStore.getState().liveTargets.get(targetKey)!.revision;
+    const coordinator = new ViewportCoordinator({
+      apply: async (operation) => ({ status: "applied", applied: operation.requested }),
+      initial: { width: 1280, height: 800 },
+      targetGeneration,
+    });
+    act(() => {
+      useBrowserAutomationStore.getState().setViewportCoordinator(
+        "thread-1",
+        "web-preview",
+        coordinator,
+      );
+    });
+
+    await act(async () => {
+      await coordinator.requestAgentResize({ width: 393, height: 852 });
+    });
+
+    expect(screen.getByRole("separator", { name: "Resize viewport from top" })).toBeInTheDocument();
+    expect(screen.getByTestId("browser-viewport-toolbar")).toBeInTheDocument();
   });
 });
 
@@ -1010,6 +1137,57 @@ describe("PreviewPanel: full panel state", () => {
           "https://google.com/",
         );
       });
+    } finally {
+      restoreWebviewMethods();
+    }
+  });
+
+  it("keeps one webview mounted while its viewport coordinator registers", async () => {
+    const threadId = "thread-adoption-stability";
+    const tabId = "tab-adoption-stability";
+    mockUsePreviewTabs.mockReturnValue({
+      tabSet: {
+        threadId,
+        activeTabId: tabId,
+        tabs: [
+          {
+            id: tabId,
+            threadId,
+            title: "Example",
+            url: "https://example.com",
+            faviconUrl: null,
+            warm: true,
+            active: true,
+          },
+        ],
+      },
+      newTab: vi.fn(),
+      activateTab: vi.fn(),
+      closeTab: vi.fn(),
+    });
+    mockUsePreviewBridge.mockReturnValue(
+      mockBridgeState({ storedUrl: "https://example.com" }),
+    );
+    let nextWebContentsId = 70;
+    const restoreWebviewMethods = installMockWebviewMethods({
+      getURL: () => "https://example.com",
+      getWebContentsId: () => ++nextWebContentsId,
+    });
+    const adoptWebview = vi.mocked(window.desktopBridge!.preview!.adoptWebview!);
+    const releaseWebview = vi.mocked(window.desktopBridge!.preview!.releaseWebview!);
+
+    try {
+      render(<PreviewPanel threadId={threadId} workspaceId="workspace-1" />);
+      const initialWebview = screen.getByTestId("preview-webview");
+
+      await waitFor(() => expect(adoptWebview).toHaveBeenCalled());
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      });
+
+      expect(adoptWebview).toHaveBeenCalledTimes(1);
+      expect(releaseWebview).not.toHaveBeenCalled();
+      expect(screen.getByTestId("preview-webview")).toBe(initialWebview);
     } finally {
       restoreWebviewMethods();
     }

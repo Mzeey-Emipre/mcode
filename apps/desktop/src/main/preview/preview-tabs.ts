@@ -14,6 +14,7 @@ import type { BrowserTabSet } from "@mcode/contracts";
 import { logger } from "@mcode/shared";
 import {
   ensureThreadTabSet,
+  applyViewportPresentation,
   getSession,
   syncActiveTabFromSession,
   toBrowserTabSet,
@@ -81,7 +82,7 @@ function activateTabView(
   s.resumePreviewUrl = tab.resumeUrl;
   s.lastFavicons = tab.faviconUrl ? [tab.faviconUrl] : [];
 
-  if (s.lastBounds) view.setBounds(s.lastBounds);
+  if (s.lastBounds) applyViewportPresentation(s, s.lastBounds, tab.threadId, tab.id);
   mountView(win, view);
 
   let loadingKicked = false;
@@ -167,6 +168,8 @@ export function registerTabHandlers(): void {
         title: null,
         faviconUrl: null,
         lastActiveAt: Date.now(),
+        viewportTargetGeneration: null,
+        viewportOperationGeneration: null,
         // A user-opened page starts blank and must not inherit the thread's
         // last URL via the per-thread resume hint on the next sync.
         userCreatedBlank: true,
@@ -268,6 +271,8 @@ export function registerTabHandlers(): void {
           title: null,
           faviconUrl: null,
           lastActiveAt: Date.now(),
+          viewportTargetGeneration: null,
+          viewportOperationGeneration: null,
           // The user just closed the last page; the replacement stays blank
           // rather than resurrecting the closed page's URL via the hint.
           userCreatedBlank: true,

@@ -47,9 +47,17 @@ import {
   getBrowserAutomationRuntimeOperations,
 } from "@/services/browser-automation/browserSessionDriver";
 import { WebBrowserSessionAdapter } from "@/services/browser-automation/webBrowserSessionAdapter";
+import {
+  type ViewportApplyResult,
+} from "@/services/browser-automation/viewportCoordinator";
+import {
+  getOrCreateViewportCoordinator,
+  waitForViewportLayout,
+} from "@/services/browser-automation/viewportCoordinatorFactory";
 
 const HEARTBEAT_INTERVAL_MS = 10_000;
 const WEB_AUTOMATION_UNAVAILABLE_REASON = "Web automation executor is unavailable";
+const viewportCoordinatorDispatches = new WeakMap<object, BrowserAutomationHostDispatch>();
 
 export { isBrowserAutomationWebRuntimeEnabled } from "./browserAutomationRuntime";
 
@@ -84,6 +92,7 @@ function failureResponse(
   request: BrowserAutomationRequest,
   code: BrowserAutomationErrorCode,
   message: string,
+  appliedViewport?: { readonly width: number; readonly height: number },
 ): BrowserAutomationResponse {
   return {
     contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
@@ -94,12 +103,168 @@ function failureResponse(
       code,
       message,
       retryable: code !== "INVALID_REQUEST",
+      ...(appliedViewport ? { appliedViewport } : {}),
       stage: code === "TAB_UNAVAILABLE" ? "allocation" : "effect",
       effect: code === "TAB_UNAVAILABLE" ? "unknown" : "none",
       recovery: code === "TAB_UNAVAILABLE" ? "reopen" : "manual",
       correlationId: globalThis.crypto.randomUUID(),
     },
   };
+}
+
+function viewportFailureCode(status: ViewportApplyResult["status"]): BrowserAutomationErrorCode {
+  if (status === "stale") return "STALE_TARGET_GENERATION";
+  if (status === "superseded") return "OPERATION_CANCELLED";
+  return "INTERNAL_ERROR";
+}
+
+function resizeResponse(
+  dispatch: BrowserAutomationHostDispatch,
+  result: ViewportApplyResult,
+): BrowserAutomationResponse {
+  if (result.status !== "applied" && result.status !== "clamped") {
+    return failureResponse(
+      dispatch.request,
+      viewportFailureCode(result.status),
+      result.error ?? `Browser viewport resize ${result.status}`,
+      result.applied,
+    );
+  }
+  return {
+    contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
+    requestId: dispatch.request.requestId,
+    sequence: dispatch.request.sequence,
+    ok: true,
+    result: {
+      operation: "resize",
+      width: result.applied.width,
+      height: result.applied.height,
+      controlEpoch: dispatch.request.expectedControlEpoch,
+    },
+  };
+}
+
+async function restoreCompletedAgentViewport(
+  dispatch: BrowserAutomationHostDispatch,
+  response: BrowserAutomationResponse,
+): Promise<BrowserAutomationResponse> {
+  if (dispatch.request.operation !== "act" || !response.ok) return response;
+  const coordinator = useBrowserAutomationStore.getState().viewportCoordinators.get(
+    browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId),
+  );
+  if (!coordinator?.snapshot().agentActive) return response;
+  const result = await coordinator.completeAgent({
+    targetGeneration: dispatch.target.targetGeneration,
+  });
+  useBrowserAutomationStore.getState().setViewportState(
+    dispatch.target.threadId,
+    dispatch.target.tabId,
+    coordinator.snapshot(),
+    coordinator,
+  );
+  if (result && result.status !== "applied" && result.status !== "clamped") {
+    return failureResponse(
+      dispatch.request,
+      viewportFailureCode(result.status),
+      result.error ?? `Browser viewport restore ${result.status}`,
+      result.applied,
+    );
+  }
+  return response;
+}
+
+async function completeViewportControlRun(
+  dispatch: BrowserAutomationHostDispatch,
+  response: BrowserAutomationResponse,
+): Promise<BrowserAutomationResponse> {
+  if (!response.ok) return response;
+  const isCompletedAct = dispatch.request.operation === "act" &&
+    response.result.operation === "act" && response.result.outcome === "completed";
+  if (!isCompletedAct) return response;
+  return restoreCompletedAgentViewport(dispatch, response);
+}
+
+function interruptViewportCoordinator(dispatch: BrowserAutomationHostDispatch): void {
+  const coordinator = useBrowserAutomationStore.getState().viewportCoordinators.get(
+    browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId),
+  );
+  if (!coordinator) return;
+  coordinator.interrupt();
+  useBrowserAutomationStore.getState().setViewportState(
+    dispatch.target.threadId,
+    dispatch.target.tabId,
+    coordinator.snapshot(),
+    coordinator,
+  );
+}
+
+function ensureViewportCoordinator(
+  dispatch: BrowserAutomationHostDispatch,
+): ReturnType<typeof getOrCreateViewportCoordinator> {
+  const key = browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId);
+  const state = useBrowserAutomationStore.getState();
+  const existing = state.viewportCoordinators.get(key);
+  let coordinator = existing;
+  coordinator = getOrCreateViewportCoordinator({
+    existing,
+    target: dispatch.target,
+    initial: state.viewportStateByTarget.get(key)?.confirmed ?? state.viewportByTarget.get(key),
+    mode: state.viewportStateByTarget.get(key)?.mode,
+    presentation: state.viewportStateByTarget.get(key)?.presentation,
+    targetGeneration: dispatch.target.targetGeneration,
+    nativeHost: () => window.desktopBridge?.preview?.design,
+    rendererHost: {
+      setViewport: (size, operation, coordinator) => useBrowserAutomationStore.getState().applyViewportIfCurrent(
+        dispatch.target.threadId,
+        dispatch.target.tabId,
+        coordinator,
+        operation.targetGeneration,
+        size,
+      ),
+      resetViewport: (operation, coordinator) => useBrowserAutomationStore.getState().resetViewportIfCurrent(
+        dispatch.target.threadId,
+        dispatch.target.tabId,
+        coordinator,
+        operation.targetGeneration,
+      ),
+      readViewport: () => useBrowserAutomationStore.getState().viewportByTarget.get(key) ?? null,
+      waitForLayout: () => waitForViewportLayout(2),
+      isCurrent: (operation, coordinator) => {
+        const current = useBrowserAutomationStore.getState();
+        return current.viewportCoordinators.get(key) === coordinator &&
+          current.liveTargets.get(key)?.revision === operation.targetGeneration;
+      },
+    },
+    readConfirmed: () => useBrowserAutomationStore.getState().viewportStateByTarget.get(key)?.confirmed ??
+      useBrowserAutomationStore.getState().viewportByTarget.get(key) ?? null,
+    operationId: (_operation, sequence) => {
+      const currentDispatch = viewportCoordinatorDispatches.get(coordinator!) ?? dispatch;
+      return browserAutomationRequestKey(
+        currentDispatch.request.requestId,
+        currentDispatch.request.sequence + sequence,
+      );
+    },
+    onStateChange: (nextState, coordinator) => useBrowserAutomationStore.getState().setViewportState(
+      dispatch.target.threadId,
+      dispatch.target.tabId,
+      nextState,
+      coordinator,
+    ),
+    onCreated: (created) => useBrowserAutomationStore.getState().setViewportCoordinator(
+      dispatch.target.threadId,
+      dispatch.target.tabId,
+      created,
+    ),
+  });
+  viewportCoordinatorDispatches.set(coordinator, dispatch);
+  return coordinator;
+}
+
+function bindViewportCoordinatorDispatch(dispatch: BrowserAutomationHostDispatch): void {
+  const coordinator = useBrowserAutomationStore.getState().viewportCoordinators.get(
+    browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId),
+  );
+  if (coordinator) viewportCoordinatorDispatches.set(coordinator, dispatch);
 }
 
 function projectAgentControl(dispatch: BrowserAutomationHostDispatch): void {
@@ -127,11 +292,6 @@ function projectAgentControl(dispatch: BrowserAutomationHostDispatch): void {
   );
 }
 
-async function afterBrowserLayout(): Promise<void> {
-  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-}
-
 function mountedWebIframe(dispatch: BrowserAutomationHostDispatch): HTMLIFrameElement | null {
   for (const iframe of document.querySelectorAll<HTMLIFrameElement>("iframe")) {
     if (iframe.dataset.threadId === dispatch.target.threadId && iframe.dataset.tabId === dispatch.target.tabId) return iframe;
@@ -146,11 +306,32 @@ async function executeBrowserDispatch(
   signal: AbortSignal,
   runtimeOperations?: readonly BrowserAutomationOperation[],
 ): Promise<BrowserAutomationResponse> {
+  bindViewportCoordinatorDispatch(dispatch);
   const operations = runtimeOperations ?? getBrowserAutomationRuntimeOperations(
     bridge ? "electron" : "web",
     { recordingAvailable: bridge ? recordingAvailable() : false },
   );
   if (!bridge) {
+    if (dispatch.request.operation === "resize") {
+      const coordinator = ensureViewportCoordinator(dispatch);
+      const result = await coordinator.requestAgentResize(
+        dispatch.request.args,
+        {
+          operationId: browserAutomationRequestKey(
+            dispatch.request.requestId,
+            dispatch.request.sequence,
+          ),
+          targetGeneration: dispatch.target.targetGeneration,
+        },
+      );
+      useBrowserAutomationStore.getState().setViewportState(
+        dispatch.target.threadId,
+        dispatch.target.tabId,
+        coordinator.snapshot(),
+        coordinator,
+      );
+      return resizeResponse(dispatch, result);
+    }
     const response = await executeWebBrowserDispatch(dispatch, signal);
     if (dispatch.request.operation !== "status" || !response.ok || response.result.operation !== "status") return response;
     const iframe = mountedWebIframe(dispatch);
@@ -178,29 +359,24 @@ async function executeBrowserDispatch(
     let response: BrowserAutomationResponse;
     try {
       if (dispatch.request.operation === "resize") {
-    useBrowserAutomationStore.getState().setViewport(
-      dispatch.target.threadId,
-      dispatch.target.tabId,
-      dispatch.request.args.width,
-      dispatch.request.args.height,
-    );
-    await afterBrowserLayout();
-    const key = browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId);
-    const applied = useBrowserAutomationStore.getState().viewportByTarget.get(key);
-        if (!applied) {
-          response = failureResponse(dispatch.request, "TAB_UNAVAILABLE", "Browser viewport target is unavailable");
-        } else response = {
-      contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
-      requestId: dispatch.request.requestId,
-      sequence: dispatch.request.sequence,
-      ok: true,
-      result: {
-        operation: "resize",
-        width: applied.width,
-        height: applied.height,
-        controlEpoch: dispatch.request.expectedControlEpoch,
-      },
-        };
+        const coordinator = ensureViewportCoordinator(dispatch);
+        const result = await coordinator.requestAgentResize(
+          dispatch.request.args,
+          {
+            operationId: browserAutomationRequestKey(
+              dispatch.request.requestId,
+              dispatch.request.sequence,
+            ),
+            targetGeneration: dispatch.target.targetGeneration,
+          },
+        );
+        useBrowserAutomationStore.getState().setViewportState(
+          dispatch.target.threadId,
+          dispatch.target.tabId,
+          coordinator.snapshot(),
+          coordinator,
+        );
+        response = resizeResponse(dispatch, result);
       } else if (dispatch.request.operation === "recordingStart") {
         response = await recorder.start(dispatch, bridge);
       } else {
@@ -756,6 +932,11 @@ export function BrowserAutomationHost() {
   ): void => {
     if (cancelledRef.current.has(key)) return;
     cancelledRef.current.add(key);
+    const targetKey = browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId);
+    const viewportCoordinator = useBrowserAutomationStore.getState().viewportCoordinators.get(targetKey);
+    if (viewportCoordinator?.snapshot().agentActive || dispatch.request.operation === "resize") {
+      interruptViewportCoordinator(dispatch);
+    }
     webAbortRef.current.get(key)?.abort(new Error(`Browser operation was cancelled: ${reason}`));
     recorderRef.current.cancel(dispatch);
     void window.desktopBridge?.preview?.automation?.cancel(dispatch.request.requestId);
@@ -1143,21 +1324,22 @@ export function BrowserAutomationHost() {
         }
         throw cause;
       });
-      void guardedOperation.then((response) => {
+      void guardedOperation.then(async (response) => {
         if (leaseRef.current !== lease || cancelledRef.current.has(key)) return;
-        const responseTarget = sessionDriverRef.current!.responseTarget(dispatch, response);
-        return webDispatch || webNavigateRequest || dispatch.request.operation === "tabs" || (!bridge && webAutomationEnabled && dispatch.request.operation === "screenshot")
-          ? getTransport().respondToBrowserAutomationRequest(
-            lease.hostId,
-            lease.generation,
-            response,
-            responseTarget,
-          )
-          : getTransport().respondToBrowserAutomationRequest(
-            lease.hostId,
-            lease.generation,
-            response,
-          );
+        const completedResponse = await completeViewportControlRun(dispatch, response);
+        const responseTarget = sessionDriverRef.current!.responseTarget(dispatch, completedResponse);
+          return webDispatch || webNavigateRequest || dispatch.request.operation === "tabs" || (!bridge && webAutomationEnabled && dispatch.request.operation === "screenshot")
+            ? getTransport().respondToBrowserAutomationRequest(
+              lease.hostId,
+              lease.generation,
+              completedResponse,
+              responseTarget,
+            )
+            : getTransport().respondToBrowserAutomationRequest(
+              lease.hostId,
+              lease.generation,
+              completedResponse,
+            );
       }).catch(() => undefined).finally(() => {
         webObserverRef.current.get(key)?.();
         webObserverRef.current.delete(key);
@@ -1191,6 +1373,7 @@ export function BrowserAutomationHost() {
       }
       if (!inFlightRef.current.has(key) || cancelledRef.current.has(key)) return;
       cancelledRef.current.add(key);
+      interruptViewportCoordinator(inFlightRef.current.get(key)!);
       webAbortRef.current.get(key)?.abort(new Error("Browser operation was cancelled"));
       recorderRef.current.cancel(inFlightRef.current.get(key)!);
       requestAbortRef.current.get(key)?.abort(new Error("Browser operation was cancelled"));
@@ -1307,7 +1490,7 @@ export function BrowserAutomationHost() {
           diff.showRightPanel(request.workspaceId, request.threadId);
           diff.setRightPanelTab(request.workspaceId, request.threadId, "preview");
         }
-        await afterBrowserLayout();
+        await waitForViewportLayout(2);
         const listed = await window.desktopBridge?.preview?.tabs.list?.(request.threadId);
         if (listed?.ok && listed.data.threadId === request.threadId) {
           usePreviewTabsStore.getState().setTabSet(request.threadId, listed.data);
@@ -1341,11 +1524,6 @@ export function BrowserAutomationHost() {
           if (tabId) {
             createdTabId = tabId;
             if (agentOpenKey) agentOpenTabsRef.current.set(agentOpenKey, tabId);
-            useBrowserAutomationStore.getState().registerTarget(
-              request.workspaceId,
-              request.threadId,
-              tabId,
-            );
           }
         }
         if (!tabId) throw new Error("Browser tab could not be created or restored");

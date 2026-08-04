@@ -6,6 +6,12 @@ import type {
   BrowserAutomationResponse,
   BrowserPerfCounters,
   BrowserTabSet,
+  BrowserAutomationViewportPresentationRequest,
+  BrowserAutomationViewportPresentationResult,
+  BrowserAutomationViewportRequest,
+  BrowserAutomationViewportResult,
+  BrowserAutomationViewportResetRequest,
+  BrowserAutomationViewportResetResult,
   McodeBrowserCapture,
   PreviewPageStatus,
 } from "@mcode/contracts";
@@ -261,19 +267,12 @@ export interface PreviewAutomationBridge {
   onControllerChanged(callback: (state: BrowserAutomationControllerState) => void): () => void;
 }
 
-/** Built-in viewport presets exposed by Phase G. */
-export type DesignViewportPresetId = "phone" | "tablet" | "desktop";
-
 interface PreviewDesignBridge {
-  setViewport(payload: {
-    presetId?: DesignViewportPresetId;
-    widthOverride?: number;
-    heightOverride?: number;
-  }): Promise<
-    | { ok: true; data: { width: number; height: number } }
-    | { ok: false; error: string }
-  >;
-  resetViewport(): Promise<{ ok: true } | { ok: false; error: string }>;
+  setViewport(payload: BrowserAutomationViewportRequest): Promise<BrowserAutomationViewportResult>;
+  setPresentation(
+    payload: BrowserAutomationViewportPresentationRequest,
+  ): Promise<BrowserAutomationViewportPresentationResult>;
+  resetViewport(payload: BrowserAutomationViewportResetRequest): Promise<BrowserAutomationViewportResetResult>;
   setInspect(
     enabled: boolean,
   ): Promise<{ ok: true } | { ok: false; error: string }>;
