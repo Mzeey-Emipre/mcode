@@ -65,6 +65,7 @@ export {
   buildMcodeInstructionPlan,
   renderMcodeInstructions,
 } from "./mcode-instructions.js";
+export { MCODE_BROWSER_GUIDE } from "./browser-operating-guide.js";
 export type {
   BuildMcodeInstructionPlanInput,
   McodeInstructionCapabilities,

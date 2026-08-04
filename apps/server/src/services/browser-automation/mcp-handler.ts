@@ -8,6 +8,7 @@ import {
   BrowserAutomationRequestSchema,
   type BrowserAutomationOperation,
 } from "@mcode/contracts";
+import { MCODE_BROWSER_GUIDE } from "@mcode/thread-orchestration";
 import type { BrowserAutomationBroker } from "./broker.js";
 import type {
   BrowserAutomationCredentialClaims,
@@ -116,6 +117,8 @@ const actTargetSchema = {
 } as const;
 
 const actTimeoutSchema = { type: "integer", minimum: 1, maximum: 60_000 } as const;
+
+const BROWSER_V2_CORE_OPERATIONS = ["open", "inspect", "act", "tabs"] as const satisfies readonly BrowserAutomationOperation[];
 
 function actStepSchema(
   operation: string,
@@ -256,12 +259,29 @@ function inputSchema(operation: BrowserAutomationOperation): Record<string, unkn
   };
 }
 
+function toolDescription(operation: BrowserAutomationOperation): string {
+  switch (operation) {
+    case "open":
+      return "Create one agent-owned background tab and return its initial Browser observation. Use a fresh idempotency key; this does not reveal or focus the Browser panel.";
+    case "inspect":
+      return "Inspect Browser readiness and return the canonical session-specific capabilities, constraints, tabs, observationRef, diagnostics, and recovery guidance.";
+    case "act":
+      return "Execute up to eight ordered Browser steps against the latest observationRef. Use a fresh idempotency key and stop at any failure, interruption, deadline, navigation, or invalidation boundary.";
+    case "tabs":
+      return "Select, claim, release, close, or finalize Browser tabs using the latest observationRef and a fresh idempotency key. Release claimed user tabs instead of closing them.";
+    case "evaluate":
+      return "Run privileged open-world page evaluation only when live negotiation advertises this tool. Use the same observationRef, idempotency, interruption, receipt, effect, and recovery rules as Browser mutations.";
+    default:
+      return `Operate or inspect the user-visible Mcode Browser: ${operation}. Follow Browser readiness and recovery results before another call.`;
+  }
+}
+
 function toolList(operations: readonly BrowserAutomationOperation[]): Array<Record<string, unknown>> {
   return operations.map((operation) => {
     const metadata = BROWSER_AUTOMATION_OPERATION_METADATA[operation];
     return {
       name: metadata.mcpName,
-      description: `Operate or inspect the user-visible Mcode Browser: ${operation}.`,
+      description: toolDescription(operation),
       inputSchema: inputSchema(operation),
       annotations: {
         readOnlyHint: metadata.annotations.readOnly,
@@ -405,10 +425,10 @@ export class BrowserAutomationMcpHandler {
       const protocolVersion = typeof requested === "string" && MCP_PROTOCOL_VERSIONS.includes(requested as (typeof MCP_PROTOCOL_VERSIONS)[number])
         ? requested
         : MCP_PROTOCOL_VERSIONS[0];
-      return { jsonrpc: "2.0", id, result: { protocolVersion, capabilities: { tools: { listChanged: false } }, serverInfo: { name: "mcode-browser", version: String(BROWSER_AUTOMATION_CONTRACT_VERSION) } } };
+      return { jsonrpc: "2.0", id, result: { protocolVersion, capabilities: { tools: { listChanged: false } }, serverInfo: { name: "mcode-browser", version: String(BROWSER_AUTOMATION_CONTRACT_VERSION) }, instructions: MCODE_BROWSER_GUIDE } };
     }
     if (request.method === "tools/list") {
-      return { jsonrpc: "2.0", id, result: { tools: toolList(this.broker.availableOperations(claims)) } };
+      return { jsonrpc: "2.0", id, result: { tools: toolList(this.discoverableOperations(claims)) } };
     }
     if (request.method === "notifications/cancelled") {
       const cancelledId = request.params && typeof request.params === "object" && !Array.isArray(request.params)
@@ -489,6 +509,17 @@ export class BrowserAutomationMcpHandler {
         isError: !result.ok,
       },
     };
+  }
+
+  private discoverableOperations(
+    claims: BrowserAutomationCredentialClaims,
+  ): readonly BrowserAutomationOperation[] {
+    const negotiated = this.broker.availableOperations(claims);
+    const core = BROWSER_V2_CORE_OPERATIONS.filter((operation) => claims.allowedOperations.includes(operation));
+    return [
+      ...core,
+      ...negotiated.filter((operation) => !core.includes(operation as (typeof core)[number])),
+    ];
   }
 
   private evictOldestSequence(): void {

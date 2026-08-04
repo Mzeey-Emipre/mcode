@@ -140,6 +140,9 @@ describe("CodexProvider first turn on new session", () => {
       'mcp_servers.mcode-browser.url="http://127.0.0.1:19400/mcp"',
       'mcp_servers.mcode-browser.bearer_token_env_var="MCODE_BROWSER_MCP_TOKEN"',
     ]);
+    expect(server.options.developerInstructions).toContain("browser_inspect");
+    expect(server.options.developerInstructions).toContain("yield_to_user");
+    expect(server.options.developerInstructions).not.toContain("browser_status");
     expect(server.spawnedEnv?.MCODE_BROWSER_MCP_TOKEN).toMatch(/^[A-Za-z0-9_-]{40,}$/);
     expect(process.env.MCODE_BROWSER_MCP_TOKEN).toBeUndefined();
     await new Promise<void>((resolve) => setImmediate(resolve));

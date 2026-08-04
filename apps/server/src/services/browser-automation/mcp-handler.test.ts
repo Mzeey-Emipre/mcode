@@ -1,7 +1,10 @@
 import { createServer, type Server } from "http";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { BROWSER_AUTOMATION_OPERATIONS } from "@mcode/contracts";
-import type { BrowserAutomationBroker } from "./broker.js";
+import {
+  BROWSER_AUTOMATION_CONTRACT_VERSION,
+  BROWSER_AUTOMATION_OPERATIONS,
+} from "@mcode/contracts";
+import { BrowserAutomationBroker } from "./broker.js";
 import { BrowserAutomationCredentialRegistry } from "./credential-registry.js";
 import { BrowserAutomationMcpHandler } from "./mcp-handler.js";
 
@@ -14,6 +17,7 @@ describe("BrowserAutomationMcpHandler", () => {
   let handler: BrowserAutomationMcpHandler;
   let execute: ReturnType<typeof vi.fn>;
   let cancelFromProvider: ReturnType<typeof vi.fn>;
+  let availableOperations: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
     credentials = new BrowserAutomationCredentialRegistry();
@@ -46,12 +50,13 @@ describe("BrowserAutomationMcpHandler", () => {
       },
     }));
     cancelFromProvider = vi.fn(() => false);
+    availableOperations = vi.fn((claims: { allowedOperations: readonly string[] }) => claims.allowedOperations);
     handler = new BrowserAutomationMcpHandler({
       credentials,
       broker: {
         execute,
         cancelFromProvider,
-        availableOperations: (claims: { allowedOperations: readonly string[] }) => claims.allowedOperations,
+        availableOperations,
       } as unknown as BrowserAutomationBroker,
       now: () => 1_000,
       maxSequenceEntries: 1,
@@ -92,6 +97,100 @@ describe("BrowserAutomationMcpHandler", () => {
       "observationRef",
       "deadlineMs",
       "expression",
+    ]);
+  });
+
+  it.each(["claude", "codex", "cursor", "copilot"])(
+    "publishes the same Browser v2 contract and typed recovery for %s during transient unavailability",
+    async (providerId) => {
+      const issued = credentials.issue({
+        providerId,
+        providerSessionId: `${providerId}-provider-session`,
+        mcodeSessionId: `${providerId}-mcode-session`,
+        threadId: `${providerId}-thread`,
+        workspaceId: "workspace-a",
+        worktreeIdentity: "worktree-a",
+        permissionCapability: "interact",
+        allowedOperations: ["open", "inspect", "act", "tabs"],
+      });
+      handler = new BrowserAutomationMcpHandler({
+        credentials,
+        broker: new BrowserAutomationBroker({ now: () => 1_000 }),
+        now: () => 1_000,
+      });
+      const authorization = `Bearer ${issued.token}`;
+
+      const initialized = await post(JSON.stringify({
+        jsonrpc: "2.0",
+        id: `${providerId}-initialize`,
+        method: "initialize",
+        params: { protocolVersion: "2025-03-26" },
+      }), authorization);
+      const initialization = (await initialized.json() as any).result;
+      expect(initialization.serverInfo.version).toBe(String(BROWSER_AUTOMATION_CONTRACT_VERSION));
+      expect(initialization.instructions).toContain("browser_inspect");
+      expect(initialization.instructions).toContain("yield_to_user");
+      expect(initialization.instructions).not.toContain("browser_status");
+
+      const listed = await post(JSON.stringify({
+        jsonrpc: "2.0",
+        id: `${providerId}-list`,
+        method: "tools/list",
+        params: {},
+      }), authorization);
+      const tools = (await listed.json() as any).result.tools;
+      expect(tools.map((tool: any) => tool.name)).toEqual([
+        "browser_open",
+        "browser_inspect",
+        "browser_act",
+        "browser_tabs",
+      ]);
+      expect(tools.find((tool: any) => tool.name === "browser_inspect").description)
+        .toContain("canonical session-specific");
+      expect(tools.find((tool: any) => tool.name === "browser_act").description)
+        .toContain("observationRef");
+
+      const inspected = await post(JSON.stringify({
+        jsonrpc: "2.0",
+        id: `${providerId}-inspect`,
+        method: "tools/call",
+        params: { name: "browser_inspect" },
+      }), authorization);
+      const content = (await inspected.json() as any).result.content[0].text;
+      expect(JSON.parse(content)).toMatchObject({
+        code: "HOST_UNAVAILABLE",
+        stage: "transport",
+        effect: "none",
+        recovery: "wait",
+      });
+    },
+  );
+
+  it("advertises browser_evaluate only when live negotiation permits it", async () => {
+    const issued = credentials.issue({
+      providerId: "codex",
+      providerSessionId: "evaluate-provider-session",
+      mcodeSessionId: "evaluate-mcode-session",
+      threadId: "evaluate-thread",
+      workspaceId: "workspace-a",
+      worktreeIdentity: "worktree-a",
+      permissionCapability: "privileged",
+      allowedOperations: ["open", "inspect", "act", "tabs", "evaluate"],
+    });
+    const authorization = `Bearer ${issued.token}`;
+
+    availableOperations.mockReturnValue([]);
+    const unavailable = await post(JSON.stringify({ jsonrpc: "2.0", id: 21, method: "tools/list", params: {} }), authorization);
+    expect((await unavailable.json() as any).result.tools.map((tool: any) => tool.name)).not.toContain("browser_evaluate");
+
+    availableOperations.mockReturnValue(["evaluate"]);
+    const negotiated = await post(JSON.stringify({ jsonrpc: "2.0", id: 22, method: "tools/list", params: {} }), authorization);
+    expect((await negotiated.json() as any).result.tools.map((tool: any) => tool.name)).toEqual([
+      "browser_open",
+      "browser_inspect",
+      "browser_act",
+      "browser_tabs",
+      "browser_evaluate",
     ]);
   });
 

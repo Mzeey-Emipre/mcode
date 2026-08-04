@@ -111,6 +111,20 @@ describe("ClaudeProvider browser session lease lifecycle", () => {
     mockQuery.mockReturnValue({ close: vi.fn() });
   });
 
+  it("appends the shared Browser v2 guide to the native system prompt", async () => {
+    const lease = configuredLease();
+    const harness = makeProvider(lease);
+    (harness.provider as any).runtime.get = vi.fn(() => undefined);
+
+    await (harness.provider as any).sendTurn(request());
+
+    const append = mockQuery.mock.calls[0][0].options.systemPrompt.append;
+    expect(append).toContain("browser_inspect");
+    expect(append).toContain("yield_to_user");
+    expect(append).not.toContain("browser_status");
+    await (harness.provider as any).close(harness.spawnedState);
+  });
+
   it("closes a refreshed replacement with no active or pending lease", async () => {
     const lease = configuredLease();
     const oldGrant = lease.issue(scope)!;

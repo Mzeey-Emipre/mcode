@@ -289,6 +289,9 @@ describe("CopilotProvider bootstrap", () => {
     });
     expect(config.mcpServers["mcode-browser"].tools).toEqual(expect.arrayContaining(["browser_inspect", "browser_act"]));
     expect(config.mcpServers["mcode-browser"].tools).not.toContain("browser_evaluate");
+    expect(config.systemMessage.content).toContain("browser_inspect");
+    expect(config.systemMessage.content).toContain("yield_to_user");
+    expect(config.systemMessage.content).not.toContain("browser_status");
     expect(lease.status()).toEqual({ active: 1, pending: 0 });
     await provider.stopSession("mcode-browser-copilot");
     expect(lease.credentials.size()).toBe(0);

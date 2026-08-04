@@ -113,7 +113,7 @@ describe("internal thread-control MCP transport", () => {
       ],
     });
     await expect(client.callTool({ name: "mcode_browser_guide" })).resolves.toMatchObject({
-      structuredContent: { guide: expect.stringContaining("browser_status") },
+      structuredContent: { guide: expect.stringContaining("browser_inspect") },
       content: [{ type: "text", text: expect.not.stringContaining("thread_create_batch") }],
     });
     await expect(client.callTool({ name: "thread_control_guide" })).resolves.toMatchObject({
