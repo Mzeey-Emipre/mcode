@@ -103,6 +103,7 @@ import {
   browserAutomationTargetKey,
   useBrowserAutomationStore,
 } from "@/stores/browserAutomationStore";
+import { ViewportCoordinator } from "@/services/browser-automation/viewportCoordinator";
 
 function mockBridgeState(overrides: Record<string, unknown> = {}) {
   const state = {
@@ -516,6 +517,36 @@ describe("PreviewPanel: unavailable state", () => {
     await coordinator!.requestAgentResize({ width: 393, height: 852 });
 
     expect(await screen.findByTestId("browser-viewport-toolbar")).toBeInTheDocument();
+  });
+
+  it("shows the toolbar from live agent state before the stored viewport projection catches up", async () => {
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    render(<PreviewPanel threadId="thread-1" workspaceId="workspace-1" />);
+
+    const targetKey = JSON.stringify(["thread-1", "web-preview"]);
+    await waitFor(() => {
+      expect(useBrowserAutomationStore.getState().liveTargets.has(targetKey)).toBe(true);
+    });
+    const targetGeneration = useBrowserAutomationStore.getState().liveTargets.get(targetKey)!.revision;
+    const coordinator = new ViewportCoordinator({
+      apply: async (operation) => ({ status: "applied", applied: operation.requested }),
+      initial: { width: 1280, height: 800 },
+      targetGeneration,
+    });
+    act(() => {
+      useBrowserAutomationStore.getState().setViewportCoordinator(
+        "thread-1",
+        "web-preview",
+        coordinator,
+      );
+    });
+
+    await act(async () => {
+      await coordinator.requestAgentResize({ width: 393, height: 852 });
+    });
+
+    expect(screen.getByRole("separator", { name: "Resize viewport from top" })).toBeInTheDocument();
+    expect(screen.getByTestId("browser-viewport-toolbar")).toBeInTheDocument();
   });
 });
 

@@ -1561,6 +1561,25 @@ export interface PreviewPanelProps {
   readonly automationOnly?: boolean;
 }
 
+function useLiveViewportCoordinatorState(
+  coordinator: ViewportCoordinator | undefined,
+  projectedState: ViewportCoordinatorState | undefined,
+): ViewportCoordinatorState | undefined {
+  const [state, setState] = useState(projectedState);
+
+  useEffect(() => {
+    if (!coordinator) return;
+    setState(coordinator.snapshot());
+    return coordinator.subscribe(setState);
+  }, [coordinator]);
+
+  useEffect(() => {
+    if (!coordinator) setState(projectedState);
+  }, [coordinator, projectedState]);
+
+  return state;
+}
+
 /** Visible same-origin iframe surface used by the worktree-local web runtime. */
 function WebRuntimePreview({
   threadId,
@@ -1957,9 +1976,13 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
       ? PREVIEW_WEBVIEW_FALLBACK_TAB_ID
       : WEB_RUNTIME_PREVIEW_TAB_ID);
   const activeBrowserTargetKey = browserAutomationTargetKey(threadId, activeWebviewTabId);
-  const activeViewportState: ViewportCoordinatorState | undefined =
+  const projectedActiveViewportState: ViewportCoordinatorState | undefined =
     automationViewportStates.get(activeBrowserTargetKey);
   const activeViewportCoordinator = automationViewportCoordinators.get(activeBrowserTargetKey);
+  const activeViewportState = useLiveViewportCoordinatorState(
+    activeViewportCoordinator,
+    projectedActiveViewportState,
+  );
   const [viewportToolbarOpen, setViewportToolbarOpen] = useState(false);
   useEffect(() => {
     if (window.desktopBridge?.preview) return;
