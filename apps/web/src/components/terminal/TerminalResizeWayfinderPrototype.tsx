@@ -251,14 +251,28 @@ export function TerminalResizeWayfinderPrototype() {
         return;
       }
       const before = terminalSnapshot(instance.term);
-      let proposed = instance.fit.proposeDimensions();
-      if (!proposed || proposed.cols < MIN_SAFE_COLS || proposed.rows < MIN_SAFE_ROWS) {
-        proposed = { cols: estimated.cols, rows: estimated.rows };
-      }
-      const cols = clamp(proposed.cols, MIN_SAFE_COLS, MAX_COLS);
-      const rows = clamp(proposed.rows, MIN_SAFE_ROWS, MAX_ROWS);
-      instance.term.resize(cols, rows);
       const stable = stateRef.current.policy === "stable";
+      const proposed = instance.fit.proposeDimensions();
+      const proposedSafe =
+        proposed != null &&
+        proposed.cols >= MIN_SAFE_COLS &&
+        proposed.rows >= MIN_SAFE_ROWS;
+      let cols: number;
+      let rows: number;
+      if (stable && proposedSafe) {
+        // Stable policy uses xterm's real fit path once per animation frame.
+        instance.fit.fit();
+        cols = clamp(instance.term.cols, MIN_SAFE_COLS, MAX_COLS);
+        rows = clamp(instance.term.rows, MIN_SAFE_ROWS, MAX_ROWS);
+        if (cols !== instance.term.cols || rows !== instance.term.rows) {
+          instance.term.resize(cols, rows);
+        }
+      } else {
+        const dimensions = proposedSafe ? proposed : estimated;
+        cols = clamp(dimensions.cols, MIN_SAFE_COLS, MAX_COLS);
+        rows = clamp(dimensions.rows, MIN_SAFE_ROWS, MAX_ROWS);
+        instance.term.resize(cols, rows);
+      }
       if (stable && !before.followingTail) restoreAnchor(instance.term, before.linesFromBottom);
       else instance.term.scrollToBottom();
       const after = terminalSnapshot(instance.term);
