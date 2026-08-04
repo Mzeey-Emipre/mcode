@@ -85,4 +85,3 @@ export function markerCoverage(
   );
   return found / expectedMarkers.length;
 }
-

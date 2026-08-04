@@ -1,0 +1,19 @@
+{
+  "upstream": {
+    "repository": "https://github.com/ghostty-org/ghostty.git",
+    "commit": "ca56412bf28ae4de7e323d4b30b39844501be05b",
+    "version": "1.3.2-dev",
+    "apiStatus": "unstable and untagged"
+  },
+  "toolchain": {
+    "zigVersion": "0.16.0",
+    "downloadUrl": "https://ziglang.org/download/0.16.0/zig-x86_64-windows-0.16.0.zip",
+    "sha256": "68659eb5f1e4eb1437a722f1dd889c5a322c9954607f5edcf337bc3684a75a7e"
+  },
+  "build": {
+    "command": "zig build -Demit-lib-vt -Dtarget=wasm32-freestanding -Doptimize=ReleaseSmall",
+    "artifact": "ghostty-vt.wasm",
+    "artifactBytes": 812749,
+    "artifactSha256": "595d05148aa3a9388e1a572939d957f35a3bad9280a493ed317e10dfdf5ab472"
+  }
+}
