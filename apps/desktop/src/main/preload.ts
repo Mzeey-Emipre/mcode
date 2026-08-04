@@ -425,10 +425,11 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       list(threadId: string): Promise<unknown> {
         return ipcRenderer.invoke("preview:tabs.list", { threadId });
       },
-      create(threadId: string, activate = true): Promise<unknown> {
-        return ipcRenderer.invoke("preview:tabs.create", {
+      open(threadId: string, options?: { activate?: boolean; tabId?: string }): Promise<unknown> {
+        return ipcRenderer.invoke("preview:tabs.open", {
           threadId,
-          activate,
+          activate: options?.activate,
+          tabId: options?.tabId,
         });
       },
       activate(threadId: string, tabId: string): Promise<unknown> {

@@ -126,8 +126,8 @@ export function openUrlInPreview({
   const run = async (): Promise<void> => {
     const openInNewTab = newTab && (await shouldOpenInNewTab(threadId, preview.tabs));
 
-    if (openInNewTab && preview.tabs?.create) {
-      await preview.tabs.create(threadId, true);
+    if (openInNewTab && preview.tabs?.open) {
+      await preview.tabs.open(threadId, { activate: true });
     } else if (!openInNewTab) {
       setPreviewUrlForThread(threadId, url);
     }

@@ -612,7 +612,7 @@ describe("PreviewPanel: full panel state", () => {
     usePreviewDesignModeStore.setState({ modes: {} });
     usePreviewTabsStore.setState({ tabSetByScope: {}, liveChromeByScope: {}, persistentTabIdsByScope: {} });
     useDiffStore.setState({ previewUrlByThread: {} });
-    useBrowserAutomationStore.setState({ controllers: new Map() });
+    useBrowserAutomationStore.setState({ controllers: new Map(), pendingAgentOpens: new Map() });
     useProviderCatalogStore.getState().reset();
     mockUsePreviewBridge.mockReturnValue(mockBridgeState());
     mockUsePreviewTabs.mockReturnValue({
@@ -632,7 +632,7 @@ describe("PreviewPanel: full panel state", () => {
     usePreviewAnnotationStore.setState({ byThread: {}, drafts: {} });
     usePreviewDesignModeStore.setState({ modes: {} });
     usePreviewTabsStore.setState({ tabSetByScope: {}, liveChromeByScope: {}, persistentTabIdsByScope: {} });
-    useBrowserAutomationStore.setState({ controllers: new Map() });
+    useBrowserAutomationStore.setState({ controllers: new Map(), pendingAgentOpens: new Map() });
     useProviderCatalogStore.getState().reset();
     mockUsePreviewBridge.mockClear();
     mockUsePreviewTabs.mockClear();
@@ -668,6 +668,28 @@ describe("PreviewPanel: full panel state", () => {
     expect(overlay).toHaveClass("border-2", "border-primary");
     expect(overlay.style.backgroundImage).toContain("transparent 32px");
     expect(overlay.style.boxShadow).toContain("inset 0 0 40px");
+  });
+
+  it("shows the agent frame and cursor while the active page is still opening", () => {
+    useBrowserAutomationStore.setState({
+      pendingAgentOpens: new Map([
+        [
+          "pending-open",
+          {
+            workspaceId: "workspace-1",
+            threadId: "thread-1",
+            tabId: PREVIEW_WEBVIEW_FALLBACK_TAB_ID,
+            url: "https://example.com",
+            startedAt: 1,
+          },
+        ],
+      ]),
+    });
+
+    render(<PreviewPanel threadId="thread-1" workspaceId="workspace-1" />);
+
+    expect(screen.getByTestId("browser-automation-overlay")).toBeInTheDocument();
+    expect(screen.getByTestId("browser-automation-pointer")).toBeInTheDocument();
   });
 
   it("does not render the unavailable state when desktopBridge is present", () => {

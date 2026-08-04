@@ -53,8 +53,10 @@ import {
 import { useDiffStore } from "@/stores/diffStore";
 import {
   browserAutomationTargetKey,
+  findPendingBrowserAutomationOpen,
   useBrowserAutomationStore,
   type BrowserAutomationLiveTarget,
+  type BrowserAutomationPendingAgentOpen,
 } from "@/stores/browserAutomationStore";
 import { usePreviewDisplayTabSet, usePreviewTabsStore } from "@/stores/previewTabsStore";
 import { useThreadStore } from "@/stores/threadStore";
@@ -185,12 +187,24 @@ const OVERVIEW_ROW_CLASS =
 const EMPTY_BROWSER_LIFECYCLE_TABS: ReadonlyMap<string, BrowserSessionLifecycleTab> = new Map();
 const EMPTY_BROWSER_LIVE_TARGETS: ReadonlyMap<string, BrowserAutomationLiveTarget> = new Map();
 const EMPTY_BROWSER_CONTROLLERS: ReadonlyMap<string, BrowserAutomationControllerState> = new Map();
+const EMPTY_BROWSER_PENDING_OPENS: ReadonlyMap<string, BrowserAutomationPendingAgentOpen> = new Map();
 
 /** One Browser tab row joined from a live target and tab chrome. */
 export interface ThreadOverviewBrowserTab {
   readonly tab: BrowserTabInfo;
   readonly lifecycle?: BrowserSessionLifecycleTab;
   readonly controller: BrowserAutomationControllerState["controller"] | undefined;
+}
+
+function browserPendingTab(tab: BrowserTabInfo, pendingUrl: string | null): BrowserTabInfo {
+  if (!pendingUrl || !isEmptyPreviewTabUrl(tab.url)) return tab;
+  let title: string | null = null;
+  try {
+    title = new URL(pendingUrl).hostname || null;
+  } catch {
+    // The Browser host remains responsible for rejecting invalid navigation URLs.
+  }
+  return { ...tab, title, url: pendingUrl };
 }
 
 /**
@@ -205,6 +219,7 @@ export function getThreadOverviewBrowserTabs({
   lifecycleTabs,
   liveTargets,
   controllers,
+  pendingAgentOpens = EMPTY_BROWSER_PENDING_OPENS,
 }: {
   workspaceId: string;
   threadId: string;
@@ -212,6 +227,7 @@ export function getThreadOverviewBrowserTabs({
   lifecycleTabs: ReadonlyMap<string, BrowserSessionLifecycleTab>;
   liveTargets: ReadonlyMap<string, BrowserAutomationLiveTarget>;
   controllers: ReadonlyMap<string, BrowserAutomationControllerState>;
+  pendingAgentOpens?: ReadonlyMap<string, BrowserAutomationPendingAgentOpen>;
 }): ThreadOverviewBrowserTab[] {
   if (!tabSet || tabSet.threadId !== threadId) return [];
 
@@ -227,23 +243,34 @@ export function getThreadOverviewBrowserTabs({
   }
 
   return tabSet.tabs.flatMap((tab) => {
-    if (tab.threadId !== threadId || isEmptyPreviewTabUrl(tab.url)) return [];
+    if (tab.threadId !== threadId) return [];
     const targetKey = browserAutomationTargetKey(threadId, tab.id);
+    const pendingOpen = findPendingBrowserAutomationOpen(
+      pendingAgentOpens,
+      threadId,
+      tab.id,
+      workspaceId,
+    );
+    const pendingUrl = pendingOpen?.url?.trim() || null;
+    if (isEmptyPreviewTabUrl(tab.url) && !pendingUrl) return [];
     const liveTarget = liveTargets.get(targetKey);
     if (
-      !liveTarget ||
-      liveTarget.workspaceId !== workspaceId ||
-      liveTarget.threadId !== threadId ||
-      liveTarget.tabId !== tab.id
+      !pendingOpen &&
+      (!liveTarget ||
+        liveTarget.workspaceId !== workspaceId ||
+        liveTarget.threadId !== threadId ||
+        liveTarget.tabId !== tab.id)
     ) {
       return [];
     }
     const lifecycle = lifecycleByTarget.get(targetKey);
     const controller = lifecycle?.ownership === "released"
       ? undefined
-      : controllers.get(targetKey)?.controller ?? lifecycle?.target.controller?.controller;
+      : controllers.get(targetKey)?.controller ??
+        lifecycle?.target.controller?.controller ??
+        (pendingOpen ? "agent" : undefined);
     return [{
-      tab,
+      tab: browserPendingTab(tab, pendingUrl),
       ...(lifecycle ? { lifecycle } : {}),
       controller,
     }];
@@ -1763,6 +1790,9 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
   const browserControllers = useBrowserAutomationStore((state) =>
     open ? state.controllers : EMPTY_BROWSER_CONTROLLERS,
   );
+  const browserPendingAgentOpens = useBrowserAutomationStore((state) =>
+    open ? state.pendingAgentOpens : EMPTY_BROWSER_PENDING_OPENS,
+  );
   const browserHostStatus = useBrowserAutomationStore((state) => state.status);
   const browserHostRegistered = useBrowserAutomationStore((state) => state.registered);
   const browserTabs = useMemo(
@@ -1775,6 +1805,7 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
             lifecycleTabs: browserLifecycleTabs,
             liveTargets: browserLiveTargets,
             controllers: browserControllers,
+            pendingAgentOpens: browserPendingAgentOpens,
           })
         : [],
     [
@@ -1783,6 +1814,7 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
       browserHostStatus,
       browserLifecycleTabs,
       browserLiveTargets,
+      browserPendingAgentOpens,
       browserTabSet,
       open,
       thread.id,

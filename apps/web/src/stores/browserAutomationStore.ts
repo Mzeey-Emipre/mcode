@@ -37,6 +37,7 @@ export interface BrowserAutomationPendingAgentOpen {
   readonly workspaceId: string;
   readonly threadId: string;
   readonly tabId: string;
+  readonly url: string | null;
   readonly startedAt: number;
 }
 
@@ -117,6 +118,41 @@ export function browserAutomationLifecycleKey(
 /** Stable key for one broker request correlation pair. */
 export function browserAutomationRequestKey(requestId: string, sequence: number): string {
   return JSON.stringify([requestId, sequence]);
+}
+
+/** Returns the pending agent open for one exact Browser target, if any. */
+export function findPendingBrowserAutomationOpen(
+  pendingAgentOpens: ReadonlyMap<string, BrowserAutomationPendingAgentOpen>,
+  threadId: string,
+  tabId: string,
+  workspaceId?: string | null,
+): BrowserAutomationPendingAgentOpen | null {
+  for (const pending of pendingAgentOpens.values()) {
+    if (
+      pending.threadId === threadId &&
+      pending.tabId === tabId &&
+      (!workspaceId || pending.workspaceId === workspaceId)
+    ) return pending;
+  }
+  return null;
+}
+
+/** Whether an agent controls or is opening one exact Browser target. */
+export function isBrowserAutomationAgentControlled(
+  state: Pick<BrowserAutomationState, "controllers" | "pendingAgentOpens">,
+  threadId: string,
+  tabId: string,
+  workspaceId?: string | null,
+): boolean {
+  if (state.controllers.get(browserAutomationTargetKey(threadId, tabId))?.controller === "agent") {
+    return true;
+  }
+  return findPendingBrowserAutomationOpen(
+    state.pendingAgentOpens,
+    threadId,
+    tabId,
+    workspaceId,
+  ) !== null;
 }
 
 /** Resolve a controller event only when its tab id maps to one exact live target. */

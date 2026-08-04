@@ -286,8 +286,8 @@ export type PreviewTabIpcResult<T> =
   | { readonly ok: true; readonly data: T }
   | { readonly ok: false; readonly error: string };
 
-/** Mutation result for create. */
-export interface PreviewTabCreateData {
+/** Mutation result for opening a new or existing page. */
+export interface PreviewTabOpenData {
   readonly tabId: string;
   readonly tabs: BrowserTabSet;
 }
@@ -295,10 +295,10 @@ export interface PreviewTabCreateData {
 /** Tab control surface mounted under `desktopBridge.preview.tabs`. */
 interface PreviewTabsBridge {
   list(threadId: string): Promise<PreviewTabIpcResult<BrowserTabSet>>;
-  create(
+  open(
     threadId: string,
-    activate?: boolean,
-  ): Promise<PreviewTabIpcResult<PreviewTabCreateData>>;
+    options?: { readonly activate?: boolean; readonly tabId?: string },
+  ): Promise<PreviewTabIpcResult<PreviewTabOpenData>>;
   activate(
     threadId: string,
     tabId: string,

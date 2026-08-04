@@ -250,7 +250,7 @@ describe("BrowserAutomationHost", () => {
         },
         tabs: {
           list: listTabs,
-          create: createTab,
+          open: createTab,
           close: closeTab,
         },
       },
@@ -1457,7 +1457,7 @@ describe("BrowserAutomationHost", () => {
     });
     await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalled());
     expect(createTab).toHaveBeenCalledOnce();
-    expect(createTab).toHaveBeenCalledWith("thread-1", true);
+    expect(createTab).toHaveBeenCalledWith("thread-1", { activate: true });
     expect(usePreviewTabsStore.getState().tabSetByScope["thread-1"]?.tabs[0]?.url).toBe(
       "about:blank",
     );
@@ -1486,10 +1486,19 @@ describe("BrowserAutomationHost", () => {
     view.unmount();
   });
 
-  it("allows a cold browser target to attach after ten seconds but before its deadline", async () => {
+  it("registers a hidden agent tab immediately instead of waiting for its panel surface", async () => {
     vi.useFakeTimers();
     try {
       useBrowserAutomationStore.setState({ liveTargets: new Map() });
+      useDiffStore.getState().closeRightPanelTab("workspace-1", "thread-1", "preview");
+      listTabs.mockResolvedValue({
+        ok: true,
+        data: {
+          threadId: "thread-1",
+          activeTabId: "cold-tab",
+          tabs: [{ id: "cold-tab", threadId: "thread-1", url: null, title: null, faviconUrl: null, warm: false }],
+        },
+      });
       createTab.mockImplementation(async (threadId: string) => ({
         ok: true,
         data: {
@@ -1553,27 +1562,11 @@ describe("BrowserAutomationHost", () => {
         await Promise.resolve();
         await Promise.resolve();
       });
-      expect(execute).not.toHaveBeenCalled();
-      expect([...useBrowserAutomationStore.getState().pendingAgentOpens.values()]).toEqual([
-        expect.objectContaining({
-          workspaceId: "workspace-1",
-          threadId: "thread-1",
-          tabId: "cold-tab",
-        }),
-      ]);
-
-      await act(async () => {
-        vi.advanceTimersByTime(10_500);
-        useBrowserAutomationStore.getState().registerTarget(
-          "workspace-1",
-          "thread-1",
-          "cold-tab",
-        );
-        await Promise.resolve();
-        await Promise.resolve();
-      });
-
       expect(execute).toHaveBeenCalledOnce();
+      expect(createTab).toHaveBeenCalledWith("thread-1", {
+        activate: false,
+        tabId: "cold-tab",
+      });
       expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledWith(
         hostId,
         1,
@@ -1581,6 +1574,9 @@ describe("BrowserAutomationHost", () => {
         expect.objectContaining({ tabId: "cold-tab" }),
       );
       expect(useBrowserAutomationStore.getState().pendingAgentOpens).toHaveLength(0);
+      expect(usePreviewTabsStore.getState().tabSetByScope["thread-1"]?.tabs).toEqual([
+        expect.objectContaining({ id: "cold-tab", url: "https://example.com/" }),
+      ]);
       view.unmount();
     } finally {
       vi.useRealTimers();

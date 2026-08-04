@@ -31,9 +31,9 @@ function sameLiveChrome(a: PreviewLiveChrome | null, b: PreviewLiveChrome | null
 
 /** The minimal slice of the desktop bridge's tab surface this store drives. */
 interface PreviewTabsBridgeLike {
-  create(
+  open(
     threadId: string,
-    activate: boolean,
+    options?: { readonly activate?: boolean; readonly tabId?: string },
   ): Promise<{ ok: true; data: { tabId: string; tabs: BrowserTabSet } } | { ok: false; error: string }>;
   activate(
     threadId: string,
@@ -101,8 +101,12 @@ interface PreviewTabsState {
   /** Merge renderer-observed chrome into one tab's persisted renderer mirror. */
   updateTabChrome: (scopeId: string, tabId: string, chrome: PreviewLiveChrome) => void;
 
-  /** Create a new page and optionally suppress human-focused omnibox behavior. */
-  createPage: (scopeId: string, options?: { readonly focusOmnibox?: boolean; readonly activate?: boolean }) => Promise<string | null>;
+  /** Open a new page or continue an exact existing page by id. */
+  openPage: (scopeId: string, options?: {
+    readonly focusOmnibox?: boolean;
+    readonly activate?: boolean;
+    readonly tabId?: string;
+  }) => Promise<string | null>;
   /** Activate (switch to) a page within the scope's browser. */
   activatePage: (scopeId: string, tabId: string) => Promise<void>;
   /**
@@ -240,16 +244,20 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
       };
     }),
 
-  createPage: async (scopeId, options) => {
+  openPage: async (scopeId, options) => {
     const tabs = bridgeTabs();
     if (!tabs) return null;
-    const r = await tabs.create(scopeId, options?.activate ?? true);
+    const activate = options?.activate ?? true;
+    const r = await tabs.open(scopeId, {
+      activate,
+      ...(options?.tabId ? { tabId: options.tabId } : {}),
+    });
     if (r.ok) {
       get().setTabSet(scopeId, r.data.tabs);
       useBrowserAutomationStore.getState().refreshTarget(scopeId, r.data.tabId);
-      // A freshly-created page is empty; drop the cursor into the URL field so
-      // the user can type immediately (matches the panel-open shortcut's UX).
-      if (options?.focusOmnibox !== false && (options?.activate ?? true)) {
+      // A user-created page is empty; drop the cursor into the URL field so the
+      // user can type immediately (matches the panel-open shortcut's UX).
+      if (!options?.tabId && options?.focusOmnibox !== false && (options?.activate ?? true)) {
         usePreviewFocusStore.getState().requestOmniboxFocus();
       }
       return r.data.tabId;

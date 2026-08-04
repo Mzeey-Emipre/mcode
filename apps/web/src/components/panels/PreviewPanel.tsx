@@ -81,6 +81,7 @@ import type { MentionSuggestion } from "@/components/chat/useFileAutocomplete";
 import { useWorkspaceThread } from "@/stores/workspace-selectors";
 import {
   browserAutomationTargetKey,
+  isBrowserAutomationAgentControlled,
   interruptBrowserAutomationTarget,
   invalidateBrowserAutomationTargetObservation,
   selectWarmBrowserTabIds,
@@ -1965,6 +1966,7 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
   // activity rail (the page switcher), so this panel no longer renders a strip.
   const tabs = usePreviewTabs(threadId);
   const automationControllers = useBrowserAutomationStore((state) => state.controllers);
+  const pendingAgentOpens = useBrowserAutomationStore((state) => state.pendingAgentOpens);
   const automationActiveRequests = useBrowserAutomationStore((state) => state.activeRequests);
   const automationLiveTargets = useBrowserAutomationStore((state) => state.liveTargets);
   const automationViewports = useBrowserAutomationStore((state) => state.viewportByTarget);
@@ -2176,7 +2178,12 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
     ({ dispatch }) =>
       dispatch.target.threadId === threadId && dispatch.target.tabId === activeWebviewTabId,
   );
-  const agentControlsBrowser = activeAutomationController?.controller === "agent";
+  const agentControlsBrowser = isBrowserAutomationAgentControlled(
+    { controllers: automationControllers, pendingAgentOpens },
+    threadId,
+    activeWebviewTabId,
+    workspaceId,
+  );
   const automationPointer = activeAutomationController?.pointer ?? null;
   const activeWebviewRef = useCallback(
     (): PreviewWebviewHandle | null =>
@@ -3112,18 +3119,16 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
             <span className="sr-only" role="status" aria-live="polite">
               Agent controls Browser
             </span>
-            {automationPointer ? (
-              <MousePointer2
-                data-testid="browser-automation-pointer"
-                className="absolute size-5 fill-primary text-primary motion-reduce:transition-none"
-                style={{
-                  left: automationPointer.x,
-                  top: automationPointer.y,
-                  filter: "drop-shadow(0 0 5px color-mix(in oklab, var(--primary) 72%, transparent)) drop-shadow(0 2px 5px rgb(0 0 0 / 0.35))",
-                }}
-                aria-hidden
-              />
-            ) : null}
+            <MousePointer2
+              data-testid="browser-automation-pointer"
+              className="absolute size-5 fill-primary text-primary motion-reduce:transition-none"
+              style={{
+                left: automationPointer?.x ?? 24,
+                top: automationPointer?.y ?? 24,
+                filter: "drop-shadow(0 0 5px color-mix(in oklab, var(--primary) 72%, transparent)) drop-shadow(0 2px 5px rgb(0 0 0 / 0.35))",
+              }}
+              aria-hidden
+            />
           </div>
         ) : null}
         {visiblePageAnnotations.map((annotation) => {

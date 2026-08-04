@@ -21,7 +21,7 @@ import {
 export function usePreviewTabs(scopeId: string) {
   const tabSet = usePreviewTabSet(scopeId);
   const newTab = useCallback(
-    () => usePreviewTabsStore.getState().createPage(scopeId),
+    () => usePreviewTabsStore.getState().openPage(scopeId),
     [scopeId],
   );
   const activateTab = useCallback(

@@ -29,6 +29,7 @@ import {
 } from "@/stores/browserAutomationStore";
 import { useDiffStore } from "@/stores/diffStore";
 import { usePreviewTabsStore } from "@/stores/previewTabsStore";
+import { isEmptyPreviewTabUrl } from "@/lib/open-url-in-preview";
 import { BrowserAutomationRecorder } from "./browserAutomationRecorder";
 import {
   resolveSameOriginFrame,
@@ -1517,13 +1518,38 @@ export function BrowserAutomationHost() {
           tabId = webTabId;
         }
         if (!tabId) {
-          tabId = await usePreviewTabsStore.getState().createPage(request.threadId, {
+          const onlyExistingTab = existingSet?.tabs.length === 1 ? existingSet.tabs[0] : undefined;
+          const browserPanelWasVisible = previousPanel.visible &&
+            previousPanel.openTabs.includes("preview");
+          const existingTabId = agentOwnedOpen &&
+              !browserPanelWasVisible &&
+              onlyExistingTab &&
+              isEmptyPreviewTabUrl(onlyExistingTab.url) &&
+              !onlyExistingTab.title &&
+              !onlyExistingTab.faviconUrl
+            ? onlyExistingTab.id
+            : undefined;
+          tabId = await usePreviewTabsStore.getState().openPage(request.threadId, {
             activate: !agentOwnedOpen,
             focusOmnibox: ownsVisibleContext && request.args.activate && !agentOwnedOpen,
+            ...(existingTabId ? { tabId: existingTabId } : {}),
           });
+          if (!tabId && existingTabId) {
+            tabId = await usePreviewTabsStore.getState().openPage(request.threadId, {
+              activate: false,
+              focusOmnibox: false,
+            });
+          }
           if (tabId) {
             createdTabId = tabId;
             if (agentOpenKey) agentOpenTabsRef.current.set(agentOpenKey, tabId);
+            if (bridge) {
+              useBrowserAutomationStore.getState().registerTarget(
+                request.workspaceId,
+                request.threadId,
+                tabId,
+              );
+            }
           }
         }
         if (!tabId) throw new Error("Browser tab could not be created or restored");
@@ -1535,19 +1561,23 @@ export function BrowserAutomationHost() {
               workspaceId: request.workspaceId,
               threadId: request.threadId,
               tabId,
+              url: request.args.url ?? null,
               startedAt: Date.now(),
             },
           );
         }
         const selectedTab = existingSet?.tabs.find((tab) => tab.id === tabId);
-        const initialUrl = requestedWebUrl ?? selectedTab?.url ?? "about:blank";
-        if (!agentOwnedOpen && (!selectedTab?.url || requestedWebUrl)) {
+        const initialUrl = requestedWebUrl ??
+          (agentOwnedOpen ? request.args.url : undefined) ??
+          selectedTab?.url ??
+          "about:blank";
+        if (!selectedTab?.url || requestedWebUrl || request.args.url) {
           usePreviewTabsStore.getState().updateTabChrome(request.threadId, tabId, {
             title: null,
             url: initialUrl,
             favicon: null,
           });
-          diff.setPreviewUrlForThread(request.threadId, initialUrl);
+          if (!agentOwnedOpen) diff.setPreviewUrlForThread(request.threadId, initialUrl);
         }
         if (controller.signal.aborted) {
           throw controller.signal.reason;

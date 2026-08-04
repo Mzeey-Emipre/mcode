@@ -236,6 +236,7 @@ export function ensureTabView(
       const persisted = await validateResumeUrl(isAllowedPreviewUrl(url) ? url : null);
       // Always record on the owning tab so background tabs keep their own URL.
       tab.resumeUrl = persisted;
+      tab.backgroundOpenReserved = false;
       // Once a page navigates to a real URL it is no longer a blank new tab, so
       // it may participate in normal resume on future remounts.
       if (persisted) tab.userCreatedBlank = false;

@@ -530,7 +530,7 @@ describe("preview-browser", () => {
 
       // The user opens a new page on the active thread.
       const ev = fakeEvent(win);
-      await ipcHandlers["preview:tabs.create"]!(ev, {
+      await ipcHandlers["preview:tabs.open"]!(ev, {
         threadId: "thread-1",
         activate: true,
       });
@@ -1087,13 +1087,13 @@ describe("preview-browser", () => {
       expect(result.data.activeTabId).toBeTruthy();
     });
 
-    it("tabs.create appends a tab and activates it by default", async () => {
+    it("tabs.open creates a tab and activates it by default", async () => {
       const win = createWindow();
       await showPreview(win, { threadId: "thread-A" });
 
       const created = callTabs<{ tabId: string; tabs: { tabs: unknown[]; activeTabId: string } }>(
         win,
-        "preview:tabs.create",
+        "preview:tabs.open",
         { threadId: "thread-A" },
       );
 
@@ -1103,13 +1103,72 @@ describe("preview-browser", () => {
       expect(created.data.tabs.activeTabId).toBe(created.data.tabId);
     });
 
+    it("tabs.open continues an exact existing page for a hidden agent open", async () => {
+      const win = createWindow();
+      const initial = callTabs<{ tabs: { id: string }[] }>(win, "preview:tabs.list", {
+        threadId: "thread-A",
+      });
+      expect(initial.ok).toBe(true);
+      if (!initial.ok) return;
+
+      const opened = callTabs<{
+        tabId: string;
+        tabs: { tabs: { id: string; warm: boolean }[]; activeTabId: string };
+      }>(win, "preview:tabs.open", {
+        threadId: "thread-A",
+        activate: false,
+        tabId: initial.data.tabs[0]!.id,
+      });
+
+      expect(opened.ok).toBe(true);
+      if (!opened.ok) return;
+      expect(opened.data.tabId).toBe(initial.data.tabs[0]!.id);
+      expect(opened.data.tabs.tabs).toEqual([
+        expect.objectContaining({ id: opened.data.tabId, warm: true }),
+      ]);
+      expect(opened.data.tabs.activeTabId).toBe(opened.data.tabId);
+    });
+
+    it("tabs.open reserves an existing page from concurrent background opens", async () => {
+      const win = createWindow();
+      const initial = callTabs<{ tabs: { id: string }[] }>(win, "preview:tabs.list", {
+        threadId: "thread-A",
+      });
+      expect(initial.ok).toBe(true);
+      if (!initial.ok) return;
+
+      const first = callTabs<{ tabId: string }>(win, "preview:tabs.open", {
+        threadId: "thread-A",
+        activate: false,
+        tabId: initial.data.tabs[0]!.id,
+      });
+      const duplicate = callTabs(win, "preview:tabs.open", {
+        threadId: "thread-A",
+        activate: false,
+        tabId: initial.data.tabs[0]!.id,
+      });
+      const second = callTabs<{ tabId: string; tabs: { tabs: { id: string }[] } }>(
+        win,
+        "preview:tabs.open",
+        { threadId: "thread-A", activate: false },
+      );
+
+      expect(first.ok).toBe(true);
+      expect(duplicate).toEqual({ ok: false, error: "tab-reserved" });
+      expect(second.ok).toBe(true);
+      if (!first.ok || !second.ok) return;
+      expect(first.data.tabId).toBe(initial.data.tabs[0]!.id);
+      expect(second.data.tabId).not.toBe(first.data.tabId);
+      expect(second.data.tabs.tabs).toHaveLength(2);
+    });
+
     it("tabs.activate switches the active tab", async () => {
       const win = createWindow();
       await showPreview(win, { threadId: "thread-A" });
 
       const created = callTabs<{ tabId: string; tabs: { activeTabId: string } }>(
         win,
-        "preview:tabs.create",
+        "preview:tabs.open",
         { threadId: "thread-A", activate: false },
       );
       expect(created.ok).toBe(true);
@@ -1134,7 +1193,7 @@ describe("preview-browser", () => {
       const created = callTabs<{
         tabId: string;
         tabs: { activeTabId: string | null; tabs: { id: string; warm: boolean }[] };
-      }>(win, "preview:tabs.create", {
+      }>(win, "preview:tabs.open", {
         threadId: "thread-B",
         activate: false,
       });
@@ -1154,7 +1213,7 @@ describe("preview-browser", () => {
 
       const created = callTabs<{ tabId: string; tabs: { tabs: { id: string }[]; activeTabId: string } }>(
         win,
-        "preview:tabs.create",
+        "preview:tabs.open",
         { threadId: "thread-A" },
       );
       expect(created.ok).toBe(true);
@@ -1202,7 +1261,7 @@ describe("preview-browser", () => {
       await showPreview(win, { threadId: "thread-A", url: "https://one.test" });
       const firstView = createdViews[0]!;
 
-      const created = callTabs<{ tabId: string }>(win, "preview:tabs.create", {
+      const created = callTabs<{ tabId: string }>(win, "preview:tabs.open", {
         threadId: "thread-A",
       });
       expect(created.ok).toBe(true);
@@ -1225,7 +1284,7 @@ describe("preview-browser", () => {
     it("tab sets are isolated per thread (thread restore)", async () => {
       const win = createWindow();
       await showPreview(win, { threadId: "thread-A" });
-      const createdA = callTabs<{ tabId: string }>(win, "preview:tabs.create", {
+      const createdA = callTabs<{ tabId: string }>(win, "preview:tabs.open", {
         threadId: "thread-A",
       });
       expect(createdA.ok).toBe(true);
@@ -1257,7 +1316,7 @@ describe("preview-browser", () => {
       firstView.webContents.getURL.mockReturnValue("https://first.test");
 
       // Brand-new tab on the active thread - this creates its own view.
-      const created = callTabs<{ tabId: string }>(win, "preview:tabs.create", {
+      const created = callTabs<{ tabId: string }>(win, "preview:tabs.open", {
         threadId: "thread-A",
         activate: true,
       });
@@ -1290,7 +1349,7 @@ describe("preview-browser", () => {
       const win = createWindow();
       await showPreview(win, { threadId: "thread-A", url: "https://first.test" });
 
-      const created = callTabs<{ tabId: string }>(win, "preview:tabs.create", {
+      const created = callTabs<{ tabId: string }>(win, "preview:tabs.open", {
         threadId: "thread-A",
         activate: false,
       });
@@ -1328,7 +1387,7 @@ describe("preview-browser", () => {
       firstView.webContents.getURL.mockReturnValue("https://prev.test");
       win.webContents.send.mockClear();
 
-      const created = callTabs<{ tabId: string }>(win, "preview:tabs.create", {
+      const created = callTabs<{ tabId: string }>(win, "preview:tabs.open", {
         threadId: "thread-A",
         activate: true,
       });
@@ -1351,7 +1410,7 @@ describe("preview-browser", () => {
 
       // Create + activate a new blank tab.
       firstView.webContents.loadURL.mockClear();
-      const created = callTabs<{ tabId: string }>(win, "preview:tabs.create", {
+      const created = callTabs<{ tabId: string }>(win, "preview:tabs.open", {
         threadId: "thread-A",
         activate: true,
       });

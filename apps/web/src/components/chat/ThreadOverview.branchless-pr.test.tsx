@@ -327,6 +327,50 @@ describe("ThreadOverview branchless Create PR", () => {
     expect(screen.queryByTestId("thread-overview-browser")).not.toBeInTheDocument();
   });
 
+  it("shows a pending agent Browser page before target attachment finishes", () => {
+    useBrowserAutomationStore.setState({
+      registered: true,
+      status: "registered",
+      pendingAgentOpens: new Map([
+        [
+          "pending-open",
+          {
+            workspaceId: "ws-1",
+            threadId: "thread-1",
+            tabId: "agent-tab",
+            url: "https://example.test/search",
+            startedAt: 1,
+          },
+        ],
+      ]),
+    });
+    usePreviewTabsStore.setState({
+      tabSetByScope: {
+        "thread-1": {
+          threadId: "thread-1",
+          activeTabId: "agent-tab",
+          tabs: [{
+            id: "agent-tab",
+            threadId: "thread-1",
+            title: null,
+            url: null,
+            faviconUrl: null,
+            warm: true,
+            active: true,
+          }],
+        },
+      },
+      liveChromeByScope: {},
+      persistentTabIdsByScope: {},
+    });
+
+    render(<ThreadOverview thread={makeThread()} threadPaneWidth={1400} />);
+
+    const row = screen.getByRole("button", { name: /Browser, example\.test/ });
+    expect(row).toHaveAccessibleName(expect.stringContaining("agent controls"));
+    expect(screen.getByTestId("thread-overview-browser-agent-cursor")).toBeInTheDocument();
+  });
+
   it("filters empty and detached tabs while retaining released live tabs as user rows", () => {
     const releasedLifecycle = {
       workspaceId: "ws-1",

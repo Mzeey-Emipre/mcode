@@ -72,7 +72,7 @@ function mockTabList(activeUrl: string | null) {
 }
 
 describe("openUrlInPreview", () => {
-  let mockCreate: ReturnType<typeof vi.fn>;
+  let mockOpen: ReturnType<typeof vi.fn>;
   let mockNavigate: ReturnType<typeof vi.fn>;
   let showRightPanel: ReturnType<typeof vi.fn>;
   let setRightPanelTab: ReturnType<typeof vi.fn>;
@@ -80,7 +80,7 @@ describe("openUrlInPreview", () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
-    mockCreate = vi.fn().mockResolvedValue({ ok: true, data: { tabId: "tab-2", tabs: {} } });
+    mockOpen = vi.fn().mockResolvedValue({ ok: true, data: { tabId: "tab-2", tabs: {} } });
     mockNavigate = vi.fn().mockResolvedValue({ ok: true });
     showRightPanel = vi.fn();
     setRightPanelTab = vi.fn();
@@ -102,7 +102,7 @@ describe("openUrlInPreview", () => {
 
     window.desktopBridge = {
       preview: {
-        tabs: { create: mockCreate, list: mockTabList("https://example.com") },
+        tabs: { open: mockOpen, list: mockTabList("https://example.com") },
         navigate: mockNavigate,
       },
     } as unknown as typeof window.desktopBridge;
@@ -124,7 +124,7 @@ describe("openUrlInPreview", () => {
 
     expect(showRightPanel).toHaveBeenCalledWith("ws-1", "thread-1");
     expect(setRightPanelTab).toHaveBeenCalledWith("ws-1", "thread-1", "preview");
-    expect(mockCreate).toHaveBeenCalledWith("thread-1", true);
+    expect(mockOpen).toHaveBeenCalledWith("thread-1", { activate: true });
     expect(mockNavigate).toHaveBeenCalledWith("https://example.com/pr/1", "/tmp/workspace");
     expect(setPreviewUrlForThread).not.toHaveBeenCalled();
   });
@@ -132,7 +132,7 @@ describe("openUrlInPreview", () => {
   it("reuses an empty active tab instead of creating another", async () => {
     window.desktopBridge = {
       preview: {
-        tabs: { create: mockCreate, list: mockTabList(null) },
+        tabs: { open: mockOpen, list: mockTabList(null) },
         navigate: mockNavigate,
       },
     } as unknown as typeof window.desktopBridge;
@@ -140,7 +140,7 @@ describe("openUrlInPreview", () => {
     openUrlInPreview({ url: "https://example.com/pr/1", threadId: "thread-1" });
     await vi.runAllTimersAsync();
 
-    expect(mockCreate).not.toHaveBeenCalled();
+    expect(mockOpen).not.toHaveBeenCalled();
     expect(setPreviewUrlForThread).toHaveBeenCalledWith("thread-1", "https://example.com/pr/1");
     expect(mockNavigate).toHaveBeenCalledWith("https://example.com/pr/1", "/tmp/workspace");
   });
@@ -153,7 +153,7 @@ describe("openUrlInPreview", () => {
     });
     await vi.runAllTimersAsync();
 
-    expect(mockCreate).not.toHaveBeenCalled();
+    expect(mockOpen).not.toHaveBeenCalled();
     expect(setPreviewUrlForThread).toHaveBeenCalledWith("thread-1", "https://example.com");
     expect(mockNavigate).toHaveBeenCalled();
   });
@@ -173,7 +173,7 @@ describe("openUrlInPreview", () => {
     mockNavigate.mockRejectedValue(new Error("no-bounds"));
     window.desktopBridge = {
       preview: {
-        tabs: { create: mockCreate, list: mockTabList("https://example.com") },
+        tabs: { open: mockOpen, list: mockTabList("https://example.com") },
         navigate: mockNavigate,
       },
     } as unknown as typeof window.desktopBridge;
@@ -194,7 +194,7 @@ describe("openGitHubUrl", () => {
       openExternalUrl: mockOpenExternal,
       preview: {
         tabs: {
-          create: vi.fn().mockResolvedValue({ ok: true, data: {} }),
+          open: vi.fn().mockResolvedValue({ ok: true, data: {} }),
           list: mockTabList("https://github.com/org/repo/pull/1"),
         },
         navigate: vi.fn().mockResolvedValue({ ok: true }),
@@ -237,7 +237,7 @@ describe("openGitHubUrl", () => {
   });
 
   it("opens in preview on ctrl+click", async () => {
-    const mockCreate = vi.mocked(window.desktopBridge!.preview!.tabs!.create);
+    const mockOpen = vi.mocked(window.desktopBridge!.preview!.tabs!.open);
     openGitHubUrl(
       "https://github.com/org/repo/pull/1",
       "thread-1",
@@ -245,6 +245,6 @@ describe("openGitHubUrl", () => {
     );
     await vi.runAllTimersAsync();
     expect(mockOpenExternal).not.toHaveBeenCalled();
-    expect(mockCreate).toHaveBeenCalled();
+    expect(mockOpen).toHaveBeenCalled();
   });
 });

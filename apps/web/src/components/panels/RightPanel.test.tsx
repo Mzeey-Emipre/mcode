@@ -207,6 +207,7 @@ describe("RightPanel", () => {
             workspaceId: "workspace-1",
             threadId: "workspace-1",
             tabId: "agent-browser-tab",
+            url: "https://example.test",
             startedAt: 2,
           },
         ],

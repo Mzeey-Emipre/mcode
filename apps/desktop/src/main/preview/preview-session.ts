@@ -66,6 +66,8 @@ export interface TabState {
    * to a real URL.
    */
   userCreatedBlank?: boolean;
+  /** Prevents another background open from claiming this page before navigation settles. */
+  backgroundOpenReserved?: boolean;
 }
 
 /** Per-thread tab set: an ordered list plus the id of the mounted tab. */
