@@ -104,7 +104,7 @@ function parseJsonRpc(value: unknown): JsonRpcRequest | null {
 }
 
 const commonProperties = {
-  expectedControlEpoch: { type: "integer", minimum: 0, description: "Control epoch returned by browser_status." },
+  expectedControlEpoch: { type: "integer", minimum: 0, description: "Control epoch returned by browser_inspect." },
 } as const;
 
 const actTargetSchema = {

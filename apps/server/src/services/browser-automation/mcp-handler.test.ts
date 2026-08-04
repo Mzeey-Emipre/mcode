@@ -4,6 +4,7 @@ import {
   BROWSER_AUTOMATION_CONTRACT_VERSION,
   BROWSER_AUTOMATION_OPERATIONS,
 } from "@mcode/contracts";
+import { MCODE_BROWSER_GUIDE } from "@mcode/thread-orchestration";
 import { BrowserAutomationBroker } from "./broker.js";
 import { BrowserAutomationCredentialRegistry } from "./credential-registry.js";
 import { BrowserAutomationMcpHandler } from "./mcp-handler.js";
@@ -128,9 +129,7 @@ describe("BrowserAutomationMcpHandler", () => {
       }), authorization);
       const initialization = (await initialized.json() as any).result;
       expect(initialization.serverInfo.version).toBe(String(BROWSER_AUTOMATION_CONTRACT_VERSION));
-      expect(initialization.instructions).toContain("browser_inspect");
-      expect(initialization.instructions).toContain("yield_to_user");
-      expect(initialization.instructions).not.toContain("browser_status");
+      expect(initialization.instructions).toBe(MCODE_BROWSER_GUIDE);
 
       const listed = await post(JSON.stringify({
         jsonrpc: "2.0",
@@ -145,6 +144,7 @@ describe("BrowserAutomationMcpHandler", () => {
         "browser_act",
         "browser_tabs",
       ]);
+      expect(JSON.stringify(tools)).not.toContain("browser_status");
       expect(tools.find((tool: any) => tool.name === "browser_inspect").description)
         .toContain("canonical session-specific");
       expect(tools.find((tool: any) => tool.name === "browser_act").description)

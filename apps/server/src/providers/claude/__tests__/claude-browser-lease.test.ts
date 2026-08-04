@@ -1,5 +1,6 @@
 import "reflect-metadata";
 import { describe, expect, it, vi, beforeEach } from "vitest";
+import { MCODE_BROWSER_GUIDE } from "@mcode/thread-orchestration";
 import {
   BrowserAutomationSessionLease,
   type BrowserAutomationSessionLeaseScope,
@@ -122,6 +123,7 @@ describe("ClaudeProvider browser session lease lifecycle", () => {
     expect(append).toContain("browser_inspect");
     expect(append).toContain("yield_to_user");
     expect(append).not.toContain("browser_status");
+    expect(append).toContain(MCODE_BROWSER_GUIDE.trim());
     await (harness.provider as any).close(harness.spawnedState);
   });
 

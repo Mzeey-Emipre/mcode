@@ -24,6 +24,7 @@ describe("Mcode runtime instruction plan", () => {
     });
     expect(plan.text).toContain("mcode_internal_thread_control");
     expect(plan.text).toContain(MCODE_BROWSER_GUIDE.trim());
+    expect(plan.text).toContain("prefer semanticId from the latest observation");
     expect(plan.text).toContain("browser_open");
     expect(plan.text).toContain("browser_inspect");
     expect(plan.text).toContain("browser_act");

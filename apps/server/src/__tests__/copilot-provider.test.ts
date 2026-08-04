@@ -1,6 +1,7 @@
 import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
 import type { AgentEvent } from "@mcode/contracts";
+import { MCODE_BROWSER_GUIDE } from "@mcode/thread-orchestration";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -292,6 +293,7 @@ describe("CopilotProvider bootstrap", () => {
     expect(config.systemMessage.content).toContain("browser_inspect");
     expect(config.systemMessage.content).toContain("yield_to_user");
     expect(config.systemMessage.content).not.toContain("browser_status");
+    expect(config.systemMessage.content).toContain(MCODE_BROWSER_GUIDE.trim());
     expect(lease.status()).toEqual({ active: 1, pending: 0 });
     await provider.stopSession("mcode-browser-copilot");
     expect(lease.credentials.size()).toBe(0);
