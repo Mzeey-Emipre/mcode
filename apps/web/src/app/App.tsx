@@ -36,6 +36,7 @@ import type { SettingsSection } from "@/components/settings/settings-nav";
 import { TerminalPoolHost } from "@/components/terminal/TerminalPoolHost";
 import { TerminalPoolSlotProvider } from "@/components/terminal/TerminalPoolSlotContext";
 import { TerminalResizeWayfinderPrototype } from "@/components/terminal/TerminalResizeWayfinderPrototype";
+import { TerminalRendererHeadToHeadPrototype } from "@/components/terminal/TerminalRendererHeadToHeadPrototype";
 import { BrowserAutomationHost } from "@/components/panels/BrowserAutomationHost";
 import { DesktopTitleBar } from "@/components/desktop/DesktopTitleBar";
 import {
@@ -73,8 +74,16 @@ export function App() {
     new URLSearchParams(window.location.search).get("terminal-resize-prototype") ===
       "1";
 
+  const rendererHeadToHeadPrototypeActive =
+    window.location.pathname === "/prototype/renderer-head-to-head" ||
+    new URLSearchParams(window.location.search).get("renderer-head-to-head") === "1";
+
   if (terminalResizePrototypeActive) {
     return <TerminalResizeWayfinderPrototype />;
+  }
+
+  if (rendererHeadToHeadPrototypeActive) {
+    return <TerminalRendererHeadToHeadPrototype />;
   }
 
   const isDesktop = Boolean(window.desktopBridge?.window);
