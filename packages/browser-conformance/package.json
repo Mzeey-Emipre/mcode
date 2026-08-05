@@ -1,0 +1,21 @@
+{
+  "name": "@mcode/browser-conformance",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@mcode/contracts": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.17",
+    "typescript": "^5.8.0",
+    "vitest": "^4.1.0"
+  }
+}
