@@ -30,6 +30,7 @@
       },
       "devDependencies": {
         "@electron/fuses": "^2.1.1",
+        "@mcode/browser-conformance": "workspace:*",
         "@resvg/resvg-js": "^2.6.2",
         "@types/uuid": "^10.0.0",
         "@types/which": "^3.0.4",
@@ -128,6 +129,7 @@
       },
       "devDependencies": {
         "@eslint/js": "^10.0.1",
+        "@mcode/browser-conformance": "workspace:*",
         "@tailwindcss/vite": "^4.2.2",
         "@testing-library/jest-dom": "^6.9.1",
         "@testing-library/react": "^16.3.2",

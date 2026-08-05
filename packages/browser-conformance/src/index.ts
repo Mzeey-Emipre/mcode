@@ -86,6 +86,12 @@ export {
   serializeBrowserConformanceReplayBundle,
   writeBrowserConformanceReplayBundle,
 } from "./replay.js";
+export {
+  BROWSER_CONFORMANCE_SHARED_EXECUTOR_OPERATIONS,
+  createBrowserExecutorParityScenario,
+  runBrowserConformanceExecutorScenario,
+} from "./executor.js";
+export type { BrowserConformanceExecutorScenario } from "./executor.js";
 export type {
   BrowserConformanceReplayBundle,
   BrowserConformanceReplayBundleInput,
