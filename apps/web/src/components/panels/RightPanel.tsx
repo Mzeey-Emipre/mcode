@@ -244,14 +244,17 @@ export function RightPanel() {
     pendingAgentOpens,
   ]);
 
-  // Keep hidden agent activity background-only. Once the human can see an
-  // otherwise empty panel, project any recorded Browser page immediately,
-  // including a page published after the default screen was already visible.
+  // Keep idle Browser pages background-only when the panel has no retained
+  // tab. An explicit retained Preview tab is restored, while an empty panel
+  // projects only the page currently controlled by an agent.
   const previewIsOnlyOpenTab =
     tabInstances.length === 1 && tabInstances[0]?.type === "preview";
+  const shouldRevealAgentPage =
+    openTabs.length === 0 && activeAgentBrowserPageId !== null;
+  const shouldRestorePreviewTab = previewIsOnlyOpenTab && activeTab !== "preview";
   const revealExistingPreview =
     panelVisible &&
-    (openTabs.length === 0 || (previewIsOnlyOpenTab && activeTab !== "preview")) &&
+    (shouldRevealAgentPage || shouldRestorePreviewTab) &&
     (browserTabSet?.tabs.length ?? 0) > 0;
   const renderedTabInstances = revealExistingPreview
     ? [{ id: "singleton:preview", type: "preview" as const }]
@@ -325,10 +328,17 @@ export function RightPanel() {
     const next = previewActive && panelScopeId && activeWorkspaceId
       ? { scopeId: panelScopeId, workspaceId: activeWorkspaceId, lastUsedAt: Date.now() }
       : null;
-    setWarmPreviewScopes((previous) =>
-      reconcileWarmPreviewScopes(previous, next, busyPreviewScopeIds),
-    );
-  }, [activeWorkspaceId, busyPreviewScopeIds, panelScopeId, previewActive]);
+    setWarmPreviewScopes((previous) => {
+      const previousScopes =
+        !previewActive &&
+        browserTabSet === null &&
+        panelScopeId &&
+        !busyPreviewScopeIds.has(panelScopeId)
+        ? previous.filter((scope) => scope.scopeId !== panelScopeId)
+        : previous;
+      return reconcileWarmPreviewScopes(previousScopes, next, busyPreviewScopeIds);
+    });
+  }, [activeWorkspaceId, browserTabSet, busyPreviewScopeIds, panelScopeId, previewActive]);
 
   const isChangesActive = panelVisible && changesActive;
   const changesFresh = useChangesFreshness(
