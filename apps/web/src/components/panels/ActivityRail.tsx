@@ -741,7 +741,10 @@ export function ActivityRail({
       ref={railRef}
       data-testid="activity-rail"
       data-expanded={expanded ? "true" : "false"}
-      className="relative z-30 w-12 flex-none bg-background"
+      className={cn(
+        "relative z-30 flex-none bg-background transition-[width,margin-right] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:duration-0 motion-reduce:transition-none",
+        expanded ? "w-40 -mr-28" : "w-12",
+      )}
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
       onFocusCapture={onFocusCapture}
@@ -749,8 +752,8 @@ export function ActivityRail({
     >
       <div
         className={cn(
-          "absolute inset-y-0 left-0 flex w-12 flex-col items-stretch gap-0.5 overflow-hidden bg-background px-1.5 py-2 transition-[width] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:duration-0 motion-reduce:transition-none",
-          expanded && "w-40 border-r border-border/50",
+          "absolute inset-y-0 left-0 flex w-full flex-col items-stretch gap-0.5 overflow-hidden bg-background px-1.5 py-2",
+          expanded && "border-r border-border/50",
         )}
       >
       {/* Panel-level actions stay at the rail head so they remain the first tab
