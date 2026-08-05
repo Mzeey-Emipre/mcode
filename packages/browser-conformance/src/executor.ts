@@ -6,8 +6,14 @@ import {
   type BrowserConformanceNormalizedRun,
   type BrowserConformanceScenario,
   type BrowserConformanceSubject,
+  type BrowserConformanceScheduledEvent,
+  type BrowserConformanceCheckpoint,
 } from "./model.js";
-import { createBrowserConformanceResourceSnapshot } from "./cleanup.js";
+import {
+  checkBrowserConformanceCleanup,
+  createBrowserConformanceResourceSnapshot,
+  type BrowserConformanceCleanupComparison,
+} from "./cleanup.js";
 import { normalizeBrowserConformanceRun } from "./normalize.js";
 
 /** Shared-capability operations exercised by the web and Electron executors. */
@@ -30,21 +36,156 @@ export interface BrowserConformanceExecutorScenario {
   readonly expected: BrowserConformanceNormalizedRun;
 }
 
+/** Failure context supplied after the shared runner has drained and disposed a subject. */
+export interface BrowserConformanceExecutionFailure {
+  readonly error: unknown;
+  readonly run?: BrowserConformanceNormalizedRun;
+  readonly baseline: ReturnType<BrowserConformanceSubject["snapshotResources"]>;
+  readonly final: ReturnType<BrowserConformanceSubject["snapshotResources"]>;
+  readonly cleanup: BrowserConformanceCleanupComparison;
+}
+
+/** Hooks used by the shared scenario core without changing its failure semantics. */
+export interface BrowserConformanceExecutionOptions {
+  readonly onFailure?: (failure: BrowserConformanceExecutionFailure) => Promise<void> | void;
+}
+
+/** Executes one scenario on the canonical ordered timeline and enforces its cleanup contract. */
+export async function runBrowserConformanceScenarioCore(
+  scenario: BrowserConformanceScenario,
+  subject: BrowserConformanceSubject,
+  options: BrowserConformanceExecutionOptions = {},
+): Promise<BrowserConformanceNormalizedRun> {
+  const baseline = subject.snapshotResources();
+  let run: BrowserConformanceNormalizedRun | undefined;
+  let failure: unknown;
+  let final = baseline;
+  let cleanup: BrowserConformanceCleanupComparison = checkBrowserConformanceCleanup({ baseline }, baseline);
+
+  try {
+    run = await executeBrowserConformanceTimeline(scenario, subject);
+  } catch (error) {
+    failure = error;
+  }
+
+  try {
+    await subject.drainToQuiescence();
+  } catch (error) {
+    if (failure === undefined) failure = error;
+  }
+
+  try {
+    await subject.dispose();
+  } catch (error) {
+    if (failure === undefined) failure = error;
+  }
+
+  try {
+    final = subject.snapshotResources();
+    cleanup = checkBrowserConformanceCleanup(scenario.cleanup, final);
+    if (!cleanup.ok && failure === undefined) {
+      const resources = cleanup.violations.map((violation) => violation.resource).join(", ");
+      failure = new Error(`Browser conformance cleanup failed: ${resources}`);
+    }
+  } catch (error) {
+    if (failure === undefined) failure = error;
+  }
+
+  if (failure !== undefined) {
+    if (!run) {
+      try {
+        run = subject.snapshotOutcome();
+      } catch {
+        // A subject that cannot snapshot still preserves the original failure.
+      }
+    }
+    try {
+      await options.onFailure?.({ error: failure, ...(run ? { run } : {}), baseline, final, cleanup });
+    } catch {
+      // Failure reporting is observational and must never replace the scenario failure.
+    }
+    throw failure;
+  }
+
+  if (!run) run = subject.snapshotOutcome();
+  return run;
+}
+
 /** Runs one adapter-neutral scenario through a real runtime subject. */
 export async function runBrowserConformanceExecutorScenario(
   scenario: BrowserConformanceScenario,
   subject: BrowserConformanceSubject,
 ): Promise<BrowserConformanceNormalizedRun> {
-  try {
-    for (const event of scenario.schedule.events) subject.schedule(event);
-    for (let index = 0; index < scenario.commands.length; index += 1) {
-      await subject.advanceClock(index);
-      await subject.dispatch(scenario.commands[index]!);
+  return runBrowserConformanceScenarioCore(scenario, subject);
+}
+
+async function executeBrowserConformanceTimeline(
+  scenario: BrowserConformanceScenario,
+  subject: BrowserConformanceSubject,
+): Promise<BrowserConformanceNormalizedRun> {
+  // Command N runs before scheduled work at tick N (ordinal >= 0).
+  // That work therefore occurs after command N and before command N+1.
+  const events = [...scenario.schedule.events].sort(compareScheduledOrder);
+  const checkpoints = [...scenario.schedule.checkpoints].sort(compareScheduledOrder);
+  let eventIndex = 0;
+  let checkpointIndex = 0;
+  let currentTick = -1;
+  for (const event of scenario.schedule.events) subject.schedule(event);
+  for (let index = 0; index < scenario.commands.length; index += 1) {
+    await flushTimeline({ tick: index, ordinal: -1 });
+    await subject.dispatch(scenario.commands[index]!);
+  }
+  await flushTimeline({ tick: Math.max(currentTick, scenario.schedule.bounds.maxTick), ordinal: Number.MAX_SAFE_INTEGER });
+  return subject.snapshotOutcome();
+
+  async function flushTimeline(limit: { readonly tick: number; readonly ordinal: number }): Promise<void> {
+    while (eventIndex < events.length || checkpointIndex < checkpoints.length) {
+      const nextEvent = events[eventIndex];
+      const nextCheckpoint = checkpoints[checkpointIndex];
+      const next = !nextCheckpoint || (nextEvent && compareScheduledOrder(nextEvent, nextCheckpoint) <= 0)
+        ? nextEvent
+        : nextCheckpoint;
+      if (!next || compareOrders(next.order, limit) > 0) break;
+      if (next.order.tick > currentTick) {
+        await subject.advanceClock(next.order.tick);
+        currentTick = next.order.tick;
+      }
+      if (next === nextEvent) {
+        await subject.injectExternalEvent(nextEvent!);
+        eventIndex += 1;
+      } else {
+        assertCheckpoint(subject, nextCheckpoint!);
+        checkpointIndex += 1;
+      }
     }
-    await subject.drainToQuiescence();
-    return subject.snapshotOutcome();
-  } finally {
-    await subject.dispose();
+    if (limit.tick > currentTick) {
+      await subject.advanceClock(limit.tick);
+      currentTick = limit.tick;
+    }
+  }
+}
+
+function compareScheduledOrder(
+  left: BrowserConformanceScheduledEvent | BrowserConformanceCheckpoint,
+  right: BrowserConformanceScheduledEvent | BrowserConformanceCheckpoint,
+): number {
+  return compareOrders(left.order, right.order);
+}
+
+function compareOrders(
+  left: { readonly tick: number; readonly ordinal: number },
+  right: { readonly tick: number; readonly ordinal: number },
+): number {
+  return left.tick - right.tick || left.ordinal - right.ordinal;
+}
+
+function assertCheckpoint(subject: BrowserConformanceSubject, checkpoint: BrowserConformanceCheckpoint): void {
+  if (!checkpoint.expectedRevisions) return;
+  const actual = subject.snapshotOutcome().finalState.revisions;
+  for (const key of Object.keys(checkpoint.expectedRevisions) as Array<keyof typeof checkpoint.expectedRevisions>) {
+    if (actual[key] !== checkpoint.expectedRevisions[key]) {
+      throw new Error(`Browser conformance checkpoint failed: ${checkpoint.id}`);
+    }
   }
 }
 

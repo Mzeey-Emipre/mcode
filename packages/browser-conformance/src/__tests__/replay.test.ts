@@ -89,6 +89,17 @@ describe("Browser conformance replay bundles", () => {
     expect(new TextEncoder().encode(serialized).byteLength).toBeLessThanOrEqual(BROWSER_CONFORMANCE_REPLAY_MAX_BYTES);
   });
 
+  it("sanitizes URLs and credential-shaped text in the invariant label", () => {
+    const input = createReplayInput();
+    const bundle = createBrowserConformanceReplayBundle({
+      ...input,
+      failingInvariant: "see https://example.test/path?token=secret#fragment token=secret",
+    });
+    expect(bundle.failingInvariant).toContain("https://example.test/path");
+    expect(bundle.failingInvariant).not.toContain("token=secret");
+    expect(bundle.failingInvariant).not.toContain("#fragment");
+  });
+
   it("bounds generic sanitization and writes only below disposable verification", async () => {
     const sanitized = sanitizeBrowserConformanceValue({
       requestId: "dynamic",

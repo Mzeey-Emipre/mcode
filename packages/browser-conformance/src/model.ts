@@ -100,6 +100,8 @@ export const BROWSER_CONFORMANCE_EVENT_KINDS = [
   "timeout",
   "lost-response",
   "late-response",
+  "late-event",
+  "late-timer",
   "user-takeover",
   "navigation",
   "reload",

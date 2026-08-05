@@ -1,10 +1,12 @@
 import { EventEmitter } from "node:events";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { BROWSER_AUTOMATION_CONTRACT_VERSION, type BrowserAutomationHostDispatch, type BrowserAutomationResponse } from "@mcode/contracts";
+import { BROWSER_AUTOMATION_CONTRACT_VERSION, BrowserAutomationResponseSchema, type BrowserAutomationHostDispatch, type BrowserAutomationResponse } from "@mcode/contracts";
 import {
   createBrowserConformanceResourceSnapshot,
   normalizeBrowserConformanceRun,
-  runBrowserConformanceExecutorScenario,
+  runBrowserConformanceScenarioWithReplay,
   createBrowserExecutorParityScenario,
   type BrowserConformanceCommand,
   type BrowserConformanceNormalizedRun,
@@ -19,6 +21,8 @@ import {
   getBrowserAutomationRuntimeOperations,
 } from "../../../../web/src/services/browser-automation/browserSessionDriver";
 import { BrowserAutomationKernel } from "../browser-automation/kernel.js";
+
+const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../../");
 
 let currentWebContents: FakeWebContents;
 const rendererSender = new EventEmitter() as EventEmitter & { isDestroyed: () => boolean; send: ReturnType<typeof vi.fn> };
@@ -133,7 +137,9 @@ class ElectronExecutorSubject implements BrowserConformanceSubject {
       target: target(),
       request: { contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION, workspaceId: "workspace", threadId: "thread", providerSessionId: "session", providerInstanceId: "instance", requestId: `parity-${command.id}-${this.receipts.length}`, sequence: this.receipts.length, deadline: Date.now() + 10_000, expectedControlEpoch: 0, operation: command.operation, args },
     } as unknown as BrowserAutomationHostDispatch;
-    const result = await this.driver.execute(dispatch, new AbortController().signal);
+    const result = BrowserAutomationResponseSchema().parse(
+      await this.driver.execute(dispatch, new AbortController().signal),
+    );
     if (result.ok) {
       const candidate = result.result as { observationRef?: string; nextObservationRef?: string; finalObservation?: { observationRef?: string } };
       this.state.observationRef = candidate.nextObservationRef ?? candidate.finalObservation?.observationRef ?? candidate.observationRef ?? this.state.observationRef;
@@ -155,6 +161,16 @@ class ElectronExecutorSubject implements BrowserConformanceSubject {
 }
 
 describe("Electron Browser executor parity at BrowserSessionDriver", () => {
+  it("does not normalize malformed runtime output into a successful receipt", async () => {
+    const malformed = new BrowserSessionDriver({
+      web: { execute: async () => ({ ok: true, result: { operation: "inspect" } } as never) },
+      electron: { execute: async () => ({ ok: true, result: { operation: "inspect" } } as never) },
+      isElectron: () => false,
+    });
+    await expect(new ElectronExecutorSubject(malformed, new BrowserAutomationKernel()).dispatch({ id: "malformed", operation: "inspect" }))
+      .rejects.toThrow();
+  });
+
   let kernel: BrowserAutomationKernel;
   beforeEach(() => { currentWebContents = new FakeWebContents(); fakePreviewSession.tabsByThread.clear(); seedTarget(); kernel = new BrowserAutomationKernel(); });
   afterEach(() => { kernel.disposeWindow(fakeWindow.id); });
@@ -165,7 +181,10 @@ describe("Electron Browser executor parity at BrowserSessionDriver", () => {
     const driver = new BrowserSessionDriver({ web: electronAdapter, electron: electronAdapter, isElectron: () => true, supportedActOperations: ["click", "type", "navigate"], electronTabs: { list: async () => [target()], close: async () => undefined } });
     const parity = createBrowserExecutorParityScenario();
     expect(getBrowserAutomationRuntimeOperations("electron")).toEqual(expect.arrayContaining([...parity.operations]));
-    const run = await runBrowserConformanceExecutorScenario(parity.scenario, new ElectronExecutorSubject(driver, kernel));
+    const run = await runBrowserConformanceScenarioWithReplay(parity.scenario, new ElectronExecutorSubject(driver, kernel), {
+      workspaceRoot,
+      failingInvariant: "electron executor parity remains canonical",
+    });
     expect(run).toEqual(parity.expected);
     expect(currentWebContents.debugger.commands.some((entry) => entry.method === "Input.dispatchMouseEvent")).toBe(true);
     expect(currentWebContents.debugger.commands.some((entry) => entry.method === "Input.insertText")).toBe(true);

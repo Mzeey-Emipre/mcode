@@ -1,12 +1,15 @@
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
-import type {
-  BrowserAutomationHostDispatch,
+import {
+  BrowserAutomationResponseSchema,
+  BROWSER_AUTOMATION_CONTRACT_VERSION,
+  type BrowserAutomationHostDispatch,
 } from "@mcode/contracts";
-import { BROWSER_AUTOMATION_CONTRACT_VERSION } from "@mcode/contracts";
 import {
   createBrowserConformanceResourceSnapshot,
   normalizeBrowserConformanceRun,
-  runBrowserConformanceExecutorScenario,
+  runBrowserConformanceScenarioWithReplay,
   createBrowserExecutorParityScenario,
   type BrowserConformanceCommand,
   type BrowserConformanceNormalizedRun,
@@ -22,6 +25,8 @@ import {
 } from "./browserSessionDriver";
 import { WebBrowserSessionAdapter } from "./webBrowserSessionAdapter";
 import { executeWebBrowserDispatch } from "../../components/panels/browserAutomationWebExecutor";
+
+const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../../");
 
 vi.mock("../../components/panels/web-browser-automation/capture", () => ({
   captureVisibleWebScreenshot: vi.fn(async () => ({
@@ -84,7 +89,9 @@ class WebExecutorSubject implements BrowserConformanceSubject {
         args,
       },
     } as unknown as BrowserAutomationHostDispatch;
-    const result = await this.driver.execute(dispatch, new AbortController().signal);
+    const result = BrowserAutomationResponseSchema().parse(
+      await this.driver.execute(dispatch, new AbortController().signal),
+    );
     if (result.ok) {
       const candidate = result.result as { observationRef?: string; nextObservationRef?: string; finalObservation?: { observationRef?: string } };
       this.state.observationRef = candidate.nextObservationRef ?? candidate.finalObservation?.observationRef ?? candidate.observationRef ?? this.state.observationRef;
@@ -133,6 +140,16 @@ class WebExecutorSubject implements BrowserConformanceSubject {
 }
 
 describe("shared Browser executor parity at BrowserSessionDriver", () => {
+  it("does not normalize malformed runtime output into a successful receipt", async () => {
+    const malformed = new BrowserSessionDriver({
+      web: { execute: async () => ({ ok: true, result: { operation: "inspect" } } as never) },
+      electron: { execute: async () => ({ ok: true, result: { operation: "inspect" } } as never) },
+      isElectron: () => false,
+    });
+    await expect(new WebExecutorSubject(malformed).dispatch({ id: "malformed", operation: "inspect" }))
+      .rejects.toThrow();
+  });
+
   it("proves the web descriptor and compares the real DOM-backed executor with canonical outcomes", async () => {
     document.body.innerHTML = `<iframe data-thread-id="thread" data-tab-id="tab" src="about:blank"></iframe><button id="save">Save</button><input id="name" />`;
     const iframe = document.querySelector<HTMLIFrameElement>("iframe")!;
@@ -166,7 +183,10 @@ describe("shared Browser executor parity at BrowserSessionDriver", () => {
     const parity = createBrowserExecutorParityScenario();
     expect(descriptor).toEqual(expect.arrayContaining([...parity.operations]));
     expect(getBrowserAutomationRuntimeOperations("electron")).toEqual(expect.arrayContaining([...parity.operations]));
-    const run = await runBrowserConformanceExecutorScenario(parity.scenario, new WebExecutorSubject(driver));
+    const run = await runBrowserConformanceScenarioWithReplay(parity.scenario, new WebExecutorSubject(driver), {
+      workspaceRoot,
+      failingInvariant: "web executor parity remains canonical",
+    });
     expect(clicks).toBe(2);
     expect(input.value).toBe("Mcode");
     expect(run).toEqual(parity.expected);

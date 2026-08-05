@@ -96,7 +96,7 @@ export function createBrowserConformanceReplayBundle(
         ? { comparison: sanitizeBrowserConformanceValue(input.cleanup.comparison) as unknown as BrowserConformanceCleanupComparison }
         : {}),
     },
-    failingInvariant: sanitizeLabel(input.failingInvariant),
+    failingInvariant: sanitizeInvariant(input.failingInvariant),
     ...(input.injectedFault
       ? {
           injectedFault: {
@@ -261,6 +261,14 @@ function sanitizeString(value: string, key: string | undefined): string {
 
 function sanitizeLabel(value: string): string {
   return value.replace(/[^A-Za-z0-9_.:-]+/g, "_").slice(0, 128) || "unknown";
+}
+
+function sanitizeInvariant(value: string): string {
+  return value
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\b(?:https?|wss?):\/\/[^\s,;]+/gi, (location) => sanitizeString(location, "url"))
+    .replace(/\b(password|token|secret|authorization|cookie|credential|api[_-]?key)\b\s*[:=]\s*[^,;\s]+/gi, "$1=[REDACTED]")
+    .slice(0, 256) || "unknown invariant";
 }
 
 function safeFileName(value: string): string {

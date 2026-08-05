@@ -89,12 +89,34 @@ export {
 export {
   BROWSER_CONFORMANCE_SHARED_EXECUTOR_OPERATIONS,
   createBrowserExecutorParityScenario,
+  runBrowserConformanceScenarioCore,
   runBrowserConformanceExecutorScenario,
 } from "./executor.js";
-export type { BrowserConformanceExecutorScenario } from "./executor.js";
+export type {
+  BrowserConformanceExecutionFailure,
+  BrowserConformanceExecutionOptions,
+  BrowserConformanceExecutorScenario,
+} from "./executor.js";
+export {
+  runBrowserConformanceScenarioWithReplay,
+} from "./runner.js";
+export type { BrowserConformanceReplayRunnerOptions } from "./runner.js";
 export type {
   BrowserConformanceReplayBundle,
   BrowserConformanceReplayBundleInput,
   BrowserConformanceReplayCommand,
   BrowserConformanceReplayEvent,
 } from "./replay.js";
+export {
+  BROWSER_CONFORMANCE_HIGH_RISK_REVISION_COMBINATIONS,
+  BROWSER_CONFORMANCE_RACE_CATALOGUE,
+  createBrowserConformanceRaceSchedules,
+  createBrowserConformanceRevisionRaceSchedules,
+} from "./races.js";
+export type {
+  BrowserConformanceRaceCase,
+  BrowserConformanceRaceFamily,
+  BrowserConformanceRevisionRaceSchedule,
+  BrowserConformanceRevisionRaceSchedules,
+  BrowserConformanceRevisionRaceScheduleOptions,
+} from "./races.js";
