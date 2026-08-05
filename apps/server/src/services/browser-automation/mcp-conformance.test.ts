@@ -9,15 +9,48 @@ import {
   type BrowserAutomationResponse,
 } from "@mcode/contracts";
 import {
+  BROWSER_CONFORMANCE_RACE_CATALOGUE,
+  BrowserConformanceFaultController,
   createBrowserConformanceScenario,
   normalizeBrowserConformanceRun,
   createBrowserConformanceResourceSnapshot,
+  type BrowserConformanceEventKind,
 } from "@mcode/browser-conformance";
 import { BrowserAutomationBroker } from "./broker.js";
 import { BrowserAutomationCredentialRegistry } from "./credential-registry.js";
 import { BrowserAutomationMcpHandler } from "./mcp-handler.js";
 
 const socket = { name: "conformance-host" } as never;
+
+const MCP_OWNED_RACE_IDS = ["cleanup-late-event", "cleanup-disconnect"] as const;
+
+function mcpRaceLabel(): string {
+  return MCP_OWNED_RACE_IDS.map((id) => {
+    const race = BROWSER_CONFORMANCE_RACE_CATALOGUE.find((candidate) => candidate.id === id);
+    if (!race) throw new Error(`Missing Browser conformance race catalogue entry: ${id}`);
+    return `${race.id} [${race.events.join(", ")}]`;
+  }).join(" + ");
+}
+
+function mcpRaceDriver(): {
+  event: (kind: BrowserConformanceEventKind) => void;
+  assertComplete: () => void;
+} {
+  const remaining = new Map<BrowserConformanceEventKind, number>();
+  for (const id of MCP_OWNED_RACE_IDS) {
+    const race = BROWSER_CONFORMANCE_RACE_CATALOGUE.find((candidate) => candidate.id === id);
+    if (!race) throw new Error(`Missing Browser conformance race catalogue entry: ${id}`);
+    for (const event of race.events) remaining.set(event, (remaining.get(event) ?? 0) + 1);
+  }
+  return {
+    event: (kind) => {
+      const count = remaining.get(kind) ?? 0;
+      expect(count, `unexpected ${kind} event for MCP conformance`).toBeGreaterThan(0);
+      remaining.set(kind, count - 1);
+    },
+    assertComplete: () => expect([...remaining.entries()].filter(([, count]) => count > 0)).toEqual([]),
+  };
+}
 
 function registration(): BrowserAutomationHostRegistration {
   return {
@@ -66,7 +99,20 @@ describe("authenticated Browser MCP conformance", () => {
     if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));
   });
 
-  it("crosses MCP transport into broker, normalizes success, and rejects late host activity", async () => {
+  it("covers the MCP-owned named race catalogue subset explicitly", () => {
+    const expected = [...MCP_OWNED_RACE_IDS];
+    const expectedSet = new Set<string>(expected);
+    expect(expectedSet.size).toBe(expected.length);
+    expect(BROWSER_CONFORMANCE_RACE_CATALOGUE.filter(({ id }) => expectedSet.has(id)).map(({ id }) => id))
+      .toEqual(expected);
+  });
+
+  it("crosses MCP transport into broker, normalizes success, and rejects late host activity for " + mcpRaceLabel(), async () => {
+    const race = mcpRaceDriver();
+    const transportFaults = new BrowserConformanceFaultController();
+    const targetFaults = new BrowserConformanceFaultController();
+    const receiptFaults = new BrowserConformanceFaultController();
+    const cleanupFaults = new BrowserConformanceFaultController();
     let dispatch: BrowserAutomationHostDispatch | undefined;
     const dispatchResolvers: Array<(value: BrowserAutomationHostDispatch) => void> = [];
     const nextDispatch = (): Promise<BrowserAutomationHostDispatch> => new Promise((resolve) => {
@@ -77,6 +123,7 @@ describe("authenticated Browser MCP conformance", () => {
     broker = new BrowserAutomationBroker({
       now: () => 1_000,
       send: (_socket, channel, data) => {
+        transportFaults.hit("host-transport");
         if (channel === "browserAutomation.request") {
           dispatch = (data as { dispatch: BrowserAutomationHostDispatch }).dispatch;
           dispatchResolvers.shift()?.(dispatch);
@@ -91,6 +138,7 @@ describe("authenticated Browser MCP conformance", () => {
       allowedWorkspaceIds: ["workspace-conformance"],
     });
     generation = registered.generation;
+    targetFaults.hit("target-registration");
     broker.updateTargets(socket, "host-conformance", generation, [target(generation)]);
     const issued = credentials.issue({
       providerId: "codex",
@@ -153,6 +201,7 @@ describe("authenticated Browser MCP conformance", () => {
       },
     });
     expect(response.ok).toBe(true);
+    receiptFaults.hit("receipt-delivery");
     broker.respond(socket, "host-conformance", generation, response, dispatch!.target);
     const payload = await (await call).json() as { result: { content: [{ text: string }] } };
     const observed = JSON.parse(payload.result.content[0].text) as { operation: string; available: boolean };
@@ -233,6 +282,7 @@ describe("authenticated Browser MCP conformance", () => {
       },
     });
     expect(actResponse.ok).toBe(true);
+    receiptFaults.hit("receipt-delivery");
     broker.respond(socket, "host-conformance", generation, actResponse, actDispatch.target);
     const actPayload = await (await actCall).json() as { result: { content: [{ text: string }] } };
     const actObserved = JSON.parse(actPayload.result.content[0].text) as {
@@ -265,13 +315,29 @@ describe("authenticated Browser MCP conformance", () => {
     expect(actNormalized.receipts.map((receipt) => receipt.status)).toEqual(["applied", "interrupted", "skipped"]);
     expect(actNormalized.receipts.some((receipt) => receipt.status === "unknown" || receipt.operation === "unknown")).toBe(false);
 
+    race.event("host-disconnect");
+    cleanupFaults.hit("cleanup");
     broker.disconnect(socket);
     expect(broker.status()).toEqual({ hosts: 0, pending: 0, assignments: 0 });
     expect(broker.reliabilityStatus().succeeded).toBe(baselineReliability.succeeded + 2);
     expect(() => broker.respond(socket, "host-conformance", generation, response, dispatch!.target))
       .toThrow("stale or invalid");
+    race.event("late-event");
+    race.assertComplete();
     expect(broker.status()).toEqual({ hosts: 0, pending: 0, assignments: 0 });
     expect(credentials.revoke(issued.credentialId)).toBe(true);
     expect(credentials.size()).toBe(0);
+    expect(transportFaults.callsFor("host-transport")).toBe(2);
+    expect(targetFaults.callsFor("target-registration")).toBe(1);
+    expect(receiptFaults.callsFor("receipt-delivery")).toBe(2);
+    expect(cleanupFaults.callsFor("cleanup")).toBe(1);
+    transportFaults.dispose();
+    targetFaults.dispose();
+    receiptFaults.dispose();
+    cleanupFaults.dispose();
+    expect(transportFaults.isDisposed).toBe(true);
+    expect(targetFaults.isDisposed).toBe(true);
+    expect(receiptFaults.isDisposed).toBe(true);
+    expect(cleanupFaults.isDisposed).toBe(true);
   });
 });
