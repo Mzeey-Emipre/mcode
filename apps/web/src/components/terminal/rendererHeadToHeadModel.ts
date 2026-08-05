@@ -33,6 +33,89 @@ export const TERMINAL_RENDERER_WORKLOAD_LIMITS = Object.freeze({
   maxProcessLifetimeMs: 3_000,
 });
 
+/** Candidate-specific timing summary for one bounded comparison run. */
+export interface RendererTimingSummary {
+  readonly p50Ms: number | null;
+  readonly p95Ms: number | null;
+  readonly p99Ms: number | null;
+  readonly maxMs: number | null;
+}
+
+/** Candidate-specific facts retained by the throwaway comparison route. */
+export interface RendererRunMetrics {
+  readonly parseRender: RendererTimingSummary;
+  readonly paintBoundary: RendererTimingSummary;
+  readonly throughputBytesPerSecond: number | null;
+  readonly resizeToStablePaintMs: number | null;
+  readonly switchRestoreMs: number | null;
+  readonly markerCoverage: number;
+  readonly droppedFrames: number;
+  readonly lostInputEvents: number;
+  readonly longFrameCount: number;
+  readonly failures: readonly string[];
+}
+
+/** A single frame input shared by both renderer candidates. */
+export interface RendererInputFrame {
+  readonly seq: number;
+  readonly bytes: number;
+  readonly digest: string;
+}
+
+/** Capability status surfaced as a matrix rather than inferred from speed. */
+export type RendererCapabilityStatus = "pass" | "fail" | "not-measured";
+
+/** One row in the renderer capability matrix. */
+export interface RendererCapabilityRow {
+  readonly capability: string;
+  readonly xterm: RendererCapabilityStatus;
+  readonly ghostty: RendererCapabilityStatus;
+  readonly note: string;
+}
+
+/** Explicit interactive and platform capability questions for this prototype. */
+export const RENDERER_CAPABILITY_MATRIX: readonly RendererCapabilityRow[] = Object.freeze([
+  { capability: "IME / dead keys", xterm: "pass", ghostty: "fail", note: "xterm owns a native input textarea; Canvas lacks production IME/dead-key composition." },
+  { capability: "Mouse protocol", xterm: "pass", ghostty: "fail", note: "Ghostty has no production mouse-reporting or Canvas hit-test path." },
+  { capability: "Selection / clipboard", xterm: "pass", ghostty: "fail", note: "Ghostty exposes an explicit text projection copy action only, not native selection parity." },
+  { capability: "Accessible text projection", xterm: "pass", ghostty: "pass", note: "Both candidates expose terminal text for assistive technology." },
+  { capability: "Unicode / CJK / combining", xterm: "pass", ghostty: "pass", note: "Covered by the jagged-reflow corpus workload." },
+  { capability: "Alternate screen / fullscreen", xterm: "not-measured", ghostty: "not-measured", note: "No bounded corpus workload currently asserts alternate-screen state." },
+  { capability: "Links", xterm: "not-measured", ghostty: "not-measured", note: "Link provider behavior is outside this parser-only comparison." },
+  { capability: "Truecolor / SGR", xterm: "pass", ghostty: "pass", note: "ANSI color output is exercised by shaky-live-resizing." },
+  { capability: "Bracketed paste", xterm: "not-measured", ghostty: "not-measured", note: "Requires an explicit paste event fixture and user gesture." },
+  { capability: "Memory", xterm: "not-measured", ghostty: "not-measured", note: "Browser heap isolation was not credible in this route." },
+]);
+
+/** Return a percentile using nearest-rank interpolation over bounded samples. */
+export function rendererPercentile(samples: readonly number[], percentile: number): number | null {
+  if (samples.length === 0) return null;
+  const ordered = [...samples].sort((left, right) => left - right);
+  const rank = Math.min(ordered.length - 1, Math.max(0, Math.ceil(percentile * ordered.length) - 1));
+  return ordered[rank] ?? null;
+}
+
+/** Summarize bounded timing samples for the report and raw JSON export. */
+export function summarizeRendererTimings(samples: readonly number[]): RendererTimingSummary {
+  return {
+    p50Ms: rendererPercentile(samples, 0.5),
+    p95Ms: rendererPercentile(samples, 0.95),
+    p99Ms: rendererPercentile(samples, 0.99),
+    maxMs: samples.length === 0 ? null : Math.max(...samples),
+  };
+}
+
+/** Compare the exact frame sequence, byte lengths, and digests dispatched to two candidates. */
+export function compareRendererInputFrames(
+  left: readonly RendererInputFrame[],
+  right: readonly RendererInputFrame[],
+): boolean {
+  return left.length === right.length && left.every((frame, index) => {
+    const other = right[index];
+    return other?.seq === frame.seq && other.bytes === frame.bytes && other.digest === frame.digest;
+  });
+}
+
 /** Viewport facts needed to preserve a user’s position through a resize. */
 export interface RendererViewportAnchor {
   /** Number of rows between the viewport tail and the buffer tail. */

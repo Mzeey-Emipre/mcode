@@ -27,6 +27,7 @@
     "state:reset": "bun scripts/state-reset.mjs",
     "db:info": "bun scripts/db-info.mjs",
     "agent:up": "bun scripts/agent/agent-up.mjs",
+    "prototype:terminal-renderers": "bun scripts/prototype-terminal-renderers.mjs",
     "agent:down": "bun scripts/agent/agent-down.mjs",
     "agent:reset": "bun scripts/agent/agent-reset.mjs",
     "sync:cursor-models": "bun apps/server/scripts/sync-cursor-models-snapshot.ts",

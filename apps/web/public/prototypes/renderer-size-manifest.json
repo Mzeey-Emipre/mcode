@@ -1,0 +1,22 @@
+{
+  "measurement": "sum of pinned package files; gzip level 9 per file, then sum",
+  "generatedAt": "2026-08-05",
+  "xterm": {
+    "rawBytes": 370387,
+    "gzipBytes": 96898,
+    "files": [
+      "@xterm/xterm@6.0.0/lib/xterm.mjs",
+      "@xterm/xterm@6.0.0/css/xterm.css",
+      "@xterm/addon-fit@0.11.0/lib/addon-fit.mjs",
+      "@xterm/addon-serialize@0.14.0/lib/addon-serialize.mjs"
+    ],
+    "webglAddon": { "rawBytes": 496945, "gzipBytes": 132811 }
+  },
+  "ghostty": {
+    "rawBytes": 812749,
+    "gzipBytes": 253191,
+    "files": [
+      "ghostty-vt.wasm (pinned upstream libghostty-vt artifact)"
+    ]
+  }
+}

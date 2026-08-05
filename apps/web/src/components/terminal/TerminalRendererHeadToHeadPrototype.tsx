@@ -18,11 +18,16 @@ import { onPtyData, onPtyExit, onPtyReconnectGap } from "./ptyDataRegistry";
 import { GhosttyVtCanvasRenderer } from "./GhosttyVtCanvasRenderer";
 import {
   coalesceRendererResize,
+  compareRendererInputFrames,
   markerCoverage,
+  RENDERER_CAPABILITY_MATRIX,
   restoreRendererViewportAnchor,
+  summarizeRendererTimings,
   TERMINAL_RENDERER_WORKLOAD_IDS,
   TERMINAL_RENDERER_WORKLOAD_LIMITS,
   type RendererViewportAnchor,
+  type RendererRunMetrics,
+  type RendererInputFrame,
   type TerminalRendererCandidate,
   type TerminalRendererWorkloadId,
 } from "./rendererHeadToHeadModel";
@@ -35,6 +40,7 @@ type Workload = {
   readonly label: string;
   readonly purpose: string;
   readonly markers: readonly string[];
+  readonly expectedProgramBytes: number | null;
 };
 
 type Metrics = {
@@ -49,66 +55,182 @@ type Metrics = {
   readonly processExited: boolean;
 };
 
+type CandidateTimingState = {
+  readonly parseSamples: number[];
+  readonly paintSamples: number[];
+  readonly resizeSamples: number[];
+  readonly switchSamples: number[];
+  throughputBytesPerSecond: number | null;
+  processingDurationMs: number;
+  markerCoverage: number;
+  droppedFrames: number;
+  lostInputEvents: number;
+  longFrameCount: number;
+  failures: string[];
+};
+
+type ComparisonRun = {
+  readonly run: number;
+  readonly workloadId: TerminalRendererWorkloadId;
+  readonly order: readonly TerminalRendererCandidate[];
+  readonly timingMethod: "paired-isolated-replay";
+  readonly inputFrames: readonly RendererInputFrame[];
+  readonly inputFrameCount: number;
+  readonly dispatchedFrameEqual: boolean;
+  readonly outputBytes: number;
+  readonly outputFrames: number;
+  readonly outputTruncated: boolean;
+  readonly expectedProgramBytes: number | null;
+  readonly completion: "marker" | "process-exit" | "timeout" | "error";
+  readonly transportFailure: string | null;
+  readonly classification: "pass" | "candidate-failure" | "harness-indeterminate" | "harness-failure";
+  readonly resizeCount: number;
+  readonly markerCoverage: Readonly<Record<TerminalRendererCandidate, number>>;
+  readonly droppedFrames: Readonly<Record<TerminalRendererCandidate, number>>;
+  readonly lostInputEvents: Readonly<Record<TerminalRendererCandidate, number>>;
+  readonly metrics: Readonly<Record<TerminalRendererCandidate, RendererRunMetrics>>;
+  readonly failures: readonly string[];
+};
+
+type WorkloadCompletion = "marker" | "process-exit" | "timeout" | "error";
+
 const WORKLOADS: readonly Workload[] = [
   {
     id: "wrong-width-restoration",
     label: "Wrong-width restoration",
     purpose: "80 → 120 → 80 complete-cell resize and bottom-row marker.",
     markers: ["WF:wrong-width:initial", "WF:wrong-width:bottom", "WF:wrong-width:restored"],
+    expectedProgramBytes: null,
   },
   {
     id: "jagged-reflow",
     label: "Jagged reflow",
     purpose: "Wide, combining, and emoji graphemes across four narrow widths.",
     markers: ["WF:jagged:begin", "WF:jagged:end"],
+    expectedProgramBytes: null,
   },
   {
     id: "shaky-live-resizing",
     label: "Shaky live resizing",
     purpose: "ANSI color output while resize requests are coalesced at frame rate.",
     markers: ["WF:resize:tick", "WF:resize:end"],
+    expectedProgramBytes: null,
   },
   {
     id: "bottom-row-clipping",
     label: "Bottom-row clipping",
     purpose: "Cursor movement near the final complete row before output.",
     markers: ["WF:bottom-row:top", "WF:bottom-row:end"],
+    expectedProgramBytes: null,
   },
   {
     id: "high-output-pressure",
     label: "High-output pressure",
     purpose: "Twenty bounded 4 KiB chunks, capped at 128 KiB.",
     markers: ["WF:high-output:begin", "WF:high-output:end"],
+    expectedProgramBytes: 82_450,
   },
   {
     id: "reconnect-recovery",
     label: "Reconnect recovery",
     purpose: "Pause and reattach with bounded replay and a visible gap state.",
     markers: ["WF:reconnect:before", "WF:reconnect:after"],
+    expectedProgramBytes: null,
   },
   {
     id: "interactive-program",
     label: "Interactive program",
     purpose: "Ready, ping/pong, and done markers through the same PTY input path.",
     markers: ["WF:interactive:ready", "WF:interactive:pong", "WF:interactive:done"],
+    expectedProgramBytes: null,
   },
   {
     id: "process-cleanup",
     label: "Process cleanup",
     purpose: "Parent and child lifecycle markers followed by explicit PTY cleanup.",
     markers: ["WF:cleanup:parent", "WF:cleanup:child:"],
+    expectedProgramBytes: null,
   },
 ];
 
 const PROGRAMS: Readonly<Record<TerminalRendererWorkloadId, string>> = {
-  "wrong-width-restoration": String.raw`const e="\x1b";process.stdout.write(e+"[2J"+e+"[HWF:wrong-width:initial\n"+"W80:·".repeat(18)+"\n"+e+"[24;1HWF:wrong-width:bottom\n");setTimeout(()=>process.stdout.write("WF:wrong-width:restored\n"),160);setTimeout(()=>process.exit(0),280);`,
-  "jagged-reflow": String.raw`const e="\x1b";const wide="A界é🙂".repeat(40);process.stdout.write(e+"[2J"+e+"[HWF:jagged:begin\n"+wide+"\n");let i=0;const t=setInterval(()=>process.stdout.write("WF:jagged:tick:"+i+++":"+wide.slice(0,120)+"\n"),45);setTimeout(()=>{clearInterval(t);process.stdout.write("WF:jagged:end\n");process.exit(0)},320);`,
-  "shaky-live-resizing": String.raw`const e="\x1b";let i=0;const t=setInterval(()=>process.stdout.write("WF:resize:tick:"+i+++":"+e+"[38;5;"+(i%16)+"mresize"+e+"[0m\n"),15);setTimeout(()=>{clearInterval(t);process.stdout.write(e+"[0mWF:resize:end\n");process.exit(0)},300);`,
-  "bottom-row-clipping": String.raw`const e="\x1b";process.stdout.write(e+"[2J"+e+"[1;1HWF:bottom-row:top\n"+e+"[24;1HWF:bottom-row:initial\n");setTimeout(()=>process.stdout.write(e+"[8;1HWF:bottom-row:resized\n"),80);setTimeout(()=>process.stdout.write("WF:bottom-row:end\n"),180);setTimeout(()=>process.exit(0),260);`,
-  "high-output-pressure": String.raw`const p="0123456789abcdef".repeat(256);process.stdout.write("WF:high-output:begin\n");for(let i=0;i<20;i++)process.stdout.write("WF:high-output:chunk:"+i+":"+p+"\n");process.stdout.write("WF:high-output:end\n");process.exit(0);`,
-  "reconnect-recovery": String.raw`let p="";process.stdout.write("WF:reconnect:before\n");process.stdin.setEncoding("utf8");process.stdin.on("data",c=>{p+=c;let n=p.search(/[\r\n]/);while(n>=0){const l=p.slice(0,n);p=p.slice(n+1);if(p.startsWith("\n"))p=p.slice(1);if(l==="gap"){setTimeout(()=>process.stdout.write("WF:reconnect:middle\n"),60);setTimeout(()=>process.stdout.write("WF:reconnect:after\n"),220);setTimeout(()=>process.exit(0),340)}n=p.search(/[\r\n]/)}});`,
-  "interactive-program": String.raw`let p="";process.stdout.write("WF:interactive:ready\n");process.stdin.setEncoding("utf8");process.stdin.on("data",c=>{p+=c;let n=p.search(/[\r\n]/);while(n>=0){const l=p.slice(0,n);p=p.slice(n+1);if(p.startsWith("\n"))p=p.slice(1);if(l==="ping")process.stdout.write("WF:interactive:pong\n");if(l==="exit"){process.stdout.write("WF:interactive:done\n");process.exit(0)}n=p.search(/[\r\n]/)}});`,
-  "process-cleanup": String.raw`const{spawn}=require("node:child_process");const c=spawn(process.execPath,["-e","setInterval(()=>{},1000)"],{stdio:"ignore"});process.stdout.write("WF:cleanup:parent\n");process.stdout.write("WF:cleanup:child:"+c.pid+"\n");setInterval(()=>{},1000);`,
+  "wrong-width-restoration": String.raw`const e = "\x1b";
+const fill = (width, label) => label + "·".repeat(Math.max(0, width - label.length));
+process.stdout.write(e + "[2J" + e + "[H");
+process.stdout.write("WF:wrong-width:initial\n");
+process.stdout.write(fill(80, "W80:") + "\n");
+process.stdout.write(e + "[24;1H" + "WF:wrong-width:bottom\n");
+setTimeout(() => process.stdout.write("WF:wrong-width:restored\n"), 160);
+setTimeout(() => process.exit(0), 280);`,
+  "jagged-reflow": String.raw`const e = "\x1b";
+const wide = "A界é🙂".repeat(40);
+process.stdout.write(e + "[2J" + e + "[H" + "WF:jagged:begin\n");
+process.stdout.write(wide + "\n");
+let tick = 0;
+const timer = setInterval(() => {
+  process.stdout.write("WF:jagged:tick:" + tick + ":" + wide.slice(0, 120) + "\n");
+  tick += 1;
+}, 45);
+setTimeout(() => { clearInterval(timer); process.stdout.write("WF:jagged:end\n"); process.exit(0); }, 320);`,
+  "shaky-live-resizing": String.raw`const e = "\x1b";
+let tick = 0;
+const timer = setInterval(() => {
+  process.stdout.write("WF:resize:tick:" + tick + ":" + e + "[38;5;" + (tick % 16) + "mresize\n");
+  tick += 1;
+}, 15);
+setTimeout(() => { clearInterval(timer); process.stdout.write(e + "[0mWF:resize:end\n"); process.exit(0); }, 300);`,
+  "bottom-row-clipping": String.raw`const e = "\x1b";
+process.stdout.write(e + "[2J" + e + "[1;1H" + "WF:bottom-row:top\n");
+process.stdout.write(e + "[24;1H" + "WF:bottom-row:initial\n");
+setTimeout(() => process.stdout.write(e + "[8;1H" + "WF:bottom-row:resized\n"), 80);
+setTimeout(() => process.stdout.write("WF:bottom-row:end\n"), 180);
+setTimeout(() => process.exit(0), 260);`,
+  "high-output-pressure": String.raw`const payload = "0123456789abcdef".repeat(256);
+process.stdout.write("WF:high-output:begin\n");
+for (let index = 0; index < 20; index += 1) {
+  process.stdout.write("WF:high-output:chunk:" + index + ":" + payload + "\n");
+}
+process.stdout.write("WF:high-output:end\n");
+process.exit(0);`,
+  "reconnect-recovery": String.raw`let pending = "";
+process.stdout.write("WF:reconnect:before\n");
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  pending += chunk;
+  let newline = pending.search(/[\r\n]/);
+  while (newline >= 0) {
+    const line = pending.slice(0, newline);
+    pending = pending.slice(newline + 1);
+    if (pending.startsWith("\n")) pending = pending.slice(1);
+    if (line === "gap") {
+      setTimeout(() => process.stdout.write("WF:reconnect:middle\n"), 60);
+      setTimeout(() => process.stdout.write("WF:reconnect:after\n"), 220);
+      setTimeout(() => process.exit(0), 340);
+    }
+    newline = pending.search(/[\r\n]/);
+  }
+});`,
+  "interactive-program": String.raw`let pending = "";
+process.stdout.write("WF:interactive:ready\n");
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => {
+  pending += chunk;
+  let newline = pending.search(/[\r\n]/);
+  while (newline >= 0) {
+    const line = pending.slice(0, newline);
+    pending = pending.slice(newline + 1);
+    if (pending.startsWith("\n")) pending = pending.slice(1);
+    if (line === "ping") process.stdout.write("WF:interactive:pong\n");
+    if (line === "exit") { process.stdout.write("WF:interactive:done\n"); process.exit(0); }
+    newline = pending.search(/[\r\n]/);
+  }
+});`,
+  "process-cleanup": String.raw`const { spawn } = require("node:child_process");
+const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 50)"], { stdio: "ignore" });
+process.stdout.write("WF:cleanup:parent\n");
+process.stdout.write("WF:cleanup:child:" + child.pid + "\n");
+child.once("exit", () => process.stdout.write("WF:cleanup:child-exit\n"));
+setTimeout(() => process.exit(0), 180);`,
 };
 
 const INITIAL_COLS = 80;
@@ -168,6 +290,43 @@ function initialMetrics(workload: Workload): Metrics {
   };
 }
 
+function initialCandidateTimingState(): CandidateTimingState {
+  return {
+    parseSamples: [],
+    paintSamples: [],
+    resizeSamples: [],
+    switchSamples: [],
+    throughputBytesPerSecond: null,
+    processingDurationMs: 0,
+    markerCoverage: 0,
+    droppedFrames: 0,
+    lostInputEvents: 0,
+    longFrameCount: 0,
+    failures: [],
+  };
+}
+
+function candidateRunMetrics(state: CandidateTimingState): RendererRunMetrics {
+  return {
+    parseRender: summarizeRendererTimings(state.parseSamples),
+    paintBoundary: summarizeRendererTimings(state.paintSamples),
+    throughputBytesPerSecond: state.throughputBytesPerSecond,
+    resizeToStablePaintMs: state.resizeSamples.at(-1) ?? null,
+    switchRestoreMs: state.switchSamples.at(-1) ?? null,
+    markerCoverage: state.markerCoverage,
+    droppedFrames: state.droppedFrames,
+    lostInputEvents: state.lostInputEvents,
+    longFrameCount: state.longFrameCount,
+    failures: state.failures,
+  };
+}
+
+function frameDigest(bytes: Uint8Array): string {
+  let hash = 2166136261;
+  for (const byte of bytes) hash = Math.imul(hash ^ byte, 16777619);
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
 /** Throwaway route for comparing strengthened xterm with real libghostty-vt. */
 export function TerminalRendererHeadToHeadPrototype() {
   const activeThreadId = useWorkspaceStore((state) => state.activeThreadId);
@@ -177,17 +336,29 @@ export function TerminalRendererHeadToHeadPrototype() {
     TERMINAL_RENDERER_WORKLOAD_IDS[0],
   );
   const [pty, setPty] = useState<{ id: string; shell: string } | null>(null);
+  const [ptyReady, setPtyReady] = useState(false);
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [ghosttyStatus, setGhosttyStatus] = useState<GhosttyStatus>("loading");
   const [ghosttyError, setGhosttyError] = useState<string | null>(null);
   const [visible, setVisible] = useState(true);
   const [dimensions, setDimensions] = useState({ cols: INITIAL_COLS, rows: INITIAL_ROWS });
   const [metrics, setMetrics] = useState<Metrics>(() => initialMetrics(WORKLOADS[0]));
+  const [runMode, setRunMode] = useState<"quick" | "thirty">("quick");
+  const [comparisonRuns, setComparisonRuns] = useState<ComparisonRun[]>([]);
+  const [comparisonRunning, setComparisonRunning] = useState(false);
+  const [sizeManifest, setSizeManifest] = useState<{ xterm: { rawBytes: number; gzipBytes: number; webglAddon: { rawBytes: number; gzipBytes: number } }; ghostty: { rawBytes: number; gzipBytes: number } } | null>(null);
   const [ghosttySnapshot, setGhosttySnapshot] = useState({ dirtyRows: 0, renderCount: 0, text: "" });
   const workload = useMemo(
     () => WORKLOADS.find((item) => item.id === workloadId) ?? WORKLOADS[0],
     [workloadId],
   );
+
+  useEffect(() => {
+    void fetch("/prototypes/renderer-size-manifest.json")
+      .then((response) => response.ok ? response.json() : null)
+      .then((manifest: typeof sizeManifest) => setSizeManifest(manifest))
+      .catch(() => setSizeManifest(null));
+  }, []);
 
   useEffect(() => {
     startPushListeners();
@@ -216,6 +387,23 @@ export function TerminalRendererHeadToHeadPrototype() {
   const ptyCleanupTimerRef = useRef<number | null>(null);
   const ptyMountCountRef = useRef(0);
   const inputReadyRef = useRef(false);
+  const processExitedRef = useRef(false);
+  const candidateFrameStreamsRef = useRef<Record<TerminalRendererCandidate, RendererInputFrame[]>>({ xterm: [], ghostty: [] });
+  const workloadCompletionRef = useRef<WorkloadCompletion | null>(null);
+  const workloadErrorRef = useRef<string | null>(null);
+  const candidateTimingRef = useRef<Record<TerminalRendererCandidate, CandidateTimingState>>({
+    xterm: initialCandidateTimingState(),
+    ghostty: initialCandidateTimingState(),
+  });
+  const inputFramesRef = useRef<RendererInputFrame[]>([]);
+  const inputPayloadsRef = useRef<Uint8Array[]>([]);
+  const resizeTraceRef = useRef<Array<{ cols: number; rows: number; frameIndex: number }>>([]);
+  const frameStartRef = useRef(performance.now());
+  const lastSeqObservedRef = useRef<number | null>(null);
+  const resizeStartedAtRef = useRef<Record<TerminalRendererCandidate, number | null>>({ xterm: null, ghostty: null });
+  const switchStartedAtRef = useRef<Record<TerminalRendererCandidate, number | null>>({ xterm: null, ghostty: null });
+  const comparisonRunNumberRef = useRef(0);
+  const comparisonOrderRef = useRef<readonly TerminalRendererCandidate[]>(["xterm", "ghostty"]);
   candidateRef.current = candidate;
   workloadRef.current = workload;
   metricsRef.current = metrics;
@@ -228,6 +416,32 @@ export function TerminalRendererHeadToHeadPrototype() {
     });
   }, []);
 
+  const recordCandidateFrame = useCallback((
+    rendererCandidate: TerminalRendererCandidate,
+    bytes: number,
+    startedAt: number,
+    paintBoundaryMs: number,
+  ): void => {
+    const state = candidateTimingRef.current[rendererCandidate];
+    const parseRenderMs = performance.now() - startedAt;
+    state.processingDurationMs += parseRenderMs;
+    state.parseSamples.push(parseRenderMs);
+    state.paintSamples.push(paintBoundaryMs);
+    if (parseRenderMs > 16.7) state.longFrameCount += 1;
+    if (state.parseSamples.length > 300) state.parseSamples.shift();
+    if (state.paintSamples.length > 300) state.paintSamples.shift();
+    const elapsedMs = Math.max(1, performance.now() - frameStartRef.current);
+    state.throughputBytesPerSecond = (outputBytesRef.current / elapsedMs) * 1000;
+    state.markerCoverage = rendererCandidate === "xterm"
+      ? markerCoverage(terminalRef.current ? textFromXterm(terminalRef.current) : "", workloadRef.current.markers)
+      : markerCoverage(ghosttySnapshot.text, workloadRef.current.markers);
+    if (switchStartedAtRef.current[rendererCandidate] !== null) {
+      state.switchSamples.push(performance.now() - switchStartedAtRef.current[rendererCandidate]!);
+      switchStartedAtRef.current[rendererCandidate] = null;
+    }
+    void bytes;
+  }, [ghosttySnapshot.text]);
+
   const renderGhostty = useCallback((): void => {
     const renderer = ghosttyRef.current;
     const canvas = ghosttyCanvasRef.current;
@@ -235,8 +449,27 @@ export function TerminalRendererHeadToHeadPrototype() {
     const started = performance.now();
     const snapshot = renderer.render(canvas);
     setGhosttySnapshot(snapshot);
+    const parseRenderMs = performance.now() - started;
+    const paintStarted = performance.now();
+    requestAnimationFrame(() => {
+      const state = candidateTimingRef.current.ghostty;
+      state.parseSamples.push(parseRenderMs);
+      state.paintSamples.push(performance.now() - paintStarted);
+      if (parseRenderMs > 16.7) state.longFrameCount += 1;
+      if (state.parseSamples.length > 300) state.parseSamples.shift();
+      if (state.paintSamples.length > 300) state.paintSamples.shift();
+      state.markerCoverage = markerCoverage(snapshot.text, workloadRef.current.markers);
+      if (resizeStartedAtRef.current.ghostty !== null) {
+        state.resizeSamples.push(performance.now() - resizeStartedAtRef.current.ghostty);
+        resizeStartedAtRef.current.ghostty = null;
+      }
+      if (switchStartedAtRef.current.ghostty !== null) {
+        state.switchSamples.push(performance.now() - switchStartedAtRef.current.ghostty);
+        switchStartedAtRef.current.ghostty = null;
+      }
+    });
     updateMetrics({
-      lastPaintMs: performance.now() - started,
+      lastPaintMs: parseRenderMs,
       markerCoverage: markerCoverage(snapshot.text, workload.markers),
     });
   }, [updateMetrics, workload.markers]);
@@ -249,6 +482,9 @@ export function TerminalRendererHeadToHeadPrototype() {
       const anchor = terminalAnchor(term);
       const dimensionsChanged = term.cols !== request.cols || term.rows !== request.rows;
       if (dimensionsChanged) {
+        resizeStartedAtRef.current.xterm = performance.now();
+        resizeStartedAtRef.current.ghostty = resizeStartedAtRef.current.xterm;
+        resizeTraceRef.current.push({ cols: request.cols, rows: request.rows, frameIndex: inputFramesRef.current.length });
         term.resize(request.cols, request.rows);
         ghosttyRef.current?.resize(request.cols, request.rows, CELL_WIDTH, CELL_HEIGHT);
         setDimensions({ cols: request.cols, rows: request.rows });
@@ -261,6 +497,12 @@ export function TerminalRendererHeadToHeadPrototype() {
         setConnectionError(error instanceof Error ? error.message : String(error));
       });
       renderGhosttyRef.current();
+      requestAnimationFrame(() => {
+        const started = resizeStartedAtRef.current.xterm;
+        if (started === null) return;
+        candidateTimingRef.current.xterm.resizeSamples.push(performance.now() - started);
+        resizeStartedAtRef.current.xterm = null;
+      });
     },
     [updateMetrics],
   );
@@ -355,46 +597,70 @@ export function TerminalRendererHeadToHeadPrototype() {
           if (remaining <= 0) return;
           const bounded = payload.slice(0, remaining);
           outputBytesRef.current += bounded.byteLength;
-          const term = terminalRef.current;
-          const started = performance.now();
-          term?.write(bounded, () => {
-            const patch: {
-              outputBytes: number;
-              outputFrames: number;
-              lastPaintMs: number;
-              switchLatencyMs?: number;
-              markerCoverage?: number;
-            } = {
-              outputBytes: outputBytesRef.current,
-              outputFrames: metricsRef.current.outputFrames + 1,
-              lastPaintMs: performance.now() - started,
-            };
-            if (candidateChangedAtRef.current !== null) {
-              patch.switchLatencyMs = performance.now() - candidateChangedAtRef.current;
-              candidateChangedAtRef.current = null;
+          const digest = frameDigest(bounded);
+          const inputFrame = { seq, bytes: bounded.byteLength, digest };
+          inputFramesRef.current.push(inputFrame);
+          inputPayloadsRef.current.push(bounded.slice());
+          if (inputFramesRef.current.length > 1_000) inputFramesRef.current.shift();
+          if (inputPayloadsRef.current.length > 1_000) inputPayloadsRef.current.shift();
+          if (lastSeqObservedRef.current !== null && seq > lastSeqObservedRef.current + 1) {
+            const gap = seq - lastSeqObservedRef.current - 1;
+            candidateTimingRef.current.xterm.droppedFrames += gap;
+            candidateTimingRef.current.ghostty.droppedFrames += gap;
+          }
+          lastSeqObservedRef.current = seq;
+          const applyXterm = (): void => {
+            const term = terminalRef.current;
+            if (!term) return;
+            candidateFrameStreamsRef.current.xterm.push(inputFrame);
+            const started = performance.now();
+            term.write(bounded, () => {
+              const parseRenderMs = performance.now() - started;
+              requestAnimationFrame(() => {
+                const paintBoundaryMs = performance.now() - started;
+                recordCandidateFrame("xterm", bounded.byteLength, started, paintBoundaryMs);
+                updateMetrics({
+                  outputBytes: outputBytesRef.current,
+                  outputFrames: metricsRef.current.outputFrames + 1,
+                  lastPaintMs: parseRenderMs,
+                  markerCoverage: markerCoverage(textFromXterm(term), workloadRef.current.markers),
+                  switchLatencyMs: candidateChangedAtRef.current === null ? metricsRef.current.switchLatencyMs : paintBoundaryMs,
+                });
+                candidateChangedAtRef.current = null;
+              });
+            });
+          };
+          const applyGhostty = (): void => {
+            const renderer = ghosttyRef.current;
+            if (renderer) {
+              candidateFrameStreamsRef.current.ghostty.push(inputFrame);
+              renderer.write(bounded);
+              renderGhosttyRef.current();
+            } else {
+              pendingBytesRef.current.push(bounded.slice());
+              let pendingLength = pendingBytesRef.current.reduce((sum, bytes) => sum + bytes.byteLength, 0);
+              while (pendingLength > TERMINAL_RENDERER_WORKLOAD_LIMITS.maxReplayBytes && pendingBytesRef.current.length > 0) {
+                pendingLength -= pendingBytesRef.current.shift()?.byteLength ?? 0;
+              }
             }
-            const xtermText = term ? textFromXterm(term) : "";
-            if (candidateRef.current === "xterm") {
-              patch.markerCoverage = markerCoverage(xtermText, workloadRef.current.markers);
-            }
-            updateMetrics(patch);
-          });
-          const renderer = ghosttyRef.current;
-          if (renderer) {
-            renderer.write(bounded);
-            renderGhosttyRef.current();
-          } else {
-            pendingBytesRef.current.push(bounded.slice());
-            let pendingLength = pendingBytesRef.current.reduce((sum, bytes) => sum + bytes.byteLength, 0);
-            while (pendingLength > TERMINAL_RENDERER_WORKLOAD_LIMITS.maxReplayBytes && pendingBytesRef.current.length > 0) {
-              pendingLength -= pendingBytesRef.current.shift()?.byteLength ?? 0;
-            }
+          };
+          const frameOrder: readonly TerminalRendererCandidate[] = seq % 2 === 0
+            ? ["ghostty", "xterm"]
+            : ["xterm", "ghostty"];
+          for (const orderedCandidate of frameOrder) {
+            if (orderedCandidate === "xterm") applyXterm();
+            else applyGhostty();
           }
         });
-        const exitUnsubscribe = onPtyExit(created.ptyId, () => updateMetrics({ processExited: true }));
+        const exitUnsubscribe = onPtyExit(created.ptyId, () => {
+          processExitedRef.current = true;
+          updateMetrics({ processExited: true });
+        });
         const gapUnsubscribe = onPtyReconnectGap(created.ptyId, () => updateMetrics({ replayGap: true }));
         await transport.terminalReattach(created.ptyId, 0, true);
         await transport.terminalResume(created.ptyId);
+        await transport.terminalWrite(created.ptyId, "\r");
+        await new Promise((resolve) => setTimeout(resolve, 300));
         ptySessionRef.current = {
           id: created.ptyId,
           cleanup: () => {
@@ -403,6 +669,7 @@ export function TerminalRendererHeadToHeadPrototype() {
             gapUnsubscribe();
           },
         };
+        window.setTimeout(() => setPtyReady(true), 500);
       } catch (error: unknown) {
         if (ptyMountCountRef.current > 0) {
           setConnectionError(error instanceof Error ? error.message : String(error));
@@ -424,6 +691,7 @@ export function TerminalRendererHeadToHeadPrototype() {
           ptySessionRef.current = null;
           ptyRef.current = null;
           setPty(null);
+          setPtyReady(false);
         }
       }, 250);
     };
@@ -469,35 +737,332 @@ export function TerminalRendererHeadToHeadPrototype() {
 
   const selectCandidate = (next: TerminalRendererCandidate): void => {
     if (next === "ghostty" && ghosttyStatus !== "ready") return;
-    candidateChangedAtRef.current = performance.now();
+    const started = performance.now();
+    candidateChangedAtRef.current = started;
+    switchStartedAtRef.current[next] = started;
     setCandidate(next);
   };
 
-  const runWorkload = async (): Promise<void> => {
+  const runWorkload = async (requestedWorkload: Workload = workload): Promise<void> => {
     const id = ptyRef.current;
     if (!id) return;
+    workloadRef.current = requestedWorkload;
+    comparisonRunNumberRef.current += 1;
+    comparisonOrderRef.current = comparisonRunNumberRef.current % 2 === 0
+      ? ["ghostty", "xterm"]
+      : ["xterm", "ghostty"];
     outputBytesRef.current = 0;
-    updateMetrics({ ...initialMetrics(workload), replayGap: false, processExited: false });
-    const command = encodeNodeProgram(PROGRAMS[workload.id]);
+    frameStartRef.current = performance.now();
+    inputFramesRef.current = [];
+    inputPayloadsRef.current = [];
+    candidateFrameStreamsRef.current = { xterm: [], ghostty: [] };
+    resizeTraceRef.current = [];
+    lastSeqObservedRef.current = null;
+    processExitedRef.current = false;
+    workloadCompletionRef.current = null;
+    workloadErrorRef.current = null;
+    candidateTimingRef.current = { xterm: initialCandidateTimingState(), ghostty: initialCandidateTimingState() };
+    updateMetrics({ ...initialMetrics(requestedWorkload), replayGap: false, processExited: false });
+    const command = encodeNodeProgram(PROGRAMS[requestedWorkload.id]);
     await getTransport().terminalWrite(id, "\u0003\r");
-    await new Promise((resolve) => setTimeout(resolve, 120));
+    await new Promise((resolve) => setTimeout(resolve, 500));
     await getTransport().terminalWrite(id, command);
-    if (workload.id === "wrong-width-restoration") {
-      setTimeout(() => requestResize(120, 24), 100);
-      setTimeout(() => requestResize(80, 24), 220);
-    } else if (workload.id === "jagged-reflow") {
-      [39, 40, 41, 40].forEach((cols, index) => setTimeout(() => requestResize(cols, 24), 70 + index * 20));
-    } else if (workload.id === "shaky-live-resizing") {
-      Array.from({ length: 8 }, (_, index) => setTimeout(() => requestResize(72 + (index % 4) * 3, 24), 30 + index * 25));
-    } else if (workload.id === "reconnect-recovery") {
+    if (requestedWorkload.id === "wrong-width-restoration") {
+      setTimeout(() => requestResize(120, 24), 40);
+      setTimeout(() => requestResize(80, 24), 120);
+    } else if (requestedWorkload.id === "jagged-reflow") {
+      [39, 40, 41, 40].forEach((cols, index) => setTimeout(() => requestResize(cols, 24), 35 + index * 12));
+    } else if (requestedWorkload.id === "shaky-live-resizing") {
+      [[100, 30], [101, 30], [99, 29], [100, 30], [98, 28], [100, 30]].forEach(([cols, rows], index) => setTimeout(() => requestResize(cols, rows), 30 + index * 15));
+    } else if (requestedWorkload.id === "reconnect-recovery") {
+      setTimeout(() => writeInput("gap\r"), 20);
       setTimeout(() => { void getTransport().terminalPause(id); }, 90);
       setTimeout(() => { void getTransport().terminalReattach(id, lastSeqRef.current, false); }, 220);
       setTimeout(() => { void getTransport().terminalResume(id); }, 260);
-    } else if (workload.id === "interactive-program") {
-      setTimeout(() => writeInput("ping\r"), 220);
-      setTimeout(() => writeInput("exit\r"), 420);
-    } else if (workload.id === "process-cleanup") {
-      setTimeout(() => { void getTransport().terminalKill(id); }, 1_000);
+    } else if (requestedWorkload.id === "interactive-program") {
+      setTimeout(() => writeInput("ping\r"), 40);
+      setTimeout(() => writeInput("exit\r"), 100);
+    }
+  };
+
+  const waitForPaint = (): Promise<number> => new Promise((resolve) => {
+    const started = performance.now();
+    requestAnimationFrame(() => resolve(performance.now() - started));
+  });
+
+  const replayCandidate = async (
+    rendererCandidate: TerminalRendererCandidate,
+    payloads: readonly Uint8Array[],
+    resizeTrace: readonly { cols: number; rows: number; frameIndex: number }[],
+    replayWorkload: Workload,
+  ): Promise<CandidateTimingState> => {
+    const state = initialCandidateTimingState();
+    const host = document.createElement("div");
+    host.style.cssText = "position:fixed;left:-10000px;top:-10000px;width:1200px;height:500px;overflow:hidden;";
+    document.body.appendChild(host);
+    let replayTerm: Terminal | null = null;
+    let replayGhostty: GhosttyVtCanvasRenderer | null = null;
+    let replayCanvas: HTMLCanvasElement | null = null;
+    try {
+      if (rendererCandidate === "xterm") {
+        replayTerm = new Terminal({ cols: INITIAL_COLS, rows: INITIAL_ROWS, scrollback: 2_000, fontFamily: "ui-monospace, monospace", fontSize: 13, theme: { background: "#10141d", foreground: "#f1f5f9" } });
+        replayTerm.open(host);
+      } else {
+        replayCanvas = document.createElement("canvas");
+        replayCanvas.width = INITIAL_COLS * CELL_WIDTH;
+        replayCanvas.height = INITIAL_ROWS * CELL_HEIGHT;
+        host.appendChild(replayCanvas);
+        replayGhostty = await GhosttyVtCanvasRenderer.create(INITIAL_COLS, INITIAL_ROWS);
+      }
+      let resizeIndex = 0;
+      let resizeStartedAt: number | null = null;
+      for (let frameIndex = 0; frameIndex < payloads.length; frameIndex += 1) {
+        while (resizeIndex < resizeTrace.length && resizeTrace[resizeIndex]!.frameIndex <= frameIndex) {
+          const resize = resizeTrace[resizeIndex]!;
+          if (replayTerm) replayTerm.resize(resize.cols, resize.rows);
+          if (replayGhostty && replayCanvas) {
+            replayGhostty.resize(resize.cols, resize.rows, CELL_WIDTH, CELL_HEIGHT);
+            replayCanvas.width = resize.cols * CELL_WIDTH;
+            replayCanvas.height = resize.rows * CELL_HEIGHT;
+          }
+          resizeStartedAt = performance.now();
+          resizeIndex += 1;
+        }
+        const payload = payloads[frameIndex]!;
+        const frameStarted = performance.now();
+        if (replayTerm) {
+          let settled = false;
+          const callback = new Promise<void>((resolve) => replayTerm!.write(payload, () => {
+            if (settled) return;
+            settled = true;
+            const parseRenderMs = performance.now() - frameStarted;
+            state.parseSamples.push(parseRenderMs);
+            state.processingDurationMs += parseRenderMs;
+            if (parseRenderMs > 16.7) state.longFrameCount += 1;
+            requestAnimationFrame(() => {
+              state.paintSamples.push(performance.now() - frameStarted);
+              if (resizeStartedAt !== null) {
+                state.resizeSamples.push(performance.now() - resizeStartedAt);
+                resizeStartedAt = null;
+              }
+            });
+            resolve();
+          }));
+          const timer = new Promise<"timeout">((resolve) => window.setTimeout(() => resolve("timeout"), 250));
+          const result = await Promise.race([callback.then(() => "complete" as const), timer]);
+          if (result === "timeout") {
+            settled = true;
+            state.failures.push(`${rendererCandidate} write callback timeout at frame ${frameIndex}`);
+          }
+        } else {
+          replayGhostty!.write(payload);
+          replayGhostty!.render(replayCanvas!);
+          const parseRenderMs = performance.now() - frameStarted;
+          state.parseSamples.push(parseRenderMs);
+          state.processingDurationMs += parseRenderMs;
+          if (parseRenderMs > 16.7) state.longFrameCount += 1;
+          requestAnimationFrame(() => {
+            state.paintSamples.push(performance.now() - frameStarted);
+            if (resizeStartedAt !== null) {
+              state.resizeSamples.push(performance.now() - resizeStartedAt);
+              resizeStartedAt = null;
+            }
+          });
+        }
+      }
+      await waitForPaint();
+      state.throughputBytesPerSecond = payloads.reduce((sum, payload) => sum + payload.byteLength, 0) / Math.max(0.01, state.processingDurationMs) * 1000;
+      state.markerCoverage = rendererCandidate === "xterm"
+        ? markerCoverage(replayTerm ? textFromXterm(replayTerm) : "", replayWorkload.markers)
+        : markerCoverage(replayGhostty && replayCanvas ? replayGhostty.render(replayCanvas).text : "", replayWorkload.markers);
+      if (state.markerCoverage < 1) state.failures.push(`${rendererCandidate} replay marker coverage below 100%`);
+      return state;
+    } finally {
+      replayTerm?.dispose();
+      replayGhostty?.dispose();
+      host.remove();
+    }
+  };
+
+  const runPairedReplay = async (replayWorkload: Workload): Promise<Readonly<Record<TerminalRendererCandidate, RendererRunMetrics>>> => {
+    const firstOrder: readonly TerminalRendererCandidate[] = comparisonRunNumberRef.current % 2 === 0 ? ["ghostty", "xterm"] : ["xterm", "ghostty"];
+    const secondOrder = [...firstOrder].reverse() as readonly TerminalRendererCandidate[];
+    const passStates: Record<TerminalRendererCandidate, CandidateTimingState[]> = { xterm: [], ghostty: [] };
+    for (const order of [firstOrder, secondOrder]) {
+      for (const rendererCandidate of order) {
+        passStates[rendererCandidate].push(await replayCandidate(rendererCandidate, inputPayloadsRef.current, resizeTraceRef.current, replayWorkload));
+      }
+    }
+    const aggregate = (states: readonly CandidateTimingState[]): RendererRunMetrics => {
+      const merged = initialCandidateTimingState();
+      for (const state of states) {
+        merged.parseSamples.push(...state.parseSamples);
+        merged.paintSamples.push(...state.paintSamples);
+        merged.longFrameCount += state.longFrameCount;
+        merged.processingDurationMs += state.processingDurationMs;
+        merged.markerCoverage = Math.min(merged.markerCoverage || 1, state.markerCoverage);
+        merged.throughputBytesPerSecond = merged.throughputBytesPerSecond === null ? state.throughputBytesPerSecond : (merged.throughputBytesPerSecond + (state.throughputBytesPerSecond ?? 0)) / 2;
+        merged.failures.push(...state.failures);
+      }
+      return candidateRunMetrics(merged);
+    };
+    return { xterm: aggregate(passStates.xterm), ghostty: aggregate(passStates.ghostty) };
+  };
+
+  const captureComparisonRun = async (): Promise<ComparisonRun> => {
+    const xtermMetrics = candidateRunMetrics(candidateTimingRef.current.xterm);
+    const ghosttyMetrics = candidateRunMetrics(candidateTimingRef.current.ghostty);
+    const replayMetrics = await runPairedReplay(workloadRef.current);
+    const replayWithSwitch = {
+      xterm: { ...replayMetrics.xterm, switchRestoreMs: replayMetrics.xterm.switchRestoreMs ?? xtermMetrics.switchRestoreMs },
+      ghostty: { ...replayMetrics.ghostty, switchRestoreMs: replayMetrics.ghostty.switchRestoreMs ?? ghosttyMetrics.switchRestoreMs },
+    } satisfies Readonly<Record<TerminalRendererCandidate, RendererRunMetrics>>;
+    const dispatchedFrameEqual = compareRendererInputFrames(
+      candidateFrameStreamsRef.current.xterm,
+      candidateFrameStreamsRef.current.ghostty,
+    );
+    const inputReceiptIndeterminate = (workloadRef.current.id === "reconnect-recovery" || workloadRef.current.id === "interactive-program")
+      && workloadCompletionRef.current === "timeout";
+    const failures: string[] = [];
+    if (!inputReceiptIndeterminate) {
+      for (const rendererCandidate of ["xterm", "ghostty"] as const) {
+        for (const failure of replayMetrics[rendererCandidate].failures) {
+          failures.push(`${rendererCandidate} replay: ${failure}`);
+        }
+      }
+    }
+    if (!dispatchedFrameEqual) failures.push("dispatched frame streams differ");
+    if (inputFramesRef.current.length === 0) failures.push("no PTY frames captured");
+    if (!inputReceiptIndeterminate && xtermMetrics.markerCoverage < 1) failures.push("xterm workload markers missing");
+    if (!inputReceiptIndeterminate && ghosttyMetrics.markerCoverage < 1) {
+      failures.push(
+        workloadRef.current.id === "high-output-pressure"
+          ? "ghostty scrollback/capability gate: viewport projection lost high-output begin marker"
+          : "ghostty workload markers missing",
+      );
+    }
+    if (workloadErrorRef.current) failures.push(workloadErrorRef.current);
+    const expectedBytes = workloadRef.current.expectedProgramBytes;
+    if (expectedBytes !== null && outputBytesRef.current < expectedBytes) {
+      workloadErrorRef.current ??= `transport-neutral harness/input failure: ${outputBytesRef.current.toLocaleString()} bytes captured below ${expectedBytes.toLocaleString()} expected program bytes`;
+      if (!failures.includes(workloadErrorRef.current)) failures.push(workloadErrorRef.current);
+    }
+    if (inputReceiptIndeterminate) {
+      failures.push("harness-indeterminate: PTY input receipt was not proven before timeout");
+    }
+    const classification: ComparisonRun["classification"] = workloadErrorRef.current
+      ? "harness-failure"
+      : inputReceiptIndeterminate
+        ? "harness-indeterminate"
+        : failures.length > 0
+          ? "candidate-failure"
+          : "pass";
+    return {
+      run: comparisonRunNumberRef.current,
+      workloadId: workloadRef.current.id,
+      order: comparisonOrderRef.current,
+      timingMethod: "paired-isolated-replay",
+      inputFrames: inputFramesRef.current.slice(0, 200),
+      inputFrameCount: inputFramesRef.current.length,
+      dispatchedFrameEqual,
+      outputBytes: outputBytesRef.current,
+      outputFrames: inputFramesRef.current.length,
+      outputTruncated: outputBytesRef.current >= TERMINAL_RENDERER_WORKLOAD_LIMITS.maxOutputBytes,
+      expectedProgramBytes: workloadRef.current.expectedProgramBytes,
+      completion: workloadCompletionRef.current ?? "timeout",
+      transportFailure: workloadErrorRef.current,
+      classification,
+      resizeCount: metricsRef.current.resizeCount,
+      markerCoverage: { xterm: xtermMetrics.markerCoverage, ghostty: ghosttyMetrics.markerCoverage },
+      droppedFrames: { xterm: xtermMetrics.droppedFrames, ghostty: ghosttyMetrics.droppedFrames },
+      lostInputEvents: { xterm: xtermMetrics.lostInputEvents, ghostty: ghosttyMetrics.lostInputEvents },
+      metrics: replayWithSwitch,
+      failures,
+    };
+  };
+
+  const runWorkloadAndCapture = async (nextWorkload: Workload): Promise<ComparisonRun> => {
+    setWorkloadId(nextWorkload.id);
+    try {
+      await runWorkload(nextWorkload);
+    } catch (error: unknown) {
+      workloadErrorRef.current = `workload input failed: ${error instanceof Error ? error.message : String(error)}`;
+      workloadCompletionRef.current = "error";
+    }
+    if (workloadCompletionRef.current !== "error") {
+      await new Promise<void>((resolve) => {
+        let finished = false;
+        let pollTimer: number | null = null;
+        const finish = (completion: WorkloadCompletion): void => {
+          if (finished) return;
+          finished = true;
+          if (pollTimer !== null) window.clearTimeout(pollTimer);
+          workloadCompletionRef.current = completion;
+          resolve();
+        };
+        const deadline = window.setTimeout(() => finish("timeout"), TERMINAL_RENDERER_WORKLOAD_LIMITS.maxDurationMs);
+        const check = (): void => {
+          if (finished) return;
+          if (processExitedRef.current) {
+            window.clearTimeout(deadline);
+            finish("process-exit");
+            return;
+          }
+          if (candidateTimingRef.current.xterm.markerCoverage >= 1 || candidateTimingRef.current.ghostty.markerCoverage >= 1) {
+            window.clearTimeout(deadline);
+            finish("marker");
+            return;
+          }
+          pollTimer = window.setTimeout(check, 40);
+        };
+        check();
+      });
+    }
+    return captureComparisonRun();
+  };
+
+  const runComparison = async (): Promise<void> => {
+    if (!ptyRef.current || !ptyReady || ghosttyStatus !== "ready" || comparisonRunning) return;
+    setComparisonRunning(true);
+    setComparisonRuns([]);
+    const repetitions = runMode === "thirty" ? 30 : 1;
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      for (let repetition = 0; repetition < repetitions; repetition += 1) {
+        for (const nextWorkload of WORKLOADS) {
+          let run: ComparisonRun;
+          try {
+            run = await runWorkloadAndCapture(nextWorkload);
+          } catch (error: unknown) {
+            const message = `comparison harness failure: ${error instanceof Error ? error.message : String(error)}`;
+            run = {
+              run: comparisonRunNumberRef.current,
+              workloadId: nextWorkload.id,
+              order: comparisonOrderRef.current,
+              timingMethod: "paired-isolated-replay",
+              inputFrames: inputFramesRef.current.slice(0, 200),
+              inputFrameCount: inputFramesRef.current.length,
+              dispatchedFrameEqual: compareRendererInputFrames(candidateFrameStreamsRef.current.xterm, candidateFrameStreamsRef.current.ghostty),
+              outputBytes: outputBytesRef.current,
+              outputFrames: inputFramesRef.current.length,
+              outputTruncated: outputBytesRef.current >= TERMINAL_RENDERER_WORKLOAD_LIMITS.maxOutputBytes,
+              expectedProgramBytes: nextWorkload.expectedProgramBytes,
+              completion: "error",
+              transportFailure: message,
+              classification: "harness-failure",
+              resizeCount: metricsRef.current.resizeCount,
+              markerCoverage: { xterm: candidateTimingRef.current.xterm.markerCoverage, ghostty: candidateTimingRef.current.ghostty.markerCoverage },
+              droppedFrames: { xterm: candidateTimingRef.current.xterm.droppedFrames, ghostty: candidateTimingRef.current.ghostty.droppedFrames },
+              lostInputEvents: { xterm: candidateTimingRef.current.xterm.lostInputEvents, ghostty: candidateTimingRef.current.ghostty.lostInputEvents },
+              metrics: { xterm: candidateRunMetrics(candidateTimingRef.current.xterm), ghostty: candidateRunMetrics(candidateTimingRef.current.ghostty) },
+              failures: [message],
+            };
+          }
+          setComparisonRuns((current) => [...current, run].slice(-240));
+        }
+      }
+    } finally {
+      setComparisonRunning(false);
     }
   };
 
@@ -517,6 +1082,31 @@ export function TerminalRendererHeadToHeadPrototype() {
       ? textFromXterm(terminalRef.current)
       : "";
   const activeStatus = candidate === "ghostty" ? ghosttyStatus : "ready";
+  const comparisonReport = {
+    schemaVersion: 1,
+    mode: runMode,
+    workloadIds: WORKLOADS.map((item) => item.id),
+    runCount: comparisonRuns.length,
+    timingMethod: "paired-isolated-replay",
+    timingNotes: [
+      "xterm write callback measures parser/accept completion; Ghostty sync timing includes Canvas rendering.",
+      "output-to-next-requestAnimationFrame is a directional painted-latency signal, not presentation-complete proof.",
+      "Parser throughput does not prove a renderer winner.",
+    ],
+    memory: { status: "not-measured", reason: "Browser heap isolation was not credible in this route." },
+    capabilityMatrix: RENDERER_CAPABILITY_MATRIX,
+    gate: {
+      allWorkloadsPresent: comparisonRuns.length >= WORKLOADS.length,
+      artifactComplete: comparisonRuns.length >= WORKLOADS.length,
+      dispatchedFrameEqual: comparisonRuns.every((run) => run.dispatchedFrameEqual),
+      capabilityFailures: RENDERER_CAPABILITY_MATRIX.filter((row) => row.xterm === "fail" || row.ghostty === "fail").map((row) => row.capability),
+      candidateFailures: comparisonRuns.filter((run) => run.classification === "candidate-failure").map((run) => `${run.run}:${run.workloadId}`),
+      harnessIndeterminateRuns: comparisonRuns.filter((run) => run.classification === "harness-indeterminate").map((run) => `${run.run}:${run.workloadId}`),
+      harnessFailures: comparisonRuns.filter((run) => run.classification === "harness-failure" || run.transportFailure !== null).map((run) => `${run.run}:${run.workloadId}`),
+      overallCandidatePass: false,
+    },
+    runs: comparisonRuns,
+  };
 
   return (
     <main className="min-h-screen bg-[#080b11] px-6 py-6 text-slate-100">
@@ -525,7 +1115,7 @@ export function TerminalRendererHeadToHeadPrototype() {
           <div>
             <div className="mb-2 flex items-center gap-2"><Badge variant="outline">PROTOTYPE</Badge><Badge variant="secondary">#1078</Badge></div>
             <h1 className="text-2xl font-semibold tracking-tight">Renderer head-to-head</h1>
-            <p className="mt-1 max-w-3xl text-sm text-slate-400">One server-owned PTY, one raw byte stream, and the same bounded corpus for strengthened xterm and real libghostty-vt Canvas state.</p>
+            <p className="mt-1 max-w-3xl text-sm text-slate-400">Question: which renderer should Mcode adopt? One server-owned PTY, one bounded corpus, and two real candidates with the same byte stream.</p>
           </div>
           <div className="rounded-lg border border-amber-700/60 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">Throwaway evidence surface. Not a production terminal.</div>
         </header>
@@ -553,7 +1143,13 @@ export function TerminalRendererHeadToHeadPrototype() {
           <select id="renderer-workload" value={workloadId} onChange={(event) => setWorkloadId(event.target.value as TerminalRendererWorkloadId)} className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-sm">
             {WORKLOADS.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
           </select>
-          <Button size="sm" onClick={() => void runWorkload()} disabled={!pty || ghosttyStatus !== "ready"}><Send className="mr-1 h-3.5 w-3.5" />Run on same PTY</Button>
+          <Button size="sm" onClick={() => void runWorkload()} disabled={!pty || !ptyReady || ghosttyStatus !== "ready"}><Send className="mr-1 h-3.5 w-3.5" />Run on same PTY</Button>
+          <label className="ml-2 text-xs text-slate-400" htmlFor="renderer-run-mode">Comparison mode</label>
+          <select id="renderer-run-mode" value={runMode} onChange={(event) => setRunMode(event.target.value as "quick" | "thirty")} className="rounded border border-slate-700 bg-slate-900 px-2 py-1 text-sm">
+            <option value="quick">Quick: 8 workloads × 1</option>
+            <option value="thirty">Explicit: 8 workloads × 30</option>
+          </select>
+          <Button data-testid="run-comparison" size="sm" variant="secondary" onClick={() => void runComparison()} disabled={!pty || !ptyReady || ghosttyStatus !== "ready" || comparisonRunning}><Activity className="mr-1 h-3.5 w-3.5" />{comparisonRunning ? "Comparing…" : "Run comparison"}</Button>
           <Button size="sm" variant="outline" onClick={() => void reconnect()} disabled={!pty}><RefreshCw className="mr-1 h-3.5 w-3.5" />Reattach</Button>
           <Button size="sm" variant="outline" onClick={() => setVisible((value) => !value)}><Eye className="mr-1 h-3.5 w-3.5" />{visible ? "Hide" : "Show"} surface</Button>
           <Button size="sm" variant="destructive" onClick={() => { if (ptyRef.current) void getTransport().terminalKill(ptyRef.current); }} disabled={!pty}><Square className="mr-1 h-3.5 w-3.5" />Kill PTY</Button>
@@ -575,6 +1171,35 @@ export function TerminalRendererHeadToHeadPrototype() {
             <div className="border-t border-slate-800 pt-3 text-[11px] text-slate-500">Canvas supports basic printable keys, arrows, Enter, Tab, Backspace, and a screen-reader text projection. IME, dead-key composition, mouse protocol, and native selection parity remain open gates.</div>
             {candidate === "ghostty" ? <Button size="sm" variant="outline" onClick={() => void copyGhosttyText()}><Clipboard className="mr-1 h-3.5 w-3.5" />Copy projection</Button> : <div className="text-[11px] text-slate-500"><Copy className="mr-1 inline h-3 w-3" />xterm owns selection and clipboard in this candidate.</div>}
           </aside>
+        </section>
+
+        <section className="rounded-lg border border-slate-800 bg-slate-950/50 p-4 text-xs">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <div>
+              <h2 className="font-medium">Interactive comparison matrix</h2>
+              <p className="mt-1 text-slate-500">Each row is one bounded corpus run. p50/p95/p99/max are paired isolated replays (A→B then B→A) over captured bytes and resize trace. xterm write callbacks measure parser/accept completion, while Ghostty sync timing includes Canvas rendering. Output-to-next-requestAnimationFrame is the fair painted-latency signal.</p>
+            </div>
+            <span data-testid="comparison-status" className="font-mono text-slate-500">{comparisonRuns.length} runs retained (max 240) · {comparisonRunning ? "running" : "idle"}</span>
+          </div>
+          <div className="mt-3 overflow-x-auto">
+            <table className="w-full min-w-[980px] border-collapse" data-testid="comparison-matrix">
+              <thead><tr className="border-b border-slate-800 text-left text-slate-500"><th className="p-2">Run / workload</th><th className="p-2">Order</th><th className="p-2">Input</th><th className="p-2">xterm p50 / p95 / p99 / max</th><th className="p-2">Ghostty p50 / p95 / p99 / max</th><th className="p-2">Markers / drops / failures</th></tr></thead>
+              <tbody>
+                {comparisonRuns.map((run) => {
+                  const xtermTiming = run.metrics.xterm.paintBoundary;
+                  const ghosttyTiming = run.metrics.ghostty.paintBoundary;
+                  const timing = (value: typeof xtermTiming): string => [value.p50Ms, value.p95Ms, value.p99Ms, value.maxMs].map((item) => item === null ? "–" : item.toFixed(1)).join(" / ");
+                  return <tr key={`${run.run}-${run.workloadId}`} className="border-b border-slate-900 align-top"><td className="p-2"><div className="font-medium">#{run.run} {run.workloadId}</div><div className="text-slate-500">{run.outputBytes.toLocaleString()} bytes · {run.outputFrames} frames · {run.resizeCount} resizes · {run.completion}</div></td><td className="p-2 font-mono">{run.order.join(" → ")}</td><td className="p-2">{run.dispatchedFrameEqual ? <span className="text-emerald-300">dispatched equal</span> : <span className="text-red-300">dispatched mismatch</span>}<div className="text-slate-500">{run.inputFrameCount} frames ({run.inputFrames.length} retained)</div></td><td className="p-2 font-mono">{timing(xtermTiming)} ms<div className="text-slate-500">throughput {run.metrics.xterm.throughputBytesPerSecond === null ? "–" : `${Math.round(run.metrics.xterm.throughputBytesPerSecond).toLocaleString()} B/s`}</div></td><td className="p-2 font-mono">{timing(ghosttyTiming)} ms<div className="text-slate-500">throughput {run.metrics.ghostty.throughputBytesPerSecond === null ? "–" : `${Math.round(run.metrics.ghostty.throughputBytesPerSecond).toLocaleString()} B/s`}</div></td><td className="p-2">{run.classification}<div>{Math.round(run.markerCoverage.xterm * 100)}% / {Math.round(run.markerCoverage.ghostty * 100)}%</div><div className="text-slate-500">drops {run.droppedFrames.xterm} / {run.droppedFrames.ghostty} · lost input {run.lostInputEvents.xterm} / {run.lostInputEvents.ghostty}</div>{run.failures.length > 0 ? <div className="text-red-300">{run.failures.join(", ")}</div> : <div className="text-emerald-300">pass</div>}</td></tr>;
+                })}
+              </tbody>
+            </table>
+          </div>
+          <details className="mt-3"><summary className="cursor-pointer text-slate-400">Raw per-run JSON</summary><pre data-testid="raw-results" className="mt-2 max-h-72 overflow-auto rounded bg-slate-950 p-3 text-[10px] text-slate-400">{JSON.stringify(comparisonReport, null, 2)}</pre></details>
+        </section>
+
+        <section className="grid gap-4 lg:grid-cols-2">
+          <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-4 text-xs"><h2 className="font-medium">Capability matrix</h2><p className="mt-1 text-slate-500">Interactive and platform behavior is reported separately from parser timing. Failed production-required cells and not-measured cells are not performance wins.</p><div className="mt-3 overflow-x-auto"><table className="w-full min-w-[520px] border-collapse"><thead><tr className="border-b border-slate-800 text-left text-slate-500"><th className="p-2">Capability</th><th className="p-2">xterm</th><th className="p-2">Ghostty</th><th className="p-2">Evidence</th></tr></thead><tbody>{RENDERER_CAPABILITY_MATRIX.map((row) => <tr key={row.capability} className="border-b border-slate-900"><td className="p-2">{row.capability}</td><td className="p-2">{row.xterm}</td><td className="p-2">{row.ghostty}</td><td className="p-2 text-slate-500">{row.note}</td></tr>)}</tbody></table></div></div>
+          <div className="rounded-lg border border-slate-800 bg-slate-950/50 p-4 text-xs"><h2 className="font-medium">Artifact size</h2><p className="mt-1 text-slate-500">Measured from pinned package files and the committed Ghostty WASM artifact. Memory is explicitly not measured in this browser route.</p>{sizeManifest ? <dl className="mt-3 grid grid-cols-[1fr_auto] gap-y-2"><dt className="text-slate-500">xterm core + fit + serialize</dt><dd className="font-mono">{sizeManifest.xterm.rawBytes.toLocaleString()} raw / {sizeManifest.xterm.gzipBytes.toLocaleString()} gzip</dd><dt className="text-slate-500">xterm with WebGL addon</dt><dd className="font-mono">{sizeManifest.xterm.webglAddon.rawBytes.toLocaleString()} raw / {sizeManifest.xterm.webglAddon.gzipBytes.toLocaleString()} gzip</dd><dt className="text-slate-500">Ghostty WASM</dt><dd className="font-mono">{sizeManifest.ghostty.rawBytes.toLocaleString()} raw / {sizeManifest.ghostty.gzipBytes.toLocaleString()} gzip</dd><dt className="text-slate-500">Memory</dt><dd>not measured</dd></dl> : <div className="mt-3 text-slate-500">Loading committed size manifest…</div>}<div className="mt-3 border-t border-slate-800 pt-3 text-slate-500">Raw bytes and per-file gzip sums are descriptive evidence, not a production bundle-size gate.</div></div>
         </section>
 
         <section className="rounded-lg border border-slate-800 bg-slate-950/50 p-4 text-xs">
