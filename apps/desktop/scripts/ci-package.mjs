@@ -23,6 +23,7 @@ import { readFileSync, writeFileSync, existsSync, readdirSync } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 import { execFileSync } from "child_process";
+import { sanitizePackageManifest } from "./sanitize-package-manifest.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(__dirname, "..");
@@ -34,16 +35,11 @@ const pkgPath = resolve(desktopRoot, "package.json");
 //    rebuilds their native bindings. All other server JS is bundled in server.cjs.
 // ---------------------------------------------------------------------------
 
-const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
-const filteredDeps = {};
-for (const [name, version] of Object.entries(pkg.dependencies ?? {})) {
-  if (!String(version).startsWith("workspace:")) {
-    filteredDeps[name] = version;
-  }
-}
-pkg.dependencies = filteredDeps;
+const pkg = sanitizePackageManifest(JSON.parse(readFileSync(pkgPath, "utf8")));
 writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
-console.log("[ci-package] Stripped workspace:* dependencies from package.json");
+console.log(
+  "[ci-package] Stripped workspace:* entries from package.json dependency fields",
+);
 
 // ---------------------------------------------------------------------------
 // 2. Create a minimal package-lock.json to anchor npm in this directory and

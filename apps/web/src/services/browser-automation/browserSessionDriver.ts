@@ -120,6 +120,7 @@ interface ProviderTabSession {
   readonly workspaceId: string;
   readonly providerSessionId: string;
   readonly providerInstanceId: string;
+  lastDispatch: BrowserAutomationHostDispatch;
   current: BrowserAutomationHostDispatchTarget | null;
   readonly tabs: Map<string, ControlledTab>;
 }
@@ -829,7 +830,7 @@ export class BrowserSessionDriver {
     } else if ((request.args.action === "release" || request.args.action === "close") && requestedTabId) {
       const controlled = session.tabs.get(requestedTabId);
       if (request.args.action === "close" && controlled?.provenance === "agent-created") {
-        const closeResult = await this.closeControlledTab(dispatch, session, adapter, requestedTabId, controlled, signal);
+        const closeResult = await this.closeControlledTab(dispatch, session, adapter, requestedTabId, controlled, signal, liveTargets);
         if (closeResult) return closeResult;
       } else if (controlled) {
         if (signal.aborted) {
@@ -848,7 +849,7 @@ export class BrowserSessionDriver {
           ? requested === "handoff" || requested === "deliverable" ? requested : "release"
           : requested ?? "close";
         if (disposition === "close") {
-          const closeResult = await this.closeControlledTab(dispatch, session, adapter, tabId, controlled, signal);
+          const closeResult = await this.closeControlledTab(dispatch, session, adapter, tabId, controlled, signal, liveTargets);
           if (closeResult) return closeResult;
         } else {
           if (signal.aborted) {
@@ -932,30 +933,99 @@ export class BrowserSessionDriver {
     tabId: string,
     controlled: ControlledTab,
     signal: AbortSignal,
+    liveTargets?: Map<string, BrowserAutomationHostDispatchTarget>,
   ): Promise<BrowserAutomationResponse | null> {
     if (signal.aborted) {
       return this.tabCancellation(dispatch, "Browser tab mutation was interrupted before closing the tab");
     }
+    if (!adapter) {
+      this.preserveControlledTab(session, tabId, controlled);
+      return this.tabCloseFailure(dispatch, new Error("Browser tab lifecycle adapter is unavailable"), signal, "preserved");
+    }
+    let closeCause: unknown;
     try {
-      await adapter?.close(controlled.target);
+      await adapter.close(controlled.target);
     } catch (cause) {
-      return this.tabCloseFailure(dispatch, cause, signal);
+      closeCause = cause;
     }
-    session.tabs.delete(tabId);
-    if (session.current?.tabId === tabId) session.current = null;
+    const effect = await this.reconcileClosedTab(dispatch, session, adapter, tabId, controlled, liveTargets);
+    if (effect === "preserved") {
+      return this.tabCloseFailure(
+        dispatch,
+        closeCause ?? new Error("Browser tab close did not remove the target"),
+        signal,
+        effect,
+      );
+    }
     if (signal.aborted) {
-      return this.tabCancellation(dispatch, "Browser tab mutation was interrupted after closing the tab", "unknown");
+      return this.tabCancellation(dispatch, "Browser tab mutation was interrupted after closing the tab", effect);
     }
+    if (closeCause) return this.tabCloseFailure(dispatch, closeCause, signal, effect);
     return null;
+  }
+
+  private async reconcileClosedTab(
+    dispatch: BrowserAutomationHostDispatch,
+    session: ProviderTabSession,
+    adapter: BrowserSessionTabLifecycleAdapter,
+    tabId: string,
+    controlled: ControlledTab,
+    liveTargets?: Map<string, BrowserAutomationHostDispatchTarget>,
+  ): Promise<"closed" | "preserved"> {
+    let liveTargetList: readonly BrowserAutomationHostDispatchTarget[];
+    try {
+      liveTargetList = await adapter.list(dispatch);
+    } catch {
+      // A failed reconciliation cannot prove that the physical target closed.
+      this.preserveControlledTab(session, tabId, controlled);
+      return "preserved";
+    }
+    if (liveTargets) {
+      liveTargets.clear();
+      for (const target of liveTargetList) liveTargets.set(target.tabId, target);
+    }
+    const liveTarget = liveTargetList.find((target) => this.sameTargetIdentity(target, controlled.target));
+    if (!liveTarget) {
+      session.tabs.delete(tabId);
+      if (session.current?.tabId === tabId) session.current = null;
+      this.publishLifecycleProjectionInternal();
+      return "closed";
+    }
+    this.preserveControlledTab(session, tabId, controlled, liveTarget);
+    return "preserved";
+  }
+
+  private sameTargetIdentity(
+    left: BrowserAutomationHostDispatchTarget,
+    right: BrowserAutomationHostDispatchTarget,
+  ): boolean {
+    return left.desktopInstanceId === right.desktopInstanceId &&
+      left.windowId === right.windowId &&
+      left.connectionGeneration === right.connectionGeneration &&
+      left.threadId === right.threadId &&
+      left.tabId === right.tabId &&
+      left.targetGeneration === right.targetGeneration;
+  }
+
+  private preserveControlledTab(
+    session: ProviderTabSession,
+    tabId: string,
+    controlled: ControlledTab,
+    target: BrowserAutomationHostDispatchTarget = controlled.target,
+  ): void {
+    session.tabs.set(tabId, { ...controlled, target });
+    if (session.current?.tabId === tabId) session.current = target;
+    this.publishLifecycleProjectionInternal();
   }
 
   private tabCloseFailure(
     dispatch: BrowserAutomationHostDispatch,
     cause: unknown,
     signal: AbortSignal,
+    effect: "closed" | "preserved",
   ): BrowserAutomationResponse {
     if (signal.aborted || this.isCancellation(cause)) {
-      return this.tabCancellation(dispatch, "Browser tab mutation was interrupted while closing the tab", "unknown");
+      return this.tabCancellation(dispatch, "Browser tab mutation was interrupted while closing the tab", effect);
     }
     const detail = sanitizePublicDetail(cause instanceof Error ? cause.message : cause);
     return {
@@ -968,7 +1038,7 @@ export class BrowserSessionDriver {
         message: detail ? `Browser tab close failed: ${detail}` : "Browser tab close failed",
         retryable: true,
         stage: "effect",
-        effect: "unknown",
+        effect,
         recovery: "inspect",
       },
     };
@@ -1113,10 +1183,13 @@ export class BrowserSessionDriver {
         workspaceId: dispatch.request.workspaceId,
         providerSessionId: dispatch.request.providerSessionId,
         providerInstanceId: dispatch.request.providerInstanceId,
+        lastDispatch: dispatch,
         current: null,
         tabs: new Map(),
       };
       this.tabSessions.set(key, session);
+    } else {
+      session.lastDispatch = dispatch;
     }
     return session;
   }
@@ -1134,15 +1207,29 @@ export class BrowserSessionDriver {
           observationTargetKey(session.current.threadId, session.current.tabId),
         );
       }
+      const retained = new Map<string, ControlledTab>();
       for (const tab of session.tabs.values()) {
         this.clearHumanInteractionTarget(
           observationTargetKey(tab.target.threadId, tab.target.tabId),
         );
-        if (tab.provenance === "agent-created" && tab.ownership !== "released") {
-          await adapter?.close(tab.target);
+        if (tab.provenance !== "agent-created" || tab.ownership === "released") continue;
+        if (!adapter) {
+          retained.set(tab.tabId, tab);
+          continue;
         }
+        try {
+          await adapter.close(tab.target);
+        } catch { /* Reconciliation decides whether retryable ownership remains. */ }
+        const effect = await this.reconcileClosedTab(session.lastDispatch, session, adapter, tab.tabId, tab);
+        if (effect === "preserved") retained.set(tab.tabId, session.tabs.get(tab.tabId) ?? tab);
       }
-      this.tabSessions.delete(key);
+      if (retained.size === 0) {
+        this.tabSessions.delete(key);
+      } else {
+        session.tabs.clear();
+        for (const [tabId, tab] of retained) session.tabs.set(tabId, tab);
+        if (!session.current || !retained.has(session.current.tabId)) session.current = null;
+      }
     }
     this.publishLifecycleProjectionInternal();
   }
@@ -1191,7 +1278,7 @@ export class BrowserSessionDriver {
   private tabCancellation(
     dispatch: BrowserAutomationHostDispatch,
     message: string,
-    effect: "none" | "unknown" = "none",
+    effect: "none" | "closed" | "preserved" = "none",
   ): BrowserAutomationResponse {
     return {
       contractVersion: dispatch.request.contractVersion,

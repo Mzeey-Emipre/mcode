@@ -47,11 +47,14 @@ export type BrowserAutomationIpcTarget = BrowserAutomationHostDispatchTarget;
 /** Validated IPC input accepted by the browser automation kernel. */
 export type BrowserAutomationIpcRequest = BrowserAutomationHostDispatch;
 
+type KernelErrorEffect = "none" | "created" | "closed" | "preserved" | "unknown";
+
 class KernelError extends Error {
   constructor(
     readonly code: BrowserAutomationErrorCode,
     message: string,
     readonly retryable: boolean,
+    readonly effect: KernelErrorEffect = "none",
   ) {
     super(message);
     this.name = "BrowserAutomationKernelError";
@@ -765,11 +768,7 @@ export class BrowserAutomationKernel {
     if (!win || win.isDestroyed()) return false;
     const state = this.targets.get(targetKey(win.id, threadId, tabId));
     if (!state) return false;
-    if (
-      state.syntheticInputDepth > 0 ||
-      Date.now() <= state.syntheticInputUntil ||
-      state.controller.controller === "human"
-    ) return false;
+    if (state.controller.controller === "human") return false;
     this.humanInterrupt(state);
     return true;
   }
@@ -1165,25 +1164,30 @@ export class BrowserAutomationKernel {
     if (request.deadline <= Date.now()) throw new KernelError("DEADLINE_EXCEEDED", "Browser operation deadline elapsed", true);
     state.actions.push({ timestamp: Date.now(), operation: request.operation, outcome: "started" });
     if (request.operation !== "status") this.emitController(state, "agent", request);
+    let effect: KernelErrorEffect = "none";
+    const markEffect = () => {
+      if (effect === "none") effect = "preserved";
+    };
     try {
-      const operation = this.dispatch(resolved, request, signal);
+      const operation = this.dispatch(resolved, request, signal, markEffect);
       const result = request.operation === "open" || request.operation === "navigate"
         ? await operation
         : await boundedRace(operation, signal, request.deadline);
       state.actions.push({ timestamp: Date.now(), operation: request.operation, outcome: "succeeded" });
       return result;
     } catch (cause) {
+      const finalCause = effect === "none" ? cause : this.withEffect(cause, effect);
       state.actions.push({
         timestamp: Date.now(),
         operation: request.operation,
         outcome:
-          cause instanceof BrowserAutomationCancelledError ||
-          (cause instanceof KernelError && (cause.code === "HUMAN_INTERRUPTED" || cause.code === "OPERATION_CANCELLED"))
+          finalCause instanceof BrowserAutomationCancelledError ||
+          (finalCause instanceof KernelError && (finalCause.code === "HUMAN_INTERRUPTED" || finalCause.code === "OPERATION_CANCELLED"))
             ? "interrupted"
             : "failed",
-        detail: redactBrowserText(cause instanceof Error ? cause.message : "Browser operation failed"),
+        detail: redactBrowserText(finalCause instanceof Error ? finalCause.message : "Browser operation failed"),
       });
-      throw cause;
+      throw finalCause;
     } finally {
       if (state.syntheticInputDepth > 0 && state.debuggerOwned) {
         await Promise.race([
@@ -1198,7 +1202,12 @@ export class BrowserAutomationKernel {
     }
   }
 
-  private async dispatch(resolved: ResolvedTarget, request: BrowserAutomationRequest, signal: AbortSignal): Promise<unknown> {
+  private async dispatch(
+    resolved: ResolvedTarget,
+    request: BrowserAutomationRequest,
+    signal: AbortSignal,
+    markEffect: () => void,
+  ): Promise<unknown> {
     const { state, webContents } = resolved;
     const base = () => ({ url: redactBrowserLocation(webContents.getURL()), title: redactBrowserText(webContents.getTitle(), 4_096), controlEpoch: state.controlEpoch });
     switch (request.operation) {
@@ -1271,7 +1280,9 @@ export class BrowserAutomationKernel {
           signal.addEventListener("abort", stopNavigation, { once: true });
           state.automationNavigationDepth += 1;
           try {
-            await boundedRace(webContents.loadURL(url), signal, request.deadline);
+            const navigation = webContents.loadURL(url);
+            markEffect();
+            await boundedRace(navigation, signal, request.deadline);
             if (signal.aborted || state.navigationSequence !== navigationSequence) {
               throw new BrowserAutomationCancelledError("Browser navigation was cancelled");
             }
@@ -1312,9 +1323,19 @@ export class BrowserAutomationKernel {
         this.emitController(state, "agent", request, point);
         await this.withSyntheticInput(state, async () => {
           await this.ensureDebugger(state);
-          await this.dispatchGuestInput(state, "pointer", () =>
-            webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: request.args.button, clickCount: request.args.clickCount }),
+          await this.dispatchGuestInput(
+            state,
+            "pointer",
+            () => webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
+              type: "mousePressed",
+              x: point.x,
+              y: point.y,
+              button: request.args.button,
+              clickCount: request.args.clickCount,
+            }),
+            markEffect,
           );
+          this.throwIfAborted(signal);
           try {
             await webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: request.args.button, clickCount: request.args.clickCount });
           } catch (cause) {
@@ -1328,29 +1349,45 @@ export class BrowserAutomationKernel {
         if (request.args.target) {
           const point = await this.resolvePoint(resolved, request.args.target);
           this.emitController(state, "agent", request, point);
-          await this.withSyntheticInput(state, () => this.clickPoint(state, point));
+          await this.withSyntheticInput(state, () => this.clickPoint(state, point, markEffect));
+          this.throwIfAborted(signal);
         }
         await this.withSyntheticInput(state, async () => {
           await this.ensureDebugger(state);
           if (request.args.clear) {
-            await this.pressKey(state, "a", selectAllModifierMask() === 4 ? ["Meta"] : ["Control"]);
-            await this.pressKey(state, "Backspace", []);
+            await this.pressKey(state, "a", selectAllModifierMask() === 4 ? ["Meta"] : ["Control"], markEffect);
+            await this.pressKey(state, "Backspace", [], markEffect);
           }
-          await webContents.debugger.sendCommand("Input.insertText", { text: request.args.text });
-          if (request.args.submit) await this.pressKey(state, "Enter", []);
+          this.throwIfAborted(signal);
+          const insertion = webContents.debugger.sendCommand("Input.insertText", { text: request.args.text });
+          markEffect();
+          await insertion;
+          this.throwIfAborted(signal);
+          if (request.args.submit) await this.pressKey(state, "Enter", [], markEffect);
         });
         return { operation: "type", ...base() };
       }
       case "press":
-        await this.withSyntheticInput(state, () => this.pressKey(state, request.args.key, request.args.modifiers));
+        await this.withSyntheticInput(state, () => this.pressKey(state, request.args.key, request.args.modifiers, markEffect));
+        this.throwIfAborted(signal);
         return { operation: "press", ...base() };
       case "scroll": {
         const point = request.args.target ? await this.resolvePoint(resolved, request.args.target) : { x: 1, y: 1 };
         await this.withSyntheticInput(state, async () => {
           await this.ensureDebugger(state);
-          await this.dispatchGuestInput(state, "wheel", () =>
-            webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type: "mouseWheel", x: point.x, y: point.y, deltaX: request.args.deltaX, deltaY: request.args.deltaY }),
+          await this.dispatchGuestInput(
+            state,
+            "wheel",
+            () => webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
+              type: "mouseWheel",
+              x: point.x,
+              y: point.y,
+              deltaX: request.args.deltaX,
+              deltaY: request.args.deltaY,
+            }),
+            markEffect,
           );
+          this.throwIfAborted(signal);
         });
         return { operation: "scroll", ...base() };
       }
@@ -1386,20 +1423,17 @@ export class BrowserAutomationKernel {
         if (byteLength(request.args.expression) > EVALUATION_LIMIT) throw new KernelError("INVALID_REQUEST", "Evaluation expression exceeds 64 KiB", false);
         const timeoutMs = Math.min(request.args.timeoutMs, Math.max(1, request.deadline - Date.now()));
         try {
-          const evaluated = asRecord(await boundedRace(
-            this.callIsolatedFunction(
-              state,
-              evaluateIsolatedExpression,
-              {
-                expression: request.args.expression,
-                awaitPromise: request.args.awaitPromise,
-                maxBytes: EVALUATION_LIMIT,
-              },
-              { awaitPromise: true, timeoutMs },
-            ),
-            signal,
-            Date.now() + timeoutMs,
-          ));
+          const evaluation = this.callIsolatedFunction(
+            state,
+            evaluateIsolatedExpression,
+            {
+              expression: request.args.expression,
+              awaitPromise: request.args.awaitPromise,
+              maxBytes: EVALUATION_LIMIT,
+            },
+            { awaitPromise: true, timeoutMs, onDispatch: markEffect },
+          );
+          const evaluated = asRecord(await boundedRace(evaluation, signal, Date.now() + timeoutMs));
           if (evaluated.ok !== true || typeof evaluated.valueJson !== "string") {
             throw new KernelError("RESULT_TOO_LARGE", "Evaluation result exceeds 64 KiB", false);
           }
@@ -1447,6 +1481,13 @@ export class BrowserAutomationKernel {
     }
   }
 
+  private throwIfAborted(signal: AbortSignal): void {
+    if (!signal.aborted) return;
+    const reason = signal.reason;
+    if (reason instanceof Error) throw reason;
+    throw new BrowserAutomationCancelledError();
+  }
+
   private suppressGuestInput(
     state: TargetState,
     kind: "keyboard" | "pointer" | "wheel",
@@ -1479,11 +1520,14 @@ export class BrowserAutomationKernel {
     state: TargetState,
     kind: "keyboard" | "pointer" | "wheel",
     dispatch: () => Promise<T>,
+    markEffect?: () => void,
   ): Promise<T> {
     const allowance = this.suppressGuestInput(state, kind);
     let succeeded = false;
     try {
-      const result = await dispatch();
+      const pending = dispatch();
+      markEffect?.();
+      const result = await pending;
       succeeded = true;
       return result;
     } finally {
@@ -1491,15 +1535,29 @@ export class BrowserAutomationKernel {
     }
   }
 
-  private async clickPoint(state: TargetState, point: { x: number; y: number }): Promise<void> {
+  private async clickPoint(state: TargetState, point: { x: number; y: number }, markEffect?: () => void): Promise<void> {
     await this.ensureDebuggerForWebContents(state.webContents);
-    await this.dispatchGuestInput(state, "pointer", () =>
-      state.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1 }),
+    await this.dispatchGuestInput(
+      state,
+      "pointer",
+      () => state.webContents.debugger.sendCommand("Input.dispatchMouseEvent", {
+        type: "mousePressed",
+        x: point.x,
+        y: point.y,
+        button: "left",
+        clickCount: 1,
+      }),
+      markEffect,
     );
     await state.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1 });
   }
 
-  private async pressKey(state: TargetState, key: string, modifiers: readonly string[]): Promise<void> {
+  private async pressKey(
+    state: TargetState,
+    key: string,
+    modifiers: readonly string[],
+    markEffect?: () => void,
+  ): Promise<void> {
     const webContents = state.webContents;
     await this.ensureDebuggerForWebContents(webContents);
     if (state.heldKeys.size >= 32 && !state.heldKeys.has(key)) {
@@ -1507,8 +1565,11 @@ export class BrowserAutomationKernel {
     }
     const mask = modifiers.reduce((value, modifier) => value | ({ Alt: 1, Control: 2, Meta: 4, Shift: 8 }[modifier] ?? 0), 0);
     state.heldKeys.add(key);
-    await this.dispatchGuestInput(state, "keyboard", () =>
-      webContents.debugger.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", key, modifiers: mask }),
+    await this.dispatchGuestInput(
+      state,
+      "keyboard",
+      () => webContents.debugger.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", key, modifiers: mask }),
+      markEffect,
     );
     try {
       await webContents.debugger.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key, modifiers: mask });
@@ -1764,10 +1825,10 @@ export class BrowserAutomationKernel {
     state: TargetState,
     fn: (argument: TArgument) => unknown,
     argument: TArgument,
-    options?: { awaitPromise?: boolean; returnByValue?: boolean; timeoutMs?: number },
+    options?: { awaitPromise?: boolean; returnByValue?: boolean; timeoutMs?: number; onDispatch?: () => void },
   ): Promise<unknown> {
     const executionContextId = await this.ensureIsolatedContext(state);
-    const response = asRecord(await state.webContents.debugger.sendCommand("Runtime.callFunctionOn", {
+    const responsePromise = state.webContents.debugger.sendCommand("Runtime.callFunctionOn", {
       functionDeclaration: fn.toString(),
       executionContextId,
       arguments: [{ value: argument }],
@@ -1775,7 +1836,9 @@ export class BrowserAutomationKernel {
       returnByValue: options?.returnByValue ?? true,
       userGesture: false,
       ...(options?.timeoutMs ? { timeout: options.timeoutMs } : {}),
-    }));
+    });
+    options?.onDispatch?.();
+    const response = asRecord(await responsePromise);
     if (response.exceptionDetails) {
       const details = asRecord(response.exceptionDetails);
       throw new KernelError(
@@ -1981,6 +2044,16 @@ export class BrowserAutomationKernel {
     return result;
   }
 
+  private withEffect(cause: unknown, effect: KernelErrorEffect): unknown {
+    if (cause instanceof KernelError) {
+      return new KernelError(cause.code, cause.message, cause.retryable, effect);
+    }
+    if (cause instanceof BrowserAutomationCancelledError) {
+      return new KernelError("OPERATION_CANCELLED", cause.message, true, effect);
+    }
+    return new KernelError("INTERNAL_ERROR", "Browser automation failed", true, effect);
+  }
+
   private failureResponse(request: BrowserAutomationRequest | null, cause: unknown): BrowserAutomationResponse {
     const mapped = cause instanceof KernelError
       ? cause
@@ -1999,7 +2072,7 @@ export class BrowserAutomationKernel {
         message: redactBrowserText(mapped.message),
         retryable: mapped.retryable,
         stage: mapped.code === "TAB_UNAVAILABLE" ? "allocation" : "effect",
-        effect: mapped.code === "TAB_UNAVAILABLE" ? "unknown" : "none",
+        effect: mapped.code === "TAB_UNAVAILABLE" && mapped.effect === "none" ? "unknown" : mapped.effect,
         recovery: mapped.retryable ? "retry" : "manual",
         correlationId: randomUUID(),
       },

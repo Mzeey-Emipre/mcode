@@ -33,6 +33,7 @@
   },
   "devDependencies": {
     "@electron/fuses": "^2.1.1",
+    "@mcode/browser-conformance": "workspace:*",
     "@resvg/resvg-js": "^2.6.2",
     "@types/uuid": "^10.0.0",
     "@types/which": "^3.0.4",
@@ -41,6 +42,7 @@
     "electron-builder": "^25.1.0",
     "electron-mksnapshot": "35.7.5",
     "esbuild": "^0.27.0",
+    "jsdom": "^29.0.1",
     "png-to-ico": "^3.0.1",
     "png2icons": "^2.0.1",
     "resedit": "^3.0.2",

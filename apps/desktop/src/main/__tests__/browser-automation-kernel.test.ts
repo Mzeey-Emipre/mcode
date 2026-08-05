@@ -476,16 +476,20 @@ describe("BrowserAutomationKernel", () => {
   });
 
   it("does not treat synthetic keyboard input as human takeover and releases held input", async () => {
-    let rendererInterruptResult: boolean | null = null;
+    let syntheticInputObserved = false;
     currentWebContents!.on("before-input-event", () => {
-      rendererInterruptResult = kernel.interrupt(event(), { threadId: "thread", tabId: "tab" });
+      syntheticInputObserved = true;
     });
     const pressed = await kernel.execute(event(), payload(request("press", { key: "A", modifiers: ["Shift"] })));
     expect(pressed).toMatchObject({ ok: true });
-    expect(rendererInterruptResult).toBe(false);
+    expect(syntheticInputObserved).toBe(true);
     const commands = currentWebContents!.debugger.commands.map((command) => command.method);
     expect(commands.filter((method) => method === "Input.dispatchKeyEvent").length).toBeGreaterThanOrEqual(4);
-    await expect(kernel.execute(event(), payload(request("status")))).resolves.toMatchObject({ ok: true });
+    await expect(kernel.execute(event(), payload(request("status")))).resolves.toMatchObject({
+      ok: true,
+      result: { controller: { controller: "agent", controlEpoch: 0 } },
+    });
+    expect(kernel.interrupt(event(), { threadId: "thread", tabId: "tab" })).toBe(true);
   });
 
   it("revokes failed CDP input before an immediate trusted human takeover", async () => {
@@ -516,7 +520,7 @@ describe("BrowserAutomationKernel", () => {
     expect(kernel.interrupt(event(), { threadId: "thread", tabId: "tab" })).toBe(true);
   });
 
-  it("does not treat a click-triggered link navigation as delayed human takeover", async () => {
+  it("does not treat click-triggered link navigation as human takeover", async () => {
     vi.useFakeTimers();
     currentWebContents!.semanticElements.set("link", { attached: true, visible: true, x: 10, y: 20 });
     await kernel.execute(event(), payload(request("click", {
@@ -525,17 +529,10 @@ describe("BrowserAutomationKernel", () => {
       clickCount: 1,
       timeoutMs: 1_000,
     }, { requestId: "click-link" })));
-    expect(kernel.interrupt(event(), { threadId: "thread", tabId: "tab" })).toBe(false);
     currentWebContents!.emit("did-start-navigation", {}, "https://example.test/next", false, true);
     await expect(kernel.execute(event(), payload(request("status", {}, { requestId: "status-after-click-navigation" })))).resolves.toMatchObject({
       ok: true,
       result: { controller: { controller: "agent", controlEpoch: 0 } },
-    });
-    await vi.advanceTimersByTimeAsync(251);
-    expect(kernel.interrupt(event(), { threadId: "thread", tabId: "tab" })).toBe(true);
-    await expect(kernel.execute(event(), payload(request("status", {}, { requestId: "status-after-human-navigation" })))).resolves.toMatchObject({
-      ok: true,
-      result: { controller: { controller: "human", controlEpoch: 1 } },
     });
     vi.useRealTimers();
   });
