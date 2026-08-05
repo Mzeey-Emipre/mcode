@@ -5,9 +5,13 @@ import {
   BROWSER_AUTOMATION_MAX_RESULT_BYTES,
   BROWSER_AUTOMATION_OPERATION_METADATA,
   BROWSER_AUTOMATION_OPERATIONS,
+  BROWSER_V2_CORE_OPERATIONS,
   BrowserAutomationRequestSchema,
+  type BrowserAutomationResult,
   type BrowserAutomationOperation,
+  type BrowserAutomationResponse,
 } from "@mcode/contracts";
+import { MCODE_BROWSER_GUIDE } from "@mcode/thread-orchestration";
 import type { BrowserAutomationBroker } from "./broker.js";
 import type {
   BrowserAutomationCredentialClaims,
@@ -103,7 +107,7 @@ function parseJsonRpc(value: unknown): JsonRpcRequest | null {
 }
 
 const commonProperties = {
-  expectedControlEpoch: { type: "integer", minimum: 0, description: "Control epoch returned by browser_status." },
+  expectedControlEpoch: { type: "integer", minimum: 0, description: "Control epoch returned by browser_inspect." },
 } as const;
 
 const actTargetSchema = {
@@ -256,12 +260,29 @@ function inputSchema(operation: BrowserAutomationOperation): Record<string, unkn
   };
 }
 
+function toolDescription(operation: BrowserAutomationOperation): string {
+  switch (operation) {
+    case "open":
+      return "Create one agent-owned background tab and return its initial Browser observation. Use a fresh idempotency key; this does not reveal or focus the Browser panel.";
+    case "inspect":
+      return "Inspect Browser readiness and return the canonical session-specific capabilities, constraints, tabs, observationRef, diagnostics, and recovery guidance.";
+    case "act":
+      return "Execute up to eight ordered Browser steps against the latest observationRef. Use a fresh idempotency key and stop at any failure, interruption, deadline, navigation, or invalidation boundary.";
+    case "tabs":
+      return "Select, claim, release, close, or finalize Browser tabs using the latest observationRef and a fresh idempotency key. Release claimed user tabs instead of closing them.";
+    case "evaluate":
+      return "Run privileged open-world page evaluation only when live negotiation advertises this tool. Use the same observationRef, idempotency, interruption, receipt, effect, and recovery rules as Browser mutations.";
+    default:
+      return `Operate or inspect the user-visible Mcode Browser: ${operation}. Follow Browser readiness and recovery results before another call.`;
+  }
+}
+
 function toolList(operations: readonly BrowserAutomationOperation[]): Array<Record<string, unknown>> {
   return operations.map((operation) => {
     const metadata = BROWSER_AUTOMATION_OPERATION_METADATA[operation];
     return {
       name: metadata.mcpName,
-      description: `Operate or inspect the user-visible Mcode Browser: ${operation}.`,
+      description: toolDescription(operation),
       inputSchema: inputSchema(operation),
       annotations: {
         readOnlyHint: metadata.annotations.readOnly,
@@ -271,6 +292,48 @@ function toolList(operations: readonly BrowserAutomationOperation[]): Array<Reco
       },
     };
   });
+}
+
+type BrowserAutomationScreenshot = NonNullable<Extract<BrowserAutomationResult, { operation: "inspect" }>["screenshot"]>;
+
+function screenshotProjection(screenshot: BrowserAutomationScreenshot): {
+  readonly data: string;
+  readonly metadata: Omit<BrowserAutomationScreenshot, "dataBase64">;
+  readonly mimeType: BrowserAutomationScreenshot["mediaType"];
+} {
+  const { dataBase64, ...metadata } = screenshot;
+  return { data: dataBase64, metadata, mimeType: screenshot.mediaType };
+}
+
+function screenshotFromResult(
+  result: BrowserAutomationResult,
+): BrowserAutomationScreenshot | undefined {
+  switch (result.operation) {
+    case "inspect":
+    case "screenshot":
+      return result.screenshot;
+    case "snapshot":
+      return result.snapshot.screenshot;
+    default:
+      return undefined;
+  }
+}
+
+function mcpContent(result: BrowserAutomationResponse): Array<Record<string, unknown>> {
+  if (!result.ok) return [{ type: "text", text: JSON.stringify(result.error) }];
+
+  const toolResult = result.result;
+  const screenshot = screenshotFromResult(toolResult);
+  if (!screenshot) return [{ type: "text", text: JSON.stringify(toolResult) }];
+
+  const projection = screenshotProjection(screenshot);
+  const metadataResult = toolResult.operation === "snapshot"
+    ? { ...toolResult, snapshot: { ...toolResult.snapshot, screenshot: projection.metadata } }
+    : { ...toolResult, screenshot: projection.metadata };
+  return [
+    { type: "text", text: JSON.stringify(metadataResult) },
+    { type: "image", data: projection.data, mimeType: projection.mimeType },
+  ];
 }
 
 /** Handles authenticated, stateless JSON-RPC calls for visible-browser MCP tools. */
@@ -405,10 +468,10 @@ export class BrowserAutomationMcpHandler {
       const protocolVersion = typeof requested === "string" && MCP_PROTOCOL_VERSIONS.includes(requested as (typeof MCP_PROTOCOL_VERSIONS)[number])
         ? requested
         : MCP_PROTOCOL_VERSIONS[0];
-      return { jsonrpc: "2.0", id, result: { protocolVersion, capabilities: { tools: { listChanged: false } }, serverInfo: { name: "mcode-browser", version: String(BROWSER_AUTOMATION_CONTRACT_VERSION) } } };
+      return { jsonrpc: "2.0", id, result: { protocolVersion, capabilities: { tools: { listChanged: false } }, serverInfo: { name: "mcode-browser", version: String(BROWSER_AUTOMATION_CONTRACT_VERSION) }, instructions: MCODE_BROWSER_GUIDE } };
     }
     if (request.method === "tools/list") {
-      return { jsonrpc: "2.0", id, result: { tools: toolList(this.broker.availableOperations(claims)) } };
+      return { jsonrpc: "2.0", id, result: { tools: toolList(this.discoverableOperations(claims)) } };
     }
     if (request.method === "notifications/cancelled") {
       const cancelledId = request.params && typeof request.params === "object" && !Array.isArray(request.params)
@@ -485,10 +548,21 @@ export class BrowserAutomationMcpHandler {
       jsonrpc: "2.0",
       id,
       result: {
-        content: [{ type: "text", text: JSON.stringify(result.ok ? result.result : result.error) }],
+        content: mcpContent(result),
         isError: !result.ok,
       },
     };
+  }
+
+  private discoverableOperations(
+    claims: BrowserAutomationCredentialClaims,
+  ): readonly BrowserAutomationOperation[] {
+    const negotiated = this.broker.availableOperations(claims);
+    const core = BROWSER_V2_CORE_OPERATIONS.filter((operation) => claims.allowedOperations.includes(operation));
+    return [
+      ...core,
+      ...negotiated.filter((operation) => !core.includes(operation as (typeof core)[number])),
+    ];
   }
 
   private evictOldestSequence(): void {

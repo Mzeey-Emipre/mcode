@@ -12,6 +12,25 @@ const rendererSender = new EventEmitter() as EventEmitter & { isDestroyed: () =>
 rendererSender.isDestroyed = () => false;
 rendererSender.send = vi.fn();
 const fakeWindow = { id: 7, isDestroyed: () => false, webContents: rendererSender };
+const SMALL_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+
+type FakeNativeImage = {
+  getSize: () => { width: number; height: number };
+  resize: (input: { width: number; quality?: string }) => FakeNativeImage;
+  toPNG: () => Buffer;
+};
+
+function makeFakeNativeImage(buffer: Buffer, width = 1, height = 1): FakeNativeImage {
+  return {
+    getSize: () => ({ width, height }),
+    resize: ({ width: nextWidth }) => makeFakeNativeImage(buffer, nextWidth, Math.max(1, Math.floor(nextWidth * 0.75))),
+    toPNG: () => buffer,
+  };
+}
+
+const nativeImageCreateFromBuffer = vi.hoisted(() => vi.fn());
+nativeImageCreateFromBuffer.mockImplementation((buffer: Buffer) => makeFakeNativeImage(buffer));
+
 const fakePreviewSession = {
   lastPreviewThreadId: "thread",
   view: null,
@@ -66,6 +85,7 @@ class FakeDebugger extends EventEmitter {
     if (method === "DOM.describeNode") return { node: { backendNodeId: 2 } };
     if (method === "Accessibility.getPartialAXTree") return { nodes: this.axNodes };
     if (method === "Performance.getMetrics") return { metrics: this.performanceMetrics };
+    if (method === "Page.captureScreenshot") return { data: SMALL_PNG_BASE64 };
     if (method === "Runtime.callFunctionOn") {
       const input = params as {
         functionDeclaration?: string;
@@ -153,19 +173,20 @@ class FakeWebContents extends EventEmitter {
     if (source.includes("pageIncludesText")) return false;
     return {};
   }
-  async capturePage() {
-    return {
+  capturePage = vi.fn(async () => ({
       getSize: () => ({ width: 10, height: 10 }),
       resize: () => this.capturePage(),
       toPNG: () => Buffer.from("png"),
-    };
-  }
+    }));
 }
 
 vi.mock("electron", () => ({
   BrowserWindow: {
     fromWebContents: vi.fn(() => fakeWindow),
     getAllWindows: vi.fn(() => [fakeWindow]),
+  },
+  nativeImage: {
+    createFromBuffer: nativeImageCreateFromBuffer,
   },
 }));
 
@@ -253,7 +274,11 @@ describe("BrowserAutomationKernel", () => {
     seedFakeTab();
     kernel = new BrowserAutomationKernel();
   });
-  afterEach(() => kernel.disposeWindow(fakeWindow.id));
+  afterEach(() => {
+    kernel.disposeWindow(fakeWindow.id);
+    nativeImageCreateFromBuffer.mockReset();
+    nativeImageCreateFromBuffer.mockImplementation((buffer: Buffer) => makeFakeNativeImage(buffer));
+  });
 
   it("reports exact URL, activity, loading, focus, and viewport before acting", async () => {
     await expect(kernel.execute(event(), payload(request("status")))).resolves.toMatchObject({
@@ -993,13 +1018,36 @@ describe("BrowserAutomationKernel", () => {
     expect(currentWebContents!.debugger.commands.some((command) => command.method === "Accessibility.getFullAXTree")).toBe(false);
   });
 
+  it("captures screenshots through CDP and never calls webContents.capturePage", async () => {
+    const response = await kernel.execute(
+      event(),
+      payload(request("screenshot", { maxWidth: 1_280, fullPage: false }, { requestId: "cdp-screenshot" })),
+    );
+
+    expect(response).toMatchObject({ ok: true, result: { operation: "screenshot" } });
+    expect(currentWebContents!.capturePage).not.toHaveBeenCalled();
+    expect(currentWebContents!.debugger.commands).toContainEqual({
+      method: "Page.captureScreenshot",
+      params: {
+        format: "png",
+        fromSurface: true,
+        captureBeyondViewport: false,
+      },
+    });
+    expect(nativeImageCreateFromBuffer).toHaveBeenCalledWith(Buffer.from(SMALL_PNG_BASE64, "base64"));
+    if (!response.ok || response.result.operation !== "screenshot") throw new Error("Expected screenshot result");
+    expect(response.result.screenshot.width).toBeGreaterThan(0);
+    expect(response.result.screenshot.height).toBeGreaterThan(0);
+    expect(response.result.screenshot.dataBase64.length).toBeGreaterThan(0);
+  });
+
   it("shrinks screenshots until the complete response fits its outer byte bound", async () => {
     const makeImage = (width: number): { getSize: () => { width: number; height: number }; resize: (input: { width: number }) => unknown; toPNG: () => Buffer } => ({
       getSize: () => ({ width, height: Math.max(1, Math.floor(width * 0.75)) }),
       resize: ({ width: nextWidth }) => makeImage(nextWidth),
       toPNG: () => Buffer.alloc(width * 600),
     });
-    currentWebContents!.capturePage = vi.fn(async () => makeImage(1_280)) as never;
+    nativeImageCreateFromBuffer.mockImplementation(() => makeImage(1_280) as never);
     const response = await kernel.execute(
       event(),
       payload(request("screenshot", { maxWidth: 1_280, fullPage: false }, { requestId: "bounded-screenshot" })),
@@ -1038,7 +1086,7 @@ describe("BrowserAutomationKernel", () => {
       resize: ({ width: nextWidth }) => makeImage(nextWidth),
       toPNG: () => Buffer.alloc(width * 300),
     });
-    currentWebContents!.capturePage = vi.fn(async () => makeImage(1_280)) as never;
+    nativeImageCreateFromBuffer.mockImplementation(() => makeImage(1_280) as never);
     const response = await kernel.execute(
       event(),
       payload(request("snapshot", { includeScreenshot: true }, { requestId: "bounded-rich-snapshot" })),

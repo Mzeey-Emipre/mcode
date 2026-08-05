@@ -13,6 +13,12 @@ export const BROWSER_TAB_INFO_STRING_MAX = {
   faviconUrl: 4096,
 } as const;
 
+/** Rendering surfaces supported by the desktop preview tab host. */
+export const PREVIEW_RENDERING_HOSTS = ["webContentsView", "webview"] as const;
+
+/** Surface that owns a preview tab's live page. */
+export type PreviewRenderingHost = (typeof PREVIEW_RENDERING_HOSTS)[number];
+
 /** Stable, opaque identifier for a tab. Generated host-side on create. */
 export const BrowserTabIdSchema = lazySchema(() =>
   z.string().min(1).max(BROWSER_TAB_INFO_STRING_MAX.id),

@@ -9,6 +9,11 @@ import {
   carryCursorMcodeSentState,
 } from "../cursor/cursor-provider.js";
 import { composeCopilotSystemMessage } from "../copilot/copilot-provider.js";
+import {
+  buildMcodeInstructionPlan,
+  MCODE_BROWSER_GUIDE,
+  renderMcodeInstructions,
+} from "@mcode/thread-orchestration";
 
 describe("provider-native Mcode instruction boundaries", () => {
   it("adds Codex instructions to both start and resume payload shapes", () => {
@@ -35,9 +40,13 @@ describe("provider-native Mcode instruction boundaries", () => {
   });
 
   it("delivers Cursor guidance once across accepted and unaccepted attempts", () => {
-    const runtime = "mcode runtime";
+    const runtime = renderMcodeInstructions(buildMcodeInstructionPlan({
+      browserAutomationGranted: true,
+      threadControlGranted: false,
+    }));
     const first = appendCursorMcodeInstructions("user rules", runtime, false);
-    expect(first).toEqual({ instructionMarkdown: "user rules\n\nmcode runtime", included: true });
+    expect(first).toEqual({ instructionMarkdown: `user rules\n\n${runtime}`, included: true });
+    expect(first.instructionMarkdown).toContain(MCODE_BROWSER_GUIDE.trim());
 
     const unacceptedRetry = appendCursorMcodeInstructions(first.instructionMarkdown, runtime, false);
     expect(unacceptedRetry).toEqual(first);

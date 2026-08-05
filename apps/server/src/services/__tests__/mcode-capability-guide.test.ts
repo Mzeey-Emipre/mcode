@@ -11,8 +11,13 @@ describe("Mcode capability guide", () => {
     const result = getMcodeBrowserGuide();
 
     expect(result).toEqual({ guide: MCODE_BROWSER_GUIDE });
-    expect(result.guide).toContain("browser_status");
-    expect(result.guide).toContain("expectedControlEpoch");
+    expect(result.guide).toContain("browser_inspect");
+    expect(result.guide).toContain("browser_act");
+    expect(result.guide).toContain("observationRef");
+    expect(result.guide).toContain("yield_to_user");
+    expect(result.guide).toContain("finalize");
+    expect(result.guide).not.toContain("browser_status");
+    expect(result.guide).not.toContain("expectedControlEpoch");
     expect(result.guide).not.toContain("thread_create_batch");
     expect(result.guide).not.toContain("workspace_search");
   });
@@ -26,7 +31,7 @@ describe("Mcode capability guide", () => {
     expect(result.guide).toContain("active source thread's Project");
     expect(result.guide).toContain("omit branchName");
     expect(result.guide).toContain("providerId codex");
-    expect(result.guide).not.toContain("browser_status");
-    expect(result.guide).not.toContain("expectedControlEpoch");
+    expect(result.guide).not.toContain("browser_inspect");
+    expect(result.guide).not.toContain("observationRef");
   });
 });

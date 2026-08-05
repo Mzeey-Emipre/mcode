@@ -98,21 +98,29 @@ export function resolveWebTarget(ownerDocument: Document, target: BrowserAutomat
     let element: HTMLElement | null = null;
     if ("cssSelector" in target) {
       if (target.cssSelector.length > 4_096) return fail("TARGET_NOT_FOUND", "Browser target selector is invalid");
-      element = ownerDocument.querySelector<HTMLElement>(target.cssSelector);
+      const matches = ownerDocument.querySelectorAll<HTMLElement>(target.cssSelector);
+      if (matches.length !== 1) return fail("TARGET_NOT_FOUND", "Browser target did not resolve uniquely");
+      element = matches[0] ?? null;
     } else if ("semanticId" in target) {
       element = ownerDocument.getElementById(target.semanticId);
       if (!element) element = ownerDocument.querySelector<HTMLElement>(`[data-automation-id="${escapeSelector(target.semanticId)}"]`);
       if (!element) element = getWebBrowserSemanticRegistry(ownerDocument).resolve(ownerDocument, target.semanticId);
     } else if ("role" in target) {
       let scanned = 0;
+      let scanLimitReached = false;
+      const matches: HTMLElement[] = [];
       for (const candidate of ownerDocument.querySelectorAll<HTMLElement>("button,input,select,textarea,[role]")) {
-        if (++scanned > MAX_TARGET_SCAN) break;
-        const role = candidate.getAttribute("role") || candidate.localName?.toLowerCase();
-        if (role === target.role && accessibleName(candidate) === target.accessibleName) {
-          element = candidate;
+        if (++scanned > MAX_TARGET_SCAN) {
+          scanLimitReached = true;
           break;
         }
+        const role = candidate.getAttribute("role") || candidate.localName?.toLowerCase();
+        if (role === target.role && accessibleName(candidate) === target.accessibleName) {
+          matches.push(candidate);
+        }
       }
+      if (scanLimitReached || matches.length !== 1) return fail("TARGET_NOT_FOUND", "Browser target did not resolve uniquely");
+      element = matches[0] ?? null;
     } else {
       if (target.x < 0 || target.y < 0 || target.x > ownerDocument.documentElement.clientWidth || target.y > ownerDocument.documentElement.clientHeight) {
         return fail("TARGET_NOT_FOUND", "Browser coordinate target is outside the visible page");

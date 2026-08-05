@@ -113,12 +113,53 @@ export interface BrowserAutomationBrokerOptions {
   maxTargets?: number;
 }
 
+const BROWSER_V2_OPERATIONS = new Set<BrowserAutomationOperation>([
+  "open",
+  "inspect",
+  "act",
+  "tabs",
+  "evaluate",
+]);
+
+function browserV2Recovery(code: BrowserAutomationErrorCode): "inspect" | "reopen" | "wait" | "yield_to_user" | "do_not_retry" {
+  switch (code) {
+    case "CAPABILITY_CHANGED":
+    case "STALE_TARGET_GENERATION":
+    case "STALE_CONTROL_EPOCH":
+      return "inspect";
+    case "TAB_UNAVAILABLE":
+    case "TARGET_NOT_FOUND":
+      return "reopen";
+    case "HOST_UNAVAILABLE":
+    case "BROWSER_BUSY":
+    case "TIMEOUT":
+      return "wait";
+    case "HUMAN_INTERRUPTED":
+      return "yield_to_user";
+    default:
+      return "do_not_retry";
+  }
+}
+
+function legacyBrowserRecovery(
+  code: BrowserAutomationErrorCode,
+  retryable: boolean,
+): "inspect" | "wait" | "retry" | "manual" {
+  if (code === "BROWSER_BUSY") return "wait";
+  if (code === "CAPABILITY_CHANGED") return "inspect";
+  return retryable ? "retry" : "manual";
+}
+
 function failure(
   request: BrowserAutomationRequest,
   code: BrowserAutomationErrorCode,
   message: string,
   retryable: boolean,
 ): BrowserAutomationResponse {
+  const browserV2Request = BROWSER_V2_OPERATIONS.has(request.operation);
+  const recovery = browserV2Request
+    ? browserV2Recovery(code)
+    : legacyBrowserRecovery(code, retryable);
   return {
     contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
     requestId: request.requestId,
@@ -129,8 +170,8 @@ function failure(
       message,
       retryable,
       stage: code === "TAB_UNAVAILABLE" || code === "BROWSER_BUSY" ? "allocation" : "transport",
-      effect: code === "TAB_UNAVAILABLE" ? "unknown" : "none",
-      recovery: code === "BROWSER_BUSY" ? "wait" : code === "CAPABILITY_CHANGED" ? "inspect" : retryable ? "retry" : "manual",
+      effect: code === "TAB_UNAVAILABLE" && !browserV2Request ? "unknown" : "none",
+      recovery,
       correlationId: randomUUID(),
     },
   };
@@ -936,6 +977,9 @@ export class BrowserAutomationBroker {
       if (request.operation === "open") {
         const host = this.resolveBootstrapHost(claims, request);
         if (host) return this.executeBootstrap(host, claims.providerId, request);
+      }
+      if (!this.resolveSelectedHost(claims)) {
+        return finishImmediately(failure(request, "HOST_UNAVAILABLE", "No authorized visible Browser host is available", true));
       }
       return finishImmediately(failure(request, "TAB_UNAVAILABLE", "No authorized visible browser tab is available", true));
     }

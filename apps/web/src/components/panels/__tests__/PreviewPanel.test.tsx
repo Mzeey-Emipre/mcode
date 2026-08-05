@@ -612,7 +612,7 @@ describe("PreviewPanel: full panel state", () => {
     usePreviewDesignModeStore.setState({ modes: {} });
     usePreviewTabsStore.setState({ tabSetByScope: {}, liveChromeByScope: {}, persistentTabIdsByScope: {} });
     useDiffStore.setState({ previewUrlByThread: {} });
-    useBrowserAutomationStore.setState({ controllers: new Map() });
+    useBrowserAutomationStore.setState({ controllers: new Map(), pendingAgentOpens: new Map() });
     useProviderCatalogStore.getState().reset();
     mockUsePreviewBridge.mockReturnValue(mockBridgeState());
     mockUsePreviewTabs.mockReturnValue({
@@ -632,7 +632,7 @@ describe("PreviewPanel: full panel state", () => {
     usePreviewAnnotationStore.setState({ byThread: {}, drafts: {} });
     usePreviewDesignModeStore.setState({ modes: {} });
     usePreviewTabsStore.setState({ tabSetByScope: {}, liveChromeByScope: {}, persistentTabIdsByScope: {} });
-    useBrowserAutomationStore.setState({ controllers: new Map() });
+    useBrowserAutomationStore.setState({ controllers: new Map(), pendingAgentOpens: new Map() });
     useProviderCatalogStore.getState().reset();
     mockUsePreviewBridge.mockClear();
     mockUsePreviewTabs.mockClear();
@@ -668,6 +668,28 @@ describe("PreviewPanel: full panel state", () => {
     expect(overlay).toHaveClass("border-2", "border-primary");
     expect(overlay.style.backgroundImage).toContain("transparent 32px");
     expect(overlay.style.boxShadow).toContain("inset 0 0 40px");
+  });
+
+  it("shows the agent frame and cursor while the active page is still opening", () => {
+    useBrowserAutomationStore.setState({
+      pendingAgentOpens: new Map([
+        [
+          "pending-open",
+          {
+            workspaceId: "workspace-1",
+            threadId: "thread-1",
+            tabId: PREVIEW_WEBVIEW_FALLBACK_TAB_ID,
+            url: "https://example.com",
+            startedAt: 1,
+          },
+        ],
+      ]),
+    });
+
+    render(<PreviewPanel threadId="thread-1" workspaceId="workspace-1" />);
+
+    expect(screen.getByTestId("browser-automation-overlay")).toBeInTheDocument();
+    expect(screen.getByTestId("browser-automation-pointer")).toBeInTheDocument();
   });
 
   it("does not render the unavailable state when desktopBridge is present", () => {
@@ -1188,6 +1210,67 @@ describe("PreviewPanel: full panel state", () => {
       expect(adoptWebview).toHaveBeenCalledTimes(1);
       expect(releaseWebview).not.toHaveBeenCalled();
       expect(screen.getByTestId("preview-webview")).toBe(initialWebview);
+    } finally {
+      restoreWebviewMethods();
+    }
+  });
+
+  it("does not feed an agent navigation redirect back into the webview src", async () => {
+    useSettingsStore.getState()._applyPush({
+      ...getDefaultSettings(),
+      preview: {
+        ...getDefaultSettings().preview,
+        rendering: { engine: "webview" },
+      },
+    });
+    const requestedUrl =
+      "https://duckduckgo.com/?q=The+Left+Hand+of+Darkness+Ursula+K.+Le+Guin";
+    const redirectedUrl = `${requestedUrl}&ia=web`;
+    let liveUrl = requestedUrl;
+    const restoreWebviewMethods = installMockWebviewMethods({
+      getURL: () => liveUrl,
+    });
+    const tabs = (url: string) => ({
+      tabSet: {
+        threadId: "thread-1",
+        activeTabId: "agent-tab",
+        tabs: [{
+          id: "agent-tab",
+          threadId: "thread-1",
+          title: "DuckDuckGo",
+          url,
+          faviconUrl: null,
+          warm: true,
+          active: true,
+        }],
+      },
+      newTab: vi.fn(),
+      activateTab: vi.fn(),
+      closeTab: vi.fn(),
+    });
+
+    try {
+      mockUsePreviewBridge.mockReturnValue(
+        mockBridgeState({ storedUrl: requestedUrl }),
+      );
+      mockUsePreviewTabs.mockReturnValue(tabs(requestedUrl));
+      const { rerender } = render(<PreviewPanel threadId="thread-1" />);
+      const webview = screen.getByTestId("preview-webview");
+      expect(webview).toHaveAttribute("src", requestedUrl);
+
+      liveUrl = redirectedUrl;
+      mockUsePreviewBridge.mockReturnValue(
+        mockBridgeState({ storedUrl: redirectedUrl }),
+      );
+      mockUsePreviewTabs.mockReturnValue(tabs(redirectedUrl));
+      rerender(<PreviewPanel threadId="thread-1" />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId("preview-webview")).toHaveAttribute(
+          "src",
+          requestedUrl,
+        );
+      });
     } finally {
       restoreWebviewMethods();
     }

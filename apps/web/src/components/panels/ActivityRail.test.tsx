@@ -65,7 +65,7 @@ describe("ActivityRail expansion", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
-    useBrowserAutomationStore.setState({ controllers: new Map() });
+    useBrowserAutomationStore.setState({ controllers: new Map(), pendingAgentOpens: new Map() });
     usePreviewSuppressionStore.setState({ count: 0 });
   });
 
@@ -252,6 +252,34 @@ describe("ActivityRail expansion", () => {
     expect(screen.getByTestId("browser-agent-control-indicator")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Browser page: Example, agent controls Browser" })).toBeInTheDocument();
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
+  });
+
+  it("uses the amber pointer while an agent-created page is still opening", () => {
+    const page = browserTabSet.tabs[0]!;
+    useBrowserAutomationStore.setState({
+      pendingAgentOpens: new Map([
+        [
+          "pending-open",
+          {
+            workspaceId: "workspace-1",
+            threadId: page.threadId,
+            tabId: page.id,
+            url: page.url,
+            startedAt: 1,
+          },
+        ],
+      ]),
+    });
+
+    render(
+      <ActivityRail
+        {...railElement(["preview"]).props}
+        browserTabSet={browserTabSet}
+      />,
+    );
+
+    expect(screen.getByTestId("browser-agent-control-indicator")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Browser page: Example, agent controls Browser" })).toBeInTheDocument();
   });
 
   it("reorders only from a focused rail tab keyboard shortcut", () => {

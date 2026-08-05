@@ -1,11 +1,6 @@
-/** Stable operating guidance for the Mcode Browser capability. */
-export const MCODE_BROWSER_GUIDE = `Mcode Browser guide (available only inside authenticated Mcode provider sessions)
+import { MCODE_BROWSER_GUIDE } from "@mcode/thread-orchestration";
 
-- Check browser_status before an action, then use browser_snapshot to understand the current page and available semantic targets.
-- Prefer semantic targets from the snapshot when clicking, typing, pressing keys, scrolling, or waiting. Use browser_open or browser_navigate for navigation, then snapshot again.
-- For every mutating operation, pass expectedControlEpoch from the latest browser_status. If the epoch is stale, refresh status and snapshot before retrying. Observe the result with another snapshot or status call.
-- Use browser_screenshot for visual evidence. Use browser_console, browser_network, browser_accessibility, and browser_performance for diagnostics. Browser tool schemas define exact arguments and permissions; do not infer or reproduce them here.
-`;
+export { MCODE_BROWSER_GUIDE } from "@mcode/thread-orchestration";
 
 /** Stable operating guidance for Mcode thread and worktree control. */
 export const THREAD_CONTROL_GUIDE = `Mcode thread-control guide (available only inside authenticated Mcode provider sessions)

@@ -160,14 +160,14 @@ describe("MarkdownContent link handling", () => {
 
 describe("MarkdownContent workspace preview navigation", () => {
   let mockNavigate: ReturnType<typeof vi.fn>;
-  let mockCreate: ReturnType<typeof vi.fn>;
+  let mockOpen: ReturnType<typeof vi.fn>;
   let showRightPanel: ReturnType<typeof vi.fn>;
   let setRightPanelTab: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.useFakeTimers();
     mockNavigate = vi.fn().mockResolvedValue({ ok: true });
-    mockCreate = vi.fn().mockResolvedValue({ ok: true, data: { tabId: "tab-2", tabs: {} } });
+    mockOpen = vi.fn().mockResolvedValue({ ok: true, data: { tabId: "tab-2", tabs: {} } });
     showRightPanel = vi.fn();
     setRightPanelTab = vi.fn();
     const ws = createMockWorkspace({ id: "ws-prev", path: "/tmp/ws-preview-test" });
@@ -187,7 +187,7 @@ describe("MarkdownContent workspace preview navigation", () => {
       preview: {
         navigate: mockNavigate,
         tabs: {
-          create: mockCreate,
+          open: mockOpen,
           list: vi.fn().mockResolvedValue({
             ok: true,
             data: {
@@ -232,7 +232,7 @@ describe("MarkdownContent workspace preview navigation", () => {
     });
     expect(showRightPanel).toHaveBeenCalledWith("ws-prev", "thread-prev");
     expect(setRightPanelTab).toHaveBeenCalledWith("ws-prev", "thread-prev", "preview");
-    expect(mockCreate).toHaveBeenCalledWith("thread-prev", true);
+    expect(mockOpen).toHaveBeenCalledWith("thread-prev", { activate: true });
     expect(mockNavigate).toHaveBeenCalledWith(
       "mcode-workspace:///sub/page.html",
       "/tmp/ws-preview-test",
@@ -247,7 +247,7 @@ describe("MarkdownContent workspace preview navigation", () => {
       fireEvent.click(link!, { ctrlKey: true });
       await vi.runAllTimersAsync();
     });
-    expect(mockCreate).toHaveBeenCalledWith("thread-prev", true);
+    expect(mockOpen).toHaveBeenCalledWith("thread-prev", { activate: true });
     expect(mockNavigate).toHaveBeenCalledWith(
       "mcode-workspace:///sub/page.html",
       "/tmp/ws-preview-test",
@@ -291,7 +291,7 @@ describe("MarkdownContent workspace preview navigation", () => {
       fireEvent.click(el!, { ctrlKey: true });
       await vi.runAllTimersAsync();
     });
-    expect(mockCreate).toHaveBeenCalledWith("thread-prev", true);
+    expect(mockOpen).toHaveBeenCalledWith("thread-prev", { activate: true });
     expect(mockNavigate).toHaveBeenCalledWith(
       "mcode-workspace:///report.html",
       "/tmp/ws-preview-test",
@@ -309,7 +309,7 @@ describe("MarkdownContent workspace preview navigation", () => {
       openExternalUrl: vi.fn(),
       preview: {
         tabs: {
-          create: mockCreate,
+          open: mockOpen,
           list: vi.fn().mockResolvedValue({
             ok: true,
             data: {

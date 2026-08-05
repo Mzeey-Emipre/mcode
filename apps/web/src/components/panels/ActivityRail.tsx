@@ -35,7 +35,7 @@ import {
 } from "@/lib/panel-tabs";
 import type { RightPanelTab, RightPanelTabInstance } from "@/stores/diffStore";
 import {
-  browserAutomationTargetKey,
+  isBrowserAutomationAgentControlled,
   useBrowserAutomationStore,
 } from "@/stores/browserAutomationStore";
 import { cn } from "@/lib/utils";
@@ -362,9 +362,7 @@ function BrowserPageRailTab({
 }) {
   const label = pageLabel(page);
   const agentControlled = useBrowserAutomationStore(
-    (state) =>
-      state.controllers.get(browserAutomationTargetKey(page.threadId, page.id))
-        ?.controller === "agent",
+    (state) => isBrowserAutomationAgentControlled(state, page.threadId, page.id),
   );
   return (
     <div className="group relative w-full">

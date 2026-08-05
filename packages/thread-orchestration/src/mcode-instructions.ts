@@ -1,5 +1,7 @@
 /** Capability-derived runtime guidance shared by every provider adapter. */
 
+import { MCODE_BROWSER_GUIDE } from "./browser-operating-guide.js";
+
 export const MCODE_INSTRUCTIONS_MAX_CHARS = 4_000;
 
 /** Capabilities proven available for one provider session. */
@@ -36,11 +38,7 @@ const THREAD_CONTROL_BLOCK = [
   "Route delegated Mcode threads through Mcode thread tools. Never target the source thread.",
 ].join(" ");
 
-const BROWSER_BLOCK = [
-  "Use the mcode-browser MCP server for visible Browser automation.",
-  "Use browser_status before actions, then browser_open, browser_navigate, browser_snapshot, browser_click, browser_type, browser_press, browser_scroll, and other granted browser tools.",
-  "Operate only within the issued Browser lease and granted operations.",
-].join(" ");
+const BROWSER_BLOCK = MCODE_BROWSER_GUIDE.trim();
 
 function capInstructionText(text: string): string {
   if (text.length <= MCODE_INSTRUCTIONS_MAX_CHARS) return text;

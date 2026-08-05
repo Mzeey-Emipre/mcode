@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildMcodeInstructionPlan } from "../index.js";
+import { buildMcodeInstructionPlan, MCODE_BROWSER_GUIDE } from "../index.js";
 
 describe("Mcode runtime instruction plan", () => {
   it("always includes identity and excludes ungranted capabilities", () => {
@@ -23,7 +23,7 @@ describe("Mcode runtime instruction plan", () => {
       browserAutomation: true,
     });
     expect(plan.text).toContain("mcode_internal_thread_control");
-    expect(plan.text).toContain("mcode-browser");
+    expect(plan.text).toContain(MCODE_BROWSER_GUIDE.trim());
     expect(plan.text).toContain("thread-source");
     expect(plan.text).not.toContain("http://");
     expect(plan.text).not.toContain("Bearer");

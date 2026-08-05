@@ -225,6 +225,28 @@ describe("BrowserAutomationBroker", () => {
     expect(broker.availableOperations(scope)).toEqual(["open"]);
   });
 
+  it("returns Browser v2 recovery vocabulary when no visible host is available", async () => {
+    const broker = new BrowserAutomationBroker(options({ now: () => 10 }));
+    const scope = {
+      ...claims("thread-a", "workspace-a"),
+      permissionCapability: "interact" as const,
+      allowedOperations: ["open", "inspect", "act", "tabs"] as const,
+    };
+
+    await expect(broker.execute(scope, {
+      ...request(scope),
+      operation: "inspect",
+      args: { includeScreenshot: false, includeDiagnostics: false },
+    })).resolves.toMatchObject({
+      ok: false,
+      error: {
+        code: "HOST_UNAVAILABLE",
+        effect: "none",
+        recovery: "wait",
+      },
+    });
+  });
+
   it("derives bounded inspect metadata from descriptor, credential, host, and target state", async () => {
     const deliveries: Array<{ channel: string; data: any }> = [];
     const broker = new BrowserAutomationBroker(options({ now: () => 10, send: (_socket, channel, data) => {

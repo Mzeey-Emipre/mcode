@@ -272,13 +272,16 @@ export const BROWSER_AUTOMATION_OPERATIONS = [
   "recordingStop",
 ] as const;
 
+/** Stable Browser v2 operations discoverable during transient unavailability. */
+export const BROWSER_V2_CORE_OPERATIONS = ["open", "inspect", "act", "tabs"] as const;
+
 /** One browser automation operation identifier. */
-export type BrowserAutomationOperation = (typeof BROWSER_AUTOMATION_OPERATIONS)[number] | "inspect" | "act" | "tabs";
+export type BrowserAutomationOperation =
+  | (typeof BROWSER_AUTOMATION_OPERATIONS)[number]
+  | (typeof BROWSER_V2_CORE_OPERATIONS)[number];
 const browserOperationSchema = z.union([
   z.enum(BROWSER_AUTOMATION_OPERATIONS),
-  z.literal("inspect"),
-  z.literal("act"),
-  z.literal("tabs"),
+  z.enum(BROWSER_V2_CORE_OPERATIONS),
 ]);
 
 /** Provider-facing MCP tool annotations for one operation. */

@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { tmpdir } from "os";
 import { join } from "path";
 import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { MCODE_BROWSER_GUIDE } from "@mcode/thread-orchestration";
 
 vi.mock("@mcode/shared", () => ({
   getMcodeDir: () => process.env.MCODE_DATA_DIR ?? ".",
@@ -140,6 +141,10 @@ describe("CodexProvider first turn on new session", () => {
       'mcp_servers.mcode-browser.url="http://127.0.0.1:19400/mcp"',
       'mcp_servers.mcode-browser.bearer_token_env_var="MCODE_BROWSER_MCP_TOKEN"',
     ]);
+    expect(server.options.developerInstructions).toContain("browser_inspect");
+    expect(server.options.developerInstructions).toContain("yield_to_user");
+    expect(server.options.developerInstructions).not.toContain("browser_status");
+    expect(server.options.developerInstructions).toContain(MCODE_BROWSER_GUIDE.trim());
     expect(server.spawnedEnv?.MCODE_BROWSER_MCP_TOKEN).toMatch(/^[A-Za-z0-9_-]{40,}$/);
     expect(process.env.MCODE_BROWSER_MCP_TOKEN).toBeUndefined();
     await new Promise<void>((resolve) => setImmediate(resolve));

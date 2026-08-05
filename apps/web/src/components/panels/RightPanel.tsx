@@ -32,6 +32,7 @@ import { cn } from "@/lib/utils";
 import { ResizableRightPanel } from "./ResizableRightPanel";
 import {
   BROWSER_AUTOMATION_WARM_TARGET_LIMIT,
+  browserAutomationTargetKey,
   useBrowserAutomationStore,
 } from "@/stores/browserAutomationStore";
 import { usePreviewTabSet } from "./hooks/usePreviewTabs";
@@ -156,6 +157,9 @@ export function RightPanel() {
   // the local workspace root). Their stores treat this as an opaque scope key.
   const panelScopeId = activeThreadId ?? activeWorkspaceId;
   const activeBrowserRequests = useBrowserAutomationStore((state) => state.activeRequests);
+  const pendingAgentOpens = useBrowserAutomationStore((state) => state.pendingAgentOpens);
+  const browserLifecycleTabs = useBrowserAutomationStore((state) => state.lifecycleTabs);
+  const browserLiveTargets = useBrowserAutomationStore((state) => state.liveTargets);
   const automationHostedScopeIds = useBrowserAutomationStore((state) => state.hostedScopeIds);
   const busyPreviewScopeIds = useMemo(
     () => new Set(
@@ -190,13 +194,64 @@ export function RightPanel() {
   // active. Null in web builds with no bridge, where the rail keeps the single
   // Browser glyph.
   const browserTabSet = usePreviewTabSet(panelScopeId);
+  const activeAgentBrowserPageId = useMemo(() => {
+    if (!activeWorkspaceId || !panelScopeId || !browserTabSet) return null;
+    let pendingPage: { readonly tabId: string; readonly startedAt: number } | null = null;
+    for (const pending of pendingAgentOpens.values()) {
+      if (pending.workspaceId !== activeWorkspaceId || pending.threadId !== panelScopeId) continue;
+      if (!browserTabSet.tabs.some((tab) => tab.id === pending.tabId)) continue;
+      if (!pendingPage || pending.startedAt > pendingPage.startedAt) {
+        pendingPage = { tabId: pending.tabId, startedAt: pending.startedAt };
+      }
+    }
+    if (pendingPage) return pendingPage.tabId;
+
+    let selected: { readonly tabId: string; readonly startedAt: number } | null = null;
+    for (const { dispatch, startedAt } of activeBrowserRequests.values()) {
+      if (dispatch.target.threadId !== panelScopeId) continue;
+      if (!browserTabSet.tabs.some((tab) => tab.id === dispatch.target.tabId)) continue;
+      if (!selected || startedAt > selected.startedAt) {
+        selected = { tabId: dispatch.target.tabId, startedAt };
+      }
+    }
+    if (selected) return selected.tabId;
+
+    let ownedPage: { readonly tabId: string; readonly lastUsedAt: number } | null = null;
+    for (const lifecycle of browserLifecycleTabs.values()) {
+      if (
+        lifecycle.workspaceId !== activeWorkspaceId ||
+        lifecycle.threadId !== panelScopeId ||
+        lifecycle.provenance !== "agent-created" ||
+        lifecycle.ownership !== "owned" ||
+        !browserTabSet.tabs.some((tab) => tab.id === lifecycle.tabId)
+      ) continue;
+      const liveTarget = browserLiveTargets.get(
+        browserAutomationTargetKey(panelScopeId, lifecycle.tabId),
+      );
+      const lastUsedAt = liveTarget?.lastUsedAt ?? 0;
+      if (!ownedPage || lastUsedAt > ownedPage.lastUsedAt) {
+        ownedPage = { tabId: lifecycle.tabId, lastUsedAt };
+      }
+    }
+    return ownedPage?.tabId ?? null;
+  }, [
+    activeBrowserRequests,
+    activeWorkspaceId,
+    browserLifecycleTabs,
+    browserLiveTargets,
+    browserTabSet,
+    panelScopeId,
+    pendingAgentOpens,
+  ]);
 
   // Keep hidden agent activity background-only. Once the human can see an
   // otherwise empty panel, project any recorded Browser page immediately,
   // including a page published after the default screen was already visible.
+  const previewIsOnlyOpenTab =
+    tabInstances.length === 1 && tabInstances[0]?.type === "preview";
   const revealExistingPreview =
     panelVisible &&
-    openTabs.length === 0 &&
+    (openTabs.length === 0 || (previewIsOnlyOpenTab && activeTab !== "preview")) &&
     (browserTabSet?.tabs.length ?? 0) > 0;
   const renderedTabInstances = revealExistingPreview
     ? [{ id: "singleton:preview", type: "preview" as const }]
@@ -208,14 +263,18 @@ export function RightPanel() {
   useLayoutEffect(() => {
     if (!revealExistingPreview || !activeWorkspaceId) return;
     const current = useDiffStore.getState().getRightPanel(activeWorkspaceId, activeThreadId);
-    if (!current.visible || current.openTabs.length > 0) return;
+    const hasNonPreviewTab = current.tabInstances.some((instance) => instance.type !== "preview");
+    if (!current.visible || hasNonPreviewTab) return;
     useDiffStore.getState().setRightPanelTab(activeWorkspaceId, activeThreadId, "preview");
-    const existingPageId = browserTabSet?.activeTabId ?? browserTabSet?.tabs[0]?.id;
+    const existingPageId = activeAgentBrowserPageId ??
+      browserTabSet?.activeTabId ??
+      browserTabSet?.tabs[0]?.id;
     if (panelScopeId && existingPageId) {
       void usePreviewTabsStore.getState().activatePage(panelScopeId, existingPageId);
     }
   }, [
     activeThreadId,
+    activeAgentBrowserPageId,
     activeWorkspaceId,
     browserTabSet,
     panelScopeId,

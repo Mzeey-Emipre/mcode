@@ -41,6 +41,7 @@ const previewPartition = {
 let currentEventSender: ReturnType<typeof makeWindow>["webContents"] | null = null;
 
 function makeWebContentsView() {
+  let bounds = { x: 0, y: 0, width: 0, height: 0 };
   const webContents = {
     isDestroyed: vi.fn().mockReturnValue(false),
     // Newly-created WebContentsView starts at the empty URL until something
@@ -81,8 +82,10 @@ function makeWebContentsView() {
   };
   const view = {
     webContents,
-    setBounds: vi.fn(),
-    getBounds: vi.fn().mockReturnValue(VALID_BOUNDS),
+    setBounds: vi.fn((next: { x: number; y: number; width: number; height: number }) => {
+      bounds = { ...next };
+    }),
+    getBounds: vi.fn(() => bounds),
   };
   createdViews.push(view);
   return view;
@@ -115,6 +118,7 @@ function makeWindow() {
       setWindowOpenHandler: vi.fn(),
       getZoomFactor: vi.fn().mockReturnValue(1),
     },
+    getContentBounds: vi.fn().mockReturnValue(VALID_BOUNDS),
   };
 }
 
@@ -197,6 +201,13 @@ function fakeEvent(win: ReturnType<typeof makeWindow>) {
 }
 
 const VALID_BOUNDS = { x: 100, y: 100, width: 800, height: 600 };
+
+function expectBackgroundBounds(bounds: { x: number; y: number; width: number; height: number }): void {
+  expect(bounds.width).toBeGreaterThan(0);
+  expect(bounds.height).toBeGreaterThan(0);
+  expect(bounds.x + bounds.width).toBeLessThanOrEqual(0);
+  expect(bounds.y + bounds.height).toBeLessThanOrEqual(0);
+}
 
 /** Show the preview for a given thread. */
 async function showPreview(
@@ -385,7 +396,7 @@ describe("preview-browser", () => {
   });
 
   describe("hidePreview (tab switch)", () => {
-    it("detaches the WebContentsView from the window without destroying webContents", async () => {
+    it("parks the WebContentsView offscreen without destroying webContents", async () => {
       const win = createWindow();
       await showPreview(win);
 
@@ -394,7 +405,9 @@ describe("preview-browser", () => {
 
       await hidePreview(win);
 
-      expect(win.contentView.removeChildView).toHaveBeenCalledWith(view);
+      expect(win.contentView.children).toContain(view);
+      const bounds = view.getBounds();
+      expectBackgroundBounds(bounds);
       expect(view.webContents.close).not.toHaveBeenCalled();
     });
 
@@ -451,6 +464,20 @@ describe("preview-browser", () => {
       await showPreview(win);
 
       expect(createdViews.length).toBe(viewCountAfterFirstShow);
+    });
+
+    it("keeps the revealed native target attached offscreen after hiding again", async () => {
+      const win = createWindow();
+      await showPreview(win, { threadId: "agent-thread" });
+      const view = createdViews[0]!;
+
+      await hidePreview(win);
+      await showPreview(win, { threadId: "agent-thread" });
+      await hidePreview(win);
+
+      expect(win.contentView.children).toContain(view);
+      const bounds = view.getBounds();
+      expectBackgroundBounds(bounds);
     });
 
     it("does not reload the page when re-showing the same thread", async () => {
@@ -530,7 +557,7 @@ describe("preview-browser", () => {
 
       // The user opens a new page on the active thread.
       const ev = fakeEvent(win);
-      await ipcHandlers["preview:tabs.create"]!(ev, {
+      await ipcHandlers["preview:tabs.open"]!(ev, {
         threadId: "thread-1",
         activate: true,
       });
@@ -1087,13 +1114,13 @@ describe("preview-browser", () => {
       expect(result.data.activeTabId).toBeTruthy();
     });
 
-    it("tabs.create appends a tab and activates it by default", async () => {
+    it("tabs.open creates a tab and activates it by default", async () => {
       const win = createWindow();
       await showPreview(win, { threadId: "thread-A" });
 
       const created = callTabs<{ tabId: string; tabs: { tabs: unknown[]; activeTabId: string } }>(
         win,
-        "preview:tabs.create",
+        "preview:tabs.open",
         { threadId: "thread-A" },
       );
 
@@ -1103,13 +1130,140 @@ describe("preview-browser", () => {
       expect(created.data.tabs.activeTabId).toBe(created.data.tabId);
     });
 
+    it("tabs.open continues an exact existing page for a hidden agent open", async () => {
+      const win = createWindow();
+      const initial = callTabs<{ tabs: { id: string }[] }>(win, "preview:tabs.list", {
+        threadId: "thread-A",
+      });
+      expect(initial.ok).toBe(true);
+      if (!initial.ok) return;
+
+      const opened = callTabs<{
+        tabId: string;
+        tabs: { tabs: { id: string; warm: boolean }[]; activeTabId: string };
+      }>(win, "preview:tabs.open", {
+        threadId: "thread-A",
+        activate: false,
+        tabId: initial.data.tabs[0]!.id,
+      });
+
+      expect(opened.ok).toBe(true);
+      if (!opened.ok) return;
+      expect(opened.data.tabId).toBe(initial.data.tabs[0]!.id);
+      expect(opened.data.tabs.tabs).toEqual([
+        expect.objectContaining({ id: opened.data.tabId, warm: true }),
+      ]);
+      expect(opened.data.tabs.activeTabId).toBe(opened.data.tabId);
+    });
+
+    it("attaches a hidden agent tab offscreen when the panel has no bounds", () => {
+      const win = createWindow();
+      const opened = callTabs<{ tabId: string }>(win, "preview:tabs.open", {
+        threadId: "thread-A",
+        activate: false,
+      });
+
+      expect(opened.ok).toBe(true);
+      const view = createdViews[createdViews.length - 1]!;
+      expect(win.contentView.addChildView).toHaveBeenCalledWith(view);
+      expect(win.contentView.children).toContain(view);
+      const bounds = view.getBounds();
+      expectBackgroundBounds(bounds);
+    });
+
+    it("keeps a webview-hosted hidden open as a cold logical tab", () => {
+      const win = createWindow();
+      const listed = callTabs<{
+        tabs: { id: string }[];
+      }>(win, "preview:tabs.list", { threadId: "thread-A" });
+      expect(listed.ok).toBe(true);
+      if (!listed.ok) return;
+      const existingTabId = listed.data.tabs[0]!.id;
+      const opened = callTabs<{
+        tabId: string;
+        tabs: { activeTabId: string | null; tabs: { id: string; warm: boolean }[] };
+      }>(win, "preview:tabs.open", {
+        threadId: "thread-A",
+        activate: false,
+        renderingHost: "webview",
+        tabId: existingTabId,
+      });
+
+      expect(opened.ok).toBe(true);
+      if (!opened.ok) return;
+      expect(createdViews).toHaveLength(0);
+      expect(win.contentView.addChildView).not.toHaveBeenCalled();
+      expect(opened.data.tabs.activeTabId).toBe(opened.data.tabId);
+      expect(opened.data.tabs.tabs).toEqual([
+        expect.objectContaining({ id: opened.data.tabId, warm: false }),
+      ]);
+    });
+
+    it("activates a webview-hosted tab without creating a native view", async () => {
+      const win = createWindow();
+      await showPreview(win, { threadId: "thread-A" });
+      const nativeView = createdViews[0]!;
+      const opened = callTabs<{ tabId: string }>(win, "preview:tabs.open", {
+        threadId: "thread-A",
+        activate: false,
+        renderingHost: "webview",
+      });
+      expect(opened.ok).toBe(true);
+      if (!opened.ok) return;
+
+      const activated = callTabs<{ activeTabId: string | null }>(
+        win,
+        "preview:tabs.activate",
+        { threadId: "thread-A", tabId: opened.data.tabId },
+      );
+
+      expect(activated.ok).toBe(true);
+      if (!activated.ok) return;
+      expect(activated.data.activeTabId).toBe(opened.data.tabId);
+      expect(createdViews).toHaveLength(1);
+      expect(win.contentView.removeChildView).toHaveBeenCalledWith(nativeView);
+    });
+
+    it("tabs.open reserves an existing page from concurrent background opens", async () => {
+      const win = createWindow();
+      const initial = callTabs<{ tabs: { id: string }[] }>(win, "preview:tabs.list", {
+        threadId: "thread-A",
+      });
+      expect(initial.ok).toBe(true);
+      if (!initial.ok) return;
+
+      const first = callTabs<{ tabId: string }>(win, "preview:tabs.open", {
+        threadId: "thread-A",
+        activate: false,
+        tabId: initial.data.tabs[0]!.id,
+      });
+      const duplicate = callTabs(win, "preview:tabs.open", {
+        threadId: "thread-A",
+        activate: false,
+        tabId: initial.data.tabs[0]!.id,
+      });
+      const second = callTabs<{ tabId: string; tabs: { tabs: { id: string }[] } }>(
+        win,
+        "preview:tabs.open",
+        { threadId: "thread-A", activate: false },
+      );
+
+      expect(first.ok).toBe(true);
+      expect(duplicate).toEqual({ ok: false, error: "tab-reserved" });
+      expect(second.ok).toBe(true);
+      if (!first.ok || !second.ok) return;
+      expect(first.data.tabId).toBe(initial.data.tabs[0]!.id);
+      expect(second.data.tabId).not.toBe(first.data.tabId);
+      expect(second.data.tabs.tabs).toHaveLength(2);
+    });
+
     it("tabs.activate switches the active tab", async () => {
       const win = createWindow();
       await showPreview(win, { threadId: "thread-A" });
 
       const created = callTabs<{ tabId: string; tabs: { activeTabId: string } }>(
         win,
-        "preview:tabs.create",
+        "preview:tabs.open",
         { threadId: "thread-A", activate: false },
       );
       expect(created.ok).toBe(true);
@@ -1125,7 +1279,7 @@ describe("preview-browser", () => {
       expect(activated.data.activeTabId).toBe(created.data.tabId);
     });
 
-    it("warms an inactive-thread tab when activation is disabled", async () => {
+    it("warms an inactive-thread tab offscreen when activation is disabled", async () => {
       const win = createWindow();
       await showPreview(win, { threadId: "thread-A" });
       const activeView = createdViews[0]!;
@@ -1134,7 +1288,7 @@ describe("preview-browser", () => {
       const created = callTabs<{
         tabId: string;
         tabs: { activeTabId: string | null; tabs: { id: string; warm: boolean }[] };
-      }>(win, "preview:tabs.create", {
+      }>(win, "preview:tabs.open", {
         threadId: "thread-B",
         activate: false,
       });
@@ -1144,8 +1298,12 @@ describe("preview-browser", () => {
       expect(created.data.tabs.activeTabId).not.toBe(created.data.tabId);
       expect(created.data.tabs.tabs.find((tab) => tab.id === created.data.tabId)?.warm).toBe(true);
       expect(createdViews).toHaveLength(viewsBeforeCreate + 1);
-      expect(win.contentView.addChildView).toHaveBeenCalledTimes(1);
-      expect(win.contentView.children).toEqual([activeView]);
+      const backgroundView = createdViews[createdViews.length - 1]!;
+      expect(win.contentView.addChildView).toHaveBeenCalledWith(backgroundView);
+      expect(win.contentView.children).toEqual([activeView, backgroundView]);
+      const backgroundBounds = backgroundView.getBounds();
+      expectBackgroundBounds(backgroundBounds);
+      expect(activeView.getBounds()).toEqual(VALID_BOUNDS);
     });
 
     it("tabs.close promotes a sibling when the active tab is removed", async () => {
@@ -1154,7 +1312,7 @@ describe("preview-browser", () => {
 
       const created = callTabs<{ tabId: string; tabs: { tabs: { id: string }[]; activeTabId: string } }>(
         win,
-        "preview:tabs.create",
+        "preview:tabs.open",
         { threadId: "thread-A" },
       );
       expect(created.ok).toBe(true);
@@ -1202,7 +1360,7 @@ describe("preview-browser", () => {
       await showPreview(win, { threadId: "thread-A", url: "https://one.test" });
       const firstView = createdViews[0]!;
 
-      const created = callTabs<{ tabId: string }>(win, "preview:tabs.create", {
+      const created = callTabs<{ tabId: string }>(win, "preview:tabs.open", {
         threadId: "thread-A",
       });
       expect(created.ok).toBe(true);
@@ -1225,7 +1383,7 @@ describe("preview-browser", () => {
     it("tab sets are isolated per thread (thread restore)", async () => {
       const win = createWindow();
       await showPreview(win, { threadId: "thread-A" });
-      const createdA = callTabs<{ tabId: string }>(win, "preview:tabs.create", {
+      const createdA = callTabs<{ tabId: string }>(win, "preview:tabs.open", {
         threadId: "thread-A",
       });
       expect(createdA.ok).toBe(true);
@@ -1257,7 +1415,7 @@ describe("preview-browser", () => {
       firstView.webContents.getURL.mockReturnValue("https://first.test");
 
       // Brand-new tab on the active thread - this creates its own view.
-      const created = callTabs<{ tabId: string }>(win, "preview:tabs.create", {
+      const created = callTabs<{ tabId: string }>(win, "preview:tabs.open", {
         threadId: "thread-A",
         activate: true,
       });
@@ -1286,6 +1444,36 @@ describe("preview-browser", () => {
       }
     });
 
+    it("mounts and sizes a cold blank tab without invoking Chromium emulation", async () => {
+      const win = createWindow();
+      await showPreview(win, { threadId: "thread-A", url: "https://first.test" });
+
+      const created = callTabs<{ tabId: string }>(win, "preview:tabs.open", {
+        threadId: "thread-A",
+        activate: false,
+      });
+      expect(created.ok).toBe(true);
+      if (!created.ok) return;
+
+      const backgroundView = createdViews[createdViews.length - 1]!;
+      win.contentView.addChildView.mockClear();
+      backgroundView.setBounds.mockClear();
+      backgroundView.webContents.enableDeviceEmulation.mockClear();
+      backgroundView.webContents.disableDeviceEmulation.mockClear();
+
+      const activated = callTabs(win, "preview:tabs.activate", {
+        threadId: "thread-A",
+        tabId: created.data.tabId,
+      });
+
+      expect(activated.ok).toBe(true);
+      expect(win.contentView.addChildView).not.toHaveBeenCalled();
+      expect(win.contentView.children).toContain(backgroundView);
+      expect(backgroundView.setBounds).toHaveBeenCalledWith(VALID_BOUNDS);
+      expect(backgroundView.webContents.enableDeviceEmulation).not.toHaveBeenCalled();
+      expect(backgroundView.webContents.disableDeviceEmulation).not.toHaveBeenCalled();
+    });
+
     it("activating a brand-new blank tab pushes a page-status with null URL", async () => {
       // Regression: a blank new tab must emit a page-status whose url is null so
       // the renderer clears its omnibox; otherwise the previous tab's URL bleeds
@@ -1296,7 +1484,7 @@ describe("preview-browser", () => {
       firstView.webContents.getURL.mockReturnValue("https://prev.test");
       win.webContents.send.mockClear();
 
-      const created = callTabs<{ tabId: string }>(win, "preview:tabs.create", {
+      const created = callTabs<{ tabId: string }>(win, "preview:tabs.open", {
         threadId: "thread-A",
         activate: true,
       });
@@ -1319,7 +1507,7 @@ describe("preview-browser", () => {
 
       // Create + activate a new blank tab.
       firstView.webContents.loadURL.mockClear();
-      const created = callTabs<{ tabId: string }>(win, "preview:tabs.create", {
+      const created = callTabs<{ tabId: string }>(win, "preview:tabs.open", {
         threadId: "thread-A",
         activate: true,
       });

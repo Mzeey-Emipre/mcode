@@ -11,6 +11,7 @@ import type {
   BrowserTabSet,
   McodeBrowserCaptureV2,
   PreviewPageStatus,
+  PreviewRenderingHost,
 } from "@mcode/contracts";
 import {
   BROWSER_AUTOMATION_VIEWPORT_CANVAS_PADDING_PX,
@@ -49,6 +50,8 @@ export interface TabState {
   id: string;
   threadId: string;
   view: WebContentsView | null;
+  /** Surface that owns this tab's live document. */
+  renderingHost: PreviewRenderingHost;
   resumeUrl: string | null;
   title: string | null;
   faviconUrl: string | null;
@@ -66,6 +69,8 @@ export interface TabState {
    * to a real URL.
    */
   userCreatedBlank?: boolean;
+  /** Prevents another background open from claiming this page before navigation settles. */
+  backgroundOpenReserved?: boolean;
 }
 
 /** Per-thread tab set: an ordered list plus the id of the mounted tab. */
@@ -216,6 +221,7 @@ export function ensureThreadTabSet(s: PreviewSession, threadId: string): ThreadT
       id: tabId,
       threadId,
       view: isActiveThread ? s.view : null,
+      renderingHost: "webContentsView",
       resumeUrl: isActiveThread ? s.resumePreviewUrl : null,
       title: null,
       faviconUrl: isActiveThread ? (s.lastFavicons[0] ?? null) : null,
@@ -241,6 +247,7 @@ export function getActiveTab(s: PreviewSession, threadId: string): TabState {
       id,
       threadId,
       view: null,
+      renderingHost: "webContentsView",
       resumeUrl: null,
       title: null,
       faviconUrl: null,
@@ -292,6 +299,54 @@ export function viewportBoundsForTarget(
       height,
     },
     scale,
+  };
+}
+
+function hasPositiveBounds(bounds: Bounds | null): bounds is Bounds {
+  return bounds !== null &&
+    Number.isFinite(bounds.x) &&
+    Number.isFinite(bounds.y) &&
+    Number.isFinite(bounds.width) &&
+    Number.isFinite(bounds.height) &&
+    bounds.width > 0 &&
+    bounds.height > 0;
+}
+
+/**
+ * Returns positive-size bounds fully outside the window content area.
+ * CDP captures the native view directly, so the warm target stays mounted
+ * without covering the app shell or receiving pointer input.
+ */
+export function backgroundBoundsForTarget(
+  win: BrowserWindow,
+  s: PreviewSession,
+  threadId: string | null,
+  tabId: string | null,
+): Bounds | null {
+  const contentBounds = win.getContentBounds();
+  if (
+    !Number.isFinite(contentBounds.width) ||
+    !Number.isFinite(contentBounds.height) ||
+    contentBounds.width <= 0 ||
+    contentBounds.height <= 0
+  ) {
+    return null;
+  }
+  const panelBounds = hasPositiveBounds(s.lastBounds)
+    ? s.lastBounds
+    : {
+        x: 0,
+        y: 0,
+        width: contentBounds.width,
+        height: contentBounds.height,
+      };
+  if (!hasPositiveBounds(panelBounds)) return null;
+  const targetBounds = viewportBoundsForTarget(s, panelBounds, threadId, tabId).bounds;
+  return {
+    x: -targetBounds.width - 1,
+    y: -targetBounds.height - 1,
+    width: targetBounds.width,
+    height: targetBounds.height,
   };
 }
 

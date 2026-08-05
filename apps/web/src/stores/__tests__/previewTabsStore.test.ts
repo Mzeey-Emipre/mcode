@@ -30,14 +30,14 @@ function set(activeTabId: string | null, tabs: BrowserTabInfo[]): BrowserTabSet 
 
 /** A controllable mock of `desktopBridge.preview.tabs` returning shaped results. */
 function mockBridge(handlers: {
-  create?: BrowserTabSet;
+  open?: BrowserTabSet;
   activate?: BrowserTabSet;
   close?: BrowserTabSet;
   closeScope?: BrowserTabSet;
 }) {
-  const create = vi.fn(async () => ({
+  const open = vi.fn(async () => ({
     ok: true as const,
-    data: { tabId: "new", tabs: handlers.create ?? set("new", [page("new")]) },
+    data: { tabId: "new", tabs: handlers.open ?? set("new", [page("new")]) },
   }));
   const activate = vi.fn(async () => ({
     ok: true as const,
@@ -55,9 +55,9 @@ function mockBridge(handlers: {
   }));
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (window as any).desktopBridge = {
-    preview: { tabs: { create, activate, close, closeScope, list: vi.fn(), onUpdated: vi.fn() } },
+    preview: { tabs: { open, activate, close, closeScope, list: vi.fn(), onUpdated: vi.fn() } },
   };
-  return { create, activate, close, closeScope };
+  return { open, activate, close, closeScope };
 }
 
 describe("overlayDisplaySet", () => {
@@ -118,13 +118,30 @@ describe("previewTabsStore", () => {
     expect(usePreviewTabsStore.getState().liveChromeByScope[SCOPE]?.title).toBe("T");
   });
 
-  it("createPage adds a page via the bridge and focuses the omnibox", async () => {
+  it("openPage creates a page via the bridge and focuses the omnibox", async () => {
     const created = set("new", [page("a"), page("new", { active: true })]);
-    const { create } = mockBridge({ create: created });
-    await usePreviewTabsStore.getState().createPage(SCOPE);
-    expect(create).toHaveBeenCalledWith(SCOPE, true);
+    const { open } = mockBridge({ open: created });
+    await usePreviewTabsStore.getState().openPage(SCOPE);
+    expect(open).toHaveBeenCalledWith(SCOPE, { activate: true });
     expect(usePreviewTabsStore.getState().tabSetByScope[SCOPE]).toBe(created);
     expect(usePreviewFocusStore.getState().omniboxFocusTick).toBe(1);
+  });
+
+  it("openPage passes an exact existing page id to the bridge", async () => {
+    const { open } = mockBridge({});
+
+    await usePreviewTabsStore.getState().openPage(SCOPE, {
+      activate: false,
+      focusOmnibox: false,
+      tabId: "blank",
+      renderingHost: "webview",
+    });
+
+    expect(open).toHaveBeenCalledWith(SCOPE, {
+      activate: false,
+      renderingHost: "webview",
+      tabId: "blank",
+    });
   });
 
   it("activatePage switches the active page and clears stale live chrome", async () => {
@@ -242,7 +259,7 @@ describe("previewTabsStore", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (window as any).desktopBridge = undefined;
     const onLastClose = vi.fn();
-    await usePreviewTabsStore.getState().createPage(SCOPE);
+    await usePreviewTabsStore.getState().openPage(SCOPE);
     await usePreviewTabsStore.getState().activatePage(SCOPE, "a");
     await usePreviewTabsStore.getState().closePage(SCOPE, "a", { onLastClose });
     expect(onLastClose).not.toHaveBeenCalled();

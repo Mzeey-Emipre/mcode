@@ -32,11 +32,21 @@ export interface BrowserAutomationActiveRequest {
   readonly startedAt: number;
 }
 
+/** Agent-created Browser tab visible before its open bootstrap can dispatch. */
+export interface BrowserAutomationPendingAgentOpen {
+  readonly workspaceId: string;
+  readonly threadId: string;
+  readonly tabId: string;
+  readonly url: string | null;
+  readonly startedAt: number;
+}
+
 interface BrowserAutomationState {
   readonly liveTargets: ReadonlyMap<string, BrowserAutomationLiveTarget>;
   readonly lifecycleTabs: ReadonlyMap<string, BrowserSessionLifecycleTab>;
   readonly controllers: ReadonlyMap<string, BrowserAutomationControllerState>;
   readonly activeRequests: ReadonlyMap<string, BrowserAutomationActiveRequest>;
+  readonly pendingAgentOpens: ReadonlyMap<string, BrowserAutomationPendingAgentOpen>;
   readonly registered: boolean;
   readonly status: BrowserAutomationHostStatus;
   readonly viewportByTarget: ReadonlyMap<string, { readonly width: number; readonly height: number }>;
@@ -58,6 +68,12 @@ interface BrowserAutomationState {
   ) => void;
   setActiveRequest: (request: BrowserAutomationActiveRequest) => void;
   clearActiveRequest: (requestId: string, sequence: number) => void;
+  setPendingAgentOpen: (
+    requestId: string,
+    sequence: number,
+    pending: BrowserAutomationPendingAgentOpen,
+  ) => void;
+  clearPendingAgentOpen: (requestId: string, sequence: number) => void;
   setRegistered: (registered: boolean) => void;
   setStatus: (status: BrowserAutomationHostStatus) => void;
   setViewport: (threadId: string, tabId: string, width: number, height: number) => void;
@@ -104,6 +120,41 @@ export function browserAutomationRequestKey(requestId: string, sequence: number)
   return JSON.stringify([requestId, sequence]);
 }
 
+/** Returns the pending agent open for one exact Browser target, if any. */
+export function findPendingBrowserAutomationOpen(
+  pendingAgentOpens: ReadonlyMap<string, BrowserAutomationPendingAgentOpen>,
+  threadId: string,
+  tabId: string,
+  workspaceId?: string | null,
+): BrowserAutomationPendingAgentOpen | null {
+  for (const pending of pendingAgentOpens.values()) {
+    if (
+      pending.threadId === threadId &&
+      pending.tabId === tabId &&
+      (!workspaceId || pending.workspaceId === workspaceId)
+    ) return pending;
+  }
+  return null;
+}
+
+/** Whether an agent controls or is opening one exact Browser target. */
+export function isBrowserAutomationAgentControlled(
+  state: Pick<BrowserAutomationState, "controllers" | "pendingAgentOpens">,
+  threadId: string,
+  tabId: string,
+  workspaceId?: string | null,
+): boolean {
+  if (state.controllers.get(browserAutomationTargetKey(threadId, tabId))?.controller === "agent") {
+    return true;
+  }
+  return findPendingBrowserAutomationOpen(
+    state.pendingAgentOpens,
+    threadId,
+    tabId,
+    workspaceId,
+  ) !== null;
+}
+
 /** Resolve a controller event only when its tab id maps to one exact live target. */
 export function resolveBrowserAutomationControllerTarget(
   targets: Iterable<BrowserAutomationLiveTarget>,
@@ -123,6 +174,7 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set, ge
   lifecycleTabs: new Map(),
   controllers: new Map(),
   activeRequests: new Map(),
+  pendingAgentOpens: new Map(),
   registered: false,
   status: "unavailable",
   viewportByTarget: new Map(),
@@ -358,6 +410,25 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set, ge
       const activeRequests = new Map(state.activeRequests);
       activeRequests.delete(key);
       return { activeRequests };
+    }),
+  setPendingAgentOpen: (requestId, sequence, pending) =>
+    set((state) => {
+      const pendingAgentOpens = new Map(state.pendingAgentOpens);
+      pendingAgentOpens.set(browserAutomationRequestKey(requestId, sequence), pending);
+      while (pendingAgentOpens.size > BROWSER_AUTOMATION_MAX_PENDING_REQUESTS) {
+        const oldest = pendingAgentOpens.keys().next().value as string | undefined;
+        if (!oldest) break;
+        pendingAgentOpens.delete(oldest);
+      }
+      return { pendingAgentOpens };
+    }),
+  clearPendingAgentOpen: (requestId, sequence) =>
+    set((state) => {
+      const key = browserAutomationRequestKey(requestId, sequence);
+      if (!state.pendingAgentOpens.has(key)) return state;
+      const pendingAgentOpens = new Map(state.pendingAgentOpens);
+      pendingAgentOpens.delete(key);
+      return { pendingAgentOpens };
     }),
   setRegistered: (registered) => set({ registered }),
   setStatus: (status) => set({ status }),

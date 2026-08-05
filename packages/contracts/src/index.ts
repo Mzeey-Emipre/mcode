@@ -366,12 +366,14 @@ export {
   BrowserTabSetSchema,
   BrowserPerfCountersSchema,
   BROWSER_TAB_INFO_STRING_MAX,
+  PREVIEW_RENDERING_HOSTS,
 } from "./models/browser-tab.js";
 export type {
   BrowserTabId,
   BrowserTabInfo,
   BrowserTabSet,
   BrowserPerfCounters,
+  PreviewRenderingHost,
 } from "./models/browser-tab.js";
 
 export {
@@ -434,6 +436,7 @@ export {
   BrowserAutomationViewportResetRequestSchema,
   BrowserAutomationViewportResetResultSchema,
   BROWSER_AUTOMATION_OPERATIONS,
+  BROWSER_V2_CORE_OPERATIONS,
   BROWSER_AUTOMATION_OPERATION_METADATA,
   BROWSER_AUTOMATION_ERROR_CODES,
   BrowserAutomationUrlSchema,
