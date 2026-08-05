@@ -1,4 +1,7 @@
 import { EventEmitter } from "node:events";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BROWSER_AUTOMATION_CONTRACT_VERSION,
@@ -6,7 +9,23 @@ import {
   BrowserAutomationResponseSchema,
   type BrowserAutomationRequest,
   type BrowserAutomationResponse,
+  type BrowserAutomationHostDispatch,
 } from "@mcode/contracts";
+import {
+  BROWSER_CONFORMANCE_RACE_CATALOGUE,
+  createBrowserConformanceResourceSnapshot,
+  createBrowserConformanceRevisionRaceSchedules,
+  createBrowserConformanceScenario,
+  createBrowserConformanceSchedule,
+  normalizeBrowserConformanceRun,
+  runBrowserConformanceScenarioWithReplay,
+  type BrowserConformanceCommand,
+  type BrowserConformanceNormalizedRun,
+  type BrowserConformanceReceipt,
+  type BrowserConformanceResourceSnapshot,
+  type BrowserConformanceScheduledEvent,
+  type BrowserConformanceSubject,
+} from "@mcode/browser-conformance";
 
 const rendererSender = new EventEmitter() as EventEmitter & {
   isDestroyed: () => boolean;
@@ -45,6 +64,7 @@ type CommandGate = {
 };
 
 let currentWebContents: FakeWebContents;
+const replayRoots: string[] = [];
 const tabsByThread = new Map<string, { threadId: string; activeTabId: string; tabs: Array<{ id: string; threadId: string; view: null }> }>();
 
 class FakeDebugger extends EventEmitter {
@@ -163,6 +183,7 @@ vi.mock("../preview/preview-session.js", () => ({
 }));
 
 import { BrowserAutomationKernel } from "../browser-automation/kernel.js";
+import { BrowserSessionDriver, ElectronBrowserSessionAdapter } from "../../../../web/src/services/browser-automation/browserSessionDriver";
 
 function seedTab(tabId = "tab", threadId = "thread"): void {
   tabsByThread.set(threadId, {
@@ -231,6 +252,186 @@ function parseResponse(value: unknown): BrowserAutomationResponse {
   return parsed.data;
 }
 
+type ConformanceRevisions = { host: number; document: number; control: number; capability: number; observation: number };
+type BrowserMutationCounters = { debuggerInput: number; navigation: number; loadURL: number };
+
+class KernelConformanceSubject implements BrowserConformanceSubject {
+  private readonly receipts: BrowserConformanceReceipt[] = [];
+  private readonly requestLeases = new Set<string>();
+  private readonly scheduled = new Set<string>();
+  private readonly timerLeases = new Set<number>();
+  private readonly heldInputLeases = new Set<string>();
+  private readonly controllerLeases = new Set<string>();
+  private readonly replayEntries = new Map<string, string>();
+  private readonly registryEntries = new Map<string, string>();
+  private readonly bufferEntries = new Set<string>();
+  private readonly mutationCounters?: () => BrowserMutationCounters;
+  private preActMutationCounters: BrowserMutationCounters | undefined;
+  private readonly revisions: ConformanceRevisions;
+  private readonly admissionRevisions: ConformanceRevisions;
+  private readonly liveTargets: Map<string, ReturnType<typeof kernelTarget>>;
+  private tick = 0;
+  private disposed = false;
+  private observationRef: string | undefined;
+
+  constructor(
+    private readonly driver: BrowserSessionDriver,
+    private readonly kernel: BrowserAutomationKernel,
+    revisions: ConformanceRevisions,
+    admissionRevisions: ConformanceRevisions,
+    liveTargets = new Map([["tab", kernelTarget()]]),
+    mutationCounters?: () => BrowserMutationCounters,
+  ) { this.revisions = revisions; this.admissionRevisions = admissionRevisions; this.liveTargets = liveTargets; this.mutationCounters = mutationCounters; }
+
+  mutationSnapshotBeforeAct(): BrowserMutationCounters | undefined {
+    return this.preActMutationCounters;
+  }
+
+  async dispatch(command: BrowserConformanceCommand): Promise<BrowserConformanceReceipt> {
+    if (command.operation === "act" && this.mutationCounters) this.preActMutationCounters = this.mutationCounters();
+    const requestKey = `${command.id}:${this.receipts.length}`;
+    this.requestLeases.add(requestKey);
+    this.bufferEntries.add(requestKey);
+    this.registryEntries.set("provider-session", "active");
+    if (command.operation === "act") {
+      this.heldInputLeases.add(requestKey);
+      this.controllerLeases.add(requestKey);
+    }
+    const args = { ...(command.args ?? (command.operation === "inspect" ? { includeScreenshot: false, includeDiagnostics: false } : {})) } as Record<string, unknown>;
+    if (command.operation === "act") args.observationRef = this.observationRef ?? "missing-observation";
+    const request = requestForConformance({ ...command, args }, this.receipts.length);
+    const envelope = dispatch(request) as unknown as BrowserAutomationHostDispatch;
+    envelope.connection = { ...envelope.connection, capabilityRevision: 1 };
+    const response = parseResponse(await this.driver.execute(envelope, new AbortController().signal));
+    if (response.ok) {
+      const result = response.result as { observationRef?: string; nextObservationRef?: string; finalObservation?: { observationRef?: string } };
+      this.observationRef = result.nextObservationRef ?? result.finalObservation?.observationRef ?? result.observationRef ?? this.observationRef;
+      if (this.observationRef) this.replayEntries.set(this.observationRef, requestKey);
+    }
+    const raw = {
+      receipts: [{
+        order: { tick: this.tick, ordinal: this.receipts.length },
+        commandId: command.id,
+        operation: command.operation,
+        status: response.ok ? "applied" : "failed",
+        effect: response.ok ? "none" : response.error.effect,
+        recovery: response.ok ? "none" : response.error.recovery,
+        errorCode: response.ok ? null : response.error.code,
+        errorStage: response.ok ? "observation" : response.error.stage,
+        revisions: this.revisions,
+      }],
+      outcome: response.ok ? { status: "completed", effect: "none", recovery: "none", revisions: this.revisions } : { status: "failed", effect: response.error.effect, recovery: response.error.recovery, errorCode: response.error.code, errorStage: response.error.stage, revisions: this.revisions },
+      finalState: { readiness: "ready", controlOwner: "none", tabCount: 1, currentUrl: null, revisions: this.revisions, resources: this.snapshotResources() },
+    };
+    const receipt = normalizeBrowserConformanceRun(raw).receipts[0]!;
+    this.receipts.push(receipt);
+    return receipt;
+  }
+
+  schedule(eventValue: BrowserConformanceScheduledEvent): void {
+    if (!this.disposed) this.scheduled.add(`${eventValue.order.tick}:${eventValue.order.ordinal}`);
+  }
+  async advanceClock(tick: number): Promise<void> {
+    this.tick = tick;
+    this.timerLeases.add(tick);
+  }
+  async injectExternalEvent(eventValue: BrowserConformanceScheduledEvent): Promise<void> {
+    if (this.disposed) return;
+    if (eventValue.kind === "target-close") {
+      this.driver.clearIdempotencyForTarget("thread", "tab");
+      this.liveTargets.delete("tab");
+    } else if (eventValue.kind === "target-register") {
+      this.liveTargets.set("tab", kernelTarget());
+    }
+    const revision = eventValue.revision ?? revisionForEvent(eventValue.kind);
+    if (revision) {
+      this.revisions[revision] += 1;
+      this.admissionRevisions[revision] += 1;
+      if (revision === "observation") this.driver.invalidateTargetObservations("thread", "tab");
+    }
+  }
+  snapshotOutcome(): BrowserConformanceNormalizedRun {
+    const last = this.receipts.at(-1);
+    return normalizeBrowserConformanceRun({
+      receipts: this.receipts,
+      outcome: { status: last?.status === "failed" ? "failed" : "completed", effect: last?.effect ?? "none", recovery: last?.recovery ?? "none", revisions: this.revisions },
+      finalState: { readiness: "ready", controlOwner: "none", tabCount: 1, currentUrl: null, revisions: this.revisions, resources: this.snapshotResources() },
+    });
+  }
+  snapshotResources(): BrowserConformanceResourceSnapshot {
+    const counters = this.kernel.getCounters();
+    const listenerCount = currentWebContents.eventNames().reduce((total, name) => total + currentWebContents.listenerCount(name), 0)
+      + currentWebContents.debugger.eventNames().reduce((total, name) => total + currentWebContents.debugger.listenerCount(name), 0);
+    return createBrowserConformanceResourceSnapshot({
+      counts: {
+        requests: this.requestLeases.size,
+        queues: Math.max(counters.queued, this.scheduled.size),
+        timers: this.timerLeases.size,
+        listeners: listenerCount,
+        heldInput: this.heldInputLeases.size,
+        controllerLeases: this.controllerLeases.size,
+        targets: counters.targets,
+        replayEntries: this.replayEntries.size,
+        registries: this.registryEntries.size,
+        buffers: this.bufferEntries.size,
+      },
+      identities: { targets: counters.targets > 0 ? [{ id: "browser-target", generation: kernelTarget().targetGeneration }] : [] },
+    });
+  }
+  async drainToQuiescence(): Promise<void> { await settleLateWork(); }
+  async dispose(): Promise<void> {
+    if (this.disposed) return;
+    this.disposed = true;
+    await this.driver.releaseProviderSession("provider-session");
+    this.kernel.disposeWindow(fakeWindow.id);
+    this.liveTargets.clear();
+    this.requestLeases.clear();
+    this.scheduled.clear();
+    this.timerLeases.clear();
+    this.heldInputLeases.clear();
+    this.controllerLeases.clear();
+    this.replayEntries.clear();
+    this.registryEntries.clear();
+    this.bufferEntries.clear();
+  }
+}
+
+function requestForConformance(command: BrowserConformanceCommand, sequence: number): BrowserAutomationRequest {
+  const args = command.args ?? (command.operation === "inspect" ? { includeScreenshot: false, includeDiagnostics: false } : {});
+  return request(command.operation as BrowserAutomationRequest["operation"], args as never, { requestId: `conformance-${command.id}-${sequence}`, expectedControlEpoch: 0 });
+}
+
+function revisionForEvent(kind: BrowserConformanceScheduledEvent["kind"]): keyof ConformanceRevisions | undefined {
+  switch (kind) {
+    case "host-disconnect":
+    case "host-reconnect": return "host";
+    case "navigation":
+    case "reload":
+    case "document-revision": return "document";
+    case "user-takeover":
+    case "competing-mutation":
+    case "cancel":
+    case "timeout":
+    case "resize":
+    case "control-revision": return "control";
+    case "capability-revision": return "capability";
+    case "observation-revision": return "observation";
+    default: return undefined;
+  }
+}
+
+function kernelTarget() {
+  return { desktopInstanceId: "desktop", windowId: fakeWindow.id, connectionGeneration: 1, threadId: "thread", tabId: "tab", targetGeneration: 0, active: true, focused: true, lastUsedAt: 0 } as const;
+}
+
+function mutationCounters(webContents: FakeWebContents): BrowserMutationCounters {
+  return {
+    debuggerInput: webContents.debugger.commands.filter((command) => command.method.startsWith("Input.")).length,
+    navigation: webContents.debugger.commands.filter((command) => command.method === "Page.navigate").length,
+    loadURL: webContents.loadURL.mock.calls.length,
+  };
+}
+
 function event() {
   return { sender: rendererSender } as never;
 }
@@ -252,10 +453,11 @@ describe("BrowserAutomationKernel race conformance", () => {
     kernel = new BrowserAutomationKernel();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     vi.useRealTimers();
     kernel.disposeWindow(fakeWindow.id);
     tabsByThread.clear();
+    await Promise.all(replayRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
   });
 
   it("trusted takeover stops a deferred mutation and cancellation releases held input", async () => {
@@ -426,6 +628,143 @@ describe("BrowserAutomationKernel race conformance", () => {
       error: { code: "TIMEOUT", effect: "preserved", recovery: "retry" },
     });
     vi.useRealTimers();
+  });
+
+  it("executes every seeded revision schedule through the real Electron kernel with replay hooks", async () => {
+    const replayRoot = await mkdtemp(join(tmpdir(), "mcode-kernel-conformance-"));
+    replayRoots.push(replayRoot);
+    const generated = createBrowserConformanceRevisionRaceSchedules({
+      seed: "electron-kernel-revision-races",
+      maxCommands: 2,
+      maxEvents: 8,
+      maxCheckpoints: 4,
+      maxTick: 0,
+    });
+    const schedules = [...Object.values(generated.individual), ...generated.pairs, ...generated.highRisk];
+    for (const generatedSchedule of schedules) {
+      currentWebContents = new FakeWebContents(1);
+      tabsByThread.clear();
+      seedTab();
+      const seededKernel = new BrowserAutomationKernel();
+      const revisions = { host: 1, document: 0, control: 0, capability: 1, observation: 0 };
+      const liveTargets = new Map([["tab", kernelTarget()]]);
+      const electronAdapter = new ElectronBrowserSessionAdapter((dispatchValue) => seededKernel.execute(event(), dispatchValue));
+      const driver = new BrowserSessionDriver({
+        web: electronAdapter,
+        electron: electronAdapter,
+        isElectron: () => true,
+        getHostRevision: () => revisions.host,
+        getDocumentRevision: () => revisions.document,
+        getControlRevision: () => revisions.control,
+        getCapabilityRevision: () => revisions.capability,
+        supportedActOperations: ["click", "navigate"],
+        electronTabs: { list: async () => [...liveTargets.values()], close: async (closedTarget) => { liveTargets.delete(closedTarget.tabId); } },
+      });
+      const subject = new KernelConformanceSubject(driver, seededKernel, { host: 0, document: 0, control: 0, capability: 0, observation: 0 }, revisions, liveTargets, () => mutationCounters(currentWebContents));
+      const scenario = createBrowserConformanceScenario({
+        id: `electron-kernel-${generatedSchedule.id}`,
+        seed: generatedSchedule.schedule.seed,
+        commands: [
+          { id: "inspect-before-revision", operation: "inspect", args: { includeScreenshot: false, includeDiagnostics: false } },
+          {
+            id: "act-after-revision",
+            operation: "act",
+            args: {
+              observationRef: "$lastObservationRef",
+              deadlineMs: 10_000,
+              steps: [{ operation: "click", target: { cssSelector: "#save" } }],
+            },
+          },
+        ],
+        schedule: generatedSchedule.schedule,
+        cleanup: { baseline: createBrowserConformanceResourceSnapshot() },
+      });
+      const run = await runBrowserConformanceScenarioWithReplay(scenario, subject, {
+        workspaceRoot: replayRoot,
+        fileName: `electron-kernel-${generatedSchedule.id}.json`,
+        failingInvariant: "electron kernel seeded revision schedule remains bounded",
+      });
+      expect(run.outcome.status, generatedSchedule.id).not.toBe("unknown");
+      expect(run.finalState.resources.targets, generatedSchedule.id).toBe(1);
+      expect(run.finalState.resources.requests, generatedSchedule.id).toBeGreaterThan(0);
+      expect(run.receipts.length, generatedSchedule.id).toBe(2);
+      expect(run.receipts.every((receipt) => receipt.status !== "unknown" && receipt.effect !== "unknown" && receipt.recovery !== "unknown"), generatedSchedule.id).toBe(true);
+      const terminalReceipt = run.receipts.at(-1);
+      expect(terminalReceipt?.status, generatedSchedule.id).toBe("failed");
+      expect(terminalReceipt?.errorCode, generatedSchedule.id).toBe(
+        generatedSchedule.revisions.includes("capability") ? "CAPABILITY_CHANGED" : "STALE_TARGET_GENERATION",
+      );
+      expect(terminalReceipt?.effect, generatedSchedule.id).toBe("none");
+      expect(subject.mutationSnapshotBeforeAct(), generatedSchedule.id).toEqual(mutationCounters(currentWebContents));
+      expect(subject.snapshotResources()).toEqual(createBrowserConformanceResourceSnapshot());
+    }
+  });
+
+  it("executes every named catalogue race through the real Electron adapter with replay hooks", async () => {
+    const replayRoot = await mkdtemp(join(tmpdir(), "mcode-kernel-catalogue-"));
+    replayRoots.push(replayRoot);
+    const exercisedRaceIds = new Set<string>();
+    for (const race of BROWSER_CONFORMANCE_RACE_CATALOGUE) {
+      currentWebContents = new FakeWebContents(1);
+      tabsByThread.clear();
+      seedTab();
+      const seededKernel = new BrowserAutomationKernel();
+      const revisions = { host: 1, document: 0, control: 0, capability: 1, observation: 0 };
+      const liveTargets = new Map([["tab", kernelTarget()]]);
+      const electronAdapter = new ElectronBrowserSessionAdapter((dispatchValue) => seededKernel.execute(event(), dispatchValue));
+      const driver = new BrowserSessionDriver({
+        web: electronAdapter,
+        electron: electronAdapter,
+        isElectron: () => true,
+        getHostRevision: () => revisions.host,
+        getDocumentRevision: () => revisions.document,
+        getControlRevision: () => revisions.control,
+        getCapabilityRevision: () => revisions.capability,
+        supportedActOperations: ["click", "navigate"],
+        electronTabs: { list: async () => [...liveTargets.values()], close: async (closedTarget) => { liveTargets.delete(closedTarget.tabId); } },
+      });
+      const subject = new KernelConformanceSubject(driver, seededKernel, { host: 0, document: 0, control: 0, capability: 0, observation: 0 }, revisions, liveTargets, () => mutationCounters(currentWebContents));
+      const schedule = createBrowserConformanceSchedule({
+        seed: race.id,
+        maxCommands: 2,
+        maxEvents: race.events.length,
+        maxCheckpoints: 0,
+        maxTick: 0,
+        eventCount: 0,
+      });
+      const scenario = createBrowserConformanceScenario({
+        id: `electron-catalogue-${race.id}`,
+        seed: race.id,
+        commands: [
+          { id: `${race.id}-inspect`, operation: "inspect", args: { includeScreenshot: false, includeDiagnostics: false } },
+          {
+            id: `${race.id}-act`,
+            operation: "act",
+            args: {
+              observationRef: "$lastObservationRef",
+              deadlineMs: 10_000,
+              steps: [{ operation: "click", target: { cssSelector: "#save" } }],
+            },
+          },
+        ],
+        schedule: {
+          ...schedule,
+          events: race.events.map((kind, ordinal) => ({ order: { tick: 0, ordinal }, kind })),
+        },
+        cleanup: { baseline: createBrowserConformanceResourceSnapshot() },
+      });
+      const run = await runBrowserConformanceScenarioWithReplay(scenario, subject, {
+        workspaceRoot: replayRoot,
+        fileName: `electron-catalogue-${race.id}.json`,
+        failingInvariant: race.invariant,
+      });
+      expect(run.outcome.status, race.id).not.toBe("unknown");
+      expect(run.finalState.resources.requests, race.id).toBeGreaterThan(0);
+      expect(run.receipts.every((receipt) => receipt.status !== "unknown" && receipt.effect !== "unknown" && receipt.recovery !== "unknown"), race.id).toBe(true);
+      expect(subject.snapshotResources(), race.id).toEqual(createBrowserConformanceResourceSnapshot());
+      exercisedRaceIds.add(race.id);
+    }
+    expect(exercisedRaceIds).toEqual(new Set(BROWSER_CONFORMANCE_RACE_CATALOGUE.map((race) => race.id)));
   });
 
   it("cancellation and deadline between effects return bounded recovery without false success", async () => {

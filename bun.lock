@@ -39,6 +39,7 @@
         "electron-builder": "^25.1.0",
         "electron-mksnapshot": "35.7.5",
         "esbuild": "^0.27.0",
+        "jsdom": "^29.0.1",
         "png-to-ico": "^3.0.1",
         "png2icons": "^2.0.1",
         "resedit": "^3.0.2",
@@ -71,6 +72,7 @@
         "zod": "^3.24.2",
       },
       "devDependencies": {
+        "@mcode/browser-conformance": "workspace:*",
         "@swc/cli": "^0.8.1",
         "@swc/core": "^1.15.41",
         "@types/better-sqlite3": "^7.6.12",
