@@ -26,8 +26,10 @@ vi.mock("../../transport/push.js", () => ({ broadcast: vi.fn() }));
 import { broadcast } from "../../transport/push.js";
 
 const THREAD_ID = "thread-abc";
+type PersistedThreadStatus = Thread["status"] | "failed" | "idle" | "stopped";
+type PersistedThread = Omit<Thread, "status"> & { status: PersistedThreadStatus };
 
-function makeThread(overrides: Partial<Thread> = {}): Thread {
+function makeThread(overrides: Partial<PersistedThread> = {}): PersistedThread {
   return {
     id: THREAD_ID,
     workspace_id: "ws-1",
@@ -66,9 +68,9 @@ function buildService({
 }: {
   assertUsable?: ReturnType<typeof vi.fn>;
   resolveProvider?: ReturnType<typeof vi.fn>;
-  threadStatus?: Thread["status"] | "failed" | "idle" | "stopped";
+  threadStatus?: PersistedThreadStatus;
 } = {}) {
-  const thread = threadStatus === "idle" ? makeThread() : makeThread({ status: threadStatus as Thread["status"] });
+  const thread = makeThread({ status: threadStatus });
 
   const threadRepo = {
     findById: vi.fn(() => thread),
