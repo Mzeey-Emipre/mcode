@@ -645,7 +645,7 @@ describe("PreviewPanel: full panel state", () => {
     expect(screen.getByTestId("preview-panel")).toBeInTheDocument();
   });
 
-  it("uses a prominent frame and edge wash while the agent controls Browser", () => {
+  it("uses an amber shadow and edge wash while the agent controls Browser", () => {
     useBrowserAutomationStore.setState({
       controllers: new Map([
         [
@@ -665,9 +665,14 @@ describe("PreviewPanel: full panel state", () => {
     render(<PreviewPanel threadId="thread-1" />);
 
     const overlay = screen.getByTestId("browser-automation-overlay");
-    expect(overlay).toHaveClass("border-2", "border-primary");
+    expect(overlay).not.toHaveClass("border");
+    expect(overlay).not.toHaveClass("border-2");
+    expect(overlay).not.toHaveClass("border-primary");
     expect(overlay.style.backgroundImage).toContain("transparent 32px");
+    expect(overlay.style.boxShadow).not.toContain("inset 0 0 0 1px");
     expect(overlay.style.boxShadow).toContain("inset 0 0 40px");
+    expect(overlay.style.boxShadow).toContain("0 0 24px");
+    expect(overlay.style.boxShadow).toContain("var(--primary)");
   });
 
   it("shows the agent frame and cursor while the active page is still opening", () => {

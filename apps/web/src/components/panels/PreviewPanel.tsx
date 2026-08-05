@@ -3123,7 +3123,7 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
         {agentControlsBrowser ? (
           <div
             data-testid="browser-automation-overlay"
-            className="pointer-events-none absolute inset-0 z-20 rounded-tl-md border-2 border-primary"
+            className="pointer-events-none absolute inset-0 z-20 rounded-tl-md"
             style={{
               backgroundImage: [
                 "linear-gradient(to right, color-mix(in oklab, var(--primary) 26%, transparent), transparent 32px)",
@@ -3132,7 +3132,6 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
                 "linear-gradient(to top, color-mix(in oklab, var(--primary) 26%, transparent), transparent 32px)",
               ].join(", "),
               boxShadow: [
-                "inset 0 0 0 1px color-mix(in oklab, var(--primary) 88%, white 12%)",
                 "inset 0 0 40px color-mix(in oklab, var(--primary) 30%, transparent)",
                 "0 0 24px color-mix(in oklab, var(--primary) 28%, transparent)",
               ].join(", "),
