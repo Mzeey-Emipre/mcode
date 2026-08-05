@@ -4,6 +4,7 @@ import type {
   BrowserAutomationHostDispatchTarget,
   BrowserAutomationResponse,
 } from "@mcode/contracts";
+import { BrowserAutomationResponseSchema } from "@mcode/contracts";
 import {
   BrowserSessionDriver,
   ElectronBrowserSessionAdapter,
@@ -808,7 +809,7 @@ describe("BrowserSessionDriver", () => {
 
     await expect(pending).resolves.toMatchObject({
       ok: false,
-      error: { code: "OPERATION_CANCELLED", effect: "unknown", recovery: "inspect" },
+      error: { code: "OPERATION_CANCELLED", effect: "closed", recovery: "inspect" },
     });
     const refreshed = await driver.execute(inspectTabDispatch(tab2, "refresh", 6), new AbortController().signal);
     const refreshedRef = (refreshed as { result: { observationRef: string } }).result.observationRef;
@@ -877,7 +878,7 @@ describe("BrowserSessionDriver", () => {
 
     await expect(pending).resolves.toMatchObject({
       ok: false,
-      error: { code: "OPERATION_CANCELLED", effect: "unknown", recovery: "inspect" },
+      error: { code: "OPERATION_CANCELLED", effect: "closed", recovery: "inspect" },
     });
     const refreshed = await driver.execute(inspectTabDispatch(tab2, "refresh", 6), new AbortController().signal);
     const refreshedRef = (refreshed as { result: { observationRef: string } }).result.observationRef;
@@ -926,7 +927,7 @@ describe("BrowserSessionDriver", () => {
         code: "TAB_UNAVAILABLE",
         retryable: true,
         stage: "effect",
-        effect: "unknown",
+        effect: "preserved",
         recovery: "inspect",
       },
     });
@@ -936,6 +937,169 @@ describe("BrowserSessionDriver", () => {
     const retried = await driver.execute(tabsDispatch(target, "retry-close", 5, refreshedRef, { action: "close", tabId: "tab-1" }), new AbortController().signal);
     expect(retried).toMatchObject({ ok: true, result: { tabs: [] } });
     expect(close).toHaveBeenCalledTimes(2);
+  });
+
+  it("preserves ownership when tab close resolves but reconciliation retains the target", async () => {
+    const target = browserTarget("tab-1");
+    const liveTargets = new Map([[target.tabId, target]]);
+    const close = vi.fn()
+      .mockResolvedValueOnce(undefined)
+      .mockImplementation(async (value: BrowserAutomationHostDispatchTarget) => {
+        liveTargets.delete(value.tabId);
+      });
+    const execute = vi.fn(async (value: BrowserAutomationHostDispatch) => {
+      if (value.request.operation === "open") liveTargets.set(value.target.tabId, value.target);
+      return {
+        contractVersion: 1,
+        requestId: value.request.requestId,
+        sequence: value.request.sequence,
+        ok: true,
+        result: value.request.operation === "inspect"
+          ? { operation: "inspect", tabs: [...liveTargets.values()] }
+          : { operation: "open", url: "about:blank", title: "", controlEpoch: 0 },
+      } as unknown as BrowserAutomationResponse;
+    });
+    const projections: BrowserSessionLifecycleTab[][] = [];
+    const driver = new BrowserSessionDriver({
+      web: { execute },
+      electron: { execute },
+      isElectron: () => false,
+      webTabs: { list: async () => [...liveTargets.values()], close },
+      onLifecycleChange: (tabs) => projections.push([...tabs]),
+    });
+    await driver.execute(openTabDispatch(target, "open", 1), new AbortController().signal);
+    const inspected = BrowserAutomationResponseSchema().parse(
+      await driver.execute(inspectTabDispatch(target, "inspect", 2), new AbortController().signal),
+    );
+    const inspectedRef = inspected.ok && inspected.result.operation === "inspect" ? inspected.result.observationRef! : "";
+    const retained = BrowserAutomationResponseSchema().parse(
+      await driver.execute(tabsDispatch(target, "close", 3, inspectedRef, { action: "close", tabId: target.tabId }), new AbortController().signal),
+    );
+    expect(retained).toMatchObject({ ok: false, error: { code: "TAB_UNAVAILABLE", effect: "preserved", retryable: true } });
+    expect(projections.at(-1)).toEqual([expect.objectContaining({ tabId: target.tabId, ownership: "owned" })]);
+
+    const refreshed = BrowserAutomationResponseSchema().parse(
+      await driver.execute(inspectTabDispatch(target, "refresh", 4), new AbortController().signal),
+    );
+    const refreshedRef = refreshed.ok && refreshed.result.operation === "inspect" ? refreshed.result.observationRef! : "";
+    const closed = BrowserAutomationResponseSchema().parse(
+      await driver.execute(tabsDispatch(target, "retry-close", 5, refreshedRef, { action: "close", tabId: target.tabId }), new AbortController().signal),
+    );
+    expect(closed).toMatchObject({ ok: true, result: { tabs: [] } });
+    expect(close).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not adopt a same-tab replacement generation after close", async () => {
+    const target = browserTarget("tab-1");
+    const replacement = { ...target, targetGeneration: target.targetGeneration + 1 };
+    const liveTargets = new Map([[target.tabId, target]]);
+    const close = vi.fn(async (value: BrowserAutomationHostDispatchTarget) => {
+      liveTargets.set(value.tabId, replacement);
+    });
+    const execute = vi.fn(async (value: BrowserAutomationHostDispatch) => {
+      if (value.request.operation === "open") liveTargets.set(value.target.tabId, value.target);
+      return {
+        contractVersion: 1,
+        requestId: value.request.requestId,
+        sequence: value.request.sequence,
+        ok: true,
+        result: value.request.operation === "inspect"
+          ? { operation: "inspect", tabs: [...liveTargets.values()] }
+          : { operation: "open", url: "about:blank", title: "", controlEpoch: 0 },
+      } as unknown as BrowserAutomationResponse;
+    });
+    const projections: BrowserSessionLifecycleTab[][] = [];
+    const driver = new BrowserSessionDriver({
+      web: { execute },
+      electron: { execute },
+      isElectron: () => false,
+      webTabs: { list: async () => [...liveTargets.values()], close },
+      onLifecycleChange: (tabs) => projections.push([...tabs]),
+    });
+    await driver.execute(openTabDispatch(target, "open", 1), new AbortController().signal);
+    const inspected = await driver.execute(inspectTabDispatch(target, "inspect", 2), new AbortController().signal);
+    const observationRef = (inspected as { result: { observationRef: string } }).result.observationRef;
+    const closed = await driver.execute(
+      tabsDispatch(target, "close", 3, observationRef, { action: "close", tabId: target.tabId }),
+      new AbortController().signal,
+    );
+    expect(closed).toMatchObject({ ok: true, result: { tabs: [] } });
+    expect(projections.at(-1)).toEqual([]);
+    await driver.releaseProviderSession("session");
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("retains agent ownership for provider-session cleanup retry after close failure", async () => {
+    const target = browserTarget("tab-1");
+    const liveTargets = new Map([[target.tabId, target]]);
+    const close = vi.fn()
+      .mockRejectedValueOnce(new Error("close failed"))
+      .mockImplementation(async (value: BrowserAutomationHostDispatchTarget) => {
+        liveTargets.delete(value.tabId);
+      });
+    const execute = vi.fn(async (value: BrowserAutomationHostDispatch) => {
+      if (value.request.operation === "open") liveTargets.set(value.target.tabId, value.target);
+      return {
+        contractVersion: 1,
+        requestId: value.request.requestId,
+        sequence: value.request.sequence,
+        ok: true,
+        result: value.request.operation === "inspect"
+          ? { operation: "inspect", tabs: [...liveTargets.values()] }
+          : { operation: "open", url: "about:blank", title: "", controlEpoch: 0 },
+      } as unknown as BrowserAutomationResponse;
+    });
+    const projections: BrowserSessionLifecycleTab[][] = [];
+    const driver = new BrowserSessionDriver({
+      web: { execute },
+      electron: { execute },
+      isElectron: () => false,
+      webTabs: { list: async () => [...liveTargets.values()], close },
+      onLifecycleChange: (tabs) => projections.push([...tabs]),
+    });
+    await driver.execute(openTabDispatch(target, "open", 1), new AbortController().signal);
+    await driver.releaseProviderSession("session");
+    expect(projections.at(-1)).toEqual([expect.objectContaining({ tabId: target.tabId, ownership: "owned" })]);
+    expect(close).toHaveBeenCalledOnce();
+
+    await driver.releaseProviderSession("session");
+    expect(projections.at(-1)).toEqual([]);
+    expect(close).toHaveBeenCalledTimes(2);
+  });
+
+  it("drops a retained session when provider cleanup sees a late replacement generation", async () => {
+    const target = browserTarget("tab-1");
+    const replacement = { ...target, targetGeneration: target.targetGeneration + 1 };
+    const liveTargets = new Map([[target.tabId, target]]);
+    const close = vi.fn(async (value: BrowserAutomationHostDispatchTarget) => {
+      liveTargets.set(value.tabId, replacement);
+    });
+    const execute = vi.fn(async (value: BrowserAutomationHostDispatch) => {
+      if (value.request.operation === "open") liveTargets.set(value.target.tabId, value.target);
+      return {
+        contractVersion: 1,
+        requestId: value.request.requestId,
+        sequence: value.request.sequence,
+        ok: true,
+        result: value.request.operation === "inspect"
+          ? { operation: "inspect", tabs: [...liveTargets.values()] }
+          : { operation: "open", url: "about:blank", title: "", controlEpoch: 0 },
+      } as unknown as BrowserAutomationResponse;
+    });
+    const projections: BrowserSessionLifecycleTab[][] = [];
+    const driver = new BrowserSessionDriver({
+      web: { execute },
+      electron: { execute },
+      isElectron: () => false,
+      webTabs: { list: async () => [...liveTargets.values()], close },
+      onLifecycleChange: (tabs) => projections.push([...tabs]),
+    });
+    await driver.execute(openTabDispatch(target, "open", 1), new AbortController().signal);
+    await driver.releaseProviderSession("session");
+    expect(projections.at(-1)).toEqual([]);
+    await driver.releaseProviderSession("session");
+    expect(close).toHaveBeenCalledOnce();
+    expect(liveTargets.get(target.tabId)).toEqual(replacement);
   });
 
   it("claims and releases user tabs without physically closing them", async () => {
@@ -986,6 +1150,7 @@ describe("BrowserSessionDriver", () => {
   it("implicitly claims a user tab after browser_navigate and leaves it open during release", async () => {
     const agent = { threadId: "thread", tabId: "agent-tab", windowId: 1, connectionGeneration: 1, targetGeneration: 1 };
     const user = { threadId: "thread", tabId: "user-tab", windowId: 1, connectionGeneration: 1, targetGeneration: 4 };
+    const liveTargets = new Map([[agent.tabId, agent], [user.tabId, user]]);
     const execute = vi.fn(async (value: BrowserAutomationHostDispatch) => ({
       contractVersion: 1,
       requestId: value.request.requestId,
@@ -993,13 +1158,15 @@ describe("BrowserSessionDriver", () => {
       ok: true,
       result: { operation: value.request.operation },
     }) as BrowserAutomationResponse);
-    const close = vi.fn();
+    const close = vi.fn(async (target: BrowserAutomationHostDispatchTarget) => {
+      liveTargets.delete(target.tabId);
+    });
     const projections: BrowserSessionLifecycleTab[][] = [];
     const driver = new BrowserSessionDriver({
       web: { execute },
       electron: { execute },
       isElectron: () => false,
-      webTabs: { list: async () => [agent, user] as never, close },
+      webTabs: { list: async () => [...liveTargets.values()] as never, close },
       onLifecycleChange: (tabs) => projections.push([...tabs]),
     });
     const open = await driver.execute({
@@ -1134,6 +1301,7 @@ describe("BrowserSessionDriver", () => {
   it("publishes lifecycle projection changes for agent-owned and claimed tabs", async () => {
     const current = { threadId: "thread", tabId: "agent-tab", windowId: 1, connectionGeneration: 1, targetGeneration: 1 };
     const user = { threadId: "thread", tabId: "user-tab", windowId: 1, connectionGeneration: 1, targetGeneration: 4 };
+    const liveTargets = new Map([[current.tabId, current], [user.tabId, user]]);
     const execute = vi.fn(async (value: BrowserAutomationHostDispatch) => ({
       contractVersion: 1,
       requestId: value.request.requestId,
@@ -1148,7 +1316,10 @@ describe("BrowserSessionDriver", () => {
       web: { execute },
       electron: { execute },
       isElectron: () => false,
-      webTabs: { list: async () => [current, user] as never, close: vi.fn() },
+      webTabs: {
+        list: async () => [...liveTargets.values()] as never,
+        close: vi.fn(async (target: BrowserAutomationHostDispatchTarget) => { liveTargets.delete(target.tabId); }),
+      },
       onLifecycleChange: (tabs) => projections.push([...tabs]),
     });
     const base = {
@@ -1207,7 +1378,9 @@ describe("BrowserSessionDriver", () => {
           : { operation: "open", url: "about:blank", title: "", controlEpoch: 0 },
       } as BrowserAutomationResponse;
     });
-    const close = vi.fn();
+    const close = vi.fn(async (target: BrowserAutomationHostDispatchTarget) => {
+      liveTargets.delete(target.tabId);
+    });
     const driver = new BrowserSessionDriver({
       web: { execute }, electron: { execute }, isElectron: () => false,
       webTabs: { list: async () => [...liveTargets.values()], close },
@@ -1269,6 +1442,7 @@ describe("BrowserSessionDriver", () => {
     const run = async (electronRuntime: boolean) => {
       const webClose = vi.fn();
       const electronClose = vi.fn();
+      let closed = false;
       const execute = vi.fn(async (value: BrowserAutomationHostDispatch) => ({
         contractVersion: 1,
         requestId: value.request.requestId,
@@ -1278,8 +1452,8 @@ describe("BrowserSessionDriver", () => {
       }) as BrowserAutomationResponse);
       const driver = new BrowserSessionDriver({
         web: { execute }, electron: { execute }, isElectron: () => electronRuntime,
-        webTabs: { list: async (value) => [value.target], close: webClose },
-        electronTabs: { list: async (value) => [value.target], close: electronClose },
+        webTabs: { list: async (value) => closed ? [] : [value.target], close: async (target) => { closed = true; webClose(target); } },
+        electronTabs: { list: async (value) => closed ? [] : [value.target], close: async (target) => { closed = true; electronClose(target); } },
       });
       const opened = {
         connection: { connectionGeneration: 1, capabilityRevision: 1 },

@@ -301,5 +301,5 @@ class WebDriverRaceSubject implements BrowserConformanceSubject {
     return createBrowserConformanceResourceSnapshot({ counts: { targets: this.liveTargets.size }, identities: { targets: [...this.liveTargets.values()].map((target) => ({ id: `${target.threadId}/${target.tabId}`, generation: target.targetGeneration })) } });
   }
   async drainToQuiescence(): Promise<void> {}
-  async dispose(): Promise<void> { this.disposed = true; await this.driver.releaseProviderSession("session"); this.liveTargets.clear(); }
+  async dispose(): Promise<void> { this.disposed = true; await this.driver.releaseProviderSession("session"); }
 }
