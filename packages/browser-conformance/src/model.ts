@@ -62,6 +62,12 @@ export const BROWSER_CONFORMANCE_SCENARIO_VERSION = 1 as const;
 /** Schedule generator version for deterministic replay compatibility. */
 export const BROWSER_CONFORMANCE_GENERATOR_VERSION = "browser-v2-seeded-v1" as const;
 
+/** Hard upper bound for commands, events, checkpoints, and total-order ordinals. */
+export const BROWSER_CONFORMANCE_HARD_MAX_SCHEDULE_ITEMS = 256;
+
+/** Hard upper bound for virtual monotonic ticks in custom schedules. */
+export const BROWSER_CONFORMANCE_HARD_MAX_SCHEDULE_TICK = BROWSER_CONFORMANCE_HARD_MAX_SCHEDULE_ITEMS * 4;
+
 /** Virtual monotonic time and total-order position for scheduled work. */
 export interface BrowserConformanceOrder {
   readonly tick: number;
@@ -402,7 +408,11 @@ function validateScenarioSchedule(
     throw new RangeError("Browser conformance schedule metadata does not match the scenario");
   }
   const bounds = schedule.bounds;
-  if (!isBound(bounds.maxCommands) || !isBound(bounds.maxEvents) || !isBound(bounds.maxCheckpoints) || !isBound(bounds.maxTick)
+  if (commandCount > BROWSER_CONFORMANCE_HARD_MAX_SCHEDULE_ITEMS
+    || !isBound(bounds.maxCommands, BROWSER_CONFORMANCE_HARD_MAX_SCHEDULE_ITEMS)
+    || !isBound(bounds.maxEvents, BROWSER_CONFORMANCE_HARD_MAX_SCHEDULE_ITEMS)
+    || !isBound(bounds.maxCheckpoints, BROWSER_CONFORMANCE_HARD_MAX_SCHEDULE_ITEMS)
+    || !isBound(bounds.maxTick, BROWSER_CONFORMANCE_HARD_MAX_SCHEDULE_TICK)
     || commandCount > bounds.maxCommands || schedule.events.length > bounds.maxEvents
     || schedule.checkpoints.length > bounds.maxCheckpoints) {
     throw new RangeError("Browser conformance schedule exceeds its declared bounds");
@@ -423,7 +433,9 @@ function validateScenarioSchedule(
 }
 
 function validateOrder(order: BrowserConformanceOrder, maxTick: number, orders: Set<string>): void {
-  if (!isBound(order.tick) || !isBound(order.ordinal) || order.tick > maxTick) {
+  if (!isBound(order.tick, BROWSER_CONFORMANCE_HARD_MAX_SCHEDULE_TICK)
+    || !isBound(order.ordinal, BROWSER_CONFORMANCE_HARD_MAX_SCHEDULE_ITEMS)
+    || order.tick > maxTick) {
     throw new RangeError("Browser conformance schedule order is invalid");
   }
   const key = `${order.tick}:${order.ordinal}`;
@@ -442,8 +454,8 @@ function validateRevisionVector(
   }
 }
 
-function isBound(value: number): boolean {
-  return Number.isSafeInteger(value) && value >= 0;
+function isBound(value: number, maximum = Number.MAX_SAFE_INTEGER): boolean {
+  return Number.isSafeInteger(value) && value >= 0 && value <= maximum;
 }
 
 /** Normalizes a numeric seed into the deterministic unsigned range. */

@@ -1,9 +1,11 @@
+import { EventEmitter } from "node:events";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   BROWSER_CONFORMANCE_EVENT_KINDS,
+  BROWSER_CONFORMANCE_FAULT_CONTROL_KINDS,
   BROWSER_CONFORMANCE_HIGH_RISK_REVISION_COMBINATIONS,
   BROWSER_CONFORMANCE_RACE_CATALOGUE,
   createBrowserConformanceRaceSchedules,
@@ -13,8 +15,11 @@ import {
   createBrowserConformanceRevisionRaceSchedules,
   createBrowserExecutorParityScenario,
   normalizeBrowserConformanceRun,
+  BrowserConformanceFaultController,
+  BrowserConformanceInjectedFaultError,
   runBrowserConformanceScenarioWithReplay,
   runBrowserConformanceExecutorScenario,
+  type BrowserConformanceCommand,
   type BrowserConformanceNormalizedRun,
   type BrowserConformanceReceipt,
   type BrowserConformanceResourceSnapshot,
@@ -237,6 +242,43 @@ describe("Browser conformance named races", () => {
     expect(subject.advancedTicks).toEqual([0, 4]);
   });
 
+  it.each(BROWSER_CONFORMANCE_FAULT_CONTROL_KINDS)("applies bounded %s controls and becomes inert after disposal", async (kind) => {
+    const eventKinds = new Set(["scheduling", "host-transport", "target-registration", "capability-revision"]);
+    const eventKind = kind === "host-transport"
+      ? "host-disconnect" as const
+      : kind === "target-registration"
+        ? "target-register" as const
+        : kind === "capability-revision"
+          ? "capability-revision" as const
+          : "timeout" as const;
+    const schedule = createBrowserConformanceSchedule({ seed: 96, maxCommands: 1, maxEvents: eventKinds.has(kind) ? 1 : 0, maxCheckpoints: kind === "checkpoint" ? 1 : 0, maxTick: 1, eventCount: 0, checkpointCount: 0 });
+    const scenario = createBrowserConformanceScenario({
+      id: `fault-${kind}`,
+      seed: 96,
+      commands: kind === "executor-dispatch" || kind === "receipt-delivery" ? [{ id: "inspect", operation: "inspect" }] : [],
+      schedule: {
+        ...schedule,
+        events: eventKinds.has(kind) ? [{ order: { tick: 0, ordinal: 0 }, kind: eventKind }] : [],
+        checkpoints: kind === "checkpoint" ? [{ order: { tick: 0, ordinal: 0 }, id: "fault-checkpoint", label: "fault checkpoint", expectedRevisions: {} }] : [],
+      },
+      cleanup: { baseline: createBrowserConformanceResourceSnapshot() },
+    });
+    const controller = new BrowserConformanceFaultController({ kind });
+    const subject = new RecordingSubject();
+    await expect(runBrowserConformanceExecutorScenario(scenario, subject, { faultController: controller })).rejects.toBeInstanceOf(BrowserConformanceInjectedFaultError);
+    expect(controller.callsFor(kind)).toBe(1);
+    controller.hit(kind);
+    expect(controller.callsFor(kind)).toBe(1);
+    expect(controller.isDisposed).toBe(true);
+    expect(subject.disposeCount).toBe(1);
+  });
+
+  it("rejects malformed fault control kinds at the runtime boundary", () => {
+    const malformed = { kind: "not-a-browser-control", occurrence: 1 } as unknown as ConstructorParameters<typeof BrowserConformanceFaultController>[0];
+    expect(() => new BrowserConformanceFaultController(malformed))
+      .toThrow("Unknown Browser conformance fault control kind");
+  });
+
   it("enforces cleanup after disposal while preserving an explicitly bounded target", async () => {
     const final = createBrowserConformanceResourceSnapshot({
       identities: { targets: [{ id: "target-a", generation: 1 }] },
@@ -250,6 +292,45 @@ describe("Browser conformance named races", () => {
     const subject = new CleanupSubject(final);
     await runBrowserConformanceExecutorScenario(scenario, subject);
     expect(subject.disposeCount).toBe(1);
+  });
+
+  it("releases every tracked resource category and ignores late work", async () => {
+    const subject = new LifecycleResourceSubject();
+    const scenario = createBrowserConformanceScenario({
+      id: "cleanup-all-resource-categories",
+      seed: 97,
+      commands: [{ id: "inspect", operation: "inspect" }],
+      schedule: {
+        ...createBrowserConformanceSchedule({
+        seed: 97,
+        maxCommands: 1,
+        maxEvents: 1,
+        maxCheckpoints: 0,
+        maxTick: 0,
+        eventCount: 0,
+        checkpointCount: 0,
+        }),
+        events: [{ order: { tick: 0, ordinal: 0 }, kind: "user-takeover" }],
+      },
+      cleanup: { baseline: createBrowserConformanceResourceSnapshot() },
+    });
+    const run = await runBrowserConformanceExecutorScenario(scenario, subject);
+    expect(run.finalState.resources).toMatchObject({
+      requests: 1,
+      queues: 1,
+      timers: 1,
+      listeners: 1,
+      heldInput: 1,
+      controllerLeases: 1,
+      targets: 1,
+      replayEntries: 1,
+      registries: 1,
+      buffers: 1,
+    });
+    expect(subject.snapshotResources()).toEqual(createBrowserConformanceResourceSnapshot());
+    await subject.injectExternalEvent({ order: { tick: 1, ordinal: 1 }, kind: "late-event" });
+    await subject.drainToQuiescence();
+    expect(subject.snapshotResources()).toEqual(createBrowserConformanceResourceSnapshot());
   });
 
   it.each([
@@ -345,6 +426,107 @@ class CleanupSubject implements BrowserConformanceSubject {
   }
   async drainToQuiescence(): Promise<void> {}
   async dispose(): Promise<void> { this.disposeCount += 1; this.disposed = true; }
+}
+
+class LifecycleResourceSubject implements BrowserConformanceSubject {
+  private readonly emitter = new EventEmitter();
+  private readonly requests = new Map<string, BrowserConformanceCommand>();
+  private readonly queues: BrowserConformanceScheduledEvent[] = [];
+  private readonly timers = new Set<number>();
+  private readonly heldInput = new Set<string>();
+  private readonly controllerLeases = new Set<string>();
+  private readonly targets = new Map<string, { id: string; generation: number }>();
+  private readonly replayEntries = new Map<string, string>();
+  private readonly registries = new Map<string, string>();
+  private readonly buffers: BrowserConformanceReceipt[] = [];
+  private disposed = false;
+  private readonly listener = (): void => undefined;
+
+  constructor() {
+    this.emitter.on("resource", this.listener);
+  }
+
+  schedule(event: BrowserConformanceScheduledEvent): void {
+    if (!this.disposed) this.queues.push(event);
+  }
+
+  async advanceClock(tick: number): Promise<void> {
+    if (!this.disposed) this.timers.add(tick);
+  }
+
+  async injectExternalEvent(event: BrowserConformanceScheduledEvent): Promise<void> {
+    if (this.disposed) return;
+    if (event.kind === "target-close") this.targets.delete("tab");
+    if (event.kind === "target-register") this.targets.set("tab", { id: "tab", generation: 2 });
+    if (event.kind === "user-takeover") this.heldInput.add("user-control");
+  }
+
+  async dispatch(command: BrowserConformanceCommand): Promise<BrowserConformanceReceipt> {
+    if (this.disposed) throw new Error("lifecycle subject disposed");
+    this.requests.set(command.id, command);
+    this.heldInput.add(command.id);
+    this.controllerLeases.add(command.id);
+    this.targets.set("tab", { id: "tab", generation: 1 });
+    this.registries.set(command.id, "active");
+    const receipt = normalizeBrowserConformanceRun({
+      receipts: [{ commandId: command.id, operation: command.operation, status: "satisfied", effect: "none", recovery: "none" }],
+      finalState: { resources: {} },
+    }).receipts[0]!;
+    this.buffers.push(receipt);
+    this.heldInput.delete(command.id);
+    this.replayEntries.set(command.id, command.id);
+    return receipt;
+  }
+
+  snapshotOutcome(): BrowserConformanceNormalizedRun {
+    return normalizeBrowserConformanceRun({
+      receipts: this.buffers,
+      outcome: { status: "completed", effect: "none", recovery: "none" },
+      finalState: { resources: this.snapshotResources() },
+    });
+  }
+
+  snapshotResources(): BrowserConformanceResourceSnapshot {
+    const listeners = this.emitter.listenerCount("resource");
+    return createBrowserConformanceResourceSnapshot({
+      counts: {
+        requests: this.requests.size,
+        queues: this.queues.length,
+        timers: this.timers.size,
+        listeners,
+        heldInput: this.heldInput.size,
+        controllerLeases: this.controllerLeases.size,
+        targets: this.targets.size,
+        replayEntries: this.replayEntries.size,
+        registries: this.registries.size,
+        buffers: this.buffers.length,
+      },
+      identities: {
+        targets: [...this.targets.values()],
+      },
+    });
+  }
+
+  async drainToQuiescence(): Promise<void> {
+    this.requests.clear();
+    this.queues.length = 0;
+    this.timers.clear();
+  }
+
+  async dispose(): Promise<void> {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.emitter.removeListener("resource", this.listener);
+    this.requests.clear();
+    this.queues.length = 0;
+    this.timers.clear();
+    this.heldInput.clear();
+    this.controllerLeases.clear();
+    this.targets.clear();
+    this.replayEntries.clear();
+    this.registries.clear();
+    this.buffers.length = 0;
+  }
 }
 
 class TerminalSubject implements BrowserConformanceSubject {

@@ -1,6 +1,8 @@
 export {
   BROWSER_CONFORMANCE_EVENT_KINDS,
   BROWSER_CONFORMANCE_GENERATOR_VERSION,
+  BROWSER_CONFORMANCE_HARD_MAX_SCHEDULE_ITEMS,
+  BROWSER_CONFORMANCE_HARD_MAX_SCHEDULE_TICK,
   BROWSER_CONFORMANCE_OPERATIONS,
   BROWSER_CONFORMANCE_RESOURCE_KEYS,
   BROWSER_CONFORMANCE_REVISION_KEYS,
@@ -49,7 +51,6 @@ export {
   BROWSER_CONFORMANCE_DEFAULT_MAX_COMMANDS,
   BROWSER_CONFORMANCE_DEFAULT_MAX_EVENTS,
   BROWSER_CONFORMANCE_DEFAULT_MAX_TICK,
-  BROWSER_CONFORMANCE_HARD_MAX_SCHEDULE_ITEMS,
   createBrowserConformanceRandom,
   createBrowserConformanceSchedule,
 } from "./schedule.js";
@@ -101,6 +102,15 @@ export {
   runBrowserConformanceScenarioWithReplay,
 } from "./runner.js";
 export type { BrowserConformanceReplayRunnerOptions } from "./runner.js";
+export {
+  BROWSER_CONFORMANCE_FAULT_CONTROL_KINDS,
+  BrowserConformanceFaultController,
+  BrowserConformanceInjectedFaultError,
+} from "./faults.js";
+export type {
+  BrowserConformanceFaultControl,
+  BrowserConformanceFaultControlKind,
+} from "./faults.js";
 export type {
   BrowserConformanceReplayBundle,
   BrowserConformanceReplayBundleInput,

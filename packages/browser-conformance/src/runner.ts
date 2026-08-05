@@ -2,6 +2,10 @@ import {
   runBrowserConformanceScenarioCore,
   type BrowserConformanceExecutionFailure,
 } from "./executor.js";
+import {
+  BrowserConformanceFaultController,
+  BrowserConformanceInjectedFaultError,
+} from "./faults.js";
 import { normalizeBrowserConformanceRun } from "./normalize.js";
 import {
   createBrowserConformanceReplayBundle,
@@ -19,6 +23,7 @@ export interface BrowserConformanceReplayRunnerOptions {
   readonly fileName?: string;
   readonly failingInvariant: string;
   readonly injectedFault?: { readonly kind: string };
+  readonly faultController?: BrowserConformanceFaultController;
 }
 
 /** Runs one scenario through the shared timeline and writes bounded replay evidence on failure. */
@@ -28,6 +33,7 @@ export async function runBrowserConformanceScenarioWithReplay(
   options: BrowserConformanceReplayRunnerOptions,
 ): Promise<BrowserConformanceNormalizedRun> {
   return runBrowserConformanceScenarioCore(scenario, subject, {
+    faultController: options.faultController,
     onFailure: async (failure) => {
       await captureReplay(scenario, failure, options);
     },
@@ -60,7 +66,11 @@ async function captureReplay(
         comparison: failure.cleanup,
       },
       failingInvariant: options.failingInvariant,
-      ...(options.injectedFault ? { injectedFault: options.injectedFault } : {}),
+      ...(options.injectedFault
+        ? { injectedFault: options.injectedFault }
+        : failure.error instanceof BrowserConformanceInjectedFaultError
+          ? { injectedFault: { kind: failure.error.kind } }
+          : {}),
     }),
     { workspaceRoot: options.workspaceRoot, fileName: options.fileName },
   );

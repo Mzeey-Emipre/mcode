@@ -1,6 +1,8 @@
 import {
   BROWSER_CONFORMANCE_EVENT_KINDS,
   BROWSER_CONFORMANCE_GENERATOR_VERSION,
+  BROWSER_CONFORMANCE_HARD_MAX_SCHEDULE_ITEMS,
+  BROWSER_CONFORMANCE_HARD_MAX_SCHEDULE_TICK,
   BROWSER_CONFORMANCE_REVISION_KEYS,
   BROWSER_CONFORMANCE_SCENARIO_VERSION,
   type BrowserConformanceCheckpoint,
@@ -26,8 +28,8 @@ export const BROWSER_CONFORMANCE_DEFAULT_MAX_CHECKPOINTS = 16;
 /** Default virtual monotonic tick bound for generated schedules. */
 export const BROWSER_CONFORMANCE_DEFAULT_MAX_TICK = 256;
 
-/** Hard upper bound that keeps generated schedules suitable for CI. */
-export const BROWSER_CONFORMANCE_HARD_MAX_SCHEDULE_ITEMS = 256;
+/** Re-exported hard bounds used by custom scenario validation. */
+export { BROWSER_CONFORMANCE_HARD_MAX_SCHEDULE_ITEMS, BROWSER_CONFORMANCE_HARD_MAX_SCHEDULE_TICK } from "./model.js";
 
 /** Seed accepted by the deterministic conformance random source. */
 export type BrowserConformanceSeed = number | string;
@@ -136,7 +138,7 @@ function boundedCount(value: number): number {
 
 function boundedTick(value: number): number {
   if (!Number.isFinite(value)) return 0;
-  return Math.min(BROWSER_CONFORMANCE_HARD_MAX_SCHEDULE_ITEMS * 4, Math.max(0, Math.trunc(value)));
+  return Math.min(BROWSER_CONFORMANCE_HARD_MAX_SCHEDULE_TICK, Math.max(0, Math.trunc(value)));
 }
 
 function nextOrder(random: BrowserConformanceRandom, maxTick: number, ordinal: number): BrowserConformanceOrder {
