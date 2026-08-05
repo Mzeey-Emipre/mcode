@@ -66,7 +66,7 @@ function buildService({
 }: {
   assertUsable?: ReturnType<typeof vi.fn>;
   resolveProvider?: ReturnType<typeof vi.fn>;
-  threadStatus?: Thread["status"] | "idle" | "stopped";
+  threadStatus?: Thread["status"] | "failed" | "idle" | "stopped";
 } = {}) {
   const thread = threadStatus === "idle" ? makeThread() : makeThread({ status: threadStatus as Thread["status"] });
 
@@ -245,7 +245,7 @@ describe("AgentService.sendMessage — provider availability gate", () => {
     });
   });
 
-  it.each(["errored", "interrupted", "stopped", "archived", "deleted"] as const)("rejects composer sends to %s threads before persistence", async (threadStatus) => {
+  it.each(["errored", "failed", "stopped", "archived", "deleted"] as const)("rejects composer sends to %s threads before persistence", async (threadStatus) => {
     const assertUsable = vi.fn();
     const { svc } = buildService({ threadStatus, assertUsable });
 
@@ -261,8 +261,8 @@ describe("AgentService.sendMessage — provider availability gate", () => {
     expect(assertUsable).not.toHaveBeenCalled();
   });
 
-  it("allows a direct follow-up to a completed thread through persistence and provider dispatch", async () => {
-    const { svc, threadRepo, messageRepo, providerStub } = buildService({ threadStatus: "completed" });
+  it.each(["completed", "interrupted"] as const)("allows a direct follow-up to a %s thread through persistence and provider dispatch", async (threadStatus) => {
+    const { svc, threadRepo, messageRepo, providerStub } = buildService({ threadStatus });
 
     await svc.sendMessage({
       threadId: THREAD_ID,
@@ -278,13 +278,12 @@ describe("AgentService.sendMessage — provider availability gate", () => {
     expect(providerStub.sendTurn).toHaveBeenCalledTimes(1);
   });
 
-  it("rejects a completed cross-thread target before persistence or provider side effects", async () => {
-    const assertUsable = vi.fn();
-    const { svc, threadRepo, messageRepo, providerStub } = buildService({ threadStatus: "completed", assertUsable });
+  it.each(["completed", "interrupted"] as const)("allows a fully-provenanced cross-thread send to a %s thread", async (threadStatus) => {
+    const { svc, threadRepo, messageRepo, providerStub } = buildService({ threadStatus });
 
-    await expect(svc.sendMessage({
+    await svc.sendMessage({
       threadId: THREAD_ID,
-      content: "Delegated follow-up must not resume a completed task",
+      content: "Delegated follow-up resumes the target task",
       permissionMode: "default",
       model: "claude-sonnet-4-6",
       attachments: [],
@@ -292,12 +291,29 @@ describe("AgentService.sendMessage — provider availability gate", () => {
       sourceThreadId: "source-thread",
       originSourceTurnId: "source-turn",
       sourceProviderId: "claude",
-    })).rejects.toThrow("terminal thread");
+    });
 
-    expect(assertUsable).not.toHaveBeenCalled();
-    expect(messageRepo.create).not.toHaveBeenCalled();
-    expect(threadRepo.updateStatus).not.toHaveBeenCalled();
-    expect(providerStub.sendTurn).not.toHaveBeenCalled();
+    expect(messageRepo.create).toHaveBeenCalledWith(
+      THREAD_ID,
+      "user",
+      "Delegated follow-up resumes the target task",
+      1,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      {
+        type: "thread",
+        sourceThreadId: "source-thread",
+        sourceTurnId: "source-turn",
+        sourceProviderId: "claude",
+      },
+    );
+    expect(threadRepo.updateStatus).toHaveBeenCalledWith(THREAD_ID, "active");
+    expect(providerStub.sendTurn).toHaveBeenCalledTimes(1);
   });
 
   it("rejects incomplete cross-thread provenance before provider side effects", async () => {
