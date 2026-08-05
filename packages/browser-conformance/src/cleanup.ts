@@ -41,6 +41,9 @@ export function createBrowserConformanceResourceSnapshot(
   const identities = Object.fromEntries(
     BROWSER_CONFORMANCE_RESOURCE_KEYS.map((key) => [key, input.identities?.[key] ?? []]),
   ) as Record<BrowserConformanceResourceKey, readonly BrowserConformanceResourceIdentity[]>;
+  for (const key of BROWSER_CONFORMANCE_RESOURCE_KEYS) {
+    validateIdentities(key, identities[key], input.counts?.[key]);
+  }
   return {
     requests: input.counts?.requests ?? identities.requests.length,
     queues: input.counts?.queues ?? identities.queues.length,
@@ -63,6 +66,8 @@ export function compareBrowserConformanceCleanup(
   final: BrowserConformanceResourceSnapshot,
   allowedGrowth: BrowserConformanceResourceBounds = {},
 ): BrowserConformanceCleanupComparison {
+  validateSnapshot(baseline, "baseline");
+  validateSnapshot(final, "final");
   const violations: BrowserConformanceCleanupViolation[] = [];
   const delta = {} as Record<BrowserConformanceResourceKey, number>;
   for (const resource of BROWSER_CONFORMANCE_RESOURCE_KEYS) {
@@ -83,6 +88,31 @@ export function compareBrowserConformanceCleanup(
     }
   }
   return { ok: violations.length === 0, violations, delta };
+}
+
+function validateSnapshot(snapshot: BrowserConformanceResourceSnapshot, label: string): void {
+  for (const resource of BROWSER_CONFORMANCE_RESOURCE_KEYS) {
+    validateIdentities(resource, snapshot.identities[resource], snapshot[resource], label);
+  }
+}
+
+function validateIdentities(
+  resource: BrowserConformanceResourceKey,
+  identities: readonly BrowserConformanceResourceIdentity[],
+  count: number | undefined,
+  label = "snapshot",
+): void {
+  const keys = new Set<string>();
+  for (const identity of identities) {
+    if (!identity.id || !Number.isSafeInteger(identity.generation) || identity.generation < 0) {
+      throw new RangeError(`${label} ${resource} identity is invalid`);
+    }
+    if (keys.has(identity.id)) throw new RangeError(`${label} ${resource} identities contain duplicates`);
+    keys.add(identity.id);
+  }
+  if (count !== undefined && identities.length > count) {
+    throw new RangeError(`${label} ${resource} identity cardinality exceeds its count`);
+  }
 }
 
 /** Compares a snapshot against the invariant's baseline and declared bounds. */

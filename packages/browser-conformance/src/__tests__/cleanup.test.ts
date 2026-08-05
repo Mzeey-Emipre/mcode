@@ -30,4 +30,15 @@ describe("Browser conformance cleanup baselines", () => {
     expect(checkBrowserConformanceCleanup({ baseline, allowedGrowth: { replayEntries: 1 } }, final).ok).toBe(true);
     expect(checkBrowserConformanceCleanup({ baseline }, final).ok).toBe(false);
   });
+
+  it("rejects duplicate identities and identity cardinality mismatches", () => {
+    expect(() => createBrowserConformanceResourceSnapshot({
+      counts: { targets: 1 },
+      identities: { targets: [{ id: "target-a", generation: 1 }, { id: "target-a", generation: 1 }] },
+    })).toThrow(/duplicates|cardinality/);
+    expect(() => createBrowserConformanceResourceSnapshot({
+      counts: { targets: 1 },
+      identities: { targets: [{ id: "target-a", generation: 1 }, { id: "target-b", generation: 1 }] },
+    })).toThrow(/cardinality/);
+  });
 });

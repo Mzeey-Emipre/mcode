@@ -106,9 +106,7 @@ export function createBrowserConformanceReplayBundle(
         }
       : {}),
   };
-  const serialized = serializeBrowserConformanceReplayBundle(bundle);
-  if (serialized.length === 0) throw new Error("Browser conformance replay bundle is empty");
-  return bundle;
+  return fitReplayBundle(bundle);
 }
 
 /** Serializes a replay bundle and enforces its UTF-8 size bound. */
@@ -189,8 +187,58 @@ function sanitizeValue(
 }
 
 function isSensitiveKey(key: string): boolean {
-  return /^(args?|typedtext|screenshot|body|headers?|credentials?|cookie|authorization|password|token|secret|query|fragment|exception|stack|payload)$/i.test(key)
+  return /^(args?|typed[_-]?text|screenshots?|screenshot[_-]?data|body|bodies|headers?|credentials?|cookie|authorization|password|token|secret|query|fragment|errors?|exception|stack|cause|payload)$/i.test(key)
     || /(?:timestamp|requestid|traceid|sessionid|runtimeid|targetid|windowid|nonce|createdat|updatedat|receivedat)$/i.test(key);
+}
+
+function fitReplayBundle(bundle: BrowserConformanceReplayBundle): BrowserConformanceReplayBundle {
+  let candidate = bundle;
+  while (serializedReplayBytes(candidate) > BROWSER_CONFORMANCE_REPLAY_MAX_BYTES) {
+    if (candidate.run.receipts.length > 0) {
+      candidate = { ...candidate, run: { ...candidate.run, receipts: candidate.run.receipts.slice(0, Math.floor(candidate.run.receipts.length / 2)) } };
+      continue;
+    }
+    if (candidate.run.visibleObservations.length > 0) {
+      candidate = { ...candidate, run: { ...candidate.run, visibleObservations: candidate.run.visibleObservations.slice(0, Math.floor(candidate.run.visibleObservations.length / 2)) } };
+      continue;
+    }
+    if (candidate.schedule.events.length > 0) {
+      candidate = { ...candidate, schedule: { ...candidate.schedule, events: candidate.schedule.events.slice(0, Math.floor(candidate.schedule.events.length / 2)) } };
+      continue;
+    }
+    if (candidate.schedule.checkpoints.length > 0) {
+      candidate = { ...candidate, schedule: { ...candidate.schedule, checkpoints: candidate.schedule.checkpoints.slice(0, Math.floor(candidate.schedule.checkpoints.length / 2)) } };
+      continue;
+    }
+    if (candidate.cleanup.comparison) {
+      const { comparison: _comparison, ...cleanup } = candidate.cleanup;
+      candidate = { ...candidate, cleanup };
+      continue;
+    }
+    const compacted = compactReplayResources(candidate);
+    if (compacted !== candidate) {
+      candidate = compacted;
+      continue;
+    }
+    throw new RangeError("Browser conformance replay cannot fit its required evidence fields");
+  }
+  return candidate;
+}
+
+function serializedReplayBytes(bundle: BrowserConformanceReplayBundle): number {
+  return new TextEncoder().encode(JSON.stringify(sanitizeBrowserConformanceValue(bundle))).byteLength;
+}
+
+function compactReplayResources(bundle: BrowserConformanceReplayBundle): BrowserConformanceReplayBundle {
+  const compact = (snapshot: BrowserConformanceResourceSnapshot): BrowserConformanceResourceSnapshot => ({
+    ...snapshot,
+    identities: Object.fromEntries(Object.keys(snapshot.identities).map((key) => [key, []])) as unknown as BrowserConformanceResourceSnapshot["identities"],
+  });
+  const baseline = compact(bundle.cleanup.baseline);
+  const final = compact(bundle.cleanup.final);
+  if (JSON.stringify(baseline) === JSON.stringify(bundle.cleanup.baseline)
+    && JSON.stringify(final) === JSON.stringify(bundle.cleanup.final)) return bundle;
+  return { ...bundle, cleanup: { ...bundle.cleanup, baseline, final } };
 }
 
 function sanitizeString(value: string, key: string | undefined): string {

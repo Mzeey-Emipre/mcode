@@ -45,6 +45,38 @@ function createReplayInput() {
 }
 
 describe("Browser conformance replay bundles", () => {
+  it("degrades maximal runs deterministically while preserving required replay identity", () => {
+    const input = createReplayInput();
+    const maximal = {
+      ...input,
+      run: {
+        ...input.run,
+        receipts: Array.from({ length: 256 }, (_, index) => ({
+          ...input.run.receipts[0],
+          order: { tick: index, ordinal: index },
+        })),
+        visibleObservations: Array.from({ length: 256 }, () => input.run.visibleObservations[0] ?? {
+          surface: "browser" as const,
+          readiness: "ready" as const,
+          controlOwner: "none" as const,
+          tabCount: 0,
+          currentUrl: null,
+          title: "observation",
+          action: null,
+          truncated: false,
+        }),
+      },
+    };
+    const bundle = createBrowserConformanceReplayBundle(maximal);
+    expect(bundle.schemaVersion).toBe(1);
+    expect(bundle.generatorVersion).toBe("browser-v2-seeded-v1");
+    expect(bundle.scenarioId).toBe("takeover-race");
+    expect(bundle.seed).toBe(42);
+    expect(bundle.failingInvariant).toBe("no-late-state-resurrection");
+    expect(new TextEncoder().encode(serializeBrowserConformanceReplayBundle(bundle)).byteLength)
+      .toBeLessThanOrEqual(BROWSER_CONFORMANCE_REPLAY_MAX_BYTES);
+  });
+
   it("sanitizes sensitive payloads and preserves the seed and failing invariant", () => {
     const bundle = createBrowserConformanceReplayBundle(createReplayInput());
     const serialized = serializeBrowserConformanceReplayBundle(bundle);
@@ -62,11 +94,15 @@ describe("Browser conformance replay bundles", () => {
       requestId: "dynamic",
       headers: { authorization: "secret" },
       body: "raw body",
+      typedText: "raw typed content",
+      screenshotData: "raw screenshot bytes",
       location: "https://example.test/path?token=secret#fragment",
       nested: Array.from({ length: 1_000 }, () => "x"),
     });
     expect(JSON.stringify(sanitized)).not.toContain("dynamic");
     expect(JSON.stringify(sanitized)).not.toContain("raw body");
+    expect(JSON.stringify(sanitized)).not.toContain("raw typed content");
+    expect(JSON.stringify(sanitized)).not.toContain("raw screenshot bytes");
     expect(JSON.stringify(sanitized)).not.toContain("secret");
     expect((sanitized as { nested: readonly unknown[] }).nested).toHaveLength(128);
 
