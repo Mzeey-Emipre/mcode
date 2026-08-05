@@ -167,12 +167,21 @@ describe("previewTabsStore", () => {
 
   it("closePage fires onLastClose and drops the scope's set when closing the last page", async () => {
     usePreviewTabsStore.getState().setTabSet(SCOPE, set("a", [page("a")]));
-    mockBridge({});
+    const { close, closeScope } = mockBridge({});
+    usePreviewTabsStore.getState().setLiveChrome(SCOPE, { title: "A", url: null, favicon: null });
+    useBrowserAutomationStore.getState().registerTarget("workspace-1", SCOPE, "a");
     const onLastClose = vi.fn();
+    onLastClose.mockImplementation(() => {
+      expect(usePreviewTabsStore.getState().tabSetByScope[SCOPE]).toBeNull();
+      expect(usePreviewTabsStore.getState().liveChromeByScope[SCOPE]).toBeNull();
+    });
     await usePreviewTabsStore.getState().closePage(SCOPE, "a", { onLastClose });
     expect(onLastClose).toHaveBeenCalledTimes(1);
-    // The host recreates a blank fallback, but the Browser tab is gone; the
-    // scope's set must clear rather than retain a phantom page.
+    expect(closeScope).toHaveBeenCalledWith(SCOPE);
+    expect(close).not.toHaveBeenCalled();
+    expect(browserTargetRegistry.get(SCOPE, "a")).toBeNull();
+    // The Browser tab is gone; the scope's set must clear rather than retain
+    // a phantom page.
     expect(usePreviewTabsStore.getState().tabSetByScope[SCOPE]).toBeNull();
   });
 
@@ -197,6 +206,19 @@ describe("previewTabsStore", () => {
 
     await expect(usePreviewTabsStore.getState().clearScope(SCOPE)).rejects.toThrow("scope close failed");
     expect(browserTargetRegistry.get(SCOPE, "a")).not.toBeNull();
+  });
+
+  it("retains final-page automation targets when the physical scope close fails", async () => {
+    usePreviewTabsStore.getState().setTabSet(SCOPE, set("a", [page("a")]));
+    const { close, closeScope } = mockBridge({});
+    closeScope.mockResolvedValueOnce({ ok: false, error: "scope close failed" });
+    useBrowserAutomationStore.getState().registerTarget("workspace-1", SCOPE, "a");
+
+    await usePreviewTabsStore.getState().closePage(SCOPE, "a");
+
+    expect(close).not.toHaveBeenCalled();
+    expect(browserTargetRegistry.get(SCOPE, "a")).not.toBeNull();
+    expect(usePreviewTabsStore.getState().tabSetByScope[SCOPE]).toBeNull();
   });
 
   it("setLiveChrome keeps the same reference when the chrome is unchanged", () => {
