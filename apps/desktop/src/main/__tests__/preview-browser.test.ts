@@ -480,6 +480,19 @@ describe("preview-browser", () => {
       expectBackgroundBounds(bounds);
     });
 
+    it("recreates an invalidated tab view after a normal hide/show cycle", async () => {
+      const win = createWindow();
+      await showPreview(win);
+      const invalidatedView = createdViews[0]!;
+      (invalidatedView as unknown as { webContents: undefined }).webContents = undefined;
+
+      await hidePreview(win);
+      await expect(showPreview(win)).resolves.not.toThrow();
+
+      expect(createdViews.length).toBeGreaterThan(1);
+      expect(createdViews.at(-1)).not.toBe(invalidatedView);
+    });
+
     it("does not reload the page when re-showing the same thread", async () => {
       const win = createWindow();
       await showPreview(win, { url: "https://example.com" });
@@ -595,6 +608,23 @@ describe("preview-browser", () => {
 
       expect(win.contentView.removeChildView).toHaveBeenCalled();
       expect(view.webContents.close).toHaveBeenCalled();
+    });
+
+    it("does not crash when Electron invalidates a tab view during window teardown", async () => {
+      const win = createWindow();
+      await showPreview(win);
+
+      const view = createdViews[0]!;
+      // Electron can clear the child view's webContents before the window
+      // close handler reaches disposePreviewForWindow.
+      (view as unknown as { webContents: undefined }).webContents = undefined;
+      testWindows = testWindows.filter((candidate) => candidate !== win);
+
+      try {
+        expect(() => disposePreviewForWindow(win as never)).not.toThrow();
+      } finally {
+        sessions.delete(win.id);
+      }
     });
   });
 
