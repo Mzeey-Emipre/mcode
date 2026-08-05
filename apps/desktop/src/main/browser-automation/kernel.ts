@@ -1,7 +1,7 @@
 /// <reference lib="dom" />
 /// <reference lib="dom.iterable" />
 
-import { BrowserWindow, type IpcMainInvokeEvent, type WebContents } from "electron";
+import { BrowserWindow, nativeImage, type IpcMainInvokeEvent, type WebContents } from "electron";
 import { randomUUID } from "node:crypto";
 import {
   BROWSER_AUTOMATION_CONTRACT_VERSION,
@@ -1205,7 +1205,7 @@ export class BrowserAutomationKernel {
       case "inspect": {
         const snapshot = await this.captureSnapshot(resolved, false);
         const screenshot = request.args.includeScreenshot
-          ? await this.captureScreenshot(webContents, 1_280)
+          ? await this.captureScreenshot(state, 1_280)
           : undefined;
         const diagnostics = request.args.includeDiagnostics
           ? state.console.read(BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES).map((entry) => entry.text)
@@ -1305,7 +1305,7 @@ export class BrowserAutomationKernel {
       }
       case "screenshot": {
         if (request.args.fullPage) throw new KernelError("UNSUPPORTED_OPERATION", "Full-page screenshot is unavailable", false);
-        return { operation: "screenshot", screenshot: await this.captureScreenshot(webContents, request.args.maxWidth), controlEpoch: state.controlEpoch };
+        return { operation: "screenshot", screenshot: await this.captureScreenshot(state, request.args.maxWidth), controlEpoch: state.controlEpoch };
       }
       case "click": {
         const point = await this.resolvePoint(resolved, request.args.target);
@@ -1631,7 +1631,7 @@ export class BrowserAutomationKernel {
       if (maxScreenshotBytes >= 1_024) {
         try {
           snapshot.screenshot = await this.captureScreenshot(
-            resolved.webContents,
+            resolved.state,
             1_280,
             Math.min(SCREENSHOT_BINARY_LIMIT, maxScreenshotBytes),
           );
@@ -1707,12 +1707,25 @@ export class BrowserAutomationKernel {
   }
 
   private async captureScreenshot(
-    webContents: WebContents,
+    state: TargetState,
     maxWidth: number,
     maxBinaryBytes = SCREENSHOT_BINARY_LIMIT,
   ): Promise<Record<string, unknown>> {
-    let image = await webContents.capturePage();
+    await this.ensureDebugger(state);
+    const response = asRecord(await state.webContents.debugger.sendCommand("Page.captureScreenshot", {
+      format: "png",
+      fromSurface: true,
+      captureBeyondViewport: false,
+    }));
+    const data = typeof response.data === "string" ? response.data : "";
+    if (data.length === 0) {
+      throw new KernelError("INTERNAL_ERROR", "Browser screenshot capture returned no image data", true);
+    }
+    let image = nativeImage.createFromBuffer(Buffer.from(data, "base64"));
     const original = image.getSize();
+    if (original.width <= 0 || original.height <= 0) {
+      throw new KernelError("INTERNAL_ERROR", "Browser screenshot capture returned an empty image", true);
+    }
     if (original.width > maxWidth) image = image.resize({ width: maxWidth, quality: "better" });
     let buffer = image.toPNG();
     while (buffer.byteLength > maxBinaryBytes && image.getSize().width > 320) {

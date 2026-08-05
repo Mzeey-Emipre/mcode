@@ -13,6 +13,7 @@ import type {
   BrowserAutomationViewportPresentationResult,
   BrowserAutomationViewportResetRequest,
   BrowserAutomationViewportResetResult,
+  PreviewRenderingHost,
 } from "@mcode/contracts";
 
 contextBridge.exposeInMainWorld("desktopBridge", {
@@ -425,11 +426,19 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       list(threadId: string): Promise<unknown> {
         return ipcRenderer.invoke("preview:tabs.list", { threadId });
       },
-      open(threadId: string, options?: { activate?: boolean; tabId?: string }): Promise<unknown> {
+      open(
+        threadId: string,
+        options?: {
+          activate?: boolean;
+          tabId?: string;
+          renderingHost?: PreviewRenderingHost;
+        },
+      ): Promise<unknown> {
         return ipcRenderer.invoke("preview:tabs.open", {
           threadId,
           activate: options?.activate,
           tabId: options?.tabId,
+          renderingHost: options?.renderingHost,
         });
       },
       activate(threadId: string, tabId: string): Promise<unknown> {

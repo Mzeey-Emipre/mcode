@@ -19,6 +19,7 @@ import {
   clearDiscardTimers,
   applyPageStatus,
   applyViewportPresentation,
+  backgroundBoundsForTarget,
   setPreviewLoading,
   isAllowedPreviewUrl,
 } from "./preview-session.js";
@@ -426,6 +427,7 @@ export function ensureView(win: BrowserWindow, s: PreviewSession): WebContentsVi
     id: "__detached__",
     threadId: "__detached__",
     view: null,
+    renderingHost: "webContentsView",
     resumeUrl: null,
     title: null,
     faviconUrl: null,
@@ -485,18 +487,29 @@ async function injectPreviewScrollbarStyles(s: PreviewSession): Promise<void> {
 }
 
 /**
- * Detaches the WebContentsView from the window without destroying it, and
- * aborts any in-progress overlay capture. Used by preview:sync when
- * visibility toggles off temporarily (e.g. React effect cleanup during
- * in-page navigations). The webContents stays alive so the page isn't
- * reloaded when the view is re-attached moments later.
+ * Parks every live preview view offscreen without destroying it, and aborts
+ * any in-progress overlay capture. Used by preview:sync when visibility
+ * toggles off temporarily so native automation targets keep rendering while
+ * remaining outside the visible content view.
  */
 export function hidePreview(win: BrowserWindow, s: PreviewSession): void {
   abortOverlayCapture(s, "capture-interrupted");
   clearIdle(s);
-  if (s.view && !win.isDestroyed()) {
-    logger.info("Preview: view hidden (detached, kept alive)");
-    unmountView(win, s.view);
+  if (!win.isDestroyed()) {
+    logger.info("Preview: views hidden (parked offscreen, kept alive)");
+    for (const set of s.tabsByThread.values()) {
+      for (const tab of set.tabs) {
+        const view = tab.view;
+        if (!view || view.webContents.isDestroyed()) continue;
+        const bounds = backgroundBoundsForTarget(win, s, tab.threadId, tab.id);
+        if (!bounds) {
+          unmountView(win, view);
+          continue;
+        }
+        view.setBounds(bounds);
+        mountView(win, view);
+      }
+    }
   }
   if (!win.isDestroyed()) {
     setPreviewLoading(win, s, false);

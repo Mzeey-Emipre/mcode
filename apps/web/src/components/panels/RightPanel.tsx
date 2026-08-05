@@ -247,9 +247,11 @@ export function RightPanel() {
   // Keep hidden agent activity background-only. Once the human can see an
   // otherwise empty panel, project any recorded Browser page immediately,
   // including a page published after the default screen was already visible.
+  const previewIsOnlyOpenTab =
+    tabInstances.length === 1 && tabInstances[0]?.type === "preview";
   const revealExistingPreview =
     panelVisible &&
-    openTabs.length === 0 &&
+    (openTabs.length === 0 || (previewIsOnlyOpenTab && activeTab !== "preview")) &&
     (browserTabSet?.tabs.length ?? 0) > 0;
   const renderedTabInstances = revealExistingPreview
     ? [{ id: "singleton:preview", type: "preview" as const }]
@@ -261,7 +263,8 @@ export function RightPanel() {
   useLayoutEffect(() => {
     if (!revealExistingPreview || !activeWorkspaceId) return;
     const current = useDiffStore.getState().getRightPanel(activeWorkspaceId, activeThreadId);
-    if (!current.visible || current.openTabs.length > 0) return;
+    const hasNonPreviewTab = current.tabInstances.some((instance) => instance.type !== "preview");
+    if (!current.visible || hasNonPreviewTab) return;
     useDiffStore.getState().setRightPanelTab(activeWorkspaceId, activeThreadId, "preview");
     const existingPageId = activeAgentBrowserPageId ??
       browserTabSet?.activeTabId ??

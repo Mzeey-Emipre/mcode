@@ -1532,24 +1532,19 @@ export function BrowserAutomationHost() {
           tabId = await usePreviewTabsStore.getState().openPage(request.threadId, {
             activate: !agentOwnedOpen,
             focusOmnibox: ownsVisibleContext && request.args.activate && !agentOwnedOpen,
+            ...(agentOwnedOpen ? { renderingHost: "webview" as const } : {}),
             ...(existingTabId ? { tabId: existingTabId } : {}),
           });
           if (!tabId && existingTabId) {
             tabId = await usePreviewTabsStore.getState().openPage(request.threadId, {
               activate: false,
               focusOmnibox: false,
+              renderingHost: "webview",
             });
           }
           if (tabId) {
             createdTabId = tabId;
             if (agentOpenKey) agentOpenTabsRef.current.set(agentOpenKey, tabId);
-            if (bridge) {
-              useBrowserAutomationStore.getState().registerTarget(
-                request.workspaceId,
-                request.threadId,
-                tabId,
-              );
-            }
           }
         }
         if (!tabId) throw new Error("Browser tab could not be created or restored");

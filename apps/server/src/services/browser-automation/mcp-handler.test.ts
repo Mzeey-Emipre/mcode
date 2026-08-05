@@ -317,6 +317,162 @@ describe("BrowserAutomationMcpHandler", () => {
     expect(execute).toHaveBeenCalledWith(expect.objectContaining({ threadId: "thread-inspect" }), expect.objectContaining({ operation: "inspect" }));
   });
 
+  it("projects inspect screenshots as MCP image content without duplicating base64 in text", async () => {
+    const inspect = credentials.issue({
+      providerId: "cursor",
+      providerSessionId: "screenshot-provider",
+      mcodeSessionId: "screenshot-mcode",
+      threadId: "thread-screenshot",
+      workspaceId: "workspace-a",
+      worktreeIdentity: "worktree-a",
+      permissionCapability: "observe",
+      allowedOperations: ["inspect"],
+    });
+    const screenshotData = "iVBORw0KGgo=";
+    execute.mockImplementationOnce(async (_claims, request) => ({
+      contractVersion: 1,
+      requestId: request.requestId,
+      sequence: request.sequence,
+      ok: true,
+      result: {
+        operation: "inspect",
+        tabs: [],
+        screenshot: {
+          mediaType: "image/png",
+          dataBase64: screenshotData,
+          width: 320,
+          height: 180,
+          truncation: { truncated: false },
+        },
+      },
+    }));
+
+    const response = await post(JSON.stringify({
+      jsonrpc: "2.0",
+      id: "inspect-screenshot",
+      method: "tools/call",
+      params: { name: "browser_inspect", arguments: { includeScreenshot: true } },
+    }), `Bearer ${inspect.token}`);
+    const payload = await response.json() as any;
+    expect(payload).toHaveProperty("result");
+    const content = payload.result.content;
+
+    expect(content).toHaveLength(2);
+    expect(content[0].type).toBe("text");
+    expect(content[0].text).not.toContain(screenshotData);
+    expect(JSON.parse(content[0].text)).toMatchObject({
+      operation: "inspect",
+      screenshot: { mediaType: "image/png", width: 320, height: 180, truncation: { truncated: false } },
+    });
+    expect(content[1]).toEqual({ type: "image", data: screenshotData, mimeType: "image/png" });
+  });
+
+  it("projects snapshot and screenshot payloads into MCP image blocks", async () => {
+    const observe = credentials.issue({
+      providerId: "cursor",
+      providerSessionId: "snapshot-provider",
+      mcodeSessionId: "snapshot-mcode",
+      threadId: "thread-snapshot",
+      workspaceId: "workspace-a",
+      worktreeIdentity: "worktree-a",
+      permissionCapability: "observe",
+      allowedOperations: ["snapshot", "screenshot"],
+    });
+    const authorization = `Bearer ${observe.token}`;
+    const snapshotData = "c25hcHNob3Q=";
+    const screenshotData = "c2NyZWVuc2hvdA==";
+    const screenshot = (dataBase64: string) => ({
+      mediaType: "image/png",
+      dataBase64,
+      width: 320,
+      height: 180,
+      truncation: { truncated: false },
+    });
+    execute.mockImplementationOnce(async (_claims, request) => ({
+      contractVersion: 1,
+      requestId: request.requestId,
+      sequence: request.sequence,
+      ok: true,
+      result: { operation: "snapshot", snapshot: { screenshot: screenshot(snapshotData) } },
+    }));
+    const snapshotResponse = await post(JSON.stringify({
+      jsonrpc: "2.0",
+      id: "snapshot-screenshot",
+      method: "tools/call",
+      params: { name: "browser_snapshot", arguments: { includeScreenshot: true, timeoutMs: 1_000 } },
+    }), authorization);
+    const snapshotContent = (await snapshotResponse.json() as any).result.content;
+    expect(snapshotContent).toHaveLength(2);
+    expect(snapshotContent[0].text).not.toContain(snapshotData);
+    expect(snapshotContent[1]).toEqual({ type: "image", data: snapshotData, mimeType: "image/png" });
+
+    execute.mockImplementationOnce(async (_claims, request) => ({
+      contractVersion: 1,
+      requestId: request.requestId,
+      sequence: request.sequence,
+      ok: true,
+      result: { operation: "screenshot", screenshot: screenshot(screenshotData) },
+    }));
+    const screenshotResponse = await post(JSON.stringify({
+      jsonrpc: "2.0",
+      id: "screenshot",
+      method: "tools/call",
+      params: { name: "browser_screenshot", arguments: { maxWidth: 320, fullPage: false } },
+    }), authorization);
+    const screenshotContent = (await screenshotResponse.json() as any).result.content;
+    expect(screenshotContent).toHaveLength(2);
+    expect(screenshotContent[0].text).not.toContain(screenshotData);
+    expect(screenshotContent[1]).toEqual({ type: "image", data: screenshotData, mimeType: "image/png" });
+  });
+
+  it("keeps non-image inspect results and failures as one text content block", async () => {
+    const inspect = credentials.issue({
+      providerId: "cursor",
+      providerSessionId: "plain-inspect-provider",
+      mcodeSessionId: "plain-inspect-mcode",
+      threadId: "thread-plain-inspect",
+      workspaceId: "workspace-a",
+      worktreeIdentity: "worktree-a",
+      permissionCapability: "observe",
+      allowedOperations: ["inspect"],
+    });
+    const authorization = `Bearer ${inspect.token}`;
+    const inspectResult = { operation: "inspect", tabs: [] };
+    execute.mockImplementationOnce(async (_claims, request) => ({
+      contractVersion: 1,
+      requestId: request.requestId,
+      sequence: request.sequence,
+      ok: true,
+      result: inspectResult,
+    }));
+    const inspectResponse = await post(JSON.stringify({
+      jsonrpc: "2.0",
+      id: "inspect-plain",
+      method: "tools/call",
+      params: { name: "browser_inspect" },
+    }), authorization);
+    const inspectContent = (await inspectResponse.json() as any).result.content;
+    expect(inspectContent).toEqual([{ type: "text", text: JSON.stringify(inspectResult) }]);
+
+    const error = { code: "HOST_UNAVAILABLE", message: "Browser host is unavailable", retryable: true };
+    execute.mockImplementationOnce(async (_claims, request) => ({
+      contractVersion: 1,
+      requestId: request.requestId,
+      sequence: request.sequence,
+      ok: false,
+      error,
+    }));
+    const failureResponse = await post(JSON.stringify({
+      jsonrpc: "2.0",
+      id: "inspect-failure",
+      method: "tools/call",
+      params: { name: "browser_inspect" },
+    }), authorization);
+    const failurePayload = await failureResponse.json() as any;
+    expect(failurePayload.result.content).toEqual([{ type: "text", text: JSON.stringify(error) }]);
+    expect(failurePayload.result.isError).toBe(true);
+  });
+
   it("binds tool requests to credential scope instead of accepting caller scope", async () => {
     const response = await post(JSON.stringify({ jsonrpc: "2.0", id: "call", method: "tools/call", params: { name: "browser_status" } }));
     expect(response.status).toBe(200);

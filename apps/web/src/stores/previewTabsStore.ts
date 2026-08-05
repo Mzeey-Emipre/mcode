@@ -4,6 +4,7 @@ import {
   BROWSER_TAB_INFO_STRING_MAX,
   type BrowserTabInfo,
   type BrowserTabSet,
+  type PreviewRenderingHost,
 } from "@mcode/contracts";
 import { usePreviewFocusStore } from "./previewFocusStore";
 import { useBrowserAutomationStore } from "./browserAutomationStore";
@@ -33,7 +34,11 @@ function sameLiveChrome(a: PreviewLiveChrome | null, b: PreviewLiveChrome | null
 interface PreviewTabsBridgeLike {
   open(
     threadId: string,
-    options?: { readonly activate?: boolean; readonly tabId?: string },
+    options?: {
+      readonly activate?: boolean;
+      readonly tabId?: string;
+      readonly renderingHost?: PreviewRenderingHost;
+    },
   ): Promise<{ ok: true; data: { tabId: string; tabs: BrowserTabSet } } | { ok: false; error: string }>;
   activate(
     threadId: string,
@@ -106,6 +111,7 @@ interface PreviewTabsState {
     readonly focusOmnibox?: boolean;
     readonly activate?: boolean;
     readonly tabId?: string;
+    readonly renderingHost?: PreviewRenderingHost;
   }) => Promise<string | null>;
   /** Activate (switch to) a page within the scope's browser. */
   activatePage: (scopeId: string, tabId: string) => Promise<void>;
@@ -251,6 +257,7 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
     const r = await tabs.open(scopeId, {
       activate,
       ...(options?.tabId ? { tabId: options.tabId } : {}),
+      ...(options?.renderingHost ? { renderingHost: options.renderingHost } : {}),
     });
     if (r.ok) {
       get().setTabSet(scopeId, r.data.tabs);

@@ -134,9 +134,14 @@ describe("previewTabsStore", () => {
       activate: false,
       focusOmnibox: false,
       tabId: "blank",
+      renderingHost: "webview",
     });
 
-    expect(open).toHaveBeenCalledWith(SCOPE, { activate: false, tabId: "blank" });
+    expect(open).toHaveBeenCalledWith(SCOPE, {
+      activate: false,
+      renderingHost: "webview",
+      tabId: "blank",
+    });
   });
 
   it("activatePage switches the active page and clears stale live chrome", async () => {

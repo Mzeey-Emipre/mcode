@@ -60,6 +60,44 @@ describe("web browser interaction executor", () => {
     expect(resolveWebTarget(document, { role: "button", accessibleName: "Save" })).toMatchObject({ ok: true, element: button });
   });
 
+  it("fails closed for zero or ambiguous role and CSS matches", async () => {
+    document.body.innerHTML = "<button>Save</button><button>Save</button>";
+    const buttons = [...document.querySelectorAll("button")];
+    const clicked = buttons.map((button) => {
+      const listener = vi.fn();
+      button.addEventListener("click", listener);
+      return listener;
+    });
+
+    expect(resolveWebTarget(document, { role: "button", accessibleName: "Missing" })).toMatchObject({ ok: false, code: "TARGET_NOT_FOUND" });
+    expect(resolveWebTarget(document, { role: "button", accessibleName: "Save" })).toMatchObject({ ok: false, code: "TARGET_NOT_FOUND" });
+    const clickResult = await executeWebInteraction(
+      document,
+      dispatch("click", { target: { role: "button", accessibleName: "Save" }, button: "left", clickCount: 1, timeoutMs: 1000 }),
+      guard(),
+    );
+    expect(clickResult).toMatchObject({ ok: false, error: { code: "TARGET_NOT_FOUND" } });
+    expect(clicked[0]).not.toHaveBeenCalled();
+    expect(clicked[1]).not.toHaveBeenCalled();
+
+    document.body.innerHTML = '<input class="email" value="first" /><input class="email" value="second" />';
+    const inputs = [...document.querySelectorAll<HTMLInputElement>("input")];
+    expect(resolveWebTarget(document, { cssSelector: ".missing" })).toMatchObject({ ok: false, code: "TARGET_NOT_FOUND" });
+    expect(resolveWebTarget(document, { cssSelector: ".email" })).toMatchObject({ ok: false, code: "TARGET_NOT_FOUND" });
+    const typeResult = await executeWebInteraction(
+      document,
+      dispatch("type", { target: { cssSelector: ".email" }, text: "wrong", clear: true, submit: false, timeoutMs: 1000 }),
+      guard(),
+    );
+    expect(typeResult).toMatchObject({ ok: false, error: { code: "TARGET_NOT_FOUND" } });
+    expect(inputs.map((input) => input.value)).toEqual(["first", "second"]);
+  });
+
+  it("fails closed when the bounded role scan cannot prove uniqueness", () => {
+    document.body.innerHTML = Array.from({ length: 1_025 }, (_, index) => `<button>${index === 0 ? "Save" : "Other"}</button>`).join("");
+    expect(resolveWebTarget(document, { role: "button", accessibleName: "Save" })).toMatchObject({ ok: false, code: "TARGET_NOT_FOUND" });
+  });
+
   it("cancels click during the scheduling frame before dispatching events", async () => {
     document.body.innerHTML = '<button id="save">Save</button>';
     const button = document.querySelector("button") as HTMLButtonElement;

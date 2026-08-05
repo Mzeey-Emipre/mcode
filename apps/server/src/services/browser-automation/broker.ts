@@ -141,6 +141,15 @@ function browserV2Recovery(code: BrowserAutomationErrorCode): "inspect" | "reope
   }
 }
 
+function legacyBrowserRecovery(
+  code: BrowserAutomationErrorCode,
+  retryable: boolean,
+): "inspect" | "wait" | "retry" | "manual" {
+  if (code === "BROWSER_BUSY") return "wait";
+  if (code === "CAPABILITY_CHANGED") return "inspect";
+  return retryable ? "retry" : "manual";
+}
+
 function failure(
   request: BrowserAutomationRequest,
   code: BrowserAutomationErrorCode,
@@ -148,6 +157,9 @@ function failure(
   retryable: boolean,
 ): BrowserAutomationResponse {
   const browserV2Request = BROWSER_V2_OPERATIONS.has(request.operation);
+  const recovery = browserV2Request
+    ? browserV2Recovery(code)
+    : legacyBrowserRecovery(code, retryable);
   return {
     contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
     requestId: request.requestId,
@@ -159,15 +171,7 @@ function failure(
       retryable,
       stage: code === "TAB_UNAVAILABLE" || code === "BROWSER_BUSY" ? "allocation" : "transport",
       effect: code === "TAB_UNAVAILABLE" && !browserV2Request ? "unknown" : "none",
-      recovery: browserV2Request
-        ? browserV2Recovery(code)
-        : code === "BROWSER_BUSY"
-          ? "wait"
-          : code === "CAPABILITY_CHANGED"
-            ? "inspect"
-            : retryable
-              ? "retry"
-              : "manual",
+      recovery,
       correlationId: randomUUID(),
     },
   };

@@ -10,12 +10,17 @@
 
 import { BrowserWindow, ipcMain } from "electron";
 import { randomUUID } from "node:crypto";
-import type { BrowserTabSet } from "@mcode/contracts";
+import {
+  PREVIEW_RENDERING_HOSTS,
+  type BrowserTabSet,
+  type PreviewRenderingHost,
+} from "@mcode/contracts";
 import { logger } from "@mcode/shared";
 import {
   ensureThreadTabSet,
   applyViewportPresentation,
   getSession,
+  backgroundBoundsForTarget,
   syncActiveTabFromSession,
   toBrowserTabSet,
   type PreviewSession,
@@ -56,6 +61,11 @@ function sendTabsUpdated(win: BrowserWindow, set: BrowserTabSet): void {
   } catch {
     bumpPerf("stateEmitSkips");
   }
+}
+
+function normaliseRenderingHost(value: unknown): PreviewRenderingHost | null {
+  if (value === undefined) return "webContentsView";
+  return PREVIEW_RENDERING_HOSTS.find((host) => host === value) ?? null;
 }
 
 /**
@@ -119,6 +129,23 @@ function activateTabView(
   }
 }
 
+function activateTab(
+  win: BrowserWindow,
+  s: PreviewSession,
+  tab: TabState,
+): void {
+  if (tab.renderingHost === "webContentsView") {
+    activateTabView(win, s, tab);
+    return;
+  }
+
+  tab.lastActiveAt = Date.now();
+  if (s.view) unmountView(win, s.view);
+  s.view = null;
+  s.resumePreviewUrl = tab.resumeUrl;
+  s.lastFavicons = tab.faviconUrl ? [tab.faviconUrl] : [];
+}
+
 /**
  * Phase A: returns the active thread's tab set, but only meaningfully when
  * `threadId` matches the session's current thread. For inactive threads we
@@ -149,7 +176,12 @@ export function registerTabHandlers(): void {
     "preview:tabs.open",
     (
       _event,
-      payload: { threadId?: unknown; activate?: unknown; tabId?: unknown },
+      payload: {
+        threadId?: unknown;
+        activate?: unknown;
+        tabId?: unknown;
+        renderingHost?: unknown;
+      },
     ): TabIpcResult<{ tabId: string; tabs: BrowserTabSet }> => {
       const win = BrowserWindow.fromWebContents(_event.sender);
       if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
@@ -159,6 +191,8 @@ export function registerTabHandlers(): void {
       if (payload?.tabId !== undefined && !requestedTabId) {
         return { ok: false, error: "invalid-tab-id" };
       }
+      const renderingHost = normaliseRenderingHost(payload?.renderingHost);
+      if (!renderingHost) return { ok: false, error: "invalid-rendering-host" };
       const activate = payload?.activate !== false; // default: true
 
       const s = getSession(win);
@@ -169,11 +203,17 @@ export function registerTabHandlers(): void {
       if (requestedTabId && !existingTab) return { ok: false, error: "tab-not-found" };
       if (existingTab?.backgroundOpenReserved) return { ok: false, error: "tab-reserved" };
 
+      if (existingTab && existingTab.renderingHost !== renderingHost) {
+        disposeTabView(win, s, existingTab);
+        existingTab.renderingHost = renderingHost;
+      }
+
       const tabId = existingTab?.id ?? randomUUID();
       const tab = existingTab ?? {
         id: tabId,
         threadId: tid,
         view: null,
+        renderingHost,
         resumeUrl: null,
         title: null,
         faviconUrl: null,
@@ -191,15 +231,19 @@ export function registerTabHandlers(): void {
         // Opening on the active thread builds or reuses its exact view before
         // swapping it in, without disturbing sibling webContents.
         set.activeTabId = tabId;
-        activateTabView(win, s, tab);
+        activateTab(win, s, tab);
       } else if (activate) {
         set.activeTabId = tabId;
-      } else if (!activate) {
-        // Agent-owned tabs stay warm without mounting or selecting their view,
-        // including tabs created for an inactive thread. This preserves the
-        // user's visible page while allowing the automation kernel to attach
-        // to the newly-created target immediately.
-        ensureTabView(win, s, tab);
+      } else if (!activate && tab.renderingHost === "webContentsView") {
+        // Agent-owned tabs stay warm without selecting their view, including
+        // tabs created for an inactive thread. Positive-size offscreen bounds
+        // keep the guest renderer active without painting over the panel.
+        const backgroundView = ensureTabView(win, s, tab);
+        const backgroundBounds = backgroundBoundsForTarget(win, s, tab.threadId, tab.id);
+        if (backgroundBounds && !backgroundView.webContents.isDestroyed()) {
+          backgroundView.setBounds(backgroundBounds);
+          mountView(win, backgroundView);
+        }
       }
 
       const tabs = buildTabSet(s, tid);
@@ -238,7 +282,7 @@ export function registerTabHandlers(): void {
           // Swap which per-tab WebContentsView is mounted. No reload - the
           // target tab's webContents is already alive with its own URL,
           // scroll, and form state preserved across the switch.
-          activateTabView(win, s, tab);
+          activateTab(win, s, tab);
         }
       }
 
@@ -281,6 +325,7 @@ export function registerTabHandlers(): void {
           id: fallbackId,
           threadId: tid,
           view: null,
+          renderingHost: "webContentsView",
           resumeUrl: null,
           title: null,
           faviconUrl: null,
@@ -294,13 +339,13 @@ export function registerTabHandlers(): void {
         set.tabs.push(fallback);
         set.activeTabId = fallbackId;
         if (tid === s.lastPreviewThreadId) {
-          activateTabView(win, s, fallback);
+          activateTab(win, s, fallback);
         }
       } else if (wasActive) {
         const nextActive = set.tabs[Math.min(idx, set.tabs.length - 1)]!;
         set.activeTabId = nextActive.id;
         if (tid === s.lastPreviewThreadId) {
-          activateTabView(win, s, nextActive);
+          activateTab(win, s, nextActive);
         }
       }
 

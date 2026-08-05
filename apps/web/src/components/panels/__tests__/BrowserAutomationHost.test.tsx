@@ -1486,7 +1486,7 @@ describe("BrowserAutomationHost", () => {
     view.unmount();
   });
 
-  it("registers a hidden agent tab immediately instead of waiting for its panel surface", async () => {
+  it("registers a hidden agent tab for the renderer host before its panel surface", async () => {
     vi.useFakeTimers();
     try {
       useBrowserAutomationStore.setState({ liveTargets: new Map() });
@@ -1499,17 +1499,24 @@ describe("BrowserAutomationHost", () => {
           tabs: [{ id: "cold-tab", threadId: "thread-1", url: null, title: null, faviconUrl: null, warm: false }],
         },
       });
-      createTab.mockImplementation(async (threadId: string) => ({
-        ok: true,
-        data: {
-          tabId: "cold-tab",
-          tabs: {
-            threadId,
-            activeTabId: "cold-tab",
-            tabs: [{ id: "cold-tab", threadId, url: null, title: null, faviconUrl: null, warm: true }],
+      createTab.mockImplementation(async (threadId: string) => {
+        useBrowserAutomationStore.getState().registerTarget(
+          "workspace-1",
+          threadId,
+          "cold-tab",
+        );
+        return {
+          ok: true,
+          data: {
+            tabId: "cold-tab",
+            tabs: {
+              threadId,
+              activeTabId: "cold-tab",
+              tabs: [{ id: "cold-tab", threadId, url: null, title: null, faviconUrl: null, warm: true }],
+            },
           },
-        },
-      }));
+        };
+      });
       describeTarget.mockResolvedValue({
         ok: true,
         target: {
@@ -1565,6 +1572,7 @@ describe("BrowserAutomationHost", () => {
       expect(execute).toHaveBeenCalledOnce();
       expect(createTab).toHaveBeenCalledWith("thread-1", {
         activate: false,
+        renderingHost: "webview",
         tabId: "cold-tab",
       });
       expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledWith(

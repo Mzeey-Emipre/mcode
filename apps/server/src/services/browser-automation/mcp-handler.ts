@@ -7,7 +7,9 @@ import {
   BROWSER_AUTOMATION_OPERATIONS,
   BROWSER_V2_CORE_OPERATIONS,
   BrowserAutomationRequestSchema,
+  type BrowserAutomationResult,
   type BrowserAutomationOperation,
+  type BrowserAutomationResponse,
 } from "@mcode/contracts";
 import { MCODE_BROWSER_GUIDE } from "@mcode/thread-orchestration";
 import type { BrowserAutomationBroker } from "./broker.js";
@@ -292,6 +294,48 @@ function toolList(operations: readonly BrowserAutomationOperation[]): Array<Reco
   });
 }
 
+type BrowserAutomationScreenshot = NonNullable<Extract<BrowserAutomationResult, { operation: "inspect" }>["screenshot"]>;
+
+function screenshotProjection(screenshot: BrowserAutomationScreenshot): {
+  readonly data: string;
+  readonly metadata: Omit<BrowserAutomationScreenshot, "dataBase64">;
+  readonly mimeType: BrowserAutomationScreenshot["mediaType"];
+} {
+  const { dataBase64, ...metadata } = screenshot;
+  return { data: dataBase64, metadata, mimeType: screenshot.mediaType };
+}
+
+function screenshotFromResult(
+  result: BrowserAutomationResult,
+): BrowserAutomationScreenshot | undefined {
+  switch (result.operation) {
+    case "inspect":
+    case "screenshot":
+      return result.screenshot;
+    case "snapshot":
+      return result.snapshot.screenshot;
+    default:
+      return undefined;
+  }
+}
+
+function mcpContent(result: BrowserAutomationResponse): Array<Record<string, unknown>> {
+  if (!result.ok) return [{ type: "text", text: JSON.stringify(result.error) }];
+
+  const toolResult = result.result;
+  const screenshot = screenshotFromResult(toolResult);
+  if (!screenshot) return [{ type: "text", text: JSON.stringify(toolResult) }];
+
+  const projection = screenshotProjection(screenshot);
+  const metadataResult = toolResult.operation === "snapshot"
+    ? { ...toolResult, snapshot: { ...toolResult.snapshot, screenshot: projection.metadata } }
+    : { ...toolResult, screenshot: projection.metadata };
+  return [
+    { type: "text", text: JSON.stringify(metadataResult) },
+    { type: "image", data: projection.data, mimeType: projection.mimeType },
+  ];
+}
+
 /** Handles authenticated, stateless JSON-RPC calls for visible-browser MCP tools. */
 export class BrowserAutomationMcpHandler {
   private readonly credentials: BrowserAutomationCredentialRegistry;
@@ -504,7 +548,7 @@ export class BrowserAutomationMcpHandler {
       jsonrpc: "2.0",
       id,
       result: {
-        content: [{ type: "text", text: JSON.stringify(result.ok ? result.result : result.error) }],
+        content: mcpContent(result),
         isError: !result.ok,
       },
     };

@@ -14,6 +14,7 @@ import type {
   BrowserAutomationViewportResetResult,
   McodeBrowserCapture,
   PreviewPageStatus,
+  PreviewRenderingHost,
 } from "@mcode/contracts";
 
 /** Discriminated union describing the auto-updater lifecycle state. */
@@ -297,7 +298,11 @@ interface PreviewTabsBridge {
   list(threadId: string): Promise<PreviewTabIpcResult<BrowserTabSet>>;
   open(
     threadId: string,
-    options?: { readonly activate?: boolean; readonly tabId?: string },
+    options?: {
+      readonly activate?: boolean;
+      readonly tabId?: string;
+      readonly renderingHost?: PreviewRenderingHost;
+    },
   ): Promise<PreviewTabIpcResult<PreviewTabOpenData>>;
   activate(
     threadId: string,
