@@ -73,9 +73,8 @@ describe("BrowserSessionDriver deterministic races", () => {
       getTargetGeneration: () => revisions.document,
       onHumanInput: vi.fn(),
       onObserver: (_dispatch, dispose) => {
-        let wrappedDispose: (() => void) | undefined;
-        wrappedDispose = () => {
-          if (wrappedDispose) observerDisposers.delete(wrappedDispose);
+        const wrappedDispose = () => {
+          observerDisposers.delete(wrappedDispose);
           dispose();
         };
         observerDisposers.add(wrappedDispose);
