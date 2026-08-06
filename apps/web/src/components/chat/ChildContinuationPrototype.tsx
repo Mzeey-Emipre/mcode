@@ -79,7 +79,7 @@ function NarrativeSubagentRow({ child, onReview }: { child: ChildAgent; onReview
         size="sm"
         onClick={onReview}
         className="min-w-0 max-w-full justify-start gap-1.5 rounded-full px-2 text-left hover:bg-muted/30"
-        aria-label={`Open ${child.identity} subagent details`}
+        aria-label={`Open ${child.identity} subagent details, ${lifecycleLabel(child.lifecycle)}`}
       >
         <SubagentIdentityGlyph identity={child.identity} hasExplicitIdentity className="size-4" size={11} />
         <span className="truncate text-xs font-medium text-foreground/85">{child.identity}</span>
@@ -112,19 +112,20 @@ function SubagentActivityGroup({
   return (
     <div className="flex min-w-0 max-w-full items-center gap-1 overflow-hidden whitespace-nowrap py-1 text-xs">
       {namedChildren.map((child) => (
-        <Button
-          key={child.id}
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={() => onOpenChild(child.id)}
-          className="min-w-0 max-w-[45%] shrink gap-1.5 rounded-full px-2 text-left hover:bg-muted/30"
-          aria-label={`Open ${child.identity} subagent details`}
-        >
-          <SubagentIdentityGlyph identity={child.identity} hasExplicitIdentity className="size-4" size={11} />
-          <span className="min-w-0 truncate font-medium text-foreground/85">{child.identity}</span>
+        <span key={child.id} className="flex min-w-0 max-w-[45%] shrink items-center gap-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => onOpenChild(child.id)}
+            className="min-w-0 flex-1 justify-start gap-1.5 rounded-full px-2 text-left hover:bg-muted/30"
+            aria-label={`Open ${child.identity} subagent details, ${lifecycleLabel(child.lifecycle)}`}
+          >
+            <SubagentIdentityGlyph identity={child.identity} hasExplicitIdentity className="size-4" size={11} />
+            <span className="min-w-0 truncate font-medium text-foreground/85">{child.identity}</span>
+          </Button>
           <span className="shrink-0 text-muted-foreground">{lifecycleLabel(child.lifecycle)}</span>
-        </Button>
+        </span>
       ))}
       {remainingCounts.length > 0 && (
         <Button

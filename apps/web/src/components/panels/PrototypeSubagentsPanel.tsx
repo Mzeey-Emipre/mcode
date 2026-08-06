@@ -3,7 +3,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { MessageBubble } from "@/components/chat/MessageBubble";
-import { StreamingCard } from "@/components/chat/StreamingCard";
 import { DeltaBlock } from "@/components/chat/narrative/DeltaBlock";
 import { NarrativeFlow } from "@/components/chat/narrative";
 import { TurnFooter } from "@/components/chat/narrative/TurnFooter";
@@ -19,7 +18,6 @@ import type { Message, ToolCall } from "@/transport";
 const PROTOTYPE_THREAD_ID = "prototype-child-continuation";
 const SYNTHETIC_START_TIME = "2026-08-06T09:41:00.000Z";
 const SYNTHETIC_TOOL_START = Date.parse(SYNTHETIC_START_TIME);
-const CHILD_STREAMING_TEXT = "Checking the down migration against the new index shape…";
 const CHILD_RESULT_TEXT = "Rollback is safe when the index is absent. The migration can be reverted without touching the new index shape.";
 
 function createTaskMessage(row: ChildContinuationPrototypeRosterRow): Message {
@@ -88,8 +86,8 @@ function RosterRowButton({ row, onSelect }: { readonly row: ChildContinuationPro
 }
 
 function PrototypeRosterDetail({ row, onBack }: { readonly row: ChildContinuationPrototypeRosterRow; readonly onBack: () => void }) {
-  const isActive = row.lifecycle !== "finished";
-  const toolCalls = createToolCalls(isActive);
+  const toolCalls = createToolCalls(row.lifecycle !== "finished");
+  const isAgentRunning = toolCalls.some((toolCall) => !toolCall.isComplete);
   return (
     <section className="flex min-h-0 flex-1 flex-col" aria-label={`${row.identity} subagent details`}>
       <header className="flex shrink-0 items-center gap-2 border-b border-border/50 px-4 py-3">
@@ -106,17 +104,18 @@ function PrototypeRosterDetail({ row, onBack }: { readonly row: ChildContinuatio
             toolCalls={toolCalls}
             hooks={[]}
             thoughtSegments={[]}
-            streamingText={isActive ? CHILD_STREAMING_TEXT : ""}
-            isAgentRunning={isActive}
+            streamingText=""
+            isAgentRunning={isAgentRunning}
           />
-          {isActive ? (
-            <StreamingCard text={CHILD_STREAMING_TEXT} />
-          ) : (
+          {!isAgentRunning && (
             <div data-testid="prototype-subagent-response-text" className="mt-8 text-sm text-foreground">
               <DeltaBlock text={CHILD_RESULT_TEXT} isStreaming={false} showCursor={false} />
             </div>
           )}
-          {!isActive && <TurnFooter counts={{ steps: toolCalls.length, thoughts: 0, subagents: 0 }} durationMs={12_000} />}
+          <TurnFooter
+            counts={{ steps: toolCalls.length, thoughts: 0, subagents: 0 }}
+            durationMs={isAgentRunning ? (toolCalls[0]?.elapsedSeconds ?? 0) * 1_000 : 12_000}
+          />
         </div>
       </ScrollArea>
     </section>
