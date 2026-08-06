@@ -20,6 +20,7 @@ import { DeltaBlock } from "@/components/chat/narrative/DeltaBlock";
 import { NarrativeFlow } from "@/components/chat/narrative";
 import { TurnFooter } from "@/components/chat/narrative/TurnFooter";
 import { SubagentIdentityGlyph } from "@/components/subagents/SubagentIdentityGlyph";
+import { useElementWidth } from "@/hooks/useElementWidth";
 import { PRIMARY_CONTENT_RAIL_CLASS } from "@/lib/layout-rails";
 import type { Message, ToolCall } from "@/transport";
 
@@ -60,6 +61,7 @@ const SYNTHETIC_START_TIME = "2026-08-06T09:41:00.000Z";
 const SYNTHETIC_TOOL_START = Date.parse(SYNTHETIC_START_TIME);
 const CHILD_STREAMING_TEXT = "Checking the down migration against the new index shape…";
 const CHILD_RESULT_TEXT = "Rollback is safe when the index is absent. The migration can be reverted without touching the new index shape.";
+const NARROW_PANEL_STAGE_WIDTH = 960;
 
 const VARIANTS: readonly VariantKey[] = ["A", "B", "C"];
 
@@ -577,8 +579,11 @@ export function ChildContinuationPrototype() {
   const [selectedChild, setSelectedChild] = useState<RosterRow | null>(null);
   const [floatingRosterOpen, setFloatingRosterOpen] = useState(true);
   const [subagentsPanelExpanded, setSubagentsPanelExpanded] = useState(false);
+  const stageRef = useRef<HTMLDivElement>(null);
   const scrollViewportRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef(state);
+  const stageWidth = useElementWidth(stageRef);
+  const useOverlayRoster = stageWidth > 0 && stageWidth < NARROW_PANEL_STAGE_WIDTH;
 
   useEffect(() => {
     stateRef.current = state;
@@ -710,8 +715,8 @@ export function ChildContinuationPrototype() {
         onReset={reset}
       />
 
-      <div className="relative flex min-h-0 flex-1">
-        <ScrollArea viewportRef={scrollViewportRef} className="min-h-0 flex-1" viewportClassName="px-0">
+      <div ref={stageRef} className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
+        <ScrollArea viewportRef={scrollViewportRef} className="min-h-0 min-w-0 flex-1" viewportClassName="px-0">
           <ParentTimeline state={state} onOpenChild={openChildDetail} onOpenRoster={openRoster} />
           {showNewMessages && <NewMessagesBelow onClick={jumpToTail} />}
         </ScrollArea>
@@ -739,7 +744,9 @@ export function ChildContinuationPrototype() {
           )
         ) : (
           <aside
-            className="flex min-h-0 max-w-[calc(100%-1rem)] shrink-0 flex-col border-l border-border/60 bg-background"
+            className={useOverlayRoster
+              ? "absolute inset-y-3 right-3 z-20 flex min-h-0 max-w-[calc(100%-1rem)] flex-col border border-border/60 bg-background"
+              : "flex min-h-0 max-w-[calc(100%-1rem)] shrink-0 flex-col border-l border-border/60 bg-background"}
             style={{ width: subagentsPanelExpanded ? "min(36rem, calc(100% - 1rem))" : "18rem" }}
             aria-label={`${VARIANT_NAMES[variant]} Sub-agents right panel`}
           >
