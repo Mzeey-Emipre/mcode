@@ -113,6 +113,8 @@ describe("SubagentsPanel", () => {
     expect(screen.getByText("Read 1 file")).toBeInTheDocument();
     expect(screen.getByText("Running command")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Running command.*pnpm test migration\/rollback/ })).toBeInTheDocument();
+    expect(screen.getByText(/1 step.*Thinking\.\.\./)).toBeInTheDocument();
+    expect(screen.getByText(/^\(\d+s\)$/)).toBeInTheDocument();
     expect(screen.queryByText("Checking the down migration against the new index shape…")).not.toBeInTheDocument();
     expect(screen.queryByTestId("prototype-subagent-response-text")).not.toBeInTheDocument();
     expect(screen.queryByText("2 steps")).not.toBeInTheDocument();

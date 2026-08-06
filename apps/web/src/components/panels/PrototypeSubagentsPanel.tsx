@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { ChevronLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -5,6 +6,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { DeltaBlock } from "@/components/chat/narrative/DeltaBlock";
 import { NarrativeFlow, type ThoughtSegment } from "@/components/chat/narrative";
+import { NarrativeIndicator } from "@/components/chat/narrative/NarrativeIndicator";
 import { TurnFooter } from "@/components/chat/narrative/TurnFooter";
 import { SubagentIdentityGlyph } from "@/components/subagents/SubagentIdentityGlyph";
 import {
@@ -101,9 +103,11 @@ function RosterRowButton({ row, onSelect }: { readonly row: ChildContinuationPro
 
 function PrototypeRosterDetail({ row, onBack }: { readonly row: ChildContinuationPrototypeRosterRow; readonly onBack: () => void }) {
   const isActive = row.lifecycle !== "finished";
+  const [startTime] = useState(() => Date.now());
   const toolCalls = createToolCalls(isActive);
   const thoughtSegments = createThoughtSegments(row);
   const isAgentRunning = toolCalls.some((toolCall) => !toolCall.isComplete);
+  const completedStepCount = toolCalls.filter((toolCall) => toolCall.isComplete).length;
   return (
     <section className="flex min-h-0 flex-1 flex-col" aria-label={`${row.identity} subagent details`}>
       <header className="flex shrink-0 items-center gap-2 border-b border-border/50 px-4 py-3">
@@ -123,6 +127,15 @@ function PrototypeRosterDetail({ row, onBack }: { readonly row: ChildContinuatio
             streamingText=""
             isAgentRunning={isAgentRunning}
           />
+          {isActive && (
+            <NarrativeIndicator
+              stepCount={completedStepCount}
+              subagentCount={0}
+              activeToolCalls={[]}
+              startTime={startTime}
+              isAgentRunning
+            />
+          )}
           {!isAgentRunning && (
             <div data-testid="prototype-subagent-response-text" className="mt-8 text-sm text-foreground">
               <DeltaBlock text={CHILD_RESULT_TEXT} isStreaming={false} showCursor={false} />
