@@ -1,9 +1,16 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { activatePreviewPage, closePreviewPage, previewTabSet, previewTabsBridge } = vi.hoisted(() => ({
+const {
+  activatePreviewPage,
+  closePreviewPage,
+  previewPanelRender,
+  previewTabSet,
+  previewTabsBridge,
+} = vi.hoisted(() => ({
   activatePreviewPage: vi.fn(),
   closePreviewPage: vi.fn(),
+  previewPanelRender: vi.fn(),
   previewTabSet: { current: null as {
     threadId: string;
     activeTabId: string | null;
@@ -31,14 +38,17 @@ vi.mock("./ActivityRail", () => ({
     activeTabId,
     onCloseBrowserPage,
     onExpandedChange,
+    onTogglePanel,
   }: {
     tabInstances: Array<{ type: string }>;
     activeTabId: string | null;
     onCloseBrowserPage?: (pageId: string) => void;
     onExpandedChange?: (expanded: boolean) => void;
+    onTogglePanel?: () => void;
   }) => (
     <div data-testid="activity-rail" data-open-tabs={tabInstances.map((instance) => instance.type).join(",")} data-active-tab-id={activeTabId}>
       <button type="button" data-testid="expand-activity-rail" onClick={() => onExpandedChange?.(true)} />
+      <button type="button" data-testid="toggle-right-panel" onClick={onTogglePanel} />
       {tabInstances.some((instance) => instance.type === "preview") && onCloseBrowserPage && (
         <button type="button" data-testid="close-browser-page" onClick={() => onCloseBrowserPage("browser-tab-1")} />
       )}
@@ -49,8 +59,26 @@ vi.mock("./PanelEmptyState", () => ({
   PanelEmptyState: () => <div data-testid="panel-empty-state" />,
 }));
 vi.mock("./ResizableRightPanel", () => ({
-  ResizableRightPanel: ({ children, testId }: { children: React.ReactNode; testId?: string }) => (
-    <div data-testid={testId}>{children}</div>
+  ResizableRightPanel: ({
+    children,
+    inert,
+    testId,
+    ...props
+  }: {
+    children: React.ReactNode;
+    inert?: boolean;
+    testId?: string;
+    "aria-hidden"?: boolean;
+    "data-right-panel-root"?: string;
+  }) => (
+    <div
+      data-testid={testId}
+      aria-hidden={props["aria-hidden"]}
+      data-right-panel-root={props["data-right-panel-root"]}
+      inert={inert ? true : undefined}
+    >
+      {children}
+    </div>
   ),
 }));
 vi.mock("./SubagentsPanel", () => ({ SubagentsPanel: () => <div /> }));
@@ -62,9 +90,10 @@ vi.mock("./CoordinationPanel", () => ({
 vi.mock("./plan", () => ({ PlanPanel: () => <div /> }));
 vi.mock("@/components/diff", () => ({ DiffPanel: () => <div /> }));
 vi.mock("@/components/panels/PreviewPanel", () => ({
-  PreviewPanel: ({ rendererOccludedLeft = 0 }: { rendererOccludedLeft?: number }) => (
-    <div data-testid="preview-panel" data-renderer-occluded-left={rendererOccludedLeft} />
-  ),
+  PreviewPanel: ({ rendererOccludedLeft = 0 }: { rendererOccludedLeft?: number }) => {
+    previewPanelRender();
+    return <div data-testid="preview-panel" data-renderer-occluded-left={rendererOccludedLeft} />;
+  },
 }));
 vi.mock("@/components/terminal/TerminalPoolSlotContext", () => ({
   TerminalPoolSlot: () => <div data-testid="terminal-pool-slot" />,
@@ -85,7 +114,7 @@ vi.mock("@/lib/ensure-terminal", () => ({ createTerminalForScope: vi.fn() }));
 vi.mock("@/lib/right-panel-layout", () => ({ toggleRightPanelAdaptive: vi.fn() }));
 vi.mock("@/transport", () => ({ getTransport: () => ({ terminalKill: vi.fn() }) }));
 
-import { RightPanel } from "./RightPanel";
+import { reconcileWarmPreviewScopes, RightPanel } from "./RightPanel";
 import { createRightPanelState, useDiffStore } from "@/stores/diffStore";
 import { useTerminalStore } from "@/stores/terminalStore";
 import { useUiStore } from "@/stores/uiStore";
@@ -97,6 +126,7 @@ describe("RightPanel", () => {
     previewTabSet.current = null;
     activatePreviewPage.mockReset();
     closePreviewPage.mockReset();
+    previewPanelRender.mockReset();
     previewTabsBridge.list.mockReset();
     previewTabsBridge.list.mockResolvedValue({ ok: true, data: null });
     previewTabsBridge.updatedListener.current = null;
@@ -144,6 +174,30 @@ describe("RightPanel", () => {
       "The result of getSnapshot should be cached",
     );
     error.mockRestore();
+  });
+
+  it("preserves warm-scope identity when reconciliation changes nothing", () => {
+    const scopes = [{ scopeId: "workspace-1", workspaceId: "workspace-1", lastUsedAt: 1 }];
+
+    expect(reconcileWarmPreviewScopes(scopes, scopes[0]!, new Set())).toBe(scopes);
+  });
+
+  it("releases focus before making the right panel inert", () => {
+    useDiffStore.setState({
+      rightPanelFallbackByWorkspace: {
+        "workspace-1": createRightPanelState({ visible: true, width: 400 }),
+      },
+    });
+    render(<RightPanel />);
+    const toggle = screen.getByTestId("toggle-right-panel");
+    toggle.focus();
+    expect(toggle).toHaveFocus();
+
+    act(() => useDiffStore.getState().hideRightPanel("workspace-1"));
+
+    expect(toggle).not.toHaveFocus();
+    expect(screen.getByTestId("right-panel")).toHaveAttribute("inert");
+    expect(screen.getByTestId("right-panel")).not.toHaveAttribute("aria-hidden");
   });
 
   it("renders coordination content for an open active thread tab", () => {
@@ -433,6 +487,48 @@ describe("RightPanel", () => {
       "data-renderer-occluded-left",
       "112",
     );
+  });
+
+  it("does not render the active Browser surface for another scope's request", () => {
+    previewTabSet.current = {
+      threadId: "workspace-1",
+      activeTabId: "browser-tab-1",
+      tabs: [{
+        id: "browser-tab-1",
+        threadId: "workspace-1",
+        title: "Visible page",
+        url: "https://example.test",
+        faviconUrl: null,
+        warm: true,
+        active: true,
+      }],
+    };
+    useDiffStore.setState({
+      rightPanelFallbackByWorkspace: {
+        "workspace-1": createRightPanelState({
+          visible: true,
+          width: 400,
+          openTabs: ["preview"],
+          activeTab: "preview",
+        }),
+      },
+    });
+    render(<RightPanel />);
+    const renderCount = previewPanelRender.mock.calls.length;
+
+    act(() => useBrowserAutomationStore.setState({
+      activeRequests: new Map([
+        [
+          "other-scope-request",
+          {
+            dispatch: { target: { threadId: "other-scope", tabId: "other-tab" } },
+            startedAt: 2,
+          } as never,
+        ],
+      ]),
+    }));
+
+    expect(previewPanelRender).toHaveBeenCalledTimes(renderCount);
   });
 
   it("keeps a closed Browser scope warm while its active request settles", () => {

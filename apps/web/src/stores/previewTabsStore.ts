@@ -30,6 +30,27 @@ function sameLiveChrome(a: PreviewLiveChrome | null, b: PreviewLiveChrome | null
   return a.title === b.title && a.url === b.url && a.favicon === b.favicon;
 }
 
+function sameBrowserTab(a: BrowserTabInfo, b: BrowserTabInfo): boolean {
+  return a === b || (
+    a.id === b.id &&
+    a.threadId === b.threadId &&
+    a.title === b.title &&
+    a.url === b.url &&
+    a.faviconUrl === b.faviconUrl &&
+    a.warm === b.warm &&
+    a.active === b.active
+  );
+}
+
+function sameBrowserTabSet(a: BrowserTabSet | null, b: BrowserTabSet | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.threadId === b.threadId &&
+    a.activeTabId === b.activeTabId &&
+    a.tabs.length === b.tabs.length &&
+    a.tabs.every((tab, index) => sameBrowserTab(tab, b.tabs[index]!));
+}
+
 /** The minimal slice of the desktop bridge's tab surface this store drives. */
 interface PreviewTabsBridgeLike {
   open(
@@ -165,9 +186,13 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
   persistentTabIdsByScope: {},
 
   setTabSet: (scopeId, value) =>
-    set((s) => ({
-      tabSetByScope: { ...s.tabSetByScope, [scopeId]: value },
-    })),
+    set((s) => {
+      const previous = s.tabSetByScope[scopeId] ?? null;
+      if (sameBrowserTabSet(previous, value)) return s;
+      return {
+        tabSetByScope: { ...s.tabSetByScope, [scopeId]: value },
+      };
+    }),
 
   upsertPersistentTab: (scopeId, tab) =>
     set((s) => {

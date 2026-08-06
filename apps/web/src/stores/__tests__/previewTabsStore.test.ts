@@ -118,6 +118,20 @@ describe("previewTabsStore", () => {
     expect(usePreviewTabsStore.getState().liveChromeByScope[SCOPE]?.title).toBe("T");
   });
 
+  it("setTabSet preserves state identity for a semantically identical host snapshot", () => {
+    const { setTabSet } = usePreviewTabsStore.getState();
+    setTabSet(SCOPE, set("a", [page("a")]));
+    const previousState = usePreviewTabsStore.getState();
+    const subscriber = vi.fn();
+    const unsubscribe = usePreviewTabsStore.subscribe(subscriber);
+
+    setTabSet(SCOPE, set("a", [page("a")]));
+
+    expect(usePreviewTabsStore.getState()).toBe(previousState);
+    expect(subscriber).not.toHaveBeenCalled();
+    unsubscribe();
+  });
+
   it("openPage creates a page via the bridge and focuses the omnibox", async () => {
     const created = set("new", [page("a"), page("new", { active: true })]);
     const { open } = mockBridge({ open: created });

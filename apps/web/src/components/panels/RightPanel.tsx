@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useShallow } from "zustand/shallow";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useUiStore } from "@/stores/uiStore";
 import {
@@ -68,12 +69,53 @@ export function reconcileWarmPreviewScopes(
     if (selected.size >= BROWSER_AUTOMATION_WARM_TARGET_LIMIT) break;
     selected.set(scope.scopeId, scope);
   }
-  return [...selected.values()];
+  const result = [...selected.values()];
+  return result.length === previous.length &&
+    result.every((scope, index) => scope === previous[index])
+    ? previous
+    : result;
 }
 import { SubagentsPanel } from "./SubagentsPanel";
 import { CoordinationPanel } from "./CoordinationPanel";
 
 const EMPTY_SCOPE_TERMINALS: readonly TerminalInstance[] = [];
+
+interface WarmPreviewSurfaceProps {
+  readonly scope: WarmPreviewScope;
+  readonly visible: boolean;
+  readonly rendererOccludedLeft: number;
+}
+
+const WarmPreviewSurface = memo(function WarmPreviewSurface({
+  scope,
+  visible,
+  rendererOccludedLeft,
+}: WarmPreviewSurfaceProps) {
+  const automationHosted = useBrowserAutomationStore((state) =>
+    state.hostedScopeIds.has(scope.scopeId),
+  );
+  return (
+    <div
+      data-preview-scope={scope.scopeId}
+      className={visible ? "flex min-h-0 flex-1" : "hidden"}
+      inert={!visible ? true : undefined}
+    >
+      {automationHosted ? (
+        <div
+          data-automation-preview-dock={scope.scopeId}
+          data-visible={visible ? "true" : "false"}
+          className="min-h-0 min-w-0 flex-1"
+        />
+      ) : (
+        <PreviewPanel
+          threadId={scope.scopeId}
+          workspaceId={scope.workspaceId}
+          rendererOccludedLeft={rendererOccludedLeft}
+        />
+      )}
+    </div>
+  );
+});
 
 /**
  * Tracks whether the Changes tab has unreviewed new files for the active
@@ -160,19 +202,74 @@ export function RightPanel() {
   // workspace itself in the threadless new-thread view (where they run against
   // the local workspace root). Their stores treat this as an opaque scope key.
   const panelScopeId = activeThreadId ?? activeWorkspaceId;
-  const activeBrowserRequests = useBrowserAutomationStore((state) => state.activeRequests);
-  const pendingAgentOpens = useBrowserAutomationStore((state) => state.pendingAgentOpens);
-  const browserLifecycleTabs = useBrowserAutomationStore((state) => state.lifecycleTabs);
-  const browserLiveTargets = useBrowserAutomationStore((state) => state.liveTargets);
-  const automationHostedScopeIds = useBrowserAutomationStore((state) => state.hostedScopeIds);
-  const busyPreviewScopeIds = useMemo(
-    () => new Set(
-      [...activeBrowserRequests.values()].map(({ dispatch }) => dispatch.target.threadId),
-    ),
-    [activeBrowserRequests],
-  );
   const [warmPreviewScopes, setWarmPreviewScopes] = useState<readonly WarmPreviewScope[]>([]);
   const [activityRailExpanded, setActivityRailExpanded] = useState(false);
+  const retainedPreviewScopeIds = useMemo(
+    () => new Set([
+      ...(panelScopeId ? [panelScopeId] : []),
+      ...warmPreviewScopes.map((scope) => scope.scopeId),
+    ]),
+    [panelScopeId, warmPreviewScopes],
+  );
+  const [pendingAgentPageId, activeAgentRequestPageId, ownedAgentPageId] =
+    useBrowserAutomationStore(
+      useShallow((state) => {
+        let pendingPage: { readonly tabId: string; readonly startedAt: number } | null = null;
+        for (const pending of state.pendingAgentOpens.values()) {
+          if (
+            pending.workspaceId !== activeWorkspaceId ||
+            pending.threadId !== panelScopeId
+          ) continue;
+          if (!pendingPage || pending.startedAt > pendingPage.startedAt) {
+            pendingPage = { tabId: pending.tabId, startedAt: pending.startedAt };
+          }
+        }
+
+        let activePage: { readonly tabId: string; readonly startedAt: number } | null = null;
+        for (const { dispatch, startedAt } of state.activeRequests.values()) {
+          if (dispatch.target.threadId !== panelScopeId) continue;
+          if (!activePage || startedAt > activePage.startedAt) {
+            activePage = { tabId: dispatch.target.tabId, startedAt };
+          }
+        }
+
+        let ownedPage: { readonly tabId: string; readonly lastUsedAt: number } | null = null;
+        for (const lifecycle of state.lifecycleTabs.values()) {
+          if (
+            lifecycle.workspaceId !== activeWorkspaceId ||
+            lifecycle.threadId !== panelScopeId ||
+            lifecycle.provenance !== "agent-created" ||
+            lifecycle.ownership !== "owned"
+          ) continue;
+          const liveTarget = panelScopeId
+            ? state.liveTargets.get(browserAutomationTargetKey(panelScopeId, lifecycle.tabId))
+            : undefined;
+          const lastUsedAt = liveTarget?.lastUsedAt ?? 0;
+          if (!ownedPage || lastUsedAt > ownedPage.lastUsedAt) {
+            ownedPage = { tabId: lifecycle.tabId, lastUsedAt };
+          }
+        }
+
+        return [
+          pendingPage?.tabId ?? null,
+          activePage?.tabId ?? null,
+          ownedPage?.tabId ?? null,
+        ] as const;
+      }),
+    );
+  const busyPreviewScopeIdList = useBrowserAutomationStore(
+    useShallow((state) => [
+      ...new Set(
+        [...state.activeRequests.values()]
+          .map(({ dispatch }) => dispatch.target.threadId)
+          .filter((scopeId) => retainedPreviewScopeIds.has(scopeId)),
+      ),
+    ].sort()),
+  );
+  const busyPreviewScopeIds = useMemo(
+    () => new Set(busyPreviewScopeIdList),
+    [busyPreviewScopeIdList],
+  );
   const terminalsByScope = useTerminalStore((s) => s.terminals);
   const scopeTerminals = panelScopeId
     ? (terminalsByScope[panelScopeId] ?? EMPTY_SCOPE_TERMINALS)
@@ -202,52 +299,24 @@ export function RightPanel() {
   const requestedAgentPageActivationRef = useRef<string | null>(null);
   const agentBrowserPage = useMemo(() => {
     if (!activeWorkspaceId || !panelScopeId || !browserTabSet) return null;
-    let pendingPage: { readonly tabId: string; readonly startedAt: number } | null = null;
-    for (const pending of pendingAgentOpens.values()) {
-      if (pending.workspaceId !== activeWorkspaceId || pending.threadId !== panelScopeId) continue;
-      if (!browserTabSet.tabs.some((tab) => tab.id === pending.tabId)) continue;
-      if (!pendingPage || pending.startedAt > pendingPage.startedAt) {
-        pendingPage = { tabId: pending.tabId, startedAt: pending.startedAt };
-      }
+    const hasPage = (tabId: string | null) =>
+      tabId !== null && browserTabSet.tabs.some((tab) => tab.id === tabId);
+    if (pendingAgentPageId && hasPage(pendingAgentPageId)) {
+      return { tabId: pendingAgentPageId, presenting: true };
     }
-    if (pendingPage) return { tabId: pendingPage.tabId, presenting: true };
-
-    let selected: { readonly tabId: string; readonly startedAt: number } | null = null;
-    for (const { dispatch, startedAt } of activeBrowserRequests.values()) {
-      if (dispatch.target.threadId !== panelScopeId) continue;
-      if (!browserTabSet.tabs.some((tab) => tab.id === dispatch.target.tabId)) continue;
-      if (!selected || startedAt > selected.startedAt) {
-        selected = { tabId: dispatch.target.tabId, startedAt };
-      }
+    if (activeAgentRequestPageId && hasPage(activeAgentRequestPageId)) {
+      return { tabId: activeAgentRequestPageId, presenting: true };
     }
-    if (selected) return { tabId: selected.tabId, presenting: true };
-
-    let ownedPage: { readonly tabId: string; readonly lastUsedAt: number } | null = null;
-    for (const lifecycle of browserLifecycleTabs.values()) {
-      if (
-        lifecycle.workspaceId !== activeWorkspaceId ||
-        lifecycle.threadId !== panelScopeId ||
-        lifecycle.provenance !== "agent-created" ||
-        lifecycle.ownership !== "owned" ||
-        !browserTabSet.tabs.some((tab) => tab.id === lifecycle.tabId)
-      ) continue;
-      const liveTarget = browserLiveTargets.get(
-        browserAutomationTargetKey(panelScopeId, lifecycle.tabId),
-      );
-      const lastUsedAt = liveTarget?.lastUsedAt ?? 0;
-      if (!ownedPage || lastUsedAt > ownedPage.lastUsedAt) {
-        ownedPage = { tabId: lifecycle.tabId, lastUsedAt };
-      }
-    }
-    return ownedPage ? { tabId: ownedPage.tabId, presenting: false } : null;
+    return ownedAgentPageId && hasPage(ownedAgentPageId)
+      ? { tabId: ownedAgentPageId, presenting: false }
+      : null;
   }, [
-    activeBrowserRequests,
+    activeAgentRequestPageId,
     activeWorkspaceId,
-    browserLifecycleTabs,
-    browserLiveTargets,
     browserTabSet,
+    ownedAgentPageId,
     panelScopeId,
-    pendingAgentOpens,
+    pendingAgentPageId,
   ]);
 
   // Keep idle Browser pages background-only when the panel has no retained
@@ -318,6 +387,38 @@ export function RightPanel() {
   } =
     useDiffStore.getState();
 
+  const handlePanelWidthChange = useCallback(
+    (nextWidth: number, source: "preserve" | "user") => {
+      if (!activeWorkspaceId) return;
+      setRightPanelWidth(activeWorkspaceId, activeThreadId, nextWidth, source);
+    },
+    [activeThreadId, activeWorkspaceId, setRightPanelWidth],
+  );
+
+  const handleTogglePanel = useCallback(() => {
+    if (!activeWorkspaceId) return;
+    const activeElement = document.activeElement;
+    if (
+      panelVisible &&
+      activeElement instanceof HTMLElement &&
+      activeElement.closest("[data-right-panel-root]")
+    ) {
+      activeElement.blur();
+    }
+    toggleRightPanelAdaptive(activeWorkspaceId, activeThreadId);
+  }, [activeThreadId, activeWorkspaceId, panelVisible]);
+
+  useLayoutEffect(() => {
+    if (panelVisible) return;
+    const activeElement = document.activeElement;
+    if (
+      activeElement instanceof HTMLElement &&
+      activeElement.closest("[data-right-panel-root]")
+    ) {
+      activeElement.blur();
+    }
+  }, [panelVisible]);
+
   // Tab-strip glance status. Changes counts
   // distinct files across every turn snapshot (the cumulative working-tree diff
   // the user reviews and ships).
@@ -345,21 +446,39 @@ export function RightPanel() {
   const subagentsActive =
     renderedActiveTab === "subagents" && renderedTabInstances.some((instance) => instance.type === "subagents");
 
+  const activePreviewScopeKey = previewActive && panelScopeId && activeWorkspaceId
+    ? `${activeWorkspaceId}\u0000${panelScopeId}`
+    : null;
+  const previousActivePreviewScopeKeyRef = useRef<string | null>(null);
   useEffect(() => {
-    const next = previewActive && panelScopeId && activeWorkspaceId
-      ? { scopeId: panelScopeId, workspaceId: activeWorkspaceId, lastUsedAt: Date.now() }
-      : null;
+    if (!activePreviewScopeKey || !panelScopeId || !activeWorkspaceId) {
+      previousActivePreviewScopeKeyRef.current = null;
+      return;
+    }
+    const becameActive = previousActivePreviewScopeKeyRef.current !== activePreviewScopeKey;
+    previousActivePreviewScopeKeyRef.current = activePreviewScopeKey;
     setWarmPreviewScopes((previous) => {
-      const previousScopes =
+      const existing = previous.find((scope) => scope.scopeId === panelScopeId);
+      const next = !existing || becameActive
+        ? { scopeId: panelScopeId, workspaceId: activeWorkspaceId, lastUsedAt: Date.now() }
+        : existing;
+      return reconcileWarmPreviewScopes(previous, next, busyPreviewScopeIds);
+    });
+  }, [activePreviewScopeKey, activeWorkspaceId, busyPreviewScopeIds, panelScopeId]);
+
+  const browserScopePresent = browserTabSet !== null;
+  useEffect(() => {
+    setWarmPreviewScopes((previous) => {
+      const retained =
         !previewActive &&
-        browserTabSet === null &&
+        !browserScopePresent &&
         panelScopeId &&
         !busyPreviewScopeIds.has(panelScopeId)
         ? previous.filter((scope) => scope.scopeId !== panelScopeId)
         : previous;
-      return reconcileWarmPreviewScopes(previousScopes, next, busyPreviewScopeIds);
+      return reconcileWarmPreviewScopes(retained, null, busyPreviewScopeIds);
     });
-  }, [activeWorkspaceId, browserTabSet, busyPreviewScopeIds, panelScopeId, previewActive]);
+  }, [browserScopePresent, busyPreviewScopeIds, panelScopeId, previewActive]);
 
   const isChangesActive = panelVisible && changesActive;
   const changesFresh = useChangesFreshness(
@@ -408,14 +527,7 @@ export function RightPanel() {
       wideWidth={PANEL_WIDE_WIDTH}
       separatorLabel="Resize panel"
       resizeEnabled={panelVisible && !maximized}
-      onWidthChange={(nextWidth, source) =>
-        setRightPanelWidth(
-          activeWorkspaceId!,
-          activeThreadId,
-          nextWidth,
-          source,
-        )
-      }
+      onWidthChange={handlePanelWidthChange}
       style={
         !panelVisible
           ? {
@@ -434,12 +546,7 @@ export function RightPanel() {
         // mode is sized by the stored width above.
         panelVisible && maximized && "flex-1",
       )}
-      // Pair aria-hidden with inert: inert auto-blurs any focused descendant on
-      // apply, which avoids Chrome's "Blocked aria-hidden on an element because
-      // its descendant retained focus" warning when the user clicks the close
-      // button (focus is on the button when the panel is told to hide). Same
-      // pattern as the terminal tab below.
-      aria-hidden={!panelVisible}
+      data-right-panel-root=""
       inert={!panelVisible ? true : undefined}
     >
       {/* Rail + content. The activity rail carries close and maximize actions and,
@@ -455,9 +562,7 @@ export function RightPanel() {
           changesFresh={changesFresh}
           browserTabSet={browserTabSet}
           maximized={maximized}
-          onTogglePanel={() =>
-            toggleRightPanelAdaptive(activeWorkspaceId, activeThreadId)
-          }
+          onTogglePanel={handleTogglePanel}
           onToggleMaximized={toggleMaximized}
           onSelect={(instanceId) => {
             setRightPanelTabInstance(activeWorkspaceId!, activeThreadId, instanceId);
@@ -568,31 +673,16 @@ export function RightPanel() {
           {warmPreviewScopes.map((scope) => {
             const visible = previewActive && scope.scopeId === panelScopeId;
             return (
-              <div
+              <WarmPreviewSurface
                 key={scope.scopeId}
-                data-preview-scope={scope.scopeId}
-                className={visible ? "flex min-h-0 flex-1" : "hidden"}
-                aria-hidden={!visible}
-                inert={!visible ? true : undefined}
-              >
-                {automationHostedScopeIds.has(scope.scopeId) ? (
-                  <div
-                    data-automation-preview-dock={scope.scopeId}
-                    data-visible={visible ? "true" : "false"}
-                    className="min-h-0 min-w-0 flex-1"
-                  />
-                ) : (
-                  <PreviewPanel
-                    threadId={scope.scopeId}
-                    workspaceId={scope.workspaceId}
-                    rendererOccludedLeft={
-                      visible && activityRailExpanded
-                        ? ACTIVITY_RAIL_FLOATING_OVERLAP_PX
-                        : 0
-                    }
-                  />
-                )}
-              </div>
+                scope={scope}
+                visible={visible}
+                rendererOccludedLeft={
+                  visible && activityRailExpanded
+                    ? ACTIVITY_RAIL_FLOATING_OVERLAP_PX
+                    : 0
+                }
+              />
             );
           })}
           <div
@@ -600,7 +690,6 @@ export function RightPanel() {
               "absolute inset-0 z-0 flex min-h-0 flex-row overflow-hidden",
               !terminalActive && "pointer-events-none opacity-0",
             )}
-            aria-hidden={!terminalActive}
             inert={!terminalActive ? true : undefined}
           >
             <TerminalPoolSlot className="relative min-h-0 min-w-0 flex-1 overflow-hidden" />
