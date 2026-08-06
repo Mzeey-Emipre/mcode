@@ -111,7 +111,14 @@ describe("SubagentsPanel", () => {
     expect(await screen.findByRole("region", { name: "Rollback check subagent details" })).toBeInTheDocument();
     expect(screen.getByText("Reading files...")).toBeInTheDocument();
     expect(screen.queryByText("Checking the down migration against the new index shape…")).not.toBeInTheDocument();
-    expect(screen.getByText("1 step")).toBeInTheDocument();
+    expect(screen.queryByText("1 step")).not.toBeInTheDocument();
+    expect(screen.queryByText("4.0s")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Back to subagents" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open Docs scan details" }));
+    expect(await screen.findByRole("region", { name: "Docs scan subagent details" })).toBeInTheDocument();
+    expect(screen.getByText("2 steps")).toBeInTheDocument();
+    expect(screen.getByText("12.0s")).toBeInTheDocument();
   });
 
   it("omits empty sections and shows one whole-panel empty state only when both are empty", () => {

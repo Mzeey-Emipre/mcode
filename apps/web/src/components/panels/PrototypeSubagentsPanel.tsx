@@ -86,7 +86,8 @@ function RosterRowButton({ row, onSelect }: { readonly row: ChildContinuationPro
 }
 
 function PrototypeRosterDetail({ row, onBack }: { readonly row: ChildContinuationPrototypeRosterRow; readonly onBack: () => void }) {
-  const toolCalls = createToolCalls(row.lifecycle !== "finished");
+  const isActive = row.lifecycle !== "finished";
+  const toolCalls = createToolCalls(isActive);
   const isAgentRunning = toolCalls.some((toolCall) => !toolCall.isComplete);
   return (
     <section className="flex min-h-0 flex-1 flex-col" aria-label={`${row.identity} subagent details`}>
@@ -112,10 +113,9 @@ function PrototypeRosterDetail({ row, onBack }: { readonly row: ChildContinuatio
               <DeltaBlock text={CHILD_RESULT_TEXT} isStreaming={false} showCursor={false} />
             </div>
           )}
-          <TurnFooter
-            counts={{ steps: toolCalls.length, thoughts: 0, subagents: 0 }}
-            durationMs={isAgentRunning ? (toolCalls[0]?.elapsedSeconds ?? 0) * 1_000 : 12_000}
-          />
+          {!isActive && (
+            <TurnFooter counts={{ steps: toolCalls.length, thoughts: 0, subagents: 0 }} durationMs={12_000} />
+          )}
         </div>
       </ScrollArea>
     </section>
