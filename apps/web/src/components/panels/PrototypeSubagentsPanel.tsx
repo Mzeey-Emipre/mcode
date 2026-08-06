@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { DeltaBlock } from "@/components/chat/narrative/DeltaBlock";
-import { NarrativeFlow } from "@/components/chat/narrative";
+import { NarrativeFlow, type ThoughtSegment } from "@/components/chat/narrative";
 import { TurnFooter } from "@/components/chat/narrative/TurnFooter";
 import { SubagentIdentityGlyph } from "@/components/subagents/SubagentIdentityGlyph";
 import {
@@ -19,6 +19,13 @@ const PROTOTYPE_THREAD_ID = "prototype-child-continuation";
 const SYNTHETIC_START_TIME = "2026-08-06T09:41:00.000Z";
 const SYNTHETIC_TOOL_START = Date.parse(SYNTHETIC_START_TIME);
 const CHILD_RESULT_TEXT = "Rollback is safe when the index is absent. The migration can be reverted without touching the new index shape.";
+const ACTIVE_THOUGHT_BY_CHILD_STATE: Record<string, string> = {
+  "rollback-check:working": "I’m checking whether the index is absent.",
+  "schema-scan:started": "I’m preparing the initial checks.",
+  "schema-scan:working": "I’m checking the migration boundary.",
+  "test-runner:working": "I’m running the rollback tests.",
+  "api-check:working": "I’m comparing the generated schema.",
+};
 
 function createTaskMessage(row: ChildContinuationPrototypeRosterRow): Message {
   return {
@@ -41,28 +48,35 @@ function createToolCalls(isActive: boolean): ToolCall[] {
     id: "prototype-subagent-read",
     toolName: "Read",
     toolInput: { file_path: "db/migrations/2026_08_add_index.sql" },
-    output: isActive ? null : "Migration boundary and index definition loaded.",
+    output: "Migration boundary and index definition loaded.",
     isError: false,
-    isComplete: !isActive,
+    isComplete: true,
     startedAt: SYNTHETIC_TOOL_START + 2_000,
-    elapsedSeconds: isActive ? 4 : 5,
-    durationMs: isActive ? undefined : 5_000,
+    elapsedSeconds: 5,
+    durationMs: 5_000,
   };
-  if (isActive) return [readCall];
   return [
     readCall,
     {
       id: "prototype-subagent-tests",
       toolName: "Bash",
       toolInput: { command: "pnpm test migration/rollback" },
-      output: "3 tests passed",
+      output: isActive ? null : "3 tests passed",
       isError: false,
-      isComplete: true,
+      isComplete: !isActive,
       startedAt: SYNTHETIC_TOOL_START + 8_000,
       elapsedSeconds: 7,
-      durationMs: 7_000,
+      durationMs: isActive ? undefined : 7_000,
     },
   ];
+}
+
+function createThoughtSegments(row: ChildContinuationPrototypeRosterRow): ThoughtSegment[] {
+  if (row.lifecycle === "finished") return [];
+  return [{
+    text: ACTIVE_THOUGHT_BY_CHILD_STATE[`${row.id}:${row.lifecycle}`] ?? "I’m reviewing the delegated task.",
+    startedAt: SYNTHETIC_TOOL_START + 1_000,
+  }];
 }
 
 function RosterRowButton({ row, onSelect }: { readonly row: ChildContinuationPrototypeRosterRow; readonly onSelect: () => void }) {
@@ -88,6 +102,7 @@ function RosterRowButton({ row, onSelect }: { readonly row: ChildContinuationPro
 function PrototypeRosterDetail({ row, onBack }: { readonly row: ChildContinuationPrototypeRosterRow; readonly onBack: () => void }) {
   const isActive = row.lifecycle !== "finished";
   const toolCalls = createToolCalls(isActive);
+  const thoughtSegments = createThoughtSegments(row);
   const isAgentRunning = toolCalls.some((toolCall) => !toolCall.isComplete);
   return (
     <section className="flex min-h-0 flex-1 flex-col" aria-label={`${row.identity} subagent details`}>
@@ -104,7 +119,7 @@ function PrototypeRosterDetail({ row, onBack }: { readonly row: ChildContinuatio
           <NarrativeFlow
             toolCalls={toolCalls}
             hooks={[]}
-            thoughtSegments={[]}
+            thoughtSegments={thoughtSegments}
             streamingText=""
             isAgentRunning={isAgentRunning}
           />

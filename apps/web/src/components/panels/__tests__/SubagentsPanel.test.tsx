@@ -109,10 +109,21 @@ describe("SubagentsPanel", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Open Rollback check details" }));
     expect(await screen.findByRole("region", { name: "Rollback check subagent details" })).toBeInTheDocument();
-    expect(screen.getByText("Reading files...")).toBeInTheDocument();
+    expect(await screen.findByText("I’m checking whether the index is absent.")).toBeInTheDocument();
+    expect(screen.getByText("Read 1 file")).toBeInTheDocument();
+    expect(screen.getByText("Running command")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Running command.*pnpm test migration\/rollback/ })).toBeInTheDocument();
     expect(screen.queryByText("Checking the down migration against the new index shape…")).not.toBeInTheDocument();
-    expect(screen.queryByText("1 step")).not.toBeInTheDocument();
-    expect(screen.queryByText("4.0s")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("prototype-subagent-response-text")).not.toBeInTheDocument();
+    expect(screen.queryByText("2 steps")).not.toBeInTheDocument();
+    expect(screen.queryByText("12.0s")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Back to subagents" }));
+    fireEvent.click(screen.getByRole("button", { name: "Open Schema scan details" }));
+    expect(await screen.findByRole("region", { name: "Schema scan subagent details" })).toBeInTheDocument();
+    expect(await screen.findByText("I’m preparing the initial checks.")).toBeInTheDocument();
+    useChildContinuationPrototypeStore.getState().advanceSchemaScan();
+    expect(await screen.findByText("I’m checking the migration boundary.")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Back to subagents" }));
     fireEvent.click(screen.getByRole("button", { name: "Open Docs scan details" }));
