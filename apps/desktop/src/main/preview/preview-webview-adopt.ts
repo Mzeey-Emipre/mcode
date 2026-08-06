@@ -18,6 +18,10 @@ import { BrowserWindow, ipcMain, session as electronSession, webContents as elec
 import type { WebContents } from "electron";
 import { logger } from "@mcode/shared";
 import { getSession } from "./preview-session.js";
+import {
+  registerPreviewClipboardGuest,
+  unregisterPreviewClipboardGuest,
+} from "./preview-clipboard-trust.js";
 
 /** Per-window registry of adopted WebContents keyed by (threadId, tabId). */
 interface AdoptedRecord {
@@ -49,6 +53,7 @@ function dropAdoption(windowId: number, threadId: string, tabId: string): void {
   if (!inner) return;
   const rec = inner.get(key(threadId, tabId));
   if (!rec) return;
+  unregisterPreviewClipboardGuest(rec.webContents);
   try {
     rec.dispose();
   } catch {
@@ -116,6 +121,15 @@ export function registerWebviewAdoptHandlers(): void {
 
       const onDestroyed = () => dropAdoption(win.id, tid, tabId);
       wc.once("destroyed", onDestroyed);
+      registerPreviewClipboardGuest(wc, () => {
+        if (win.isDestroyed() || !win.isFocused()) return false;
+        const current = getSession(win);
+        return (
+          current.lastPreviewThreadId === tid &&
+          current.tabsByThread.get(tid)?.activeTabId === tabId &&
+          adoptedByWindow.get(win.id)?.get(key(tid, tabId))?.webContents === wc
+        );
+      });
       const dispose = () => {
         try {
           wc.removeListener("destroyed", onDestroyed);

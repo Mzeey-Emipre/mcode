@@ -27,6 +27,11 @@ import { removeEpPickHighlighter, abortOverlayCapture } from "./preview-overlay.
 import { pushPreviewConsoleLine } from "./preview-capture.js";
 import { validateResumeUrl, trustMainProcessFileNavigation } from "./preview-local-file.js";
 import { classifyLoadResult, crashError } from "./classify-load-result.js";
+import { resolvePreviewGuestPreloadPath } from "./preview-webview-security.js";
+import {
+  registerPreviewClipboardGuest,
+  unregisterPreviewClipboardGuest,
+} from "./preview-clipboard-trust.js";
 
 /**
  * Injected into every guest document so preview scrollbars match the app shell on Windows
@@ -84,6 +89,7 @@ function clearActiveViewState(s: PreviewSession, view: WebContentsView): void {
  * teardown does not fire stale callbacks after the view is detached.
  */
 export function detachViewListeners(view: WebContentsView): void {
+  unregisterPreviewClipboardGuest(view.webContents);
   view.webContents.removeAllListeners("did-navigate");
   view.webContents.removeAllListeners("did-navigate-in-page");
   view.webContents.removeAllListeners("page-title-updated");
@@ -122,9 +128,21 @@ export function ensureTabView(
       contextIsolation: true,
       sandbox: true,
       partition: "persist:mcode-preview",
+      preload: resolvePreviewGuestPreloadPath(__dirname),
     },
   });
   const isActiveView = (): boolean => s.view === view;
+
+  registerPreviewClipboardGuest(view.webContents, () => {
+    if (win.isDestroyed() || !win.isFocused()) return false;
+    const set = s.tabsByThread.get(tab.threadId);
+    return (
+      s.lastPreviewThreadId === tab.threadId &&
+      set?.activeTabId === tab.id &&
+      s.view === view &&
+      tab.view === view
+    );
+  });
 
   view.webContents.setBackgroundThrottling(true);
 
