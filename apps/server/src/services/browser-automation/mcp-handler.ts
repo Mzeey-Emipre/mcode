@@ -160,54 +160,33 @@ const tabsMutationProperties = {
   ...commonProperties,
 } as const;
 
-const tabsMutationVariants = [
-  {
-    type: "object",
-    properties: { ...tabsMutationProperties, action: { const: "select" }, tabId: { type: "string", minLength: 1, maxLength: 256 } },
-    required: ["action", "tabId", "idempotencyKey", "observationRef"],
-    additionalProperties: false,
-  },
-  {
-    type: "object",
-    properties: { ...tabsMutationProperties, action: { const: "claim" }, tabId: { type: "string", minLength: 1, maxLength: 256 } },
-    required: ["action", "tabId", "idempotencyKey", "observationRef"],
-    additionalProperties: false,
-  },
-  {
-    type: "object",
-    properties: { ...tabsMutationProperties, action: { const: "release" }, tabId: { type: "string", minLength: 1, maxLength: 256 } },
-    required: ["action", "idempotencyKey", "observationRef"],
-    additionalProperties: false,
-  },
-  {
-    type: "object",
-    properties: { ...tabsMutationProperties, action: { const: "close" }, tabId: { type: "string", minLength: 1, maxLength: 256 } },
-    required: ["action", "idempotencyKey", "observationRef"],
-    additionalProperties: false,
-  },
-  {
-    type: "object",
-    properties: {
-      ...tabsMutationProperties,
-      action: { const: "finalize" },
-      dispositions: {
-        type: "array",
-        maxItems: 32,
-        items: {
-          type: "object",
-          properties: {
-            tabId: { type: "string", minLength: 1, maxLength: 256 },
-            disposition: { enum: ["close", "release", "handoff", "deliverable"] },
-          },
-          required: ["tabId", "disposition"],
-          additionalProperties: false,
+/** Describes Browser tab actions without a top-level JSON Schema union. */
+const tabsInputSchema = {
+  type: "object",
+  properties: {
+    ...tabsMutationProperties,
+    action: {
+      enum: ["select", "claim", "release", "close", "finalize"],
+      description: "Select or claim requires tabId; finalize requires dispositions; release and close may omit tabId.",
+    },
+    tabId: { type: "string", minLength: 1, maxLength: 256 },
+    dispositions: {
+      type: "array",
+      maxItems: 32,
+      items: {
+        type: "object",
+        properties: {
+          tabId: { type: "string", minLength: 1, maxLength: 256 },
+          disposition: { enum: ["close", "release", "handoff", "deliverable"] },
         },
+        required: ["tabId", "disposition"],
+        additionalProperties: false,
       },
     },
-    required: ["action", "dispositions", "idempotencyKey", "observationRef"],
-    additionalProperties: false,
   },
-];
+  required: ["action", "idempotencyKey", "observationRef"],
+  additionalProperties: false,
+} satisfies Record<string, unknown>;
 
 function inputSchema(operation: BrowserAutomationOperation): Record<string, unknown> {
   const schemas: Record<BrowserAutomationOperation, Record<string, unknown>> = {
@@ -246,12 +225,12 @@ function inputSchema(operation: BrowserAutomationOperation): Record<string, unkn
     },
     recordingStart: { maxDurationMs: { type: "integer", minimum: 1000, maximum: 600000 } },
     recordingStop: {},
-    tabs: { oneOf: tabsMutationVariants },
+    tabs: tabsInputSchema,
   };
   const requiredByOperation: Partial<Record<BrowserAutomationOperation, string[]>> = {
     open: ["idempotencyKey"], act: ["idempotencyKey", "observationRef", "deadlineMs", "steps"], navigate: ["url"], resize: ["width", "height"], click: ["target"], type: ["text"], press: ["key"], scroll: ["deltaY"], evaluate: ["idempotencyKey", "observationRef", "deadlineMs", "expression"],
   };
-  if (operation === "tabs") return { oneOf: tabsMutationVariants };
+  if (operation === "tabs") return tabsInputSchema;
   return {
     type: "object",
     properties: { ...commonProperties, ...schemas[operation] },

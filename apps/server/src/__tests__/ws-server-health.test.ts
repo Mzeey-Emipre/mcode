@@ -232,6 +232,7 @@ describe("/health endpoint", () => {
           capacityRejected: 0,
           latencyTotalMs: 40,
           latencyMaxMs: 25,
+          roundTripLatency: { samples: 2, p50Ms: 20, p95Ms: 25, p99Ms: 25 },
         }),
       } as never,
     });

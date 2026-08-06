@@ -111,6 +111,19 @@ export type {
   BrowserConformanceFaultControl,
   BrowserConformanceFaultControlKind,
 } from "./faults.js";
+export {
+  BROWSER_CONFORMANCE_MAX_TIMING_DURATION_MS,
+  BROWSER_CONFORMANCE_MAX_TIMING_SAMPLES,
+  BROWSER_CONFORMANCE_TIMING_PHASES,
+  BrowserConformanceTimingMetrics,
+} from "./metrics.js";
+export type {
+  BrowserConformanceTimingMetricsOptions,
+  BrowserConformanceTimingPercentiles,
+  BrowserConformanceTimingPhase,
+  BrowserConformanceTimingReport,
+  BrowserConformanceTimingSample,
+} from "./metrics.js";
 export type {
   BrowserConformanceReplayBundle,
   BrowserConformanceReplayBundleInput,
