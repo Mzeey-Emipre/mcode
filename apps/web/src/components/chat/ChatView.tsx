@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from "react";
 import { Bug, GitFork, Hammer, SearchCode, ScanSearch } from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import {
@@ -44,6 +44,10 @@ import {
   recordThreadHoldStart,
 } from "@/lib/thread-switch-telemetry";
 import { MAX_THREAD_SUBSCRIPTIONS, type SetThreadSubscriptionsInput } from "@mcode/contracts";
+
+const ChildContinuationPrototype = import.meta.env.DEV
+  ? lazy(() => import("./ChildContinuationPrototype").then(({ ChildContinuationPrototype: Prototype }) => ({ default: Prototype })))
+  : null;
 
 /** Entry point suggestions shown in the empty state — each maps to a real Mcode capability. */
 const ENTRY_POINTS = [
@@ -895,6 +899,9 @@ export function ChatView() {
   }
 
   const hasMessages = messageCount > 0;
+  const childContinuationPrototypeEnabled = import.meta.env.DEV
+    && typeof window !== "undefined"
+    && new URLSearchParams(window.location.search).get("prototype") === "child-continuation";
   const conversationLoading = hydratedThreadId !== activeThreadId || historyLoading;
   const showHold = displayHoldThreadId !== null && !targetPaintable;
   const showTransition = conversationLoading && !targetPaintable && !showHold && !isAgentRunning;
@@ -989,7 +996,11 @@ export function ChatView() {
         className="animate-fade-up-in flex-1 min-h-0 transition-[padding] duration-200"
         style={{ paddingRight: overviewPaddingRight }}
       >
-        {showHold ? (
+        {childContinuationPrototypeEnabled && ChildContinuationPrototype ? (
+          <Suspense fallback={<div className="flex h-full items-center justify-center text-sm text-muted-foreground">Loading prototype…</div>}>
+            <ChildContinuationPrototype />
+          </Suspense>
+        ) : showHold ? (
           <div className="relative h-full" aria-busy="true">
             <div className="pointer-events-none h-full" inert>
               <MessageList
