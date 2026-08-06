@@ -68,7 +68,7 @@ When a category has only one setting or settings that don't share a qualifier, k
 // Good: standalone settings within a category
 {
   "appearance": { "theme": "system" },
-  "terminal": { "scrollback": 500 }
+  "terminal": { "scrollback": 1000 } // Legacy v0 setting, default 1000
 }
 ```
 
@@ -107,6 +107,10 @@ When adding a new setting, ask these questions in order:
 
 ## Current Schema
 
+The current runtime schema below is the legacy projection. It remains in this
+guide to describe existing installations and must not be read as the v1
+Terminal contract.
+
 ```jsonc
 {
   "appearance": {
@@ -133,7 +137,7 @@ When adding a new setting, ask these questions in order:
     }
   },
   "terminal": {
-    "scrollback": 500
+    "scrollback": 1000                // Legacy v0 projection, default 1000
   },
   "notifications": {
     "enabled": true
@@ -172,6 +176,65 @@ When adding a new setting, ask these questions in order:
   }
 }
 ```
+
+## Terminal v1 target (version 0.0.1, implementation pending)
+
+The frozen Terminal target keeps the maximum nesting depth at three levels:
+`terminal.behavior.scrollback` and `terminal.behavior.sessionLimit` are the
+deepest settings. The target document is versioned and nested as follows:
+
+```jsonc
+{
+  "meta": { "schemaVersion": "0.0.1" },
+  "terminal": {
+    "defaultProfileId": "automatic",
+    "profiles": [],
+    "presentation": {
+      "fontFamily": "mcodeMono",
+      "fontSize": "sm",              // xs | sm | md | lg | xl
+      "lineHeight": "normal",        // compact | normal | relaxed
+      "cursorStyle": "block",        // block | underline | bar
+      "cursorBlink": false,
+      "ligatures": false
+    },
+    "behavior": {
+      "scrollback": 1000,              // 100..5000; legacy 0 -> 5000
+      "sessionLimit": 20,              // 1..20, app-wide
+      "confirmOnKill": "withChildProcesses", // never | withChildProcesses | always
+      "copyOnSelect": false,
+      "confirmMultilinePaste": true
+    },
+    "accessibility": { "screenReaderMode": "off" }, // off | auto | on
+    "flowControl": {
+      "serverHighBytes": 1048576,
+      "serverLowBytes": 262144,
+      "clientHighBytes": 262144,
+      "clientLowBytes": 65536
+    }
+  }
+}
+```
+
+The flow-control values are fixed operational bounds and stay outside the
+normal settings UI. Custom profile records contain only a server-generated
+`id`, `name`, `executable`, and `arguments`; they never contain environment
+values or a working directory. At most 32 custom profiles are stored. Names
+are 1..64 trimmed characters, executables are 1..1024 characters, and
+arguments contain at most 32 entries with each entry at most 1024 characters
+and 8 KiB total.
+
+### Legacy projection and migration
+
+Migration to schema version `0.0.1` is forward-only and preserves the source
+settings before writing the target. A legacy flat `terminal.scrollback` value
+projects to `terminal.behavior.scrollback`; legacy `0` becomes `5000`, while
+other values must satisfy 100..5000. Re-running migration is idempotent.
+Malformed input fails closed without replacing the source, future schema
+versions are not downgraded, and writes remain atomic. Reset restores the
+default selection, presentation, behavior, and accessibility while preserving
+custom profiles. Workspace reset deletes the workspace preference row; a
+missing row means inherit, and workspace deletion removes its row after
+Terminal sessions close.
 
 ## Adding New Settings
 

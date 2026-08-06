@@ -782,8 +782,12 @@ Terminal is repeatable: each open Terminal tab represents one **shell
 session**. The set of **creatable** types is filtered by **scope** (types
 needing a thread are dropped when no thread is active) and by
 **cardinality** (open singleton types are dropped, while Terminal remains
-creatable until its limit of four shell sessions per terminal scope is
-reached). When exactly one type is creatable, the add affordance opens it
+creatable until the app-wide `terminal.behavior.sessionLimit` is reached).
+That limit is configurable from 1 through 20 and defaults to 20. It counts
+`starting`, `running`, and `exiting` sessions plus `exited` and `failed`
+tombstones until an explicit close or a replacement reaches `running`; it is
+not a per-scope cap.
+When exactly one type is creatable, the add affordance opens it
 directly instead of showing a menu; when none are, the add affordance is
 hidden. The empty panel and the add menu present this same creatable-types
 set. Tabs share one creation-ordered sequence regardless of type. A newly
@@ -829,8 +833,10 @@ workspace root). Creating another shell session creates another Terminal
 tab. Selecting a Terminal tab shows only that tab's shell session. Closing
 a Terminal tab closes its shell session and terminates the entire process
 tree rooted at that shell. If closing it leaves no right-panel tabs, the
-right panel closes. When a shell exits on its own, its Terminal tab may show
-the exit status briefly, then closes automatically.
+right panel closes. When a shell exits on its own, its Terminal tab remains
+with an exited tombstone and final output metadata until the user closes it
+or a replacement session reaches `running`; the tombstone continues to count
+toward the app-wide session limit.
 
 ### Terminal scope
 The thread or workspace a shell session runs against. When a thread is
@@ -840,11 +846,13 @@ workspace and shells open at the workspace root.
 _Avoid_: Using "thread id" alone when the scope may be a workspace.
 
 ### Shell session
-A running shell process (e.g. PowerShell, bash) tied to one terminal scope.
-Survives thread switches and terminal-tab hides; the process keeps running
-until the user kills it or closes its Terminal tab. Closing it terminates the
-shell and every descendant process that it started. Output keeps draining
-into server-side scrollback even when no terminal view is mounted.
+A server-owned shell lifecycle (e.g. PowerShell, bash) tied to one terminal
+scope. It survives thread switches and terminal-tab hides while running. A
+natural exit enters an exited tombstone that retains bounded output and exit
+metadata until explicit close or replacement reaches `running`. Closing a
+running session terminates the shell and every descendant process that it
+started. Output keeps draining into server-side replay even when no terminal
+view is mounted.
 _Avoid_: PTY (implementation term), terminal instance (ambiguous with the view).
 
 ### Active shell
@@ -865,11 +873,13 @@ control-sequence fragments as visible characters.
 _Avoid_: xterm (implementation term), conflating with shell session.
 
 ### Scrollback
-How many lines of shell output are retained for a shell session, set by
-`terminal.scrollback`. The same limit applies on the server (for replay when
-the terminal view remounts) and in the mounted terminal view. Output beyond
-the limit is dropped oldest-first.
-_Avoid_: Treating scrollback as a client-only display setting.
+How many lines of shell output the mounted terminal view retains. The v1
+renderer line limit is 100..5000, defaults to 1000, and maps legacy `0` to
+5000. Server replay is a separate derived byte budget:
+`clamp(scrollback * 512, 65536, 8388608)`. Replay eviction reports explicit
+gaps when the requested sequence is no longer retained; it does not pretend
+that missing bytes exist.
+_Avoid_: Treating scrollback as a server line cap or hiding replay gaps.
 
 ### Review tab
 The right-panel tab that shows code changes. **Dual-scope**: its

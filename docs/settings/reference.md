@@ -4,6 +4,59 @@ Per-setting reference for Mcode's `settings.json`. For schema conventions and st
 
 **Location:** `~/.mcode/settings.json`
 
+## Terminal v1 target (frozen, implementation pending)
+
+The following versioned shape is the v1 contract. It is documented here for
+implementation and migration work; the current runtime still reads the legacy
+row identified in the table below.
+
+```json
+{
+  "meta": { "schemaVersion": "0.0.1" },
+  "terminal": {
+    "defaultProfileId": "automatic",
+    "profiles": [],
+    "presentation": {
+      "fontFamily": "mcodeMono",
+      "fontSize": "sm",
+      "lineHeight": "normal",
+      "cursorStyle": "block",
+      "cursorBlink": false,
+      "ligatures": false
+    },
+    "behavior": {
+      "scrollback": 1000,
+      "sessionLimit": 20,
+      "confirmOnKill": "withChildProcesses",
+      "copyOnSelect": false,
+      "confirmMultilinePaste": true
+    },
+    "accessibility": { "screenReaderMode": "off" },
+    "flowControl": {
+      "serverHighBytes": 1048576,
+      "serverLowBytes": 262144,
+      "clientHighBytes": 262144,
+      "clientLowBytes": 65536
+    }
+  }
+}
+```
+
+`fontSize` is `xs|sm|md|lg|xl`; `lineHeight` is `compact|normal|relaxed`;
+`cursorStyle` is `block|underline|bar`; `screenReaderMode` is `off|auto|on`;
+and `confirmOnKill` is `never|withChildProcesses|always`. `scrollback` is
+100..5000 lines with default 1000. Legacy scrollback `0` migrates to 5000.
+`sessionLimit` is app-wide, 1..20, with default 20. Flow-control values are
+fixed operational values and are not normal settings controls.
+
+Custom `profiles` contain only a server-generated `id`, `name`, `executable`,
+and `arguments`; they never contain environment values or a working directory.
+At most 32 custom profiles are stored. Names are 1..64 trimmed characters,
+executables are 1..1024 characters, and arguments contain at most 32 entries
+with each entry at most 1024 characters and 8 KiB total.
+The frozen workspace preference row stores `workspaceId`,
+`defaultProfileId`, and `updatedAt`; no row means inherit.
+
 ## All Settings
 
 | Setting | Type | Default | Range | Env Override | Description |
@@ -19,7 +72,7 @@ Per-setting reference for Mcode's `settings.json`. For schema conventions and st
 | `model.defaults.reasoning` | enum | `"high"` | `"none"` \| `"minimal"` \| `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` \| `"max"` | - | Default reasoning effort level. Tiers in ascending order: `low < medium < high < xhigh < max`. `"none"` and `"minimal"` map to OpenAI Codex effort presets; Claude models normalize them to `"low"`. `"xhigh"` requires Opus 4.8 or Opus 4.7 for Claude. `"max"` requires Fable 5, Sonnet 5, Opus 4.8, Opus 4.7, Opus 4.6, or Sonnet 4.6; it normalizes to `"high"` at runtime on other Claude models. Stored legacy `"ultra"` and `"ultrathink"` values normalize to `"max"`. Haiku 4.5 ignores this setting because the effort parameter is not sent for that model. Ultra and Ultracode are composer orchestration capabilities, not reasoning settings. |
 | `model.defaults.fallbackId` | string | `"claude-sonnet-4-6"` | - | - | Fallback model when the primary is unavailable. Set to `""` to disable fallback. |
 | `model.defaults.contextWindow` | integer | - | > 0, ≤ 2,000,000 | - | Override the context window (tokens) for the default model. When set, takes priority over API-fetched and SDK-reported values. Useful when the SDK reports stale data (e.g. 200K instead of 1M). Omit to use the automatically detected value. Claude only. |
-| `terminal.scrollback` | integer | `250` | >= 0 | - | Number of scrollback lines to retain |
+| `terminal.scrollback` (legacy v0 only) | integer | `1000` | >= 0 | - | Current legacy client setting. Values above 5000 clamp to 5000; `0` means legacy unlimited scrollback. Not part of the v1 shape; migrate into `terminal.behavior.scrollback` and map legacy `0` to `5000`. |
 | `notifications.enabled` | boolean | `true` | - | - | Whether desktop notifications are enabled |
 | `updates.channel` | enum | `"stable"` | `"stable"` \| `"nightly"` | - | Desktop auto-update release line. Stable uses normal GitHub releases; nightly uses the maintainers' prerelease channel when CI publishes it. **Channel switch behavior:** Stable to Nightly, electron-updater checks the latest per-build nightly release and offers it as an available update with `allowPrerelease` enabled. Nightly to Stable, if the running version is newer than the latest stable, the app shows a confirmation dialog. Confirming triggers a one-shot downgrade install. Cancelling leaves you on nightly. Per-build nightly releases are tagged `v<version>-nightly.<YYYYMMDD>.<runNumber>` and marked as GitHub prereleases. The "Latest" badge on the repo always points to the most recent stable. |
 | `updates.autoDownload` | boolean | `true` | - | - | Download updates automatically when available |

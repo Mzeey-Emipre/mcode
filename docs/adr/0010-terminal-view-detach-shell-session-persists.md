@@ -13,8 +13,10 @@ every long-running shell, causing lag on Windows and making multi-thread
 sessions unusable.
 
 The server already had `terminal.reattach` and a replay buffer, but the
-512 KB cap was sized for WebSocket reconnect, not for scrollback. The
-`terminal.scrollback` setting applied only to the client xterm buffer.
+legacy v0 512 KB cap was sized for WebSocket reconnect, not for scrollback.
+The legacy `terminal.scrollback` setting applied only to the client xterm
+buffer. The frozen v1 contract replaces that behavior with a renderer line
+limit and a derived, byte-bounded server replay.
 
 ADR-0002 established discard semantics for browser preview tabs. The terminal
 needed an equivalent split: dispose inactive views, retain one warm view, and
@@ -32,9 +34,11 @@ Split **shell session** (server PTY, long-lived) from **terminal view**
 - **Terminal views** mount for at most one shell at a time. The active shell's
   view stays warm when the Terminal tab or right panel is hidden. Switching
   shells or terminal scopes replaces that view. All other shells run headless.
-- **Scrollback** uses one knob: `terminal.scrollback` drives both server
-  retention (for reattach replay) and the mounted view's buffer. Output
-  beyond the limit is dropped oldest-first.
+- **Scrollback** uses one user knob: the v1 renderer limit is
+  `terminal.behavior.scrollback`, 100..5000 lines with a default of 1000.
+  Legacy `0` migrates to 5000. Server replay derives a separate byte budget
+  with `clamp(scrollback * 512, 65536, 8388608)`, evicts oldest bytes, and
+  reports explicit replay gaps when a requested sequence is missing.
 - **Return to the same shell** reveals the warm view and requests only output
   after its last processed sequence. The view follows new output when the user
   was at the tail, or restores the same retained content when the user was
@@ -54,8 +58,8 @@ Split **shell session** (server PTY, long-lived) from **terminal view**
   and memory grow with open shells.
 - **Dispose views without server scrollback (rejected).** Saves memory but
   loses history on thread switch; unusable for long-running builds.
-- **Separate server scrollback cap (rejected).** Two knobs confuse users;
-  one setting should mean one retention policy.
+- **Separate user-facing server cap (rejected).** Two knobs confuse users;
+  one renderer setting drives the derived server replay budget.
 - **Mount all shells for the active scope (rejected).** Up to four xterm
   instances per thread; still too heavy for the idle-memory target.
 - **Dispose every hidden view (rejected).** Keeps renderer memory lowest, but
@@ -70,8 +74,8 @@ Split **shell session** (server PTY, long-lived) from **terminal view**
 - `TerminalPoolHost`'s many-view pool is replaced by one lazy terminal view.
   The view moves between the visible terminal surface and an offscreen host.
   Background shell tabs stay server-side only.
-- Server replay buffer capacity must derive from `terminal.scrollback`, not
-  the fixed 512 KB default.
+- Server replay capacity derives from the renderer line setting, not the
+  legacy fixed 512 KB cap, and is independent of renderer line eviction.
 - Closing and reopening the terminal surface keeps the active view and viewport
   intact. Shell or scope switches use hidden hydration and restore the saved
   tail or history anchor before reveal.

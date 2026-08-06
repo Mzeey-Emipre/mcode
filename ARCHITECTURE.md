@@ -116,7 +116,7 @@ apps/server/src/
     file-service.ts           File listing (git ls-files), reading
     config-service.ts         Claude config discovery (~/.claude/)
     skill-service.ts          Skill scanning from filesystem
-    terminal-service.ts       PTY management (node-pty)
+    terminal-service.ts       Current legacy v0 PTY management (node-pty)
     attachment-service.ts     Persist/read attachments
   providers/
     provider-registry.ts      Resolves provider by ID, injects all registered providers
@@ -182,7 +182,7 @@ graph TB
         Services["Service Layer<br/>(tsyringe DI)"]
         DB["SQLite<br/>(better-sqlite3)"]
         Providers["Provider Registry<br/>(Claude, future providers)"]
-        PTY["PTY Manager<br/>(node-pty)"]
+        PTY["Current legacy v0 PTY Manager<br/>(node-pty)"]
 
         WS --> Services
         Services --> DB
@@ -385,7 +385,7 @@ Each entity has a dedicated repo class (`WorkspaceRepo`, `ThreadRepo`, `MessageR
 
 ### 6.2 RPC Methods
 
-All params and results are defined as Zod schemas in `packages/contracts/src/ws/methods.ts`. The router validates both directions at runtime.
+All params and results are defined as Zod schemas in `packages/contracts/src/ws/methods.ts`. The router validates both directions at runtime. The terminal rows in this table are the current legacy v0 surface. The frozen rollout will isolate them to Nightly compatibility and later remove them.
 
 | Method | Description |
 |--------|-------------|
@@ -429,22 +429,22 @@ All params and results are defined as Zod schemas in `packages/contracts/src/ws/
 | `pullRequest.merge` | Merge with an expected-head guard and selected merge method |
 | `config.discover` | Discover Claude config for a workspace path |
 | `skill.list` | List available skills |
-| `terminal.create` | Create a PTY for a thread |
-| `terminal.write` | Write data to a PTY |
-| `terminal.resize` | Resize a PTY |
-| `terminal.kill` | Kill a PTY |
-| `terminal.killByThread` | Kill all PTYs for a thread |
+| `terminal.create` | Legacy v0: create a PTY for a thread |
+| `terminal.write` | Legacy v0: write data to a PTY |
+| `terminal.resize` | Legacy v0: resize a PTY |
+| `terminal.kill` | Legacy v0: kill a PTY |
+| `terminal.killByThread` | Legacy v0: kill all PTYs for a thread |
 | `app.version` | Get the server version |
 
 ### 6.3 Push Channels
 
-Push events are broadcast to all connected WebSocket clients. The server validates push data against channel schemas before sending.
+Push events are broadcast to all connected WebSocket clients. The server validates push data against channel schemas before sending. The terminal channels in this table are the current legacy v0 surface. The frozen rollout will isolate them to Nightly compatibility and later remove them.
 
 | Channel | Data | Description |
 |---------|------|-------------|
 | `agent.event` | `AgentEvent` | Agent stream events (message, toolUse, toolResult, turnComplete, error, ended, system) |
-| `terminal.data` | `{ ptyId, data }` | PTY output |
-| `terminal.exit` | `{ ptyId, code }` | PTY exited |
+| `terminal.data` | `{ ptyId, data }` | Legacy v0 PTY output |
+| `terminal.exit` | `{ ptyId, code }` | Legacy v0 PTY exit notification |
 | `thread.status` | `{ threadId, status }` | Thread status changed |
 | `files.changed` | `{ workspaceId, threadId? }` | File list invalidated (after agent turns) |
 | `skills.changed` | `{}` | Skill list invalidated |
@@ -670,7 +670,7 @@ The server handles SIGTERM with a five-step shutdown sequence:
 1. Stop all active agent sessions
 2. Shut down all providers (closes SDK subprocesses)
 3. Mark active threads as "interrupted" in the database
-4. Shut down the terminal service (kills all PTYs)
+4. Shut down the legacy v0 terminal service (kills all PTYs)
 5. Close the database connection
 
 ## 10. Web Transport Layer
@@ -707,8 +707,8 @@ The WebSocket transport includes automatic reconnection:
 | Channel | Handler |
 |---------|---------|
 | `agent.event` | Forwards to `threadStore.handleAgentEvent()` |
-| `terminal.data` | Dispatches `mcode:pty-data` CustomEvent for xterm instances |
-| `terminal.exit` | Dispatches `mcode:pty-exit` CustomEvent, removes terminal after delay |
+| `terminal.data` | Legacy v0: dispatches `mcode:pty-data` CustomEvent for xterm instances |
+| `terminal.exit` | Legacy v0: dispatches `mcode:pty-exit` CustomEvent and removes terminal after delay |
 | `thread.status` | Updates thread status in `workspaceStore` |
 | `files.changed` | Clears the file autocomplete cache for the workspace |
 | `skills.changed` | Reserved for future skill cache invalidation |
@@ -719,6 +719,68 @@ residency owns selected activation, forced refresh, bounded inactive retention,
 pagination cache synchronization, and prefetch routing. `threadStore` projects
 validated AgentEvents into resident Thread records. The server remains the
 durability authority for messages and persisted narrative metadata.
+
+## Terminal v1 target (frozen, implementation pending)
+
+The legacy v0 terminal tree, RPC rows, and push listeners above describe the
+current implementation only. The frozen rollout will isolate them to Nightly
+compatibility and later remove them; they are not the v1 target. The frozen v1
+contract preserves the right-panel product model while replacing the terminal
+seams below.
+
+### Module and interface seams
+
+| Module or interface | Responsibility and boundary |
+| --- | --- |
+| `TerminalSessionService` | Product policy and orchestration: scope, app-wide capacity, profile resolution, backend selection, recovery classification, and shutdown. It does not own session mechanics. |
+| `TerminalSessionRuntime` | Session lifecycle mechanics and state transitions: identity mechanics, sequencing, leases, flow control, replay, checkpoints, hydration, exit barriers, and tombstones. |
+| `PtyHostAdapter` | Private process seam. Native PTY handles never cross the interface or become session identity. `PtyHostSupervisor` runs one supervised Node host per boot. |
+| `LegacyTerminalBackend` / `LegacyTerminalClient` | Isolated v0 adapter for Nightly fallback. Modern callers cannot import v0 RPC or push contracts. |
+| `TerminalRendererController` / `XtermTerminalRenderer` | One mounted renderer controller with strengthened xterm selected for v1. Hydration, replay gaps, acknowledgements, and viewport restoration stay behind this interface. |
+
+### Modern transport and boot selector
+
+V1 management uses strict JSON RPC methods under `ws/terminal.ts`. Binary
+attachment frames carry UUID session and attachment identities with u64
+sequences. The modern selector waits up to five seconds on a monotonic clock
+before any shell exists. While selecting, Terminal reports `Starting` and
+rejects shell creation with `HOST_STARTING`. If modern health fails or the
+deadline expires, the selector fixes the legacy backend for the whole boot,
+shows a persistent `Starting fallback: Copy diagnostics` notice, and retries
+modern selection only on the next launch. No live path switches backend.
+
+### Capacity, lifecycle, and replay
+
+`terminal.behavior.sessionLimit` is one app-wide limit from 1 through 20,
+default 20. It counts `starting`, `running`, and `exiting` sessions plus
+`exited` and `failed` tombstones across all scopes. Natural exit retains the
+Terminal tab, bounded replay tail, checkpoint, final sequence, and exit metadata
+until explicit close or a replacement reaches `running`; the retained tombstone
+continues to use a slot. Renderer scrollback is 100..5000 lines, default 1000,
+with legacy `0` migrating to 5000. Server replay derives a byte budget with
+`clamp(scrollback * 512, 65536, 8388608)` and sends explicit gap descriptors
+when eviction prevents contiguous replay.
+
+### Certified shells and migration seams
+
+The certified shell matrix is exact: Windows PowerShell 5.1, PowerShell 7,
+cmd, Git Bash, and WSL when installed; macOS zsh and bash; Linux bash and zsh.
+Optional workloads skip only when unavailable outside release images. The
+forward-only persistence seams are the `workspace_terminal_preferences` row
+(`workspaceId`, `defaultProfileId`, `updatedAt`; missing row means inherit) and
+the bounded `terminal_cleanup_ledger` that stores logical session ID, host
+generation, root PID, and process-group identity for safe reaping.
+
+### Verification obligations
+
+Contract and boundary checks must cover strict schemas, modern and legacy
+adapter isolation, binary frames, selector fallback, tombstone capacity,
+replay gaps, and migration idempotence. Runtime checks cover the supervised
+PTY host, process containment, certified-shell detection, and cleanup-ledger
+generation checks. Renderer and live checks cover one strengthened xterm,
+hidden hydration, reconnect and gap recovery, right-panel wide and narrow
+postures, the 20-session app-wide limit, exited-tab retention, accessibility,
+and the explicit optional-workload skip rule.
 
 ## 11. Session Lifecycle
 
