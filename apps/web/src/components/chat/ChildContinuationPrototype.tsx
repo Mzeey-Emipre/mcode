@@ -6,7 +6,6 @@ import {
   Check,
   ChevronLeft,
   CircleDot,
-  Eye,
   RotateCcw,
   Sparkles,
   X,
@@ -71,7 +70,7 @@ function RosterRowButton({ row, onSelect }: { row: RosterRow; onSelect: () => vo
       variant="ghost"
       size="sm"
       onClick={onSelect}
-      aria-label={`Open ${row.identity} details, ${row.status === "active" ? "Active" : "Done"}`}
+      aria-label={`Open ${row.identity} details${row.status === "active" ? ", Active" : ""}`}
       data-subagent-id={row.id}
       className="h-auto w-full min-w-0 justify-start gap-2.5 rounded-none px-4 py-2.5 text-left hover:bg-muted/30 focus-visible:ring-inset"
     >
@@ -84,7 +83,7 @@ function RosterRowButton({ row, onSelect }: { row: RosterRow; onSelect: () => vo
       <span className="min-w-0 flex-1">
         <span className="flex min-w-0 items-center gap-2">
           <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{row.identity}</span>
-          <span className="shrink-0 text-xs text-muted-foreground">{row.status === "active" ? "Active" : "Done"}</span>
+          {row.status === "active" && <span className="shrink-0 text-xs text-muted-foreground">Active</span>}
         </span>
         <span className="mt-0.5 block truncate text-xs text-muted-foreground">{row.activity}</span>
       </span>
@@ -185,7 +184,6 @@ function SubagentsRoster({
               title="New child result"
             />
           )}
-          <span className="text-xs text-muted-foreground">{rows.active.length} active · {rows.done.length} done</span>
         </div>
         {onClose && (
           <Button type="button" variant="ghost" size="icon-xs" onClick={onClose} aria-label="Close Subagents panel">
@@ -259,24 +257,6 @@ function NarrativeSubagentRow({ state, onReview }: { state: PrototypeState; onRe
   );
 }
 
-function ChildReturnItem({ onReview }: { onReview: () => void }) {
-  return (
-    <div className="flex items-start gap-3 border-y border-border/50 py-3">
-      <SubagentIdentityGlyph identity="Rollback check" hasExplicitIdentity className="size-5" size={12} />
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-          <p className="text-sm font-medium text-foreground">Rollback check returned</p>
-          <Badge variant="secondary" size="sm">Done</Badge>
-        </div>
-        <p className="mt-1 text-sm leading-6 text-foreground/85">Rollback is safe when the index is absent.</p>
-        <Button type="button" variant="link" size="sm" onClick={onReview} className="mt-1 h-auto p-0 text-xs">
-          <Eye className="size-3.5" aria-hidden /> Review in Subagents
-        </Button>
-      </div>
-    </div>
-  );
-}
-
 function ParentTimeline({ state, onReview }: { state: PrototypeState; onReview: () => void }) {
   return (
     <div className={`${PRIMARY_CONTENT_RAIL_CLASS} max-w-3xl space-y-7 px-4 py-8 sm:px-8`}>
@@ -285,7 +265,6 @@ function ParentTimeline({ state, onReview }: { state: PrototypeState; onReview: 
         I found the migration boundary and asked a child agent to verify the rollback path. I’ll continue once its result arrives.
       </AssistantMessage>
       <NarrativeSubagentRow state={state} onReview={onReview} />
-      {state.childStatus === "returned" && <ChildReturnItem onReview={onReview} />}
       {state.parentStatus === "continuing" && (
         <AssistantMessage
           footer={(
