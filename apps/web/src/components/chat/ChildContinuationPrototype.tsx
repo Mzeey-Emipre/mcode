@@ -5,6 +5,8 @@ import {
   ArrowRight,
   ChevronLeft,
   CircleDot,
+  Maximize2,
+  Minimize2,
   RotateCcw,
   Sparkles,
   X,
@@ -204,7 +206,19 @@ function createToolCalls(isActive: boolean): ToolCall[] {
   ];
 }
 
-function RosterDetail({ row, isActive, onBack }: { row: RosterRow; isActive: boolean; onBack: () => void }) {
+function RosterDetail({
+  row,
+  isActive,
+  expanded,
+  onToggleExpanded,
+  onBack,
+}: {
+  row: RosterRow;
+  isActive: boolean;
+  expanded: boolean;
+  onToggleExpanded: () => void;
+  onBack: () => void;
+}) {
   const taskMessage = createTaskMessage(row);
   const toolCalls = createToolCalls(isActive);
   return (
@@ -216,6 +230,17 @@ function RosterDetail({ row, isActive, onBack }: { row: RosterRow; isActive: boo
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <SubagentIdentityGlyph identity={row.identity} hasExplicitIdentity className="size-6" size={14} />
           <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">{row.identity}</h2>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            onClick={onToggleExpanded}
+            aria-label={expanded ? "Restore panel" : "Maximize panel"}
+            title={expanded ? "Restore panel" : "Maximize panel"}
+            data-testid="prototype-subagents-panel-maximize-toggle"
+          >
+            {expanded ? <Minimize2 aria-hidden /> : <Maximize2 aria-hidden />}
+          </Button>
         </div>
       </header>
       <ScrollArea className="min-h-0 flex-1">
@@ -267,31 +292,54 @@ function rosterRows(state: PrototypeState): { active: RosterRow[]; done: RosterR
   return { active, done };
 }
 
-function SubagentsRoster({
+/** Models the Sub-agents surface hosted in Mcode's right panel for this DEV prototype. */
+function SubagentsRightPanelPrototype({
   state,
   attention,
   selectedId,
   onSelect,
   onClose,
+  expanded,
+  onToggleExpanded,
 }: {
   state: PrototypeState;
   attention: boolean;
   selectedId: string | null;
   onSelect: (row: RosterRow) => void;
   onClose?: () => void;
+  expanded: boolean;
+  onToggleExpanded: () => void;
 }) {
   const rows = rosterRows(state);
   const selectedRow = [...rows.active, ...rows.done].find((row) => row.id === selectedId);
   if (selectedRow) {
     const isActive = selectedRow.lifecycle !== "finished";
-    return <RosterDetail row={selectedRow} isActive={isActive} onBack={() => onSelect({ ...selectedRow, id: "" })} />;
+    return (
+      <section
+        className="flex min-h-0 flex-1 flex-col"
+        aria-label="Sub-agents right panel"
+        data-testid="prototype-subagents-right-panel"
+      >
+        <RosterDetail
+          row={selectedRow}
+          isActive={isActive}
+          expanded={expanded}
+          onToggleExpanded={onToggleExpanded}
+          onBack={() => onSelect({ ...selectedRow, id: "" })}
+        />
+      </section>
+    );
   }
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col" aria-label="Subagents">
+    <section
+      className="flex min-h-0 flex-1 flex-col"
+      aria-label="Sub-agents right panel"
+      data-testid="prototype-subagents-right-panel"
+    >
       <header className="flex shrink-0 items-center gap-2 border-b border-border/50 px-4 py-3">
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          <h2 className="text-sm font-semibold text-foreground">Subagents</h2>
+          <h2 className="text-sm font-semibold text-foreground">Sub-agents</h2>
           {attention && (
             <span
               className="size-1.5 rounded-full bg-primary"
@@ -300,6 +348,17 @@ function SubagentsRoster({
             />
           )}
         </div>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          onClick={onToggleExpanded}
+          aria-label={expanded ? "Restore panel" : "Maximize panel"}
+          title={expanded ? "Restore panel" : "Maximize panel"}
+          data-testid="prototype-subagents-panel-maximize-toggle"
+        >
+          {expanded ? <Minimize2 aria-hidden /> : <Maximize2 aria-hidden />}
+        </Button>
         {onClose && (
           <Button type="button" variant="ghost" size="icon-xs" onClick={onClose} aria-label="Close Subagents panel">
             <X className="size-3.5" aria-hidden />
@@ -517,6 +576,7 @@ export function ChildContinuationPrototype() {
   const [showNewMessages, setShowNewMessages] = useState(false);
   const [selectedChild, setSelectedChild] = useState<RosterRow | null>(null);
   const [floatingRosterOpen, setFloatingRosterOpen] = useState(true);
+  const [subagentsPanelExpanded, setSubagentsPanelExpanded] = useState(false);
   const scrollViewportRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef(state);
 
@@ -622,16 +682,19 @@ export function ChildContinuationPrototype() {
     setShowNewMessages(false);
     setSelectedChild(null);
     setFloatingRosterOpen(true);
+    setSubagentsPanelExpanded(false);
     window.setTimeout(scrollToTail, 0);
   }, [scrollToTail]);
 
   const roster = (
-    <SubagentsRoster
+    <SubagentsRightPanelPrototype
       state={state}
       attention={variant === "B" && state.lastChildTransition === "finished" && state.readingPosition === "above" && showNewMessages}
       selectedId={selectedChild?.id ?? null}
       onSelect={(row) => setSelectedChild(row.id ? row : null)}
       onClose={variant === "C" ? () => setFloatingRosterOpen(false) : undefined}
+      expanded={subagentsPanelExpanded}
+      onToggleExpanded={() => setSubagentsPanelExpanded((current) => !current)}
     />
   );
 
@@ -655,7 +718,11 @@ export function ChildContinuationPrototype() {
 
         {variant === "C" ? (
           floatingRosterOpen ? (
-            <aside className="absolute inset-y-3 right-3 z-20 flex w-[18rem] min-h-0 flex-col border border-border/70 bg-background/95 backdrop-blur-sm" aria-label="Floating Subagents panel">
+            <aside
+              className="absolute inset-y-3 right-3 z-20 flex min-h-0 max-w-[calc(100%-1rem)] flex-col border border-border/70 bg-background/95 backdrop-blur-sm"
+              style={{ width: subagentsPanelExpanded ? "min(36rem, calc(100% - 1rem))" : "18rem" }}
+              aria-label="Floating Sub-agents right panel"
+            >
               {roster}
             </aside>
           ) : (
@@ -671,7 +738,11 @@ export function ChildContinuationPrototype() {
             </Button>
           )
         ) : (
-          <aside className="flex w-[18rem] min-h-0 shrink-0 flex-col border-l border-border/60 bg-background" aria-label={`${VARIANT_NAMES[variant]} Subagents panel`}>
+          <aside
+            className="flex min-h-0 max-w-[calc(100%-1rem)] shrink-0 flex-col border-l border-border/60 bg-background"
+            style={{ width: subagentsPanelExpanded ? "min(36rem, calc(100% - 1rem))" : "18rem" }}
+            aria-label={`${VARIANT_NAMES[variant]} Sub-agents right panel`}
+          >
             {roster}
           </aside>
         )}
