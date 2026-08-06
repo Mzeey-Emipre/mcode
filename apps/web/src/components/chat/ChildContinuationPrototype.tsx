@@ -332,13 +332,14 @@ export function ChildContinuationPrototype() {
 
   const updateState = useCallback((label: string, patch: Partial<PrototypeState>) => {
     const wasAbove = stateRef.current.readingPosition === "above";
+    const shouldAutoScroll = variant !== "B" && !wasAbove;
     setState((current) => ({
       ...current,
       ...patch,
       eventLog: [...current.eventLog, label],
     }));
     if (wasAbove) setShowNewMessages(true);
-    else if (variant !== "B") setTimeout(scrollToTail, 0);
+    else if (shouldAutoScroll) setTimeout(scrollToTail, 0);
   }, [scrollToTail, variant]);
 
   const reviewChild = useCallback(() => {
