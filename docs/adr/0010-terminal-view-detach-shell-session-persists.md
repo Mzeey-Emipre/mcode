@@ -36,7 +36,8 @@ Split **shell session** (server PTY, long-lived) from **terminal view**
   shells or terminal scopes replaces that view. All other shells run headless.
 - **Scrollback** uses one user knob: the v1 renderer limit is
   `terminal.behavior.scrollback`, 100..5000 lines with a default of 1000.
-  Legacy `0` migrates to 5000. Server replay derives a separate byte budget
+  Legacy migration maps `0` to 5000, `1..99` to 100, leaves `100..5000`
+  unchanged, and maps values above 5000 to 5000. Server replay derives a separate byte budget
   with `clamp(scrollback * 512, 65536, 8388608)`, evicts oldest bytes, and
   reports explicit replay gaps when a requested sequence is missing.
 - **Return to the same shell** reveals the warm view and requests only output

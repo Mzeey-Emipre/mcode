@@ -23,6 +23,14 @@ The Terminal v1 persistence contract is forward-only. This section describes
 the migration boundary; it does not add SQL or claim that the current runtime
 has applied it.
 
+### Legacy Terminal scrollback mapping
+
+The forward-only settings migration projects the legacy flat
+`terminal.scrollback` value into `terminal.behavior.scrollback` with one exact
+mapping: `0` becomes `5000`; `1..99` becomes `100`; `100..5000` is unchanged;
+and values above `5000` become `5000`. The v1 setting remains bounded to
+100..5000 lines.
+
 ### `workspace_terminal_preferences`
 
 The migration adds one workspace preference row keyed by `workspaceId`. A row

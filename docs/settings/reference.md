@@ -45,7 +45,8 @@ row identified in the table below.
 `fontSize` is `xs|sm|md|lg|xl`; `lineHeight` is `compact|normal|relaxed`;
 `cursorStyle` is `block|underline|bar`; `screenReaderMode` is `off|auto|on`;
 and `confirmOnKill` is `never|withChildProcesses|always`. `scrollback` is
-100..5000 lines with default 1000. Legacy scrollback `0` migrates to 5000.
+100..5000 lines with default 1000. Legacy migration maps `0` to 5000, `1..99`
+to 100, leaves `100..5000` unchanged, and maps values above 5000 to 5000.
 `sessionLimit` is app-wide, 1..20, with default 20. Flow-control values are
 fixed operational values and are not normal settings controls.
 
@@ -72,7 +73,7 @@ The frozen workspace preference row stores `workspaceId`,
 | `model.defaults.reasoning` | enum | `"high"` | `"none"` \| `"minimal"` \| `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` \| `"max"` | - | Default reasoning effort level. Tiers in ascending order: `low < medium < high < xhigh < max`. `"none"` and `"minimal"` map to OpenAI Codex effort presets; Claude models normalize them to `"low"`. `"xhigh"` requires Opus 4.8 or Opus 4.7 for Claude. `"max"` requires Fable 5, Sonnet 5, Opus 4.8, Opus 4.7, Opus 4.6, or Sonnet 4.6; it normalizes to `"high"` at runtime on other Claude models. Stored legacy `"ultra"` and `"ultrathink"` values normalize to `"max"`. Haiku 4.5 ignores this setting because the effort parameter is not sent for that model. Ultra and Ultracode are composer orchestration capabilities, not reasoning settings. |
 | `model.defaults.fallbackId` | string | `"claude-sonnet-4-6"` | - | - | Fallback model when the primary is unavailable. Set to `""` to disable fallback. |
 | `model.defaults.contextWindow` | integer | - | > 0, ≤ 2,000,000 | - | Override the context window (tokens) for the default model. When set, takes priority over API-fetched and SDK-reported values. Useful when the SDK reports stale data (e.g. 200K instead of 1M). Omit to use the automatically detected value. Claude only. |
-| `terminal.scrollback` (legacy v0 only) | integer | `1000` | >= 0 | - | Current legacy client setting. Values above 5000 clamp to 5000; `0` means legacy unlimited scrollback. Not part of the v1 shape; migrate into `terminal.behavior.scrollback` and map legacy `0` to `5000`. |
+| `terminal.scrollback` (legacy v0 only) | integer | `1000` | >= 0 | - | Current legacy client setting. Migration maps `0` to `5000`, `1..99` to `100`, leaves `100..5000` unchanged, and maps values above `5000` to `5000`. Not part of the v1 shape; migrate into `terminal.behavior.scrollback`. |
 | `notifications.enabled` | boolean | `true` | - | - | Whether desktop notifications are enabled |
 | `updates.channel` | enum | `"stable"` | `"stable"` \| `"nightly"` | - | Desktop auto-update release line. Stable uses normal GitHub releases; nightly uses the maintainers' prerelease channel when CI publishes it. **Channel switch behavior:** Stable to Nightly, electron-updater checks the latest per-build nightly release and offers it as an available update with `allowPrerelease` enabled. Nightly to Stable, if the running version is newer than the latest stable, the app shows a confirmation dialog. Confirming triggers a one-shot downgrade install. Cancelling leaves you on nightly. Per-build nightly releases are tagged `v<version>-nightly.<YYYYMMDD>.<runNumber>` and marked as GitHub prereleases. The "Latest" badge on the repo always points to the most recent stable. |
 | `updates.autoDownload` | boolean | `true` | - | - | Download updates automatically when available |

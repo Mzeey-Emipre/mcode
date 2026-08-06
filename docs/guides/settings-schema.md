@@ -198,7 +198,7 @@ deepest settings. The target document is versioned and nested as follows:
       "ligatures": false
     },
     "behavior": {
-      "scrollback": 1000,              // 100..5000; legacy 0 -> 5000
+      "scrollback": 1000,              // 100..5000; legacy 0 -> 5000, 1..99 -> 100, >5000 -> 5000
       "sessionLimit": 20,              // 1..20, app-wide
       "confirmOnKill": "withChildProcesses", // never | withChildProcesses | always
       "copyOnSelect": false,
@@ -227,8 +227,9 @@ and 8 KiB total.
 
 Migration to schema version `0.0.1` is forward-only and preserves the source
 settings before writing the target. A legacy flat `terminal.scrollback` value
-projects to `terminal.behavior.scrollback`; legacy `0` becomes `5000`, while
-other values must satisfy 100..5000. Re-running migration is idempotent.
+projects to `terminal.behavior.scrollback` with this exact mapping: `0` becomes
+`5000`; `1..99` becomes `100`; `100..5000` is unchanged; and values above
+`5000` become `5000`. Re-running migration is idempotent.
 Malformed input fails closed without replacing the source, future schema
 versions are not downgraded, and writes remain atomic. Reset restores the
 default selection, presentation, behavior, and accessibility while preserving

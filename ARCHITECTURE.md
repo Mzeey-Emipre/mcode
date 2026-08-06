@@ -756,8 +756,9 @@ default 20. It counts `starting`, `running`, and `exiting` sessions plus
 `exited` and `failed` tombstones across all scopes. Natural exit retains the
 Terminal tab, bounded replay tail, checkpoint, final sequence, and exit metadata
 until explicit close or a replacement reaches `running`; the retained tombstone
-continues to use a slot. Renderer scrollback is 100..5000 lines, default 1000,
-with legacy `0` migrating to 5000. Server replay derives a byte budget with
+continues to use a slot. Renderer scrollback is 100..5000 lines, default 1000.
+Legacy migration maps `0` to 5000, `1..99` to 100, leaves `100..5000`
+unchanged, and maps values above 5000 to 5000. Server replay derives a byte budget with
 `clamp(scrollback * 512, 65536, 8388608)` and sends explicit gap descriptors
 when eviction prevents contiguous replay.
 

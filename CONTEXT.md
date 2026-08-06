@@ -874,8 +874,9 @@ _Avoid_: xterm (implementation term), conflating with shell session.
 
 ### Scrollback
 How many lines of shell output the mounted terminal view retains. The v1
-renderer line limit is 100..5000, defaults to 1000, and maps legacy `0` to
-5000. Server replay is a separate derived byte budget:
+renderer line limit is 100..5000, defaults to 1000. Legacy migration maps `0`
+to 5000, `1..99` to 100, leaves `100..5000` unchanged, and maps values above
+5000 to 5000. Server replay is a separate derived byte budget:
 `clamp(scrollback * 512, 65536, 8388608)`. Replay eviction reports explicit
 gaps when the requested sequence is no longer retained; it does not pretend
 that missing bytes exist.
