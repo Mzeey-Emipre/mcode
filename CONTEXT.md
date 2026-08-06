@@ -255,14 +255,15 @@ elsewhere."
 
 ### Turn
 One round of agent execution within a thread, bounded by a `TurnStarted`
-event and a `TurnComplete` event. A turn always begins with one user
-message; the agent then does whatever work it needs (streaming thoughts,
-calling tools, reading files, dispatching sub-agents) before producing its
-final response. Everything from the user message to the final agent
-response is the **same turn**, no matter how many intermediate steps
-occurred. Costs, token counts, and tool-call sequences are attributed
-per-turn, and several pieces of client-side state are scoped to the current
-turn.
+event and a `TurnCompleted` event. A turn may be triggered by a user, provider,
+or child and records its trigger provenance; provider- and child-triggered
+turns do not require a user message. The agent then does whatever work it
+needs (streaming thoughts, calling tools, reading files, dispatching
+sub-agents) before producing its final response. Everything from the trigger
+to the final agent response is the **same turn**, no matter how many
+intermediate steps occurred. Costs, token counts, and tool-call sequences are
+attributed per-turn, and several pieces of client-side state are scoped to the
+current turn.
 
 ### Tool call
 A single tool invocation the agent makes during a turn (e.g. `Read`,
@@ -272,24 +273,30 @@ Multiple tool calls can run in parallel within the same turn. All
 user-visible tool calls are domain tool calls; internal SDK plumbing is
 not.
 
-### Sub-agent
-A tool call of a special kind: the agent dispatching another agent to do a
-focused task and report back. Sub-agents may run in parallel and may
-themselves dispatch further sub-agents (nested). Each sub-agent's events
-are attributed to its parent via `parentToolCallId` so the narrative
-timeline can nest them correctly.
+### Sub-agent thread
+A provider-native child conversation created from the current turn and
+persisted as a normal Mcode thread. Sub-agent threads may run in parallel and
+may themselves dispatch further sub-agents (nested). A sub-agent thread is
+distinct from a [[Delegated thread]] created through [[Thread control]].
+
+### Sub-agent call
+The parent-turn tool or action that creates or contacts a [[Sub-agent thread]].
+It remains part of the parent Turn. Each sub-agent call's events are attributed
+to its parent via `parentToolCallId` so the narrative timeline can nest them
+correctly. The phrase “use a sub-agent” means this provider-native behavior;
+it never authorizes [[Thread control]].
 
 Sub-agent calls are **always shown** in the user's timeline; the user
 should be able to tell when the agent has handed work to a sub-agent. From
-the user's point of view, a sub-agent is still part of the same turn as
+the user's point of view, a sub-agent call is still part of the same turn as
 the parent.
 
-A sub-agent counts as **running until its work finishes**, regardless of
+A sub-agent call counts as **running until its work finishes**, regardless of
 how the provider signals dispatch. Some providers (Codex `spawnAgent`)
-report the dispatch call itself as complete the moment the child is
-created; the timeline must not show the sub-agent as done until the child
-actually reports back. The sub-agent's own narration is not streamed to
-the timeline; only its nested tool calls and its final result are shown.
+report the dispatch call itself as complete the moment the child is created;
+the timeline must not show the sub-agent as done until the child actually
+reports back. The sub-agent thread's own narration is not streamed into the
+parent timeline; child detail separately shows its full timeline.
 
 ### Coordinator thread
 A thread that assigns work to one or more delegated threads and monitors their
@@ -299,7 +306,7 @@ _Avoid_: Parent agent, orchestrator session
 ### Delegated thread
 A normal Mcode thread created by a coordinator thread to perform an explicit
 assignment. It remains visible and controllable as its own thread.
-_Avoid_: Sub-agent, hidden child session
+_Avoid_: Sub-agent thread, hidden child session
 
 ### Thread delegation
 The durable assignment and relationship between a coordinator thread and a
