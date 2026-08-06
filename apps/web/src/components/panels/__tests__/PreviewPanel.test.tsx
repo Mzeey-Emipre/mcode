@@ -808,6 +808,26 @@ describe("PreviewPanel: full panel state", () => {
     );
   });
 
+  it("clips only the floating rail overlap from the renderer webview", () => {
+    useSettingsStore.getState()._applyPush({
+      ...getDefaultSettings(),
+      preview: {
+        ...getDefaultSettings().preview,
+        rendering: { engine: "webview" },
+      },
+    });
+    mockUsePreviewBridge.mockReturnValue(
+      mockBridgeState({ storedUrl: "https://example.com" }),
+    );
+
+    render(<PreviewPanel threadId="thread-1" rendererOccludedLeft={112} />);
+
+    expect(screen.getByTestId("preview-webview-surface")).toHaveStyle({
+      clipPath: "inset(0px 0px 0px 112px)",
+    });
+    expect(screen.getByTestId("preview-webview")).not.toHaveClass("pointer-events-none");
+  });
+
   it("keeps an about:blank live tab stable while the persisted URL is empty", async () => {
     useSettingsStore.getState()._applyPush({
       ...getDefaultSettings(),

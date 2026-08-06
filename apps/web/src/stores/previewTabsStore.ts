@@ -344,13 +344,13 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
       return;
     }
     if (isLast) {
-      clearLastScopeState();
-      opts?.onLastClose?.();
       const r = tabs.closeScope
         ? await tabs.closeScope(scopeId)
         : await tabs.close(scopeId, tabId);
       if (!r.ok) return;
+      clearLastScopeState();
       useBrowserAutomationStore.getState().releaseThreadTargets(scopeId);
+      opts?.onLastClose?.();
       return;
     }
     get().setLiveChrome(scopeId, null);

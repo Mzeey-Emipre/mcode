@@ -830,6 +830,165 @@ describe("BrowserAutomationBroker", () => {
     await expect(navigated).resolves.toMatchObject({ ok: true });
   });
 
+  it("allows one retry for a failed navigation and rejects further attempts", async () => {
+    const deliveries: Array<{ dispatch: any }> = [];
+    const broker = new BrowserAutomationBroker(options({
+      now: () => 10,
+      send: (_socket, channel, data) => {
+        if (channel === "browserAutomation.request") deliveries.push(data as { dispatch: any });
+        return true;
+      },
+    }));
+    const hostSocket = socket("navigation-retry-budget");
+    const generation = broker.registerHost(hostSocket, {
+      ...registration("navigation-retry-budget", "workspace-a"),
+      capabilities: [{ operation: "navigate", available: true }],
+    }, authorization("navigation-retry-budget")).generation;
+    updateTargets(broker, hostSocket, "navigation-retry-budget", generation, ["thread-a"]);
+    const scope = {
+      ...claims("thread-a", "workspace-a"),
+      allowedOperations: ["navigate" as const],
+    };
+    const navigate = (sequence: number) => broker.execute(scope, {
+      ...request(scope, sequence),
+      operation: "navigate",
+      args: { url: "https://example.test/challenge" },
+    });
+    const failLatest = (): void => {
+      const delivery = deliveries.at(-1)!.dispatch;
+      broker.respond(hostSocket, "navigation-retry-budget", generation, {
+        contractVersion: 1,
+        requestId: delivery.request.requestId,
+        sequence: delivery.request.sequence,
+        ok: false,
+        error: {
+          code: "NAVIGATION_FAILED",
+          message: "Browser navigation failed",
+          retryable: true,
+          stage: "effect",
+          effect: "none",
+          recovery: "retry",
+        },
+      });
+    };
+
+    const first = navigate(1);
+    failLatest();
+    await expect(first).resolves.toMatchObject({
+      ok: false,
+      error: { code: "NAVIGATION_FAILED", retryable: true, recovery: "retry" },
+    });
+
+    const retry = navigate(2);
+    failLatest();
+    await expect(retry).resolves.toMatchObject({
+      ok: false,
+      error: { code: "NAVIGATION_FAILED", retryable: false, recovery: "do_not_retry" },
+    });
+
+    await expect(navigate(3)).resolves.toMatchObject({
+      ok: false,
+      error: { code: "NAVIGATION_FAILED", retryable: false, recovery: "do_not_retry" },
+    });
+    expect(deliveries).toHaveLength(2);
+  });
+
+  it("does not direct navigation retries after the browser host disconnects", async () => {
+    const broker = new BrowserAutomationBroker(options({ now: () => 10 }));
+    const hostSocket = socket("navigation-host-loss");
+    const generation = broker.registerHost(hostSocket, {
+      ...registration("navigation-host-loss", "workspace-a"),
+      capabilities: [{ operation: "navigate", available: true }],
+    }, authorization("navigation-host-loss")).generation;
+    updateTargets(broker, hostSocket, "navigation-host-loss", generation, ["thread-a"]);
+    const scope = {
+      ...claims("thread-a", "workspace-a"),
+      allowedOperations: ["navigate" as const],
+    };
+    const pending = broker.execute(scope, {
+      ...request(scope),
+      operation: "navigate",
+      args: { url: "https://example.test/challenge" },
+    });
+
+    broker.disconnect(hostSocket);
+
+    await expect(pending).resolves.toMatchObject({
+      ok: false,
+      error: { code: "HOST_UNAVAILABLE", recovery: "wait" },
+    });
+  });
+
+  it("resets the navigation retry budget after a successful load", async () => {
+    const deliveries: Array<{ dispatch: any }> = [];
+    const broker = new BrowserAutomationBroker(options({
+      now: () => 10,
+      send: (_socket, channel, data) => {
+        if (channel === "browserAutomation.request") deliveries.push(data as { dispatch: any });
+        return true;
+      },
+    }));
+    const hostSocket = socket("navigation-retry-reset");
+    const generation = broker.registerHost(hostSocket, {
+      ...registration("navigation-retry-reset", "workspace-a"),
+      capabilities: [{ operation: "navigate", available: true }],
+    }, authorization("navigation-retry-reset")).generation;
+    updateTargets(broker, hostSocket, "navigation-retry-reset", generation, ["thread-a"]);
+    const scope = {
+      ...claims("thread-a", "workspace-a"),
+      allowedOperations: ["navigate" as const],
+    };
+    const navigate = (sequence: number) => broker.execute(scope, {
+      ...request(scope, sequence),
+      operation: "navigate",
+      args: { url: "https://example.test/recovered" },
+    });
+
+    const first = navigate(1);
+    const firstDelivery = deliveries.at(-1)!.dispatch;
+    broker.respond(hostSocket, "navigation-retry-reset", generation, {
+      contractVersion: 1,
+      requestId: firstDelivery.request.requestId,
+      sequence: firstDelivery.request.sequence,
+      ok: false,
+      error: { code: "NAVIGATION_FAILED", message: "failed", retryable: true },
+    });
+    await expect(first).resolves.toMatchObject({ ok: false });
+
+    const recovered = navigate(2);
+    const recoveredDelivery = deliveries.at(-1)!.dispatch;
+    broker.respond(hostSocket, "navigation-retry-reset", generation, {
+      contractVersion: 1,
+      requestId: recoveredDelivery.request.requestId,
+      sequence: recoveredDelivery.request.sequence,
+      ok: true,
+      result: {
+        operation: "navigate",
+        url: "https://example.test/recovered",
+        title: "Recovered",
+        controlEpoch: 0,
+      },
+    });
+    await expect(recovered).resolves.toMatchObject({ ok: true });
+
+    const afterSuccess = navigate(3);
+    expect(deliveries).toHaveLength(3);
+    const finalDelivery = deliveries.at(-1)!.dispatch;
+    broker.respond(hostSocket, "navigation-retry-reset", generation, {
+      contractVersion: 1,
+      requestId: finalDelivery.request.requestId,
+      sequence: finalDelivery.request.sequence,
+      ok: true,
+      result: {
+        operation: "navigate",
+        url: "https://example.test/recovered",
+        title: "Recovered again",
+        controlEpoch: 0,
+      },
+    });
+    await expect(afterSuccess).resolves.toMatchObject({ ok: true });
+  });
+
   it("settles non-open work when an assigned target advances generations", async () => {
     let delivery: any;
     const broker = new BrowserAutomationBroker(options({

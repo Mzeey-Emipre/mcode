@@ -125,6 +125,10 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
     forwardedRef,
   ) {
   const ref = useRef<PreviewElement | null>(null);
+  const onPageStatusRef = useRef(onPageStatus);
+  const onNavigationStateChangeRef = useRef(onNavigationStateChange);
+  onPageStatusRef.current = onPageStatus;
+  onNavigationStateChangeRef.current = onNavigationStateChange;
   const domReadyRef = useRef(false);
   const pendingReloadRef = useRef(false);
   const faviconRef = useRef<string | null>(null);
@@ -213,28 +217,28 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
   const emitNavigationState = useCallback(() => {
     const el = ref.current;
     if (!domReadyRef.current || !el) {
-      onNavigationStateChange?.({ canGoBack: false, canGoForward: false });
+      onNavigationStateChangeRef.current?.({ canGoBack: false, canGoForward: false });
       return;
     }
     if (isIframeElement(el)) {
-      onNavigationStateChange?.({ canGoBack: false, canGoForward: false });
+      onNavigationStateChangeRef.current?.({ canGoBack: false, canGoForward: false });
       return;
     }
-    onNavigationStateChange?.({
+    onNavigationStateChangeRef.current?.({
       canGoBack: !!el.canGoBack?.(),
       canGoForward: !!el.canGoForward?.(),
     });
-  }, [onNavigationStateChange]);
+  }, []);
 
   const emitStatus = useCallback((phase: PreviewPageStatus["phase"]) => {
-    onPageStatus?.({
+    onPageStatusRef.current?.({
       url: readUrl(),
       title: readTitle(),
       favicon: faviconRef.current,
       phase,
     });
     emitNavigationState();
-  }, [emitNavigationState, onPageStatus, readTitle, readUrl]);
+  }, [emitNavigationState, readTitle, readUrl]);
 
   useImperativeHandle(
     forwardedRef,
@@ -244,13 +248,13 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
         if (!el) return;
         if (isIframeElement(el)) {
           el.src = url;
-          onPageStatus?.({ url, title: null, favicon: null, phase: "loading" });
+          onPageStatusRef.current?.({ url, title: null, favicon: null, phase: "loading" });
           return;
         }
         if (el.loadURL) {
           void el.loadURL(url).catch((error: unknown) => {
             if (isExpectedNavigationAbort(error)) return;
-            onPageStatus?.({
+            onPageStatusRef.current?.({
               url: realUrl(url),
               title: null,
               favicon: null,
@@ -321,7 +325,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
         return (await Promise.resolve(el.getZoomFactor?.())) ?? factor;
       },
     }),
-    [emitNavigationState, onPageStatus, readUrl],
+    [emitNavigationState, readUrl],
   );
 
   useEffect(() => {
@@ -405,7 +409,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
     };
     const onStop = () => emitStatus("loaded");
     const onNavigate = (ev: WebviewEvent) => {
-      onPageStatus?.({
+      onPageStatusRef.current?.({
         url: realUrl(ev.url) ?? readUrl(),
         title: readTitle(),
         favicon: faviconRef.current,
@@ -414,7 +418,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       emitNavigationState();
     };
     const onTitle = (ev: WebviewEvent) => {
-      onPageStatus?.({
+      onPageStatusRef.current?.({
         url: readUrl(),
         title: ev.title && ev.title.trim().length > 0 ? ev.title : readTitle(),
         favicon: faviconRef.current,
@@ -428,7 +432,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
     };
     const onFail = (ev: WebviewEvent) => {
       if (ev.errorCode === -3) return;
-      onPageStatus?.({
+      onPageStatusRef.current?.({
         url: realUrl(ev.validatedURL) ?? readUrl(),
         title: null,
         favicon: null,
@@ -469,7 +473,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       el.removeEventListener("did-fail-load", onFail);
       el.removeEventListener("ipc-message", onIpcMessage);
     };
-  }, [emitNavigationState, emitStatus, ensureViewportCoordinator, onPageStatus, readTitle, readUrl, tabId, threadId]);
+  }, [emitNavigationState, emitStatus, ensureViewportCoordinator, readTitle, readUrl, tabId, threadId]);
 
   // Use createElement via React JSX since <webview> is a custom Chromium
   // element; React 19 will pass unknown attributes through unchanged.

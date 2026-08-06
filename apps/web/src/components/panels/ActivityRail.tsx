@@ -56,6 +56,9 @@ const RAIL_EXPAND_DELAY_MS = 140;
 /** Grace period that keeps the rail open while the pointer moves between rows. */
 const RAIL_COLLAPSE_DELAY_MS = 250;
 
+/** Width that the expanded rail floats over Browser content beyond its collapsed footprint. */
+export const ACTIVITY_RAIL_FLOATING_OVERLAP_PX = 112;
+
 /** Shared trailing anchor for expanded-rail actions. */
 const RAIL_TRAILING_CONTROL_CLASS = "absolute right-0 top-0";
 /** Pointer and keyboard reorder boundary for one top-level rail instance. */
@@ -631,6 +634,7 @@ export function ActivityRail({
   terminalLabels,
   onSelectBrowserPage,
   onCloseBrowserPage,
+  onExpandedChange,
 }: {
   readonly tabInstances: readonly RightPanelTabInstance[];
   readonly activeTabId: string | null;
@@ -654,6 +658,8 @@ export function ActivityRail({
   readonly terminalLabels?: Readonly<Record<string, string>>;
   onSelectBrowserPage: (instanceId: string, pageId: string) => void;
   onCloseBrowserPage: (pageId: string) => void;
+  /** Publishes the floating state so renderer guests can yield the overlap region. */
+  readonly onExpandedChange?: (expanded: boolean) => void;
 }) {
   const openTabs = tabInstances.map((instance) => instance.type);
   const [expanded, setExpanded] = useState(false);
@@ -702,6 +708,10 @@ export function ActivityRail({
     incrementPreviewSuppression();
     return () => decrementPreviewSuppression();
   }, [decrementPreviewSuppression, expanded, incrementPreviewSuppression]);
+
+  useEffect(() => {
+    onExpandedChange?.(expanded);
+  }, [expanded, onExpandedChange]);
 
   useEffect(
     () => () => {

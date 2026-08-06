@@ -92,6 +92,25 @@ describe("ActivityRail expansion", () => {
     expect(rail).toHaveAttribute("data-expanded", "false");
   });
 
+  it("publishes expansion changes so renderer guests can yield the floating overlap", () => {
+    const onExpandedChange = vi.fn();
+    render(
+      <ActivityRail
+        {...railElement().props}
+        onExpandedChange={onExpandedChange}
+      />,
+    );
+    const rail = screen.getByTestId("activity-rail");
+
+    fireEvent.pointerEnter(rail, { pointerType: "mouse" });
+    act(() => vi.advanceTimersByTime(EXPECTED_EXPAND_DELAY_MS));
+    expect(onExpandedChange).toHaveBeenLastCalledWith(true);
+
+    fireEvent.pointerLeave(rail, { pointerType: "mouse" });
+    act(() => vi.advanceTimersByTime(EXPECTED_COLLAPSE_DELAY_MS));
+    expect(onExpandedChange).toHaveBeenLastCalledWith(false);
+  });
+
   it("keeps a fixed collapsed footprint above right-panel content", () => {
     renderRail();
     const rail = screen.getByTestId("activity-rail");

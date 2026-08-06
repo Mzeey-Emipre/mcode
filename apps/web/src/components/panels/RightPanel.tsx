@@ -14,7 +14,11 @@ import {
 } from "@/stores/diffStore";
 import { PlanPanel } from "./plan";
 import { PanelEmptyState } from "./PanelEmptyState";
-import { ActivityRail, type ScopeProgress } from "./ActivityRail";
+import {
+  ACTIVITY_RAIL_FLOATING_OVERLAP_PX,
+  ActivityRail,
+  type ScopeProgress,
+} from "./ActivityRail";
 import type { PanelScope } from "@/lib/panel-tabs";
 import { DiffPanel } from "@/components/diff";
 import { PreviewPanel } from "@/components/panels/PreviewPanel";
@@ -168,6 +172,7 @@ export function RightPanel() {
     [activeBrowserRequests],
   );
   const [warmPreviewScopes, setWarmPreviewScopes] = useState<readonly WarmPreviewScope[]>([]);
+  const [activityRailExpanded, setActivityRailExpanded] = useState(false);
   const terminalsByScope = useTerminalStore((s) => s.terminals);
   const scopeTerminals = panelScopeId
     ? (terminalsByScope[panelScopeId] ?? EMPTY_SCOPE_TERMINALS)
@@ -194,7 +199,8 @@ export function RightPanel() {
   // active. Null in web builds with no bridge, where the rail keeps the single
   // Browser glyph.
   const browserTabSet = usePreviewTabSet(panelScopeId);
-  const activeAgentBrowserPageId = useMemo(() => {
+  const requestedAgentPageActivationRef = useRef<string | null>(null);
+  const agentBrowserPage = useMemo(() => {
     if (!activeWorkspaceId || !panelScopeId || !browserTabSet) return null;
     let pendingPage: { readonly tabId: string; readonly startedAt: number } | null = null;
     for (const pending of pendingAgentOpens.values()) {
@@ -204,7 +210,7 @@ export function RightPanel() {
         pendingPage = { tabId: pending.tabId, startedAt: pending.startedAt };
       }
     }
-    if (pendingPage) return pendingPage.tabId;
+    if (pendingPage) return { tabId: pendingPage.tabId, presenting: true };
 
     let selected: { readonly tabId: string; readonly startedAt: number } | null = null;
     for (const { dispatch, startedAt } of activeBrowserRequests.values()) {
@@ -214,7 +220,7 @@ export function RightPanel() {
         selected = { tabId: dispatch.target.tabId, startedAt };
       }
     }
-    if (selected) return selected.tabId;
+    if (selected) return { tabId: selected.tabId, presenting: true };
 
     let ownedPage: { readonly tabId: string; readonly lastUsedAt: number } | null = null;
     for (const lifecycle of browserLifecycleTabs.values()) {
@@ -233,7 +239,7 @@ export function RightPanel() {
         ownedPage = { tabId: lifecycle.tabId, lastUsedAt };
       }
     }
-    return ownedPage?.tabId ?? null;
+    return ownedPage ? { tabId: ownedPage.tabId, presenting: false } : null;
   }, [
     activeBrowserRequests,
     activeWorkspaceId,
@@ -246,18 +252,21 @@ export function RightPanel() {
 
   // Keep idle Browser pages background-only when the panel has no retained
   // tab. An explicit retained Preview tab is restored, while an empty panel
-  // projects only the page currently controlled by an agent.
+  // projects the latest agent-owned page. A live agent request takes over an
+  // already-visible panel without discarding its other retained tools.
+  const activeAgentBrowserPageId = agentBrowserPage?.tabId ?? null;
   const previewIsOnlyOpenTab =
     tabInstances.length === 1 && tabInstances[0]?.type === "preview";
   const shouldRevealAgentPage =
-    openTabs.length === 0 && activeAgentBrowserPageId !== null;
+    activeAgentBrowserPageId !== null &&
+    (openTabs.length === 0 || (panelVisible && agentBrowserPage?.presenting === true));
   const shouldRestorePreviewTab = previewIsOnlyOpenTab && activeTab !== "preview";
   const revealExistingPreview =
     panelVisible &&
     (shouldRevealAgentPage || shouldRestorePreviewTab) &&
     (browserTabSet?.tabs.length ?? 0) > 0;
-  const renderedTabInstances = revealExistingPreview
-    ? [{ id: "singleton:preview", type: "preview" as const }]
+  const renderedTabInstances = revealExistingPreview && !openTabs.includes("preview")
+    ? [...tabInstances, { id: "singleton:preview", type: "preview" as const }]
     : tabInstances;
   const renderedOpenTabs = renderedTabInstances.map((instance) => instance.type);
   const renderedActiveTabId = revealExistingPreview ? "singleton:preview" : activeTabId;
@@ -267,17 +276,29 @@ export function RightPanel() {
     if (!revealExistingPreview || !activeWorkspaceId) return;
     const current = useDiffStore.getState().getRightPanel(activeWorkspaceId, activeThreadId);
     const hasNonPreviewTab = current.tabInstances.some((instance) => instance.type !== "preview");
-    if (!current.visible || hasNonPreviewTab) return;
-    useDiffStore.getState().setRightPanelTab(activeWorkspaceId, activeThreadId, "preview");
-    const existingPageId = activeAgentBrowserPageId ??
+    if (!current.visible || (hasNonPreviewTab && agentBrowserPage?.presenting !== true)) return;
+    if (current.activeTab !== "preview") {
+      useDiffStore.getState().setRightPanelTab(activeWorkspaceId, activeThreadId, "preview");
+    }
+    const existingPageId = agentBrowserPage?.tabId ??
       browserTabSet?.activeTabId ??
       browserTabSet?.tabs[0]?.id;
-    if (panelScopeId && existingPageId) {
+    const activationKey = panelScopeId && existingPageId
+      ? `${panelScopeId}:${existingPageId}`
+      : null;
+    if (
+      panelScopeId &&
+      existingPageId &&
+      activationKey &&
+      browserTabSet?.activeTabId !== existingPageId &&
+      requestedAgentPageActivationRef.current !== activationKey
+    ) {
+      requestedAgentPageActivationRef.current = activationKey;
       void usePreviewTabsStore.getState().activatePage(panelScopeId, existingPageId);
     }
   }, [
     activeThreadId,
-    activeAgentBrowserPageId,
+    agentBrowserPage,
     activeWorkspaceId,
     browserTabSet,
     panelScopeId,
@@ -502,6 +523,7 @@ export function RightPanel() {
                   ),
               });
           }}
+          onExpandedChange={setActivityRailExpanded}
         />
 
         {/* Tab content — DiffPanel and terminal pool stay mounted (stacked) so
@@ -563,6 +585,11 @@ export function RightPanel() {
                   <PreviewPanel
                     threadId={scope.scopeId}
                     workspaceId={scope.workspaceId}
+                    rendererOccludedLeft={
+                      visible && activityRailExpanded
+                        ? ACTIVITY_RAIL_FLOATING_OVERLAP_PX
+                        : 0
+                    }
                   />
                 )}
               </div>

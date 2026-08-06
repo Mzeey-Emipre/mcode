@@ -1,7 +1,7 @@
 /** Provider-neutral operating guide for the visible Mcode Browser v2 contract. */
 export const MCODE_BROWSER_GUIDE = `Mcode Browser v2 Operating Guide (authenticated Mcode provider sessions only)
 
-Apply this guide automatically when the user asks to open, inspect, test, debug, or interact with the visible Mcode Browser. The user does not need to invoke /mcode-browser.
+Apply this guide automatically when the user asks to open, inspect, test, debug, or interact with the visible Browser. The user does not need to invoke $mcode-browser.
 
 - Intent: use mcode-browser for Mcode's shared Preview. Tabs may run while the Browser panel is hidden and be revealed later. Do not launch a separate browser or profile, and never compete with direct user input.
 - Target selection: browser_open creates one agent-owned background tab, makes it sticky, and returns tab metadata plus an observationRef, not a semantic page observation. Call browser_inspect before the first action unless the returned result includes sufficient current snapshot evidence. Use browser_tabs to select or claim another tab and to release, close, or finalize controlled tabs. For elements, prefer semanticId from the latest inspection, then role plus accessibleName, then CSS or coordinates only without a semantic target. Targets must come from the latest inspection; never guess ambiguous matches.

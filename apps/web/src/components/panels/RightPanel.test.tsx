@@ -25,16 +25,20 @@ const { activatePreviewPage, closePreviewPage, previewTabSet, previewTabsBridge 
 }));
 
 vi.mock("./ActivityRail", () => ({
+  ACTIVITY_RAIL_FLOATING_OVERLAP_PX: 112,
   ActivityRail: ({
     tabInstances,
     activeTabId,
     onCloseBrowserPage,
+    onExpandedChange,
   }: {
     tabInstances: Array<{ type: string }>;
     activeTabId: string | null;
     onCloseBrowserPage?: (pageId: string) => void;
+    onExpandedChange?: (expanded: boolean) => void;
   }) => (
     <div data-testid="activity-rail" data-open-tabs={tabInstances.map((instance) => instance.type).join(",")} data-active-tab-id={activeTabId}>
+      <button type="button" data-testid="expand-activity-rail" onClick={() => onExpandedChange?.(true)} />
       {tabInstances.some((instance) => instance.type === "preview") && onCloseBrowserPage && (
         <button type="button" data-testid="close-browser-page" onClick={() => onCloseBrowserPage("browser-tab-1")} />
       )}
@@ -57,7 +61,11 @@ vi.mock("./CoordinationPanel", () => ({
 }));
 vi.mock("./plan", () => ({ PlanPanel: () => <div /> }));
 vi.mock("@/components/diff", () => ({ DiffPanel: () => <div /> }));
-vi.mock("@/components/panels/PreviewPanel", () => ({ PreviewPanel: () => <div data-testid="preview-panel" /> }));
+vi.mock("@/components/panels/PreviewPanel", () => ({
+  PreviewPanel: ({ rendererOccludedLeft = 0 }: { rendererOccludedLeft?: number }) => (
+    <div data-testid="preview-panel" data-renderer-occluded-left={rendererOccludedLeft} />
+  ),
+}));
 vi.mock("@/components/terminal/TerminalPoolSlotContext", () => ({
   TerminalPoolSlot: () => <div data-testid="terminal-pool-slot" />,
 }));
@@ -221,7 +229,7 @@ describe("RightPanel", () => {
       openTabs: ["preview"],
       activeTab: "preview",
     });
-    expect(activatePreviewPage).toHaveBeenCalledWith("workspace-1", "browser-tab-1");
+    expect(activatePreviewPage).not.toHaveBeenCalled();
   });
 
   it("reveals an agent-created page while its Browser bootstrap is pending", () => {
@@ -273,6 +281,78 @@ describe("RightPanel", () => {
     expect(activatePreviewPage).toHaveBeenCalledWith("workspace-1", "agent-browser-tab");
   });
 
+  it("switches an already-open panel to an agent-created Browser page", () => {
+    previewTabSet.current = {
+      threadId: "workspace-1",
+      activeTabId: "existing-browser-tab",
+      tabs: [
+        {
+          id: "existing-browser-tab",
+          threadId: "workspace-1",
+          title: "Existing page",
+          url: "https://existing.example.test",
+          faviconUrl: null,
+          warm: true,
+          active: true,
+        },
+        {
+          id: "agent-browser-tab",
+          threadId: "workspace-1",
+          title: "Agent page",
+          url: "https://example.test",
+          faviconUrl: null,
+          warm: true,
+          active: false,
+        },
+      ],
+    };
+    useDiffStore.setState({
+      rightPanelFallbackByWorkspace: {
+        "workspace-1": createRightPanelState({
+          visible: true,
+          width: 400,
+          openTabs: ["tasks"],
+          activeTab: "tasks",
+        }),
+      },
+    });
+    useBrowserAutomationStore.setState({
+      pendingAgentOpens: new Map([
+        [
+          "pending-browser-open",
+          {
+            workspaceId: "workspace-1",
+            threadId: "workspace-1",
+            tabId: "agent-browser-tab",
+            url: "https://example.test",
+            startedAt: 2,
+          },
+        ],
+      ]),
+    });
+
+    const { rerender } = render(<RightPanel />);
+
+    expect(screen.getByTestId("activity-rail")).toHaveAttribute(
+      "data-open-tabs",
+      "tasks,preview",
+    );
+    expect(screen.getByTestId("activity-rail")).toHaveAttribute(
+      "data-active-tab-id",
+      "singleton:preview",
+    );
+    expect(screen.getByTestId("preview-panel")).toBeInTheDocument();
+    expect(useDiffStore.getState().getRightPanel("workspace-1")).toMatchObject({
+      openTabs: ["tasks", "preview"],
+      activeTab: "preview",
+    });
+    expect(activatePreviewPage).toHaveBeenCalledWith("workspace-1", "agent-browser-tab");
+
+    rerender(<RightPanel />);
+
+    expect(activatePreviewPage).toHaveBeenCalledTimes(1);
+  });
+
   it("does not re-open Browser while the final page close callback is synchronous", () => {
     previewTabSet.current = {
       threadId: "workspace-1",
@@ -314,6 +394,45 @@ describe("RightPanel", () => {
     expect(screen.queryByTestId("preview-panel")).not.toBeInTheDocument();
     expect(useDiffStore.getState().getRightPanel("workspace-1").openTabs).toEqual([]);
     expect(activatePreviewPage).not.toHaveBeenCalled();
+  });
+
+  it("passes the floating rail overlap to the visible renderer Browser", () => {
+    previewTabSet.current = {
+      threadId: "workspace-1",
+      activeTabId: "browser-tab-1",
+      tabs: [{
+        id: "browser-tab-1",
+        threadId: "workspace-1",
+        title: "Visible page",
+        url: "https://example.test",
+        faviconUrl: null,
+        warm: true,
+        active: true,
+      }],
+    };
+    useDiffStore.setState({
+      rightPanelFallbackByWorkspace: {
+        "workspace-1": createRightPanelState({
+          visible: true,
+          width: 400,
+          openTabs: ["preview"],
+          activeTab: "preview",
+        }),
+      },
+    });
+
+    render(<RightPanel />);
+    expect(screen.getByTestId("preview-panel")).toHaveAttribute(
+      "data-renderer-occluded-left",
+      "0",
+    );
+
+    fireEvent.click(screen.getByTestId("expand-activity-rail"));
+
+    expect(screen.getByTestId("preview-panel")).toHaveAttribute(
+      "data-renderer-occluded-left",
+      "112",
+    );
   });
 
   it("keeps a closed Browser scope warm while its active request settles", () => {

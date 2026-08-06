@@ -1560,6 +1560,8 @@ export interface PreviewPanelProps {
   readonly workspaceId?: string | null;
   /** Mount only renderer-owned automation webviews, without native preview events. */
   readonly automationOnly?: boolean;
+  /** Left edge hidden beneath floating renderer chrome while the remaining guest stays interactive. */
+  readonly rendererOccludedLeft?: number;
 }
 
 function useLiveViewportCoordinatorState(
@@ -1811,7 +1813,12 @@ function WebRuntimePreview({
  * would hide in-surface overlays. In web-only builds without
  * `desktopBridge.preview`, renders an explanatory empty state.
  */
-export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: PreviewPanelProps) {
+export function PreviewPanel({
+  threadId,
+  workspaceId,
+  automationOnly = false,
+  rendererOccludedLeft = 0,
+}: PreviewPanelProps) {
   const surfaceRef = useRef<HTMLDivElement>(null);
   const webviewRefs = useRef<Record<string, PreviewWebviewHandle | null>>({});
   const [viewportCanvasBounds, setViewportCanvasBounds] = useState({ width: 0, height: 0 });
@@ -3103,6 +3110,11 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
         {hasWebviewLayer ? (
           <div
             data-testid="preview-webview-surface"
+            style={
+              rendererOccludedLeft > 0
+                ? { clipPath: `inset(0px 0px 0px ${rendererOccludedLeft}px)` }
+                : undefined
+            }
             className={cn(
               "absolute inset-0 z-0 overflow-hidden rounded-tl-md",
               !webviewLayerInteractive && "pointer-events-none",
