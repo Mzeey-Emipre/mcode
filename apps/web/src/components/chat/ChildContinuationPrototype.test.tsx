@@ -25,7 +25,14 @@ describe("ChildContinuationPrototype", () => {
   });
 
   it("keeps grouped child lifecycle text outside each named agent button", () => {
+    window.history.replaceState(null, "", "/?prototype=child-continuation&variant=C");
     render(<ChildContinuationPrototype />);
+
+    expect(screen.queryByRole("button", { name: "Previous prototype variant" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Next prototype variant" })).not.toBeInTheDocument();
+    for (const label of ["Advance Schema scan", "Later parent turn", "At tail", "Reading above", "Reset"]) {
+      expect(screen.getByRole("button", { name: label })).toBeInTheDocument();
+    }
 
     const rollbackButton = screen.getByRole("button", {
       name: "Open Rollback check subagent details, working",

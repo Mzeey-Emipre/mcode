@@ -1,8 +1,6 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, type ReactNode } from "react";
 import {
   ArrowDown,
-  ArrowLeft,
-  ArrowRight,
   CircleDot,
   RotateCcw,
   Sparkles,
@@ -18,30 +16,6 @@ import {
   type ChildContinuationPrototypeLifecycle as ChildLifecycle,
   type ChildContinuationPrototypeState,
 } from "@/stores/childContinuationPrototypeStore";
-
-type VariantKey = "A" | "B" | "C";
-
-const VARIANTS: readonly VariantKey[] = ["A", "B", "C"];
-
-const VARIANT_NAMES: Record<VariantKey, string> = {
-  A: "Baseline timeline",
-  B: "Attention timeline",
-  C: "Timeline detail",
-};
-
-function readVariant(): VariantKey {
-  if (typeof window === "undefined") return "A";
-  const candidate = new URLSearchParams(window.location.search).get("variant")?.toUpperCase();
-  return candidate === "A" || candidate === "B" || candidate === "C" ? candidate : "A";
-}
-
-function replaceVariantUrl(variant: VariantKey) {
-  if (typeof window === "undefined") return;
-  const params = new URLSearchParams(window.location.search);
-  params.set("prototype", "child-continuation");
-  params.set("variant", variant);
-  window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}${window.location.hash}`);
-}
 
 function UserMessage() {
   return (
@@ -184,16 +158,12 @@ function NewMessagesBelow({ onClick }: { onClick: () => void }) {
 }
 
 function PrototypeToolbar({
-  variant,
-  onCycle,
   onAdvanceChild,
   onParentTurn,
   onTail,
   onAbove,
   onReset,
 }: {
-  variant: VariantKey;
-  onCycle: (direction: -1 | 1) => void;
   onAdvanceChild: () => void;
   onParentTurn: () => void;
   onTail: () => void;
@@ -215,18 +185,12 @@ function PrototypeToolbar({
           {control.icon}{control.label}
         </Button>
       ))}
-      <span className="ml-auto flex shrink-0 items-center gap-1 border-l border-border/50 pl-2 text-xs text-muted-foreground">
-        <Button type="button" variant="ghost" size="icon-xs" onClick={() => onCycle(-1)} aria-label="Previous prototype variant"><ArrowLeft className="size-3" /></Button>
-        <span className="font-mono">{variant} · {VARIANT_NAMES[variant]}</span>
-        <Button type="button" variant="ghost" size="icon-xs" onClick={() => onCycle(1)} aria-label="Next prototype variant"><ArrowRight className="size-3" /></Button>
-      </span>
     </div>
   );
 }
 
 /** Throwaway UI prototype for child continuation inside the real ChatView stage. */
 export function ChildContinuationPrototype() {
-  const [variant, setVariant] = useState<VariantKey>(readVariant);
   const state = useChildContinuationPrototypeStore((current) => current);
   const advanceSchemaScan = useChildContinuationPrototypeStore((current) => current.advanceSchemaScan);
   const setParentContinuing = useChildContinuationPrototypeStore((current) => current.setParentContinuing);
@@ -256,35 +220,6 @@ export function ChildContinuationPrototype() {
     setReadingPosition("tail");
   }, [setReadingPosition]);
 
-  const switchVariant = useCallback((nextVariant: VariantKey) => {
-    setVariant(nextVariant);
-    replaceVariantUrl(nextVariant);
-    selectChild(null);
-    setPrototypeReadingPosition("tail");
-  }, [selectChild, setPrototypeReadingPosition]);
-
-  const cycleVariant = useCallback((direction: -1 | 1) => {
-    const currentIndex = VARIANTS.indexOf(variant);
-    const nextIndex = (currentIndex + direction + VARIANTS.length) % VARIANTS.length;
-    switchVariant(VARIANTS[nextIndex]);
-  }, [switchVariant, variant]);
-
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (target?.matches("input, textarea, [contenteditable='true']")) return;
-      if (event.key === "ArrowLeft") {
-        event.preventDefault();
-        cycleVariant(-1);
-      } else if (event.key === "ArrowRight") {
-        event.preventDefault();
-        cycleVariant(1);
-      }
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [cycleVariant]);
-
   const openChildDetail = useCallback((childId: string) => {
     selectChild(childId);
     openSubagentsPanel();
@@ -308,8 +243,6 @@ export function ChildContinuationPrototype() {
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <PrototypeToolbar
-        variant={variant}
-        onCycle={cycleVariant}
         onAdvanceChild={advanceChild}
         onParentTurn={setParentContinuing}
         onTail={() => setReadingPosition("tail")}
