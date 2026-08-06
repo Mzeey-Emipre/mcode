@@ -254,7 +254,13 @@ describe("BrowserAutomationMcpHandler", () => {
     const tool = (await listed.json() as any).result.tools[0];
     expect(tool.name).toBe("browser_tabs");
     expect(tool.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true, idempotentHint: true });
-    expect(tool.inputSchema.oneOf).toHaveLength(5);
+    expect(tool.inputSchema.oneOf).toBeUndefined();
+    expect(tool.inputSchema.required).toEqual(expect.arrayContaining(["action", "idempotencyKey", "observationRef"]));
+    expect(tool.inputSchema.properties.action.enum).toEqual(["select", "claim", "release", "close", "finalize"]);
+    expect(tool.inputSchema.properties.dispositions.items).toMatchObject({
+      required: ["tabId", "disposition"],
+      additionalProperties: false,
+    });
     const response = await post(JSON.stringify({
       jsonrpc: "2.0",
       id: 12,
@@ -269,6 +275,19 @@ describe("BrowserAutomationMcpHandler", () => {
       operation: "tabs",
       args: { action: "select", tabId: "tab-2", idempotencyKey: "tabs-key", observationRef: "obs-1" },
     }));
+
+    execute.mockClear();
+    const invalid = await post(JSON.stringify({
+      jsonrpc: "2.0",
+      id: 13,
+      method: "tools/call",
+      params: {
+        name: "browser_tabs",
+        arguments: { action: "select", idempotencyKey: "tabs-key-2", observationRef: "obs-1" },
+      },
+    }), `Bearer ${tabs.token}`);
+    expect((await invalid.json() as any).error.code).toBe(-32602);
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it("advertises only the operations allowed by the authenticated credential", async () => {
