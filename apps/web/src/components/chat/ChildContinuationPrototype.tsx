@@ -13,8 +13,14 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { MessageBubble } from "@/components/chat/MessageBubble";
+import { StreamingCard } from "@/components/chat/StreamingCard";
+import { DeltaBlock } from "@/components/chat/narrative/DeltaBlock";
+import { NarrativeFlow } from "@/components/chat/narrative";
+import { TurnFooter } from "@/components/chat/narrative/TurnFooter";
 import { SubagentIdentityGlyph } from "@/components/subagents/SubagentIdentityGlyph";
 import { PRIMARY_CONTENT_RAIL_CLASS } from "@/lib/layout-rails";
+import type { Message, ToolCall } from "@/transport";
 
 type VariantKey = "A" | "B" | "C";
 type ChildStatus = "continuing" | "returned";
@@ -34,6 +40,12 @@ interface RosterRow {
   status: "active" | "done";
   activity: string;
 }
+
+const PROTOTYPE_THREAD_ID = "prototype-child-continuation";
+const SYNTHETIC_START_TIME = "2026-08-06T09:41:00.000Z";
+const SYNTHETIC_TOOL_START = Date.parse(SYNTHETIC_START_TIME);
+const CHILD_STREAMING_TEXT = "Checking the down migration against the new index shape…";
+const CHILD_RESULT_TEXT = "Rollback is safe when the index is absent. The migration can be reverted without touching the new index shape.";
 
 const VARIANTS: readonly VariantKey[] = ["A", "B", "C"];
 
@@ -91,7 +103,55 @@ function RosterRowButton({ row, onSelect }: { row: RosterRow; onSelect: () => vo
   );
 }
 
-function RosterDetail({ row, onBack }: { row: RosterRow; onBack: () => void }) {
+function createTaskMessage(row: RosterRow): Message {
+  return {
+    id: `prototype-subagent-task-${row.id}`,
+    thread_id: PROTOTYPE_THREAD_ID,
+    role: "user",
+    content: row.task,
+    tool_calls: null,
+    files_changed: null,
+    cost_usd: null,
+    tokens_used: null,
+    timestamp: SYNTHETIC_START_TIME,
+    sequence: 0,
+    attachments: null,
+  };
+}
+
+function createToolCalls(isActive: boolean): ToolCall[] {
+  const readCall: ToolCall = {
+    id: "prototype-subagent-read",
+    toolName: "Read",
+    toolInput: { file_path: "db/migrations/2026_08_add_index.sql" },
+    output: isActive ? null : "Migration boundary and index definition loaded.",
+    isError: false,
+    isComplete: !isActive,
+    startedAt: SYNTHETIC_TOOL_START + 2_000,
+    elapsedSeconds: isActive ? 4 : 5,
+    durationMs: isActive ? undefined : 5_000,
+  };
+  if (isActive) return [readCall];
+
+  return [
+    readCall,
+    {
+      id: "prototype-subagent-tests",
+      toolName: "Bash",
+      toolInput: { command: "pnpm test migration/rollback" },
+      output: "3 tests passed",
+      isError: false,
+      isComplete: true,
+      startedAt: SYNTHETIC_TOOL_START + 8_000,
+      elapsedSeconds: 7,
+      durationMs: 7_000,
+    },
+  ];
+}
+
+function RosterDetail({ row, isActive, onBack }: { row: RosterRow; isActive: boolean; onBack: () => void }) {
+  const taskMessage = createTaskMessage(row);
+  const toolCalls = createToolCalls(isActive);
   return (
     <section className="flex min-h-0 flex-1 flex-col" aria-label={`${row.identity} subagent details`}>
       <header className="flex shrink-0 items-center gap-2 border-b border-border/50 px-4 py-3">
@@ -101,26 +161,31 @@ function RosterDetail({ row, onBack }: { row: RosterRow; onBack: () => void }) {
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <SubagentIdentityGlyph identity={row.identity} hasExplicitIdentity className="size-6" size={14} />
           <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">{row.identity}</h2>
-          <Badge variant={row.status === "active" ? "default" : "secondary"} size="sm">
-            {row.status === "active" ? "Active" : "Done"}
-          </Badge>
         </div>
       </header>
       <ScrollArea className="min-h-0 flex-1">
-        <div className="space-y-5 px-4 py-5">
-          <div>
-            <p className="font-mono text-xs uppercase tracking-[0.16em] text-muted-foreground/70">Task</p>
-            <p className="mt-1 text-sm leading-6 text-foreground">{row.task}</p>
-          </div>
-          <div className="space-y-3 border-l border-border pl-3 text-sm leading-6 text-foreground/85">
-            <p>Checked the down migration against the new index shape.</p>
-            <p>Confirmed rollback is safe when the index is absent.</p>
-            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <Check className="size-3 text-primary" aria-hidden />
-              {row.status === "active" ? "Waiting for the remaining checks." : "Result available to parent."}
-            </p>
-          </div>
-          <p className="text-xs leading-5 text-muted-foreground">Read-only detail from the Subagents panel.</p>
+        <div className={`${PRIMARY_CONTENT_RAIL_CLASS} space-y-5 px-6 py-8 sm:px-10`}>
+          <MessageBubble message={taskMessage} interactive={false} />
+          <NarrativeFlow
+            toolCalls={toolCalls}
+            hooks={[]}
+            thoughtSegments={[]}
+            streamingText={isActive ? CHILD_STREAMING_TEXT : ""}
+            isAgentRunning={isActive}
+          />
+          {isActive ? (
+            <StreamingCard text={CHILD_STREAMING_TEXT} />
+          ) : (
+            <div data-testid="prototype-subagent-response-text" className="mt-8 text-sm text-foreground">
+              <DeltaBlock text={CHILD_RESULT_TEXT} isStreaming={false} showCursor={false} />
+            </div>
+          )}
+          {!isActive && (
+            <TurnFooter
+              counts={{ steps: toolCalls.length, thoughts: 0, subagents: 0 }}
+              durationMs={12_000}
+            />
+          )}
         </div>
       </ScrollArea>
     </section>
@@ -170,7 +235,10 @@ function SubagentsRoster({
 }) {
   const rows = rosterRows(state);
   const selectedRow = [...rows.active, ...rows.done].find((row) => row.id === selectedId);
-  if (selectedRow) return <RosterDetail row={selectedRow} onBack={() => onSelect({ ...selectedRow, id: "" })} />;
+  if (selectedRow) {
+    const isActive = selectedRow.id === "rollback-check" && state.childStatus === "continuing";
+    return <RosterDetail row={selectedRow} isActive={isActive} onBack={() => onSelect({ ...selectedRow, id: "" })} />;
+  }
 
   return (
     <section className="flex min-h-0 flex-1 flex-col" aria-label="Subagents">
@@ -228,17 +296,16 @@ function UserMessage() {
   );
 }
 
-function AssistantMessage({ children, footer }: { children: ReactNode; footer?: ReactNode }) {
+function AssistantMessage({ children }: { children: ReactNode }) {
   return (
     <article className="space-y-2 text-sm leading-7 text-foreground">
       <p>{children}</p>
-      {footer && <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 font-mono text-xs text-muted-foreground/65">{footer}</div>}
     </article>
   );
 }
 
 function NarrativeSubagentRow({ state, onReview }: { state: PrototypeState; onReview: () => void }) {
-  const status = state.childStatus === "continuing" ? "started working" : "returned a result";
+  const status = state.childStatus === "continuing" ? "started working" : "finished";
   return (
     <div className="flex min-w-0 items-center gap-2 py-1">
       <Button
@@ -266,14 +333,7 @@ function ParentTimeline({ state, onReview }: { state: PrototypeState; onReview: 
       </AssistantMessage>
       <NarrativeSubagentRow state={state} onReview={onReview} />
       {state.parentStatus === "continuing" && (
-        <AssistantMessage
-          footer={(
-            <>
-              <Badge variant="outline" size="sm">Provider-originated</Badge>
-              <span>Parent turn · 09:45</span>
-            </>
-          )}
-        >
+        <AssistantMessage>
           The child confirmed the rollback path. I’m folding that result into the parent plan now.
         </AssistantMessage>
       )}
