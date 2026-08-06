@@ -683,10 +683,13 @@ export const useDiffStore = create<DiffState>((set, get) => ({
   setRightPanelWidth: (workspaceId, threadId, width, source = "user") =>
     set((state) => {
       const current = effectiveRightPanel(state, workspaceId, threadId);
+      const nextWidth = clampWidth(width);
+      const nextWidthSource = source === "preserve" ? current.widthSource : source;
+      if (current.width === nextWidth && current.widthSource === nextWidthSource) return state;
       return writeRightPanel(state, workspaceId, threadId, {
         ...current,
-        width: clampWidth(width),
-        widthSource: source === "preserve" ? current.widthSource : source,
+        width: nextWidth,
+        widthSource: nextWidthSource,
       });
     }),
 

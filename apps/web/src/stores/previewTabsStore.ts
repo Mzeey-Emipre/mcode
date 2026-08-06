@@ -30,6 +30,27 @@ function sameLiveChrome(a: PreviewLiveChrome | null, b: PreviewLiveChrome | null
   return a.title === b.title && a.url === b.url && a.favicon === b.favicon;
 }
 
+function sameBrowserTab(a: BrowserTabInfo, b: BrowserTabInfo): boolean {
+  return a === b || (
+    a.id === b.id &&
+    a.threadId === b.threadId &&
+    a.title === b.title &&
+    a.url === b.url &&
+    a.faviconUrl === b.faviconUrl &&
+    a.warm === b.warm &&
+    a.active === b.active
+  );
+}
+
+function sameBrowserTabSet(a: BrowserTabSet | null, b: BrowserTabSet | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return a.threadId === b.threadId &&
+    a.activeTabId === b.activeTabId &&
+    a.tabs.length === b.tabs.length &&
+    a.tabs.every((tab, index) => sameBrowserTab(tab, b.tabs[index]!));
+}
+
 /** The minimal slice of the desktop bridge's tab surface this store drives. */
 interface PreviewTabsBridgeLike {
   open(
@@ -132,6 +153,25 @@ export interface ClosePageOptions {
   readonly onLastClose?: () => void;
 }
 
+function clearPreviewScopeState(
+  state: Pick<PreviewTabsState, "tabSetByScope" | "liveChromeByScope" | "persistentTabIdsByScope">,
+  scopeId: string,
+  preserveEmptyState: boolean,
+): Pick<PreviewTabsState, "tabSetByScope" | "liveChromeByScope" | "persistentTabIdsByScope"> {
+  const tabSetByScope = { ...state.tabSetByScope };
+  const liveChromeByScope = { ...state.liveChromeByScope };
+  const persistentTabIdsByScope = { ...state.persistentTabIdsByScope };
+  if (preserveEmptyState) {
+    tabSetByScope[scopeId] = null;
+    liveChromeByScope[scopeId] = null;
+  } else {
+    delete tabSetByScope[scopeId];
+    delete liveChromeByScope[scopeId];
+  }
+  delete persistentTabIdsByScope[scopeId];
+  return { tabSetByScope, liveChromeByScope, persistentTabIdsByScope };
+}
+
 /**
  * Renderer-side source of truth for the in-app browser's pages, mirroring the
  * host tab set and exposing the page add/close/switch actions the activity rail
@@ -146,9 +186,13 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
   persistentTabIdsByScope: {},
 
   setTabSet: (scopeId, value) =>
-    set((s) => ({
-      tabSetByScope: { ...s.tabSetByScope, [scopeId]: value },
-    })),
+    set((s) => {
+      const previous = s.tabSetByScope[scopeId] ?? null;
+      if (sameBrowserTabSet(previous, value)) return s;
+      return {
+        tabSetByScope: { ...s.tabSetByScope, [scopeId]: value },
+      };
+    }),
 
   upsertPersistentTab: (scopeId, tab) =>
     set((s) => {
@@ -306,20 +350,34 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
 
   closePage: async (scopeId, tabId, opts) => {
     const tabs = bridgeTabs();
+    const current = get().tabSetByScope[scopeId];
+    const isLast = !!current && current.tabs.length <= 1;
+    const clearLastScopeState = () => {
+      set((s) => clearPreviewScopeState(s, scopeId, true));
+    };
     if (!tabs) {
       if (!get().persistentTabIdsByScope[scopeId]?.has(tabId)) return;
-      const current = get().tabSetByScope[scopeId];
-      const isLast = !!current && current.tabs.length <= 1;
-      if (isLast) opts?.onLastClose?.();
+      if (isLast) {
+        clearLastScopeState();
+        opts?.onLastClose?.();
+        useBrowserAutomationStore.getState().releaseThreadTargets(scopeId);
+        return;
+      }
       get().setLiveChrome(scopeId, null);
       get().removePersistentTab(scopeId, tabId);
       useBrowserAutomationStore.getState().unregisterTarget(scopeId, tabId);
-      if (isLast) get().setTabSet(scopeId, null);
       return;
     }
-    const current = get().tabSetByScope[scopeId];
-    const isLast = !!current && current.tabs.length <= 1;
-    if (isLast) opts?.onLastClose?.();
+    if (isLast) {
+      const r = tabs.closeScope
+        ? await tabs.closeScope(scopeId)
+        : await tabs.close(scopeId, tabId);
+      if (!r.ok) return;
+      clearLastScopeState();
+      useBrowserAutomationStore.getState().releaseThreadTargets(scopeId);
+      opts?.onLastClose?.();
+      return;
+    }
     get().setLiveChrome(scopeId, null);
     const r = await tabs.close(scopeId, tabId);
     if (!r.ok) return;
@@ -336,15 +394,7 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
     const r = await tabs?.closeScope?.(scopeId);
     if (r && !r.ok) throw new Error(r.error);
     useBrowserAutomationStore.getState().releaseThreadTargets(scopeId);
-    set((s) => {
-      const tabSetByScope = { ...s.tabSetByScope };
-      const liveChromeByScope = { ...s.liveChromeByScope };
-      const persistentTabIdsByScope = { ...s.persistentTabIdsByScope };
-      delete tabSetByScope[scopeId];
-      delete liveChromeByScope[scopeId];
-      delete persistentTabIdsByScope[scopeId];
-      return { tabSetByScope, liveChromeByScope, persistentTabIdsByScope };
-    });
+    set((s) => clearPreviewScopeState(s, scopeId, false));
   },
 }));
 

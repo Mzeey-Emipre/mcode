@@ -171,6 +171,40 @@ describe("PreviewWebview", () => {
     }
   });
 
+  it("keeps native event subscriptions stable when parent callbacks change", () => {
+    window.desktopBridge = { preview: {} } as unknown as NonNullable<typeof window.desktopBridge>;
+    const addEventListener = vi.spyOn(HTMLElement.prototype, "addEventListener");
+    const firstStatus = vi.fn();
+    const secondStatus = vi.fn();
+    const { rerender } = render(
+      <PreviewWebview
+        threadId="thread-stable"
+        tabId="tab-stable"
+        src="https://example.com"
+        onPageStatus={firstStatus}
+      />,
+    );
+    const initialStopSubscriptions = addEventListener.mock.calls.filter(
+      ([eventName]) => eventName === "did-stop-loading",
+    ).length;
+
+    rerender(
+      <PreviewWebview
+        threadId="thread-stable"
+        tabId="tab-stable"
+        src="https://example.com"
+        onPageStatus={secondStatus}
+      />,
+    );
+    screen.getByTestId("preview-webview").dispatchEvent(new Event("did-stop-loading"));
+
+    expect(addEventListener.mock.calls.filter(
+      ([eventName]) => eventName === "did-stop-loading",
+    )).toHaveLength(initialStopSubscriptions);
+    expect(firstStatus).not.toHaveBeenCalled();
+    expect(secondStatus).toHaveBeenCalledOnce();
+  });
+
   it("applies an exact renderer-owned design viewport to the visible webview", () => {
     render(
       <PreviewWebview

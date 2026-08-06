@@ -152,6 +152,23 @@ function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
 }
 
+function isCommittedAbortedNavigation(
+  cause: unknown,
+  webContents: WebContents,
+  requestedUrl: string,
+  previousUrl: string,
+): boolean {
+  const error = asRecord(cause);
+  if (error.code !== "ERR_ABORTED" && error.errno !== -3) return false;
+  const committedUrl = webContents.getURL();
+  if (!committedUrl || committedUrl.startsWith("about:") || committedUrl.startsWith("chrome-error:")) {
+    return false;
+  }
+  // Redirecting pages can reject loadURL after Chromium has already committed
+  // the requested page. A still-unchanged page is a real aborted navigation.
+  return committedUrl === requestedUrl || committedUrl !== previousUrl;
+}
+
 function createAbortPromise(signal: AbortSignal): Promise<never> {
   return new Promise((_, reject) => {
     if (signal.aborted) {
@@ -1271,6 +1288,7 @@ export class BrowserAutomationKernel {
       case "navigate": {
         const url = request.operation === "navigate" ? request.args.url : request.args.url;
         if (url) {
+          const previousUrl = webContents.getURL();
           const navigationSequence = ++state.navigationSequence;
           const stopNavigation = () => {
             if (state.navigationSequence !== navigationSequence) return;
@@ -1296,7 +1314,9 @@ export class BrowserAutomationKernel {
               throw cause;
             }
             if (cause instanceof KernelError) throw cause;
-            throw new KernelError("NAVIGATION_FAILED", "Browser navigation failed", true);
+            if (!isCommittedAbortedNavigation(cause, webContents, url, previousUrl)) {
+              throw new KernelError("NAVIGATION_FAILED", "Browser navigation failed", true);
+            }
           } finally {
             signal.removeEventListener("abort", stopNavigation);
             state.automationNavigationDepth -= 1;

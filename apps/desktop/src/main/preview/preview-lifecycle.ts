@@ -71,6 +71,14 @@ export function unmountView(win: BrowserWindow, view: WebContentsView): void {
   }
 }
 
+function clearActiveViewState(s: PreviewSession, view: WebContentsView): void {
+  if (s.view !== view) return;
+  s.view = null;
+  s.scrollbarCssKey = null;
+  s.consoleBuffer.length = 0;
+  s.failedRequestBuffer.length = 0;
+}
+
 /**
  * Removes all preview-related webContents listeners from a WebContentsView so
  * teardown does not fire stale callbacks after the view is detached.
@@ -455,12 +463,7 @@ export function disposeTabView(win: BrowserWindow, s: PreviewSession, tab: TabSt
     /* guest may already be torn down */
   }
   tab.view = null;
-  if (s.view === v) {
-    s.view = null;
-    s.scrollbarCssKey = null;
-    s.consoleBuffer.length = 0;
-    s.failedRequestBuffer.length = 0;
-  }
+  clearActiveViewState(s, v);
 }
 
 /**
@@ -493,6 +496,11 @@ async function injectPreviewScrollbarStyles(s: PreviewSession): Promise<void> {
  * remaining outside the visible content view.
  */
 export function hidePreview(win: BrowserWindow, s: PreviewSession): void {
+  const activeView = s.view;
+  if (activeView && !activeView.webContents) {
+    if (!win.isDestroyed()) unmountView(win, activeView);
+    clearActiveViewState(s, activeView);
+  }
   abortOverlayCapture(s, "capture-interrupted");
   clearIdle(s);
   if (!win.isDestroyed()) {
@@ -500,7 +508,14 @@ export function hidePreview(win: BrowserWindow, s: PreviewSession): void {
     for (const set of s.tabsByThread.values()) {
       for (const tab of set.tabs) {
         const view = tab.view;
-        if (!view || view.webContents.isDestroyed()) continue;
+        if (!view) continue;
+        const webContents = view.webContents;
+        if (!webContents || webContents.isDestroyed()) {
+          unmountView(win, view);
+          tab.view = null;
+          clearActiveViewState(s, view);
+          continue;
+        }
         const bounds = backgroundBoundsForTarget(win, s, tab.threadId, tab.id);
         if (!bounds) {
           unmountView(win, view);
@@ -527,10 +542,11 @@ export function parkPreview(win: BrowserWindow, s: PreviewSession): void {
   hidePreview(win, s);
   clearDiscardTimers(s);
   // Save the active tab's URL before disposing so a later restore can reload.
-  if (s.view && !s.view.webContents.isDestroyed()) {
+  const activeWebContents = s.view?.webContents;
+  if (activeWebContents && !activeWebContents.isDestroyed()) {
     try {
-      void removeEpPickHighlighter(s.view.webContents);
-      const parked = s.view.webContents.getURL();
+      void removeEpPickHighlighter(activeWebContents);
+      const parked = activeWebContents.getURL();
       void validateResumeUrl(isAllowedPreviewUrl(parked) ? parked : null).then((safe) => {
         if (!win.isDestroyed()) s.resumePreviewUrl = safe;
       });

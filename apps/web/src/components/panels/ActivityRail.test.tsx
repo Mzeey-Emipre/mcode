@@ -92,17 +92,36 @@ describe("ActivityRail expansion", () => {
     expect(rail).toHaveAttribute("data-expanded", "false");
   });
 
+  it("publishes expansion changes so renderer guests can yield the floating overlap", () => {
+    const onExpandedChange = vi.fn();
+    render(
+      <ActivityRail
+        {...railElement().props}
+        onExpandedChange={onExpandedChange}
+      />,
+    );
+    const rail = screen.getByTestId("activity-rail");
+
+    fireEvent.pointerEnter(rail, { pointerType: "mouse" });
+    act(() => vi.advanceTimersByTime(EXPECTED_EXPAND_DELAY_MS));
+    expect(onExpandedChange).toHaveBeenLastCalledWith(true);
+
+    fireEvent.pointerLeave(rail, { pointerType: "mouse" });
+    act(() => vi.advanceTimersByTime(EXPECTED_COLLAPSE_DELAY_MS));
+    expect(onExpandedChange).toHaveBeenLastCalledWith(false);
+  });
+
   it("keeps a fixed collapsed footprint above right-panel content", () => {
     renderRail();
     const rail = screen.getByTestId("activity-rail");
 
     expect(rail).toHaveClass("z-30", "w-12", "flex-none");
-    expect(rail.firstElementChild).toHaveClass("absolute", "w-12");
+    expect(rail.firstElementChild).toHaveClass("absolute", "w-full");
 
     fireEvent.focus(screen.getByRole("button", { name: "Terminal" }));
 
-    expect(rail.firstElementChild).toHaveClass("w-40");
-    expect(rail).toHaveClass("w-12");
+    expect(rail.firstElementChild).toHaveClass("w-full");
+    expect(rail).toHaveClass("w-40", "-mr-28");
   });
 
   it("anchors trailing controls right and reserves their label space", () => {
@@ -218,17 +237,111 @@ describe("ActivityRail expansion", () => {
     expect(rail).toHaveAttribute("data-expanded", "false");
   });
 
-  it("floats the expanded rail above preview content without suppressing it", () => {
-    const { unmount } = renderRail();
+  it("suppresses preview while the expanded rail overlaps its bounds and releases on collapse", () => {
+    renderRail();
     const rail = screen.getByTestId("activity-rail");
 
     fireEvent.pointerEnter(rail, { pointerType: "mouse" });
     act(() => vi.advanceTimersByTime(EXPECTED_EXPAND_DELAY_MS));
     expect(rail).toHaveAttribute("data-expanded", "true");
     expect(rail).toHaveClass("z-30");
+    expect(usePreviewSuppressionStore.getState().count).toBe(1);
+
+    fireEvent.pointerLeave(rail, { pointerType: "mouse" });
+    act(() => vi.advanceTimersByTime(EXPECTED_COLLAPSE_DELAY_MS));
+    expect(rail).toHaveAttribute("data-expanded", "false");
     expect(usePreviewSuppressionStore.getState().count).toBe(0);
+  });
+
+  it("keeps preview suppressed for an expanded rail and its add-tab menu, then cleans up on close and unmount", () => {
+    const { unmount } = renderRail();
+    const rail = screen.getByTestId("activity-rail");
+
+    fireEvent.focus(screen.getByRole("button", { name: "Terminal" }));
+    expect(rail).toHaveAttribute("data-expanded", "true");
+    expect(usePreviewSuppressionStore.getState().count).toBe(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "New tab" }));
+    expect(screen.getByRole("menuitem", { name: "Browser" })).toBeInTheDocument();
+    expect(usePreviewSuppressionStore.getState().count).toBe(2);
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "Browser" }));
+    expect(usePreviewSuppressionStore.getState().count).toBe(1);
 
     unmount();
+    expect(usePreviewSuppressionStore.getState().count).toBe(0);
+  });
+
+  it("gives the expanded rail a real hit-test box over the renderer guest seam", () => {
+    const guestPointerDown = vi.fn();
+    render(
+      <div
+        data-testid="preview-compositing-root"
+        className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden"
+      >
+        <div
+          data-testid="renderer-guest"
+          className="absolute inset-0 z-0"
+          onPointerDown={guestPointerDown}
+        />
+        <div
+          data-testid="browser-automation-overlay"
+          className="pointer-events-none absolute inset-0 z-20"
+        />
+        <span
+          data-testid="browser-automation-pointer"
+          className="pointer-events-none absolute z-30"
+        />
+        {railElement()}
+      </div>,
+    );
+
+    const rail = screen.getByTestId("activity-rail");
+    const railOverlay = rail.firstElementChild;
+    const guest = screen.getByTestId("renderer-guest");
+    const terminal = screen.getByRole("button", { name: "Terminal" });
+    expect(rail).toHaveClass("w-12");
+    expect(rail).not.toHaveClass("-mr-28");
+
+    const originalElementFromPoint = document.elementFromPoint;
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: (x: number) => {
+        const expanded = rail.classList.contains("w-40");
+        if (expanded && x < 160) return terminal;
+        if (x >= 48) return guest;
+        return rail;
+      },
+    });
+
+    try {
+      fireEvent.pointerEnter(rail, { pointerType: "mouse" });
+      act(() => vi.advanceTimersByTime(EXPECTED_EXPAND_DELAY_MS));
+
+      expect(rail).toHaveAttribute("data-expanded", "true");
+      expect(rail).toHaveClass("w-40", "-mr-28", "z-30");
+      expect(railOverlay).toHaveClass("absolute", "w-full");
+      expect(document.elementFromPoint(100, 200)).toBe(terminal);
+      expect(document.elementFromPoint(300, 200)).toBe(guest);
+      expect(guest).toBeVisible();
+      expect(guest).not.toHaveClass("invisible", "pointer-events-none");
+
+      fireEvent.click(terminal);
+      expect(handlers.onSelect).toHaveBeenCalledWith(rightPanelSingletonId("terminal"));
+      fireEvent.pointerDown(guest, { clientX: 300, clientY: 200 });
+      expect(guestPointerDown).toHaveBeenCalledTimes(1);
+
+      fireEvent.pointerLeave(rail, { pointerType: "mouse" });
+      act(() => vi.advanceTimersByTime(EXPECTED_COLLAPSE_DELAY_MS));
+      expect(rail).toHaveAttribute("data-expanded", "false");
+      expect(rail).toHaveClass("w-12");
+      expect(rail).not.toHaveClass("-mr-28");
+    } finally {
+      Object.defineProperty(document, "elementFromPoint", {
+        configurable: true,
+        value: originalElementFromPoint,
+      });
+    }
   });
 
   it("uses the amber pointer favicon and accessible name for an agent-controlled page", () => {

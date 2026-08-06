@@ -1560,6 +1560,8 @@ export interface PreviewPanelProps {
   readonly workspaceId?: string | null;
   /** Mount only renderer-owned automation webviews, without native preview events. */
   readonly automationOnly?: boolean;
+  /** Left edge hidden beneath floating renderer chrome while the remaining guest stays interactive. */
+  readonly rendererOccludedLeft?: number;
 }
 
 function useLiveViewportCoordinatorState(
@@ -1811,7 +1813,12 @@ function WebRuntimePreview({
  * would hide in-surface overlays. In web-only builds without
  * `desktopBridge.preview`, renders an explanatory empty state.
  */
-export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: PreviewPanelProps) {
+export function PreviewPanel({
+  threadId,
+  workspaceId,
+  automationOnly = false,
+  rendererOccludedLeft = 0,
+}: PreviewPanelProps) {
   const surfaceRef = useRef<HTMLDivElement>(null);
   const webviewRefs = useRef<Record<string, PreviewWebviewHandle | null>>({});
   const [viewportCanvasBounds, setViewportCanvasBounds] = useState({ width: 0, height: 0 });
@@ -3103,6 +3110,11 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
         {hasWebviewLayer ? (
           <div
             data-testid="preview-webview-surface"
+            style={
+              rendererOccludedLeft > 0
+                ? { left: rendererOccludedLeft }
+                : undefined
+            }
             className={cn(
               "absolute inset-0 z-0 overflow-hidden rounded-tl-md",
               !webviewLayerInteractive && "pointer-events-none",
@@ -3123,7 +3135,7 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
         {agentControlsBrowser ? (
           <div
             data-testid="browser-automation-overlay"
-            className="pointer-events-none absolute inset-0 z-20 rounded-tl-md border-2 border-primary"
+            className="pointer-events-none absolute inset-0 z-20 rounded-tl-md"
             style={{
               backgroundImage: [
                 "linear-gradient(to right, color-mix(in oklab, var(--primary) 26%, transparent), transparent 32px)",
@@ -3132,7 +3144,6 @@ export function PreviewPanel({ threadId, workspaceId, automationOnly = false }: 
                 "linear-gradient(to top, color-mix(in oklab, var(--primary) 26%, transparent), transparent 32px)",
               ].join(", "),
               boxShadow: [
-                "inset 0 0 0 1px color-mix(in oklab, var(--primary) 88%, white 12%)",
                 "inset 0 0 40px color-mix(in oklab, var(--primary) 30%, transparent)",
                 "0 0 24px color-mix(in oklab, var(--primary) 28%, transparent)",
               ].join(", "),

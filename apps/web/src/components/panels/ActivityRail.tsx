@@ -38,6 +38,7 @@ import {
   isBrowserAutomationAgentControlled,
   useBrowserAutomationStore,
 } from "@/stores/browserAutomationStore";
+import { usePreviewSuppressionStore } from "@/stores/previewSuppressionStore";
 import { cn } from "@/lib/utils";
 
 /** Legacy task completion payload kept for tab API compatibility. */
@@ -54,6 +55,9 @@ const RAIL_EXPAND_DELAY_MS = 140;
 
 /** Grace period that keeps the rail open while the pointer moves between rows. */
 const RAIL_COLLAPSE_DELAY_MS = 250;
+
+/** Width that the expanded rail floats over Browser content beyond its collapsed footprint. */
+export const ACTIVITY_RAIL_FLOATING_OVERLAP_PX = 112;
 
 /** Shared trailing anchor for expanded-rail actions. */
 const RAIL_TRAILING_CONTROL_CLASS = "absolute right-0 top-0";
@@ -505,10 +509,21 @@ function RailAddControl({
   onCreate: (id: RightPanelTab) => void;
   readonly terminalCapReached?: boolean;
 }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const incrementPreviewSuppression = usePreviewSuppressionStore((s) => s.increment);
+  const decrementPreviewSuppression = usePreviewSuppressionStore((s) => s.decrement);
   const shown = shownTabTypes(scope, openTabs);
   const creatable = creatableTypes(scope, openTabs).filter(
     (type) => !(terminalCapReached && type.id === "terminal"),
   );
+
+  // The portaled options can overlap the native preview even when the rail itself is collapsed.
+  const suppressPreview = menuOpen && creatable.length > 1;
+  useEffect(() => {
+    if (!suppressPreview) return;
+    incrementPreviewSuppression();
+    return () => decrementPreviewSuppression();
+  }, [decrementPreviewSuppression, incrementPreviewSuppression, suppressPreview]);
 
   // Nothing openable hides the control entirely, even if a coming-soon teaser remains.
   if (creatable.length === 0) return null;
@@ -540,7 +555,7 @@ function RailAddControl({
   }
 
   return (
-    <DropdownMenu>
+    <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
       <DropdownMenuTrigger
         render={
           <Button
@@ -619,6 +634,7 @@ export function ActivityRail({
   terminalLabels,
   onSelectBrowserPage,
   onCloseBrowserPage,
+  onExpandedChange,
 }: {
   readonly tabInstances: readonly RightPanelTabInstance[];
   readonly activeTabId: string | null;
@@ -642,6 +658,8 @@ export function ActivityRail({
   readonly terminalLabels?: Readonly<Record<string, string>>;
   onSelectBrowserPage: (instanceId: string, pageId: string) => void;
   onCloseBrowserPage: (pageId: string) => void;
+  /** Publishes the floating state so renderer guests can yield the overlap region. */
+  readonly onExpandedChange?: (expanded: boolean) => void;
 }) {
   const openTabs = tabInstances.map((instance) => instance.type);
   const [expanded, setExpanded] = useState(false);
@@ -683,6 +701,18 @@ export function ActivityRail({
     }, RAIL_COLLAPSE_DELAY_MS);
   }, [clearCollapseTimer, clearExpandTimer]);
 
+  const incrementPreviewSuppression = usePreviewSuppressionStore((s) => s.increment);
+  const decrementPreviewSuppression = usePreviewSuppressionStore((s) => s.decrement);
+  useEffect(() => {
+    if (!expanded) return;
+    incrementPreviewSuppression();
+    return () => decrementPreviewSuppression();
+  }, [decrementPreviewSuppression, expanded, incrementPreviewSuppression]);
+
+  useEffect(() => {
+    onExpandedChange?.(expanded);
+  }, [expanded, onExpandedChange]);
+
   useEffect(
     () => () => {
       clearExpandTimer();
@@ -721,7 +751,10 @@ export function ActivityRail({
       ref={railRef}
       data-testid="activity-rail"
       data-expanded={expanded ? "true" : "false"}
-      className="relative z-30 w-12 flex-none bg-background"
+      className={cn(
+        "relative z-30 flex-none bg-background transition-[width,margin-right] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:duration-0 motion-reduce:transition-none",
+        expanded ? "w-40 -mr-28" : "w-12",
+      )}
       onPointerEnter={onPointerEnter}
       onPointerLeave={onPointerLeave}
       onFocusCapture={onFocusCapture}
@@ -729,8 +762,8 @@ export function ActivityRail({
     >
       <div
         className={cn(
-          "absolute inset-y-0 left-0 flex w-12 flex-col items-stretch gap-0.5 overflow-hidden bg-background px-1.5 py-2 transition-[width] duration-150 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:duration-0 motion-reduce:transition-none",
-          expanded && "w-40 border-r border-border/50",
+          "absolute inset-y-0 left-0 flex w-full flex-col items-stretch gap-0.5 overflow-hidden bg-background px-1.5 py-2",
+          expanded && "border-r border-border/50",
         )}
       >
       {/* Panel-level actions stay at the rail head so they remain the first tab

@@ -118,6 +118,20 @@ describe("previewTabsStore", () => {
     expect(usePreviewTabsStore.getState().liveChromeByScope[SCOPE]?.title).toBe("T");
   });
 
+  it("setTabSet preserves state identity for a semantically identical host snapshot", () => {
+    const { setTabSet } = usePreviewTabsStore.getState();
+    setTabSet(SCOPE, set("a", [page("a")]));
+    const previousState = usePreviewTabsStore.getState();
+    const subscriber = vi.fn();
+    const unsubscribe = usePreviewTabsStore.subscribe(subscriber);
+
+    setTabSet(SCOPE, set("a", [page("a")]));
+
+    expect(usePreviewTabsStore.getState()).toBe(previousState);
+    expect(subscriber).not.toHaveBeenCalled();
+    unsubscribe();
+  });
+
   it("openPage creates a page via the bridge and focuses the omnibox", async () => {
     const created = set("new", [page("a"), page("new", { active: true })]);
     const { open } = mockBridge({ open: created });
@@ -167,12 +181,21 @@ describe("previewTabsStore", () => {
 
   it("closePage fires onLastClose and drops the scope's set when closing the last page", async () => {
     usePreviewTabsStore.getState().setTabSet(SCOPE, set("a", [page("a")]));
-    mockBridge({});
+    const { close, closeScope } = mockBridge({});
+    usePreviewTabsStore.getState().setLiveChrome(SCOPE, { title: "A", url: null, favicon: null });
+    useBrowserAutomationStore.getState().registerTarget("workspace-1", SCOPE, "a");
     const onLastClose = vi.fn();
+    onLastClose.mockImplementation(() => {
+      expect(usePreviewTabsStore.getState().tabSetByScope[SCOPE]).toBeNull();
+      expect(usePreviewTabsStore.getState().liveChromeByScope[SCOPE]).toBeNull();
+    });
     await usePreviewTabsStore.getState().closePage(SCOPE, "a", { onLastClose });
     expect(onLastClose).toHaveBeenCalledTimes(1);
-    // The host recreates a blank fallback, but the Browser tab is gone; the
-    // scope's set must clear rather than retain a phantom page.
+    expect(closeScope).toHaveBeenCalledWith(SCOPE);
+    expect(close).not.toHaveBeenCalled();
+    expect(browserTargetRegistry.get(SCOPE, "a")).toBeNull();
+    // The Browser tab is gone; the scope's set must clear rather than retain
+    // a phantom page.
     expect(usePreviewTabsStore.getState().tabSetByScope[SCOPE]).toBeNull();
   });
 
@@ -197,6 +220,28 @@ describe("previewTabsStore", () => {
 
     await expect(usePreviewTabsStore.getState().clearScope(SCOPE)).rejects.toThrow("scope close failed");
     expect(browserTargetRegistry.get(SCOPE, "a")).not.toBeNull();
+  });
+
+  it("retains final-page UI state and automation targets when the physical scope close fails", async () => {
+    const finalTabSet = set("a", [page("a")]);
+    usePreviewTabsStore.getState().setTabSet(SCOPE, finalTabSet);
+    usePreviewTabsStore.getState().setLiveChrome(SCOPE, { title: "A", url: "https://example.test", favicon: null });
+    const { close, closeScope } = mockBridge({});
+    closeScope.mockResolvedValueOnce({ ok: false, error: "scope close failed" });
+    useBrowserAutomationStore.getState().registerTarget("workspace-1", SCOPE, "a");
+    const onLastClose = vi.fn();
+
+    await usePreviewTabsStore.getState().closePage(SCOPE, "a", { onLastClose });
+
+    expect(close).not.toHaveBeenCalled();
+    expect(onLastClose).not.toHaveBeenCalled();
+    expect(browserTargetRegistry.get(SCOPE, "a")).not.toBeNull();
+    expect(usePreviewTabsStore.getState().tabSetByScope[SCOPE]).toBe(finalTabSet);
+    expect(usePreviewTabsStore.getState().liveChromeByScope[SCOPE]).toEqual({
+      title: "A",
+      url: "https://example.test",
+      favicon: null,
+    });
   });
 
   it("setLiveChrome keeps the same reference when the chrome is unchanged", () => {

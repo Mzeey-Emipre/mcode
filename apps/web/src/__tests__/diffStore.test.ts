@@ -408,6 +408,20 @@ describe("diffStore", () => {
       setRightPanelWidth("ws-1", null, 100);
       expect(getRightPanel("ws-1").width).toBe(PANEL_MIN_WIDTH);
     });
+
+    it("preserves store identity when the effective width and source are unchanged", () => {
+      const { setRightPanelWidth } = useDiffStore.getState();
+      setRightPanelWidth("ws-1", null, 500, "user");
+      const previousState = useDiffStore.getState();
+      const subscriber = vi.fn();
+      const unsubscribe = useDiffStore.subscribe(subscriber);
+
+      setRightPanelWidth("ws-1", null, 500, "user");
+
+      expect(useDiffStore.getState()).toBe(previousState);
+      expect(subscriber).not.toHaveBeenCalled();
+      unsubscribe();
+    });
   });
 
   describe("maxPanelWidthInSplit", () => {

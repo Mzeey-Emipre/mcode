@@ -814,6 +814,45 @@ describe("BrowserAutomationKernel", () => {
     });
   });
 
+  it("accepts an aborted load after the requested navigation commits", async () => {
+    const targetUrl = "https://www.google.test/search?q=browser";
+    const committedUrl = `${targetUrl}&source=redirect`;
+    currentWebContents!.loadURL.mockImplementationOnce(async () => {
+      currentWebContents!.url = committedUrl;
+      throw Object.assign(new Error("ERR_ABORTED (-3)"), {
+        code: "ERR_ABORTED",
+        errno: -3,
+      });
+    });
+
+    await expect(kernel.execute(
+      event(),
+      payload(request("navigate", { url: targetUrl }, { requestId: "redirect-committed" })),
+    )).resolves.toMatchObject({
+      ok: true,
+      result: { operation: "navigate", url: committedUrl },
+    });
+  });
+
+  it("rejects an aborted load that leaves the previous page unchanged", async () => {
+    currentWebContents!.loadURL.mockRejectedValueOnce(Object.assign(new Error("ERR_ABORTED (-3)"), {
+      code: "ERR_ABORTED",
+      errno: -3,
+    }));
+
+    await expect(kernel.execute(
+      event(),
+      payload(request(
+        "navigate",
+        { url: "https://other.test/" },
+        { requestId: "redirect-not-committed" },
+      )),
+    )).resolves.toMatchObject({
+      ok: false,
+      error: { code: "NAVIGATION_FAILED" },
+    });
+  });
+
   it("stops every timed-out navigation before returning its error response", async () => {
     vi.useFakeTimers();
     try {

@@ -40,6 +40,12 @@ interface PendingRequest {
   timer: ReturnType<typeof setTimeout>;
   startedAt: number;
   credentialOperations: readonly BrowserAutomationOperation[];
+  navigationAttemptKey?: string;
+}
+
+interface NavigationAttemptRecord {
+  attempts: number;
+  lastAttemptAt: number;
 }
 
 interface OpenReplayRecord {
@@ -120,6 +126,10 @@ const BROWSER_V2_OPERATIONS = new Set<BrowserAutomationOperation>([
   "tabs",
   "evaluate",
 ]);
+const NAVIGATION_MAX_RETRIES = 1;
+const NAVIGATION_MAX_ATTEMPTS = NAVIGATION_MAX_RETRIES + 1;
+const NAVIGATION_RETRY_WINDOW_MS = 60_000;
+const NAVIGATION_ATTEMPT_RECORD_LIMIT = 256;
 
 function browserV2Recovery(code: BrowserAutomationErrorCode): "inspect" | "reopen" | "wait" | "yield_to_user" | "do_not_retry" {
   switch (code) {
@@ -142,9 +152,11 @@ function browserV2Recovery(code: BrowserAutomationErrorCode): "inspect" | "reope
 }
 
 function legacyBrowserRecovery(
+  operation: BrowserAutomationOperation,
   code: BrowserAutomationErrorCode,
   retryable: boolean,
 ): "inspect" | "wait" | "retry" | "manual" {
+  if (operation === "navigate" && code === "HOST_UNAVAILABLE") return "wait";
   if (code === "BROWSER_BUSY") return "wait";
   if (code === "CAPABILITY_CHANGED") return "inspect";
   return retryable ? "retry" : "manual";
@@ -159,7 +171,7 @@ function failure(
   const browserV2Request = BROWSER_V2_OPERATIONS.has(request.operation);
   const recovery = browserV2Request
     ? browserV2Recovery(code)
-    : legacyBrowserRecovery(code, retryable);
+    : legacyBrowserRecovery(request.operation, code, retryable);
   return {
     contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
     requestId: request.requestId,
@@ -232,6 +244,46 @@ function evaluateReplayKey(providerId: string, request: Extract<BrowserAutomatio
 
 function hashExpression(expression: string): string {
   return createHash("sha256").update(expression, "utf8").digest("hex");
+}
+
+function navigationAttemptKey(
+  providerId: string,
+  request: Extract<BrowserAutomationRequest, { operation: "navigate" }>,
+  host: RegisteredHost,
+  target: BrowserAutomationHostDispatchTarget,
+): string {
+  const normalizedUrl = new URL(request.args.url).toString();
+  return JSON.stringify([
+    providerId,
+    request.providerSessionId,
+    request.workspaceId,
+    request.threadId,
+    host.registration.hostId,
+    host.generation,
+    target.tabId,
+    createHash("sha256").update(normalizedUrl, "utf8").digest("hex"),
+  ]);
+}
+
+function navigationRetryLimitFailure(
+  request: Extract<BrowserAutomationRequest, { operation: "navigate" }>,
+): BrowserAutomationResponse {
+  const response = failure(
+    request,
+    "NAVIGATION_FAILED",
+    "Browser navigation retry limit reached",
+    false,
+  );
+  if (response.ok) return response;
+  return {
+    ...response,
+    error: {
+      ...response.error,
+      stage: "effect",
+      effect: "none",
+      recovery: "do_not_retry",
+    },
+  };
 }
 
 function tabsReplayKey(providerId: string, request: Extract<BrowserAutomationRequest, { operation: "tabs" }>): string {
@@ -397,6 +449,7 @@ export class BrowserAutomationBroker {
   private readonly browserMutations = new Map<string, string>();
   private readonly tabsReplay = new Map<string, TabsReplayRecord>();
   private readonly sessionHosts = new Map<string, RegisteredHost>();
+  private readonly navigationAttempts = new Map<string, NavigationAttemptRecord>();
   private nextGeneration = 1;
   private readonly reliability: BrowserAutomationReliabilityCounters = {
     dispatched: 0,
@@ -1023,6 +1076,16 @@ export class BrowserAutomationBroker {
     if (this.pending.has(key)) {
       return finishImmediately(failure(request, "INVALID_REQUEST", "Browser request correlation is already pending", false));
     }
+    const navigationRequest = request.operation === "navigate" ? request : undefined;
+    const retryKey = navigationRequest
+      ? navigationAttemptKey(claims.providerId, navigationRequest, host, target)
+      : undefined;
+    const priorNavigationAttempts = retryKey
+      ? (this.navigationAttempts.get(retryKey)?.attempts ?? 0)
+      : 0;
+    if (navigationRequest && priorNavigationAttempts >= NAVIGATION_MAX_ATTEMPTS) {
+      return finishImmediately(navigationRetryLimitFailure(navigationRequest));
+    }
 
     return new Promise((resolve) => {
       const timeoutMs = Math.max(1, Math.min(60_000, request.deadline - this.now()));
@@ -1057,6 +1120,28 @@ export class BrowserAutomationBroker {
       if (preflightError) {
         this.settle(key, pending, preflightError);
         return;
+      }
+      if (retryKey && navigationRequest) {
+        const prior = this.navigationAttempts.get(retryKey);
+        if ((prior?.attempts ?? 0) >= NAVIGATION_MAX_ATTEMPTS) {
+          this.settle(
+            key,
+            pending,
+            navigationRetryLimitFailure(navigationRequest),
+          );
+          return;
+        }
+        pending.navigationAttemptKey = retryKey;
+        this.navigationAttempts.delete(retryKey);
+        this.navigationAttempts.set(retryKey, {
+          attempts: (prior?.attempts ?? 0) + 1,
+          lastAttemptAt: this.now(),
+        });
+        while (this.navigationAttempts.size > NAVIGATION_ATTEMPT_RECORD_LIMIT) {
+          const oldest = this.navigationAttempts.keys().next().value as string | undefined;
+          if (!oldest) break;
+          this.navigationAttempts.delete(oldest);
+        }
       }
       const sent = this.trySend(host.socket, "browserAutomation.request", {
         hostId: host.registration.hostId,
@@ -1112,6 +1197,7 @@ export class BrowserAutomationBroker {
     this.browserMutations.clear();
     this.tabsReplay.clear();
     this.sessionHosts.clear();
+    this.navigationAttempts.clear();
   }
 
   /** Returns bounded broker counts for status and tests. */
@@ -1209,6 +1295,12 @@ export class BrowserAutomationBroker {
     for (const key of this.tabsReplay.keys()) {
       const parts = JSON.parse(key) as string[];
       if (parts[0] === providerId && parts[1] === providerSessionId) this.tabsReplay.delete(key);
+    }
+    for (const key of this.navigationAttempts.keys()) {
+      const parts = JSON.parse(key) as string[];
+      if (parts[0] === providerId && parts[1] === providerSessionId) {
+        this.navigationAttempts.delete(key);
+      }
     }
     this.browserMutations.delete(sessionRoutingKey(providerId, providerSessionId));
     return removed;
@@ -1456,9 +1548,43 @@ export class BrowserAutomationBroker {
     if (!this.pending.delete(key)) return;
     clearTimeout(pending.timer);
     pending.host.pending = Math.max(0, pending.host.pending - 1);
+    const boundedResponse = this.applyNavigationRetryPolicy(pending, response);
     const latencyMs = Math.max(0, this.now() - pending.startedAt);
-    this.recordOutcome(response, latencyMs);
-    pending.resolve(response);
+    this.recordOutcome(boundedResponse, latencyMs);
+    pending.resolve(boundedResponse);
+  }
+
+  private applyNavigationRetryPolicy(
+    pending: PendingRequest,
+    response: BrowserAutomationResponse,
+  ): BrowserAutomationResponse {
+    if (pending.request.operation !== "navigate") return response;
+    const retryKey = pending.navigationAttemptKey;
+    if (response.ok) {
+      if (retryKey) this.navigationAttempts.delete(retryKey);
+      return response;
+    }
+    if (response.error.code === "HOST_UNAVAILABLE") {
+      return {
+        ...response,
+        error: { ...response.error, recovery: "wait" },
+      };
+    }
+    if (
+      response.error.code === "NAVIGATION_FAILED" &&
+      retryKey &&
+      (this.navigationAttempts.get(retryKey)?.attempts ?? 0) >= NAVIGATION_MAX_ATTEMPTS
+    ) {
+      return {
+        ...response,
+        error: {
+          ...response.error,
+          retryable: false,
+          recovery: "do_not_retry",
+        },
+      };
+    }
+    return response;
   }
 
   private updateTabsAssignment(
@@ -1671,6 +1797,11 @@ export class BrowserAutomationBroker {
     }
     for (const [key, assignment] of this.assignments) {
       if (now - assignment.lastUsedAt >= this.assignmentTtlMs) this.assignments.delete(key);
+    }
+    for (const [key, record] of this.navigationAttempts) {
+      if (now - record.lastAttemptAt >= NAVIGATION_RETRY_WINDOW_MS) {
+        this.navigationAttempts.delete(key);
+      }
     }
   }
 
