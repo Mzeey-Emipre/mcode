@@ -808,7 +808,7 @@ describe("PreviewPanel: full panel state", () => {
     );
   });
 
-  it("clips only the floating rail overlap from the renderer webview", () => {
+  it("removes the floating rail overlap from the renderer webview hit area", () => {
     useSettingsStore.getState()._applyPush({
       ...getDefaultSettings(),
       preview: {
@@ -822,7 +822,8 @@ describe("PreviewPanel: full panel state", () => {
 
     render(<PreviewPanel threadId="thread-1" rendererOccludedLeft={112} />);
 
-    expect(screen.getByTestId("preview-webview-surface")).toHaveStyle({
+    expect(screen.getByTestId("preview-webview-surface")).toHaveStyle({ left: "112px" });
+    expect(screen.getByTestId("preview-webview-surface")).not.toHaveStyle({
       clipPath: "inset(0px 0px 0px 112px)",
     });
     expect(screen.getByTestId("preview-webview")).not.toHaveClass("pointer-events-none");

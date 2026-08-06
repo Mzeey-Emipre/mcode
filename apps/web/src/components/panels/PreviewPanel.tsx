@@ -3112,7 +3112,7 @@ export function PreviewPanel({
             data-testid="preview-webview-surface"
             style={
               rendererOccludedLeft > 0
-                ? { clipPath: `inset(0px 0px 0px ${rendererOccludedLeft}px)` }
+                ? { left: rendererOccludedLeft }
                 : undefined
             }
             className={cn(
