@@ -1,26 +1,24 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   ArrowDown,
   ArrowLeft,
   ArrowRight,
-  Bot,
   Check,
-  ChevronDown,
+  ChevronLeft,
   CircleDot,
   Eye,
-  GitBranch,
-  Inbox,
   RotateCcw,
   Sparkles,
+  X,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-
-// Prototype plan: three child-continuation layouts on ChatView, switchable via ?prototype=child-continuation&variant=A|B|C.
+import { SubagentIdentityGlyph } from "@/components/subagents/SubagentIdentityGlyph";
+import { PRIMARY_CONTENT_RAIL_CLASS } from "@/lib/layout-rails";
 
 type VariantKey = "A" | "B" | "C";
-type ChildStatus = "idle" | "continuing" | "returned";
+type ChildStatus = "continuing" | "returned";
 type ParentStatus = "settled" | "continuing";
 type ReadingPosition = "tail" | "above";
 
@@ -28,30 +26,28 @@ interface PrototypeState {
   childStatus: ChildStatus;
   parentStatus: ParentStatus;
   readingPosition: ReadingPosition;
-  childDetailOpen: boolean;
-  eventLog: string[];
 }
 
-interface StateAction {
-  label: string;
-  onClick: () => void;
-  icon: React.ReactNode;
+interface RosterRow {
+  id: string;
+  identity: string;
+  task: string;
+  status: "active" | "done";
+  activity: string;
 }
 
 const VARIANTS: readonly VariantKey[] = ["A", "B", "C"];
 
 const VARIANT_NAMES: Record<VariantKey, string> = {
-  A: "Inline return item",
+  A: "Docked roster",
   B: "Attention rail",
-  C: "Continuation handoff",
+  C: "Floating roster",
 };
 
 const INITIAL_STATE: PrototypeState = {
-  childStatus: "idle",
+  childStatus: "continuing",
   parentStatus: "settled",
   readingPosition: "tail",
-  childDetailOpen: false,
-  eventLog: ["Prototype ready: parent turn settled."],
 };
 
 function readVariant(): VariantKey {
@@ -68,243 +64,308 @@ function replaceVariantUrl(variant: VariantKey) {
   window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}${window.location.hash}`);
 }
 
-function statusLabel(status: ChildStatus | ParentStatus) {
-  if (status === "continuing") return "continuing";
-  if (status === "returned") return "returned";
-  return status;
-}
-
-function statusVariant(status: ChildStatus | ParentStatus): "default" | "secondary" | "outline" {
-  if (status === "continuing") return "default";
-  if (status === "returned") return "secondary";
-  return "outline";
-}
-
-function TranscriptHeader({ state }: { state: PrototypeState }) {
+function RosterRowButton({ row, onSelect }: { row: RosterRow; onSelect: () => void }) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/50 pb-3">
-      <div>
-        <p className="font-mono text-xs uppercase tracking-[0.18em] text-muted-foreground/65">
-          Child continuation lab
-        </p>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Read-only interaction prototype for a settled parent turn and its continuing child.
-        </p>
-      </div>
-      <Badge variant="outline" size="sm">DEV prototype</Badge>
-      <div className="flex items-center gap-1.5 text-xs text-muted-foreground" aria-live="polite">
-        <Badge variant={statusVariant(state.childStatus)} size="sm">child {statusLabel(state.childStatus)}</Badge>
-        <Badge variant={statusVariant(state.parentStatus)} size="sm">parent {statusLabel(state.parentStatus)}</Badge>
-      </div>
-    </div>
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      onClick={onSelect}
+      aria-label={`Open ${row.identity} details, ${row.status === "active" ? "Active" : "Done"}`}
+      data-subagent-id={row.id}
+      className="h-auto w-full min-w-0 justify-start gap-2.5 rounded-none px-4 py-2.5 text-left hover:bg-muted/30 focus-visible:ring-inset"
+    >
+      <SubagentIdentityGlyph
+        identity={row.identity}
+        hasExplicitIdentity
+        className="size-6"
+        size={14}
+      />
+      <span className="min-w-0 flex-1">
+        <span className="flex min-w-0 items-center gap-2">
+          <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{row.identity}</span>
+          <span className="shrink-0 text-xs text-muted-foreground">{row.status === "active" ? "Active" : "Done"}</span>
+        </span>
+        <span className="mt-0.5 block truncate text-xs text-muted-foreground">{row.activity}</span>
+      </span>
+    </Button>
   );
 }
 
-function ParentTranscript({ parentStatus }: { parentStatus: ParentStatus }) {
+function RosterDetail({ row, onBack }: { row: RosterRow; onBack: () => void }) {
   return (
-    <div className="space-y-3">
-      <article className="rounded-xl border border-border/60 bg-card/55 p-4 shadow-xs">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-            <span className="flex size-6 items-center justify-center rounded-full bg-muted text-foreground/70" aria-hidden="true">
-              <GitBranch className="size-3.5" />
-            </span>
-            You
-          </div>
-          <span className="font-mono text-xs text-muted-foreground/60">09:41</span>
-        </div>
-        <p className="mt-3 text-sm leading-6 text-foreground/90">
-          Inspect the migration and propose a safe fix. Ask a child agent to check the edge cases while you work.
-        </p>
-      </article>
-
-      <article className="rounded-xl border border-primary/25 bg-primary/[0.035] p-4">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2 text-xs font-medium text-foreground/80">
-            <span className="flex size-6 items-center justify-center rounded-full bg-primary/10 text-primary" aria-hidden="true">
-              <Bot className="size-3.5" />
-            </span>
-            Parent agent
-          </div>
-          <Badge variant="outline" size="sm">settled</Badge>
-        </div>
-        <p className="mt-3 text-sm leading-6 text-foreground/90">
-          I found the migration boundary and asked a child agent to verify the rollback path. I’ll continue once its result arrives.
-        </p>
-        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-          <span className="inline-flex items-center gap-1"><Check className="size-3" /> Parent turn settled</span>
-          <span className="text-border">•</span>
-          <span>{parentStatus === "continuing" ? "New parent turn is streaming below" : "Waiting for child result"}</span>
-        </div>
-      </article>
-
-      {parentStatus === "continuing" && (
-        <article className="rounded-xl border border-primary/35 bg-primary/[0.06] p-4">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-xs font-medium text-foreground/85">
-              <span className="flex size-6 items-center justify-center rounded-full bg-primary/10 text-primary" aria-hidden="true">
-                <Sparkles className="size-3.5" />
-              </span>
-              Parent continuation
-            </div>
-            <Badge variant="default" size="sm">provider · parent</Badge>
-          </div>
-          <p className="mt-3 text-sm leading-6 text-foreground/90">
-            The child confirmed the rollback path. I’m folding that result into the parent plan now.
-          </p>
-          <p className="mt-2 font-mono text-xs uppercase tracking-[0.14em] text-muted-foreground/65">
-            Explicit provenance: provider-originated parent turn
-          </p>
-        </article>
-      )}
-    </div>
-  );
-}
-
-function ChildDetail({ headingRef, onClose }: { headingRef?: React.RefObject<HTMLHeadingElement | null>; onClose: () => void }) {
-  return (
-    <section className="rounded-xl border border-primary/25 bg-primary/[0.035] p-4" aria-labelledby="child-detail-heading">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h3 ref={headingRef} id="child-detail-heading" tabIndex={-1} className="text-sm font-semibold text-foreground outline-none">
-            Child agent detail
-          </h3>
-          <p className="mt-1 text-xs text-muted-foreground">Rollback check · 3 steps · completed 12s ago</p>
-        </div>
-        <Button variant="ghost" size="icon-xs" onClick={onClose} aria-label="Close child detail">
-          <ChevronDown className="size-4" />
+    <section className="flex min-h-0 flex-1 flex-col" aria-label={`${row.identity} subagent details`}>
+      <header className="flex shrink-0 items-center gap-2 border-b border-border/50 px-4 py-3">
+        <Button type="button" variant="ghost" size="icon-sm" onClick={onBack} aria-label="Back to subagents">
+          <ChevronLeft className="size-4" aria-hidden />
         </Button>
-      </div>
-      <div className="mt-3 space-y-2 border-l border-primary/25 pl-3 text-sm text-foreground/80">
-        <p>Checked the down migration against the new index shape.</p>
-        <p>Confirmed rollback is safe when the index is absent.</p>
-        <p className="flex items-center gap-1.5 text-xs text-muted-foreground"><Check className="size-3 text-primary" /> Result available to parent</p>
-      </div>
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <SubagentIdentityGlyph identity={row.identity} hasExplicitIdentity className="size-6" size={14} />
+          <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">{row.identity}</h2>
+          <Badge variant={row.status === "active" ? "default" : "secondary"} size="sm">
+            {row.status === "active" ? "Active" : "Done"}
+          </Badge>
+        </div>
+      </header>
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="space-y-5 px-4 py-5">
+          <div>
+            <p className="font-mono text-xs uppercase tracking-[0.16em] text-muted-foreground/70">Task</p>
+            <p className="mt-1 text-sm leading-6 text-foreground">{row.task}</p>
+          </div>
+          <div className="space-y-3 border-l border-border pl-3 text-sm leading-6 text-foreground/85">
+            <p>Checked the down migration against the new index shape.</p>
+            <p>Confirmed rollback is safe when the index is absent.</p>
+            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Check className="size-3 text-primary" aria-hidden />
+              {row.status === "active" ? "Waiting for the remaining checks." : "Result available to parent."}
+            </p>
+          </div>
+          <p className="text-xs leading-5 text-muted-foreground">Read-only detail from the Subagents panel.</p>
+        </div>
+      </ScrollArea>
     </section>
   );
 }
 
-function ChildReturnItem({ state, onReview }: { state: PrototypeState; onReview: () => void }) {
+function rosterRows(state: PrototypeState): { active: RosterRow[]; done: RosterRow[] } {
+  const active: RosterRow[] = state.childStatus === "continuing"
+    ? [{
+      id: "rollback-check",
+      identity: "Rollback check",
+      task: "Verify the down migration edge cases",
+      status: "active",
+      activity: "Checking index absence",
+    }]
+    : [];
+  const done: RosterRow[] = state.childStatus === "returned"
+    ? [{
+      id: "rollback-check",
+      identity: "Rollback check",
+      task: "Verify the down migration edge cases",
+      status: "done",
+      activity: "Result ready · 12s ago",
+    }]
+    : [{
+      id: "schema-scan",
+      identity: "Schema scan",
+      task: "Map the migration boundary",
+      status: "done",
+      activity: "Finished · 2m ago",
+    }];
+  return { active, done };
+}
+
+function SubagentsRoster({
+  state,
+  attention,
+  selectedId,
+  onSelect,
+  onClose,
+}: {
+  state: PrototypeState;
+  attention: boolean;
+  selectedId: string | null;
+  onSelect: (row: RosterRow) => void;
+  onClose?: () => void;
+}) {
+  const rows = rosterRows(state);
+  const selectedRow = [...rows.active, ...rows.done].find((row) => row.id === selectedId);
+  if (selectedRow) return <RosterDetail row={selectedRow} onBack={() => onSelect({ ...selectedRow, id: "" })} />;
+
   return (
-    <article className="rounded-xl border-l-4 border-l-primary border-y border-r border-border/55 bg-card/60 p-4 shadow-xs">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 text-xs font-medium text-foreground/85">
-          <span className="flex size-6 items-center justify-center rounded-full bg-primary/10 text-primary" aria-hidden="true">
-            <CircleDot className="size-3.5" />
-          </span>
-          Child agent {state.childStatus === "returned" ? "returned" : "continues"}
+    <section className="flex min-h-0 flex-1 flex-col" aria-label="Subagents">
+      <header className="flex shrink-0 items-center gap-2 border-b border-border/50 px-4 py-3">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
+          <h2 className="text-sm font-semibold text-foreground">Subagents</h2>
+          {attention && (
+            <span
+              className="size-1.5 rounded-full bg-primary"
+              aria-label="New child result"
+              title="New child result"
+            />
+          )}
+          <span className="text-xs text-muted-foreground">{rows.active.length} active · {rows.done.length} done</span>
         </div>
-        <Badge variant="secondary" size="sm">child · returned</Badge>
+        {onClose && (
+          <Button type="button" variant="ghost" size="icon-xs" onClick={onClose} aria-label="Close Subagents panel">
+            <X className="size-3.5" aria-hidden />
+          </Button>
+        )}
+      </header>
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="pb-3">
+          <section aria-labelledby="prototype-subagents-active-heading">
+            <div className="flex items-center gap-2 px-4 pb-1 pt-5">
+              <h3 id="prototype-subagents-active-heading" className="text-sm font-semibold text-foreground">Active</h3>
+              <Badge variant="ghost" size="sm" className="px-0 font-mono font-normal text-muted-foreground hover:bg-transparent">{rows.active.length}</Badge>
+            </div>
+            {rows.active.length > 0 ? rows.active.map((row) => <RosterRowButton key={row.id} row={row} onSelect={() => onSelect(row)} />) : (
+              <p className="px-4 py-2 text-xs text-muted-foreground">No active child work.</p>
+            )}
+          </section>
+          <section aria-labelledby="prototype-subagents-done-heading">
+            <div className="flex items-center gap-2 px-4 pb-1 pt-5">
+              <h3 id="prototype-subagents-done-heading" className="text-sm font-semibold text-foreground">Done</h3>
+              <Badge variant="ghost" size="sm" className="px-0 font-mono font-normal text-muted-foreground hover:bg-transparent">{rows.done.length}</Badge>
+            </div>
+            {rows.done.map((row) => <RosterRowButton key={row.id} row={row} onSelect={() => onSelect(row)} />)}
+          </section>
+        </div>
+      </ScrollArea>
+    </section>
+  );
+}
+
+function UserMessage() {
+  return (
+    <div className="flex justify-end">
+      <div className="min-w-0 max-w-[min(82%,56rem)] space-y-1.5">
+        <div className="overflow-hidden break-words rounded-lg rounded-br-md bg-accent px-3 py-1.5 text-sm text-accent-foreground">
+          Inspect the migration and ask a child agent to verify the rollback edge cases.
+        </div>
+        <div className="flex justify-end pr-1 font-mono text-xs tabular-nums text-muted-foreground/55">09:41</div>
       </div>
-      <p className="mt-3 text-sm leading-6 text-foreground/90">
-        {state.childStatus === "continuing"
-          ? "Still checking the rollback path. The parent turn has already settled."
-          : "Rollback is safe when the index is absent. This result is ready for the parent to continue."}
-      </p>
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        <Button variant="outline" size="sm" onClick={onReview}>
-          <Eye className="size-3.5" /> Review child
-        </Button>
-        <span className="text-xs text-muted-foreground">Inline return keeps the parent tail intact.</span>
-      </div>
+    </div>
+  );
+}
+
+function AssistantMessage({ children, footer }: { children: ReactNode; footer?: ReactNode }) {
+  return (
+    <article className="space-y-2 text-sm leading-7 text-foreground">
+      <p>{children}</p>
+      {footer && <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 font-mono text-xs text-muted-foreground/65">{footer}</div>}
     </article>
   );
 }
 
-function AttentionRail({ state, onReview }: { state: PrototypeState; onReview: () => void }) {
+function NarrativeSubagentRow({ state, onReview }: { state: PrototypeState; onReview: () => void }) {
+  const status = state.childStatus === "continuing" ? "started working" : "returned a result";
   return (
-    <aside className="rounded-xl border border-border/65 bg-muted/20 p-4" aria-label="Child activity rail">
-      <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-        <Inbox className="size-4 text-primary" />
-        Activity rail
-      </div>
-      <p className="mt-1 text-xs leading-5 text-muted-foreground">The parent transcript does not move while a child needs attention.</p>
-      <div className="mt-4 rounded-lg border border-primary/25 bg-background/80 p-3">
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-xs font-medium text-foreground/85">Rollback check</span>
-          <Badge variant={state.childStatus === "returned" ? "secondary" : "default"} size="sm">{statusLabel(state.childStatus)}</Badge>
-        </div>
-        <p className="mt-2 text-xs leading-5 text-muted-foreground">
-          {state.childStatus === "returned" ? "Result is ready for review." : "Child is continuing after the parent settled."}
-        </p>
-        <Button className="mt-3 w-full" variant="outline" size="sm" onClick={onReview}>
-          <Eye className="size-3.5" /> Review child
-        </Button>
-      </div>
-      <div className="mt-4 flex items-start gap-2 border-t border-border/50 pt-3 text-xs text-muted-foreground">
-        <CircleDot className="mt-0.5 size-3 text-primary" />
-        <span>Attention persists here until explicitly reviewed.</span>
-      </div>
-    </aside>
-  );
-}
-
-function ContinuationStrip({ onReview, onContinue }: { onReview: () => void; onContinue: () => void }) {
-  return (
-    <section className="border-t border-primary/25 bg-primary/[0.045] px-4 py-3" aria-label="Continuation handoff">
-      <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-between gap-3">
-        <div className="flex min-w-0 items-start gap-2">
-          <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary" aria-hidden="true">
-            <ArrowDown className="size-3.5" />
-          </span>
-          <div className="min-w-0">
-            <p className="text-xs font-semibold text-foreground">Child result is ready for the parent</p>
-            <p className="mt-0.5 truncate text-xs text-muted-foreground">Rollback is safe when the index is absent.</p>
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={onReview}><Eye className="size-3.5" /> Review child</Button>
-          <Button variant="default" size="sm" onClick={onContinue}><Sparkles className="size-3.5" /> Continue parent</Button>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function StateActions({ actions }: { actions: readonly StateAction[] }) {
-  return (
-    <div className="flex flex-wrap gap-2" aria-label="Simulation controls">
-      {actions.map((action) => (
-        <Button key={action.label} variant="outline" size="sm" onClick={action.onClick}>
-          {action.icon}
-          {action.label}
-        </Button>
-      ))}
+    <div className="flex min-w-0 items-center gap-2 py-1">
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        onClick={onReview}
+        className="min-w-0 max-w-full justify-start gap-1.5 rounded-full px-2 text-left hover:bg-muted/30"
+        aria-label="Open Rollback check subagent details"
+      >
+        <SubagentIdentityGlyph identity="Rollback check" hasExplicitIdentity className="size-4" size={11} />
+        <span className="truncate text-xs font-medium text-foreground/85">Rollback check</span>
+      </Button>
+      <span className="shrink-0 text-xs text-muted-foreground">{status}</span>
     </div>
   );
 }
 
-function StateReadout({ state, variant }: { state: PrototypeState; variant: VariantKey }) {
+function ChildReturnItem({ onReview }: { onReview: () => void }) {
   return (
-    <div className="rounded-lg border border-border/55 bg-muted/15 px-3 py-2 text-xs text-muted-foreground" aria-live="polite">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span><span className="font-medium text-foreground/80">Variant</span> {variant} · {VARIANT_NAMES[variant]}</span>
-        <span><span className="font-medium text-foreground/80">Position</span> {state.readingPosition === "tail" ? "at tail" : "reading above"}</span>
-        <span><span className="font-medium text-foreground/80">Detail</span> {state.childDetailOpen ? "open" : "closed"}</span>
+    <div className="flex items-start gap-3 border-y border-border/50 py-3">
+      <SubagentIdentityGlyph identity="Rollback check" hasExplicitIdentity className="size-5" size={12} />
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <p className="text-sm font-medium text-foreground">Rollback check returned</p>
+          <Badge variant="secondary" size="sm">Done</Badge>
+        </div>
+        <p className="mt-1 text-sm leading-6 text-foreground/85">Rollback is safe when the index is absent.</p>
+        <Button type="button" variant="link" size="sm" onClick={onReview} className="mt-1 h-auto p-0 text-xs">
+          <Eye className="size-3.5" aria-hidden /> Review in Subagents
+        </Button>
       </div>
-      <p className="mt-1 truncate font-mono text-xs text-muted-foreground/70">Last event: {state.eventLog.at(-1)}</p>
+    </div>
+  );
+}
+
+function ParentTimeline({ state, onReview }: { state: PrototypeState; onReview: () => void }) {
+  return (
+    <div className={`${PRIMARY_CONTENT_RAIL_CLASS} max-w-3xl space-y-7 px-4 py-8 sm:px-8`}>
+      <UserMessage />
+      <AssistantMessage>
+        I found the migration boundary and asked a child agent to verify the rollback path. I’ll continue once its result arrives.
+      </AssistantMessage>
+      <NarrativeSubagentRow state={state} onReview={onReview} />
+      {state.childStatus === "returned" && <ChildReturnItem onReview={onReview} />}
+      {state.parentStatus === "continuing" && (
+        <AssistantMessage
+          footer={(
+            <>
+              <Badge variant="outline" size="sm">Provider-originated</Badge>
+              <span>Parent turn · 09:45</span>
+            </>
+          )}
+        >
+          The child confirmed the rollback path. I’m folding that result into the parent plan now.
+        </AssistantMessage>
+      )}
+      <div aria-hidden className="h-40" />
     </div>
   );
 }
 
 function NewMessagesBelow({ onClick }: { onClick: () => void }) {
   return (
-    <div className="sticky bottom-3 z-10 flex justify-center">
-      <Button variant="secondary" size="sm" onClick={onClick} className="rounded-full border border-primary/25 shadow-md">
-        <ArrowDown className="size-3.5" /> New messages below
+    <div className="pointer-events-none sticky bottom-3 z-10 flex justify-center">
+      <Button type="button" variant="secondary" size="sm" onClick={onClick} className="pointer-events-auto rounded-full border border-primary/25">
+        <ArrowDown className="size-3.5" aria-hidden /> New messages below
       </Button>
     </div>
   );
 }
 
-/** Throwaway UI prototype for issue 1118, intentionally excluded from production via ChatView's DEV-only dynamic import. */
+function PrototypeToolbar({
+  variant,
+  onCycle,
+  onChildContinue,
+  onChildReturn,
+  onParentTurn,
+  onTail,
+  onAbove,
+  onReset,
+}: {
+  variant: VariantKey;
+  onCycle: (direction: -1 | 1) => void;
+  onChildContinue: () => void;
+  onChildReturn: () => void;
+  onParentTurn: () => void;
+  onTail: () => void;
+  onAbove: () => void;
+  onReset: () => void;
+}) {
+  const controls = [
+    { label: "Child continues", onClick: onChildContinue, icon: <CircleDot className="size-3" aria-hidden /> },
+    { label: "Child returns", onClick: onChildReturn, icon: <Check className="size-3" aria-hidden /> },
+    { label: "Later parent turn", onClick: onParentTurn, icon: <Sparkles className="size-3" aria-hidden /> },
+    { label: "At tail", onClick: onTail, icon: <ArrowDown className="size-3" aria-hidden /> },
+    { label: "Reading above", onClick: onAbove, icon: <ArrowDown className="size-3 rotate-180" aria-hidden /> },
+    { label: "Reset", onClick: onReset, icon: <RotateCcw className="size-3" aria-hidden /> },
+  ];
+  return (
+    <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b border-border/50 px-3 py-1" aria-label="Prototype controls">
+      <span className="mr-1 shrink-0 font-mono text-xs uppercase tracking-[0.14em] text-muted-foreground/70">Dev</span>
+      {controls.map((control) => (
+        <Button key={control.label} type="button" variant="ghost" size="xs" onClick={control.onClick} className="shrink-0 gap-1 text-xs">
+          {control.icon}{control.label}
+        </Button>
+      ))}
+      <span className="ml-auto flex shrink-0 items-center gap-1 border-l border-border/50 pl-2 text-xs text-muted-foreground">
+        <Button type="button" variant="ghost" size="icon-xs" onClick={() => onCycle(-1)} aria-label="Previous prototype variant"><ArrowLeft className="size-3" /></Button>
+        <span className="font-mono">{variant} · {VARIANT_NAMES[variant]}</span>
+        <Button type="button" variant="ghost" size="icon-xs" onClick={() => onCycle(1)} aria-label="Next prototype variant"><ArrowRight className="size-3" /></Button>
+      </span>
+    </div>
+  );
+}
+
+/** Throwaway UI prototype for child continuation inside the real ChatView stage. */
 export function ChildContinuationPrototype() {
   const [variant, setVariant] = useState<VariantKey>(readVariant);
   const [state, setState] = useState<PrototypeState>(INITIAL_STATE);
   const [showNewMessages, setShowNewMessages] = useState(false);
+  const [selectedChild, setSelectedChild] = useState<RosterRow | null>(null);
+  const [floatingRosterOpen, setFloatingRosterOpen] = useState(true);
   const scrollViewportRef = useRef<HTMLDivElement>(null);
   const stateRef = useRef(state);
-  const detailHeadingRef = useRef<HTMLHeadingElement>(null);
 
   useEffect(() => {
     stateRef.current = state;
@@ -314,50 +375,30 @@ export function ChildContinuationPrototype() {
     const viewport = scrollViewportRef.current;
     if (!viewport) return;
     viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" });
-    setShowNewMessages(false);
   }, []);
 
   const setReadingPosition = useCallback((readingPosition: ReadingPosition) => {
-    setState((current) => ({
-      ...current,
-      readingPosition,
-      eventLog: [...current.eventLog, readingPosition === "tail" ? "User returned to the tail." : "User is reading above the tail."],
-    }));
+    setState((current) => ({ ...current, readingPosition }));
+    setShowNewMessages(false);
     if (readingPosition === "tail") scrollToTail();
-    else {
-      setShowNewMessages(false);
-      scrollViewportRef.current?.scrollTo({ top: 0, behavior: "smooth" });
-    }
+    else scrollViewportRef.current?.scrollTo({ top: 0, behavior: "smooth" });
   }, [scrollToTail]);
 
-  const updateState = useCallback((label: string, patch: Partial<PrototypeState>) => {
+  const updateState = useCallback((patch: Partial<PrototypeState>) => {
     const wasAbove = stateRef.current.readingPosition === "above";
-    const shouldAutoScroll = variant !== "B" && !wasAbove;
-    setState((current) => ({
-      ...current,
-      ...patch,
-      eventLog: [...current.eventLog, label],
-    }));
+    setState((current) => ({ ...current, ...patch }));
     if (wasAbove) setShowNewMessages(true);
-    else if (shouldAutoScroll) setTimeout(scrollToTail, 0);
-  }, [scrollToTail, variant]);
+    else window.setTimeout(scrollToTail, 0);
+  }, [scrollToTail]);
 
-  const reviewChild = useCallback(() => {
-    updateState("User opened child detail.", { childDetailOpen: true });
-  }, [updateState]);
-
-  const closeChildDetail = useCallback(() => {
-    updateState("User closed child detail.", { childDetailOpen: false });
-  }, [updateState]);
-
-  const continueParent = useCallback(() => {
-    updateState("User continued the parent turn.", { parentStatus: "continuing" });
-  }, [updateState]);
+  const jumpToTail = useCallback(() => {
+    setReadingPosition("tail");
+  }, [setReadingPosition]);
 
   const switchVariant = useCallback((nextVariant: VariantKey) => {
     setVariant(nextVariant);
     replaceVariantUrl(nextVariant);
-    setState((current) => ({ ...current, eventLog: [...current.eventLog, `Switched to variant ${nextVariant}.`] }));
+    setSelectedChild(null);
     setShowNewMessages(false);
   }, []);
 
@@ -366,11 +407,6 @@ export function ChildContinuationPrototype() {
     const nextIndex = (currentIndex + direction + VARIANTS.length) % VARIANTS.length;
     switchVariant(VARIANTS[nextIndex]);
   }, [switchVariant, variant]);
-
-  useEffect(() => {
-    if (variant !== "B" || !state.childDetailOpen) return;
-    detailHeadingRef.current?.focus();
-  }, [state.childDetailOpen, variant]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -388,106 +424,70 @@ export function ChildContinuationPrototype() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [cycleVariant]);
 
-  const actions: readonly StateAction[] = [
-    {
-      label: "Child continues",
-      icon: <CircleDot className="size-3.5" />,
-      onClick: () => updateState("Child continues after parent settled.", { childStatus: "continuing" }),
-    },
-    {
-      label: "Child returns",
-      icon: <Check className="size-3.5" />,
-      onClick: () => updateState("Child returned a result.", { childStatus: "returned" }),
-    },
-    {
-      label: "Later parent turn",
-      icon: <Sparkles className="size-3.5" />,
-      onClick: () => updateState("Provider started a later parent turn.", { parentStatus: "continuing" }),
-    },
-    {
-      label: "User at tail",
-      icon: <ArrowDown className="size-3.5" />,
-      onClick: () => setReadingPosition("tail"),
-    },
-    {
-      label: "User reading above",
-      icon: <ArrowDown className="size-3.5 rotate-180" />,
-      onClick: () => setReadingPosition("above"),
-    },
-    {
-      label: "Reset",
-      icon: <RotateCcw className="size-3.5" />,
-      onClick: () => {
-        setState(INITIAL_STATE);
-        setShowNewMessages(false);
-        setTimeout(scrollToTail, 0);
-      },
-    },
-  ];
+  const reviewChild = useCallback(() => {
+    const rows = rosterRows(stateRef.current);
+    setSelectedChild(rows.active[0] ?? rows.done[0] ?? null);
+  }, []);
+
+  const reset = useCallback(() => {
+    setState(INITIAL_STATE);
+    setShowNewMessages(false);
+    setSelectedChild(null);
+    setFloatingRosterOpen(true);
+    window.setTimeout(scrollToTail, 0);
+  }, [scrollToTail]);
+
+  const roster = (
+    <SubagentsRoster
+      state={state}
+      attention={variant === "B" && state.childStatus === "returned" && state.readingPosition === "above" && showNewMessages}
+      selectedId={selectedChild?.id ?? null}
+      onSelect={(row) => setSelectedChild(row.id ? row : null)}
+      onClose={variant === "C" ? () => setFloatingRosterOpen(false) : undefined}
+    />
+  );
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="shrink-0 space-y-3 border-b border-border/50 bg-background px-4 py-4">
-        <TranscriptHeader state={state} />
-        <StateActions actions={actions} />
-        <StateReadout state={state} variant={variant} />
-      </div>
+      <PrototypeToolbar
+        variant={variant}
+        onCycle={cycleVariant}
+        onChildContinue={() => updateState({ childStatus: "continuing" })}
+        onChildReturn={() => updateState({ childStatus: "returned" })}
+        onParentTurn={() => updateState({ parentStatus: "continuing" })}
+        onTail={() => setReadingPosition("tail")}
+        onAbove={() => setReadingPosition("above")}
+        onReset={reset}
+      />
 
-      {variant === "B" ? (
-        <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_17rem]">
-          <ScrollArea viewportRef={scrollViewportRef} className="min-h-0" viewportClassName="pr-3">
-            <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 pb-6">
-              <ParentTranscript parentStatus={state.parentStatus} />
-              {state.childDetailOpen && <ChildDetail headingRef={detailHeadingRef} onClose={closeChildDetail} />}
-              {showNewMessages && <NewMessagesBelow onClick={scrollToTail} />}
-            </div>
-          </ScrollArea>
-          <div className="min-h-0 overflow-auto">
-            <AttentionRail state={state} onReview={reviewChild} />
-          </div>
-        </div>
-      ) : (
-        <ScrollArea viewportRef={scrollViewportRef} className="min-h-0 flex-1" viewportClassName="px-4">
-          <div className="mx-auto flex w-full max-w-3xl flex-col gap-4 py-6">
-            <ParentTranscript parentStatus={state.parentStatus} />
-            {variant === "A" && state.childStatus !== "idle" && (
-              <ChildReturnItem state={state} onReview={reviewChild} />
-            )}
-            {variant === "C" && state.childStatus !== "idle" && (
-              <article className="rounded-xl border border-border/55 bg-muted/15 p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2 text-xs font-medium text-foreground/85">
-                    <CircleDot className="size-4 text-primary" /> Child result stream
-                  </div>
-                  <Badge variant={state.childStatus === "returned" ? "secondary" : "default"} size="sm">
-                    child · {statusLabel(state.childStatus)}
-                  </Badge>
-                </div>
-                <p className="mt-2 text-sm text-muted-foreground">The handoff strip below keeps this result adjacent to the composer.</p>
-              </article>
-            )}
-            {state.childDetailOpen && <ChildDetail onClose={closeChildDetail} />}
-            {showNewMessages && <NewMessagesBelow onClick={scrollToTail} />}
-          </div>
+      <div className="relative flex min-h-0 flex-1">
+        <ScrollArea viewportRef={scrollViewportRef} className="min-h-0 flex-1" viewportClassName="px-0">
+          <ParentTimeline state={state} onReview={reviewChild} />
+          {showNewMessages && <NewMessagesBelow onClick={jumpToTail} />}
         </ScrollArea>
-      )}
 
-      {variant === "C" && state.childStatus !== "idle" && (
-        <ContinuationStrip onReview={reviewChild} onContinue={continueParent} />
-      )}
-
-      <div className="pointer-events-none fixed inset-x-0 bottom-4 z-50 flex justify-center">
-        <div className="pointer-events-auto flex items-center gap-1 rounded-full border border-border/70 bg-foreground px-1.5 py-1 text-background shadow-xl">
-          <Button variant="ghost" size="icon-xs" className="text-background hover:bg-background/15 hover:text-background" onClick={() => cycleVariant(-1)} aria-label="Previous prototype variant">
-            <ArrowLeft className="size-3.5" />
-          </Button>
-          <span className="min-w-36 px-2 text-center font-mono text-xs uppercase tracking-[0.12em]">
-            {variant} · {VARIANT_NAMES[variant]}
-          </span>
-          <Button variant="ghost" size="icon-xs" className="text-background hover:bg-background/15 hover:text-background" onClick={() => cycleVariant(1)} aria-label="Next prototype variant">
-            <ArrowRight className="size-3.5" />
-          </Button>
-        </div>
+        {variant === "C" ? (
+          floatingRosterOpen ? (
+            <aside className="absolute inset-y-3 right-3 z-20 flex w-[18rem] min-h-0 flex-col border border-border/70 bg-background/95 backdrop-blur-sm" aria-label="Floating Subagents panel">
+              {roster}
+            </aside>
+          ) : (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => setFloatingRosterOpen(true)}
+              className="absolute right-3 top-3 z-20 gap-1.5 bg-background/95"
+            >
+              <CircleDot className="size-3.5 text-primary" aria-hidden />
+              Sub-agents <Badge variant="secondary" size="sm">{rosterRows(state).active.length + rosterRows(state).done.length}</Badge>
+            </Button>
+          )
+        ) : (
+          <aside className="flex w-[18rem] min-h-0 shrink-0 flex-col border-l border-border/60 bg-background" aria-label={`${VARIANT_NAMES[variant]} Subagents panel`}>
+            {roster}
+          </aside>
+        )}
       </div>
     </div>
   );
