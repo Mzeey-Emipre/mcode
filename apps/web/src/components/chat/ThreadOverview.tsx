@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent } from "react";
 import {
   Check,
   ChevronDown,
@@ -79,6 +79,7 @@ import { openSubagentsPanel } from "@/lib/open-subagent-detail";
 import { projectSubagents } from "@/components/subagents/subagent-projection";
 import { SubagentIdentityGlyph } from "@/components/subagents/SubagentIdentityGlyph";
 import { cn } from "@/lib/utils";
+import { isChildContinuationPrototypeEnabled } from "@/lib/child-continuation-prototype-gate";
 import { resolveThreadCheckoutLabel } from "@/lib/checkout-label";
 import { formatUsageResetText } from "@/lib/usage-reset-format";
 import {
@@ -99,6 +100,10 @@ import type {
   TurnSnapshot,
 } from "@mcode/contracts";
 import type { BrowserSessionLifecycleTab } from "@/services/browser-automation/browserSessionDriver";
+
+const PrototypeThreadOverviewSubagents = import.meta.env.DEV
+  ? lazy(() => import("./PrototypeThreadOverviewSubagents").then(({ PrototypeThreadOverviewSubagents: Prototype }) => ({ default: Prototype })))
+  : null;
 
 /** Stable empty messages reference so the closed Overview never re-renders on new messages. */
 const EMPTY_MESSAGES: Message[] = [];
@@ -1769,6 +1774,7 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
     repository: ThreadOverviewRepository;
   } | null>(null);
   const [changeSummaryStatus, setChangeSummaryStatus] = useState<LoadStatus>("idle");
+  const childContinuationPrototypeEnabled = isChildContinuationPrototypeEnabled();
 
   // Space-aware open: the Overview sits open when there is room and steps aside
   // when the right panel or a narrow viewport leaves none, until the user takes
@@ -2375,7 +2381,11 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
               </>
             )}
 
-            {subagentTotal > 0 && (
+            {childContinuationPrototypeEnabled && PrototypeThreadOverviewSubagents ? (
+              <Suspense fallback={null}>
+                <PrototypeThreadOverviewSubagents onOpen={openSubagentsPanel} />
+              </Suspense>
+            ) : subagentTotal > 0 && (
               <>
                 <Separator className="my-1.5" />
                 <div className="px-2 pt-1 text-xs font-medium text-muted-foreground">

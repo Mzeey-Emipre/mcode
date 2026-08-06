@@ -14,6 +14,7 @@ import { usePreviewTabsStore } from "@/stores/previewTabsStore";
 import type { BrowserSessionLifecycleTab } from "@/services/browser-automation/browserSessionDriver";
 import { useDiffStore } from "@/stores/diffStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useChildContinuationPrototypeStore } from "@/stores/childContinuationPrototypeStore";
 
 const {
   mockCreateBranch,
@@ -186,6 +187,8 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
 
 describe("ThreadOverview branchless Create PR", () => {
   beforeEach(() => {
+    window.history.replaceState(null, "", "/");
+    useChildContinuationPrototypeStore.getState().reset();
     const thread = makeThread();
     mockWorkspaceState.threads = [thread];
     mockWorkspaceState.prUrlsByThreadId = {};
@@ -477,6 +480,19 @@ describe("ThreadOverview branchless Create PR", () => {
       "data-subagent-palette",
       String(getSubagentIdentityPaletteIndex("Explorer")),
     );
+    fireEvent.click(summary);
+    expect(mockOpenSubagentsPanel).toHaveBeenCalledOnce();
+  });
+
+  it("surfaces the DEV child-continuation roster in the existing Overview row", async () => {
+    window.history.replaceState(null, "", "/?prototype=child-continuation");
+
+    render(<ThreadOverview thread={makeThread()} threadPaneWidth={1400} />);
+
+    const summary = await screen.findByTestId("thread-overview-subagents");
+    expect(summary).toHaveAccessibleName("Subagents, 4 active, 1 done");
+    expect(summary).toHaveTextContent("4 active, 1 done");
+    expect(summary.querySelectorAll("[data-subagent-identity-glyph]")).toHaveLength(4);
     fireEvent.click(summary);
     expect(mockOpenSubagentsPanel).toHaveBeenCalledOnce();
   });

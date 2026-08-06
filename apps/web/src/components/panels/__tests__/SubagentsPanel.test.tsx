@@ -4,6 +4,7 @@ import type { TurnFileEffectSummary } from "@mcode/contracts";
 import type { ToolCall, ToolCallRecord } from "@/transport/types";
 import { useDiffStore } from "@/stores/diffStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useChildContinuationPrototypeStore } from "@/stores/childContinuationPrototypeStore";
 
 const state = vi.hoisted(() => ({
   records: {} as Record<string, {
@@ -71,6 +72,8 @@ function setThread(
 
 describe("SubagentsPanel", () => {
   beforeEach(() => {
+    window.history.replaceState(null, "", "/");
+    useChildContinuationPrototypeStore.getState().reset();
     state.records = {};
     useWorkspaceStore.setState({ activeWorkspaceId: "workspace-1", activeThreadId: "thread-1" });
     useDiffStore.setState({ subagentDetailByThread: {}, subagentReviewScopeByThread: {} });
@@ -91,6 +94,22 @@ describe("SubagentsPanel", () => {
     expect(screen.getByRole("button", { name: /Open Implementation worker details, Finished/ })).toBeInTheDocument();
     expect(screen.queryByRole("tab")).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Subagents" })).not.toBeInTheDocument();
+  });
+
+  it("renders the DEV prototype roster in the real Subagents panel host", async () => {
+    window.history.replaceState(null, "", "/?prototype=child-continuation");
+
+    render(<SubagentsPanel threadId="thread-1" />);
+
+    const panel = await screen.findByTestId("prototype-subagents-panel");
+    expect(panel).toHaveTextContent("Active");
+    expect(panel).toHaveTextContent("Done");
+    expect(panel).toHaveTextContent("Rollback check");
+    expect(panel).toHaveTextContent("Docs scan");
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Rollback check details" }));
+    expect(await screen.findByRole("region", { name: "Rollback check subagent details" })).toBeInTheDocument();
+    expect(screen.getByText("Checking the down migration against the new index shape…")).toBeInTheDocument();
   });
 
   it("omits empty sections and shows one whole-panel empty state only when both are empty", () => {

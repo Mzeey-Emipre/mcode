@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -28,6 +28,11 @@ import { getTransport, type Message } from "@/transport";
 import { resolveModelDisplayLabel } from "@/lib/format-model-label";
 import { MessageBubble } from "@/components/chat/MessageBubble";
 import { SubagentChangeSummary } from "./SubagentChangeSummary";
+import { isChildContinuationPrototypeEnabled } from "@/lib/child-continuation-prototype-gate";
+
+const PrototypeSubagentsPanel = import.meta.env.DEV
+  ? lazy(() => import("./PrototypeSubagentsPanel").then(({ PrototypeSubagentsPanel: Prototype }) => ({ default: Prototype })))
+  : null;
 
 const FINISHED_STATUS: Record<FinishedSubagentStatus, string> = {
   completed: "Finished",
@@ -244,6 +249,7 @@ function DetailView({ threadId, row, onBack }: { readonly threadId: string; read
 
 /** Thread-only right-panel roster for live and hydrated Agent tool calls. */
 export function SubagentsPanel({ threadId }: { readonly threadId: string }) {
+  const childContinuationPrototypeEnabled = isChildContinuationPrototypeEnabled();
   const { toolCalls, narrativeByMessage, fileEffectSummary } = useThreadRecord(threadId, (record) => ({
     toolCalls: record.toolCalls,
     narrativeByMessage: record.narrativeByMessage,
@@ -303,6 +309,14 @@ export function SubagentsPanel({ threadId }: { readonly threadId: string }) {
     })();
     return () => { cancelled = true; };
   }, [detailSelection, setSnapshots, snapshots, threadId]);
+
+  if (childContinuationPrototypeEnabled && PrototypeSubagentsPanel) {
+    return (
+      <Suspense fallback={<div className="flex min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground">Loading Subagents…</div>}>
+        <PrototypeSubagentsPanel />
+      </Suspense>
+    );
+  }
 
   const selectRow = (id: string, originTab: SubagentRosterTab) => {
     selectDetail(threadId, { id, originTab, scrollTop: viewportRef.current?.scrollTop ?? 0 });
