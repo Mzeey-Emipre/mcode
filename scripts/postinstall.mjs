@@ -7,9 +7,8 @@
  *
  *   build/Release/better_sqlite3.electron.node  - Electron prebuild
  *
- * Skips gracefully when:
- * - Electron binary is not installed (worktrees, CI, server-only dev)
- * - The correct prebuild is already in place (avoids re-downloading)
+ * Installs Electron first when its executable is missing. Skips only when
+ * SKIP_ELECTRON_REBUILD=1 is explicit or the correct prebuild already exists.
  *
  * Set SKIP_ELECTRON_REBUILD=1 to force skip.
  */
@@ -20,6 +19,7 @@ import { createRequire } from "module";
 import { dirname, resolve } from "path";
 import { fileURLToPath } from "url";
 import { tmpdir } from "os";
+import { ensureElectronForPrebuild } from "./electron-postinstall.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(__dirname, "..");
@@ -53,24 +53,6 @@ const electronBinary = resolve(
 const abiMarker = resolve(betterSqliteDir, "build", "Release", ".electron-abi");
 
 /**
- * Resolve the path to the actual Electron binary from the project's
- * node_modules. Returns null if Electron is not installed or the binary
- * is missing (e.g. in worktrees before `electron install` runs).
- */
-function getElectronBinary() {
-  try {
-    const desktopRequire = createRequire(
-      resolve(desktopDir, "package.json"),
-    );
-    const electronPath = desktopRequire("electron");
-    if (!existsSync(electronPath)) return null;
-    return electronPath;
-  } catch {
-    return null;
-  }
-}
-
-/**
  * Query the actual NODE_MODULE_VERSION from the installed Electron binary.
  * Returns null if the binary can't be queried.
  */
@@ -101,14 +83,10 @@ const arch = process.arch;
 let electronABI = null;
 
 if (!skipElectron) {
-  const electronBin = getElectronBinary();
-  if (!electronBin) {
-    console.log("Skipping Electron prebuild (Electron binary not found)");
-  } else {
-    electronABI = getElectronABI(electronBin);
-    if (!electronABI) {
-      console.log("Skipping Electron prebuild (could not detect Electron ABI)");
-    }
+  const electronBin = ensureElectronForPrebuild(desktopDir);
+  electronABI = getElectronABI(electronBin);
+  if (!electronABI) {
+    throw new Error("Could not detect the installed Electron ABI");
   }
 }
 
