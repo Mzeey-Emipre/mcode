@@ -3,7 +3,6 @@ import {
   ArrowDown,
   ArrowLeft,
   ArrowRight,
-  Check,
   ChevronLeft,
   CircleDot,
   RotateCcw,
@@ -23,12 +22,24 @@ import { PRIMARY_CONTENT_RAIL_CLASS } from "@/lib/layout-rails";
 import type { Message, ToolCall } from "@/transport";
 
 type VariantKey = "A" | "B" | "C";
-type ChildStatus = "continuing" | "returned";
+type ChildLifecycle = "started" | "working" | "finished";
 type ParentStatus = "settled" | "continuing";
 type ReadingPosition = "tail" | "above";
 
+interface ChildAgent {
+  id: string;
+  identity: string;
+  task: string;
+  lifecycle: ChildLifecycle;
+  startOrder: number;
+  completedOrder?: number;
+  activity: string;
+}
+
 interface PrototypeState {
-  childStatus: ChildStatus;
+  children: ChildAgent[];
+  completionSequence: number;
+  lastChildTransition: ChildLifecycle | null;
   parentStatus: ParentStatus;
   readingPosition: ReadingPosition;
 }
@@ -38,6 +49,7 @@ interface RosterRow {
   identity: string;
   task: string;
   status: "active" | "done";
+  lifecycle: ChildLifecycle;
   activity: string;
 }
 
@@ -56,7 +68,51 @@ const VARIANT_NAMES: Record<VariantKey, string> = {
 };
 
 const INITIAL_STATE: PrototypeState = {
-  childStatus: "continuing",
+  children: [
+    {
+      id: "rollback-check",
+      identity: "Rollback check",
+      task: "Verify the down migration edge cases",
+      lifecycle: "started",
+      startOrder: 1,
+      activity: "Queued initial checks",
+    },
+    {
+      id: "schema-scan",
+      identity: "Schema scan",
+      task: "Map the migration boundary",
+      lifecycle: "working",
+      startOrder: 2,
+      activity: "Checking index absence",
+    },
+    {
+      id: "test-runner",
+      identity: "Test runner",
+      task: "Exercise migration rollback tests",
+      lifecycle: "working",
+      startOrder: 3,
+      activity: "Running rollback tests",
+    },
+    {
+      id: "api-check",
+      identity: "API check",
+      task: "Verify the migration boundary in the API",
+      lifecycle: "working",
+      startOrder: 4,
+      activity: "Comparing generated schema",
+    },
+    {
+      id: "docs-scan",
+      identity: "Docs scan",
+      task: "Check migration notes for compatibility warnings",
+      lifecycle: "finished",
+      startOrder: 5,
+      completedOrder: 1,
+      activity: "Result available",
+    },
+  ],
+  completionSequence: 1,
+  lastChildTransition: null,
   parentStatus: "settled",
   readingPosition: "tail",
 };
@@ -82,7 +138,7 @@ function RosterRowButton({ row, onSelect }: { row: RosterRow; onSelect: () => vo
       variant="ghost"
       size="sm"
       onClick={onSelect}
-      aria-label={`Open ${row.identity} details${row.status === "active" ? ", Active" : ""}`}
+      aria-label={`Open ${row.identity} details`}
       data-subagent-id={row.id}
       className="h-auto w-full min-w-0 justify-start gap-2.5 rounded-none px-4 py-2.5 text-left hover:bg-muted/30 focus-visible:ring-inset"
     >
@@ -95,7 +151,6 @@ function RosterRowButton({ row, onSelect }: { row: RosterRow; onSelect: () => vo
       <span className="min-w-0 flex-1">
         <span className="flex min-w-0 items-center gap-2">
           <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{row.identity}</span>
-          {row.status === "active" && <span className="shrink-0 text-xs text-muted-foreground">Active</span>}
         </span>
         <span className="mt-0.5 block truncate text-xs text-muted-foreground">{row.activity}</span>
       </span>
@@ -193,30 +248,22 @@ function RosterDetail({ row, isActive, onBack }: { row: RosterRow; isActive: boo
 }
 
 function rosterRows(state: PrototypeState): { active: RosterRow[]; done: RosterRow[] } {
-  const active: RosterRow[] = state.childStatus === "continuing"
-    ? [{
-      id: "rollback-check",
-      identity: "Rollback check",
-      task: "Verify the down migration edge cases",
-      status: "active",
-      activity: "Checking index absence",
-    }]
-    : [];
-  const done: RosterRow[] = state.childStatus === "returned"
-    ? [{
-      id: "rollback-check",
-      identity: "Rollback check",
-      task: "Verify the down migration edge cases",
-      status: "done",
-      activity: "Result ready · 12s ago",
-    }]
-    : [{
-      id: "schema-scan",
-      identity: "Schema scan",
-      task: "Map the migration boundary",
-      status: "done",
-      activity: "Finished · 2m ago",
-    }];
+  const toRow = (child: ChildAgent): RosterRow => ({
+    id: child.id,
+    identity: child.identity,
+    task: child.task,
+    status: child.lifecycle === "finished" ? "done" : "active",
+    lifecycle: child.lifecycle,
+    activity: child.activity,
+  });
+  const active = state.children
+    .filter((child) => child.lifecycle !== "finished")
+    .sort((left, right) => left.startOrder - right.startOrder)
+    .map(toRow);
+  const done = state.children
+    .filter((child) => child.lifecycle === "finished")
+    .sort((left, right) => (right.completedOrder ?? 0) - (left.completedOrder ?? 0))
+    .map(toRow);
   return { active, done };
 }
 
@@ -236,7 +283,7 @@ function SubagentsRoster({
   const rows = rosterRows(state);
   const selectedRow = [...rows.active, ...rows.done].find((row) => row.id === selectedId);
   if (selectedRow) {
-    const isActive = selectedRow.id === "rollback-check" && state.childStatus === "continuing";
+    const isActive = selectedRow.lifecycle !== "finished";
     return <RosterDetail row={selectedRow} isActive={isActive} onBack={() => onSelect({ ...selectedRow, id: "" })} />;
   }
 
@@ -304,8 +351,13 @@ function AssistantMessage({ children }: { children: ReactNode }) {
   );
 }
 
-function NarrativeSubagentRow({ state, onReview }: { state: PrototypeState; onReview: () => void }) {
-  const status = state.childStatus === "continuing" ? "started working" : "finished";
+function lifecycleLabel(lifecycle: ChildLifecycle): string {
+  if (lifecycle === "started") return "started working";
+  if (lifecycle === "working") return "working";
+  return "finished";
+}
+
+function NarrativeSubagentRow({ child, onReview }: { child: ChildAgent; onReview: () => void }) {
   return (
     <div className="flex min-w-0 items-center gap-2 py-1">
       <Button
@@ -314,24 +366,89 @@ function NarrativeSubagentRow({ state, onReview }: { state: PrototypeState; onRe
         size="sm"
         onClick={onReview}
         className="min-w-0 max-w-full justify-start gap-1.5 rounded-full px-2 text-left hover:bg-muted/30"
-        aria-label="Open Rollback check subagent details"
+        aria-label={`Open ${child.identity} subagent details`}
       >
-        <SubagentIdentityGlyph identity="Rollback check" hasExplicitIdentity className="size-4" size={11} />
-        <span className="truncate text-xs font-medium text-foreground/85">Rollback check</span>
+        <SubagentIdentityGlyph identity={child.identity} hasExplicitIdentity className="size-4" size={11} />
+        <span className="truncate text-xs font-medium text-foreground/85">{child.identity}</span>
       </Button>
-      <span className="shrink-0 text-xs text-muted-foreground">{status}</span>
+      <span className="shrink-0 text-xs text-muted-foreground">{lifecycleLabel(child.lifecycle)}</span>
     </div>
   );
 }
 
-function ParentTimeline({ state, onReview }: { state: PrototypeState; onReview: () => void }) {
+function SubagentActivityGroup({
+  children,
+  onOpenChild,
+  onOpenRoster,
+}: {
+  children: readonly ChildAgent[];
+  onOpenChild: (childId: string) => void;
+  onOpenRoster: () => void;
+}) {
+  if (children.length === 1) {
+    return <NarrativeSubagentRow child={children[0]} onReview={() => onOpenChild(children[0].id)} />;
+  }
+
+  const namedChildren = children.slice(0, 2);
+  const remaining = children.slice(2);
+  const remainingCounts = (["started", "working", "finished"] as const)
+    .map((lifecycle) => ({ lifecycle, count: remaining.filter((child) => child.lifecycle === lifecycle).length }))
+    .filter(({ count }) => count > 0)
+    .map(({ lifecycle, count }, index) => `${index === 0 ? "+" : ""}${count} ${lifecycleLabel(lifecycle)}`);
+
+  return (
+    <div className="flex min-w-0 max-w-full items-center gap-1 overflow-hidden whitespace-nowrap py-1 text-xs">
+      {namedChildren.map((child) => (
+        <Button
+          key={child.id}
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => onOpenChild(child.id)}
+          className="min-w-0 max-w-[45%] shrink gap-1.5 rounded-full px-2 text-left hover:bg-muted/30"
+          aria-label={`Open ${child.identity} subagent details`}
+        >
+          <SubagentIdentityGlyph identity={child.identity} hasExplicitIdentity className="size-4" size={11} />
+          <span className="min-w-0 truncate font-medium text-foreground/85">{child.identity}</span>
+          <span className="shrink-0 text-muted-foreground">{lifecycleLabel(child.lifecycle)}</span>
+        </Button>
+      ))}
+      {remainingCounts.length > 0 && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={onOpenRoster}
+          className="min-w-0 flex-1 justify-start rounded-full px-2 text-left text-muted-foreground hover:bg-muted/30"
+          aria-label={`Open full Subagents roster, ${remainingCounts.join(", ")}`}
+        >
+          <span className="min-w-0 truncate">{remainingCounts.join(", ")}</span>
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function ParentTimeline({
+  state,
+  onOpenChild,
+  onOpenRoster,
+}: {
+  state: PrototypeState;
+  onOpenChild: (childId: string) => void;
+  onOpenRoster: () => void;
+}) {
   return (
     <div className={`${PRIMARY_CONTENT_RAIL_CLASS} max-w-3xl space-y-7 px-4 py-8 sm:px-8`}>
       <UserMessage />
       <AssistantMessage>
         I found the migration boundary and asked a child agent to verify the rollback path. I’ll continue once its result arrives.
       </AssistantMessage>
-      <NarrativeSubagentRow state={state} onReview={onReview} />
+      <SubagentActivityGroup
+        children={state.children}
+        onOpenChild={onOpenChild}
+        onOpenRoster={onOpenRoster}
+      />
       {state.parentStatus === "continuing" && (
         <AssistantMessage>
           The child confirmed the rollback path. I’m folding that result into the parent plan now.
@@ -355,8 +472,7 @@ function NewMessagesBelow({ onClick }: { onClick: () => void }) {
 function PrototypeToolbar({
   variant,
   onCycle,
-  onChildContinue,
-  onChildReturn,
+  onAdvanceChild,
   onParentTurn,
   onTail,
   onAbove,
@@ -364,16 +480,14 @@ function PrototypeToolbar({
 }: {
   variant: VariantKey;
   onCycle: (direction: -1 | 1) => void;
-  onChildContinue: () => void;
-  onChildReturn: () => void;
+  onAdvanceChild: () => void;
   onParentTurn: () => void;
   onTail: () => void;
   onAbove: () => void;
   onReset: () => void;
 }) {
   const controls = [
-    { label: "Child continues", onClick: onChildContinue, icon: <CircleDot className="size-3" aria-hidden /> },
-    { label: "Child returns", onClick: onChildReturn, icon: <Check className="size-3" aria-hidden /> },
+    { label: "Advance child", onClick: onAdvanceChild, icon: <CircleDot className="size-3" aria-hidden /> },
     { label: "Later parent turn", onClick: onParentTurn, icon: <Sparkles className="size-3" aria-hidden /> },
     { label: "At tail", onClick: onTail, icon: <ArrowDown className="size-3" aria-hidden /> },
     { label: "Reading above", onClick: onAbove, icon: <ArrowDown className="size-3 rotate-180" aria-hidden /> },
@@ -463,10 +577,45 @@ export function ChildContinuationPrototype() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [cycleVariant]);
 
-  const reviewChild = useCallback(() => {
+  const openChildDetail = useCallback((childId: string) => {
     const rows = rosterRows(stateRef.current);
-    setSelectedChild(rows.active[0] ?? rows.done[0] ?? null);
+    setSelectedChild([...rows.active, ...rows.done].find((row) => row.id === childId) ?? null);
   }, []);
+
+  const openRoster = useCallback(() => {
+    setSelectedChild(null);
+    setFloatingRosterOpen(true);
+  }, []);
+
+  const advanceChild = useCallback(() => {
+    const current = stateRef.current;
+    const target = current.children[0];
+    const nextLifecycle: ChildLifecycle = target.lifecycle === "started"
+      ? "working"
+      : target.lifecycle === "working"
+        ? "finished"
+        : "started";
+    const nextSequence = nextLifecycle === "finished"
+      ? current.completionSequence + 1
+      : current.completionSequence;
+    const activity = nextLifecycle === "started"
+      ? "Queued initial checks"
+      : nextLifecycle === "working"
+        ? "Checking index absence"
+        : "Result available";
+    updateState({
+      children: current.children.map((child) => child.id === target.id
+        ? {
+          ...child,
+          lifecycle: nextLifecycle,
+          activity,
+          completedOrder: nextLifecycle === "finished" ? nextSequence : undefined,
+        }
+        : child),
+      completionSequence: nextSequence,
+      lastChildTransition: nextLifecycle,
+    });
+  }, [updateState]);
 
   const reset = useCallback(() => {
     setState(INITIAL_STATE);
@@ -479,7 +628,7 @@ export function ChildContinuationPrototype() {
   const roster = (
     <SubagentsRoster
       state={state}
-      attention={variant === "B" && state.childStatus === "returned" && state.readingPosition === "above" && showNewMessages}
+      attention={variant === "B" && state.lastChildTransition === "finished" && state.readingPosition === "above" && showNewMessages}
       selectedId={selectedChild?.id ?? null}
       onSelect={(row) => setSelectedChild(row.id ? row : null)}
       onClose={variant === "C" ? () => setFloatingRosterOpen(false) : undefined}
@@ -491,9 +640,8 @@ export function ChildContinuationPrototype() {
       <PrototypeToolbar
         variant={variant}
         onCycle={cycleVariant}
-        onChildContinue={() => updateState({ childStatus: "continuing" })}
-        onChildReturn={() => updateState({ childStatus: "returned" })}
-        onParentTurn={() => updateState({ parentStatus: "continuing" })}
+        onAdvanceChild={advanceChild}
+        onParentTurn={() => updateState({ parentStatus: "continuing", lastChildTransition: null })}
         onTail={() => setReadingPosition("tail")}
         onAbove={() => setReadingPosition("above")}
         onReset={reset}
@@ -501,7 +649,7 @@ export function ChildContinuationPrototype() {
 
       <div className="relative flex min-h-0 flex-1">
         <ScrollArea viewportRef={scrollViewportRef} className="min-h-0 flex-1" viewportClassName="px-0">
-          <ParentTimeline state={state} onReview={reviewChild} />
+          <ParentTimeline state={state} onOpenChild={openChildDetail} onOpenRoster={openRoster} />
           {showNewMessages && <NewMessagesBelow onClick={jumpToTail} />}
         </ScrollArea>
 
