@@ -1249,8 +1249,46 @@ describe("BrowserAutomationBroker", () => {
       capacityRejected: 1,
       latencyTotalMs: 25,
       latencyMaxMs: 25,
+      roundTripLatency: { samples: 1, p50Ms: 25, p95Ms: 25, p99Ms: 25 },
     });
     expect(JSON.stringify(broker.reliabilityStatus())).not.toContain("thread-a");
+  });
+
+  it("reports recent Browser round-trip latency percentiles without page data", async () => {
+    let now = 100;
+    let delivery: any;
+    const broker = new BrowserAutomationBroker(options({
+      now: () => now,
+      maxLatencySamples: 2,
+      send: (_socket, channel, data) => {
+        if (channel === "browserAutomation.request") delivery = data;
+        return true;
+      },
+    }));
+    const hostSocket = socket("latency");
+    const generation = register(broker, hostSocket, "latency", "workspace-a");
+    updateTargets(broker, hostSocket, "latency", generation, ["thread-a"]);
+    const scope = claims("thread-a", "workspace-a");
+    for (const [sequence, elapsed] of [[1, 10], [2, 20], [3, 30]] as const) {
+      const pending = broker.execute(scope, request(scope, sequence));
+      now += elapsed;
+      broker.respond(hostSocket, "latency", generation, {
+        contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
+        requestId: delivery.dispatch.request.requestId,
+        sequence: delivery.dispatch.request.sequence,
+        ok: true,
+        result: statusResult(),
+      });
+      await pending;
+    }
+
+    expect(broker.reliabilityStatus().roundTripLatency).toEqual({
+      samples: 2,
+      p50Ms: 20,
+      p95Ms: 30,
+      p99Ms: 30,
+    });
+    expect(JSON.stringify(broker.reliabilityStatus())).not.toMatch(/thread-a|example\.test/i);
   });
 
   it("counts truncation nested inside screenshot and snapshot results", async () => {

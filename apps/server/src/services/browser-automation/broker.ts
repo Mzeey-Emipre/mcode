@@ -86,6 +86,16 @@ export interface BrowserAutomationReliabilityCounters {
   capacityRejected: number;
   latencyTotalMs: number;
   latencyMaxMs: number;
+  /** Round-trip timing from broker admission through host response settlement. */
+  roundTripLatency: BrowserAutomationLatencyPercentiles;
+}
+
+/** Percentiles over the bounded Browser broker round-trip window. */
+export interface BrowserAutomationLatencyPercentiles {
+  samples: number;
+  p50Ms: number | null;
+  p95Ms: number | null;
+  p99Ms: number | null;
 }
 
 /** Function used by the broker to deliver a directed, validated push event. */
@@ -117,6 +127,7 @@ export interface BrowserAutomationBrokerOptions {
   hostHeartbeatTimeoutMs?: number;
   maxHosts?: number;
   maxTargets?: number;
+  maxLatencySamples?: number;
 }
 
 const BROWSER_V2_OPERATIONS = new Set<BrowserAutomationOperation>([
@@ -130,6 +141,8 @@ const NAVIGATION_MAX_RETRIES = 1;
 const NAVIGATION_MAX_ATTEMPTS = NAVIGATION_MAX_RETRIES + 1;
 const NAVIGATION_RETRY_WINDOW_MS = 60_000;
 const NAVIGATION_ATTEMPT_RECORD_LIMIT = 256;
+const MAX_LATENCY_SAMPLES = 256;
+const MAX_LATENCY_SAMPLE_MS = 24 * 60 * 60 * 1_000;
 
 function browserV2Recovery(code: BrowserAutomationErrorCode): "inspect" | "reopen" | "wait" | "yield_to_user" | "do_not_retry" {
   switch (code) {
@@ -320,6 +333,22 @@ function incrementBounded(value: number, amount = 1): number {
   return Math.min(Number.MAX_SAFE_INTEGER, value + Math.max(0, amount));
 }
 
+function latencyPercentile(sorted: readonly number[], quantile: number): number | null {
+  if (sorted.length === 0) return null;
+  const index = Math.max(0, Math.ceil(sorted.length * quantile) - 1);
+  return sorted[index] ?? null;
+}
+
+function summarizeLatency(values: readonly number[]): BrowserAutomationLatencyPercentiles {
+  const sorted = [...values].sort((left, right) => left - right);
+  return {
+    samples: sorted.length,
+    p50Ms: latencyPercentile(sorted, 0.5),
+    p95Ms: latencyPercentile(sorted, 0.95),
+    p99Ms: latencyPercentile(sorted, 0.99),
+  };
+}
+
 function responseWasTruncated(response: BrowserAutomationResponse): boolean {
   if (!response.ok) return false;
   const result = response.result as unknown as Record<string, unknown>;
@@ -443,6 +472,7 @@ export class BrowserAutomationBroker {
   private readonly hostHeartbeatTimeoutMs: number;
   private readonly maxHosts: number;
   private readonly maxTargets: number;
+  private readonly maxLatencySamples: number;
   private readonly openReplay = new Map<string, OpenReplayRecord>();
   private readonly actReplay = new Map<string, ActReplayRecord>();
   private readonly evaluateReplay = new Map<string, EvaluateReplayRecord>();
@@ -450,6 +480,8 @@ export class BrowserAutomationBroker {
   private readonly tabsReplay = new Map<string, TabsReplayRecord>();
   private readonly sessionHosts = new Map<string, RegisteredHost>();
   private readonly navigationAttempts = new Map<string, NavigationAttemptRecord>();
+  private readonly latencySamples: number[] = [];
+  private latencySampleCursor = 0;
   private nextGeneration = 1;
   private readonly reliability: BrowserAutomationReliabilityCounters = {
     dispatched: 0,
@@ -462,6 +494,7 @@ export class BrowserAutomationBroker {
     capacityRejected: 0,
     latencyTotalMs: 0,
     latencyMaxMs: 0,
+    roundTripLatency: { samples: 0, p50Ms: null, p95Ms: null, p99Ms: null },
   };
 
   constructor(options: BrowserAutomationBrokerOptions) {
@@ -473,6 +506,7 @@ export class BrowserAutomationBroker {
     this.hostHeartbeatTimeoutMs = options.hostHeartbeatTimeoutMs ?? 30_000;
     this.maxHosts = options.maxHosts ?? 8;
     this.maxTargets = options.maxTargets ?? 128;
+    this.maxLatencySamples = options.maxLatencySamples ?? MAX_LATENCY_SAMPLES;
     if (
       !Number.isInteger(this.maxPendingRequests) ||
       this.maxPendingRequests < 1 ||
@@ -494,6 +528,9 @@ export class BrowserAutomationBroker {
     }
     if (!Number.isInteger(this.maxTargets) || this.maxTargets < 1 || this.maxTargets > 4_096) {
       throw new Error("Browser automation target capacity is invalid");
+    }
+    if (!Number.isInteger(this.maxLatencySamples) || this.maxLatencySamples < 1 || this.maxLatencySamples > MAX_LATENCY_SAMPLES) {
+      throw new Error("Browser automation latency sample capacity is invalid");
     }
   }
 
@@ -993,7 +1030,7 @@ export class BrowserAutomationBroker {
     const startedAt = this.now();
     this.reliability.dispatched = incrementBounded(this.reliability.dispatched);
     const finishImmediately = (response: BrowserAutomationResponse): Promise<BrowserAutomationResponse> => {
-      this.recordOutcome(response, Math.max(0, this.now() - startedAt));
+      this.recordOutcome(response, Math.max(0, this.now() - startedAt), false);
       return Promise.resolve(response);
     };
     if (
@@ -1208,7 +1245,10 @@ export class BrowserAutomationBroker {
 
   /** Returns a snapshot of bounded reliability counters without page or credential data. */
   reliabilityStatus(): BrowserAutomationReliabilityCounters {
-    return { ...this.reliability };
+    return {
+      ...this.reliability,
+      roundTripLatency: summarizeLatency(this.latencySamples),
+    };
   }
 
   /** Returns the operations both the credential and its selected executor support. */
@@ -1507,7 +1547,7 @@ export class BrowserAutomationBroker {
     const key = pendingKey(host, request.requestId, request.sequence);
     if (this.pending.has(key)) {
       const response = failure(request, "INVALID_REQUEST", "Browser request correlation is already pending", false);
-      this.recordOutcome(response, 0);
+      this.recordOutcome(response, 0, false);
       return Promise.resolve(response);
     }
     return new Promise((resolve) => {
@@ -1647,9 +1687,10 @@ export class BrowserAutomationBroker {
     this.assignments.set(key, { host, targetKey: targetKey(target), lastUsedAt: this.now() });
   }
 
-  private recordOutcome(response: BrowserAutomationResponse, latencyMs: number): void {
+  private recordOutcome(response: BrowserAutomationResponse, latencyMs: number, recordLatency = true): void {
     this.reliability.latencyTotalMs = incrementBounded(this.reliability.latencyTotalMs, latencyMs);
     this.reliability.latencyMaxMs = Math.max(this.reliability.latencyMaxMs, latencyMs);
+    if (recordLatency) this.recordLatencySample(latencyMs);
     if (response.ok) {
       this.reliability.succeeded = incrementBounded(this.reliability.succeeded);
       if (responseWasTruncated(response)) {
@@ -1667,6 +1708,17 @@ export class BrowserAutomationBroker {
         this.reliability.hostLosses = incrementBounded(this.reliability.hostLosses);
       }
     }
+  }
+
+  private recordLatencySample(latencyMs: number): void {
+    if (!Number.isFinite(latencyMs)) return;
+    const bounded = Math.min(MAX_LATENCY_SAMPLE_MS, Math.max(0, latencyMs));
+    if (this.latencySamples.length < this.maxLatencySamples) {
+      this.latencySamples.push(bounded);
+      return;
+    }
+    this.latencySamples[this.latencySampleCursor] = bounded;
+    this.latencySampleCursor = (this.latencySampleCursor + 1) % this.maxLatencySamples;
   }
 
   private adoptBootstrapTarget(
