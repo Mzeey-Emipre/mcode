@@ -73,17 +73,17 @@ const INITIAL_STATE: PrototypeState = {
       id: "rollback-check",
       identity: "Rollback check",
       task: "Verify the down migration edge cases",
-      lifecycle: "started",
+      lifecycle: "working",
       startOrder: 1,
-      activity: "Queued initial checks",
+      activity: "Checking index absence",
     },
     {
       id: "schema-scan",
       identity: "Schema scan",
       task: "Map the migration boundary",
-      lifecycle: "working",
+      lifecycle: "started",
       startOrder: 2,
-      activity: "Checking index absence",
+      activity: "Queued initial checks",
     },
     {
       id: "test-runner",
@@ -487,7 +487,7 @@ function PrototypeToolbar({
   onReset: () => void;
 }) {
   const controls = [
-    { label: "Advance child", onClick: onAdvanceChild, icon: <CircleDot className="size-3" aria-hidden /> },
+    { label: "Advance Schema scan", onClick: onAdvanceChild, icon: <CircleDot className="size-3" aria-hidden /> },
     { label: "Later parent turn", onClick: onParentTurn, icon: <Sparkles className="size-3" aria-hidden /> },
     { label: "At tail", onClick: onTail, icon: <ArrowDown className="size-3" aria-hidden /> },
     { label: "Reading above", onClick: onAbove, icon: <ArrowDown className="size-3 rotate-180" aria-hidden /> },
@@ -589,7 +589,7 @@ export function ChildContinuationPrototype() {
 
   const advanceChild = useCallback(() => {
     const current = stateRef.current;
-    const target = current.children[0];
+    const target = current.children.find((child) => child.id === "schema-scan") ?? current.children[0];
     const nextLifecycle: ChildLifecycle = target.lifecycle === "started"
       ? "working"
       : target.lifecycle === "working"
