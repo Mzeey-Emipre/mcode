@@ -153,7 +153,7 @@ function ParentTimeline({
   onOpenRoster: () => void;
 }) {
   return (
-    <div className={`${PRIMARY_CONTENT_RAIL_CLASS} max-w-3xl space-y-7 px-4 py-8 sm:px-8`}>
+    <div className={`${PRIMARY_CONTENT_RAIL_CLASS} max-w-3xl space-y-2 px-4 py-8 sm:px-8`}>
       <UserMessage />
       <AssistantMessage>
         I found the migration boundary and asked a child agent to verify the rollback path. I’ll continue once its result arrives.
