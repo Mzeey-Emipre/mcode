@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   PREVIEW_GUEST_AGENT_INPUT_CHANNEL,
+  PREVIEW_GUEST_CLIPBOARD_TRUST_CHANNEL,
   PREVIEW_GUEST_HUMAN_INPUT_CHANNEL,
   PreviewGuestInputSuppressor,
   toPreviewGuestHumanInputMessage,
@@ -36,6 +37,7 @@ describe("preview webview security", () => {
 
   it("emits only the narrow host contract for trusted human input", () => {
     expect(PREVIEW_GUEST_HUMAN_INPUT_CHANNEL).toBe("mcode:browser-human-input");
+    expect(PREVIEW_GUEST_CLIPBOARD_TRUST_CHANNEL).toBe("mcode:browser-clipboard-trust");
     expect(toPreviewGuestHumanInputMessage("keydown", true)).toEqual({ kind: "keyboard" });
     expect(toPreviewGuestHumanInputMessage("pointerdown", true)).toEqual({ kind: "pointer" });
     expect(toPreviewGuestHumanInputMessage("touchstart", true)).toEqual({ kind: "touch" });

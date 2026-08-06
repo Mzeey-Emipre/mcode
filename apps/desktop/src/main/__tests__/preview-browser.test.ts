@@ -29,6 +29,7 @@ const mockWebContentsById = new Map<number, ReturnType<typeof makeWebContentsVie
 
 /** Shared preview partition returned by the Electron session mock. */
 const previewPartition = {
+  setPermissionCheckHandler: vi.fn(),
   setPermissionRequestHandler: vi.fn(),
   on: vi.fn(),
   webRequest: {
@@ -39,10 +40,12 @@ const previewPartition = {
 };
 
 let currentEventSender: ReturnType<typeof makeWindow>["webContents"] | null = null;
+let nextWebContentsId = 1;
 
 function makeWebContentsView() {
   let bounds = { x: 0, y: 0, width: 0, height: 0 };
   const webContents = {
+    id: nextWebContentsId++,
     isDestroyed: vi.fn().mockReturnValue(false),
     // Newly-created WebContentsView starts at the empty URL until something
     // loads. guestUrlNeedsHttpRestore('') === true so the URL-restore path
@@ -101,6 +104,7 @@ function makeWindow() {
   return {
     id,
     isDestroyed: vi.fn().mockReturnValue(false),
+    isFocused: vi.fn().mockReturnValue(true),
     contentView: {
       children,
       addChildView: vi.fn((v: ReturnType<typeof makeWebContentsView>) => {
@@ -299,15 +303,26 @@ function firePreviewInput(
   return event;
 }
 
-it("denies clipboard permissions and downloads in the preview partition", () => {
+it("denies clipboard permissions without a trusted click and denies downloads", () => {
+  const checkHandler = previewPartition.setPermissionCheckHandler.mock.calls.at(-1)?.[0];
   const handler = previewPartition.setPermissionRequestHandler.mock.calls.at(-1)?.[0];
+  expect(checkHandler).toBeTypeOf("function");
   expect(handler).toBeTypeOf("function");
   const callback = vi.fn();
 
-  handler?.({} as never, "clipboard-sanitized-write", callback);
+  expect(checkHandler?.(null, "clipboard-sanitized-write", "https://example.test", {
+    isMainFrame: true,
+  })).toBe(false);
+  handler?.({} as never, "clipboard-sanitized-write", callback, {
+    isMainFrame: true,
+    requestingUrl: "https://example.test",
+  });
   expect(callback).toHaveBeenLastCalledWith(false);
 
-  handler?.({} as never, "clipboard-read", callback);
+  handler?.({} as never, "clipboard-read", callback, {
+    isMainFrame: true,
+    requestingUrl: "https://example.test",
+  });
   expect(callback).toHaveBeenLastCalledWith(false);
 
   const downloadHandler = previewPartition.on.mock.calls.find(([event]) => event === "will-download")?.[1];

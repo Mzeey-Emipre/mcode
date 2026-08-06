@@ -19,11 +19,12 @@ import { getPerfCounters } from "./preview-perf.js";
 import { registerWebviewAdoptHandlers } from "./preview-webview-adopt.js";
 import { registerDesignModeHandlers } from "./preview-design-mode.js";
 import { registerBrowserAutomationHandlers } from "../browser-automation/index.js";
+import { registerPreviewClipboardPermissionHandlers } from "./preview-clipboard-trust.js";
 
 /** Registers all preview:* IPC handlers. Call once at app startup. */
 export function registerPreviewBrowserHandlers(): void {
   const previewPartition = session.fromPartition("persist:mcode-preview");
-  previewPartition.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
+  registerPreviewClipboardPermissionHandlers(previewPartition, ipcMain);
   previewPartition.on("will-download", (event) => event.preventDefault());
 
   registerNavigationHandlers();

@@ -19,9 +19,10 @@ interface FakeWebContents {
   hostWebContents: unknown;
   session: object;
   setWindowOpenHandler: ReturnType<typeof vi.fn>;
+  on: (event: string, cb: (...args: unknown[]) => void) => void;
   once: (event: string, cb: (...args: unknown[]) => void) => void;
   removeListener: (event: string, cb: (...args: unknown[]) => void) => void;
-  emit: (event: string) => void;
+  emit: (event: string, ...args: unknown[]) => void;
 }
 
 function makeFakeWebContents(
@@ -48,6 +49,14 @@ function makeFakeWebContents(
     hostWebContents: overrides.hostWebContents ?? allWindows[0]?.webContents,
     session: overrides.session ?? previewPartition,
     setWindowOpenHandler: vi.fn(),
+    on(event, cb) {
+      let bag = listeners.get(event);
+      if (!bag) {
+        bag = new Set();
+        listeners.set(event, bag);
+      }
+      bag.add(cb);
+    },
     once(event, cb) {
       let bag = listeners.get(event);
       if (!bag) {
@@ -70,10 +79,10 @@ function makeFakeWebContents(
         if (w === cb) bag.delete(w);
       }
     },
-    emit(event) {
+    emit(event, ...args) {
       const bag = listeners.get(event);
       if (!bag) return;
-      for (const cb of [...bag]) cb();
+      for (const cb of [...bag]) cb(...args);
     },
   };
 }
@@ -85,6 +94,7 @@ function makeWindow(id: number) {
   return {
     id,
     isDestroyed: () => false,
+    isFocused: () => true,
     webContents: { isDestroyed: () => false, send: vi.fn() },
   };
 }
