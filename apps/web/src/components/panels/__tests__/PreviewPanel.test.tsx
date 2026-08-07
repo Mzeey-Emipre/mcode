@@ -600,8 +600,12 @@ describe("PreviewPanel: full panel state", () => {
           .mockResolvedValue({ canGoBack: false, canGoForward: false }),
         onPageStatus: vi.fn().mockReturnValue(() => {}),
         cancelCapture: vi.fn().mockResolvedValue(undefined),
-        adoptWebview: vi.fn().mockResolvedValue({ ok: true }),
-        releaseWebview: vi.fn().mockResolvedValue(undefined),
+        surface: {
+          prepare: vi.fn().mockResolvedValue({ ok: true }),
+          adopt: vi.fn().mockResolvedValue({ ok: true }),
+          release: vi.fn().mockResolvedValue({ ok: true }),
+          navigate: vi.fn().mockResolvedValue({ ok: true }),
+        },
         design: {
           setAnnotationGuard: vi.fn().mockResolvedValue({ ok: true }),
         },
@@ -915,22 +919,23 @@ describe("PreviewPanel: full panel state", () => {
 
     try {
       render(<PreviewPanel threadId="thread-1" />);
-      const webview = await screen.findByTestId("preview-webview");
-      fireEvent(webview, new Event("did-start-loading"));
+      await screen.findByTestId("preview-webview");
+      const hostedWebview = screen.getByTestId("electron-browser-surface-webview");
+      fireEvent(hostedWebview, new Event("did-start-loading"));
       expect(useDiffStore.getState().previewUrlByThread["thread-1"]).toBe(
-        "https://example.com",
+        "https://example.com/",
       );
 
       const titleEvent = new Event("page-title-updated") as Event & { title?: string };
       Object.defineProperty(titleEvent, "title", { value: "Example" });
-      fireEvent(webview, titleEvent);
+      fireEvent(hostedWebview, titleEvent);
       expect(useDiffStore.getState().previewUrlByThread["thread-1"]).toBe(
-        "https://example.com",
+        "https://example.com/",
       );
 
       const blankEvent = new Event("did-navigate") as Event & { url?: string };
       Object.defineProperty(blankEvent, "url", { value: "about:blank" });
-      fireEvent(webview, blankEvent);
+      fireEvent(hostedWebview, blankEvent);
       await waitFor(() => {
         expect(useDiffStore.getState().previewUrlByThread["thread-1"]).toBe("");
       });
@@ -1016,7 +1021,7 @@ describe("PreviewPanel: full panel state", () => {
     ]);
   });
 
-  it("persists favicon updates from inactive warm webview pages", () => {
+  it("persists favicon updates from inactive warm webview pages", async () => {
     const tabSet = {
       threadId: "thread-1",
       activeTabId: "tab-a",
@@ -1052,7 +1057,7 @@ describe("PreviewPanel: full panel state", () => {
     render(<PreviewPanel threadId="thread-1" />);
 
     const inactiveWebview = screen
-      .getAllByTestId("preview-webview")
+      .getAllByTestId("electron-browser-surface-webview")
       .find((node) => node.getAttribute("data-tab-id") === "tab-b")!;
     fireEvent(
       inactiveWebview,
@@ -1061,10 +1066,12 @@ describe("PreviewPanel: full panel state", () => {
       }),
     );
 
-    const updatedTabSet = usePreviewTabsStore.getState().tabSetByScope["thread-1"]!;
-    expect(updatedTabSet.tabs.find((tab) => tab.id === "tab-b")?.faviconUrl).toBe(
-      "https://b.example/favicon.ico",
-    );
+    await waitFor(() => {
+      const updatedTabSet = usePreviewTabsStore.getState().tabSetByScope["thread-1"]!;
+      expect(updatedTabSet.tabs.find((tab) => tab.id === "tab-b")?.faviconUrl).toBe(
+        "https://b.example/favicon.ico",
+      );
+    });
   });
 
   it("does not loop when equivalent active webview tab data is republished", () => {
@@ -1193,6 +1200,10 @@ describe("PreviewPanel: full panel state", () => {
       expect(webview).toHaveAttribute("src", "https://google.com/");
 
       liveUrl = "https://about.google/";
+      fireEvent(
+        screen.getByTestId("electron-browser-surface-webview"),
+        Object.assign(new Event("did-navigate"), { url: liveUrl }),
+      );
       mockUsePreviewBridge.mockReturnValue(
         mockBridgeState({ storedUrl: "https://about.google/" }),
       );
@@ -1208,7 +1219,7 @@ describe("PreviewPanel: full panel state", () => {
     }
   });
 
-  it("keeps one webview mounted while its viewport coordinator registers", async () => {
+  it("keeps one hosted placement mounted while its viewport coordinator registers", async () => {
     const threadId = "thread-adoption-stability";
     const tabId = "tab-adoption-stability";
     mockUsePreviewTabs.mockReturnValue({
@@ -1234,29 +1245,20 @@ describe("PreviewPanel: full panel state", () => {
     mockUsePreviewBridge.mockReturnValue(
       mockBridgeState({ storedUrl: "https://example.com" }),
     );
-    let nextWebContentsId = 70;
-    const restoreWebviewMethods = installMockWebviewMethods({
-      getURL: () => "https://example.com",
-      getWebContentsId: () => ++nextWebContentsId,
+    const prepare = vi.mocked(window.desktopBridge!.preview!.surface.prepare);
+    const release = vi.mocked(window.desktopBridge!.preview!.surface.release);
+
+    render(<PreviewPanel threadId={threadId} workspaceId="workspace-1" />);
+    const initialPlacement = screen.getByTestId("preview-webview");
+
+    await waitFor(() => expect(prepare).toHaveBeenCalled());
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
     });
-    const adoptWebview = vi.mocked(window.desktopBridge!.preview!.adoptWebview!);
-    const releaseWebview = vi.mocked(window.desktopBridge!.preview!.releaseWebview!);
 
-    try {
-      render(<PreviewPanel threadId={threadId} workspaceId="workspace-1" />);
-      const initialWebview = screen.getByTestId("preview-webview");
-
-      await waitFor(() => expect(adoptWebview).toHaveBeenCalled());
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      });
-
-      expect(adoptWebview).toHaveBeenCalledTimes(1);
-      expect(releaseWebview).not.toHaveBeenCalled();
-      expect(screen.getByTestId("preview-webview")).toBe(initialWebview);
-    } finally {
-      restoreWebviewMethods();
-    }
+    expect(prepare).toHaveBeenCalledTimes(1);
+    expect(release).not.toHaveBeenCalled();
+    expect(screen.getByTestId("preview-webview")).toBe(initialPlacement);
   });
 
   it("does not feed an agent navigation redirect back into the webview src", async () => {
@@ -1303,6 +1305,10 @@ describe("PreviewPanel: full panel state", () => {
       expect(webview).toHaveAttribute("src", requestedUrl);
 
       liveUrl = redirectedUrl;
+      fireEvent(
+        screen.getByTestId("electron-browser-surface-webview"),
+        Object.assign(new Event("did-navigate"), { url: liveUrl }),
+      );
       mockUsePreviewBridge.mockReturnValue(
         mockBridgeState({ storedUrl: redirectedUrl }),
       );
@@ -1339,10 +1345,9 @@ describe("PreviewPanel: full panel state", () => {
     );
 
     const loadURL = vi.fn().mockResolvedValue(undefined);
-    const reload = vi.fn();
+    const navigateSurface = vi.mocked(window.desktopBridge!.preview!.surface.navigate);
     const restoreWebviewMethods = installMockWebviewMethods({
       loadURL,
-      reload,
       getURL: () => "https://google.com/",
     });
 
@@ -1357,9 +1362,10 @@ describe("PreviewPanel: full panel state", () => {
       await waitFor(() => {
         expect(resolveNavigation).toHaveBeenCalledWith("https://google.com/");
       });
-      fireEvent(screen.getByTestId("preview-webview"), new Event("dom-ready"));
       await waitFor(() => {
-        expect(reload).toHaveBeenCalledTimes(1);
+        expect(navigateSurface).toHaveBeenCalledWith(expect.objectContaining({
+          navigation: { kind: "reload" },
+        }));
       });
       expect(loadURL).not.toHaveBeenCalled();
     } finally {

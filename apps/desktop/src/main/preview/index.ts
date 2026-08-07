@@ -16,7 +16,7 @@ import { registerOverlayHandlers } from "./preview-overlay.js";
 import { registerSpillHandlers } from "./preview-spill.js";
 import { registerTabHandlers } from "./preview-tabs.js";
 import { getPerfCounters } from "./preview-perf.js";
-import { registerWebviewAdoptHandlers } from "./preview-webview-adopt.js";
+import { registerPreviewSurfaceHandlers } from "./preview-webview-adopt.js";
 import { registerDesignModeHandlers } from "./preview-design-mode.js";
 import { registerBrowserAutomationHandlers } from "../browser-automation/index.js";
 import { registerPreviewClipboardPermissionHandlers } from "./preview-clipboard-trust.js";
@@ -33,7 +33,7 @@ export function registerPreviewBrowserHandlers(): void {
   registerOverlayHandlers();
   registerSpillHandlers();
   registerTabHandlers();
-  registerWebviewAdoptHandlers();
+  registerPreviewSurfaceHandlers();
   registerDesignModeHandlers();
   registerBrowserAutomationHandlers();
   ipcMain.handle("preview:get-perf-counters", () => getPerfCounters());
