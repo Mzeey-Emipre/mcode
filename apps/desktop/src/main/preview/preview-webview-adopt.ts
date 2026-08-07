@@ -6,7 +6,9 @@ import {
 } from "electron";
 import type { IpcMainInvokeEvent, WebContents } from "electron";
 import { logger } from "@mcode/shared";
-import { getSession, isAllowedHttpUrl } from "./preview-session.js";
+import { getSession } from "./preview-session.js";
+import { resolvePreviewNavigationTarget } from "./preview-navigation.js";
+import { trustMainProcessFileNavigation } from "./preview-local-file.js";
 import {
   registerPreviewClipboardGuest,
   unregisterPreviewClipboardGuest,
@@ -345,9 +347,10 @@ function adoptSurface(event: IpcMainInvokeEvent, inputValue: unknown): PreviewSu
 
 function releaseSurface(event: IpcMainInvokeEvent, inputValue: unknown): PreviewSurfaceResult {
   const input = typeof inputValue === "object" && inputValue !== null ? inputValue as Partial<PreviewSurfaceReleaseInput> : {};
-  const validated = validateSenderAndSurface(event, input.surface);
-  if ("ok" in validated) return validated;
-  const { win, surface } = validated;
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (!win || win.isDestroyed()) return errorResult("no-window");
+  const surface = validateSurface(input.surface);
+  if (!surface) return errorResult("invalid-surface");
   const key = surfaceKey(surface.identity);
   const currentGeneration = generationByWindow.get(win.id)?.get(key);
   if (currentGeneration !== surface.generation) return errorResult("stale-generation");
@@ -379,10 +382,12 @@ async function navigateSurface(event: IpcMainInvokeEvent, inputValue: unknown): 
       case "address": {
         const address = typeof navigation.address === "string" ? navigation.address.trim() : "";
         if (navigation.kind === "initial" && !address) return { ok: true };
-        if (!address || !isAllowedHttpUrl(address)) return errorResult("invalid-url");
+        const resolved = await resolvePreviewNavigationTarget(address);
+        if (!resolved.ok) return errorResult(resolved.error);
         const current = resolveAdoptedPreviewSurfaceForWindow(win.id, surface, event.sender);
         if (!current || current.webContents !== guest) return errorResult("stale-generation");
-        await guest.loadURL(address);
+        trustMainProcessFileNavigation(getSession(win), resolved.url);
+        await guest.loadURL(resolved.url);
         return { ok: true };
       }
       case "back":

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolvePreviewGuestPreloadPath } from "../preview/preview-webview-security.js";
 
 const ipcHandlers: Record<string, (...args: unknown[]) => unknown> = {};
@@ -216,17 +216,30 @@ describe("preview typed surface bridge", () => {
     expect(invoke("preview.surface.prepare", { surface: otherSurface, adoptionToken: "token-5678" })).toMatchObject({ ok: false, error: "duplicate-adoption-token" });
   });
 
+  it("releases the exact adopted generation after its tab ownership record is removed", () => {
+    makeGuest(allWindows[0]!);
+    expect(invoke("preview.surface.prepare", { surface: surface(), adoptionToken: "token-1234" })).toEqual({ ok: true });
+    expect(invoke("preview.surface.adopt", { surface: surface(), adoptionToken: "token-1234" })).toEqual({ ok: true });
+    getSession(allWindows[0] as never).tabsByThread.clear();
+
+    expect(invoke("preview.surface.release", { surface: surface() })).toEqual({ ok: true });
+    expect(findAdoptedWebContentsForWindow(1, "thread-A", "tab-1", 1)).toBeNull();
+  });
+
   it("revalidates exact generation for address, history, reload, and force reload", async () => {
     const guest = makeGuest(allWindows[0]!);
     expect(invoke("preview.surface.prepare", { surface: surface(), adoptionToken: "token-1234" })).toEqual({ ok: true });
     expect(invoke("preview.surface.adopt", { surface: surface(), adoptionToken: "token-1234" })).toEqual({ ok: true });
     expect(await invoke("preview.surface.navigate", { surface: surface(), navigation: { kind: "initial", address: "https://example.test" } })).toEqual({ ok: true });
-    expect(await invoke("preview.surface.navigate", { surface: surface(), navigation: { kind: "address", address: "file:///etc/passwd" } })).toMatchObject({ ok: false, error: "invalid-url" });
+    expect(await invoke("preview.surface.navigate", { surface: surface(), navigation: { kind: "address", address: "file://attacker/share" } })).toMatchObject({ ok: false, error: "sensitive-file" });
+    const localUrl = pathToFileURL(fileURLToPath(import.meta.url)).href;
+    expect(await invoke("preview.surface.navigate", { surface: surface(), navigation: { kind: "restored", address: localUrl } })).toEqual({ ok: true });
     expect(await invoke("preview.surface.navigate", { surface: surface(), navigation: { kind: "back" } })).toEqual({ ok: true });
     expect(await invoke("preview.surface.navigate", { surface: surface(), navigation: { kind: "forward" } })).toEqual({ ok: true });
     expect(await invoke("preview.surface.navigate", { surface: surface(), navigation: { kind: "reload" } })).toEqual({ ok: true });
     expect(await invoke("preview.surface.navigate", { surface: surface(), navigation: { kind: "force-reload" } })).toEqual({ ok: true });
     expect(guest.loadURL).toHaveBeenCalledWith("https://example.test");
+    expect(guest.loadURL).toHaveBeenCalledWith(localUrl);
     expect(guest.reloadIgnoringCache).toHaveBeenCalledTimes(1);
     expect(await invoke("preview.surface.navigate", { surface: surface(2), navigation: { kind: "reload" } })).toMatchObject({ ok: false, error: "stale-generation" });
   });

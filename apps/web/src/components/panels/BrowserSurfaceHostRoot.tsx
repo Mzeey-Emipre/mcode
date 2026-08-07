@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import {
   BrowserSurfaceHost,
   ElectronWebviewBrowserSurfaceAdapter,
+  normalizeElectronWebviewSurfaceAddress,
   WebIframeBrowserSurfaceAdapter,
 } from "@/services/browser-surfaces";
 import {
@@ -13,6 +14,9 @@ let surfaceRoot: HTMLDivElement | null = null;
 
 /** Renderer-window Browser surface host used by the web iframe adapter. */
 export const browserSurfaceHost = new BrowserSurfaceHost({
+  normalizeAddress: window.desktopBridge?.preview?.surface
+    ? normalizeElectronWebviewSurfaceAddress
+    : undefined,
   adapterFactory: (identity, generation) => {
     const root = surfaceRoot ?? document.body;
     if (window.desktopBridge?.preview?.surface) {

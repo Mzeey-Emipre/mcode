@@ -7,14 +7,14 @@ import { findAdoptedWebContentsForWindow } from "./preview-webview-adopt.js";
  */
 export function resolveActivePreviewWebContents(s: PreviewSession): WebContents | null {
   const threadId = s.lastPreviewThreadId;
-  if (threadId) {
-    const activeTab = getActiveTab(s, threadId);
-    const windowId = [...sessions].find(([, candidate]) => candidate === s)?.[0];
-    const adopted = windowId === undefined
-      ? null
-      : findAdoptedWebContentsForWindow(windowId, threadId, activeTab.id);
-    if (adopted && !adopted.isDestroyed()) return adopted;
-  }
-  if (s.view && !s.view.webContents.isDestroyed()) return s.view.webContents;
-  return null;
+  if (!threadId) return null;
+  const activeTab = getActiveTab(s, threadId);
+  const windowId = [...sessions].find(([, candidate]) => candidate === s)?.[0];
+  const adopted = windowId === undefined
+    ? null
+    : findAdoptedWebContentsForWindow(windowId, threadId, activeTab.id);
+  if (adopted && !adopted.isDestroyed()) return adopted;
+  if (activeTab.renderingHost === "webview") return null;
+  const native = activeTab.view?.webContents ?? null;
+  return native && !native.isDestroyed() ? native : null;
 }

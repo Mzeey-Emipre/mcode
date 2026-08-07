@@ -120,6 +120,7 @@ export interface BrowserSurfaceVisibility {
 /** Host dependencies. Both the adapter and publication scheduler are injected. */
 export interface BrowserSurfaceHostOptions {
   readonly adapterFactory: BrowserSurfaceAdapterFactory;
+  readonly normalizeAddress?: (address: string) => string;
   readonly scheduling?: BrowserSurfaceScheduling;
   readonly visibility?: BrowserSurfaceVisibility;
 }
@@ -238,6 +239,7 @@ export class BrowserSurfaceHost {
   private readonly records = new Map<string, SurfaceRecord>();
   private readonly scheduling: BrowserSurfaceScheduling;
   private readonly visibility: BrowserSurfaceVisibility;
+  private readonly normalizeAddress: (address: string) => string;
   private readonly stopVisibility: () => void;
   private nextGeneration = 1;
 
@@ -245,6 +247,7 @@ export class BrowserSurfaceHost {
   public constructor(options: BrowserSurfaceHostOptions) {
     this.scheduling = options.scheduling ?? defaultScheduling();
     this.visibility = options.visibility ?? defaultVisibility();
+    this.normalizeAddress = options.normalizeAddress ?? normalizeBrowserSurfaceAddress;
     this.stopVisibility = this.visibility.subscribe((hidden) => {
       if (hidden ?? this.visibility.isHidden()) return;
       this.publishVisibleRecords();
@@ -263,7 +266,7 @@ export class BrowserSurfaceHost {
     const prior = this.records.get(key);
     const address = options.address === undefined
       ? undefined
-      : normalizeBrowserSurfaceAddress(options.address);
+      : this.normalizeAddress(options.address);
     const generation = options.generation ?? (prior ? prior.generation + 1 : this.nextGeneration++);
     if (prior && options.generation !== undefined && generation <= prior.generation) return prior.state;
     if (generation >= this.nextGeneration) this.nextGeneration = generation + 1;
@@ -311,7 +314,7 @@ export class BrowserSurfaceHost {
   public navigate(identity: BrowserSurfaceIdentity, address: string): void {
     const record = this.records.get(surfaceKey(identity));
     if (!record || !sameIdentity(record.identity, identity)) return;
-    const normalized = normalizeBrowserSurfaceAddress(address);
+    const normalized = this.normalizeAddress(address);
     this.reduce(record, { type: "navigation-started", identity, generation: record.generation, mainFrame: true, address: normalized });
     void record.adapter.navigate(normalized);
   }

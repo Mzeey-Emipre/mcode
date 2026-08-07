@@ -13,7 +13,6 @@ import type {
   BrowserSurfaceIdentity,
   BrowserSurfacePresentation,
 } from "./BrowserSurfaceHost";
-import { normalizeBrowserSurfaceAddress } from "./browserSurfaceAddress";
 
 const MAX_ADDRESS = BROWSER_TAB_INFO_STRING_MAX.url;
 const MAX_TITLE = BROWSER_TAB_INFO_STRING_MAX.title;
@@ -48,6 +47,21 @@ type WebviewEvent = Event & {
 
 const PREVIEW_GUEST_HUMAN_INPUT_CHANNEL = "mcode:browser-human-input";
 const HUMAN_INPUT_KINDS = new Set(["keyboard", "pointer", "touch", "wheel"]);
+
+/** Validates an absolute address that Electron main will authorize again before loading. */
+export function normalizeElectronWebviewSurfaceAddress(address: string): string {
+  if (address.length > MAX_ADDRESS) throw new TypeError("Browser surface address exceeds the maximum length");
+  let parsed: URL;
+  try {
+    parsed = new URL(address);
+  } catch {
+    throw new TypeError("Browser surface address must be an absolute URL");
+  }
+  if (!["http:", "https:", "file:"].includes(parsed.protocol) || parsed.username || parsed.password) {
+    throw new TypeError("Electron Browser surface address must use HTTP(S) or file without credentials");
+  }
+  return parsed.href;
+}
 
 function opaqueToken(): string {
   const cryptoRef = globalThis.crypto;
@@ -187,7 +201,7 @@ export class ElectronWebviewBrowserSurfaceAdapter implements BrowserSurfaceAdapt
   /** Requests main-process navigation after trusted adoption. */
   public async navigate(address: string): Promise<void> {
     if (this.disposed) return;
-    const normalized = normalizeBrowserSurfaceAddress(address);
+    const normalized = normalizeElectronWebviewSurfaceAddress(address);
     this.emit({ type: "navigation-started", mainFrame: true, address: normalized });
     if (!this.adopted) {
       this.pendingAddress = normalized;

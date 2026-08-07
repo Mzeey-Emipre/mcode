@@ -79,7 +79,7 @@ function previewStatus(state: BrowserSurfacePageState): PreviewPageStatus {
 }
 
 function supportedInitialAddress(address: string): string | undefined {
-  return /^https?:\/\//i.test(address) ? address : undefined;
+  return /^(https?|file):\/\//i.test(address) ? address : undefined;
 }
 
 /** Placement controller for a surface owned by the renderer-window BrowserSurfaceHost. */
