@@ -390,7 +390,7 @@ describe("PreviewPanel: unavailable state", () => {
     );
   });
 
-  it("marks a same-origin requested page unsupported after cross-origin iframe navigation", () => {
+  it("marks a same-origin requested page unsupported after cross-origin iframe navigation", async () => {
     vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
     useDiffStore.setState({ previewUrlByThread: { "thread-1": window.location.origin + "/fixture" } });
     render(<PreviewPanel threadId="thread-1" />);
@@ -400,9 +400,11 @@ describe("PreviewPanel: unavailable state", () => {
       value: { location: { origin: "https://example.com" } },
     });
     fireEvent.load(iframe);
-    expect(screen.getByTestId("web-runtime-cross-origin")).toHaveTextContent(
-      "automation and DOM access are unsupported",
-    );
+    await waitFor(() => {
+      expect(screen.getByTestId("web-runtime-cross-origin")).toHaveTextContent(
+        "automation and DOM access are unsupported",
+      );
+    });
   });
 
   it("explains that web preview automation is disabled by default", () => {
@@ -411,6 +413,7 @@ describe("PreviewPanel: unavailable state", () => {
     expect(screen.getByTestId("preview-panel-unavailable")).toHaveTextContent(
       "Web preview automation is disabled",
     );
+    expect(screen.queryByTestId("web-runtime-preview-iframe")).not.toBeInTheDocument();
   });
 
   it("renders the deterministic same-origin fixture when web automation is enabled", () => {
@@ -421,6 +424,21 @@ describe("PreviewPanel: unavailable state", () => {
       "src",
       `${window.location.origin}/browser-automation-fixture.html`,
     );
+  });
+
+  it("hides the hosted iframe when navigation becomes unavailable", async () => {
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    render(<PreviewPanel threadId="thread-1" />);
+    const iframe = screen.getByTestId("web-runtime-preview-iframe");
+    const input = screen.getByLabelText("Preview URL");
+
+    fireEvent.change(input, { target: { value: "ftp://example.com" } });
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+
+    expect(screen.getByTestId("web-runtime-unavailable")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(iframe).not.toBeInTheDocument();
+    });
   });
 
   it("keeps the responsive toolbar available through the web Browser overflow menu", async () => {

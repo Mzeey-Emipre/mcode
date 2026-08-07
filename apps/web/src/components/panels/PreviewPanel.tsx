@@ -2,6 +2,7 @@ import {
   Fragment,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -102,6 +103,11 @@ import {
   getOrCreateViewportCoordinator,
   waitForViewportLayout,
 } from "@/services/browser-automation/viewportCoordinatorFactory";
+import type {
+  BrowserSurfaceIdentity,
+  BrowserSurfacePageState,
+} from "@/services/browser-surfaces";
+import { browserSurfaceHost } from "./BrowserSurfaceHostRoot";
 
 /** Human-readable label for the capture confirmation badge. */
 const CAPTURE_KIND_LABEL: Record<PreviewCaptureKind, string> = {
@@ -1604,14 +1610,29 @@ function WebRuntimePreview({
   const storedUrl = useDiffStore((state) => state.previewUrlByThread[threadId] ?? "");
   const fixtureUrl = `${window.location.origin}${WEB_AUTOMATION_FIXTURE_URL}`;
   const [inputUrl, setInputUrl] = useState(storedUrl);
-  const [src, setSrc] = useState<string | null>(() => normalizeWebPreviewUrl(storedUrl) ?? fixtureUrl);
+  const [requestedAddress, setRequestedAddress] = useState<string | null>(
+    () => normalizeWebPreviewUrl(storedUrl) ?? fixtureUrl,
+  );
+  const requestedAddressRef = useRef(requestedAddress);
+  requestedAddressRef.current = requestedAddress;
+  const [pageState, setPageState] = useState<BrowserSurfacePageState | null>(null);
   const [crossOriginObserved, setCrossOriginObserved] = useState(false);
   const [zoom, setZoom] = useState(1);
   const [canvasBounds, setCanvasBounds] = useState({ width: 0, height: 0 });
   const surfaceRef = useRef<HTMLDivElement>(null);
+  const dockRef = useRef<HTMLDivElement>(null);
+  const identity = useMemo<BrowserSurfaceIdentity>(() => ({
+    workspaceId: workspaceId ?? threadId,
+    scope: {
+      kind: "thread",
+      id: threadId,
+    },
+    tabId: WEB_RUNTIME_PREVIEW_TAB_ID,
+  }), [threadId, workspaceId]);
   const enabled = isBrowserAutomationWebRuntimeEnabled();
-  const requestedState = resolveWebPreviewState(src, enabled);
+  const requestedState = resolveWebPreviewState(requestedAddress, enabled);
   const state = crossOriginObserved ? "cross-origin" : requestedState;
+  const surfaceAvailable = enabled && requestedAddress !== null;
   const responsiveViewportSize =
     viewportState?.mode === "responsive" ? viewportState.confirmed : null;
   const responsiveViewportScale = responsiveViewportSize
@@ -1621,25 +1642,47 @@ function WebRuntimePreview({
         viewportState?.presentation ?? "fit",
       )
     : 1;
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (!surfaceAvailable) return;
     useBrowserAutomationStore.getState().registerTarget(
-      workspaceId ?? threadId,
+      identity.workspaceId,
       threadId,
       WEB_RUNTIME_PREVIEW_TAB_ID,
     );
+    const initial = browserSurfaceHost.create(identity, {
+      address: requestedAddressRef.current ?? fixtureUrl,
+    });
+    setPageState(initial);
+    const unsubscribe = browserSurfaceHost.subscribe(identity, (snapshot) => {
+      setPageState(snapshot);
+      setCrossOriginObserved(snapshot.documentAccess === "cross-origin");
+    });
     return () => {
+      unsubscribe();
+      browserSurfaceHost.dispose(identity);
       useBrowserAutomationStore.getState().detachTarget(
         threadId,
         WEB_RUNTIME_PREVIEW_TAB_ID,
       );
     };
-  }, [threadId, workspaceId]);
+  }, [fixtureUrl, identity, surfaceAvailable, threadId]);
 
   useEffect(() => {
     setInputUrl(storedUrl);
-    setSrc(normalizeWebPreviewUrl(storedUrl) ?? fixtureUrl);
+    setRequestedAddress(normalizeWebPreviewUrl(storedUrl) ?? fixtureUrl);
     setCrossOriginObserved(false);
   }, [fixtureUrl, storedUrl]);
+
+  useEffect(() => {
+    if (!requestedAddress) return;
+    const current = browserSurfaceHost.getSnapshot(identity);
+    if (!current) return;
+    if (
+      current.pendingAddress === requestedAddress ||
+      current.committedAddress === requestedAddress
+    ) return;
+    browserSurfaceHost.navigate(identity, requestedAddress);
+  }, [identity, requestedAddress]);
 
   useEffect(() => {
     const surface = surfaceRef.current;
@@ -1655,65 +1698,73 @@ function WebRuntimePreview({
     };
   }, []);
 
+  useLayoutEffect(() => {
+    const dock = dockRef.current;
+    if (!dock) {
+      browserSurfaceHost.hide(identity);
+      return;
+    }
+    const update = (): void => {
+      const bounds = dock.getBoundingClientRect();
+      if (dock.closest("[inert], [aria-hidden='true']")) {
+        browserSurfaceHost.hide(identity);
+        return;
+      }
+      const hasGeometry = bounds.width > 0 && bounds.height > 0;
+      browserSurfaceHost.present(identity, {
+        left: hasGeometry ? bounds.left : -20_000,
+        top: hasGeometry ? bounds.top : 0,
+        width: responsiveViewportSize?.width ?? (hasGeometry ? bounds.width : 1),
+        height: responsiveViewportSize?.height ?? (hasGeometry ? bounds.height : 1),
+        scale: responsiveViewportSize ? responsiveViewportScale : 1,
+        zIndex: 31,
+      });
+    };
+    const resizeObserver = typeof ResizeObserver === "function"
+      ? new ResizeObserver(update)
+      : null;
+    resizeObserver?.observe(dock);
+    window.addEventListener("resize", update);
+    update();
+    return () => {
+      resizeObserver?.disconnect();
+      window.removeEventListener("resize", update);
+      browserSurfaceHost.hide(identity);
+    };
+  }, [identity, responsiveViewportScale, responsiveViewportSize, state]);
+
   const navigate = (candidate = inputUrl): void => {
     const next = normalizeWebPreviewUrl(candidate);
     if (!next) {
-      setSrc(null);
+      setRequestedAddress(null);
       setCrossOriginObserved(false);
       return;
     }
-    setSrc(next);
+    setRequestedAddress(next);
     setCrossOriginObserved(false);
     useDiffStore.getState().setPreviewUrlForThread(threadId, next);
-  };
-
-  const onIframeLoad = (event: React.SyntheticEvent<HTMLIFrameElement>): void => {
-    useBrowserAutomationStore.getState().refreshTarget(
-      threadId,
-      WEB_RUNTIME_PREVIEW_TAB_ID,
-    );
-    try {
-      const actualOrigin = event.currentTarget.contentWindow?.location.origin;
-      setCrossOriginObserved(actualOrigin !== window.location.origin);
-    } catch {
-      setCrossOriginObserved(true);
-    }
   };
 
   const noOp = (): void => undefined;
   const invalidateViewportObservation = (): void => {
     invalidateBrowserAutomationTargetObservation(threadId, WEB_RUNTIME_PREVIEW_TAB_ID);
   };
-  const iframeStyle: CSSProperties | undefined = responsiveViewportSize
-    ? {
-        width: responsiveViewportSize.width,
-        height: responsiveViewportSize.height,
-      }
-    : undefined;
-  const previewContent = state === "same-origin" && src ? (
-    <iframe
-      title="Web browser preview"
-      src={src}
-      data-testid="web-runtime-preview-iframe"
-      data-thread-id={threadId}
-      data-tab-id={WEB_RUNTIME_PREVIEW_TAB_ID}
-      className={cn("border-0", responsiveViewportSize ? "absolute left-0 top-0" : "h-full w-full")}
-      style={iframeStyle}
-      referrerPolicy="no-referrer"
-      onLoad={onIframeLoad}
+  const visiblePageState = surfaceAvailable ? pageState : null;
+  const visibleAddress = visiblePageState?.phase === "error"
+    ? visiblePageState.pendingAddress ?? visiblePageState.committedAddress
+    : visiblePageState?.committedAddress ?? visiblePageState?.pendingAddress ?? requestedAddress;
+  const previewContent = state === "same-origin" && requestedAddress ? (
+    <div
+      ref={dockRef}
+      data-testid="web-runtime-preview-dock"
+      className="absolute inset-0 h-full w-full"
     />
-  ) : state === "cross-origin" && src ? (
+  ) : state === "cross-origin" && requestedAddress ? (
     <>
-      <iframe
-        title="Cross-origin web preview"
-        src={src}
-        data-testid="web-runtime-preview-iframe"
-        data-thread-id={threadId}
-        data-tab-id={WEB_RUNTIME_PREVIEW_TAB_ID}
-        className={cn("border-0", responsiveViewportSize ? "absolute left-0 top-0" : "h-full w-full")}
-        style={iframeStyle}
-        referrerPolicy="no-referrer"
-        onLoad={onIframeLoad}
+      <div
+        ref={dockRef}
+        data-testid="web-runtime-preview-dock"
+        className="absolute inset-0 h-full w-full"
       />
       <div data-testid="web-runtime-cross-origin" className="pointer-events-none absolute inset-x-3 top-3 rounded-md border border-amber-500/40 bg-background/95 px-3 py-2 text-xs text-amber-700 shadow-sm">
         Cross-origin preview is visible, but web automation and DOM access are unsupported.
@@ -1730,12 +1781,12 @@ function WebRuntimePreview({
   return (
     <div data-testid="web-runtime-preview" className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       <BrowserHeader
-        url={src ?? ""}
-        pageTitle={null}
-        faviconUrl={null}
-        hasLoadedPage={Boolean(src)}
-        canBack={false}
-        canFwd={false}
+        url={visibleAddress ?? ""}
+        pageTitle={visiblePageState?.title || null}
+        faviconUrl={visiblePageState?.favicon ?? null}
+        hasLoadedPage={Boolean(visibleAddress)}
+        canBack={visiblePageState?.navigation?.canGoBack ?? false}
+        canFwd={visiblePageState?.navigation?.canGoForward ?? false}
         threadId=""
         designModeActive={false}
         elementPickBusy={false}
@@ -1750,7 +1801,7 @@ function WebRuntimePreview({
         onGoForward={noOp}
         onReload={() => {
           invalidateBrowserAutomationTargetObservation(threadId, WEB_RUNTIME_PREVIEW_TAB_ID);
-          setSrc((current) => current ?? fixtureUrl);
+          browserSurfaceHost.navigate(identity, visibleAddress ?? fixtureUrl);
         }}
         onOpenExternal={noOp}
         onToggleDesign={noOp}
@@ -1758,7 +1809,7 @@ function WebRuntimePreview({
         onNewPage={noOp}
         onForceReload={() => {
           invalidateBrowserAutomationTargetObservation(threadId, WEB_RUNTIME_PREVIEW_TAB_ID);
-          setSrc((current) => current ?? fixtureUrl);
+          browserSurfaceHost.navigate(identity, visibleAddress ?? fixtureUrl);
         }}
         onRegionCapture={noOp}
         onDumpContent={noOp}

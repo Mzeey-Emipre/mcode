@@ -184,6 +184,14 @@ function markIframeLoaded(iframe: HTMLIFrameElement): void {
   }
 }
 
+function setIframeIdentity(iframe: HTMLIFrameElement, tabId: string): void {
+  iframe.dataset.workspaceId = "workspace-1";
+  iframe.dataset.scopeKind = "thread";
+  iframe.dataset.scopeId = "thread-1";
+  iframe.dataset.threadId = "thread-1";
+  iframe.dataset.tabId = tabId;
+}
+
 describe("BrowserAutomationHost", () => {
   const execute = vi.fn();
   const beginRendererOperation = vi.fn();
@@ -563,8 +571,7 @@ describe("BrowserAutomationHost", () => {
     expect(webExecutor.executeWebBrowserDispatch).not.toHaveBeenCalled();
     const iframe = document.createElement("iframe");
     iframe.src = openRequest.args.url;
-    iframe.dataset.threadId = "thread-1";
-    iframe.dataset.tabId = "web-preview";
+    setIframeIdentity(iframe, "web-preview");
     document.body.append(iframe);
     markIframeLoaded(iframe);
     window.setTimeout(() => iframe.dispatchEvent(new Event("load")), 0);
@@ -595,8 +602,7 @@ describe("BrowserAutomationHost", () => {
     expect(webExecutor.executeWebBrowserDispatch).not.toHaveBeenCalled();
     const iframe = document.createElement("iframe");
     iframe.src = openRequest.args.url;
-    iframe.dataset.threadId = "thread-1";
-    iframe.dataset.tabId = "web-preview";
+    setIframeIdentity(iframe, "web-preview");
     document.body.append(iframe);
     markIframeLoaded(iframe);
     window.setTimeout(() => iframe.dispatchEvent(new Event("load")), 0);
@@ -793,8 +799,7 @@ describe("BrowserAutomationHost", () => {
     const normalOpenUrl = `${window.location.origin}/normal-open`;
     const existingIframe = document.createElement("iframe");
     existingIframe.src = normalOpenUrl;
-    existingIframe.dataset.threadId = "thread-1";
-    existingIframe.dataset.tabId = "tab-1";
+    setIframeIdentity(existingIframe, "tab-1");
     document.body.append(existingIframe);
     window.setTimeout(() => existingIframe.dispatchEvent(new Event("load")), 0);
     act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: openDispatch }));
@@ -829,8 +834,7 @@ describe("BrowserAutomationHost", () => {
     expect(webExecutor.executeWebBrowserDispatch).not.toHaveBeenCalled();
     const iframe = document.createElement("iframe");
     iframe.src = firstOpenUrl;
-    iframe.dataset.threadId = "thread-1";
-    iframe.dataset.tabId = "web-preview";
+    setIframeIdentity(iframe, "web-preview");
     document.body.append(iframe);
     window.setTimeout(() => {
       iframe.dispatchEvent(new Event("load"));
@@ -865,8 +869,7 @@ describe("BrowserAutomationHost", () => {
 
     const iframe = document.createElement("iframe");
     iframe.src = expectedUrl;
-    iframe.dataset.threadId = "thread-1";
-    iframe.dataset.tabId = "tab-1";
+    setIframeIdentity(iframe, "tab-1");
     Object.defineProperty(iframe, "contentWindow", {
       configurable: true,
       value: { location: { origin: window.location.origin } },
@@ -904,8 +907,7 @@ describe("BrowserAutomationHost", () => {
     await waitFor(() => expect(useDiffStore.getState().previewUrlByThread["thread-1"]).toBe(expectedUrl));
     const iframe = document.createElement("iframe");
     iframe.src = expectedUrl;
-    iframe.dataset.threadId = "thread-1";
-    iframe.dataset.tabId = "tab-1";
+    setIframeIdentity(iframe, "tab-1");
     document.body.append(iframe);
     act(() => useBrowserAutomationStore.getState().refreshTarget("thread-1", "tab-1"));
     await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
@@ -935,8 +937,7 @@ describe("BrowserAutomationHost", () => {
     } as never;
     const iframe = document.createElement("iframe");
     iframe.src = expectedUrl;
-    iframe.dataset.threadId = "thread-1";
-    iframe.dataset.tabId = "tab-1";
+    setIframeIdentity(iframe, "tab-1");
     Object.defineProperty(iframe, "contentWindow", {
       configurable: true,
       value: { location: { origin: window.location.origin } },
@@ -971,8 +972,7 @@ describe("BrowserAutomationHost", () => {
     navigateDispatch.request = { ...navigateDispatch.request, operation: "navigate", args: { url: expectedUrl } } as never;
     const iframe = document.createElement("iframe");
     iframe.src = `${window.location.origin}/before`;
-    iframe.dataset.threadId = "thread-1";
-    iframe.dataset.tabId = "tab-1";
+    setIframeIdentity(iframe, "tab-1");
     document.body.append(iframe);
     act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: navigateDispatch }));
     await waitFor(() => expect(webExecutor.executeWebBrowserDispatch).toHaveBeenCalledWith(navigateDispatch, expect.any(AbortSignal)));
@@ -1008,8 +1008,7 @@ describe("BrowserAutomationHost", () => {
 
     const replacement = document.createElement("iframe");
     replacement.src = `${window.location.origin}/unrelated-replacement`;
-    replacement.dataset.threadId = "thread-1";
-    replacement.dataset.tabId = "tab-1";
+    setIframeIdentity(replacement, "tab-1");
     document.body.append(replacement);
     act(() => useBrowserAutomationStore.getState().refreshTarget("thread-1", "tab-1"));
 
@@ -2200,8 +2199,7 @@ describe("BrowserAutomationHost", () => {
     delete window.desktopBridge;
     vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
     const iframe = document.createElement("iframe");
-    iframe.dataset.threadId = "thread-1";
-    iframe.dataset.tabId = "tab-1";
+    setIframeIdentity(iframe, "tab-1");
     const targetDocument = {
       location: { href: "https://user:password@example.com/sessions/eyJabcdefghijk.abcdefghijklmnop?secret=query#fragment" },
       body: document.createElement("body"),
@@ -2231,8 +2229,7 @@ describe("BrowserAutomationHost", () => {
     delete window.desktopBridge;
     vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
     const iframe = document.createElement("iframe");
-    iframe.dataset.threadId = "thread-1";
-    iframe.dataset.tabId = "tab-1";
+    setIframeIdentity(iframe, "tab-1");
     iframe.src = "https://evil.example/";
     Object.defineProperty(iframe, "contentWindow", { configurable: true, value: { location: { origin: "https://evil.example" } } });
     Object.defineProperty(iframe, "contentDocument", { configurable: true, value: { body: document.createElement("body") } });
@@ -2258,8 +2255,7 @@ describe("BrowserAutomationHost", () => {
     vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
     delete window.desktopBridge;
     const frame = document.createElement("iframe");
-    frame.dataset.threadId = "thread-1";
-    frame.dataset.tabId = "tab-1";
+    setIframeIdentity(frame, "tab-1");
     document.body.append(frame);
     Object.defineProperty(frame, "contentWindow", { configurable: true, value: { location: { origin: window.location.origin } } });
     const frameDocument = frame.contentDocument!;
@@ -2295,8 +2291,7 @@ describe("BrowserAutomationHost", () => {
     vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
     delete window.desktopBridge;
     const frame = document.createElement("iframe");
-    frame.dataset.threadId = "thread-1";
-    frame.dataset.tabId = "tab-1";
+    setIframeIdentity(frame, "tab-1");
     document.body.append(frame);
     Object.defineProperty(frame, "contentWindow", { configurable: true, value: { location: { origin: window.location.origin } } });
     const frameDocument = frame.contentDocument!;
@@ -2331,8 +2326,7 @@ describe("BrowserAutomationHost", () => {
     vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
     delete window.desktopBridge;
     const frame = document.createElement("iframe");
-    frame.dataset.threadId = "thread-1";
-    frame.dataset.tabId = "tab-1";
+    setIframeIdentity(frame, "tab-1");
     document.body.append(frame);
     Object.defineProperty(frame, "contentWindow", { configurable: true, value: { location: { origin: window.location.origin } } });
     const frameDocument = frame.contentDocument!;
@@ -2367,8 +2361,7 @@ describe("BrowserAutomationHost", () => {
     vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
     delete window.desktopBridge;
     const frame = document.createElement("iframe");
-    frame.dataset.threadId = "thread-1";
-    frame.dataset.tabId = "tab-1";
+    setIframeIdentity(frame, "tab-1");
     document.body.append(frame);
     Object.defineProperty(frame, "contentWindow", { configurable: true, value: { location: { origin: window.location.origin } } });
     const frameDocument = frame.contentDocument!;
@@ -2410,8 +2403,7 @@ describe("BrowserAutomationHost", () => {
     vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
     delete window.desktopBridge;
     const frame = document.createElement("iframe");
-    frame.dataset.threadId = "thread-1";
-    frame.dataset.tabId = "tab-1";
+    setIframeIdentity(frame, "tab-1");
     document.body.append(frame);
     Object.defineProperty(frame, "contentWindow", { configurable: true, value: { location: { origin: window.location.origin } } });
     const frameDocument = frame.contentDocument!;
