@@ -67,6 +67,10 @@ function escapeWebSelector(value: string): string {
   return escape ? escape(value) : value.replace(/[^a-zA-Z0-9_-]/g, (character) => `\\${character}`);
 }
 
+function webIframeSelector(workspaceId: string, threadId: string, tabId: string): string {
+  return `iframe[data-workspace-id="${escapeWebSelector(workspaceId)}"][data-scope-kind="thread"][data-scope-id="${escapeWebSelector(threadId)}"][data-tab-id="${escapeWebSelector(tabId)}"]`;
+}
+
 function webTargetIdentity(
   worktreeIdentity: string,
   connectionId: string,
@@ -294,10 +298,11 @@ function projectAgentControl(dispatch: BrowserAutomationHostDispatch): void {
 }
 
 function mountedWebIframe(dispatch: BrowserAutomationHostDispatch): HTMLIFrameElement | null {
-  for (const iframe of document.querySelectorAll<HTMLIFrameElement>("iframe")) {
-    if (iframe.dataset.threadId === dispatch.target.threadId && iframe.dataset.tabId === dispatch.target.tabId) return iframe;
-  }
-  return null;
+  return document.querySelector<HTMLIFrameElement>(webIframeSelector(
+    dispatch.scope.workspaceId,
+    dispatch.target.threadId,
+    dispatch.target.tabId,
+  ));
 }
 
 async function executeBrowserDispatch(
@@ -468,11 +473,12 @@ function waitForLiveTarget(
 }
 
 function webPreviewIframe(
+  workspaceId: string,
   threadId: string,
   tabId: string,
   expectedUrl: string,
 ): HTMLIFrameElement | null {
-  const selector = `iframe[data-thread-id="${escapeWebSelector(threadId)}"][data-tab-id="${escapeWebSelector(tabId)}"]`;
+  const selector = webIframeSelector(workspaceId, threadId, tabId);
   const iframe = document.querySelector<HTMLIFrameElement>(selector);
   if (!iframe || normalizeWebPreviewUrl(iframe.src) !== expectedUrl) return null;
   return resolveSameOriginFrame(iframe) ? iframe : null;
@@ -487,6 +493,7 @@ function isSameOriginWebPreviewUrl(url: string): boolean {
 }
 
 function waitForWebPreviewIframe(
+  workspaceId: string,
   threadId: string,
   tabId: string,
   expectedUrl: string,
@@ -495,7 +502,7 @@ function waitForWebPreviewIframe(
   onNavigationLoad?: (iframe: HTMLIFrameElement) => void,
 ): Promise<void> {
   if (signal.aborted) return Promise.reject(signal.reason);
-  const ready = webPreviewIframe(threadId, tabId, expectedUrl);
+  const ready = webPreviewIframe(workspaceId, threadId, tabId, expectedUrl);
   if (ready?.contentDocument?.readyState === "complete" && !onNavigationLoad) return Promise.resolve();
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -508,7 +515,7 @@ function waitForWebPreviewIframe(
       resolve();
     };
     const observeReady = () => {
-      const iframe = webPreviewIframe(threadId, tabId, expectedUrl);
+      const iframe = webPreviewIframe(workspaceId, threadId, tabId, expectedUrl);
       if (!iframe) return;
       if (iframe.contentDocument?.readyState === "complete" && !onNavigationLoad) {
         finish();
@@ -548,7 +555,7 @@ function waitForWebPreviewIframe(
       subtree: true,
       childList: true,
       attributes: true,
-      attributeFilter: ["src", "data-thread-id", "data-tab-id", "class", "style", "hidden", "aria-hidden"],
+      attributeFilter: ["src", "data-workspace-id", "data-scope-kind", "data-scope-id", "data-tab-id", "class", "style", "hidden", "aria-hidden"],
     });
     signal.addEventListener("abort", onAbort, { once: true });
     if (signal.aborted) onAbort();
@@ -587,7 +594,7 @@ function acceptExpectedWebNavigationRevision(
     navigation.expectedUrl !== expectedUrl ||
     dispatch.target.targetGeneration !== navigation.initialRevision ||
     target?.revision !== navigation.initialRevision + 1 ||
-    !webPreviewIframe(dispatch.target.threadId, dispatch.target.tabId, navigation.expectedUrl)
+    !webPreviewIframe(dispatch.scope.workspaceId, dispatch.target.threadId, dispatch.target.tabId, navigation.expectedUrl)
   ) return undefined;
   navigation.acceptedRevision = target.revision;
   return target.revision;
@@ -657,6 +664,9 @@ function PersistentAutomationWebTab({
     <iframe
       title="Browser automation page"
       src={tab.url}
+      data-workspace-id={tab.workspaceId}
+      data-scope-kind="thread"
+      data-scope-id={tab.threadId}
       data-thread-id={tab.threadId}
       data-tab-id={tab.tabId}
       aria-hidden={!visible}
@@ -842,7 +852,11 @@ export function BrowserAutomationHost() {
   if (!sessionDriverRef.current) {
     const webAdapter = new WebBrowserSessionAdapter({
       resolveDocument: (dispatch) => {
-        const selector = `iframe[data-thread-id="${escapeWebSelector(dispatch.target.threadId)}"][data-tab-id="${escapeWebSelector(dispatch.target.tabId)}"]`;
+        const selector = webIframeSelector(
+          dispatch.scope.workspaceId,
+          dispatch.target.threadId,
+          dispatch.target.tabId,
+        );
         for (const iframe of document.querySelectorAll<HTMLIFrameElement>(selector)) {
           const resolved = resolveSameOriginFrame(iframe);
           if (resolved) return resolved.document;
@@ -1214,7 +1228,11 @@ export function BrowserAutomationHost() {
             loadObserved: false,
           };
           webNavigationRef.current.set(key, navigation);
-          const selector = `iframe[data-thread-id="${escapeWebSelector(dispatch.target.threadId)}"][data-tab-id="${escapeWebSelector(dispatch.target.tabId)}"]`;
+          const selector = webIframeSelector(
+            dispatch.scope.workspaceId,
+            dispatch.target.threadId,
+            dispatch.target.tabId,
+          );
           const iframe = document.querySelector<HTMLIFrameElement>(selector);
           if (iframe) {
             const onLoad = () => {
@@ -1244,7 +1262,12 @@ export function BrowserAutomationHost() {
         if (!currentTarget || currentTarget.revision !== dispatch.target.targetGeneration) {
           return failureResponse(dispatch.request, "STALE_TARGET_GENERATION", "Browser operation is stale");
         }
-        const currentIframe = webPreviewIframe(dispatch.target.threadId, dispatch.target.tabId, requestedUrl);
+        const currentIframe = webPreviewIframe(
+          dispatch.scope.workspaceId,
+          dispatch.target.threadId,
+          dispatch.target.tabId,
+          requestedUrl,
+        );
         if (!currentIframe) {
           webNavigationRef.current.set(key, {
             targetKey,
@@ -1257,6 +1280,7 @@ export function BrowserAutomationHost() {
           useDiffStore.getState().setPreviewUrlForThread(dispatch.target.threadId, requestedUrl);
         }
         await waitForWebPreviewIframe(
+          dispatch.scope.workspaceId,
           dispatch.target.threadId,
           dispatch.target.tabId,
           requestedUrl,
@@ -1579,6 +1603,7 @@ export function BrowserAutomationHost() {
         }
         if (!bridge && requestedWebUrl) {
           await waitForWebPreviewIframe(
+            request.workspaceId,
             request.threadId,
             tabId,
             requestedWebUrl,
