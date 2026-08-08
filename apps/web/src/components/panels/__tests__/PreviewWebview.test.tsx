@@ -231,4 +231,39 @@ describe("PreviewWebview", () => {
       height: "768px",
     });
   });
+
+  it("hides a warm inactive surface and presents it when selected", () => {
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(10, 20, 640, 480),
+    );
+    const { rerender } = render(
+      <PreviewWebview
+        active={false}
+        threadId="thread-switch"
+        tabId="tab-switch"
+        src="https://example.com"
+      />,
+    );
+    const surface = screen.getByTestId("web-runtime-preview-iframe");
+    expect(surface).toHaveStyle({ visibility: "hidden", pointerEvents: "none" });
+
+    rerender(
+      <PreviewWebview
+        active
+        threadId="thread-switch"
+        tabId="tab-switch"
+        src="https://example.com"
+      />,
+    );
+
+    expect(surface).toHaveStyle({
+      left: "10px",
+      top: "20px",
+      width: "640px",
+      height: "480px",
+      visibility: "visible",
+      pointerEvents: "auto",
+    });
+    rect.mockRestore();
+  });
 });

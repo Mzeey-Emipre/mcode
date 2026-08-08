@@ -1,11 +1,12 @@
 import { act, render, screen } from "@testing-library/react";
+import { Profiler, type ProfilerOnRenderCallback, useSyncExternalStore } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   BrowserSurfaceHostRoot,
   browserSurfaceHost,
 } from "../BrowserSurfaceHostRoot";
 import type { BrowserSurfaceIdentity } from "@/services/browser-surfaces";
-import { usePreviewTabsStore } from "@/stores/previewTabsStore";
+import { previewTabsScopeKey, usePreviewTabsStore } from "@/stores/previewTabsStore";
 import { useBrowserAutomationStore } from "@/stores/browserAutomationStore";
 import type {
   PreviewPopupRequest,
@@ -18,11 +19,49 @@ const IDENTITY: BrowserSurfaceIdentity = {
   tabId: "web-preview",
 };
 
+const UNRELATED_IDENTITY: BrowserSurfaceIdentity = {
+  workspaceId: "workspace-1",
+  scope: { kind: "thread", id: "thread-2" },
+  tabId: "web-preview-other",
+};
+
+const UNRELATED_SCOPE_KEY = previewTabsScopeKey("workspace-1", "thread-2");
+
+function SurfaceSnapshotProbe({ identity }: { identity: BrowserSurfaceIdentity }) {
+  const subscribe = (listener: () => void): (() => void) =>
+    browserSurfaceHost.subscribe(identity, () => listener());
+  const getSnapshot = (): ReturnType<typeof browserSurfaceHost.getSnapshot> =>
+    browserSurfaceHost.getSnapshot(identity);
+  const snapshot = useSyncExternalStore(subscribe, getSnapshot, () => null);
+
+  return <output data-testid={`surface-title-${identity.tabId}`}>{snapshot?.title ?? ""}</output>;
+}
+
+function PanelStoreRerenderHarness() {
+  usePreviewTabsStore((state) => state.liveChromeByScope[UNRELATED_SCOPE_KEY]);
+  useBrowserAutomationStore((state) => state.status);
+  return <BrowserSurfaceHostRoot />;
+}
+
+async function flushSurfaceFrame(): Promise<void> {
+  await act(async () => {
+    await new Promise<void>((resolve) => {
+      if (typeof window.requestAnimationFrame === "function") {
+        window.requestAnimationFrame(() => resolve());
+        return;
+      }
+      window.setTimeout(resolve, 0);
+    });
+  });
+}
+
 describe("BrowserSurfaceHostRoot", () => {
   const originalOpenPage = usePreviewTabsStore.getState().openPage;
+  const originalAutomationStatus = useBrowserAutomationStore.getState().status;
 
   afterEach(() => {
     browserSurfaceHost.dispose(IDENTITY);
+    browserSurfaceHost.dispose(UNRELATED_IDENTITY);
     usePreviewTabsStore.setState({
       openPage: originalOpenPage,
       tabSetByScope: {},
@@ -30,6 +69,7 @@ describe("BrowserSurfaceHostRoot", () => {
       persistentTabIdsByScope: {},
     });
     useBrowserAutomationStore.getState().releaseWorkspaceTargets("workspace-1");
+    useBrowserAutomationStore.getState().setStatus(originalAutomationStatus);
     delete window.desktopBridge;
   });
 
@@ -82,6 +122,107 @@ describe("BrowserSurfaceHostRoot", () => {
 
     view.unmount();
     expect(stopDiscardRequests).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the root host mounted across unrelated panel and store updates", () => {
+    const phases: Parameters<ProfilerOnRenderCallback>[1][] = [];
+    const view = render(
+      <Profiler id="browser-surface-host-root" onRender={(_id, phase) => phases.push(phase)}>
+        <PanelStoreRerenderHarness />
+      </Profiler>,
+    );
+    const rootBefore = document.querySelector("[data-browser-surface-host]");
+    expect(rootBefore).not.toBeNull();
+
+    act(() => {
+      usePreviewTabsStore.getState().setLiveChrome("workspace-1", "thread-2", {
+        title: "Unrelated panel update",
+        url: "https://other.example.test",
+        favicon: null,
+      });
+      useBrowserAutomationStore.getState().setStatus("registered");
+    });
+
+    expect(document.querySelector("[data-browser-surface-host]")).toBe(rootBefore);
+    expect(phases.filter((phase) => phase === "mount")).toHaveLength(1);
+    view.unmount();
+  });
+
+  it("does not commit for a semantic no-op surface event", async () => {
+    browserSurfaceHost.create(IDENTITY, { address: "https://example.test/profiler-no-op" });
+    await flushSurfaceFrame();
+    const commits: Parameters<ProfilerOnRenderCallback>[1][] = [];
+    const view = render(
+      <Profiler id="observed-surface" onRender={(_id, phase) => commits.push(phase)}>
+        <SurfaceSnapshotProbe identity={IDENTITY} />
+      </Profiler>,
+    );
+
+    act(() => browserSurfaceHost.handleEvent({
+      type: "title-updated",
+      identity: IDENTITY,
+      generation: browserSurfaceHost.getSnapshot(IDENTITY)!.generation,
+      title: "",
+    }));
+    await flushSurfaceFrame();
+
+    expect(screen.getByTestId("surface-title-web-preview")).toHaveTextContent("");
+    expect(commits).toEqual(["mount"]);
+    view.unmount();
+  });
+
+  it("publishes changed surface state at most once per frame", async () => {
+    browserSurfaceHost.create(IDENTITY, { address: "https://example.test/profiler-frame" });
+    await flushSurfaceFrame();
+    const commits: Parameters<ProfilerOnRenderCallback>[1][] = [];
+    const view = render(
+      <Profiler id="observed-surface" onRender={(_id, phase) => commits.push(phase)}>
+        <SurfaceSnapshotProbe identity={IDENTITY} />
+      </Profiler>,
+    );
+    const generation = browserSurfaceHost.getSnapshot(IDENTITY)!.generation;
+
+    act(() => {
+      browserSurfaceHost.handleEvent({ type: "title-updated", identity: IDENTITY, generation, title: "A" });
+      browserSurfaceHost.handleEvent({ type: "title-updated", identity: IDENTITY, generation, title: "B" });
+    });
+    await flushSurfaceFrame();
+    const firstFrameCommits = commits.length - 1;
+    expect(screen.getByTestId("surface-title-web-preview")).toHaveTextContent("B");
+
+    act(() => browserSurfaceHost.handleEvent({ type: "title-updated", identity: IDENTITY, generation, title: "C" }));
+    await flushSurfaceFrame();
+    const secondFrameCommits = commits.length - 1 - firstFrameCommits;
+
+    expect(screen.getByTestId("surface-title-web-preview")).toHaveTextContent("C");
+    expect(firstFrameCommits).toBe(1);
+    expect(secondFrameCommits).toBe(1);
+    view.unmount();
+  });
+
+  it("does not commit the observed identity for an unrelated complete surface identity", async () => {
+    browserSurfaceHost.create(IDENTITY, { address: "https://example.test/profiler-observed" });
+    browserSurfaceHost.create(UNRELATED_IDENTITY, { address: "https://example.test/profiler-unrelated" });
+    await flushSurfaceFrame();
+    const commits: Parameters<ProfilerOnRenderCallback>[1][] = [];
+    const view = render(
+      <Profiler id="observed-surface" onRender={(_id, phase) => commits.push(phase)}>
+        <SurfaceSnapshotProbe identity={IDENTITY} />
+      </Profiler>,
+    );
+    const generation = browserSurfaceHost.getSnapshot(UNRELATED_IDENTITY)!.generation;
+
+    act(() => browserSurfaceHost.handleEvent({
+      type: "title-updated",
+      identity: UNRELATED_IDENTITY,
+      generation,
+      title: "Unrelated surface",
+    }));
+    await flushSurfaceFrame();
+
+    expect(screen.getByTestId("surface-title-web-preview")).toHaveTextContent("");
+    expect(commits).toEqual(["mount"]);
+    view.unmount();
   });
 
   it("applies controller and operation protection when their surface materializes later", () => {

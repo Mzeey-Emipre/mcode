@@ -2953,6 +2953,7 @@ export function PreviewPanel({
     return (
       <PreviewWebview
         key={tab.id}
+        active={tab.id === activeWebviewTabId}
         ref={(handle) => {
           webviewRefs.current[tab.id] = handle;
         }}
