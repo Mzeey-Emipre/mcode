@@ -25,6 +25,7 @@ import {
 
 /** Properties for one hosted renderer Browser surface. */
 export interface PreviewWebviewProps {
+  readonly active?: boolean;
   readonly workspaceId?: string;
   readonly threadId: string;
   readonly tabId: string;
@@ -86,6 +87,7 @@ function supportedInitialAddress(address: string): string | undefined {
 export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewProps>(
   function PreviewWebview(
     {
+      active = true,
       threadId,
       workspaceId = threadId,
       tabId,
@@ -250,6 +252,10 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
     useLayoutEffect(() => {
       const placement = placementRef.current;
       if (!placement) return;
+      if (!active) {
+        browserSurfaceHost.hide(identity);
+        return;
+      }
       const update = (): void => {
         const bounds = placement.getBoundingClientRect();
         if (
@@ -280,7 +286,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
         window.removeEventListener("resize", update);
         browserSurfaceHost.hide(identity);
       };
-    }, [identity, viewport]);
+    }, [active, identity, viewport]);
 
     return (
       <div
