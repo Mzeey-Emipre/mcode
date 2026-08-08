@@ -24,9 +24,25 @@ vi.mock("../../transport/push.js", () => ({
 
 import { SettingsService } from "../settings-service.js";
 import { broadcast } from "../../transport/push.js";
+import { readFileSync, renameSync, unlinkSync, writeFileSync } from "fs";
+import { join } from "path";
+
+const legacySettings = (
+  engine: unknown,
+  preview: Record<string, unknown> = {},
+  root: Record<string, unknown> = {},
+) =>
+  JSON.stringify({
+    ...root,
+    appearance: { theme: "dark" },
+    preview: { ...preview, rendering: { engine } },
+  });
 
 describe("SettingsService in-process change listener", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(readFileSync).mockImplementation(() => { throw new Error("ENOENT"); });
+  });
 
   it("on('change', cb) fires cb with the validated settings when update() is called", () => {
     const svc = new SettingsService();
@@ -52,5 +68,104 @@ describe("SettingsService in-process change listener", () => {
     svc.update({});
 
     expect(listener).not.toHaveBeenCalled();
+  });
+});
+
+describe("SettingsService rendering-engine migration", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(readFileSync).mockImplementation(() => { throw new Error("ENOENT"); });
+  });
+
+  it.each(["webContentsView", "webview", "unknown-host"])(
+    "removes legacy engine %s, validates the remainder, and persists it atomically",
+    (engine) => {
+      vi.mocked(readFileSync).mockReturnValue(legacySettings(
+        engine,
+        { memorySaver: { maxWarm: 5 }, unknownPreviewSetting: true },
+        { unknownTopLevelSetting: true },
+      ));
+
+      const settings = new SettingsService().get();
+
+      expect(settings.appearance.theme).toBe("dark");
+      expect(settings.preview.memorySaver.maxWarm).toBe(5);
+      expect(settings.preview).not.toHaveProperty("rendering");
+      expect(writeFileSync).toHaveBeenCalledOnce();
+      expect(renameSync).toHaveBeenCalledWith(
+        join("/fake/mcode", "settings.json.tmp"),
+        join("/fake/mcode", "settings.json"),
+      );
+      expect(writeFileSync).toHaveBeenCalledWith(
+        join("/fake/mcode", "settings.json.tmp"),
+        expect.not.stringContaining("rendering"),
+        "utf-8",
+      );
+      const persisted = JSON.parse(
+        vi.mocked(writeFileSync).mock.calls[0]![1] as string,
+      ) as Record<string, unknown>;
+      expect(persisted).not.toHaveProperty("unknownTopLevelSetting");
+      expect(persisted).not.toHaveProperty("preview.unknownPreviewSetting");
+    },
+  );
+
+  it("removes an empty preview parent from the migrated document", () => {
+    vi.mocked(readFileSync).mockReturnValue(legacySettings("webContentsView"));
+
+    new SettingsService().get();
+
+    const persisted = JSON.parse(
+      vi.mocked(writeFileSync).mock.calls[0]![1] as string,
+    ) as Record<string, unknown>;
+    expect(persisted).not.toHaveProperty("preview");
+  });
+
+  it("does not persist a migration when the remaining settings fail validation", () => {
+    vi.mocked(readFileSync).mockReturnValue(legacySettings("webview", {
+      memorySaver: { maxWarm: 0 },
+    }));
+
+    const settings = new SettingsService().get();
+
+    expect(settings.preview.memorySaver.maxWarm).toBe(3);
+    expect(writeFileSync).not.toHaveBeenCalled();
+    expect(renameSync).not.toHaveBeenCalled();
+  });
+
+  it("retains validated settings when atomic migration persistence fails", () => {
+    vi.mocked(readFileSync).mockReturnValue(legacySettings("webview", {
+      memorySaver: { maxWarm: 5 },
+    }));
+    vi.mocked(renameSync).mockImplementation(() => { throw new Error("EACCES"); });
+    const service = new SettingsService();
+
+    const settings = service.get();
+
+    expect(settings.appearance.theme).toBe("dark");
+    expect(settings.preview.memorySaver.maxWarm).toBe(5);
+    expect(settings.preview).not.toHaveProperty("rendering");
+    expect(unlinkSync).toHaveBeenCalledWith(join("/fake/mcode", "settings.json.tmp"));
+    expect(service.get()).toBe(settings);
+    expect(readFileSync).toHaveBeenCalledOnce();
+  });
+
+  it("does not rewrite current settings or repeat a completed migration", () => {
+    vi.mocked(readFileSync).mockReturnValueOnce(legacySettings("webview"));
+    const service = new SettingsService();
+
+    service.get();
+    service.get();
+
+    expect(readFileSync).toHaveBeenCalledOnce();
+    expect(writeFileSync).toHaveBeenCalledOnce();
+    expect(renameSync).toHaveBeenCalledOnce();
+
+    vi.clearAllMocks();
+    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ appearance: { theme: "dark" } }));
+    new SettingsService().get();
+
+    expect(writeFileSync).not.toHaveBeenCalled();
+    expect(renameSync).not.toHaveBeenCalled();
+    expect(unlinkSync).not.toHaveBeenCalled();
   });
 });

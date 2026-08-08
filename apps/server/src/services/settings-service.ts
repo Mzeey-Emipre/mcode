@@ -10,6 +10,7 @@ import { join, dirname } from "path";
 import type { FSWatcher } from "fs";
 
 import {
+  PartialSettingsSchema,
   SettingsSchema,
   getDefaultSettings,
   type Settings,
@@ -50,6 +51,33 @@ function deepMerge<T extends Record<string, unknown>>(
   }
 
   return result;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function removeLegacyPreviewRenderingSetting(value: unknown): {
+  readonly changed: boolean;
+  readonly document: unknown;
+} {
+  if (!isRecord(value) || !isRecord(value.preview)) {
+    return { changed: false, document: value };
+  }
+
+  if (!Object.prototype.hasOwnProperty.call(value.preview, "rendering")) {
+    return { changed: false, document: value };
+  }
+
+  const preview = { ...value.preview };
+  delete preview.rendering;
+  const document = { ...value };
+  if (Object.keys(preview).length === 0) {
+    delete document.preview;
+  } else {
+    document.preview = preview;
+  }
+  return { changed: true, document };
 }
 
 /**
@@ -94,8 +122,25 @@ export class SettingsService {
     try {
       const raw = readFileSync(this.filePath, "utf-8");
       const parsed = JSON.parse(raw) as unknown;
-      const result = SettingsSchema().safeParse(parsed);
+      const migration = removeLegacyPreviewRenderingSetting(parsed);
+      const documentResult = PartialSettingsSchema().safeParse(migration.document);
+      if (!documentResult.success) {
+        logger.warn("Settings file failed validation, returning defaults", {
+          error: documentResult.error.message,
+        });
+        return getDefaultSettings();
+      }
+      const result = SettingsSchema().safeParse(documentResult.data);
       if (result.success) {
+        if (migration.changed) {
+          try {
+            this.writeAtomically(documentResult.data);
+          } catch (error) {
+            logger.warn("Failed to persist migrated settings", {
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
         this.cache = result.data;
         return this.cache;
       }
@@ -132,7 +177,18 @@ export class SettingsService {
       throw new Error("At least one provider must remain enabled");
     }
 
-    // Ensure parent directory exists (only on first write)
+    this.writeAtomically(validated);
+
+    // Update cache directly from the validated result — no need for another disk read
+    this.cache = validated;
+
+    broadcast("settings.changed", validated);
+    this.emitChange(validated);
+
+    return validated;
+  }
+
+  private writeAtomically(document: unknown): void {
     if (!this.dirEnsured) {
       mkdirSync(dirname(this.filePath), { recursive: true });
       this.dirEnsured = true;
@@ -148,7 +204,7 @@ export class SettingsService {
     const tmpPath = this.filePath + ".tmp";
     this.selfWrite = true;
     try {
-      writeFileSync(tmpPath, JSON.stringify(validated, null, 2), "utf-8");
+      writeFileSync(tmpPath, JSON.stringify(document, null, 2), "utf-8");
       renameSync(tmpPath, this.filePath);
       // Safety: clear selfWrite after a window in case fs.watch never fires.
       setTimeout(() => { this.selfWrite = false; }, 500);
@@ -158,14 +214,6 @@ export class SettingsService {
       try { unlinkSync(tmpPath); } catch { /* best-effort cleanup */ }
       throw err;
     }
-
-    // Update cache directly from the validated result — no need for another disk read
-    this.cache = validated;
-
-    broadcast("settings.changed", validated);
-    this.emitChange(validated);
-
-    return validated;
   }
 
   /**
