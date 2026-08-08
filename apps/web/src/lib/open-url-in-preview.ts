@@ -126,23 +126,18 @@ export function openUrlInPreview({
 
   const run = async (): Promise<void> => {
     const exactWorkspaceId = workspaceId ?? threadId;
+    const resolved = await preview.resolveNavigation?.(url, wsPath ?? undefined);
+    if (!resolved?.ok) return;
     const openInNewTab = newTab && (await shouldOpenInNewTab(threadId, exactWorkspaceId, preview.tabs));
 
     if (openInNewTab && preview.tabs?.open) {
-      await preview.tabs.open(threadId, exactWorkspaceId, { activate: true });
-    } else if (!openInNewTab) {
-      setPreviewUrlForThread(threadId, url);
+      const opened = await preview.tabs.open(threadId, exactWorkspaceId, {
+        activate: true,
+        renderingHost: "webview",
+      });
+      if (!opened.ok) return;
     }
-
-    if (preview.navigate) {
-      try {
-        await preview.navigate(url, wsPath ?? undefined);
-      } catch {
-        setPreviewUrlForThread(threadId, url);
-      }
-    } else {
-      setPreviewUrlForThread(threadId, url);
-    }
+    setPreviewUrlForThread(threadId, resolved.url);
   };
 
   // Defer until the preview panel has mounted and reported bounds.

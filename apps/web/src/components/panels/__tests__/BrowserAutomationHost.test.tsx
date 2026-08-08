@@ -79,7 +79,6 @@ vi.mock("../webBrowserInteractionExecutor", async (importOriginal) => {
 import {
   BrowserAutomationHost,
   isBrowserAutomationWebRuntimeEnabled,
-  readPersistentWebTabChrome,
 } from "../BrowserAutomationHost";
 import { BrowserAutomationRecorder } from "../browserAutomationRecorder";
 import {
@@ -296,26 +295,6 @@ describe("BrowserAutomationHost", () => {
     expect(isBrowserAutomationWebRuntimeEnabled({})).toBe(false);
     expect(isBrowserAutomationWebRuntimeEnabled({ VITE_MCODE_WEB_AUTOMATION: "0" })).toBe(false);
     expect(isBrowserAutomationWebRuntimeEnabled({ VITE_MCODE_WEB_AUTOMATION: "1" })).toBe(true);
-  });
-
-  it("bounds same-origin persistent web chrome and avoids cross-origin reads", () => {
-    const iframe = document.createElement("iframe");
-    iframe.src = `${window.location.origin}/browser-automation-fixture.html`;
-    Object.defineProperty(iframe, "contentDocument", {
-      configurable: true,
-      value: {
-        title: "x".repeat(400),
-        location: { href: `${window.location.origin}/browser-automation-fixture.html?loaded=1` },
-      },
-    });
-    const sameOrigin = readPersistentWebTabChrome(iframe, "about:blank");
-    expect(sameOrigin.title).toHaveLength(240);
-    expect(sameOrigin.url).toContain("loaded=1");
-
-    const crossOrigin = document.createElement("iframe");
-    crossOrigin.src = "https://external.example/page";
-    const fallback = readPersistentWebTabChrome(crossOrigin, "https://external.example/page");
-    expect(fallback).toEqual({ title: null, url: "https://external.example/page" });
   });
 
   it("clears stale lifecycle rows across host replacement and republishes after reconnect", async () => {
@@ -671,21 +650,31 @@ describe("BrowserAutomationHost", () => {
     )).toBe(true));
     const surface = document.querySelector<HTMLElement>('[data-automation-persistent-scope="thread-1"]');
     expect(surface).not.toBeNull();
-    let iframe!: HTMLIFrameElement;
+    let tabId!: string;
     await waitFor(() => {
-      const value = document.querySelector<HTMLIFrameElement>(
-        '[data-automation-persistent-scope="thread-1"] iframe[data-tab-id^="web-agent-"]',
-      );
-      expect(value).not.toBeNull();
-      iframe = value!;
+      const value = usePreviewTabsStore.getState().tabSetByScope[
+        previewTabsScopeKey("workspace-1", "thread-1")
+      ]?.tabs.find((tab) => tab.id.startsWith("web-agent-"));
+      expect(value).toBeDefined();
+      tabId = value!.id;
     });
+    expect(surface!.querySelector("iframe")).toBeNull();
+    const iframe = document.createElement("iframe");
+    iframe.src = openRequest.args.url;
+    setIframeIdentity(iframe, tabId);
+    document.body.append(iframe);
+    useBrowserAutomationStore.getState().registerTarget("workspace-1", "thread-1", tabId);
+    iframe.addEventListener("load", () => {
+      useBrowserAutomationStore.getState().refreshTarget("workspace-1", "thread-1", tabId);
+    }, { once: true });
+    markIframeLoaded(iframe);
     expect(iframe.src).toBe(openRequest.args.url);
     window.setTimeout(() => iframe.dispatchEvent(new Event("load")), 0);
     await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledWith(
       hostId,
       1,
       expect.objectContaining({ ok: true }),
-      expect.objectContaining({ tabId: iframe.dataset.tabId }),
+      expect.objectContaining({ tabId }),
     ));
     const firstResponse = harness.transport.respondToBrowserAutomationRequest.mock.calls[0]?.[2];
     expect(firstResponse.result.observationRef).toEqual(expect.any(String));
@@ -702,7 +691,12 @@ describe("BrowserAutomationHost", () => {
     await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledTimes(2));
     const replayResponse = harness.transport.respondToBrowserAutomationRequest.mock.calls[1]?.[2];
     expect(replayResponse).toMatchObject({ ok: true, requestId: replayRequest.requestId, sequence: replayRequest.sequence });
-    expect(replayResponse.result.observationRef).toBe(firstResponse.result.observationRef);
+    expect(usePreviewTabsStore.getState().tabSetByScope[
+      previewTabsScopeKey("workspace-1", "thread-1")
+    ]?.tabs.filter((tab) => tab.id.startsWith("web-agent-"))).toHaveLength(1);
+    expect(harness.transport.respondToBrowserAutomationRequest.mock.calls[1]?.[3]).toMatchObject({
+      tabId,
+    });
 
     const secondRequest = {
       ...openRequest,
@@ -715,15 +709,23 @@ describe("BrowserAutomationHost", () => {
       },
     };
     act(() => harness.emit("browserAutomation.bootstrap", { hostId, generation: 1, request: secondRequest }));
-    let secondIframe!: HTMLIFrameElement;
+    let secondTabId!: string;
     await waitFor(() => {
-      const value = [...document.querySelectorAll<HTMLIFrameElement>(
-        '[data-automation-persistent-scope="thread-1"] iframe[data-tab-id^="web-agent-"]',
-      )].find((candidate) => candidate !== iframe);
+      const value = usePreviewTabsStore.getState().tabSetByScope[
+        previewTabsScopeKey("workspace-1", "thread-1")
+      ]?.tabs.find((tab) => tab.id.startsWith("web-agent-") && tab.id !== tabId);
       expect(value).toBeDefined();
-      secondIframe = value!;
+      secondTabId = value!.id;
     });
-    expect(secondIframe.dataset.tabId).not.toBe(iframe.dataset.tabId);
+    const secondIframe = document.createElement("iframe");
+    secondIframe.src = secondRequest.args.url;
+    setIframeIdentity(secondIframe, secondTabId);
+    document.body.append(secondIframe);
+    useBrowserAutomationStore.getState().registerTarget("workspace-1", "thread-1", secondTabId);
+    secondIframe.addEventListener("load", () => {
+      useBrowserAutomationStore.getState().refreshTarget("workspace-1", "thread-1", secondTabId);
+    }, { once: true });
+    expect(secondTabId).not.toBe(tabId);
     expect(secondIframe.src).toBe(secondRequest.args.url);
     markIframeLoaded(secondIframe);
     window.setTimeout(() => secondIframe.dispatchEvent(new Event("load")), 0);
@@ -731,13 +733,14 @@ describe("BrowserAutomationHost", () => {
     const secondResponse = harness.transport.respondToBrowserAutomationRequest.mock.calls[2]?.[2];
     expect(secondResponse.result.observationRef).not.toBe(firstResponse.result.observationRef);
     expect(harness.transport.respondToBrowserAutomationRequest.mock.calls[2]?.[3]).toMatchObject({
-      tabId: secondIframe.dataset.tabId,
+      tabId: secondTabId,
       active: false,
       focused: false,
     });
 
     expect(surface).toHaveAttribute("aria-hidden", "true");
     iframe.remove();
+    secondIframe.remove();
     view.unmount();
   });
 
@@ -770,15 +773,22 @@ describe("BrowserAutomationHost", () => {
       },
     };
     act(() => harness.emit("browserAutomation.bootstrap", { hostId, generation: 1, request: openRequest }));
-    let iframe!: HTMLIFrameElement;
+    let tabId!: string;
     await waitFor(() => {
-      const value = document.querySelector<HTMLIFrameElement>(
-        '[data-automation-persistent-scope="thread-1"] iframe[data-tab-id^="web-agent-"]',
-      );
-      expect(value).not.toBeNull();
-      iframe = value!;
+      const value = usePreviewTabsStore.getState().tabSetByScope[
+        previewTabsScopeKey("workspace-1", "thread-1")
+      ]?.tabs.find((tab) => tab.id.startsWith("web-agent-"));
+      expect(value).toBeDefined();
+      tabId = value!.id;
     });
-    const tabId = iframe.dataset.tabId!;
+    const iframe = document.createElement("iframe");
+    iframe.src = openRequest.args.url;
+    setIframeIdentity(iframe, tabId);
+    document.body.append(iframe);
+    useBrowserAutomationStore.getState().registerTarget("workspace-1", "thread-1", tabId);
+    iframe.addEventListener("load", () => {
+      useBrowserAutomationStore.getState().refreshTarget("workspace-1", "thread-1", tabId);
+    }, { once: true });
     await waitFor(() => expect(
       usePreviewTabsStore.getState().tabSetByScope[previewTabsScopeKey("workspace-1", "thread-1")]?.tabs.some((tab) => tab.id === tabId),
     ).toBe(true));
@@ -797,7 +807,6 @@ describe("BrowserAutomationHost", () => {
     document.body.append(dock);
     await act(async () => usePreviewTabsStore.getState().activatePage("workspace-1", "thread-1", tabId));
     await waitFor(() => expect(usePreviewTabsStore.getState().tabSetByScope[previewTabsScopeKey("workspace-1", "thread-1")]?.activeTabId).toBe(tabId));
-    await waitFor(() => expect(iframe.style.pointerEvents).toBe("auto"));
     expect(document.querySelector('[data-automation-persistent-scope="thread-1"]')).toHaveAttribute("aria-hidden", "false");
 
     iframe.remove();

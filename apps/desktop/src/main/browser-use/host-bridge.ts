@@ -3,9 +3,7 @@
  *
  * Mirrors the methods dpcode's `DesktopBrowserManager` exposes to its pipe
  * server, but is intentionally minimal in Phase A/C: backed by the existing
- * single-view `PreviewSession`, so it can deliver protocol parity today while
- * Slice 2 wires real per-tab `WebContentsView` runtimes underneath. Method
- * signatures and shapes are stable across that future refactor.
+ * `PreviewSession` tab records and the renderer-owned Browser surface host.
  */
 
 import type { BrowserWindow, WebContents } from "electron";
@@ -18,7 +16,7 @@ import { findAdoptedWebContentsForWindow } from "../preview/preview-webview-adop
 export interface BrowserHostSnapshot {
   readonly threadId: string;
   readonly windowId: number;
-  /** Currently-mounted backing view's webContents (single-view shim). */
+  /** Active renderer-owned guest, when its exact surface is warm. */
   readonly activeWebContents: WebContents | null;
   readonly tabs: ReadonlyArray<{
     readonly id: string;
@@ -84,16 +82,7 @@ function locateTab(threadId: string, tabId: string): {
     const tab = set.tabs.find((t) => t.id === tabId);
     if (!tab) continue;
     const adopted = findAdoptedWebContentsForWindow(win.id, threadId, tabId);
-    if (adopted) return { win, webContents: adopted };
-    if (tab.renderingHost === "webview") return { win, webContents: null };
-    // Slice 2: every warm tab carries its own WebContentsView, so the bridge
-    // can target inactive tabs too. Returns null only when the tab is cold
-    // (never mounted) or its webContents has been destroyed.
-    const view = tab.view;
-    return {
-      win,
-      webContents: view && !view.webContents.isDestroyed() ? view.webContents : null,
-    };
+    return { win, webContents: adopted && !adopted.isDestroyed() ? adopted : null };
   }
   return null;
 }
@@ -101,12 +90,8 @@ function locateTab(threadId: string, tabId: string): {
 /**
  * Preview-session-backed implementation of {@link BrowserHostBridge}.
  *
- * Limitations (Phase A shim, lifted in Slice 2):
- *   - Only the active tab of the active thread has a live `WebContents`; CDP
- *     calls against any other tab return an error until that tab is activated.
- *   - The debugger attaches to the single backing view. Switching tabs
- *     within the same thread (Phase A behavior) tears down the view and
- *     auto-detaches.
+ * CDP operations resolve one exact adopted guest and never use the active tab
+ * as a substitute.
  */
 export function createPreviewSessionBackedHostBridge(): BrowserHostBridge {
   /** Per-(threadId,tabId) listener bag, so multiple sessions can subscribe. */
@@ -135,11 +120,13 @@ export function createPreviewSessionBackedHostBridge(): BrowserHostBridge {
         if (!s || !s.lastPreviewThreadId) continue;
         const threadId = s.lastPreviewThreadId;
         const set = ensureThreadTabSet(s, threadId);
+        const activeAdopted = set.activeTabId
+          ? findAdoptedWebContentsForWindow(win.id, threadId, set.activeTabId)
+          : null;
         return {
           threadId,
           windowId: win.id,
-          activeWebContents:
-            s.view && !s.view.webContents.isDestroyed() ? s.view.webContents : null,
+          activeWebContents: activeAdopted && !activeAdopted.isDestroyed() ? activeAdopted : null,
           tabs: set.tabs.map((t) => ({
             id: t.id,
             threadId: t.threadId,
@@ -178,10 +165,14 @@ export function createPreviewSessionBackedHostBridge(): BrowserHostBridge {
       }
       const set = found.tabs;
       const s = sessions.get(found.win.id)!;
+      const activeTabId = getThreadTabSet(s, threadId)?.activeTabId ?? null;
+      const activeAdopted = activeTabId
+        ? findAdoptedWebContentsForWindow(found.win.id, threadId, activeTabId)
+        : null;
       return {
         threadId,
         windowId: found.win.id,
-        activeWebContents: s.view && !s.view.webContents.isDestroyed() ? s.view.webContents : null,
+        activeWebContents: activeAdopted && !activeAdopted.isDestroyed() ? activeAdopted : null,
         tabs: set.map((t) => ({
           id: t.id,
           threadId: t.threadId,

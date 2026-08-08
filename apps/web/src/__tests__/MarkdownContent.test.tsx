@@ -160,16 +160,20 @@ describe("MarkdownContent link handling", () => {
 
 describe("MarkdownContent workspace preview navigation", () => {
   let mockNavigate: ReturnType<typeof vi.fn>;
+  let mockResolveNavigation: ReturnType<typeof vi.fn>;
   let mockOpen: ReturnType<typeof vi.fn>;
   let showRightPanel: ReturnType<typeof vi.fn>;
   let setRightPanelTab: ReturnType<typeof vi.fn>;
+  let setPreviewUrlForThread: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     vi.useFakeTimers();
     mockNavigate = vi.fn().mockResolvedValue({ ok: true });
+    mockResolveNavigation = vi.fn(async (url: string) => ({ ok: true, url }));
     mockOpen = vi.fn().mockResolvedValue({ ok: true, data: { tabId: "tab-2", tabs: {} } });
     showRightPanel = vi.fn();
     setRightPanelTab = vi.fn();
+    setPreviewUrlForThread = vi.fn();
     const ws = createMockWorkspace({ id: "ws-prev", path: "/tmp/ws-preview-test" });
     useWorkspaceStore.setState({
       workspaces: [ws],
@@ -180,12 +184,13 @@ describe("MarkdownContent workspace preview navigation", () => {
     useDiffStore.setState({
       showRightPanel,
       setRightPanelTab,
-      setPreviewUrlForThread: vi.fn(),
+      setPreviewUrlForThread,
     } as Partial<ReturnType<typeof useDiffStore.getState>>);
     window.desktopBridge = {
       openExternalUrl: vi.fn(),
       preview: {
         navigate: mockNavigate,
+        resolveNavigation: mockResolveNavigation,
         tabs: {
           open: mockOpen,
           list: vi.fn().mockResolvedValue({
@@ -232,11 +237,16 @@ describe("MarkdownContent workspace preview navigation", () => {
     });
     expect(showRightPanel).toHaveBeenCalledWith("ws-prev", "thread-prev");
     expect(setRightPanelTab).toHaveBeenCalledWith("ws-prev", "thread-prev", "preview");
-    expect(mockOpen).toHaveBeenCalledWith("thread-prev", "ws-prev", { activate: true });
-    expect(mockNavigate).toHaveBeenCalledWith(
+    expect(mockResolveNavigation).toHaveBeenCalledWith(
       "mcode-workspace:///sub/page.html",
       "/tmp/ws-preview-test",
     );
+    expect(mockOpen).toHaveBeenCalledWith("thread-prev", "ws-prev", {
+      activate: true,
+      renderingHost: "webview",
+    });
+    expect(setPreviewUrlForThread).toHaveBeenCalledWith("thread-prev", "mcode-workspace:///sub/page.html");
+    expect(mockNavigate).not.toHaveBeenCalled();
   });
 
   it("rewrites relative html link to mcode-workspace for navigation", async () => {
@@ -247,11 +257,16 @@ describe("MarkdownContent workspace preview navigation", () => {
       fireEvent.click(link!, { ctrlKey: true });
       await vi.runAllTimersAsync();
     });
-    expect(mockOpen).toHaveBeenCalledWith("thread-prev", "ws-prev", { activate: true });
-    expect(mockNavigate).toHaveBeenCalledWith(
+    expect(mockOpen).toHaveBeenCalledWith("thread-prev", "ws-prev", {
+      activate: true,
+      renderingHost: "webview",
+    });
+    expect(mockResolveNavigation).toHaveBeenCalledWith(
       "mcode-workspace:///sub/page.html",
       "/tmp/ws-preview-test",
     );
+    expect(setPreviewUrlForThread).toHaveBeenCalledWith("thread-prev", "mcode-workspace:///sub/page.html");
+    expect(mockNavigate).not.toHaveBeenCalled();
   });
 
   it("opens mcode-workspace in the default browser on plain click", async () => {
@@ -291,11 +306,16 @@ describe("MarkdownContent workspace preview navigation", () => {
       fireEvent.click(el!, { ctrlKey: true });
       await vi.runAllTimersAsync();
     });
-    expect(mockOpen).toHaveBeenCalledWith("thread-prev", "ws-prev", { activate: true });
-    expect(mockNavigate).toHaveBeenCalledWith(
+    expect(mockOpen).toHaveBeenCalledWith("thread-prev", "ws-prev", {
+      activate: true,
+      renderingHost: "webview",
+    });
+    expect(mockResolveNavigation).toHaveBeenCalledWith(
       "mcode-workspace:///report.html",
       "/tmp/ws-preview-test",
     );
+    expect(setPreviewUrlForThread).toHaveBeenCalledWith("thread-prev", "mcode-workspace:///report.html");
+    expect(mockNavigate).not.toHaveBeenCalled();
   });
 
   it("stores URL for preview sync when preview.navigate is missing on ctrl+click", async () => {
@@ -308,6 +328,7 @@ describe("MarkdownContent workspace preview navigation", () => {
     window.desktopBridge = {
       openExternalUrl: vi.fn(),
       preview: {
+        resolveNavigation: mockResolveNavigation,
         tabs: {
           open: mockOpen,
           list: vi.fn().mockResolvedValue({
@@ -343,8 +364,7 @@ describe("MarkdownContent workspace preview navigation", () => {
     );
   });
 
-  it("stores URL when navigate rejects on ctrl+click", async () => {
-    const setPreviewUrlForThread = vi.fn();
+  it("stores the resolved URL without calling retired navigation", async () => {
     useDiffStore.setState({
       showRightPanel,
       setRightPanelTab,
@@ -360,7 +380,7 @@ describe("MarkdownContent workspace preview navigation", () => {
       await vi.runAllTimersAsync();
     });
     expect(setPreviewUrlForThread).toHaveBeenCalledWith("thread-prev", "https://example.com/x");
-    expect(mockNavigate).toHaveBeenCalled();
+    expect(mockNavigate).not.toHaveBeenCalled();
   });
 });
 

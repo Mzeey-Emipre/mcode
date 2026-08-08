@@ -835,10 +835,7 @@ export class BrowserAutomationKernel {
       return { ok: false, error: "invalid-target" };
     }
     try {
-      // Bootstrap-created native tabs are owned by main and are not renderer
-      // adopted webviews. Resolve their native WebContents so targetless opens
-      // can describe and dispatch without activating the visible panel.
-      const resolved = this.resolveCurrentTarget(event, threadId, tabId, false);
+      const resolved = this.resolveCurrentTarget(event, threadId, tabId);
       const tabSet = getThreadTabSet(getSession(resolved.window), threadId);
       const tab = tabSet?.tabs.find((candidate) => candidate.id === tabId);
       return {
@@ -884,7 +881,7 @@ export class BrowserAutomationKernel {
       return { ok: false, error: "INVALID_REQUEST" };
     }
     try {
-      const resolved = this.resolveCurrentTarget(event, threadId, tabId, true);
+      const resolved = this.resolveCurrentTarget(event, threadId, tabId);
       if (
         resolved.state.windowId !== target.windowId ||
         resolved.state.targetGeneration !== target.targetGeneration
@@ -926,11 +923,7 @@ export class BrowserAutomationKernel {
     const tab = set?.tabs.find((candidate) => candidate.id === (tabId ?? set.activeTabId));
     if (!tab) return false;
     const adopted = findAdoptedWebContentsForWindow(win.id, threadId, tab.id);
-    const guest = adopted?.hostWebContents === event.sender
-      ? adopted
-      : tab.renderingHost === "webview"
-        ? null
-        : tab.view?.webContents ?? (exactTargetRequested ? null : session.view?.webContents ?? null);
+    const guest = adopted?.hostWebContents === event.sender ? adopted : null;
     if (!guest || guest.isDestroyed()) return false;
     const state = this.targets.get(targetKey(win.id, threadId, tab.id));
     if (state) {
@@ -1003,7 +996,7 @@ export class BrowserAutomationKernel {
   }
 
   private resolveTarget(event: IpcMainInvokeEvent, threadId: string, target: BrowserAutomationIpcTarget): ResolvedTarget {
-    const resolved = this.resolveCurrentTarget(event, threadId, target.tabId, false);
+    const resolved = this.resolveCurrentTarget(event, threadId, target.tabId);
     if (target.windowId !== resolved.state.windowId) {
       throw new KernelError("TAB_UNAVAILABLE", "Browser dispatch window does not match the renderer", false);
     }
@@ -1021,7 +1014,6 @@ export class BrowserAutomationKernel {
     event: IpcMainInvokeEvent,
     threadId: string,
     tabId: string,
-    adoptedOnly: boolean,
   ): ResolvedTarget {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win || win.isDestroyed()) throw new KernelError("TAB_UNAVAILABLE", "Browser window is unavailable", true);
@@ -1032,9 +1024,6 @@ export class BrowserAutomationKernel {
     }
     let webContents = findAdoptedWebContentsForWindow(win.id, threadId, tabId);
     if (webContents?.hostWebContents !== event.sender) webContents = null;
-    if (!webContents && !adoptedOnly && tab.renderingHost !== "webview") {
-      webContents = tab?.view?.webContents ?? null;
-    }
     if (!webContents || webContents.isDestroyed()) throw new KernelError("TAB_UNAVAILABLE", "Exact browser tab is unavailable", true);
 
     const key = targetKey(win.id, threadId, tabId);
