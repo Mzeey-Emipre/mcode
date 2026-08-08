@@ -1,6 +1,5 @@
 /**
- * Selection overlay management for region drag and element-pick capture modes.
- * Overlay BrowserWindows sit above the preview WebContentsView and intercept pointer events.
+ * In-page region drag and element-pick capture helpers for an adopted Preview guest.
  */
 
 import { mkdir, writeFile } from "node:fs/promises";
@@ -16,8 +15,6 @@ import {
   type Bounds,
   type PreviewSession,
   getSession,
-  clearIdle,
-  resetIdle,
 } from "./preview-session.js";
 import {
   type PreviewPictureReferenceResult,
@@ -37,10 +34,7 @@ import { resolveActivePreviewWebContents } from "./preview-active-webcontents.js
  * the amber highlight + tooltip, and a shared `window.__mcodeEpState` object queues the
  * commit point or cancellation flag for the host to drain via executeJavaScript polling.
  *
- * Why this replaces the previous transparent child BrowserWindow overlay: on Windows,
- * DWM cannot composite a transparent BrowserWindow over a WebContentsView. The overlay
- * paints opaque (black), hiding the page underneath. Injecting into the guest keeps the
- * amber highlight visible on top of real page pixels.
+ * In-page capture keeps the highlight bound to the exact guest document.
  */
 const EP_CHAT_CURSOR_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 28 28"><path fill="#f59e0b" stroke="#111827" stroke-width="1.5" d="M14 3.5c6.1 0 10.8 3.8 10.8 8.7s-4.7 8.7-10.8 8.7c-1.1 0-2.2-.1-3.2-.4L5 24l1.8-5C4.6 17.4 3.2 15 3.2 12.2 3.2 7.3 7.9 3.5 14 3.5Z"/><circle cx="10.6" cy="12.3" r="1.2" fill="#fff"/><circle cx="14" cy="12.3" r="1.2" fill="#fff"/><circle cx="17.4" cy="12.3" r="1.2" fill="#fff"/></svg>`;
 const EP_CHAT_CURSOR_CSS = `url('data:image/svg+xml,${encodeURIComponent(
@@ -300,9 +294,7 @@ const EP_POLL_JS = `(function(){
  * layer captures pointer events at the document's capture phase, blocking the
  * underlying page, and a `window.__mcodeRgState` object holds the pending
  * commit rect or cancellation flag for the host to drain via executeJavaScript
- * polling. Replaces the previous transparent BrowserWindow overlay, which
- * paints opaque on Windows because DWM cannot blend a transparent child
- * window over a WebContentsView.
+ * polling.
  */
 const RG_INJECT_JS = `(function(){
   if (window.__mcodeRgTeardown) return;
@@ -529,18 +521,8 @@ async function removeRgMarqueeHighlighter(wc: WebContents): Promise<void> {
 
 const resolveActiveCaptureWebContents = resolveActivePreviewWebContents;
 
-/** Prefer WebContentsView bounds for native captures; webview captures use shell bounds. */
-function hostBoundsForHitTest(s: PreviewSession, webContents: WebContents): Bounds | null {
-  if (s.view?.webContents === webContents && !s.view.webContents.isDestroyed()) {
-    try {
-      const b = s.view.getBounds();
-      if (b.width > 0 && b.height > 0) {
-        return { x: b.x, y: b.y, width: b.width, height: b.height };
-      }
-    } catch {
-      /* use lastBounds */
-    }
-  }
+/** Return the current renderer-reported bounds for capture hit testing. */
+function hostBoundsForHitTest(s: PreviewSession, _webContents: WebContents): Bounds | null {
   return s.lastBounds;
 }
 
@@ -978,22 +960,6 @@ async function runElementHitTest(
 }
 
 /**
- * Tears down only the selection overlay BrowserWindow, leaving the session state intact.
- */
-export function destroySelectionOverlayOnly(s: PreviewSession): void {
-  if (!s.selectionOverlay || s.selectionOverlay.isDestroyed()) {
-    s.selectionOverlay = null;
-    return;
-  }
-  try {
-    s.selectionOverlay.destroy();
-  } catch {
-    /* already gone */
-  }
-  s.selectionOverlay = null;
-}
-
-/**
  * Removes the main-frame navigation listener registered at the start of an overlay capture.
  */
 function endOverlaySession(s: PreviewSession): void {
@@ -1005,7 +971,7 @@ function endOverlaySession(s: PreviewSession): void {
 
 /**
  * Aborts an in-progress overlay capture, cancels the pending promise, and tears down
- * the overlay window and guest highlight.
+ * the guest highlight.
  */
 export function abortOverlayCapture(s: PreviewSession, error: string): void {
   endOverlaySession(s);
@@ -1033,11 +999,7 @@ export function abortOverlayCapture(s: PreviewSession, error: string): void {
       void removeEpPickHighlighter(webContents);
     }
   }
-  destroySelectionOverlayOnly(s);
   if (pending) {
-    if (!pending.hostWin.isDestroyed()) {
-      resetIdle(pending.hostWin, s);
-    }
     pending.finish({ ok: false, error });
   }
 }
@@ -1102,7 +1064,6 @@ export function registerOverlayHandlers(): void {
       }
 
       return await new Promise<PreviewPictureReferenceResult>((resolve) => {
-        clearIdle(s);
 
         let settled = false;
         const finishOnce = (r: PreviewPictureReferenceResult): void => {
@@ -1140,7 +1101,6 @@ export function registerOverlayHandlers(): void {
       }
 
       return await new Promise<PreviewPictureReferenceResult>((resolve) => {
-        clearIdle(s);
 
         let settled = false;
         const finishOnce = (r: PreviewPictureReferenceResult): void => {
@@ -1267,7 +1227,6 @@ async function finishRegionCapture(s: PreviewSession, rect: Bounds): Promise<voi
 
   const webContents = pending.webContents;
   if (webContents.isDestroyed()) {
-    if (!pending.hostWin.isDestroyed()) resetIdle(pending.hostWin, s);
     pending.finish({ ok: false, error: "no-preview" });
     return;
   }
@@ -1275,7 +1234,6 @@ async function finishRegionCapture(s: PreviewSession, rect: Bounds): Promise<voi
   const lb = s.lastBounds;
   if (!lb) {
     await removeRgMarqueeHighlighter(webContents);
-    if (!pending.hostWin.isDestroyed()) resetIdle(pending.hostWin, s);
     pending.finish({ ok: false, error: "no-bounds" });
     return;
   }
@@ -1283,7 +1241,6 @@ async function finishRegionCapture(s: PreviewSession, rect: Bounds): Promise<voi
   const r = clampRectInPlace(rect, lb.width, lb.height);
   if (r.width < 4 || r.height < 4) {
     await removeRgMarqueeHighlighter(webContents);
-    if (!pending.hostWin.isDestroyed()) resetIdle(pending.hostWin, s);
     pending.finish({ ok: false, error: "region-too-small" });
     return;
   }
@@ -1293,7 +1250,6 @@ async function finishRegionCapture(s: PreviewSession, rect: Bounds): Promise<voi
     const image = await webContents.capturePage(r);
     const buffer = image.toPNG();
     if (buffer.length === 0) {
-      if (!pending.hostWin.isDestroyed()) resetIdle(pending.hostWin, s);
       pending.finish({ ok: false, error: "empty-capture" });
       return;
     }
@@ -1325,10 +1281,8 @@ async function finishRegionCapture(s: PreviewSession, rect: Bounds): Promise<voi
       },
     );
 
-    if (!pending.hostWin.isDestroyed()) resetIdle(pending.hostWin, s);
     pending.finish({ ok: true, meta, previewBytes: Uint8Array.from(buffer), capture });
   } catch {
-    if (!pending.hostWin.isDestroyed()) resetIdle(pending.hostWin, s);
     pending.finish({ ok: false, error: "capture-failed" });
   }
 }
@@ -1429,7 +1383,6 @@ async function finishElementPickCapture(
 
   const webContents = pending.webContents;
   if (webContents.isDestroyed()) {
-    if (!pending.hostWin.isDestroyed()) resetIdle(pending.hostWin, s);
     pending.finish({ ok: false, error: "no-preview" });
     return;
   }
@@ -1437,7 +1390,6 @@ async function finishElementPickCapture(
   const lb = s.lastBounds;
   if (!lb) {
     await removeEpPickHighlighter(webContents);
-    if (!pending.hostWin.isDestroyed()) resetIdle(pending.hostWin, s);
     pending.finish({ ok: false, error: "no-bounds" });
     return;
   }
@@ -1445,7 +1397,6 @@ async function finishElementPickCapture(
   const hit = await runElementHitTest(webContents, x, y, hostBoundsForHitTest(s, webContents));
   if (!hit || !hit.ok) {
     await removeEpPickHighlighter(webContents);
-    if (!pending.hostWin.isDestroyed()) resetIdle(pending.hostWin, s);
     pending.finish({ ok: false, error: "no-hit" });
     return;
   }
@@ -1453,7 +1404,6 @@ async function finishElementPickCapture(
   const r = clampRectInPlace(hit.bounds, lb.width, lb.height);
   if (r.width < 4 || r.height < 4) {
     await removeEpPickHighlighter(webContents);
-    if (!pending.hostWin.isDestroyed()) resetIdle(pending.hostWin, s);
     pending.finish({ ok: false, error: "region-too-small" });
     return;
   }
@@ -1463,7 +1413,6 @@ async function finishElementPickCapture(
     const image = await webContents.capturePage(r);
     const buffer = image.toPNG();
     if (buffer.length === 0) {
-      if (!pending.hostWin.isDestroyed()) resetIdle(pending.hostWin, s);
       pending.finish({ ok: false, error: "empty-capture" });
       return;
     }
@@ -1498,10 +1447,8 @@ async function finishElementPickCapture(
       },
     );
 
-    if (!pending.hostWin.isDestroyed()) resetIdle(pending.hostWin, s);
     pending.finish({ ok: true, meta, previewBytes: Uint8Array.from(buffer), capture });
   } catch {
-    if (!pending.hostWin.isDestroyed()) resetIdle(pending.hostWin, s);
     pending.finish({ ok: false, error: "capture-failed" });
   }
 }

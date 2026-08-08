@@ -76,8 +76,6 @@ export interface BrowserHeaderProps {
   readonly onToggleViewportToolbar?: () => void;
   /** Whether the responsive viewport toolbar is visible. */
   readonly viewportToolbarVisible?: boolean;
-  /** Whether overflow overlays must hide the native preview layer. */
-  readonly suppressPreviewForOverlays?: boolean;
   /** Current controller for the active visible Browser tab. */
   readonly automationController?: BrowserAutomationControllerState | null;
   /** True while the active tab owns an in-flight browser operation. */
@@ -132,7 +130,6 @@ export function BrowserHeader({
   onOpenDevTools = () => undefined,
   onToggleViewportToolbar,
   viewportToolbarVisible = false,
-  suppressPreviewForOverlays = true,
   automationController = null,
   automationBusy = false,
   onStopAutomation,
@@ -410,7 +407,6 @@ export function BrowserHeader({
         onOpenDevTools={onOpenDevTools}
         onToggleViewportToolbar={onToggleViewportToolbar}
         viewportToolbarVisible={viewportToolbarVisible}
-        suppressPreviewForOverlays={suppressPreviewForOverlays}
         automationController={automationController}
         automationBusy={automationBusy}
         onStopAutomation={onStopAutomation}

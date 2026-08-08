@@ -243,7 +243,6 @@ describe("MarkdownContent workspace preview navigation", () => {
     );
     expect(mockOpen).toHaveBeenCalledWith("thread-prev", "ws-prev", {
       activate: true,
-      renderingHost: "webview",
     });
     expect(setPreviewUrlForThread).toHaveBeenCalledWith("thread-prev", "mcode-workspace:///sub/page.html");
     expect(mockNavigate).not.toHaveBeenCalled();
@@ -259,7 +258,6 @@ describe("MarkdownContent workspace preview navigation", () => {
     });
     expect(mockOpen).toHaveBeenCalledWith("thread-prev", "ws-prev", {
       activate: true,
-      renderingHost: "webview",
     });
     expect(mockResolveNavigation).toHaveBeenCalledWith(
       "mcode-workspace:///sub/page.html",
@@ -308,7 +306,6 @@ describe("MarkdownContent workspace preview navigation", () => {
     });
     expect(mockOpen).toHaveBeenCalledWith("thread-prev", "ws-prev", {
       activate: true,
-      renderingHost: "webview",
     });
     expect(mockResolveNavigation).toHaveBeenCalledWith(
       "mcode-workspace:///report.html",

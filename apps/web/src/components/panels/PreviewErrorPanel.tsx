@@ -33,10 +33,9 @@ export interface PreviewErrorPanelProps {
 }
 
 /**
- * In-chrome error surface shown (Approach A) when the native preview view is
- * hidden because a load failed. Names the failure in plain language, shows the
- * diagnostic code/URL for triage, and offers the one canonical recovery —
- * Retry — plus Go back when there is history to return to.
+ * Error surface shown when a Browser page fails to load. Names the failure in
+ * plain language, shows the diagnostic code and URL, and offers Retry plus Go
+ * back when there is history to return to.
  *
  * Editing the address and opening in the system browser are intentionally NOT
  * here: the omnibox directly above is the URL editor, and the toolbar already

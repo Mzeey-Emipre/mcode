@@ -46,7 +46,7 @@ export interface ViewportSize {
   readonly height: number;
 }
 
-/** One operation submitted to the active rendering host. */
+/** One viewport operation submitted to the Browser surface. */
 export interface ViewportHostOperation {
   readonly operationId: string;
   readonly source: ViewportSource;
@@ -55,7 +55,7 @@ export interface ViewportHostOperation {
   readonly requested: ViewportSize;
 }
 
-/** One reset submitted to the active rendering host when Regular mode owns the target. */
+/** One reset submitted to the Browser surface when Regular mode owns the target. */
 export interface ViewportHostResetOperation {
   readonly operationId: string;
   readonly source: ViewportSource;
@@ -78,7 +78,7 @@ export interface ViewportHostResetResult {
   readonly error?: string;
 }
 
-/** One presentation change submitted to the active rendering host. */
+/** One presentation change applied to the Browser surface. */
 export interface ViewportPresentationHostOperation {
   readonly operationId: string;
   readonly source: ViewportSource;

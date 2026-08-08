@@ -129,7 +129,6 @@ describe("openUrlInPreview", () => {
     expect(setRightPanelTab).toHaveBeenCalledWith("ws-1", "thread-1", "preview");
     expect(mockOpen).toHaveBeenCalledWith("thread-1", "ws-1", {
       activate: true,
-      renderingHost: "webview",
     });
     expect(mockNavigate).not.toHaveBeenCalled();
     expect(setPreviewUrlForThread).toHaveBeenCalledWith("thread-1", "https://example.com/pr/1");

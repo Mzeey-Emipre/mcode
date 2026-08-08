@@ -309,6 +309,16 @@ export function requestRendererSurfaceDiscard(
   return true;
 }
 
+/** Releases all adopted and pending surfaces owned by one closing renderer window. */
+export function disposePreviewSurfacesForWindow(windowId: number): void {
+  const adopted = adoptedByWindow.get(windowId);
+  for (const key of [...(adopted?.keys() ?? [])]) {
+    dropAdoption(windowId, key);
+  }
+  pendingByWindow.delete(windowId);
+  generationByWindow.delete(windowId);
+}
+
 function prepareSurface(event: IpcMainInvokeEvent, inputValue: unknown): PreviewSurfaceResult {
   const input = typeof inputValue === "object" && inputValue !== null ? inputValue as Partial<PreviewSurfacePrepareInput> : {};
   if (!validAdoptionToken(input.adoptionToken)) return errorResult("invalid-adoption-token");

@@ -1,6 +1,6 @@
 /**
  * Virtual URL scheme for workspace-relative preview targets. Electron resolves these
- * with the active workspace root before loading `file:` URLs in the embedded BrowserView.
+ * with the active workspace root before loading `file:` URLs in a Browser surface.
  */
 export const MCODE_WORKSPACE_PREVIEW_PROTOCOL = "mcode-workspace:";
 

@@ -123,8 +123,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
         mode: store.viewportStateByTarget.get(key)?.mode,
         presentation: store.viewportStateByTarget.get(key)?.presentation,
         targetGeneration,
-        nativeHost: () => window.desktopBridge?.preview?.design,
-        rendererHost: {
+        surface: {
           setViewport: (size, operation, coordinator) => useBrowserAutomationStore.getState().applyViewportIfCurrent(
             workspaceId,
             threadId,

@@ -137,7 +137,7 @@ beforeEach(() => {
   session.tabsByThread.set(previewTabScopeKey("workspace-A", "thread-A"), {
     threadId: "thread-A",
     activeTabId: "tab-1",
-    tabs: [{ id: "tab-1", threadId: "thread-A", view: null, renderingHost: "webContentsView", resumeUrl: null, title: null, faviconUrl: null, lastActiveAt: 0, viewportTargetGeneration: null, viewportOperationGeneration: null }],
+    tabs: [{ id: "tab-1", threadId: "thread-A", resumeUrl: null, title: null, faviconUrl: null, lastActiveAt: 0 }],
   });
   _resetAdoptionRegistryForTests();
   registerPreviewSurfaceHandlers();

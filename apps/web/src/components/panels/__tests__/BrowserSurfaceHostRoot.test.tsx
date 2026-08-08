@@ -374,7 +374,6 @@ describe("BrowserSurfaceHostRoot", () => {
       activate: true,
       focusOmnibox: false,
       initialAddress: request.address,
-      renderingHost: "webview",
     });
 
     act(() => onPopupRequested?.({ ...request, initiator: "agent" }));
@@ -382,7 +381,6 @@ describe("BrowserSurfaceHostRoot", () => {
       activate: false,
       focusOmnibox: false,
       initialAddress: request.address,
-      renderingHost: "webview",
     });
 
     openPage.mockClear();

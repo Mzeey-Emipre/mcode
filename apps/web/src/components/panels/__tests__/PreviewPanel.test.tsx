@@ -89,7 +89,6 @@ import {
 } from "../PreviewPanel";
 import { executeWebBrowserDispatch } from "../browserAutomationWebExecutor";
 import { useSettingsStore } from "@/stores/settingsStore";
-import { usePreviewSuppressionStore } from "@/stores/previewSuppressionStore";
 import {
   normalizePreviewPageIdentity,
   usePreviewAnnotationStore,
@@ -639,7 +638,6 @@ describe("PreviewPanel: full panel state", () => {
       },
     });
     useSettingsStore.getState()._applyPush(getDefaultSettings());
-    usePreviewSuppressionStore.setState({ count: 0 });
     usePreviewAnnotationStore.setState({ byThread: {}, drafts: {} });
     usePreviewDesignModeStore.setState({ modes: {} });
     usePreviewTabsStore.setState({ tabSetByScope: {}, liveChromeByScope: {}, persistentTabIdsByScope: {} });
@@ -661,7 +659,6 @@ describe("PreviewPanel: full panel state", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (window as any).desktopBridge = undefined;
     useSettingsStore.getState()._applyPush(getDefaultSettings());
-    usePreviewSuppressionStore.setState({ count: 0 });
     usePreviewAnnotationStore.setState({ byThread: {}, drafts: {} });
     usePreviewDesignModeStore.setState({ modes: {} });
     usePreviewTabsStore.setState({ tabSetByScope: {}, liveChromeByScope: {}, persistentTabIdsByScope: {} });
@@ -778,7 +775,7 @@ describe("PreviewPanel: full panel state", () => {
       "rounded-tl-md",
     );
     expect(mockUsePreviewBridge).toHaveBeenLastCalledWith(
-      expect.objectContaining({ forceHidden: true }),
+      expect.objectContaining({ threadId: "thread-1" }),
     );
   });
 
@@ -806,7 +803,7 @@ describe("PreviewPanel: full panel state", () => {
       "z-20",
     );
     expect(mockUsePreviewBridge).toHaveBeenLastCalledWith(
-      expect.objectContaining({ forceHidden: true }),
+      expect.objectContaining({ threadId: "thread-1" }),
     );
   });
 
@@ -857,7 +854,7 @@ describe("PreviewPanel: full panel state", () => {
     expect(webview).toHaveClass("absolute", "inset-0", "z-0", "h-full", "w-full");
     expect(screen.queryByTestId("browser-local-ports")).not.toBeInTheDocument();
     expect(mockUsePreviewBridge).toHaveBeenLastCalledWith(
-      expect.objectContaining({ forceHidden: true }),
+      expect.objectContaining({ threadId: "thread-1" }),
     );
   });
 
@@ -1363,12 +1360,10 @@ describe("PreviewPanel: full panel state", () => {
     render(<PreviewPanel threadId="thread-1" />);
 
     expect(screen.getByTestId("preview-webview")).toBeInTheDocument();
-    expect(usePreviewSuppressionStore.getState().count).toBe(0);
     fireEvent.click(screen.getByLabelText("More browser tools"));
 
     expect(await screen.findByTestId("browser-overflow-menu")).toBeInTheDocument();
     expect(screen.getByTestId("preview-webview")).toBeInTheDocument();
-    expect(usePreviewSuppressionStore.getState().count).toBe(0);
   });
 
   it("keeps browser chrome visible while design mode has no saved annotations", () => {

@@ -6,7 +6,6 @@ import {
   browserAutomationTargetKey,
   useBrowserAutomationStore,
 } from "@/stores/browserAutomationStore";
-import { usePreviewSuppressionStore } from "@/stores/previewSuppressionStore";
 import { ActivityRail } from "./ActivityRail";
 
 const EXPECTED_EXPAND_DELAY_MS = 140;
@@ -68,7 +67,6 @@ describe("ActivityRail expansion", () => {
     vi.useFakeTimers();
     vi.clearAllMocks();
     useBrowserAutomationStore.setState({ controllers: new Map(), pendingAgentOpens: new Map() });
-    usePreviewSuppressionStore.setState({ count: 0 });
   });
 
   afterEach(() => {
@@ -239,41 +237,6 @@ describe("ActivityRail expansion", () => {
     act(() => vi.advanceTimersByTime(EXPECTED_COLLAPSE_DELAY_MS));
 
     expect(rail).toHaveAttribute("data-expanded", "false");
-  });
-
-  it("suppresses preview while the expanded rail overlaps its bounds and releases on collapse", () => {
-    renderRail();
-    const rail = screen.getByTestId("activity-rail");
-
-    fireEvent.pointerEnter(rail, { pointerType: "mouse" });
-    act(() => vi.advanceTimersByTime(EXPECTED_EXPAND_DELAY_MS));
-    expect(rail).toHaveAttribute("data-expanded", "true");
-    expect(rail).toHaveClass("z-30");
-    expect(usePreviewSuppressionStore.getState().count).toBe(1);
-
-    fireEvent.pointerLeave(rail, { pointerType: "mouse" });
-    act(() => vi.advanceTimersByTime(EXPECTED_COLLAPSE_DELAY_MS));
-    expect(rail).toHaveAttribute("data-expanded", "false");
-    expect(usePreviewSuppressionStore.getState().count).toBe(0);
-  });
-
-  it("keeps preview suppressed for an expanded rail and its add-tab menu, then cleans up on close and unmount", () => {
-    const { unmount } = renderRail();
-    const rail = screen.getByTestId("activity-rail");
-
-    fireEvent.focus(screen.getByRole("button", { name: "Terminal" }));
-    expect(rail).toHaveAttribute("data-expanded", "true");
-    expect(usePreviewSuppressionStore.getState().count).toBe(1);
-
-    fireEvent.click(screen.getByRole("button", { name: "New tab" }));
-    expect(screen.getByRole("menuitem", { name: "Browser" })).toBeInTheDocument();
-    expect(usePreviewSuppressionStore.getState().count).toBe(2);
-
-    fireEvent.click(screen.getByRole("menuitem", { name: "Browser" }));
-    expect(usePreviewSuppressionStore.getState().count).toBe(1);
-
-    unmount();
-    expect(usePreviewSuppressionStore.getState().count).toBe(0);
   });
 
   it("gives the expanded rail a real hit-test box over the renderer guest seam", () => {

@@ -3,7 +3,7 @@ import { getActiveTab, sessions, type PreviewSession } from "./preview-session.j
 import { findAdoptedWebContentsForWindow } from "./preview-webview-adopt.js";
 
 /**
- * Resolves the active Preview guest WebContents across WebContentsView and adopted webview hosts.
+ * Resolves the active Preview guest WebContents from the exact adopted surface.
  */
 export function resolveActivePreviewWebContents(s: PreviewSession): WebContents | null {
   const threadId = s.lastPreviewThreadId;
@@ -13,8 +13,5 @@ export function resolveActivePreviewWebContents(s: PreviewSession): WebContents 
   const adopted = windowId === undefined
     ? null
     : findAdoptedWebContentsForWindow(windowId, threadId, activeTab.id);
-  if (adopted && !adopted.isDestroyed()) return adopted;
-  if (activeTab.renderingHost === "webview") return null;
-  const native = activeTab.view?.webContents ?? null;
-  return native && !native.isDestroyed() ? native : null;
+  return adopted && !adopted.isDestroyed() ? adopted : null;
 }

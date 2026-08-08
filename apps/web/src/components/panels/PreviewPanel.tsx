@@ -1556,7 +1556,7 @@ export interface PreviewPanelProps {
   readonly threadId: string;
   /** Active workspace id; scopes spill files under the Mcode app data dir (not the project tree). */
   readonly workspaceId?: string | null;
-  /** Mount only renderer-owned automation webviews, without native preview events. */
+  /** Mount only automation webviews without visible panel chrome. */
   readonly automationOnly?: boolean;
   /** Left edge hidden beneath floating renderer chrome while the remaining guest stays interactive. */
   readonly rendererOccludedLeft?: number;
@@ -1812,7 +1812,6 @@ function WebRuntimePreview({
         onOpenDevTools={noOp}
         onToggleViewportToolbar={onToggleViewportToolbar}
         viewportToolbarVisible={viewportToolbarOpen || responsiveViewportSize !== null}
-        suppressPreviewForOverlays={false}
         onHumanFocus={() => invalidateBrowserAutomationTargetObservation(identity.workspaceId, threadId, WEB_RUNTIME_PREVIEW_TAB_ID)}
       />
       {viewportToolbarOpen || responsiveViewportSize ? (
@@ -1844,12 +1843,11 @@ function WebRuntimePreview({
 
 /**
  * Embedded site preview: a clean URL header above a region aligned to an
- * Electron BrowserView. The header morphs across empty / focused / loaded
+ * BrowserSurfaceHost page. The header morphs across empty, focused, and loaded
  * states; when nothing is loaded the surface lists detected localhost ports as
  * one-click cards. Full viewport, drag-selected region, element-pick PNGs, or
  * fence-only page context attach to the composer. A loading banner sits between
- * the header and guest region because the BrowserView stacks above HTML and
- * would hide in-surface overlays. In web-only builds without
+ * the header and guest region. In web-only builds without
  * `desktopBridge.preview`, renders an explanatory empty state.
  */
 export function PreviewPanel({
@@ -2045,8 +2043,7 @@ export function PreviewPanel({
       mode: automationViewportStates.get(activeBrowserTargetKey)?.mode,
       presentation: automationViewportStates.get(activeBrowserTargetKey)?.presentation,
       targetGeneration: target.revision,
-      nativeHost: () => window.desktopBridge?.preview?.design,
-      rendererHost: {
+      surface: {
         setViewport: (size, operation, coordinator) => useBrowserAutomationStore.getState().applyViewportIfCurrent(
           browserWorkspaceId,
           threadId,
@@ -2129,7 +2126,6 @@ export function PreviewPanel({
     threadId,
     workspaceId,
     surfaceRef,
-    forceHidden: showWebviewPreview,
     automationOnly,
   });
   // Keep each mounted webview's requested URL separate from live page chrome.
@@ -3055,7 +3051,6 @@ export function PreviewPanel({
             }}
             onToggleViewportToolbar={toggleViewportToolbar}
             viewportToolbarVisible={viewportToolbarOpen || activeViewportState?.mode === "responsive"}
-            suppressPreviewForOverlays={!showWebviewPreview}
             automationController={activeAutomationController ?? null}
             automationBusy={activeAutomationRequest !== undefined}
             onHumanFocus={() => {
@@ -3094,9 +3089,7 @@ export function PreviewPanel({
         </p>
       ) : null}
 
-      {/* Surface aligned to the native BrowserView. When nothing is loaded the
-          localhost-ports list owns the surface; once a page loads the native
-          guest paints over it. */}
+      {/* Surface aligned to the hosted Browser page. */}
       <div
         ref={surfaceRef}
         role="region"
@@ -3138,9 +3131,7 @@ export function PreviewPanel({
             data-testid="preview-capture-confirmation"
             className={cn(
               "pointer-events-none absolute right-2 bottom-2 z-10 flex items-center gap-1.5",
-              // No backdrop-blur: the BrowserView paints opaque underneath
-              // anyway, so the blur is a no-op render cost. bg-background/90
-              // gives enough contrast over any guest page color.
+              // The opaque background keeps the status legible over any page.
               "rounded-sm border border-primary/30 bg-background/90 px-2 py-1 shadow-sm",
               "font-mono text-xs uppercase tracking-[0.14em] text-primary",
               "motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-bottom-1",
@@ -3560,9 +3551,6 @@ export function PreviewPanel({
           tone="dark"
         />
         {pageError ? (
-          // Approach A: the native view is hidden (bridge syncs visible:false
-          // while phase === "error"), so this HTML panel owns the surface and
-          // names the failure with recovery actions.
           <PreviewErrorPanel
             error={pageError}
             url={effectivePageStatus.url}

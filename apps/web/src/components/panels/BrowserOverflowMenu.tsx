@@ -22,7 +22,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import { usePreviewSuppressionStore } from "@/stores/previewSuppressionStore";
 
 /** Step applied per zoom in/out click (10 percentage points). */
 const ZOOM_STEP = 0.1;
@@ -53,8 +52,6 @@ export interface BrowserOverflowMenuProps {
   readonly onToggleViewportToolbar?: () => void;
   /** Whether the responsive viewport toolbar is currently shown. */
   readonly viewportToolbarVisible?: boolean;
-  /** Whether this menu must hide the native preview layer while open. */
-  readonly suppressPreviewForOverlays?: boolean;
   /** Current controller for the active visible Browser tab. */
   readonly automationController?: BrowserAutomationControllerState | null;
   /** True while the active tab owns an in-flight browser operation. */
@@ -70,10 +67,6 @@ export interface BrowserOverflowMenuProps {
  * Show device toolbar, Zoom, Clear cookies, and Clear cache. Keeps the everyday
  * header to back/forward, the
  * URL, design, and screenshot.
- *
- * While open it suppresses the native Electron BrowserView (which paints above
- * all HTML and would otherwise occlude this menu) via the shared
- * preview-suppression count, mirroring how modal dialogs hide the guest view.
  */
 export function BrowserOverflowMenu({
   hasLoadedPage,
@@ -88,24 +81,12 @@ export function BrowserOverflowMenu({
   onOpenDevTools,
   onToggleViewportToolbar,
   viewportToolbarVisible = false,
-  suppressPreviewForOverlays = true,
   automationController = null,
   automationBusy = false,
   onStopAutomation,
 }: BrowserOverflowMenuProps) {
   const [open, setOpen] = useState(false);
   const [zoom, setZoom] = useState(1);
-  const increment = usePreviewSuppressionStore((s) => s.increment);
-  const decrement = usePreviewSuppressionStore((s) => s.decrement);
-
-  // Hide the guest BrowserView for the menu's open lifetime so the HTML
-  // popup paints on top instead of behind the native view.
-  useEffect(() => {
-    if (!open || !suppressPreviewForOverlays) return;
-    increment();
-    return () => decrement();
-  }, [open, suppressPreviewForOverlays, increment, decrement]);
-
   // Read the live zoom factor when the menu opens so the readout reflects the
   // guest's actual state (which navigation can reset) rather than a stale value.
   useEffect(() => {

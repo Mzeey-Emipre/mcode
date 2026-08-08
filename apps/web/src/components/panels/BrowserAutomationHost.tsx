@@ -219,8 +219,7 @@ function ensureViewportCoordinator(
     mode: state.viewportStateByTarget.get(key)?.mode,
     presentation: state.viewportStateByTarget.get(key)?.presentation,
     targetGeneration: dispatch.target.targetGeneration,
-    nativeHost: () => window.desktopBridge?.preview?.design,
-    rendererHost: {
+    surface: {
       setViewport: (size, operation, coordinator) => useBrowserAutomationStore.getState().applyViewportIfCurrent(
         dispatch.scope.workspaceId,
         dispatch.target.threadId,
@@ -1547,14 +1546,12 @@ export function BrowserAutomationHost() {
           tabId = await usePreviewTabsStore.getState().openPage(request.workspaceId, request.threadId, {
             activate: !agentOwnedOpen,
             focusOmnibox: ownsVisibleContext && request.args.activate && !agentOwnedOpen,
-            ...(agentOwnedOpen ? { renderingHost: "webview" as const } : {}),
             ...(existingTabId ? { tabId: existingTabId } : {}),
           });
           if (!tabId && existingTabId) {
             tabId = await usePreviewTabsStore.getState().openPage(request.workspaceId, request.threadId, {
               activate: false,
               focusOmnibox: false,
-              renderingHost: "webview",
             });
           }
           if (tabId) {
