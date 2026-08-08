@@ -359,7 +359,7 @@ export class BrowserSurfaceHost {
     this.disposeRecord(key, record, true);
   }
 
-  /** Releases host-level visibility resources. */
+  /** Stops host visibility and disposes every registered surface. */
   public disposeHost(): void {
     this.stopVisibility();
     this.disposeAll();

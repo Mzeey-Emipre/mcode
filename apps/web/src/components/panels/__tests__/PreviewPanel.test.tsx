@@ -312,14 +312,14 @@ describe("PreviewPanel: unavailable state", () => {
     expect(iframe).toHaveAttribute("data-thread-id", "thread-1");
     expect(iframe).toHaveAttribute("data-tab-id", "web-preview");
     expect(useBrowserAutomationStore.getState().liveTargets.get(
-      JSON.stringify(["thread-1", "web-preview"]),
+      JSON.stringify(["workspace-1", "thread-1", "web-preview"]),
     )).toMatchObject({ workspaceId: "workspace-1", threadId: "thread-1", tabId: "web-preview" });
     const initialRevision = useBrowserAutomationStore.getState().liveTargets.get(
-      JSON.stringify(["thread-1", "web-preview"]),
+      JSON.stringify(["workspace-1", "thread-1", "web-preview"]),
     )!.revision;
     fireEvent.load(iframe);
     expect(useBrowserAutomationStore.getState().liveTargets.get(
-      JSON.stringify(["thread-1", "web-preview"]),
+      JSON.stringify(["workspace-1", "thread-1", "web-preview"]),
     )!.revision).toBe(initialRevision + 1);
     const page = document.implementation.createHTMLDocument("Fixture");
     page.body.innerHTML = "<main>Visible fixture</main>";
@@ -471,7 +471,7 @@ describe("PreviewPanel: unavailable state", () => {
     await waitFor(() => {
       expect(
         useBrowserAutomationStore.getState().viewportStateByTarget.get(
-          JSON.stringify(["thread-1", "web-preview"]),
+          JSON.stringify(["workspace-1", "thread-1", "web-preview"]),
         ),
       ).toMatchObject({ mode: "responsive" });
     });
@@ -481,7 +481,7 @@ describe("PreviewPanel: unavailable state", () => {
     await waitFor(() => {
       expect(
         useBrowserAutomationStore.getState().viewportStateByTarget.get(
-          JSON.stringify(["thread-1", "web-preview"]),
+          JSON.stringify(["workspace-1", "thread-1", "web-preview"]),
         ),
       ).toMatchObject({ mode: "regular" });
     });
@@ -508,7 +508,7 @@ describe("PreviewPanel: unavailable state", () => {
     await waitFor(() => {
       expect(
         useBrowserAutomationStore.getState().viewportStateByTarget.get(
-          JSON.stringify(["thread-1", "web-preview"]),
+          JSON.stringify(["workspace-1", "thread-1", "web-preview"]),
         ),
       ).toMatchObject({ presentation: "150%" });
     });
@@ -524,7 +524,7 @@ describe("PreviewPanel: unavailable state", () => {
     await waitFor(() => {
       expect(
         useBrowserAutomationStore.getState().viewportStateByTarget.get(
-          JSON.stringify(["thread-1", "web-preview"]),
+          JSON.stringify(["workspace-1", "thread-1", "web-preview"]),
         ),
       ).toMatchObject({ mode: "responsive", presentation: "fit" });
     });
@@ -539,7 +539,7 @@ describe("PreviewPanel: unavailable state", () => {
       expect(useBrowserAutomationStore.getState().viewportCoordinators.size).toBeGreaterThan(0);
     });
     const coordinator = useBrowserAutomationStore.getState().viewportCoordinators.get(
-      JSON.stringify(["thread-1", "web-preview"]),
+      JSON.stringify(["workspace-1", "thread-1", "web-preview"]),
     );
     expect(coordinator).toBeDefined();
     await coordinator!.requestAgentResize({ width: 393, height: 852 });
@@ -551,7 +551,7 @@ describe("PreviewPanel: unavailable state", () => {
     vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
     render(<PreviewPanel threadId="thread-1" workspaceId="workspace-1" />);
 
-    const targetKey = JSON.stringify(["thread-1", "web-preview"]);
+    const targetKey = JSON.stringify(["workspace-1", "thread-1", "web-preview"]);
     await waitFor(() => {
       expect(useBrowserAutomationStore.getState().liveTargets.has(targetKey)).toBe(true);
     });
@@ -563,6 +563,7 @@ describe("PreviewPanel: unavailable state", () => {
     });
     act(() => {
       useBrowserAutomationStore.getState().setViewportCoordinator(
+        "workspace-1",
         "thread-1",
         "web-preview",
         coordinator,
@@ -683,6 +684,7 @@ describe("PreviewPanel: full panel state", () => {
       controllers: new Map([
         [
           browserAutomationTargetKey(
+            "thread-1",
             "thread-1",
             PREVIEW_WEBVIEW_FALLBACK_TAB_ID,
           ),

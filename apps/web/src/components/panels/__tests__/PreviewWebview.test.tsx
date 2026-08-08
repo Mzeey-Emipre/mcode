@@ -62,7 +62,7 @@ describe("PreviewWebview", () => {
     }));
     unsubscribe();
     expect(invalidate).toHaveBeenCalledOnce();
-    expect(invalidate).toHaveBeenCalledWith("thread-1", "tab-1");
+    expect(invalidate).toHaveBeenCalledWith("workspace-1", "thread-1", "tab-1");
   });
 
   it("routes history through the exact generation-bound main bridge", async () => {
@@ -124,7 +124,7 @@ describe("PreviewWebview", () => {
           src="https://example.com"
         />,
       );
-      const key = browserAutomationTargetKey("thread-generation", "tab-generation");
+      const key = browserAutomationTargetKey("workspace-generation", "thread-generation", "tab-generation");
       await waitFor(() => {
         expect(useBrowserAutomationStore.getState().viewportCoordinators.get(key)).toBeDefined();
       });
@@ -137,7 +137,7 @@ describe("PreviewWebview", () => {
         expect(store.liveTargets.get(key)?.revision).toBe(1);
       });
     } finally {
-      releaseBrowserAutomationThreadScope("thread-generation");
+      releaseBrowserAutomationThreadScope("workspace-generation", "thread-generation");
     }
   });
 
@@ -160,7 +160,7 @@ describe("PreviewWebview", () => {
     const first = render(<PreviewWebview {...props} />);
     const firstGeneration = prepare.mock.calls[0]?.[0].surface.generation as number;
     const firstGuest = screen.getByTestId("electron-browser-surface-webview");
-    const targetKey = browserAutomationTargetKey(props.threadId, props.tabId);
+    const targetKey = browserAutomationTargetKey(props.workspaceId, props.threadId, props.tabId);
     const firstTargetGeneration = useBrowserAutomationStore.getState().liveTargets.get(targetKey)?.revision;
     first.unmount();
     expect(useBrowserAutomationStore.getState().liveTargets.get(targetKey)?.revision).toBe(

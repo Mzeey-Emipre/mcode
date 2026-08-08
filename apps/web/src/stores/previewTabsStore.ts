@@ -129,7 +129,7 @@ interface PreviewTabsState {
   updateTabChrome: (scopeId: string, tabId: string, chrome: PreviewLiveChrome) => void;
 
   /** Open a new page or continue an exact existing page by id. */
-  openPage: (scopeId: string, options?: {
+  openPage: (workspaceId: string, scopeId: string, options?: {
     readonly focusOmnibox?: boolean;
     readonly activate?: boolean;
     readonly tabId?: string;
@@ -137,16 +137,16 @@ interface PreviewTabsState {
     readonly initialAddress?: string;
   }) => Promise<string | null>;
   /** Activate (switch to) a page within the scope's browser. */
-  activatePage: (scopeId: string, tabId: string) => Promise<void>;
+  activatePage: (workspaceId: string, scopeId: string, tabId: string) => Promise<void>;
   /**
    * Close a page. When it is the scope's last page, {@link ClosePageOptions.onLastClose}
    * fires (the panel uses it to close the Browser tab) before the bridge call,
    * so the tab collapses immediately rather than flashing the host's
    * always-recreated empty fallback.
    */
-  closePage: (scopeId: string, tabId: string, opts?: ClosePageOptions) => Promise<void>;
+  closePage: (workspaceId: string, scopeId: string, tabId: string, opts?: ClosePageOptions) => Promise<void>;
   /** Close every host-owned browser page for a scope and clear renderer mirrors. */
-  clearScope: (scopeId: string) => Promise<void>;
+  clearScope: (workspaceId: string, scopeId: string) => Promise<void>;
 }
 
 /** Hooks the store offers callers when a page close empties the browser. */
@@ -296,7 +296,7 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
       };
     }),
 
-  openPage: async (scopeId, options) => {
+  openPage: async (workspaceId, scopeId, options) => {
     const tabs = bridgeTabs();
     if (!tabs) return null;
     const activate = options?.activate ?? true;
@@ -308,7 +308,7 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
     });
     if (r.ok) {
       get().setTabSet(scopeId, r.data.tabs);
-      useBrowserAutomationStore.getState().refreshTarget(scopeId, r.data.tabId);
+      useBrowserAutomationStore.getState().refreshTarget(workspaceId, scopeId, r.data.tabId);
       // A user-created page is empty; drop the cursor into the URL field so the
       // user can type immediately (matches the panel-open shortcut's UX).
       if (!options?.tabId && options?.focusOmnibox !== false && (options?.activate ?? true)) {
@@ -319,7 +319,7 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
     return null;
   },
 
-  activatePage: async (scopeId, tabId) => {
+  activatePage: async (workspaceId, scopeId, tabId) => {
     const tabs = bridgeTabs();
     if (!tabs) {
       if (!get().persistentTabIdsByScope[scopeId]?.has(tabId)) return;
@@ -338,7 +338,7 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
           },
         };
       });
-      useBrowserAutomationStore.getState().refreshTarget(scopeId, tabId);
+      useBrowserAutomationStore.getState().refreshTarget(workspaceId, scopeId, tabId);
       return;
     }
     // The newly-active page has not emitted its live chrome yet; clear the
@@ -347,11 +347,11 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
     const r = await tabs.activate(scopeId, tabId);
     if (r.ok) {
       get().setTabSet(scopeId, r.data);
-      useBrowserAutomationStore.getState().refreshTarget(scopeId, tabId);
+      useBrowserAutomationStore.getState().refreshTarget(workspaceId, scopeId, tabId);
     }
   },
 
-  closePage: async (scopeId, tabId, opts) => {
+  closePage: async (workspaceId, scopeId, tabId, opts) => {
     const tabs = bridgeTabs();
     const current = get().tabSetByScope[scopeId];
     const isLast = !!current && current.tabs.length <= 1;
@@ -363,12 +363,12 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
       if (isLast) {
         clearLastScopeState();
         opts?.onLastClose?.();
-        useBrowserAutomationStore.getState().releaseThreadTargets(scopeId);
+        useBrowserAutomationStore.getState().releaseThreadTargets(workspaceId, scopeId);
         return;
       }
       get().setLiveChrome(scopeId, null);
       get().removePersistentTab(scopeId, tabId);
-      useBrowserAutomationStore.getState().unregisterTarget(scopeId, tabId);
+      useBrowserAutomationStore.getState().unregisterTarget(workspaceId, scopeId, tabId);
       return;
     }
     if (isLast) {
@@ -377,14 +377,14 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
         : await tabs.close(scopeId, tabId);
       if (!r.ok) return;
       clearLastScopeState();
-      useBrowserAutomationStore.getState().releaseThreadTargets(scopeId);
+      useBrowserAutomationStore.getState().releaseThreadTargets(workspaceId, scopeId);
       opts?.onLastClose?.();
       return;
     }
     get().setLiveChrome(scopeId, null);
     const r = await tabs.close(scopeId, tabId);
     if (!r.ok) return;
-    useBrowserAutomationStore.getState().unregisterTarget(scopeId, tabId);
+    useBrowserAutomationStore.getState().unregisterTarget(workspaceId, scopeId, tabId);
     // Closing the last page collapses the Browser tab. The host always recreates
     // a blank fallback page in its returned set, but the tab is gone from the
     // rail, so drop the scope's set rather than leave that fallback as a phantom
@@ -392,11 +392,11 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
     get().setTabSet(scopeId, isLast ? null : r.data);
   },
 
-  clearScope: async (scopeId) => {
+  clearScope: async (workspaceId, scopeId) => {
     const tabs = bridgeTabs();
     const r = await tabs?.closeScope?.(scopeId);
     if (r && !r.ok) throw new Error(r.error);
-    useBrowserAutomationStore.getState().releaseThreadTargets(scopeId);
+    useBrowserAutomationStore.getState().releaseThreadTargets(workspaceId, scopeId);
     set((s) => clearPreviewScopeState(s, scopeId, false));
   },
 }));

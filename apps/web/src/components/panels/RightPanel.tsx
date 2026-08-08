@@ -37,6 +37,7 @@ import { cn } from "@/lib/utils";
 import { ResizableRightPanel } from "./ResizableRightPanel";
 import {
   BROWSER_AUTOMATION_WARM_TARGET_LIMIT,
+  browserAutomationScopeKey,
   browserAutomationTargetKey,
   useBrowserAutomationStore,
 } from "@/stores/browserAutomationStore";
@@ -50,7 +51,7 @@ export interface WarmPreviewScope {
 }
 
 function warmPreviewScopeKey(scope: Pick<WarmPreviewScope, "scopeId" | "workspaceId">): string {
-  return JSON.stringify([scope.workspaceId, scope.scopeId]);
+  return browserAutomationScopeKey(scope.workspaceId, scope.scopeId);
 }
 
 /**
@@ -60,14 +61,14 @@ function warmPreviewScopeKey(scope: Pick<WarmPreviewScope, "scopeId" | "workspac
 export function reconcileWarmPreviewScopes(
   previous: readonly WarmPreviewScope[],
   next: WarmPreviewScope | null,
-  busyScopeIds: ReadonlySet<string>,
+  busyScopeKeys: ReadonlySet<string>,
 ): readonly WarmPreviewScope[] {
   const byId = new Map(previous.map((scope) => [warmPreviewScopeKey(scope), scope]));
   if (next) byId.set(warmPreviewScopeKey(next), next);
   const ordered = [...byId.values()].sort((left, right) => right.lastUsedAt - left.lastUsedAt);
   const leased = ordered.filter(
     (scope) => (next !== null && warmPreviewScopeKey(scope) === warmPreviewScopeKey(next)) ||
-      busyScopeIds.has(scope.scopeId),
+      busyScopeKeys.has(warmPreviewScopeKey(scope)),
   );
   const selected = new Map(leased.map((scope) => [warmPreviewScopeKey(scope), scope]));
   for (const scope of ordered) {
@@ -97,7 +98,7 @@ const WarmPreviewSurface = memo(function WarmPreviewSurface({
   rendererOccludedLeft,
 }: WarmPreviewSurfaceProps) {
   const automationHosted = useBrowserAutomationStore((state) =>
-    state.hostedScopeIds.has(scope.scopeId),
+    state.hostedScopeIds.has(warmPreviewScopeKey(scope)),
   );
   return (
     <div
@@ -209,12 +210,12 @@ export function RightPanel() {
   const panelScopeId = activeThreadId ?? activeWorkspaceId;
   const [warmPreviewScopes, setWarmPreviewScopes] = useState<readonly WarmPreviewScope[]>([]);
   const [activityRailExpanded, setActivityRailExpanded] = useState(false);
-  const retainedPreviewScopeIds = useMemo(
+  const retainedPreviewScopeKeys = useMemo(
     () => new Set([
-      ...(panelScopeId ? [panelScopeId] : []),
-      ...warmPreviewScopes.map((scope) => scope.scopeId),
+      ...(panelScopeId && activeWorkspaceId ? [browserAutomationScopeKey(activeWorkspaceId, panelScopeId)] : []),
+      ...warmPreviewScopes.map(warmPreviewScopeKey),
     ]),
-    [panelScopeId, warmPreviewScopes],
+    [activeWorkspaceId, panelScopeId, warmPreviewScopes],
   );
   const [pendingAgentPageId, activeAgentRequestPageId, ownedAgentPageId] =
     useBrowserAutomationStore(
@@ -232,7 +233,7 @@ export function RightPanel() {
 
         let activePage: { readonly tabId: string; readonly startedAt: number } | null = null;
         for (const { dispatch, startedAt } of state.activeRequests.values()) {
-          if (dispatch.target.threadId !== panelScopeId) continue;
+          if (dispatch.request.workspaceId !== activeWorkspaceId || dispatch.target.threadId !== panelScopeId) continue;
           if (!activePage || startedAt > activePage.startedAt) {
             activePage = { tabId: dispatch.target.tabId, startedAt };
           }
@@ -247,7 +248,7 @@ export function RightPanel() {
             lifecycle.ownership !== "owned"
           ) continue;
           const liveTarget = panelScopeId
-            ? state.liveTargets.get(browserAutomationTargetKey(panelScopeId, lifecycle.tabId))
+             ? state.liveTargets.get(browserAutomationTargetKey(activeWorkspaceId, panelScopeId, lifecycle.tabId))
             : undefined;
           const lastUsedAt = liveTarget?.lastUsedAt ?? 0;
           if (!ownedPage || lastUsedAt > ownedPage.lastUsedAt) {
@@ -266,8 +267,8 @@ export function RightPanel() {
     useShallow((state) => [
       ...new Set(
         [...state.activeRequests.values()]
-          .map(({ dispatch }) => dispatch.target.threadId)
-          .filter((scopeId) => retainedPreviewScopeIds.has(scopeId)),
+          .map(({ dispatch }) => browserAutomationScopeKey(dispatch.request.workspaceId, dispatch.target.threadId))
+          .filter((scopeKey) => retainedPreviewScopeKeys.has(scopeKey)),
       ),
     ].sort()),
   );
@@ -368,7 +369,7 @@ export function RightPanel() {
       requestedAgentPageActivationRef.current !== activationKey
     ) {
       requestedAgentPageActivationRef.current = activationKey;
-      void usePreviewTabsStore.getState().activatePage(panelScopeId, existingPageId);
+      void usePreviewTabsStore.getState().activatePage(activeWorkspaceId!, panelScopeId, existingPageId);
     }
   }, [
     activeThreadId,
@@ -480,14 +481,15 @@ export function RightPanel() {
         !previewActive &&
         !browserScopePresent &&
         panelScopeId &&
-        !busyPreviewScopeIds.has(panelScopeId)
+        activeWorkspaceId &&
+        !busyPreviewScopeIds.has(browserAutomationScopeKey(activeWorkspaceId, panelScopeId))
         ? previous.filter((scope) =>
             scope.scopeId !== panelScopeId || scope.workspaceId !== activeWorkspaceId
           )
         : previous;
       return reconcileWarmPreviewScopes(retained, null, busyPreviewScopeIds);
     });
-  }, [browserScopePresent, busyPreviewScopeIds, panelScopeId, previewActive]);
+  }, [activeWorkspaceId, browserScopePresent, busyPreviewScopeIds, panelScopeId, previewActive]);
 
   const isChangesActive = panelVisible && changesActive;
   const changesFresh = useChangesFreshness(
@@ -563,6 +565,7 @@ export function RightPanel() {
           keeps those panel actions beside the empty-state create list. */}
       <div className="flex min-h-0 flex-1 flex-row overflow-hidden">
         <ActivityRail
+          workspaceId={activeWorkspaceId!}
           tabInstances={renderedTabInstances}
           activeTabId={renderedActiveTabId}
           scope={panelScope}
@@ -619,7 +622,7 @@ export function RightPanel() {
             if (panelScopeId) {
               void usePreviewTabsStore
                 .getState()
-                .activatePage(panelScopeId, pageId);
+                .activatePage(activeWorkspaceId!, panelScopeId, pageId);
             }
           }}
           onCloseBrowserPage={(pageId) => {
@@ -628,7 +631,7 @@ export function RightPanel() {
             // the page switcher, so an empty browser has nothing to show).
             void usePreviewTabsStore
               .getState()
-              .closePage(panelScopeId, pageId, {
+              .closePage(activeWorkspaceId!, panelScopeId, pageId, {
                 onLastClose: () =>
                   closeRightPanelTab(
                     activeWorkspaceId!,

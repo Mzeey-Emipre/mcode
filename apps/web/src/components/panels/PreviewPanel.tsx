@@ -1743,7 +1743,7 @@ function WebRuntimePreview({
 
   const noOp = (): void => undefined;
   const invalidateViewportObservation = (): void => {
-    invalidateBrowserAutomationTargetObservation(threadId, WEB_RUNTIME_PREVIEW_TAB_ID);
+    invalidateBrowserAutomationTargetObservation(identity.workspaceId, threadId, WEB_RUNTIME_PREVIEW_TAB_ID);
   };
   const visiblePageState = surfaceAvailable ? pageState : null;
   const visibleAddress = visiblePageState?.phase === "error"
@@ -1789,14 +1789,14 @@ function WebRuntimePreview({
         captureBusy={false}
         regionBusy={false}
         onNavigate={(url) => {
-          invalidateBrowserAutomationTargetObservation(threadId, WEB_RUNTIME_PREVIEW_TAB_ID);
+          invalidateBrowserAutomationTargetObservation(identity.workspaceId, threadId, WEB_RUNTIME_PREVIEW_TAB_ID);
           setInputUrl(url);
           navigate(url);
         }}
         onGoBack={noOp}
         onGoForward={noOp}
         onReload={() => {
-          invalidateBrowserAutomationTargetObservation(threadId, WEB_RUNTIME_PREVIEW_TAB_ID);
+          invalidateBrowserAutomationTargetObservation(identity.workspaceId, threadId, WEB_RUNTIME_PREVIEW_TAB_ID);
           browserSurfaceHost.navigate(identity, visibleAddress ?? fixtureUrl);
         }}
         onOpenExternal={noOp}
@@ -1804,7 +1804,7 @@ function WebRuntimePreview({
         onScreenshot={noOp}
         onNewPage={noOp}
         onForceReload={() => {
-          invalidateBrowserAutomationTargetObservation(threadId, WEB_RUNTIME_PREVIEW_TAB_ID);
+          invalidateBrowserAutomationTargetObservation(identity.workspaceId, threadId, WEB_RUNTIME_PREVIEW_TAB_ID);
           browserSurfaceHost.navigate(identity, visibleAddress ?? fixtureUrl);
         }}
         onRegionCapture={noOp}
@@ -1821,7 +1821,7 @@ function WebRuntimePreview({
         onToggleViewportToolbar={onToggleViewportToolbar}
         viewportToolbarVisible={viewportToolbarOpen || responsiveViewportSize !== null}
         suppressPreviewForOverlays={false}
-        onHumanFocus={() => invalidateBrowserAutomationTargetObservation(threadId, WEB_RUNTIME_PREVIEW_TAB_ID)}
+        onHumanFocus={() => invalidateBrowserAutomationTargetObservation(identity.workspaceId, threadId, WEB_RUNTIME_PREVIEW_TAB_ID)}
       />
       {viewportToolbarOpen || responsiveViewportSize ? (
         viewportCoordinator && viewportState ? (
@@ -2031,7 +2031,8 @@ export function PreviewPanel({
     (window.desktopBridge?.preview
       ? PREVIEW_WEBVIEW_FALLBACK_TAB_ID
       : WEB_RUNTIME_PREVIEW_TAB_ID);
-  const activeBrowserTargetKey = browserAutomationTargetKey(threadId, activeWebviewTabId);
+  const browserWorkspaceId = workspaceId ?? threadId;
+  const activeBrowserTargetKey = browserAutomationTargetKey(browserWorkspaceId, threadId, activeWebviewTabId);
   const projectedActiveViewportState: ViewportCoordinatorState | undefined =
     automationViewportStates.get(activeBrowserTargetKey);
   const activeViewportCoordinator = automationViewportCoordinators.get(activeBrowserTargetKey);
@@ -2055,6 +2056,7 @@ export function PreviewPanel({
       nativeHost: () => window.desktopBridge?.preview?.design,
       rendererHost: {
         setViewport: (size, operation, coordinator) => useBrowserAutomationStore.getState().applyViewportIfCurrent(
+          browserWorkspaceId,
           threadId,
           activeWebviewTabId,
           coordinator,
@@ -2062,6 +2064,7 @@ export function PreviewPanel({
           size,
         ),
         resetViewport: (operation, coordinator) => useBrowserAutomationStore.getState().resetViewportIfCurrent(
+          browserWorkspaceId,
           threadId,
           activeWebviewTabId,
           coordinator,
@@ -2078,12 +2081,14 @@ export function PreviewPanel({
       readConfirmed: () => useBrowserAutomationStore.getState().viewportStateByTarget.get(activeBrowserTargetKey)?.confirmed ??
         useBrowserAutomationStore.getState().viewportByTarget.get(activeBrowserTargetKey) ?? null,
       onStateChange: (nextState, coordinator) => useBrowserAutomationStore.getState().setViewportState(
+        browserWorkspaceId,
         threadId,
         activeWebviewTabId,
         nextState,
         coordinator,
       ),
       onCreated: (coordinator) => useBrowserAutomationStore.getState().setViewportCoordinator(
+        browserWorkspaceId,
         threadId,
         activeWebviewTabId,
         coordinator,
@@ -2097,10 +2102,11 @@ export function PreviewPanel({
     automationViewportStates,
     automationViewportCoordinators,
     threadId,
+    browserWorkspaceId,
   ]);
   const invalidateActiveViewportObservation = useCallback((): void => {
-    invalidateBrowserAutomationTargetObservation(threadId, activeWebviewTabId);
-  }, [activeWebviewTabId, threadId]);
+    invalidateBrowserAutomationTargetObservation(browserWorkspaceId, threadId, activeWebviewTabId);
+  }, [activeWebviewTabId, browserWorkspaceId, threadId]);
   useEffect(() => {
     if (!viewportToolbarOpen || !activeViewportCoordinator) return;
     let cancelled = false;
@@ -2231,7 +2237,7 @@ export function PreviewPanel({
           : webRuntime
             ? [{ id: PREVIEW_WEBVIEW_FALLBACK_TAB_ID, url: "about:blank" }]
             : [];
-    const warmIds = selectWarmBrowserTabIds(sourceTabs, threadId, activeWebviewTabId);
+    const warmIds = selectWarmBrowserTabIds(sourceTabs, browserWorkspaceId, threadId, activeWebviewTabId);
     return sourceTabs
       .filter((tab) => warmIds.has(tab.id))
       .map((tab) => ({
@@ -2244,21 +2250,23 @@ export function PreviewPanel({
     automationActiveRequests,
     tabs.tabSet,
     threadId,
+    browserWorkspaceId,
     webviewRequestedUrlByTab,
     webRuntime,
   ]);
   const activeAutomationController = automationControllers.get(
-    browserAutomationTargetKey(threadId, activeWebviewTabId),
+    browserAutomationTargetKey(browserWorkspaceId, threadId, activeWebviewTabId),
   );
   const activeAutomationRequest = [...automationActiveRequests.values()].find(
     ({ dispatch }) =>
+      dispatch.request.workspaceId === browserWorkspaceId &&
       dispatch.target.threadId === threadId && dispatch.target.tabId === activeWebviewTabId,
   );
   const agentControlsBrowser = isBrowserAutomationAgentControlled(
     { controllers: automationControllers, pendingAgentOpens },
+    browserWorkspaceId,
     threadId,
     activeWebviewTabId,
-    workspaceId,
   );
   const automationPointer = activeAutomationController?.pointer ?? null;
   const activeWebviewRef = useCallback(
@@ -2939,7 +2947,7 @@ export function PreviewPanel({
       )
     : 1;
   const warmWebviewLayer = warmWebviewTabs.map((tab) => {
-    const tabKey = browserAutomationTargetKey(threadId, tab.id);
+    const tabKey = browserAutomationTargetKey(browserWorkspaceId, threadId, tab.id);
     const tabViewport = automationViewports.get(tabKey);
     const tabViewportState = automationViewportStates.get(tabKey);
     return (
@@ -3017,30 +3025,30 @@ export function PreviewPanel({
             regionBusy={capture.regionBusy}
             focusRequest={omniboxFocusTick}
             onNavigate={(url) => {
-              invalidateBrowserAutomationTargetObservation(threadId, activeWebviewTabId);
+              invalidateBrowserAutomationTargetObservation(browserWorkspaceId, threadId, activeWebviewTabId);
               effectiveNavigate(url);
             }}
             onGoBack={() => {
-              invalidateBrowserAutomationTargetObservation(threadId, activeWebviewTabId);
+              invalidateBrowserAutomationTargetObservation(browserWorkspaceId, threadId, activeWebviewTabId);
               effectiveGoBack();
             }}
             onGoForward={() => {
-              invalidateBrowserAutomationTargetObservation(threadId, activeWebviewTabId);
+              invalidateBrowserAutomationTargetObservation(browserWorkspaceId, threadId, activeWebviewTabId);
               effectiveGoForward();
             }}
             onReload={() => {
-              invalidateBrowserAutomationTargetObservation(threadId, activeWebviewTabId);
+              invalidateBrowserAutomationTargetObservation(browserWorkspaceId, threadId, activeWebviewTabId);
               effectiveReload();
             }}
             onOpenExternal={effectiveOpenExternal}
             onToggleDesign={onToggleDesignMode}
             onScreenshot={capture.onAddPictureReference}
             onNewPage={() => {
-              invalidateBrowserAutomationTargetObservation(threadId, activeWebviewTabId);
+              invalidateBrowserAutomationTargetObservation(browserWorkspaceId, threadId, activeWebviewTabId);
               tabs.newTab();
             }}
             onForceReload={() => {
-              invalidateBrowserAutomationTargetObservation(threadId, activeWebviewTabId);
+              invalidateBrowserAutomationTargetObservation(browserWorkspaceId, threadId, activeWebviewTabId);
               effectiveForceReload();
             }}
             onRegionCapture={capture.onAddRegionPictureReference}
@@ -3062,10 +3070,11 @@ export function PreviewPanel({
             automationBusy={activeAutomationRequest !== undefined}
             onHumanFocus={() => {
               if (activeAutomationController?.controller !== "agent") return;
-              invalidateBrowserAutomationTargetObservation(threadId, activeWebviewTabId);
+              invalidateBrowserAutomationTargetObservation(browserWorkspaceId, threadId, activeWebviewTabId);
             }}
             onStopAutomation={() =>
               interruptBrowserAutomationTarget(
+                browserWorkspaceId,
                 threadId,
                 activeWebviewTabId,
                 "user-stopped",

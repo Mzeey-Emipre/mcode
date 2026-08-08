@@ -43,8 +43,8 @@ const SYNC_THROTTLE_MS = 30_000;
 /** Tracks the last syncThreadPrs request time per workspace. */
 const lastSyncTime = new Map<string, number>();
 
-async function clearPreviewResources(threadId: string): Promise<void> {
-  await usePreviewTabsStore.getState().clearScope(threadId);
+async function clearPreviewResources(workspaceId: string, threadId: string): Promise<void> {
+  await usePreviewTabsStore.getState().clearScope(workspaceId, threadId);
   usePreviewReferenceQueueStore.getState().clearThread(threadId);
 }
 
@@ -528,7 +528,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       const deletedThreadIds = get()
         .threads.filter((t) => t.workspace_id === id)
         .map((t) => t.id);
-      await Promise.all(deletedThreadIds.map((tid) => clearPreviewResources(tid)));
+      await Promise.all(deletedThreadIds.map((tid) => clearPreviewResources(id, tid)));
       await getTransport().deleteWorkspace(id);
       releaseBrowserAutomationWorkspaceScopes(id);
       bumpThreadListMutationEpoch(id);
@@ -1099,7 +1099,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
   },
 
   dismissPreparingThread: (placeholderId) => {
-    releaseBrowserAutomationThreadScope(placeholderId);
+    const workspaceId = pendingThreadCreationByPlaceholderId.get(placeholderId)?.workspaceId ??
+      get().threads.find((thread) => thread.id === placeholderId)?.workspace_id;
+    if (workspaceId) releaseBrowserAutomationThreadScope(workspaceId, placeholderId);
     pendingThreadCreationByPlaceholderId.delete(placeholderId);
     useThreadStore.getState().clearThreadState(placeholderId);
     const didClearActiveThread = get().activeThreadId === placeholderId;
@@ -1125,8 +1127,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       const isClientOnly = !!(row?.clientPreparing || row?.clientError);
 
       if (isClientOnly) {
-        releaseBrowserAutomationThreadScope(threadId);
-        await clearPreviewResources(threadId);
+        if (workspaceIdForEpoch) releaseBrowserAutomationThreadScope(workspaceIdForEpoch, threadId);
+        if (workspaceIdForEpoch) await clearPreviewResources(workspaceIdForEpoch, threadId);
         if (workspaceIdForEpoch) {
           bumpThreadListMutationEpoch(workspaceIdForEpoch);
         }
@@ -1155,9 +1157,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         return;
       }
 
-      await clearPreviewResources(threadId);
+      if (workspaceIdForEpoch) await clearPreviewResources(workspaceIdForEpoch, threadId);
       await getTransport().deleteThread(threadId, cleanupWorktree);
-      releaseBrowserAutomationThreadScope(threadId);
+      if (workspaceIdForEpoch) releaseBrowserAutomationThreadScope(workspaceIdForEpoch, threadId);
       if (workspaceIdForEpoch) {
         bumpThreadListMutationEpoch(workspaceIdForEpoch);
       }

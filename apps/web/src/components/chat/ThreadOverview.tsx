@@ -239,17 +239,17 @@ export function getThreadOverviewBrowserTabs({
       lifecycle.target.threadId !== threadId ||
       lifecycle.target.tabId !== lifecycle.tabId
     ) continue;
-    lifecycleByTarget.set(browserAutomationTargetKey(threadId, lifecycle.tabId), lifecycle);
+    lifecycleByTarget.set(browserAutomationTargetKey(workspaceId, threadId, lifecycle.tabId), lifecycle);
   }
 
   return tabSet.tabs.flatMap((tab) => {
     if (tab.threadId !== threadId) return [];
-    const targetKey = browserAutomationTargetKey(threadId, tab.id);
+    const targetKey = browserAutomationTargetKey(workspaceId, threadId, tab.id);
     const pendingOpen = findPendingBrowserAutomationOpen(
       pendingAgentOpens,
+      workspaceId,
       threadId,
       tab.id,
-      workspaceId,
     );
     const pendingUrl = pendingOpen?.url?.trim() || null;
     if (isEmptyPreviewTabUrl(tab.url) && !pendingUrl) return [];
@@ -2054,7 +2054,7 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
     (tabId: string) => {
       showRightPanelAdaptive(thread.workspace_id, thread.id);
       useDiffStore.getState().setRightPanelTab(thread.workspace_id, thread.id, "preview");
-      void usePreviewTabsStore.getState().activatePage(thread.id, tabId);
+      void usePreviewTabsStore.getState().activatePage(thread.workspace_id, thread.id, tabId);
     },
     [thread.id, thread.workspace_id],
   );

@@ -126,7 +126,8 @@ vi.mock("@/components/ui/dialog", () => ({
 
 const THREAD_ID = "thread-visible-conformance";
 const TAB_ID = "tab-visible-conformance";
-const TARGET_KEY = browserAutomationTargetKey(THREAD_ID, TAB_ID);
+const WORKSPACE_ID = "workspace-visible";
+const TARGET_KEY = browserAutomationTargetKey(WORKSPACE_ID, THREAD_ID, TAB_ID);
 
 const visibleScenario = createBrowserConformanceScenario({
   id: "visible-browser-surfaces",
@@ -411,13 +412,13 @@ describe("visible Browser conformance observer", () => {
 
   afterEach(() => {
     browserTargetRegistry.clear();
-    useBrowserAutomationStore.getState().unregisterTarget(THREAD_ID, TAB_ID);
+    useBrowserAutomationStore.getState().unregisterTarget(WORKSPACE_ID, THREAD_ID, TAB_ID);
   });
 
   it("observes agent ownership through the accessible Browser takeover control", async () => {
     const user = userEvent.setup();
-    useBrowserAutomationStore.getState().registerTarget("workspace-visible", THREAD_ID, TAB_ID);
-    useBrowserAutomationStore.getState().setControllerForTarget(THREAD_ID, TAB_ID, {
+    useBrowserAutomationStore.getState().registerTarget(WORKSPACE_ID, THREAD_ID, TAB_ID);
+    useBrowserAutomationStore.getState().setControllerForTarget(WORKSPACE_ID, THREAD_ID, TAB_ID, {
       tabId: TAB_ID,
       controller: "agent",
       controlEpoch: 4,
@@ -444,7 +445,7 @@ describe("visible Browser conformance observer", () => {
     await user.click(takeover);
     expect(onStopAutomation).toHaveBeenCalledOnce();
     await act(async () => {
-      useBrowserAutomationStore.getState().setControllerForTarget(THREAD_ID, TAB_ID, {
+      useBrowserAutomationStore.getState().setControllerForTarget(WORKSPACE_ID, THREAD_ID, TAB_ID, {
         tabId: TAB_ID,
         controller: "none",
         controlEpoch: 5,
@@ -687,7 +688,7 @@ describe("visible Browser conformance observer", () => {
     expect(normalized.finalState.readiness).not.toBe("unknown");
 
     await userEvent.setup().click(row);
-    expect(activatePage).toHaveBeenCalledWith(THREAD_ID, TAB_ID);
+    expect(activatePage).toHaveBeenCalledWith(WORKSPACE_ID, THREAD_ID, TAB_ID);
   });
 
   it("observes viewport preset, orientation, and fit/actual presentation through public controls", async () => {
@@ -782,8 +783,8 @@ describe("visible Browser conformance observer", () => {
 
   it("does not resurrect visible ownership after scope cleanup and a late controller event", async () => {
     const user = userEvent.setup();
-    useBrowserAutomationStore.getState().registerTarget("workspace-visible", THREAD_ID, TAB_ID);
-    useBrowserAutomationStore.getState().setControllerForTarget(THREAD_ID, TAB_ID, {
+    useBrowserAutomationStore.getState().registerTarget(WORKSPACE_ID, THREAD_ID, TAB_ID);
+    useBrowserAutomationStore.getState().setControllerForTarget(WORKSPACE_ID, THREAD_ID, TAB_ID, {
       tabId: TAB_ID,
       controller: "agent",
       controlEpoch: 7,
@@ -793,8 +794,8 @@ describe("visible Browser conformance observer", () => {
     expect(await screen.findByRole("menuitem", { name: "Take control" })).toBeInTheDocument();
 
     act(() => {
-      releaseBrowserAutomationThreadScope(THREAD_ID);
-      useBrowserAutomationStore.getState().setControllerForTarget(THREAD_ID, TAB_ID, {
+      releaseBrowserAutomationThreadScope(WORKSPACE_ID, THREAD_ID);
+      useBrowserAutomationStore.getState().setControllerForTarget(WORKSPACE_ID, THREAD_ID, TAB_ID, {
         tabId: TAB_ID,
         controller: "agent",
         controlEpoch: 8,
@@ -806,6 +807,6 @@ describe("visible Browser conformance observer", () => {
       expect(useBrowserAutomationStore.getState().controllers.size).toBe(0);
       expect(screen.queryByRole("menuitem", { name: "Take control" })).not.toBeInTheDocument();
     });
-    expect(browserTargetRegistry.get(THREAD_ID, TAB_ID)).toBeNull();
+    expect(browserTargetRegistry.get(WORKSPACE_ID, THREAD_ID, TAB_ID)).toBeNull();
   });
 });

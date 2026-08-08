@@ -11,6 +11,7 @@ import { ActivityRail } from "./ActivityRail";
 
 const EXPECTED_EXPAND_DELAY_MS = 140;
 const EXPECTED_COLLAPSE_DELAY_MS = 250;
+const workspaceId = "workspace-1";
 
 const browserTabSet: BrowserTabSet = {
   threadId: "thread-activity-rail",
@@ -43,6 +44,7 @@ function railElement(openTabs: readonly RightPanelTab[] = ["terminal", "changes"
   return (
     <ActivityRail
       tabInstances={openTabs.map((type) => ({ id: rightPanelSingletonId(type), type }))}
+      workspaceId={workspaceId}
       activeTabId={rightPanelSingletonId("terminal")}
       scope="thread"
       scopeProgress={{ done: 0, total: 0 }}
@@ -150,6 +152,7 @@ describe("ActivityRail expansion", () => {
     rerender(
       <ActivityRail
         tabInstances={[{ id: rightPanelSingletonId("preview"), type: "preview" }]}
+        workspaceId={workspaceId}
         activeTabId={rightPanelSingletonId("preview")}
         scope="thread"
         scopeProgress={{ done: 0, total: 0 }}
@@ -209,6 +212,7 @@ describe("ActivityRail expansion", () => {
           id: rightPanelSingletonId(type as RightPanelTab),
           type: type as RightPanelTab,
         }))}
+        workspaceId={workspaceId}
         activeTabId={rightPanelSingletonId("terminal")}
         scope="thread"
         scopeProgress={{ done: 0, total: 0 }}
@@ -349,7 +353,7 @@ describe("ActivityRail expansion", () => {
     useBrowserAutomationStore.setState({
       controllers: new Map([
         [
-          browserAutomationTargetKey(page.threadId, page.id),
+          browserAutomationTargetKey(workspaceId, page.threadId, page.id),
           { tabId: page.id, controller: "agent", controlEpoch: 1 },
         ],
       ]),

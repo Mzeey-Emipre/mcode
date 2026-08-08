@@ -19,19 +19,20 @@ import {
  * A no-op in non-desktop builds (the bridge is absent, so `tabSet` stays null).
  */
 export function usePreviewTabs(scopeId: string, workspaceId?: string | null) {
+  const exactWorkspaceId = workspaceId ?? scopeId;
   const tabSet = usePreviewTabSet(scopeId, workspaceId);
   const newTab = useCallback(
-    () => usePreviewTabsStore.getState().openPage(scopeId),
-    [scopeId],
+    () => usePreviewTabsStore.getState().openPage(exactWorkspaceId, scopeId),
+    [exactWorkspaceId, scopeId],
   );
   const activateTab = useCallback(
-    (tabId: string) => usePreviewTabsStore.getState().activatePage(scopeId, tabId),
-    [scopeId],
+    (tabId: string) => usePreviewTabsStore.getState().activatePage(exactWorkspaceId, scopeId, tabId),
+    [exactWorkspaceId, scopeId],
   );
   const closeTab = useCallback(
     (tabId: string, opts?: ClosePageOptions) =>
-      usePreviewTabsStore.getState().closePage(scopeId, tabId, opts),
-    [scopeId],
+      usePreviewTabsStore.getState().closePage(exactWorkspaceId, scopeId, tabId, opts),
+    [exactWorkspaceId, scopeId],
   );
 
   return { tabSet, newTab, activateTab, closeTab };

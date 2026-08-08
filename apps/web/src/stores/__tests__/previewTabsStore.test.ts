@@ -10,6 +10,7 @@ import { useBrowserAutomationStore } from "../browserAutomationStore";
 import { browserTargetRegistry } from "@/services/browser-automation/browserTargetRegistry";
 
 const SCOPE = "thread-1";
+const WORKSPACE_ID = "workspace-1";
 
 function page(id: string, over: Partial<BrowserTabInfo> = {}): BrowserTabInfo {
   return {
@@ -135,7 +136,7 @@ describe("previewTabsStore", () => {
   it("openPage creates a page via the bridge and focuses the omnibox", async () => {
     const created = set("new", [page("a"), page("new", { active: true })]);
     const { open } = mockBridge({ open: created });
-    await usePreviewTabsStore.getState().openPage(SCOPE);
+    await usePreviewTabsStore.getState().openPage(WORKSPACE_ID, SCOPE);
     expect(open).toHaveBeenCalledWith(SCOPE, { activate: true });
     expect(usePreviewTabsStore.getState().tabSetByScope[SCOPE]).toBe(created);
     expect(usePreviewFocusStore.getState().omniboxFocusTick).toBe(1);
@@ -144,7 +145,7 @@ describe("previewTabsStore", () => {
   it("openPage passes an exact existing page id to the bridge", async () => {
     const { open } = mockBridge({});
 
-    await usePreviewTabsStore.getState().openPage(SCOPE, {
+    await usePreviewTabsStore.getState().openPage(WORKSPACE_ID, SCOPE, {
       activate: false,
       focusOmnibox: false,
       tabId: "blank",
@@ -179,7 +180,7 @@ describe("previewTabsStore", () => {
     usePreviewTabsStore.getState().setLiveChrome(SCOPE, { title: "stale", url: null, favicon: null });
     const switched = set("b", [page("a"), page("b", { active: true })]);
     const { activate } = mockBridge({ activate: switched });
-    await usePreviewTabsStore.getState().activatePage(SCOPE, "b");
+    await usePreviewTabsStore.getState().activatePage(WORKSPACE_ID, SCOPE, "b");
     expect(activate).toHaveBeenCalledWith(SCOPE, "b");
     expect(usePreviewTabsStore.getState().tabSetByScope[SCOPE]).toBe(switched);
     expect(usePreviewTabsStore.getState().liveChromeByScope[SCOPE]).toBeNull();
@@ -190,7 +191,7 @@ describe("previewTabsStore", () => {
     const remaining = set("a", [page("a")]);
     const { close } = mockBridge({ close: remaining });
     const onLastClose = vi.fn();
-    await usePreviewTabsStore.getState().closePage(SCOPE, "b", { onLastClose });
+    await usePreviewTabsStore.getState().closePage(WORKSPACE_ID, SCOPE, "b", { onLastClose });
     expect(close).toHaveBeenCalledWith(SCOPE, "b");
     expect(onLastClose).not.toHaveBeenCalled();
     expect(usePreviewTabsStore.getState().tabSetByScope[SCOPE]).toBe(remaining);
@@ -200,43 +201,43 @@ describe("previewTabsStore", () => {
     usePreviewTabsStore.getState().setTabSet(SCOPE, set("a", [page("a")]));
     const { close, closeScope } = mockBridge({});
     usePreviewTabsStore.getState().setLiveChrome(SCOPE, { title: "A", url: null, favicon: null });
-    useBrowserAutomationStore.getState().registerTarget("workspace-1", SCOPE, "a");
+    useBrowserAutomationStore.getState().registerTarget(WORKSPACE_ID, SCOPE, "a");
     const onLastClose = vi.fn();
     onLastClose.mockImplementation(() => {
       expect(usePreviewTabsStore.getState().tabSetByScope[SCOPE]).toBeNull();
       expect(usePreviewTabsStore.getState().liveChromeByScope[SCOPE]).toBeNull();
     });
-    await usePreviewTabsStore.getState().closePage(SCOPE, "a", { onLastClose });
+    await usePreviewTabsStore.getState().closePage(WORKSPACE_ID, SCOPE, "a", { onLastClose });
     expect(onLastClose).toHaveBeenCalledTimes(1);
     expect(closeScope).toHaveBeenCalledWith(SCOPE);
     expect(close).not.toHaveBeenCalled();
-    expect(browserTargetRegistry.get(SCOPE, "a")).toBeNull();
+    expect(browserTargetRegistry.get(WORKSPACE_ID, SCOPE, "a")).toBeNull();
     // The Browser tab is gone; the scope's set must clear rather than retain
     // a phantom page.
     expect(usePreviewTabsStore.getState().tabSetByScope[SCOPE]).toBeNull();
   });
 
   it("clearScope releases every target after a successful scope close", async () => {
-    useBrowserAutomationStore.getState().registerTarget("workspace-1", SCOPE, "a");
-    useBrowserAutomationStore.getState().registerTarget("workspace-1", SCOPE, "b");
-    useBrowserAutomationStore.getState().registerTarget("workspace-1", "thread-2", "other");
+    useBrowserAutomationStore.getState().registerTarget(WORKSPACE_ID, SCOPE, "a");
+    useBrowserAutomationStore.getState().registerTarget(WORKSPACE_ID, SCOPE, "b");
+    useBrowserAutomationStore.getState().registerTarget(WORKSPACE_ID, "thread-2", "other");
     const { closeScope } = mockBridge({});
 
-    await usePreviewTabsStore.getState().clearScope(SCOPE);
+    await usePreviewTabsStore.getState().clearScope(WORKSPACE_ID, SCOPE);
 
     expect(closeScope).toHaveBeenCalledWith(SCOPE);
-    expect(browserTargetRegistry.get(SCOPE, "a")).toBeNull();
-    expect(browserTargetRegistry.get(SCOPE, "b")).toBeNull();
-    expect(browserTargetRegistry.get("thread-2", "other")).not.toBeNull();
+    expect(browserTargetRegistry.get(WORKSPACE_ID, SCOPE, "a")).toBeNull();
+    expect(browserTargetRegistry.get(WORKSPACE_ID, SCOPE, "b")).toBeNull();
+    expect(browserTargetRegistry.get(WORKSPACE_ID, "thread-2", "other")).not.toBeNull();
   });
 
   it("clearScope retains targets when the physical scope close fails", async () => {
-    useBrowserAutomationStore.getState().registerTarget("workspace-1", SCOPE, "a");
+    useBrowserAutomationStore.getState().registerTarget(WORKSPACE_ID, SCOPE, "a");
     const { closeScope } = mockBridge({});
     closeScope.mockResolvedValueOnce({ ok: false, error: "scope close failed" });
 
-    await expect(usePreviewTabsStore.getState().clearScope(SCOPE)).rejects.toThrow("scope close failed");
-    expect(browserTargetRegistry.get(SCOPE, "a")).not.toBeNull();
+    await expect(usePreviewTabsStore.getState().clearScope(WORKSPACE_ID, SCOPE)).rejects.toThrow("scope close failed");
+    expect(browserTargetRegistry.get(WORKSPACE_ID, SCOPE, "a")).not.toBeNull();
   });
 
   it("retains final-page UI state and automation targets when the physical scope close fails", async () => {
@@ -245,14 +246,14 @@ describe("previewTabsStore", () => {
     usePreviewTabsStore.getState().setLiveChrome(SCOPE, { title: "A", url: "https://example.test", favicon: null });
     const { close, closeScope } = mockBridge({});
     closeScope.mockResolvedValueOnce({ ok: false, error: "scope close failed" });
-    useBrowserAutomationStore.getState().registerTarget("workspace-1", SCOPE, "a");
+    useBrowserAutomationStore.getState().registerTarget(WORKSPACE_ID, SCOPE, "a");
     const onLastClose = vi.fn();
 
-    await usePreviewTabsStore.getState().closePage(SCOPE, "a", { onLastClose });
+    await usePreviewTabsStore.getState().closePage(WORKSPACE_ID, SCOPE, "a", { onLastClose });
 
     expect(close).not.toHaveBeenCalled();
     expect(onLastClose).not.toHaveBeenCalled();
-    expect(browserTargetRegistry.get(SCOPE, "a")).not.toBeNull();
+    expect(browserTargetRegistry.get(WORKSPACE_ID, SCOPE, "a")).not.toBeNull();
     expect(usePreviewTabsStore.getState().tabSetByScope[SCOPE]).toBe(finalTabSet);
     expect(usePreviewTabsStore.getState().liveChromeByScope[SCOPE]).toEqual({
       title: "A",
@@ -321,9 +322,9 @@ describe("previewTabsStore", () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (window as any).desktopBridge = undefined;
     const onLastClose = vi.fn();
-    await usePreviewTabsStore.getState().openPage(SCOPE);
-    await usePreviewTabsStore.getState().activatePage(SCOPE, "a");
-    await usePreviewTabsStore.getState().closePage(SCOPE, "a", { onLastClose });
+    await usePreviewTabsStore.getState().openPage(WORKSPACE_ID, SCOPE);
+    await usePreviewTabsStore.getState().activatePage(WORKSPACE_ID, SCOPE, "a");
+    await usePreviewTabsStore.getState().closePage(WORKSPACE_ID, SCOPE, "a", { onLastClose });
     expect(onLastClose).not.toHaveBeenCalled();
     expect(usePreviewTabsStore.getState().tabSetByScope[SCOPE]).toBeUndefined();
   });
@@ -340,19 +341,19 @@ describe("previewTabsStore", () => {
     usePreviewTabsStore.getState().upsertPersistentTab(SCOPE, persistent);
     usePreviewTabsStore.getState().upsertPersistentTab(SCOPE, second);
 
-    await usePreviewTabsStore.getState().activatePage(SCOPE, persistent.id);
+    await usePreviewTabsStore.getState().activatePage(WORKSPACE_ID, SCOPE, persistent.id);
     expect(usePreviewTabsStore.getState().tabSetByScope[SCOPE]?.activeTabId).toBe(persistent.id);
     expect(usePreviewTabsStore.getState().tabSetByScope[SCOPE]?.tabs[0]?.active).toBe(true);
 
     const onLastClose = vi.fn();
-    await usePreviewTabsStore.getState().closePage(SCOPE, second.id, { onLastClose });
+    await usePreviewTabsStore.getState().closePage(WORKSPACE_ID, SCOPE, second.id, { onLastClose });
     expect(onLastClose).not.toHaveBeenCalled();
     expect(usePreviewTabsStore.getState().tabSetByScope[SCOPE]).toMatchObject({
       activeTabId: persistent.id,
       tabs: [{ ...persistent, active: true }],
     });
 
-    await usePreviewTabsStore.getState().closePage(SCOPE, persistent.id, { onLastClose });
+    await usePreviewTabsStore.getState().closePage(WORKSPACE_ID, SCOPE, persistent.id, { onLastClose });
     expect(onLastClose).toHaveBeenCalledOnce();
     expect(usePreviewTabsStore.getState().tabSetByScope[SCOPE]).toBeNull();
     expect(usePreviewTabsStore.getState().persistentTabIdsByScope[SCOPE]).toBeUndefined();

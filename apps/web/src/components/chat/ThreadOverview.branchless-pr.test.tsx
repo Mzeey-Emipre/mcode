@@ -242,16 +242,16 @@ describe("ThreadOverview branchless Create PR", () => {
       registered: true,
       status: "registered",
       liveTargets: new Map([
-        [browserAutomationTargetKey("thread-1", "agent-tab"), { workspaceId: "ws-1", threadId: "thread-1", tabId: "agent-tab", revision: 1, lastUsedAt: 1 }],
-        [browserAutomationTargetKey("thread-1", "claimed-tab"), { workspaceId: "ws-1", threadId: "thread-1", tabId: "claimed-tab", revision: 1, lastUsedAt: 1 }],
-        [browserAutomationTargetKey("thread-1", "ordinary-tab"), { workspaceId: "ws-1", threadId: "thread-1", tabId: "ordinary-tab", revision: 1, lastUsedAt: 1 }],
+        [browserAutomationTargetKey("ws-1", "thread-1", "agent-tab"), { workspaceId: "ws-1", threadId: "thread-1", tabId: "agent-tab", revision: 1, lastUsedAt: 1 }],
+        [browserAutomationTargetKey("ws-1", "thread-1", "claimed-tab"), { workspaceId: "ws-1", threadId: "thread-1", tabId: "claimed-tab", revision: 1, lastUsedAt: 1 }],
+        [browserAutomationTargetKey("ws-1", "thread-1", "ordinary-tab"), { workspaceId: "ws-1", threadId: "thread-1", tabId: "ordinary-tab", revision: 1, lastUsedAt: 1 }],
       ]),
       lifecycleTabs: new Map<string, BrowserSessionLifecycleTab>([
         [browserAutomationLifecycleKey("ws-1", "thread-1", "agent-tab"), lifecycleTab],
         [browserAutomationLifecycleKey("ws-1", "thread-1", "claimed-tab"), claimedTab],
       ]),
       controllers: new Map([
-        [browserAutomationTargetKey("thread-1", "agent-tab"), { tabId: "agent-tab", controller: "agent", controlEpoch: 1 }],
+        [browserAutomationTargetKey("ws-1", "thread-1", "agent-tab"), { tabId: "agent-tab", controller: "agent", controlEpoch: 1 }],
       ]),
     });
     usePreviewTabsStore.setState({
@@ -293,7 +293,7 @@ describe("ThreadOverview branchless Create PR", () => {
     expect(agentRow).toHaveAccessibleName(expect.stringContaining("agent controls"));
     expect(agentRow.querySelector('[data-testid="thread-overview-browser-agent-cursor"]')).toBeInTheDocument();
     act(() => {
-      useBrowserAutomationStore.getState().setControllerForTarget("thread-1", "agent-tab", {
+      useBrowserAutomationStore.getState().setControllerForTarget("ws-1", "thread-1", "agent-tab", {
         tabId: "agent-tab",
         controller: "human",
         controlEpoch: 2,
@@ -313,10 +313,10 @@ describe("ThreadOverview branchless Create PR", () => {
     await user.keyboard("{Enter}");
     expect(showRightPanel).toHaveBeenCalledWith("ws-1", "thread-1");
     expect(setRightPanelTab).toHaveBeenCalledWith("ws-1", "thread-1", "preview");
-    expect(activatePage).toHaveBeenCalledWith("thread-1", "agent-tab");
+    expect(activatePage).toHaveBeenCalledWith("ws-1", "thread-1", "agent-tab");
     expect(navigate).not.toHaveBeenCalled();
 
-    act(() => useBrowserAutomationStore.getState().detachTarget("thread-1", "agent-tab"));
+    act(() => useBrowserAutomationStore.getState().detachTarget("ws-1", "thread-1", "agent-tab"));
     expect(screen.queryByRole("button", { name: /Browser, Agent page/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Browser, Claimed page/ })).toBeInTheDocument();
 
@@ -407,12 +407,12 @@ describe("ThreadOverview branchless Create PR", () => {
       ],
     };
     const liveTargets = new Map([
-      [browserAutomationTargetKey("thread-1", "released-tab"), { workspaceId: "ws-1", threadId: "thread-1", tabId: "released-tab", revision: 1, lastUsedAt: 1 }],
-      [browserAutomationTargetKey("thread-1", "empty-tab"), { workspaceId: "ws-1", threadId: "thread-1", tabId: "empty-tab", revision: 1, lastUsedAt: 1 }],
-      [browserAutomationTargetKey("thread-1", "blank-tab"), { workspaceId: "ws-1", threadId: "thread-1", tabId: "blank-tab", revision: 1, lastUsedAt: 1 }],
-      [browserAutomationTargetKey("thread-1", "error-tab"), { workspaceId: "ws-1", threadId: "thread-1", tabId: "error-tab", revision: 1, lastUsedAt: 1 }],
-      [browserAutomationTargetKey("thread-1", "wrong-thread-tab"), { workspaceId: "ws-1", threadId: "thread-2", tabId: "wrong-thread-tab", revision: 1, lastUsedAt: 1 }],
-      [browserAutomationTargetKey("thread-1", "wrong-workspace-tab"), { workspaceId: "ws-2", threadId: "thread-1", tabId: "wrong-workspace-tab", revision: 1, lastUsedAt: 1 }],
+      [browserAutomationTargetKey("ws-1", "thread-1", "released-tab"), { workspaceId: "ws-1", threadId: "thread-1", tabId: "released-tab", revision: 1, lastUsedAt: 1 }],
+      [browserAutomationTargetKey("ws-1", "thread-1", "empty-tab"), { workspaceId: "ws-1", threadId: "thread-1", tabId: "empty-tab", revision: 1, lastUsedAt: 1 }],
+      [browserAutomationTargetKey("ws-1", "thread-1", "blank-tab"), { workspaceId: "ws-1", threadId: "thread-1", tabId: "blank-tab", revision: 1, lastUsedAt: 1 }],
+      [browserAutomationTargetKey("ws-1", "thread-1", "error-tab"), { workspaceId: "ws-1", threadId: "thread-1", tabId: "error-tab", revision: 1, lastUsedAt: 1 }],
+      [browserAutomationTargetKey("ws-1", "thread-2", "wrong-thread-tab"), { workspaceId: "ws-1", threadId: "thread-2", tabId: "wrong-thread-tab", revision: 1, lastUsedAt: 1 }],
+      [browserAutomationTargetKey("ws-2", "thread-1", "wrong-workspace-tab"), { workspaceId: "ws-2", threadId: "thread-1", tabId: "wrong-workspace-tab", revision: 1, lastUsedAt: 1 }],
     ]);
     const rows = getThreadOverviewBrowserTabs({
       workspaceId: "ws-1",
@@ -421,7 +421,7 @@ describe("ThreadOverview branchless Create PR", () => {
       lifecycleTabs: new Map([["released", releasedLifecycle]]),
       liveTargets,
       controllers: new Map([
-        [browserAutomationTargetKey("thread-1", "released-tab"), { tabId: "released-tab", controller: "agent" as const, controlEpoch: 2 }],
+        [browserAutomationTargetKey("ws-1", "thread-1", "released-tab"), { tabId: "released-tab", controller: "agent" as const, controlEpoch: 2 }],
       ]),
     });
 

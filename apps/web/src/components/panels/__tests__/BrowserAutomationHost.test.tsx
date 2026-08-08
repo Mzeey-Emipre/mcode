@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useThreadStore } from "@/stores/threadStore";
 import {
+  browserAutomationScopeKey,
   browserAutomationTargetKey,
   interruptBrowserAutomationTarget,
   releaseBrowserAutomationThreadScope,
@@ -103,7 +104,7 @@ function dispatch(
   const threadId = options.threadId ?? "thread-1";
   const tabId = options.tabId ?? "tab-1";
   const targetGeneration = options.targetGeneration ??
-    useBrowserAutomationStore.getState().liveTargets.get(browserAutomationTargetKey(threadId, tabId))?.revision ?? 1;
+    useBrowserAutomationStore.getState().liveTargets.get(browserAutomationTargetKey("workspace-1", threadId, tabId))?.revision ?? 1;
   return {
     scope: {
       workspaceId: "workspace-1",
@@ -384,8 +385,9 @@ describe("BrowserAutomationHost", () => {
       targetGeneration: 1,
     });
     await coordinator.requestAgentResize({ width: 1_200, height: 800 });
-    useBrowserAutomationStore.getState().setViewportCoordinator("thread-1", "tab-1", coordinator);
+    useBrowserAutomationStore.getState().setViewportCoordinator("workspace-1", "thread-1", "tab-1", coordinator);
     useBrowserAutomationStore.getState().setViewportState(
+      "workspace-1",
       "thread-1",
       "tab-1",
       coordinator.snapshot(),
@@ -469,12 +471,12 @@ describe("BrowserAutomationHost", () => {
     await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
 
     expect(useBrowserAutomationStore.getState().controllers.get(
-      JSON.stringify(["thread-1", "tab-1"]),
+      browserAutomationTargetKey("workspace-1", "thread-1", "tab-1"),
     )).toMatchObject({ controller: "agent", controlEpoch: 0 });
 
     act(() => useThreadStore.setState({ runningThreadIds: new Set() }));
     await waitFor(() => expect(useBrowserAutomationStore.getState().controllers.get(
-      JSON.stringify(["thread-1", "tab-1"]),
+      browserAutomationTargetKey("workspace-1", "thread-1", "tab-1"),
     )).toMatchObject({ controller: "none", controlEpoch: 0 }));
     expect(releaseAgentControl).toHaveBeenCalledWith({
       threadId: "thread-1",
@@ -644,7 +646,9 @@ describe("BrowserAutomationHost", () => {
       },
     };
     act(() => harness.emit("browserAutomation.bootstrap", { hostId, generation: 1, request: openRequest }));
-    await waitFor(() => expect(useBrowserAutomationStore.getState().hostedScopeIds.has("thread-1")).toBe(true));
+    await waitFor(() => expect(useBrowserAutomationStore.getState().hostedScopeIds.has(
+      browserAutomationScopeKey("workspace-1", "thread-1"),
+    )).toBe(true));
     const surface = document.querySelector<HTMLElement>('[data-automation-persistent-scope="thread-1"]');
     expect(surface).not.toBeNull();
     let iframe!: HTMLIFrameElement;
@@ -770,7 +774,7 @@ describe("BrowserAutomationHost", () => {
       value: () => ({ left: 40, top: 20, width: 640, height: 480, right: 680, bottom: 500, x: 40, y: 20, toJSON: () => ({}) }),
     });
     document.body.append(dock);
-    await act(async () => usePreviewTabsStore.getState().activatePage("thread-1", tabId));
+    await act(async () => usePreviewTabsStore.getState().activatePage("workspace-1", "thread-1", tabId));
     await waitFor(() => expect(usePreviewTabsStore.getState().tabSetByScope["thread-1"]?.activeTabId).toBe(tabId));
     await waitFor(() => expect(iframe.style.pointerEvents).toBe("auto"));
     expect(document.querySelector('[data-automation-persistent-scope="thread-1"]')).toHaveAttribute("aria-hidden", "false");
@@ -838,7 +842,7 @@ describe("BrowserAutomationHost", () => {
     document.body.append(iframe);
     window.setTimeout(() => {
       iframe.dispatchEvent(new Event("load"));
-      useBrowserAutomationStore.getState().refreshTarget("thread-1", "web-preview");
+      useBrowserAutomationStore.getState().refreshTarget("workspace-1", "thread-1", "web-preview");
     }, 0);
     await waitFor(() => expect(webExecutor.executeWebBrowserDispatch).toHaveBeenCalledWith(
       expect.objectContaining({ request: expect.objectContaining({ args: { activate: true } }) }),
@@ -876,7 +880,7 @@ describe("BrowserAutomationHost", () => {
     });
     document.body.append(iframe);
     window.setTimeout(() => {
-      useBrowserAutomationStore.getState().refreshTarget("thread-1", "tab-1");
+      useBrowserAutomationStore.getState().refreshTarget("workspace-1", "thread-1", "tab-1");
       iframe.dispatchEvent(new Event("load"));
     }, 0);
 
@@ -909,7 +913,7 @@ describe("BrowserAutomationHost", () => {
     iframe.src = expectedUrl;
     setIframeIdentity(iframe, "tab-1");
     document.body.append(iframe);
-    act(() => useBrowserAutomationStore.getState().refreshTarget("thread-1", "tab-1"));
+    act(() => useBrowserAutomationStore.getState().refreshTarget("workspace-1", "thread-1", "tab-1"));
     await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
     expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledWith(
       hostId,
@@ -946,7 +950,7 @@ describe("BrowserAutomationHost", () => {
     act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: navigateDispatch }));
     await waitFor(() => expect(webExecutor.executeWebBrowserDispatch).toHaveBeenCalledWith(navigateDispatch, expect.any(AbortSignal)));
     act(() => iframe.dispatchEvent(new Event("load")));
-    act(() => useBrowserAutomationStore.getState().refreshTarget("thread-1", "tab-1"));
+    act(() => useBrowserAutomationStore.getState().refreshTarget("workspace-1", "thread-1", "tab-1"));
     executing.resolve(successResponse(navigateDispatch.request));
     await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
     expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledWith(
@@ -976,7 +980,7 @@ describe("BrowserAutomationHost", () => {
     document.body.append(iframe);
     act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: navigateDispatch }));
     await waitFor(() => expect(webExecutor.executeWebBrowserDispatch).toHaveBeenCalledWith(navigateDispatch, expect.any(AbortSignal)));
-    act(() => useBrowserAutomationStore.getState().refreshTarget("thread-1", "tab-1"));
+    act(() => useBrowserAutomationStore.getState().refreshTarget("workspace-1", "thread-1", "tab-1"));
     executing.resolve(successResponse(navigateDispatch.request));
     await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
     expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledWith(
@@ -1010,7 +1014,7 @@ describe("BrowserAutomationHost", () => {
     replacement.src = `${window.location.origin}/unrelated-replacement`;
     setIframeIdentity(replacement, "tab-1");
     document.body.append(replacement);
-    act(() => useBrowserAutomationStore.getState().refreshTarget("thread-1", "tab-1"));
+    act(() => useBrowserAutomationStore.getState().refreshTarget("workspace-1", "thread-1", "tab-1"));
 
     await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
     expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledWith(
@@ -1212,7 +1216,7 @@ describe("BrowserAutomationHost", () => {
       ok: true,
       target: { windowId: 8, threadId: "thread-1", tabId: "tab-1", targetGeneration: 4, active: true, focused: true, lastUsedAt: 20 },
     });
-    act(() => useBrowserAutomationStore.getState().refreshTarget("thread-1", "tab-1"));
+    act(() => useBrowserAutomationStore.getState().refreshTarget("workspace-1", "thread-1", "tab-1"));
     await waitFor(() => expect(harness.transport.updateBrowserAutomationHostTargets).toHaveBeenCalledTimes(2));
     expect(harness.transport.updateBrowserAutomationHostTargets.mock.calls[1]?.[2]).toEqual([
       expect.objectContaining({ windowId: 8, targetGeneration: 4, connectionGeneration: 1 }),
@@ -1271,7 +1275,7 @@ describe("BrowserAutomationHost", () => {
     }));
     await waitFor(() => expect(useBrowserAutomationStore.getState().activeRequests).toHaveLength(1));
 
-    act(() => useBrowserAutomationStore.getState().unregisterTarget("thread-1", "tab-1"));
+    act(() => useBrowserAutomationStore.getState().unregisterTarget("workspace-1", "thread-1", "tab-1"));
     await waitFor(() => expect(cancel).toHaveBeenCalledWith(activeDispatch.request.requestId));
     expect(clearTargetReplay).toHaveBeenCalledWith("thread-1", "tab-1");
     expect(harness.transport.cancelBrowserAutomationRequest).toHaveBeenCalledWith(
@@ -1303,7 +1307,7 @@ describe("BrowserAutomationHost", () => {
     await act(async () => {
       harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: firstDispatch });
       harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: secondDispatch });
-      interruptBrowserAutomationTarget("thread-2", "tab-1", "human-interrupted");
+      interruptBrowserAutomationTarget("workspace-1", "thread-2", "tab-1", "human-interrupted");
       await Promise.resolve();
     });
     expect(interrupt).toHaveBeenCalledWith({ threadId: "thread-2", tabId: "tab-1" });
@@ -1371,7 +1375,9 @@ describe("BrowserAutomationHost", () => {
       request: openRequest,
     }));
     await waitFor(() => expect(createTab).toHaveBeenCalledOnce());
-    await waitFor(() => expect(useBrowserAutomationStore.getState().hostedScopeIds.has("thread-1")).toBe(true));
+    await waitFor(() => expect(useBrowserAutomationStore.getState().hostedScopeIds.has(
+      browserAutomationScopeKey("workspace-1", "thread-1"),
+    )).toBe(true));
 
     view.unmount();
     expect(harness.transport.cancelBrowserAutomationRequest).toHaveBeenCalledWith(
@@ -1466,7 +1472,9 @@ describe("BrowserAutomationHost", () => {
       activeTab: "preview",
     });
     expect(document.querySelector('[data-automation-persistent-scope="thread-1"]')).not.toBeNull();
-    expect(useBrowserAutomationStore.getState().hostedScopeIds.has("thread-1")).toBe(true);
+    expect(useBrowserAutomationStore.getState().hostedScopeIds.has(
+      browserAutomationScopeKey("workspace-1", "thread-1"),
+    )).toBe(true);
     expect(execute).toHaveBeenCalledWith(expect.objectContaining({
       request: openRequest,
       target: expect.objectContaining({ tabId: "created-tab" }),
@@ -1480,7 +1488,7 @@ describe("BrowserAutomationHost", () => {
       expect.objectContaining({ tabId: "created-tab", targetGeneration: 1 }),
     );
     expect(useBrowserAutomationStore.getState().controllers.get(
-      JSON.stringify(["thread-1", "created-tab"]),
+      browserAutomationTargetKey("workspace-1", "thread-1", "created-tab"),
     )).toMatchObject({ controller: "agent", operation: "open" });
     view.unmount();
   });
@@ -1700,9 +1708,11 @@ describe("BrowserAutomationHost", () => {
     await waitFor(() => expect(execute).toHaveBeenCalledOnce());
     const surface = document.querySelector('[data-automation-persistent-scope="thread-1"]');
     expect(surface).not.toBeNull();
-    expect(useBrowserAutomationStore.getState().hostedScopeIds.has("thread-1")).toBe(true);
+    expect(useBrowserAutomationStore.getState().hostedScopeIds.has(
+      browserAutomationScopeKey("workspace-1", "thread-1"),
+    )).toBe(true);
 
-    act(() => releaseBrowserAutomationThreadScope("thread-1"));
+    act(() => releaseBrowserAutomationThreadScope("workspace-1", "thread-1"));
     await waitFor(() => expect(document.querySelector(
       '[data-automation-persistent-scope="thread-1"]',
     )).toBeNull());
@@ -1714,7 +1724,9 @@ describe("BrowserAutomationHost", () => {
       openRequest.sequence,
       "host-shutdown",
     );
-    expect(useBrowserAutomationStore.getState().hostedScopeIds.has("thread-1")).toBe(false);
+    expect(useBrowserAutomationStore.getState().hostedScopeIds.has(
+      browserAutomationScopeKey("workspace-1", "thread-1"),
+    )).toBe(false);
 
     pending.resolve(response(openRequest));
     await act(async () => pending.promise);
@@ -1936,7 +1948,7 @@ describe("BrowserAutomationHost", () => {
     act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: resizeDispatch }));
     await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalled());
     expect(useBrowserAutomationStore.getState().viewportByTarget.get(
-      JSON.stringify(["thread-1", "tab-1"]),
+      browserAutomationTargetKey("workspace-1", "thread-1", "tab-1"),
     )).toEqual({ width: 1024, height: 768 });
     expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledWith(
       hostId,
@@ -1985,7 +1997,7 @@ describe("BrowserAutomationHost", () => {
     await act(async () => executing.promise);
     expect(harness.transport.respondToBrowserAutomationRequest).not.toHaveBeenCalled();
     await waitFor(() => expect(closeTab).toHaveBeenCalledWith("thread-1", "created-tab"));
-    expect(browserTargetRegistry.get("thread-1", "created-tab")).toBeNull();
+    expect(browserTargetRegistry.get("workspace-1", "thread-1", "created-tab")).toBeNull();
     view.unmount();
   });
 
@@ -2013,7 +2025,7 @@ describe("BrowserAutomationHost", () => {
     const openRequest = { ...request, operation: "open" as const, args: { url: "https://example.com/", activate: true } };
     act(() => harness.emit("browserAutomation.bootstrap", { hostId, generation: 1, request: openRequest }));
     await waitFor(() => expect(closeTab).toHaveBeenCalledWith("thread-1", "failed-tab"));
-    expect(browserTargetRegistry.get("thread-1", "failed-tab")).toBeNull();
+    expect(browserTargetRegistry.get("workspace-1", "thread-1", "failed-tab")).toBeNull();
     view.unmount();
   });
 
@@ -2052,8 +2064,8 @@ describe("BrowserAutomationHost", () => {
     const openRequest = { ...request, operation: "open" as const, args: { url: "https://example.com/", activate: false } };
     act(() => harness.emit("browserAutomation.bootstrap", { hostId, generation: 1, request: openRequest }));
     await waitFor(() => expect(closeTab).toHaveBeenCalledWith("thread-1", "restore-failure-tab"));
-    expect(activatePage).toHaveBeenCalledWith("thread-1", "previous-tab");
-    expect(browserTargetRegistry.get("thread-1", "restore-failure-tab")).toBeNull();
+    expect(activatePage).toHaveBeenCalledWith("workspace-1", "thread-1", "previous-tab");
+    expect(browserTargetRegistry.get("workspace-1", "thread-1", "restore-failure-tab")).toBeNull();
     view.unmount();
   });
 
@@ -2081,7 +2093,7 @@ describe("BrowserAutomationHost", () => {
     const openRequest = { ...request, operation: "open" as const, args: { url: "https://example.com/", activate: true } };
     act(() => harness.emit("browserAutomation.bootstrap", { hostId, generation: 1, request: openRequest }));
     await waitFor(() => expect(closeTab).toHaveBeenCalledWith("thread-1", "close-failure-tab"));
-    expect(browserTargetRegistry.get("thread-1", "close-failure-tab")).not.toBeNull();
+    expect(browserTargetRegistry.get("workspace-1", "thread-1", "close-failure-tab")).not.toBeNull();
     view.unmount();
   });
 
@@ -2107,7 +2119,7 @@ describe("BrowserAutomationHost", () => {
     act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: resizeDispatch }));
     await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalled());
     expect(useBrowserAutomationStore.getState().viewportByTarget.has(
-      JSON.stringify(["thread-1", "tab-1"]),
+      browserAutomationTargetKey("workspace-1", "thread-1", "tab-1"),
     )).toBe(false);
     expect(finishRendererOperation).not.toHaveBeenCalled();
     view.unmount();
@@ -2337,7 +2349,7 @@ describe("BrowserAutomationHost", () => {
     vi.spyOn(input, "getBoundingClientRect").mockReturnValue({ width: 120, height: 20 } as DOMRect);
     const clicked = vi.fn();
     button.addEventListener("click", clicked);
-    useBrowserAutomationStore.getState().setControllerForTarget("thread-1", "tab-1", { tabId: "tab-1", controller: "agent", controlEpoch: 2 });
+    useBrowserAutomationStore.getState().setControllerForTarget("workspace-1", "thread-1", "tab-1", { tabId: "tab-1", controller: "agent", controlEpoch: 2 });
     const view = render(<BrowserAutomationHost />);
     await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
     const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
@@ -2384,7 +2396,7 @@ describe("BrowserAutomationHost", () => {
     typeDispatch.request = { ...typeDispatch.request, operation: "type", args: { target: { cssSelector: "#name" }, text: "typed", clear: true, submit: false, timeoutMs: 1000 } } as never;
     act(() => harness.emit("browserAutomation.request", { hostId, generation: 1, dispatch: typeDispatch }));
     await waitFor(() => expect(useBrowserAutomationStore.getState().activeRequests.size).toBe(1));
-    act(() => useBrowserAutomationStore.getState().refreshTarget("thread-1", "tab-1"));
+    act(() => useBrowserAutomationStore.getState().refreshTarget("workspace-1", "thread-1", "tab-1"));
     pending.shift()?.(performance.now());
     await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
     expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenLastCalledWith(
@@ -2431,10 +2443,10 @@ describe("BrowserAutomationHost", () => {
     const view = render(<BrowserAutomationHost />);
     await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
     await act(async () => {
-      interruptBrowserAutomationTarget("thread-1", "tab-1", "human-interrupted");
+      interruptBrowserAutomationTarget("workspace-1", "thread-1", "tab-1", "human-interrupted");
       await Promise.resolve();
     });
-    expect(disposeTarget).toHaveBeenCalledWith("thread-1", "tab-1");
+    expect(disposeTarget).toHaveBeenCalledWith("workspace-1", "thread-1", "tab-1");
     view.unmount();
     disposeTarget.mockRestore();
   });

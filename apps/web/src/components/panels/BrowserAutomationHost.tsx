@@ -19,6 +19,7 @@ import { useThreadStore } from "@/stores/threadStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import {
   browserAutomationRequestKey,
+  browserAutomationScopeKey,
   browserAutomationTargetKey,
   invalidateBrowserAutomationTargetObservation,
   onBrowserAutomationObservationInvalidation,
@@ -155,13 +156,14 @@ async function restoreCompletedAgentViewport(
 ): Promise<BrowserAutomationResponse> {
   if (dispatch.request.operation !== "act" || !response.ok) return response;
   const coordinator = useBrowserAutomationStore.getState().viewportCoordinators.get(
-    browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId),
+    browserAutomationTargetKey(dispatch.scope.workspaceId, dispatch.target.threadId, dispatch.target.tabId),
   );
   if (!coordinator?.snapshot().agentActive) return response;
   const result = await coordinator.completeAgent({
     targetGeneration: dispatch.target.targetGeneration,
   });
   useBrowserAutomationStore.getState().setViewportState(
+    dispatch.scope.workspaceId,
     dispatch.target.threadId,
     dispatch.target.tabId,
     coordinator.snapshot(),
@@ -191,11 +193,12 @@ async function completeViewportControlRun(
 
 function interruptViewportCoordinator(dispatch: BrowserAutomationHostDispatch): void {
   const coordinator = useBrowserAutomationStore.getState().viewportCoordinators.get(
-    browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId),
+    browserAutomationTargetKey(dispatch.scope.workspaceId, dispatch.target.threadId, dispatch.target.tabId),
   );
   if (!coordinator) return;
   coordinator.interrupt();
   useBrowserAutomationStore.getState().setViewportState(
+    dispatch.scope.workspaceId,
     dispatch.target.threadId,
     dispatch.target.tabId,
     coordinator.snapshot(),
@@ -206,7 +209,7 @@ function interruptViewportCoordinator(dispatch: BrowserAutomationHostDispatch): 
 function ensureViewportCoordinator(
   dispatch: BrowserAutomationHostDispatch,
 ): ReturnType<typeof getOrCreateViewportCoordinator> {
-  const key = browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId);
+  const key = browserAutomationTargetKey(dispatch.scope.workspaceId, dispatch.target.threadId, dispatch.target.tabId);
   const state = useBrowserAutomationStore.getState();
   const existing = state.viewportCoordinators.get(key);
   let coordinator = existing;
@@ -220,6 +223,7 @@ function ensureViewportCoordinator(
     nativeHost: () => window.desktopBridge?.preview?.design,
     rendererHost: {
       setViewport: (size, operation, coordinator) => useBrowserAutomationStore.getState().applyViewportIfCurrent(
+        dispatch.scope.workspaceId,
         dispatch.target.threadId,
         dispatch.target.tabId,
         coordinator,
@@ -227,6 +231,7 @@ function ensureViewportCoordinator(
         size,
       ),
       resetViewport: (operation, coordinator) => useBrowserAutomationStore.getState().resetViewportIfCurrent(
+        dispatch.scope.workspaceId,
         dispatch.target.threadId,
         dispatch.target.tabId,
         coordinator,
@@ -250,12 +255,14 @@ function ensureViewportCoordinator(
       );
     },
     onStateChange: (nextState, coordinator) => useBrowserAutomationStore.getState().setViewportState(
+      dispatch.scope.workspaceId,
       dispatch.target.threadId,
       dispatch.target.tabId,
       nextState,
       coordinator,
     ),
     onCreated: (created) => useBrowserAutomationStore.getState().setViewportCoordinator(
+      dispatch.scope.workspaceId,
       dispatch.target.threadId,
       dispatch.target.tabId,
       created,
@@ -267,7 +274,7 @@ function ensureViewportCoordinator(
 
 function bindViewportCoordinatorDispatch(dispatch: BrowserAutomationHostDispatch): void {
   const coordinator = useBrowserAutomationStore.getState().viewportCoordinators.get(
-    browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId),
+    browserAutomationTargetKey(dispatch.scope.workspaceId, dispatch.target.threadId, dispatch.target.tabId),
   );
   if (coordinator) viewportCoordinatorDispatches.set(coordinator, dispatch);
 }
@@ -279,6 +286,7 @@ function projectAgentControl(dispatch: BrowserAutomationHostDispatch): void {
     !useThreadStore.getState().runningThreadIds.has(dispatch.target.threadId)
   ) return;
   useBrowserAutomationStore.getState().setControllerForTarget(
+    dispatch.scope.workspaceId,
     dispatch.target.threadId,
     dispatch.target.tabId,
     {
@@ -331,6 +339,7 @@ async function executeBrowserDispatch(
         },
       );
       useBrowserAutomationStore.getState().setViewportState(
+        dispatch.scope.workspaceId,
         dispatch.target.threadId,
         dispatch.target.tabId,
         coordinator.snapshot(),
@@ -377,6 +386,7 @@ async function executeBrowserDispatch(
           },
         );
         useBrowserAutomationStore.getState().setViewportState(
+          dispatch.scope.workspaceId,
           dispatch.target.threadId,
           dispatch.target.tabId,
           coordinator.snapshot(),
@@ -442,12 +452,13 @@ function hostId(): string | null {
 }
 
 function waitForLiveTarget(
+  workspaceId: string,
   threadId: string,
   tabId: string,
   deadline: number,
   signal: AbortSignal,
 ): Promise<void> {
-  const key = browserAutomationTargetKey(threadId, tabId);
+  const key = browserAutomationTargetKey(workspaceId, threadId, tabId);
   if (signal.aborted) return Promise.reject(signal.reason);
   if (useBrowserAutomationStore.getState().liveTargets.has(key)) return Promise.resolve();
   return new Promise((resolve, reject) => {
@@ -590,7 +601,7 @@ function acceptExpectedWebNavigationRevision(
   }
   const expectedUrl = normalizeWebPreviewUrl(dispatch.request.args.url ?? "");
   if (
-    navigation.targetKey !== browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId) ||
+    navigation.targetKey !== browserAutomationTargetKey(dispatch.scope.workspaceId, dispatch.target.threadId, dispatch.target.tabId) ||
     navigation.expectedUrl !== expectedUrl ||
     dispatch.target.targetGeneration !== navigation.initialRevision ||
     target?.revision !== navigation.initialRevision + 1 ||
@@ -657,7 +668,7 @@ function PersistentAutomationWebTab({
   const visible = layout.visible && activeTabId === tab.tabId;
   useEffect(() => {
     useBrowserAutomationStore.getState().registerTarget(tab.workspaceId, tab.threadId, tab.tabId);
-    return () => useBrowserAutomationStore.getState().detachTarget(tab.threadId, tab.tabId);
+    return () => useBrowserAutomationStore.getState().detachTarget(tab.workspaceId, tab.threadId, tab.tabId);
   }, [tab.tabId, tab.threadId, tab.workspaceId]);
 
   return (
@@ -679,7 +690,7 @@ function PersistentAutomationWebTab({
           url: chrome.url,
           favicon: null,
         });
-        useBrowserAutomationStore.getState().refreshTarget(tab.threadId, tab.tabId);
+        useBrowserAutomationStore.getState().refreshTarget(tab.workspaceId, tab.threadId, tab.tabId);
       }}
       style={{
         position: "fixed",
@@ -865,14 +876,14 @@ export function BrowserAutomationHost() {
       },
       resolveSignal: (dispatch, signal) => webAbortRef.current.get(browserAutomationRequestKey(dispatch.request.requestId, dispatch.request.sequence))?.signal ?? signal,
       getControlEpoch: (dispatch) => {
-        const targetKey = browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId);
+        const targetKey = browserAutomationTargetKey(dispatch.scope.workspaceId, dispatch.target.threadId, dispatch.target.tabId);
         return useBrowserAutomationStore.getState().controllers.get(targetKey)?.controlEpoch ?? dispatch.request.expectedControlEpoch;
       },
       getTargetGeneration: (dispatch) => {
-        const targetKey = browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId);
+        const targetKey = browserAutomationTargetKey(dispatch.scope.workspaceId, dispatch.target.threadId, dispatch.target.tabId);
         return useBrowserAutomationStore.getState().liveTargets.get(targetKey)?.revision ?? 0;
       },
-      onHumanInput: (dispatch) => invalidateBrowserAutomationTargetObservation(dispatch.target.threadId, dispatch.target.tabId),
+      onHumanInput: (dispatch) => invalidateBrowserAutomationTargetObservation(dispatch.scope.workspaceId, dispatch.target.threadId, dispatch.target.tabId),
       onObserver: (dispatch, dispose) => webObserverRef.current.set(browserAutomationRequestKey(dispatch.request.requestId, dispatch.request.sequence), dispose),
       executeNonInteraction: (dispatch, signal) => executeBrowserDispatch(undefined, recorderRef.current, dispatch, signal, executorDescriptor.operations),
     });
@@ -882,11 +893,11 @@ export function BrowserAutomationHost() {
       getHostRevision: () => leaseRef.current?.generation ?? 0,
       getDocumentRevision: (dispatch) => executorDescriptor.runtime === "web"
         ? useBrowserAutomationStore.getState().liveTargets.get(
-          browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId),
+          browserAutomationTargetKey(dispatch.scope.workspaceId, dispatch.target.threadId, dispatch.target.tabId),
         )?.revision ?? dispatch.target.targetGeneration
         : dispatch.target.targetGeneration,
       getControlRevision: (dispatch) => useBrowserAutomationStore.getState().controllers.get(
-        browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId),
+        browserAutomationTargetKey(dispatch.scope.workspaceId, dispatch.target.threadId, dispatch.target.tabId),
       )?.controlEpoch ?? dispatch.target.controller?.controlEpoch ?? dispatch.request.expectedControlEpoch,
       electron: new ElectronBrowserSessionAdapter(
         (dispatch, signal) => executeBrowserDispatch(window.desktopBridge?.preview?.automation, recorderRef.current, dispatch, signal, executorDescriptor.operations),
@@ -900,7 +911,12 @@ export function BrowserAutomationHost() {
       },
       electronTabs: {
         list: listLifecycleTargets,
-        close: async (target) => usePreviewTabsStore.getState().closePage(target.threadId, target.tabId),
+        close: async (target) => {
+          const matches = [...useBrowserAutomationStore.getState().liveTargets.values()]
+            .filter((candidate) => candidate.threadId === target.threadId && candidate.tabId === target.tabId);
+          if (matches.length !== 1) throw new Error("Browser target workspace is ambiguous");
+          await usePreviewTabsStore.getState().closePage(matches[0]!.workspaceId, target.threadId, target.tabId);
+        },
       },
       onLifecycleChange: (tabs) => useBrowserAutomationStore.getState().setLifecycleTabs(tabs),
     });
@@ -926,7 +942,7 @@ export function BrowserAutomationHost() {
       if (value === tabId) agentOpenTabsRef.current.delete(key);
     }
     usePreviewTabsStore.getState().removePersistentTab(tab.threadId, tab.tabId);
-    useBrowserAutomationStore.getState().unregisterTarget(tab.threadId, tabId);
+    useBrowserAutomationStore.getState().unregisterTarget(tab.workspaceId, tab.threadId, tabId);
     setPersistentWebTabsRevision((value) => value + 1);
   };
   const stableHostId = useMemo(hostId, []);
@@ -947,7 +963,7 @@ export function BrowserAutomationHost() {
   ): void => {
     if (cancelledRef.current.has(key)) return;
     cancelledRef.current.add(key);
-    const targetKey = browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId);
+    const targetKey = browserAutomationTargetKey(dispatch.scope.workspaceId, dispatch.target.threadId, dispatch.target.tabId);
     const viewportCoordinator = useBrowserAutomationStore.getState().viewportCoordinators.get(targetKey);
     if (viewportCoordinator?.snapshot().agentActive || dispatch.request.operation === "resize") {
       interruptViewportCoordinator(dispatch);
@@ -974,7 +990,7 @@ export function BrowserAutomationHost() {
   useEffect(() => {
     backgroundScopesRef.current = backgroundScopes;
     useBrowserAutomationStore.getState().setHostedScopeIds(
-      new Set(backgroundScopes.map((scope) => scope.threadId)),
+      new Set(backgroundScopes.map((scope) => browserAutomationScopeKey(scope.workspaceId, scope.threadId))),
     );
   }, [backgroundScopes]);
 
@@ -1086,7 +1102,7 @@ export function BrowserAutomationHost() {
         active: candidate.threadId === useWorkspaceStore.getState().activeThreadId,
         focused: candidate.threadId === useWorkspaceStore.getState().activeThreadId,
         lastUsedAt: candidate.lastUsedAt,
-        controller: useBrowserAutomationStore.getState().controllers.get(browserAutomationTargetKey(candidate.threadId, candidate.tabId)),
+        controller: useBrowserAutomationStore.getState().controllers.get(browserAutomationTargetKey(candidate.workspaceId, candidate.threadId, candidate.tabId)),
       } satisfies BrowserAutomationHostDispatchTarget));
       if (leaseRef.current === lease) {
         void getTransport().updateBrowserAutomationHostTargets(
@@ -1104,7 +1120,7 @@ export function BrowserAutomationHost() {
         tabId: candidate.tabId,
       });
       if (!described.ok) return null;
-      const controller = useBrowserAutomationStore.getState().controllers.get(browserAutomationTargetKey(candidate.threadId, candidate.tabId));
+      const controller = useBrowserAutomationStore.getState().controllers.get(browserAutomationTargetKey(candidate.workspaceId, candidate.threadId, candidate.tabId));
       return {
         ...described.target,
         desktopInstanceId: lease.desktopInstanceId,
@@ -1134,7 +1150,7 @@ export function BrowserAutomationHost() {
       const previousRevision = priorRevisions.get(key);
       if (previousRevision === undefined || previousRevision === target.revision) continue;
       for (const [requestKey, dispatch] of inFlightRef.current) {
-        if (browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId) !== key) continue;
+        if (browserAutomationTargetKey(dispatch.scope.workspaceId, dispatch.target.threadId, dispatch.target.tabId) !== key) continue;
         const navigation = webNavigationRef.current.get(requestKey);
         const expectedNavigation = acceptExpectedWebNavigationRevision(dispatch, navigation, target) !== undefined;
         if (expectedNavigation) {
@@ -1146,14 +1162,14 @@ export function BrowserAutomationHost() {
     }
     for (const removed of priorLiveTargetKeysRef.current) {
       if (next.has(removed)) continue;
-      const [threadId, tabId] = JSON.parse(removed) as [string, string];
+      const [workspaceId, threadId, tabId] = JSON.parse(removed) as [string, string, string];
       sessionDriverRef.current?.clearIdempotencyForTarget(threadId, tabId);
       for (const [openKey, mappedTabId] of agentOpenTabsRef.current) {
         if (mappedTabId === tabId) agentOpenTabsRef.current.delete(openKey);
       }
-      recorderRef.current.disposeTarget(threadId, tabId);
+      recorderRef.current.disposeTarget(workspaceId, threadId, tabId);
       for (const [key, dispatch] of inFlightRef.current) {
-        if (dispatch.target.threadId !== threadId || dispatch.target.tabId !== tabId) continue;
+        if (dispatch.scope.workspaceId !== workspaceId || dispatch.target.threadId !== threadId || dispatch.target.tabId !== tabId) continue;
         cancelHostedRequest(key, dispatch, "host-shutdown");
       }
     }
@@ -1209,7 +1225,7 @@ export function BrowserAutomationHost() {
         dispatch.request.operation === "navigate" && Boolean(dispatch.request.args.url);
       const operationAbort = webDispatch ? new AbortController() : null;
       if (operationAbort) webAbortRef.current.set(key, operationAbort);
-      const targetKey = browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId);
+      const targetKey = browserAutomationTargetKey(dispatch.scope.workspaceId, dispatch.target.threadId, dispatch.target.tabId);
       const liveTarget = useBrowserAutomationStore.getState().liveTargets.get(targetKey);
       const currentEpoch = useBrowserAutomationStore.getState().controllers.get(targetKey)?.controlEpoch ?? dispatch.request.expectedControlEpoch;
       const staleAtStart = !liveTarget || liveTarget.revision !== dispatch.target.targetGeneration || currentEpoch !== dispatch.request.expectedControlEpoch;
@@ -1447,7 +1463,7 @@ export function BrowserAutomationHost() {
         if (agentOwnedOpen || request.args.activate || backgroundContextRestored) return;
         backgroundContextRestored = true;
         if (createdTabId && previousTabId && previousTabId !== createdTabId) {
-          await usePreviewTabsStore.getState().activatePage(request.threadId, previousTabId);
+          await usePreviewTabsStore.getState().activatePage(request.workspaceId, request.threadId, previousTabId);
         }
         if (!visibleContextModified) return;
         const currentDiff = useDiffStore.getState();
@@ -1487,7 +1503,7 @@ export function BrowserAutomationHost() {
               (candidate) => candidate.threadId === scope.threadId,
             ) || [...inFlightRef.current.values()].some(
               (candidate) => candidate.scope.threadId === scope.threadId,
-            ) || recorderRef.current.hasActiveThread(scope.threadId) ||
+             ) || recorderRef.current.hasActiveThread(scope.workspaceId, scope.threadId) ||
             findAutomationDock(scope.threadId) !== null;
           const evicted = currentScopes.length >= 5
             ? currentScopes.find((scope) => !isBusy(scope))
@@ -1506,7 +1522,7 @@ export function BrowserAutomationHost() {
           }
           backgroundScopesRef.current = nextScopes;
           useBrowserAutomationStore.getState().setHostedScopeIds(
-            new Set(nextScopes.map((scope) => scope.threadId)),
+             new Set(nextScopes.map((scope) => browserAutomationScopeKey(scope.workspaceId, scope.threadId))),
           );
           setBackgroundScopes(nextScopes);
         }
@@ -1553,14 +1569,14 @@ export function BrowserAutomationHost() {
               !onlyExistingTab.faviconUrl
             ? onlyExistingTab.id
             : undefined;
-          tabId = await usePreviewTabsStore.getState().openPage(request.threadId, {
+          tabId = await usePreviewTabsStore.getState().openPage(request.workspaceId, request.threadId, {
             activate: !agentOwnedOpen,
             focusOmnibox: ownsVisibleContext && request.args.activate && !agentOwnedOpen,
             ...(agentOwnedOpen ? { renderingHost: "webview" as const } : {}),
             ...(existingTabId ? { tabId: existingTabId } : {}),
           });
           if (!tabId && existingTabId) {
-            tabId = await usePreviewTabsStore.getState().openPage(request.threadId, {
+            tabId = await usePreviewTabsStore.getState().openPage(request.workspaceId, request.threadId, {
               activate: false,
               focusOmnibox: false,
               renderingHost: "webview",
@@ -1612,7 +1628,7 @@ export function BrowserAutomationHost() {
           );
           ensureActive();
         }
-        await waitForLiveTarget(request.threadId, tabId, request.deadline, controller.signal);
+        await waitForLiveTarget(request.workspaceId, request.threadId, tabId, request.deadline, controller.signal);
         ensureActive();
         const described = bridge
           ? await bridge.describeTarget({ threadId: request.threadId, tabId })
@@ -1623,7 +1639,7 @@ export function BrowserAutomationHost() {
                 threadId: request.threadId,
                 tabId,
                 targetGeneration: useBrowserAutomationStore.getState().liveTargets.get(
-                  browserAutomationTargetKey(request.threadId, tabId),
+                  browserAutomationTargetKey(request.workspaceId, request.threadId, tabId),
                 )?.revision ?? 1,
                 active: !agentOwnedOpen,
                 focused: !agentOwnedOpen,
@@ -1694,7 +1710,7 @@ export function BrowserAutomationHost() {
         }
         if (createdTabId && !bootstrapSucceeded) {
           try {
-            await usePreviewTabsStore.getState().closePage(request.threadId, createdTabId);
+            await usePreviewTabsStore.getState().closePage(request.workspaceId, request.threadId, createdTabId);
           } catch {
             // Keep finalizer cleanup settled; closePage preserves logical records on physical failure.
           }
@@ -1716,7 +1732,7 @@ export function BrowserAutomationHost() {
     });
   }, []);
 
-  useEffect(() => onBrowserAutomationObservationInvalidation((threadId, tabId) => {
+  useEffect(() => onBrowserAutomationObservationInvalidation((_workspaceId, threadId, tabId) => {
     sessionDriverRef.current?.invalidateTargetObservations(threadId, tabId);
   }), []);
 
@@ -1732,7 +1748,7 @@ export function BrowserAutomationHost() {
       store.setController(controller);
       if (controller.controller !== "human") return;
       if (!target) return;
-      recorderRef.current.disposeTarget(target.threadId, target.tabId);
+      recorderRef.current.disposeTarget(target.workspaceId, target.threadId, target.tabId);
       for (const dispatch of inFlightRef.current.values()) {
         if (dispatch.target.threadId !== target.threadId || dispatch.target.tabId !== target.tabId) continue;
         const lease = leaseRef.current;
@@ -1759,7 +1775,7 @@ export function BrowserAutomationHost() {
           providerSessionId: controller.providerSessionId,
         });
       } else {
-        store.setControllerForTarget(target.threadId, target.tabId, {
+        store.setControllerForTarget(target.workspaceId, target.threadId, target.tabId, {
           tabId: target.tabId,
           controller: "none",
           controlEpoch: controller.controlEpoch,
@@ -1768,10 +1784,10 @@ export function BrowserAutomationHost() {
     }
   }, [runningThreadIds]);
 
-  useEffect(() => onBrowserAutomationInterruption((threadId, tabId, reason) => {
-    recorderRef.current.disposeTarget(threadId, tabId);
+  useEffect(() => onBrowserAutomationInterruption((workspaceId, threadId, tabId, reason) => {
+    recorderRef.current.disposeTarget(workspaceId, threadId, tabId);
     for (const dispatch of inFlightRef.current.values()) {
-      if (dispatch.target.threadId !== threadId || dispatch.target.tabId !== tabId) continue;
+      if (dispatch.scope.workspaceId !== workspaceId || dispatch.target.threadId !== threadId || dispatch.target.tabId !== tabId) continue;
       const lease = leaseRef.current;
       if (!lease) continue;
       const key = browserAutomationRequestKey(dispatch.request.requestId, dispatch.request.sequence);
@@ -1781,8 +1797,10 @@ export function BrowserAutomationHost() {
 
   useEffect(() => onBrowserAutomationScopeRelease((release) => {
     const matches = (threadId: string, workspaceId: string): boolean =>
-      release.threadId !== undefined ? threadId === release.threadId : workspaceId === release.workspaceId;
-    if (release.threadId !== undefined) void sessionDriverRef.current?.releaseThread(release.threadId);
+      release.threadId !== undefined
+        ? workspaceId === release.workspaceId && threadId === release.threadId
+        : workspaceId === release.workspaceId;
+    if (release.threadId !== undefined) void sessionDriverRef.current?.releaseThread(release.workspaceId, release.threadId);
     else void sessionDriverRef.current?.releaseWorkspace(release.workspaceId);
     const nextScopes = backgroundScopesRef.current.filter(
       (scope) => !matches(scope.threadId, scope.workspaceId),
@@ -1791,7 +1809,7 @@ export function BrowserAutomationHost() {
       backgroundScopesRef.current = nextScopes;
       setBackgroundScopes(nextScopes);
       useBrowserAutomationStore.getState().setHostedScopeIds(
-        new Set(nextScopes.map((scope) => scope.threadId)),
+        new Set(nextScopes.map((scope) => browserAutomationScopeKey(scope.workspaceId, scope.threadId))),
       );
     }
     for (const tab of persistentWebTabsRef.current.values()) {

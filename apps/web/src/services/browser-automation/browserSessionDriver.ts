@@ -380,10 +380,11 @@ export class BrowserSessionDriver {
   }
 
   /** Settles every tab owned or claimed by one deleted thread. */
-  async releaseThread(threadId: string): Promise<void> {
-    this.clearObservations((observation) => observation.threadId === threadId);
-    this.clearHumanInteractionScopes((scope) => scope.threadId === threadId);
-    await this.releaseSessions((session) => [...session.tabs.values()].some((tab) => tab.target.threadId === threadId));
+  async releaseThread(workspaceId: string, threadId: string): Promise<void> {
+    this.clearObservations((observation) => observation.workspaceId === workspaceId && observation.threadId === threadId);
+    this.clearHumanInteractionScopes((scope) => scope.workspaceId === workspaceId && scope.threadId === threadId);
+    await this.releaseSessions((session) => session.workspaceId === workspaceId &&
+      [...session.tabs.values()].some((tab) => tab.target.threadId === threadId));
   }
 
   /** Settles every tab owned or claimed by one deleted workspace. */

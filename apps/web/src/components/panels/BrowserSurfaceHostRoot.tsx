@@ -27,6 +27,7 @@ export const browserSurfaceHost = new BrowserSurfaceHost({
         onHumanInput: (surfaceIdentity) => {
           if (surfaceIdentity.scope.kind !== "thread") return;
           invalidateBrowserAutomationTargetObservation(
+            surfaceIdentity.workspaceId,
             surfaceIdentity.scope.id,
             surfaceIdentity.tabId,
           );
@@ -38,6 +39,7 @@ export const browserSurfaceHost = new BrowserSurfaceHost({
       title: "Web browser preview",
       onLoad: (surfaceIdentity) => {
         useBrowserAutomationStore.getState().refreshTarget(
+          surfaceIdentity.workspaceId,
           surfaceIdentity.scope.id,
           surfaceIdentity.tabId,
         );

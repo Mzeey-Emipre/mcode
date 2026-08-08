@@ -110,7 +110,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
     const initialViewportRef = useRef(viewport ?? DEFAULT_VIEWPORT_SIZE);
 
     const ensureViewportCoordinator = useCallback((targetGeneration: number) => {
-      const key = browserAutomationTargetKey(threadId, tabId);
+      const key = browserAutomationTargetKey(workspaceId, threadId, tabId);
       const store = useBrowserAutomationStore.getState();
       const existing = store.viewportCoordinators.get(key);
       return getOrCreateViewportCoordinator({
@@ -124,6 +124,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
         nativeHost: () => window.desktopBridge?.preview?.design,
         rendererHost: {
           setViewport: (size, operation, coordinator) => useBrowserAutomationStore.getState().applyViewportIfCurrent(
+            workspaceId,
             threadId,
             tabId,
             coordinator,
@@ -131,6 +132,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
             size,
           ),
           resetViewport: (operation, coordinator) => useBrowserAutomationStore.getState().resetViewportIfCurrent(
+            workspaceId,
             threadId,
             tabId,
             coordinator,
@@ -148,18 +150,20 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
           useBrowserAutomationStore.getState().viewportStateByTarget.get(key)?.confirmed ??
           useBrowserAutomationStore.getState().viewportByTarget.get(key) ?? null,
         onStateChange: (state, coordinator) => useBrowserAutomationStore.getState().setViewportState(
+          workspaceId,
           threadId,
           tabId,
           state,
           coordinator,
         ),
         onCreated: (created) => useBrowserAutomationStore.getState().setViewportCoordinator(
+          workspaceId,
           threadId,
           tabId,
           created,
         ),
       });
-    }, [tabId, threadId]);
+    }, [tabId, threadId, workspaceId]);
 
     const currentSurface = useCallback(() => {
       const state = browserSurfaceHost.getSnapshot(identity);
@@ -213,7 +217,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
     useLayoutEffect(() => {
       useBrowserAutomationStore.getState().registerTarget(workspaceId, threadId, tabId);
       const targetGeneration = useBrowserAutomationStore.getState().liveTargets.get(
-        browserAutomationTargetKey(threadId, tabId),
+        browserAutomationTargetKey(workspaceId, threadId, tabId),
       )?.revision ?? 1;
       ensureViewportCoordinator(targetGeneration);
       const initial = browserSurfaceHost.ensure(identity, {
