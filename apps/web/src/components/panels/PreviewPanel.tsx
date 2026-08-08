@@ -2206,6 +2206,7 @@ export function PreviewPanel({
   const activeWebviewTab = tabs.tabSet?.tabs.find(
     (tab) => tab.id === activeWebviewTabId,
   );
+  const hydratedWebviewTargetRef = useRef<string | null>(null);
   const activeWebviewTabUrl = activeWebviewTab?.url ?? null;
   const activeWebviewSrc =
     webviewRequestedUrlByTab[activeWebviewTabId] ?? activeWebviewTabUrl;
@@ -2282,11 +2283,28 @@ export function PreviewPanel({
   useEffect(() => {
     if (!showWebviewPreview) return;
     if (tabs.tabSet) {
-      if (isEmptyPreviewTabUrl(activeWebviewTabUrl)) {
-        setWebviewPageStatus({ url: null, title: null, favicon: null, phase: "loaded" });
-      }
+      if (hydratedWebviewTargetRef.current === activeBrowserTargetKey) return;
+      hydratedWebviewTargetRef.current = activeBrowserTargetKey;
+      const nextStatus: PreviewPageStatus = isEmptyPreviewTabUrl(activeWebviewTabUrl)
+        ? { url: null, title: null, favicon: null, phase: "loaded" }
+        : {
+            url: activeWebviewTabUrl,
+            title: activeWebviewTab?.title ?? null,
+            favicon: activeWebviewTab?.faviconUrl ?? null,
+            phase: "loaded",
+          };
+      setWebviewPageStatus((status) => (
+        status.url === nextStatus.url &&
+        status.title === nextStatus.title &&
+        status.favicon === nextStatus.favicon &&
+        status.phase === nextStatus.phase &&
+        status.error === undefined
+          ? status
+          : nextStatus
+      ));
       return;
     }
+    hydratedWebviewTargetRef.current = null;
     const stored = bridge.storedUrl.trim();
     if (!stored) {
       setWebviewRequestedUrl(activeWebviewTabId, null);
@@ -2303,6 +2321,7 @@ export function PreviewPanel({
     setWebviewRequestedUrl(activeWebviewTabId, stored);
   }, [
     activeWebviewRef,
+    activeWebviewTab,
     activeWebviewTabUrl,
     activeWebviewTabId,
     bridge.storedUrl,

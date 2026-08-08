@@ -46,6 +46,19 @@ function normaliseChromeField(value: unknown, maxLength: number): string | null 
   return value;
 }
 
+function normaliseChromeUrl(value: unknown): string | null | undefined {
+  if (value === null) return null;
+  if (typeof value !== "string" || value.length > BROWSER_TAB_INFO_STRING_MAX.url) {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  const lower = trimmed.toLowerCase();
+  if (trimmed.length === 0 || lower.startsWith("about:") || lower.startsWith("chrome-error:")) {
+    return null;
+  }
+  return normaliseInitialAddress(trimmed) ?? undefined;
+}
+
 function sendTabsUpdated(win: BrowserWindow, set: BrowserTabSet): void {
   if (win.isDestroyed()) return;
   bumpPerf("stateEmitCalls");
@@ -243,7 +256,7 @@ export function registerTabHandlers(): void {
       const workspaceId = normaliseWorkspaceId(payload?.workspaceId);
       const tabId = normaliseTabId(payload?.tabId);
       const title = normaliseChromeField(payload?.title, BROWSER_TAB_INFO_STRING_MAX.title);
-      const url = normaliseChromeField(payload?.url, BROWSER_TAB_INFO_STRING_MAX.url);
+      const url = normaliseChromeUrl(payload?.url);
       const faviconUrl = normaliseChromeField(payload?.faviconUrl, BROWSER_TAB_INFO_STRING_MAX.faviconUrl);
       if (!tid) return { ok: false, error: "invalid-thread-id" };
       if (!workspaceId) return { ok: false, error: "invalid-workspace-id" };

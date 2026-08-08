@@ -358,6 +358,39 @@ describe("previewTabsStore", () => {
     expect(usePreviewTabsStore.getState().tabSetByScope[SCOPE_KEY]).toBe(tabSet);
   });
 
+  it("updateTabChrome persists explicit null values that clear tab chrome", () => {
+    const { updateChrome } = mockBridge({});
+    const { setTabSet, updateTabChrome } = usePreviewTabsStore.getState();
+    setTabSet(
+      WORKSPACE_ID,
+      SCOPE,
+      set("a", [
+        page("a", {
+          title: "Loaded",
+          url: "https://a.test",
+          faviconUrl: "https://a.test/favicon.ico",
+        }),
+      ]),
+    );
+
+    updateTabChrome(WORKSPACE_ID, SCOPE, "a", {
+      title: null,
+      url: null,
+      favicon: null,
+    });
+
+    expect(usePreviewTabsStore.getState().tabSetByScope[SCOPE_KEY]?.tabs[0]).toMatchObject({
+      title: null,
+      url: null,
+      faviconUrl: null,
+    });
+    expect(updateChrome).toHaveBeenCalledWith(SCOPE, WORKSPACE_ID, "a", {
+      title: null,
+      url: null,
+      faviconUrl: null,
+    });
+  });
+
   it("page actions are no-ops without a desktop bridge", async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (window as any).desktopBridge = undefined;

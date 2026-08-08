@@ -299,9 +299,9 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
         if (tab.id !== tabId) return tab;
         const next = {
           ...tab,
-          title: chrome.title ?? tab.title,
-          url: chrome.url ?? tab.url,
-          faviconUrl: chrome.favicon ?? tab.faviconUrl,
+          title: chrome.title === undefined ? tab.title : chrome.title,
+          url: chrome.url === undefined ? tab.url : chrome.url,
+          faviconUrl: chrome.favicon === undefined ? tab.faviconUrl : chrome.favicon,
         };
         changed =
           next.title !== tab.title ||

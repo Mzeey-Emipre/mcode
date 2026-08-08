@@ -142,6 +142,40 @@ describe("preview tab handlers", () => {
     }));
   });
 
+  it("rejects unsafe renderer-observed URLs and canonicalizes unloaded markers", () => {
+    const listed = invoke<{ activeTabId: string; tabs: Array<{ id: string; url: string | null }> }>(
+      "preview:tabs.list",
+      { workspaceId: "workspace-A", threadId: "thread-A" },
+    );
+    expect(listed.ok).toBe(true);
+    if (!listed.ok) return;
+
+    for (const url of ["file:///sensitive.html", "data:text/html,unsafe"]) {
+      expect(invoke("preview:tabs.updateChrome", {
+        workspaceId: "workspace-A",
+        threadId: "thread-A",
+        tabId: listed.data.activeTabId,
+        title: "Unsafe",
+        url,
+        faviconUrl: null,
+      })).toEqual({ ok: false, error: "invalid-tab-chrome" });
+    }
+
+    expect(invoke("preview:tabs.updateChrome", {
+      workspaceId: "workspace-A",
+      threadId: "thread-A",
+      tabId: listed.data.activeTabId,
+      title: null,
+      url: "about:blank",
+      faviconUrl: null,
+    })).toMatchObject({ ok: true });
+    const refreshed = invoke<{ tabs: Array<{ id: string; url: string | null }> }>(
+      "preview:tabs.list",
+      { workspaceId: "workspace-A", threadId: "thread-A" },
+    );
+    expect(refreshed.ok && refreshed.data.tabs[0]?.url).toBeNull();
+  });
+
   it("closes only the exact workspace-qualified scope", () => {
     invoke("preview:tabs.list", { workspaceId: "workspace-A", threadId: "thread-A" });
     invoke("preview:tabs.list", { workspaceId: "workspace-B", threadId: "thread-A" });
