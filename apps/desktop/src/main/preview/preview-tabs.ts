@@ -13,7 +13,6 @@ import { BrowserWindow, ipcMain } from "electron";
 import { randomUUID } from "node:crypto";
 import {
   BROWSER_TAB_INFO_STRING_MAX,
-  PREVIEW_RENDERING_HOSTS,
   type BrowserTabSet,
   type PreviewRenderingHost,
 } from "@mcode/contracts";
@@ -74,8 +73,7 @@ function sendTabsUpdated(win: BrowserWindow, set: BrowserTabSet): void {
 }
 
 function normaliseRenderingHost(value: unknown): PreviewRenderingHost | null {
-  if (value === undefined) return "webContentsView";
-  return PREVIEW_RENDERING_HOSTS.find((host) => host === value) ?? null;
+  return value === undefined || value === "webview" ? "webview" : null;
 }
 
 function normaliseInitialAddress(value: unknown): string | null | undefined {
@@ -229,8 +227,6 @@ export function registerTabHandlers(): void {
       if (payload?.tabId !== undefined && !requestedTabId) {
         return { ok: false, error: "invalid-tab-id" };
       }
-      const renderingHost = normaliseRenderingHost(payload?.renderingHost);
-      if (!renderingHost) return { ok: false, error: "invalid-rendering-host" };
       const initialAddress = normaliseInitialAddress(payload?.initialAddress);
       if (payload?.initialAddress !== undefined && initialAddress === null) {
         return { ok: false, error: "invalid-initial-address" };
@@ -240,6 +236,11 @@ export function registerTabHandlers(): void {
       const s = getSession(win);
       s.workspaceId = workspaceId;
       const set = ensureThreadTabSet(s, tid);
+      const inheritedHost = set.tabs.find((tab) => tab.id === set.activeTabId)?.renderingHost;
+      const renderingHost = payload?.renderingHost === undefined
+        ? inheritedHost ?? "webview"
+        : normaliseRenderingHost(payload.renderingHost);
+      if (!renderingHost) return { ok: false, error: "invalid-rendering-host" };
       const existingTab = requestedTabId
         ? set.tabs.find((candidate) => candidate.id === requestedTabId)
         : undefined;
@@ -378,7 +379,7 @@ export function registerTabHandlers(): void {
           id: fallbackId,
           threadId: tid,
           view: null,
-          renderingHost: "webContentsView",
+          renderingHost: "webview",
           resumeUrl: null,
           title: null,
           faviconUrl: null,

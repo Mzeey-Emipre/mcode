@@ -429,7 +429,7 @@ describe("BrowserAutomationKernel", () => {
     });
   });
 
-  it("describes a native background tab without renderer adoption", () => {
+  it("does not use a native background tab when renderer adoption is absent", () => {
     const native = new FakeWebContents(9);
     fakePreviewSession.tabsByThread.set("native-thread", {
       threadId: "native-thread",
@@ -437,9 +437,9 @@ describe("BrowserAutomationKernel", () => {
       tabs: [{ id: "native-tab", threadId: "native-thread", renderingHost: "webContentsView", view: { webContents: native } }],
     });
     adoptedWebContents.set(JSON.stringify(["native-thread", "native-tab"]), null);
-    expect(kernel.describeTarget(event(), { threadId: "native-thread", tabId: "native-tab" })).toMatchObject({
-      ok: true,
-      target: { threadId: "native-thread", tabId: "native-tab" },
+    expect(kernel.describeTarget(event(), { threadId: "native-thread", tabId: "native-tab" })).toEqual({
+      ok: false,
+      error: "TAB_UNAVAILABLE",
     });
   });
 

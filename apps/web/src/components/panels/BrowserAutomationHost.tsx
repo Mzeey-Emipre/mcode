@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BROWSER_AUTOMATION_CONTRACT_VERSION,
   BROWSER_AUTOMATION_MAX_PENDING_REQUESTS,
-  BROWSER_TAB_INFO_STRING_MAX,
   BrowserAutomationHostDispatchSchema,
   BrowserAutomationRequestSchema,
   type BrowserAutomationHostDispatch,
@@ -646,82 +645,10 @@ interface AutomationTargetRef {
   readonly tabId: string;
 }
 
-/** Reads bounded same-origin web chrome and returns a safe URL fallback otherwise. */
-export function readPersistentWebTabChrome(
-  frame: HTMLIFrameElement,
-  fallbackUrl: string,
-): { readonly title: string | null; readonly url: string } {
-  try {
-    const frameUrl = new URL(frame.src, window.location.href);
-    if (frameUrl.origin !== window.location.origin) return { title: null, url: fallbackUrl };
-    const document = frame.contentDocument;
-    return {
-      title: document?.title?.slice(0, BROWSER_TAB_INFO_STRING_MAX.title) || null,
-      url: (document?.location?.href || frameUrl.href).slice(0, BROWSER_TAB_INFO_STRING_MAX.url),
-    };
-  } catch {
-    return { title: null, url: fallbackUrl };
-  }
-}
-
-/** Keeps one exact automation PreviewPanel mounted while moving it into its visible dock. */
-function PersistentAutomationWebTab({
-  tab,
-  layout,
-}: {
-  readonly tab: PersistentAutomationWebTab;
-  readonly layout: PersistentSurfaceLayout;
-}) {
-  const activeTabId = usePreviewTabsStore((state) => state.tabSetByScope[previewTabsScopeKey(tab.workspaceId, tab.threadId)]?.activeTabId ?? null);
-  const visible = layout.visible && activeTabId === tab.tabId;
-  useEffect(() => {
-    useBrowserAutomationStore.getState().registerTarget(tab.workspaceId, tab.threadId, tab.tabId);
-    return () => useBrowserAutomationStore.getState().detachTarget(tab.workspaceId, tab.threadId, tab.tabId);
-  }, [tab.tabId, tab.threadId, tab.workspaceId]);
-
-  return (
-    <iframe
-      title="Browser automation page"
-      src={tab.url}
-      data-workspace-id={tab.workspaceId}
-      data-scope-kind="thread"
-      data-scope-id={tab.threadId}
-      data-thread-id={tab.threadId}
-      data-tab-id={tab.tabId}
-      aria-hidden={!visible}
-      inert={!visible ? true : undefined}
-      onLoad={(event) => {
-        const frame = event.currentTarget;
-        const chrome = readPersistentWebTabChrome(frame, tab.url);
-        usePreviewTabsStore.getState().updateTabChrome(tab.workspaceId, tab.threadId, tab.tabId, {
-          title: chrome.title,
-          url: chrome.url,
-          favicon: null,
-        });
-        useBrowserAutomationStore.getState().refreshTarget(tab.workspaceId, tab.threadId, tab.tabId);
-      }}
-      style={{
-        position: "fixed",
-        left: visible ? layout.left : -20_000,
-        top: visible ? layout.top : 0,
-        width: layout.width,
-        height: layout.height,
-        border: 0,
-        pointerEvents: visible ? "auto" : "none",
-        visibility: visible ? "visible" : "hidden",
-        zIndex: visible ? 31 : undefined,
-      }}
-      referrerPolicy="no-referrer"
-    />
-  );
-}
-
 function PersistentAutomationPreviewSurface({
   scope,
-  webTabs,
 }: {
   readonly scope: BackgroundBrowserScope;
-  readonly webTabs: readonly PersistentAutomationWebTab[];
 }) {
   const [layout, setLayout] = useState<PersistentSurfaceLayout>({
     visible: false,
@@ -790,9 +717,6 @@ function PersistentAutomationPreviewSurface({
         workspaceId={scope.workspaceId}
         automationOnly={!layout.visible}
       />
-      {webTabs
-        .filter((tab) => tab.workspaceId === scope.workspaceId && tab.threadId === scope.threadId)
-        .map((tab) => <PersistentAutomationWebTab key={tab.tabId} tab={tab} layout={layout} />)}
     </div>
   );
 }
@@ -1950,7 +1874,6 @@ export function BrowserAutomationHost() {
     <PersistentAutomationPreviewSurface
       key={browserAutomationScopeKey(scope.workspaceId, scope.threadId)}
       scope={scope}
-      webTabs={[...persistentWebTabsRef.current.values()]}
     />
   ));
 }

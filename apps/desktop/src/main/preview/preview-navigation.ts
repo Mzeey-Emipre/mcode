@@ -5,12 +5,13 @@
  * overflow kebab (clear-cookies, clear-cache, get-zoom, set-zoom).
  */
 
-import { BrowserWindow, ipcMain, shell } from "electron";
+import { BrowserWindow, ipcMain, shell, type WebContentsView } from "electron";
 import { logger } from "@mcode/shared";
 import {
   ensureThreadTabSet,
   getActiveTab,
   getSession,
+  getThreadTabSet,
   guestUrlNeedsHttpRestore,
   isAllowedHttpUrl,
   isAllowedPreviewUrl,
@@ -21,7 +22,7 @@ import {
   syncActiveTabFromSession,
 } from "./preview-session.js";
 import { ensureView, hidePreview, mountView, unmountView } from "./preview-lifecycle.js";
-import { type Bounds } from "./preview-session.js";
+import { type Bounds, type PreviewSession } from "./preview-session.js";
 import { bumpPerf } from "./preview-perf.js";
 import {
   resolveLocalFileUrl,
@@ -48,6 +49,17 @@ function clampZoomFactor(factor: number): number {
   const safe = Number.isFinite(factor) ? factor : 1;
   const bounded = Math.min(MAX_ZOOM_FACTOR, Math.max(MIN_ZOOM_FACTOR, safe));
   return Math.round(bounded * 100) / 100;
+}
+
+/** Return the exact active native view without creating a fallback surface. */
+function getActiveNativeView(session: PreviewSession): WebContentsView | null {
+  const threadId = session.lastPreviewThreadId;
+  if (!threadId) return null;
+  const tabSet = getThreadTabSet(session, threadId);
+  const tab = tabSet?.tabs.find((candidate) => candidate.id === tabSet.activeTabId);
+  if (tab?.renderingHost !== "webContentsView") return null;
+  const view = tab.view;
+  return view && !view.webContents.isDestroyed() ? view : null;
 }
 
 /**
@@ -186,6 +198,15 @@ export function registerNavigationHandlers(): void {
       const hintRaw = payload.resumeUrlHint?.trim() ?? "";
       const hint = hintRaw.length > 0 && isAllowedPreviewUrl(hintRaw) ? hintRaw : null;
       const safeHint = await validateResumeUrl(hint);
+      if (tid == null) {
+        hidePreview(win, s);
+        return;
+      }
+      const rendererTab = tid != null ? getActiveTab(s, tid) : null;
+      if (rendererTab?.renderingHost === "webview") {
+        hidePreview(win, s);
+        return;
+      }
 
       // Detach the prior thread's active view BEFORE picking the new one so
       // we never have two views mounted simultaneously.
@@ -283,7 +304,8 @@ export function registerNavigationHandlers(): void {
         return { ok: false, error: "no-bounds" };
       }
 
-      const view = ensureView(win, s);
+      const view = getActiveNativeView(s);
+      if (!view) return { ok: false, error: "native-preview-unavailable" };
       const activeTab = s.lastPreviewThreadId ? getActiveTab(s, s.lastPreviewThreadId) : null;
       applyViewportPresentation(s, s.lastBounds, s.lastPreviewThreadId, activeTab?.id ?? null);
       mountView(win, view);
@@ -302,10 +324,11 @@ export function registerNavigationHandlers(): void {
     const win = BrowserWindow.fromWebContents(_event.sender);
     if (!win || win.isDestroyed()) return false;
     const s = getSession(win);
-    if (!s.view || s.view.webContents.isDestroyed()) return false;
-    if (s.view.webContents.canGoBack()) {
+    const view = getActiveNativeView(s);
+    if (!view) return false;
+    if (view.webContents.canGoBack()) {
       setPreviewLoading(win, s, true);
-      s.view.webContents.goBack();
+      view.webContents.goBack();
       resetIdle(win, s);
       return true;
     }
@@ -316,10 +339,11 @@ export function registerNavigationHandlers(): void {
     const win = BrowserWindow.fromWebContents(_event.sender);
     if (!win || win.isDestroyed()) return false;
     const s = getSession(win);
-    if (!s.view || s.view.webContents.isDestroyed()) return false;
-    if (s.view.webContents.canGoForward()) {
+    const view = getActiveNativeView(s);
+    if (!view) return false;
+    if (view.webContents.canGoForward()) {
       setPreviewLoading(win, s, true);
-      s.view.webContents.goForward();
+      view.webContents.goForward();
       resetIdle(win, s);
       return true;
     }
@@ -330,26 +354,10 @@ export function registerNavigationHandlers(): void {
     const win = BrowserWindow.fromWebContents(_event.sender);
     if (!win || win.isDestroyed()) return;
     const s = getSession(win);
-    if (s.view && !s.view.webContents.isDestroyed()) {
-      setPreviewLoading(win, s, true);
-      s.view.webContents.reload();
-      resetIdle(win, s);
-      return;
-    }
-    // The view was torn down (e.g. a renderer crash surfaced as an error panel,
-    // and the crash-cooldown skipped auto-recovery). Retry must re-create the
-    // view rather than no-op. A fresh tab can crash before it ever navigated, so
-    // resumePreviewUrl may be null; fall back to a blank guest so Retry still
-    // remounts a working surface instead of leaving the error panel stuck.
-    if (!s.lastBounds) return;
-    const url = s.resumePreviewUrl ?? "about:blank";
-    const view = ensureView(win, s);
-    const activeTab = s.lastPreviewThreadId ? getActiveTab(s, s.lastPreviewThreadId) : null;
-    applyViewportPresentation(s, s.lastBounds, s.lastPreviewThreadId, activeTab?.id ?? null);
-    mountView(win, view);
+    const view = getActiveNativeView(s);
+    if (!view) return;
     setPreviewLoading(win, s, true);
-    trustMainProcessFileNavigation(s, url);
-    void view.webContents.loadURL(url);
+    view.webContents.reload();
     resetIdle(win, s);
   });
 
@@ -357,25 +365,10 @@ export function registerNavigationHandlers(): void {
     const win = BrowserWindow.fromWebContents(_event.sender);
     if (!win || win.isDestroyed()) return;
     const s = getSession(win);
-    if (s.view && !s.view.webContents.isDestroyed()) {
-      setPreviewLoading(win, s, true);
-      // Hard reload: drop the disk/memory cache so the guest re-fetches every
-      // resource. This is the only difference from preview:reload.
-      s.view.webContents.reloadIgnoringCache();
-      resetIdle(win, s);
-      return;
-    }
-    // View torn down (renderer crash → error panel): recreate and load fresh.
-    // A brand-new load already bypasses the cache, so it honours the intent.
-    if (!s.lastBounds) return;
-    const url = s.resumePreviewUrl ?? "about:blank";
-    const view = ensureView(win, s);
-    const activeTab = s.lastPreviewThreadId ? getActiveTab(s, s.lastPreviewThreadId) : null;
-    applyViewportPresentation(s, s.lastBounds, s.lastPreviewThreadId, activeTab?.id ?? null);
-    mountView(win, view);
+    const view = getActiveNativeView(s);
+    if (!view) return;
     setPreviewLoading(win, s, true);
-    trustMainProcessFileNavigation(s, url);
-    void view.webContents.loadURL(url);
+    view.webContents.reloadIgnoringCache();
     resetIdle(win, s);
   });
 
@@ -395,17 +388,19 @@ export function registerNavigationHandlers(): void {
     const win = BrowserWindow.fromWebContents(_event.sender);
     if (!win || win.isDestroyed()) return 1;
     const s = getSession(win);
-    if (!s.view || s.view.webContents.isDestroyed()) return 1;
-    return clampZoomFactor(s.view.webContents.getZoomFactor());
+    const view = getActiveNativeView(s);
+    if (!view) return 1;
+    return clampZoomFactor(view.webContents.getZoomFactor());
   });
 
   ipcMain.handle("preview:set-zoom", (_event, factor: number): number => {
     const win = BrowserWindow.fromWebContents(_event.sender);
     if (!win || win.isDestroyed()) return 1;
     const s = getSession(win);
-    if (!s.view || s.view.webContents.isDestroyed()) return 1;
+    const view = getActiveNativeView(s);
+    if (!view) return 1;
     const clamped = clampZoomFactor(factor);
-    s.view.webContents.setZoomFactor(clamped);
+    view.webContents.setZoomFactor(clamped);
     return clamped;
   });
 
@@ -413,8 +408,9 @@ export function registerNavigationHandlers(): void {
     const win = BrowserWindow.fromWebContents(_event.sender);
     if (!win || win.isDestroyed()) return;
     const s = getSession(win);
-    if (!s.view || s.view.webContents.isDestroyed()) return;
-    const current = s.view.webContents.getURL();
+    const view = getActiveNativeView(s);
+    if (!view) return;
+    const current = view.webContents.getURL();
     if (isAllowedHttpUrl(current)) {
       void shell.openExternal(current).catch(() => {
         /* shell may reject the URL */
@@ -426,12 +422,13 @@ export function registerNavigationHandlers(): void {
     const win = BrowserWindow.fromWebContents(_event.sender);
     if (!win || win.isDestroyed()) return { canGoBack: false, canGoForward: false };
     const s = getSession(win);
-    if (!s.view || s.view.webContents.isDestroyed()) {
+    const view = getActiveNativeView(s);
+    if (!view) {
       return { canGoBack: false, canGoForward: false };
     }
     return {
-      canGoBack: s.view.webContents.canGoBack(),
-      canGoForward: s.view.webContents.canGoForward(),
+      canGoBack: view.webContents.canGoBack(),
+      canGoForward: view.webContents.canGoForward(),
     };
   });
 }

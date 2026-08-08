@@ -74,6 +74,7 @@ function mockTabList(activeUrl: string | null) {
 describe("openUrlInPreview", () => {
   let mockOpen: ReturnType<typeof vi.fn>;
   let mockNavigate: ReturnType<typeof vi.fn>;
+  let mockResolveNavigation: ReturnType<typeof vi.fn>;
   let showRightPanel: ReturnType<typeof vi.fn>;
   let setRightPanelTab: ReturnType<typeof vi.fn>;
   let setPreviewUrlForThread: ReturnType<typeof vi.fn>;
@@ -82,6 +83,7 @@ describe("openUrlInPreview", () => {
     vi.useFakeTimers();
     mockOpen = vi.fn().mockResolvedValue({ ok: true, data: { tabId: "tab-2", tabs: {} } });
     mockNavigate = vi.fn().mockResolvedValue({ ok: true });
+    mockResolveNavigation = vi.fn(async (url: string) => ({ ok: true, url }));
     showRightPanel = vi.fn();
     setRightPanelTab = vi.fn();
     setPreviewUrlForThread = vi.fn();
@@ -104,6 +106,7 @@ describe("openUrlInPreview", () => {
       preview: {
         tabs: { open: mockOpen, list: mockTabList("https://example.com") },
         navigate: mockNavigate,
+        resolveNavigation: mockResolveNavigation,
       },
     } as unknown as typeof window.desktopBridge;
   });
@@ -124,9 +127,12 @@ describe("openUrlInPreview", () => {
 
     expect(showRightPanel).toHaveBeenCalledWith("ws-1", "thread-1");
     expect(setRightPanelTab).toHaveBeenCalledWith("ws-1", "thread-1", "preview");
-    expect(mockOpen).toHaveBeenCalledWith("thread-1", "ws-1", { activate: true });
-    expect(mockNavigate).toHaveBeenCalledWith("https://example.com/pr/1", "/tmp/workspace");
-    expect(setPreviewUrlForThread).not.toHaveBeenCalled();
+    expect(mockOpen).toHaveBeenCalledWith("thread-1", "ws-1", {
+      activate: true,
+      renderingHost: "webview",
+    });
+    expect(mockNavigate).not.toHaveBeenCalled();
+    expect(setPreviewUrlForThread).toHaveBeenCalledWith("thread-1", "https://example.com/pr/1");
   });
 
   it("reuses an empty active tab instead of creating another", async () => {
@@ -134,6 +140,7 @@ describe("openUrlInPreview", () => {
       preview: {
         tabs: { open: mockOpen, list: mockTabList(null) },
         navigate: mockNavigate,
+        resolveNavigation: mockResolveNavigation,
       },
     } as unknown as typeof window.desktopBridge;
 
@@ -142,7 +149,7 @@ describe("openUrlInPreview", () => {
 
     expect(mockOpen).not.toHaveBeenCalled();
     expect(setPreviewUrlForThread).toHaveBeenCalledWith("thread-1", "https://example.com/pr/1");
-    expect(mockNavigate).toHaveBeenCalledWith("https://example.com/pr/1", "/tmp/workspace");
+    expect(mockNavigate).not.toHaveBeenCalled();
   });
 
   it("navigates active tab without creating when newTab is false", async () => {
@@ -155,7 +162,7 @@ describe("openUrlInPreview", () => {
 
     expect(mockOpen).not.toHaveBeenCalled();
     expect(setPreviewUrlForThread).toHaveBeenCalledWith("thread-1", "https://example.com");
-    expect(mockNavigate).toHaveBeenCalled();
+    expect(mockNavigate).not.toHaveBeenCalled();
   });
 
   it("falls back to window.open when preview bridge is missing", () => {
@@ -169,19 +176,32 @@ describe("openUrlInPreview", () => {
     vi.unstubAllGlobals();
   });
 
-  it("stores URL when navigate rejects", async () => {
-    mockNavigate.mockRejectedValue(new Error("no-bounds"));
+  it("does not change the hosted surface when URL resolution fails", async () => {
+    mockResolveNavigation.mockResolvedValue({ ok: false, error: "invalid-url" });
     window.desktopBridge = {
       preview: {
         tabs: { open: mockOpen, list: mockTabList("https://example.com") },
         navigate: mockNavigate,
+        resolveNavigation: mockResolveNavigation,
       },
     } as unknown as typeof window.desktopBridge;
 
     openUrlInPreview({ url: "https://example.com", threadId: "thread-1" });
     await vi.runAllTimersAsync();
 
-    expect(setPreviewUrlForThread).toHaveBeenCalledWith("thread-1", "https://example.com");
+    expect(mockOpen).not.toHaveBeenCalled();
+    expect(setPreviewUrlForThread).not.toHaveBeenCalled();
+  });
+
+  it("does not navigate the active tab when exact new-tab creation fails", async () => {
+    mockOpen.mockResolvedValue({ ok: false, error: "tab-unavailable" });
+
+    openUrlInPreview({ url: "https://example.com/next", threadId: "thread-1" });
+    await vi.runAllTimersAsync();
+
+    expect(mockOpen).toHaveBeenCalled();
+    expect(setPreviewUrlForThread).not.toHaveBeenCalled();
+    expect(mockNavigate).not.toHaveBeenCalled();
   });
 });
 
@@ -198,6 +218,7 @@ describe("openGitHubUrl", () => {
           list: mockTabList("https://github.com/org/repo/pull/1"),
         },
         navigate: vi.fn().mockResolvedValue({ ok: true }),
+        resolveNavigation: vi.fn(async (url: string) => ({ ok: true, url })),
       },
     } as unknown as typeof window.desktopBridge;
 
