@@ -673,6 +673,17 @@ The server handles SIGTERM with a five-step shutdown sequence:
 4. Shut down the terminal service (kills all PTYs)
 5. Close the database connection
 
+### 9.5 Browser surfaces
+
+One `BrowserSurfaceHost` exists in each renderer window. It owns live Browser
+pages independently of panel and thread component lifetimes. Electron surfaces
+use renderer-owned `<webview>` elements. Web surfaces use iframes.
+
+Electron main validates adoption, navigation, permissions, capture, and browser
+automation through typed generation-bound adapters. The renderer host owns page
+placement, visibility, semantic page state, and final DOM release. There is no
+runtime host switch or fallback.
+
 ## 10. Web Transport Layer
 
 ### 10.1 Transport Initialization

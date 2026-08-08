@@ -1,8 +1,16 @@
 ---
-status: accepted
+status: superseded
 ---
 
 # Browser preview rendering host is switchable behind a hidden setting
+
+Status: Superseded
+
+Issue #1181 superseded this temporary migration decision. `BrowserSurfaceHost`
+is now the only runtime host. Electron uses renderer-owned `<webview>` elements,
+and the web runtime uses iframes. Mcode no longer has a host switch or fallback.
+
+The remaining text records the temporary migration decision.
 
 ## Context
 

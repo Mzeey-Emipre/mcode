@@ -18,7 +18,7 @@ export interface PendingAttachment {
   sizeBytes: number;
   previewUrl: string;
   filePath: string | null;
-  /** Structured BrowserView preview context bundled with PNG references from desktop. */
+  /** Structured Browser preview context bundled with PNG references from desktop. */
   browserCapture?: McodeBrowserCapture;
   /** When true, only structured `browserCapture` is sent (no image file). */
   contextOnly?: boolean;

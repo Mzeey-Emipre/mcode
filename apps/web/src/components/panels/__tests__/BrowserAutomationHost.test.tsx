@@ -1609,7 +1609,6 @@ describe("BrowserAutomationHost", () => {
       expect(execute).toHaveBeenCalledOnce();
       expect(createTab).toHaveBeenCalledWith("thread-1", "workspace-1", {
         activate: false,
-        renderingHost: "webview",
         tabId: "cold-tab",
       });
       expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledWith(

@@ -1,9 +1,9 @@
 /**
- * Shared session state types and accessors for the embedded preview WebContentsView.
+ * Shared session state types and accessors for renderer-owned Preview surfaces.
  * All other preview modules import from here rather than maintaining their own state.
  */
 
-import { BrowserWindow, WebContentsView, type WebContents } from "electron";
+import { BrowserWindow, type WebContents } from "electron";
 import { randomUUID } from "node:crypto";
 import type {
   AttachmentMeta,
@@ -11,12 +11,6 @@ import type {
   BrowserTabSet,
   McodeBrowserCaptureV2,
   PreviewPageStatus,
-  PreviewRenderingHost,
-} from "@mcode/contracts";
-import {
-  BROWSER_AUTOMATION_VIEWPORT_CANVAS_PADDING_PX,
-  resolveBrowserAutomationViewportPresentationScale,
-  type BrowserAutomationViewportPresentation,
 } from "@mcode/contracts";
 import {
   pageStatusReducer,
@@ -24,7 +18,6 @@ import {
   type PageStatusEvent,
 } from "./page-status-reducer.js";
 import { bumpPerf } from "./preview-perf.js";
-import { applyPreviewViewportEmulation } from "../preview-device-emulation.js";
 
 /**
  * Result of a picture-reference capture; defined here so PreviewSession can reference
@@ -34,33 +27,20 @@ export type CaptureFinishResult =
   | { ok: true; meta: AttachmentMeta; previewBytes: Uint8Array; capture: McodeBrowserCaptureV2 }
   | { ok: false; error: string };
 
-/** CSS-pixel rectangle used for WebContentsView bounds and capture regions. */
+/** CSS-pixel rectangle used for Preview layout and capture regions. */
 export type Bounds = { x: number; y: number; width: number; height: number };
 
-/** Presentation mode used when a confirmed CSS viewport is shown in the panel. */
-export type ViewportPresentation = BrowserAutomationViewportPresentation;
-
 /**
- * Per-tab record held inside a thread's tab set. Phase A keeps a single backing
- * WebContentsView per session (see {@link PreviewSession.view}), so `view` here is
- * non-null only on the currently-active tab. Cold/inactive tabs hold the URL
- * needed to re-create the view when re-activated in Phase A.
+ * Per-tab record held inside a thread's tab set.
  */
 export interface TabState {
   id: string;
   threadId: string;
-  view: WebContentsView | null;
-  /** Surface that owns this tab's live document. */
-  renderingHost: PreviewRenderingHost;
   resumeUrl: string | null;
   title: string | null;
   faviconUrl: string | null;
   /** Epoch ms when this tab was last activated. Drives memory-saver LRU ordering (ADR 0002). */
   lastActiveAt: number;
-  /** Latest viewport target generation admitted while this tab remains live. */
-  viewportTargetGeneration: number | null;
-  /** Latest viewport operation generation admitted for the current target generation. */
-  viewportOperationGeneration: number | null;
   /** Current renderer-owned guest generation, or null while the tab is cold. */
   rendererSurfaceGeneration?: number | null;
   /**
@@ -99,33 +79,20 @@ export function getThreadTabSet(
 }
 
 /**
- * Per-window state for the embedded preview WebContentsView.
+ * Per-window state for renderer-owned Preview surfaces.
  * One entry is created lazily per BrowserWindow id and removed when the window closes.
  */
 export interface PreviewSession {
-  view: WebContentsView | null;
-  idleTimer: NodeJS.Timeout | null;
   /** Recurring sweep timer that evicts idle background tabs while the panel is visible. */
   discardSweepTimer: NodeJS.Timeout | null;
   /** One-shot timer scheduled when the panel hides; trims the warm set unless cancelled (hysteresis). */
   discardHiddenTimer: NodeJS.Timeout | null;
   /** True while a discard sweep is mid-flight; prevents overlapping async sweeps. */
   discardSweepInProgress: boolean;
-  /** Last shell-reported bounds so navigate can attach the view before the next sync tick. */
+  /** Last shell-reported bounds used by responsive viewport presentation. */
   lastBounds: Bounds | null;
-  /**
-   * Last loaded http(s) URL before the view was torn down. New WebContentsViews start blank;
-   * sync restores this so closing and reopening the preview panel keeps the page.
-   */
+  /** Last allowed page URL for the active Preview tab. */
   resumePreviewUrl: string | null;
-  /** Key from the last insertCSS call; cleared when the guest navigates or the view is destroyed. */
-  scrollbarCssKey: string | null;
-  /**
-   * Deprecated since the in-guest region-capture port; kept for backward
-   * compatibility with any external code that still reads the field. Both
-   * region and element-pick now run entirely inside the guest WebContents.
-   */
-  selectionOverlay: BrowserWindow | null;
   overlayPending:
     | {
         mode: "region" | "element";
@@ -140,9 +107,7 @@ export interface PreviewSession {
    * shared state via executeJavaScript to detect commit / cancel. Null when no
    * element pick is in flight.
    *
-   * Avoids the Electron-on-Windows compositing bug where a child
-   * BrowserWindow with `transparent: true` over a `WebContentsView` paints
-   * opaque (black) because DWM cannot blend the two GPU surfaces.
+   * The in-page picker keeps capture bound to the exact adopted guest.
    */
   elementPickPollTimer: NodeJS.Timeout | null;
   /**
@@ -162,10 +127,6 @@ export interface PreviewSession {
   lastPreviewThreadId: string | null;
   /** Active workspace id from the renderer; scopes spill files under getMcodeDir(). */
   workspaceId: string | null;
-  /** Renderer-confirmed responsive viewport dimensions by exact thread/tab target. */
-  viewportAppliedByTarget: Map<string, { width: number; height: number }>;
-  /** Presentation mode for each exact responsive viewport target. */
-  viewportPresentationByTarget: Map<string, ViewportPresentation>;
   /** Favicon URLs from the last page-favicon-updated event. */
   lastFavicons: string[];
   /** Timestamp of the last renderer crash auto-recovery; used to rate-limit retries. */
@@ -176,9 +137,7 @@ export interface PreviewSession {
    */
   trustedFileNavigationBudget: number;
   /**
-   * Per-thread tab sets. Phase A: each thread has at least one synthetic tab whose
-   * `view` mirrors {@link PreviewSession.view} when that thread is active. Inactive
-   * threads' tabs carry only the resume URL/title/favicon needed to restore them.
+   * Per-thread tab sets with bounded recovery metadata for cold surfaces.
    */
   tabsByThread: Map<string, ThreadTabSet>;
   /** Single source of truth for the active tab's page chrome, emitted on `preview:page-status`. */
@@ -195,15 +154,11 @@ export function getSession(win: BrowserWindow): PreviewSession {
   let s = sessions.get(win.id);
   if (!s) {
     s = {
-      view: null,
-      idleTimer: null,
       discardSweepTimer: null,
       discardHiddenTimer: null,
       discardSweepInProgress: false,
       lastBounds: null,
       resumePreviewUrl: null,
-      scrollbarCssKey: null,
-      selectionOverlay: null,
       overlayPending: null,
       elementPickPollTimer: null,
       regionPollTimer: null,
@@ -212,8 +167,6 @@ export function getSession(win: BrowserWindow): PreviewSession {
       failedRequestBuffer: [],
       lastPreviewThreadId: null,
       workspaceId: null,
-      viewportAppliedByTarget: new Map(),
-      viewportPresentationByTarget: new Map(),
       lastFavicons: [],
       lastCrashRecoveryAt: 0,
       trustedFileNavigationBudget: 0,
@@ -240,14 +193,10 @@ export function ensureThreadTabSet(s: PreviewSession, threadId: string): ThreadT
     const firstTab: TabState = {
       id: tabId,
       threadId,
-      view: isActiveThread ? s.view : null,
-      renderingHost: "webview",
       resumeUrl: isActiveThread ? s.resumePreviewUrl : null,
       title: null,
       faviconUrl: isActiveThread ? (s.lastFavicons[0] ?? null) : null,
       lastActiveAt: Date.now(),
-      viewportTargetGeneration: null,
-      viewportOperationGeneration: null,
     };
     set = { threadId, tabs: [firstTab], activeTabId: tabId };
     s.tabsByThread.set(scopeKey, set);
@@ -266,130 +215,16 @@ export function getActiveTab(s: PreviewSession, threadId: string): TabState {
     const tab: TabState = {
       id,
       threadId,
-      view: null,
-      renderingHost: "webview",
       resumeUrl: null,
       title: null,
       faviconUrl: null,
       lastActiveAt: Date.now(),
-      viewportTargetGeneration: null,
-      viewportOperationGeneration: null,
     };
     set.tabs.push(tab);
     set.activeTabId = id;
     return tab;
   }
   return active;
-}
-
-/** Stable key for one native preview target's viewport state. */
-export function viewportTargetKey(threadId: string, tabId: string): string {
-  return JSON.stringify([threadId, tabId]);
-}
-
-/**
- * Computes the native presentation bounds for one confirmed CSS viewport.
- * Device emulation scales the guest content while its fixed CSS viewport stays
- * independent from the surrounding panel size.
- */
-export function viewportBoundsForTarget(
-  s: PreviewSession,
-  panel: Bounds,
-  threadId: string | null,
-  tabId: string | null,
-): { bounds: Bounds; scale: number } {
-  if (!threadId || !tabId) return { bounds: panel, scale: 1 };
-  const key = viewportTargetKey(threadId, tabId);
-  const viewport = s.viewportAppliedByTarget.get(key);
-  if (!viewport) return { bounds: panel, scale: 1 };
-  const presentation = s.viewportPresentationByTarget.get(key) ?? "fit";
-  const fitWidth = Math.max(0, panel.width - BROWSER_AUTOMATION_VIEWPORT_CANVAS_PADDING_PX);
-  const fitHeight = Math.max(0, panel.height - BROWSER_AUTOMATION_VIEWPORT_CANVAS_PADDING_PX);
-  const fixedScale = resolveBrowserAutomationViewportPresentationScale(presentation);
-  const rawScale = fixedScale ?? Math.min(fitWidth / viewport.width, fitHeight / viewport.height);
-  const scale = fixedScale ??
-    Math.min(1.25, Math.max(0.2, Number.isFinite(rawScale) && rawScale > 0 ? rawScale : 0.2));
-  const width = Math.max(1, Math.round(viewport.width * scale));
-  const height = Math.max(1, Math.round(viewport.height * scale));
-  return {
-    bounds: {
-      x: panel.x + Math.floor((panel.width - width) / 2),
-      y: panel.y + Math.floor((panel.height - height) / 2),
-      width,
-      height,
-    },
-    scale,
-  };
-}
-
-function hasPositiveBounds(bounds: Bounds | null): bounds is Bounds {
-  return bounds !== null &&
-    Number.isFinite(bounds.x) &&
-    Number.isFinite(bounds.y) &&
-    Number.isFinite(bounds.width) &&
-    Number.isFinite(bounds.height) &&
-    bounds.width > 0 &&
-    bounds.height > 0;
-}
-
-/**
- * Returns positive-size bounds fully outside the window content area.
- * CDP captures the native view directly, so the warm target stays mounted
- * without covering the app shell or receiving pointer input.
- */
-export function backgroundBoundsForTarget(
-  win: BrowserWindow,
-  s: PreviewSession,
-  threadId: string | null,
-  tabId: string | null,
-): Bounds | null {
-  const contentBounds = win.getContentBounds();
-  if (
-    !Number.isFinite(contentBounds.width) ||
-    !Number.isFinite(contentBounds.height) ||
-    contentBounds.width <= 0 ||
-    contentBounds.height <= 0
-  ) {
-    return null;
-  }
-  const panelBounds = hasPositiveBounds(s.lastBounds)
-    ? s.lastBounds
-    : {
-        x: 0,
-        y: 0,
-        width: contentBounds.width,
-        height: contentBounds.height,
-      };
-  if (!hasPositiveBounds(panelBounds)) return null;
-  const targetBounds = viewportBoundsForTarget(s, panelBounds, threadId, tabId).bounds;
-  return {
-    x: -targetBounds.width - 1,
-    y: -targetBounds.height - 1,
-    width: targetBounds.width,
-    height: targetBounds.height,
-  };
-}
-
-/** Apply the current target presentation to the active native view. */
-export function applyViewportPresentation(
-  s: PreviewSession,
-  panel: Bounds,
-  threadId: string | null,
-  tabId: string | null,
-  updateBounds = true,
-): { bounds: Bounds; scale: number } {
-  const presentation = viewportBoundsForTarget(s, panel, threadId, tabId);
-  if (s.view && !s.view.webContents.isDestroyed()) {
-    const key = threadId && tabId ? viewportTargetKey(threadId, tabId) : null;
-    const viewport = key ? s.viewportAppliedByTarget.get(key) : undefined;
-    applyPreviewViewportEmulation(s.view.webContents, {
-      active: viewport !== undefined,
-      cssViewport: viewport ?? panel,
-      scale: presentation.scale,
-    });
-    if (updateBounds) s.view.setBounds(presentation.bounds);
-  }
-  return presentation;
 }
 
 /** Serializable view of a thread's tab set for IPC and renderer reconciliation. */
@@ -401,7 +236,7 @@ export function toBrowserTabSet(s: PreviewSession, threadId: string): BrowserTab
     title: t.title,
     url: t.resumeUrl,
     faviconUrl: t.faviconUrl,
-    warm: (t.view !== null && !t.view.webContents.isDestroyed()) || t.rendererSurfaceGeneration != null,
+    warm: t.rendererSurfaceGeneration != null,
     active: t.id === set.activeTabId,
   }));
   return {
@@ -410,25 +245,6 @@ export function toBrowserTabSet(s: PreviewSession, threadId: string): BrowserTab
     tabs,
   };
 }
-
-/**
- * Reflects the session's active single-view state onto the given thread's
- * active tab. Called by navigation/lifecycle code after URL or favicon changes
- * so {@link toBrowserTabSet} returns fresh data.
- */
-export function syncActiveTabFromSession(s: PreviewSession): void {
-  const threadId = s.lastPreviewThreadId;
-  if (!threadId) return;
-  const tab = getActiveTab(s, threadId);
-  tab.view = s.view;
-  tab.resumeUrl = s.resumePreviewUrl;
-  tab.faviconUrl = s.lastFavicons[0] ?? null;
-  if (s.view && !s.view.webContents.isDestroyed()) {
-    const t = s.view.webContents.getTitle();
-    tab.title = t && t.length > 0 ? t : tab.title;
-  }
-}
-
 /** Cancels both memory-saver discard timers (sweep interval + hidden one-shot). */
 export function clearDiscardTimers(s: PreviewSession): void {
   if (s.discardSweepTimer) {
@@ -439,21 +255,6 @@ export function clearDiscardTimers(s: PreviewSession): void {
     clearTimeout(s.discardHiddenTimer);
     s.discardHiddenTimer = null;
   }
-}
-
-/**
- * Cancels the idle teardown timer on the given session.
- */
-export function clearIdle(s: PreviewSession): void {
-  if (s.idleTimer) {
-    clearTimeout(s.idleTimer);
-    s.idleTimer = null;
-  }
-}
-
-/** No-op: idle teardown removed (the React shell parks the view on unmount). */
-export function resetIdle(_win: BrowserWindow, s: PreviewSession): void {
-  clearIdle(s);
 }
 
 /**
@@ -523,9 +324,7 @@ function pageStatusEqual(a: PreviewPageStatus, b: PreviewPageStatus): boolean {
 }
 
 /**
- * Returns true when the URL is a valid http or https URL.
- * Moved here from preview-navigation to break the circular dependency between
- * preview-lifecycle (imports isAllowedHttpUrl) and preview-navigation (imports ensureView).
+ * Returns true when the URL is a valid HTTP or HTTPS URL.
  */
 export function isAllowedHttpUrl(url: string): boolean {
   try {
@@ -536,7 +335,7 @@ export function isAllowedHttpUrl(url: string): boolean {
   }
 }
 
-/** Accepts http, https, and file URLs for the preview WebContentsView. */
+/** Accepts http, https, and file URLs for a Preview surface. */
 export function isAllowedPreviewUrl(url: string): boolean {
   try {
     const u = new URL(url);
@@ -544,16 +343,4 @@ export function isAllowedPreviewUrl(url: string): boolean {
   } catch {
     return false;
   }
-}
-
-/**
- * True when the guest has no real document loaded yet (fresh view or error).
- * Moved here alongside isAllowedHttpUrl to keep URL utilities together.
- */
-export function guestUrlNeedsHttpRestore(url: string): boolean {
-  if (url.length === 0) return true;
-  if (url === "about:blank") return true;
-  if (url.startsWith("about:")) return true;
-  if (url.startsWith("chrome-error:")) return true;
-  return false;
 }

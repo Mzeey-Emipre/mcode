@@ -360,7 +360,7 @@ describe("browser automation renderer scope", () => {
       target: { threadId, tabId },
       initial: { width: 1280, height: 800 },
       targetGeneration: target.revision,
-      rendererHost: {
+      surface: {
         setViewport: (size, operation, currentCoordinator) => {
           lateWrite = () => store.applyViewportIfCurrent(
             workspaceId,

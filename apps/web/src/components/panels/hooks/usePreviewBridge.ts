@@ -7,7 +7,6 @@ import {
 } from "react";
 import type { PreviewPageStatus } from "@mcode/contracts";
 import { useDiffStore } from "@/stores/diffStore";
-import { usePreviewSuppressionStore } from "@/stores/previewSuppressionStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { resolveScopeBasePath } from "@/lib/resolve-scope-path";
 import type { PreviewResolveNavigationResult } from "@/transport/desktop-bridge";
@@ -35,10 +34,8 @@ export interface UsePreviewBridgeOptions {
   readonly threadId: string;
   /** Active workspace id; used to resolve relative file paths and scope spill files. */
   readonly workspaceId?: string | null;
-  /** Ref to the DOM element whose bounds are synced to the native BrowserView. */
+  /** Ref to the DOM element whose bounds define Preview visibility and layout. */
   readonly surfaceRef: RefObject<HTMLDivElement | null>;
-  /** Force the native preview surface hidden while another renderer owns it. */
-  readonly forceHidden?: boolean;
   /** Disable every global native-preview subscription for automation-only webviews. */
   readonly automationOnly?: boolean;
 }
@@ -60,7 +57,7 @@ export interface PreviewBridgeState {
   readonly pageStatus: PreviewPageStatus;
   /** Persisted URL for the current thread (Zustand store). */
   readonly storedUrl: string;
-  /** Push current bounds and visibility to the native BrowserView. */
+  /** Push current bounds and visibility to the desktop Preview policy. */
   readonly pushSync: (visible: boolean) => Promise<void>;
   /** Refresh navigation state (canGoBack / canGoForward) from IPC. */
   readonly refreshNav: () => Promise<void>;
@@ -78,7 +75,7 @@ export interface PreviewBridgeState {
   /** Set the guest's zoom factor; resolves to the clamped factor applied. */
   readonly onSetZoom: (factor: number) => Promise<number>;
   readonly onOpenExternal: () => Promise<void>;
-  /** Resolve user input to a safe preview URL without loading the native view. */
+  /** Resolve user input to a safe preview URL before loading the Browser page. */
   readonly resolveNavigation: (url: string) => Promise<PreviewResolveNavigationResult>;
   /** Navigate the preview to the given URL or file path. */
   readonly onNavigate: (url: string) => void;
@@ -94,7 +91,6 @@ export function usePreviewBridge({
   threadId,
   workspaceId,
   surfaceRef,
-  forceHidden = false,
   automationOnly = false,
 }: UsePreviewBridgeOptions): PreviewBridgeState {
   const [inputUrl, setInputUrl] = useState("");
@@ -110,13 +106,6 @@ export function usePreviewBridge({
   const previewLoading = pageStatus.phase === "loading";
   const pageTitle = pageStatus.title;
   const faviconUrl = pageStatus.favicon;
-
-  // Approach A seam: while the page is in an error phase we hide the native
-  // WebContentsView (which paints above all HTML) so the in-chrome HTML error
-  // panel is visible. pushSync reads this ref to force visible:false; the
-  // phase-change effect below re-syncs on every transition into/out of error.
-  const phaseRef = useRef(pageStatus.phase);
-  phaseRef.current = pageStatus.phase;
 
   // Relative file paths typed in the omnibox resolve against the scope's local
   // checkout: the workspace root when threadless or a direct thread, the
@@ -142,10 +131,9 @@ export function usePreviewBridge({
     setNavError(null);
   }, [threadId, storedUrl]);
 
-  // Notify the native layer whenever the owning thread changes. The
+  // Notify the desktop policy whenever the owning thread changes. The
   // ResizeObserver effect (primary sync driver) has empty deps and only fires
-  // on layout changes — a thread switch with identical panel bounds would
-  // otherwise leave the previous thread's WebContentsView visible.
+  // on layout changes, so an equal-size thread switch needs an explicit sync.
   useEffect(() => {
     void pushSyncRef.current(true);
   }, [threadId]);
@@ -166,20 +154,12 @@ export function usePreviewBridge({
       if (!preview) return;
       const el = surfaceRef.current;
       const hint = storedUrlRef.current.trim() || null;
-      // Suppression (overlay open) and the error panel both force the native
-      // view hidden regardless of what the caller asked for, so stray
-      // pushSync(true) calls (ResizeObserver, thread switch) cannot pop the
-      // view back above an open overlay.
-      const suppressed = !forceHidden && usePreviewSuppressionStore.getState().count > 0;
-      const effectiveVisible =
-        visible && !forceHidden && !suppressed && phaseRef.current !== "error";
       if (!el) {
         await preview.sync({
           visible: false,
           bounds: null,
           threadId,
           resumeUrlHint: hint,
-          ...(forceHidden ? { hideReason: "renderer-webview" as const } : {}),
           workspaceId: workspaceId ?? null,
         });
         return;
@@ -191,13 +171,12 @@ export function usePreviewBridge({
         width: Math.round(r.width),
         height: Math.round(r.height),
       };
-      if (!effectiveVisible) {
+      if (!visible) {
         await preview.sync({
           visible: false,
           bounds,
           threadId,
           resumeUrlHint: hint,
-          ...(forceHidden ? { hideReason: "renderer-webview" as const } : {}),
           workspaceId: workspaceId ?? null,
         });
         return;
@@ -210,7 +189,7 @@ export function usePreviewBridge({
         workspaceId: workspaceId ?? null,
       });
     },
-    [threadId, workspaceId, surfaceRef, forceHidden, automationOnly],
+    [threadId, workspaceId, surfaceRef, automationOnly],
   );
 
   const pushSyncRef = useRef(pushSync);
@@ -261,24 +240,6 @@ export function usePreviewBridge({
     return unsub;
   }, [threadId, refreshNav, automationOnly]);
 
-  // While any modal/dialog overlay is open in the renderer the native
-  // WebContentsView must be detached: it composites above all HTML and would
-  // occlude the overlay. Webview surfaces are renderer-owned, so forceHidden
-  // keeps the native view detached without reacting to overlay suppression.
-  const rawSuppressionCount = usePreviewSuppressionStore((s) => s.count);
-  const suppressionCount = forceHidden ? 0 : rawSuppressionCount;
-  useEffect(() => {
-    void pushSyncRef.current(suppressionCount === 0);
-  }, [suppressionCount]);
-
-  // Re-sync the native view on every error<->non-error transition: hide it when
-  // an error panel takes over, re-show it when a retry clears the error.
-  // pushSync itself defers to suppression, so a load completing while a
-  // dialog/overlay is open cannot reshow the BrowserView above it.
-  useEffect(() => {
-    void pushSyncRef.current(true);
-  }, [pageStatus.phase]);
-
   useEffect(() => {
     if (automationOnly) return;
     const preview = window.desktopBridge?.preview;
@@ -311,7 +272,7 @@ export function usePreviewBridge({
       if (raf) cancelAnimationFrame(raf);
       void pushSync(false);
     };
-  }, [automationOnly, forceHidden, threadId, workspaceId]);
+  }, [automationOnly, threadId, workspaceId]);
 
   const onGoBack = useCallback(async () => {
     const preview = window.desktopBridge?.preview;

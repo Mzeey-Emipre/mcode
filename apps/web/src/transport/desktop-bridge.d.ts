@@ -6,15 +6,8 @@ import type {
   BrowserAutomationResponse,
   BrowserPerfCounters,
   BrowserTabSet,
-  BrowserAutomationViewportPresentationRequest,
-  BrowserAutomationViewportPresentationResult,
-  BrowserAutomationViewportRequest,
-  BrowserAutomationViewportResult,
-  BrowserAutomationViewportResetRequest,
-  BrowserAutomationViewportResetResult,
   McodeBrowserCapture,
   PreviewPageStatus,
-  PreviewRenderingHost,
 } from "@mcode/contracts";
 
 /** Discriminated union describing the auto-updater lifecycle state. */
@@ -62,7 +55,7 @@ interface AppBridge {
   offUpdateStatus(listener: (...args: unknown[]) => void): void;
 }
 
-/** Bounds for aligning the native BrowserView with a DOM region in the React shell. */
+/** Bounds that describe the Preview region in the React shell. */
 export type PreviewShellBounds = {
   readonly x: number;
   readonly y: number;
@@ -190,15 +183,13 @@ export interface DetectedLocalPort {
   readonly online: boolean;
 }
 
-/** Embedded thread preview backed by an Electron BrowserView. */
+/** Embedded thread Preview backed by BrowserSurfaceHost. */
 interface PreviewBridge {
   sync(payload: {
     visible: boolean;
     bounds: PreviewShellBounds | null;
     threadId?: string | null;
     resumeUrlHint?: string | null;
-    /** Why a visible panel is asking the native host to hide its BrowserView. */
-    hideReason?: "renderer-webview";
     /** Active workspace id; scopes preview spill files under the Mcode app data directory. */
     workspaceId?: string | null;
   }): Promise<void>;
@@ -328,11 +319,6 @@ export interface PreviewAutomationBridge {
 }
 
 interface PreviewDesignBridge {
-  setViewport(payload: BrowserAutomationViewportRequest): Promise<BrowserAutomationViewportResult>;
-  setPresentation(
-    payload: BrowserAutomationViewportPresentationRequest,
-  ): Promise<BrowserAutomationViewportPresentationResult>;
-  resetViewport(payload: BrowserAutomationViewportResetRequest): Promise<BrowserAutomationViewportResetResult>;
   setInspect(
     enabled: boolean,
   ): Promise<{ ok: true } | { ok: false; error: string }>;
@@ -364,7 +350,6 @@ interface PreviewTabsBridge {
     options?: {
       readonly activate?: boolean;
       readonly tabId?: string;
-      readonly renderingHost?: PreviewRenderingHost;
       readonly initialAddress?: string;
     },
   ): Promise<PreviewTabIpcResult<PreviewTabOpenData>>;

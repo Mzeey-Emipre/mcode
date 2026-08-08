@@ -38,7 +38,6 @@ import {
   isBrowserAutomationAgentControlled,
   useBrowserAutomationStore,
 } from "@/stores/browserAutomationStore";
-import { usePreviewSuppressionStore } from "@/stores/previewSuppressionStore";
 import { cn } from "@/lib/utils";
 
 /** Legacy task completion payload kept for tab API compatibility. */
@@ -515,20 +514,10 @@ function RailAddControl({
   readonly terminalCapReached?: boolean;
 }) {
   const [menuOpen, setMenuOpen] = useState(false);
-  const incrementPreviewSuppression = usePreviewSuppressionStore((s) => s.increment);
-  const decrementPreviewSuppression = usePreviewSuppressionStore((s) => s.decrement);
   const shown = shownTabTypes(scope, openTabs);
   const creatable = creatableTypes(scope, openTabs).filter(
     (type) => !(terminalCapReached && type.id === "terminal"),
   );
-
-  // The portaled options can overlap the native preview even when the rail itself is collapsed.
-  const suppressPreview = menuOpen && creatable.length > 1;
-  useEffect(() => {
-    if (!suppressPreview) return;
-    incrementPreviewSuppression();
-    return () => decrementPreviewSuppression();
-  }, [decrementPreviewSuppression, incrementPreviewSuppression, suppressPreview]);
 
   // Nothing openable hides the control entirely, even if a coming-soon teaser remains.
   if (creatable.length === 0) return null;
@@ -707,14 +696,6 @@ export function ActivityRail({
       if (!pointerWithinRef.current && !focusWithin) setExpanded(false);
     }, RAIL_COLLAPSE_DELAY_MS);
   }, [clearCollapseTimer, clearExpandTimer]);
-
-  const incrementPreviewSuppression = usePreviewSuppressionStore((s) => s.increment);
-  const decrementPreviewSuppression = usePreviewSuppressionStore((s) => s.decrement);
-  useEffect(() => {
-    if (!expanded) return;
-    incrementPreviewSuppression();
-    return () => decrementPreviewSuppression();
-  }, [decrementPreviewSuppression, expanded, incrementPreviewSuppression]);
 
   useEffect(() => {
     onExpandedChange?.(expanded);

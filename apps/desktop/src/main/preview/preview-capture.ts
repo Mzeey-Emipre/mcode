@@ -1,6 +1,6 @@
 /**
  * Screenshot capture, guest page context extraction, and capture payload construction
- * for the embedded preview WebContentsView.
+ * for the embedded BrowserSurfaceHost page.
  */
 
 import { mkdir, writeFile } from "node:fs/promises";
@@ -14,7 +14,7 @@ import {
   type McodeBrowserCaptureV2,
 } from "@mcode/contracts";
 import { redactMcodeBrowserCaptureV2 } from "@mcode/shared";
-import { type Bounds, type PreviewSession, type CaptureFinishResult, sessions, getSession, resetIdle } from "./preview-session.js";
+import { type Bounds, type PreviewSession, type CaptureFinishResult, sessions, getSession } from "./preview-session.js";
 import { persistBrowserCaptureSpill } from "./preview-spill.js";
 import { resolveActivePreviewWebContents } from "./preview-active-webcontents.js";
 
@@ -247,7 +247,7 @@ function captureNeedsSpillPostRedact(c: McodeBrowserCaptureV2): boolean {
   );
 }
 
-/** Full viewport bounds in WebContentsView-relative CSS pixels. */
+/** Full viewport bounds in guest-relative CSS pixels. */
 export function viewportBoundsFallback(viewWidth: number, viewHeight: number): Bounds {
   return { x: 0, y: 0, width: Math.max(1, viewWidth), height: Math.max(1, viewHeight) };
 }
@@ -593,7 +593,6 @@ export function registerCaptureHandlers(): void {
           captureKind: "viewport",
         },
       );
-      resetIdle(win, s);
       return { ok: true, meta, previewBytes: Uint8Array.from(buffer), capture };
     } catch {
       return { ok: false, error: "capture-failed" };
@@ -664,7 +663,6 @@ export function registerCaptureHandlers(): void {
             captureKind: "viewport",
           },
         );
-        resetIdle(win, s);
         return { ok: true, meta, previewBytes: Uint8Array.from(buffer), capture };
       } catch {
         return { ok: false, error: "capture-failed" };
@@ -705,7 +703,6 @@ export function registerCaptureHandlers(): void {
         s.workspaceId,
         { captureKind: "viewport" },
       );
-      resetIdle(win, s);
       return { ok: true, capture };
     } catch {
       return { ok: false, error: "capture-failed" };

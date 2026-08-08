@@ -3,7 +3,6 @@
  * Wires all IPC handlers and re-exports the symbols that main.ts needs.
  */
 
-export { disposePreviewForWindow } from "./preview-lifecycle.js";
 export type {
   PreviewPictureReferenceResult,
   PreviewContextReferenceResult,
@@ -20,6 +19,22 @@ import { registerPreviewSurfaceHandlers } from "./preview-webview-adopt.js";
 import { registerDesignModeHandlers } from "./preview-design-mode.js";
 import { registerBrowserAutomationHandlers } from "../browser-automation/index.js";
 import { registerPreviewSessionPolicy } from "./preview-session-adapter.js";
+import { abortOverlayCapture } from "./preview-overlay.js";
+import { clearDiscardTimers, sessions } from "./preview-session.js";
+import { disposePreviewSurfacesForWindow } from "./preview-webview-adopt.js";
+
+/** Releases Preview resources owned by one closing renderer window. */
+export function disposePreviewForWindow(win: import("electron").BrowserWindow): void {
+  const session = sessions.get(win.id);
+  if (session) {
+    abortOverlayCapture(session, "capture-interrupted");
+    clearDiscardTimers(session);
+    session.consoleBuffer.length = 0;
+    session.failedRequestBuffer.length = 0;
+    sessions.delete(win.id);
+  }
+  disposePreviewSurfacesForWindow(win.id);
+}
 
 /** Registers all preview:* IPC handlers. Call once at app startup. */
 export function registerPreviewBrowserHandlers(): void {

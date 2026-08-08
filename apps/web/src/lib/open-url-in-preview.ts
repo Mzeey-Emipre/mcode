@@ -133,7 +133,6 @@ export function openUrlInPreview({
     if (openInNewTab && preview.tabs?.open) {
       const opened = await preview.tabs.open(threadId, exactWorkspaceId, {
         activate: true,
-        renderingHost: "webview",
       });
       if (!opened.ok) return;
     }

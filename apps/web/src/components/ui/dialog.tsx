@@ -4,23 +4,6 @@ import { Dialog as DialogPrimitive } from "@base-ui/react/dialog"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { XIcon } from "lucide-react"
-import { usePreviewSuppressionStore } from "@/stores/previewSuppressionStore"
-
-/**
- * Mounted inside DialogPortal so its lifetime exactly matches the dialog's
- * open state. While mounted it increments the global preview-suppression
- * count so the native Electron WebContentsView is hidden, preventing the
- * preview from painting over the modal. Renders nothing.
- */
-function PreviewSuppressionGate() {
-  const increment = usePreviewSuppressionStore((s) => s.increment)
-  const decrement = usePreviewSuppressionStore((s) => s.decrement)
-  React.useEffect(() => {
-    increment()
-    return () => decrement()
-  }, [increment, decrement])
-  return null
-}
 
 function Dialog({ ...props }: DialogPrimitive.Root.Props) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />
@@ -64,7 +47,6 @@ function DialogContent({
 }) {
   return (
     <DialogPortal>
-      <PreviewSuppressionGate />
       <DialogOverlay />
       <DialogPrimitive.Popup
         data-slot="dialog-content"

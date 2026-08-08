@@ -8,7 +8,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import { usePreviewBridge, formatNavError } from "../usePreviewBridge";
-import { usePreviewSuppressionStore } from "@/stores/previewSuppressionStore";
 
 // ---------------------------------------------------------------------------
 // diffStore mock – avoid pulling in the full Zustand store and its deps.
@@ -87,7 +86,6 @@ beforeEach(() => {
   for (const key of Object.keys(mockPreviewUrlByThread)) {
     delete mockPreviewUrlByThread[key];
   }
-  usePreviewSuppressionStore.setState({ count: 0 });
 
   mockRo = { observe: vi.fn(), disconnect: vi.fn() };
   // Must be a real constructor (class/function), not an arrow fn, for `new ResizeObserver(...)` to work.
@@ -103,9 +101,6 @@ beforeEach(() => {
 
 afterEach(() => {
   delete (window as unknown as Record<string, unknown>).desktopBridge;
-  act(() => {
-    usePreviewSuppressionStore.setState({ count: 0 });
-  });
   vi.clearAllMocks();
   vi.useRealTimers();
   vi.unstubAllGlobals();
@@ -251,93 +246,6 @@ describe("usePreviewBridge", () => {
     expect(mockPreview.sync).toHaveBeenCalledWith(
       expect.objectContaining({ visible: true, threadId: "t-1" }),
     );
-  });
-
-  it("hides native sync without marking the panel hidden when forceHidden is enabled", async () => {
-    const mockPreview = makeMockPreview();
-    window.desktopBridge = { preview: mockPreview } as unknown as typeof window.desktopBridge;
-
-    const surfaceRef = makeSurfaceRef();
-    const { result, rerender } = renderHook(
-      ({ threadId }: { threadId: string }) =>
-        usePreviewBridge({
-          threadId,
-          workspaceId: "ws-1",
-          surfaceRef,
-          forceHidden: true,
-        }),
-      { initialProps: { threadId: "t-1" } },
-    );
-
-    await flushRaf();
-    await act(async () => {
-      await result.current.pushSync(true);
-      rerender({ threadId: "t-2" });
-    });
-
-    expect(mockPreview.sync).toHaveBeenCalledWith(
-      expect.objectContaining({
-        visible: false,
-        hideReason: "renderer-webview",
-        threadId: "t-1",
-      }),
-    );
-    expect(mockPreview.sync.mock.calls).not.toContainEqual([
-      expect.objectContaining({ visible: true }),
-    ]);
-  });
-
-  it("hides the native BrowserView during overlays while preserving panel bounds", async () => {
-    const mockPreview = makeMockPreview();
-    window.desktopBridge = { preview: mockPreview } as unknown as typeof window.desktopBridge;
-
-    const { result } = renderHook(() =>
-      usePreviewBridge({
-        threadId: "t-1",
-        workspaceId: "ws-1",
-        surfaceRef: makeSurfaceRef(),
-      }),
-    );
-
-    await flushRaf();
-    mockPreview.sync.mockClear();
-    await act(async () => {
-      usePreviewSuppressionStore.getState().increment();
-      await Promise.resolve();
-    });
-
-    expect(mockPreview.sync).toHaveBeenCalledWith(
-      expect.objectContaining({
-        visible: false,
-        bounds: { x: 10, y: 20, width: 800, height: 600 },
-        threadId: "t-1",
-      }),
-    );
-    expect("freezeFrame" in result.current).toBe(false);
-  });
-
-  it("does not resync a renderer-owned webview during overlay suppression", async () => {
-    const mockPreview = makeMockPreview();
-    window.desktopBridge = { preview: mockPreview } as unknown as typeof window.desktopBridge;
-
-    const { result } = renderHook(() =>
-      usePreviewBridge({
-        threadId: "t-1",
-        workspaceId: "ws-1",
-        surfaceRef: makeSurfaceRef(),
-        forceHidden: true,
-      }),
-    );
-
-    await flushRaf();
-    mockPreview.sync.mockClear();
-    await act(async () => {
-      usePreviewSuppressionStore.getState().increment();
-      await Promise.resolve();
-    });
-
-    expect(mockPreview.sync).not.toHaveBeenCalled();
-    expect("freezeFrame" in result.current).toBe(false);
   });
 
   it("calls preview.sync with visible:false on unmount", async () => {
@@ -737,7 +645,7 @@ describe("usePreviewBridge", () => {
       });
 
       // The new threadId effect must fire synchronously (no RAF needed) so
-      // the native layer swaps views even when panel bounds are unchanged.
+      // the Browser surface swaps pages even when panel bounds are unchanged.
       expect(mockPreview.sync).toHaveBeenCalledWith(
         expect.objectContaining({ visible: true, threadId: "t-2" }),
       );

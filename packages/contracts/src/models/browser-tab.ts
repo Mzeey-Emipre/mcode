@@ -13,12 +13,6 @@ export const BROWSER_TAB_INFO_STRING_MAX = {
   faviconUrl: 4096,
 } as const;
 
-/** Rendering surfaces supported by the desktop preview tab host. */
-export const PREVIEW_RENDERING_HOSTS = ["webContentsView", "webview"] as const;
-
-/** Surface that owns a preview tab's live page. */
-export type PreviewRenderingHost = (typeof PREVIEW_RENDERING_HOSTS)[number];
-
 /** Stable, opaque identifier for a tab. Generated host-side on create. */
 export const BrowserTabIdSchema = lazySchema(() =>
   z.string().min(1).max(BROWSER_TAB_INFO_STRING_MAX.id),
@@ -27,7 +21,7 @@ export type BrowserTabId = z.infer<ReturnType<typeof BrowserTabIdSchema>>;
 
 /**
  * Public, serializable view of a single tab inside the in-app browser.
- * Mirrors the host-side `TabState` minus the BrowserView reference.
+ * Mirrors the host-side `TabState` without renderer-owned surface state.
  */
 export const BrowserTabInfoSchema = lazySchema(() =>
   z.object({
@@ -36,9 +30,9 @@ export const BrowserTabInfoSchema = lazySchema(() =>
     title: z.string().max(BROWSER_TAB_INFO_STRING_MAX.title).nullable(),
     url: z.string().max(BROWSER_TAB_INFO_STRING_MAX.url).nullable(),
     faviconUrl: z.string().max(BROWSER_TAB_INFO_STRING_MAX.faviconUrl).nullable(),
-    /** True when the tab has a live BrowserView attached; false for evicted/cold tabs. */
+    /** True when the tab has a live Browser surface; false for evicted/cold tabs. */
     warm: z.boolean(),
-    /** True when this is the tab whose BrowserView is mounted in the window. */
+    /** True when this is the selected tab. */
     active: z.boolean(),
   }),
 );

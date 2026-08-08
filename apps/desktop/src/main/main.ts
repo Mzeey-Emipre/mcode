@@ -835,7 +835,7 @@ app.commandLine.appendSwitch("aggressive-cache-discard");
 // worth persisting to disk. Remove the disk cache overhead.
 app.commandLine.appendSwitch("disable-disk-cache");
 
-// Cap renderer V8 heap. The preview BrowserView loads arbitrary third-party
+// Cap renderer V8 heap. Browser surfaces load arbitrary third-party
 // pages that can exceed 128 MB, so the limit is raised to 2 GB. The main
 // renderer still benefits from young-generation capping (2 MB semi-space).
 app.commandLine.appendSwitch(

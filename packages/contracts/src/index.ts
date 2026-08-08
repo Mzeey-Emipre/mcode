@@ -366,14 +366,12 @@ export {
   BrowserTabSetSchema,
   BrowserPerfCountersSchema,
   BROWSER_TAB_INFO_STRING_MAX,
-  PREVIEW_RENDERING_HOSTS,
 } from "./models/browser-tab.js";
 export type {
   BrowserTabId,
   BrowserTabInfo,
   BrowserTabSet,
   BrowserPerfCounters,
-  PreviewRenderingHost,
 } from "./models/browser-tab.js";
 
 export {
@@ -429,12 +427,6 @@ export {
   BROWSER_AUTOMATION_VIEWPORT_CANVAS_PADDING_PX,
   BROWSER_AUTOMATION_VIEWPORT_PRESENTATIONS,
   resolveBrowserAutomationViewportPresentationScale,
-  BrowserAutomationViewportRequestSchema,
-  BrowserAutomationViewportResultSchema,
-  BrowserAutomationViewportPresentationRequestSchema,
-  BrowserAutomationViewportPresentationResultSchema,
-  BrowserAutomationViewportResetRequestSchema,
-  BrowserAutomationViewportResetResultSchema,
   BROWSER_AUTOMATION_OPERATIONS,
   BROWSER_V2_CORE_OPERATIONS,
   BROWSER_AUTOMATION_OPERATION_METADATA,
@@ -493,13 +485,7 @@ export type {
   BrowserAutomationErrorCode,
   BrowserAutomationError,
   BrowserAutomationResponse,
-  BrowserAutomationViewportRequest,
-  BrowserAutomationViewportResult,
-  BrowserAutomationViewportPresentationRequest,
-  BrowserAutomationViewportPresentationResult,
   BrowserAutomationViewportPresentation,
-  BrowserAutomationViewportResetRequest,
-  BrowserAutomationViewportResetResult,
   BrowserAutomationHostRuntime,
   BrowserAutomationTargetIdentity,
   BrowserAutomationExecutorDescriptor,

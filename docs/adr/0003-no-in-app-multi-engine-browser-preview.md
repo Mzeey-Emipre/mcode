@@ -3,9 +3,8 @@
 Status: accepted
 
 We will **not** build multi-engine browser preview inside Mcode (issue #452, closed
-wontfix). The in-app preview stays Chromium-only via Electron. The rendering host
-may be `WebContentsView` or Electron `<webview>` (ADR-0016), but both are
-Chromium surfaces. Cross-browser verification is served by launching the user's
+wontfix). The in-app preview stays Chromium-only via Electron `<webview>` elements.
+The web runtime uses iframes. Cross-browser verification is served by launching the user's
 **real installed browser** ("Open in browser", already on the roadmap via #554),
 not by embedding or bundling Firefox/WebKit.
 
@@ -19,7 +18,7 @@ options:
 - **No desktop Gecko embedding exists.** `GeckoView` is Android-only and Mozilla has
   no desktop plans. WebKit is embeddable only as the *system* engine (WKWebView on
   macOS, WebKitGTK on Linux); there is no first-class embeddable WebKit on Windows.
-  Electron `WebContentsView`/`<webview>` are Chromium-only.
+  Electron `<webview>` elements are Chromium-only.
 - **A Playwright-launched headed window can't be docked or positioned.** Playwright
   exposes no cross-engine window-bounds API (`Browser.setWindowBounds` is
   Chromium-only; WebKit ignores it; Firefox moves only the viewport). It would float

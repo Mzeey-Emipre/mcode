@@ -70,7 +70,6 @@ export function BrowserSurfaceHostRoot() {
           activate: request.initiator === "human",
           focusOmnibox: false,
           initialAddress: request.address,
-          renderingHost: "webview",
         },
       );
     });

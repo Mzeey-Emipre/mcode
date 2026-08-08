@@ -6,15 +6,6 @@
  */
 
 import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
-import type {
-  BrowserAutomationViewportRequest,
-  BrowserAutomationViewportResult,
-  BrowserAutomationViewportPresentationRequest,
-  BrowserAutomationViewportPresentationResult,
-  BrowserAutomationViewportResetRequest,
-  BrowserAutomationViewportResetResult,
-  PreviewRenderingHost,
-} from "@mcode/contracts";
 import {
   PREVIEW_POPUP_REQUESTED_CHANNEL,
   type PreviewPopupRequest,
@@ -204,7 +195,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   },
 
   /**
-   * Embedded thread preview (Electron BrowserView). No-op channels in web builds
+   * Embedded thread Preview bridge. No-op channels in web builds
    * without this namespace; the renderer checks `desktopBridge?.preview` before use.
    */
   preview: {
@@ -213,7 +204,6 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       bounds: { x: number; y: number; width: number; height: number } | null;
       threadId?: string | null;
       resumeUrlHint?: string | null;
-      hideReason?: "renderer-webview";
       workspaceId?: string | null;
     }): Promise<void> {
       return ipcRenderer.invoke("preview:sync", payload);
@@ -449,23 +439,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         return () => ipcRenderer.removeListener("preview:automation.controller", listener);
       },
     },
-    /** Phase G design mode: apply explicit CSS viewport dimensions. */
+    /** Design mode operations applied to the adopted Browser guest. */
     design: {
-      setViewport(
-        payload: BrowserAutomationViewportRequest,
-      ): Promise<BrowserAutomationViewportResult> {
-        return ipcRenderer.invoke("preview:design.set-viewport", payload);
-      },
-      setPresentation(
-        payload: BrowserAutomationViewportPresentationRequest,
-      ): Promise<BrowserAutomationViewportPresentationResult> {
-        return ipcRenderer.invoke("preview:design.set-presentation", payload);
-      },
-      resetViewport(
-        payload: BrowserAutomationViewportResetRequest,
-      ): Promise<BrowserAutomationViewportResetResult> {
-        return ipcRenderer.invoke("preview:design.reset-viewport", payload);
-      },
       setInspect(enabled: boolean): Promise<unknown> {
         return ipcRenderer.invoke("preview:design.set-inspect", { enabled });
       },
@@ -475,12 +450,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         });
       },
     },
-    /**
-     * Multi-tab control surface (Phase A of the in-app browser rewrite).
-     * Phase A keeps a single backing BrowserView per window; these methods
-     * give the renderer a stable contract for tab list / mutations so the UI
-     * can ship tab affordances before the real per-tab backing lands.
-     */
+    /** Multi-tab control surface for BrowserSurfaceHost-owned pages. */
     tabs: {
       list(threadId: string, workspaceId?: string): Promise<unknown> {
         return ipcRenderer.invoke("preview:tabs.list", { threadId, workspaceId });
@@ -491,7 +461,6 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         options?: {
           activate?: boolean;
           tabId?: string;
-          renderingHost?: PreviewRenderingHost;
           initialAddress?: string;
         },
       ): Promise<unknown> {
@@ -500,7 +469,6 @@ contextBridge.exposeInMainWorld("desktopBridge", {
           workspaceId,
           activate: options?.activate,
           tabId: options?.tabId,
-          renderingHost: options?.renderingHost,
           initialAddress: options?.initialAddress,
         });
       },

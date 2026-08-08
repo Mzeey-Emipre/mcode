@@ -182,12 +182,10 @@ describe("previewTabsStore", () => {
       activate: false,
       focusOmnibox: false,
       tabId: "blank",
-      renderingHost: "webview",
     });
 
     expect(open).toHaveBeenCalledWith(SCOPE, WORKSPACE_ID, {
       activate: false,
-      renderingHost: "webview",
       tabId: "blank",
     });
   });
@@ -199,13 +197,11 @@ describe("previewTabsStore", () => {
       activate: true,
       focusOmnibox: false,
       initialAddress: "https://popup.example.test/next",
-      renderingHost: "webview",
     });
 
     expect(open).toHaveBeenCalledWith(SCOPE, WORKSPACE_ID, {
       activate: true,
       initialAddress: "https://popup.example.test/next",
-      renderingHost: "webview",
     });
   });
 

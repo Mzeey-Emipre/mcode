@@ -34,7 +34,7 @@ nativeImageCreateFromBuffer.mockImplementation((buffer: Buffer) => makeFakeNativ
 const fakePreviewSession = {
   lastPreviewThreadId: "thread",
   view: null,
-  tabsByThread: new Map<string, { threadId: string; activeTabId: string; tabs: Array<{ id: string; threadId: string; view: null | { webContents: FakeWebContents }; renderingHost?: "webContentsView" | "webview" }> }>(),
+  tabsByThread: new Map<string, { threadId: string; activeTabId: string; tabs: Array<{ id: string; threadId: string }> }>(),
 };
 
 function seedFakeTab(threadId = "thread", tabId = "tab") {
@@ -424,35 +424,6 @@ describe("BrowserAutomationKernel", () => {
       target: { windowId: 7, threadId: "thread", tabId: "tab", targetGeneration: 1, active: true, focused: true, lastUsedAt: 0 },
     });
     expect(kernel.describeTarget(event(), { threadId: "thread", tabId: "missing" })).toEqual({
-      ok: false,
-      error: "TAB_UNAVAILABLE",
-    });
-  });
-
-  it("does not use a native background tab when renderer adoption is absent", () => {
-    const native = new FakeWebContents(9);
-    fakePreviewSession.tabsByThread.set("native-thread", {
-      threadId: "native-thread",
-      activeTabId: "native-tab",
-      tabs: [{ id: "native-tab", threadId: "native-thread", renderingHost: "webContentsView", view: { webContents: native } }],
-    });
-    adoptedWebContents.set(JSON.stringify(["native-thread", "native-tab"]), null);
-    expect(kernel.describeTarget(event(), { threadId: "native-thread", tabId: "native-tab" })).toEqual({
-      ok: false,
-      error: "TAB_UNAVAILABLE",
-    });
-  });
-
-  it("does not fall back to a stale native view for an unadopted webview target", () => {
-    const staleVisibleGuest = new FakeWebContents(10);
-    fakePreviewSession.tabsByThread.set("webview-thread", {
-      threadId: "webview-thread",
-      activeTabId: "webview-tab",
-      tabs: [{ id: "webview-tab", threadId: "webview-thread", renderingHost: "webview", view: { webContents: staleVisibleGuest } }],
-    });
-    adoptedWebContents.set(JSON.stringify(["webview-thread", "webview-tab"]), null);
-
-    expect(kernel.describeTarget(event(), { threadId: "webview-thread", tabId: "webview-tab" })).toEqual({
       ok: false,
       error: "TAB_UNAVAILABLE",
     });

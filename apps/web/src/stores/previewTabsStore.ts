@@ -4,7 +4,6 @@ import {
   BROWSER_TAB_INFO_STRING_MAX,
   type BrowserTabInfo,
   type BrowserTabSet,
-  type PreviewRenderingHost,
 } from "@mcode/contracts";
 import { usePreviewFocusStore } from "./previewFocusStore";
 import { browserAutomationScopeKey, useBrowserAutomationStore } from "./browserAutomationStore";
@@ -64,7 +63,6 @@ interface PreviewTabsBridgeLike {
     options?: {
       readonly activate?: boolean;
       readonly tabId?: string;
-      readonly renderingHost?: PreviewRenderingHost;
       readonly initialAddress?: string;
     },
   ): Promise<{ ok: true; data: { tabId: string; tabs: BrowserTabSet } } | { ok: false; error: string }>;
@@ -142,7 +140,6 @@ interface PreviewTabsState {
     readonly focusOmnibox?: boolean;
     readonly activate?: boolean;
     readonly tabId?: string;
-    readonly renderingHost?: PreviewRenderingHost;
     readonly initialAddress?: string;
   }) => Promise<string | null>;
   /** Activate (switch to) a page within the scope's browser. */
@@ -317,7 +314,6 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
     const r = await tabs.open(scopeId, workspaceId, {
       activate,
       ...(options?.tabId ? { tabId: options.tabId } : {}),
-      ...(options?.renderingHost ? { renderingHost: options.renderingHost } : {}),
       ...(options?.initialAddress ? { initialAddress: options.initialAddress } : {}),
     });
     if (r.ok) {
