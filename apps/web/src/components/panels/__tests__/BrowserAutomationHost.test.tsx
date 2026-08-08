@@ -17,7 +17,7 @@ import {
 } from "@/stores/browserAutomationStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useDiffStore } from "@/stores/diffStore";
-import { usePreviewTabsStore } from "@/stores/previewTabsStore";
+import { previewTabsScopeKey, usePreviewTabsStore } from "@/stores/previewTabsStore";
 import { browserTargetRegistry } from "@/services/browser-automation/browserTargetRegistry";
 
 const harness = vi.hoisted(() => {
@@ -519,6 +519,26 @@ describe("BrowserAutomationHost", () => {
     webExecutor.executeWebBrowserDispatch.mockReset();
   });
 
+  it("publishes web targets as active only in the active workspace and thread", async () => {
+    delete window.desktopBridge;
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    useBrowserAutomationStore.getState().registerTarget(
+      "workspace-2",
+      "thread-1",
+      "tab-2",
+    );
+
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.updateBrowserAutomationHostTargets).toHaveBeenCalled());
+    const targets = harness.transport.updateBrowserAutomationHostTargets.mock.calls.at(-1)?.[2];
+
+    expect(targets).toEqual(expect.arrayContaining([
+      expect.objectContaining({ tabId: "tab-1", active: true, focused: true }),
+      expect.objectContaining({ tabId: "tab-2", active: false, focused: false }),
+    ]));
+    view.unmount();
+  });
+
   it("keeps evaluate out of the pure web descriptor, registration, and status capabilities", async () => {
     delete window.desktopBridge;
     vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
@@ -760,7 +780,7 @@ describe("BrowserAutomationHost", () => {
     });
     const tabId = iframe.dataset.tabId!;
     await waitFor(() => expect(
-      usePreviewTabsStore.getState().tabSetByScope["thread-1"]?.tabs.some((tab) => tab.id === tabId),
+      usePreviewTabsStore.getState().tabSetByScope[previewTabsScopeKey("workspace-1", "thread-1")]?.tabs.some((tab) => tab.id === tabId),
     ).toBe(true));
     markIframeLoaded(iframe);
     window.setTimeout(() => iframe.dispatchEvent(new Event("load")), 0);
@@ -768,6 +788,7 @@ describe("BrowserAutomationHost", () => {
 
     const dock = document.createElement("div");
     dock.dataset.automationPreviewDock = "thread-1";
+    dock.dataset.automationPreviewWorkspace = "workspace-1";
     dock.dataset.visible = "true";
     Object.defineProperty(dock, "getBoundingClientRect", {
       configurable: true,
@@ -775,7 +796,7 @@ describe("BrowserAutomationHost", () => {
     });
     document.body.append(dock);
     await act(async () => usePreviewTabsStore.getState().activatePage("workspace-1", "thread-1", tabId));
-    await waitFor(() => expect(usePreviewTabsStore.getState().tabSetByScope["thread-1"]?.activeTabId).toBe(tabId));
+    await waitFor(() => expect(usePreviewTabsStore.getState().tabSetByScope[previewTabsScopeKey("workspace-1", "thread-1")]?.activeTabId).toBe(tabId));
     await waitFor(() => expect(iframe.style.pointerEvents).toBe("auto"));
     expect(document.querySelector('[data-automation-persistent-scope="thread-1"]')).toHaveAttribute("aria-hidden", "false");
 
@@ -1277,7 +1298,7 @@ describe("BrowserAutomationHost", () => {
 
     act(() => useBrowserAutomationStore.getState().unregisterTarget("workspace-1", "thread-1", "tab-1"));
     await waitFor(() => expect(cancel).toHaveBeenCalledWith(activeDispatch.request.requestId));
-    expect(clearTargetReplay).toHaveBeenCalledWith("thread-1", "tab-1");
+    expect(clearTargetReplay).toHaveBeenCalledWith("workspace-1", "thread-1", "tab-1");
     expect(harness.transport.cancelBrowserAutomationRequest).toHaveBeenCalledWith(
       hostId,
       1,
@@ -1434,7 +1455,7 @@ describe("BrowserAutomationHost", () => {
     execute.mockImplementation(async (value: BrowserAutomationHostDispatch) => {
       expect(useDiffStore.getState().previewUrlByThread["thread-1"]).toBe("about:blank");
       expect(
-        usePreviewTabsStore.getState().tabSetByScope["thread-1"]?.tabs[0]?.url,
+        usePreviewTabsStore.getState().tabSetByScope[previewTabsScopeKey("workspace-1", "thread-1")]?.tabs[0]?.url,
       ).toBe("about:blank");
       controllerChanged?.({
         tabId: "created-tab",
@@ -1462,8 +1483,8 @@ describe("BrowserAutomationHost", () => {
     });
     await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalled());
     expect(createTab).toHaveBeenCalledOnce();
-    expect(createTab).toHaveBeenCalledWith("thread-1", { activate: true });
-    expect(usePreviewTabsStore.getState().tabSetByScope["thread-1"]?.tabs[0]?.url).toBe(
+    expect(createTab).toHaveBeenCalledWith("thread-1", "workspace-1", { activate: true });
+    expect(usePreviewTabsStore.getState().tabSetByScope[previewTabsScopeKey("workspace-1", "thread-1")]?.tabs[0]?.url).toBe(
       "about:blank",
     );
     expect(useWorkspaceStore.getState().activeThreadId).toBe("thread-1");
@@ -1577,7 +1598,7 @@ describe("BrowserAutomationHost", () => {
         await Promise.resolve();
       });
       expect(execute).toHaveBeenCalledOnce();
-      expect(createTab).toHaveBeenCalledWith("thread-1", {
+      expect(createTab).toHaveBeenCalledWith("thread-1", "workspace-1", {
         activate: false,
         renderingHost: "webview",
         tabId: "cold-tab",
@@ -1589,7 +1610,7 @@ describe("BrowserAutomationHost", () => {
         expect.objectContaining({ tabId: "cold-tab" }),
       );
       expect(useBrowserAutomationStore.getState().pendingAgentOpens).toHaveLength(0);
-      expect(usePreviewTabsStore.getState().tabSetByScope["thread-1"]?.tabs).toEqual([
+      expect(usePreviewTabsStore.getState().tabSetByScope[previewTabsScopeKey("workspace-1", "thread-1")]?.tabs).toEqual([
         expect.objectContaining({ id: "cold-tab", url: "https://example.com/" }),
       ]);
       view.unmount();
@@ -1772,6 +1793,7 @@ describe("BrowserAutomationHost", () => {
         );
         oldestDock = document.createElement("div");
         oldestDock.dataset.automationPreviewDock = "sequential-0";
+        oldestDock.dataset.automationPreviewWorkspace = "workspace-1";
         oldestDock.dataset.visible = "true";
         vi.spyOn(oldestDock, "getBoundingClientRect").mockReturnValue({
           left: 5, top: 10, width: 700, height: 500, right: 705, bottom: 510, x: 5, y: 10, toJSON: () => undefined,
@@ -1811,9 +1833,11 @@ describe("BrowserAutomationHost", () => {
     );
     const fourthDock = document.createElement("div");
     fourthDock.dataset.automationPreviewDock = "sequential-4";
+    fourthDock.dataset.automationPreviewWorkspace = "workspace-1";
     fourthDock.dataset.visible = "false";
     const fifthDock = document.createElement("div");
     fifthDock.dataset.automationPreviewDock = "sequential-5";
+    fifthDock.dataset.automationPreviewWorkspace = "workspace-1";
     fifthDock.dataset.visible = "true";
     vi.spyOn(fourthDock, "getBoundingClientRect").mockReturnValue({
       left: 10, top: 20, width: 800, height: 600, right: 810, bottom: 620, x: 10, y: 20, toJSON: () => undefined,
@@ -1996,7 +2020,7 @@ describe("BrowserAutomationHost", () => {
     executing.resolve(response(openRequest));
     await act(async () => executing.promise);
     expect(harness.transport.respondToBrowserAutomationRequest).not.toHaveBeenCalled();
-    await waitFor(() => expect(closeTab).toHaveBeenCalledWith("thread-1", "created-tab"));
+    await waitFor(() => expect(closeTab).toHaveBeenCalledWith("thread-1", "workspace-1", "created-tab"));
     expect(browserTargetRegistry.get("workspace-1", "thread-1", "created-tab")).toBeNull();
     view.unmount();
   });
@@ -2024,7 +2048,7 @@ describe("BrowserAutomationHost", () => {
     const request = dispatch(1, 13).request;
     const openRequest = { ...request, operation: "open" as const, args: { url: "https://example.com/", activate: true } };
     act(() => harness.emit("browserAutomation.bootstrap", { hostId, generation: 1, request: openRequest }));
-    await waitFor(() => expect(closeTab).toHaveBeenCalledWith("thread-1", "failed-tab"));
+    await waitFor(() => expect(closeTab).toHaveBeenCalledWith("thread-1", "workspace-1", "failed-tab"));
     expect(browserTargetRegistry.get("workspace-1", "thread-1", "failed-tab")).toBeNull();
     view.unmount();
   });
@@ -2033,7 +2057,7 @@ describe("BrowserAutomationHost", () => {
     useBrowserAutomationStore.setState({ liveTargets: new Map() });
     usePreviewTabsStore.setState({
       tabSetByScope: {
-        "thread-1": {
+        [previewTabsScopeKey("workspace-1", "thread-1")]: {
           threadId: "thread-1",
           activeTabId: "previous-tab",
           tabs: [{ id: "previous-tab", threadId: "thread-1", url: null, title: null, faviconUrl: null, warm: true, active: true }],
@@ -2063,7 +2087,7 @@ describe("BrowserAutomationHost", () => {
     const request = dispatch(1, 15).request;
     const openRequest = { ...request, operation: "open" as const, args: { url: "https://example.com/", activate: false } };
     act(() => harness.emit("browserAutomation.bootstrap", { hostId, generation: 1, request: openRequest }));
-    await waitFor(() => expect(closeTab).toHaveBeenCalledWith("thread-1", "restore-failure-tab"));
+    await waitFor(() => expect(closeTab).toHaveBeenCalledWith("thread-1", "workspace-1", "restore-failure-tab"));
     expect(activatePage).toHaveBeenCalledWith("workspace-1", "thread-1", "previous-tab");
     expect(browserTargetRegistry.get("workspace-1", "thread-1", "restore-failure-tab")).toBeNull();
     view.unmount();
@@ -2092,7 +2116,7 @@ describe("BrowserAutomationHost", () => {
     const request = dispatch(1, 17).request;
     const openRequest = { ...request, operation: "open" as const, args: { url: "https://example.com/", activate: true } };
     act(() => harness.emit("browserAutomation.bootstrap", { hostId, generation: 1, request: openRequest }));
-    await waitFor(() => expect(closeTab).toHaveBeenCalledWith("thread-1", "close-failure-tab"));
+    await waitFor(() => expect(closeTab).toHaveBeenCalledWith("thread-1", "workspace-1", "close-failure-tab"));
     expect(browserTargetRegistry.get("workspace-1", "thread-1", "close-failure-tab")).not.toBeNull();
     view.unmount();
   });

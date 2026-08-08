@@ -199,6 +199,7 @@ vi.mock("../preview/preview-webview-adopt.js", () => ({
 
 vi.mock("../preview/preview-session.js", () => ({
   getSession: vi.fn(() => fakePreviewSession),
+  getThreadTabSet: vi.fn((session, threadId) => session.tabsByThread.get(threadId)),
 }));
 
 import { BrowserAutomationKernel, selectAllModifierMask } from "../browser-automation/kernel.js";

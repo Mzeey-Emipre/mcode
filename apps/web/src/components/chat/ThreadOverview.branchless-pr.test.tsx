@@ -10,7 +10,7 @@ import {
   browserAutomationTargetKey,
   useBrowserAutomationStore,
 } from "@/stores/browserAutomationStore";
-import { usePreviewTabsStore } from "@/stores/previewTabsStore";
+import { previewTabsScopeKey, usePreviewTabsStore } from "@/stores/previewTabsStore";
 import type { BrowserSessionLifecycleTab } from "@/services/browser-automation/browserSessionDriver";
 import { useDiffStore } from "@/stores/diffStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
@@ -256,7 +256,7 @@ describe("ThreadOverview branchless Create PR", () => {
     });
     usePreviewTabsStore.setState({
       tabSetByScope: {
-        "thread-1": {
+        [previewTabsScopeKey("ws-1", "thread-1")]: {
           threadId: "thread-1",
           activeTabId: "agent-tab",
           tabs: [
@@ -273,7 +273,9 @@ describe("ThreadOverview branchless Create PR", () => {
     const rows = getThreadOverviewBrowserTabs({
       workspaceId: thread.workspace_id,
       threadId: thread.id,
-      tabSet: usePreviewTabsStore.getState().tabSetByScope[thread.id] ?? null,
+      tabSet: usePreviewTabsStore.getState().tabSetByScope[
+        previewTabsScopeKey(thread.workspace_id, thread.id)
+      ] ?? null,
       lifecycleTabs: useBrowserAutomationStore.getState().lifecycleTabs,
       liveTargets: useBrowserAutomationStore.getState().liveTargets,
       controllers: useBrowserAutomationStore.getState().controllers,
@@ -346,7 +348,7 @@ describe("ThreadOverview branchless Create PR", () => {
     });
     usePreviewTabsStore.setState({
       tabSetByScope: {
-        "thread-1": {
+        [previewTabsScopeKey("ws-1", "thread-1")]: {
           threadId: "thread-1",
           activeTabId: "agent-tab",
           tabs: [{

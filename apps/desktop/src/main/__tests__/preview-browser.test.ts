@@ -192,6 +192,7 @@ import { registerPreviewBrowserHandlers, disposePreviewForWindow } from "../prev
 import { resolvePreviewGuestPreloadPath } from "../preview/preview-webview-security.js";
 import { _resetAdoptionRegistryForTests } from "../preview/preview-webview-adopt.js";
 import {
+  getThreadTabSet,
   sessions,
   viewportBoundsForTarget,
   type PreviewSession,
@@ -255,6 +256,9 @@ async function showPreview(
     resumeUrlHint: opts?.url ?? "https://example.com",
     workspaceId: "ws-1",
   });
+  const session = sessions.get(win.id);
+  const tabSet = session?.tabsByThread.get(JSON.stringify(["ws-1", opts?.threadId ?? "thread-1"]));
+  if (session && tabSet) session.tabsByThread.set(opts?.threadId ?? "thread-1", tabSet);
 }
 
 /** Hide the preview: calls preview:sync with visible=false. */
@@ -617,6 +621,7 @@ describe("preview-browser", () => {
       const ev = fakeEvent(win);
       await ipcHandlers["preview:tabs.open"]!(ev, {
         threadId: "thread-1",
+        workspaceId: "ws-1",
         activate: true,
       });
       const newView = createdViews[createdViews.length - 1]!;
@@ -1169,7 +1174,25 @@ describe("preview-browser", () => {
       payload: Record<string, unknown>,
     ): TabIpcResult<T> {
       const ev = fakeEvent(win);
-      return ipcHandlers[channel]!(ev, payload) as TabIpcResult<T>;
+      const scopedPayload = [
+        "preview:tabs.list",
+        "preview:tabs.open",
+        "preview:tabs.activate",
+        "preview:tabs.close",
+        "preview:tabs.closeScope",
+      ].includes(channel) && !("workspaceId" in payload)
+        ? { ...payload, workspaceId: "ws-1" }
+        : payload;
+      const result = ipcHandlers[channel]!(ev, scopedPayload) as TabIpcResult<T>;
+      const session = sessions.get(win.id);
+      const threadId = scopedPayload.threadId;
+      const workspaceId = scopedPayload.workspaceId;
+      if (session && typeof threadId === "string" && typeof workspaceId === "string") {
+        const qualifiedKey = JSON.stringify([workspaceId, threadId]);
+        const tabSet = session.tabsByThread.get(qualifiedKey);
+        if (tabSet) session.tabsByThread.set(threadId, tabSet);
+      }
+      return result;
     }
 
     it("tabs.list materialises a single tab for a new thread", async () => {
@@ -1539,6 +1562,38 @@ describe("preview-browser", () => {
       expect(aListAgain.data.tabs).toHaveLength(2);
     });
 
+    it("keeps the same thread isolated across workspaces", () => {
+      const firstWindow = createWindow();
+
+      const first = callTabs<{ tabId: string }>(firstWindow, "preview:tabs.open", {
+        threadId: "shared-thread",
+        workspaceId: "workspace-A",
+      });
+      const second = callTabs<{ tabId: string }>(firstWindow, "preview:tabs.open", {
+        threadId: "shared-thread",
+        workspaceId: "workspace-B",
+      });
+
+      expect(first.ok).toBe(true);
+      expect(second.ok).toBe(true);
+      if (!first.ok || !second.ok) return;
+      expect(first.data.tabId).not.toBe(second.data.tabId);
+
+      const firstList = callTabs<{ tabs: unknown[] }>(firstWindow, "preview:tabs.list", {
+        threadId: "shared-thread",
+        workspaceId: "workspace-A",
+      });
+      const secondList = callTabs<{ tabs: unknown[] }>(firstWindow, "preview:tabs.list", {
+        threadId: "shared-thread",
+        workspaceId: "workspace-B",
+      });
+      expect(firstList.ok).toBe(true);
+      expect(secondList.ok).toBe(true);
+      if (!firstList.ok || !secondList.ok) return;
+      expect(firstList.data.tabs).toHaveLength(2);
+      expect(secondList.data.tabs).toHaveLength(2);
+    });
+
     it("tabs.activate swaps which per-tab view is mounted (no reload of either tab)", async () => {
       const win = createWindow();
       await showPreview(win, { threadId: "thread-A", url: "https://first.test" });
@@ -1650,7 +1705,7 @@ describe("preview-browser", () => {
       expect(firstView.webContents.loadURL).not.toHaveBeenCalled();
     });
 
-    it("rejects invalid thread or tab ids", () => {
+    it("rejects invalid or oversized workspace, thread, and tab ids", () => {
       const win = createWindow();
       const r1 = callTabs(win, "preview:tabs.list", { threadId: "" });
       expect(r1.ok).toBe(false);
@@ -1659,6 +1714,11 @@ describe("preview-browser", () => {
         tabId: "",
       });
       expect(r2.ok).toBe(false);
+      const r3 = callTabs(win, "preview:tabs.list", {
+        threadId: "thread-A",
+        workspaceId: "w".repeat(257),
+      });
+      expect(r3).toEqual({ ok: false, error: "invalid-workspace-id" });
     });
   });
 
@@ -1754,7 +1814,7 @@ describe("preview-browser", () => {
       const adopted = makeWebContentsView().webContents;
       adopted.getURL.mockReturnValue("https://example.com/page");
       const session = sessions.get(win.id)!;
-      const tabId = session.tabsByThread.get("thread-webview")!.activeTabId!;
+      const tabId = getThreadTabSet(session, "thread-webview")!.activeTabId!;
       expect(session.view).toBeNull();
       await adoptTypedGuest(win, "thread-webview", tabId, adopted);
 
@@ -1837,7 +1897,7 @@ describe("preview-browser", () => {
         }),
       );
 
-      const tabId = sessions.get(win.id)!.tabsByThread.get("thread-webview")!.activeTabId!;
+      const tabId = getThreadTabSet(sessions.get(win.id)!, "thread-webview")!.activeTabId!;
       await adoptTypedGuest(win, "thread-webview", tabId, adopted);
 
       const result = await ipcHandlers["preview:capture-picture-reference"]!(ev) as {
@@ -1883,7 +1943,7 @@ describe("preview-browser", () => {
         )
         .mockResolvedValueOnce(undefined);
 
-      const tabId = sessions.get(win.id)!.tabsByThread.get("thread-webview")!.activeTabId!;
+      const tabId = getThreadTabSet(sessions.get(win.id)!, "thread-webview")!.activeTabId!;
       await adoptTypedGuest(win, "thread-webview", tabId, adopted);
 
       const result = await ipcHandlers["preview:capture-annotation-snapshot"]!(ev, {
@@ -1946,7 +2006,7 @@ describe("preview-browser", () => {
         }),
       );
 
-      const tabId = sessions.get(win.id)!.tabsByThread.get("thread-webview")!.activeTabId!;
+      const tabId = getThreadTabSet(sessions.get(win.id)!, "thread-webview")!.activeTabId!;
       await adoptTypedGuest(win, "thread-webview", tabId, adopted);
 
       const result = await ipcHandlers["preview:capture-context-reference"]!(ev) as {
@@ -1980,7 +2040,7 @@ describe("preview-browser", () => {
           .mockResolvedValueOnce(undefined)
           .mockResolvedValueOnce(JSON.stringify({ state: "cancelled", seq: 1 }));
 
-        const elementTabId = sessions.get(win.id)!.tabsByThread.get("thread-webview")!.activeTabId!;
+        const elementTabId = getThreadTabSet(sessions.get(win.id)!, "thread-webview")!.activeTabId!;
         await adoptTypedGuest(win, "thread-webview", elementTabId, adopted);
         const adoptedResult = { ok: true };
         expect(adoptedResult).toEqual({ ok: true });
@@ -2048,7 +2108,7 @@ describe("preview-browser", () => {
           .mockResolvedValueOnce(undefined)
           .mockResolvedValueOnce(JSON.stringify({ visibleText: "Attach", scrollX: 0, scrollY: 0 }));
 
-        const tabId = sessions.get(win.id)!.tabsByThread.get("thread-webview")!.activeTabId!;
+        const tabId = getThreadTabSet(sessions.get(win.id)!, "thread-webview")!.activeTabId!;
         await adoptTypedGuest(win, "thread-webview", tabId, adopted);
 
         const capturePromise = ipcHandlers["preview:capture-picture-element-pick"]!(

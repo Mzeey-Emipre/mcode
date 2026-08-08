@@ -2475,17 +2475,17 @@ export function PreviewPanel({
   // every favicon tick. Clear on unmount so a backgrounded scope falls back to
   // each tab's own persisted favicon rather than a stale overlay.
   useEffect(() => {
-    usePreviewTabsStore.getState().setLiveChrome(threadId, {
+    usePreviewTabsStore.getState().setLiveChrome(browserWorkspaceId, threadId, {
       title: effectivePageStatus.title,
       url: effectivePageStatus.url,
       favicon: effectivePageStatus.favicon,
     });
-  }, [threadId, effectivePageStatus]);
+  }, [browserWorkspaceId, threadId, effectivePageStatus]);
   useEffect(() => {
     return () => {
-      usePreviewTabsStore.getState().setLiveChrome(threadId, null);
+      usePreviewTabsStore.getState().setLiveChrome(browserWorkspaceId, threadId, null);
     };
-  }, [threadId]);
+  }, [browserWorkspaceId, threadId]);
 
   useEffect(() => {
     if (!draftAnnotation) return;
@@ -2970,7 +2970,7 @@ export function PreviewPanel({
             : "pointer-events-none -z-10 opacity-0",
         )}
         onPageStatus={(status) => {
-          usePreviewTabsStore.getState().updateTabChrome(threadId, tab.id, {
+          usePreviewTabsStore.getState().updateTabChrome(browserWorkspaceId, threadId, tab.id, {
             title: status.title,
             url: status.url,
             favicon: status.favicon,

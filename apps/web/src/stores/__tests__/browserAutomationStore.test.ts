@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { BROWSER_AUTOMATION_MAX_PENDING_REQUESTS } from "@mcode/contracts";
 import {
+  browserAutomationLifecycleKey,
   browserAutomationRequestKey,
   browserAutomationScopeKey,
   browserAutomationTargetKey,
@@ -29,6 +30,33 @@ function target(
   lastUsedAt = 1,
 ): BrowserAutomationLiveTarget {
   return { workspaceId, threadId, tabId, lastUsedAt, revision: 1 };
+}
+
+function lifecycleTab(
+  workspaceId: string,
+  threadId: string,
+  tabId: string,
+): BrowserSessionLifecycleTab {
+  return {
+    workspaceId,
+    threadId,
+    tabId,
+    providerSessionId: "session",
+    providerInstanceId: "instance",
+    provenance: "claimed-user",
+    ownership: "claimed",
+    target: {
+      desktopInstanceId: "desktop",
+      windowId: 1,
+      connectionGeneration: 1,
+      threadId,
+      tabId,
+      targetGeneration: 1,
+      active: false,
+      focused: false,
+      lastUsedAt: 1,
+    },
+  };
 }
 
 describe("browser automation renderer scope", () => {
@@ -135,6 +163,25 @@ describe("browser automation renderer scope", () => {
     )).toBe(false);
     expect(browserTargetRegistry.get("workspace-a", "thread", "tab")?.workspaceId).toBe("workspace-a");
     expect(browserTargetRegistry.get("workspace-b", "thread", "tab")?.workspaceId).toBe("workspace-b");
+  });
+
+  it("unregisters lifecycle state only for the exact workspace target", () => {
+    const store = useBrowserAutomationStore.getState();
+    store.registerTarget("workspace-a", "thread", "tab");
+    store.registerTarget("workspace-b", "thread", "tab");
+    store.setLifecycleTabs([
+      lifecycleTab("workspace-a", "thread", "tab"),
+      lifecycleTab("workspace-b", "thread", "tab"),
+    ]);
+
+    store.unregisterTarget("workspace-a", "thread", "tab");
+
+    expect(useBrowserAutomationStore.getState().lifecycleTabs.has(
+      browserAutomationLifecycleKey("workspace-a", "thread", "tab"),
+    )).toBe(false);
+    expect(useBrowserAutomationStore.getState().lifecycleTabs.has(
+      browserAutomationLifecycleKey("workspace-b", "thread", "tab"),
+    )).toBe(true);
   });
 
   it("leases a busy warm scope by workspace and thread", () => {

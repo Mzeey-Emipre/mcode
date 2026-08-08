@@ -352,6 +352,7 @@ interface PreviewTabsBridge {
   ): Promise<PreviewTabIpcResult<BrowserTabSet>>;
   open(
     threadId: string,
+    workspaceId: string,
     options?: {
       readonly activate?: boolean;
       readonly tabId?: string;
@@ -361,13 +362,15 @@ interface PreviewTabsBridge {
   ): Promise<PreviewTabIpcResult<PreviewTabOpenData>>;
   activate(
     threadId: string,
+    workspaceId: string,
     tabId: string,
   ): Promise<PreviewTabIpcResult<BrowserTabSet>>;
   close(
     threadId: string,
+    workspaceId: string,
     tabId: string,
   ): Promise<PreviewTabIpcResult<BrowserTabSet>>;
-  closeScope(threadId: string): Promise<PreviewTabIpcResult<BrowserTabSet>>;
+  closeScope(threadId: string, workspaceId: string): Promise<PreviewTabIpcResult<BrowserTabSet>>;
   /** Subscribe to push-style tab set updates emitted on navigation/favicon/close. */
   onUpdated(callback: (payload: BrowserTabSet) => void): () => void;
 }

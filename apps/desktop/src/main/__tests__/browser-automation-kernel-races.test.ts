@@ -179,14 +179,16 @@ vi.mock("../preview/preview-webview-adopt.js", () => ({
 }));
 
 vi.mock("../preview/preview-session.js", () => ({
-  getSession: vi.fn(() => ({ lastPreviewThreadId: "thread", tabsByThread })),
+  getSession: vi.fn(() => ({ workspaceId: "workspace", lastPreviewThreadId: "thread", tabsByThread })),
+  getThreadTabSet: vi.fn((session, threadId, workspaceId = session.workspaceId ?? threadId) =>
+    session.tabsByThread.get(JSON.stringify([workspaceId, threadId])) ?? session.tabsByThread.get(threadId)),
 }));
 
 import { BrowserAutomationKernel } from "../browser-automation/kernel.js";
 import { BrowserSessionDriver, ElectronBrowserSessionAdapter } from "../../../../web/src/services/browser-automation/browserSessionDriver";
 
 function seedTab(tabId = "tab", threadId = "thread"): void {
-  tabsByThread.set(threadId, {
+  tabsByThread.set(JSON.stringify(["workspace", threadId]), {
     threadId,
     activeTabId: tabId,
     tabs: [{ id: tabId, threadId, view: null }],
@@ -338,7 +340,7 @@ class KernelConformanceSubject implements BrowserConformanceSubject {
   async injectExternalEvent(eventValue: BrowserConformanceScheduledEvent): Promise<void> {
     if (this.disposed) return;
     if (eventValue.kind === "target-close") {
-      this.driver.clearIdempotencyForTarget("thread", "tab");
+      this.driver.clearIdempotencyForTarget("workspace", "thread", "tab");
       this.liveTargets.delete("tab");
     } else if (eventValue.kind === "target-register") {
       this.liveTargets.set("tab", kernelTarget());
@@ -347,7 +349,7 @@ class KernelConformanceSubject implements BrowserConformanceSubject {
     if (revision) {
       this.revisions[revision] += 1;
       this.admissionRevisions[revision] += 1;
-      if (revision === "observation") this.driver.invalidateTargetObservations("thread", "tab");
+      if (revision === "observation") this.driver.invalidateTargetObservations("workspace", "thread", "tab");
     }
   }
   snapshotOutcome(): BrowserConformanceNormalizedRun {

@@ -43,7 +43,7 @@ export function usePreviewTabSet(
   scopeId: string | null,
   workspaceId?: string | null,
 ): BrowserTabSet | null {
-  const tabSet = usePreviewDisplayTabSet(scopeId);
+  const tabSet = usePreviewDisplayTabSet(scopeId, workspaceId);
   const bridge = window.desktopBridge?.preview?.tabs;
 
   useEffect(() => {
@@ -52,11 +52,11 @@ export function usePreviewTabSet(
     const { setTabSet } = usePreviewTabsStore.getState();
     void bridge.list(scopeId, workspaceId ?? undefined).then((r) => {
       if (cancelled) return;
-      if (r.ok) setTabSet(scopeId, r.data);
+      if (r.ok) setTabSet(workspaceId ?? scopeId, scopeId, r.data);
     });
     const off = bridge.onUpdated((payload: BrowserTabSet) => {
       if (cancelled) return;
-      if (payload.threadId === scopeId) setTabSet(scopeId, payload);
+      if (payload.threadId === scopeId) setTabSet(workspaceId ?? scopeId, scopeId, payload);
     });
     return () => {
       cancelled = true;

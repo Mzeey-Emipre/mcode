@@ -370,7 +370,7 @@ class WebDriverRaceSubject implements BrowserConformanceSubject {
         this.bumpRevision("capability");
         break;
       case "observation-revision":
-        this.driver.invalidateTargetObservations("thread", "tab");
+        this.driver.invalidateTargetObservations("workspace", "thread", "tab");
         this.bumpRevision("observation");
         break;
       case "late-event":
@@ -380,7 +380,7 @@ class WebDriverRaceSubject implements BrowserConformanceSubject {
         // Late responses carry no new authority revision and disposed callbacks stay inert.
         break;
       case "target-close":
-        this.driver.clearIdempotencyForTarget("thread", "tab");
+        this.driver.clearIdempotencyForTarget("workspace", "thread", "tab");
         this.liveTargets.delete("tab");
         this.bumpRevision("document");
         break;

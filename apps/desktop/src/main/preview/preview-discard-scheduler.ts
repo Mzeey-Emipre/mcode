@@ -21,6 +21,7 @@ import {
 import {
   applyPageStatus,
   emitTabsUpdated,
+  getThreadTabSet,
   isAllowedPreviewUrl,
   type PreviewSession,
   type TabState,
@@ -75,7 +76,7 @@ function collectWarmTabs(s: PreviewSession): WarmTabRef[] {
 /** Active tab id of the active preview thread, or null. */
 function activeTabIdOf(s: PreviewSession): string | null {
   if (!s.lastPreviewThreadId) return null;
-  return s.tabsByThread.get(s.lastPreviewThreadId)?.activeTabId ?? null;
+  return getThreadTabSet(s, s.lastPreviewThreadId)?.activeTabId ?? null;
 }
 
 /** Locates a tab by id across all threads. */

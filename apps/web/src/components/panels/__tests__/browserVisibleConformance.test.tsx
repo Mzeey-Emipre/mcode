@@ -28,7 +28,7 @@ import {
   releaseBrowserAutomationThreadScope,
   useBrowserAutomationStore,
 } from "@/stores/browserAutomationStore";
-import { usePreviewTabsStore } from "@/stores/previewTabsStore";
+import { previewTabsScopeKey, usePreviewTabsStore } from "@/stores/previewTabsStore";
 import { browserTargetRegistry } from "@/services/browser-automation/browserTargetRegistry";
 import {
   ViewportCoordinator,
@@ -633,7 +633,7 @@ describe("visible Browser conformance observer", () => {
       controllers: new Map([[TARGET_KEY, { tabId: TAB_ID, controller: "agent", controlEpoch: 1 }]]),
     });
     usePreviewTabsStore.setState({
-      tabSetByScope: { [THREAD_ID]: tabSet },
+      tabSetByScope: { [previewTabsScopeKey("workspace-visible", THREAD_ID)]: tabSet },
       liveChromeByScope: {},
       persistentTabIdsByScope: {},
     });

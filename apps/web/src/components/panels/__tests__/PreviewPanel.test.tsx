@@ -97,7 +97,7 @@ import {
 } from "@/stores/previewAnnotationStore";
 import { usePreviewDesignModeStore } from "@/stores/previewDesignModeStore";
 import { useProviderCatalogStore } from "@/stores/providerCatalogStore";
-import { usePreviewTabsStore } from "@/stores/previewTabsStore";
+import { previewTabsScopeKey, usePreviewTabsStore } from "@/stores/previewTabsStore";
 import { useDiffStore } from "@/stores/diffStore";
 import {
   browserAutomationTargetKey,
@@ -1093,7 +1093,7 @@ describe("PreviewPanel: full panel state", () => {
         },
       ],
     };
-    usePreviewTabsStore.getState().setTabSet("thread-1", tabSet);
+    usePreviewTabsStore.getState().setTabSet("thread-1", "thread-1", tabSet);
     mockUsePreviewTabs.mockReturnValue({
       tabSet,
       newTab: vi.fn(),
@@ -1114,7 +1114,7 @@ describe("PreviewPanel: full panel state", () => {
     );
 
     await waitFor(() => {
-      const updatedTabSet = usePreviewTabsStore.getState().tabSetByScope["thread-1"]!;
+      const updatedTabSet = usePreviewTabsStore.getState().tabSetByScope[previewTabsScopeKey("thread-1", "thread-1")]!;
       expect(updatedTabSet.tabs.find((tab) => tab.id === "tab-b")?.faviconUrl).toBe(
         "https://b.example/favicon.ico",
       );

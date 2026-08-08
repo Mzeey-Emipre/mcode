@@ -17,13 +17,13 @@ const response = {} as BrowserAutomationResponse;
 const dispatch = {} as BrowserAutomationHostDispatch;
 
 describe("BrowserSessionDriver", () => {
-  function inspectDispatch(requestId = "inspect"): BrowserAutomationHostDispatch {
+  function inspectDispatch(requestId = "inspect", workspaceId = "workspace"): BrowserAutomationHostDispatch {
     return {
       connection: { connectionGeneration: 1, targetGeneration: 1, capabilityRevision: 1 },
       target: { threadId: "thread", tabId: "tab", targetGeneration: 1, windowId: 1 },
       request: {
         contractVersion: 1,
-        workspaceId: "workspace",
+        workspaceId,
         threadId: "thread",
         providerSessionId: "session",
         providerInstanceId: "instance",
@@ -461,7 +461,7 @@ describe("BrowserSessionDriver", () => {
       if (value.request.operation === "inspect") {
         return { ok: true, result: { operation: "inspect" } } as unknown as BrowserAutomationResponse;
       }
-      driver.invalidateTargetObservations("thread", "tab");
+      driver.invalidateTargetObservations("workspace", "thread", "tab");
       return { ok: true, result: { operation: value.request.operation } } as unknown as BrowserAutomationResponse;
     });
     const driver = new BrowserSessionDriver({
@@ -503,7 +503,7 @@ describe("BrowserSessionDriver", () => {
     });
 
     await driver.execute(inspectDispatch(), new AbortController().signal);
-    driver.invalidateTargetObservations("thread", "tab");
+    driver.invalidateTargetObservations("workspace", "thread", "tab");
     const interactionRevisions = (
       driver as unknown as { humanInteractionRevisions: Map<string, number> }
     ).humanInteractionRevisions;
@@ -512,6 +512,64 @@ describe("BrowserSessionDriver", () => {
     await driver.releaseProviderSession("session");
 
     expect(interactionRevisions.size).toBe(0);
+  });
+
+  it("isolates same thread and tab IDs across workspaces during invalidation and cleanup", async () => {
+    const execute = vi.fn(async (value: BrowserAutomationHostDispatch) => {
+      if (value.request.operation === "inspect") {
+        return { ok: true, result: { operation: "inspect" } } as unknown as BrowserAutomationResponse;
+      }
+      return { ok: true, result: { operation: value.request.operation } } as unknown as BrowserAutomationResponse;
+    });
+    const driver = new BrowserSessionDriver({
+      web: { execute },
+      electron: { execute },
+      isElectron: () => false,
+      supportedActOperations: ["click"],
+    });
+    const workspaceDispatch = (workspaceId: string): BrowserAutomationHostDispatch => {
+      return inspectDispatch("inspect", workspaceId);
+    };
+    const workspaceAct = (workspaceId: string, observationRef: string): BrowserAutomationHostDispatch => {
+      const base = actDispatch(observationRef, [{ operation: "click", target: { cssSelector: "#save" } }]);
+      return { ...base, request: { ...base.request, workspaceId } } as BrowserAutomationHostDispatch;
+    };
+    const inspectA = await driver.execute(workspaceDispatch("workspace-a"), new AbortController().signal);
+    const inspectB = await driver.execute(workspaceDispatch("workspace-b"), new AbortController().signal);
+    const observationA = (inspectA as { result: { observationRef: string } }).result.observationRef;
+    const observationB = (inspectB as { result: { observationRef: string } }).result.observationRef;
+
+    driver.invalidateTargetObservations("workspace-a", "thread", "tab");
+    await expect(driver.execute(workspaceAct("workspace-b", observationB), new AbortController().signal))
+      .resolves.toMatchObject({ ok: true, result: { outcome: "completed" } });
+    await expect(driver.execute(workspaceAct("workspace-a", observationA), new AbortController().signal))
+      .resolves.toMatchObject({ ok: false, error: { code: "STALE_TARGET_GENERATION" } });
+
+    const openDispatch = (workspaceId: string, requestId: string): BrowserAutomationHostDispatch => ({
+      connection: { connectionGeneration: 1, capabilityRevision: 1 },
+      target: { threadId: "thread", tabId: "tab", windowId: 1, targetGeneration: 1 },
+      request: {
+        contractVersion: 1,
+        workspaceId,
+        threadId: "thread",
+        providerSessionId: "session",
+        providerInstanceId: "instance",
+        requestId,
+        sequence: 1,
+        deadline: Date.now() + 10_000,
+        expectedControlEpoch: 0,
+        operation: "open",
+        args: { idempotencyKey: "same-open-key" },
+      },
+    } as unknown as BrowserAutomationHostDispatch);
+    await driver.execute(openDispatch("workspace-a", "open-a"), new AbortController().signal);
+    await driver.execute(openDispatch("workspace-b", "open-b"), new AbortController().signal);
+    const callsAfterInitialOpens = execute.mock.calls.length;
+    driver.clearIdempotencyForTarget("workspace-a", "thread", "tab");
+    await driver.execute(openDispatch("workspace-b", "open-b-replay"), new AbortController().signal);
+    expect(execute).toHaveBeenCalledTimes(callsAfterInitialOpens);
+    await driver.execute(openDispatch("workspace-a", "open-a-fresh"), new AbortController().signal);
+    expect(execute).toHaveBeenCalledTimes(callsAfterInitialOpens + 1);
   });
 
   it("fails before adapter execution when descriptor revision drifts", async () => {
@@ -640,7 +698,7 @@ describe("BrowserSessionDriver", () => {
     await driver.execute(makeDispatch("generation-bump", "https://example.test/", 2), new AbortController().signal);
     expect(execute).toHaveBeenCalledTimes(3);
 
-    driver.clearIdempotencyForTarget("thread", "tab");
+    driver.clearIdempotencyForTarget("workspace", "thread", "tab");
     await driver.execute(makeDispatch("fresh", "https://example.test/", 2), new AbortController().signal);
     expect(execute).toHaveBeenCalledTimes(4);
   });
@@ -1233,16 +1291,16 @@ describe("BrowserSessionDriver", () => {
       expect.objectContaining({ tabId: "user-tab", provenance: "claimed-user", ownership: "claimed" }),
     ]));
 
-    driver.invalidateTargetObservations("thread", "agent-tab");
-    driver.invalidateTargetObservations("thread", "user-tab");
+    driver.invalidateTargetObservations("workspace", "thread", "agent-tab");
+    driver.invalidateTargetObservations("workspace", "thread", "user-tab");
     const interactionRevisions = (
       driver as unknown as { humanInteractionRevisions: Map<string, number> }
     ).humanInteractionRevisions;
     expect(interactionRevisions.size).toBe(2);
 
     await driver.releaseProviderSession("session");
-    expect(close).toHaveBeenCalledWith(agent);
-    expect(close).not.toHaveBeenCalledWith(user);
+    expect(close).toHaveBeenCalledWith(agent, "workspace");
+    expect(close).not.toHaveBeenCalledWith(user, "workspace");
     expect(projections.at(-1)).toEqual([]);
     expect(interactionRevisions.size).toBe(0);
   });

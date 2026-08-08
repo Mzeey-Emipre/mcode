@@ -1780,7 +1780,7 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
   const openRequested = useOverviewStore(
     (state) => state.requestedThreadId === thread.id,
   );
-  const browserTabSet = usePreviewDisplayTabSet(open ? thread.id : null);
+  const browserTabSet = usePreviewDisplayTabSet(open ? thread.id : null, thread.workspace_id);
   const browserLifecycleTabs = useBrowserAutomationStore((state) =>
     open ? state.lifecycleTabs : EMPTY_BROWSER_LIFECYCLE_TABS,
   );

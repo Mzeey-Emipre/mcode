@@ -123,7 +123,10 @@ vi.mock("electron", () => ({
 }));
 vi.mock("../preview/preview-webview-adopt.js", () => ({ findAdoptedWebContentsForWindow: vi.fn(() => currentWebContents) }));
 vi.mock("../preview/preview-guest-input-contract.js", () => ({ PREVIEW_GUEST_AGENT_INPUT_CHANNEL: "mcode:browser-agent-input" }));
-vi.mock("../preview/preview-session.js", () => ({ getSession: vi.fn(() => fakePreviewSession) }));
+vi.mock("../preview/preview-session.js", () => ({
+  getSession: vi.fn(() => fakePreviewSession),
+  getThreadTabSet: vi.fn((session, threadId) => session.tabsByThread.get(threadId)),
+}));
 
 function seedTarget(): void {
   fakePreviewSession.tabsByThread.set("thread", { threadId: "thread", activeTabId: "tab", tabs: [{ id: "tab", threadId: "thread", view: null }] });

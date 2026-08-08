@@ -272,7 +272,11 @@ export const useBrowserAutomationStore = create<BrowserAutomationState>((set, ge
       viewportCoordinators.delete(key);
       const lifecycleTabs = new Map(state.lifecycleTabs);
       for (const [lifecycleKey, tab] of lifecycleTabs) {
-        if (tab.threadId === threadId && tab.tabId === tabId) lifecycleTabs.delete(lifecycleKey);
+        if (
+          tab.workspaceId === workspaceId &&
+          tab.threadId === threadId &&
+          tab.tabId === tabId
+        ) lifecycleTabs.delete(lifecycleKey);
       }
       return {
         liveTargets,
