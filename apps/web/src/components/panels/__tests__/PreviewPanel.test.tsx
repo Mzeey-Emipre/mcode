@@ -86,7 +86,6 @@ vi.mock("../hooks/usePreviewCapture", () => ({
 import {
   PREVIEW_WEBVIEW_FALLBACK_TAB_ID,
   PreviewPanel,
-  shouldRenderWebviewPreview,
 } from "../PreviewPanel";
 import { executeWebBrowserDispatch } from "../browserAutomationWebExecutor";
 import { useSettingsStore } from "@/stores/settingsStore";
@@ -784,14 +783,6 @@ describe("PreviewPanel: full panel state", () => {
   });
 
   it("keeps the webview path flush while preserving the empty state", () => {
-    useSettingsStore.getState()._applyPush({
-      ...getDefaultSettings(),
-      preview: {
-        ...getDefaultSettings().preview,
-        rendering: { engine: "webview" },
-      },
-    });
-
     render(<PreviewPanel threadId="thread-1" />);
 
     expect(screen.queryByTestId("preview-webview-surface")).not.toBeInTheDocument();
@@ -854,13 +845,6 @@ describe("PreviewPanel: full panel state", () => {
   });
 
   it("renders the active URL in a live webview when the effective engine is webview", () => {
-    useSettingsStore.getState()._applyPush({
-      ...getDefaultSettings(),
-      preview: {
-        ...getDefaultSettings().preview,
-        rendering: { engine: "webview" },
-      },
-    });
     mockUsePreviewBridge.mockReturnValue(
       mockBridgeState({ storedUrl: "https://example.com" }),
     );
@@ -878,13 +862,6 @@ describe("PreviewPanel: full panel state", () => {
   });
 
   it("removes the floating rail overlap from the renderer webview hit area", () => {
-    useSettingsStore.getState()._applyPush({
-      ...getDefaultSettings(),
-      preview: {
-        ...getDefaultSettings().preview,
-        rendering: { engine: "webview" },
-      },
-    });
     mockUsePreviewBridge.mockReturnValue(
       mockBridgeState({ storedUrl: "https://example.com" }),
     );
@@ -899,13 +876,6 @@ describe("PreviewPanel: full panel state", () => {
   });
 
   it("keeps an about:blank live tab stable while the persisted URL is empty", async () => {
-    useSettingsStore.getState()._applyPush({
-      ...getDefaultSettings(),
-      preview: {
-        ...getDefaultSettings().preview,
-        rendering: { engine: "webview" },
-      },
-    });
     mockUsePreviewBridge.mockReturnValue(mockBridgeState({ storedUrl: "" }));
     mockUsePreviewTabs.mockReturnValue({
       tabSet: {
@@ -947,13 +917,6 @@ describe("PreviewPanel: full panel state", () => {
   });
 
   it("preserves a page for a title-only event and clears it on authoritative blank navigation", async () => {
-    useSettingsStore.getState()._applyPush({
-      ...getDefaultSettings(),
-      preview: {
-        ...getDefaultSettings().preview,
-        rendering: { engine: "webview" },
-      },
-    });
     mockUsePreviewBridge.mockReturnValue(
       mockBridgeState({ storedUrl: "https://example.com" }),
     );
@@ -1172,13 +1135,6 @@ describe("PreviewPanel: full panel state", () => {
   });
 
   it("navigates changed webview URLs through src without an extra loadURL call", async () => {
-    useSettingsStore.getState()._applyPush({
-      ...getDefaultSettings(),
-      preview: {
-        ...getDefaultSettings().preview,
-        rendering: { engine: "webview" },
-      },
-    });
     const resolveNavigation = vi
       .fn()
       .mockResolvedValue({ ok: true, url: "https://about.google/" });
@@ -1226,13 +1182,6 @@ describe("PreviewPanel: full panel state", () => {
   });
 
   it("does not rewrite src when stored URL already matches the live webview URL", async () => {
-    useSettingsStore.getState()._applyPush({
-      ...getDefaultSettings(),
-      preview: {
-        ...getDefaultSettings().preview,
-        rendering: { engine: "webview" },
-      },
-    });
     let liveUrl = "https://google.com/";
     const restoreWebviewMethods = installMockWebviewMethods({
       getURL: () => liveUrl,
@@ -1309,13 +1258,6 @@ describe("PreviewPanel: full panel state", () => {
   });
 
   it("does not feed an agent navigation redirect back into the webview src", async () => {
-    useSettingsStore.getState()._applyPush({
-      ...getDefaultSettings(),
-      preview: {
-        ...getDefaultSettings().preview,
-        rendering: { engine: "webview" },
-      },
-    });
     const requestedUrl =
       "https://duckduckgo.com/?q=The+Left+Hand+of+Darkness+Ursula+K.+Le+Guin";
     const redirectedUrl = `${requestedUrl}&ia=web`;
@@ -1374,13 +1316,6 @@ describe("PreviewPanel: full panel state", () => {
   });
 
   it("reloads instead of loadURL when navigating to the live webview URL", async () => {
-    useSettingsStore.getState()._applyPush({
-      ...getDefaultSettings(),
-      preview: {
-        ...getDefaultSettings().preview,
-        rendering: { engine: "webview" },
-      },
-    });
     const resolveNavigation = vi
       .fn()
       .mockResolvedValue({ ok: true, url: "https://google.com/" });
@@ -1421,13 +1356,6 @@ describe("PreviewPanel: full panel state", () => {
   });
 
   it("keeps the live webview mounted while the overflow menu is open", async () => {
-    useSettingsStore.getState()._applyPush({
-      ...getDefaultSettings(),
-      preview: {
-        ...getDefaultSettings().preview,
-        rendering: { engine: "webview" },
-      },
-    });
     mockUsePreviewBridge.mockReturnValue(
       mockBridgeState({ storedUrl: "https://example.com" }),
     );
@@ -1441,12 +1369,6 @@ describe("PreviewPanel: full panel state", () => {
     expect(await screen.findByTestId("browser-overflow-menu")).toBeInTheDocument();
     expect(screen.getByTestId("preview-webview")).toBeInTheDocument();
     expect(usePreviewSuppressionStore.getState().count).toBe(0);
-  });
-
-  it("honors the webview engine in built and dev renderers", () => {
-    expect(shouldRenderWebviewPreview("webview")).toBe(true);
-    expect(shouldRenderWebviewPreview("webContentsView")).toBe(true);
-    expect(shouldRenderWebviewPreview(undefined)).toBe(true);
   });
 
   it("keeps browser chrome visible while design mode has no saved annotations", () => {

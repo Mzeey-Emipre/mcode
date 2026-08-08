@@ -1078,16 +1078,9 @@ instead of the normal browser header.
 _Avoid_: treating Design as a separate interaction mode
 
 ### Preview rendering host
-The Electron surface that owns a preview tab's live Chromium page. Mcode has
-two rendering hosts: **WebContentsView**, a native view managed by the main
-process, and **webview**, a renderer-owned Electron element. `WebContentsView`
-paints outside the React DOM stack, so React overlays must hide or suppress it
-while they are open. `webview` stays in the renderer tree, so React menus,
-dialogs, and other overlays can layer above it normally.
-
-The hidden setting `preview.rendering.engine` selects the host. Both values are
-Chromium-based; this setting is about Electron compositing, not Firefox,
-WebKit, or another browser engine.
+The BrowserSurfaceHost owns each preview tab's live Chromium page. Electron
+uses renderer-owned `webview` elements. The web runtime uses iframes. There is
+no runtime host setting or compatibility fallback.
 
 ### Preview tab
 One navigable page within the preview, belonging to a thread. A thread can

@@ -158,9 +158,6 @@ When adding a new setting, ask these questions in order:
     "model": ""                          // Model for PR draft generation, empty = provider default
   },
   "preview": {
-    "rendering": {
-      "engine": "webContentsView"         // "webContentsView" | "webview"; hidden preview host switch
-    },
     "memorySaver": {
       "maxWarm": 3,
       "bgIdleMs": 300000,

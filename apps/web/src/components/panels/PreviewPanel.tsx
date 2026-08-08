@@ -35,7 +35,6 @@ import { useDiffStore } from "@/stores/diffStore";
 import { usePreviewDesignModeStore } from "@/stores/previewDesignModeStore";
 import { usePreviewFocusStore } from "@/stores/previewFocusStore";
 import { usePreviewTabsStore } from "@/stores/previewTabsStore";
-import { useSettingsStore } from "@/stores/settingsStore";
 import { BrowserHeader } from "./BrowserHeader";
 import { BrowserViewportToolbar } from "./BrowserViewportToolbar";
 import {
@@ -1552,13 +1551,6 @@ export const PREVIEW_WEBVIEW_FALLBACK_TAB_ID =
 export const WEB_RUNTIME_PREVIEW_TAB_ID = "web-preview";
 const WEB_AUTOMATION_FIXTURE_URL = "/browser-automation-fixture.html";
 
-/** Returns whether the webview renderer should own the preview surface. */
-export function shouldRenderWebviewPreview(
-  _engine: string | undefined,
-): boolean {
-  return true;
-}
-
 export interface PreviewPanelProps {
   /** Thread that owns preview state (URL memory and future captures). */
   readonly threadId: string;
@@ -2130,10 +2122,7 @@ export function PreviewPanel({
   }, [activeViewportCoordinator]);
 
   const omniboxFocusTick = usePreviewFocusStore((s) => s.omniboxFocusTick);
-  const previewRenderingEngine = useSettingsStore(
-    (s) => s.settings.preview.rendering.engine,
-  );
-  const showWebviewPreview = shouldRenderWebviewPreview(previewRenderingEngine);
+  const showWebviewPreview = true;
   const webRuntime = typeof window.desktopBridge?.preview !== "object";
 
   const bridge = usePreviewBridge({

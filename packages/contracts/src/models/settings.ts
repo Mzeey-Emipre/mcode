@@ -75,11 +75,6 @@ export const UpdateReleaseLineSchema = z.enum(["stable", "nightly"]);
 /** Desktop auto-update release line value. */
 export type UpdateReleaseLine = z.infer<typeof UpdateReleaseLineSchema>;
 
-/** Browser preview rendering host. */
-export const PreviewRenderingEngineSchema = z.enum(["webContentsView", "webview"]);
-/** Browser preview rendering host value. */
-export type PreviewRenderingEngine = z.infer<typeof PreviewRenderingEngineSchema>;
-
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -446,13 +441,6 @@ export const SettingsSchema = lazySchema(() =>
     /** In-app browser preview settings. */
     preview: z
       .object({
-        /** Browser preview rendering host. */
-        rendering: z
-          .object({
-            /** Hidden legacy switch; preview rendering now uses webview. */
-            engine: PreviewRenderingEngineSchema.default("webview"),
-          })
-          .default({}),
         /**
          * Memory-saver discard policy (ADR 0002). Thresholds are milliseconds.
          * Background preview tabs are discarded (renderer freed) and reload on
@@ -684,11 +672,6 @@ export const PartialSettingsSchema = lazySchema(() =>
       .optional(),
     preview: z
       .object({
-        rendering: z
-          .object({
-            engine: PreviewRenderingEngineSchema.optional(),
-          })
-          .optional(),
         memorySaver: z
           .object({
             maxWarm: z.number().int().min(1).max(20).optional(),

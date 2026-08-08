@@ -55,44 +55,19 @@ describe("preview.memorySaver", () => {
   });
 });
 
-describe("preview.rendering", () => {
-  it("defaults the rendering engine to webview", () => {
-    expect(SettingsSchema().parse({}).preview.rendering.engine).toBe("webview");
-    expect(getDefaultSettings().preview.rendering.engine).toBe("webview");
-  });
-
-  it("accepts supported rendering engines", () => {
+describe("preview settings", () => {
+  it("does not expose a rendering-engine choice", () => {
+    expect(getDefaultSettings().preview).not.toHaveProperty("rendering");
     expect(
       SettingsSchema().parse({
         preview: { rendering: { engine: "webContentsView" } },
-      }).preview.rendering.engine,
-    ).toBe("webContentsView");
+      }).preview,
+    ).not.toHaveProperty("rendering");
     expect(
-      SettingsSchema().parse({
+      PartialSettingsSchema().parse({
         preview: { rendering: { engine: "webview" } },
-      }).preview.rendering.engine,
-    ).toBe("webview");
-  });
-
-  it("rejects unknown rendering engines in full and partial settings", () => {
-    expect(
-      SettingsSchema().safeParse({
-        preview: { rendering: { engine: "browserView" } },
-      }).success,
-    ).toBe(false);
-    expect(
-      PartialSettingsSchema().safeParse({
-        preview: { rendering: { engine: "browserView" } },
-      }).success,
-    ).toBe(false);
-  });
-
-  it("accepts a partial rendering override without backfilling memory-saver siblings", () => {
-    const p = PartialSettingsSchema().parse({
-      preview: { rendering: { engine: "webview" } },
-    });
-    expect(p.preview?.rendering?.engine).toBe("webview");
-    expect(p.preview?.memorySaver).toBeUndefined();
+      }).preview,
+    ).not.toHaveProperty("rendering");
   });
 });
 
