@@ -56,11 +56,15 @@ function mockBridge(handlers: {
     ok: true as const,
     data: handlers.closeScope ?? set(null, []),
   }));
+  const updateChrome = vi.fn(async () => ({
+    ok: true as const,
+    data: set("a", [page("a")]),
+  }));
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   (window as any).desktopBridge = {
-    preview: { tabs: { open, activate, close, closeScope, list: vi.fn(), onUpdated: vi.fn() } },
+    preview: { tabs: { open, activate, updateChrome, close, closeScope, list: vi.fn(), onUpdated: vi.fn() } },
   };
-  return { open, activate, close, closeScope };
+  return { open, activate, updateChrome, close, closeScope };
 }
 
 describe("overlayDisplaySet", () => {
@@ -303,6 +307,7 @@ describe("previewTabsStore", () => {
   });
 
   it("updateTabChrome persists renderer-observed favicon for inactive tabs", () => {
+    const { updateChrome } = mockBridge({});
     const { setTabSet, updateTabChrome } = usePreviewTabsStore.getState();
     setTabSet(
       WORKSPACE_ID,
@@ -322,6 +327,11 @@ describe("previewTabsStore", () => {
     const tabSet = usePreviewTabsStore.getState().tabSetByScope[SCOPE_KEY]!;
     expect(tabSet.tabs[0]!.faviconUrl).toBe("https://a.test/favicon.ico");
     expect(tabSet.tabs[1]).toMatchObject({
+      title: "B updated",
+      url: "https://b.test/path",
+      faviconUrl: "https://b.test/favicon.ico",
+    });
+    expect(updateChrome).toHaveBeenCalledWith(SCOPE, WORKSPACE_ID, "b", {
       title: "B updated",
       url: "https://b.test/path",
       faviconUrl: "https://b.test/favicon.ico",

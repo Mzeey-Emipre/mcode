@@ -30,6 +30,7 @@ import type {
 } from "@mcode/contracts";
 import { BROWSER_AUTOMATION_VIEWPORT_CANVAS_PADDING_PX } from "@mcode/contracts";
 import type { PreviewAnnotationSnapshotRequest } from "@/transport/desktop-bridge";
+import { isEmptyPreviewTabUrl } from "@/lib/open-url-in-preview";
 import { cn } from "@/lib/utils";
 import { useDiffStore } from "@/stores/diffStore";
 import { usePreviewDesignModeStore } from "@/stores/previewDesignModeStore";
@@ -2280,6 +2281,12 @@ export function PreviewPanel({
 
   useEffect(() => {
     if (!showWebviewPreview) return;
+    if (tabs.tabSet) {
+      if (isEmptyPreviewTabUrl(activeWebviewTabUrl)) {
+        setWebviewPageStatus({ url: null, title: null, favicon: null, phase: "loaded" });
+      }
+      return;
+    }
     const stored = bridge.storedUrl.trim();
     if (!stored) {
       setWebviewRequestedUrl(activeWebviewTabId, null);
@@ -2296,10 +2303,12 @@ export function PreviewPanel({
     setWebviewRequestedUrl(activeWebviewTabId, stored);
   }, [
     activeWebviewRef,
+    activeWebviewTabUrl,
     activeWebviewTabId,
     bridge.storedUrl,
     setWebviewRequestedUrl,
     showWebviewPreview,
+    tabs.tabSet,
     threadId,
   ]);
 
@@ -2781,7 +2790,7 @@ export function PreviewPanel({
   }
 
   const hasLoadedPage = showWebviewPreview
-    ? !!(activeWebviewSrc ?? webviewPageStatus.url)
+    ? !isEmptyPreviewTabUrl(activeWebviewSrc ?? webviewPageStatus.url)
     : bridge.storedUrl.trim().length > 0;
   const pageError =
     effectivePageStatus.phase === "error"

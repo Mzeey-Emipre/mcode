@@ -4,6 +4,7 @@ import {
   type BrowserAutomationControllerState,
   type BrowserAutomationHostDispatch,
   type BrowserAutomationResponse,
+  type BrowserTabSet,
 } from "@mcode/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useConnectionStore } from "@/stores/connectionStore";
@@ -1520,6 +1521,152 @@ describe("BrowserAutomationHost", () => {
     expect(useBrowserAutomationStore.getState().controllers.get(
       browserAutomationTargetKey("workspace-1", "thread-1", "created-tab"),
     )).toMatchObject({ controller: "agent", operation: "open" });
+    view.unmount();
+  });
+
+  it("keeps an active warm user tab selected while an idempotent background open creates one agent tab", async () => {
+    useBrowserAutomationStore.setState({ liveTargets: new Map() });
+    const userTab = {
+      id: "user-tab",
+      threadId: "thread-1",
+      url: "https://user.example/loaded",
+      title: "User page",
+      faviconUrl: null,
+      warm: true,
+      active: true,
+    };
+    const agentTab = {
+      id: "agent-tab",
+      threadId: "thread-1",
+      url: null,
+      title: null,
+      faviconUrl: null,
+      warm: true,
+      active: false,
+    };
+    let tabSet: BrowserTabSet = {
+      threadId: "thread-1",
+      activeTabId: userTab.id,
+      tabs: [userTab],
+    };
+    listTabs.mockImplementation(async () => {
+      useBrowserAutomationStore.getState().registerTarget("workspace-1", "thread-1", userTab.id);
+      return { ok: true, data: tabSet };
+    });
+    createTab.mockImplementation(async (threadId: string, workspaceId: string) => {
+      useBrowserAutomationStore.getState().registerTarget(workspaceId, threadId, agentTab.id);
+      tabSet = {
+        threadId,
+        activeTabId: userTab.id,
+        tabs: [userTab, agentTab],
+      };
+      return { ok: true, data: { tabId: agentTab.id, tabs: tabSet } };
+    });
+    describeTarget.mockImplementation(async ({ tabId }: { tabId: string }) => ({
+      ok: true,
+      target: {
+        windowId: 7,
+        threadId: "thread-1",
+        tabId,
+        targetGeneration: 1,
+        active: tabId === userTab.id,
+        focused: tabId === userTab.id,
+        lastUsedAt: tabId === userTab.id ? 100 : 50,
+      },
+    }));
+    execute.mockResolvedValue({
+      contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
+      requestId: "request-1192",
+      sequence: 1192,
+      ok: true,
+      result: {
+        operation: "open",
+        url: "https://agent.example/loaded",
+        title: "Agent page",
+        controlEpoch: 0,
+      },
+    });
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    const openRequest = {
+      ...dispatch(1, 1192).request,
+      requestId: "request-1192",
+      sequence: 1192,
+      operation: "open" as const,
+      args: {
+        url: "https://agent.example/loaded",
+        idempotencyKey: "agent-open-1192",
+        activate: false,
+      },
+    };
+
+    act(() => harness.emit("browserAutomation.bootstrap", { hostId, generation: 1, request: openRequest }));
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
+    expect(createTab).toHaveBeenCalledOnce();
+    expect(createTab).toHaveBeenCalledWith("thread-1", "workspace-1", { activate: false });
+    expect(execute).toHaveBeenCalledOnce();
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({
+      request: expect.objectContaining({
+        requestId: openRequest.requestId,
+        sequence: openRequest.sequence,
+        operation: "open",
+        args: { url: openRequest.args.url, idempotencyKey: openRequest.args.idempotencyKey },
+      }),
+      target: expect.objectContaining({ tabId: agentTab.id, active: false, focused: false }),
+    }));
+
+    const firstTabSet = usePreviewTabsStore.getState().tabSetByScope[
+      previewTabsScopeKey("workspace-1", "thread-1")
+    ];
+    expect(firstTabSet).toMatchObject({ activeTabId: userTab.id });
+    expect(firstTabSet?.tabs).toEqual([
+      expect.objectContaining({ ...userTab, active: true }),
+      expect.objectContaining({ id: agentTab.id, url: openRequest.args.url, active: false }),
+    ]);
+    expect(useWorkspaceStore.getState()).toMatchObject({
+      activeWorkspaceId: "workspace-1",
+      activeThreadId: "thread-1",
+    });
+    expect(useBrowserAutomationStore.getState().lifecycleTabs).toEqual(
+      expect.any(Map),
+    );
+    expect([...useBrowserAutomationStore.getState().lifecycleTabs.values()]).toEqual([
+      expect.objectContaining({
+        tabId: agentTab.id,
+        provenance: "agent-created",
+        ownership: "owned",
+        workspaceId: "workspace-1",
+        threadId: "thread-1",
+        providerSessionId: openRequest.providerSessionId,
+        providerInstanceId: openRequest.providerInstanceId,
+      }),
+    ]);
+    expect(useBrowserAutomationStore.getState().lifecycleTabs.has(
+      browserAutomationTargetKey("workspace-1", "thread-1", userTab.id),
+    )).toBe(false);
+
+    act(() => harness.emit("browserAutomation.bootstrap", { hostId, generation: 1, request: openRequest }));
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledTimes(2));
+    expect(createTab).toHaveBeenCalledOnce();
+    expect(execute).toHaveBeenCalledOnce();
+    const replayTabSet = usePreviewTabsStore.getState().tabSetByScope[
+      previewTabsScopeKey("workspace-1", "thread-1")
+    ];
+    expect(replayTabSet).toMatchObject({ activeTabId: userTab.id });
+    expect(replayTabSet?.tabs).toHaveLength(2);
+    expect(replayTabSet?.tabs.find((tab) => tab.id === userTab.id)).toMatchObject({
+      id: userTab.id,
+      url: userTab.url,
+      active: true,
+      warm: true,
+    });
+    expect(replayTabSet?.tabs.find((tab) => tab.id === agentTab.id)).toMatchObject({
+      id: agentTab.id,
+      url: openRequest.args.url,
+      active: false,
+      warm: true,
+    });
     view.unmount();
   });
 

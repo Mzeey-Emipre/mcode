@@ -475,6 +475,19 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       activate(threadId: string, workspaceId: string, tabId: string): Promise<unknown> {
         return ipcRenderer.invoke("preview:tabs.activate", { threadId, workspaceId, tabId });
       },
+      updateChrome(
+        threadId: string,
+        workspaceId: string,
+        tabId: string,
+        chrome: { title: string | null; url: string | null; faviconUrl: string | null },
+      ): Promise<unknown> {
+        return ipcRenderer.invoke("preview:tabs.updateChrome", {
+          threadId,
+          workspaceId,
+          tabId,
+          ...chrome,
+        });
+      },
       close(threadId: string, workspaceId: string, tabId: string): Promise<unknown> {
         return ipcRenderer.invoke("preview:tabs.close", { threadId, workspaceId, tabId });
       },

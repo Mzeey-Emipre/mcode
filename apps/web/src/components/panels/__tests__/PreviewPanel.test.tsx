@@ -952,6 +952,7 @@ describe("PreviewPanel: full panel state", () => {
   });
 
   it("keeps warm webview pages mounted while switching the active tab", () => {
+    mockUsePreviewBridge.mockReturnValue(mockBridgeState({ storedUrl: "https://a.example" }));
     mockUsePreviewTabs.mockReturnValue({
       tabSet: {
         threadId: "thread-1",
@@ -1026,6 +1027,8 @@ describe("PreviewPanel: full panel state", () => {
       "tab-a",
       "tab-b",
     ]);
+    expect(webviews[0]).toHaveAttribute("src", "https://a.example");
+    expect(webviews[1]).toHaveAttribute("src", "https://b.example");
   });
 
   it("persists favicon updates from inactive warm webview pages", async () => {

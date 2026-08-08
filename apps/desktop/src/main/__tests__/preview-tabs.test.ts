@@ -105,6 +105,43 @@ describe("preview tab handlers", () => {
     expect(closedLast.ok && closedLast.data.activeTabId).toBeTruthy();
   });
 
+  it("persists renderer-observed tab chrome across activation snapshots", () => {
+    const first = invoke<{ activeTabId: string }>("preview:tabs.list", {
+      workspaceId: "workspace-A",
+      threadId: "thread-A",
+    });
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+
+    const opened = invoke<{ tabId: string }>("preview:tabs.open", {
+      workspaceId: "workspace-A",
+      threadId: "thread-A",
+    });
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+
+    expect(invoke("preview:tabs.updateChrome", {
+      workspaceId: "workspace-A",
+      threadId: "thread-A",
+      tabId: opened.data.tabId,
+      title: "Loaded page",
+      url: "https://example.test/loaded",
+      faviconUrl: "https://example.test/favicon.ico",
+    })).toMatchObject({ ok: true });
+
+    const activated = invoke<{ tabs: Array<Record<string, unknown>> }>("preview:tabs.activate", {
+      workspaceId: "workspace-A",
+      threadId: "thread-A",
+      tabId: first.data.activeTabId,
+    });
+    expect(activated.ok && activated.data.tabs).toContainEqual(expect.objectContaining({
+      id: opened.data.tabId,
+      title: "Loaded page",
+      url: "https://example.test/loaded",
+      faviconUrl: "https://example.test/favicon.ico",
+    }));
+  });
+
   it("closes only the exact workspace-qualified scope", () => {
     invoke("preview:tabs.list", { workspaceId: "workspace-A", threadId: "thread-A" });
     invoke("preview:tabs.list", { workspaceId: "workspace-B", threadId: "thread-A" });
@@ -138,5 +175,13 @@ describe("preview tab handlers", () => {
       threadId: "thread-A",
       initialAddress: "file:///sensitive.html",
     })).toEqual({ ok: false, error: "invalid-initial-address" });
+    expect(invoke("preview:tabs.updateChrome", {
+      workspaceId: "workspace-A",
+      threadId: "thread-A",
+      tabId: "tab-A",
+      title: {},
+      url: null,
+      faviconUrl: null,
+    })).toEqual({ ok: false, error: "invalid-tab-chrome" });
   });
 });
