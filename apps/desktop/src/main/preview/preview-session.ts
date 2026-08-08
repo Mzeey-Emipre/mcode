@@ -80,6 +80,22 @@ export interface ThreadTabSet {
   activeTabId: string | null;
 }
 
+/** Stable key for one workspace and preview scope in a BrowserWindow session. */
+export function previewTabScopeKey(workspaceId: string, threadId: string): string {
+  return JSON.stringify([workspaceId, threadId]);
+}
+
+/** Returns one exact workspace-qualified tab set, if present. */
+export function getThreadTabSet(
+  s: PreviewSession,
+  threadId: string,
+  workspaceId = s.workspaceId ?? threadId,
+): ThreadTabSet | undefined {
+  const exact = s.tabsByThread.get(previewTabScopeKey(workspaceId, threadId));
+  if (exact || s.workspaceId !== undefined && s.workspaceId !== null) return exact;
+  return s.tabsByThread.get(threadId);
+}
+
 /**
  * Per-window state for the embedded preview WebContentsView.
  * One entry is created lazily per BrowserWindow id and removed when the window closes.
@@ -213,10 +229,12 @@ export function getSession(win: BrowserWindow): PreviewSession {
  * has for that thread so existing single-view behavior carries over.
  */
 export function ensureThreadTabSet(s: PreviewSession, threadId: string): ThreadTabSet {
-  let set = s.tabsByThread.get(threadId);
+  const workspaceId = s.workspaceId ?? threadId;
+  const scopeKey = previewTabScopeKey(workspaceId, threadId);
+  let set = getThreadTabSet(s, threadId, workspaceId);
   if (!set) {
     const tabId = randomUUID();
-    const isActiveThread = s.lastPreviewThreadId === threadId;
+    const isActiveThread = s.lastPreviewThreadId === threadId && workspaceId === (s.workspaceId ?? threadId);
     const firstTab: TabState = {
       id: tabId,
       threadId,
@@ -230,7 +248,7 @@ export function ensureThreadTabSet(s: PreviewSession, threadId: string): ThreadT
       viewportOperationGeneration: null,
     };
     set = { threadId, tabs: [firstTab], activeTabId: tabId };
-    s.tabsByThread.set(threadId, set);
+    s.tabsByThread.set(scopeKey, set);
   }
   return set;
 }

@@ -9,6 +9,7 @@ import {
   useBrowserAutomationStore,
 } from "@/stores/browserAutomationStore";
 import { PreviewWebview, type PreviewWebviewHandle } from "../PreviewWebview";
+import { browserSurfaceHost } from "../BrowserSurfaceHostRoot";
 
 describe("PreviewWebview", () => {
   beforeEach(() => {
@@ -17,6 +18,7 @@ describe("PreviewWebview", () => {
   });
 
   afterEach(() => {
+    browserSurfaceHost.disposeAll();
     delete window.desktopBridge;
   });
 
@@ -60,7 +62,7 @@ describe("PreviewWebview", () => {
     }));
     unsubscribe();
     expect(invalidate).toHaveBeenCalledOnce();
-    expect(invalidate).toHaveBeenCalledWith("thread-1", "tab-1");
+    expect(invalidate).toHaveBeenCalledWith("workspace-1", "thread-1", "tab-1");
   });
 
   it("routes history through the exact generation-bound main bridge", async () => {
@@ -122,7 +124,7 @@ describe("PreviewWebview", () => {
           src="https://example.com"
         />,
       );
-      const key = browserAutomationTargetKey("thread-generation", "tab-generation");
+      const key = browserAutomationTargetKey("workspace-generation", "thread-generation", "tab-generation");
       await waitFor(() => {
         expect(useBrowserAutomationStore.getState().viewportCoordinators.get(key)).toBeDefined();
       });
@@ -135,17 +137,18 @@ describe("PreviewWebview", () => {
         expect(store.liveTargets.get(key)?.revision).toBe(1);
       });
     } finally {
-      releaseBrowserAutomationThreadScope("thread-generation");
+      releaseBrowserAutomationThreadScope("workspace-generation", "thread-generation");
     }
   });
 
-  it("advances the Electron surface generation when the same target remounts", () => {
+  it("preserves the Electron guest and generation when presentation remounts", () => {
     const prepare = vi.fn().mockResolvedValue({ ok: true });
+    const release = vi.fn().mockResolvedValue({ ok: true });
     window.desktopBridge = { preview: { surface: {
       prepare,
       adopt: vi.fn().mockResolvedValue({ ok: true }),
       navigate: vi.fn().mockResolvedValue({ ok: true }),
-      release: vi.fn().mockResolvedValue({ ok: true }),
+      release,
     } } } as unknown as NonNullable<typeof window.desktopBridge>;
     const props = {
       workspaceId: "workspace-remount",
@@ -156,11 +159,27 @@ describe("PreviewWebview", () => {
 
     const first = render(<PreviewWebview {...props} />);
     const firstGeneration = prepare.mock.calls[0]?.[0].surface.generation as number;
+    const firstGuest = screen.getByTestId("electron-browser-surface-webview");
+    const targetKey = browserAutomationTargetKey(props.workspaceId, props.threadId, props.tabId);
+    const firstTargetGeneration = useBrowserAutomationStore.getState().liveTargets.get(targetKey)?.revision;
     first.unmount();
+    expect(useBrowserAutomationStore.getState().liveTargets.get(targetKey)?.revision).toBe(
+      firstTargetGeneration,
+    );
     render(<PreviewWebview {...props} />);
-    const secondGeneration = prepare.mock.calls[1]?.[0].surface.generation as number;
+    const snapshot = browserSurfaceHost.getSnapshot({
+      workspaceId: props.workspaceId,
+      scope: { kind: "thread", id: props.threadId },
+      tabId: props.tabId,
+    });
 
-    expect(secondGeneration).toBeGreaterThan(firstGeneration);
+    expect(prepare).toHaveBeenCalledTimes(1);
+    expect(release).not.toHaveBeenCalled();
+    expect(screen.getByTestId("electron-browser-surface-webview")).toBe(firstGuest);
+    expect(snapshot?.generation).toBe(firstGeneration);
+    expect(useBrowserAutomationStore.getState().liveTargets.get(targetKey)?.revision).toBe(
+      firstTargetGeneration,
+    );
   });
 
   it("keeps native event subscriptions stable when parent callbacks change", async () => {

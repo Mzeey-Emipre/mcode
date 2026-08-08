@@ -232,7 +232,7 @@ describe("MarkdownContent workspace preview navigation", () => {
     });
     expect(showRightPanel).toHaveBeenCalledWith("ws-prev", "thread-prev");
     expect(setRightPanelTab).toHaveBeenCalledWith("ws-prev", "thread-prev", "preview");
-    expect(mockOpen).toHaveBeenCalledWith("thread-prev", { activate: true });
+    expect(mockOpen).toHaveBeenCalledWith("thread-prev", "ws-prev", { activate: true });
     expect(mockNavigate).toHaveBeenCalledWith(
       "mcode-workspace:///sub/page.html",
       "/tmp/ws-preview-test",
@@ -247,7 +247,7 @@ describe("MarkdownContent workspace preview navigation", () => {
       fireEvent.click(link!, { ctrlKey: true });
       await vi.runAllTimersAsync();
     });
-    expect(mockOpen).toHaveBeenCalledWith("thread-prev", { activate: true });
+    expect(mockOpen).toHaveBeenCalledWith("thread-prev", "ws-prev", { activate: true });
     expect(mockNavigate).toHaveBeenCalledWith(
       "mcode-workspace:///sub/page.html",
       "/tmp/ws-preview-test",
@@ -291,7 +291,7 @@ describe("MarkdownContent workspace preview navigation", () => {
       fireEvent.click(el!, { ctrlKey: true });
       await vi.runAllTimersAsync();
     });
-    expect(mockOpen).toHaveBeenCalledWith("thread-prev", { activate: true });
+    expect(mockOpen).toHaveBeenCalledWith("thread-prev", "ws-prev", { activate: true });
     expect(mockNavigate).toHaveBeenCalledWith(
       "mcode-workspace:///report.html",
       "/tmp/ws-preview-test",

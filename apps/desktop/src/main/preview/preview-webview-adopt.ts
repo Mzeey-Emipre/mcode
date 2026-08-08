@@ -5,7 +5,7 @@ import {
 } from "electron";
 import type { IpcMainInvokeEvent, WebContents } from "electron";
 import { logger } from "@mcode/shared";
-import { getSession } from "./preview-session.js";
+import { getSession, getThreadTabSet } from "./preview-session.js";
 import { resolvePreviewNavigationTarget } from "./preview-navigation.js";
 import { trustMainProcessFileNavigation } from "./preview-local-file.js";
 import {
@@ -144,16 +144,16 @@ function findOwnedTab(
   const session = getSession(win);
   if (session.workspaceId !== identity.workspaceId) return null;
   if (identity.scope.kind === "thread") {
-    const tab = session.tabsByThread.get(identity.scope.id)?.tabs.find((candidate) => candidate.id === identity.tabId);
+    const tab = getThreadTabSet(session, identity.scope.id, identity.workspaceId)?.tabs.find((candidate) => candidate.id === identity.tabId);
     return tab?.threadId === identity.scope.id ? { threadId: identity.scope.id, tabId: tab.id } : null;
   }
   if (identity.scope.id !== identity.workspaceId) return null;
   let found: { threadId: string; tabId: string } | null = null;
-  for (const [threadId, tabSet] of session.tabsByThread) {
+  for (const tabSet of session.tabsByThread.values()) {
     const tab = tabSet.tabs.find((candidate) => candidate.id === identity.tabId);
     if (!tab) continue;
     if (found) return null;
-    found = { threadId, tabId: tab.id };
+    found = { threadId: tab.threadId, tabId: tab.id };
   }
   return found;
 }

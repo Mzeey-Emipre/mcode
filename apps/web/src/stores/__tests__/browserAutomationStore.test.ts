@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { BROWSER_AUTOMATION_MAX_PENDING_REQUESTS } from "@mcode/contracts";
 import {
+  browserAutomationLifecycleKey,
   browserAutomationRequestKey,
+  browserAutomationScopeKey,
   browserAutomationTargetKey,
   onBrowserAutomationScopeRelease,
   invalidateBrowserAutomationTargetObservation,
@@ -28,6 +30,33 @@ function target(
   lastUsedAt = 1,
 ): BrowserAutomationLiveTarget {
   return { workspaceId, threadId, tabId, lastUsedAt, revision: 1 };
+}
+
+function lifecycleTab(
+  workspaceId: string,
+  threadId: string,
+  tabId: string,
+): BrowserSessionLifecycleTab {
+  return {
+    workspaceId,
+    threadId,
+    tabId,
+    providerSessionId: "session",
+    providerInstanceId: "instance",
+    provenance: "claimed-user",
+    ownership: "claimed",
+    target: {
+      desktopInstanceId: "desktop",
+      windowId: 1,
+      connectionGeneration: 1,
+      threadId,
+      tabId,
+      targetGeneration: 1,
+      active: false,
+      focused: false,
+      lastUsedAt: 1,
+    },
+  };
 }
 
 describe("browser automation renderer scope", () => {
@@ -64,7 +93,7 @@ describe("browser automation renderer scope", () => {
       ["workspace-b", "thread-b", "tab-b"],
     ]);
 
-    useBrowserAutomationStore.getState().releaseThreadTargets("thread-a");
+    useBrowserAutomationStore.getState().releaseThreadTargets("workspace-a", "thread-a");
     expect([...useBrowserAutomationStore.getState().lifecycleTabs.values()]).toEqual([
       expect.objectContaining({ workspaceId: "workspace-b", threadId: "thread-b", tabId: "tab-b" }),
     ]);
@@ -74,8 +103,8 @@ describe("browser automation renderer scope", () => {
   });
 
   it("uses collision-proof tuple keys for adversarial external ids", () => {
-    expect(browserAutomationTargetKey("a\u0000b", "c")).not.toBe(
-      browserAutomationTargetKey("a", "b\u0000c"),
+    expect(browserAutomationTargetKey("a", "\u0000b", "c")).not.toBe(
+      browserAutomationTargetKey("a", "b", "\u0000c"),
     );
     expect(browserAutomationRequestKey("request\u00001", 2)).not.toBe(
       browserAutomationRequestKey("request", 12),
@@ -110,30 +139,90 @@ describe("browser automation renderer scope", () => {
         { scopeId: "busy", workspaceId: "ws", lastUsedAt: 0 },
       ],
       { scopeId: "active", workspaceId: "ws", lastUsedAt: 4 },
-      new Set(["busy"]),
+      new Set([browserAutomationScopeKey("ws", "busy")]),
     );
     expect(result.map((scope) => scope.scopeId)).toEqual(["active", "busy", "recent"]);
+  });
+
+  it("keeps equal thread and tab ids isolated across workspaces", () => {
+    const store = useBrowserAutomationStore.getState();
+    store.registerTarget("workspace-a", "thread", "tab");
+    store.registerTarget("workspace-b", "thread", "tab");
+    store.setControllerForTarget("workspace-a", "thread", "tab", {
+      tabId: "tab",
+      controller: "agent",
+      controlEpoch: 1,
+    });
+
+    expect(useBrowserAutomationStore.getState().liveTargets).toHaveLength(2);
+    expect(useBrowserAutomationStore.getState().controllers.get(
+      browserAutomationTargetKey("workspace-a", "thread", "tab"),
+    )).toEqual(expect.objectContaining({ controller: "agent" }));
+    expect(useBrowserAutomationStore.getState().controllers.has(
+      browserAutomationTargetKey("workspace-b", "thread", "tab"),
+    )).toBe(false);
+    expect(browserTargetRegistry.get("workspace-a", "thread", "tab")?.workspaceId).toBe("workspace-a");
+    expect(browserTargetRegistry.get("workspace-b", "thread", "tab")?.workspaceId).toBe("workspace-b");
+  });
+
+  it("unregisters lifecycle state only for the exact workspace target", () => {
+    const store = useBrowserAutomationStore.getState();
+    store.registerTarget("workspace-a", "thread", "tab");
+    store.registerTarget("workspace-b", "thread", "tab");
+    store.setLifecycleTabs([
+      lifecycleTab("workspace-a", "thread", "tab"),
+      lifecycleTab("workspace-b", "thread", "tab"),
+    ]);
+
+    store.unregisterTarget("workspace-a", "thread", "tab");
+
+    expect(useBrowserAutomationStore.getState().lifecycleTabs.has(
+      browserAutomationLifecycleKey("workspace-a", "thread", "tab"),
+    )).toBe(false);
+    expect(useBrowserAutomationStore.getState().lifecycleTabs.has(
+      browserAutomationLifecycleKey("workspace-b", "thread", "tab"),
+    )).toBe(true);
+  });
+
+  it("leases a busy warm scope by workspace and thread", () => {
+    const result = reconcileWarmPreviewScopes(
+      [
+        { scopeId: "shared-thread", workspaceId: "workspace-a", lastUsedAt: 4 },
+        { scopeId: "shared-thread", workspaceId: "workspace-b", lastUsedAt: 1 },
+        { scopeId: "other-thread", workspaceId: "workspace-a", lastUsedAt: 3 },
+        { scopeId: "other-thread", workspaceId: "workspace-b", lastUsedAt: 2 },
+      ],
+      null,
+      new Set([browserAutomationScopeKey("workspace-b", "shared-thread")]),
+    );
+
+    expect(result.map((scope) => [scope.workspaceId, scope.scopeId])).toEqual([
+      ["workspace-b", "shared-thread"],
+      ["workspace-a", "shared-thread"],
+      ["workspace-a", "other-thread"],
+    ]);
   });
 
   it("bounds a 20-tab pool while preserving active and busy leases exactly", () => {
     const tabs = Array.from({ length: 20 }, (_, index) => ({ id: `tab-${index}` }));
     useBrowserAutomationStore.setState({
       liveTargets: new Map(tabs.map((tab, index) => [
-        browserAutomationTargetKey("thread-a", tab.id),
+        browserAutomationTargetKey("ws-a", "thread-a", tab.id),
         target("ws-a", "thread-a", tab.id, index),
       ])),
       activeRequests: new Map([1, 2, 3, 4].map((index) => {
         const activeDispatch = {
+          request: { workspaceId: "ws-a" },
           target: { threadId: "thread-a", tabId: `tab-${index}` },
         } as never;
         return [`request-${index}`, { dispatch: activeDispatch, startedAt: index }];
       })),
     });
-    const leased = selectWarmBrowserTabIds(tabs, "thread-a", "tab-0");
+    const leased = selectWarmBrowserTabIds(tabs, "ws-a", "thread-a", "tab-0");
     expect(leased).toEqual(new Set(["tab-0", "tab-1", "tab-2", "tab-3", "tab-4"]));
 
     useBrowserAutomationStore.setState({ activeRequests: new Map() });
-    const settled = selectWarmBrowserTabIds(tabs, "thread-a", "tab-0");
+    const settled = selectWarmBrowserTabIds(tabs, "ws-a", "thread-a", "tab-0");
     expect(settled.size).toBe(3);
     expect(settled.has("tab-0")).toBe(true);
   });
@@ -142,7 +231,7 @@ describe("browser automation renderer scope", () => {
     useBrowserAutomationStore.setState({ activeRequests: new Map() });
     const requests = Array.from({ length: BROWSER_AUTOMATION_MAX_PENDING_REQUESTS + 1 }, (_, index) => {
       const activeDispatch = {
-        request: { requestId: `request-${index}`, sequence: index },
+        request: { workspaceId: "ws-a", requestId: `request-${index}`, sequence: index },
         target: { threadId: "thread-a", tabId: `tab-${index}` },
       } as BrowserAutomationActiveRequest["dispatch"];
       return {
@@ -164,6 +253,7 @@ describe("browser automation renderer scope", () => {
     ))).toBe(true);
     expect(selectWarmBrowserTabIds(
       requests.map((request) => ({ id: request.dispatch.target.tabId })),
+      "ws-a",
       "thread-a",
       "tab-0",
     )).toContain("tab-32");
@@ -181,35 +271,35 @@ describe("browser automation renderer scope", () => {
     const workspaceId = "workspace-late-refresh";
     const threadId = "thread-late-refresh";
     const tabId = "tab-late-refresh";
-    const key = browserAutomationTargetKey(threadId, tabId);
+    const key = browserAutomationTargetKey(workspaceId, threadId, tabId);
     const store = useBrowserAutomationStore.getState();
 
-    store.unregisterTarget(threadId, tabId);
+    store.unregisterTarget(workspaceId, threadId, tabId);
     store.registerTarget(workspaceId, threadId, tabId);
     const attachedRevision = useBrowserAutomationStore.getState().liveTargets.get(key)?.revision;
     expect(attachedRevision).toBeDefined();
 
-    store.refreshTarget(threadId, tabId);
+    store.refreshTarget(workspaceId, threadId, tabId);
     expect(useBrowserAutomationStore.getState().liveTargets.get(key)?.revision).toBe(
       attachedRevision! + 1,
     );
 
-    store.detachTarget(threadId, tabId);
-    store.refreshTarget(threadId, tabId);
+    store.detachTarget(workspaceId, threadId, tabId);
+    store.refreshTarget(workspaceId, threadId, tabId);
 
     expect(useBrowserAutomationStore.getState().liveTargets.has(key)).toBe(false);
-    expect(browserTargetRegistry.get(threadId, tabId)?.attached).toBe(false);
+    expect(browserTargetRegistry.get(workspaceId, threadId, tabId)?.attached).toBe(false);
 
-    store.unregisterTarget(threadId, tabId);
+    store.unregisterTarget(workspaceId, threadId, tabId);
   });
 
   it("interrupts a detached viewport host without creating a Regular-mode viewport on remount", async () => {
     const workspaceId = "workspace-viewport-remount";
     const threadId = "thread-viewport-remount";
     const tabId = "tab-viewport-remount";
-    const key = browserAutomationTargetKey(threadId, tabId);
+    const key = browserAutomationTargetKey(workspaceId, threadId, tabId);
     const store = useBrowserAutomationStore.getState();
-    store.unregisterTarget(threadId, tabId);
+    store.unregisterTarget(workspaceId, threadId, tabId);
     store.registerTarget(workspaceId, threadId, tabId);
     const target = useBrowserAutomationStore.getState().liveTargets.get(key)!;
     let resolveHost!: (result: { status: "applied"; applied: { width: number; height: number } }) => void;
@@ -218,10 +308,10 @@ describe("browser automation renderer scope", () => {
       targetGeneration: target.revision,
       apply: () => new Promise((resolve) => { resolveHost = resolve; }),
     });
-    store.setViewportCoordinator(threadId, tabId, coordinator);
+    store.setViewportCoordinator(workspaceId, threadId, tabId, coordinator);
 
     const pending = coordinator.requestUserResize({ width: 900, height: 700 });
-    store.detachTarget(threadId, tabId);
+    store.detachTarget(workspaceId, threadId, tabId);
     expect(await pending).toMatchObject({ status: "stale", applied: { width: 1280, height: 800 } });
     expect(useBrowserAutomationStore.getState().viewportByTarget.get(key)).toBeUndefined();
     expect(useBrowserAutomationStore.getState().viewportStateByTarget.get(key)?.confirmed).toEqual({ width: 1280, height: 800 });
@@ -235,16 +325,16 @@ describe("browser automation renderer scope", () => {
     await Promise.resolve();
     expect(useBrowserAutomationStore.getState().viewportByTarget.get(key)).toBeUndefined();
 
-    store.unregisterTarget(threadId, tabId);
+    store.unregisterTarget(workspaceId, threadId, tabId);
   });
 
   it("does not let a late renderer write update a remounted target", async () => {
     const workspaceId = "workspace-viewport-late-renderer";
     const threadId = "thread-viewport-late-renderer";
     const tabId = "tab-viewport-late-renderer";
-    const key = browserAutomationTargetKey(threadId, tabId);
+    const key = browserAutomationTargetKey(workspaceId, threadId, tabId);
     const store = useBrowserAutomationStore.getState();
-    store.unregisterTarget(threadId, tabId);
+    store.unregisterTarget(workspaceId, threadId, tabId);
     store.registerTarget(workspaceId, threadId, tabId);
     const target = useBrowserAutomationStore.getState().liveTargets.get(key)!;
     let releaseLayout!: () => void;
@@ -256,6 +346,7 @@ describe("browser automation renderer scope", () => {
       rendererHost: {
         setViewport: (size, operation, currentCoordinator) => {
           lateWrite = () => store.applyViewportIfCurrent(
+            workspaceId,
             threadId,
             tabId,
             currentCoordinator,
@@ -268,17 +359,18 @@ describe("browser automation renderer scope", () => {
         waitForLayout: () => new Promise<void>((resolve) => { releaseLayout = resolve; }),
       },
       onStateChange: (state, currentCoordinator) => store.setViewportState(
+        workspaceId,
         threadId,
         tabId,
         state,
         currentCoordinator,
       ),
     });
-    store.setViewportCoordinator(threadId, tabId, coordinator);
+    store.setViewportCoordinator(workspaceId, threadId, tabId, coordinator);
 
     const pending = coordinator.requestUserResize({ width: 900, height: 700 });
     await Promise.resolve();
-    store.detachTarget(threadId, tabId);
+    store.detachTarget(workspaceId, threadId, tabId);
     store.registerTarget(workspaceId, threadId, tabId);
     lateWrite();
     expect(useBrowserAutomationStore.getState().viewportByTarget.get(key)).toBeUndefined();
@@ -287,16 +379,16 @@ describe("browser automation renderer scope", () => {
     await pending;
     expect(useBrowserAutomationStore.getState().viewportByTarget.get(key)).toBeUndefined();
 
-    store.unregisterTarget(threadId, tabId);
+    store.unregisterTarget(workspaceId, threadId, tabId);
   });
 
   it("clears a current renderer viewport when Regular mode resets the host", () => {
     const workspaceId = "workspace-viewport-reset";
     const threadId = "thread-viewport-reset";
     const tabId = "tab-viewport-reset";
-    const key = browserAutomationTargetKey(threadId, tabId);
+    const key = browserAutomationTargetKey(workspaceId, threadId, tabId);
     const store = useBrowserAutomationStore.getState();
-    store.unregisterTarget(threadId, tabId);
+    store.unregisterTarget(workspaceId, threadId, tabId);
     store.registerTarget(workspaceId, threadId, tabId);
     const target = useBrowserAutomationStore.getState().liveTargets.get(key)!;
     const coordinator = new ViewportCoordinator({
@@ -304,8 +396,8 @@ describe("browser automation renderer scope", () => {
       targetGeneration: target.revision,
       apply: async (operation) => ({ status: "applied", applied: operation.requested }),
     });
-    store.setViewportCoordinator(threadId, tabId, coordinator);
-    store.applyViewportIfCurrent(threadId, tabId, coordinator, target.revision, {
+    store.setViewportCoordinator(workspaceId, threadId, tabId, coordinator);
+    store.applyViewportIfCurrent(workspaceId, threadId, tabId, coordinator, target.revision, {
       width: 960,
       height: 640,
     });
@@ -314,33 +406,33 @@ describe("browser automation renderer scope", () => {
       width: 960,
       height: 640,
     });
-    expect(store.resetViewportIfCurrent(threadId, tabId, coordinator, target.revision)).toBe(true);
-    store.setViewportState(threadId, tabId, {
+    expect(store.resetViewportIfCurrent(workspaceId, threadId, tabId, coordinator, target.revision)).toBe(true);
+    store.setViewportState(workspaceId, threadId, tabId, {
       ...coordinator.snapshot(),
       mode: "regular",
     }, coordinator);
     expect(useBrowserAutomationStore.getState().viewportByTarget.has(key)).toBe(false);
 
-    store.unregisterTarget(threadId, tabId);
+    store.unregisterTarget(workspaceId, threadId, tabId);
   });
 
   it("routes authoritative thread and workspace cleanup to exact host scopes", () => {
     const listener = vi.fn();
     const unsubscribe = onBrowserAutomationScopeRelease(listener);
-    releaseBrowserAutomationThreadScope("thread-a");
+    releaseBrowserAutomationThreadScope("workspace-a", "thread-a");
     releaseBrowserAutomationWorkspaceScopes("workspace-a");
     expect(listener.mock.calls).toEqual([
-      [{ threadId: "thread-a" }],
+      [{ workspaceId: "workspace-a", threadId: "thread-a" }],
       [{ workspaceId: "workspace-a" }],
     ]);
     unsubscribe();
-    releaseBrowserAutomationThreadScope("thread-b");
+    releaseBrowserAutomationThreadScope("workspace-b", "thread-b");
     expect(listener).toHaveBeenCalledTimes(2);
   });
 
   it("notifies exact human-input listeners without changing controller state", () => {
     useBrowserAutomationStore.getState().registerTarget("workspace-a", "thread-a", "tab-a");
-    useBrowserAutomationStore.getState().setControllerForTarget("thread-a", "tab-a", {
+    useBrowserAutomationStore.getState().setControllerForTarget("workspace-a", "thread-a", "tab-a", {
       tabId: "tab-a",
       controller: "agent",
       controlEpoch: 3,
@@ -348,12 +440,12 @@ describe("browser automation renderer scope", () => {
     const listener = vi.fn();
     const unsubscribe = onBrowserAutomationObservationInvalidation(listener);
 
-    invalidateBrowserAutomationTargetObservation("thread-a", "tab-a");
+    invalidateBrowserAutomationTargetObservation("workspace-a", "thread-a", "tab-a");
 
     expect(listener).toHaveBeenCalledOnce();
-    expect(listener).toHaveBeenCalledWith("thread-a", "tab-a");
+    expect(listener).toHaveBeenCalledWith("workspace-a", "thread-a", "tab-a");
     expect(useBrowserAutomationStore.getState().controllers.get(
-      browserAutomationTargetKey("thread-a", "tab-a"),
+      browserAutomationTargetKey("workspace-a", "thread-a", "tab-a"),
     )).toEqual({ tabId: "tab-a", controller: "agent", controlEpoch: 3 });
     unsubscribe();
   });
@@ -362,24 +454,24 @@ describe("browser automation renderer scope", () => {
     const store = useBrowserAutomationStore.getState();
     store.registerTarget("workspace-agent", "thread-agent", "tab-first");
     store.registerTarget("workspace-agent", "thread-agent", "tab-second");
-    store.setControllerForTarget("thread-agent", "tab-first", {
+    store.setControllerForTarget("workspace-agent", "thread-agent", "tab-first", {
       tabId: "tab-first",
       controller: "agent",
       controlEpoch: 1,
     });
-    store.setControllerForTarget("thread-agent", "tab-second", {
+    store.setControllerForTarget("workspace-agent", "thread-agent", "tab-second", {
       tabId: "tab-second",
       controller: "agent",
       controlEpoch: 2,
     });
 
     expect(useBrowserAutomationStore.getState().controllers.get(
-      browserAutomationTargetKey("thread-agent", "tab-first"),
+      browserAutomationTargetKey("workspace-agent", "thread-agent", "tab-first"),
     )).toEqual({ tabId: "tab-first", controller: "none", controlEpoch: 1 });
     expect(useBrowserAutomationStore.getState().controllers.get(
-      browserAutomationTargetKey("thread-agent", "tab-second"),
+      browserAutomationTargetKey("workspace-agent", "thread-agent", "tab-second"),
     )).toEqual({ tabId: "tab-second", controller: "agent", controlEpoch: 2 });
 
-    store.releaseThreadTargets("thread-agent");
+    store.releaseThreadTargets("workspace-agent", "thread-agent");
   });
 });

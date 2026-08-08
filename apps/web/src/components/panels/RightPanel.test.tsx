@@ -182,6 +182,13 @@ describe("RightPanel", () => {
     expect(reconcileWarmPreviewScopes(scopes, scopes[0]!, new Set())).toBe(scopes);
   });
 
+  it("keeps equal scope ids from different workspaces as distinct warm surfaces", () => {
+    const first = { scopeId: "shared-scope", workspaceId: "workspace-a", lastUsedAt: 1 };
+    const second = { scopeId: "shared-scope", workspaceId: "workspace-b", lastUsedAt: 2 };
+
+    expect(reconcileWarmPreviewScopes([first], second, new Set())).toEqual([second, first]);
+  });
+
   it("releases focus before making the right panel inert", () => {
     useDiffStore.setState({
       rightPanelFallbackByWorkspace: {
@@ -332,7 +339,11 @@ describe("RightPanel", () => {
     expect(screen.queryByTestId("panel-empty-state")).not.toBeInTheDocument();
     expect(screen.getByTestId("activity-rail")).toHaveAttribute("data-open-tabs", "preview");
     expect(screen.getByTestId("preview-panel")).toBeInTheDocument();
-    expect(activatePreviewPage).toHaveBeenCalledWith("workspace-1", "agent-browser-tab");
+    expect(activatePreviewPage).toHaveBeenCalledWith(
+      "workspace-1",
+      "workspace-1",
+      "agent-browser-tab",
+    );
   });
 
   it("switches an already-open panel to an agent-created Browser page", () => {
@@ -400,7 +411,11 @@ describe("RightPanel", () => {
       openTabs: ["tasks", "preview"],
       activeTab: "preview",
     });
-    expect(activatePreviewPage).toHaveBeenCalledWith("workspace-1", "agent-browser-tab");
+    expect(activatePreviewPage).toHaveBeenCalledWith(
+      "workspace-1",
+      "workspace-1",
+      "agent-browser-tab",
+    );
 
     rerender(<RightPanel />);
 
@@ -432,6 +447,7 @@ describe("RightPanel", () => {
       },
     });
     closePreviewPage.mockImplementation((
+      _workspaceId: string,
       _scopeId: string,
       _tabId: string,
       options: { onLastClose?: () => void },
@@ -521,7 +537,10 @@ describe("RightPanel", () => {
         [
           "other-scope-request",
           {
-            dispatch: { target: { threadId: "other-scope", tabId: "other-tab" } },
+            dispatch: {
+              request: { workspaceId: "workspace-1" },
+              target: { threadId: "other-scope", tabId: "other-tab" },
+            },
             startedAt: 2,
           } as never,
         ],
@@ -560,13 +579,17 @@ describe("RightPanel", () => {
         [
           "active-browser-request",
           {
-            dispatch: { target: { threadId: "workspace-1", tabId: "browser-tab-1" } },
+            dispatch: {
+              request: { workspaceId: "workspace-1" },
+              target: { threadId: "workspace-1", tabId: "browser-tab-1" },
+            },
             startedAt: 2,
           } as never,
         ],
       ]),
     });
     closePreviewPage.mockImplementation((
+      _workspaceId: string,
       _scopeId: string,
       _tabId: string,
       options: { onLastClose?: () => void },

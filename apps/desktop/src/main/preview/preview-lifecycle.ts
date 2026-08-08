@@ -13,6 +13,7 @@ import {
   type PreviewSession,
   type TabState,
   ensureThreadTabSet,
+  getThreadTabSet,
   getActiveTab,
   sessions,
   clearIdle,
@@ -136,7 +137,7 @@ export function ensureTabView(
 
   registerPreviewClipboardGuest(view.webContents, () => {
     if (win.isDestroyed() || !win.isFocused()) return false;
-    const set = s.tabsByThread.get(tab.threadId);
+    const set = getThreadTabSet(s, tab.threadId);
     return (
       s.lastPreviewThreadId === tab.threadId &&
       set?.activeTabId === tab.id &&

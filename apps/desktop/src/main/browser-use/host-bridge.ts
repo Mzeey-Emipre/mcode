@@ -11,7 +11,7 @@
 import type { BrowserWindow, WebContents } from "electron";
 import { BrowserWindow as ElectronBrowserWindow } from "electron";
 import { logger } from "@mcode/shared";
-import { ensureThreadTabSet, sessions, type TabState } from "../preview/preview-session.js";
+import { ensureThreadTabSet, getThreadTabSet, sessions, type TabState } from "../preview/preview-session.js";
 import { findAdoptedWebContentsForWindow } from "../preview/preview-webview-adopt.js";
 
 /** Snapshot of the currently-visible preview, or null if none. */
@@ -79,7 +79,7 @@ function locateTab(threadId: string, tabId: string): {
   for (const win of ElectronBrowserWindow.getAllWindows()) {
     const s = sessions.get(win.id);
     if (!s) continue;
-    const set = s.tabsByThread.get(threadId);
+    const set = getThreadTabSet(s, threadId);
     if (!set) continue;
     const tab = set.tabs.find((t) => t.id === tabId);
     if (!tab) continue;
@@ -159,7 +159,7 @@ export function createPreviewSessionBackedHostBridge(): BrowserHostBridge {
         for (const win of ElectronBrowserWindow.getAllWindows()) {
           const s = sessions.get(win.id);
           if (!s) continue;
-          const set = s.tabsByThread.get(threadId);
+          const set = getThreadTabSet(s, threadId);
           if (!set) continue;
           return {
             threadId,
@@ -187,7 +187,7 @@ export function createPreviewSessionBackedHostBridge(): BrowserHostBridge {
           threadId: t.threadId,
           url: t.resumeUrl ?? "",
           title: t.title ?? "",
-          active: s.tabsByThread.get(threadId)?.activeTabId === t.id,
+          active: getThreadTabSet(s, threadId)?.activeTabId === t.id,
         })),
       };
     },

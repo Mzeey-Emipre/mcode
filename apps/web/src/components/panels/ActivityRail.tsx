@@ -351,6 +351,7 @@ function pageLabel(page: BrowserTabInfo): string {
  */
 function BrowserPageRailTab({
   page,
+  workspaceId,
   active,
   browserActive,
   expanded,
@@ -358,6 +359,7 @@ function BrowserPageRailTab({
   onClose,
 }: {
   page: BrowserTabInfo;
+  workspaceId: string;
   active: boolean;
   browserActive: boolean;
   expanded: boolean;
@@ -366,7 +368,7 @@ function BrowserPageRailTab({
 }) {
   const label = pageLabel(page);
   const agentControlled = useBrowserAutomationStore(
-    (state) => isBrowserAutomationAgentControlled(state, page.threadId, page.id),
+    (state) => isBrowserAutomationAgentControlled(state, workspaceId, page.threadId, page.id),
   );
   return (
     <div className="group relative w-full">
@@ -456,12 +458,14 @@ function BrowserPageRailTab({
  */
 function BrowserPageGroup({
   tabSet,
+  workspaceId,
   browserActive,
   expanded,
   onSelectPage,
   onClosePage,
 }: {
   tabSet: BrowserTabSet;
+  workspaceId: string;
   browserActive: boolean;
   expanded: boolean;
   onSelectPage: (pageId: string) => void;
@@ -478,6 +482,7 @@ function BrowserPageGroup({
         <BrowserPageRailTab
           key={page.id}
           page={page}
+          workspaceId={workspaceId}
           active={page.id === tabSet.activeTabId}
           browserActive={browserActive}
           expanded={expanded}
@@ -616,6 +621,7 @@ function RailAddControl({
  * list. The close action mirrors the chat-header toggle and right-panel shortcut.
  */
 export function ActivityRail({
+  workspaceId,
   tabInstances,
   activeTabId,
   scope,
@@ -636,6 +642,7 @@ export function ActivityRail({
   onCloseBrowserPage,
   onExpandedChange,
 }: {
+  readonly workspaceId: string;
   readonly tabInstances: readonly RightPanelTabInstance[];
   readonly activeTabId: string | null;
   readonly scope: PanelScope;
@@ -819,6 +826,7 @@ export function ActivityRail({
             <ReorderableRailItem key={instanceId} instanceId={instanceId} onReorder={onReorder}>
               <BrowserPageGroup
                 tabSet={browserTabSet}
+                workspaceId={workspaceId}
                 browserActive={activeTabId === instanceId}
                 expanded={expanded}
                 onSelectPage={(pageId) => onSelectBrowserPage(instanceId, pageId)}

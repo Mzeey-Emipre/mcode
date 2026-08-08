@@ -9,7 +9,7 @@ import { useWorkspaceStore, __resetThreadListMutationEpochForTests, __clearPendi
 import { useThreadStore } from "@/stores/threadStore";
 import { useDiffStore } from "@/stores/diffStore";
 import { usePreviewReferenceQueueStore } from "@/stores/previewReferenceQueueStore";
-import { usePreviewTabsStore } from "@/stores/previewTabsStore";
+import { previewTabsScopeKey, usePreviewTabsStore } from "@/stores/previewTabsStore";
 import {
   mockTransport,
   createMockWorkspace,
@@ -586,7 +586,7 @@ describe("Workspace Behavior", () => {
       });
       usePreviewTabsStore.setState({
         tabSetByScope: {
-          "t-preview": {
+          [previewTabsScopeKey(ws.id, "t-preview")]: {
             threadId: "t-preview",
             activeTabId: "tab-1",
             tabs: [{
@@ -601,7 +601,7 @@ describe("Workspace Behavior", () => {
           },
         },
         liveChromeByScope: {
-          "t-preview": { title: "Example", url: "https://example.test", favicon: null },
+          [previewTabsScopeKey(ws.id, "t-preview")]: { title: "Example", url: "https://example.test", favicon: null },
         },
       });
       usePreviewReferenceQueueStore.getState().enqueuePreviewReference("t-preview", {
@@ -615,8 +615,8 @@ describe("Workspace Behavior", () => {
 
       await useWorkspaceStore.getState().deleteThread("t-preview", false);
 
-      expect(usePreviewTabsStore.getState().tabSetByScope["t-preview"]).toBeUndefined();
-      expect(usePreviewTabsStore.getState().liveChromeByScope["t-preview"]).toBeUndefined();
+      expect(usePreviewTabsStore.getState().tabSetByScope[previewTabsScopeKey(ws.id, "t-preview")]).toBeUndefined();
+      expect(usePreviewTabsStore.getState().liveChromeByScope[previewTabsScopeKey(ws.id, "t-preview")]).toBeUndefined();
       expect(usePreviewReferenceQueueStore.getState().queueByThread["t-preview"]).toBeUndefined();
     });
 

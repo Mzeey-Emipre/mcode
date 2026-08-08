@@ -291,6 +291,13 @@ export class BrowserSurfaceHost {
     return record.state;
   }
 
+  /** Returns an identity's warm surface, or creates it when it does not exist. */
+  public ensure(identity: BrowserSurfaceIdentity, options: BrowserSurfaceCreateOptions = {}): BrowserSurfacePageState {
+    const current = this.records.get(surfaceKey(identity));
+    if (current && sameIdentity(current.identity, identity)) return current.state;
+    return this.create(identity, options);
+  }
+
   /** Makes an identity's current surface visible without changing its generation. */
   public present(identity: BrowserSurfaceIdentity, presentation: BrowserSurfacePresentation = {
     left: 0,
@@ -352,9 +359,14 @@ export class BrowserSurfaceHost {
     this.disposeRecord(key, record, true);
   }
 
-  /** Releases host-level visibility resources. */
+  /** Stops host visibility and disposes every registered surface. */
   public disposeHost(): void {
     this.stopVisibility();
+    this.disposeAll();
+  }
+
+  /** Disposes every surface while retaining host-level visibility resources. */
+  public disposeAll(): void {
     for (const [key, record] of this.records) this.disposeRecord(key, record, true);
   }
 

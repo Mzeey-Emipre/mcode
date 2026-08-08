@@ -7,7 +7,12 @@ import {
   type PreviewRenderingHost,
 } from "@mcode/contracts";
 import { usePreviewFocusStore } from "./previewFocusStore";
-import { useBrowserAutomationStore } from "./browserAutomationStore";
+import { browserAutomationScopeKey, useBrowserAutomationStore } from "./browserAutomationStore";
+
+/** Stable key for one workspace and preview scope. */
+export function previewTabsScopeKey(workspaceId: string, scopeId: string): string {
+  return browserAutomationScopeKey(workspaceId, scopeId);
+}
 
 /**
  * Live chrome for the active preview page, sourced from `preview:page-status`.
@@ -55,6 +60,7 @@ function sameBrowserTabSet(a: BrowserTabSet | null, b: BrowserTabSet | null): bo
 interface PreviewTabsBridgeLike {
   open(
     threadId: string,
+    workspaceId: string,
     options?: {
       readonly activate?: boolean;
       readonly tabId?: string;
@@ -64,14 +70,17 @@ interface PreviewTabsBridgeLike {
   ): Promise<{ ok: true; data: { tabId: string; tabs: BrowserTabSet } } | { ok: false; error: string }>;
   activate(
     threadId: string,
+    workspaceId: string,
     tabId: string,
   ): Promise<{ ok: true; data: BrowserTabSet } | { ok: false; error: string }>;
   close(
     threadId: string,
+    workspaceId: string,
     tabId: string,
   ): Promise<{ ok: true; data: BrowserTabSet } | { ok: false; error: string }>;
   closeScope?(
     threadId: string,
+    workspaceId: string,
   ): Promise<{ ok: true; data: BrowserTabSet } | { ok: false; error: string }>;
 }
 
@@ -118,18 +127,18 @@ interface PreviewTabsState {
   readonly persistentTabIdsByScope: Record<string, ReadonlySet<string>>;
 
   /** Reconcile a scope's tab set against a host snapshot (list / tabs-updated / mutation result). */
-  setTabSet: (scopeId: string, set: BrowserTabSet | null) => void;
+  setTabSet: (workspaceId: string, scopeId: string, set: BrowserTabSet | null) => void;
   /** Add or update one bounded renderer-owned web tab without activating it. */
-  upsertPersistentTab: (scopeId: string, tab: BrowserTabInfo) => void;
+  upsertPersistentTab: (workspaceId: string, scopeId: string, tab: BrowserTabInfo) => void;
   /** Remove one renderer-owned web tab from its scope projection. */
-  removePersistentTab: (scopeId: string, tabId: string) => void;
+  removePersistentTab: (workspaceId: string, scopeId: string, tabId: string) => void;
   /** Publish (or clear) the active page's live chrome for a scope. */
-  setLiveChrome: (scopeId: string, chrome: PreviewLiveChrome | null) => void;
+  setLiveChrome: (workspaceId: string, scopeId: string, chrome: PreviewLiveChrome | null) => void;
   /** Merge renderer-observed chrome into one tab's persisted renderer mirror. */
-  updateTabChrome: (scopeId: string, tabId: string, chrome: PreviewLiveChrome) => void;
+  updateTabChrome: (workspaceId: string, scopeId: string, tabId: string, chrome: PreviewLiveChrome) => void;
 
   /** Open a new page or continue an exact existing page by id. */
-  openPage: (scopeId: string, options?: {
+  openPage: (workspaceId: string, scopeId: string, options?: {
     readonly focusOmnibox?: boolean;
     readonly activate?: boolean;
     readonly tabId?: string;
@@ -137,16 +146,16 @@ interface PreviewTabsState {
     readonly initialAddress?: string;
   }) => Promise<string | null>;
   /** Activate (switch to) a page within the scope's browser. */
-  activatePage: (scopeId: string, tabId: string) => Promise<void>;
+  activatePage: (workspaceId: string, scopeId: string, tabId: string) => Promise<void>;
   /**
    * Close a page. When it is the scope's last page, {@link ClosePageOptions.onLastClose}
    * fires (the panel uses it to close the Browser tab) before the bridge call,
    * so the tab collapses immediately rather than flashing the host's
    * always-recreated empty fallback.
    */
-  closePage: (scopeId: string, tabId: string, opts?: ClosePageOptions) => Promise<void>;
+  closePage: (workspaceId: string, scopeId: string, tabId: string, opts?: ClosePageOptions) => Promise<void>;
   /** Close every host-owned browser page for a scope and clear renderer mirrors. */
-  clearScope: (scopeId: string) => Promise<void>;
+  clearScope: (workspaceId: string, scopeId: string) => Promise<void>;
 }
 
 /** Hooks the store offers callers when a page close empties the browser. */
@@ -157,20 +166,20 @@ export interface ClosePageOptions {
 
 function clearPreviewScopeState(
   state: Pick<PreviewTabsState, "tabSetByScope" | "liveChromeByScope" | "persistentTabIdsByScope">,
-  scopeId: string,
+  scopeKey: string,
   preserveEmptyState: boolean,
 ): Pick<PreviewTabsState, "tabSetByScope" | "liveChromeByScope" | "persistentTabIdsByScope"> {
   const tabSetByScope = { ...state.tabSetByScope };
   const liveChromeByScope = { ...state.liveChromeByScope };
   const persistentTabIdsByScope = { ...state.persistentTabIdsByScope };
   if (preserveEmptyState) {
-    tabSetByScope[scopeId] = null;
-    liveChromeByScope[scopeId] = null;
+    tabSetByScope[scopeKey] = null;
+    liveChromeByScope[scopeKey] = null;
   } else {
-    delete tabSetByScope[scopeId];
-    delete liveChromeByScope[scopeId];
+    delete tabSetByScope[scopeKey];
+    delete liveChromeByScope[scopeKey];
   }
-  delete persistentTabIdsByScope[scopeId];
+  delete persistentTabIdsByScope[scopeKey];
   return { tabSetByScope, liveChromeByScope, persistentTabIdsByScope };
 }
 
@@ -187,25 +196,27 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
   liveChromeByScope: {},
   persistentTabIdsByScope: {},
 
-  setTabSet: (scopeId, value) =>
+  setTabSet: (workspaceId, scopeId, value) =>
     set((s) => {
-      const previous = s.tabSetByScope[scopeId] ?? null;
+      const scopeKey = previewTabsScopeKey(workspaceId, scopeId);
+      const previous = s.tabSetByScope[scopeKey] ?? null;
       if (sameBrowserTabSet(previous, value)) return s;
       return {
-        tabSetByScope: { ...s.tabSetByScope, [scopeId]: value },
+        tabSetByScope: { ...s.tabSetByScope, [scopeKey]: value },
       };
     }),
 
-  upsertPersistentTab: (scopeId, tab) =>
+  upsertPersistentTab: (workspaceId, scopeId, tab) =>
     set((s) => {
+      const scopeKey = previewTabsScopeKey(workspaceId, scopeId);
       if (
         tab.id.length > BROWSER_TAB_INFO_STRING_MAX.id ||
         tab.threadId.length > BROWSER_TAB_INFO_STRING_MAX.threadId
       ) return s;
-      const persistentIds = new Set(s.persistentTabIdsByScope[scopeId] ?? []);
+      const persistentIds = new Set(s.persistentTabIdsByScope[scopeKey] ?? []);
       if (!persistentIds.has(tab.id) && persistentIds.size >= MAX_PERSISTENT_WEB_TABS_PER_SCOPE) return s;
       persistentIds.add(tab.id);
-      const current = s.tabSetByScope[scopeId] ?? {
+      const current = s.tabSetByScope[scopeKey] ?? {
         threadId: scopeId,
         activeTabId: null,
         tabs: [],
@@ -223,25 +234,26 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
       return {
         tabSetByScope: {
           ...s.tabSetByScope,
-          [scopeId]: { ...current, tabs },
+          [scopeKey]: { ...current, tabs },
         },
         persistentTabIdsByScope: {
           ...s.persistentTabIdsByScope,
-          [scopeId]: persistentIds,
+          [scopeKey]: persistentIds,
         },
       };
     }),
 
-  removePersistentTab: (scopeId, tabId) =>
+  removePersistentTab: (workspaceId, scopeId, tabId) =>
     set((s) => {
-      const currentIds = s.persistentTabIdsByScope[scopeId];
+      const scopeKey = previewTabsScopeKey(workspaceId, scopeId);
+      const currentIds = s.persistentTabIdsByScope[scopeKey];
       if (!currentIds?.has(tabId)) return s;
       const persistentIds = new Set(currentIds);
       persistentIds.delete(tabId);
       const persistentTabIdsByScope = { ...s.persistentTabIdsByScope };
-      if (persistentIds.size > 0) persistentTabIdsByScope[scopeId] = persistentIds;
-      else delete persistentTabIdsByScope[scopeId];
-      const current = s.tabSetByScope[scopeId];
+      if (persistentIds.size > 0) persistentTabIdsByScope[scopeKey] = persistentIds;
+      else delete persistentTabIdsByScope[scopeKey];
+      const current = s.tabSetByScope[scopeKey];
       if (!current) return { persistentTabIdsByScope };
       const tabs = current.tabs.filter((tab) => tab.id !== tabId);
       const activeTabId = current.activeTabId === tabId ? tabs[0]?.id ?? null : current.activeTabId;
@@ -249,7 +261,7 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
         persistentTabIdsByScope,
         tabSetByScope: {
           ...s.tabSetByScope,
-          [scopeId]: {
+          [scopeKey]: {
             ...current,
             activeTabId,
             tabs: tabs.map((tab) => ({ ...tab, active: tab.id === activeTabId })),
@@ -258,19 +270,21 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
       };
     }),
 
-  setLiveChrome: (scopeId, chrome) =>
+  setLiveChrome: (workspaceId, scopeId, chrome) =>
     set((s) => {
       // The host re-emits page-status many times per second during a load.
       // Bail when the chrome is unchanged so unchanged ticks don't notify
       // subscribers (the rail glyph and the whole RightPanel tree subscribe).
-      const prev = s.liveChromeByScope[scopeId] ?? null;
+      const scopeKey = previewTabsScopeKey(workspaceId, scopeId);
+      const prev = s.liveChromeByScope[scopeKey] ?? null;
       if (sameLiveChrome(prev, chrome)) return s;
-      return { liveChromeByScope: { ...s.liveChromeByScope, [scopeId]: chrome } };
+      return { liveChromeByScope: { ...s.liveChromeByScope, [scopeKey]: chrome } };
     }),
 
-  updateTabChrome: (scopeId, tabId, chrome) =>
+  updateTabChrome: (workspaceId, scopeId, tabId, chrome) =>
     set((s) => {
-      const tabSet = s.tabSetByScope[scopeId] ?? null;
+      const scopeKey = previewTabsScopeKey(workspaceId, scopeId);
+      const tabSet = s.tabSetByScope[scopeKey] ?? null;
       if (!tabSet) return s;
       let changed = false;
       const tabs = tabSet.tabs.map((tab) => {
@@ -291,24 +305,24 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
       return {
         tabSetByScope: {
           ...s.tabSetByScope,
-          [scopeId]: { ...tabSet, tabs },
+          [scopeKey]: { ...tabSet, tabs },
         },
       };
     }),
 
-  openPage: async (scopeId, options) => {
+  openPage: async (workspaceId, scopeId, options) => {
     const tabs = bridgeTabs();
     if (!tabs) return null;
     const activate = options?.activate ?? true;
-    const r = await tabs.open(scopeId, {
+    const r = await tabs.open(scopeId, workspaceId, {
       activate,
       ...(options?.tabId ? { tabId: options.tabId } : {}),
       ...(options?.renderingHost ? { renderingHost: options.renderingHost } : {}),
       ...(options?.initialAddress ? { initialAddress: options.initialAddress } : {}),
     });
     if (r.ok) {
-      get().setTabSet(scopeId, r.data.tabs);
-      useBrowserAutomationStore.getState().refreshTarget(scopeId, r.data.tabId);
+      get().setTabSet(workspaceId, scopeId, r.data.tabs);
+      useBrowserAutomationStore.getState().refreshTarget(workspaceId, scopeId, r.data.tabId);
       // A user-created page is empty; drop the cursor into the URL field so the
       // user can type immediately (matches the panel-open shortcut's UX).
       if (!options?.tabId && options?.focusOmnibox !== false && (options?.activate ?? true)) {
@@ -319,18 +333,19 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
     return null;
   },
 
-  activatePage: async (scopeId, tabId) => {
+  activatePage: async (workspaceId, scopeId, tabId) => {
     const tabs = bridgeTabs();
     if (!tabs) {
-      if (!get().persistentTabIdsByScope[scopeId]?.has(tabId)) return;
-      get().setLiveChrome(scopeId, null);
+      const scopeKey = previewTabsScopeKey(workspaceId, scopeId);
+      if (!get().persistentTabIdsByScope[scopeKey]?.has(tabId)) return;
+      get().setLiveChrome(workspaceId, scopeId, null);
       set((s) => {
-        const tabSet = s.tabSetByScope[scopeId];
+        const tabSet = s.tabSetByScope[scopeKey];
         if (!tabSet || !tabSet.tabs.some((tab) => tab.id === tabId)) return s;
         return {
           tabSetByScope: {
             ...s.tabSetByScope,
-            [scopeId]: {
+            [scopeKey]: {
               ...tabSet,
               activeTabId: tabId,
               tabs: tabSet.tabs.map((tab) => ({ ...tab, active: tab.id === tabId })),
@@ -338,66 +353,67 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
           },
         };
       });
-      useBrowserAutomationStore.getState().refreshTarget(scopeId, tabId);
+      useBrowserAutomationStore.getState().refreshTarget(workspaceId, scopeId, tabId);
       return;
     }
     // The newly-active page has not emitted its live chrome yet; clear the
     // stale overlay so it does not paint the prior page's favicon onto it.
-    get().setLiveChrome(scopeId, null);
-    const r = await tabs.activate(scopeId, tabId);
+    get().setLiveChrome(workspaceId, scopeId, null);
+    const r = await tabs.activate(scopeId, workspaceId, tabId);
     if (r.ok) {
-      get().setTabSet(scopeId, r.data);
-      useBrowserAutomationStore.getState().refreshTarget(scopeId, tabId);
+      get().setTabSet(workspaceId, scopeId, r.data);
+      useBrowserAutomationStore.getState().refreshTarget(workspaceId, scopeId, tabId);
     }
   },
 
-  closePage: async (scopeId, tabId, opts) => {
+  closePage: async (workspaceId, scopeId, tabId, opts) => {
     const tabs = bridgeTabs();
-    const current = get().tabSetByScope[scopeId];
+    const scopeKey = previewTabsScopeKey(workspaceId, scopeId);
+    const current = get().tabSetByScope[scopeKey];
     const isLast = !!current && current.tabs.length <= 1;
     const clearLastScopeState = () => {
-      set((s) => clearPreviewScopeState(s, scopeId, true));
+      set((s) => clearPreviewScopeState(s, scopeKey, true));
     };
     if (!tabs) {
-      if (!get().persistentTabIdsByScope[scopeId]?.has(tabId)) return;
+      if (!get().persistentTabIdsByScope[scopeKey]?.has(tabId)) return;
       if (isLast) {
         clearLastScopeState();
         opts?.onLastClose?.();
-        useBrowserAutomationStore.getState().releaseThreadTargets(scopeId);
+        useBrowserAutomationStore.getState().releaseThreadTargets(workspaceId, scopeId);
         return;
       }
-      get().setLiveChrome(scopeId, null);
-      get().removePersistentTab(scopeId, tabId);
-      useBrowserAutomationStore.getState().unregisterTarget(scopeId, tabId);
+      get().setLiveChrome(workspaceId, scopeId, null);
+      get().removePersistentTab(workspaceId, scopeId, tabId);
+      useBrowserAutomationStore.getState().unregisterTarget(workspaceId, scopeId, tabId);
       return;
     }
     if (isLast) {
       const r = tabs.closeScope
-        ? await tabs.closeScope(scopeId)
-        : await tabs.close(scopeId, tabId);
+        ? await tabs.closeScope(scopeId, workspaceId)
+        : await tabs.close(scopeId, workspaceId, tabId);
       if (!r.ok) return;
       clearLastScopeState();
-      useBrowserAutomationStore.getState().releaseThreadTargets(scopeId);
+      useBrowserAutomationStore.getState().releaseThreadTargets(workspaceId, scopeId);
       opts?.onLastClose?.();
       return;
     }
-    get().setLiveChrome(scopeId, null);
-    const r = await tabs.close(scopeId, tabId);
+    get().setLiveChrome(workspaceId, scopeId, null);
+    const r = await tabs.close(scopeId, workspaceId, tabId);
     if (!r.ok) return;
-    useBrowserAutomationStore.getState().unregisterTarget(scopeId, tabId);
+    useBrowserAutomationStore.getState().unregisterTarget(workspaceId, scopeId, tabId);
     // Closing the last page collapses the Browser tab. The host always recreates
     // a blank fallback page in its returned set, but the tab is gone from the
     // rail, so drop the scope's set rather than leave that fallback as a phantom
     // page; reopening Browser re-seeds it via `list`.
-    get().setTabSet(scopeId, isLast ? null : r.data);
+    get().setTabSet(workspaceId, scopeId, isLast ? null : r.data);
   },
 
-  clearScope: async (scopeId) => {
+  clearScope: async (workspaceId, scopeId) => {
     const tabs = bridgeTabs();
-    const r = await tabs?.closeScope?.(scopeId);
+    const r = await tabs?.closeScope?.(scopeId, workspaceId);
     if (r && !r.ok) throw new Error(r.error);
-    useBrowserAutomationStore.getState().releaseThreadTargets(scopeId);
-    set((s) => clearPreviewScopeState(s, scopeId, false));
+    useBrowserAutomationStore.getState().releaseThreadTargets(workspaceId, scopeId);
+    set((s) => clearPreviewScopeState(s, previewTabsScopeKey(workspaceId, scopeId), false));
   },
 }));
 
@@ -408,9 +424,12 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
  */
 export function usePreviewDisplayTabSet(
   scopeId: string | null | undefined,
+  workspaceId?: string | null,
 ): BrowserTabSet | null {
-  const tabSet = usePreviewTabsStore((s) => (scopeId ? s.tabSetByScope[scopeId] ?? null : null));
-  const live = usePreviewTabsStore((s) => (scopeId ? s.liveChromeByScope[scopeId] ?? null : null));
+  const exactWorkspaceId = workspaceId ?? scopeId;
+  const scopeKey = scopeId && exactWorkspaceId ? previewTabsScopeKey(exactWorkspaceId, scopeId) : null;
+  const tabSet = usePreviewTabsStore((s) => (scopeKey ? s.tabSetByScope[scopeKey] ?? null : null));
+  const live = usePreviewTabsStore((s) => (scopeKey ? s.liveChromeByScope[scopeKey] ?? null : null));
   // overlayDisplaySet allocates a fresh set when live chrome is present; memoize
   // on the source references so an unchanged tick yields a stable reference and
   // does not defeat downstream memoization of the rail.

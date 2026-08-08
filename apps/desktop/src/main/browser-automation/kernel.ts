@@ -26,7 +26,7 @@ import {
 } from "@mcode/contracts";
 import { findAdoptedWebContentsForWindow } from "../preview/preview-webview-adopt.js";
 import { PREVIEW_GUEST_AGENT_INPUT_CHANNEL } from "../preview/preview-guest-input-contract.js";
-import { getSession } from "../preview/preview-session.js";
+import { getSession, getThreadTabSet } from "../preview/preview-session.js";
 import {
   BrowserAutomationCancelledError,
   BrowserAutomationQueueFullError,
@@ -839,7 +839,7 @@ export class BrowserAutomationKernel {
       // adopted webviews. Resolve their native WebContents so targetless opens
       // can describe and dispatch without activating the visible panel.
       const resolved = this.resolveCurrentTarget(event, threadId, tabId, false);
-      const tabSet = getSession(resolved.window).tabsByThread.get(threadId);
+      const tabSet = getThreadTabSet(getSession(resolved.window), threadId);
       const tab = tabSet?.tabs.find((candidate) => candidate.id === tabId);
       return {
         ok: true,
@@ -922,7 +922,7 @@ export class BrowserAutomationKernel {
       }
     }
     if (!threadId) return false;
-    const set = session.tabsByThread.get(threadId);
+    const set = getThreadTabSet(session, threadId);
     const tab = set?.tabs.find((candidate) => candidate.id === (tabId ?? set.activeTabId));
     if (!tab) return false;
     const adopted = findAdoptedWebContentsForWindow(win.id, threadId, tab.id);
@@ -1026,7 +1026,7 @@ export class BrowserAutomationKernel {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win || win.isDestroyed()) throw new KernelError("TAB_UNAVAILABLE", "Browser window is unavailable", true);
     const session = getSession(win);
-    const tab = session.tabsByThread.get(threadId)?.tabs.find((candidate) => candidate.id === tabId);
+    const tab = getThreadTabSet(session, threadId)?.tabs.find((candidate) => candidate.id === tabId);
     if (!tab || tab.threadId !== threadId) {
       throw new KernelError("TAB_UNAVAILABLE", "Browser target slot is unavailable", true);
     }
@@ -1251,7 +1251,7 @@ export class BrowserAutomationKernel {
             threadId: state.threadId,
             tabId: state.tabId,
             targetGeneration: state.targetGeneration,
-            active: getSession(resolved.window).tabsByThread.get(state.threadId)?.activeTabId === state.tabId,
+            active: getThreadTabSet(getSession(resolved.window), state.threadId)?.activeTabId === state.tabId,
             focused: webContents.isFocused(),
             lastUsedAt: Date.now(),
           }],
@@ -1276,7 +1276,7 @@ export class BrowserAutomationKernel {
         const mechanical: MechanicalStatusResult = {
           operation: "status",
           available: true,
-          active: getSession(resolved.window).tabsByThread.get(state.threadId)?.activeTabId === state.tabId,
+          active: getThreadTabSet(getSession(resolved.window), state.threadId)?.activeTabId === state.tabId,
           tabId: state.tabId,
           url: redactBrowserLocation(webContents.getURL()),
           loading: webContents.isLoading(),

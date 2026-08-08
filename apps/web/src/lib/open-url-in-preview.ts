@@ -76,11 +76,12 @@ function findActiveTab(
  */
 async function shouldOpenInNewTab(
   threadId: string,
+  workspaceId: string,
   tabsApi: NonNullable<NonNullable<typeof window.desktopBridge>["preview"]>["tabs"],
 ): Promise<boolean> {
   if (!tabsApi?.list) return false;
 
-  const listed = await tabsApi.list(threadId);
+  const listed = await tabsApi.list(threadId, workspaceId);
   if (!listed.ok) return true;
 
   const active = findActiveTab(listed.data.tabs, listed.data.activeTabId);
@@ -124,10 +125,11 @@ export function openUrlInPreview({
   }
 
   const run = async (): Promise<void> => {
-    const openInNewTab = newTab && (await shouldOpenInNewTab(threadId, preview.tabs));
+    const exactWorkspaceId = workspaceId ?? threadId;
+    const openInNewTab = newTab && (await shouldOpenInNewTab(threadId, exactWorkspaceId, preview.tabs));
 
     if (openInNewTab && preview.tabs?.open) {
-      await preview.tabs.open(threadId, { activate: true });
+      await preview.tabs.open(threadId, exactWorkspaceId, { activate: true });
     } else if (!openInNewTab) {
       setPreviewUrlForThread(threadId, url);
     }

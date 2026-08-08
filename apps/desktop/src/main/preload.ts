@@ -476,6 +476,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       },
       open(
         threadId: string,
+        workspaceId: string,
         options?: {
           activate?: boolean;
           tabId?: string;
@@ -485,20 +486,21 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ): Promise<unknown> {
         return ipcRenderer.invoke("preview:tabs.open", {
           threadId,
+          workspaceId,
           activate: options?.activate,
           tabId: options?.tabId,
           renderingHost: options?.renderingHost,
           initialAddress: options?.initialAddress,
         });
       },
-      activate(threadId: string, tabId: string): Promise<unknown> {
-        return ipcRenderer.invoke("preview:tabs.activate", { threadId, tabId });
+      activate(threadId: string, workspaceId: string, tabId: string): Promise<unknown> {
+        return ipcRenderer.invoke("preview:tabs.activate", { threadId, workspaceId, tabId });
       },
-      close(threadId: string, tabId: string): Promise<unknown> {
-        return ipcRenderer.invoke("preview:tabs.close", { threadId, tabId });
+      close(threadId: string, workspaceId: string, tabId: string): Promise<unknown> {
+        return ipcRenderer.invoke("preview:tabs.close", { threadId, workspaceId, tabId });
       },
-      closeScope(threadId: string): Promise<unknown> {
-        return ipcRenderer.invoke("preview:tabs.closeScope", { threadId });
+      closeScope(threadId: string, workspaceId: string): Promise<unknown> {
+        return ipcRenderer.invoke("preview:tabs.closeScope", { threadId, workspaceId });
       },
       onUpdated(callback: (payload: unknown) => void): () => void {
         const listener = (_event: unknown, payload: unknown) =>

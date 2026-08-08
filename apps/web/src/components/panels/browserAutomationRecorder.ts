@@ -31,6 +31,7 @@ async function acquireBeforeDeadline<T>(
 interface RecordingSession {
   readonly id: string;
   readonly targetKey: string;
+  readonly workspaceId: string;
   readonly threadId: string;
   readonly recorder: MediaRecorder;
   readonly stream: MediaStream;
@@ -66,6 +67,7 @@ export class BrowserAutomationRecorder {
   private readonly sessions = new Map<string, RecordingSession>();
   private readonly pendingAcquisitions = new Map<string, {
     requestKey: string;
+    workspaceId: string;
     threadId: string;
     cancelled: boolean;
   }>();
@@ -76,12 +78,12 @@ export class BrowserAutomationRecorder {
     dispatch: BrowserAutomationHostDispatch,
     bridge: PreviewAutomationBridge,
   ): Promise<BrowserAutomationResponse> {
-    const key = browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId);
+    const key = browserAutomationTargetKey(dispatch.scope.workspaceId, dispatch.target.threadId, dispatch.target.tabId);
     const requestKey = browserAutomationRequestKey(dispatch.request.requestId, dispatch.request.sequence);
     if (this.sessions.has(key) || this.pendingAcquisitions.has(key)) {
       return failure(dispatch, "A recording is already active for this browser tab");
     }
-    const acquisition = { requestKey, threadId: dispatch.target.threadId, cancelled: false };
+    const acquisition = { requestKey, workspaceId: dispatch.scope.workspaceId, threadId: dispatch.target.threadId, cancelled: false };
     this.pendingAcquisitions.set(key, acquisition);
     let source: Awaited<ReturnType<PreviewAutomationBridge["getMediaSourceId"]>>;
     try {
@@ -163,6 +165,7 @@ export class BrowserAutomationRecorder {
     const session: RecordingSession = {
       id: crypto.randomUUID(),
       targetKey: key,
+      workspaceId: dispatch.scope.workspaceId,
       threadId: dispatch.target.threadId,
       recorder,
       stream,
@@ -226,14 +229,14 @@ export class BrowserAutomationRecorder {
   }
 
   /** Report whether a thread owns an active or pending recording lease. */
-  hasActiveThread(threadId: string): boolean {
-    return [...this.sessions.values()].some((session) => session.threadId === threadId) ||
-      [...this.pendingAcquisitions.values()].some((acquisition) => acquisition.threadId === threadId);
+  hasActiveThread(workspaceId: string, threadId: string): boolean {
+    return [...this.sessions.values()].some((session) => session.workspaceId === workspaceId && session.threadId === threadId) ||
+      [...this.pendingAcquisitions.values()].some((acquisition) => acquisition.workspaceId === workspaceId && acquisition.threadId === threadId);
   }
 
   /** Stop one exact recording and return a bounded base64 WebM result. */
   async stop(dispatch: BrowserAutomationHostDispatch): Promise<BrowserAutomationResponse> {
-    const key = browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId);
+    const key = browserAutomationTargetKey(dispatch.scope.workspaceId, dispatch.target.threadId, dispatch.target.tabId);
     const session = this.sessions.get(key);
     if (!session) return failure(dispatch, "No recording is active for this browser tab");
     if (session.recorder.state !== "inactive") session.recorder.stop();
@@ -276,18 +279,18 @@ export class BrowserAutomationRecorder {
 
   /** Cancel pending acquisition and release any active session for a request target. */
   cancel(dispatch: BrowserAutomationHostDispatch): void {
-    const targetKey = browserAutomationTargetKey(dispatch.target.threadId, dispatch.target.tabId);
+    const targetKey = browserAutomationTargetKey(dispatch.scope.workspaceId, dispatch.target.threadId, dispatch.target.tabId);
     const acquisition = this.pendingAcquisitions.get(targetKey);
     if (acquisition?.requestKey === browserAutomationRequestKey(
       dispatch.request.requestId,
       dispatch.request.sequence,
     )) acquisition.cancelled = true;
-    this.disposeTarget(dispatch.target.threadId, dispatch.target.tabId);
+    this.disposeTarget(dispatch.scope.workspaceId, dispatch.target.threadId, dispatch.target.tabId);
   }
 
   /** Release recording resources for one exact Browser target. */
-  disposeTarget(threadId: string, tabId: string): void {
-    const key = browserAutomationTargetKey(threadId, tabId);
+  disposeTarget(workspaceId: string, threadId: string, tabId: string): void {
+    const key = browserAutomationTargetKey(workspaceId, threadId, tabId);
     const acquisition = this.pendingAcquisitions.get(key);
     if (acquisition) acquisition.cancelled = true;
     const session = this.sessions.get(key);
@@ -302,7 +305,7 @@ export class BrowserAutomationRecorder {
   dispose(): void {
     this.disposed = true;
     for (const session of [...this.sessions.values()]) {
-      this.disposeTarget(...(JSON.parse(session.targetKey) as [string, string]));
+      this.disposeTarget(...(JSON.parse(session.targetKey) as [string, string, string]));
     }
     for (const acquisition of this.pendingAcquisitions.values()) acquisition.cancelled = true;
   }

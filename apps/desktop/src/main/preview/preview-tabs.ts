@@ -2,10 +2,11 @@
  * Tab IPC handlers for the embedded preview WebContentsView.
  *
  * Phase A scope (this PR): the host still owns a single backing WebContentsView per
- * window. These handlers maintain a per-thread tab set whose **active** tab
- * mirrors that single view, and surface a stable wire format so the renderer
- * can build a tab bar today. Future PRs replace the single backing view with
- * one WebContentsView per warm tab; the wire contract here does not change.
+ * window. These handlers maintain a workspace-qualified preview-scope tab set
+ * whose **active** tab mirrors that single view, and surface a stable wire
+ * format so the renderer can build a tab bar today. Future PRs replace the
+ * single backing view with one WebContentsView per warm tab; the wire contract
+ * here does not change.
  */
 
 import { BrowserWindow, ipcMain } from "electron";
@@ -21,6 +22,7 @@ import {
   ensureThreadTabSet,
   applyViewportPresentation,
   getSession,
+  previewTabScopeKey,
   backgroundBoundsForTarget,
   syncActiveTabFromSession,
   toBrowserTabSet,
@@ -41,17 +43,24 @@ import {
 import { trustMainProcessFileNavigation } from "./preview-local-file.js";
 
 type TabIpcResult<T> = { ok: true; data: T } | { ok: false; error: string };
+const MAX_PREVIEW_ID_LENGTH = 256;
 
-function normaliseThreadId(value: unknown): string | null {
+function normalisePreviewId(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
+  return trimmed.length > 0 && trimmed.length <= MAX_PREVIEW_ID_LENGTH ? trimmed : null;
+}
+
+function normaliseThreadId(value: unknown): string | null {
+  return normalisePreviewId(value);
 }
 
 function normaliseTabId(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
+  return normalisePreviewId(value);
+}
+
+function normaliseWorkspaceId(value: unknown): string | null {
+  return normalisePreviewId(value);
 }
 
 function sendTabsUpdated(win: BrowserWindow, set: BrowserTabSet): void {
@@ -189,12 +198,10 @@ export function registerTabHandlers(): void {
       if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
       const tid = normaliseThreadId(payload?.threadId);
       if (!tid) return { ok: false, error: "invalid-thread-id" };
-      const workspaceId = normaliseThreadId(payload?.workspaceId);
-      if (payload?.workspaceId !== undefined && !workspaceId) {
-        return { ok: false, error: "invalid-workspace-id" };
-      }
+      const workspaceId = normaliseWorkspaceId(payload?.workspaceId);
+      if (!workspaceId) return { ok: false, error: "invalid-workspace-id" };
       const s = getSession(win);
-      if (workspaceId) s.workspaceId = workspaceId;
+      s.workspaceId = workspaceId;
       return { ok: true, data: buildTabSet(s, tid) };
     },
   );
@@ -205,6 +212,7 @@ export function registerTabHandlers(): void {
       _event,
       payload: {
         threadId?: unknown;
+        workspaceId?: unknown;
         activate?: unknown;
         tabId?: unknown;
         renderingHost?: unknown;
@@ -215,6 +223,8 @@ export function registerTabHandlers(): void {
       if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
       const tid = normaliseThreadId(payload?.threadId);
       if (!tid) return { ok: false, error: "invalid-thread-id" };
+      const workspaceId = normaliseWorkspaceId(payload?.workspaceId);
+      if (!workspaceId) return { ok: false, error: "invalid-workspace-id" };
       const requestedTabId = payload?.tabId === undefined ? null : normaliseTabId(payload.tabId);
       if (payload?.tabId !== undefined && !requestedTabId) {
         return { ok: false, error: "invalid-tab-id" };
@@ -228,6 +238,7 @@ export function registerTabHandlers(): void {
       const activate = payload?.activate !== false; // default: true
 
       const s = getSession(win);
+      s.workspaceId = workspaceId;
       const set = ensureThreadTabSet(s, tid);
       const existingTab = requestedTabId
         ? set.tabs.find((candidate) => candidate.id === requestedTabId)
@@ -298,16 +309,19 @@ export function registerTabHandlers(): void {
     "preview:tabs.activate",
     (
       _event,
-      payload: { threadId?: unknown; tabId?: unknown },
+      payload: { threadId?: unknown; workspaceId?: unknown; tabId?: unknown },
     ): TabIpcResult<BrowserTabSet> => {
       const win = BrowserWindow.fromWebContents(_event.sender);
       if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
       const tid = normaliseThreadId(payload?.threadId);
+      const workspaceId = normaliseWorkspaceId(payload?.workspaceId);
       const tabId = normaliseTabId(payload?.tabId);
       if (!tid) return { ok: false, error: "invalid-thread-id" };
+      if (!workspaceId) return { ok: false, error: "invalid-workspace-id" };
       if (!tabId) return { ok: false, error: "invalid-tab-id" };
 
       const s = getSession(win);
+      s.workspaceId = workspaceId;
       const set = ensureThreadTabSet(s, tid);
       const tab = set.tabs.find((t) => t.id === tabId);
       if (!tab) return { ok: false, error: "tab-not-found" };
@@ -333,16 +347,19 @@ export function registerTabHandlers(): void {
     "preview:tabs.close",
     (
       _event,
-      payload: { threadId?: unknown; tabId?: unknown },
+      payload: { threadId?: unknown; workspaceId?: unknown; tabId?: unknown },
     ): TabIpcResult<BrowserTabSet> => {
       const win = BrowserWindow.fromWebContents(_event.sender);
       if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
       const tid = normaliseThreadId(payload?.threadId);
+      const workspaceId = normaliseWorkspaceId(payload?.workspaceId);
       const tabId = normaliseTabId(payload?.tabId);
       if (!tid) return { ok: false, error: "invalid-thread-id" };
+      if (!workspaceId) return { ok: false, error: "invalid-workspace-id" };
       if (!tabId) return { ok: false, error: "invalid-tab-id" };
 
       const s = getSession(win);
+      s.workspaceId = workspaceId;
       const set = ensureThreadTabSet(s, tid);
       const idx = set.tabs.findIndex((t) => t.id === tabId);
       if (idx === -1) return { ok: false, error: "tab-not-found" };
@@ -394,19 +411,23 @@ export function registerTabHandlers(): void {
 
   ipcMain.handle(
     "preview:tabs.closeScope",
-    (_event, payload: { threadId?: unknown }): TabIpcResult<BrowserTabSet> => {
+    (_event, payload: { threadId?: unknown; workspaceId?: unknown }): TabIpcResult<BrowserTabSet> => {
       const win = BrowserWindow.fromWebContents(_event.sender);
       if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
       const tid = normaliseThreadId(payload?.threadId);
+      const workspaceId = normaliseWorkspaceId(payload?.workspaceId);
       if (!tid) return { ok: false, error: "invalid-thread-id" };
+      if (!workspaceId) return { ok: false, error: "invalid-workspace-id" };
 
       const s = getSession(win);
-      const set = s.tabsByThread.get(tid);
+      s.workspaceId = workspaceId;
+      const scopeKey = previewTabScopeKey(workspaceId, tid);
+      const set = s.tabsByThread.get(scopeKey);
       if (set) {
         for (const tab of set.tabs) {
           disposeTabView(win, s, tab);
         }
-        s.tabsByThread.delete(tid);
+        s.tabsByThread.delete(scopeKey);
       }
       if (s.lastPreviewThreadId === tid) {
         s.lastPreviewThreadId = null;

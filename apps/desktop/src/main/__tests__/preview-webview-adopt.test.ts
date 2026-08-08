@@ -111,7 +111,7 @@ import {
   findAdoptedWebContentsForWindow,
   registerPreviewSurfaceHandlers,
 } from "../preview/preview-webview-adopt.js";
-import { getSession, sessions } from "../preview/preview-session.js";
+import { getSession, previewTabScopeKey, sessions } from "../preview/preview-session.js";
 
 const surface = (generation = 1) => ({
   identity: {
@@ -133,7 +133,7 @@ beforeEach(() => {
   const session = getSession(allWindows[0] as never);
   session.workspaceId = "workspace-A";
   session.tabsByThread.clear();
-  session.tabsByThread.set("thread-A", {
+  session.tabsByThread.set(previewTabScopeKey("workspace-A", "thread-A"), {
     threadId: "thread-A",
     activeTabId: "tab-1",
     tabs: [{ id: "tab-1", threadId: "thread-A", view: null, renderingHost: "webContentsView", resumeUrl: null, title: null, faviconUrl: null, lastActiveAt: 0, viewportTargetGeneration: null, viewportOperationGeneration: null }],
@@ -204,7 +204,9 @@ describe("preview typed surface bridge", () => {
     expect(invoke("preview.surface.adopt", { surface: surface(2), adoptionToken: "token-5678" })).toEqual({ ok: true });
     expect(findAdoptedWebContentsForWindow(1, "thread-A", "tab-1", 2)).toBe(secondGuest);
 
-    const tabSet = getSession(allWindows[0] as never).tabsByThread.get("thread-A")!;
+    const tabSet = getSession(allWindows[0] as never).tabsByThread.get(
+      previewTabScopeKey("workspace-A", "thread-A"),
+    )!;
     tabSet.tabs.push({ ...tabSet.tabs[0]!, id: "tab-2" });
     const otherSurface = { ...surface(), identity: { ...surface().identity, tabId: "tab-2" } };
     expect(invoke("preview.surface.prepare", { surface: otherSurface, adoptionToken: "token-5678" })).toMatchObject({ ok: false, error: "duplicate-adoption-token" });

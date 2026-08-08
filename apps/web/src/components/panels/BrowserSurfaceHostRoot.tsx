@@ -27,6 +27,7 @@ export const browserSurfaceHost = new BrowserSurfaceHost({
         onHumanInput: (surfaceIdentity) => {
           if (surfaceIdentity.scope.kind !== "thread") return;
           invalidateBrowserAutomationTargetObservation(
+            surfaceIdentity.workspaceId,
             surfaceIdentity.scope.id,
             surfaceIdentity.tabId,
           );
@@ -38,6 +39,7 @@ export const browserSurfaceHost = new BrowserSurfaceHost({
       title: "Web browser preview",
       onLoad: (surfaceIdentity) => {
         useBrowserAutomationStore.getState().refreshTarget(
+          surfaceIdentity.workspaceId,
           surfaceIdentity.scope.id,
           surfaceIdentity.tabId,
         );
@@ -58,12 +60,16 @@ export function BrowserSurfaceHostRoot() {
     return surfaceBridge.onPopupRequested((request) => {
       const source = browserSurfaceHost.getSnapshot(request.sourceSurface.identity);
       if (!source || source.generation !== request.sourceSurface.generation) return;
-      void usePreviewTabsStore.getState().openPage(request.sourceSurface.identity.scope.id, {
-        activate: request.initiator === "human",
-        focusOmnibox: false,
-        initialAddress: request.address,
-        renderingHost: "webview",
-      });
+      void usePreviewTabsStore.getState().openPage(
+        request.sourceSurface.identity.workspaceId,
+        request.sourceSurface.identity.scope.id,
+        {
+          activate: request.initiator === "human",
+          focusOmnibox: false,
+          initialAddress: request.address,
+          renderingHost: "webview",
+        },
+      );
     });
   }, []);
 

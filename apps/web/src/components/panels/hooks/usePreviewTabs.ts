@@ -19,19 +19,20 @@ import {
  * A no-op in non-desktop builds (the bridge is absent, so `tabSet` stays null).
  */
 export function usePreviewTabs(scopeId: string, workspaceId?: string | null) {
+  const exactWorkspaceId = workspaceId ?? scopeId;
   const tabSet = usePreviewTabSet(scopeId, workspaceId);
   const newTab = useCallback(
-    () => usePreviewTabsStore.getState().openPage(scopeId),
-    [scopeId],
+    () => usePreviewTabsStore.getState().openPage(exactWorkspaceId, scopeId),
+    [exactWorkspaceId, scopeId],
   );
   const activateTab = useCallback(
-    (tabId: string) => usePreviewTabsStore.getState().activatePage(scopeId, tabId),
-    [scopeId],
+    (tabId: string) => usePreviewTabsStore.getState().activatePage(exactWorkspaceId, scopeId, tabId),
+    [exactWorkspaceId, scopeId],
   );
   const closeTab = useCallback(
     (tabId: string, opts?: ClosePageOptions) =>
-      usePreviewTabsStore.getState().closePage(scopeId, tabId, opts),
-    [scopeId],
+      usePreviewTabsStore.getState().closePage(exactWorkspaceId, scopeId, tabId, opts),
+    [exactWorkspaceId, scopeId],
   );
 
   return { tabSet, newTab, activateTab, closeTab };
@@ -42,7 +43,7 @@ export function usePreviewTabSet(
   scopeId: string | null,
   workspaceId?: string | null,
 ): BrowserTabSet | null {
-  const tabSet = usePreviewDisplayTabSet(scopeId);
+  const tabSet = usePreviewDisplayTabSet(scopeId, workspaceId);
   const bridge = window.desktopBridge?.preview?.tabs;
 
   useEffect(() => {
@@ -51,11 +52,11 @@ export function usePreviewTabSet(
     const { setTabSet } = usePreviewTabsStore.getState();
     void bridge.list(scopeId, workspaceId ?? undefined).then((r) => {
       if (cancelled) return;
-      if (r.ok) setTabSet(scopeId, r.data);
+      if (r.ok) setTabSet(workspaceId ?? scopeId, scopeId, r.data);
     });
     const off = bridge.onUpdated((payload: BrowserTabSet) => {
       if (cancelled) return;
-      if (payload.threadId === scopeId) setTabSet(scopeId, payload);
+      if (payload.threadId === scopeId) setTabSet(workspaceId ?? scopeId, scopeId, payload);
     });
     return () => {
       cancelled = true;

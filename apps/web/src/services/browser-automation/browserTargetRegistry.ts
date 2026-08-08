@@ -8,8 +8,8 @@ export interface BrowserTargetRecord {
   readonly attached: boolean;
 }
 
-function key(threadId: string, tabId: string): string {
-  return JSON.stringify([threadId, tabId]);
+function key(workspaceId: string, threadId: string, tabId: string): string {
+  return JSON.stringify([workspaceId, threadId, tabId]);
 }
 
 /**
@@ -20,7 +20,7 @@ export class BrowserTargetRegistry {
   private readonly records = new Map<string, BrowserTargetRecord>();
 
   register(workspaceId: string, threadId: string, tabId: string): BrowserTargetRecord {
-    const targetKey = key(threadId, tabId);
+    const targetKey = key(workspaceId, threadId, tabId);
     const current = this.records.get(targetKey);
     const next: BrowserTargetRecord = {
       workspaceId,
@@ -39,8 +39,8 @@ export class BrowserTargetRegistry {
     return this.register(workspaceId, threadId, tabId);
   }
 
-  refresh(threadId: string, tabId: string): BrowserTargetRecord | null {
-    const targetKey = key(threadId, tabId);
+  refresh(workspaceId: string, threadId: string, tabId: string): BrowserTargetRecord | null {
+    const targetKey = key(workspaceId, threadId, tabId);
     const current = this.records.get(targetKey);
     if (!current) return null;
     const next = { ...current, revision: current.revision + 1, lastUsedAt: Date.now(), attached: true };
@@ -48,8 +48,8 @@ export class BrowserTargetRegistry {
     return next;
   }
 
-  detach(threadId: string, tabId: string): BrowserTargetRecord | null {
-    const targetKey = key(threadId, tabId);
+  detach(workspaceId: string, threadId: string, tabId: string): BrowserTargetRecord | null {
+    const targetKey = key(workspaceId, threadId, tabId);
     const current = this.records.get(targetKey);
     if (!current) return null;
     const next = { ...current, attached: false };
@@ -57,13 +57,13 @@ export class BrowserTargetRegistry {
     return next;
   }
 
-  releaseTarget(threadId: string, tabId: string): void {
-    this.records.delete(key(threadId, tabId));
+  releaseTarget(workspaceId: string, threadId: string, tabId: string): void {
+    this.records.delete(key(workspaceId, threadId, tabId));
   }
 
-  releaseThread(threadId: string): void {
+  releaseThread(workspaceId: string, threadId: string): void {
     for (const [targetKey, target] of this.records) {
-      if (target.threadId === threadId) this.records.delete(targetKey);
+      if (target.workspaceId === workspaceId && target.threadId === threadId) this.records.delete(targetKey);
     }
   }
 
@@ -73,8 +73,8 @@ export class BrowserTargetRegistry {
     }
   }
 
-  get(threadId: string, tabId: string): BrowserTargetRecord | null {
-    return this.records.get(key(threadId, tabId)) ?? null;
+  get(workspaceId: string, threadId: string, tabId: string): BrowserTargetRecord | null {
+    return this.records.get(key(workspaceId, threadId, tabId)) ?? null;
   }
 
   attached(): BrowserTargetRecord[] {
