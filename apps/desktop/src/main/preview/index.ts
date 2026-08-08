@@ -9,7 +9,7 @@ export type {
   PreviewContextReferenceResult,
 } from "./preview-capture.js";
 
-import { ipcMain, session } from "electron";
+import { ipcMain } from "electron";
 import { registerNavigationHandlers } from "./preview-navigation.js";
 import { registerCaptureHandlers, registerWebRequestInterceptor } from "./preview-capture.js";
 import { registerOverlayHandlers } from "./preview-overlay.js";
@@ -19,13 +19,11 @@ import { getPerfCounters } from "./preview-perf.js";
 import { registerPreviewSurfaceHandlers } from "./preview-webview-adopt.js";
 import { registerDesignModeHandlers } from "./preview-design-mode.js";
 import { registerBrowserAutomationHandlers } from "../browser-automation/index.js";
-import { registerPreviewClipboardPermissionHandlers } from "./preview-clipboard-trust.js";
+import { registerPreviewSessionPolicy } from "./preview-session-adapter.js";
 
 /** Registers all preview:* IPC handlers. Call once at app startup. */
 export function registerPreviewBrowserHandlers(): void {
-  const previewPartition = session.fromPartition("persist:mcode-preview");
-  registerPreviewClipboardPermissionHandlers(previewPartition, ipcMain);
-  previewPartition.on("will-download", (event) => event.preventDefault());
+  const previewPartition = registerPreviewSessionPolicy();
 
   registerNavigationHandlers();
   registerCaptureHandlers();
@@ -38,3 +36,11 @@ export function registerPreviewBrowserHandlers(): void {
   registerBrowserAutomationHandlers();
   ipcMain.handle("preview:get-perf-counters", () => getPerfCounters());
 }
+
+export {
+  PREVIEW_PARTITION,
+  PreviewSessionAdapter,
+  previewSessionAdapter,
+} from "./preview-session-adapter.js";
+export { PREVIEW_POPUP_REQUESTED_CHANNEL } from "./preview-popup-contract.js";
+export type { PreviewPopupRequest } from "./preview-popup-contract.js";

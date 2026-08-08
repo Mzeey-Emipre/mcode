@@ -27,6 +27,7 @@ function bridge(): PreviewSurfaceBridge & {
     adopt: vi.fn().mockResolvedValue({ ok: true }),
     navigate: vi.fn().mockResolvedValue({ ok: true }),
     release: vi.fn().mockResolvedValue({ ok: true }),
+    onPopupRequested: vi.fn(() => () => undefined),
   };
 }
 
@@ -47,6 +48,7 @@ describe("ElectronWebviewBrowserSurfaceAdapter", () => {
 
     expect(element.tagName).toBe("WEBVIEW");
     expect(element.getAttribute("src")).toMatch(/^about:blank#[A-Za-z0-9_-]+$/);
+    expect(element.hasAttribute("allowpopups")).toBe(true);
     expect(surfaceBridge.prepare).toHaveBeenCalledWith(expect.objectContaining({
       surface: { identity: IDENTITY, generation: 7 },
       adoptionToken: expect.any(String),

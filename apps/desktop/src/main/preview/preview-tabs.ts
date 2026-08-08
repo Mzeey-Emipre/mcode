@@ -11,6 +11,7 @@
 import { BrowserWindow, ipcMain } from "electron";
 import { randomUUID } from "node:crypto";
 import {
+  BROWSER_TAB_INFO_STRING_MAX,
   PREVIEW_RENDERING_HOSTS,
   type BrowserTabSet,
   type PreviewRenderingHost,
@@ -66,6 +67,27 @@ function sendTabsUpdated(win: BrowserWindow, set: BrowserTabSet): void {
 function normaliseRenderingHost(value: unknown): PreviewRenderingHost | null {
   if (value === undefined) return "webContentsView";
   return PREVIEW_RENDERING_HOSTS.find((host) => host === value) ?? null;
+}
+
+function normaliseInitialAddress(value: unknown): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (
+    typeof value !== "string" ||
+    value.length === 0 ||
+    value.length > BROWSER_TAB_INFO_STRING_MAX.url
+  ) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return null;
+  }
+  if (
+    (parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
+    parsed.username.length > 0 ||
+    parsed.password.length > 0
+  ) return null;
+  return value;
 }
 
 /**
@@ -186,6 +208,7 @@ export function registerTabHandlers(): void {
         activate?: unknown;
         tabId?: unknown;
         renderingHost?: unknown;
+        initialAddress?: unknown;
       },
     ): TabIpcResult<{ tabId: string; tabs: BrowserTabSet }> => {
       const win = BrowserWindow.fromWebContents(_event.sender);
@@ -198,6 +221,10 @@ export function registerTabHandlers(): void {
       }
       const renderingHost = normaliseRenderingHost(payload?.renderingHost);
       if (!renderingHost) return { ok: false, error: "invalid-rendering-host" };
+      const initialAddress = normaliseInitialAddress(payload?.initialAddress);
+      if (payload?.initialAddress !== undefined && initialAddress === null) {
+        return { ok: false, error: "invalid-initial-address" };
+      }
       const activate = payload?.activate !== false; // default: true
 
       const s = getSession(win);
@@ -229,6 +256,10 @@ export function registerTabHandlers(): void {
         // last URL via the per-thread resume hint on the next sync.
         userCreatedBlank: true,
       } satisfies TabState;
+      if (initialAddress !== undefined) {
+        tab.resumeUrl = initialAddress;
+        tab.userCreatedBlank = false;
+      }
       if (!existingTab) set.tabs.push(tab);
       if (existingTab && !activate) tab.backgroundOpenReserved = true;
 

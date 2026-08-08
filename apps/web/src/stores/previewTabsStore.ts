@@ -59,6 +59,7 @@ interface PreviewTabsBridgeLike {
       readonly activate?: boolean;
       readonly tabId?: string;
       readonly renderingHost?: PreviewRenderingHost;
+      readonly initialAddress?: string;
     },
   ): Promise<{ ok: true; data: { tabId: string; tabs: BrowserTabSet } } | { ok: false; error: string }>;
   activate(
@@ -133,6 +134,7 @@ interface PreviewTabsState {
     readonly activate?: boolean;
     readonly tabId?: string;
     readonly renderingHost?: PreviewRenderingHost;
+    readonly initialAddress?: string;
   }) => Promise<string | null>;
   /** Activate (switch to) a page within the scope's browser. */
   activatePage: (scopeId: string, tabId: string) => Promise<void>;
@@ -302,6 +304,7 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
       activate,
       ...(options?.tabId ? { tabId: options.tabId } : {}),
       ...(options?.renderingHost ? { renderingHost: options.renderingHost } : {}),
+      ...(options?.initialAddress ? { initialAddress: options.initialAddress } : {}),
     });
     if (r.ok) {
       get().setTabSet(scopeId, r.data.tabs);

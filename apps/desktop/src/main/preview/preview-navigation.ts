@@ -5,7 +5,7 @@
  * overflow kebab (clear-cookies, clear-cache, get-zoom, set-zoom).
  */
 
-import { BrowserWindow, ipcMain, session as electronSession, shell } from "electron";
+import { BrowserWindow, ipcMain, shell } from "electron";
 import { logger } from "@mcode/shared";
 import {
   ensureThreadTabSet,
@@ -32,13 +32,12 @@ import {
 } from "./preview-local-file.js";
 import { isMcodeWorkspacePreviewUrl } from "@mcode/contracts";
 import { onPreviewHidden, onPreviewVisible } from "./preview-discard-scheduler.js";
+import { previewSessionAdapter } from "./preview-session-adapter.js";
 
 /** Lower bound on the preview zoom factor (25%), matching Chromium's floor. */
 const MIN_ZOOM_FACTOR = 0.25;
 /** Upper bound on the preview zoom factor (500%), matching Chromium's ceiling. */
 const MAX_ZOOM_FACTOR = 5;
-/** Shared Electron storage partition for native and renderer-hosted previews. */
-const PREVIEW_PARTITION = "persist:mcode-preview";
 
 type PreviewResolveNavigationResult =
   | { ok: true; url: string }
@@ -70,11 +69,6 @@ export function looksLikeBareDomain(input: string): boolean {
   if (!hostPart.includes(".")) return false;
   const tld = hostPart.split(":")[0]!.split(".").pop() ?? "";
   return /^[a-z][a-z0-9-]{1,}$/i.test(tld);
-}
-
-/** Returns the shared storage session used by both preview rendering hosts. */
-function getPreviewStorageSession(): Electron.Session {
-  return electronSession.fromPartition(PREVIEW_PARTITION);
 }
 
 /** Resolve user omnibox input to a safe preview URL without loading it. */
@@ -388,13 +382,13 @@ export function registerNavigationHandlers(): void {
   ipcMain.handle("preview:clear-cookies", async (_event) => {
     const win = BrowserWindow.fromWebContents(_event.sender);
     if (!win || win.isDestroyed()) return;
-    await getPreviewStorageSession().clearStorageData({ storages: ["cookies"] });
+    await previewSessionAdapter.clearCookies();
   });
 
   ipcMain.handle("preview:clear-cache", async (_event) => {
     const win = BrowserWindow.fromWebContents(_event.sender);
     if (!win || win.isDestroyed()) return;
-    await getPreviewStorageSession().clearCache();
+    await previewSessionAdapter.clearCache();
   });
 
   ipcMain.handle("preview:get-zoom", (_event): number => {

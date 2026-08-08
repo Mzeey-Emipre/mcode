@@ -158,6 +158,23 @@ describe("previewTabsStore", () => {
     });
   });
 
+  it("openPage passes a bounded initial address to the bridge", async () => {
+    const { open } = mockBridge({});
+
+    await usePreviewTabsStore.getState().openPage(SCOPE, {
+      activate: true,
+      focusOmnibox: false,
+      initialAddress: "https://popup.example.test/next",
+      renderingHost: "webview",
+    });
+
+    expect(open).toHaveBeenCalledWith(SCOPE, {
+      activate: true,
+      initialAddress: "https://popup.example.test/next",
+      renderingHost: "webview",
+    });
+  });
+
   it("activatePage switches the active page and clears stale live chrome", async () => {
     usePreviewTabsStore.getState().setLiveChrome(SCOPE, { title: "stale", url: null, favicon: null });
     const switched = set("b", [page("a"), page("b", { active: true })]);

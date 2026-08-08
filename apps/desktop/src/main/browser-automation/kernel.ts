@@ -34,6 +34,7 @@ import {
 } from "./scheduler.js";
 import { OldestFirstRingBuffer } from "./ring-buffer.js";
 import { redactBrowserDiagnosticUrl, redactBrowserLocation, redactBrowserText, redactBrowserValue } from "./redaction.js";
+import { updateBrowserAutomationAgentOperationDepth } from "./active-operation.js";
 
 const EVALUATION_LIMIT = BROWSER_AUTOMATION_MAX_EXPRESSION_BYTES;
 const SCREENSHOT_BINARY_LIMIT = 360 * 1_024;
@@ -1183,6 +1184,7 @@ export class BrowserAutomationKernel {
     if (request.deadline <= Date.now()) throw new KernelError("DEADLINE_EXCEEDED", "Browser operation deadline elapsed", true);
     state.actions.push({ timestamp: Date.now(), operation: request.operation, outcome: "started" });
     if (request.operation !== "status") this.emitController(state, "agent", request);
+    updateBrowserAutomationAgentOperationDepth(webContents, 1);
     let effect: KernelErrorEffect = "none";
     const markEffect = () => {
       if (effect === "none") effect = "preserved";
@@ -1208,6 +1210,7 @@ export class BrowserAutomationKernel {
       });
       throw finalCause;
     } finally {
+      updateBrowserAutomationAgentOperationDepth(webContents, -1);
       if (state.syntheticInputDepth > 0 && state.debuggerOwned) {
         await Promise.race([
           this.releaseInput(state.webContents, state.heldKeys),

@@ -1218,6 +1218,49 @@ describe("preview-browser", () => {
       expect(created.data.tabs.activeTabId).toBe(created.data.tabId);
     });
 
+    it("tabs.open stores a validated popup address and preserves background selection", () => {
+      const win = createWindow();
+      const listed = callTabs<{ activeTabId: string; tabs: unknown[] }>(
+        win,
+        "preview:tabs.list",
+        { threadId: "thread-A" },
+      );
+      expect(listed.ok).toBe(true);
+      if (!listed.ok) return;
+
+      const opened = callTabs<{
+        tabId: string;
+        tabs: { activeTabId: string; tabs: Array<{ id: string; url: string | null }> };
+      }>(win, "preview:tabs.open", {
+        threadId: "thread-A",
+        activate: false,
+        renderingHost: "webview",
+        initialAddress: "https://popup.example.test/next",
+      });
+
+      expect(opened.ok).toBe(true);
+      if (!opened.ok) return;
+      expect(opened.data.tabs.activeTabId).toBe(listed.data.activeTabId);
+      expect(opened.data.tabs.tabs).toContainEqual(expect.objectContaining({
+        id: opened.data.tabId,
+        url: "https://popup.example.test/next",
+      }));
+      expect(sessions.get(win.id)?.tabsByThread.get("thread-A")?.tabs).toContainEqual(
+        expect.objectContaining({
+          id: opened.data.tabId,
+          resumeUrl: "https://popup.example.test/next",
+          userCreatedBlank: false,
+        }),
+      );
+
+      const rejected = callTabs(win, "preview:tabs.open", {
+        threadId: "thread-A",
+        initialAddress: "data:text/html,blocked",
+      });
+      expect(rejected).toEqual({ ok: false, error: "invalid-initial-address" });
+      expect(sessions.get(win.id)?.tabsByThread.get("thread-A")?.tabs).toHaveLength(2);
+    });
+
     it("tabs.open continues an exact existing page for a hidden agent open", async () => {
       const win = createWindow();
       const initial = callTabs<{ tabs: { id: string }[] }>(win, "preview:tabs.list", {

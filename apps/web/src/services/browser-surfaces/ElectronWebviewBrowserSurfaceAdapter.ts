@@ -134,6 +134,7 @@ export class ElectronWebviewBrowserSurfaceAdapter implements BrowserSurfaceAdapt
     this.frame.setAttribute("src", this.frame.src);
     this.frame.title = options.title ?? "Browser surface";
     this.frame.setAttribute("partition", "persist:mcode-preview");
+    this.frame.setAttribute("allowpopups", "");
     this.frame.setAttribute("aria-hidden", "true");
     this.frame.dataset.testid = "electron-browser-surface-webview";
     this.frame.dataset.workspaceId = identity.workspaceId;
