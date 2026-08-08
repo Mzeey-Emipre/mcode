@@ -182,6 +182,13 @@ describe("RightPanel", () => {
     expect(reconcileWarmPreviewScopes(scopes, scopes[0]!, new Set())).toBe(scopes);
   });
 
+  it("keeps equal scope ids from different workspaces as distinct warm surfaces", () => {
+    const first = { scopeId: "shared-scope", workspaceId: "workspace-a", lastUsedAt: 1 };
+    const second = { scopeId: "shared-scope", workspaceId: "workspace-b", lastUsedAt: 2 };
+
+    expect(reconcileWarmPreviewScopes([first], second, new Set())).toEqual([second, first]);
+  });
+
   it("releases focus before making the right panel inert", () => {
     useDiffStore.setState({
       rightPanelFallbackByWorkspace: {

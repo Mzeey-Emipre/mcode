@@ -104,6 +104,7 @@ import {
   useBrowserAutomationStore,
 } from "@/stores/browserAutomationStore";
 import { ViewportCoordinator } from "@/services/browser-automation/viewportCoordinator";
+import { browserSurfaceHost } from "../BrowserSurfaceHostRoot";
 
 function mockBridgeState(overrides: Record<string, unknown> = {}) {
   const state = {
@@ -272,6 +273,7 @@ describe("PreviewPanel: unavailable state", () => {
   });
 
   afterEach(() => {
+    browserSurfaceHost.disposeAll();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (window as any).desktopBridge = undefined;
     mockUsePreviewBridge.mockClear();
@@ -363,7 +365,7 @@ describe("PreviewPanel: unavailable state", () => {
     expect(result).toMatchObject({ ok: true, result: { operation: "snapshot" } });
   });
 
-  it("switches thread URL and iframe synchronously without stale preview state", () => {
+  it("switches thread presentation without replacing the prior warm iframe", () => {
     vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
     useDiffStore.setState({
       previewUrlByThread: {
@@ -372,12 +374,18 @@ describe("PreviewPanel: unavailable state", () => {
       },
     });
     const view = render(<PreviewPanel threadId="thread-1" />);
+    const firstIframe = screen.getByTestId("web-runtime-preview-iframe");
     view.rerender(<PreviewPanel threadId="thread-2" />);
     expect(screen.getByLabelText("Preview URL")).toHaveValue(window.location.origin + "/second");
-    expect(screen.getByTestId("web-runtime-preview-iframe")).toHaveAttribute(
+    const secondIframe = screen.getAllByTestId("web-runtime-preview-iframe").find(
+      (iframe) => iframe.getAttribute("data-thread-id") === "thread-2",
+    );
+    expect(secondIframe).toHaveAttribute(
       "src",
       window.location.origin + "/second",
     );
+    expect(firstIframe).toBeInTheDocument();
+    expect(firstIframe).toHaveAttribute("aria-hidden", "true");
   });
 
   it("keeps a cross-origin page visible while identifying DOM automation as unsupported", () => {
@@ -437,7 +445,9 @@ describe("PreviewPanel: unavailable state", () => {
 
     expect(screen.getByTestId("web-runtime-unavailable")).toBeInTheDocument();
     await waitFor(() => {
-      expect(iframe).not.toBeInTheDocument();
+      expect(iframe).toBeInTheDocument();
+      expect(iframe).toHaveAttribute("aria-hidden", "true");
+      expect(iframe).toHaveStyle({ visibility: "hidden" });
     });
   });
 
@@ -646,6 +656,7 @@ describe("PreviewPanel: full panel state", () => {
   });
 
   afterEach(() => {
+    browserSurfaceHost.disposeAll();
     vi.unstubAllGlobals();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (window as any).desktopBridge = undefined;

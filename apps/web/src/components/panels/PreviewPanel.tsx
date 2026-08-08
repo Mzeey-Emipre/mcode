@@ -1649,7 +1649,7 @@ function WebRuntimePreview({
       threadId,
       WEB_RUNTIME_PREVIEW_TAB_ID,
     );
-    const initial = browserSurfaceHost.create(identity, {
+    const initial = browserSurfaceHost.ensure(identity, {
       address: requestedAddressRef.current ?? fixtureUrl,
     });
     setPageState(initial);
@@ -1659,11 +1659,7 @@ function WebRuntimePreview({
     });
     return () => {
       unsubscribe();
-      browserSurfaceHost.dispose(identity);
-      useBrowserAutomationStore.getState().detachTarget(
-        threadId,
-        WEB_RUNTIME_PREVIEW_TAB_ID,
-      );
+      browserSurfaceHost.hide(identity);
     };
   }, [fixtureUrl, identity, surfaceAvailable, threadId]);
 

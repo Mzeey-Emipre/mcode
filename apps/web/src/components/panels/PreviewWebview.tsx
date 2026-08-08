@@ -216,7 +216,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
         browserAutomationTargetKey(threadId, tabId),
       )?.revision ?? 1;
       ensureViewportCoordinator(targetGeneration);
-      const initial = browserSurfaceHost.create(identity, {
+      const initial = browserSurfaceHost.ensure(identity, {
         address: initialAddressRef.current,
       });
       stateRef.current = initial;
@@ -231,8 +231,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       });
       return () => {
         unsubscribe();
-        browserSurfaceHost.dispose(identity);
-        useBrowserAutomationStore.getState().detachTarget(threadId, tabId);
+        browserSurfaceHost.hide(identity);
       };
     }, [ensureViewportCoordinator, identity, tabId, threadId, workspaceId]);
 

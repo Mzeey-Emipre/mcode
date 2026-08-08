@@ -20,6 +20,8 @@ export function runBrowserSurfaceContract(name: string, adapterFactory: BrowserS
       expect(snapshot.identity).toEqual(IDENTITY);
       host.present(IDENTITY, { left: 0, top: 0, width: 640, height: 480 });
       host.hide(IDENTITY);
+      expect(host.ensure(IDENTITY)).toBe(snapshot);
+      expect(host.getSnapshot(IDENTITY)?.generation).toBe(snapshot.generation);
       host.dispose(IDENTITY);
       expect(host.getSnapshot(IDENTITY)).toBeNull();
       host.disposeHost();

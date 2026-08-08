@@ -49,6 +49,10 @@ export interface WarmPreviewScope {
   readonly lastUsedAt: number;
 }
 
+function warmPreviewScopeKey(scope: Pick<WarmPreviewScope, "scopeId" | "workspaceId">): string {
+  return JSON.stringify([scope.workspaceId, scope.scopeId]);
+}
+
 /**
  * Retain active and agent-busy Browser scopes, then fill the warm budget by
  * recency. Busy scopes are leased until their operation settles.
@@ -58,16 +62,17 @@ export function reconcileWarmPreviewScopes(
   next: WarmPreviewScope | null,
   busyScopeIds: ReadonlySet<string>,
 ): readonly WarmPreviewScope[] {
-  const byId = new Map(previous.map((scope) => [scope.scopeId, scope]));
-  if (next) byId.set(next.scopeId, next);
+  const byId = new Map(previous.map((scope) => [warmPreviewScopeKey(scope), scope]));
+  if (next) byId.set(warmPreviewScopeKey(next), next);
   const ordered = [...byId.values()].sort((left, right) => right.lastUsedAt - left.lastUsedAt);
   const leased = ordered.filter(
-    (scope) => scope.scopeId === next?.scopeId || busyScopeIds.has(scope.scopeId),
+    (scope) => (next !== null && warmPreviewScopeKey(scope) === warmPreviewScopeKey(next)) ||
+      busyScopeIds.has(scope.scopeId),
   );
-  const selected = new Map(leased.map((scope) => [scope.scopeId, scope]));
+  const selected = new Map(leased.map((scope) => [warmPreviewScopeKey(scope), scope]));
   for (const scope of ordered) {
     if (selected.size >= BROWSER_AUTOMATION_WARM_TARGET_LIMIT) break;
-    selected.set(scope.scopeId, scope);
+    selected.set(warmPreviewScopeKey(scope), scope);
   }
   const result = [...selected.values()];
   return result.length === previous.length &&
@@ -458,7 +463,9 @@ export function RightPanel() {
     const becameActive = previousActivePreviewScopeKeyRef.current !== activePreviewScopeKey;
     previousActivePreviewScopeKeyRef.current = activePreviewScopeKey;
     setWarmPreviewScopes((previous) => {
-      const existing = previous.find((scope) => scope.scopeId === panelScopeId);
+      const existing = previous.find((scope) =>
+        scope.scopeId === panelScopeId && scope.workspaceId === activeWorkspaceId
+      );
       const next = !existing || becameActive
         ? { scopeId: panelScopeId, workspaceId: activeWorkspaceId, lastUsedAt: Date.now() }
         : existing;
@@ -474,7 +481,9 @@ export function RightPanel() {
         !browserScopePresent &&
         panelScopeId &&
         !busyPreviewScopeIds.has(panelScopeId)
-        ? previous.filter((scope) => scope.scopeId !== panelScopeId)
+        ? previous.filter((scope) =>
+            scope.scopeId !== panelScopeId || scope.workspaceId !== activeWorkspaceId
+          )
         : previous;
       return reconcileWarmPreviewScopes(retained, null, busyPreviewScopeIds);
     });
@@ -671,10 +680,12 @@ export function RightPanel() {
             <DiffPanel />
           </div>
           {warmPreviewScopes.map((scope) => {
-            const visible = previewActive && scope.scopeId === panelScopeId;
+            const visible = previewActive &&
+              scope.scopeId === panelScopeId &&
+              scope.workspaceId === activeWorkspaceId;
             return (
               <WarmPreviewSurface
-                key={scope.scopeId}
+                key={warmPreviewScopeKey(scope)}
                 scope={scope}
                 visible={visible}
                 rendererOccludedLeft={

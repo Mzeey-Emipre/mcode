@@ -114,6 +114,30 @@ function testHost(): { host: BrowserSurfaceHost; adapter: TestAdapter; schedulin
 }
 
 describe("BrowserSurfaceHost", () => {
+  it("keeps one adapter and generation when presentation reacquires a warm surface", () => {
+    const adapters: TestAdapter[] = [];
+    const host = new BrowserSurfaceHost({
+      adapterFactory: () => {
+        const adapter = new TestAdapter();
+        adapters.push(adapter);
+        return adapter;
+      },
+    });
+
+    const first = host.ensure(IDENTITY, { address: "https://example.test/" });
+    host.hide(IDENTITY);
+    const second = host.ensure(IDENTITY, { address: "https://example.test/" });
+    host.present(IDENTITY, { left: 10, top: 20, width: 640, height: 480 });
+
+    expect(second).toBe(first);
+    expect(second.generation).toBe(first.generation);
+    expect(adapters).toHaveLength(1);
+    expect(adapters[0]?.disposed).toBe(0);
+    expect(adapters[0]?.hidden).toBe(1);
+    expect(adapters[0]?.presented).toBe(1);
+    host.disposeHost();
+  });
+
   it("keeps canonical state synchronous and publishes once per frame", () => {
     const { host, adapter, scheduling } = testHost();
     const updates: string[] = [];
