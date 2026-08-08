@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { terminateProcessTree } from "./process-tree.mjs";
 
 const SESSION_FILE_NAME = "electron-live-testing.json";
 
@@ -25,17 +26,9 @@ export function stopElectron(repoRoot = process.cwd()) {
     throw new Error("Recorded PID no longer matches the owned Electron command");
   }
 
-  if (process.platform === "win32") {
-    const stopped = spawnSync(
-      "taskkill.exe",
-      ["/PID", String(record.pid), "/T", "/F"],
-      { encoding: "utf8" },
-    );
-    if (stopped.status !== 0) {
-      throw new Error(`Could not stop Electron process tree: ${stopped.stderr.trim()}`);
-    }
-  } else {
-    process.kill(record.pid, "SIGTERM");
+  const stopped = terminateProcessTree(record.pid);
+  if (!stopped.ok) {
+    throw new Error(`Could not stop Electron process tree: ${stopped.error}`);
   }
 
   rmSync(sessionFile, { force: true });
@@ -59,7 +52,7 @@ function readCommandLine(pid) {
     return result.stdout.trim();
   }
 
-  const result = spawnSync("ps", ["-p", String(pid), "-o", "command="], {
+  const result = spawnSync("ps", ["-ww", "-p", String(pid), "-o", "command="], {
     encoding: "utf8",
   });
   return result.status === 0 ? result.stdout.trim() : "";

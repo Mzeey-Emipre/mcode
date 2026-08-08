@@ -34,12 +34,18 @@ export function ensurePlaywright(repoRoot = process.cwd()) {
     // A missing local dependency is the expected installation trigger.
   }
 
-  const install = spawnSync(process.execPath, ["add", "playwright"], {
+  const installer = process.versions.bun ? process.execPath : "bun";
+  const install = spawnSync(installer, ["add", "playwright"], {
     cwd: scratchDir,
     stdio: "inherit",
   });
+  if (install.error) {
+    throw new Error(`Playwright installation could not start: ${install.error.message}`);
+  }
   if (install.status !== 0) {
-    throw new Error(`Playwright installation failed with exit code ${install.status}`);
+    throw new Error(
+      `Playwright installation failed with exit code ${install.status ?? "none"} and signal ${install.signal ?? "none"}`,
+    );
   }
   const installedPath = scratchRequire.resolve("playwright");
   if (!isInside(nodeModulesDir, installedPath)) {

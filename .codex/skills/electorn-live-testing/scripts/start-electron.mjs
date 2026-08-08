@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { terminateProcessTree } from "./process-tree.mjs";
 
 const SESSION_FILE_NAME = "electron-live-testing.json";
 
@@ -84,14 +85,20 @@ export async function startElectron(repoRoot = process.cwd()) {
 
   let child;
   try {
-    child = spawn(executablePath, [`--remote-debugging-port=${debugPort}`, "."], {
-      cwd: desktopRoot,
-      detached: true,
-      env,
-      stdio: ["ignore", stdout, stderr],
+    try {
+      child = spawn(executablePath, [`--remote-debugging-port=${debugPort}`, "."], {
+        cwd: desktopRoot,
+        detached: true,
+        env,
+        stdio: ["ignore", stdout, stderr],
+      });
+    } finally {
+      closeSync(stdout);
+      closeSync(stderr);
+    }
+    const spawnFailure = new Promise((_, rejectSpawn) => {
+      child.once("error", rejectSpawn);
     });
-    closeSync(stdout);
-    closeSync(stderr);
     child.unref();
 
     const running = {
@@ -101,10 +108,10 @@ export async function startElectron(repoRoot = process.cwd()) {
       status: "running",
     };
     writeFileSync(sessionFile, `${JSON.stringify(running, null, 2)}\n`, "utf8");
-    await waitForDebugger(endpoint, child);
+    await Promise.race([waitForDebugger(endpoint, child), spawnFailure]);
     return running;
   } catch (error) {
-    if (child?.pid) await stopProcessTree(child.pid);
+    if (child?.pid) terminateProcessTree(child.pid);
     rmSync(sessionFile, { force: true });
     throw error;
   }
@@ -146,19 +153,6 @@ async function waitForDebugger(endpoint, child) {
     await new Promise((resolveWait) => setTimeout(resolveWait, 200));
   }
   throw new Error("Electron CDP endpoint did not become ready within 60 seconds");
-}
-
-async function stopProcessTree(pid) {
-  if (process.platform === "win32") {
-    const { spawnSync } = await import("node:child_process");
-    spawnSync("taskkill.exe", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore" });
-    return;
-  }
-  try {
-    process.kill(pid, "SIGTERM");
-  } catch {
-    // The process already exited.
-  }
 }
 
 if (import.meta.main) {
