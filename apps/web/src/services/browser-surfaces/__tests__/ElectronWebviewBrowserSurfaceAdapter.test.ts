@@ -28,6 +28,7 @@ function bridge(): PreviewSurfaceBridge & {
     navigate: vi.fn().mockResolvedValue({ ok: true }),
     release: vi.fn().mockResolvedValue({ ok: true }),
     onPopupRequested: vi.fn(() => () => undefined),
+    onDiscardRequested: vi.fn(() => () => undefined),
   };
 }
 
@@ -99,14 +100,19 @@ describe("ElectronWebviewBrowserSurfaceAdapter", () => {
     }));
     adapter.element.dispatchEvent(Object.assign(new Event("page-title-updated"), { title: "Example" }));
     adapter.element.dispatchEvent(Object.assign(new Event("page-favicon-updated"), { favicons: ["https://example.test/icon.png"] }));
+    adapter.element.dispatchEvent(new Event("render-process-gone"));
     expect(events).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: "load-started", identity: IDENTITY, generation: 3 }),
       expect.objectContaining({ type: "navigation-committed", address: "https://example.test/loaded", identity: IDENTITY, generation: 3 }),
       expect.objectContaining({ type: "title-updated", title: "Example", identity: IDENTITY, generation: 3 }),
       expect.objectContaining({ type: "favicon-updated", favicon: "https://example.test/icon.png", identity: IDENTITY, generation: 3 }),
+      expect.objectContaining({ type: "surface-lost", identity: IDENTITY, generation: 3 }),
     ]));
     adapter.dispose();
-    expect(surfaceBridge.release).toHaveBeenCalledWith({ surface: { identity: IDENTITY, generation: 3 } });
+    expect(surfaceBridge.release).toHaveBeenCalledWith({
+      surface: { identity: IDENTITY, generation: 3 },
+      reason: "dispose",
+    });
     expect(document.body.contains(adapter.element)).toBe(false);
     expect(() => adapter.element.dispatchEvent(new Event("did-navigate"))).not.toThrow();
   });

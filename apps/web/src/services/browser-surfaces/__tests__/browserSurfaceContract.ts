@@ -47,5 +47,19 @@ export function runBrowserSurfaceContract(name: string, adapterFactory: BrowserS
       expect(host.getSnapshot(IDENTITY)).toBe(snapshot);
       host.disposeHost();
     });
+
+    it("discards and re-warms through a new adapter generation", () => {
+      const host = new BrowserSurfaceHost({ adapterFactory });
+      const first = host.create(IDENTITY, { address: "https://example.test/recovery" });
+      expect(host.discard(IDENTITY, first.generation)).toBe(true);
+      expect(host.getSnapshot(IDENTITY)).toBeNull();
+      expect(host.inspect(IDENTITY)?.residency).toBe("cold");
+
+      const second = host.ensure(IDENTITY);
+      expect(second.generation).toBe(first.generation + 1);
+      expect(second.pendingAddress).toBe("https://example.test/recovery");
+      expect(host.inspect(IDENTITY)?.residency).toBe("warm");
+      host.disposeHost();
+    });
   });
 }

@@ -61,6 +61,8 @@ export interface TabState {
   viewportTargetGeneration: number | null;
   /** Latest viewport operation generation admitted for the current target generation. */
   viewportOperationGeneration: number | null;
+  /** Current renderer-owned guest generation, or null while the tab is cold. */
+  rendererSurfaceGeneration?: number | null;
   /**
    * True for a page the user explicitly opened as a new, blank tab. Such a tab
    * must stay on its empty "Enter a URL" state and must NOT adopt the thread's
@@ -399,7 +401,7 @@ export function toBrowserTabSet(s: PreviewSession, threadId: string): BrowserTab
     title: t.title,
     url: t.resumeUrl,
     faviconUrl: t.faviconUrl,
-    warm: t.view !== null && !t.view.webContents.isDestroyed(),
+    warm: (t.view !== null && !t.view.webContents.isDestroyed()) || t.rendererSurfaceGeneration != null,
     active: t.id === set.activeTabId,
   }));
   return {

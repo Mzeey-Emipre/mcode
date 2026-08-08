@@ -10,6 +10,7 @@ import type {
   BrowserSurfaceAdapterEvent,
   BrowserSurfaceAdapterEventPayload,
   BrowserSurfaceAdapterFactory,
+  BrowserSurfaceDisposalReason,
   BrowserSurfaceIdentity,
   BrowserSurfacePresentation,
 } from "./BrowserSurfaceHost";
@@ -161,6 +162,7 @@ export class ElectronWebviewBrowserSurfaceAdapter implements BrowserSurfaceAdapt
     this.frame.addEventListener("page-favicon-updated", this.onFaviconUpdated);
     this.frame.addEventListener("dom-ready", this.onDomReady);
     this.frame.addEventListener("ipc-message", this.onIpcMessage);
+    this.frame.addEventListener("render-process-gone", this.onRenderProcessGone);
     this.preparePromise = Promise.resolve(this.bridge.prepare({
       surface: this.surface,
       adoptionToken: this.adoptionToken,
@@ -222,7 +224,7 @@ export class ElectronWebviewBrowserSurfaceAdapter implements BrowserSurfaceAdapt
   }
 
   /** Removes native listeners, releases the exact surface generation, and detaches the webview. */
-  public dispose(): void {
+  public dispose(reason: BrowserSurfaceDisposalReason = "dispose"): void {
     if (this.disposed) return;
     this.disposed = true;
     this.resolveAdoptionWaiters(false);
@@ -236,8 +238,9 @@ export class ElectronWebviewBrowserSurfaceAdapter implements BrowserSurfaceAdapt
     this.frame.removeEventListener("page-favicon-updated", this.onFaviconUpdated);
     this.frame.removeEventListener("dom-ready", this.onDomReady);
     this.frame.removeEventListener("ipc-message", this.onIpcMessage);
+    this.frame.removeEventListener("render-process-gone", this.onRenderProcessGone);
     this.listeners.clear();
-    void Promise.resolve(this.bridge.release({ surface: this.surface })).catch(() => undefined);
+    void Promise.resolve(this.bridge.release({ surface: this.surface, reason })).catch(() => undefined);
     this.frame.remove();
   }
 
@@ -367,6 +370,10 @@ export class ElectronWebviewBrowserSurfaceAdapter implements BrowserSurfaceAdapt
     const kind = (message as { readonly kind?: unknown }).kind;
     if (typeof kind !== "string" || !HUMAN_INPUT_KINDS.has(kind)) return;
     this.onHumanInput?.(this.identity, this.generation);
+  };
+
+  private readonly onRenderProcessGone = (): void => {
+    this.emit({ type: "surface-lost" });
   };
 }
 

@@ -120,6 +120,9 @@ export interface PreviewSurfaceRef {
   readonly generation: number;
 }
 
+/** Exact renderer surface selected for a Memory Saver discard request. */
+export type PreviewSurfaceDiscardRequest = PreviewSurfaceRef;
+
 /** Opener-free popup request for one exact Browser surface generation. */
 export interface PreviewPopupRequest {
   readonly sourceSurface: PreviewSurfaceRef;
@@ -156,7 +159,10 @@ export interface PreviewSurfaceBridge {
     readonly initialAddress?: string;
   }): Promise<PreviewSurfaceBridgeResult>;
   /** Releases one exact surface generation. */
-  release(payload: { readonly surface: PreviewSurfaceRef }): Promise<PreviewSurfaceBridgeResult>;
+  release(payload: {
+    readonly surface: PreviewSurfaceRef;
+    readonly reason: "discard" | "replace" | "dispose" | "loss";
+  }): Promise<PreviewSurfaceBridgeResult>;
   /** Executes one validated navigation operation against one exact surface generation. */
   navigate(payload: {
     readonly surface: PreviewSurfaceRef;
@@ -164,6 +170,8 @@ export interface PreviewSurfaceBridge {
   }): Promise<PreviewSurfaceBridgeResult>;
   /** Subscribe to popup requests that Electron main denied and mediated. */
   onPopupRequested(callback: (request: PreviewPopupRequest) => void): () => void;
+  /** Subscribe to exact-generation Memory Saver discard requests. */
+  onDiscardRequested(callback: (request: PreviewSurfaceDiscardRequest) => void): () => void;
 }
 
 /**

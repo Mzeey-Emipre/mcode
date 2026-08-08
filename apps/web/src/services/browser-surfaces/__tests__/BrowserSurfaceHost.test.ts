@@ -244,4 +244,202 @@ describe("BrowserSurfaceHost", () => {
     expect(host.getSnapshot(IDENTITY)?.generation).toBe(4);
     host.disposeHost();
   });
+
+  it("restores presentation when a visible surface generation is replaced", () => {
+    const adapters: TestAdapter[] = [];
+    const host = new BrowserSurfaceHost({
+      adapterFactory: () => {
+        const adapter = new TestAdapter();
+        adapters.push(adapter);
+        return adapter;
+      },
+    });
+    host.create(IDENTITY);
+    host.present(IDENTITY, { left: 10, top: 20, width: 640, height: 480 });
+
+    host.create(IDENTITY);
+
+    expect(adapters).toHaveLength(2);
+    expect(adapters[1]?.presented).toBe(1);
+    host.disposeHost();
+  });
+
+  it("navigates only once when navigation re-warms a cold surface", () => {
+    const adapters: TestAdapter[] = [];
+    const host = new BrowserSurfaceHost({
+      adapterFactory: () => {
+        const adapter = new TestAdapter();
+        adapters.push(adapter);
+        return adapter;
+      },
+    });
+    const first = host.create(IDENTITY, { address: "https://example.test/start" });
+    expect(host.discard(IDENTITY, first.generation)).toBe(true);
+
+    host.navigate(IDENTITY, "https://example.test/next");
+
+    expect(adapters[1]?.navigations).toEqual(["https://example.test/next"]);
+    host.disposeHost();
+  });
+
+  it("discards to bounded cold metadata and re-warms the recovery address in a new generation", () => {
+    const adapters: TestAdapter[] = [];
+    const host = new BrowserSurfaceHost({
+      adapterFactory: () => {
+        const adapter = new TestAdapter();
+        adapters.push(adapter);
+        return adapter;
+      },
+    });
+    const first = host.create(IDENTITY, { address: "https://example.test/start" });
+    adapters[0]!.emit({
+      type: "navigation-committed",
+      mainFrame: true,
+      address: "https://example.test/recovery",
+    });
+    adapters[0]!.emit({ type: "title-updated", title: "Recovery title" });
+    adapters[0]!.emit({ type: "favicon-updated", favicon: "https://example.test/icon.png" });
+
+    expect(host.discard(IDENTITY, first.generation)).toBe(true);
+    expect(adapters[0]!.disposed).toBe(1);
+    expect(host.getSnapshot(IDENTITY)).toBeNull();
+    expect(host.inspect(IDENTITY)).toEqual({
+      identity: IDENTITY,
+      residency: "cold",
+      generation: first.generation,
+      recoveryAddress: "https://example.test/recovery",
+      title: "Recovery title",
+      favicon: "https://example.test/icon.png",
+    });
+    expect(adapters).toHaveLength(1);
+
+    const rewarmed = host.ensure(IDENTITY);
+    expect(rewarmed.generation).toBe(first.generation + 1);
+    expect(rewarmed.pendingAddress).toBe("https://example.test/recovery");
+    expect(adapters).toHaveLength(2);
+    expect(adapters[1]!.navigations).toEqual(["https://example.test/recovery"]);
+    expect(host.inspect(IDENTITY)?.residency).toBe("warm");
+    host.disposeHost();
+  });
+
+  it("protects visible, controlled, operation-pinned, and capture-pinned surfaces from discard", () => {
+    const { host } = testHost();
+    const generation = host.getSnapshot(IDENTITY)!.generation;
+
+    host.present(IDENTITY);
+    expect(host.discard(IDENTITY, generation)).toBe(false);
+    host.hide(IDENTITY);
+
+    host.setControlled(IDENTITY, true);
+    expect(host.discard(IDENTITY, generation)).toBe(false);
+    host.setControlled(IDENTITY, false);
+
+    const releaseOperation = host.pinOperation(IDENTITY, generation);
+    expect(host.discard(IDENTITY, generation)).toBe(false);
+    releaseOperation();
+
+    const releaseCapture = host.pinCapture(IDENTITY, generation);
+    expect(host.discard(IDENTITY, generation)).toBe(false);
+    releaseCapture();
+
+    expect(host.discard(IDENTITY, generation)).toBe(true);
+    host.disposeHost();
+  });
+
+  it("restores a protected unexpected loss and leaves an inactive loss cold", () => {
+    const adapters: TestAdapter[] = [];
+    const host = new BrowserSurfaceHost({
+      adapterFactory: () => {
+        const adapter = new TestAdapter();
+        adapters.push(adapter);
+        return adapter;
+      },
+    });
+    const first = host.create(IDENTITY, { address: "https://example.test/start" });
+    adapters[0]!.emit({
+      type: "navigation-committed",
+      mainFrame: true,
+      address: "https://example.test/recovery",
+    });
+    host.setControlled(IDENTITY, true);
+
+    adapters[0]!.emit({ type: "surface-lost" });
+
+    expect(host.getSnapshot(IDENTITY)?.generation).toBe(first.generation + 1);
+    expect(adapters[1]!.navigations).toEqual(["https://example.test/recovery"]);
+    host.setControlled(IDENTITY, false);
+    adapters[1]!.emit({ type: "surface-lost" }, IDENTITY, first.generation + 1);
+    expect(host.getSnapshot(IDENTITY)).toBeNull();
+    expect(host.inspect(IDENTITY)?.residency).toBe("cold");
+    expect(adapters).toHaveLength(2);
+    host.disposeHost();
+  });
+
+  it("ignores a late loss event after a generation is already cold", () => {
+    const adapters: TestAdapter[] = [];
+    const host = new BrowserSurfaceHost({
+      adapterFactory: () => {
+        const adapter = new TestAdapter();
+        adapters.push(adapter);
+        return adapter;
+      },
+    });
+    const first = host.create(IDENTITY, { address: "https://example.test/recovery" });
+    expect(host.discard(IDENTITY, first.generation)).toBe(true);
+    host.setControlled(IDENTITY, true);
+
+    host.handleEvent({ type: "surface-lost", identity: IDENTITY, generation: first.generation });
+
+    expect(host.getSnapshot(IDENTITY)).toBeNull();
+    expect(host.inspect(IDENTITY)?.residency).toBe("cold");
+    expect(adapters).toHaveLength(1);
+    host.disposeHost();
+  });
+
+  it("changes control ownership without changing the surface or generation", () => {
+    const { host, adapter } = testHost();
+    const snapshot = host.getSnapshot(IDENTITY)!;
+
+    host.setControlled(IDENTITY, true);
+    host.setControlled(IDENTITY, false);
+
+    expect(host.getSnapshot(IDENTITY)).toBe(snapshot);
+    expect(adapter.disposed).toBe(0);
+    host.disposeHost();
+  });
+
+  it("disposes exact scopes and workspaces without allowing late resurrection", () => {
+    const adapters: TestAdapter[] = [];
+    const host = new BrowserSurfaceHost({
+      adapterFactory: () => {
+        const adapter = new TestAdapter();
+        adapters.push(adapter);
+        return adapter;
+      },
+    });
+    const sibling: BrowserSurfaceIdentity = {
+      workspaceId: IDENTITY.workspaceId,
+      scope: { kind: "thread", id: "thread-b" },
+      tabId: "tab-b",
+    };
+    const otherWorkspace: BrowserSurfaceIdentity = {
+      workspaceId: "workspace-b",
+      scope: { kind: "thread", id: "thread-c" },
+      tabId: "tab-c",
+    };
+    host.create(IDENTITY);
+    host.create(sibling);
+    host.create(otherWorkspace);
+
+    host.disposeScope(IDENTITY.workspaceId, IDENTITY.scope);
+    adapters[0]!.emit({ type: "surface-lost" });
+    expect(host.inspect(IDENTITY)).toBeNull();
+    expect(host.getSnapshot(sibling)).not.toBeNull();
+
+    host.disposeWorkspace(IDENTITY.workspaceId);
+    expect(host.inspect(sibling)).toBeNull();
+    expect(host.getSnapshot(otherWorkspace)).not.toBeNull();
+    host.disposeHost();
+    expect(host.inspect(otherWorkspace)).toBeNull();
+  });
 });
