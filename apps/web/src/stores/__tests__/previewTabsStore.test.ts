@@ -195,14 +195,14 @@ describe("previewTabsStore", () => {
   it("openPage passes a bounded initial address to the bridge", async () => {
     const { open } = mockBridge({});
 
-    await usePreviewTabsStore.getState().openPage(SCOPE, {
+    await usePreviewTabsStore.getState().openPage(WORKSPACE_ID, SCOPE, {
       activate: true,
       focusOmnibox: false,
       initialAddress: "https://popup.example.test/next",
       renderingHost: "webview",
     });
 
-    expect(open).toHaveBeenCalledWith(SCOPE, {
+    expect(open).toHaveBeenCalledWith(SCOPE, WORKSPACE_ID, {
       activate: true,
       initialAddress: "https://popup.example.test/next",
       renderingHost: "webview",

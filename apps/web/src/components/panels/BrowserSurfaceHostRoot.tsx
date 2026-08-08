@@ -60,12 +60,16 @@ export function BrowserSurfaceHostRoot() {
     return surfaceBridge.onPopupRequested((request) => {
       const source = browserSurfaceHost.getSnapshot(request.sourceSurface.identity);
       if (!source || source.generation !== request.sourceSurface.generation) return;
-      void usePreviewTabsStore.getState().openPage(request.sourceSurface.identity.scope.id, {
-        activate: request.initiator === "human",
-        focusOmnibox: false,
-        initialAddress: request.address,
-        renderingHost: "webview",
-      });
+      void usePreviewTabsStore.getState().openPage(
+        request.sourceSurface.identity.workspaceId,
+        request.sourceSurface.identity.scope.id,
+        {
+          activate: request.initiator === "human",
+          focusOmnibox: false,
+          initialAddress: request.address,
+          renderingHost: "webview",
+        },
+      );
     });
   }, []);
 

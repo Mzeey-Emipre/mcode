@@ -62,7 +62,7 @@ describe("BrowserSurfaceHostRoot", () => {
       initiator: "human" as const,
     };
     act(() => onPopupRequested?.(request));
-    expect(openPage).toHaveBeenLastCalledWith("thread-1", {
+    expect(openPage).toHaveBeenLastCalledWith("workspace-1", "thread-1", {
       activate: true,
       focusOmnibox: false,
       initialAddress: request.address,
@@ -70,7 +70,7 @@ describe("BrowserSurfaceHostRoot", () => {
     });
 
     act(() => onPopupRequested?.({ ...request, initiator: "agent" }));
-    expect(openPage).toHaveBeenLastCalledWith("thread-1", {
+    expect(openPage).toHaveBeenLastCalledWith("workspace-1", "thread-1", {
       activate: false,
       focusOmnibox: false,
       initialAddress: request.address,
