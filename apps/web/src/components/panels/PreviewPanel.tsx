@@ -30,6 +30,7 @@ import type {
 } from "@mcode/contracts";
 import { BROWSER_AUTOMATION_VIEWPORT_CANVAS_PADDING_PX } from "@mcode/contracts";
 import type { PreviewAnnotationSnapshotRequest } from "@/transport/desktop-bridge";
+import { isEmptyPreviewTabUrl } from "@/lib/open-url-in-preview";
 import { cn } from "@/lib/utils";
 import { useDiffStore } from "@/stores/diffStore";
 import { usePreviewDesignModeStore } from "@/stores/previewDesignModeStore";
@@ -2205,6 +2206,7 @@ export function PreviewPanel({
   const activeWebviewTab = tabs.tabSet?.tabs.find(
     (tab) => tab.id === activeWebviewTabId,
   );
+  const hydratedWebviewTargetRef = useRef<string | null>(null);
   const activeWebviewTabUrl = activeWebviewTab?.url ?? null;
   const activeWebviewSrc =
     webviewRequestedUrlByTab[activeWebviewTabId] ?? activeWebviewTabUrl;
@@ -2280,6 +2282,29 @@ export function PreviewPanel({
 
   useEffect(() => {
     if (!showWebviewPreview) return;
+    if (tabs.tabSet) {
+      if (hydratedWebviewTargetRef.current === activeBrowserTargetKey) return;
+      hydratedWebviewTargetRef.current = activeBrowserTargetKey;
+      const nextStatus: PreviewPageStatus = isEmptyPreviewTabUrl(activeWebviewTabUrl)
+        ? { url: null, title: null, favicon: null, phase: "loaded" }
+        : {
+            url: activeWebviewTabUrl,
+            title: activeWebviewTab?.title ?? null,
+            favicon: activeWebviewTab?.faviconUrl ?? null,
+            phase: "loaded",
+          };
+      setWebviewPageStatus((status) => (
+        status.url === nextStatus.url &&
+        status.title === nextStatus.title &&
+        status.favicon === nextStatus.favicon &&
+        status.phase === nextStatus.phase &&
+        status.error === undefined
+          ? status
+          : nextStatus
+      ));
+      return;
+    }
+    hydratedWebviewTargetRef.current = null;
     const stored = bridge.storedUrl.trim();
     if (!stored) {
       setWebviewRequestedUrl(activeWebviewTabId, null);
@@ -2296,10 +2321,13 @@ export function PreviewPanel({
     setWebviewRequestedUrl(activeWebviewTabId, stored);
   }, [
     activeWebviewRef,
+    activeWebviewTab,
+    activeWebviewTabUrl,
     activeWebviewTabId,
     bridge.storedUrl,
     setWebviewRequestedUrl,
     showWebviewPreview,
+    tabs.tabSet,
     threadId,
   ]);
 
@@ -2781,7 +2809,7 @@ export function PreviewPanel({
   }
 
   const hasLoadedPage = showWebviewPreview
-    ? !!(activeWebviewSrc ?? webviewPageStatus.url)
+    ? !isEmptyPreviewTabUrl(activeWebviewSrc ?? webviewPageStatus.url)
     : bridge.storedUrl.trim().length > 0;
   const pageError =
     effectivePageStatus.phase === "error"

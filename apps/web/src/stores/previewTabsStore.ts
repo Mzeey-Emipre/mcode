@@ -71,6 +71,16 @@ interface PreviewTabsBridgeLike {
     workspaceId: string,
     tabId: string,
   ): Promise<{ ok: true; data: BrowserTabSet } | { ok: false; error: string }>;
+  updateChrome?(
+    threadId: string,
+    workspaceId: string,
+    tabId: string,
+    chrome: {
+      readonly title: string | null;
+      readonly url: string | null;
+      readonly faviconUrl: string | null;
+    },
+  ): Promise<{ ok: true; data: BrowserTabSet } | { ok: false; error: string }>;
   close(
     threadId: string,
     workspaceId: string,
@@ -278,24 +288,32 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
       return { liveChromeByScope: { ...s.liveChromeByScope, [scopeKey]: chrome } };
     }),
 
-  updateTabChrome: (workspaceId, scopeId, tabId, chrome) =>
+  updateTabChrome: (workspaceId, scopeId, tabId, chrome) => {
+    let changed = false;
+    let persistedChrome: { title: string | null; url: string | null; faviconUrl: string | null } | null = null;
     set((s) => {
       const scopeKey = previewTabsScopeKey(workspaceId, scopeId);
       const tabSet = s.tabSetByScope[scopeKey] ?? null;
       if (!tabSet) return s;
-      let changed = false;
       const tabs = tabSet.tabs.map((tab) => {
         if (tab.id !== tabId) return tab;
         const next = {
           ...tab,
-          title: chrome.title ?? tab.title,
-          url: chrome.url ?? tab.url,
-          faviconUrl: chrome.favicon ?? tab.faviconUrl,
+          title: chrome.title === undefined ? tab.title : chrome.title,
+          url: chrome.url === undefined ? tab.url : chrome.url,
+          faviconUrl: chrome.favicon === undefined ? tab.faviconUrl : chrome.favicon,
         };
         changed =
           next.title !== tab.title ||
           next.url !== tab.url ||
           next.faviconUrl !== tab.faviconUrl;
+        if (changed) {
+          persistedChrome = {
+            title: next.title,
+            url: next.url,
+            faviconUrl: next.faviconUrl,
+          };
+        }
         return changed ? next : tab;
       });
       if (!changed) return s;
@@ -305,7 +323,10 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
           [scopeKey]: { ...tabSet, tabs },
         },
       };
-    }),
+    });
+    if (!changed || !persistedChrome) return;
+    void bridgeTabs()?.updateChrome?.(scopeId, workspaceId, tabId, persistedChrome).catch(() => undefined);
+  },
 
   openPage: async (workspaceId, scopeId, options) => {
     const tabs = bridgeTabs();

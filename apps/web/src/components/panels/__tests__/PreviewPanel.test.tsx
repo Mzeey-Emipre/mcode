@@ -951,7 +951,8 @@ describe("PreviewPanel: full panel state", () => {
     }
   });
 
-  it("keeps warm webview pages mounted while switching the active tab", () => {
+  it("keeps warm webview pages mounted and hydrates chrome while switching the active tab", async () => {
+    mockUsePreviewBridge.mockReturnValue(mockBridgeState({ storedUrl: "https://a.example" }));
     mockUsePreviewTabs.mockReturnValue({
       tabSet: {
         threadId: "thread-1",
@@ -962,7 +963,7 @@ describe("PreviewPanel: full panel state", () => {
             threadId: "thread-1",
             title: "A",
             url: "https://a.example",
-            faviconUrl: null,
+            faviconUrl: "https://a.example/favicon.ico",
             warm: true,
             active: true,
           },
@@ -971,7 +972,7 @@ describe("PreviewPanel: full panel state", () => {
             threadId: "thread-1",
             title: "B",
             url: "https://b.example",
-            faviconUrl: null,
+            faviconUrl: "https://b.example/favicon.ico",
             warm: true,
             active: false,
           },
@@ -998,7 +999,7 @@ describe("PreviewPanel: full panel state", () => {
             threadId: "thread-1",
             title: "A",
             url: "https://a.example",
-            faviconUrl: null,
+            faviconUrl: "https://a.example/favicon.ico",
             warm: true,
             active: false,
           },
@@ -1007,7 +1008,7 @@ describe("PreviewPanel: full panel state", () => {
             threadId: "thread-1",
             title: "B",
             url: "https://b.example",
-            faviconUrl: null,
+            faviconUrl: "https://b.example/favicon.ico",
             warm: true,
             active: true,
           },
@@ -1026,6 +1027,16 @@ describe("PreviewPanel: full panel state", () => {
       "tab-a",
       "tab-b",
     ]);
+    expect(webviews[0]).toHaveAttribute("src", "https://a.example");
+    expect(webviews[1]).toHaveAttribute("src", "https://b.example");
+    const omnibox = screen.getByLabelText("Preview URL");
+    await waitFor(() => expect(omnibox).toHaveValue("B"));
+    expect(screen.getByTestId("browser-url-bar").querySelector("img")).toHaveAttribute(
+      "src",
+      "https://b.example/favicon.ico",
+    );
+    fireEvent.focus(omnibox);
+    expect(omnibox).toHaveValue("https://b.example");
   });
 
   it("persists favicon updates from inactive warm webview pages", async () => {

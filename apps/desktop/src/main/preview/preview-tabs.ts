@@ -40,6 +40,25 @@ function normaliseWorkspaceId(value: unknown): string | null {
   return normalisePreviewId(value);
 }
 
+function normaliseChromeField(value: unknown, maxLength: number): string | null | undefined {
+  if (value === null) return null;
+  if (typeof value !== "string" || value.length > maxLength) return undefined;
+  return value;
+}
+
+function normaliseChromeUrl(value: unknown): string | null | undefined {
+  if (value === null) return null;
+  if (typeof value !== "string" || value.length > BROWSER_TAB_INFO_STRING_MAX.url) {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  const lower = trimmed.toLowerCase();
+  if (trimmed.length === 0 || lower.startsWith("about:") || lower.startsWith("chrome-error:")) {
+    return null;
+  }
+  return normaliseInitialAddress(trimmed) ?? undefined;
+}
+
 function sendTabsUpdated(win: BrowserWindow, set: BrowserTabSet): void {
   if (win.isDestroyed()) return;
   bumpPerf("stateEmitCalls");
@@ -215,6 +234,46 @@ export function registerTabHandlers(): void {
       sendTabsUpdated(win, tabs);
       logger.info("Preview: tab activated", { threadId: tid, tabId });
       return { ok: true, data: tabs };
+    },
+  );
+
+  ipcMain.handle(
+    "preview:tabs.updateChrome",
+    (
+      _event,
+      payload: {
+        threadId?: unknown;
+        workspaceId?: unknown;
+        tabId?: unknown;
+        title?: unknown;
+        url?: unknown;
+        faviconUrl?: unknown;
+      },
+    ): TabIpcResult<BrowserTabSet> => {
+      const win = BrowserWindow.fromWebContents(_event.sender);
+      if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
+      const tid = normaliseThreadId(payload?.threadId);
+      const workspaceId = normaliseWorkspaceId(payload?.workspaceId);
+      const tabId = normaliseTabId(payload?.tabId);
+      const title = normaliseChromeField(payload?.title, BROWSER_TAB_INFO_STRING_MAX.title);
+      const url = normaliseChromeUrl(payload?.url);
+      const faviconUrl = normaliseChromeField(payload?.faviconUrl, BROWSER_TAB_INFO_STRING_MAX.faviconUrl);
+      if (!tid) return { ok: false, error: "invalid-thread-id" };
+      if (!workspaceId) return { ok: false, error: "invalid-workspace-id" };
+      if (!tabId) return { ok: false, error: "invalid-tab-id" };
+      if (title === undefined || url === undefined || faviconUrl === undefined) {
+        return { ok: false, error: "invalid-tab-chrome" };
+      }
+
+      const s = getSession(win);
+      s.workspaceId = workspaceId;
+      const set = ensureThreadTabSet(s, tid);
+      const tab = set.tabs.find((candidate) => candidate.id === tabId);
+      if (!tab) return { ok: false, error: "tab-not-found" };
+      tab.title = title;
+      tab.resumeUrl = url;
+      tab.faviconUrl = faviconUrl;
+      return { ok: true, data: buildTabSet(s, tid) };
     },
   );
 

@@ -316,16 +316,31 @@ export function runBrowserSurfaceContract(name: string, adapterFactory: BrowserS
     it("returns fixture resources to baseline after 25 lifecycle cycles", () => {
       const baselineChildren = document.body.childElementCount;
       const fixture = contractFixture(adapterFactory);
-      const { host } = fixture;
+      const { host, scheduling } = fixture;
       const identity: BrowserSurfaceIdentity = { ...IDENTITY, tabId: "cycle-tab" };
+      const baselineFrames = scheduling.frames.size;
+      const publications: string[] = [];
 
       for (let cycle = 0; cycle < 25; cycle += 1) {
         const first = host.create(identity);
+        const unsubscribe = host.subscribe(identity, (snapshot) => publications.push(snapshot.title));
+        host.present(identity, { left: 0, top: 0, width: 640, height: 480 });
         host.hide(identity);
         expect(host.discard(identity, first.generation)).toBe(true);
         const rewarmed = host.ensure(identity);
         expect(rewarmed.generation).toBe(first.generation + 1);
         host.dispose(identity);
+
+        host.handleEvent(eventFor(identity, rewarmed.generation, { type: "title-updated", title: "late" }));
+        scheduling.flush();
+        unsubscribe();
+
+        expect(host.getSnapshot(identity)).toBeNull();
+        expect(publications).toEqual([]);
+        expect(fixture.activeAdapterCount()).toBe(0);
+        expect(fixture.activeSubscriptionCount()).toBe(0);
+        expect(document.body.childElementCount).toBe(baselineChildren);
+        expect(scheduling.frames.size).toBe(baselineFrames);
       }
 
       expect(fixture.records).toHaveLength(50);

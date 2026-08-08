@@ -358,6 +358,16 @@ interface PreviewTabsBridge {
     workspaceId: string,
     tabId: string,
   ): Promise<PreviewTabIpcResult<BrowserTabSet>>;
+  updateChrome(
+    threadId: string,
+    workspaceId: string,
+    tabId: string,
+    chrome: {
+      readonly title: string | null;
+      readonly url: string | null;
+      readonly faviconUrl: string | null;
+    },
+  ): Promise<PreviewTabIpcResult<BrowserTabSet>>;
   close(
     threadId: string,
     workspaceId: string,
