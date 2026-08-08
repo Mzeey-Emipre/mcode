@@ -806,6 +806,40 @@ describe("PreviewPanel: full panel state", () => {
     );
   });
 
+  it("mounts a blank Electron surface for a new page", () => {
+    mockUsePreviewTabs.mockReturnValue({
+      tabSet: {
+        threadId: "thread-1",
+        activeTabId: "blank-tab",
+        tabs: [
+          {
+            id: "blank-tab",
+            threadId: "thread-1",
+            title: "New page",
+            url: null,
+            faviconUrl: null,
+            warm: true,
+            active: true,
+          },
+        ],
+      },
+      newTab: vi.fn(),
+      activateTab: vi.fn(),
+      closeTab: vi.fn(),
+    });
+
+    render(<PreviewPanel threadId="thread-1" />);
+
+    expect(screen.getByTestId("preview-webview")).toHaveAttribute(
+      "data-tab-id",
+      "blank-tab",
+    );
+    expect(
+      screen.getByTestId("electron-browser-surface-webview").getAttribute("src"),
+    ).toMatch(/^about:blank/);
+    expect(screen.getByTestId("browser-local-ports")).toBeInTheDocument();
+  });
+
   it("renders the active URL in a live webview when the effective engine is webview", () => {
     useSettingsStore.getState()._applyPush({
       ...getDefaultSettings(),

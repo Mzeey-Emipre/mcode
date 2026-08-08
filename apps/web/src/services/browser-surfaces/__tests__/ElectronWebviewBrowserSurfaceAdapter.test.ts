@@ -108,4 +108,20 @@ describe("ElectronWebviewBrowserSurfaceAdapter", () => {
     expect(document.body.contains(adapter.element)).toBe(false);
     expect(() => adapter.element.dispatchEvent(new Event("did-navigate"))).not.toThrow();
   });
+
+  it("retries the bounded guest discovery race after did-attach", async () => {
+    const surfaceBridge = bridge();
+    surfaceBridge.adopt
+      .mockResolvedValueOnce({ ok: false, error: "guest-not-found" })
+      .mockResolvedValueOnce({ ok: true });
+    const adapter = new ElectronWebviewBrowserSurfaceAdapter(IDENTITY, 5, {
+      root: document.body,
+      bridge: surfaceBridge,
+    });
+
+    adapter.element.dispatchEvent(new Event("did-attach"));
+
+    await vi.waitFor(() => expect(surfaceBridge.adopt).toHaveBeenCalledTimes(2));
+    adapter.dispose();
+  });
 });

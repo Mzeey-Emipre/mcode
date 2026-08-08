@@ -47,6 +47,8 @@ type WebviewEvent = Event & {
 
 const PREVIEW_GUEST_HUMAN_INPUT_CHANNEL = "mcode:browser-human-input";
 const HUMAN_INPUT_KINDS = new Set(["keyboard", "pointer", "touch", "wheel"]);
+const ADOPTION_DISCOVERY_ATTEMPTS = 40;
+const ADOPTION_DISCOVERY_RETRY_MS = 50;
 
 /** Validates an absolute address that Electron main will authorize again before loading. */
 export function normalizeElectronWebviewSurfaceAddress(address: string): string {
@@ -258,10 +260,18 @@ export class ElectronWebviewBrowserSurfaceAdapter implements BrowserSurfaceAdapt
       this.resolveAdoptionWaiters(false);
       return false;
     }
-    const result = await Promise.resolve(this.bridge.adopt({
-      surface: this.surface,
-      adoptionToken: this.adoptionToken,
-    })).catch(() => ({ ok: false as const, error: "Surface adoption failed" }));
+    let result: PreviewSurfaceBridgeResult = {
+      ok: false,
+      error: "Surface adoption failed",
+    };
+    for (let attempt = 0; attempt < ADOPTION_DISCOVERY_ATTEMPTS; attempt += 1) {
+      result = await Promise.resolve(this.bridge.adopt({
+        surface: this.surface,
+        adoptionToken: this.adoptionToken,
+      })).catch(() => ({ ok: false as const, error: "Surface adoption failed" }));
+      if (result.ok || result.error !== "guest-not-found" || this.disposed) break;
+      await new Promise((resolve) => window.setTimeout(resolve, ADOPTION_DISCOVERY_RETRY_MS));
+    }
     if (!asResult(result) || this.disposed) {
       this.resolveAdoptionWaiters(false);
       return false;

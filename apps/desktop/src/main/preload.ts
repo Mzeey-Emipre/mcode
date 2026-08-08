@@ -461,8 +461,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
      * can ship tab affordances before the real per-tab backing lands.
      */
     tabs: {
-      list(threadId: string): Promise<unknown> {
-        return ipcRenderer.invoke("preview:tabs.list", { threadId });
+      list(threadId: string, workspaceId?: string): Promise<unknown> {
+        return ipcRenderer.invoke("preview:tabs.list", { threadId, workspaceId });
       },
       open(
         threadId: string,

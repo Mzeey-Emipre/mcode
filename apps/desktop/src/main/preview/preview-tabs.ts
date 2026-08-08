@@ -162,12 +162,17 @@ function buildTabSet(s: PreviewSession, threadId: string): BrowserTabSet {
 export function registerTabHandlers(): void {
   ipcMain.handle(
     "preview:tabs.list",
-    (_event, payload: { threadId?: unknown }): TabIpcResult<BrowserTabSet> => {
+    (_event, payload: { threadId?: unknown; workspaceId?: unknown }): TabIpcResult<BrowserTabSet> => {
       const win = BrowserWindow.fromWebContents(_event.sender);
       if (!win || win.isDestroyed()) return { ok: false, error: "no-window" };
       const tid = normaliseThreadId(payload?.threadId);
       if (!tid) return { ok: false, error: "invalid-thread-id" };
+      const workspaceId = normaliseThreadId(payload?.workspaceId);
+      if (payload?.workspaceId !== undefined && !workspaceId) {
+        return { ok: false, error: "invalid-workspace-id" };
+      }
       const s = getSession(win);
+      if (workspaceId) s.workspaceId = workspaceId;
       return { ok: true, data: buildTabSet(s, tid) };
     },
   );

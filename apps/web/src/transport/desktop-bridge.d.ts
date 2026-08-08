@@ -337,7 +337,10 @@ export interface PreviewTabOpenData {
 
 /** Tab control surface mounted under `desktopBridge.preview.tabs`. */
 interface PreviewTabsBridge {
-  list(threadId: string): Promise<PreviewTabIpcResult<BrowserTabSet>>;
+  list(
+    threadId: string,
+    workspaceId?: string,
+  ): Promise<PreviewTabIpcResult<BrowserTabSet>>;
   open(
     threadId: string,
     options?: {

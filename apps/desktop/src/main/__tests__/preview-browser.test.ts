@@ -1189,6 +1189,19 @@ describe("preview-browser", () => {
       expect(result.data.activeTabId).toBeTruthy();
     });
 
+    it("tabs.list establishes workspace ownership before renderer surface adoption", () => {
+      const win = createWindow();
+
+      const result = callTabs(win, "preview:tabs.list", {
+        threadId: "thread-A",
+        workspaceId: "workspace-A",
+      });
+
+      expect(result.ok).toBe(true);
+      expect(sessions.get(win.id)?.workspaceId).toBe("workspace-A");
+      expect(sessions.get(win.id)?.tabsByThread.get("thread-A")?.tabs).toHaveLength(1);
+    });
+
     it("tabs.open creates a tab and activates it by default", async () => {
       const win = createWindow();
       await showPreview(win, { threadId: "thread-A" });

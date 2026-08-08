@@ -139,6 +139,30 @@ describe("PreviewWebview", () => {
     }
   });
 
+  it("advances the Electron surface generation when the same target remounts", () => {
+    const prepare = vi.fn().mockResolvedValue({ ok: true });
+    window.desktopBridge = { preview: { surface: {
+      prepare,
+      adopt: vi.fn().mockResolvedValue({ ok: true }),
+      navigate: vi.fn().mockResolvedValue({ ok: true }),
+      release: vi.fn().mockResolvedValue({ ok: true }),
+    } } } as unknown as NonNullable<typeof window.desktopBridge>;
+    const props = {
+      workspaceId: "workspace-remount",
+      threadId: "thread-remount",
+      tabId: "tab-remount",
+      src: "about:blank",
+    };
+
+    const first = render(<PreviewWebview {...props} />);
+    const firstGeneration = prepare.mock.calls[0]?.[0].surface.generation as number;
+    first.unmount();
+    render(<PreviewWebview {...props} />);
+    const secondGeneration = prepare.mock.calls[1]?.[0].surface.generation as number;
+
+    expect(secondGeneration).toBeGreaterThan(firstGeneration);
+  });
+
   it("keeps native event subscriptions stable when parent callbacks change", async () => {
     window.desktopBridge = { preview: {} } as unknown as NonNullable<typeof window.desktopBridge>;
     const addEventListener = vi.spyOn(HTMLElement.prototype, "addEventListener");

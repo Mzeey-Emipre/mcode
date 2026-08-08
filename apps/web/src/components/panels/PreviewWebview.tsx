@@ -218,7 +218,6 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       ensureViewportCoordinator(targetGeneration);
       const initial = browserSurfaceHost.create(identity, {
         address: initialAddressRef.current,
-        generation: targetGeneration,
       });
       stateRef.current = initial;
       callbacksRef.current.onPageStatus?.(previewStatus(initial));

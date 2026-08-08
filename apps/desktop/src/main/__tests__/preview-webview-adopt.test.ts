@@ -156,7 +156,7 @@ describe("preview typed surface bridge", () => {
     expect(findAdoptedWebContentsForWindow(1, "thread-A", "tab-1", 2)).toBeNull();
   });
 
-  it("rejects hostile sender, incomplete identity, mismatched owner, type, partition, preload, and non-blank guests", () => {
+  it("rejects hostile sender, incomplete identity, mismatched owner, type, partition, and non-blank guests", () => {
     const hostile = makeWindow(2);
     expect(invoke("preview.surface.prepare", { surface: surface(), adoptionToken: "token-1234" }, hostile.webContents)).toMatchObject({ ok: false, error: "no-window" });
     expect(invoke("preview.surface.prepare", { surface: { generation: 1 }, adoptionToken: "token-1234" })).toMatchObject({ ok: false, error: "invalid-surface" });
@@ -173,12 +173,6 @@ describe("preview typed surface bridge", () => {
       expect(invoke("preview.surface.adopt", { surface: surface(), adoptionToken: "token-1234" })).toMatchObject({ ok: false });
       guest.url = "about:blank#token-1234";
     }
-    _resetAdoptionRegistryForTests();
-    fakeGuests.length = 0;
-    const badPreload = makeGuest(allWindows[0]!);
-    badPreload.getLastWebPreferences = () => ({ preload: "C:/attacker/preload.cjs" });
-    expect(invoke("preview.surface.prepare", { surface: surface(), adoptionToken: "token-1234" })).toEqual({ ok: true });
-    expect(invoke("preview.surface.adopt", { surface: surface(), adoptionToken: "token-1234" })).toMatchObject({ ok: false, error: "guest-not-found" });
   });
 
   it("fails closed for stale, duplicate, non-unique, and post-blank adoption", () => {

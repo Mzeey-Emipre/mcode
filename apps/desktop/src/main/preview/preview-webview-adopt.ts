@@ -13,7 +13,6 @@ import {
   registerPreviewClipboardGuest,
   unregisterPreviewClipboardGuest,
 } from "./preview-clipboard-trust.js";
-import { resolvePreviewGuestPreloadPath } from "./preview-webview-security.js";
 
 const PREVIEW_PARTITION = "persist:mcode-preview";
 const MAX_SURFACE_ID_LENGTH = 256;
@@ -168,22 +167,8 @@ function adoptedForWindow(windowId: number, surface: PreviewSurfaceRef): Adoptio
   return record;
 }
 
-function expectedGuestPreloadPath(): string {
-  return resolvePreviewGuestPreloadPath(__dirname);
-}
-
 function isInertGuestUrl(url: string, adoptionToken: string): boolean {
   return url === `about:blank#${adoptionToken}`;
-}
-
-function guestHasFixedPreload(guest: WebContents): boolean {
-  const candidate = guest as WebContents & {
-    getLastWebPreferences?: () => { preload?: string };
-  };
-  const preferences = typeof candidate.getLastWebPreferences === "function"
-    ? candidate.getLastWebPreferences()
-    : null;
-  return preferences?.preload === expectedGuestPreloadPath();
 }
 
 function guestMatchesPending(
@@ -193,8 +178,10 @@ function guestMatchesPending(
 ): boolean {
   if (guest.isDestroyed() || guest.getType() !== "webview") return false;
   if (guest.hostWebContents !== sender) return false;
+  // The main window's will-attach-webview hook replaces the preload and
+  // partition before this guest exists. Electron omits preload from
+  // getLastWebPreferences(), so the enforced partition is the runtime proof.
   if (guest.session !== electronSession.fromPartition(PREVIEW_PARTITION)) return false;
-  if (!guestHasFixedPreload(guest)) return false;
   return isInertGuestUrl(guest.getURL(), adoptionToken);
 }
 

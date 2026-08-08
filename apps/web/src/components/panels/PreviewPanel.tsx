@@ -2022,7 +2022,7 @@ export function PreviewPanel({
   // Subscribes the scope's tab set into usePreviewTabsStore and exposes the
   // "New page" action for the header. Page switching/closing is driven from the
   // activity rail (the page switcher), so this panel no longer renders a strip.
-  const tabs = usePreviewTabs(threadId);
+  const tabs = usePreviewTabs(threadId, workspaceId);
   const automationControllers = useBrowserAutomationStore((state) => state.controllers);
   const pendingAgentOpens = useBrowserAutomationStore((state) => state.pendingAgentOpens);
   const automationActiveRequests = useBrowserAutomationStore((state) => state.activeRequests);
@@ -2240,9 +2240,8 @@ export function PreviewPanel({
       .filter((tab) => warmIds.has(tab.id))
       .map((tab) => ({
         id: tab.id,
-        src: webviewRequestedUrlByTab[tab.id] ?? tab.url ?? null,
-      }))
-      .filter((tab): tab is { id: string; src: string } => !!tab.src);
+        src: webviewRequestedUrlByTab[tab.id] ?? tab.url ?? "about:blank",
+      }));
   }, [
     activeWebviewSrc,
     activeWebviewTabId,

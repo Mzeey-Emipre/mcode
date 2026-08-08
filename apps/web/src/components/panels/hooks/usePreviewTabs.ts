@@ -18,8 +18,8 @@ import {
  *
  * A no-op in non-desktop builds (the bridge is absent, so `tabSet` stays null).
  */
-export function usePreviewTabs(scopeId: string) {
-  const tabSet = usePreviewTabSet(scopeId);
+export function usePreviewTabs(scopeId: string, workspaceId?: string | null) {
+  const tabSet = usePreviewTabSet(scopeId, workspaceId);
   const newTab = useCallback(
     () => usePreviewTabsStore.getState().openPage(scopeId),
     [scopeId],
@@ -38,7 +38,10 @@ export function usePreviewTabs(scopeId: string) {
 }
 
 /** Keeps Electron Browser tab membership synchronized for an optional panel scope. */
-export function usePreviewTabSet(scopeId: string | null): BrowserTabSet | null {
+export function usePreviewTabSet(
+  scopeId: string | null,
+  workspaceId?: string | null,
+): BrowserTabSet | null {
   const tabSet = usePreviewDisplayTabSet(scopeId);
   const bridge = window.desktopBridge?.preview?.tabs;
 
@@ -46,7 +49,7 @@ export function usePreviewTabSet(scopeId: string | null): BrowserTabSet | null {
     if (!bridge || !scopeId) return;
     let cancelled = false;
     const { setTabSet } = usePreviewTabsStore.getState();
-    void bridge.list(scopeId).then((r) => {
+    void bridge.list(scopeId, workspaceId ?? undefined).then((r) => {
       if (cancelled) return;
       if (r.ok) setTabSet(scopeId, r.data);
     });
@@ -58,6 +61,6 @@ export function usePreviewTabSet(scopeId: string | null): BrowserTabSet | null {
       cancelled = true;
       off();
     };
-  }, [bridge, scopeId]);
+  }, [bridge, scopeId, workspaceId]);
   return tabSet;
 }
