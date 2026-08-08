@@ -120,6 +120,13 @@ export interface PreviewSurfaceRef {
   readonly generation: number;
 }
 
+/** Opener-free popup request for one exact Browser surface generation. */
+export interface PreviewPopupRequest {
+  readonly sourceSurface: PreviewSurfaceRef;
+  readonly address: string;
+  readonly initiator: "human" | "agent";
+}
+
 /** Typed navigation operation executed by Electron main for one exact surface. */
 export type PreviewSurfaceNavigation =
   | { readonly kind: "initial"; readonly address?: string }
@@ -155,6 +162,8 @@ export interface PreviewSurfaceBridge {
     readonly surface: PreviewSurfaceRef;
     readonly navigation: PreviewSurfaceNavigation;
   }): Promise<PreviewSurfaceBridgeResult>;
+  /** Subscribe to popup requests that Electron main denied and mediated. */
+  onPopupRequested(callback: (request: PreviewPopupRequest) => void): () => void;
 }
 
 /**
@@ -347,6 +356,7 @@ interface PreviewTabsBridge {
       readonly activate?: boolean;
       readonly tabId?: string;
       readonly renderingHost?: PreviewRenderingHost;
+      readonly initialAddress?: string;
     },
   ): Promise<PreviewTabIpcResult<PreviewTabOpenData>>;
   activate(

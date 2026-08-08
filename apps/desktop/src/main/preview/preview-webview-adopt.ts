@@ -1,7 +1,6 @@
 import {
   BrowserWindow,
   ipcMain,
-  session as electronSession,
   webContents as electronWebContents,
 } from "electron";
 import type { IpcMainInvokeEvent, WebContents } from "electron";
@@ -13,8 +12,11 @@ import {
   registerPreviewClipboardGuest,
   unregisterPreviewClipboardGuest,
 } from "./preview-clipboard-trust.js";
+import { previewSessionAdapter } from "./preview-session-adapter.js";
+import { PREVIEW_POPUP_REQUESTED_CHANNEL } from "./preview-popup-contract.js";
+import type { PreviewPopupSurfaceRef } from "./preview-popup-contract.js";
+import { isBrowserAutomationAgentOperationActive } from "../browser-automation/active-operation.js";
 
-const PREVIEW_PARTITION = "persist:mcode-preview";
 const MAX_SURFACE_ID_LENGTH = 256;
 const MAX_ADOPTION_TOKEN_LENGTH = 128;
 
@@ -28,10 +30,9 @@ export interface PreviewSurfaceIdentity {
   readonly tabId: string;
 }
 
-/** Generation-bound reference to one Preview surface. */
-export interface PreviewSurfaceRef {
+/** Complete identity and generation for one renderer-hosted Preview surface. */
+export interface PreviewSurfaceRef extends PreviewPopupSurfaceRef {
   readonly identity: PreviewSurfaceIdentity;
-  readonly generation: number;
 }
 
 /** Typed navigation requested by a renderer-owned Preview surface. */
@@ -181,7 +182,7 @@ function guestMatchesPending(
   // The main window's will-attach-webview hook replaces the preload and
   // partition before this guest exists. Electron omits preload from
   // getLastWebPreferences(), so the enforced partition is the runtime proof.
-  if (guest.session !== electronSession.fromPartition(PREVIEW_PARTITION)) return false;
+  if (guest.session !== previewSessionAdapter.session) return false;
   return isInertGuestUrl(guest.getURL(), adoptionToken);
 }
 
@@ -310,9 +311,17 @@ function adoptSurface(event: IpcMainInvokeEvent, inputValue: unknown): PreviewSu
       candidate.getURL() === `about:blank#${input.adoptionToken}` && candidate.hostWebContents === event.sender);
     return errorResult(matches.length > 1 ? "non-unique-adoption" : "guest-not-found");
   }
-  guest.setWindowOpenHandler(() => ({ action: "deny" }));
   const onDestroyed = () => dropAdoption(win.id, key);
   guest.once("destroyed", onDestroyed);
+  const disposePopup = previewSessionAdapter.bindGuestPopup(guest, {
+    sourceSurface: surface,
+    emitPopup: (request) => {
+      if (!win.isDestroyed() && !event.sender.isDestroyed()) {
+        event.sender.send(PREVIEW_POPUP_REQUESTED_CHANNEL, request);
+      }
+    },
+    isAgentOperationActive: isBrowserAutomationAgentOperationActive,
+  });
   registerPreviewClipboardGuest(guest, () => {
     if (win.isDestroyed() || !win.isFocused()) return false;
     const record = adoptedByWindow.get(win.id)?.get(key);
@@ -320,6 +329,7 @@ function adoptSurface(event: IpcMainInvokeEvent, inputValue: unknown): PreviewSu
   });
   const dispose = () => {
     guest.removeListener("destroyed", onDestroyed);
+    disposePopup();
   };
   windowMap(adoptedByWindow, win.id).set(key, { surface, adoptionToken: input.adoptionToken, webContents: guest, dispose });
   dropPending(win.id, key);

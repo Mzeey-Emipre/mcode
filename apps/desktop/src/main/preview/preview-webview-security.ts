@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { PREVIEW_PARTITION } from "./preview-session-adapter.js";
 
 /** Mutable web preferences received with Electron's will-attach-webview event. */
 export interface PreviewWebviewPreferences {
@@ -33,6 +34,6 @@ export function hardenPreviewWebviewAttachment(
   webPreferences.devTools = true;
   webPreferences.preload = guestPreloadPath;
   delete webPreferences.preloadURL;
-  params.partition = "persist:mcode-preview";
+  params.partition = PREVIEW_PARTITION;
   params.preload = guestPreloadPath;
 }

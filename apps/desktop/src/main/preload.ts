@@ -15,6 +15,10 @@ import type {
   BrowserAutomationViewportResetResult,
   PreviewRenderingHost,
 } from "@mcode/contracts";
+import {
+  PREVIEW_POPUP_REQUESTED_CHANNEL,
+  type PreviewPopupRequest,
+} from "./preview/preview-popup-contract.js";
 
 contextBridge.exposeInMainWorld("desktopBridge", {
   /** Platform facts and allowlisted native window actions for the custom title bar. */
@@ -384,6 +388,12 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       }): Promise<{ ok: true } | { ok: false; error: string }> {
         return ipcRenderer.invoke("preview.surface.navigate", payload);
       },
+      /** Subscribes to opener-free popup requests for exact adopted surfaces. */
+      onPopupRequested(callback: (request: PreviewPopupRequest) => void): () => void {
+        const listener = (_event: unknown, request: PreviewPopupRequest) => callback(request);
+        ipcRenderer.on(PREVIEW_POPUP_REQUESTED_CHANNEL, listener);
+        return () => ipcRenderer.removeListener(PREVIEW_POPUP_REQUESTED_CHANNEL, listener);
+      },
     },
     /** Bounded provider-neutral browser operations. Raw CDP is intentionally not exposed. */
     automation: {
@@ -470,6 +480,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
           activate?: boolean;
           tabId?: string;
           renderingHost?: PreviewRenderingHost;
+          initialAddress?: string;
         },
       ): Promise<unknown> {
         return ipcRenderer.invoke("preview:tabs.open", {
@@ -477,6 +488,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
           activate: options?.activate,
           tabId: options?.tabId,
           renderingHost: options?.renderingHost,
+          initialAddress: options?.initialAddress,
         });
       },
       activate(threadId: string, tabId: string): Promise<unknown> {

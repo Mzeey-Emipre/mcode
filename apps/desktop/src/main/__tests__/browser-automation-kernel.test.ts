@@ -202,6 +202,7 @@ vi.mock("../preview/preview-session.js", () => ({
 }));
 
 import { BrowserAutomationKernel, selectAllModifierMask } from "../browser-automation/kernel.js";
+import { isBrowserAutomationAgentOperationActive } from "../browser-automation/active-operation.js";
 
 function request(
   operation: BrowserAutomationRequest["operation"],
@@ -384,6 +385,21 @@ describe("BrowserAutomationKernel", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(kernel.finishRendererOperation(event(), { leaseId: second.leaseId, succeeded: true })).toBe(false);
     expect(kernel.getCounters()).toMatchObject({ active: 0, queued: 0, cancellations: 0 });
+  });
+
+  it("classifies only the exact guest while its automation operation is active", async () => {
+    let finishNavigation!: () => void;
+    currentWebContents!.loadURL.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      finishNavigation = resolve;
+    }));
+    const otherGuest = new FakeWebContents(99);
+    const pending = kernel.execute(event(), payload(request("open", { url: "https://example.test" }, { requestId: "popup-source" })));
+    await Promise.resolve();
+    expect(isBrowserAutomationAgentOperationActive(currentWebContents! as never)).toBe(true);
+    expect(isBrowserAutomationAgentOperationActive(otherGuest as never)).toBe(false);
+    finishNavigation();
+    await pending;
+    expect(isBrowserAutomationAgentOperationActive(currentWebContents! as never)).toBe(false);
   });
 
   it("rejects stale target generations after a webview replacement", async () => {

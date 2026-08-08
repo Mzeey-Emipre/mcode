@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useEffect } from "react";
 import {
   BrowserSurfaceHost,
   ElectronWebviewBrowserSurfaceAdapter,
@@ -9,6 +9,7 @@ import {
   invalidateBrowserAutomationTargetObservation,
   useBrowserAutomationStore,
 } from "@/stores/browserAutomationStore";
+import { usePreviewTabsStore } from "@/stores/previewTabsStore";
 
 let surfaceRoot: HTMLDivElement | null = null;
 
@@ -49,6 +50,21 @@ export const browserSurfaceHost = new BrowserSurfaceHost({
 export function BrowserSurfaceHostRoot() {
   const setRoot = useCallback((node: HTMLDivElement | null): void => {
     surfaceRoot = node;
+  }, []);
+
+  useEffect(() => {
+    const surfaceBridge = window.desktopBridge?.preview?.surface;
+    if (!surfaceBridge) return;
+    return surfaceBridge.onPopupRequested((request) => {
+      const source = browserSurfaceHost.getSnapshot(request.sourceSurface.identity);
+      if (!source || source.generation !== request.sourceSurface.generation) return;
+      void usePreviewTabsStore.getState().openPage(request.sourceSurface.identity.scope.id, {
+        activate: request.initiator === "human",
+        focusOmnibox: false,
+        initialAddress: request.address,
+        renderingHost: "webview",
+      });
+    });
   }, []);
 
   return (

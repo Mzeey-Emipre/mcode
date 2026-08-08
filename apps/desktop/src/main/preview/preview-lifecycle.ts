@@ -32,6 +32,7 @@ import {
   registerPreviewClipboardGuest,
   unregisterPreviewClipboardGuest,
 } from "./preview-clipboard-trust.js";
+import { PREVIEW_PARTITION } from "./preview-session-adapter.js";
 
 /**
  * Injected into every guest document so preview scrollbars match the app shell on Windows
@@ -127,7 +128,7 @@ export function ensureTabView(
       nodeIntegration: false,
       contextIsolation: true,
       sandbox: true,
-      partition: "persist:mcode-preview",
+      partition: PREVIEW_PARTITION,
       preload: resolvePreviewGuestPreloadPath(__dirname),
     },
   });
