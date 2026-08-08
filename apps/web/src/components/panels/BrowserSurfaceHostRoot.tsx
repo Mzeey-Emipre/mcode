@@ -151,21 +151,27 @@ export function BrowserSurfaceHostRoot() {
       }
     };
     synchronizeControllers(useBrowserAutomationStore.getState());
-    return useBrowserAutomationStore.subscribe(synchronizeControllers);
+    const unsubscribeStore = useBrowserAutomationStore.subscribe(synchronizeControllers);
+    const unsubscribeSurfaces = browserSurfaceHost.subscribeMaterialized(() => {
+      synchronizeControllers(useBrowserAutomationStore.getState());
+    });
+    return () => {
+      unsubscribeStore();
+      unsubscribeSurfaces();
+    };
   }, []);
 
   useEffect(() => {
-    const releases = new Map<string, () => void>();
+    const releases = new Map<string, { generation: number; release: () => void }>();
     const synchronizeOperations = (
       state: ReturnType<typeof useBrowserAutomationStore.getState>,
     ): void => {
-      for (const [requestKey, release] of releases) {
+      for (const [requestKey, pinned] of releases) {
         if (state.activeRequests.has(requestKey)) continue;
-        release();
+        pinned.release();
         releases.delete(requestKey);
       }
       for (const [requestKey, active] of state.activeRequests) {
-        if (releases.has(requestKey)) continue;
         const identity: BrowserSurfaceIdentity = {
           workspaceId: active.dispatch.scope.workspaceId,
           scope: { kind: "thread", id: active.dispatch.target.threadId },
@@ -173,22 +179,27 @@ export function BrowserSurfaceHostRoot() {
         };
         const generation = browserSurfaceHost.getSnapshot(identity)?.generation;
         if (generation === undefined) continue;
+        const existing = releases.get(requestKey);
+        if (existing?.generation === generation) continue;
+        existing?.release();
         const operation = active.dispatch.request.operation;
         const capturesSurface = operation === "snapshot" || operation === "screenshot" ||
           operation === "inspect" && active.dispatch.request.args.includeScreenshot;
-        releases.set(
-          requestKey,
-          capturesSurface
-            ? browserSurfaceHost.pinCapture(identity, generation)
-            : browserSurfaceHost.pinOperation(identity, generation),
-        );
+        const release = capturesSurface
+          ? browserSurfaceHost.pinCapture(identity, generation)
+          : browserSurfaceHost.pinOperation(identity, generation);
+        releases.set(requestKey, { generation, release });
       }
     };
     synchronizeOperations(useBrowserAutomationStore.getState());
-    const unsubscribe = useBrowserAutomationStore.subscribe(synchronizeOperations);
+    const unsubscribeStore = useBrowserAutomationStore.subscribe(synchronizeOperations);
+    const unsubscribeSurfaces = browserSurfaceHost.subscribeMaterialized(() => {
+      synchronizeOperations(useBrowserAutomationStore.getState());
+    });
     return () => {
-      unsubscribe();
-      for (const release of releases.values()) release();
+      unsubscribeStore();
+      unsubscribeSurfaces();
+      for (const pinned of releases.values()) pinned.release();
     };
   }, []);
 

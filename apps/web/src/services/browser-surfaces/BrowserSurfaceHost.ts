@@ -148,6 +148,12 @@ export interface BrowserSurfaceMetadata {
 /** Listener invoked when a generation's canonical state is published. */
 export type BrowserSurfaceListener = (snapshot: BrowserSurfacePageState) => void;
 
+/** Listener invoked whenever a warm generation is materialized. */
+export type BrowserSurfaceMaterializedListener = (
+  identity: BrowserSurfaceIdentity,
+  generation: number,
+) => void;
+
 const MAX_ADDRESS = BROWSER_TAB_INFO_STRING_MAX.url;
 const MAX_TITLE = BROWSER_TAB_INFO_STRING_MAX.title;
 const MAX_FAVICON = BROWSER_TAB_INFO_STRING_MAX.faviconUrl;
@@ -256,6 +262,7 @@ function sameStateValue(left: unknown, right: unknown): boolean {
  */
 export class BrowserSurfaceHost {
   private readonly records = new Map<string, SurfaceRecord>();
+  private readonly materializedListeners = new Set<BrowserSurfaceMaterializedListener>();
   private readonly scheduling: BrowserSurfaceScheduling;
   private readonly visibility: BrowserSurfaceVisibility;
   private readonly normalizeAddress: (address: string) => string;
@@ -317,6 +324,7 @@ export class BrowserSurfaceHost {
     };
     this.records.set(key, record);
     record.stopAdapter = adapter.subscribe((event) => this.handleEvent(event));
+    for (const listener of [...this.materializedListeners]) listener(identity, generation);
     adapter.create?.();
     if (address !== undefined) void adapter.navigate(address);
     if (record.publicationPending) this.schedulePublication(record);
@@ -381,6 +389,7 @@ export class BrowserSurfaceHost {
     const record = this.records.get(surfaceKey(event.identity));
     if (!record || record.disposed || record.generation !== event.generation || !sameIdentity(record.identity, event.identity)) return;
     if (event.type === "surface-lost") {
+      if (!record.state) return;
       this.handleUnexpectedLoss(record);
       return;
     }
@@ -411,6 +420,12 @@ export class BrowserSurfaceHost {
     if (!record || !sameIdentity(record.identity, identity)) return () => undefined;
     record.listeners.add(listener);
     return () => record.listeners.delete(listener);
+  }
+
+  /** Subscribes to warm generation materialization across this host. */
+  public subscribeMaterialized(listener: BrowserSurfaceMaterializedListener): () => void {
+    this.materializedListeners.add(listener);
+    return () => this.materializedListeners.delete(listener);
   }
 
   /** Discards one unprotected warm generation and retains bounded recovery metadata. */
@@ -474,6 +489,7 @@ export class BrowserSurfaceHost {
   public disposeHost(): void {
     this.stopVisibility();
     this.disposeAll();
+    this.materializedListeners.clear();
   }
 
   /** Disposes every surface while retaining host-level visibility resources. */

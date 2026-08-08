@@ -153,7 +153,7 @@ export async function runDiscardSweep(
       if (win.isDestroyed()) return;
 
       if (tab.rendererSurfaceGeneration != null) {
-        requestRendererSurfaceDiscard(win, tab.threadId, tab.id);
+        requestRendererSurfaceDiscard(win, s.workspaceId ?? tab.threadId, tab.threadId, tab.id);
         continue;
       }
       disposeTabView(win, s, tab);

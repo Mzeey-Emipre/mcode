@@ -81,6 +81,46 @@ describe("BrowserSurfaceHostRoot", () => {
     expect(stopDiscardRequests).toHaveBeenCalledTimes(1);
   });
 
+  it("applies controller and operation protection when their surface materializes later", () => {
+    useBrowserAutomationStore.getState().registerTarget("workspace-1", "thread-1", "web-preview");
+    useBrowserAutomationStore.getState().setControllerForTarget(
+      "workspace-1",
+      "thread-1",
+      "web-preview",
+      { tabId: "web-preview", controller: "agent", controlEpoch: 1 },
+    );
+    useBrowserAutomationStore.setState({
+      activeRequests: new Map([[
+        "request-1:1",
+        {
+          dispatch: {
+            scope: { workspaceId: "workspace-1" },
+            target: { threadId: "thread-1", tabId: "web-preview" },
+            request: { requestId: "request-1", sequence: 1, operation: "navigate", args: {} },
+          },
+          startedAt: 1,
+        } as never,
+      ]]),
+    });
+    const view = render(<BrowserSurfaceHostRoot />);
+    const first = browserSurfaceHost.create(IDENTITY);
+
+    expect(browserSurfaceHost.discard(IDENTITY, first.generation)).toBe(false);
+    act(() => {
+      useBrowserAutomationStore.getState().setControllerForTarget(
+        "workspace-1",
+        "thread-1",
+        "web-preview",
+        { tabId: "web-preview", controller: "none", controlEpoch: 1 },
+      );
+    });
+    expect(browserSurfaceHost.discard(IDENTITY, first.generation)).toBe(false);
+
+    act(() => useBrowserAutomationStore.setState({ activeRequests: new Map() }));
+    expect(browserSurfaceHost.discard(IDENTITY, first.generation)).toBe(true);
+    view.unmount();
+  });
+
   it("disposes a surface when canonical tab membership removes it", () => {
     const view = render(<BrowserSurfaceHostRoot />);
     browserSurfaceHost.create(IDENTITY);

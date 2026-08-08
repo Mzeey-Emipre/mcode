@@ -293,11 +293,13 @@ export function findAdoptedWebContentsForWindow(
 /** Requests renderer-side discard for one adopted surface selected by Memory Saver. */
 export function requestRendererSurfaceDiscard(
   win: BrowserWindow,
+  workspaceId: string,
   threadId: string,
   tabId: string,
 ): boolean {
   const records = adoptedByWindow.get(win.id);
   const record = [...(records?.values() ?? [])].find((candidate) =>
+    candidate.surface.identity.workspaceId === workspaceId &&
     candidate.surface.identity.scope.kind === "thread" &&
     candidate.surface.identity.scope.id === threadId &&
     candidate.surface.identity.tabId === tabId &&

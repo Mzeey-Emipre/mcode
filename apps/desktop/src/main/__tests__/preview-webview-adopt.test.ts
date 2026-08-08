@@ -232,7 +232,8 @@ describe("preview typed surface bridge", () => {
     expect(invoke("preview.surface.prepare", { surface: surface(), adoptionToken: "token-1234" })).toEqual({ ok: true });
     expect(invoke("preview.surface.adopt", { surface: surface(), adoptionToken: "token-1234" })).toEqual({ ok: true });
 
-    expect(requestRendererSurfaceDiscard(allWindows[0] as never, "thread-A", "tab-1")).toBe(true);
+    expect(requestRendererSurfaceDiscard(allWindows[0] as never, "workspace-other", "thread-A", "tab-1")).toBe(false);
+    expect(requestRendererSurfaceDiscard(allWindows[0] as never, "workspace-A", "thread-A", "tab-1")).toBe(true);
     expect(allWindows[0]!.webContents.send).toHaveBeenCalledWith(
       "preview.surface.discard-requested",
       surface(),

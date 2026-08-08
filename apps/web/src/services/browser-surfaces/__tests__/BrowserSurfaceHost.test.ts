@@ -338,6 +338,27 @@ describe("BrowserSurfaceHost", () => {
     host.disposeHost();
   });
 
+  it("ignores a late loss event after a generation is already cold", () => {
+    const adapters: TestAdapter[] = [];
+    const host = new BrowserSurfaceHost({
+      adapterFactory: () => {
+        const adapter = new TestAdapter();
+        adapters.push(adapter);
+        return adapter;
+      },
+    });
+    const first = host.create(IDENTITY, { address: "https://example.test/recovery" });
+    expect(host.discard(IDENTITY, first.generation)).toBe(true);
+    host.setControlled(IDENTITY, true);
+
+    host.handleEvent({ type: "surface-lost", identity: IDENTITY, generation: first.generation });
+
+    expect(host.getSnapshot(IDENTITY)).toBeNull();
+    expect(host.inspect(IDENTITY)?.residency).toBe("cold");
+    expect(adapters).toHaveLength(1);
+    host.disposeHost();
+  });
+
   it("changes control ownership without changing the surface or generation", () => {
     const { host, adapter } = testHost();
     const snapshot = host.getSnapshot(IDENTITY)!;
