@@ -327,6 +327,7 @@ export class BrowserSurfaceHost {
     for (const listener of [...this.materializedListeners]) listener(identity, generation);
     adapter.create?.();
     if (address !== undefined) void adapter.navigate(address);
+    if (record.visible && record.presentation) adapter.present(record.presentation);
     if (record.publicationPending) this.schedulePublication(record);
     return state;
   }
@@ -371,7 +372,10 @@ export class BrowserSurfaceHost {
   public navigate(identity: BrowserSurfaceIdentity, address: string): void {
     const record = this.records.get(surfaceKey(identity));
     if (!record || !sameIdentity(record.identity, identity)) return;
-    if (!record.state) this.rewarmRecord(record, address);
+    if (!record.state) {
+      this.rewarmRecord(record, address);
+      return;
+    }
     const current = this.records.get(surfaceKey(identity));
     if (!current?.state || !current.adapter) return;
     const normalized = this.normalizeAddress(address);

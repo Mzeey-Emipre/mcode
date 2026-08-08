@@ -5,6 +5,8 @@ import {
   browserAutomationRequestKey,
   browserAutomationScopeKey,
   browserAutomationTargetKey,
+  parseBrowserAutomationScopeKey,
+  parseBrowserAutomationTargetKey,
   onBrowserAutomationScopeRelease,
   invalidateBrowserAutomationTargetObservation,
   onBrowserAutomationObservationInvalidation,
@@ -109,6 +111,21 @@ describe("browser automation renderer scope", () => {
     expect(browserAutomationRequestKey("request\u00001", 2)).not.toBe(
       browserAutomationRequestKey("request", 12),
     );
+  });
+
+  it("decodes only valid scope and target tuple keys", () => {
+    expect(parseBrowserAutomationScopeKey(browserAutomationScopeKey("workspace-a", "thread-a"))).toEqual({
+      workspaceId: "workspace-a",
+      scopeId: "thread-a",
+    });
+    expect(parseBrowserAutomationTargetKey(browserAutomationTargetKey("workspace-a", "thread-a", "tab-a"))).toEqual({
+      workspaceId: "workspace-a",
+      threadId: "thread-a",
+      tabId: "tab-a",
+    });
+    expect(parseBrowserAutomationScopeKey('["workspace-a"]')).toBeNull();
+    expect(parseBrowserAutomationTargetKey('["workspace-a","thread-a",1]')).toBeNull();
+    expect(parseBrowserAutomationTargetKey("not-json")).toBeNull();
   });
 
   it("does not resolve a controller event when duplicate tab ids span threads", () => {

@@ -7,7 +7,10 @@ import {
 import type { BrowserSurfaceIdentity } from "@/services/browser-surfaces";
 import { usePreviewTabsStore } from "@/stores/previewTabsStore";
 import { useBrowserAutomationStore } from "@/stores/browserAutomationStore";
-import type { PreviewPopupRequest, PreviewSurfaceRef } from "@/transport/desktop-bridge";
+import type {
+  PreviewPopupRequest,
+  PreviewSurfaceDiscardRequest,
+} from "@/transport/desktop-bridge";
 
 const IDENTITY: BrowserSurfaceIdentity = {
   workspaceId: "workspace-1",
@@ -31,7 +34,7 @@ describe("BrowserSurfaceHostRoot", () => {
   });
 
   it("discards only the exact current generation selected by Memory Saver", () => {
-    let onDiscardRequested: ((request: PreviewSurfaceRef) => void) | null = null;
+    let onDiscardRequested: ((request: PreviewSurfaceDiscardRequest) => void) | null = null;
     const stopDiscardRequests = vi.fn();
     const first = browserSurfaceHost.create(IDENTITY, {
       generation: 7,
@@ -41,7 +44,7 @@ describe("BrowserSurfaceHostRoot", () => {
       preview: {
         surface: {
           onPopupRequested: vi.fn(() => () => undefined),
-          onDiscardRequested: vi.fn((listener: (request: PreviewSurfaceRef) => void) => {
+          onDiscardRequested: vi.fn((listener: (request: PreviewSurfaceDiscardRequest) => void) => {
             onDiscardRequested = listener;
             return stopDiscardRequests;
           }),
@@ -118,6 +121,48 @@ describe("BrowserSurfaceHostRoot", () => {
 
     act(() => useBrowserAutomationStore.setState({ activeRequests: new Map() }));
     expect(browserSurfaceHost.discard(IDENTITY, first.generation)).toBe(true);
+    view.unmount();
+  });
+
+  it("re-warms and pins a cold surface when an operation starts", () => {
+    const view = render(<BrowserSurfaceHostRoot />);
+    const first = browserSurfaceHost.create(IDENTITY, { address: "https://example.test/recovery" });
+    expect(browserSurfaceHost.discard(IDENTITY, first.generation)).toBe(true);
+
+    act(() => useBrowserAutomationStore.setState({
+      activeRequests: new Map([[
+        "request-cold:1",
+        {
+          dispatch: {
+            scope: { workspaceId: "workspace-1" },
+            target: { threadId: "thread-1", tabId: "web-preview" },
+            request: { requestId: "request-cold", sequence: 1, operation: "navigate", args: {} },
+          },
+          startedAt: 1,
+        } as never,
+      ]]),
+    }));
+
+    const rewarmed = browserSurfaceHost.getSnapshot(IDENTITY);
+    expect(rewarmed?.generation).toBe(first.generation + 1);
+    expect(browserSurfaceHost.discard(IDENTITY, rewarmed?.generation)).toBe(false);
+    act(() => useBrowserAutomationStore.setState({ activeRequests: new Map() }));
+    expect(browserSurfaceHost.discard(IDENTITY, rewarmed?.generation)).toBe(true);
+    view.unmount();
+  });
+
+  it("keeps the host for cancelled or cached unloads and disposes on committed pagehide", () => {
+    const view = render(<BrowserSurfaceHostRoot />);
+    const first = browserSurfaceHost.create(IDENTITY);
+
+    act(() => window.dispatchEvent(new Event("beforeunload", { cancelable: true })));
+    expect(browserSurfaceHost.getSnapshot(IDENTITY)).toBe(first);
+
+    act(() => window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true })));
+    expect(browserSurfaceHost.getSnapshot(IDENTITY)).toBe(first);
+
+    act(() => window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: false })));
+    expect(browserSurfaceHost.getSnapshot(IDENTITY)).toBeNull();
     view.unmount();
   });
 

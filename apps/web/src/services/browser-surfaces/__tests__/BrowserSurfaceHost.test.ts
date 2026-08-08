@@ -245,6 +245,43 @@ describe("BrowserSurfaceHost", () => {
     host.disposeHost();
   });
 
+  it("restores presentation when a visible surface generation is replaced", () => {
+    const adapters: TestAdapter[] = [];
+    const host = new BrowserSurfaceHost({
+      adapterFactory: () => {
+        const adapter = new TestAdapter();
+        adapters.push(adapter);
+        return adapter;
+      },
+    });
+    host.create(IDENTITY);
+    host.present(IDENTITY, { left: 10, top: 20, width: 640, height: 480 });
+
+    host.create(IDENTITY);
+
+    expect(adapters).toHaveLength(2);
+    expect(adapters[1]?.presented).toBe(1);
+    host.disposeHost();
+  });
+
+  it("navigates only once when navigation re-warms a cold surface", () => {
+    const adapters: TestAdapter[] = [];
+    const host = new BrowserSurfaceHost({
+      adapterFactory: () => {
+        const adapter = new TestAdapter();
+        adapters.push(adapter);
+        return adapter;
+      },
+    });
+    const first = host.create(IDENTITY, { address: "https://example.test/start" });
+    expect(host.discard(IDENTITY, first.generation)).toBe(true);
+
+    host.navigate(IDENTITY, "https://example.test/next");
+
+    expect(adapters[1]?.navigations).toEqual(["https://example.test/next"]);
+    host.disposeHost();
+  });
+
   it("discards to bounded cold metadata and re-warms the recovery address in a new generation", () => {
     const adapters: TestAdapter[] = [];
     const host = new BrowserSurfaceHost({

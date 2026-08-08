@@ -8,44 +8,13 @@ import {
 } from "@/services/browser-surfaces";
 import {
   invalidateBrowserAutomationTargetObservation,
+  parseBrowserAutomationScopeKey,
+  parseBrowserAutomationTargetKey,
   useBrowserAutomationStore,
 } from "@/stores/browserAutomationStore";
 import { usePreviewTabsStore } from "@/stores/previewTabsStore";
 
 let surfaceRoot: HTMLDivElement | null = null;
-
-function parsePreviewScopeKey(scopeKey: string): { workspaceId: string; scopeId: string } | null {
-  try {
-    const parsed = JSON.parse(scopeKey) as unknown;
-    if (
-      !Array.isArray(parsed) ||
-      parsed.length !== 2 ||
-      typeof parsed[0] !== "string" ||
-      typeof parsed[1] !== "string"
-    ) return null;
-    return { workspaceId: parsed[0], scopeId: parsed[1] };
-  } catch {
-    return null;
-  }
-}
-
-function parseBrowserTargetKey(targetKey: string): BrowserSurfaceIdentity | null {
-  try {
-    const parsed = JSON.parse(targetKey) as unknown;
-    if (
-      !Array.isArray(parsed) ||
-      parsed.length !== 3 ||
-      parsed.some((value) => typeof value !== "string")
-    ) return null;
-    return {
-      workspaceId: parsed[0] as string,
-      scope: { kind: "thread", id: parsed[1] as string },
-      tabId: parsed[2] as string,
-    };
-  } catch {
-    return null;
-  }
-}
 
 /** Renderer-window Browser surface host used by the web iframe adapter. */
 export const browserSurfaceHost = new BrowserSurfaceHost({
@@ -119,7 +88,7 @@ export function BrowserSurfaceHostRoot() {
       if (!previousSet) continue;
       const currentSet = state.tabSetByScope[scopeKey];
       const currentIds = new Set(currentSet?.tabs.map((tab) => tab.id) ?? []);
-      const scope = parsePreviewScopeKey(scopeKey);
+      const scope = parseBrowserAutomationScopeKey(scopeKey);
       if (!scope) continue;
       for (const tab of previousSet.tabs) {
         if (currentIds.has(tab.id)) continue;
@@ -142,8 +111,13 @@ export function BrowserSurfaceHostRoot() {
         ...(previous?.controllers.keys() ?? []),
       ]);
       for (const targetKey of targetKeys) {
-        const identity = parseBrowserTargetKey(targetKey);
-        if (!identity) continue;
+        const target = parseBrowserAutomationTargetKey(targetKey);
+        if (!target) continue;
+        const identity: BrowserSurfaceIdentity = {
+          workspaceId: target.workspaceId,
+          scope: { kind: "thread", id: target.threadId },
+          tabId: target.tabId,
+        };
         browserSurfaceHost.setControlled(
           identity,
           state.controllers.get(targetKey)?.controller === "agent",
@@ -177,8 +151,10 @@ export function BrowserSurfaceHostRoot() {
           scope: { kind: "thread", id: active.dispatch.target.threadId },
           tabId: active.dispatch.target.tabId,
         };
-        const generation = browserSurfaceHost.getSnapshot(identity)?.generation;
-        if (generation === undefined) continue;
+        const metadata = browserSurfaceHost.inspect(identity);
+        if (!metadata) continue;
+        const generation = browserSurfaceHost.getSnapshot(identity)?.generation ??
+          browserSurfaceHost.ensure(identity).generation;
         const existing = releases.get(requestKey);
         if (existing?.generation === generation) continue;
         existing?.release();
@@ -204,9 +180,12 @@ export function BrowserSurfaceHostRoot() {
   }, []);
 
   useEffect(() => {
-    const dispose = (): void => browserSurfaceHost.disposeHost();
-    window.addEventListener("beforeunload", dispose);
-    return () => window.removeEventListener("beforeunload", dispose);
+    const dispose = (event: PageTransitionEvent): void => {
+      if (event.persisted) return;
+      browserSurfaceHost.disposeHost();
+    };
+    window.addEventListener("pagehide", dispose);
+    return () => window.removeEventListener("pagehide", dispose);
   }, []);
 
   return (

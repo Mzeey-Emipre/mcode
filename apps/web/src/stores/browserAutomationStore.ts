@@ -110,9 +110,43 @@ export function browserAutomationTargetKey(workspaceId: string, threadId: string
   return JSON.stringify([workspaceId, threadId, tabId]);
 }
 
+/** Decodes one exact renderer-owned Browser tab key. */
+export function parseBrowserAutomationTargetKey(
+  value: string,
+): { workspaceId: string; threadId: string; tabId: string } | null {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (
+      !Array.isArray(parsed) ||
+      parsed.length !== 3 ||
+      parsed.some((item) => typeof item !== "string")
+    ) return null;
+    return { workspaceId: parsed[0], threadId: parsed[1], tabId: parsed[2] };
+  } catch {
+    return null;
+  }
+}
+
 /** Stable key for one workspace and Browser scope lease. */
 export function browserAutomationScopeKey(workspaceId: string, scopeId: string): string {
   return JSON.stringify([workspaceId, scopeId]);
+}
+
+/** Decodes one workspace-qualified Browser scope key. */
+export function parseBrowserAutomationScopeKey(
+  value: string,
+): { workspaceId: string; scopeId: string } | null {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (
+      !Array.isArray(parsed) ||
+      parsed.length !== 2 ||
+      parsed.some((item) => typeof item !== "string")
+    ) return null;
+    return { workspaceId: parsed[0], scopeId: parsed[1] };
+  } catch {
+    return null;
+  }
 }
 
 /** Stable key for one lifecycle-backed tab across workspace and thread scopes. */
