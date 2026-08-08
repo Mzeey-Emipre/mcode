@@ -85,6 +85,7 @@ function locateTab(threadId: string, tabId: string): {
     if (!tab) continue;
     const adopted = findAdoptedWebContentsForWindow(win.id, threadId, tabId);
     if (adopted) return { win, webContents: adopted };
+    if (tab.renderingHost === "webview") return { win, webContents: null };
     // Slice 2: every warm tab carries its own WebContentsView, so the bridge
     // can target inactive tabs too. Returns null only when the tab is cold
     // (never mounted) or its webContents has been destroyed.

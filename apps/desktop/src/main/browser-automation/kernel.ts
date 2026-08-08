@@ -927,7 +927,9 @@ export class BrowserAutomationKernel {
     const adopted = findAdoptedWebContentsForWindow(win.id, threadId, tab.id);
     const guest = adopted?.hostWebContents === event.sender
       ? adopted
-      : tab.view?.webContents ?? (exactTargetRequested ? null : session.view?.webContents ?? null);
+      : tab.renderingHost === "webview"
+        ? null
+        : tab.view?.webContents ?? (exactTargetRequested ? null : session.view?.webContents ?? null);
     if (!guest || guest.isDestroyed()) return false;
     const state = this.targets.get(targetKey(win.id, threadId, tab.id));
     if (state) {
@@ -1029,7 +1031,7 @@ export class BrowserAutomationKernel {
     }
     let webContents = findAdoptedWebContentsForWindow(win.id, threadId, tabId);
     if (webContents?.hostWebContents !== event.sender) webContents = null;
-    if (!webContents && !adoptedOnly) {
+    if (!webContents && !adoptedOnly && tab.renderingHost !== "webview") {
       webContents = tab?.view?.webContents ?? null;
     }
     if (!webContents || webContents.isDestroyed()) throw new KernelError("TAB_UNAVAILABLE", "Exact browser tab is unavailable", true);

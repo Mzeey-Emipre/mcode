@@ -1,7 +1,6 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { useEffect, useRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Mock } from "vitest";
 
 import {
   browserAutomationTargetKey,
@@ -12,48 +11,26 @@ import {
 import { PreviewWebview, type PreviewWebviewHandle } from "../PreviewWebview";
 
 describe("PreviewWebview", () => {
-  let canGoBack: Mock<() => boolean>;
-  let canGoForward: Mock<() => boolean>;
-  let domReady = false;
-  const prototype = HTMLElement.prototype as HTMLElement & {
-    canGoBack?: () => boolean;
-    canGoForward?: () => boolean;
-  };
-  const originalCanGoBack = prototype.canGoBack;
-  const originalCanGoForward = prototype.canGoForward;
-
   beforeEach(() => {
-    domReady = false;
-    canGoBack = vi.fn(() => {
-      if (!domReady) {
-        throw new Error(
-          "The WebView must be attached to the DOM and the dom-ready event emitted before this method can be called.",
-        );
-      }
-      return true;
-    });
-    canGoForward = vi.fn(() => {
-      if (!domReady) {
-        throw new Error(
-          "The WebView must be attached to the DOM and the dom-ready event emitted before this method can be called.",
-        );
-      }
-      return false;
-    });
-    prototype.canGoBack = canGoBack;
-    prototype.canGoForward = canGoForward;
+    document.querySelectorAll("[data-testid='electron-browser-surface-webview'], [data-testid='web-runtime-preview-iframe']")
+      .forEach((element) => element.remove());
   });
 
   afterEach(() => {
-    prototype.canGoBack = originalCanGoBack;
-    prototype.canGoForward = originalCanGoForward;
     delete window.desktopBridge;
   });
 
   it("invalidates exact tab observations only for the trusted guest input channel", () => {
     const invalidate = vi.fn();
     window.desktopBridge = {
-      preview: {},
+      preview: {
+        surface: {
+          prepare: vi.fn().mockResolvedValue({ ok: true }),
+          adopt: vi.fn().mockResolvedValue({ ok: true }),
+          navigate: vi.fn().mockResolvedValue({ ok: true }),
+          release: vi.fn().mockResolvedValue({ ok: true }),
+        },
+      },
     } as unknown as NonNullable<typeof window.desktopBridge>;
     const unsubscribe = onBrowserAutomationObservationInvalidation(invalidate);
     render(
@@ -64,7 +41,7 @@ describe("PreviewWebview", () => {
         src="https://example.com"
       />,
     );
-    const webview = screen.getByTestId("preview-webview");
+    const webview = screen.getByTestId("electron-browser-surface-webview");
     webview.dispatchEvent(Object.assign(new Event("ipc-message"), {
       channel: "mcode:browser-human-input",
       args: [{ kind: "pointer" }],
@@ -86,16 +63,21 @@ describe("PreviewWebview", () => {
     expect(invalidate).toHaveBeenCalledWith("thread-1", "tab-1");
   });
 
-  it("does not call Electron navigation methods before dom-ready", async () => {
+  it("routes history through the exact generation-bound main bridge", async () => {
     const observed: { handle: PreviewWebviewHandle | null } = { handle: null };
-    window.desktopBridge = { preview: {} } as unknown as NonNullable<typeof window.desktopBridge>;
+    const navigate = vi.fn().mockResolvedValue({ ok: true });
+    window.desktopBridge = { preview: { surface: {
+      prepare: vi.fn().mockResolvedValue({ ok: true }),
+      adopt: vi.fn().mockResolvedValue({ ok: true }),
+      navigate,
+      release: vi.fn().mockResolvedValue({ ok: true }),
+    } } } as unknown as NonNullable<typeof window.desktopBridge>;
 
     function Probe() {
       const ref = useRef<PreviewWebviewHandle>(null);
       useEffect(() => {
         observed.handle = ref.current;
-        ref.current?.canGoBack();
-        ref.current?.canGoForward();
+        ref.current?.goBack();
       }, []);
       return (
         <PreviewWebview
@@ -110,35 +92,26 @@ describe("PreviewWebview", () => {
     render(<Probe />);
 
     await waitFor(() => expect(observed.handle).not.toBeNull());
-    expect(observed.handle?.canGoBack()).toBe(false);
-    expect(observed.handle?.canGoForward()).toBe(false);
-    expect(canGoBack).not.toHaveBeenCalled();
-    expect(canGoForward).not.toHaveBeenCalled();
-
-    domReady = true;
-    screen.getByTestId("preview-webview").dispatchEvent(new Event("dom-ready"));
-
-    expect(observed.handle?.canGoBack()).toBe(true);
-    expect(observed.handle?.canGoForward()).toBe(false);
-    expect(canGoBack).toHaveBeenCalled();
-    expect(canGoForward).toHaveBeenCalled();
+    expect(navigate).toHaveBeenCalledWith({
+      surface: {
+        identity: {
+          workspaceId: "thread-1",
+          scope: { kind: "thread", id: "thread-1" },
+          tabId: "tab-1",
+        },
+        generation: expect.any(Number),
+      },
+      navigation: { kind: "back" },
+    });
   });
 
-  it("advances the viewport coordinator when dom-ready refreshes the target", async () => {
-    const getWebContentsId = vi.fn(() => 42);
-    const originalGetWebContentsId = (
-      HTMLElement.prototype as HTMLElement & { getWebContentsId?: () => number }
-    ).getWebContentsId;
-    (
-      HTMLElement.prototype as HTMLElement & { getWebContentsId?: () => number }
-    ).getWebContentsId = getWebContentsId;
-    window.desktopBridge = {
-      preview: {
-        adoptWebview: vi.fn().mockResolvedValue({ ok: true }),
-        releaseWebview: vi.fn().mockResolvedValue(undefined),
-        design: {},
-      },
-    } as unknown as NonNullable<typeof window.desktopBridge>;
+  it("binds the viewport coordinator to the hosted target generation", async () => {
+    window.desktopBridge = { preview: { surface: {
+      prepare: vi.fn().mockResolvedValue({ ok: true }),
+      adopt: vi.fn().mockResolvedValue({ ok: true }),
+      navigate: vi.fn().mockResolvedValue({ ok: true }),
+      release: vi.fn().mockResolvedValue({ ok: true }),
+    }, design: {} } } as unknown as NonNullable<typeof window.desktopBridge>;
 
     try {
       render(
@@ -154,24 +127,43 @@ describe("PreviewWebview", () => {
         expect(useBrowserAutomationStore.getState().viewportCoordinators.get(key)).toBeDefined();
       });
 
-      fireEvent(screen.getByTestId("preview-webview"), new Event("dom-ready"));
-
       await waitFor(() => {
         const store = useBrowserAutomationStore.getState();
         expect(store.viewportCoordinators.get(key)?.snapshot().targetGeneration).toBe(
           store.liveTargets.get(key)?.revision,
         );
-        expect(store.liveTargets.get(key)?.revision).toBe(2);
+        expect(store.liveTargets.get(key)?.revision).toBe(1);
       });
     } finally {
       releaseBrowserAutomationThreadScope("thread-generation");
-      (
-        HTMLElement.prototype as HTMLElement & { getWebContentsId?: () => number }
-      ).getWebContentsId = originalGetWebContentsId;
     }
   });
 
-  it("keeps native event subscriptions stable when parent callbacks change", () => {
+  it("advances the Electron surface generation when the same target remounts", () => {
+    const prepare = vi.fn().mockResolvedValue({ ok: true });
+    window.desktopBridge = { preview: { surface: {
+      prepare,
+      adopt: vi.fn().mockResolvedValue({ ok: true }),
+      navigate: vi.fn().mockResolvedValue({ ok: true }),
+      release: vi.fn().mockResolvedValue({ ok: true }),
+    } } } as unknown as NonNullable<typeof window.desktopBridge>;
+    const props = {
+      workspaceId: "workspace-remount",
+      threadId: "thread-remount",
+      tabId: "tab-remount",
+      src: "about:blank",
+    };
+
+    const first = render(<PreviewWebview {...props} />);
+    const firstGeneration = prepare.mock.calls[0]?.[0].surface.generation as number;
+    first.unmount();
+    render(<PreviewWebview {...props} />);
+    const secondGeneration = prepare.mock.calls[1]?.[0].surface.generation as number;
+
+    expect(secondGeneration).toBeGreaterThan(firstGeneration);
+  });
+
+  it("keeps native event subscriptions stable when parent callbacks change", async () => {
     window.desktopBridge = { preview: {} } as unknown as NonNullable<typeof window.desktopBridge>;
     const addEventListener = vi.spyOn(HTMLElement.prototype, "addEventListener");
     const firstStatus = vi.fn();
@@ -196,13 +188,14 @@ describe("PreviewWebview", () => {
         onPageStatus={secondStatus}
       />,
     );
-    screen.getByTestId("preview-webview").dispatchEvent(new Event("did-stop-loading"));
+    firstStatus.mockClear();
+    screen.getByTestId("web-runtime-preview-iframe").dispatchEvent(new Event("load"));
 
     expect(addEventListener.mock.calls.filter(
       ([eventName]) => eventName === "did-stop-loading",
     )).toHaveLength(initialStopSubscriptions);
     expect(firstStatus).not.toHaveBeenCalled();
-    expect(secondStatus).toHaveBeenCalledOnce();
+    await waitFor(() => expect(secondStatus).toHaveBeenCalled());
   });
 
   it("applies an exact renderer-owned design viewport to the visible webview", () => {

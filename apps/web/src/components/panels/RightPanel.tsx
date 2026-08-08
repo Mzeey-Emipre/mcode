@@ -295,7 +295,7 @@ export function RightPanel() {
   // page entries (and the active-page favicon glyph) even while another tab is
   // active. Null in web builds with no bridge, where the rail keeps the single
   // Browser glyph.
-  const browserTabSet = usePreviewTabSet(panelScopeId);
+  const browserTabSet = usePreviewTabSet(panelScopeId, activeWorkspaceId);
   const requestedAgentPageActivationRef = useRef<string | null>(null);
   const agentBrowserPage = useMemo(() => {
     if (!activeWorkspaceId || !panelScopeId || !browserTabSet) return null;

@@ -78,7 +78,7 @@ function getPreviewStorageSession(): Electron.Session {
 }
 
 /** Resolve user omnibox input to a safe preview URL without loading it. */
-async function resolvePreviewNavigationTarget(
+export async function resolvePreviewNavigationTarget(
   url: string,
   workspacePath?: string | null,
 ): Promise<PreviewResolveNavigationResult> {

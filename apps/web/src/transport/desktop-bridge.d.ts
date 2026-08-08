@@ -107,6 +107,56 @@ export type PreviewContextReferenceResult =
   | { readonly ok: true; readonly capture: McodeBrowserCapture }
   | { readonly ok: false; readonly error: string };
 
+/** Complete identity and generation for one renderer-hosted Electron surface. */
+export interface PreviewSurfaceRef {
+  readonly identity: {
+    readonly workspaceId: string;
+    readonly scope: {
+      readonly kind: "thread" | "workspace";
+      readonly id: string;
+    };
+    readonly tabId: string;
+  };
+  readonly generation: number;
+}
+
+/** Typed navigation operation executed by Electron main for one exact surface. */
+export type PreviewSurfaceNavigation =
+  | { readonly kind: "initial"; readonly address?: string }
+  | { readonly kind: "restored"; readonly address: string }
+  | { readonly kind: "address"; readonly address: string }
+  | { readonly kind: "back" }
+  | { readonly kind: "forward" }
+  | { readonly kind: "reload" }
+  | { readonly kind: "force-reload" };
+
+/** Result returned by a typed Electron Browser surface operation. */
+export type PreviewSurfaceBridgeResult =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly error: string };
+
+/** Opaque Electron surface operations exposed to the renderer. */
+export interface PreviewSurfaceBridge {
+  /** Registers an inert webview token before the guest can be adopted. */
+  prepare(payload: {
+    readonly surface: PreviewSurfaceRef;
+    readonly adoptionToken: string;
+  }): Promise<PreviewSurfaceBridgeResult>;
+  /** Adopts the prepared webview without exposing a guest handle to the renderer. */
+  adopt(payload: {
+    readonly surface: PreviewSurfaceRef;
+    readonly adoptionToken: string;
+    readonly initialAddress?: string;
+  }): Promise<PreviewSurfaceBridgeResult>;
+  /** Releases one exact surface generation. */
+  release(payload: { readonly surface: PreviewSurfaceRef }): Promise<PreviewSurfaceBridgeResult>;
+  /** Executes one validated navigation operation against one exact surface generation. */
+  navigate(payload: {
+    readonly surface: PreviewSurfaceRef;
+    readonly navigation: PreviewSurfaceNavigation;
+  }): Promise<PreviewSurfaceBridgeResult>;
+}
+
 /**
  * A localhost port detected as bound by a process on the machine, surfaced in
  * the empty browser as a one-click card. `name` is a best-effort label for the
@@ -202,16 +252,8 @@ interface PreviewBridge {
   tabs: PreviewTabsBridge;
   /** Live preview perf counters; dev HUD only. */
   getPerfCounters(): Promise<BrowserPerfCounters>;
-  /** Phase D: adopt a renderer-hosted <webview>'s WebContents into the host bridge. */
-  adoptWebview(payload: {
-    webContentsId: number;
-    threadId: string;
-    tabId: string;
-  }): Promise<{ ok: true } | { ok: false; error: string }>;
-  releaseWebview(payload: {
-    threadId: string;
-    tabId: string;
-  }): Promise<{ ok: true } | { ok: false; error: string }>;
+  /** Generation-bound Electron surface operations for renderer-hosted webviews. */
+  surface: PreviewSurfaceBridge;
   /** Bounded provider-neutral operations for adopted visible Browser tabs. */
   automation: PreviewAutomationBridge;
   /** Phase G: design-mode surface. */
@@ -295,7 +337,10 @@ export interface PreviewTabOpenData {
 
 /** Tab control surface mounted under `desktopBridge.preview.tabs`. */
 interface PreviewTabsBridge {
-  list(threadId: string): Promise<PreviewTabIpcResult<BrowserTabSet>>;
+  list(
+    threadId: string,
+    workspaceId?: string,
+  ): Promise<PreviewTabIpcResult<BrowserTabSet>>;
   open(
     threadId: string,
     options?: {

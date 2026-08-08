@@ -54,6 +54,7 @@ function makeWebContentsView() {
     getURL: vi.fn().mockReturnValue(""),
     getTitle: vi.fn().mockReturnValue("Example"),
     getType: vi.fn().mockReturnValue("webview"),
+    getLastWebPreferences: vi.fn(() => ({ preload: resolvePreviewGuestPreloadPath(__dirname) })),
     hostWebContents: currentEventSender,
     loadURL: vi.fn().mockResolvedValue(undefined),
     close: vi.fn(),
@@ -137,6 +138,7 @@ vi.mock("electron", () => ({
   },
   webContents: {
     fromId: vi.fn((id: number) => mockWebContentsById.get(id) ?? null),
+    getAllWebContents: vi.fn(() => [...mockWebContentsById.values()]),
   },
   ipcMain: {
     handle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
@@ -187,6 +189,8 @@ vi.mock("node:fs/promises", async () => {
 
 import { BrowserWindow } from "electron";
 import { registerPreviewBrowserHandlers, disposePreviewForWindow } from "../preview/index.js";
+import { resolvePreviewGuestPreloadPath } from "../preview/preview-webview-security.js";
+import { _resetAdoptionRegistryForTests } from "../preview/preview-webview-adopt.js";
 import {
   sessions,
   viewportBoundsForTarget,
@@ -202,6 +206,31 @@ function fakeEvent(win: ReturnType<typeof makeWindow>) {
   currentEventSender = win.webContents;
   (BrowserWindow.fromWebContents as ReturnType<typeof vi.fn>).mockReturnValue(win);
   return { sender: win.webContents } as unknown;
+}
+
+/** Adopts one renderer-owned guest through the generation-bound surface bridge. */
+async function adoptTypedGuest(
+  win: ReturnType<typeof makeWindow>,
+  threadId: string,
+  tabId: string,
+  guest: ReturnType<typeof makeWebContentsView>["webContents"],
+  token = `typed-token-${guest.id}`,
+): Promise<void> {
+  const ev = fakeEvent(win);
+  const committedUrl = guest.getURL();
+  guest.getURL.mockReturnValue(`about:blank#${token}`);
+  mockWebContentsById.set(guest.id, guest);
+  const surface = {
+    identity: {
+      workspaceId: "ws-1",
+      scope: { kind: "thread" as const, id: threadId },
+      tabId,
+    },
+    generation: 1,
+  };
+  expect(await ipcHandlers["preview.surface.prepare"]!(ev, { surface, adoptionToken: token })).toEqual({ ok: true });
+  expect(await ipcHandlers["preview.surface.adopt"]!(ev, { surface, adoptionToken: token })).toEqual({ ok: true });
+  guest.getURL.mockReturnValue(committedUrl.startsWith("http") ? committedUrl : "https://example.com/page");
 }
 
 const VALID_BOUNDS = { x: 100, y: 100, width: 800, height: 600 };
@@ -268,6 +297,7 @@ afterEach(() => {
   for (const win of testWindows) {
     disposePreviewForWindow(win as never);
   }
+  _resetAdoptionRegistryForTests();
   testWindows = [];
 });
 
@@ -1159,6 +1189,19 @@ describe("preview-browser", () => {
       expect(result.data.activeTabId).toBeTruthy();
     });
 
+    it("tabs.list establishes workspace ownership before renderer surface adoption", () => {
+      const win = createWindow();
+
+      const result = callTabs(win, "preview:tabs.list", {
+        threadId: "thread-A",
+        workspaceId: "workspace-A",
+      });
+
+      expect(result.ok).toBe(true);
+      expect(sessions.get(win.id)?.workspaceId).toBe("workspace-A");
+      expect(sessions.get(win.id)?.tabsByThread.get("thread-A")?.tabs).toHaveLength(1);
+    });
+
     it("tabs.open creates a tab and activates it by default", async () => {
       const win = createWindow();
       await showPreview(win, { threadId: "thread-A" });
@@ -1667,15 +1710,10 @@ describe("preview-browser", () => {
 
       const adopted = makeWebContentsView().webContents;
       adopted.getURL.mockReturnValue("https://example.com/page");
-      mockWebContentsById.set(47, adopted);
       const session = sessions.get(win.id)!;
       const tabId = session.tabsByThread.get("thread-webview")!.activeTabId!;
       expect(session.view).toBeNull();
-      await ipcHandlers["preview:adopt-webview"]!(ev, {
-        threadId: "thread-webview",
-        tabId,
-        webContentsId: 47,
-      });
+      await adoptTypedGuest(win, "thread-webview", tabId, adopted);
 
       const viewport = await ipcHandlers["preview:design.set-viewport"]!(ev, {
         widthOverride: 393,
@@ -1755,14 +1793,9 @@ describe("preview-browser", () => {
           layoutHeight: 768,
         }),
       );
-      mockWebContentsById.set(44, adopted);
 
-      const tabId = sessions.get(win.id)!.tabsByThread.get("thread-webview")!.activeTabId;
-      await ipcHandlers["preview:adopt-webview"]!(ev, {
-        threadId: "thread-webview",
-        tabId,
-        webContentsId: 44,
-      });
+      const tabId = sessions.get(win.id)!.tabsByThread.get("thread-webview")!.activeTabId!;
+      await adoptTypedGuest(win, "thread-webview", tabId, adopted);
 
       const result = await ipcHandlers["preview:capture-picture-reference"]!(ev) as {
         ok: true;
@@ -1806,14 +1839,9 @@ describe("preview-browser", () => {
           }),
         )
         .mockResolvedValueOnce(undefined);
-      mockWebContentsById.set(46, adopted);
 
-      const tabId = sessions.get(win.id)!.tabsByThread.get("thread-webview")!.activeTabId;
-      await ipcHandlers["preview:adopt-webview"]!(ev, {
-        threadId: "thread-webview",
-        tabId,
-        webContentsId: 46,
-      });
+      const tabId = sessions.get(win.id)!.tabsByThread.get("thread-webview")!.activeTabId!;
+      await adoptTypedGuest(win, "thread-webview", tabId, adopted);
 
       const result = await ipcHandlers["preview:capture-annotation-snapshot"]!(ev, {
         activeDisplayNumber: 2,
@@ -1874,14 +1902,9 @@ describe("preview-browser", () => {
           layoutHeight: 600,
         }),
       );
-      mockWebContentsById.set(45, adopted);
 
-      const tabId = sessions.get(win.id)!.tabsByThread.get("thread-webview")!.activeTabId;
-      await ipcHandlers["preview:adopt-webview"]!(ev, {
-        threadId: "thread-webview",
-        tabId,
-        webContentsId: 45,
-      });
+      const tabId = sessions.get(win.id)!.tabsByThread.get("thread-webview")!.activeTabId!;
+      await adoptTypedGuest(win, "thread-webview", tabId, adopted);
 
       const result = await ipcHandlers["preview:capture-context-reference"]!(ev) as {
         ok: true;
@@ -1913,13 +1936,10 @@ describe("preview-browser", () => {
         adopted.executeJavaScript
           .mockResolvedValueOnce(undefined)
           .mockResolvedValueOnce(JSON.stringify({ state: "cancelled", seq: 1 }));
-        mockWebContentsById.set(42, adopted);
 
-        const adoptedResult = await ipcHandlers["preview:adopt-webview"]!(ev, {
-          threadId: "thread-webview",
-          tabId: sessions.get(win.id)!.tabsByThread.get("thread-webview")!.activeTabId,
-          webContentsId: 42,
-        });
+        const elementTabId = sessions.get(win.id)!.tabsByThread.get("thread-webview")!.activeTabId!;
+        await adoptTypedGuest(win, "thread-webview", elementTabId, adopted);
+        const adoptedResult = { ok: true };
         expect(adoptedResult).toEqual({ ok: true });
         expect(sessions.get(win.id)!.view).toBeNull();
 
@@ -1984,14 +2004,9 @@ describe("preview-browser", () => {
           )
           .mockResolvedValueOnce(undefined)
           .mockResolvedValueOnce(JSON.stringify({ visibleText: "Attach", scrollX: 0, scrollY: 0 }));
-        mockWebContentsById.set(43, adopted);
 
-        const tabId = sessions.get(win.id)!.tabsByThread.get("thread-webview")!.activeTabId;
-        await ipcHandlers["preview:adopt-webview"]!(ev, {
-          threadId: "thread-webview",
-          tabId,
-          webContentsId: 43,
-        });
+        const tabId = sessions.get(win.id)!.tabsByThread.get("thread-webview")!.activeTabId!;
+        await adoptTypedGuest(win, "thread-webview", tabId, adopted);
 
         const capturePromise = ipcHandlers["preview:capture-picture-element-pick"]!(
           ev,

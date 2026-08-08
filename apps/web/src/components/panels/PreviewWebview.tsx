@@ -3,37 +3,28 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
   useRef,
 } from "react";
 import type { PreviewPageStatus } from "@mcode/contracts";
+import type {
+  BrowserSurfaceIdentity,
+  BrowserSurfacePageState,
+} from "@/services/browser-surfaces";
 import {
   browserAutomationTargetKey,
-  invalidateBrowserAutomationTargetObservation,
   useBrowserAutomationStore,
 } from "@/stores/browserAutomationStore";
-import {
-  DEFAULT_VIEWPORT_SIZE,
-} from "@/services/browser-automation/viewportCoordinator";
+import { browserSurfaceHost } from "./BrowserSurfaceHostRoot";
+import { DEFAULT_VIEWPORT_SIZE } from "@/services/browser-automation/viewportCoordinator";
 import {
   getOrCreateViewportCoordinator,
   waitForViewportLayout,
 } from "@/services/browser-automation/viewportCoordinatorFactory";
 
-const PREVIEW_GUEST_HUMAN_INPUT_CHANNEL = "mcode:browser-human-input";
-const HUMAN_INPUT_KINDS = new Set(["keyboard", "pointer", "touch", "wheel"]);
-
-/**
- * Renderer-hosted Electron `<webview>` that the host process can adopt by
- * `webContentsId`. Mirrors dpcode's renderer-attach flow: the renderer owns
- * the element lifetime; the host owns the WebContents lifecycle (debugger
- * attach, CDP routing) once the id is registered.
- *
- * Phase D scope: provide the adopt path so the Codex browser-use bridge can
- * drive a renderer-embedded tab via executeCdp. The component is opt-in -
- * tabs that don't request a webview keep the BrowserView path unchanged.
- */
+/** Properties for one hosted renderer Browser surface. */
 export interface PreviewWebviewProps {
-  /** Workspace that authorizes this visible target. Defaults to the threadless scope id. */
   readonly workspaceId?: string;
   readonly threadId: string;
   readonly tabId: string;
@@ -47,32 +38,7 @@ export interface PreviewWebviewProps {
   }) => void;
 }
 
-/** Subset of Electron's WebviewTag API we actually call. */
-interface ElectronWebviewElement {
-  src: string;
-  getWebContentsId(): number;
-  getURL?(): string;
-  getTitle?(): string;
-  loadURL?(url: string): Promise<void>;
-  reload?(): void;
-  reloadIgnoringCache?(): void;
-  canGoBack?(): boolean;
-  canGoForward?(): boolean;
-  goBack?(): void;
-  goForward?(): void;
-  getZoomFactor?(): number | Promise<number>;
-  setZoomFactor?(factor: number): void | Promise<void>;
-  addEventListener(type: string, listener: (ev: Event) => void): void;
-  removeEventListener(type: string, listener: (ev: Event) => void): void;
-}
-
-type PreviewElement = ElectronWebviewElement | HTMLIFrameElement;
-
-function isIframeElement(element: PreviewElement | null): element is HTMLIFrameElement {
-  return typeof HTMLIFrameElement !== "undefined" && element instanceof HTMLIFrameElement;
-}
-
-/** Imperative controls for a live renderer-hosted preview webview. */
+/** Imperative controls for one hosted renderer Browser surface. */
 export interface PreviewWebviewHandle {
   navigate(url: string): void;
   reload(): void;
@@ -86,30 +52,37 @@ export interface PreviewWebviewHandle {
   setZoom(factor: number): Promise<number>;
 }
 
-type WebviewEvent = Event & {
-  readonly url?: string;
-  readonly title?: string;
-  readonly favicons?: readonly string[];
-  readonly validatedURL?: string;
-  readonly errorCode?: number;
-  readonly errorDescription?: string;
-  readonly channel?: string;
-  readonly args?: readonly unknown[];
-};
-
-function realUrl(url: string | null | undefined): string | null {
-  if (!url || url.startsWith("about:") || url.startsWith("chrome-error://")) {
-    return null;
-  }
-  return url;
+function visibleAddress(state: BrowserSurfacePageState): string | null {
+  const address = state.committedAddress ?? state.pendingAddress;
+  return !address || address.startsWith("about:") || address.startsWith("chrome-error:")
+    ? null
+    : address;
 }
 
-function isExpectedNavigationAbort(error: unknown): boolean {
-  if (!error || typeof error !== "object") return false;
-  const candidate = error as { code?: unknown; errno?: unknown };
-  return candidate.code === "ERR_ABORTED" || candidate.errno === -3;
+function previewStatus(state: BrowserSurfacePageState): PreviewPageStatus {
+  const committedBlank = state.committedAddress?.startsWith("about:") === true;
+  return {
+    url: visibleAddress(state),
+    title: state.title || null,
+    favicon: state.favicon,
+    phase: committedBlank ? "loaded" : state.phase,
+    ...(state.mainFrameError
+      ? {
+          error: {
+            kind: "network" as const,
+            code: "ERR_FAILED",
+            message: state.mainFrameError,
+          },
+        }
+      : {}),
+  };
 }
 
+function supportedInitialAddress(address: string): string | undefined {
+  return /^(https?|file):\/\//i.test(address) ? address : undefined;
+}
+
+/** Placement controller for a surface owned by the renderer-window BrowserSurfaceHost. */
 export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewProps>(
   function PreviewWebview(
     {
@@ -124,379 +97,204 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
     },
     forwardedRef,
   ) {
-  const ref = useRef<PreviewElement | null>(null);
-  const onPageStatusRef = useRef(onPageStatus);
-  const onNavigationStateChangeRef = useRef(onNavigationStateChange);
-  onPageStatusRef.current = onPageStatus;
-  onNavigationStateChangeRef.current = onNavigationStateChange;
-  const domReadyRef = useRef(false);
-  const pendingReloadRef = useRef(false);
-  const faviconRef = useRef<string | null>(null);
-  const initialViewportRef = useRef(viewport ?? DEFAULT_VIEWPORT_SIZE);
-  const ensureViewportCoordinator = useCallback((targetGeneration: number) => {
-    const key = browserAutomationTargetKey(threadId, tabId);
-    const store = useBrowserAutomationStore.getState();
-    const existing = store.viewportCoordinators.get(key);
-    const coordinator = getOrCreateViewportCoordinator({
-      existing,
-      target: { threadId, tabId },
-      initial: store.viewportStateByTarget.get(key)?.confirmed ??
-        store.viewportByTarget.get(key) ?? initialViewportRef.current,
-      mode: store.viewportStateByTarget.get(key)?.mode,
-      presentation: store.viewportStateByTarget.get(key)?.presentation,
-      targetGeneration,
-      nativeHost: () => window.desktopBridge?.preview?.design,
-      rendererHost: {
-        setViewport: (size, operation, coordinator) => useBrowserAutomationStore.getState().applyViewportIfCurrent(
-          threadId,
-          tabId,
-          coordinator,
-          operation.targetGeneration,
-          size,
-        ),
-        resetViewport: (operation, coordinator) =>
-          useBrowserAutomationStore.getState().resetViewportIfCurrent(
+    const placementRef = useRef<HTMLDivElement | null>(null);
+    const stateRef = useRef<BrowserSurfacePageState | null>(null);
+    const initialAddressRef = useRef(supportedInitialAddress(src));
+    const callbacksRef = useRef({ onPageStatus, onNavigationStateChange });
+    callbacksRef.current = { onPageStatus, onNavigationStateChange };
+    const identity = useMemo<BrowserSurfaceIdentity>(() => ({
+      workspaceId,
+      scope: { kind: "thread", id: threadId },
+      tabId,
+    }), [tabId, threadId, workspaceId]);
+    const initialViewportRef = useRef(viewport ?? DEFAULT_VIEWPORT_SIZE);
+
+    const ensureViewportCoordinator = useCallback((targetGeneration: number) => {
+      const key = browserAutomationTargetKey(threadId, tabId);
+      const store = useBrowserAutomationStore.getState();
+      const existing = store.viewportCoordinators.get(key);
+      return getOrCreateViewportCoordinator({
+        existing,
+        target: { threadId, tabId },
+        initial: store.viewportStateByTarget.get(key)?.confirmed ??
+          store.viewportByTarget.get(key) ?? initialViewportRef.current,
+        mode: store.viewportStateByTarget.get(key)?.mode,
+        presentation: store.viewportStateByTarget.get(key)?.presentation,
+        targetGeneration,
+        nativeHost: () => window.desktopBridge?.preview?.design,
+        rendererHost: {
+          setViewport: (size, operation, coordinator) => useBrowserAutomationStore.getState().applyViewportIfCurrent(
+            threadId,
+            tabId,
+            coordinator,
+            operation.targetGeneration,
+            size,
+          ),
+          resetViewport: (operation, coordinator) => useBrowserAutomationStore.getState().resetViewportIfCurrent(
             threadId,
             tabId,
             coordinator,
             operation.targetGeneration,
           ),
-        readViewport: () => useBrowserAutomationStore.getState().viewportByTarget.get(key) ?? null,
-        waitForLayout: waitForViewportLayout,
-        isCurrent: (operation, coordinator) => {
-          const current = useBrowserAutomationStore.getState();
-          return current.viewportCoordinators.get(key) === coordinator &&
-            current.liveTargets.get(key)?.revision === operation.targetGeneration;
+          readViewport: () => useBrowserAutomationStore.getState().viewportByTarget.get(key) ?? null,
+          waitForLayout: waitForViewportLayout,
+          isCurrent: (operation, coordinator) => {
+            const current = useBrowserAutomationStore.getState();
+            return current.viewportCoordinators.get(key) === coordinator &&
+              current.liveTargets.get(key)?.revision === operation.targetGeneration;
+          },
         },
-      },
-      readConfirmed: () =>
-        useBrowserAutomationStore.getState().viewportStateByTarget.get(key)?.confirmed ??
-        useBrowserAutomationStore.getState().viewportByTarget.get(key) ?? null,
-      onStateChange: (state, coordinator) => useBrowserAutomationStore.getState().setViewportState(
-        threadId,
-        tabId,
-        state,
-        coordinator,
-      ),
-      onCreated: (created) => useBrowserAutomationStore.getState().setViewportCoordinator(
-        threadId,
-        tabId,
-        created,
-      ),
-    });
-    return coordinator;
-  }, [tabId, threadId]);
+        readConfirmed: () =>
+          useBrowserAutomationStore.getState().viewportStateByTarget.get(key)?.confirmed ??
+          useBrowserAutomationStore.getState().viewportByTarget.get(key) ?? null,
+        onStateChange: (state, coordinator) => useBrowserAutomationStore.getState().setViewportState(
+          threadId,
+          tabId,
+          state,
+          coordinator,
+        ),
+        onCreated: (created) => useBrowserAutomationStore.getState().setViewportCoordinator(
+          threadId,
+          tabId,
+          created,
+        ),
+      });
+    }, [tabId, threadId]);
 
-  const readUrl = useCallback((): string | null => {
-    const el = ref.current;
-    if (el && isIframeElement(el)) return realUrl(el.src);
-    try {
-      return realUrl(el?.getURL?.() ?? el?.src ?? null);
-    } catch {
-      return realUrl(el?.src ?? null);
-    }
-  }, []);
+    const currentSurface = useCallback(() => {
+      const state = browserSurfaceHost.getSnapshot(identity);
+      stateRef.current = state;
+      return state;
+    }, [identity]);
 
-  const readTitle = useCallback((): string | null => {
-    if (ref.current && isIframeElement(ref.current)) {
-      try {
-        const title = ref.current.contentDocument?.title ?? null;
-        return title && title.trim().length > 0 ? title : null;
-      } catch {
-        return null;
-      }
-    }
-    try {
-      const title = ref.current?.getTitle?.() ?? null;
-      return title && title.trim().length > 0 ? title : null;
-    } catch {
-      return null;
-    }
-  }, []);
+    const navigateMain = useCallback((kind: "back" | "forward" | "reload" | "force-reload"): void => {
+      const surface = currentSurface();
+      if (!surface) return;
+      void window.desktopBridge?.preview?.surface.navigate({
+        surface: { identity, generation: surface.generation },
+        navigation: { kind },
+      });
+    }, [currentSurface, identity]);
 
-  const emitNavigationState = useCallback(() => {
-    const el = ref.current;
-    if (!domReadyRef.current || !el) {
-      onNavigationStateChangeRef.current?.({ canGoBack: false, canGoForward: false });
-      return;
-    }
-    if (isIframeElement(el)) {
-      onNavigationStateChangeRef.current?.({ canGoBack: false, canGoForward: false });
-      return;
-    }
-    onNavigationStateChangeRef.current?.({
-      canGoBack: !!el.canGoBack?.(),
-      canGoForward: !!el.canGoForward?.(),
-    });
-  }, []);
-
-  const emitStatus = useCallback((phase: PreviewPageStatus["phase"]) => {
-    onPageStatusRef.current?.({
-      url: readUrl(),
-      title: readTitle(),
-      favicon: faviconRef.current,
-      phase,
-    });
-    emitNavigationState();
-  }, [emitNavigationState, readTitle, readUrl]);
-
-  useImperativeHandle(
-    forwardedRef,
-    () => ({
+    useImperativeHandle(forwardedRef, () => ({
       navigate(url: string) {
-        const el = ref.current;
-        if (!el) return;
-        if (isIframeElement(el)) {
-          el.src = url;
-          onPageStatusRef.current?.({ url, title: null, favicon: null, phase: "loading" });
-          return;
-        }
-        if (el.loadURL) {
-          void el.loadURL(url).catch((error: unknown) => {
-            if (isExpectedNavigationAbort(error)) return;
-            onPageStatusRef.current?.({
-              url: realUrl(url),
-              title: null,
-              favicon: null,
-              phase: "error",
-              error: {
-                kind: "network",
-                code: "ERR_FAILED",
-                message: "Navigation failed.",
-              },
-            });
-            emitNavigationState();
-          });
-        } else {
-          el.src = url;
-        }
+        browserSurfaceHost.navigate(identity, url);
       },
       reload() {
-        if (!domReadyRef.current) {
-          pendingReloadRef.current = true;
-          return;
-        }
-        pendingReloadRef.current = false;
-        if (ref.current && isIframeElement(ref.current)) {
-          ref.current.contentWindow?.location.reload();
-        } else ref.current?.reload?.();
+        navigateMain("reload");
       },
       forceReload() {
-        if (!domReadyRef.current) return;
-        const el = ref.current;
-        if (isIframeElement(el)) {
-          el.contentWindow?.location.reload();
-        } else if (el?.reloadIgnoringCache) {
-          el.reloadIgnoringCache();
-        } else {
-          el?.reload?.();
-        }
+        navigateMain("force-reload");
       },
       goBack() {
-        if (!domReadyRef.current || !ref.current) return;
-        if (isIframeElement(ref.current)) ref.current.contentWindow?.history.back();
-        else if (ref.current.canGoBack?.()) ref.current.goBack?.();
+        navigateMain("back");
       },
       goForward() {
-        if (!domReadyRef.current || !ref.current) return;
-        if (isIframeElement(ref.current)) ref.current.contentWindow?.history.forward();
-        else if (ref.current.canGoForward?.()) ref.current.goForward?.();
+        navigateMain("forward");
       },
       canGoBack() {
-        if (!domReadyRef.current) return false;
-        return isIframeElement(ref.current) ? false : !!ref.current?.canGoBack?.();
+        return currentSurface()?.navigation?.canGoBack ?? false;
       },
       canGoForward() {
-        if (!domReadyRef.current) return false;
-        return isIframeElement(ref.current) ? false : !!ref.current?.canGoForward?.();
+        return currentSurface()?.navigation?.canGoForward ?? false;
       },
       getUrl() {
-        return readUrl() ?? "";
+        const state = currentSurface();
+        return state ? visibleAddress(state) ?? "" : "";
       },
       async getZoom() {
-        const el = ref.current;
-        if (!domReadyRef.current || !el || isIframeElement(el)) return 1;
-        return (await Promise.resolve(el.getZoomFactor?.())) ?? 1;
+        return window.desktopBridge?.preview?.getZoom?.() ?? 1;
       },
       async setZoom(factor: number) {
-        const el = ref.current;
-        if (!domReadyRef.current || !el || isIframeElement(el)) return factor;
-        await Promise.resolve(el.setZoomFactor?.(factor));
-        return (await Promise.resolve(el.getZoomFactor?.())) ?? factor;
+        return window.desktopBridge?.preview?.setZoom?.(factor) ?? factor;
       },
-    }),
-    [emitNavigationState, readUrl],
-  );
+    }), [currentSurface, identity, navigateMain]);
 
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    if (isIframeElement(el)) {
-      domReadyRef.current = true;
+    useLayoutEffect(() => {
       useBrowserAutomationStore.getState().registerTarget(workspaceId, threadId, tabId);
-      const revision = useBrowserAutomationStore.getState().liveTargets.get(
+      const targetGeneration = useBrowserAutomationStore.getState().liveTargets.get(
         browserAutomationTargetKey(threadId, tabId),
       )?.revision ?? 1;
-      ensureViewportCoordinator(revision);
-      const onLoad = () => {
-        emitStatus("loaded");
-      };
-      el.addEventListener("load", onLoad);
+      ensureViewportCoordinator(targetGeneration);
+      const initial = browserSurfaceHost.create(identity, {
+        address: initialAddressRef.current,
+      });
+      stateRef.current = initial;
+      callbacksRef.current.onPageStatus?.(previewStatus(initial));
+      const unsubscribe = browserSurfaceHost.subscribe(identity, (state) => {
+        stateRef.current = state;
+        callbacksRef.current.onPageStatus?.(previewStatus(state));
+        callbacksRef.current.onNavigationStateChange?.(state.navigation ?? {
+          canGoBack: false,
+          canGoForward: false,
+        });
+      });
       return () => {
-        el.removeEventListener("load", onLoad);
+        unsubscribe();
+        browserSurfaceHost.dispose(identity);
         useBrowserAutomationStore.getState().detachTarget(threadId, tabId);
       };
-    }
-    if (!window.desktopBridge?.preview?.adoptWebview) return;
+    }, [ensureViewportCoordinator, identity, tabId, threadId, workspaceId]);
 
-    let cancelled = false;
-    const onAttached = (_ev: Event) => {
-      if (cancelled) return;
-      try {
-        const wcId = el.getWebContentsId();
-        if (Number.isFinite(wcId) && wcId > 0) {
-          void window.desktopBridge!.preview!.adoptWebview!({
-            webContentsId: wcId,
-            threadId,
-            tabId,
-          }).then((result) => {
-            if (cancelled || !result.ok) return;
-            useBrowserAutomationStore.getState().registerTarget(workspaceId, threadId, tabId);
-            const revision = useBrowserAutomationStore.getState().liveTargets.get(
-              browserAutomationTargetKey(threadId, tabId),
-            )?.revision ?? 1;
-            ensureViewportCoordinator(revision);
-          });
+    useEffect(() => {
+      const address = supportedInitialAddress(src);
+      if (!address) return;
+      const current = currentSurface();
+      if (current?.pendingAddress === address || current?.committedAddress === address) return;
+      browserSurfaceHost.navigate(identity, address);
+    }, [currentSurface, identity, src]);
+
+    useLayoutEffect(() => {
+      const placement = placementRef.current;
+      if (!placement) return;
+      const update = (): void => {
+        const bounds = placement.getBoundingClientRect();
+        if (
+          bounds.width <= 0 ||
+          bounds.height <= 0 ||
+          placement.closest("[inert], [aria-hidden='true']")
+        ) {
+          browserSurfaceHost.hide(identity);
+          return;
         }
-      } catch {
-        /* webview not yet ready */
-      }
-    };
-    el.addEventListener("did-attach", onAttached);
-    onAttached(new Event("did-attach"));
-    return () => {
-      cancelled = true;
-      try {
-        el.removeEventListener("did-attach", onAttached);
-      } catch {
-        /* webview gone */
-      }
-      useBrowserAutomationStore.getState().detachTarget(threadId, tabId);
-      void window.desktopBridge?.preview?.releaseWebview?.({ threadId, tabId });
-    };
-  }, [ensureViewportCoordinator, threadId, tabId, workspaceId]);
+        const intrinsicWidth = viewport?.width ?? bounds.width;
+        const intrinsicHeight = viewport?.height ?? bounds.height;
+        browserSurfaceHost.present(identity, {
+          left: bounds.left,
+          top: bounds.top,
+          width: intrinsicWidth,
+          height: intrinsicHeight,
+          scale: viewport ? Math.min(bounds.width / intrinsicWidth, bounds.height / intrinsicHeight) : 1,
+          zIndex: 31,
+        });
+      };
+      const observer = typeof ResizeObserver === "function" ? new ResizeObserver(update) : null;
+      observer?.observe(placement);
+      window.addEventListener("resize", update);
+      update();
+      return () => {
+        observer?.disconnect();
+        window.removeEventListener("resize", update);
+        browserSurfaceHost.hide(identity);
+      };
+    }, [identity, viewport]);
 
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-
-    if (isIframeElement(el)) return;
-
-    const onStart = () => emitStatus("loading");
-    const onDomReady = () => {
-      domReadyRef.current = true;
-      const store = useBrowserAutomationStore.getState();
-      store.refreshTarget(threadId, tabId);
-      const revision = useBrowserAutomationStore.getState().liveTargets.get(
-        browserAutomationTargetKey(threadId, tabId),
-      )?.revision;
-      if (revision !== undefined) ensureViewportCoordinator(revision);
-      if (pendingReloadRef.current) {
-        pendingReloadRef.current = false;
-        el.reload?.();
-      }
-      emitNavigationState();
-    };
-    const onStop = () => emitStatus("loaded");
-    const onNavigate = (ev: WebviewEvent) => {
-      onPageStatusRef.current?.({
-        url: realUrl(ev.url) ?? readUrl(),
-        title: readTitle(),
-        favicon: faviconRef.current,
-        phase: "loaded",
-      });
-      emitNavigationState();
-    };
-    const onTitle = (ev: WebviewEvent) => {
-      onPageStatusRef.current?.({
-        url: readUrl(),
-        title: ev.title && ev.title.trim().length > 0 ? ev.title : readTitle(),
-        favicon: faviconRef.current,
-        phase: "loaded",
-      });
-      emitNavigationState();
-    };
-    const onFavicon = (ev: WebviewEvent) => {
-      faviconRef.current = ev.favicons?.[0] ?? null;
-      emitStatus("loaded");
-    };
-    const onFail = (ev: WebviewEvent) => {
-      if (ev.errorCode === -3) return;
-      onPageStatusRef.current?.({
-        url: realUrl(ev.validatedURL) ?? readUrl(),
-        title: null,
-        favicon: null,
-        phase: "error",
-        error: {
-          kind: "network",
-          code: String(ev.errorCode ?? "ERR_FAILED"),
-          message: ev.errorDescription ?? "Navigation failed.",
-        },
-      });
-      emitNavigationState();
-    };
-    const onIpcMessage = (ev: WebviewEvent) => {
-      if (ev.channel !== PREVIEW_GUEST_HUMAN_INPUT_CHANNEL) return;
-      const message = ev.args?.[0];
-      if (!message || typeof message !== "object" || Array.isArray(message)) return;
-      const kind = (message as { kind?: unknown }).kind;
-      if (typeof kind !== "string" || !HUMAN_INPUT_KINDS.has(kind)) return;
-      invalidateBrowserAutomationTargetObservation(threadId, tabId);
-    };
-    el.addEventListener("did-start-loading", onStart);
-    el.addEventListener("dom-ready", onDomReady);
-    el.addEventListener("did-stop-loading", onStop);
-    el.addEventListener("did-navigate", onNavigate);
-    el.addEventListener("did-navigate-in-page", onNavigate);
-    el.addEventListener("page-title-updated", onTitle);
-    el.addEventListener("page-favicon-updated", onFavicon);
-    el.addEventListener("did-fail-load", onFail);
-    el.addEventListener("ipc-message", onIpcMessage);
-    return () => {
-      el.removeEventListener("did-start-loading", onStart);
-      el.removeEventListener("dom-ready", onDomReady);
-      el.removeEventListener("did-stop-loading", onStop);
-      el.removeEventListener("did-navigate", onNavigate);
-      el.removeEventListener("did-navigate-in-page", onNavigate);
-      el.removeEventListener("page-title-updated", onTitle);
-      el.removeEventListener("page-favicon-updated", onFavicon);
-      el.removeEventListener("did-fail-load", onFail);
-      el.removeEventListener("ipc-message", onIpcMessage);
-    };
-  }, [emitNavigationState, emitStatus, ensureViewportCoordinator, readTitle, readUrl, tabId, threadId]);
-
-  // Use createElement via React JSX since <webview> is a custom Chromium
-  // element; React 19 will pass unknown attributes through unchanged.
-  // We cast to any here only because @types/react does not know about <webview>.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const Tag = (!window.desktopBridge?.preview ? "iframe" : "webview") as any;
-  return (
-    <Tag
-      ref={ref}
-      src={src}
-      data-testid="preview-webview"
-      data-thread-id={threadId}
-      data-tab-id={tabId}
-      partition="persist:mcode-preview"
-      title="Preview"
-      className={className}
-      style={{
-        display: "inline-flex",
-        width: viewport?.width ?? "100%",
-        height: viewport?.height ?? "100%",
-        minWidth: 0,
-        minHeight: 0,
-      }}
-    />
-  );
-});
+    return (
+      <div
+        {...({ src } as Record<string, string>)}
+        ref={placementRef}
+        data-testid="preview-webview"
+        data-workspace-id={workspaceId}
+        data-thread-id={threadId}
+        data-tab-id={tabId}
+        className={className}
+        style={{
+          width: viewport?.width ?? "100%",
+          height: viewport?.height ?? "100%",
+          minWidth: 0,
+          minHeight: 0,
+        }}
+      />
+    );
+  },
+);

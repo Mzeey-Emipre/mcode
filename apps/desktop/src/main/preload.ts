@@ -328,24 +328,62 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     getPerfCounters(): Promise<unknown> {
       return ipcRenderer.invoke("preview:get-perf-counters");
     },
-    /**
-     * Phase D: adopt a renderer-hosted <webview> into the host bridge so the
-     * Codex browser-use pipe can drive it via executeCdp. The renderer reads
-     * the guest's webContentsId via `webview.getWebContentsId()` after
-     * `did-attach` fires, then forwards it here.
-     */
-    adoptWebview(payload: {
-      webContentsId: number;
-      threadId: string;
-      tabId: string;
-    }): Promise<unknown> {
-      return ipcRenderer.invoke("preview:adopt-webview", payload);
-    },
-    releaseWebview(payload: {
-      threadId: string;
-      tabId: string;
-    }): Promise<unknown> {
-      return ipcRenderer.invoke("preview:release-webview", payload);
+    /** Typed generation-bound Electron surface operations. */
+    surface: {
+      prepare(payload: {
+        surface: {
+          identity: {
+            workspaceId: string;
+            scope: { kind: "thread" | "workspace"; id: string };
+            tabId: string;
+          };
+          generation: number;
+        };
+        adoptionToken: string;
+      }): Promise<{ ok: true } | { ok: false; error: string }> {
+        return ipcRenderer.invoke("preview.surface.prepare", payload);
+      },
+      adopt(payload: {
+        surface: {
+          identity: {
+            workspaceId: string;
+            scope: { kind: "thread" | "workspace"; id: string };
+            tabId: string;
+          };
+          generation: number;
+        };
+        adoptionToken: string;
+      }): Promise<{ ok: true } | { ok: false; error: string }> {
+        return ipcRenderer.invoke("preview.surface.adopt", payload);
+      },
+      release(payload: {
+        surface: {
+          identity: {
+            workspaceId: string;
+            scope: { kind: "thread" | "workspace"; id: string };
+            tabId: string;
+          };
+          generation: number;
+        };
+      }): Promise<{ ok: true } | { ok: false; error: string }> {
+        return ipcRenderer.invoke("preview.surface.release", payload);
+      },
+      navigate(payload: {
+        surface: {
+          identity: {
+            workspaceId: string;
+            scope: { kind: "thread" | "workspace"; id: string };
+            tabId: string;
+          };
+          generation: number;
+        };
+        navigation:
+          | { kind: "initial"; address?: string }
+          | { kind: "restored" | "address"; address: string }
+          | { kind: "back" | "forward" | "reload" | "force-reload" };
+      }): Promise<{ ok: true } | { ok: false; error: string }> {
+        return ipcRenderer.invoke("preview.surface.navigate", payload);
+      },
     },
     /** Bounded provider-neutral browser operations. Raw CDP is intentionally not exposed. */
     automation: {
@@ -423,8 +461,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
      * can ship tab affordances before the real per-tab backing lands.
      */
     tabs: {
-      list(threadId: string): Promise<unknown> {
-        return ipcRenderer.invoke("preview:tabs.list", { threadId });
+      list(threadId: string, workspaceId?: string): Promise<unknown> {
+        return ipcRenderer.invoke("preview:tabs.list", { threadId, workspaceId });
       },
       open(
         threadId: string,
