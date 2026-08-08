@@ -1,0 +1,4 @@
+interface:
+  display_name: "Electron Live Testing"
+  short_description: "Control one persistent Electron test session"
+  default_prompt: "Use $electorn-live-testing to launch Mcode Electron once and verify the requested desktop behavior."
