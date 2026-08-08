@@ -110,8 +110,9 @@ import {
   _resetAdoptionRegistryForTests,
   findAdoptedWebContentsForWindow,
   registerPreviewSurfaceHandlers,
+  requestRendererSurfaceDiscard,
 } from "../preview/preview-webview-adopt.js";
-import { getSession, previewTabScopeKey, sessions } from "../preview/preview-session.js";
+import { getSession, previewTabScopeKey, sessions, toBrowserTabSet } from "../preview/preview-session.js";
 
 const surface = (generation = 1) => ({
   identity: {
@@ -154,6 +155,7 @@ describe("preview typed surface bridge", () => {
     expect(invoke("preview.surface.adopt", { surface: surface(), adoptionToken: "token-1234" })).toEqual({ ok: true });
     expect(findAdoptedWebContentsForWindow(1, "thread-A", "tab-1", 1)).toBe(guest);
     expect(findAdoptedWebContentsForWindow(1, "thread-A", "tab-1", 2)).toBeNull();
+    expect(toBrowserTabSet(getSession(allWindows[0] as never), "thread-A").tabs[0]?.warm).toBe(true);
   });
 
   it("rejects hostile sender, incomplete identity, mismatched owner, type, partition, and non-blank guests", () => {
@@ -218,8 +220,39 @@ describe("preview typed surface bridge", () => {
     expect(invoke("preview.surface.adopt", { surface: surface(), adoptionToken: "token-1234" })).toEqual({ ok: true });
     getSession(allWindows[0] as never).tabsByThread.clear();
 
-    expect(invoke("preview.surface.release", { surface: surface() })).toEqual({ ok: true });
+    expect(invoke("preview.surface.release", {
+      surface: surface(),
+      reason: "dispose",
+    })).toEqual({ ok: true });
     expect(findAdoptedWebContentsForWindow(1, "thread-A", "tab-1", 1)).toBeNull();
+  });
+
+  it("marks renderer residency cold on release and requests policy-selected discard by exact generation", () => {
+    makeGuest(allWindows[0]!);
+    expect(invoke("preview.surface.prepare", { surface: surface(), adoptionToken: "token-1234" })).toEqual({ ok: true });
+    expect(invoke("preview.surface.adopt", { surface: surface(), adoptionToken: "token-1234" })).toEqual({ ok: true });
+
+    expect(requestRendererSurfaceDiscard(allWindows[0] as never, "thread-A", "tab-1")).toBe(true);
+    expect(allWindows[0]!.webContents.send).toHaveBeenCalledWith(
+      "preview.surface.discard-requested",
+      surface(),
+    );
+    expect(invoke("preview.surface.release", {
+      surface: surface(),
+      reason: "attacker-controlled",
+    })).toMatchObject({ ok: false, error: "invalid-release-reason" });
+
+    expect(invoke("preview.surface.release", {
+      surface: surface(),
+      reason: "discard",
+    })).toEqual({ ok: true });
+    expect(toBrowserTabSet(getSession(allWindows[0] as never), "thread-A").tabs[0]?.warm).toBe(false);
+    expect(allWindows[0]!.webContents.send).toHaveBeenCalledWith(
+      "preview:tabs-updated",
+      expect.objectContaining({
+        tabs: [expect.objectContaining({ id: "tab-1", warm: false })],
+      }),
+    );
   });
 
   it("revalidates exact generation for address, history, reload, and force reload", async () => {

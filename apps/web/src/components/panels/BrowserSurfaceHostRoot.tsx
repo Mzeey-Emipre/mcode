@@ -1,6 +1,7 @@
 import { useCallback, useEffect } from "react";
 import {
   BrowserSurfaceHost,
+  type BrowserSurfaceIdentity,
   ElectronWebviewBrowserSurfaceAdapter,
   normalizeElectronWebviewSurfaceAddress,
   WebIframeBrowserSurfaceAdapter,
@@ -12,6 +13,39 @@ import {
 import { usePreviewTabsStore } from "@/stores/previewTabsStore";
 
 let surfaceRoot: HTMLDivElement | null = null;
+
+function parsePreviewScopeKey(scopeKey: string): { workspaceId: string; scopeId: string } | null {
+  try {
+    const parsed = JSON.parse(scopeKey) as unknown;
+    if (
+      !Array.isArray(parsed) ||
+      parsed.length !== 2 ||
+      typeof parsed[0] !== "string" ||
+      typeof parsed[1] !== "string"
+    ) return null;
+    return { workspaceId: parsed[0], scopeId: parsed[1] };
+  } catch {
+    return null;
+  }
+}
+
+function parseBrowserTargetKey(targetKey: string): BrowserSurfaceIdentity | null {
+  try {
+    const parsed = JSON.parse(targetKey) as unknown;
+    if (
+      !Array.isArray(parsed) ||
+      parsed.length !== 3 ||
+      parsed.some((value) => typeof value !== "string")
+    ) return null;
+    return {
+      workspaceId: parsed[0] as string,
+      scope: { kind: "thread", id: parsed[1] as string },
+      tabId: parsed[2] as string,
+    };
+  } catch {
+    return null;
+  }
+}
 
 /** Renderer-window Browser surface host used by the web iframe adapter. */
 export const browserSurfaceHost = new BrowserSurfaceHost({
@@ -57,7 +91,7 @@ export function BrowserSurfaceHostRoot() {
   useEffect(() => {
     const surfaceBridge = window.desktopBridge?.preview?.surface;
     if (!surfaceBridge) return;
-    return surfaceBridge.onPopupRequested((request) => {
+    const stopPopups = surfaceBridge.onPopupRequested((request) => {
       const source = browserSurfaceHost.getSnapshot(request.sourceSurface.identity);
       if (!source || source.generation !== request.sourceSurface.generation) return;
       void usePreviewTabsStore.getState().openPage(
@@ -71,6 +105,97 @@ export function BrowserSurfaceHostRoot() {
         },
       );
     });
+    const stopDiscards = surfaceBridge.onDiscardRequested((request) => {
+      browserSurfaceHost.discard(request.identity, request.generation);
+    });
+    return () => {
+      stopPopups();
+      stopDiscards();
+    };
+  }, []);
+
+  useEffect(() => usePreviewTabsStore.subscribe((state, previous) => {
+    for (const [scopeKey, previousSet] of Object.entries(previous.tabSetByScope)) {
+      if (!previousSet) continue;
+      const currentSet = state.tabSetByScope[scopeKey];
+      const currentIds = new Set(currentSet?.tabs.map((tab) => tab.id) ?? []);
+      const scope = parsePreviewScopeKey(scopeKey);
+      if (!scope) continue;
+      for (const tab of previousSet.tabs) {
+        if (currentIds.has(tab.id)) continue;
+        browserSurfaceHost.dispose({
+          workspaceId: scope.workspaceId,
+          scope: { kind: "thread", id: scope.scopeId },
+          tabId: tab.id,
+        });
+      }
+    }
+  }), []);
+
+  useEffect(() => {
+    const synchronizeControllers = (
+      state: ReturnType<typeof useBrowserAutomationStore.getState>,
+      previous?: ReturnType<typeof useBrowserAutomationStore.getState>,
+    ): void => {
+      const targetKeys = new Set([
+        ...state.controllers.keys(),
+        ...(previous?.controllers.keys() ?? []),
+      ]);
+      for (const targetKey of targetKeys) {
+        const identity = parseBrowserTargetKey(targetKey);
+        if (!identity) continue;
+        browserSurfaceHost.setControlled(
+          identity,
+          state.controllers.get(targetKey)?.controller === "agent",
+        );
+      }
+    };
+    synchronizeControllers(useBrowserAutomationStore.getState());
+    return useBrowserAutomationStore.subscribe(synchronizeControllers);
+  }, []);
+
+  useEffect(() => {
+    const releases = new Map<string, () => void>();
+    const synchronizeOperations = (
+      state: ReturnType<typeof useBrowserAutomationStore.getState>,
+    ): void => {
+      for (const [requestKey, release] of releases) {
+        if (state.activeRequests.has(requestKey)) continue;
+        release();
+        releases.delete(requestKey);
+      }
+      for (const [requestKey, active] of state.activeRequests) {
+        if (releases.has(requestKey)) continue;
+        const identity: BrowserSurfaceIdentity = {
+          workspaceId: active.dispatch.scope.workspaceId,
+          scope: { kind: "thread", id: active.dispatch.target.threadId },
+          tabId: active.dispatch.target.tabId,
+        };
+        const generation = browserSurfaceHost.getSnapshot(identity)?.generation;
+        if (generation === undefined) continue;
+        const operation = active.dispatch.request.operation;
+        const capturesSurface = operation === "snapshot" || operation === "screenshot" ||
+          operation === "inspect" && active.dispatch.request.args.includeScreenshot;
+        releases.set(
+          requestKey,
+          capturesSurface
+            ? browserSurfaceHost.pinCapture(identity, generation)
+            : browserSurfaceHost.pinOperation(identity, generation),
+        );
+      }
+    };
+    synchronizeOperations(useBrowserAutomationStore.getState());
+    const unsubscribe = useBrowserAutomationStore.subscribe(synchronizeOperations);
+    return () => {
+      unsubscribe();
+      for (const release of releases.values()) release();
+    };
+  }, []);
+
+  useEffect(() => {
+    const dispose = (): void => browserSurfaceHost.disposeHost();
+    window.addEventListener("beforeunload", dispose);
+    return () => window.removeEventListener("beforeunload", dispose);
   }, []);
 
   return (

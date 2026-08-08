@@ -28,6 +28,10 @@ import {
   type ThreadTabSet,
 } from "./preview-session.js";
 import { disposeTabView } from "./preview-lifecycle.js";
+import {
+  findAdoptedWebContentsForWindow,
+  requestRendererSurfaceDiscard,
+} from "./preview-webview-adopt.js";
 import { validateResumeUrl } from "./preview-local-file.js";
 import { bumpPerf, setPerf } from "./preview-perf.js";
 
@@ -65,7 +69,10 @@ function collectWarmTabs(s: PreviewSession): WarmTabRef[] {
   const out: WarmTabRef[] = [];
   for (const set of s.tabsByThread.values()) {
     for (const tab of set.tabs) {
-      if (tab.view && !tab.view.webContents.isDestroyed()) {
+      if (
+        tab.view && !tab.view.webContents.isDestroyed() ||
+        tab.rendererSurfaceGeneration != null
+      ) {
         out.push({ tabId: tab.id, threadId: tab.threadId, lastActiveAt: tab.lastActiveAt });
       }
     }
@@ -123,9 +130,20 @@ export async function runDiscardSweep(
       const { set, tab } = located;
 
       // Persist the validated current URL before disposing (ADR 0002).
-      if (tab.view && !tab.view.webContents.isDestroyed()) {
+      const rendererGuest = tab.rendererSurfaceGeneration == null
+        ? null
+        : findAdoptedWebContentsForWindow(
+            win.id,
+            tab.threadId,
+            tab.id,
+            tab.rendererSurfaceGeneration,
+          );
+      const liveGuest = tab.view && !tab.view.webContents.isDestroyed()
+        ? tab.view.webContents
+        : rendererGuest;
+      if (liveGuest) {
         try {
-          const live = tab.view.webContents.getURL();
+          const live = liveGuest.getURL();
           const safe = await validateResumeUrl(isAllowedPreviewUrl(live) ? live : null);
           if (safe) tab.resumeUrl = safe;
         } catch {
@@ -134,14 +152,17 @@ export async function runDiscardSweep(
       }
       if (win.isDestroyed()) return;
 
-      const wasActiveTab =
-        tab.threadId === s.lastPreviewThreadId && set.activeTabId === tab.id;
-
+      if (tab.rendererSurfaceGeneration != null) {
+        requestRendererSurfaceDiscard(win, tab.threadId, tab.id);
+        continue;
+      }
       disposeTabView(win, s, tab);
       bumpPerf("inactiveTabBudgetEvictions");
 
       // The active tab can only be dropped when hidden; surface it through the
       // single page-status channel so the reducer records phase: 'discarded'.
+      const wasActiveTab =
+        tab.threadId === s.lastPreviewThreadId && set.activeTabId === tab.id;
       if (wasActiveTab) applyPageStatus(win, s, { type: "discard" });
       if (tab.threadId === s.lastPreviewThreadId) activeThreadTouched = true;
     }

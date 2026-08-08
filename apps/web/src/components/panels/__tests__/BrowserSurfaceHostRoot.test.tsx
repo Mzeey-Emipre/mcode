@@ -6,7 +6,8 @@ import {
 } from "../BrowserSurfaceHostRoot";
 import type { BrowserSurfaceIdentity } from "@/services/browser-surfaces";
 import { usePreviewTabsStore } from "@/stores/previewTabsStore";
-import type { PreviewPopupRequest } from "@/transport/desktop-bridge";
+import { useBrowserAutomationStore } from "@/stores/browserAutomationStore";
+import type { PreviewPopupRequest, PreviewSurfaceRef } from "@/transport/desktop-bridge";
 
 const IDENTITY: BrowserSurfaceIdentity = {
   workspaceId: "workspace-1",
@@ -19,8 +20,88 @@ describe("BrowserSurfaceHostRoot", () => {
 
   afterEach(() => {
     browserSurfaceHost.dispose(IDENTITY);
-    usePreviewTabsStore.setState({ openPage: originalOpenPage });
+    usePreviewTabsStore.setState({
+      openPage: originalOpenPage,
+      tabSetByScope: {},
+      liveChromeByScope: {},
+      persistentTabIdsByScope: {},
+    });
+    useBrowserAutomationStore.getState().releaseWorkspaceTargets("workspace-1");
     delete window.desktopBridge;
+  });
+
+  it("discards only the exact current generation selected by Memory Saver", () => {
+    let onDiscardRequested: ((request: PreviewSurfaceRef) => void) | null = null;
+    const stopDiscardRequests = vi.fn();
+    const first = browserSurfaceHost.create(IDENTITY, {
+      generation: 7,
+      address: "https://example.test/recovery",
+    });
+    window.desktopBridge = {
+      preview: {
+        surface: {
+          onPopupRequested: vi.fn(() => () => undefined),
+          onDiscardRequested: vi.fn((listener: (request: PreviewSurfaceRef) => void) => {
+            onDiscardRequested = listener;
+            return stopDiscardRequests;
+          }),
+        },
+      },
+    } as never;
+    const view = render(<BrowserSurfaceHostRoot />);
+
+    act(() => onDiscardRequested?.({ identity: IDENTITY, generation: 6 }));
+    expect(browserSurfaceHost.getSnapshot(IDENTITY)).toBe(first);
+
+    act(() => {
+      useBrowserAutomationStore.getState().registerTarget("workspace-1", "thread-1", "web-preview");
+      useBrowserAutomationStore.getState().setControllerForTarget(
+        "workspace-1",
+        "thread-1",
+        "web-preview",
+        { tabId: "web-preview", controller: "agent", controlEpoch: 1 },
+      );
+      onDiscardRequested?.({ identity: IDENTITY, generation: 7 });
+    });
+    expect(browserSurfaceHost.getSnapshot(IDENTITY)).toBe(first);
+
+    act(() => {
+      useBrowserAutomationStore.getState().setControllerForTarget(
+        "workspace-1",
+        "thread-1",
+        "web-preview",
+        { tabId: "web-preview", controller: "none", controlEpoch: 1 },
+      );
+      onDiscardRequested?.({ identity: IDENTITY, generation: 7 });
+    });
+    expect(browserSurfaceHost.getSnapshot(IDENTITY)).toBeNull();
+    expect(browserSurfaceHost.inspect(IDENTITY)?.residency).toBe("cold");
+
+    view.unmount();
+    expect(stopDiscardRequests).toHaveBeenCalledTimes(1);
+  });
+
+  it("disposes a surface when canonical tab membership removes it", () => {
+    const view = render(<BrowserSurfaceHostRoot />);
+    browserSurfaceHost.create(IDENTITY);
+    usePreviewTabsStore.getState().setTabSet("workspace-1", "thread-1", {
+      threadId: "thread-1",
+      activeTabId: "web-preview",
+      tabs: [{
+        id: "web-preview",
+        threadId: "thread-1",
+        title: null,
+        url: null,
+        faviconUrl: null,
+        warm: true,
+        active: true,
+      }],
+    });
+
+    act(() => usePreviewTabsStore.getState().setTabSet("workspace-1", "thread-1", null));
+
+    expect(browserSurfaceHost.inspect(IDENTITY)).toBeNull();
+    view.unmount();
   });
 
   it("mounts a hosted iframe outside the panel tree", () => {
@@ -49,6 +130,7 @@ describe("BrowserSurfaceHostRoot", () => {
             onPopupRequested = listener;
             return stopPopupRequests;
           }),
+          onDiscardRequested: vi.fn(() => () => undefined),
         },
       },
     } as never;

@@ -19,6 +19,10 @@ import {
   PREVIEW_POPUP_REQUESTED_CHANNEL,
   type PreviewPopupRequest,
 } from "./preview/preview-popup-contract.js";
+import {
+  PREVIEW_SURFACE_DISCARD_REQUESTED_CHANNEL,
+  type PreviewSurfaceDiscardRequest,
+} from "./preview/preview-surface-lifecycle-contract.js";
 
 contextBridge.exposeInMainWorld("desktopBridge", {
   /** Platform facts and allowlisted native window actions for the custom title bar. */
@@ -369,6 +373,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
           };
           generation: number;
         };
+        reason: "discard" | "replace" | "dispose" | "loss";
       }): Promise<{ ok: true } | { ok: false; error: string }> {
         return ipcRenderer.invoke("preview.surface.release", payload);
       },
@@ -393,6 +398,12 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         const listener = (_event: unknown, request: PreviewPopupRequest) => callback(request);
         ipcRenderer.on(PREVIEW_POPUP_REQUESTED_CHANNEL, listener);
         return () => ipcRenderer.removeListener(PREVIEW_POPUP_REQUESTED_CHANNEL, listener);
+      },
+      /** Subscribes to exact-generation Memory Saver discard requests. */
+      onDiscardRequested(callback: (request: PreviewSurfaceDiscardRequest) => void): () => void {
+        const listener = (_event: unknown, request: PreviewSurfaceDiscardRequest) => callback(request);
+        ipcRenderer.on(PREVIEW_SURFACE_DISCARD_REQUESTED_CHANNEL, listener);
+        return () => ipcRenderer.removeListener(PREVIEW_SURFACE_DISCARD_REQUESTED_CHANNEL, listener);
       },
     },
     /** Bounded provider-neutral browser operations. Raw CDP is intentionally not exposed. */

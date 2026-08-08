@@ -63,6 +63,7 @@ export type BrowserSurfaceAdapterEvent = BrowserSurfaceAdapterEventBase & (
   | { readonly type: "favicon-updated"; readonly favicon: string | null }
   | { readonly type: "navigation-state"; readonly navigation: BrowserSurfaceNavigationState | null }
   | { readonly type: "document-access"; readonly access: BrowserSurfaceDocumentAccess }
+  | { readonly type: "surface-lost" }
 );
 
 /** Event payload accepted by adapter test doubles before identity is attached. */
@@ -85,8 +86,11 @@ export interface BrowserSurfaceAdapter {
   /** Subscribes to semantic adapter events. */
   subscribe(listener: (event: BrowserSurfaceAdapterEvent) => void): () => void;
   /** Releases the adapter's resource and listeners. */
-  dispose(): void;
+  dispose(reason?: BrowserSurfaceDisposalReason): void;
 }
+
+/** Why a generation-bound adapter stopped owning its surface. */
+export type BrowserSurfaceDisposalReason = "discard" | "replace" | "dispose" | "loss";
 
 /** Bounded viewport placement supplied by the root host for presentation. */
 export interface BrowserSurfacePresentation {
@@ -129,6 +133,16 @@ export interface BrowserSurfaceHostOptions {
 export interface BrowserSurfaceCreateOptions {
   readonly address?: string;
   readonly generation?: number;
+}
+
+/** Bounded lifecycle metadata retained while a Browser tab is cold. */
+export interface BrowserSurfaceMetadata {
+  readonly identity: BrowserSurfaceIdentity;
+  readonly residency: "warm" | "cold";
+  readonly generation: number;
+  readonly recoveryAddress: string | null;
+  readonly title: string;
+  readonly favicon: string | null;
 }
 
 /** Listener invoked when a generation's canonical state is published. */
@@ -184,16 +198,21 @@ function defaultVisibility(): BrowserSurfaceVisibility {
   };
 }
 
-function initialPageState(identity: BrowserSurfaceIdentity, generation: number, address?: string): BrowserSurfacePageState {
+function initialPageState(
+  identity: BrowserSurfaceIdentity,
+  generation: number,
+  address?: string,
+  metadata?: Pick<BrowserSurfaceMetadata, "recoveryAddress" | "title" | "favicon">,
+): BrowserSurfacePageState {
   const pendingAddress = boundString(address, MAX_ADDRESS);
   return {
     identity,
     generation,
     pendingAddress,
     committedAddress: null,
-    recoveryAddress: null,
-    title: "",
-    favicon: null,
+    recoveryAddress: metadata?.recoveryAddress ?? pendingAddress,
+    title: metadata?.title ?? "",
+    favicon: metadata?.favicon ?? null,
     phase: "loading",
     mainFrameError: null,
     navigation: null,
@@ -268,33 +287,49 @@ export class BrowserSurfaceHost {
       ? undefined
       : this.normalizeAddress(options.address);
     const generation = options.generation ?? (prior ? prior.generation + 1 : this.nextGeneration++);
-    if (prior && options.generation !== undefined && generation <= prior.generation) return prior.state;
+    if (prior && options.generation !== undefined && generation <= prior.generation) {
+      if (prior.state) return prior.state;
+      throw new RangeError("Cannot create a Browser surface from a retired generation");
+    }
     if (generation >= this.nextGeneration) this.nextGeneration = generation + 1;
+    const retainedMetadata = prior ? this.metadataFor(prior) : undefined;
     if (prior) this.disposeRecord(key, prior, false);
     const adapter = this.adapterFactory(identity, generation);
+    const state = initialPageState(identity, generation, address, retainedMetadata);
     const record: SurfaceRecord = {
       identity,
       generation,
       adapter,
-      state: initialPageState(identity, generation, address),
+      state,
+      recoveryAddress: state.recoveryAddress,
+      title: retainedMetadata?.title ?? "",
+      favicon: retainedMetadata?.favicon ?? null,
       listeners: prior?.listeners ?? new Set(),
       stopAdapter: () => undefined,
       frameHandle: null,
       publicationPending: prior !== undefined,
       disposed: false,
+      visible: prior?.visible ?? false,
+      controlled: prior?.controlled ?? false,
+      operationPins: 0,
+      capturePins: 0,
+      presentation: prior?.presentation ?? null,
     };
     this.records.set(key, record);
     record.stopAdapter = adapter.subscribe((event) => this.handleEvent(event));
     adapter.create?.();
     if (address !== undefined) void adapter.navigate(address);
     if (record.publicationPending) this.schedulePublication(record);
-    return record.state;
+    return state;
   }
 
   /** Returns an identity's warm surface, or creates it when it does not exist. */
   public ensure(identity: BrowserSurfaceIdentity, options: BrowserSurfaceCreateOptions = {}): BrowserSurfacePageState {
     const current = this.records.get(surfaceKey(identity));
-    if (current && sameIdentity(current.identity, identity)) return current.state;
+    if (current && sameIdentity(current.identity, identity)) {
+      if (current.state) return current.state;
+      return this.rewarmRecord(current, options.address);
+    }
     return this.create(identity, options);
   }
 
@@ -307,23 +342,33 @@ export class BrowserSurfaceHost {
   }): void {
     const record = this.records.get(surfaceKey(identity));
     if (!record || !sameIdentity(record.identity, identity)) return;
-    record.adapter.present(boundPresentation(presentation));
+    const bounded = boundPresentation(presentation);
+    const state = record.state ?? this.rewarmRecord(record);
+    const current = this.records.get(surfaceKey(identity));
+    if (!current || current.state !== state || !current.adapter) return;
+    current.visible = true;
+    current.presentation = bounded;
+    current.adapter.present(bounded);
   }
 
   /** Hides an identity's current surface while retaining the live adapter. */
   public hide(identity: BrowserSurfaceIdentity): void {
     const record = this.records.get(surfaceKey(identity));
     if (!record || !sameIdentity(record.identity, identity)) return;
-    record.adapter.hide();
+    record.visible = false;
+    record.adapter?.hide();
   }
 
   /** Requests navigation and synchronously enters the loading phase. */
   public navigate(identity: BrowserSurfaceIdentity, address: string): void {
     const record = this.records.get(surfaceKey(identity));
     if (!record || !sameIdentity(record.identity, identity)) return;
+    if (!record.state) this.rewarmRecord(record, address);
+    const current = this.records.get(surfaceKey(identity));
+    if (!current?.state || !current.adapter) return;
     const normalized = this.normalizeAddress(address);
-    this.reduce(record, { type: "navigation-started", identity, generation: record.generation, mainFrame: true, address: normalized });
-    void record.adapter.navigate(normalized);
+    this.reduce(current, { type: "navigation-started", identity, generation: current.generation, mainFrame: true, address: normalized });
+    void current.adapter.navigate(normalized);
   }
 
   /** Alias for callers that name the operation as a navigation request. */
@@ -335,12 +380,29 @@ export class BrowserSurfaceHost {
   public handleEvent(event: BrowserSurfaceAdapterEvent): void {
     const record = this.records.get(surfaceKey(event.identity));
     if (!record || record.disposed || record.generation !== event.generation || !sameIdentity(record.identity, event.identity)) return;
+    if (event.type === "surface-lost") {
+      this.handleUnexpectedLoss(record);
+      return;
+    }
+    if (!record.state) return;
     this.reduce(record, event);
   }
 
   /** Reads the current canonical snapshot for one identity. */
   public getSnapshot(identity: BrowserSurfaceIdentity): BrowserSurfacePageState | null {
     return this.records.get(surfaceKey(identity))?.state ?? null;
+  }
+
+  /** Reads warm or cold metadata without materializing a cold surface. */
+  public inspect(identity: BrowserSurfaceIdentity): BrowserSurfaceMetadata | null {
+    const record = this.records.get(surfaceKey(identity));
+    if (!record || !sameIdentity(record.identity, identity)) return null;
+    return {
+      identity: record.identity,
+      residency: record.state ? "warm" : "cold",
+      generation: record.generation,
+      ...this.metadataFor(record),
+    };
   }
 
   /** Subscribes to one identity; listeners never receive another identity's state. */
@@ -351,12 +413,61 @@ export class BrowserSurfaceHost {
     return () => record.listeners.delete(listener);
   }
 
+  /** Discards one unprotected warm generation and retains bounded recovery metadata. */
+  public discard(identity: BrowserSurfaceIdentity, expectedGeneration?: number): boolean {
+    const record = this.records.get(surfaceKey(identity));
+    if (
+      !record ||
+      !record.state ||
+      !sameIdentity(record.identity, identity) ||
+      expectedGeneration !== undefined && record.generation !== expectedGeneration ||
+      this.isProtected(record)
+    ) return false;
+    this.retireToCold(record);
+    return true;
+  }
+
+  /** Changes agent-control protection without changing residency or generation. */
+  public setControlled(identity: BrowserSurfaceIdentity, controlled: boolean): void {
+    const record = this.records.get(surfaceKey(identity));
+    if (!record || !sameIdentity(record.identity, identity)) return;
+    record.controlled = controlled;
+  }
+
+  /** Pins a generation while an automation operation is in flight. */
+  public pinOperation(identity: BrowserSurfaceIdentity, generation: number): () => void {
+    return this.pin(identity, generation, "operationPins");
+  }
+
+  /** Pins a generation while capture is in flight. */
+  public pinCapture(identity: BrowserSurfaceIdentity, generation: number): () => void {
+    return this.pin(identity, generation, "capturePins");
+  }
+
   /** Disposes an identity and cancels any queued publication for its generation. */
   public dispose(identity: BrowserSurfaceIdentity): void {
     const key = surfaceKey(identity);
     const record = this.records.get(key);
     if (!record || !sameIdentity(record.identity, identity)) return;
     this.disposeRecord(key, record, true);
+  }
+
+  /** Disposes every surface in one exact workspace-qualified scope. */
+  public disposeScope(workspaceId: string, scope: BrowserSurfaceIdentity["scope"]): void {
+    for (const [key, record] of this.records) {
+      if (
+        record.identity.workspaceId === workspaceId &&
+        record.identity.scope.kind === scope.kind &&
+        record.identity.scope.id === scope.id
+      ) this.disposeRecord(key, record, true);
+    }
+  }
+
+  /** Disposes every surface owned by one workspace. */
+  public disposeWorkspace(workspaceId: string): void {
+    for (const [key, record] of this.records) {
+      if (record.identity.workspaceId === workspaceId) this.disposeRecord(key, record, true);
+    }
   }
 
   /** Stops host visibility and disposes every registered surface. */
@@ -376,16 +487,22 @@ export class BrowserSurfaceHost {
     record.frameHandle = null;
     record.publicationPending = false;
     record.stopAdapter();
-    record.adapter.dispose();
+    record.adapter?.dispose(remove ? "dispose" : "replace");
+    record.adapter = null;
+    record.state = null;
     if (remove) record.listeners.clear();
     if (remove && this.records.get(key) === record) this.records.delete(key);
   }
 
   private reduce(record: SurfaceRecord, event: BrowserSurfaceAdapterEvent): void {
     const previous = record.state;
+    if (!previous || event.type === "surface-lost") return;
     const next = this.nextState(previous, event);
     if (next === previous) return;
     record.state = next;
+    record.recoveryAddress = next.recoveryAddress;
+    record.title = next.title;
+    record.favicon = next.favicon;
     record.publicationPending = true;
     this.schedulePublication(record);
   }
@@ -438,6 +555,8 @@ export class BrowserSurfaceHost {
         return this.mergeState(state, { navigation: event.navigation });
       case "document-access":
         return this.mergeState(state, { documentAccess: event.access });
+      case "surface-lost":
+        return state;
     }
   }
 
@@ -455,12 +574,13 @@ export class BrowserSurfaceHost {
   }
 
   private schedulePublication(record: SurfaceRecord): void {
-    if (record.frameHandle !== null || this.visibility.isHidden()) return;
+    if (!record.state || record.frameHandle !== null || this.visibility.isHidden()) return;
     record.frameHandle = this.scheduling.requestAnimationFrame(() => {
       record.frameHandle = null;
       if (record.disposed || this.visibility.isHidden()) return;
       if (!record.publicationPending) return;
       record.publicationPending = false;
+      if (!record.state) return;
       for (const listener of [...record.listeners]) listener(record.state);
     });
   }
@@ -472,16 +592,90 @@ export class BrowserSurfaceHost {
       this.schedulePublication(record);
     }
   }
+
+  private metadataFor(record: SurfaceRecord): Pick<BrowserSurfaceMetadata, "recoveryAddress" | "title" | "favicon"> {
+    return {
+      recoveryAddress: record.state?.recoveryAddress ?? record.recoveryAddress,
+      title: record.state?.title ?? record.title,
+      favicon: record.state?.favicon ?? record.favicon,
+    };
+  }
+
+  private isProtected(record: SurfaceRecord): boolean {
+    return record.visible || record.controlled || record.operationPins > 0 || record.capturePins > 0;
+  }
+
+  private retireToCold(record: SurfaceRecord, reason: BrowserSurfaceDisposalReason = "discard"): void {
+    const metadata = this.metadataFor(record);
+    record.recoveryAddress = metadata.recoveryAddress;
+    record.title = metadata.title;
+    record.favicon = metadata.favicon;
+    record.visible = false;
+    record.presentation = null;
+    if (record.frameHandle !== null) this.scheduling.cancelAnimationFrame(record.frameHandle);
+    record.frameHandle = null;
+    record.publicationPending = false;
+    record.stopAdapter();
+    record.stopAdapter = () => undefined;
+    record.adapter?.dispose(reason);
+    record.adapter = null;
+    record.state = null;
+  }
+
+  private rewarmRecord(record: SurfaceRecord, requestedAddress?: string): BrowserSurfacePageState {
+    const recoveryAddress = requestedAddress ?? record.recoveryAddress ?? undefined;
+    return this.create(record.identity, {
+      generation: record.generation + 1,
+      ...(recoveryAddress === undefined ? {} : { address: recoveryAddress }),
+    });
+  }
+
+  private handleUnexpectedLoss(record: SurfaceRecord): void {
+    const shouldRestore = this.isProtected(record);
+    const presentation = record.presentation;
+    this.retireToCold(record, "loss");
+    if (!shouldRestore) return;
+    this.rewarmRecord(record);
+    if (presentation) this.present(record.identity, presentation);
+  }
+
+  private pin(
+    identity: BrowserSurfaceIdentity,
+    generation: number,
+    field: "operationPins" | "capturePins",
+  ): () => void {
+    const record = this.records.get(surfaceKey(identity));
+    if (!record || !record.state || record.generation !== generation || !sameIdentity(record.identity, identity)) {
+      return () => undefined;
+    }
+    record[field] += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const current = this.records.get(surfaceKey(identity));
+      if (current !== record) return;
+      current[field] = Math.max(0, current[field] - 1);
+    };
+  }
 }
 
 interface SurfaceRecord {
   readonly identity: BrowserSurfaceIdentity;
   readonly generation: number;
-  readonly adapter: BrowserSurfaceAdapter;
+  adapter: BrowserSurfaceAdapter | null;
   readonly listeners: Set<BrowserSurfaceListener>;
-  state: BrowserSurfacePageState;
+  state: BrowserSurfacePageState | null;
+  recoveryAddress: string | null;
+  title: string;
+  favicon: string | null;
   stopAdapter: () => void;
   frameHandle: number | null;
   publicationPending: boolean;
   disposed: boolean;
+  visible: boolean;
+  controlled: boolean;
+  operationPins: number;
+  capturePins: number;
+  presentation: BrowserSurfacePresentation | null;
 }

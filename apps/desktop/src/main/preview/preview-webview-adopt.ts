@@ -5,7 +5,13 @@ import {
 } from "electron";
 import type { IpcMainInvokeEvent, WebContents } from "electron";
 import { logger } from "@mcode/shared";
-import { getSession, getThreadTabSet } from "./preview-session.js";
+import {
+  applyPageStatus,
+  emitTabsUpdated,
+  getSession,
+  getThreadTabSet,
+  type TabState,
+} from "./preview-session.js";
 import { resolvePreviewNavigationTarget } from "./preview-navigation.js";
 import { trustMainProcessFileNavigation } from "./preview-local-file.js";
 import {
@@ -16,6 +22,8 @@ import { previewSessionAdapter } from "./preview-session-adapter.js";
 import { PREVIEW_POPUP_REQUESTED_CHANNEL } from "./preview-popup-contract.js";
 import type { PreviewPopupSurfaceRef } from "./preview-popup-contract.js";
 import { isBrowserAutomationAgentOperationActive } from "../browser-automation/active-operation.js";
+import { PREVIEW_SURFACE_DISCARD_REQUESTED_CHANNEL } from "./preview-surface-lifecycle-contract.js";
+import { bumpPerf } from "./preview-perf.js";
 
 const MAX_SURFACE_ID_LENGTH = 256;
 const MAX_ADOPTION_TOKEN_LENGTH = 128;
@@ -69,6 +77,7 @@ export interface PreviewSurfaceAdoptInput extends PreviewSurfacePrepareInput {}
 /** Input accepted by preview.surface.release. */
 export interface PreviewSurfaceReleaseInput {
   readonly surface: PreviewSurfaceRef;
+  readonly reason: "discard" | "replace" | "dispose" | "loss";
 }
 
 /** Input accepted by preview.surface.navigate. */
@@ -140,20 +149,22 @@ function windowMap<T>(maps: Map<number, Map<string, T>>, windowId: number): Map<
 function findOwnedTab(
   win: BrowserWindow,
   identity: PreviewSurfaceIdentity,
-): { threadId: string; tabId: string } | null {
+): { threadId: string; tabId: string; tab: TabState } | null {
   const session = getSession(win);
   if (session.workspaceId !== identity.workspaceId) return null;
   if (identity.scope.kind === "thread") {
     const tab = getThreadTabSet(session, identity.scope.id, identity.workspaceId)?.tabs.find((candidate) => candidate.id === identity.tabId);
-    return tab?.threadId === identity.scope.id ? { threadId: identity.scope.id, tabId: tab.id } : null;
+    return tab?.threadId === identity.scope.id
+      ? { threadId: identity.scope.id, tabId: tab.id, tab }
+      : null;
   }
   if (identity.scope.id !== identity.workspaceId) return null;
-  let found: { threadId: string; tabId: string } | null = null;
+  let found: { threadId: string; tabId: string; tab: TabState } | null = null;
   for (const tabSet of session.tabsByThread.values()) {
     const tab = tabSet.tabs.find((candidate) => candidate.id === identity.tabId);
     if (!tab) continue;
     if (found) return null;
-    found = { threadId: tab.threadId, tabId: tab.id };
+    found = { threadId: tab.threadId, tabId: tab.id, tab };
   }
   return found;
 }
@@ -199,7 +210,11 @@ function errorResult(error: string): PreviewSurfaceResult {
 function validateSenderAndSurface(
   event: IpcMainInvokeEvent,
   surfaceValue: unknown,
-): { win: BrowserWindow; surface: PreviewSurfaceRef; owner: { threadId: string; tabId: string } } | PreviewSurfaceResult {
+): {
+  win: BrowserWindow;
+  surface: PreviewSurfaceRef;
+  owner: { threadId: string; tabId: string; tab: TabState };
+} | PreviewSurfaceResult {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (!win || win.isDestroyed()) return errorResult("no-window");
   const surface = validateSurface(surfaceValue);
@@ -227,6 +242,20 @@ function dropPending(windowId: number, key: string): void {
   const map = pendingByWindow.get(windowId);
   map?.delete(key);
   if (map && map.size === 0) pendingByWindow.delete(windowId);
+}
+
+function validReleaseReason(value: unknown): value is PreviewSurfaceReleaseInput["reason"] {
+  return value === "discard" || value === "replace" || value === "dispose" || value === "loss";
+}
+
+function setRendererResidency(
+  win: BrowserWindow,
+  owner: { threadId: string; tabId: string; tab: TabState },
+  generation: number | null,
+): void {
+  if (owner.tab.rendererSurfaceGeneration === generation) return;
+  owner.tab.rendererSurfaceGeneration = generation;
+  emitTabsUpdated(win, getSession(win), owner.threadId);
 }
 
 /** Resolves the adopted guest for an exact identity and generation. */
@@ -259,6 +288,23 @@ export function findAdoptedWebContentsForWindow(
     ) return record.webContents;
   }
   return null;
+}
+
+/** Requests renderer-side discard for one adopted surface selected by Memory Saver. */
+export function requestRendererSurfaceDiscard(
+  win: BrowserWindow,
+  threadId: string,
+  tabId: string,
+): boolean {
+  const records = adoptedByWindow.get(win.id);
+  const record = [...(records?.values() ?? [])].find((candidate) =>
+    candidate.surface.identity.scope.kind === "thread" &&
+    candidate.surface.identity.scope.id === threadId &&
+    candidate.surface.identity.tabId === tabId &&
+    !candidate.webContents.isDestroyed());
+  if (!record || win.isDestroyed() || win.webContents.isDestroyed()) return false;
+  win.webContents.send(PREVIEW_SURFACE_DISCARD_REQUESTED_CHANNEL, record.surface);
+  return true;
 }
 
 function prepareSurface(event: IpcMainInvokeEvent, inputValue: unknown): PreviewSurfaceResult {
@@ -298,7 +344,7 @@ function adoptSurface(event: IpcMainInvokeEvent, inputValue: unknown): PreviewSu
   if (!validAdoptionToken(input.adoptionToken)) return errorResult("invalid-adoption-token");
   const validated = validateSenderAndSurface(event, input.surface);
   if ("ok" in validated) return validated;
-  const { win, surface } = validated;
+  const { win, surface, owner } = validated;
   const key = surfaceKey(surface.identity);
   const currentGeneration = generationByWindow.get(win.id)?.get(key);
   if (currentGeneration !== surface.generation) return errorResult("stale-generation");
@@ -311,7 +357,10 @@ function adoptSurface(event: IpcMainInvokeEvent, inputValue: unknown): PreviewSu
       candidate.getURL() === `about:blank#${input.adoptionToken}` && candidate.hostWebContents === event.sender);
     return errorResult(matches.length > 1 ? "non-unique-adoption" : "guest-not-found");
   }
-  const onDestroyed = () => dropAdoption(win.id, key);
+  const onDestroyed = () => {
+    dropAdoption(win.id, key);
+    setRendererResidency(win, owner, null);
+  };
   guest.once("destroyed", onDestroyed);
   const disposePopup = previewSessionAdapter.bindGuestPopup(guest, {
     sourceSurface: surface,
@@ -333,6 +382,7 @@ function adoptSurface(event: IpcMainInvokeEvent, inputValue: unknown): PreviewSu
   };
   windowMap(adoptedByWindow, win.id).set(key, { surface, adoptionToken: input.adoptionToken, webContents: guest, dispose });
   dropPending(win.id, key);
+  setRendererResidency(win, owner, surface.generation);
   logger.info("Preview: adopted typed webview surface", {
     workspaceId: surface.identity.workspaceId,
     scope: surface.identity.scope,
@@ -348,7 +398,9 @@ function releaseSurface(event: IpcMainInvokeEvent, inputValue: unknown): Preview
   if (!win || win.isDestroyed()) return errorResult("no-window");
   const surface = validateSurface(input.surface);
   if (!surface) return errorResult("invalid-surface");
+  if (!validReleaseReason(input.reason)) return errorResult("invalid-release-reason");
   const key = surfaceKey(surface.identity);
+  const owner = findOwnedTab(win, surface.identity);
   const currentGeneration = generationByWindow.get(win.id)?.get(key);
   if (currentGeneration !== surface.generation) return errorResult("stale-generation");
   const record = adoptedByWindow.get(win.id)?.get(key);
@@ -357,6 +409,21 @@ function releaseSurface(event: IpcMainInvokeEvent, inputValue: unknown): Preview
     dropAdoption(win.id, key);
   }
   dropPending(win.id, key);
+  if (owner) {
+    setRendererResidency(win, owner, null);
+    if (input.reason === "discard") {
+      const session = getSession(win);
+      const activeTabId = getThreadTabSet(
+        session,
+        owner.threadId,
+        surface.identity.workspaceId,
+      )?.activeTabId;
+      if (session.lastPreviewThreadId === owner.threadId && activeTabId === owner.tabId) {
+        applyPageStatus(win, session, { type: "discard" });
+      }
+      bumpPerf("inactiveTabBudgetEvictions");
+    }
+  }
   return { ok: true };
 }
 
