@@ -1039,6 +1039,43 @@ describe("PreviewPanel: full panel state", () => {
     expect(omnibox).toHaveValue("https://b.example");
   });
 
+  it("presents every warm tab in the hidden automation host", async () => {
+    const bounds = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      x: 0,
+      y: 0,
+      top: 0,
+      right: 1280,
+      bottom: 720,
+      left: 0,
+      width: 1280,
+      height: 720,
+      toJSON: () => ({}),
+    });
+    mockUsePreviewBridge.mockReturnValue(mockBridgeState({ storedUrl: "https://a.example" }));
+    mockUsePreviewTabs.mockReturnValue({
+      tabSet: {
+        threadId: "thread-1",
+        activeTabId: "tab-a",
+        tabs: [
+          { id: "tab-a", threadId: "thread-1", title: "A", url: "https://a.example", faviconUrl: null, warm: true, active: true },
+          { id: "tab-b", threadId: "thread-1", title: "B", url: "https://b.example", faviconUrl: null, warm: true, active: false },
+        ],
+      },
+      newTab: vi.fn(),
+      activateTab: vi.fn(),
+      closeTab: vi.fn(),
+    });
+
+    render(<PreviewPanel threadId="thread-1" workspaceId="workspace-1" automationOnly />);
+
+    await waitFor(() => expect(screen.getAllByTestId("electron-browser-surface-webview")).toHaveLength(2));
+    expect(screen.getAllByTestId("electron-browser-surface-webview")).toEqual([
+      expect.objectContaining({ style: expect.objectContaining({ visibility: "visible" }) }),
+      expect.objectContaining({ style: expect.objectContaining({ visibility: "visible" }) }),
+    ]);
+    bounds.mockRestore();
+  });
+
   it("persists favicon updates from inactive warm webview pages", async () => {
     const tabSet = {
       threadId: "thread-1",

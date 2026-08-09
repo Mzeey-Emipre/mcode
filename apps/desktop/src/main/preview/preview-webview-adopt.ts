@@ -52,7 +52,7 @@ export type PreviewSurfaceNavigation =
 /** Result returned by a typed Preview surface operation. */
 export type PreviewSurfaceResult =
   | { readonly ok: true }
-  | { readonly ok: false; readonly error: string };
+  | { readonly ok: false; readonly error: string; readonly nextGeneration?: number };
 
 /** Pending or adopted exact Preview guest held by Electron main. */
 export interface AdoptedPreviewSurface {
@@ -207,6 +207,10 @@ function errorResult(error: string): PreviewSurfaceResult {
   return { ok: false, error };
 }
 
+function staleGenerationResult(currentGeneration: number): PreviewSurfaceResult {
+  return { ok: false, error: "stale-generation", nextGeneration: currentGeneration + 1 };
+}
+
 function validateSenderAndSurface(
   event: IpcMainInvokeEvent,
   surfaceValue: unknown,
@@ -328,12 +332,12 @@ function prepareSurface(event: IpcMainInvokeEvent, inputValue: unknown): Preview
   const key = surfaceKey(surface.identity);
   const adopted = adoptedByWindow.get(win.id)?.get(key);
   if (adopted?.surface.generation === surface.generation) return errorResult("duplicate-adoption");
-  if (adopted && surface.generation < adopted.surface.generation) return errorResult("stale-generation");
   const pending = pendingByWindow.get(win.id)?.get(key);
   if (pending?.surface.generation === surface.generation) return errorResult("duplicate-adoption");
-  if (pending && surface.generation < pending.surface.generation) return errorResult("stale-generation");
-  const generations = generationByWindow.get(win.id)?.get(key);
-  if (generations !== undefined && surface.generation <= generations) return errorResult("stale-generation");
+  const currentGeneration = generationByWindow.get(win.id)?.get(key);
+  if (currentGeneration !== undefined && surface.generation <= currentGeneration) {
+    return staleGenerationResult(currentGeneration);
+  }
   for (const records of pendingByWindow.values()) {
     for (const candidate of records.values()) {
       if (candidate.adoptionToken === input.adoptionToken) return errorResult("duplicate-adoption-token");

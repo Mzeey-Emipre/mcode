@@ -63,7 +63,7 @@ export type BrowserSurfaceAdapterEvent = BrowserSurfaceAdapterEventBase & (
   | { readonly type: "favicon-updated"; readonly favicon: string | null }
   | { readonly type: "navigation-state"; readonly navigation: BrowserSurfaceNavigationState | null }
   | { readonly type: "document-access"; readonly access: BrowserSurfaceDocumentAccess }
-  | { readonly type: "surface-lost" }
+  | { readonly type: "surface-lost"; readonly nextGeneration?: number }
 );
 
 /** Event payload accepted by adapter test doubles before identity is attached. */
@@ -394,7 +394,7 @@ export class BrowserSurfaceHost {
     if (!record || record.disposed || record.generation !== event.generation || !sameIdentity(record.identity, event.identity)) return;
     if (event.type === "surface-lost") {
       if (!record.state) return;
-      this.handleUnexpectedLoss(record);
+      this.handleUnexpectedLoss(record, event.nextGeneration);
       return;
     }
     if (!record.state) return;
@@ -642,20 +642,23 @@ export class BrowserSurfaceHost {
     record.state = null;
   }
 
-  private rewarmRecord(record: SurfaceRecord, requestedAddress?: string): BrowserSurfacePageState {
+  private rewarmRecord(record: SurfaceRecord, requestedAddress?: string, requestedGeneration?: number): BrowserSurfacePageState {
     const recoveryAddress = requestedAddress ?? record.recoveryAddress ?? undefined;
     return this.create(record.identity, {
-      generation: record.generation + 1,
+      generation: requestedGeneration ?? record.generation + 1,
       ...(recoveryAddress === undefined ? {} : { address: recoveryAddress }),
     });
   }
 
-  private handleUnexpectedLoss(record: SurfaceRecord): void {
-    const shouldRestore = this.isProtected(record);
+  private handleUnexpectedLoss(record: SurfaceRecord, requestedGeneration?: number): void {
+    const validRequestedGeneration = Number.isSafeInteger(requestedGeneration) && requestedGeneration! > record.generation
+      ? requestedGeneration
+      : undefined;
+    const shouldRestore = validRequestedGeneration !== undefined || this.isProtected(record);
     const presentation = record.presentation;
     this.retireToCold(record, "loss");
     if (!shouldRestore) return;
-    this.rewarmRecord(record);
+    this.rewarmRecord(record, undefined, validRequestedGeneration);
     if (presentation) this.present(record.identity, presentation);
   }
 

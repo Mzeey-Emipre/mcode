@@ -108,7 +108,7 @@ export class ElectronWebviewBrowserSurfaceAdapter implements BrowserSurfaceAdapt
   private readonly bridge: PreviewSurfaceBridge;
   private readonly surface: PreviewSurfaceRef;
   private readonly adoptionToken: string;
-  private readonly preparePromise: Promise<boolean>;
+  private readonly preparePromise: Promise<PreviewSurfaceBridgeResult>;
   private adoptionPromise: Promise<boolean> | null = null;
   private readonly adoptionWaiters = new Set<(adopted: boolean) => void>();
   private pendingAddress: string | null = null;
@@ -166,7 +166,7 @@ export class ElectronWebviewBrowserSurfaceAdapter implements BrowserSurfaceAdapt
     this.preparePromise = Promise.resolve(this.bridge.prepare({
       surface: this.surface,
       adoptionToken: this.adoptionToken,
-    })).then(asResult, () => false);
+    })).catch(() => ({ ok: false as const, error: "Surface preparation failed" }));
     (options.root ?? this.documentRef.body)?.appendChild(this.frame);
   }
 
@@ -178,6 +178,16 @@ export class ElectronWebviewBrowserSurfaceAdapter implements BrowserSurfaceAdapt
   /** Materializes this adapter; construction already owns and attaches its webview. */
   public create(): void {
     if (this.disposed) return;
+    void this.preparePromise.then((result) => {
+      if (
+        !result.ok &&
+        result.error === "stale-generation" &&
+        Number.isSafeInteger(result.nextGeneration) &&
+        result.nextGeneration! > this.generation
+      ) {
+        this.emit({ type: "surface-lost", nextGeneration: result.nextGeneration });
+      }
+    });
   }
 
   /** Presents the webview at bounded host coordinates. */
@@ -260,7 +270,7 @@ export class ElectronWebviewBrowserSurfaceAdapter implements BrowserSurfaceAdapt
   };
 
   private async adoptAfterPreparation(): Promise<boolean> {
-    if (!(await this.preparePromise) || this.disposed) {
+    if (!asResult(await this.preparePromise) || this.disposed) {
       this.resolveAdoptionWaiters(false);
       return false;
     }

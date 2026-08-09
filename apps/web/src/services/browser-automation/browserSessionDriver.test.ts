@@ -441,6 +441,39 @@ describe("BrowserSessionDriver", () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
+  it("executes an assert step through bounded wait conditions", async () => {
+    const execute = vi.fn(async (dispatch: BrowserAutomationHostDispatch) => ({
+      ok: true,
+      result: { operation: dispatch.request.operation },
+    }) as unknown as BrowserAutomationResponse);
+    const driver = new BrowserSessionDriver({
+      web: { execute },
+      electron: { execute },
+      isElectron: () => false,
+      supportedActOperations: ["click"],
+    });
+    const inspect = await driver.execute(inspectDispatch(), new AbortController().signal);
+    const observationRef = (inspect as { result: { observationRef: string } }).result.observationRef;
+
+    const result = await driver.execute(actDispatch(observationRef, [{
+      operation: "assert",
+      target: { cssSelector: "#status" },
+      text: "Action status: complete",
+    }]), new AbortController().signal);
+
+    expect(result).toMatchObject({
+      ok: true,
+      result: { receipts: [{ operation: "assert", status: "satisfied" }] },
+    });
+    expect(execute.mock.calls.slice(1).map(([dispatch]) => ({
+      operation: dispatch.request.operation,
+      args: dispatch.request.args,
+    }))).toEqual([
+      expect.objectContaining({ operation: "waitFor", args: expect.objectContaining({ target: { cssSelector: "#status" }, state: "visible" }) }),
+      expect.objectContaining({ operation: "waitFor", args: expect.objectContaining({ text: "Action status: complete" }) }),
+    ]);
+  });
+
   it("stops before the next effect when control revision changes", async () => {
     let controlRevision = 0;
     const execute = vi.fn(async (dispatch: BrowserAutomationHostDispatch) => {

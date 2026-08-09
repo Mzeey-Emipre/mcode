@@ -57,6 +57,8 @@ import {
 } from "@/services/browser-automation/viewportCoordinatorFactory";
 
 const HEARTBEAT_INTERVAL_MS = 10_000;
+const TARGET_DISCOVERY_RETRY_MS = 50;
+const TARGET_DISCOVERY_MAX_ATTEMPTS = 40;
 const WEB_AUTOMATION_UNAVAILABLE_REASON = "Web automation executor is unavailable";
 const viewportCoordinatorDispatches = new WeakMap<object, BrowserAutomationHostDispatch>();
 
@@ -479,6 +481,34 @@ function waitForLiveTarget(
     });
     signal.addEventListener("abort", onAbort, { once: true });
   });
+}
+
+async function waitForDesktopTarget(
+  bridge: PreviewAutomationBridge,
+  threadId: string,
+  tabId: string,
+  deadline: number,
+  signal: AbortSignal,
+): Promise<Extract<Awaited<ReturnType<PreviewAutomationBridge["describeTarget"]>>, { ok: true }>["target"]> {
+  while (true) {
+    if (signal.aborted) throw signal.reason;
+    const described = await bridge.describeTarget({ threadId, tabId });
+    if (described.ok) return described.target;
+    if (described.error !== "TAB_UNAVAILABLE") throw new Error("Browser target could not be described");
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error("Browser target could not be described before the request deadline");
+    await new Promise<void>((resolve, reject) => {
+      const onAbort = () => {
+        window.clearTimeout(timer);
+        reject(signal.reason);
+      };
+      const timer = window.setTimeout(() => {
+        signal.removeEventListener("abort", onAbort);
+        resolve();
+      }, Math.min(TARGET_DISCOVERY_RETRY_MS, remaining));
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+  }
 }
 
 function webPreviewIframe(
@@ -1040,6 +1070,7 @@ export function BrowserAutomationHost() {
     const lease = leaseRef.current;
     if (!lease || connectionStatus !== "connected") return;
     let cancelled = false;
+    let retryTimer: number | null = null;
     const bridge = window.desktopBridge?.preview?.automation;
     if (!bridge && !isBrowserAutomationWebRuntimeEnabled()) return;
     if (!bridge) {
@@ -1070,32 +1101,41 @@ export function BrowserAutomationHost() {
       return;
     }
     const targets = [...liveTargets.values()].slice(0, 64);
-    void Promise.all(targets.map(async (candidate) => {
-      const described = await bridge.describeTarget({
-        threadId: candidate.threadId,
-        tabId: candidate.tabId,
-      });
-      if (!described.ok) return null;
-      const controller = useBrowserAutomationStore.getState().controllers.get(browserAutomationTargetKey(candidate.workspaceId, candidate.threadId, candidate.tabId));
-      return {
-        ...described.target,
-        desktopInstanceId: lease.desktopInstanceId,
-        connectionGeneration: lease.generation,
-        ...(controller ? { controller } : {}),
-      } satisfies BrowserAutomationHostDispatchTarget;
-    })).then((resolved) => {
+    const publishTargets = async (attempt: number): Promise<void> => {
+      const resolved = await Promise.all(targets.map(async (candidate) => {
+        const described = await bridge.describeTarget({
+          threadId: candidate.threadId,
+          tabId: candidate.tabId,
+        });
+        if (!described.ok) return null;
+        const controller = useBrowserAutomationStore.getState().controllers.get(browserAutomationTargetKey(candidate.workspaceId, candidate.threadId, candidate.tabId));
+        return {
+          ...described.target,
+          desktopInstanceId: lease.desktopInstanceId,
+          connectionGeneration: lease.generation,
+          ...(controller ? { controller } : {}),
+        } satisfies BrowserAutomationHostDispatchTarget;
+      }));
       if (cancelled || leaseRef.current !== lease) return;
-      return getTransport().updateBrowserAutomationHostTargets(
+      await getTransport().updateBrowserAutomationHostTargets(
         lease.hostId,
         lease.generation,
         resolved.filter((target): target is BrowserAutomationHostDispatchTarget => target !== null),
       );
-    }).catch(() => {
-      // A replacement or release can race target discovery. The next registry
-      // revision retries with desktop-main identity as the source of truth.
+      if (resolved.some((target) => target === null) && attempt < TARGET_DISCOVERY_MAX_ATTEMPTS) {
+        retryTimer = window.setTimeout(() => {
+          retryTimer = null;
+          void publishTargets(attempt + 1).catch(() => undefined);
+        }, TARGET_DISCOVERY_RETRY_MS);
+      }
+    };
+    void publishTargets(1).catch(() => {
+      // A replacement or release can race publication. Registry changes retry
+      // with desktop-main identity as the source of truth.
     });
     return () => {
       cancelled = true;
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
     };
   }, [cancelHostedRequest, connectionStatus, liveTargets, registered]);
 
@@ -1609,7 +1649,16 @@ export function BrowserAutomationHost() {
         await waitForLiveTarget(request.workspaceId, request.threadId, tabId, request.deadline, controller.signal);
         ensureActive();
         const described = bridge
-          ? await bridge.describeTarget({ threadId: request.threadId, tabId })
+          ? {
+              ok: true as const,
+              target: await waitForDesktopTarget(
+                bridge,
+                request.threadId,
+                tabId,
+                request.deadline,
+                controller.signal,
+              ),
+            }
           : {
               ok: true as const,
               target: {
@@ -1624,7 +1673,6 @@ export function BrowserAutomationHost() {
                 lastUsedAt: Date.now(),
               },
             };
-        if (!described.ok) throw new Error("Browser target could not be described");
         ensureActive();
         const target: BrowserAutomationHostDispatchTarget = {
           ...described.target,

@@ -193,6 +193,16 @@ describe("preview typed surface bridge", () => {
     expect(invoke("preview.surface.adopt", { surface: surface(), adoptionToken: "token-1234" })).toMatchObject({ ok: false, error: "non-unique-adoption" });
   });
 
+  it("returns the next valid generation when renderer state restarts after reload", () => {
+    expect(invoke("preview.surface.prepare", { surface: surface(7), adoptionToken: "token-1234" })).toEqual({ ok: true });
+
+    expect(invoke("preview.surface.prepare", { surface: surface(1), adoptionToken: "token-5678" })).toEqual({
+      ok: false,
+      error: "stale-generation",
+      nextGeneration: 8,
+    });
+  });
+
   it("retires the adopted guest when the owner advances to a new generation", () => {
     const firstGuest = makeGuest(allWindows[0]!);
     expect(invoke("preview.surface.prepare", { surface: surface(), adoptionToken: "token-1234" })).toEqual({ ok: true });
