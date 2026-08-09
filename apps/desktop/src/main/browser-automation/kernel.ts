@@ -340,7 +340,7 @@ export function snapshotPage(argument: { semanticGeneration: number; maxElements
 }
 
 /** Resolves one target to attachment, visibility, and action-point state inside the isolated world. */
-export function inspectPageTarget(argument: { target: BrowserAutomationTarget }) {
+export function inspectPageTarget(argument: { target: BrowserAutomationTarget; scrollIntoView?: boolean }) {
   const nodeList = document.querySelectorAll("a[href],button,input,textarea,select,[role],[tabindex]");
   const candidates: Element[] = [];
   for (let index = 0; index < Math.min(nodeList.length, 2_000); index += 1) {
@@ -415,17 +415,31 @@ export function inspectPageTarget(argument: { target: BrowserAutomationTarget })
     };
   }
   if (!found) return { attached: false, visible: false };
-  const rect = found.getBoundingClientRect();
+  let rect = found.getBoundingClientRect();
+  if (
+    argument.scrollIntoView &&
+    (rect.left < 0 || rect.top < 0 || rect.right > innerWidth || rect.bottom > innerHeight)
+  ) {
+    found.scrollIntoView({ block: "center", inline: "center" });
+    rect = found.getBoundingClientRect();
+  }
   const style = getComputedStyle(found);
+  const point = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
   const isVisible =
     rect.width > 0 &&
     rect.height > 0 &&
     style.visibility !== "hidden" &&
-    style.display !== "none";
+    style.display !== "none" &&
+    (!argument.scrollIntoView || (
+      point.x >= 0 &&
+      point.y >= 0 &&
+      point.x <= innerWidth &&
+      point.y <= innerHeight
+    ));
   return {
     attached: true,
     visible: isVisible,
-    ...(isVisible ? { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 } : {}),
+    ...(isVisible ? point : {}),
   };
 }
 
@@ -1613,7 +1627,7 @@ export class BrowserAutomationKernel {
   }
 
   private async resolvePoint(resolved: ResolvedTarget, target: BrowserAutomationTarget): Promise<{ x: number; y: number }> {
-    const value = await this.callIsolatedFunction(resolved.state, inspectPageTarget, { target });
+    const value = await this.callIsolatedFunction(resolved.state, inspectPageTarget, { target, scrollIntoView: true });
     const record = asRecord(value);
     if (!record.attached || !record.visible || !Number.isFinite(record.x) || !Number.isFinite(record.y)) {
       throw new KernelError("TARGET_NOT_FOUND", "Browser target did not resolve to one visible element", true);

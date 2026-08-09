@@ -584,6 +584,25 @@ describe("BrowserAutomationKernel", () => {
     unsubscribe();
   });
 
+  it("scrolls an off-screen semantic target into view before clicking", async () => {
+    currentWebContents!.semanticElements.set("offscreen-button", { attached: true, visible: true, x: 25, y: 40 });
+
+    await kernel.execute(event(), payload(request("click", {
+      target: { semanticId: "offscreen-button" },
+      button: "left",
+      clickCount: 1,
+      timeoutMs: 1_000,
+    }, { requestId: "offscreen-semantic-target" })));
+
+    const targetResolution = currentWebContents!.debugger.commands.findLast(
+      ({ method, params }) => method === "Runtime.callFunctionOn" &&
+        (params as { functionDeclaration?: string }).functionDeclaration?.includes("inspectPageTarget"),
+    );
+    expect(targetResolution?.params).toMatchObject({
+      arguments: [{ value: { target: { semanticId: "offscreen-button" }, scrollIntoView: true } }],
+    });
+  });
+
   it("retains agent control between Browser calls until the renderer releases the turn", async () => {
     await expect(kernel.execute(event(), payload(request("press", {
       key: "A",

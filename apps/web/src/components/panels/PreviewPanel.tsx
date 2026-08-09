@@ -2966,7 +2966,7 @@ export function PreviewPanel({
     return (
       <PreviewWebview
         key={tab.id}
-        active={tab.id === activeWebviewTabId}
+        active={automationOnly || tab.id === activeWebviewTabId}
         ref={(handle) => {
           webviewRefs.current[tab.id] = handle;
         }}
@@ -2974,6 +2974,7 @@ export function PreviewPanel({
         workspaceId={workspaceId ?? threadId}
         tabId={tab.id}
         src={tab.src}
+        allowHiddenPresentation={automationOnly}
         viewport={tabViewportState?.mode === "responsive" ? tabViewport : undefined}
         className={cn(
           responsiveViewportSize

@@ -375,6 +375,24 @@ describe("BrowserSurfaceHost", () => {
     host.disposeHost();
   });
 
+  it("uses the main process generation after renderer state restarts", () => {
+    const adapters: TestAdapter[] = [];
+    const host = new BrowserSurfaceHost({
+      adapterFactory: () => {
+        const adapter = new TestAdapter();
+        adapters.push(adapter);
+        return adapter;
+      },
+    });
+    host.create(IDENTITY, { address: "https://example.test/recovery" });
+
+    adapters[0]!.emit({ type: "surface-lost", nextGeneration: 8 });
+
+    expect(host.getSnapshot(IDENTITY)?.generation).toBe(8);
+    expect(adapters[1]!.navigations).toEqual(["https://example.test/recovery"]);
+    host.disposeHost();
+  });
+
   it("ignores a late loss event after a generation is already cold", () => {
     const adapters: TestAdapter[] = [];
     const host = new BrowserSurfaceHost({

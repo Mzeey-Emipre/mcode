@@ -447,7 +447,8 @@ export class BrowserSessionDriver {
     const observation = this.observations.get(request.args.observationRef);
     const capabilityRevision = this.options.getCapabilityRevision?.() ?? dispatch.connection?.capabilityRevision ?? 1;
     const supported = typeof this.options.supportedActOperations === "function" ? this.options.supportedActOperations() : this.options.supportedActOperations;
-    if (supported && request.args.steps.some((step: BrowserAutomationActStep) => !supported.includes(step.operation))) {
+    if (supported && request.args.steps.some((step: BrowserAutomationActStep) =>
+      step.operation !== "assert" && !supported.includes(step.operation))) {
       return Promise.resolve(this.actFailure(dispatch, "UNSUPPORTED_OPERATION", "Browser runtime cannot execute every browser_act step"));
     }
     const currentBinding = this.currentObservationBinding(dispatch, capabilityRevision);
@@ -493,7 +494,9 @@ export class BrowserSessionDriver {
           break;
         }
         const stepDispatch = this.stepDispatch(dispatch, step, deadline, index);
-        const response = await this.executeAdapter(stepDispatch, signal, { implicitClaim: false });
+        const response = step.operation === "assert"
+          ? await this.executeAssertStep(stepDispatch, step, signal, deadline)
+          : await this.executeAdapter(stepDispatch, signal, { implicitClaim: false });
         if (!response.ok) {
           outcome = response.error.code === "OPERATION_CANCELLED" || response.error.code === "HUMAN_INTERRUPTED" || response.error.code === "DEADLINE_EXCEEDED" ? "interrupted" : "failed";
           stoppingPosition = index;
@@ -1091,6 +1094,34 @@ export class BrowserSessionDriver {
         args,
       },
     } as unknown as BrowserAutomationHostDispatch;
+  }
+
+  private async executeAssertStep(
+    dispatch: BrowserAutomationHostDispatch,
+    step: Extract<BrowserAutomationActStep, { operation: "assert" }>,
+    signal: AbortSignal,
+    deadline: number,
+  ): Promise<BrowserAutomationResponse> {
+    const conditions: Array<Record<string, unknown>> = [];
+    if (step.target) conditions.push({ target: step.target, state: "visible" });
+    if (step.text) conditions.push({ text: step.text });
+    if (step.url) conditions.push({ url: step.url });
+    let response: BrowserAutomationResponse | null = null;
+    for (let index = 0; index < conditions.length; index += 1) {
+      const timeoutMs = Math.max(1, deadline - Date.now());
+      const waitDispatch = {
+        ...dispatch,
+        request: {
+          ...dispatch.request,
+          requestId: `${dispatch.request.requestId}:assert:${index}`,
+          operation: "waitFor",
+          args: { ...conditions[index], timeoutMs },
+        },
+      } as BrowserAutomationHostDispatch;
+      response = await this.executeAdapter(waitDispatch, signal, { implicitClaim: false });
+      if (!response.ok) return response;
+    }
+    return response!;
   }
 
   private actFailure(dispatch: BrowserAutomationHostDispatch, code: "STALE_TARGET_GENERATION" | "CAPABILITY_CHANGED" | "UNSUPPORTED_OPERATION", message: string): BrowserAutomationResponse {

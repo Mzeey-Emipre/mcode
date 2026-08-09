@@ -31,6 +31,8 @@ export interface PreviewWebviewProps {
   readonly tabId: string;
   readonly src: string;
   readonly className?: string;
+  /** Keep an off-screen automation surface presented inside its dedicated inert host. */
+  readonly allowHiddenPresentation?: boolean;
   readonly viewport?: { readonly width: number; readonly height: number };
   readonly onPageStatus?: (status: PreviewPageStatus) => void;
   readonly onNavigationStateChange?: (state: {
@@ -93,6 +95,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       tabId,
       src,
       className,
+      allowHiddenPresentation = false,
       viewport,
       onPageStatus,
       onNavigationStateChange,
@@ -260,7 +263,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
         if (
           bounds.width <= 0 ||
           bounds.height <= 0 ||
-          placement.closest("[inert], [aria-hidden='true']")
+          (!allowHiddenPresentation && placement.closest("[inert], [aria-hidden='true']"))
         ) {
           browserSurfaceHost.hide(identity);
           return;
@@ -285,7 +288,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
         window.removeEventListener("resize", update);
         browserSurfaceHost.hide(identity);
       };
-    }, [active, identity, viewport]);
+    }, [active, allowHiddenPresentation, identity, viewport]);
 
     return (
       <div

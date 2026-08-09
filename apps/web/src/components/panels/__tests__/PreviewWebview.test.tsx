@@ -266,4 +266,40 @@ describe("PreviewWebview", () => {
     });
     rect.mockRestore();
   });
+
+  it("presents an active automation surface inside its dedicated hidden host", () => {
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(-20_000, 0, 1280, 720),
+    );
+    const { rerender } = render(
+      <div aria-hidden="true" inert>
+        <PreviewWebview
+          threadId="thread-background"
+          tabId="tab-background"
+          src="https://example.com"
+        />
+      </div>,
+    );
+    const surface = screen.getByTestId("web-runtime-preview-iframe");
+    expect(surface).toHaveStyle({ visibility: "hidden", width: "1px", height: "1px" });
+
+    rerender(
+      <div aria-hidden="true" inert>
+        <PreviewWebview
+          allowHiddenPresentation
+          threadId="thread-background"
+          tabId="tab-background"
+          src="https://example.com"
+        />
+      </div>,
+    );
+
+    expect(surface).toHaveStyle({
+      left: "-20000px",
+      width: "1280px",
+      height: "720px",
+      visibility: "visible",
+    });
+    rect.mockRestore();
+  });
 });

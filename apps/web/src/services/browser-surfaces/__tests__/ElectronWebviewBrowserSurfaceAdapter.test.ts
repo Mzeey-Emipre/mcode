@@ -132,4 +132,29 @@ describe("ElectronWebviewBrowserSurfaceAdapter", () => {
     await vi.waitFor(() => expect(surfaceBridge.adopt).toHaveBeenCalledTimes(2));
     adapter.dispose();
   });
+
+  it("reports the next valid generation when preparation finds stale renderer state", async () => {
+    const surfaceBridge = bridge();
+    surfaceBridge.prepare.mockResolvedValue({
+      ok: false,
+      error: "stale-generation",
+      nextGeneration: 12,
+    });
+    const adapter = new ElectronWebviewBrowserSurfaceAdapter(IDENTITY, 1, {
+      root: document.body,
+      bridge: surfaceBridge,
+    });
+    const events: BrowserSurfaceAdapterEvent[] = [];
+    adapter.subscribe((event) => events.push(event));
+
+    adapter.create();
+
+    await vi.waitFor(() => expect(events).toContainEqual({
+      type: "surface-lost",
+      identity: IDENTITY,
+      generation: 1,
+      nextGeneration: 12,
+    }));
+    adapter.dispose();
+  });
 });

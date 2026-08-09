@@ -1255,6 +1255,19 @@ describe("BrowserAutomationHost", () => {
     view.unmount();
   });
 
+  it("retries target publication while an adopted desktop guest is still becoming discoverable", async () => {
+    describeTarget.mockResolvedValueOnce({ ok: false, error: "TAB_UNAVAILABLE" });
+    const view = render(<BrowserAutomationHost />);
+
+    await waitFor(() => expect(harness.transport.updateBrowserAutomationHostTargets).toHaveBeenCalledTimes(2));
+    expect(harness.transport.updateBrowserAutomationHostTargets.mock.calls[0]?.[2]).toEqual([]);
+    expect(harness.transport.updateBrowserAutomationHostTargets.mock.calls[1]?.[2]).toEqual([
+      expect.objectContaining({ threadId: "thread-1", tabId: "tab-1", targetGeneration: 3 }),
+    ]);
+
+    view.unmount();
+  });
+
   it("keeps duplicate bookkeeping stable and correlates cancel by request id plus sequence", async () => {
     const first = deferred<BrowserAutomationResponse>();
     const second = deferred<BrowserAutomationResponse>();
@@ -1562,18 +1575,24 @@ describe("BrowserAutomationHost", () => {
       };
       return { ok: true, data: { tabId: agentTab.id, tabs: tabSet } };
     });
-    describeTarget.mockImplementation(async ({ tabId }: { tabId: string }) => ({
-      ok: true,
-      target: {
-        windowId: 7,
-        threadId: "thread-1",
-        tabId,
-        targetGeneration: 1,
-        active: tabId === userTab.id,
-        focused: tabId === userTab.id,
-        lastUsedAt: tabId === userTab.id ? 100 : 50,
-      },
-    }));
+    let agentTargetDiscoveryAttempts = 0;
+    describeTarget.mockImplementation(async ({ tabId }: { tabId: string }) => {
+      if (tabId === agentTab.id && agentTargetDiscoveryAttempts++ === 0) {
+        return { ok: false as const, error: "TAB_UNAVAILABLE" };
+      }
+      return {
+        ok: true as const,
+        target: {
+          windowId: 7,
+          threadId: "thread-1",
+          tabId,
+          targetGeneration: 1,
+          active: tabId === userTab.id,
+          focused: tabId === userTab.id,
+          lastUsedAt: tabId === userTab.id ? 100 : 50,
+        },
+      };
+    });
     execute.mockResolvedValue({
       contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
       requestId: "request-1192",
@@ -1604,6 +1623,7 @@ describe("BrowserAutomationHost", () => {
     act(() => harness.emit("browserAutomation.bootstrap", { hostId, generation: 1, request: openRequest }));
     await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
     expect(createTab).toHaveBeenCalledOnce();
+    expect(agentTargetDiscoveryAttempts).toBeGreaterThanOrEqual(2);
     expect(createTab).toHaveBeenCalledWith("thread-1", "workspace-1", { activate: false });
     expect(execute).toHaveBeenCalledOnce();
     expect(execute).toHaveBeenCalledWith(expect.objectContaining({
