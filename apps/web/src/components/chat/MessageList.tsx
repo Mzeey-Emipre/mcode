@@ -254,8 +254,6 @@ export function MessageList({ displayThreadId, onBranch, onReply }: MessageListP
   const firstVirtualItemKeyRef = useRef<string | null>(null);
   /** Visible message and viewport offset held steady while older history settles. */
   const pendingHistoryAnchorRef = useRef<{ messageId: string; top: number } | null>(null);
-  /** First history reveal keeps the latest messages at the tail when the prior window could not scroll. */
-  const pinTailAfterHistoryPrependRef = useRef(false);
   /** Invalidates stale history-anchor settle loops after navigation or another prepend. */
   const historyAnchorSettleGenerationRef = useRef(0);
   /** True until initial messages are positioned at the bottom after a thread switch. */
@@ -289,6 +287,8 @@ export function MessageList({ displayThreadId, onBranch, onReply }: MessageListP
   const [showScrollBtn, setShowScrollBtn] = useState(false);
   /** True when new content arrived while the user was scrolled up. */
   const [hasNewContent, setHasNewContent] = useState(false);
+  const [historyAnchorTrailingSpace, setHistoryAnchorTrailingSpace] = useState(0);
+  const historyAnchorTrailingSpaceRef = useRef(0);
   /** Ref mirror of showScrollBtn so scroll-trigger effects avoid stale closures. */
   const isScrolledUpRef = useRef(false);
   /** Controls container visibility: hidden while positioning to prevent top-to-bottom flash. */
@@ -449,22 +449,27 @@ export function MessageList({ displayThreadId, onBranch, onReply }: MessageListP
     }
 
     olderHistoryRequestedRef.current = false;
-    pinTailAfterHistoryPrependRef.current = el.scrollHeight <= el.clientHeight;
-    if (el.scrollHeight > el.clientHeight) {
-      const viewportTop = el.getBoundingClientRect().top;
-      const anchor = [...el.querySelectorAll<HTMLElement>("[data-message-id]")]
-        .find((node) => node.getBoundingClientRect().bottom > viewportTop + 2);
-      pendingHistoryAnchorRef.current = anchor
-        ? {
-            messageId: anchor.getAttribute("data-message-id") ?? "",
-            top: anchor.getBoundingClientRect().top,
-          }
-        : null;
-    } else {
-      pendingHistoryAnchorRef.current = null;
+    const viewportTop = el.getBoundingClientRect().top;
+    const messageElements = [...el.querySelectorAll<HTMLElement>("[data-message-id]")];
+    const anchor = messageElements
+      .find((node) => node.getBoundingClientRect().bottom > viewportTop + 2);
+    const lastMessage = messageElements.at(-1);
+    if (lastMessage) {
+      const trailingSpace = Math.max(
+        historyAnchorTrailingSpace,
+        el.getBoundingClientRect().bottom - lastMessage.getBoundingClientRect().bottom,
+      );
+      historyAnchorTrailingSpaceRef.current = trailingSpace;
+      setHistoryAnchorTrailingSpace(trailingSpace);
     }
+    pendingHistoryAnchorRef.current = anchor
+      ? {
+          messageId: anchor.getAttribute("data-message-id") ?? "",
+          top: anchor.getBoundingClientRect().top,
+        }
+      : null;
     void loadOlderMessages(renderedThreadId);
-  }, [activeThreadId, renderedThreadId, hasMore, isLoadingMore, loadOlderMessages]);
+  }, [activeThreadId, renderedThreadId, hasMore, historyAnchorTrailingSpace, isLoadingMore, loadOlderMessages]);
 
   /** Clears tail pin when the user scrolls content upward (wheel / trackpad). */
   const handleWheel = useCallback((e: WheelEvent<HTMLDivElement>) => {
@@ -561,8 +566,17 @@ export function MessageList({ displayThreadId, onBranch, onReply }: MessageListP
 
     loadOlderHistoryWhenRequested();
 
+    if (
+      historyAnchorTrailingSpaceRef.current > 0
+      && pendingHistoryAnchorRef.current === null
+      && el.scrollTop > prevScrollTopRef.current + 0.5
+    ) {
+      historyAnchorTrailingSpaceRef.current = 0;
+      setHistoryAnchorTrailingSpace(0);
+    }
+
     prevScrollTopRef.current = el.scrollTop;
-  }, [renderedThreadId, loadOlderHistoryWhenRequested, transcriptThreadId, syncStickyUserMessageVisibility]);
+  }, [historyAnchorTrailingSpace, renderedThreadId, loadOlderHistoryWhenRequested, transcriptThreadId, syncStickyUserMessageVisibility]);
 
   useEffect(() => {
     for (const message of messages) {
@@ -1020,7 +1034,8 @@ export function MessageList({ displayThreadId, onBranch, onReply }: MessageListP
       scrollToTailIntentRef.current = false;
       olderHistoryRequestedRef.current = false;
       pendingHistoryAnchorRef.current = null;
-      pinTailAfterHistoryPrependRef.current = false;
+      historyAnchorTrailingSpaceRef.current = 0;
+      setHistoryAnchorTrailingSpace(0);
       historyAnchorSettleGenerationRef.current += 1;
       scrollRestoreGenerationRef.current += 1;
       prevMessageCountRef.current = 0;
@@ -1095,7 +1110,6 @@ export function MessageList({ displayThreadId, onBranch, onReply }: MessageListP
       pendingPrependCountRef.current = 0;
       if (!isLoadingMore) {
         pendingHistoryAnchorRef.current = null;
-        pinTailAfterHistoryPrependRef.current = false;
       }
       prevScrollHeightRef.current = el?.scrollHeight ?? 0;
       return;
@@ -1120,22 +1134,7 @@ export function MessageList({ displayThreadId, onBranch, onReply }: MessageListP
         return Math.abs(delta);
       };
 
-      if (pinTailAfterHistoryPrependRef.current) {
-        const generation = ++historyAnchorSettleGenerationRef.current;
-        let lastHeight = -1;
-        let stableFrames = 0;
-        const settleTail = () => {
-          if (historyAnchorSettleGenerationRef.current !== generation) return;
-          el.scrollTop = el.scrollHeight;
-          stableFrames = el.scrollHeight === lastHeight ? stableFrames + 1 : 0;
-          lastHeight = el.scrollHeight;
-          if (stableFrames >= 3) return;
-          requestAnimationFrame(settleTail);
-        };
-        settleTail();
-        pinTailAfterHistoryPrependRef.current = false;
-        pendingHistoryAnchorRef.current = null;
-      } else if (anchorSnapshot && findAnchor()) {
+      if (anchorSnapshot && findAnchor()) {
         correctAnchor();
         const generation = ++historyAnchorSettleGenerationRef.current;
         let stableFrames = 0;
@@ -1161,7 +1160,6 @@ export function MessageList({ displayThreadId, onBranch, onReply }: MessageListP
       prevScrollHeightRef.current = newScrollHeight;
     } else {
       pendingHistoryAnchorRef.current = null;
-      pinTailAfterHistoryPrependRef.current = false;
       prevScrollHeightRef.current = el.scrollHeight;
     }
     pendingPrependCountRef.current = 0;
@@ -1403,7 +1401,7 @@ export function MessageList({ displayThreadId, onBranch, onReply }: MessageListP
       >
         <div
           className="relative w-full"
-          style={{ height: virtualTotalSize }}
+          style={{ height: virtualTotalSize + historyAnchorTrailingSpace }}
         >
           {virtualizer.getVirtualItems().map((vi) => {
             const item = items[vi.index];

@@ -98,7 +98,11 @@ import type { ModelCacheService } from "../services/model-cache-service.js";
 import type { DiffSummaryService } from "../services/diff-summary-service.js";
 import type { RecapService } from "../services/recap-service.js";
 import type { HandoffStorage } from "../services/handoff/handoff-storage.js";
-import { loadConversationPage, loadConversationTail } from "../services/conversation-page.js";
+import {
+  loadConversationPage,
+  loadConversationTail,
+  loadOlderConversationPage,
+} from "../services/conversation-page.js";
 import type { ThreadTeardownService } from "../services/thread-teardown-service.js";
 import type { PullRequestService } from "../services/pull-requests/pull-request-service.js";
 import type { PullRequestMutationService } from "../services/pull-requests/pull-request-mutation-service.js";
@@ -922,6 +926,8 @@ async function dispatch(
         limit: params.limit,
         before: params.before,
       });
+    case "conversation.olderPage":
+      return loadOlderConversationPage(deps, params);
     case "conversation.tail":
       return loadConversationTail(deps, {
         threadId: params.threadId,

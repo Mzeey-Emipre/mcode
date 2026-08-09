@@ -38,6 +38,8 @@ import type {
   PermissionRequest,
   CreateAndSendResult,
   ConversationPage,
+  ConversationOlderPage,
+  ConversationOlderPageRequest,
   ConversationTail,
   SetThreadSubscriptionsInput,
   SetThreadSubscriptionsResult,
@@ -382,6 +384,8 @@ export interface McodeTransport {
   getMessages(threadId: string, limit: number, before?: number): Promise<PaginatedMessages>;
   /** Fetch persisted messages and grouped narrative for one thread page. */
   loadConversationPage(threadId: string, limit: number, before?: number): Promise<ConversationPage>;
+  /** Fetch one identity-bound and byte-bounded page of older conversation history. */
+  loadOlderConversationPage(request: ConversationOlderPageRequest): Promise<ConversationOlderPage>;
   /** Fetch only the bounded tail needed for first paint. */
   loadConversationTail?(threadId: string, limit: number): Promise<ConversationTail>;
 

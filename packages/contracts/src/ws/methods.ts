@@ -6,6 +6,14 @@ import { PaginatedMessagesSchema } from "../models/message.js";
 import { MessageMentionsSchema } from "../models/mention.js";
 import { ConversationPageSchema } from "../models/conversation-page.js";
 import {
+  ConversationOlderPageRequestSchema,
+  ConversationOlderPageSchema,
+} from "../models/conversation-older-page.js";
+import type {
+  ConversationOlderPage,
+  ConversationOlderPageRequest,
+} from "../models/conversation-older-page.js";
+import {
   CONVERSATION_TAIL_THREAD_ID_MAX_LENGTH,
   ConversationTailParamsSchema,
   ConversationTailSchema,
@@ -315,6 +323,14 @@ export const CreateAndSendResultSchema = lazySchema(() =>
 
 /** Thread with optional non-fatal warnings from worktree creation. */
 export type CreateAndSendResult = z.infer<ReturnType<typeof CreateAndSendResultSchema>>;
+
+const ConversationOlderPageMethod: {
+  params: z.ZodType<ConversationOlderPageRequest>;
+  result: z.ZodType<ConversationOlderPage>;
+} = {
+  params: ConversationOlderPageRequestSchema(),
+  result: ConversationOlderPageSchema(),
+};
 
 /** All RPC method definitions keyed by method name with params and result schemas. */
 export const WS_METHODS = lazySchema(() => ({
@@ -826,6 +842,9 @@ export const WS_METHODS = lazySchema(() => ({
       before: z.number().int().optional(),
     }),
     result: ConversationPageSchema(),
+  },
+  "conversation.olderPage": {
+    ...ConversationOlderPageMethod,
   },
   "conversation.tail": {
     params: ConversationTailParamsSchema(),

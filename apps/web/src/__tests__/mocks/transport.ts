@@ -165,6 +165,7 @@ export const mockTransport: McodeTransport = {
   }),
   getMessages: vi.fn().mockResolvedValue({ messages: [], hasMore: false }),
   loadConversationPage: vi.fn(),
+  loadOlderConversationPage: vi.fn(),
   createAndSendMessage: vi.fn(),
   updateThreadTitle: vi.fn().mockResolvedValue(true),
   updateThreadSettings: vi.fn().mockResolvedValue(true),
@@ -290,5 +291,28 @@ vi.mocked(mockTransport.loadConversationPage).mockImplementation(
   async (threadId: string, limit: number, before?: number) => {
     const result = await mockTransport.getMessages(threadId, limit, before);
     return { ...result, narrativeByMessage: {} };
+  },
+);
+
+vi.mocked(mockTransport.loadOlderConversationPage).mockImplementation(
+  async (request) => {
+    const result = await mockTransport.loadConversationPage(
+      request.threadId,
+      request.limit,
+      request.cursor.beforeSequence,
+    );
+    return {
+      ...result,
+      identity: {
+        threadId: request.threadId,
+        cursor: request.cursor,
+        direction: request.direction,
+        generation: request.generation,
+        conversationRevision: request.conversationRevision,
+      },
+      nextCursor: result.hasMore && result.messages.length > 0
+        ? { version: 1, beforeSequence: result.messages[0].sequence }
+        : null,
+    };
   },
 );

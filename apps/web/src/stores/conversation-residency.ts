@@ -1,4 +1,7 @@
-import type { ConversationPage } from "@mcode/contracts";
+import type {
+  ConversationOlderPage,
+  ConversationOlderPageIdentity,
+} from "@mcode/contracts";
 import {
   createAdjacentPrefetchScheduler,
   type AdjacentPrefetchThread,
@@ -16,7 +19,9 @@ export interface ConversationResidencyDeps {
   invalidateConversation: (threadId: string) => void;
   synchronizeConversation: (threadId: string) => void;
   mergeCachedFileChanges: (threadId: string, filesChanged: Record<string, string[]>) => void;
-  takePrefetchedHistoryPage: (threadId: string, before: number) => ConversationPage | undefined;
+  takePrefetchedHistoryPage: (
+    identity: ConversationOlderPageIdentity,
+  ) => ConversationOlderPage | undefined;
   prefetchConversation: (threadId: string) => Promise<void>;
 }
 
@@ -78,8 +83,10 @@ export class ConversationResidency {
   }
 
   /** Consume the matching warm history page through the cache authority. */
-  takePrefetchedHistoryPage(threadId: string, before: number): ConversationPage | undefined {
-    return this.deps.takePrefetchedHistoryPage(threadId, before);
+  takePrefetchedHistoryPage(
+    identity: ConversationOlderPageIdentity,
+  ): ConversationOlderPage | undefined {
+    return this.deps.takePrefetchedHistoryPage(identity);
   }
 
   /** Warm a non-selected conversation without mutating the live selection. */

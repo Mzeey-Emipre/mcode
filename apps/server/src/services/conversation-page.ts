@@ -1,5 +1,7 @@
 import type {
   ConversationNarrativeBatch,
+  ConversationOlderPage,
+  ConversationOlderPageRequest,
   ConversationPage,
   ConversationTail,
   NarrativeEntry,
@@ -69,6 +71,72 @@ export function loadConversationPage(
       deps.planQuestionAnswersRepo.listAnsweredForThread(input.threadId),
     narrativeByMessage: groupNarrativeEntriesByMessage(entries),
   };
+}
+
+function buildOlderConversationPage(
+  request: ConversationOlderPageRequest,
+  page: ConversationPage,
+  droppedMessages: boolean,
+): ConversationOlderPage {
+  const retainedMessageIds = new Set(page.messages.map((message) => message.id));
+  const hasMore = page.hasMore || droppedMessages;
+  return {
+    identity: {
+      threadId: request.threadId,
+      cursor: request.cursor,
+      direction: request.direction,
+      generation: request.generation,
+      conversationRevision: request.conversationRevision,
+    },
+    messages: page.messages,
+    hasMore,
+    nextCursor: hasMore && page.messages.length > 0
+      ? { version: 1, beforeSequence: page.messages[0].sequence }
+      : null,
+    answeredPlanMessageIds: page.answeredPlanMessageIds?.filter((messageId) =>
+      retainedMessageIds.has(messageId)
+    ),
+    narrativeByMessage: Object.fromEntries(
+      Object.entries(page.narrativeByMessage).filter(([messageId]) =>
+        retainedMessageIds.has(messageId)
+      ),
+    ),
+  };
+}
+
+/** Loads the nearest older messages under the caller's bounded response budget. */
+export function loadOlderConversationPage(
+  deps: ConversationPageDeps,
+  request: ConversationOlderPageRequest,
+): ConversationOlderPage {
+  const page = loadConversationPage(deps, {
+    threadId: request.threadId,
+    limit: request.limit,
+    before: request.cursor.beforeSequence,
+  });
+  let retainedMessages = page.messages;
+  let droppedMessages = false;
+
+  while (retainedMessages.length > 0) {
+    const candidate = buildOlderConversationPage(
+      request,
+      { ...page, messages: retainedMessages },
+      droppedMessages,
+    );
+    if (Buffer.byteLength(JSON.stringify(candidate), "utf8") <= request.maxBytes) {
+      return candidate;
+    }
+    retainedMessages = retainedMessages.slice(1);
+    droppedMessages = true;
+  }
+
+  if (page.messages.length > 0) {
+    throw new Error(
+      `The nearest older conversation message cannot fit within ${request.maxBytes} bytes`,
+    );
+  }
+
+  return buildOlderConversationPage(request, page, false);
 }
 
 /** Loads the newest visible messages without narrative or plan-answer queries. */

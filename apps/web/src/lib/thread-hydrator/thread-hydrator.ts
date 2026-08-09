@@ -27,7 +27,13 @@ import type {
 } from "./types";
 import { SnapshotBuilder, snapshotBuilder } from "./snapshot-builder";
 import { AuxiliaryHydrator } from "./auxiliary-hydrator";
-import type { ConversationPage, ConversationTail } from "@mcode/contracts";
+import {
+  CONVERSATION_OLDER_PAGE_MAX_BYTES,
+  type ConversationOlderPage,
+  type ConversationOlderPageIdentity,
+  type ConversationPage,
+  type ConversationTail,
+} from "@mcode/contracts";
 import { hasRememberedHistoryPosition } from "@/components/chat/scrollPositionMemory";
 import {
   recordRunningFetchRequired,
@@ -40,6 +46,7 @@ import { hasResidentContent } from "./resident-content";
 
 interface PendingHistoryPrefetch {
   expectedEpoch: number;
+  expectedRevision: number;
   promise: Promise<void>;
 }
 
@@ -207,7 +214,7 @@ function normalizeTailMessages(tail: ConversationTail): ConversationPage["messag
 /** Latest messages fetched before the selected thread first paints. */
 export const MESSAGE_FETCH_SIZE = 2;
 
-/** Maximum messages fetched by a sidebar hover prefetch. */
+/** Maximum messages retained across the tail and warmed older-history page. */
 export const BACKGROUND_PREFETCH_LIMIT = 100;
 
 /** Older messages warmed after first paint and held outside live React state. */
@@ -360,8 +367,10 @@ export class ThreadHydrator {
   }
 
   /** Consume a warmed older-history page through the conversation cache. */
-  takePrefetchedHistoryPage(threadId: string, before: number): ConversationPage | undefined {
-    return takePrefetchedHistoryPage(threadId, before);
+  takePrefetchedHistoryPage(
+    identity: ConversationOlderPageIdentity,
+  ): ConversationOlderPage | undefined {
+    return takePrefetchedHistoryPage(identity);
   }
 
   /** Retire the selected conversation when no thread remains active. */
@@ -434,19 +443,13 @@ export class ThreadHydrator {
       const shouldFetchSnapshots = workspaceThread?.has_file_changes !== false;
 
       const [pageResult, snapshots] = await Promise.all([
-        this.transport().loadConversationPage(threadId, BACKGROUND_PREFETCH_LIMIT),
+        this.transport().loadConversationPage(threadId, MESSAGE_FETCH_SIZE),
         shouldFetchSnapshots
           ? this.transport().listSnapshots(threadId).catch(() => [] as Awaited<ReturnType<ThreadHydratorTransport["listSnapshots"]>>)
           : Promise.resolve([] as Awaited<ReturnType<ThreadHydratorTransport["listSnapshots"]>>),
       ]);
 
-      const tailStart = Math.max(0, pageResult.messages.length - MESSAGE_FETCH_SIZE);
-      const earlierMessages = pageResult.messages.slice(0, tailStart);
-      const tailPage = buildConversationPageSubset(
-        pageResult,
-        pageResult.messages.slice(tailStart),
-        pageResult.hasMore || earlierMessages.length > 0,
-      );
+      const tailPage = pageResult;
       const patch = snapshotBuilder.build({
         messages: tailPage.messages,
         hasMore: tailPage.hasMore,
@@ -469,13 +472,6 @@ export class ThreadHydrator {
       if (hasCachedRecord(threadId)) return;
 
       cacheRecord(threadId, cachedRecord);
-      if (earlierMessages.length > 0 && tailPage.messages.length > 0) {
-        cachePrefetchedHistoryPage(
-          threadId,
-          tailPage.messages[0].sequence,
-          buildConversationPageSubset(pageResult, earlierMessages, pageResult.hasMore),
-        );
-      }
     } catch {
       // Background prefetch is speculative; swallow errors silently.
     }
@@ -631,8 +627,8 @@ export class ThreadHydrator {
     const residentFetchOptions = hasResidentContent
       ? {
           skipPrepare: true,
-          fetchLimit: BACKGROUND_PREFETCH_LIMIT,
-          prefetchEarlierHistory: false,
+          fetchLimit: MESSAGE_FETCH_SIZE,
+          prefetchEarlierHistory: true,
         }
       : undefined;
     const backgroundFetchOptions = residentFetchOptions ?? { skipPrepare: true };
@@ -1207,20 +1203,20 @@ export class ThreadHydrator {
       if (cancelled) return;
       const state = this.deps.getState();
       if (state.currentThreadId !== threadId) return;
-      if (getThreadRecord(state.records, threadId).loadEpoch !== epoch) return;
+      const record = getThreadRecord(state.records, threadId);
+      if (record.loadEpoch !== epoch) return;
       const existing = this.pendingHistoryPrefetches.get(prefetchKey);
-      if (existing) {
-        existing.expectedEpoch = epoch;
-        return;
-      }
+      if (existing) return;
       const prefetch: PendingHistoryPrefetch = {
         expectedEpoch: epoch,
+        expectedRevision: record.conversationRevision,
         promise: Promise.resolve(),
       };
       prefetch.promise = this.prefetchEarlierHistory(
         threadId,
         before,
-        () => prefetch.expectedEpoch,
+        prefetch.expectedEpoch,
+        prefetch.expectedRevision,
       ).finally(() => {
         if (this.pendingHistoryPrefetches.get(prefetchKey) === prefetch) {
           this.pendingHistoryPrefetches.delete(prefetchKey);
@@ -1248,18 +1244,32 @@ export class ThreadHydrator {
   private async prefetchEarlierHistory(
     threadId: string,
     before: number,
-    getExpectedEpoch: () => number,
+    expectedEpoch: number,
+    expectedRevision: number,
   ): Promise<void> {
     try {
-      const page = await this.transport().loadConversationPage(
+      const request = {
         threadId,
-        HISTORY_PREFETCH_SIZE,
-        before,
-      );
+        cursor: { version: 1 as const, beforeSequence: before },
+        direction: "older" as const,
+        generation: expectedEpoch,
+        conversationRevision: expectedRevision,
+        limit: HISTORY_PREFETCH_SIZE,
+        maxBytes: CONVERSATION_OLDER_PAGE_MAX_BYTES,
+      };
+      const page = await this.transport().loadOlderConversationPage(request);
       const state = this.deps.getState();
       const current = getThreadRecord(state.records, threadId);
-      const expectedEpoch = getExpectedEpoch();
-      if (state.currentThreadId !== threadId || current.loadEpoch !== expectedEpoch) return;
+      if (
+        state.currentThreadId !== threadId
+        || current.loadEpoch !== expectedEpoch
+        || current.conversationRevision !== expectedRevision
+        || page.identity.threadId !== request.threadId
+        || page.identity.cursor.beforeSequence !== request.cursor.beforeSequence
+        || page.identity.direction !== request.direction
+        || page.identity.generation !== request.generation
+        || page.identity.conversationRevision !== request.conversationRevision
+      ) return;
 
       cachePrefetchedHistoryPage(threadId, before, page);
     } catch {

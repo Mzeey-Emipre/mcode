@@ -207,6 +207,22 @@ export type {
   ConversationPage,
   ConversationNarrativeBatch,
 } from "./models/conversation-page.js";
+export {
+  CONVERSATION_OLDER_PAGE_MAX_BYTES,
+  CONVERSATION_OLDER_PAGE_MAX_MESSAGES,
+  CONVERSATION_OLDER_PAGE_MAX_REQUEST_BYTES,
+  CONVERSATION_OLDER_PAGE_MIN_BYTES,
+  ConversationOlderPageCursorSchema,
+  ConversationOlderPageIdentitySchema,
+  ConversationOlderPageRequestSchema,
+  ConversationOlderPageSchema,
+} from "./models/conversation-older-page.js";
+export type {
+  ConversationOlderPage,
+  ConversationOlderPageCursor,
+  ConversationOlderPageIdentity,
+  ConversationOlderPageRequest,
+} from "./models/conversation-older-page.js";
 
 export {
   CONVERSATION_TAIL_MAX_MESSAGES,

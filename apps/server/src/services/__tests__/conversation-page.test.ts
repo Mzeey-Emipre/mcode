@@ -8,7 +8,11 @@ import { ThoughtSegmentRepo } from "../../repositories/thought-segment-repo";
 import { HookExecutionRepo } from "../../repositories/hook-execution-repo";
 import { PlanQuestionAnswersRepo } from "../../repositories/plan-question-answers-repo";
 import { NarrativeStore } from "../narrative-store";
-import { loadConversationPage, loadConversationTail } from "../conversation-page";
+import {
+  loadConversationPage,
+  loadConversationTail,
+  loadOlderConversationPage,
+} from "../conversation-page";
 
 function seedThread(db: Database.Database): void {
   const now = new Date().toISOString();
@@ -170,5 +174,54 @@ describe("loadConversationTail", () => {
     });
     expect(narrativeSpy).not.toHaveBeenCalled();
     expect(planSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("loadOlderConversationPage", () => {
+  it("echoes request identity and returns the nearest sequence window within its byte budget", () => {
+    const db = openMemoryDatabase();
+    seedThread(db);
+    insertMessage(db, "m1", "user", "a".repeat(40_000), 1);
+    insertMessage(db, "m2", "assistant", "b".repeat(40_000), 2);
+    insertMessage(db, "m3", "user", "c".repeat(40_000), 3);
+
+    const request = {
+      threadId: "thread-1",
+      cursor: { version: 1 as const, beforeSequence: 4 },
+      direction: "older" as const,
+      generation: 5,
+      conversationRevision: 9,
+      limit: 3,
+      maxBytes: 65_536,
+    };
+    const page = loadOlderConversationPage(createDeps(db), request);
+
+    expect(page.identity).toEqual({
+      threadId: request.threadId,
+      cursor: request.cursor,
+      direction: request.direction,
+      generation: request.generation,
+      conversationRevision: request.conversationRevision,
+    });
+    expect(page.messages.map((message) => message.sequence)).toEqual([3]);
+    expect(page.hasMore).toBe(true);
+    expect(page.nextCursor).toEqual({ version: 1, beforeSequence: 3 });
+    expect(Buffer.byteLength(JSON.stringify(page), "utf8")).toBeLessThanOrEqual(request.maxBytes);
+  });
+
+  it("fails closed when the nearest message cannot fit in the response budget", () => {
+    const db = openMemoryDatabase();
+    seedThread(db);
+    insertMessage(db, "m1", "user", "x".repeat(70_000), 1);
+
+    expect(() => loadOlderConversationPage(createDeps(db), {
+      threadId: "thread-1",
+      cursor: { version: 1, beforeSequence: 2 },
+      direction: "older",
+      generation: 1,
+      conversationRevision: 1,
+      limit: 1,
+      maxBytes: 65_536,
+    })).toThrow("cannot fit within 65536 bytes");
   });
 });

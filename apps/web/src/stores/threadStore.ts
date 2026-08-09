@@ -10,6 +10,7 @@ import {
   ProviderIdSchema,
   isGoalOpen,
   previewAnnotationSnapshotStoredAttachments,
+  CONVERSATION_OLDER_PAGE_MAX_BYTES,
 } from "@mcode/contracts";
 import { getTransport } from "@/transport";
 import { useWorkspaceStore } from "./workspaceStore";
@@ -1231,8 +1232,8 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     synchronizeConversation: (threadId) => threadHydrator.synchronizeConversation(threadId),
     mergeCachedFileChanges: (threadId, filesChanged) =>
       threadHydrator.mergeCachedFileChanges(threadId, filesChanged),
-    takePrefetchedHistoryPage: (threadId, before) =>
-      threadHydrator.takePrefetchedHistoryPage(threadId, before),
+    takePrefetchedHistoryPage: (identity) =>
+      threadHydrator.takePrefetchedHistoryPage(identity),
     prefetchConversation: (threadId) => threadHydrator.hydrate(threadId, "background"),
   });
   registerConversationResidency(conversationResidency);
@@ -1271,19 +1272,37 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     patchRec(threadId, { isLoadingMore: true });
 
     try {
-      const cursor = getRec(threadId).oldestLoadedSequence;
-      const epoch = getRec(threadId).loadEpoch;
-      const prefetchedPage = conversationResidency.takePrefetchedHistoryPage(threadId, cursor);
+      const requestRecord = getRec(threadId);
+      const cursor = requestRecord.oldestLoadedSequence;
+      const epoch = requestRecord.loadEpoch;
+      const request = {
+        threadId,
+        cursor: { version: 1 as const, beforeSequence: cursor },
+        direction: "older" as const,
+        generation: epoch,
+        conversationRevision: requestRecord.conversationRevision,
+        limit: OLDER_PAGE_SIZE,
+        maxBytes: CONVERSATION_OLDER_PAGE_MAX_BYTES,
+      };
+      const prefetchedPage = conversationResidency.takePrefetchedHistoryPage(request);
       const {
+        identity: responseIdentity,
         messages: olderMessages,
         hasMore,
         answeredPlanMessageIds,
         narrativeByMessage,
       } = prefetchedPage
-        ?? await getTransport().loadConversationPage(threadId, OLDER_PAGE_SIZE, cursor);
+        ?? await getTransport().loadOlderConversationPage(request);
 
       const isStale = get().currentThreadId !== threadId
-        || getRec(threadId).loadEpoch !== epoch;
+        || getRec(threadId).loadEpoch !== epoch
+        || getRec(threadId).conversationRevision !== request.conversationRevision
+        || responseIdentity.threadId !== request.threadId
+        || responseIdentity.cursor.version !== request.cursor.version
+        || responseIdentity.cursor.beforeSequence !== request.cursor.beforeSequence
+        || responseIdentity.direction !== request.direction
+        || responseIdentity.generation !== request.generation
+        || responseIdentity.conversationRevision !== request.conversationRevision;
       if (isStale) {
         patchRec(threadId, { isLoadingMore: false });
         return;
