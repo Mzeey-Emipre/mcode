@@ -94,23 +94,28 @@ describe("PTY host v1 protocol", () => {
     expect(protocol.messages()[0]).toMatchObject({ nonce: "11111111-1111-4111-8111-000000000001" });
   });
 
-  it("accepts only the frozen unique host capability list", () => {
+  it("accepts only the frozen host capability object", () => {
     const event = {
       contractVersion: 1,
       kind: "ready",
       hostGeneration: "7",
       platform: "windows",
       nativeAbi: "win32-x64-127",
-      capabilities: ["conpty", "job-object"],
+      capabilities: {
+        pty: "conpty",
+        containment: "job-object",
+        maxSessions: 20,
+        protocolVersion: 1,
+      },
     } as const;
     expect(PtyHostEventSchema().parse(event)).toEqual(event);
     expect(() =>
-      PtyHostEventSchema().parse({ ...event, capabilities: ["conpty", "conpty"] }),
+      PtyHostEventSchema().parse({ ...event, capabilities: ["conpty", "job-object"] }),
     ).toThrow();
     expect(() =>
       PtyHostEventSchema().parse({
         ...event,
-        capabilities: ["conpty", "job-object", "posix-pty", "process-group", "conpty"],
+        capabilities: { ...event.capabilities, maxSessions: 19 },
       }),
     ).toThrow();
   });

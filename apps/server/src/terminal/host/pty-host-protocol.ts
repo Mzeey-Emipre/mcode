@@ -66,11 +66,14 @@ export const PtyHostServerMessageSchema = lazySchema(() => messageSize(z.discrim
   z.object({ contractVersion: z.literal(TERMINAL_CONTRACT_VERSION), kind: z.literal("shutdown"), ...hostGeneration, reason: z.literal("app-shutdown") }).strict(),
 ])));
 
-const hostCapabilitySchema = z.enum(["conpty", "posix-pty", "job-object", "process-group"]);
-const hostCapabilitiesSchema = z.array(hostCapabilitySchema).max(4).refine(
-  (capabilities) => new Set(capabilities).size === capabilities.length,
-  "PTY host capabilities must be unique",
-);
+const hostCapabilitiesSchema = z
+  .object({
+    pty: z.enum(["conpty", "posix-pty"]),
+    containment: z.enum(["job-object", "process-group"]),
+    maxSessions: z.literal(20),
+    protocolVersion: z.literal(1),
+  })
+  .strict();
 
 /** Strict PTY-host-to-server event schema. */
 export const PtyHostEventSchema = lazySchema(() => messageSize(z.discriminatedUnion("kind", [
