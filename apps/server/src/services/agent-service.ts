@@ -85,6 +85,7 @@ import { ThreadControlMutationReservationService } from "./thread-control-mutati
 import { TurnRuntimeRegistry } from "./turn-runtime.js";
 import type { TurnOutcome } from "./turn-outcome.js";
 import { BrowserNarrativeEventSanitizer } from "./browser-narrative-event-sanitizer.js";
+import { CanonicalAgentEventSink } from "./canonical-agent-event-sink.js";
 
 /**
  * Escape special XML characters in a string to prevent injection into
@@ -392,6 +393,7 @@ export class AgentService {
   /** Monotonic turn generation per thread, including turns that failed setup. */
   private readonly turnGenerations = new Map<string, number>();
   private readonly mutationReservations: ThreadControlMutationReservationService;
+  private readonly canonicalSink: CanonicalAgentEventSink;
 
   constructor(
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
@@ -430,6 +432,8 @@ export class AgentService {
     private readonly threadControlMcp?: InternalThreadControlMcpRuntime,
     @inject(ThreadControlMutationReservationService)
     mutationReservations?: ThreadControlMutationReservationService,
+    @inject(CanonicalAgentEventSink)
+    canonicalSink?: CanonicalAgentEventSink,
   ) {
     this.browserNarrativeEventSanitizer = new BrowserNarrativeEventSanitizer(
       (threadId, toolCallId) => this.narrativeStore.getBufferedToolCalls(threadId)
@@ -437,6 +441,7 @@ export class AgentService {
         ?.toolName,
     );
     this.mutationReservations = mutationReservations ?? new ThreadControlMutationReservationService();
+    this.canonicalSink = canonicalSink ?? new CanonicalAgentEventSink(this.db);
     this.turnFileTracker = new TurnFileTracker(
       (cwd, ref, path) => this.snapshotService.getFileAtRef(cwd, ref, path),
       (threadId, turnId, summary) => {
@@ -451,6 +456,7 @@ export class AgentService {
       this.turnSnapshotRepo,
       this.db,
       this.turnFileTracker,
+      this.canonicalSink,
     );
     this.goalCommand = new GoalCommand(
       { messageRepo: this.messageRepo, db: this.db },
@@ -763,6 +769,8 @@ export class AgentService {
     // back too, keeping marker durability == answer durability.
     this.turnFinalizer.resetStreamingText(threadId);
 
+    const sourceTurnId = requestedSourceTurnId ?? randomUUID();
+
     const origin = originSourceThreadId && originSourceTurnId && originSourceProviderId
       ? {
           type: "thread" as const,
@@ -771,8 +779,30 @@ export class AgentService {
           sourceProviderId: originSourceProviderId,
         }
       : undefined;
-    this.db.transaction(() => {
-      const createUserMessage = () => {
+    const canonicalProviderIdentities = thread.sdk_session_id
+      && effectiveProvider === thread.provider
+      ? [{
+          providerId: effectiveProvider,
+          scope: effectiveProvider === "codex" ? "thread" as const : "session" as const,
+          value: thread.sdk_session_id,
+          provenance: "native" as const,
+        }]
+      : [];
+    this.canonicalSink.startParentTurn({
+      thread: {
+        id: threadId,
+        workspaceId: workspace.id,
+        providerId: effectiveProvider,
+        createdAt: thread.created_at,
+      },
+      turnId: sourceTurnId,
+      executionId: turnExecutionId,
+      permissionMode: permissionMode === "full"
+        || (permissionMode === "default" && thread.permission_mode === "full")
+        ? "full"
+        : "supervised",
+      providerIdentities: canonicalProviderIdentities,
+      projectUserMessage: () => {
         const args = [
           threadId,
           "user" as const,
@@ -786,23 +816,21 @@ export class AgentService {
           validatedMentions.length > 0 ? validatedMentions : undefined,
           previewAnnotations,
         ] as const;
-        if (origin) {
-          this.messageRepo.create(...args, origin);
-        } else {
-          this.messageRepo.create(...args);
+        const message = origin
+          ? this.messageRepo.create(...args, origin)
+          : this.messageRepo.create(...args);
+        if (markPlanAnswerForMessageId) {
+          // INSERT OR IGNORE inside the repo skips PK collisions (idempotent
+          // re-marking) but FK violations still abort the transaction, which
+          // keeps the answer and its durable marker atomic.
+          this.planQuestionAnswersRepo.markAnswered(
+            markPlanAnswerForMessageId,
+            threadId,
+          );
         }
-      };
-      createUserMessage();
-      if (markPlanAnswerForMessageId) {
-        // INSERT OR IGNORE inside the repo skips PK collisions (idempotent
-        // re-marking) but FK violations still abort the tx, which is exactly
-        // what we want — durable iff the answer is durable.
-        this.planQuestionAnswersRepo.markAnswered(
-          markPlanAnswerForMessageId,
-          threadId,
-        );
-      }
-    })();
+        return message;
+      },
+    });
 
     // Notify other tabs/clients on the same thread that the wizard can be
     // hidden. Fired only after the tx commits so listeners never see a
@@ -936,7 +964,6 @@ export class AgentService {
     });
 
     const sessionName = `mcode-${threadId}`;
-    const sourceTurnId = requestedSourceTurnId ?? randomUUID();
     // A branched child has a system handoff at seq 1 but no sdk_session_id.
     // Only treat as resume if there is actually a session to resume.
     const isResume = nextSeq > 1 && !!thread.sdk_session_id;
@@ -2365,7 +2392,12 @@ export class AgentService {
       activity ?? Promise.resolve(),
       refCapture ?? Promise.resolve(),
     ]);
-    const finalize = this.turnFinalizer.finalize(threadId, outcome, prerequisite)
+    const finalize = this.turnFinalizer.finalize(
+      threadId,
+      outcome,
+      prerequisite,
+      finalizedExecutionId ?? undefined,
+    )
       .catch((err) => {
       logger.error("finalize failed on terminal event", {
         threadId,

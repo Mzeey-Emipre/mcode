@@ -6,6 +6,7 @@ import { ThreadRepo } from "../../repositories/thread-repo";
 import { WorkspaceRepo } from "../../repositories/workspace-repo";
 import { MessageRepo } from "../../repositories/message-repo";
 import { AgentService } from "../agent-service";
+import { createCanonicalAgentEventSinkStub } from "../../test-utils/canonical-agent-event-sink-stub";
 import type { GitService } from "../git-service";
 import type { ThreadService } from "../thread-service";
 import type { TurnRuntimeSnapshot } from "@mcode/contracts";
@@ -44,6 +45,9 @@ function createAgentServiceHarness() {
     {} as never,
     {} as never,
     {} as never,
+    undefined,
+    undefined,
+    createCanonicalAgentEventSinkStub(db),
   );
   vi.spyOn(service, "sendMessage").mockResolvedValue(undefined);
 

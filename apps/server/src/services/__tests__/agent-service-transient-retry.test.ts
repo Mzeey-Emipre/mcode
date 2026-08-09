@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EventEmitter } from "events";
 import type { Thread, IProviderRegistry, TurnRequest } from "@mcode/contracts";
 import { AgentService } from "../agent-service.js";
+import { createCanonicalAgentEventSinkStub } from "../../test-utils/canonical-agent-event-sink-stub.js";
 import { ThreadControlMutationReservationService } from "../thread-control-mutation-reservation-service.js";
 import { NarrativeStore } from "../narrative-store.js";
 import { PlanQuestionService } from "../plan-question-service.js";
@@ -199,6 +200,7 @@ function buildService(): {
     undefined,
     threadControlMcp as never,
     mutationReservations,
+    createCanonicalAgentEventSinkStub(db),
   );
 
   return {

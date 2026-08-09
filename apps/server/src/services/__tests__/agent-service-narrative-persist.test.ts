@@ -4,6 +4,7 @@ import { EventEmitter } from "events";
 import { AgentEventType } from "@mcode/contracts";
 import type { Thread, IProviderRegistry, Message } from "@mcode/contracts";
 import { AgentService } from "../agent-service.js";
+import { createCanonicalAgentEventSinkStub } from "../../test-utils/canonical-agent-event-sink-stub.js";
 import { NarrativeStore } from "../narrative-store.js";
 import { PlanQuestionService } from "../plan-question-service.js";
 import { isTurnScopedEvent } from "../turn-runtime.js";
@@ -199,6 +200,10 @@ function build(): Built {
       { issue: vi.fn(), tryConsume: vi.fn(() => false), clear: vi.fn(), hasActiveGrant: vi.fn(() => false) } as any,
       narrativeStore,
       new PlanQuestionService(messageRepo, planQuestionAnswersRepo),
+      undefined,
+      undefined,
+      undefined,
+      createCanonicalAgentEventSinkStub(db),
   );
   service.init();
   // Provider adapters always stamp turn-scoped events with the active execution

@@ -578,6 +578,7 @@ export class NarrativeStore {
     messageId: string,
     messageContent: string,
     outcome: TurnOutcome,
+    options: { strict?: boolean } = {},
   ): PersistNarrativeResult {
     const buffer = this.turnToolCalls.get(threadId) ?? [];
     const settledAt = new Date().toISOString();
@@ -611,6 +612,7 @@ export class NarrativeStore {
       try {
         this.toolCallRecordRepo.bulkCreate(buffer);
       } catch (err) {
+        if (options.strict) throw err;
         logger.error("Failed to persist tool call records", {
           threadId,
           error: err instanceof Error ? err.message : String(err),
@@ -680,6 +682,7 @@ export class NarrativeStore {
       try {
         this.thoughtSegmentRepo.bulkCreate(thoughts);
       } catch (err) {
+        if (options.strict) throw err;
         logger.error("Failed to persist thought segments", {
           threadId,
           error: err instanceof Error ? err.message : String(err),
@@ -695,6 +698,7 @@ export class NarrativeStore {
       try {
         this.hookExecutionRepo.bulkCreate(hooks);
       } catch (err) {
+        if (options.strict) throw err;
         logger.error("Failed to persist hook executions", {
           threadId,
           error: err instanceof Error ? err.message : String(err),

@@ -100,6 +100,41 @@ describe("broadcast", () => {
     expect(JSON.parse(a[0].buf.toString("utf-8")).data.threadId).toBe("thread-a");
   });
 
+  it("routes canonical batches only to clients subscribed to their thread", () => {
+    const a: Array<{ buf: Buffer; binary: boolean }> = [];
+    const b: Array<{ buf: Buffer; binary: boolean }> = [];
+    const wsA = fakeOpenSocket(a);
+    const wsB = fakeOpenSocket(b);
+    addClient(wsA);
+    addClient(wsB);
+    subscribeClientToThread(wsA, "thread-a");
+    subscribeClientToThread(wsB, "thread-b");
+
+    broadcast("agent.canonical", {
+      threadId: "thread-a",
+      events: [{
+        eventId: "event-a",
+        routing: {
+          threadId: "thread-a",
+          turnId: "turn-a",
+          executionId: "00000000-0000-4000-8000-000000000001",
+        },
+        sourceProviderId: "codex",
+        sourceIdentities: [],
+        acceptedSequence: 1,
+        durableRevision: 1,
+        serverTimestamps: {
+          acceptedAt: "2026-08-09T20:00:00.000Z",
+          persistedAt: "2026-08-09T20:00:00.000Z",
+        },
+        payload: { type: "turn.started", startedAt: "2026-08-09T20:00:00.000Z" },
+      }],
+    });
+
+    expect(a).toHaveLength(1);
+    expect(b).toHaveLength(0);
+  });
+
   it("routes live file effects only to clients subscribed to that thread", () => {
     const a: Array<{ buf: Buffer; binary: boolean }> = [];
     const b: Array<{ buf: Buffer; binary: boolean }> = [];

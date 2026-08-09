@@ -25,6 +25,7 @@ import { ThreadControlService } from "./services/thread-control-service";
 import { ExternalThreadControlPairingService } from "./services/external-thread-control-pairing-service";
 import { ExternalThreadControlMcpRuntime } from "./services/external-thread-control-mcp-runtime";
 import { NarrativeStore } from "./services/narrative-store";
+import { CanonicalAgentEventSink } from "./services/canonical-agent-event-sink";
 import { GitService } from "./services/git-service";
 import { GithubService } from "./services/github-service";
 import { FileService } from "./services/file-service";
@@ -264,6 +265,7 @@ const toolCallRecordRepo = container.resolve(ToolCallRecordRepo);
 const thoughtSegmentRepo = container.resolve(ThoughtSegmentRepo);
 const hookExecutionRepo = container.resolve(HookExecutionRepo);
 const narrativeStore = container.resolve(NarrativeStore);
+const canonicalSink = container.resolve(CanonicalAgentEventSink);
 const turnSnapshotRepo = container.resolve(TurnSnapshotRepo);
 const snapshotService = container.resolve(SnapshotService);
 const settingsService = container.resolve(SettingsService);
@@ -655,6 +657,7 @@ const { httpServer, wss } = createWsServer({
   thoughtSegmentRepo,
   hookExecutionRepo,
   narrativeStore,
+  canonicalSink,
   turnSnapshotRepo,
   snapshotService,
   settingsService,

@@ -49,6 +49,57 @@ function createDeps(db: Database.Database) {
 }
 
 describe("loadConversationPage", () => {
+  it("prefers canonical messages and narrative while retaining older compatibility history", () => {
+    const db = openMemoryDatabase();
+    seedThread(db);
+    insertMessage(db, "legacy", "assistant", "older turn", 1);
+    insertMessage(db, "canonical-user", "user", "stale user projection", 2);
+    insertMessage(db, "canonical-assistant", "assistant", "stale assistant projection", 3);
+    const deps = createDeps(db);
+    const canonicalSink = {
+      loadConversationProjection: vi.fn(() => ({
+        messages: [
+          { ...deps.messageRepo.findById("canonical-user")!, content: "canonical user" },
+          { ...deps.messageRepo.findById("canonical-assistant")!, content: "canonical assistant" },
+        ],
+        narrativeByMessage: {
+          "canonical-user": { tools: [], thoughts: [], hooks: [] },
+          "canonical-assistant": {
+            tools: [{
+              id: "canonical-tool",
+              message_id: "canonical-assistant",
+              parent_tool_call_id: null,
+              tool_name: "Read",
+              input_summary: "canonical input",
+              output_summary: "canonical output",
+              status: "completed" as const,
+              started_at: "2026-01-01T00:00:00Z",
+              completed_at: "2026-01-01T00:00:01Z",
+              sort_order: 0,
+            }],
+            thoughts: [],
+            hooks: [],
+          },
+        },
+        hasMore: false,
+      })),
+    };
+
+    const page = loadConversationPage({ ...deps, canonicalSink } as Parameters<typeof loadConversationPage>[0], {
+      threadId: "thread-1",
+      limit: 10,
+    });
+
+    expect(page.messages.map(({ id, content }) => ({ id, content }))).toEqual([
+      { id: "legacy", content: "older turn" },
+      { id: "canonical-user", content: "canonical user" },
+      { id: "canonical-assistant", content: "canonical assistant" },
+    ]);
+    expect(page.narrativeByMessage["canonical-assistant"].tools).toEqual([
+      expect.objectContaining({ id: "canonical-tool" }),
+    ]);
+  });
+
   it("returns a paginated message page with grouped narrative payloads", () => {
     const db = openMemoryDatabase();
     seedThread(db);

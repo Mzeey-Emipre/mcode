@@ -920,7 +920,7 @@ export type {
   SetThreadSubscriptionsResult,
 } from "./ws/methods.js";
 
-export { WS_CHANNELS } from "./ws/channels.js";
+export { CANONICAL_AGENT_EVENT_BATCH_MAX, WS_CHANNELS } from "./ws/channels.js";
 export type { WsChannelName } from "./ws/channels.js";
 export { TerminalBackendCapabilitiesSchema } from "./models/terminal-backend.js";
 export type { TerminalBackendCapabilities } from "./models/terminal-backend.js";

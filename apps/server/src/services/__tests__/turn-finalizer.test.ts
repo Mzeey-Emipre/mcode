@@ -8,12 +8,13 @@ import { ThoughtSegmentRepo } from "../../repositories/thought-segment-repo";
 import { HookExecutionRepo } from "../../repositories/hook-execution-repo";
 import { NarrativeStore } from "../narrative-store";
 import { TurnFinalizer, deriveTurnAssistantMessageId } from "../turn-finalizer";
-import type { ThreadRepo } from "../../repositories/thread-repo";
+import { ThreadRepo } from "../../repositories/thread-repo";
 import type { SnapshotService } from "../snapshot-service";
-import type { TurnSnapshotRepo } from "../../repositories/turn-snapshot-repo";
+import { TurnSnapshotRepo } from "../../repositories/turn-snapshot-repo";
 import type { TurnOutcome } from "../turn-outcome";
 import type { TurnFileTracker } from "../turn-file-tracker";
 import { broadcast } from "../../transport/push";
+import { CanonicalAgentEventSink } from "../canonical-agent-event-sink";
 
 vi.mock("../../transport/push.js", () => ({ broadcast: vi.fn() }));
 
@@ -314,6 +315,105 @@ describe("TurnFinalizer.finalize — turn outcome → tool-call status", () => {
     await Promise.all([first, second]);
 
     expect(toolRepo.listByMessage("m1")).toHaveLength(1);
+  });
+});
+
+describe("TurnFinalizer canonical commit recovery", () => {
+  const executionId = "00000000-0000-4000-8000-000000000010";
+  const turnId = "canonical-turn-1";
+
+  function buildCanonicalHarness() {
+    const db = openMemoryDatabase();
+    seedThread(db);
+    const messageRepo = new MessageRepo(db);
+    const threadRepo = new ThreadRepo(db);
+    const toolRepo = new ToolCallRecordRepo(db);
+    const narrativeStore = new NarrativeStore(
+      messageRepo,
+      toolRepo,
+      new ThoughtSegmentRepo(db),
+      new HookExecutionRepo(db),
+    );
+    const sink = new CanonicalAgentEventSink(db, vi.fn());
+    sink.startParentTurn({
+      thread: {
+        id: THREAD,
+        workspaceId: "ws-1",
+        providerId: "claude",
+        createdAt: new Date().toISOString(),
+      },
+      turnId,
+      executionId,
+      permissionMode: "supervised",
+      providerIdentities: [],
+      projectUserMessage: () => messageRepo.create(THREAD, "user", "question", 1),
+    });
+    const finalizer = new TurnFinalizer(
+      messageRepo,
+      threadRepo,
+      narrativeStore,
+      { captureRef: vi.fn(), getFilesChanged: vi.fn() } as unknown as SnapshotService,
+      new TurnSnapshotRepo(db),
+      db,
+      undefined,
+      sink,
+    );
+    finalizer.bufferAssistantBody(THREAD, "answer", "claude-sonnet-4-6");
+    narrativeStore.beginTurn(THREAD);
+    narrativeStore.resetTurnCounters(THREAD);
+    narrativeStore.bufferToolCall(THREAD, {
+      toolCallId: "tool-1",
+      toolName: "Read",
+      toolInput: { path: "README.md" },
+    });
+    return { db, finalizer, messageRepo, sink };
+  }
+
+  it("retains volatile buffers when the canonical transaction rolls back", async () => {
+    const { db, finalizer, messageRepo, sink } = buildCanonicalHarness();
+    db.exec(`
+      CREATE TRIGGER reject_canonical_tool
+      BEFORE INSERT ON tool_call_records
+      BEGIN
+        SELECT RAISE(ABORT, 'forced narrative failure');
+      END;
+    `);
+
+    await expect(finalizer.finalize(
+      THREAD,
+      "completed",
+      Promise.resolve(),
+      executionId,
+    )).rejects.toThrow("forced narrative failure");
+    db.exec("DROP TRIGGER reject_canonical_tool");
+
+    await finalizer.finalize(THREAD, "completed", Promise.resolve(), executionId);
+
+    expect(messageRepo.listByThread(THREAD, 10).messages.map((message) => message.content)).toEqual([
+      "question",
+      "answer",
+    ]);
+    expect(sink.loadTerminalProjection(turnId)).toMatchObject({
+      message: expect.objectContaining({ content: "answer" }),
+      toolCallCount: 1,
+    });
+  });
+
+  it("replays terminal post-commit effects from the canonical projection", async () => {
+    const { finalizer, messageRepo } = buildCanonicalHarness();
+    await finalizer.finalize(THREAD, "completed", Promise.resolve(), executionId);
+    const messageId = messageRepo.listByThread(THREAD, 10).messages[1].id;
+    vi.mocked(broadcast).mockClear();
+
+    await finalizer.finalize(THREAD, "completed", Promise.resolve(), executionId);
+
+    expect(broadcast).toHaveBeenCalledWith("turn.persisted", expect.objectContaining({
+      threadId: THREAD,
+      turnId,
+      messageId,
+      toolCallCount: 1,
+    }));
+    expect(messageRepo.listByThread(THREAD, 10).messages).toHaveLength(2);
   });
 });
 
