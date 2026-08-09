@@ -1559,8 +1559,8 @@ export interface PreviewPanelProps {
   readonly workspaceId?: string | null;
   /** Mount only automation webviews without visible panel chrome. */
   readonly automationOnly?: boolean;
-  /** Left edge hidden beneath floating renderer chrome while the remaining guest stays interactive. */
-  readonly rendererOccludedLeft?: number;
+  /** Width covered by floating panel chrome at the left edge. */
+  readonly coveredLeft?: number;
 }
 
 function useLiveViewportCoordinatorState(
@@ -1855,7 +1855,7 @@ export function PreviewPanel({
   threadId,
   workspaceId,
   automationOnly = false,
-  rendererOccludedLeft = 0,
+  coveredLeft = 0,
 }: PreviewPanelProps) {
   const surfaceRef = useRef<HTMLDivElement>(null);
   const webviewRefs = useRef<Record<string, PreviewWebviewHandle | null>>({});
@@ -2975,6 +2975,7 @@ export function PreviewPanel({
         tabId={tab.id}
         src={tab.src}
         allowHiddenPresentation={automationOnly}
+        coveredLeft={coveredLeft}
         viewport={tabViewportState?.mode === "responsive" ? tabViewport : undefined}
         className={cn(
           responsiveViewportSize
@@ -3175,11 +3176,6 @@ export function PreviewPanel({
         {hasWebviewLayer ? (
           <div
             data-testid="preview-webview-surface"
-            style={
-              rendererOccludedLeft > 0
-                ? { left: rendererOccludedLeft }
-                : undefined
-            }
             className={cn(
               "absolute inset-0 z-0 overflow-hidden rounded-tl-md",
               !webviewLayerInteractive && "pointer-events-none",

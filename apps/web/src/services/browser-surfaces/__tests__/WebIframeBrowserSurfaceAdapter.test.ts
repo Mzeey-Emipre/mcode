@@ -29,10 +29,11 @@ describe("WebIframeBrowserSurfaceAdapter", () => {
       generation: "7",
     });
     expect(adapter.element.title).toBe("Preview");
-    adapter.present({ left: 10, top: 20, width: 640, height: 480, scale: 1.25, zIndex: 42 });
+    adapter.present({ left: 10, top: 20, width: 640, height: 480, scale: 1.25, zIndex: 42, coveredLeft: 112 });
     expect(adapter.element.style.left).toBe("10px");
     expect(adapter.element.style.width).toBe("640px");
     expect(adapter.element.style.zIndex).toBe("42");
+    expect(adapter.element.style.clipPath).toBe("inset(0px 0px 0px 112px)");
     adapter.dispose();
     expect(document.body.contains(adapter.element)).toBe(false);
   });

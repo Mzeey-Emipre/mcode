@@ -83,10 +83,13 @@ describe("ElectronWebviewBrowserSurfaceAdapter", () => {
     });
     const events: BrowserSurfaceAdapterEvent[] = [];
     adapter.subscribe((event) => events.push(event));
-    adapter.present({ left: 10, top: 20, width: 640, height: 480, scale: 1.25, zIndex: 42 });
+    adapter.present({ left: 10, top: 20, width: 640, height: 480, scale: 1.25, zIndex: 42, coveredLeft: 112 });
     expect(adapter.element.style.left).toBe("10px");
     expect(adapter.element.style.width).toBe("640px");
     expect(adapter.element.style.zIndex).toBe("42");
+    expect(adapter.element.style.clipPath).toBe("inset(0px 0px 0px 112px)");
+    adapter.present({ left: 10, top: 20, width: 640, height: 480, coveredLeft: 0 });
+    expect(adapter.element.style.clipPath).toBe("");
     adapter.hide();
     expect(adapter.element.style.visibility).toBe("hidden");
 

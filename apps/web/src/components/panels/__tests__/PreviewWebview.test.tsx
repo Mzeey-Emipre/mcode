@@ -267,6 +267,38 @@ describe("PreviewWebview", () => {
     rect.mockRestore();
   });
 
+  it("clips the covered edge without changing the Browser viewport geometry", () => {
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(10, 20, 640, 480),
+    );
+    const { rerender } = render(
+      <PreviewWebview
+        coveredLeft={112}
+        threadId="thread-covered"
+        tabId="tab-covered"
+        src="https://example.com"
+      />,
+    );
+    const surface = screen.getByTestId("web-runtime-preview-iframe");
+
+    expect(surface).toHaveStyle({
+      left: "10px",
+      width: "640px",
+      clipPath: "inset(0px 0px 0px 112px)",
+    });
+
+    rerender(
+      <PreviewWebview
+        coveredLeft={0}
+        threadId="thread-covered"
+        tabId="tab-covered"
+        src="https://example.com"
+      />,
+    );
+    expect(surface.style.clipPath).toBe("");
+    rect.mockRestore();
+  });
+
   it("presents an active automation surface inside its dedicated hidden host", () => {
     const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
       new DOMRect(-20_000, 0, 1280, 720),

@@ -654,7 +654,7 @@ export function ActivityRail({
   readonly terminalLabels?: Readonly<Record<string, string>>;
   onSelectBrowserPage: (instanceId: string, pageId: string) => void;
   onCloseBrowserPage: (pageId: string) => void;
-  /** Publishes the floating state so renderer guests can yield the overlap region. */
+  /** Publishes the floating state so Browser surfaces exclude the covered edge. */
   readonly onExpandedChange?: (expanded: boolean) => void;
 }) {
   const openTabs = tabInstances.map((instance) => instance.type);

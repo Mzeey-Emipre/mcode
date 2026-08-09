@@ -90,9 +90,9 @@ vi.mock("./CoordinationPanel", () => ({
 vi.mock("./plan", () => ({ PlanPanel: () => <div /> }));
 vi.mock("@/components/diff", () => ({ DiffPanel: () => <div /> }));
 vi.mock("@/components/panels/PreviewPanel", () => ({
-  PreviewPanel: ({ rendererOccludedLeft = 0 }: { rendererOccludedLeft?: number }) => {
-    previewPanelRender();
-    return <div data-testid="preview-panel" data-renderer-occluded-left={rendererOccludedLeft} />;
+  PreviewPanel: (props: Record<string, unknown>) => {
+    previewPanelRender(props);
+    return <div data-testid="preview-panel" data-covered-left={props.coveredLeft ?? 0} />;
   },
 }));
 vi.mock("@/components/terminal/TerminalPoolSlotContext", () => ({
@@ -466,7 +466,7 @@ describe("RightPanel", () => {
     expect(activatePreviewPage).not.toHaveBeenCalled();
   });
 
-  it("passes the floating rail overlap to the visible renderer Browser", () => {
+  it("covers the visible Browser edge without changing its layout geometry", () => {
     previewTabSet.current = {
       threadId: "workspace-1",
       activeTabId: "browser-tab-1",
@@ -493,14 +493,14 @@ describe("RightPanel", () => {
 
     render(<RightPanel />);
     expect(screen.getByTestId("preview-panel")).toHaveAttribute(
-      "data-renderer-occluded-left",
+      "data-covered-left",
       "0",
     );
 
     fireEvent.click(screen.getByTestId("expand-activity-rail"));
 
     expect(screen.getByTestId("preview-panel")).toHaveAttribute(
-      "data-renderer-occluded-left",
+      "data-covered-left",
       "112",
     );
   });

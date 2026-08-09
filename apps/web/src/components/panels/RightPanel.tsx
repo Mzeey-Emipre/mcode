@@ -89,13 +89,13 @@ const EMPTY_SCOPE_TERMINALS: readonly TerminalInstance[] = [];
 interface WarmPreviewSurfaceProps {
   readonly scope: WarmPreviewScope;
   readonly visible: boolean;
-  readonly rendererOccludedLeft: number;
+  readonly coveredLeft: number;
 }
 
 const WarmPreviewSurface = memo(function WarmPreviewSurface({
   scope,
   visible,
-  rendererOccludedLeft,
+  coveredLeft,
 }: WarmPreviewSurfaceProps) {
   const automationHosted = useBrowserAutomationStore((state) =>
     state.hostedScopeIds.has(warmPreviewScopeKey(scope)),
@@ -117,7 +117,7 @@ const WarmPreviewSurface = memo(function WarmPreviewSurface({
         <PreviewPanel
           threadId={scope.scopeId}
           workspaceId={scope.workspaceId}
-          rendererOccludedLeft={rendererOccludedLeft}
+          coveredLeft={coveredLeft}
         />
       )}
     </div>
@@ -692,7 +692,7 @@ export function RightPanel() {
                 key={warmPreviewScopeKey(scope)}
                 scope={scope}
                 visible={visible}
-                rendererOccludedLeft={
+                coveredLeft={
                   visible && activityRailExpanded
                     ? ACTIVITY_RAIL_FLOATING_OVERLAP_PX
                     : 0
