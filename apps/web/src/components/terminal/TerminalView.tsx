@@ -9,7 +9,12 @@ import { useTerminalStore } from "@/stores/terminalStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { shouldInterceptKeyEvent } from "./terminalKeyHandler";
 import { ClientTerminalFlowControl } from "./terminalFlowControl";
-import { onPtyData, onPtyExit, onPtyReconnectGap, type PtyDataPayload } from "./ptyDataRegistry";
+import {
+  onPtyData,
+  onPtyExit,
+  onPtyReconnectGap,
+  type PtyDataPayload,
+} from "@/terminal/legacy/pty-data-registry";
 import { isSafeTerminalDimensions, safeFit } from "./safeFit";
 import { terminalScroll } from "./terminalScrollController";
 import {

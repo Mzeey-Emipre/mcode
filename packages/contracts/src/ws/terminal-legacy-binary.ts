@@ -1,5 +1,5 @@
 /**
- * Binary envelope format for PTY output pushed from server to client.
+ * Legacy binary envelope format for PTY output pushed from server to client.
  *
  * Layout (big-endian for multi-byte integers):
  *   byte 0        : tag (0x01 = TERMINAL_DATA)

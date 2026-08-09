@@ -1,5 +1,5 @@
 /**
- * Always-on circular replay buffer for PTY output.
+ * Legacy circular replay buffer for PTY output.
  *
  * Unlike {@link TerminalFlowControl}, which only buffers during pauses, this
  * buffer retains the most recent PTY output at all times so that reconnecting

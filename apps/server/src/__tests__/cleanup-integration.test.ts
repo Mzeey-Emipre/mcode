@@ -15,7 +15,7 @@ import { CleanupWorker } from "../services/cleanup-worker";
 import { HandoffStorage } from "../services/handoff/handoff-storage";
 import { ThreadService } from "../services/thread-service";
 import type { ClaudeProvider } from "../providers/claude/claude-provider";
-import type { TerminalService } from "../services/terminal-service";
+import type { TerminalBackend as TerminalService } from "../terminal/terminal-backend.js";
 import type { GitService } from "../services/git-service";
 import { AttachmentService } from "../services/attachment-service";
 import { WorkspaceService } from "../services/workspace-service";

@@ -16,7 +16,7 @@ vi.mock("node:module", async (importOriginal) => {
   };
 });
 
-vi.mock("./process-kill.js", () => ({
+vi.mock("../../services/process-kill.js", () => ({
   killProcessTree,
   gracefulKillProcessTree,
   listDirectChildren: vi.fn().mockResolvedValue([]),

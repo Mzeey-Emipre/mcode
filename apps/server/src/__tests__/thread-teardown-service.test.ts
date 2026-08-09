@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ThreadRepo } from "../repositories/thread-repo";
 import { ThreadTeardownService } from "../services/thread-teardown-service";
 import type { AgentService } from "../services/agent-service";
-import type { TerminalService } from "../services/terminal-service";
+import type { TerminalBackend as TerminalService } from "../terminal/terminal-backend.js";
 
 function build(existingThreadId: string | null = "thread-1") {
   const threadRepo = {

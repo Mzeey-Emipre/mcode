@@ -56,8 +56,9 @@ import type {
   BrowserAutomationResponse,
   SendMessageInput,
   CreateAndSendInput,
+  TerminalBackendCapabilities,
 } from "@mcode/contracts";
-import { emitPtyReconnectGap } from "@/components/terminal/ptyDataRegistry";
+import { emitPtyReconnectGap } from "@/terminal/legacy/pty-data-registry";
 import type { PaginatedMessages, ConversationPage, ConversationTail, SetThreadSubscriptionsInput, SetThreadSubscriptionsResult, TurnSnapshot, PrDraft, CreatePrResult, ProviderUsageInfo, ChecksStatus, ProviderAvailability, GoalLookupResult } from "@mcode/contracts";
 import {
   TERMINAL_DATA_TAG,
@@ -67,6 +68,8 @@ import { useSettingsStore } from "@/stores/settingsStore";
 import { useThreadStore } from "@/stores/threadStore";
 import type { PermissionRequest } from "@mcode/contracts";
 import { setAttachmentTransportWsUrl } from "@/lib/attachment-url";
+import { TerminalClientSelector } from "@/terminal/terminal-client-selector";
+import type { TerminalClient } from "@/terminal/terminal-client";
 
 /** Minimum reconnect delay in milliseconds. */
 const MIN_RECONNECT_MS = 1000;
@@ -234,6 +237,7 @@ export function createWsTransport(
   let closed = false;
   let reconnectDelay = MIN_RECONNECT_MS;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let terminalSelectionPromise: Promise<TerminalBackendCapabilities> | null = null;
   // Track consecutive auth failures so we apply backoff after 3 immediate
   // retries, preventing a tight loop when the token is persistently wrong.
   let consecutiveAuthFailures = 0;
@@ -259,6 +263,7 @@ export function createWsTransport(
       setAttachmentTransportWsUrl(url);
       resolveReady();
       options?.onStatusChange?.("connected");
+      terminalSelectionPromise = selectTerminalClient();
 
       // Reconcile runningThreadIds with the server's authoritative set.
       // The client-side optimistic Set is lost on reload/reconnect; this
@@ -309,10 +314,9 @@ export function createWsTransport(
       // Deferred import avoids a circular dependency at module evaluation time.
       import("@/stores/terminalStore").then(async ({ useTerminalStore }) => {
         try {
-          const activePtys = await rpc<Array<{ ptyId: string; threadId: string }>>(
-            "terminal.listActive",
-            {},
-          );
+          await terminalSelectionPromise;
+          const terminalClient = terminalClientSelector.getSelected();
+          const activePtys = await terminalClient.listActive();
           useTerminalStore.getState().reconcileActiveSessions(activePtys);
 
           const clientPtyIds = new Set(
@@ -327,18 +331,7 @@ export function createWsTransport(
               .map(async (p) => {
                 // -1 means "I have seen nothing" — server replays everything including seq=0.
                 const lastSeq = ptyLastSeqMap.get(p.ptyId) ?? -1;
-                const result = await rpc<
-                  | { mode: "delta" }
-                  | {
-                      mode: "checkpoint";
-                      checkpoint: string;
-                      checkpointThrough: number;
-                    }
-                  | { mode: "reset"; discardThrough: number }
-                >(
-                  "terminal.reattach",
-                  { ptyId: p.ptyId, lastSeq },
-                );
+                const result = await terminalClient.reattach(p.ptyId, lastSeq);
                 if (result.mode === "reset") {
                   ptyLastSeqMap.set(p.ptyId, result.discardThrough);
                   emitPtyReconnectGap({ ptyId: p.ptyId });
@@ -477,6 +470,28 @@ export function createWsTransport(
         reject(err);
       }
     });
+  }
+
+  const terminalClientSelector = new TerminalClientSelector(
+    <T>(method: string, params: Record<string, unknown>) => rpc<T>(method, params),
+  );
+
+  async function selectTerminalClient(): Promise<TerminalBackendCapabilities> {
+    const capabilities = await rpc<TerminalBackendCapabilities>("terminal.capabilities", {});
+    terminalClientSelector.select(capabilities);
+    return capabilities;
+  }
+
+  async function terminalCapabilities(): Promise<TerminalBackendCapabilities> {
+    terminalSelectionPromise ??= selectTerminalClient();
+    return terminalSelectionPromise;
+  }
+
+  async function withTerminalClient<T>(
+    operation: (client: TerminalClient) => Promise<T>,
+  ): Promise<T> {
+    await terminalCapabilities();
+    return operation(terminalClientSelector.getSelected());
   }
 
   /**
@@ -770,31 +785,24 @@ export function createWsTransport(
       rpc<ProviderCatalogSnapshot>("provider.catalog", request),
 
     // Terminal (PTY)
-    terminalCreate: (threadId) => rpc<{ ptyId: string; shell: string }>("terminal.create", { threadId }),
-    terminalWrite: (ptyId, data) => rpc<void>("terminal.write", { ptyId, data }),
+    terminalCapabilities,
+    terminalCreate: (threadId) => withTerminalClient((client) => client.create(threadId)),
+    terminalWrite: (ptyId, data) => withTerminalClient((client) => client.write(ptyId, data)),
     terminalResize: (ptyId, cols, rows) =>
-      rpc<void>("terminal.resize", { ptyId, cols, rows }),
-    terminalKill: (ptyId) => rpc<void>("terminal.kill", { ptyId }),
-    terminalPause: (ptyId) => rpc<void>("terminal.pause", { ptyId }),
-    terminalResume: (ptyId) => rpc<void>("terminal.resume", { ptyId }),
+      withTerminalClient((client) => client.resize(ptyId, cols, rows)),
+    terminalKill: (ptyId) => withTerminalClient((client) => client.kill(ptyId)),
+    terminalPause: (ptyId) => withTerminalClient((client) => client.pause(ptyId)),
+    terminalResume: (ptyId) => withTerminalClient((client) => client.resume(ptyId)),
     terminalKillByThread: (threadId) =>
-      rpc<void>("terminal.killByThread", { threadId }),
+      withTerminalClient((client) => client.killByThread(threadId)),
     terminalReattach: (ptyId, lastSeq, cold) =>
-      rpc<
-        | { mode: "delta" }
-        | {
-            mode: "checkpoint";
-            checkpoint: string;
-            checkpointThrough: number;
-          }
-        | { mode: "reset"; discardThrough: number }
-      >("terminal.reattach", { ptyId, lastSeq, cold }),
+      withTerminalClient((client) => client.reattach(ptyId, lastSeq, cold)),
     terminalCheckpoint: (ptyId, seq, data) =>
-      rpc<{ accepted: boolean }>("terminal.checkpoint", { ptyId, seq, data }),
+      withTerminalClient((client) => client.checkpoint(ptyId, seq, data)),
     terminalListActive: () =>
-      rpc<Array<{ ptyId: string; threadId: string }>>("terminal.listActive", {}),
+      withTerminalClient((client) => client.listActive()),
     terminalHasChildren: (ptyId) =>
-      rpc<{ hasChildren: boolean }>("terminal.hasChildren", { ptyId }),
+      withTerminalClient((client) => client.hasChildren(ptyId)),
     ptySetLastSeq: (ptyId, seq) => { ptyLastSeqMap.set(ptyId, seq); },
     ptyDeleteLastSeq: (ptyId) => { ptyLastSeqMap.delete(ptyId); },
 

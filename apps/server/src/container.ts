@@ -49,7 +49,10 @@ import {
 } from "./services/codex-catalog-service";
 import { CodexCustomPromptService } from "./services/codex-custom-prompt-service";
 import { ProviderCatalogService } from "./services/provider-catalog-service";
-import { TerminalService } from "./services/terminal-service";
+import { TerminalBackend, TERMINAL_BACKEND_TOKEN } from "./terminal/terminal-backend.js";
+import { TerminalBackendSelector } from "./terminal/terminal-backend-selector.js";
+import { LegacyTerminalBackend } from "./terminal/legacy/legacy-terminal-backend.js";
+import { TerminalService as LegacyTerminalService } from "./terminal/legacy/terminal-service.js";
 import { AttachmentService } from "./services/attachment-service";
 import { HandoffStorage } from "./services/handoff/handoff-storage.js";
 import { HandoffPipelineService } from "./services/handoff/handoff-pipeline.js";
@@ -107,7 +110,7 @@ export function setupContainer(mcodeDir: string): typeof container {
     new BrowserAutomationSessionLease(browserAutomationCredentials),
   );
 
-  // PtyPidRegistry — registered before TerminalService because it is injected into it
+  // PtyPidRegistry is registered before the boot-selected legacy Terminal path.
   container.register("PtyPidRegistry", {
     useValue: new PtyPidRegistry(mcodeDir),
   });
@@ -429,10 +432,23 @@ export function setupContainer(mcodeDir: string): typeof container {
     { lifecycle: Lifecycle.Singleton },
   );
   container.register(
-    TerminalService,
-    { useClass: TerminalService },
+    LegacyTerminalService,
+    { useClass: LegacyTerminalService },
     { lifecycle: Lifecycle.Singleton },
   );
+  container.register(
+    LegacyTerminalBackend,
+    { useClass: LegacyTerminalBackend },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    TerminalBackendSelector,
+    { useClass: TerminalBackendSelector },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register<TerminalBackend>(TERMINAL_BACKEND_TOKEN, {
+    useFactory: (c) => c.resolve(TerminalBackendSelector).getSelectedBackend(),
+  });
   container.register(
     SnapshotService,
     { useClass: SnapshotService },

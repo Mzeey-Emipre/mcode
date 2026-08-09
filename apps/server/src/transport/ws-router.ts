@@ -40,7 +40,7 @@ import type {
   CodexCatalogService,
 } from "../services/codex-catalog-service";
 import type { ProviderCatalogService } from "../services/provider-catalog-service";
-import type { TerminalService } from "../services/terminal-service";
+import type { TerminalBackend } from "../terminal/terminal-backend.js";
 import type { MessageRepo } from "../repositories/message-repo";
 import type { ToolCallRecordRepo } from "../repositories/tool-call-record-repo";
 import type { NarrativeStore } from "../services/narrative-store";
@@ -176,7 +176,7 @@ export interface RouterDeps {
   codexCatalogService: CodexCatalogService;
   /** Serves persisted snapshots and coordinates background catalog reconciliation. */
   providerCatalogService: ProviderCatalogService;
-  terminalService: TerminalService;
+  terminalService: TerminalBackend;
   messageRepo: MessageRepo;
   toolCallRecordRepo: ToolCallRecordRepo;
   thoughtSegmentRepo: ThoughtSegmentRepo;
@@ -1096,6 +1096,8 @@ async function dispatch(
       });
     }
     // Terminal
+    case "terminal.capabilities":
+      return deps.terminalService.capabilities();
     case "terminal.create":
       return deps.terminalService.create(params.threadId);
     case "terminal.write":

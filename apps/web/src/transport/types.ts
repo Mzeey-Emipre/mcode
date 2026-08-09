@@ -76,6 +76,7 @@ import type {
   SendMessageInput,
   CreateAndSendInput,
   AgentStopResult,
+  TerminalBackendCapabilities,
   ThreadControlIdentity,
   ThreadControlReadResult,
   ThreadControlUserSendInput,
@@ -475,6 +476,8 @@ export interface McodeTransport {
   getProviderCatalog(request: ProviderCatalogRequest): Promise<ProviderCatalogSnapshot>;
 
   // Terminal (PTY)
+  /** Report the Terminal backend and version selected for the current server boot. */
+  terminalCapabilities(): Promise<TerminalBackendCapabilities>;
   /** Create a new PTY attached to a thread's working directory. Returns the pty ID and shell name. */
   terminalCreate(threadId: string): Promise<{ ptyId: string; shell: string }>;
   /** Write data (keystrokes) to a PTY. */

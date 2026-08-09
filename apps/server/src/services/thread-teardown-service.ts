@@ -3,7 +3,7 @@
  */
 import { injectable, inject } from "tsyringe";
 import { AgentService } from "./agent-service";
-import { TerminalService } from "./terminal-service";
+import { TerminalBackend, TERMINAL_BACKEND_TOKEN } from "../terminal/terminal-backend.js";
 import { ThreadRepo } from "../repositories/thread-repo";
 
 function failureMessage(result: PromiseRejectedResult): string {
@@ -16,7 +16,7 @@ export class ThreadTeardownService {
   constructor(
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
     @inject(AgentService) private readonly agentService: AgentService,
-    @inject(TerminalService) private readonly terminalService: TerminalService,
+    @inject(TERMINAL_BACKEND_TOKEN) private readonly terminalService: TerminalBackend,
   ) {}
 
   /** Stop provider sessions and kill PTYs for a thread before its row is deleted. */

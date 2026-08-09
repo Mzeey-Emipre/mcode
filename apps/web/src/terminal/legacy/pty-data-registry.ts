@@ -21,7 +21,7 @@ type PtyExitCallback = (detail: PtyExitPayload) => void;
 type PtyReconnectGapCallback = (detail: PtyReconnectGapPayload) => void;
 
 /**
- * Direct callback registry for PTY events. Replaces window CustomEvent
+ * Legacy callback registry for PTY events. Replaces window CustomEvent
  * dispatch with O(1) Map lookups, avoiding event object allocation and
  * the browser's full event dispatch machinery on every PTY data chunk.
  */
