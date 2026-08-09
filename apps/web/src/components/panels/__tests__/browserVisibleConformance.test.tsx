@@ -691,6 +691,87 @@ describe("visible Browser conformance observer", () => {
     expect(activatePage).toHaveBeenCalledWith(WORKSPACE_ID, THREAD_ID, TAB_ID);
   });
 
+  it("shows a restored mounted Browser tab before Overview opens and follows later tab updates", async () => {
+    let hostTabSet: BrowserTabSet = {
+      threadId: THREAD_ID,
+      activeTabId: TAB_ID,
+      tabs: [{
+        id: TAB_ID,
+        threadId: THREAD_ID,
+        title: "Restored page",
+        url: "https://example.test/restored",
+        faviconUrl: null,
+        warm: true,
+        active: true,
+      }],
+    };
+    let onTabsUpdated: ((tabSet: BrowserTabSet) => void) | null = null;
+    const list = vi.fn(async () => ({ ok: true as const, data: hostTabSet }));
+    const originalDesktopBridge = window.desktopBridge;
+    Object.defineProperty(window, "desktopBridge", {
+      configurable: true,
+      writable: true,
+      value: {
+        preview: {
+          tabs: {
+            list,
+            onUpdated: vi.fn((listener: (tabSet: BrowserTabSet) => void) => {
+              onTabsUpdated = listener;
+              return vi.fn();
+            }),
+          },
+        },
+      },
+    });
+
+    try {
+      useBrowserAutomationStore.setState({ registered: true, status: "registered" });
+      useBrowserAutomationStore.getState().registerTarget(WORKSPACE_ID, THREAD_ID, TAB_ID);
+
+      const firstOverview = render(
+        <ThreadOverview thread={visibleThread()} threadPaneWidth={500} />,
+      );
+
+      expect(await screen.findByRole("button", {
+        name: "Browser, Restored page, https://example.test/restored",
+      })).toBeInTheDocument();
+      expect(list).toHaveBeenCalledWith(THREAD_ID, WORKSPACE_ID);
+
+      hostTabSet = {
+        ...hostTabSet,
+        tabs: [{
+          ...hostTabSet.tabs[0]!,
+          title: "Loaded page",
+          url: "https://example.test/loaded?view=full",
+          faviconUrl: "https://example.test/favicon.ico",
+        }],
+      };
+      act(() => onTabsUpdated?.(hostTabSet));
+
+      const loadedRow = await screen.findByRole("button", {
+        name: "Browser, Loaded page, https://example.test/loaded?view=full",
+      });
+      expect(loadedRow.querySelector('img[src="https://example.test/favicon.ico"]')).toBeInTheDocument();
+      expect(screen.getByTestId(`thread-overview-browser-address-${TAB_ID}`)).toHaveTextContent(
+        "https://example.test/loaded?view=full",
+      );
+
+      firstOverview.unmount();
+      usePreviewTabsStore.setState({ tabSetByScope: {}, liveChromeByScope: {} });
+      render(<ThreadOverview thread={visibleThread()} threadPaneWidth={500} />);
+
+      expect(await screen.findByRole("button", {
+        name: "Browser, Loaded page, https://example.test/loaded?view=full",
+      })).toBeInTheDocument();
+    } finally {
+      Object.defineProperty(window, "desktopBridge", {
+        configurable: true,
+        writable: true,
+        value: originalDesktopBridge,
+      });
+    }
+  });
+
   it("observes viewport preset, orientation, and fit/actual presentation through public controls", async () => {
     const user = userEvent.setup();
     const apply = vi.fn(async (operation: ViewportHostOperation) => ({

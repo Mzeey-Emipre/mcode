@@ -45,6 +45,7 @@ import { CreatePrDialog } from "./CreatePrDialog";
 import { useThreadGitActions } from "@/hooks/useThreadGitActions";
 import { usePullRequestReviewLink } from "@/hooks/usePullRequestReviewLink";
 import { useThreadRecap } from "@/hooks/useThreadRecap";
+import { usePreviewTabSet } from "@/components/panels/hooks/usePreviewTabs";
 import {
   getBreakdown,
   getCiOverviewSummaryLabel,
@@ -58,7 +59,7 @@ import {
   type BrowserAutomationLiveTarget,
   type BrowserAutomationPendingAgentOpen,
 } from "@/stores/browserAutomationStore";
-import { usePreviewDisplayTabSet, usePreviewTabsStore } from "@/stores/previewTabsStore";
+import { usePreviewTabsStore } from "@/stores/previewTabsStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useThreadRecord } from "@/stores/thread-selectors";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
@@ -184,9 +185,6 @@ const EMPTY_REPOSITORY: ThreadOverviewRepository = {
 const OVERVIEW_ROW_CLASS =
   "group h-8 w-full gap-3 px-2 text-left transition-[background-color,color,transform] duration-150 ease-out active:translate-y-px motion-reduce:transform-none";
 
-const EMPTY_BROWSER_LIFECYCLE_TABS: ReadonlyMap<string, BrowserSessionLifecycleTab> = new Map();
-const EMPTY_BROWSER_LIVE_TARGETS: ReadonlyMap<string, BrowserAutomationLiveTarget> = new Map();
-const EMPTY_BROWSER_CONTROLLERS: ReadonlyMap<string, BrowserAutomationControllerState> = new Map();
 const EMPTY_BROWSER_PENDING_OPENS: ReadonlyMap<string, BrowserAutomationPendingAgentOpen> = new Map();
 
 /** One Browser tab row joined from a live target and tab chrome. */
@@ -1780,24 +1778,16 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
   const openRequested = useOverviewStore(
     (state) => state.requestedThreadId === thread.id,
   );
-  const browserTabSet = usePreviewDisplayTabSet(open ? thread.id : null, thread.workspace_id);
-  const browserLifecycleTabs = useBrowserAutomationStore((state) =>
-    open ? state.lifecycleTabs : EMPTY_BROWSER_LIFECYCLE_TABS,
-  );
-  const browserLiveTargets = useBrowserAutomationStore((state) =>
-    open ? state.liveTargets : EMPTY_BROWSER_LIVE_TARGETS,
-  );
-  const browserControllers = useBrowserAutomationStore((state) =>
-    open ? state.controllers : EMPTY_BROWSER_CONTROLLERS,
-  );
-  const browserPendingAgentOpens = useBrowserAutomationStore((state) =>
-    open ? state.pendingAgentOpens : EMPTY_BROWSER_PENDING_OPENS,
-  );
+  const browserTabSet = usePreviewTabSet(thread.id, thread.workspace_id);
+  const browserLifecycleTabs = useBrowserAutomationStore((state) => state.lifecycleTabs);
+  const browserLiveTargets = useBrowserAutomationStore((state) => state.liveTargets);
+  const browserControllers = useBrowserAutomationStore((state) => state.controllers);
+  const browserPendingAgentOpens = useBrowserAutomationStore((state) => state.pendingAgentOpens);
   const browserHostStatus = useBrowserAutomationStore((state) => state.status);
   const browserHostRegistered = useBrowserAutomationStore((state) => state.registered);
   const browserTabs = useMemo(
     () =>
-      open && browserHostRegistered && browserHostStatus === "registered"
+      browserHostRegistered && browserHostStatus === "registered"
         ? getThreadOverviewBrowserTabs({
             workspaceId: thread.workspace_id,
             threadId: thread.id,
@@ -1816,7 +1806,6 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
       browserLiveTargets,
       browserPendingAgentOpens,
       browserTabSet,
-      open,
       thread.id,
       thread.workspace_id,
     ],
