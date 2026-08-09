@@ -78,6 +78,14 @@ const validateU64 = (value: string, label: string): bigint => {
   return BigInt(parsed.data);
 };
 
+const validateUtf8 = (payload: Uint8Array, label: string): void => {
+  try {
+    decoder.decode(payload);
+  } catch {
+    throw new Error(`Terminal ${label} payload is not valid UTF-8`);
+  }
+};
+
 const validateIds = (frame: TerminalBinaryFrame): void => {
   const hydrationRequired = ["hydrationChunk", "hydrationComplete", "gap"].includes(frame.kind);
   const hydrationAllowed = hydrationRequired || frame.kind === "output";
@@ -94,6 +102,7 @@ const validatePayload = (frame: TerminalBinaryFrame): void => {
   if (["input", "output"].includes(kind)) {
     if (payload.byteLength === 0) throw new Error(`Terminal ${kind} payload is empty`);
   }
+  if (kind === "input") validateUtf8(payload, kind);
   if (kind === "resize") {
     if (payload.byteLength !== 4) throw new Error("Terminal resize payload must be four bytes");
     const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);

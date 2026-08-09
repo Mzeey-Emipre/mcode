@@ -129,4 +129,13 @@ describe("Terminal v1 binary codec", () => {
     expect(decodeTerminalFrame(encodeTerminalFrame(first)).payload).toEqual(first.payload);
     expect(decodeTerminalFrame(encodeTerminalFrame(second)).payload).toEqual(second.payload);
   });
+
+  it("rejects malformed UTF-8 input before dispatch", () => {
+    expect(() =>
+      encodeTerminalFrame({
+        ...validFrame("input"),
+        payload: new Uint8Array([0xc3, 0x28]),
+      }),
+    ).toThrow(/UTF-8/i);
+  });
 });

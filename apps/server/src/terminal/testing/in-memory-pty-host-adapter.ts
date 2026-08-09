@@ -52,10 +52,12 @@ export class InMemoryPtyHostAdapter implements PtyHostAdapter {
       hostGeneration: this.hostGeneration,
       platform: this.platform,
       nativeAbi: "in-memory-v1",
-      capabilities: [
-        this.platform === "windows" ? "conpty" : "posix-pty",
-        this.platform === "windows" ? "job-object" : "process-group",
-      ],
+      capabilities: {
+        pty: this.platform === "windows" ? "conpty" : "posix-pty",
+        containment: this.platform === "windows" ? "job-object" : "process-group",
+        maxSessions: 20,
+        protocolVersion: 1,
+      },
     });
     return { hostGeneration: this.hostGeneration, state: "healthy" };
   }
