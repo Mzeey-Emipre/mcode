@@ -971,6 +971,7 @@ export {
   TERMINAL_V1_METHOD_NAMES,
   TERMINAL_V1_METHODS,
   TerminalRpcRequestSchema,
+  parseTerminalRpcRequest,
   TerminalRpcResponseSchema,
 } from "./ws/terminal.js";
 export type { TerminalV1MethodName } from "./ws/terminal.js";

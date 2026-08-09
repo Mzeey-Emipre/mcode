@@ -10,6 +10,8 @@ import {
 
 describe("Terminal v1 lifecycle contract", () => {
   it("allows only frozen session transitions", () => {
+    expect(Object.isFrozen(TERMINAL_BOOT_TRANSITIONS)).toBe(true);
+    expect(Object.isFrozen(TERMINAL_BOOT_TRANSITIONS[0])).toBe(true);
     expect(resolveTerminalSessionTransition(null, "create-accepted")).toBe("starting");
     expect(resolveTerminalSessionTransition("running", "close-requested")).toBe("exiting");
     expect(resolveTerminalSessionTransition("exited", "explicit-close")).toBeNull();

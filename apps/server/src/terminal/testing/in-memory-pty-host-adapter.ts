@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import type { TerminalPlatform } from "@mcode/contracts";
+import { TerminalU64Schema, type TerminalPlatform } from "@mcode/contracts";
 import type {
   PtyHostAdapter,
   PtyHostClose,
@@ -20,6 +20,8 @@ interface InMemorySession {
   hasChildren: boolean;
 }
 
+const u64 = TerminalU64Schema();
+
 /** Deterministic PTY host adapter for later session-runtime tests. */
 export class InMemoryPtyHostAdapter implements PtyHostAdapter {
   private readonly protocol: InMemoryPtyHostProtocol;
@@ -36,6 +38,7 @@ export class InMemoryPtyHostAdapter implements PtyHostAdapter {
 
   /** Starts the deterministic host generation. */
   async start(): Promise<PtyHostHealth> {
+    if (this.started) throw new Error("PTY host is already started");
     this.protocol.sendToHost({
       contractVersion: 1,
       kind: "handshake",
@@ -60,6 +63,9 @@ export class InMemoryPtyHostAdapter implements PtyHostAdapter {
   /** Creates one deterministic contained PTY session. */
   async create(input: PtyHostCreate): Promise<PtyHostRunning> {
     this.requireStarted();
+    if (this.sessions.has(input.sessionId)) {
+      throw new Error(`PTY session already exists: ${input.sessionId}`);
+    }
     const containment = this.platform === "windows" ? "job-object" : "process-group";
     this.protocol.sendToHost({
       contractVersion: 1,
@@ -100,8 +106,12 @@ export class InMemoryPtyHostAdapter implements PtyHostAdapter {
   /** Applies one validated command and emits its cumulative acknowledgement. */
   async send(command: PtyHostCommand): Promise<void> {
     const session = this.requireSession(command.sessionId);
+    const commandSeq = u64.safeParse(command.commandSeq);
+    if (!commandSeq.success) {
+      throw new Error(`PTY command sequence is not a u64: ${command.commandSeq}`);
+    }
     const next = session.commandSeq + 1n;
-    if (BigInt(command.commandSeq) !== next) throw new Error("PTY command sequence is out of order");
+    if (BigInt(commandSeq.data) !== next) throw new Error("PTY command sequence is out of order");
     if (command.kind === "input") {
       this.protocol.sendToHost({ contractVersion: 1, kind: "command.input", sessionId: command.sessionId, hostGeneration: command.hostGeneration, attachmentEpoch: command.attachmentEpoch, commandSeq: command.commandSeq, dataBase64: Buffer.from(command.data).toString("base64") });
     } else {
@@ -130,8 +140,21 @@ export class InMemoryPtyHostAdapter implements PtyHostAdapter {
   async shutdown(): Promise<void> {
     if (this.started) {
       this.protocol.sendToHost({ contractVersion: 1, kind: "shutdown", hostGeneration: this.hostGeneration, reason: "app-shutdown" });
+      for (const [sessionId, session] of this.sessions) {
+        this.publish({
+          contractVersion: 1,
+          kind: "exit",
+          sessionId,
+          hostGeneration: this.hostGeneration,
+          finalOutputSeq: session.outputSeq.toString(),
+          code: 0,
+          signal: null,
+          reason: "user-close",
+        });
+      }
     }
     this.sessions.clear();
+    this.listeners.clear();
     this.started = false;
   }
 

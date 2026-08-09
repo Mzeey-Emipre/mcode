@@ -3,6 +3,7 @@ import {
   TERMINAL_RPC_MAX_BYTES,
   TERMINAL_V1_METHOD_NAMES,
   TERMINAL_V1_METHODS,
+  parseTerminalRpcRequest,
   TerminalRpcRequestSchema,
   TerminalRpcResponseSchema,
 } from "../terminal.js";
@@ -46,6 +47,16 @@ describe("Terminal v1 management RPC", () => {
     expect(() =>
       TerminalRpcRequestSchema().parse({ ...request, params: { ...request.params, shell: "pwsh" } }),
     ).toThrow();
+  });
+
+  it("rejects oversized raw requests before JSON parsing", () => {
+    const raw = `{${" ".repeat(TERMINAL_RPC_MAX_BYTES)}}`;
+    expect(() => parseTerminalRpcRequest(raw)).toThrow(/exceeds 128 KiB/i);
+    expect(parseTerminalRpcRequest(JSON.stringify({
+      id: UUID,
+      method: "terminal.capabilities",
+      params: {},
+    }))).toMatchObject({ method: "terminal.capabilities" });
   });
 
   it("makes checkpoint completion authoritative and bounds upload declarations", () => {

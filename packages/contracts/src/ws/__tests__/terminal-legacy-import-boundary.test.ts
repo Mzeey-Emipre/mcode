@@ -48,7 +48,8 @@ function listLegacyImportCandidates(): string[] {
   } catch (error) {
     const status = (error as { status?: number }).status;
     if (status === 1) return [];
-    throw error;
+    const detail = error instanceof Error ? `: ${error.message}` : "";
+    throw new Error(`Legacy import boundary check requires a working Git checkout${detail}`);
   }
 }
 

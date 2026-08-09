@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   TerminalAttachmentDescriptorSchema,
   TerminalErrorSchema,
+  TerminalHydrationDescriptorSchema,
   TerminalSessionSnapshotSchema,
   TerminalScopeSchema,
   TerminalU64Schema,
@@ -19,6 +20,7 @@ describe("Terminal v1 models", () => {
     for (const value of ["01", "+1", "1.0", "1e3", "18446744073709551616"]) {
       expect(() => TerminalU64Schema().parse(value)).toThrow();
     }
+    expect(TerminalU64Schema().safeParse("not-u64").success).toBe(false);
     expect(() => TerminalUuidSchema().parse(UUID.toUpperCase())).toThrow();
   });
 
@@ -93,6 +95,22 @@ describe("Terminal v1 models", () => {
     expect(() =>
       TerminalAttachmentDescriptorSchema().parse({ ...descriptor, inputEnabled: true }),
     ).toThrow();
+  });
+
+  it("rejects reversed hydration output ranges", () => {
+    expect(() =>
+      TerminalHydrationDescriptorSchema().parse({
+        hydrationId: UUID,
+        mode: "delta",
+        requestedAfterSeq: "0",
+        checkpointThroughSeq: null,
+        firstOutputSeq: "2",
+        lastOutputSeq: "1",
+        gap: null,
+        chunkCount: 1,
+        totalBytes: 1,
+      }),
+    ).toThrow(/reversed/i);
   });
 
   it("rejects messages and correlation IDs that exceed the public error bounds", () => {

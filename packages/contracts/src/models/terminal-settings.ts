@@ -87,6 +87,13 @@ export const TerminalSettingsSchema = lazySchema(() =>
       if (new Set(ids).size !== ids.length) {
         context.addIssue({ code: z.ZodIssueCode.custom, message: "Custom profile IDs must be unique" });
       }
+      if (value.defaultProfileId.startsWith("custom:") && !ids.includes(value.defaultProfileId)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "The default profile must reference a configured custom profile",
+          path: ["defaultProfileId"],
+        });
+      }
     }),
 );
 
@@ -120,7 +127,12 @@ export const TerminalPreferencesUpdateSchema = lazySchema(() =>
       accessibility: TerminalAccessibilitySettingsSchema().partial().strict().optional(),
     })
     .strict()
-    .refine((value) => Object.keys(value).length > 0, "At least one preference group is required"),
+    .refine(
+      (value) => Object.values(value).some(
+        (group) => group !== undefined && Object.values(group).some((field) => field !== undefined),
+      ),
+      "At least one preference field is required",
+    ),
 );
 
 /** Maps any nonnegative legacy scrollback value into the Terminal v1 range. */

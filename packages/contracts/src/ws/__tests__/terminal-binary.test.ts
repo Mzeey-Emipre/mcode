@@ -121,4 +121,12 @@ describe("Terminal v1 binary codec", () => {
       encodeTerminalFrame({ ...validFrame("gap"), primarySeq: "9", relatedSeq: "10" }),
     ).toThrow(/gap|sequence/i);
   });
+
+  it("preserves UTF-8 code points split across stream frames", () => {
+    const bytes = encoder.encode("€");
+    const first = { ...validFrame("output"), payload: bytes.subarray(0, 1) };
+    const second = { ...validFrame("output"), primarySeq: "3", payload: bytes.subarray(1) };
+    expect(decodeTerminalFrame(encodeTerminalFrame(first)).payload).toEqual(first.payload);
+    expect(decodeTerminalFrame(encodeTerminalFrame(second)).payload).toEqual(second.payload);
+  });
 });

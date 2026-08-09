@@ -17,6 +17,8 @@ import {
 export const PTY_HOST_MAX_MESSAGE_BYTES = 131_072;
 /** Maximum decoded PTY host input or output bytes. */
 export const PTY_HOST_MAX_DATA_BYTES = 65_536;
+/** Maximum retained PTY host messages or events per direction. */
+export const PTY_HOST_MAX_RETAINED_RECORDS = 256;
 
 const u64 = TerminalU64Schema();
 const uuid = TerminalUuidSchema();
@@ -118,14 +120,14 @@ export class InMemoryPtyHostProtocol {
   /** Validates and retains one server message. */
   sendToHost(value: unknown): PtyHostServerMessage {
     const message = parsePtyHostServerMessage(value, this.hostGeneration);
-    this.sentMessages.push(message);
+    this.retain(this.sentMessages, message);
     return message;
   }
 
   /** Validates and retains one host event. */
   receiveFromHost(value: unknown): PtyHostEvent {
     const event = parsePtyHostEvent(value, this.hostGeneration);
-    this.receivedEvents.push(event);
+    this.retain(this.receivedEvents, event);
     return event;
   }
 
@@ -137,5 +139,10 @@ export class InMemoryPtyHostProtocol {
   /** Returns the validated host events in receive order. */
   events(): readonly PtyHostEvent[] {
     return [...this.receivedEvents];
+  }
+
+  private retain<T>(records: T[], record: T): void {
+    records.push(record);
+    if (records.length > PTY_HOST_MAX_RETAINED_RECORDS) records.shift();
   }
 }

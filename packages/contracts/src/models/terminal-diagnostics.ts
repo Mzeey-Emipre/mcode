@@ -38,6 +38,7 @@ export const TerminalMetricIdSchema = lazySchema(() =>
 );
 
 type MetricId = z.infer<ReturnType<typeof TerminalMetricIdSchema>>;
+const TERMINAL_MAX_HOST_RESTART_COUNT = 20;
 const unitForMetric = (metric: MetricId): "ms" | "bytes" | "count" => {
   if (metric.endsWith(".ms")) return "ms";
   if (metric.endsWith(".bytes")) return "bytes";
@@ -45,7 +46,7 @@ const unitForMetric = (metric: MetricId): "ms" | "bytes" | "count" => {
 };
 const maxForMetric = (metric: MetricId): number => {
   if (metric === "host.rss.bytes") return Number.MAX_SAFE_INTEGER;
-  if (metric === "host.restart.count") return TERMINAL_MAX_SESSIONS;
+  if (metric === "host.restart.count") return TERMINAL_MAX_HOST_RESTART_COUNT;
   if (metric.endsWith(".ms")) return 600_000;
   if (metric.endsWith(".bytes")) return 8_388_608;
   return 2_048;

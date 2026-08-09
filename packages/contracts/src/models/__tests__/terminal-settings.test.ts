@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   getDefaultTerminalSettingsDocument,
   migrateLegacyTerminalScrollback,
+  TerminalPreferencesUpdateSchema,
   TerminalSettingsDocumentSchema,
 } from "../terminal-settings.js";
 
@@ -56,5 +57,26 @@ describe("Terminal v1 settings", () => {
         },
       }),
     ).toThrow();
+  });
+
+  it("requires custom defaults to reference a configured profile", () => {
+    const defaults = getDefaultTerminalSettingsDocument();
+    expect(() =>
+      TerminalSettingsDocumentSchema().parse({
+        ...defaults,
+        terminal: {
+          ...defaults.terminal,
+          defaultProfileId: "custom:11111111-1111-4111-8111-111111111111",
+        },
+      }),
+    ).toThrow(/default profile/i);
+  });
+
+  it("rejects preference updates without a defined field", () => {
+    expect(() => TerminalPreferencesUpdateSchema().parse({ presentation: {} })).toThrow();
+    expect(() => TerminalPreferencesUpdateSchema().parse({ behavior: undefined })).toThrow();
+    expect(TerminalPreferencesUpdateSchema().parse({ presentation: { fontSize: "lg" } })).toEqual({
+      presentation: { fontSize: "lg" },
+    });
   });
 });

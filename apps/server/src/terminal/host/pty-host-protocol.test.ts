@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   InMemoryPtyHostProtocol,
+  PTY_HOST_MAX_RETAINED_RECORDS,
   PtyHostEventSchema,
   PtyHostServerMessageSchema,
   parsePtyHostEvent,
@@ -65,6 +66,32 @@ describe("PTY host v1 protocol", () => {
     expect(protocol.receiveFromHost(failure)).toEqual(failure);
     expect(() => parsePtyHostEvent(failure, "8")).toThrow(/generation/i);
     expect(protocol.events()).toEqual([failure]);
+  });
+
+  it("evicts the oldest retained protocol records", () => {
+    const protocol = new InMemoryPtyHostProtocol("7");
+    for (let index = 0; index <= PTY_HOST_MAX_RETAINED_RECORDS; index += 1) {
+      protocol.receiveFromHost({
+        contractVersion: 1,
+        kind: "heartbeat",
+        hostGeneration: "7",
+        monotonicMs: index.toString(),
+        activeSessions: 0,
+        queueBytes: 0,
+        rssBytes: "0",
+      });
+      protocol.sendToHost({
+        contractVersion: 1,
+        kind: "probe",
+        hostGeneration: "7",
+        nonce: `11111111-1111-4111-8111-${index.toString(16).padStart(12, "0")}`,
+      });
+    }
+
+    expect(protocol.events()).toHaveLength(PTY_HOST_MAX_RETAINED_RECORDS);
+    expect(protocol.events()[0]).toMatchObject({ monotonicMs: "1" });
+    expect(protocol.messages()).toHaveLength(PTY_HOST_MAX_RETAINED_RECORDS);
+    expect(protocol.messages()[0]).toMatchObject({ nonce: "11111111-1111-4111-8111-000000000001" });
   });
 
   it("accepts only the frozen unique host capability list", () => {

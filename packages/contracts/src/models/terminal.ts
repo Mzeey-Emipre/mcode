@@ -32,7 +32,10 @@ export const TerminalU64Schema = lazySchema(() =>
   z
     .string()
     .regex(U64_PATTERN)
-    .refine((value) => BigInt(value) <= TERMINAL_U64_MAX, "Value exceeds u64"),
+    .refine(
+      (value) => U64_PATTERN.test(value) && BigInt(value) <= TERMINAL_U64_MAX,
+      "Value exceeds u64",
+    ),
 );
 
 /** Strict UTC timestamp schema used by Terminal contracts. */
@@ -288,6 +291,13 @@ export const TerminalHydrationDescriptorSchema = lazySchema(() =>
       }
       if ((value.firstOutputSeq === null) !== (value.lastOutputSeq === null)) {
         context.addIssue({ code: z.ZodIssueCode.custom, message: "Output sequence range must be complete" });
+      }
+      if (
+        value.firstOutputSeq !== null &&
+        value.lastOutputSeq !== null &&
+        BigInt(value.firstOutputSeq) > BigInt(value.lastOutputSeq)
+      ) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: "Output sequence range is reversed" });
       }
     }),
 );

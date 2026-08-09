@@ -224,6 +224,20 @@ export const TerminalRpcRequestSchema = lazySchema(() => {
   );
 });
 
+/** Parses one size-bounded raw Terminal v1 management request. */
+export function parseTerminalRpcRequest(raw: string): z.infer<ReturnType<typeof TerminalRpcRequestSchema>> {
+  if (new TextEncoder().encode(raw).length > TERMINAL_RPC_MAX_BYTES) {
+    throw new Error("Terminal request exceeds 128 KiB");
+  }
+  let value: unknown;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    throw new Error("Terminal request is not valid JSON");
+  }
+  return TerminalRpcRequestSchema().parse(value);
+}
+
 const terminalRpcResponseSchemas = new Map<TerminalV1MethodName, () => z.ZodTypeAny>();
 
 const buildTerminalRpcResponseSchema = (method: TerminalV1MethodName): z.ZodTypeAny => {
