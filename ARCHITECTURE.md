@@ -4,7 +4,7 @@
 
 Mcode is a desktop app for orchestrating AI coding agents. It manages multiple agent sessions across git repositories, with each thread optionally running in its own git worktree for branch isolation.
 
-The codebase is split into four layers: a **contracts** package (shared types and Zod schemas), a **shared** package (runtime utilities), a standalone **server** (all business logic), and a thin **desktop** shell (Electron, native OS bridging). The React frontend connects to the server over WebSocket and uses Electron IPC only for native-only features like file dialogs and clipboard access.
+The codebase has a runtime-neutral **agent model**, transport **contracts**, shared runtime utilities, a standalone **server**, and a thin **desktop** shell. The React frontend connects to the server through WebSocket and uses Electron IPC only for native features such as file dialogs and clipboard access.
 
 Key architectural rules:
 
@@ -12,7 +12,7 @@ Key architectural rules:
   when launched by the desktop shell or repository development scripts.
 - `desktop` has zero business logic. It cannot read the database or manage agents.
 - `web` never imports from `server` or `desktop`. It depends only on `contracts`.
-- `contracts` has zero runtime dependencies. Types and Zod schemas only.
+- `contracts` depends only on `agent-model` and Zod. It has no app or runtime implementation dependencies.
 
 ## 2. Tech Stack
 
@@ -33,7 +33,8 @@ Key architectural rules:
 
 ```text
 packages/
-  contracts/                    Single source of truth for types and schemas
+  agent-model/                  Runtime-neutral canonical agent records and reducer
+  contracts/                    Transport schemas and compatibility projections
   shared/                       Runtime utilities used across packages
 
 apps/
@@ -45,19 +46,25 @@ apps/
 ### Package Dependency Graph
 
 ```text
-contracts (zero runtime deps)
+agent-model (depends on Zod only)
     |
-    +--> shared (depends on contracts)
-    |       |
-    |       +--> server (depends on contracts + shared)
-    |       +--> desktop (depends on contracts + shared)
-    |
-    +--> web (depends on contracts only)
+    +--> contracts (transport schemas and compatibility boundary)
+            |
+            +--> shared (depends on contracts)
+            |       |
+            |       +--> server (depends on contracts + shared)
+            |       +--> desktop (depends on contracts + shared)
+            |
+            +--> web (depends on contracts only)
 ```
+
+### packages/agent-model
+
+Runtime-neutral authority for canonical agent identities, records, semantic event envelopes, reducer state, and Provider capability declarations. The package does not import Node, provider SDK, server, renderer, or database code.
 
 ### packages/contracts
 
-Single source of truth for all shared types, replacing manual duplication between packages. Uses Zod schemas that serve as both TypeScript types (via `z.infer`) and runtime validators at the WebSocket boundary.
+Authority for transport schemas and compatibility projections. It imports canonical agent types through `compat/agent-model.ts`. Existing WebSocket payloads remain unchanged during the canonical-model migration.
 
 ```text
 packages/contracts/src/
@@ -336,7 +343,7 @@ erDiagram
     threads |o--o| pull_request_review_links : "canonical Review task"
 ```
 
-All model types are defined as Zod schemas in `packages/contracts` and inferred via `z.infer`. The server validates data at the WebSocket boundary (both params and results) so the frontend receives typed, validated payloads.
+Canonical agent types are defined in `packages/agent-model`. Transport and persisted compatibility types remain in `packages/contracts`. Both packages infer TypeScript types from Zod schemas. The server validates data at the WebSocket boundary so the frontend receives typed, validated payloads.
 
 ### 5.2 Migrations
 
