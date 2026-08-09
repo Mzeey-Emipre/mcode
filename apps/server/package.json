@@ -45,6 +45,7 @@
     "@types/ws": "^8.5.13",
     "drizzle-kit": "^0.31.10",
     "typescript": "^5.6.0",
+    "vite-node": "^6.0.0",
     "vitest": "^4.1.0"
   }
 }
