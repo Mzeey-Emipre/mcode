@@ -1,18 +1,16 @@
 {
-  "name": "@mcode/contracts",
+  "name": "@mcode/agent-model",
   "version": "0.0.1",
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./snapshot": "./src/snapshot.ts"
+    ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@mcode/agent-model": "workspace:*",
     "zod": "^3.24.2"
   },
   "devDependencies": {
