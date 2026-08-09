@@ -111,11 +111,43 @@ vi.mock("@/stores/diffStore", async (importOriginal) => {
   Object.assign(selector, actual.useDiffStore);
   return { ...actual, useDiffStore: selector };
 });
-vi.mock("@/components/ui/popover", () => ({
-  Popover: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  PopoverTrigger: ({ render }: { render: ReactElement }) => render,
-  PopoverContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-}));
+vi.mock("@/components/ui/popover", async () => {
+  const React = await vi.importActual<typeof import("react")>("react");
+  const PopoverContext = React.createContext<{
+    open: boolean;
+    onOpenChange: (open: boolean) => void;
+  }>({
+    open: false,
+    onOpenChange: (_open: boolean) => undefined,
+  });
+
+  return {
+    Popover: ({
+      children,
+      open = false,
+      onOpenChange = () => undefined,
+    }: {
+      children: ReactNode;
+      open?: boolean;
+      onOpenChange?: (open: boolean) => void;
+    }) => (
+      <PopoverContext.Provider value={{ open, onOpenChange }}>
+        <div>{children}</div>
+      </PopoverContext.Provider>
+    ),
+    PopoverTrigger: ({ render }: { render: ReactElement }) => {
+      const { open, onOpenChange } = React.useContext(PopoverContext);
+      return React.cloneElement(render as ReactElement<Record<string, unknown>>, {
+        "aria-expanded": open,
+        onClick: () => onOpenChange(!open),
+      });
+    },
+    PopoverContent: ({ children }: { children: ReactNode }) => {
+      const { open } = React.useContext(PopoverContext);
+      return open ? <div>{children}</div> : null;
+    },
+  };
+});
 vi.mock("@/components/ui/dialog", () => ({
   Dialog: ({ open, children }: { open?: boolean; children: ReactNode }) => open ? <div>{children}</div> : null,
   DialogContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
@@ -732,6 +764,12 @@ describe("visible Browser conformance observer", () => {
         <ThreadOverview thread={visibleThread()} threadPaneWidth={500} />,
       );
 
+      expect(screen.queryByTestId("thread-overview-browser")).not.toBeInTheDocument();
+      expect(await screen.findByRole("button", { name: "Thread overview" })).toHaveAttribute(
+        "aria-expanded",
+        "false",
+      );
+      await userEvent.click(screen.getByRole("button", { name: "Thread overview" }));
       expect(await screen.findByRole("button", {
         name: "Browser, Restored page, https://example.test/restored",
       })).toBeInTheDocument();
@@ -760,6 +798,8 @@ describe("visible Browser conformance observer", () => {
       usePreviewTabsStore.setState({ tabSetByScope: {}, liveChromeByScope: {} });
       render(<ThreadOverview thread={visibleThread()} threadPaneWidth={500} />);
 
+      expect(screen.queryByTestId("thread-overview-browser")).not.toBeInTheDocument();
+      await userEvent.click(screen.getByRole("button", { name: "Thread overview" }));
       expect(await screen.findByRole("button", {
         name: "Browser, Loaded page, https://example.test/loaded?view=full",
       })).toBeInTheDocument();
