@@ -854,6 +854,141 @@ export { TerminalBackendCapabilitiesSchema } from "./models/terminal-backend.js"
 export type { TerminalBackendCapabilities } from "./models/terminal-backend.js";
 
 export {
+  TERMINAL_CONTRACT_VERSION,
+  TERMINAL_U64_MAX,
+  TERMINAL_MAX_PAYLOAD_BYTES,
+  TERMINAL_MAX_CHECKPOINT_BYTES,
+  TERMINAL_MAX_SESSIONS,
+  TERMINAL_DEFAULT_SESSION_LIMIT,
+  TERMINAL_MAX_COLS,
+  TERMINAL_MAX_ROWS,
+  TerminalUuidSchema,
+  TerminalU64Schema,
+  TerminalTimestampSchema,
+  TerminalPlatformSchema,
+  TerminalProfileNameSchema,
+  TerminalExecutableSchema,
+  TerminalProfileArgumentsSchema,
+  TerminalScopeSchema,
+  TerminalSessionStateSchema,
+  TerminalCertifiedProfileIdSchema,
+  TerminalCustomProfileIdSchema,
+  TerminalProfileReferenceSchema,
+  TerminalResolvedProfileSchema,
+  TerminalCustomProfileSchema,
+  TerminalLaunchSnapshotSchema,
+  TerminalExitMetadataSchema,
+  TerminalSessionSnapshotSchema,
+  TerminalAttachmentDescriptorSchema,
+  TerminalGapSchema,
+  TerminalHydrationDescriptorSchema,
+  TerminalErrorCodeSchema,
+  TerminalRetryClassSchema,
+  TerminalErrorSchema,
+  TerminalV1BackendCapabilitiesSchema,
+} from "./models/terminal.js";
+export type {
+  TerminalScope,
+  TerminalPlatform,
+  TerminalSessionState,
+  TerminalProfileReference,
+  TerminalResolvedProfile,
+  TerminalCustomProfile,
+  TerminalLaunchSnapshot,
+  TerminalExitMetadata,
+  TerminalSessionSnapshot,
+  TerminalAttachmentDescriptor,
+  TerminalGap,
+  TerminalHydrationDescriptor,
+  TerminalErrorCode,
+  TerminalRetryClass,
+  TerminalError,
+  TerminalV1BackendCapabilities,
+} from "./models/terminal.js";
+
+export {
+  TERMINAL_BOOT_TRANSITIONS,
+  TERMINAL_SESSION_TRANSITIONS,
+  TERMINAL_HOST_HEALTH_TRANSITIONS,
+  TERMINAL_ATTACHMENT_TRANSITIONS,
+  TERMINAL_HYDRATION_DECISIONS,
+  TERMINAL_TOMBSTONE_TRANSITIONS,
+  TERMINAL_CHECKPOINT_TRANSITIONS,
+  TERMINAL_SEQUENCE_TRACES,
+  resolveTerminalSessionTransition,
+} from "./models/terminal-lifecycle.js";
+export type {
+  TerminalTransition,
+  TerminalBootState,
+  TerminalHostHealthState,
+  TerminalAttachmentState,
+  TerminalTombstoneState,
+  TerminalCheckpointState,
+} from "./models/terminal-lifecycle.js";
+
+export {
+  TERMINAL_SETTINGS_SCHEMA_VERSION,
+  TERMINAL_MIN_SCROLLBACK_LINES,
+  TERMINAL_MAX_SCROLLBACK_LINES,
+  TERMINAL_DEFAULT_SCROLLBACK_LINES,
+  TerminalPresentationSettingsSchema,
+  TerminalBehaviorSettingsSchema,
+  TerminalAccessibilitySettingsSchema,
+  TerminalFlowControlSettingsSchema,
+  TerminalSettingsSchema,
+  TerminalSettingsDocumentSchema,
+  WorkspaceTerminalPreferenceSchema,
+  TerminalPreferencesUpdateSchema,
+  migrateLegacyTerminalScrollback,
+  getDefaultTerminalSettingsDocument,
+} from "./models/terminal-settings.js";
+export type {
+  TerminalSettingsDocument,
+  TerminalSettings,
+  WorkspaceTerminalPreference,
+  TerminalPreferencesUpdate,
+} from "./models/terminal-settings.js";
+
+export {
+  TerminalMetricIdSchema,
+  TerminalHealthSnapshotSchema,
+  TerminalDiagnosticEventSchema,
+  TerminalDiagnosticCounterSchema,
+  TerminalDiagnosticHistogramSchema,
+  TerminalDiagnosticsBundleSchema,
+} from "./models/terminal-diagnostics.js";
+export type {
+  TerminalMetricId,
+  TerminalHealthSnapshot,
+  TerminalDiagnosticEvent,
+  TerminalDiagnosticsBundle,
+} from "./models/terminal-diagnostics.js";
+
+export {
+  TERMINAL_RPC_MAX_BYTES,
+  TERMINAL_CHECKPOINT_CHUNK_BYTES,
+  TERMINAL_CHECKPOINT_EXPIRES_AFTER_MS,
+  TERMINAL_V1_METHOD_NAMES,
+  TERMINAL_V1_METHODS,
+  TerminalRpcRequestSchema,
+  TerminalRpcResponseSchema,
+} from "./ws/terminal.js";
+export type { TerminalV1MethodName } from "./ws/terminal.js";
+
+export {
+  TERMINAL_BINARY_MAGIC,
+  TERMINAL_BINARY_HEADER_BYTES,
+  TERMINAL_BINARY_MAX_FRAME_BYTES,
+  TERMINAL_BINARY_FRAME_KINDS,
+  encodeTerminalFrame,
+  decodeTerminalFrame,
+} from "./ws/terminal-binary.js";
+export type {
+  TerminalBinaryFrameKind,
+  TerminalBinaryFrame,
+} from "./ws/terminal-binary.js";
+
+export {
   TERMINAL_DATA_TAG,
   encodeTerminalDataFrame,
   decodeTerminalDataFrame,

@@ -1,5 +1,6 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
 const REPOSITORY_ROOT = resolve(import.meta.dirname, "../../../../../");
@@ -25,24 +26,40 @@ const ALLOWED_LEGACY_IMPORTERS = new Set([
   "packages/contracts/src/ws/methods.ts",
 ]);
 
-function listSourceFiles(directory: string): string[] {
-  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
-    const path = resolve(directory, entry.name);
-    if (entry.isDirectory()) return listSourceFiles(path);
-    return /\.(?:ts|tsx)$/.test(entry.name) ? [path] : [];
-  });
+function listLegacyImportCandidates(): string[] {
+  try {
+    return execFileSync(
+      "git",
+      [
+        "grep",
+        "--no-index",
+        "-l",
+        "-e",
+        "/legacy/",
+        "-e",
+        "terminal-legacy",
+        "--",
+        ...SOURCE_ROOTS,
+      ],
+      { cwd: REPOSITORY_ROOT, encoding: "utf8" },
+    )
+      .split(/\r?\n/)
+      .filter((path) => /\.(?:ts|tsx)$/.test(path));
+  } catch (error) {
+    const status = (error as { status?: number }).status;
+    if (status === 1) return [];
+    throw error;
+  }
 }
 
 describe("Terminal legacy import boundary", () => {
   it("rejects new dependencies on legacy Terminal modules outside approved adapters", () => {
-    const unexpectedImporters = SOURCE_ROOTS.flatMap((sourceRoot) =>
-      listSourceFiles(resolve(REPOSITORY_ROOT, sourceRoot)),
-    )
+    const unexpectedImporters = listLegacyImportCandidates()
       .filter((path) => {
-        const source = readFileSync(path, "utf8");
+        const source = readFileSync(resolve(REPOSITORY_ROOT, path), "utf8");
         return /(?:from\s+|import\()["'][^"']*(?:\/legacy\/|terminal-legacy)/.test(source);
       })
-      .map((path) => relative(REPOSITORY_ROOT, path).replaceAll("\\", "/"))
+      .map((path) => path.replaceAll("\\", "/"))
       .filter((path) => !path.includes("/legacy/") && !ALLOWED_LEGACY_IMPORTERS.has(path));
 
     expect(unexpectedImporters).toEqual([]);
