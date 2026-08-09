@@ -61,8 +61,8 @@ const exitBarrierPayloadSchema = z.object({ finalOutputSeq: TerminalU64Schema(),
 const readJson = <T>(payload: Uint8Array, schema: z.ZodType<T>, label: string): T => {
   try {
     return schema.parse(JSON.parse(decoder.decode(payload)));
-  } catch (error) {
-    throw new Error(`Invalid Terminal ${label} payload`, { cause: error });
+  } catch {
+    throw new Error(`Invalid Terminal ${label} payload`);
   }
 };
 
@@ -93,7 +93,7 @@ const validatePayload = (frame: TerminalBinaryFrame): void => {
   if (payload.byteLength > TERMINAL_MAX_PAYLOAD_BYTES) throw new Error("Terminal payload exceeds 64 KiB");
   if (["input", "output"].includes(kind)) {
     if (payload.byteLength === 0) throw new Error(`Terminal ${kind} payload is empty`);
-    try { decoder.decode(payload); } catch (error) { throw new Error(`Terminal ${kind} payload is not UTF-8`, { cause: error }); }
+    try { decoder.decode(payload); } catch { throw new Error(`Terminal ${kind} payload is not UTF-8`); }
   }
   if (kind === "resize") {
     if (payload.byteLength !== 4) throw new Error("Terminal resize payload must be four bytes");
