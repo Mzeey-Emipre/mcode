@@ -858,20 +858,6 @@ describe("PreviewPanel: full panel state", () => {
     );
   });
 
-  it("removes the floating rail overlap from the renderer webview hit area", () => {
-    mockUsePreviewBridge.mockReturnValue(
-      mockBridgeState({ storedUrl: "https://example.com" }),
-    );
-
-    render(<PreviewPanel threadId="thread-1" rendererOccludedLeft={112} />);
-
-    expect(screen.getByTestId("preview-webview-surface")).toHaveStyle({ left: "112px" });
-    expect(screen.getByTestId("preview-webview-surface")).not.toHaveStyle({
-      clipPath: "inset(0px 0px 0px 112px)",
-    });
-    expect(screen.getByTestId("preview-webview")).not.toHaveClass("pointer-events-none");
-  });
-
   it("keeps an about:blank live tab stable while the persisted URL is empty", async () => {
     mockUsePreviewBridge.mockReturnValue(mockBridgeState({ storedUrl: "" }));
     mockUsePreviewTabs.mockReturnValue({

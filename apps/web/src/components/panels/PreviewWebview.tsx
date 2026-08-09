@@ -33,6 +33,8 @@ export interface PreviewWebviewProps {
   readonly className?: string;
   /** Keep an off-screen automation surface presented inside its dedicated inert host. */
   readonly allowHiddenPresentation?: boolean;
+  /** Width covered by floating panel chrome at the left edge. */
+  readonly coveredLeft?: number;
   readonly viewport?: { readonly width: number; readonly height: number };
   readonly onPageStatus?: (status: PreviewPageStatus) => void;
   readonly onNavigationStateChange?: (state: {
@@ -96,6 +98,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       src,
       className,
       allowHiddenPresentation = false,
+      coveredLeft = 0,
       viewport,
       onPageStatus,
       onNavigationStateChange,
@@ -277,6 +280,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
           height: intrinsicHeight,
           scale: viewport ? Math.min(bounds.width / intrinsicWidth, bounds.height / intrinsicHeight) : 1,
           zIndex: 31,
+          coveredLeft,
         });
       };
       const observer = typeof ResizeObserver === "function" ? new ResizeObserver(update) : null;
@@ -288,7 +292,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
         window.removeEventListener("resize", update);
         browserSurfaceHost.hide(identity);
       };
-    }, [active, allowHiddenPresentation, identity, viewport]);
+    }, [active, allowHiddenPresentation, coveredLeft, identity, viewport]);
 
     return (
       <div

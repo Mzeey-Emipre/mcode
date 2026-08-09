@@ -100,6 +100,8 @@ export interface BrowserSurfacePresentation {
   readonly height: number;
   readonly scale?: number;
   readonly zIndex?: number;
+  /** Width hidden at the left edge while the full Browser viewport remains unchanged. */
+  readonly coveredLeft?: number;
 }
 
 /** Factory that creates the adapter for one complete identity and generation. */
@@ -235,13 +237,17 @@ function boundedNumber(value: number, fallback: number, minimum: number, maximum
 }
 
 function boundPresentation(presentation: BrowserSurfacePresentation): BrowserSurfacePresentation {
+  const width = boundedNumber(presentation.width, 1, 1, 10_000);
   return {
     left: boundedNumber(presentation.left, 0, -100_000, 100_000),
     top: boundedNumber(presentation.top, 0, -100_000, 100_000),
-    width: boundedNumber(presentation.width, 1, 1, 10_000),
+    width,
     height: boundedNumber(presentation.height, 1, 1, 10_000),
     ...(presentation.scale === undefined ? {} : { scale: boundedNumber(presentation.scale, 1, 0.1, 10) }),
     ...(presentation.zIndex === undefined ? {} : { zIndex: Math.round(boundedNumber(presentation.zIndex, 0, -2_147_483_648, 2_147_483_647)) }),
+    ...(presentation.coveredLeft === undefined
+      ? {}
+      : { coveredLeft: boundedNumber(presentation.coveredLeft, 0, 0, width) }),
   };
 }
 

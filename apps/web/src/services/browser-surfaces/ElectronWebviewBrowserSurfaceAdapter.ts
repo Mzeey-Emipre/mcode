@@ -200,6 +200,9 @@ export class ElectronWebviewBrowserSurfaceAdapter implements BrowserSurfaceAdapt
     this.frame.style.transformOrigin = "top left";
     this.frame.style.transform = presentation.scale === undefined ? "" : `scale(${presentation.scale})`;
     this.frame.style.zIndex = presentation.zIndex === undefined ? "" : String(presentation.zIndex);
+    this.frame.style.clipPath = presentation.coveredLeft
+      ? `inset(0px 0px 0px ${presentation.coveredLeft}px)`
+      : "";
     this.frame.style.visibility = "visible";
     this.frame.style.pointerEvents = "auto";
     this.frame.setAttribute("aria-hidden", "false");

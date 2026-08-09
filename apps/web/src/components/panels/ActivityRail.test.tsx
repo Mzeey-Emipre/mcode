@@ -92,7 +92,7 @@ describe("ActivityRail expansion", () => {
     expect(rail).toHaveAttribute("data-expanded", "false");
   });
 
-  it("publishes expansion changes so renderer guests can yield the floating overlap", () => {
+  it("publishes expansion changes for Browser surface coverage", () => {
     const onExpandedChange = vi.fn();
     render(
       <ActivityRail
