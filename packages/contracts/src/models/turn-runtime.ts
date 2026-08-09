@@ -1,7 +1,8 @@
 import { z } from "zod";
+import { AgentTurnExecutionIdSchema } from "../compat/agent-model.js";
 
 /** Stable identity assigned by Mcode to one logical provider turn. */
-export const TurnExecutionIdSchema = z.string().uuid();
+export const TurnExecutionIdSchema = AgentTurnExecutionIdSchema;
 /** Stable identity assigned by Mcode to one logical provider turn. */
 export type TurnExecutionId = z.infer<typeof TurnExecutionIdSchema>;
 
