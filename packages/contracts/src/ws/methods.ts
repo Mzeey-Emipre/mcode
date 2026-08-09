@@ -33,6 +33,8 @@ import {
   ContextWindowModeSchema,
 } from "../models/settings.js";
 import { lazySchema } from "../utils/lazySchema.js";
+import { TerminalBackendCapabilitiesSchema } from "../models/terminal-backend.js";
+import { LegacyTerminalMethods } from "./terminal-legacy.js";
 import { ProviderModelInfoSchema } from "../providers/models.js";
 import { ProviderUsageInfoSchema } from "../providers/usage.js";
 import { ProviderAvailabilitySchema } from "../providers/availability.js";
@@ -957,93 +959,11 @@ export const WS_METHODS = lazySchema(() => ({
     params: ProviderCatalogRequestSchema(),
     result: ProviderCatalogSnapshotSchema(),
   },
-  "terminal.create": {
-    params: z.object({ threadId: z.string() }),
-    result: z.object({ ptyId: z.string(), shell: z.string().max(64) }),
+  "terminal.capabilities": {
+    params: z.object({}).strict(),
+    result: TerminalBackendCapabilitiesSchema(),
   },
-  "terminal.write": {
-    params: z.object({
-      ptyId: z.string(),
-      /** Cap at 64 KB — well above any single keystroke burst or paste. */
-      data: z.string().max(65_536),
-    }),
-    result: z.void(),
-  },
-  "terminal.resize": {
-    params: z.object({
-      ptyId: z.string(),
-      cols: z.number().int().min(1).max(500),
-      rows: z.number().int().min(1).max(500),
-    }),
-    result: z.void(),
-  },
-  "terminal.kill": {
-    params: z.object({ ptyId: z.string() }),
-    result: z.void(),
-  },
-  "terminal.pause": {
-    params: z.object({ ptyId: z.string() }),
-    result: z.void(),
-  },
-  "terminal.resume": {
-    params: z.object({ ptyId: z.string() }),
-    result: z.void(),
-  },
-  "terminal.checkpoint": {
-    params: z.object({
-      ptyId: z.string(),
-      seq: z.number().int().min(-1),
-      data: z.string().max(8 * 1024 * 1024),
-    }),
-    result: z.object({ accepted: z.boolean() }),
-  },
-  "terminal.killByThread": {
-    params: z.object({ threadId: z.string() }),
-    result: z.void(),
-  },
-  /**
-   * Reattach to a PTY after a WebSocket reconnect.
-   * The server replays buffered chunks (as binary frames) with seq > lastSeq,
-   * then returns a flag indicating whether the replay window was exceeded.
-   */
-  "terminal.reattach": {
-    params: z.object({
-      ptyId: z.string(),
-      /**
-       * Last sequence number the client received before the disconnect.
-       * Pass -1 when the client has seen no output (replay everything).
-       */
-      lastSeq: z.number().int().min(-1),
-      cold: z.boolean().optional(),
-    }),
-    result: z.discriminatedUnion("mode", [
-      z.object({ mode: z.literal("delta") }),
-      z.object({
-        mode: z.literal("checkpoint"),
-        checkpoint: z.string(),
-        checkpointThrough: z.number().int().min(-1),
-      }),
-      z.object({
-        mode: z.literal("reset"),
-        discardThrough: z.number().int().min(-1),
-      }),
-    ]),
-  },
-  /** List all active PTY sessions on the server. Used during reconnect. */
-  "terminal.listActive": {
-    params: z.object({}),
-    result: z.array(
-      z.object({ ptyId: z.string(), threadId: z.string() }),
-    ),
-  },
-  /**
-   * Check whether a PTY has non-shell child processes currently running.
-   * Used by the optional kill confirmation feature.
-   */
-  "terminal.hasChildren": {
-    params: z.object({ ptyId: z.string() }),
-    result: z.object({ hasChildren: z.boolean() }),
-  },
+  ...LegacyTerminalMethods(),
   "app.version": {
     params: z.object({}),
     result: z.string(),

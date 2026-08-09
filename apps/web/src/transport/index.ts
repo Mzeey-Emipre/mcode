@@ -218,6 +218,7 @@ export async function initTransport(): Promise<McodeTransport> {
 
     try {
       await transport.waitForConnection(CONNECT_TIMEOUT_MS);
+      await transport.terminalCapabilities();
     } catch (err) {
       transport.close();
       transport = null;

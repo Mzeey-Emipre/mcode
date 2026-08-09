@@ -14,7 +14,7 @@ import { CleanupJobRepo } from "../repositories/cleanup-job-repo.js";
 import type { CleanupJob } from "../repositories/cleanup-job-repo.js";
 import { ThreadRepo } from "../repositories/thread-repo.js";
 import { ClaudeProvider } from "../providers/claude/claude-provider.js";
-import { TerminalService } from "./terminal-service.js";
+import { TerminalBackend, TERMINAL_BACKEND_TOKEN } from "../terminal/terminal-backend.js";
 import { GitService } from "./git-service.js";
 import { AttachmentService } from "./attachment-service.js";
 import { killDescendantsByName } from "./process-kill.js";
@@ -56,7 +56,7 @@ export class CleanupWorker {
     @inject(CleanupJobRepo) private readonly cleanupJobRepo: CleanupJobRepo,
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
     @inject(ClaudeProvider) private readonly claudeProvider: ClaudeProvider,
-    @inject(TerminalService) private readonly terminalService: TerminalService,
+    @inject(TERMINAL_BACKEND_TOKEN) private readonly terminalService: TerminalBackend,
     @inject(GitService) private readonly gitService: GitService,
     @inject(WorkspaceRepo) private readonly workspaceRepo: WorkspaceRepo,
     @inject(AttachmentService) private readonly attachmentService: AttachmentService,

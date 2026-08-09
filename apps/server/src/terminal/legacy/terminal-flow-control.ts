@@ -1,5 +1,5 @@
 /**
- * Per-PTY flow-control buffer for the server side.
+ * Legacy per-PTY flow-control buffer for the server side.
  *
  * Two pause sources can hold the PTY:
  *   - "client-request": the client sent terminal.pause

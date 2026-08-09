@@ -1,5 +1,5 @@
 /**
- * PTY (pseudo-terminal) management service.
+ * Legacy PTY (pseudo-terminal) management service.
  * Spawns and manages terminal sessions tied to threads.
  * Extracted from apps/desktop/src/main/pty-manager.ts.
  */
@@ -11,19 +11,19 @@ import { existsSync, statSync } from "fs";
 import type { IPty, IDisposable } from "node-pty";
 import { v4 as uuid } from "uuid";
 import { logger } from "@mcode/shared";
-import { killProcessTree, gracefulKillProcessTree, listDirectChildren } from "./process-kill.js";
+import { killProcessTree, gracefulKillProcessTree, listDirectChildren } from "../../services/process-kill.js";
 import { TerminalFlowControl } from "./terminal-flow-control.js";
 import { TerminalReplayBuffer, replayCapBytesForScrollback } from "./terminal-replay-buffer.js";
-import type { PtyPidRegistry } from "./pty-pid-registry.js";
-import type { ThreadRepo } from "../repositories/thread-repo";
-import type { WorkspaceRepo } from "../repositories/workspace-repo";
-import type { GitService } from "./git-service";
-import type { SettingsService } from "./settings-service";
-import { EnvService } from "./env-service.js";
+import type { PtyPidRegistry } from "../../services/pty-pid-registry.js";
+import type { ThreadRepo } from "../../repositories/thread-repo";
+import type { WorkspaceRepo } from "../../repositories/workspace-repo";
+import type { GitService } from "../../services/git-service";
+import type { SettingsService } from "../../services/settings-service";
+import { EnvService } from "../../services/env-service.js";
 import {
   WindowsProcessScopeFactory,
   type WindowsProcessScope,
-} from "./windows-process-scope.js";
+} from "../../services/windows-process-scope.js";
 
 // createRequire lets us load native CJS modules (node-pty) from both ESM
 // (Bun running `src/index.ts`) and the CJS production / dev bundle.
@@ -123,7 +123,7 @@ export class TerminalService {
     @inject("SettingsService") private readonly settingsService: SettingsService,
     @inject(EnvService) private readonly envService: EnvService,
     @inject("PtyPidRegistry") private readonly pidRegistry: PtyPidRegistry,
-    @inject("JobObject") private readonly jobObject: import("./job-object.js").JobObject,
+    @inject("JobObject") private readonly jobObject: import("../../services/job-object.js").JobObject,
     private readonly processScopeFactory: WindowsProcessScopeFactory = new WindowsProcessScopeFactory(),
   ) {
     // Keep server-side scrollback retention in sync with the terminal.scrollback

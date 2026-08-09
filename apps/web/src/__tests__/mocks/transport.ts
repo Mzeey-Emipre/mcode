@@ -210,6 +210,12 @@ export const mockTransport: McodeTransport = {
     entries: [],
     selectableAgents: [],
   })),
+  terminalCapabilities: vi.fn().mockResolvedValue({
+    contractVersion: 0,
+    backend: "legacy",
+    publicFrameVersion: 0,
+    recovery: { replay: true, checkpoint: true, gap: true },
+  }),
   terminalCreate: vi.fn().mockResolvedValue({ ptyId: "pty-mock-1", shell: "pwsh" }),
   terminalWrite: vi.fn().mockResolvedValue(undefined),
   terminalResize: vi.fn().mockResolvedValue(undefined),

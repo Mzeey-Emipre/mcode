@@ -16,6 +16,7 @@ import {
 import { TurnFileEffectSummarySchema } from "../models/file-effect.js";
 import { ProviderCatalogChangeSchema } from "../providers/capability-catalog.js";
 import { ThreadObservedStateSchema } from "../thread-control.js";
+import { LegacyTerminalChannels } from "./terminal-legacy.js";
 
 /** All push channel definitions keyed by channel name. */
 export const WS_CHANNELS = {
@@ -59,22 +60,7 @@ export const WS_CHANNELS = {
     })
     .strict(),
   "agent.event": AgentEventSchema(),
-  /**
-   * @deprecated Legacy JSON format retained for backward compatibility.
-   * Current servers send PTY output exclusively as binary WebSocket frames
-   * using the `encodeTerminalDataFrame` envelope (tag 0x01); `broadcast()`
-   * is never called for this channel. This schema only applies when a
-   * client connects to an older server that still sends JSON terminal.data.
-   */
-  "terminal.data": lazySchema(() =>
-    z.object({
-      ptyId: z.string(),
-      data: z.string(),
-      /** Monotonic per-PTY sequence number. Absent from legacy clients/servers. */
-      seq: z.number().int().nonnegative().optional(),
-    }),
-  )(),
-  "terminal.exit": z.object({ ptyId: z.string(), code: z.number() }),
+  ...LegacyTerminalChannels(),
   "thread.status": z.object({
     threadId: z.string(),
     status: ThreadStatusSchema,

@@ -3,7 +3,7 @@ import {
   encodeTerminalDataFrame,
   decodeTerminalDataFrame,
   TERMINAL_DATA_TAG,
-} from "../terminal-binary.js";
+} from "../terminal-legacy-binary.js";
 
 describe("encodeTerminalDataFrame / decodeTerminalDataFrame", () => {
   it("round-trips a short ASCII payload", () => {
