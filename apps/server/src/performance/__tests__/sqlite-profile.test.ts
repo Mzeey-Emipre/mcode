@@ -47,6 +47,7 @@ describe("parseSQLiteProfileCliOptions", () => {
     expect(parseSQLiteProfileCliOptions([])).toEqual({
       samples: 20,
       thresholdPercent: 5,
+      certify: false,
       help: false,
     });
   });
@@ -59,11 +60,13 @@ describe("parseSQLiteProfileCliOptions", () => {
       "--output=result.json",
       "--threshold-percent",
       "6.5",
+      "--certify",
     ])).toEqual({
       samples: 9,
       baselinePath: "baseline.json",
       outputPath: "result.json",
       thresholdPercent: 6.5,
+      certify: true,
       help: false,
     });
   });
@@ -79,7 +82,7 @@ describe("parseSQLiteProfileCliOptions", () => {
 describe("compareSQLiteProfileReports", () => {
   it("flags medians above five percent but accepts the boundary", () => {
     const baseline = parseSQLiteProfileBaseline({
-      schemaVersion: 1,
+      schemaVersion: 2,
       runtime,
       aggregates: aggregates(100),
     });
@@ -106,7 +109,7 @@ describe("compareSQLiteProfileReports", () => {
 
   it("reports runtime mismatches without hiding the comparison", () => {
     const baseline = parseSQLiteProfileBaseline({
-      schemaVersion: 1,
+      schemaVersion: 2,
       runtime: { ...runtime, nodeVersion: "v20.0.0" },
       aggregates: aggregates(100),
     });
@@ -126,14 +129,16 @@ describe("compareSQLiteProfileReports", () => {
 
 describe("parseSQLiteProfileBaseline", () => {
   it("rejects an incomplete baseline report", () => {
-    expect(() => parseSQLiteProfileBaseline({ schemaVersion: 1 })).toThrow();
+    expect(() => parseSQLiteProfileBaseline({ schemaVersion: 1 })).toThrow(
+      "schemaVersion must be 2",
+    );
   });
 
   it("rejects duplicate workload aggregates", () => {
     const duplicateAggregates = aggregates(100);
     duplicateAggregates[4] = { ...duplicateAggregates[0]! };
     expect(() => parseSQLiteProfileBaseline({
-      schemaVersion: 1,
+      schemaVersion: 2,
       runtime,
       aggregates: duplicateAggregates,
     })).toThrow("each workload exactly once");

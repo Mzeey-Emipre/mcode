@@ -34,6 +34,7 @@ export interface SQLiteProfileCliOptions {
   thresholdPercent: number;
   baselinePath?: string;
   outputPath?: string;
+  certify: boolean;
   help: boolean;
 }
 
@@ -124,7 +125,7 @@ export interface SQLiteProfileComparison {
 
 /** Complete result emitted by the SQLite performance profile. */
 export interface SQLiteProfileReport {
-  schemaVersion: 1;
+  schemaVersion: 2;
   createdAt: string;
   samplesPerWorkload: number;
   activeTurnWritePolicy: {
@@ -207,7 +208,7 @@ const aggregateSchema = z.object({
 });
 
 const baselineReportSchema = z.object({
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(2),
   runtime: z.object({
     platform: z.string(),
     architecture: z.string(),
@@ -268,6 +269,7 @@ export function parseSQLiteProfileCliOptions(args: readonly string[]): SQLitePro
   const options: SQLiteProfileCliOptions = {
     samples: DEFAULT_SAMPLES,
     thresholdPercent: DEFAULT_THRESHOLD_PERCENT,
+    certify: false,
     help: false,
   };
 
@@ -275,6 +277,10 @@ export function parseSQLiteProfileCliOptions(args: readonly string[]): SQLitePro
     const argument = args[index]!;
     if (argument === "--help" || argument === "-h") {
       options.help = true;
+      continue;
+    }
+    if (argument === "--certify") {
+      options.certify = true;
       continue;
     }
 
@@ -308,6 +314,14 @@ export function parseSQLiteProfileCliOptions(args: readonly string[]): SQLitePro
 
 /** Validate an untrusted baseline report before comparison. */
 export function parseSQLiteProfileBaseline(value: unknown): BaselineReport {
+  if (
+    typeof value !== "object"
+    || value === null
+    || !("schemaVersion" in value)
+    || value.schemaVersion !== 2
+  ) {
+    throw new Error("SQLite profile baseline schemaVersion must be 2.");
+  }
   return baselineReportSchema.parse(value);
 }
 
@@ -424,7 +438,7 @@ export async function runSQLiteProfile(
   }
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     createdAt: new Date().toISOString(),
     samplesPerWorkload,
     activeTurnWritePolicy: ACTIVE_TURN_WRITE_POLICY,

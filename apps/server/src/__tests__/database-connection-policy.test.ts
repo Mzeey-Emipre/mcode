@@ -43,7 +43,7 @@ describe("SQLite connection policy", () => {
       synchronous: 2,
       foreignKeys: 1,
       busyTimeout: 5_000,
-      cacheSize: -2_000,
+      cacheSize: -2_048,
       mmapSize: 0,
     });
   });
