@@ -6,7 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useShallow } from "zustand/shallow";
-import { defaultRangeExtractor, useVirtualizer, type Range } from "@tanstack/react-virtual";
+import { defaultRangeExtractor, type Range } from "@tanstack/react-virtual";
+import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { recordThreadPositioned } from "@/lib/thread-switch-telemetry";
 import { useThreadStore } from "@/stores/threadStore";
@@ -23,7 +24,6 @@ import {
   buildStableItems,
   createVolatileItemsBuilder,
   createVirtualItemsBuilder,
-  estimateItemHeight,
 } from "./virtual-items";
 import type { ChatVirtualItem } from "./virtual-items";
 import type { ToolCall } from "@/transport/types";
@@ -238,13 +238,13 @@ interface MessageListProps {
 }
 
 /** Virtualized list of chat messages, tool calls, and streaming indicators. */
-export function MessageList({
+export function LegendMessageListPrototype({
   displayThreadId,
   onBranch,
   onReply,
-  prototypeMeasurementStrategy = "immediate",
 }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const legendListRef = useRef<LegendListRef>(null);
   /** Survives virtualizer remounts: remembers manual expand/collapse toggles by messageId. */
   const turnExpandRef = useRef<Map<string, boolean>>(new Map());
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -740,56 +740,39 @@ export function MessageList({
     && items[0]?.key !== firstVirtualItemKeyRef.current
       ? items.length - previousVirtualItemCount
       : 0;
-  const rangeExtractor = useCallback(
-    (range: Range) => preservePrependedVirtualRange(range, pendingPrependCountRef.current),
-    [],
-  );
-
-  const virtualizer = useVirtualizer({
-    count: items.length,
-    getScrollElement: () => containerRef.current,
-    estimateSize: (index) => {
-      const item = items[index];
-      return item ? estimateItemHeight(item) : DEFAULT_ITEM_HEIGHT;
+  const virtualizer = useMemo(() => ({
+    getVirtualItems: () => {
+      const state = legendListRef.current?.getState();
+      if (!state || state.startBuffered < 0 || state.endBuffered < state.startBuffered) return [];
+      return Array.from(
+        { length: state.endBuffered - state.startBuffered + 1 },
+        (_, offset) => {
+          const index = state.startBuffered + offset;
+          return {
+            index,
+            key: itemsRef.current[index]?.key ?? String(index),
+            start: state.positionAtIndex(index),
+            size: state.sizeAtIndex(index),
+          };
+        },
+      );
     },
-    getItemKey: (index) => items[index]?.key ?? String(index),
-    overscan: OVERSCAN,
-    rangeExtractor,
-    // Opt out of react-virtual's flushSync(rerender) on sync measurement. It
-    // fires inside the library's commit-phase layout effect and trips React's
-    // "flushSync called from inside a lifecycle method" warning. Scroll-tail
-    // compensation is unaffected: shouldAdjustScrollPositionOnItemSizeChange
-    // adjusts scrollOffset inside virtual-core before onChange, so only the
-    // React re-render is deferred from sync to React's normal batching.
-    useFlushSync: false,
-    useAnimationFrameWithResizeObserver: prototypeMeasurementStrategy === "animation-frame",
-  });
+    getTotalSize: () => legendListRef.current?.getState().contentLength ?? 0,
+    measure: () => legendListRef.current?.clearCaches({ mode: "sizes" }),
+    scrollToIndex: (
+      index: number,
+      options: { align?: "start" | "center" | "end"; behavior?: "auto" | "smooth" } = {},
+    ) => {
+      const viewPosition = options.align === "center" ? 0.5 : options.align === "end" ? 1 : 0;
+      void legendListRef.current?.scrollToIndex({
+        animated: options.behavior === "smooth",
+        index,
+        viewPosition,
+      });
+    },
+  }), []);
   virtualizerRef.current = virtualizer;
   const virtualTotalSize = virtualizer.getTotalSize();
-
-  // Pinned to tail: always compensate for size changes so the viewport tracks
-  // the bottom as rows measure. Adjusting by +delta when at scrollOffset = oldMaxScroll
-  // gives newScrollOffset = oldMaxScroll + delta = newMaxScroll, exactly the new tail.
-  // Near the tail (not pinned): adjust within AUTO_SCROLL_THRESHOLD so a small
-  // user-induced scroll-up can still settle on the true bottom as items measure.
-  // Farther up: keep default above-viewport anchoring so history reading stays stable.
-  // Assigned on the stable virtualizer instance (TanStack Virtual v3 API);
-  // not available as a useVirtualizer option in the current type definitions.
-  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = (
-    item,
-    _delta,
-    instance,
-  ) => {
-    if (pinListTailRef.current) return true;
-    const viewportHeight = instance.scrollRect?.height ?? 0;
-    const scrollOffset = instance.scrollOffset ?? 0;
-    const remaining =
-      instance.getTotalSize() - (scrollOffset + viewportHeight);
-    if (remaining <= AUTO_SCROLL_THRESHOLD) {
-      return true;
-    }
-    return item.start < scrollOffset;
-  };
 
   useLayoutEffect(() => {
     previousVirtualItemCountRef.current = items.length;
@@ -1394,8 +1377,23 @@ export function MessageList({
 
   return (
     <div className="relative h-full" data-testid="message-list">
-      <div
-        ref={containerRef}
+      <LegendList
+        ref={legendListRef}
+        refScrollView={(element) => {
+          containerRef.current = element instanceof HTMLDivElement ? element : null;
+        }}
+        data={items}
+        dataKey={renderedThreadId ?? "empty-thread"}
+        keyExtractor={(item) => item.key}
+        getItemType={(item) => item.type}
+        estimatedItemSize={DEFAULT_ITEM_HEIGHT}
+        drawDistance={OVERSCAN * DEFAULT_ITEM_HEIGHT}
+        recycleItems={false}
+        alignItemsAtEnd
+        initialScrollAtEnd
+        maintainScrollAtEnd={{ animated: false }}
+        maintainScrollAtEndThreshold={AUTO_SCROLL_THRESHOLD / 1000}
+        maintainVisibleContentPosition={{ data: false, size: true }}
         onScroll={handleScroll}
         onWheel={handleWheel}
         className={cn(
@@ -1406,29 +1404,22 @@ export function MessageList({
           opacity: isPositioned ? 1 : 0,
           paddingTop: stickyReservedTop > 0 ? stickyReservedTop : undefined,
         }}
-      >
-        <div
-          className="relative w-full"
-          style={{ height: virtualTotalSize + historyAnchorTrailingSpace }}
-        >
-          {virtualizer.getVirtualItems().map((vi) => {
-            const item = items[vi.index];
-            return (
-              <div
-                key={vi.key}
-                ref={virtualizer.measureElement}
-                data-index={vi.index}
-                className="absolute left-0 w-full px-4 py-2 sm:px-8"
-                style={{ transform: `translateY(${vi.start}px)` }}
-              >
-                <div className={cn(PRIMARY_CONTENT_RAIL_CLASS, "min-w-0 overflow-x-hidden")}>
-                  <VirtualItemRenderer item={item} turnExpandRef={turnExpandRef} onBranch={onBranch} onReply={onReply} onScrollToMessage={scrollToMessage} currentTurnMessageIdByThread={currentTurnMessageIdByThread} />
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+        contentContainerStyle={{ paddingBottom: historyAnchorTrailingSpace }}
+        renderItem={({ item, index }) => (
+          <div data-index={index} className="w-full px-4 py-2 sm:px-8">
+            <div className={cn(PRIMARY_CONTENT_RAIL_CLASS, "min-w-0 overflow-x-hidden")}>
+              <VirtualItemRenderer
+                item={item}
+                turnExpandRef={turnExpandRef}
+                onBranch={onBranch}
+                onReply={onReply}
+                onScrollToMessage={scrollToMessage}
+                currentTurnMessageIdByThread={currentTurnMessageIdByThread}
+              />
+            </div>
+          </div>
+        )}
+      />
 
       {/* Skeleton placeholder shown while the handoff context is being generated for a child thread.
           Conditions: handoff still generating and only the initial user message has been submitted

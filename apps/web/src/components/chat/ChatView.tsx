@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback, type ComponentProps } from "react";
 import { Bug, GitFork, Hammer, SearchCode, ScanSearch } from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import {
@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { MessageList } from "./MessageList";
+import { LegendMessageListPrototype } from "./LegendMessageListPrototype";
 import { ConversationHoldOverlay } from "./ConversationHoldOverlay";
 import { Composer } from "./Composer";
 import { PlanQuestionWizard } from "@/components/chat/PlanQuestionWizard";
@@ -33,6 +34,21 @@ import { useReplyStore } from "@/stores/replyStore";
 import { getTransport } from "@/transport";
 import { useElementWidth } from "@/hooks/useElementWidth";
 import { overviewResponsivePaddingRight } from "@/lib/composer-layout";
+
+function PrototypeMessageList(props: ComponentProps<typeof MessageList>) {
+  const variant = import.meta.env.DEV
+    ? new URLSearchParams(window.location.search).get("messageTimeline")
+    : null;
+  if (variant === "legend") {
+    return <LegendMessageListPrototype {...props} />;
+  }
+  return (
+    <MessageList
+      {...props}
+      prototypeMeasurementStrategy={variant === "tanstack-raf" ? "animation-frame" : "immediate"}
+    />
+  );
+}
 import { hasResidentContent } from "@/lib/thread-hydrator/resident-content";
 import { Button } from "@/components/ui/button";
 import { McodeLogo } from "@/components/brand/McodeLogo";
@@ -992,7 +1008,7 @@ export function ChatView() {
         {showHold ? (
           <div className="relative h-full" aria-busy="true">
             <div className="pointer-events-none h-full" inert>
-              <MessageList
+              <PrototypeMessageList
                 displayThreadId={displayHoldThreadId}
                 onBranch={handleBranch}
                 onReply={handleReply}
@@ -1012,7 +1028,7 @@ export function ChatView() {
             <EmptyState onPromptSelect={setPendingPrefill} />
           </div>
         ) : (
-          <MessageList onBranch={handleBranch} onReply={handleReply} />
+          <PrototypeMessageList onBranch={handleBranch} onReply={handleReply} />
         )}
       </div>
 
