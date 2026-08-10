@@ -252,7 +252,7 @@ describe("AgentService.sendMessage — provider availability gate", () => {
     });
   });
 
-  it.each(["errored", "failed", "stopped", "archived", "deleted"] as const)("rejects composer sends to %s threads before persistence", async (threadStatus) => {
+  it.each(["failed", "stopped", "archived", "deleted"] as const)("rejects composer sends to %s threads before persistence", async (threadStatus) => {
     const assertUsable = vi.fn();
     const { svc } = buildService({ threadStatus, assertUsable });
 
@@ -268,7 +268,7 @@ describe("AgentService.sendMessage — provider availability gate", () => {
     expect(assertUsable).not.toHaveBeenCalled();
   });
 
-  it.each(["completed", "interrupted"] as const)("allows a direct follow-up to a %s thread through persistence and provider dispatch", async (threadStatus) => {
+  it.each(["completed", "interrupted", "errored"] as const)("allows a direct follow-up to the %s thread through persistence and provider dispatch", async (threadStatus) => {
     const { svc, threadRepo, messageRepo, providerStub } = buildService({ threadStatus });
 
     await svc.sendMessage({
