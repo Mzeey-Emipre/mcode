@@ -26,6 +26,7 @@
     "state:paths": "bun scripts/state-paths.mjs",
     "state:reset": "bun scripts/state-reset.mjs",
     "db:info": "bun scripts/db-info.mjs",
+    "perf:database": "bun scripts/run-electron-node.mjs --workspace-cli vite-node dist/cli.mjs apps/server/scripts/profile-sqlite.ts",
     "agent:up": "bun scripts/agent/agent-up.mjs",
     "agent:down": "bun scripts/agent/agent-down.mjs",
     "agent:reset": "bun scripts/agent/agent-reset.mjs",
