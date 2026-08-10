@@ -18,6 +18,7 @@ import { ToolCallRecordRepo } from "../repositories/tool-call-record-repo";
 import { TurnSnapshotRepo } from "../repositories/turn-snapshot-repo";
 import { TaskRepo } from "../repositories/task-repo";
 import { AgentService } from "../services/agent-service";
+import { createCanonicalAgentEventSinkStub } from "../test-utils/canonical-agent-event-sink-stub";
 import { NarrativeStore } from "../services/narrative-store";
 import { PlanQuestionService } from "../services/plan-question-service";
 import type { GitService } from "../services/git-service";
@@ -123,6 +124,10 @@ describe("AgentService clears sdk_session_id on session invalidation", () => {
         { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../repositories/hook-execution-repo.js").HookExecutionRepo,
       ),
       new PlanQuestionService(messageRepo, new PlanQuestionAnswersRepo(db)),
+      undefined,
+      undefined,
+      undefined,
+      createCanonicalAgentEventSinkStub(db),
     );
     svc.init();
   });

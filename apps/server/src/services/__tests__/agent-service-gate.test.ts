@@ -2,6 +2,7 @@ import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Thread, IProviderRegistry } from "@mcode/contracts";
 import { AgentService, usesInternalThreadControlMcp } from "../agent-service.js";
+import { createCanonicalAgentEventSinkStub } from "../../test-utils/canonical-agent-event-sink-stub.js";
 import { NarrativeStore } from "../narrative-store.js";
 import { PlanQuestionService } from "../plan-question-service.js";
 import { ProviderAvailabilityService } from "../provider-availability-service.js";
@@ -206,6 +207,10 @@ function buildService({
         { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../repositories/hook-execution-repo.js").HookExecutionRepo,
       ),
       new PlanQuestionService(messageRepo, planQuestionAnswersRepo),
+      undefined,
+      undefined,
+      undefined,
+      createCanonicalAgentEventSinkStub(db),
   );
   return { svc, threadRepo, messageRepo, providerStub, providerRegistry };
 }

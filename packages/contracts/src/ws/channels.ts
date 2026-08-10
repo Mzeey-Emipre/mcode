@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AgentEventSchema } from "../events/agent-event.js";
+import { CanonicalAgentEventEnvelopeSchema } from "../compat/agent-model.js";
 import { ThreadStatusSchema } from "../models/enums.js";
 import { ProviderIdSchema, SettingsSchema } from "../models/settings.js";
 import { PlanQuestionSchema } from "../models/plan-questions.js";
@@ -17,6 +18,9 @@ import { TurnFileEffectSummarySchema } from "../models/file-effect.js";
 import { ProviderCatalogChangeSchema } from "../providers/capability-catalog.js";
 import { ThreadObservedStateSchema } from "../thread-control.js";
 import { LegacyTerminalChannels } from "./terminal-legacy.js";
+
+/** Maximum canonical semantic events published in one durable batch. */
+export const CANONICAL_AGENT_EVENT_BATCH_MAX = 256;
 
 /** All push channel definitions keyed by channel name. */
 export const WS_CHANNELS = {
@@ -60,6 +64,11 @@ export const WS_CHANNELS = {
     })
     .strict(),
   "agent.event": AgentEventSchema(),
+  /** Canonical semantic batches published only after their durable transaction commits. */
+  "agent.canonical": z.object({
+    threadId: z.string().min(1),
+    events: z.array(CanonicalAgentEventEnvelopeSchema).min(1).max(CANONICAL_AGENT_EVENT_BATCH_MAX),
+  }).strict(),
   ...LegacyTerminalChannels(),
   "thread.status": z.object({
     threadId: z.string(),

@@ -44,6 +44,7 @@ import type { TerminalBackend } from "../terminal/terminal-backend.js";
 import type { MessageRepo } from "../repositories/message-repo";
 import type { ToolCallRecordRepo } from "../repositories/tool-call-record-repo";
 import type { NarrativeStore } from "../services/narrative-store";
+import type { CanonicalAgentEventSink } from "../services/canonical-agent-event-sink.js";
 import type { ThoughtSegmentRepo } from "../repositories/thought-segment-repo";
 import type { HookExecutionRepo } from "../repositories/hook-execution-repo";
 import type { TurnSnapshotRepo } from "../repositories/turn-snapshot-repo";
@@ -183,6 +184,8 @@ export interface RouterDeps {
   hookExecutionRepo: HookExecutionRepo;
   /** Single-source ordered narrative reader backing the `turn.load` RPC. */
   narrativeStore: NarrativeStore;
+  /** Canonical agent-model reader used during staged compatibility projection. */
+  canonicalSink: CanonicalAgentEventSink;
   turnSnapshotRepo: TurnSnapshotRepo;
   snapshotService: SnapshotService;
   settingsService: SettingsService;

@@ -21,6 +21,7 @@ import { ToolCallRecordRepo as RealToolCallRecordRepo } from "../../repositories
 import { ThoughtSegmentRepo as RealThoughtSegmentRepo } from "../../repositories/thought-segment-repo.js";
 import { HookExecutionRepo as RealHookExecutionRepo } from "../../repositories/hook-execution-repo.js";
 import { AgentService } from "../agent-service.js";
+import { createCanonicalAgentEventSinkStub } from "../../test-utils/canonical-agent-event-sink-stub.js";
 import { NarrativeStore } from "../narrative-store.js";
 import { PlanQuestionService } from "../plan-question-service.js";
 import { broadcast } from "../../transport/push.js";
@@ -306,6 +307,7 @@ function buildService(
       undefined,
       undefined,
       mutationReservations,
+      createCanonicalAgentEventSinkStub(db),
   );
 
   return {
@@ -1099,6 +1101,10 @@ describe("AgentService Ended finalization", () => {
       { issue: vi.fn(), tryConsume: vi.fn(() => false), clear: vi.fn(), hasActiveGrant: vi.fn(() => false) } as any,
       new NarrativeStore(messageRepo, toolCallRecordRepo, thoughtSegmentRepo, hookExecutionRepo),
       new PlanQuestionService(messageRepo, planQuestionAnswersRepo),
+      undefined,
+      undefined,
+      undefined,
+      createCanonicalAgentEventSinkStub(db),
     );
     service.init();
   });

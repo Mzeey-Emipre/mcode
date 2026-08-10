@@ -21,6 +21,7 @@ const nextSequenceByThread = new Map<string, number>();
 const eventEpoch = randomUUID();
 const SUBSCRIPTION_SCOPED_CHANNELS = new Set<WsChannelName>([
   "agent.event",
+  "agent.canonical",
   "turn.fileEffectsUpdated",
 ]);
 

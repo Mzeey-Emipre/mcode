@@ -11,6 +11,7 @@ import { PlanQuestionAnswersRepo } from "../../repositories/plan-question-answer
 import { TurnSnapshotRepo } from "../../repositories/turn-snapshot-repo.js";
 import { TaskRepo } from "../../repositories/task-repo.js";
 import { AgentService } from "../agent-service.js";
+import { createCanonicalAgentEventSinkStub } from "../../test-utils/canonical-agent-event-sink-stub.js";
 import { NarrativeStore } from "../narrative-store.js";
 import { PlanQuestionService } from "../plan-question-service.js";
 import { ProviderAvailabilityService } from "../provider-availability-service.js";
@@ -118,6 +119,10 @@ function buildService(db: Database.Database) {
       { issue: vi.fn(), tryConsume: vi.fn(() => false), clear: vi.fn(), hasActiveGrant: vi.fn(() => false) } as any,
       container.resolve(NarrativeStore),
       container.resolve(PlanQuestionService),
+      undefined,
+      undefined,
+      undefined,
+      createCanonicalAgentEventSinkStub(db),
   );
 
   return { svc, threadRepo, workspaceRepo, messageRepo, planQuestionAnswersRepo };

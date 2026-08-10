@@ -31,6 +31,7 @@ import type { NarrativeStore } from "./narrative-store";
 import type { TurnOutcome } from "./turn-outcome";
 import type { TurnFileTracker } from "./turn-file-tracker.js";
 import type { TurnFileEffectSummary } from "@mcode/contracts";
+import type { CanonicalAgentEventSink } from "./canonical-agent-event-sink.js";
 
 /** Pre-turn git ref captured at send time, used to diff the turn's file changes. */
 interface TurnRef {
@@ -91,6 +92,7 @@ export class TurnFinalizer {
     private readonly turnSnapshotRepo: TurnSnapshotRepo,
     private readonly db: Database.Database,
     private readonly turnFileTracker?: TurnFileTracker,
+    private readonly canonicalSink?: CanonicalAgentEventSink,
   ) {}
 
   /** Append a streaming assistant-text delta for the current turn. */
@@ -221,12 +223,13 @@ export class TurnFinalizer {
     threadId: string,
     outcome: TurnOutcome,
     prerequisite: Promise<unknown> = Promise.resolve(),
+    executionId?: string,
   ): Promise<void> {
     const turnRef = this.turnRefBefore.get(threadId);
     const tail = this.finalizeChainByThread.get(threadId) ?? Promise.resolve();
     const next = tail.then(async () => {
       await prerequisite;
-      await this.runFinalizeOnce(threadId, outcome, turnRef);
+      await this.runFinalizeOnce(threadId, executionId, outcome, turnRef);
     });
     this.finalizeChainByThread.set(threadId, next);
     try {
@@ -241,12 +244,21 @@ export class TurnFinalizer {
   /** Runs one finalize pass; concurrent calls for the same thread are queued by {@link finalize}. */
   private async runFinalizeOnce(
     threadId: string,
+    executionId: string | undefined,
     outcome: TurnOutcome,
     turnRef: TurnRef | undefined,
   ): Promise<void> {
     if (this.persistingThreads.has(threadId)) return;
     this.persistingThreads.add(threadId);
     try {
+      const canonicalTurn = executionId
+        ? this.canonicalSink?.loadTurnByExecution(executionId)
+        : null;
+      if (canonicalTurn && executionId && this.canonicalSink) {
+        await this.runCanonicalFinalize(threadId, executionId, canonicalTurn.id, outcome, turnRef);
+        return;
+      }
+
       // TurnSubstance guard: nothing worth keeping → leave no assistant row.
       if (!this.hasRecordableActivity(threadId)) {
         // This turn persisted no row, so a late hook for it must be discarded
@@ -300,6 +312,122 @@ export class TurnFinalizer {
     }
   }
 
+  /** Persist one canonical parent turn and its compatibility projection in one transaction. */
+  private async runCanonicalFinalize(
+    threadId: string,
+    executionId: string,
+    turnId: string,
+    outcome: TurnOutcome,
+    turnRef: TurnRef | undefined,
+  ): Promise<void> {
+    const canonicalThread = this.canonicalSink?.loadThread(threadId);
+    if (!canonicalThread || !this.canonicalSink) {
+      throw new Error(`Canonical thread missing for execution ${executionId}`);
+    }
+    const compatibilityThread = this.threadRepo.findById(threadId);
+    const providerIdentities = compatibilityThread?.sdk_session_id
+      && compatibilityThread.provider === canonicalThread.providerId
+      ? [{
+          providerId: canonicalThread.providerId,
+          scope: canonicalThread.providerId === "codex" ? "thread" as const : "session" as const,
+          value: compatibilityThread.sdk_session_id,
+          provenance: "native" as const,
+        }]
+      : canonicalThread.providerIdentities;
+
+    const projection: {
+      materialized: ReturnType<TurnFinalizer["materializeAssistantRow"]>;
+      toolCallCount: number;
+      narrative: ReturnType<NarrativeStore["loadForMessages"]>;
+    } = { materialized: null, toolCallCount: 0, narrative: [] };
+    const commitResult = this.canonicalSink.finishParentTurn({
+      threadId,
+      turnId,
+      executionId,
+      providerId: canonicalThread.providerId,
+      providerIdentities,
+      outcome,
+      projectTurn: () => {
+        if (!this.hasRecordableActivity(threadId)) {
+          return { message: null, narrative: [] };
+        }
+        projection.materialized = this.materializeAssistantRow(threadId, false, true);
+        if (!projection.materialized) {
+          throw new Error(`Assistant compatibility projection failed for ${threadId}`);
+        }
+        const persisted = this.narrativeStore.persistNarrative(
+          threadId,
+          projection.materialized.id,
+          projection.materialized.content,
+          outcome,
+          { strict: true },
+        );
+        projection.toolCallCount = persisted.toolCallCount;
+        const message = this.messageRepo.findById(projection.materialized.id);
+        if (!message) {
+          throw new Error(`Projected assistant message missing: ${projection.materialized.id}`);
+        }
+        projection.narrative = this.narrativeStore.loadForMessages([message]);
+        return { message, narrative: projection.narrative };
+      },
+    });
+
+    let materialized = projection.materialized;
+    const replayedTerminal = !materialized
+      && commitResult.outcome === "terminal-outcome-confirmed";
+    if (replayedTerminal) {
+      const persisted = this.canonicalSink.loadTerminalProjection(turnId);
+      if (persisted.message) {
+        materialized = {
+          id: persisted.message.id,
+          content: persisted.message.content,
+          shouldBroadcast: false,
+          attachments: persisted.message.attachments ?? [],
+        };
+        projection.toolCallCount = persisted.toolCallCount;
+      }
+    }
+    if (!materialized) {
+      this.lastPersistedMessageIdByThread.delete(threadId);
+      this.clearTurn(threadId, turnRef);
+      return;
+    }
+    this.commitAssistantMaterialization(threadId);
+
+    const messageId = materialized.id;
+    this.lastPersistedMessageIdByThread.set(threadId, messageId);
+    if (materialized.shouldBroadcast) {
+      broadcast("agent.event", {
+        type: AgentEventType.Message,
+        threadId,
+        content: materialized.content,
+        tokens: null,
+        messageId,
+        ...(materialized.attachments.length > 0 ? { attachments: materialized.attachments } : {}),
+      } satisfies AgentEvent);
+    }
+
+    const fileEffects = this.turnFileTracker
+      ? await this.turnFileTracker.finalizeTurn(threadId, turnRef?.fileTrackerGeneration)
+      : undefined;
+    const filesChanged = await this.captureSnapshot(
+      threadId,
+      messageId,
+      turnRef,
+      fileEffects,
+      replayedTerminal,
+    );
+    broadcast("turn.persisted", {
+      threadId,
+      turnId,
+      messageId,
+      toolCallCount: projection.toolCallCount,
+      filesChanged,
+      ...(fileEffects ? { fileEffects } : {}),
+    });
+    this.clearTurn(threadId, turnRef);
+  }
+
   /**
    * Capture the git turn snapshot and return the files changed since the
    * pre-turn ref. Writes the snapshot row and the thread's has_file_changes
@@ -311,7 +439,12 @@ export class TurnFinalizer {
     messageId: string,
     refData: TurnRef | undefined,
     fileEffects: TurnFileEffectSummary | undefined,
+    replayedTerminal = false,
   ): Promise<string[]> {
+    if (replayedTerminal) {
+      const existing = this.turnSnapshotRepo.getByMessage(messageId);
+      if (existing) return existing.files_changed;
+    }
     let filesChanged = fileEffects
       ? fileEffects.effects
           .filter((effect) => effect.scope === "workspace")
@@ -380,19 +513,20 @@ export class TurnFinalizer {
    * body path needs no broadcast because the `Message` event already carried
    * this id to the client. Returns null only when the write throws.
    */
-  materializeAssistantRow(threadId: string): { id: string; content: string } | null {
+  materializeAssistantRow(
+    threadId: string,
+    broadcastFallback = true,
+    deferVolatileCommit = false,
+  ): { id: string; content: string; shouldBroadcast: boolean; attachments: StoredAttachment[] } | null {
     const { messages } = this.messageRepo.listByThread(threadId, 1);
     const last = messages.length > 0 ? messages[messages.length - 1] : null;
     if (last?.role === "assistant") {
-      this.streamingAssistantTextByThread.delete(threadId);
-      this.bufferedBodyByThread.delete(threadId);
       const attachments = this.getBufferedAssistantAttachments(threadId);
       if (attachments.length > 0) {
         this.messageRepo.appendAttachments(last.id, attachments);
       }
-      this.bufferedAttachmentsByThread.delete(threadId);
-      this.materializedThreads.add(threadId);
-      return { id: last.id, content: last.content ?? "" };
+      if (!deferVolatileCommit) this.commitAssistantMaterialization(threadId);
+      return { id: last.id, content: last.content ?? "", shouldBroadcast: false, attachments };
     }
 
     const buffered = this.bufferedBodyByThread.get(threadId);
@@ -419,11 +553,9 @@ export class TurnFinalizer {
         model,
         attachments: attachments.length > 0 ? attachments : undefined,
       });
-      this.streamingAssistantTextByThread.delete(threadId);
-      this.bufferedBodyByThread.delete(threadId);
-      this.bufferedAttachmentsByThread.delete(threadId);
-      this.materializedThreads.add(threadId);
-      if (!fromProvider && (content || attachments.length > 0)) {
+      if (!deferVolatileCommit) this.commitAssistantMaterialization(threadId);
+      const shouldBroadcast = !fromProvider && (content.length > 0 || attachments.length > 0);
+      if (broadcastFallback && shouldBroadcast) {
         broadcast("agent.event", {
           type: AgentEventType.Message,
           threadId,
@@ -433,7 +565,7 @@ export class TurnFinalizer {
           ...(attachments.length > 0 ? { attachments } : {}),
         } satisfies AgentEvent);
       }
-      return { id: msg.id, content };
+      return { id: msg.id, content, shouldBroadcast, attachments };
     } catch (err) {
       logger.error("Failed to materialize assistant message", {
         threadId,
@@ -441,6 +573,13 @@ export class TurnFinalizer {
       });
       return null;
     }
+  }
+
+  private commitAssistantMaterialization(threadId: string): void {
+    this.streamingAssistantTextByThread.delete(threadId);
+    this.bufferedBodyByThread.delete(threadId);
+    this.bufferedAttachmentsByThread.delete(threadId);
+    this.materializedThreads.add(threadId);
   }
 
   /**

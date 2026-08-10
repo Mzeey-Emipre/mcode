@@ -8,12 +8,14 @@ import { CONVERSATION_TAIL_MAX_MESSAGES } from "@mcode/contracts";
 import type { MessageRepo } from "../repositories/message-repo.js";
 import type { NarrativeStore } from "./narrative-store.js";
 import type { PlanQuestionAnswersRepo } from "../repositories/plan-question-answers-repo.js";
+import type { CanonicalAgentEventSink } from "./canonical-agent-event-sink.js";
 
 /** Dependencies needed to load one paginated conversation page. */
 export interface ConversationPageDeps {
   messageRepo: MessageRepo;
   narrativeStore: NarrativeStore;
   planQuestionAnswersRepo: PlanQuestionAnswersRepo;
+  canonicalSink?: Pick<CanonicalAgentEventSink, "loadConversationProjection">;
 }
 
 /** Dependencies needed to load a bounded conversation tail. */
@@ -60,14 +62,39 @@ export function loadConversationPage(
   deps: ConversationPageDeps,
   input: { threadId: string; limit: number; before?: number },
 ): ConversationPage {
-  const page = deps.messageRepo.listByThread(input.threadId, input.limit, input.before);
-  const entries = deps.narrativeStore.loadForMessages(page.messages);
+  const compatibilityPage = deps.messageRepo.listByThread(input.threadId, input.limit, input.before);
+  const canonicalPage = deps.canonicalSink?.loadConversationProjection(
+    input.threadId,
+    input.limit,
+    input.before,
+  );
+  const messagesById = new Map(
+    compatibilityPage.messages.map((message) => [message.id, message]),
+  );
+  for (const message of canonicalPage?.messages ?? []) {
+    messagesById.set(message.id, message);
+  }
+  const mergedMessages = [...messagesById.values()].sort(
+    (left, right) => left.sequence - right.sequence,
+  );
+  const exceededLimit = mergedMessages.length > input.limit;
+  const messages = exceededLimit ? mergedMessages.slice(-input.limit) : mergedMessages;
+  const messageIds = new Set(messages.map((message) => message.id));
+  const entries = deps.narrativeStore.loadForMessages(messages);
+  const narrativeByMessage = groupNarrativeEntriesByMessage(entries);
+  for (const message of canonicalPage?.messages ?? []) {
+    const canonicalNarrative = canonicalPage?.narrativeByMessage[message.id];
+    if (canonicalNarrative && messageIds.has(message.id)) {
+      narrativeByMessage[message.id] = canonicalNarrative;
+    }
+  }
 
   return {
-    ...page,
+    messages,
+    hasMore: compatibilityPage.hasMore || canonicalPage?.hasMore === true || exceededLimit,
     answeredPlanMessageIds:
       deps.planQuestionAnswersRepo.listAnsweredForThread(input.threadId),
-    narrativeByMessage: groupNarrativeEntriesByMessage(entries),
+    narrativeByMessage,
   };
 }
 

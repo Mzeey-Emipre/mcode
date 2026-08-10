@@ -394,6 +394,133 @@ export const turnSnapshots = sqliteTable(
   ],
 );
 
+/** Canonical runtime-neutral thread records. */
+export const canonicalAgentThreads = sqliteTable(
+  "canonical_agent_threads",
+  {
+    id: text("id").primaryKey().notNull().references(() => threads.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    parentThreadId: text("parent_thread_id"),
+    rootThreadId: text("root_thread_id").notNull(),
+    owningParentThreadId: text("owning_parent_thread_id"),
+    providerId: text("provider_id").notNull(),
+    providerIdentitiesJson: text("provider_identities_json").notNull().default("[]"),
+    activityState: text("activity_state").notNull(),
+    conversationRevision: integer("conversation_revision").notNull().default(0),
+    rosterRevision: integer("roster_revision").notNull().default(0),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    index("idx_canonical_agent_threads_workspace").on(table.workspaceId),
+    index("idx_canonical_agent_threads_root").on(table.rootThreadId),
+  ],
+);
+
+/** Canonical execution-round records. */
+export const canonicalAgentTurns = sqliteTable(
+  "canonical_agent_turns",
+  {
+    id: text("id").primaryKey().notNull(),
+    threadId: text("thread_id").notNull().references(() => canonicalAgentThreads.id, { onDelete: "cascade" }),
+    executionId: text("execution_id").notNull(),
+    status: text("status").notNull(),
+    triggerJson: text("trigger_json").notNull(),
+    permissionMode: text("permission_mode").notNull(),
+    providerIdentitiesJson: text("provider_identities_json").notNull().default("[]"),
+    startedAt: text("started_at"),
+    endedAt: text("ended_at"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_canonical_agent_turns_execution").on(table.executionId),
+    index("idx_canonical_agent_turns_thread").on(table.threadId, table.createdAt),
+  ],
+);
+
+/** Canonical semantic items stored once under their owning turn. */
+export const canonicalAgentItems = sqliteTable(
+  "canonical_agent_items",
+  {
+    id: text("id").primaryKey().notNull(),
+    threadId: text("thread_id").notNull().references(() => canonicalAgentThreads.id, { onDelete: "cascade" }),
+    turnId: text("turn_id").notNull().references(() => canonicalAgentTurns.id, { onDelete: "cascade" }),
+    parentItemId: text("parent_item_id"),
+    kind: text("kind").notNull(),
+    providerIdentitiesJson: text("provider_identities_json").notNull().default("[]"),
+    payloadJson: text("payload_json").notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    index("idx_canonical_agent_items_turn").on(table.turnId, table.createdAt),
+    index("idx_canonical_agent_items_thread").on(table.threadId, table.createdAt),
+  ],
+);
+
+/** Canonical directional collaboration-delivery records. */
+export const canonicalCollaborationActions = sqliteTable(
+  "canonical_collaboration_actions",
+  {
+    id: text("id").primaryKey().notNull(),
+    kind: text("kind").notNull(),
+    sourceThreadId: text("source_thread_id").notNull(),
+    sourceTurnId: text("source_turn_id").notNull(),
+    sourceItemId: text("source_item_id").notNull(),
+    targetThreadId: text("target_thread_id").notNull(),
+    targetTurnId: text("target_turn_id"),
+    status: text("status").notNull(),
+    deliveryUnknown: integer("delivery_unknown").notNull().default(0),
+    providerIdentitiesJson: text("provider_identities_json").notNull().default("[]"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    index("idx_canonical_collaboration_source").on(table.sourceThreadId, table.createdAt),
+    index("idx_canonical_collaboration_target").on(table.targetThreadId, table.createdAt),
+  ],
+);
+
+/** Accepted canonical events with independent accepted and durable ordering. */
+export const canonicalAgentEvents = sqliteTable(
+  "canonical_agent_events",
+  {
+    eventId: text("event_id").primaryKey().notNull(),
+    threadId: text("thread_id").notNull().references(() => canonicalAgentThreads.id, { onDelete: "cascade" }),
+    turnId: text("turn_id"),
+    executionId: text("execution_id").notNull(),
+    acceptedSequence: integer("accepted_sequence").notNull(),
+    durableRevision: integer("durable_revision").notNull(),
+    rosterRevision: integer("roster_revision"),
+    envelopeJson: text("envelope_json").notNull(),
+    acceptedAt: text("accepted_at").notNull(),
+    persistedAt: text("persisted_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_canonical_agent_events_execution_sequence").on(table.executionId, table.acceptedSequence),
+    index("idx_canonical_agent_events_thread_revision").on(table.threadId, table.durableRevision),
+  ],
+);
+
+/** Durable accepted and committed progress for one canonical execution. */
+export const canonicalAgentIngestCheckpoints = sqliteTable(
+  "canonical_agent_ingest_checkpoints",
+  {
+    executionId: text("execution_id").primaryKey().notNull(),
+    threadId: text("thread_id").notNull().references(() => canonicalAgentThreads.id, { onDelete: "cascade" }),
+    turnId: text("turn_id").notNull().references(() => canonicalAgentTurns.id, { onDelete: "cascade" }),
+    lastAcceptedSequence: integer("last_accepted_sequence").notNull(),
+    lastDurableSequence: integer("last_durable_sequence").notNull(),
+    nativeCursorJson: text("native_cursor_json"),
+    phase: text("phase").notNull(),
+    terminalOutcome: text("terminal_outcome"),
+    error: text("error"),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [index("idx_canonical_agent_checkpoints_thread").on(table.threadId, table.updatedAt)],
+);
+
 /** Persisted AI-generated diff summaries, one per thread. */
 export const diffSummaries = sqliteTable(
   "diff_summaries",

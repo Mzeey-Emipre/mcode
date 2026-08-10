@@ -18,6 +18,7 @@ import { ToolCallRecordRepo } from "../repositories/tool-call-record-repo";
 import { TurnSnapshotRepo } from "../repositories/turn-snapshot-repo";
 import { TaskRepo } from "../repositories/task-repo";
 import { AgentService } from "../services/agent-service";
+import { CanonicalAgentEventSink } from "../services/canonical-agent-event-sink";
 import { NarrativeStore } from "../services/narrative-store";
 import { PlanQuestionService } from "../services/plan-question-service";
 import type { GitService } from "../services/git-service";
@@ -44,6 +45,7 @@ describe("AgentService.sendMessage emits TurnStarted", () => {
   let turnSnapshotRepo: TurnSnapshotRepo;
   let taskRepo: TaskRepo;
   let svc: AgentService;
+  let canonicalSink: CanonicalAgentEventSink;
   let providerStub: EventEmitter & Partial<IAgentProvider> & {
     sendTurn: ReturnType<typeof vi.fn>;
   };
@@ -125,6 +127,7 @@ describe("AgentService.sendMessage emits TurnStarted", () => {
       assertUsable: vi.fn(),
     } as unknown as ProviderAvailabilityService;
 
+    canonicalSink = new CanonicalAgentEventSink(db, vi.fn());
     svc = new AgentService(
       threadRepo,
       workspaceRepo,
@@ -152,6 +155,10 @@ describe("AgentService.sendMessage emits TurnStarted", () => {
         { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../repositories/hook-execution-repo.js").HookExecutionRepo,
       ),
       new PlanQuestionService(messageRepo, new PlanQuestionAnswersRepo(db)),
+      undefined,
+      undefined,
+      undefined,
+      canonicalSink,
     );
   });
 
@@ -175,6 +182,15 @@ describe("AgentService.sendMessage emits TurnStarted", () => {
       type: AgentEventType.TurnStarted,
       threadId: thread.id,
     });
+    const executionId = (capturedEvents[0] as { turnExecutionId: string }).turnExecutionId;
+    expect(canonicalSink.loadTurnByExecution(executionId)).toMatchObject({
+      threadId: thread.id,
+      status: "Running",
+      providerIdentities: [],
+    });
+    expect(canonicalSink.loadConversationProjection(thread.id, 10).messages).toEqual([
+      expect.objectContaining({ role: "user", content: "hello" }),
+    ]);
 
     // Load-bearing ordering assertion: the snapshot taken synchronously inside
     // the provider's sendMessage body must show the TurnStarted emit had already
