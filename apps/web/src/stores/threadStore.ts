@@ -1304,13 +1304,16 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
         generation: currentRecord.loadEpoch,
         conversationRevision: currentRecord.conversationRevision,
       };
-      const isStale = get().currentThreadId !== threadId
-        || !conversationResidency.canCommitOlderPageRequest(
-          requestHandle,
-          currentIdentity,
-          responseIdentity,
-        );
-      if (isStale) return;
+      const ownsCurrentRequest = conversationResidency.canCommitOlderPageRequest(
+        requestHandle,
+        currentIdentity,
+        responseIdentity,
+      );
+      if (get().currentThreadId !== threadId) {
+        if (ownsCurrentRequest) patchRec(threadId, { isLoadingMore: false });
+        return;
+      }
+      if (!ownsCurrentRequest) return;
 
       const newCounts: Record<string, number> = {};
       for (const msg of olderMessages) {
