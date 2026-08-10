@@ -7,6 +7,12 @@ import { randomUUID } from "crypto";
 import { injectable, inject } from "tsyringe";
 import type Database from "better-sqlite3";
 import type { ToolCallRecord, ToolCallStatus } from "@mcode/contracts";
+import {
+  ACTIVE_TURN_WRITE_BATCH_LIMITS,
+  runBoundedWriteBatches,
+  type WriteBatchLimits,
+  type WriteBatchResult,
+} from "../store/bounded-write-batches.js";
 
 /** Row shape returned by SQLite for the tool_call_records table. */
 interface ToolCallRecordRow {
@@ -185,6 +191,44 @@ export class ToolCallRecordRepo {
     });
 
     tx(inputs);
+  }
+
+  /** Insert tool-call rows in bounded transactions with an event-loop yield between commits. */
+  async bulkCreateBatched(
+    inputs: readonly CreateToolCallRecordInput[],
+    limits: WriteBatchLimits = ACTIVE_TURN_WRITE_BATCH_LIMITS,
+  ): Promise<WriteBatchResult> {
+    const now = new Date().toISOString();
+    return runBoundedWriteBatches({
+      db: this.db,
+      items: inputs,
+      limits,
+      byteLength: (item) => Buffer.byteLength(JSON.stringify(item), "utf8"),
+      write: (item) => {
+        const startedAt = item.startedAt ?? now;
+        const completedAt = item.status !== "running" ? item.completedAt ?? now : null;
+        this.stmtInsert.run(
+          item.toolCallId ?? randomUUID(),
+          item.messageId,
+          item.parentToolCallId ?? null,
+          item.toolName,
+          item.displayName ?? null,
+          item.providerAgentKey ?? null,
+          item.model ?? null,
+          item.reasoningEffort ?? null,
+          item.inputSummary,
+          item.outputSummary,
+          item.outputTruncated === true ? 1 : 0,
+          item.outputTotalBytes ?? null,
+          item.outputArtifactPath ?? null,
+          item.exitCode ?? null,
+          item.status,
+          startedAt,
+          completedAt,
+          item.sortOrder,
+        );
+      },
+    });
   }
 
   /** List all tool call records for a message, ordered by sort_order ascending. */

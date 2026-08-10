@@ -12,6 +12,22 @@ startup and migrations, active-turn writes, 100-message reads, 1,000-message
 reads, and cleanup. The report includes duration distributions, returned bytes,
 process-memory observations, query plans, and active pragma values.
 
+The active-turn workload uses the production repositories and canonical event
+sink. Each sample records its committed batch count, bounded row count, and
+bounded bytes. This keeps retained-statement and batching measurements on the
+same path that persists a running turn.
+
+The report also records the finite active-turn statement set and these write
+batch limits:
+
+- 64 rows
+- 262,144 bytes
+- 4 milliseconds of observed transaction time
+
+The elapsed-time limit is cooperative. The writer checks it after each bounded
+write unit, commits the current transaction, and then yields before the next
+transaction. No asynchronous work occurs while a transaction is open.
+
 Compare a candidate report with the baseline:
 
 ```sh

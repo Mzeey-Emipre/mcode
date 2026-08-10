@@ -28,7 +28,7 @@ if (options.help) {
 } else {
   const profileDirectory = mkdtempSync(join(tmpdir(), "mcode-sqlite-profile-"));
   try {
-    const report = runSQLiteProfile(options.samples, (workload, sample) => {
+    const report = await runSQLiteProfile(options.samples, (workload, sample) => {
       const dbPath = join(profileDirectory, `${sample}-${workload}.sqlite`);
       return openSQLiteProfileDatabase(dbPath);
     });

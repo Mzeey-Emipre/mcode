@@ -283,7 +283,7 @@ export class TurnFinalizer {
       // this point can attach to the correct persisted row.
       this.lastPersistedMessageIdByThread.set(threadId, messageId);
 
-      const { toolCallCount } = this.narrativeStore.persistNarrative(
+      const { toolCallCount } = await this.narrativeStore.persistNarrativeBatched(
         threadId,
         messageId,
         materialized.content,
@@ -340,35 +340,48 @@ export class TurnFinalizer {
       toolCallCount: number;
       narrative: ReturnType<NarrativeStore["loadForMessages"]>;
     } = { materialized: null, toolCallCount: 0, narrative: [] };
-    const commitResult = this.canonicalSink.finishParentTurn({
+    const terminalAlreadyConfirmed = this.canonicalSink.loadCheckpoint(executionId)?.terminalOutcome != null;
+    if (!terminalAlreadyConfirmed && this.hasRecordableActivity(threadId)) {
+      projection.materialized = this.materializeAssistantRow(threadId, false, true, true);
+      if (!projection.materialized) {
+        throw new Error(`Assistant compatibility projection failed for ${threadId}`);
+      }
+      const persisted = await this.narrativeStore.persistNarrativeBatched(
+        threadId,
+        projection.materialized.id,
+        projection.materialized.content,
+        outcome,
+        { strict: true },
+      );
+      projection.toolCallCount = persisted.toolCallCount;
+      const message = this.messageRepo
+        .listIncludingInternal(threadId)
+        .find((candidate) => candidate.id === projection.materialized!.id);
+      if (!message) {
+        throw new Error(`Projected assistant message missing: ${projection.materialized.id}`);
+      }
+      projection.narrative = this.narrativeStore.loadForMessages([message]);
+    }
+    const commitResult = await this.canonicalSink.finishParentTurnBatched({
       threadId,
       turnId,
       executionId,
       providerId: canonicalThread.providerId,
       providerIdentities,
       outcome,
-      projectTurn: () => {
-        if (!this.hasRecordableActivity(threadId)) {
-          return { message: null, narrative: [] };
-        }
-        projection.materialized = this.materializeAssistantRow(threadId, false, true);
-        if (!projection.materialized) {
-          throw new Error(`Assistant compatibility projection failed for ${threadId}`);
-        }
-        const persisted = this.narrativeStore.persistNarrative(
-          threadId,
-          projection.materialized.id,
-          projection.materialized.content,
-          outcome,
-          { strict: true },
-        );
-        projection.toolCallCount = persisted.toolCallCount;
-        const message = this.messageRepo.findById(projection.materialized.id);
-        if (!message) {
-          throw new Error(`Projected assistant message missing: ${projection.materialized.id}`);
-        }
-        projection.narrative = this.narrativeStore.loadForMessages([message]);
-        return { message, narrative: projection.narrative };
+      projectTurn: () => ({
+        message: projection.materialized
+          ? (() => {
+              const message = this.messageRepo
+                .listIncludingInternal(threadId)
+                .find((candidate) => candidate.id === projection.materialized!.id);
+              return message ? { ...message, is_internal: false } : null;
+            })()
+          : null,
+        narrative: projection.narrative,
+      }),
+      finalizeCompatibility: () => {
+        if (projection.materialized) this.messageRepo.publishAssistant(projection.materialized.id);
       },
     });
 
@@ -517,6 +530,7 @@ export class TurnFinalizer {
     threadId: string,
     broadcastFallback = true,
     deferVolatileCommit = false,
+    stageInternal = false,
   ): { id: string; content: string; shouldBroadcast: boolean; attachments: StoredAttachment[] } | null {
     const { messages } = this.messageRepo.listByThread(threadId, 1);
     const last = messages.length > 0 ? messages[messages.length - 1] : null;
@@ -552,6 +566,7 @@ export class TurnFinalizer {
         sequence: nextSeq,
         model,
         attachments: attachments.length > 0 ? attachments : undefined,
+        isInternal: stageInternal,
       });
       if (!deferVolatileCommit) this.commitAssistantMaterialization(threadId);
       const shouldBroadcast = !fromProvider && (content.length > 0 || attachments.length > 0);

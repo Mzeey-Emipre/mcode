@@ -208,7 +208,29 @@ function takeUtf8Prefix(text: string, maxBytes: number): { text: string; bytes: 
 /** Repository for message creation and retrieval against SQLite. */
 @injectable()
 export class MessageRepo {
+  private createStatement: Database.Statement | null = null;
+  private createAssistantStatement: Database.Statement | null = null;
+  private publishAssistantStatement: Database.Statement | null = null;
+
   constructor(@inject("Database") private readonly db: Database.Database) {}
+
+  private getCreateStatement(): Database.Statement {
+    return this.createStatement ??= this.db.prepare(
+      "INSERT INTO messages (id, thread_id, role, content, timestamp, sequence, attachments, preview_annotations, mentions, reply_to_message_id, quoted_text, model, origin_type, source_thread_id, source_turn_id, source_provider_id, is_internal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    );
+  }
+
+  private getCreateAssistantStatement(): Database.Statement {
+    return this.createAssistantStatement ??= this.db.prepare(
+      "INSERT OR IGNORE INTO messages (id, thread_id, role, content, timestamp, sequence, attachments, mentions, model, provider, origin_type, is_internal) VALUES (?, ?, 'assistant', ?, ?, ?, ?, ?, ?, ?, 'composer', ?)",
+    );
+  }
+
+  private getPublishAssistantStatement(): Database.Statement {
+    return this.publishAssistantStatement ??= this.db.prepare(
+      "UPDATE messages SET is_internal = 0 WHERE id = ? AND role = 'assistant'",
+    );
+  }
 
   /**
    * Create a new message and return the fully-populated record.
@@ -249,11 +271,7 @@ export class MessageRepo {
     const sourceTurnId = origin.type === "thread" ? origin.sourceTurnId : null;
     const sourceProviderId = origin.type === "thread" ? origin.sourceProviderId : null;
 
-    this.db
-      .prepare(
-        "INSERT INTO messages (id, thread_id, role, content, timestamp, sequence, attachments, preview_annotations, mentions, reply_to_message_id, quoted_text, model, origin_type, source_thread_id, source_turn_id, source_provider_id, is_internal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-      )
-      .run(
+    this.getCreateStatement().run(
         id, threadId, role, content, now, sequence,
         attachmentsJson, previewAnnotationsJson, mentionsJson, replyToMessageId ?? null, quotedText ?? null, modelValue, origin.type, sourceThreadId, sourceTurnId, sourceProviderId, isInternalValue,
       );
@@ -304,6 +322,7 @@ export class MessageRepo {
     provider?: string | null;
     attachments?: StoredAttachment[];
     mentions?: MessageMention[];
+    isInternal?: boolean;
   }): Message {
     const now = new Date().toISOString();
     const modelValue = input.model ?? null;
@@ -317,11 +336,18 @@ export class MessageRepo {
         ? JSON.stringify(input.mentions)
         : null;
 
-    const result = this.db
-      .prepare(
-        "INSERT OR IGNORE INTO messages (id, thread_id, role, content, timestamp, sequence, attachments, mentions, model, provider, origin_type, is_internal) VALUES (?, ?, 'assistant', ?, ?, ?, ?, ?, ?, ?, 'composer', 0)",
-      )
-      .run(input.id, input.threadId, input.content, now, input.sequence, attachmentsJson, mentionsJson, modelValue, providerValue);
+    const result = this.getCreateAssistantStatement().run(
+      input.id,
+      input.threadId,
+      input.content,
+      now,
+      input.sequence,
+      attachmentsJson,
+      mentionsJson,
+      modelValue,
+      providerValue,
+      input.isInternal ? 1 : 0,
+    );
 
     const attachments =
       result.changes === 0 && input.attachments && input.attachments.length > 0
@@ -344,8 +370,13 @@ export class MessageRepo {
       reply_to_message_id: null,
       quoted_text: null,
       model: modelValue,
-      is_internal: false,
+      is_internal: input.isInternal ?? false,
     };
+  }
+
+  /** Make a staged assistant message visible after its terminal checkpoint commits. */
+  publishAssistant(messageId: string): void {
+    this.getPublishAssistantStatement().run(messageId);
   }
 
   /** Append stored attachments to an existing message, deduping by attachment id. */

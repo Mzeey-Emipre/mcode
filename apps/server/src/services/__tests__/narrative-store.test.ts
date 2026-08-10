@@ -289,6 +289,7 @@ describe("NarrativeStore.load (read seam)", () => {
  */
 describe("NarrativeStore write seam (server-side traps)", () => {
   const THREAD = "thread-1";
+  const NOW = "2026-08-10T00:00:00.000Z";
   let db: Database.Database;
   let store: NarrativeStore;
 
@@ -311,6 +312,82 @@ describe("NarrativeStore write seam (server-side traps)", () => {
   function toolUse(toolCallId: string, toolName: string, parentToolCallId?: string) {
     return { toolCallId, toolName, toolInput: {}, parentToolCallId };
   }
+
+  it("persists a long active turn in order across bounded transactions", async () => {
+    seedAssistantMessage("m1", "done", 1);
+    store.beginTurn(THREAD);
+    store.resetTurnCounters(THREAD);
+    for (let index = 0; index < 130; index++) {
+      store.bufferToolCall(THREAD, toolUse(`tool-${index}`, "Read"));
+    }
+
+    const result = await store.persistNarrativeBatched(THREAD, "m1", "done", "completed");
+    const persisted = new ToolCallRecordRepo(db).listByMessage("m1");
+
+    expect(result).toEqual({ toolCallCount: 130 });
+    expect(persisted).toHaveLength(130);
+    expect(persisted.map((record) => record.id)).toEqual(
+      Array.from({ length: 130 }, (_, index) => `tool-${index}`),
+    );
+  });
+
+  it("drains a hook that arrives while a bounded narrative write yields", async () => {
+    seedAssistantMessage("m1", "done", 1);
+    const toolRepo = new ToolCallRecordRepo(db);
+    const hookRepo = new HookExecutionRepo(db);
+    store = new NarrativeStore(
+      new MessageRepo(db),
+      toolRepo,
+      new ThoughtSegmentRepo(db),
+      hookRepo,
+    );
+    store.beginTurn(THREAD);
+    store.resetTurnCounters(THREAD);
+    for (let index = 0; index < 65; index++) {
+      store.bufferToolCall(THREAD, toolUse(`tool-${index}`, "Read"));
+    }
+    const originalBulkCreateBatched = toolRepo.bulkCreateBatched.bind(toolRepo);
+    vi.spyOn(toolRepo, "bulkCreateBatched").mockImplementation(async (items, limits) => {
+      const result = await originalBulkCreateBatched(items, limits);
+      store.pushClosedHook(THREAD, {
+        id: "late-hook",
+        messageId: "",
+        hookName: "Stop",
+        toolName: null,
+        phase: "stop",
+        payload: "{}",
+        durationMs: 1,
+        didBlock: false,
+        startedAt: NOW,
+        endedAt: NOW,
+        sortOrder: 66,
+      });
+      return result;
+    });
+
+    await store.persistNarrativeBatched(THREAD, "m1", "done", "completed");
+
+    expect(hookRepo.listByMessage("m1").map((hook) => hook.id)).toEqual(["late-hook"]);
+  });
+
+  it("keeps non-strict bounded persistence best-effort after a repository failure", async () => {
+    seedAssistantMessage("m1", "done", 1);
+    const toolRepo = new ToolCallRecordRepo(db);
+    vi.spyOn(toolRepo, "bulkCreateBatched").mockRejectedValue(new Error("disk unavailable"));
+    store = new NarrativeStore(
+      new MessageRepo(db),
+      toolRepo,
+      new ThoughtSegmentRepo(db),
+      new HookExecutionRepo(db),
+    );
+    store.beginTurn(THREAD);
+    store.resetTurnCounters(THREAD);
+    store.bufferToolCall(THREAD, toolUse("tool-1", "Read"));
+
+    await expect(
+      store.persistNarrativeBatched(THREAD, "m1", "done", "completed"),
+    ).resolves.toEqual({ toolCallCount: 1 });
+  });
 
   describe("Trap 1: parent_tool_use_id is authoritative for parallel sub-agents", () => {
     it("attributes each child to its SDK-supplied parent across 4 parallel Agents", () => {

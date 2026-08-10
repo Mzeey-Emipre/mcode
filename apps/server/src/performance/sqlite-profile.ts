@@ -4,6 +4,7 @@ import { cpus } from "node:os";
 import { performance } from "node:perf_hooks";
 import type Database from "better-sqlite3";
 import { z } from "zod";
+import type { NarrativeEntry } from "@mcode/contracts";
 import { HookExecutionRepo } from "../repositories/hook-execution-repo.js";
 import { MessageRepo } from "../repositories/message-repo.js";
 import { PlanQuestionAnswersRepo } from "../repositories/plan-question-answers-repo.js";
@@ -11,7 +12,9 @@ import { ThoughtSegmentRepo } from "../repositories/thought-segment-repo.js";
 import { ToolCallRecordRepo } from "../repositories/tool-call-record-repo.js";
 import { loadConversationPage } from "../services/conversation-page.js";
 import { NarrativeStore } from "../services/narrative-store.js";
+import { CanonicalAgentEventSink } from "../services/canonical-agent-event-sink.js";
 import { openDatabase } from "../store/database.js";
+import { ACTIVE_TURN_WRITE_BATCH_LIMITS } from "../store/bounded-write-batches.js";
 
 /** Workloads measured by the repeatable SQLite performance profile. */
 export const SQLITE_PROFILE_WORKLOADS = [
@@ -70,6 +73,12 @@ export interface SQLiteProfileSample {
   memory: SQLiteProfileMemory;
   queryPlans: SQLiteQueryPlan[];
   pragmas: Record<string, string | number>;
+  activeTurnWrite?: {
+    rowsChanged: number;
+    batches: number;
+    boundedRows: number;
+    boundedBytes: number;
+  };
 }
 
 /** Distribution summary for one measured value. */
@@ -118,6 +127,10 @@ export interface SQLiteProfileReport {
   schemaVersion: 1;
   createdAt: string;
   samplesPerWorkload: number;
+  activeTurnWritePolicy: {
+    retainedStatements: readonly string[];
+    batchLimits: typeof ACTIVE_TURN_WRITE_BATCH_LIMITS;
+  };
   seed: {
     messages: 1200;
     assistantNarrativeRows: 1800;
@@ -147,6 +160,25 @@ const FIXED_TIMESTAMP = "2026-01-01T00:00:00.000Z";
 const WORKSPACE_ID = "sqlite-profile-workspace";
 const THREAD_ID = "sqlite-profile-thread";
 const CONTENT = "Mcode deterministic SQLite profile content. ".repeat(8);
+const ACTIVE_TURN_RETAINED_STATEMENTS = [
+  "messages.create",
+  "messages.createAssistantIdempotent",
+  "messages.publishAssistant",
+  "tool_call_records.insert",
+  "thought_segments.insert",
+  "hook_executions.insert",
+  "canonical_agent_threads.upsert",
+  "canonical_agent_turns.upsert",
+  "canonical_agent_items.upsert",
+  "canonical_agent_events.insert",
+  "canonical_agent_ingest_checkpoints.upsert",
+] as const;
+
+/** Finite statement retention and transaction bounds for active-turn persistence. */
+export const ACTIVE_TURN_WRITE_POLICY = {
+  retainedStatements: ACTIVE_TURN_RETAINED_STATEMENTS,
+  batchLimits: ACTIVE_TURN_WRITE_BATCH_LIMITS,
+} as const;
 
 const PROTECTED_CONVERSATION_HISTORY_INDEXES = [
   ["tool_call_records", "idx_tool_call_records_message_sort_order"],
@@ -340,10 +372,10 @@ export function compareSQLiteProfileReports(
 }
 
 /** Run all five workloads against isolated deterministic databases. */
-export function runSQLiteProfile(
+export async function runSQLiteProfile(
   samplesPerWorkload: number,
   createDatabase: (workload: SQLiteProfileWorkloadName, sample: number) => WorkloadDatabase,
-): SQLiteProfileReport {
+): Promise<SQLiteProfileReport> {
   if (!Number.isInteger(samplesPerWorkload) || samplesPerWorkload < MIN_SAMPLES || samplesPerWorkload > MAX_SAMPLES) {
     throw new Error(`samplesPerWorkload must be an integer from ${MIN_SAMPLES} to ${MAX_SAMPLES}.`);
   }
@@ -384,7 +416,7 @@ export function runSQLiteProfile(
       const workloadDatabase = createDatabase(workload, sample);
       try {
         sqliteVersion = readSQLiteVersion(workloadDatabase.db);
-        samples.push(runWorkload(workloadDatabase.db, workload, sample));
+        samples.push(await runWorkload(workloadDatabase.db, workload, sample));
       } finally {
         workloadDatabase.db.close();
       }
@@ -395,6 +427,7 @@ export function runSQLiteProfile(
     schemaVersion: 1,
     createdAt: new Date().toISOString(),
     samplesPerWorkload,
+    activeTurnWritePolicy: ACTIVE_TURN_WRITE_POLICY,
     seed: {
       messages: SEEDED_MESSAGE_COUNT,
       assistantNarrativeRows: SEEDED_NARRATIVE_ROWS,
@@ -418,18 +451,18 @@ export function openSQLiteProfileDatabase(dbPath: string): WorkloadDatabase {
   return { db: openDatabase({ dbPath }), dbPath };
 }
 
-function runWorkload(
+async function runWorkload(
   db: Database.Database,
   workload: SQLiteProfileWorkloadName,
   sample: number,
-): SQLiteProfileSample {
+): Promise<SQLiteProfileSample> {
   let measured: MeasuredResult<unknown>;
   switch (workload) {
     case "startup-and-migrations":
       throw new Error("Startup must be measured while the database opens.");
     case "active-turn-writes":
       seedWorkspaceAndThread(db);
-      measured = measureSync(() => writeActiveTurn(db));
+      measured = await measureAsync(() => writeActiveTurn(db));
       break;
     case "conversation-read-100":
       seedConversation(db);
@@ -462,6 +495,9 @@ function runWorkload(
     memory: measured.memory,
     queryPlans,
     pragmas: capturePragmas(db),
+    ...(workload === "active-turn-writes"
+      ? { activeTurnWrite: measured.value as SQLiteProfileSample["activeTurnWrite"] }
+      : {}),
   };
 }
 
@@ -502,16 +538,107 @@ function seedConversation(db: Database.Database): void {
   })();
 }
 
-function writeActiveTurn(db: Database.Database): { rowsChanged: number } {
-  const statements = [
-    db.prepare("INSERT INTO messages (id, thread_id, role, content, timestamp, sequence) VALUES (?, ?, 'user', ?, ?, ?)").bind("active-user", THREAD_ID, CONTENT, FIXED_TIMESTAMP, 1),
-    db.prepare("INSERT INTO messages (id, thread_id, role, content, timestamp, sequence) VALUES (?, ?, 'assistant', ?, ?, ?)").bind("active-assistant", THREAD_ID, CONTENT, FIXED_TIMESTAMP, 2),
-    db.prepare("INSERT INTO tool_call_records (id, message_id, tool_name, input_summary, output_summary, status, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)").bind("active-tool", "active-assistant", "Read", "src/file.ts", "ok", "completed", 1),
-    db.prepare("INSERT INTO thought_segments (id, message_id, text, started_at, ended_at, sort_order) VALUES (?, ?, ?, ?, ?, ?)").bind("active-thought", "active-assistant", "Measured thought", FIXED_TIMESTAMP, FIXED_TIMESTAMP, 0),
-    db.prepare("INSERT INTO hook_executions (id, message_id, hook_name, tool_name, phase, payload, duration_ms, did_block, started_at, ended_at, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").bind("active-hook", "active-assistant", "PreToolUse", "Read", "pre", "{}", 1, 0, FIXED_TIMESTAMP, FIXED_TIMESTAMP, 2),
+async function writeActiveTurn(db: Database.Database): Promise<NonNullable<SQLiteProfileSample["activeTurnWrite"]>> {
+  const messageRepo = new MessageRepo(db);
+  const toolRepo = new ToolCallRecordRepo(db);
+  const thoughtRepo = new ThoughtSegmentRepo(db);
+  const hookRepo = new HookExecutionRepo(db);
+  const sink = new CanonicalAgentEventSink(db, () => undefined);
+  const executionId = "00000000-0000-4000-8000-000000000001";
+  const turnId = "sqlite-profile-turn";
+  sink.startParentTurn({
+    thread: {
+      id: THREAD_ID,
+      workspaceId: WORKSPACE_ID,
+      providerId: "profile",
+      createdAt: FIXED_TIMESTAMP,
+    },
+    turnId,
+    executionId,
+    permissionMode: "supervised",
+    providerIdentities: [],
+    projectUserMessage: () => messageRepo.create(THREAD_ID, "user", CONTENT, 1),
+  });
+  const assistant = messageRepo.createAssistantIdempotent({
+    id: "active-assistant",
+    threadId: THREAD_ID,
+    content: CONTENT,
+    sequence: 2,
+    isInternal: true,
+  });
+  const tools = Array.from({ length: 65 }, (_, index) => ({
+    toolCallId: `active-tool-${index}`,
+    messageId: assistant.id,
+    toolName: "Read",
+    inputSummary: `src/file-${index}.ts`,
+    outputSummary: "ok",
+    status: "completed" as const,
+    startedAt: FIXED_TIMESTAMP,
+    completedAt: FIXED_TIMESTAMP,
+    sortOrder: index,
+  }));
+  const thoughts = [{
+    id: "active-thought",
+    messageId: assistant.id,
+    text: "Measured thought",
+    startedAt: FIXED_TIMESTAMP,
+    endedAt: FIXED_TIMESTAMP,
+    sortOrder: 65,
+  }];
+  const hooks = [{
+    id: "active-hook",
+    messageId: assistant.id,
+    hookName: "PreToolUse",
+    toolName: "Read",
+    phase: "pre",
+    payload: "{}",
+    durationMs: 1,
+    didBlock: false,
+    startedAt: FIXED_TIMESTAMP,
+    endedAt: FIXED_TIMESTAMP,
+    sortOrder: 66,
+  }];
+  const toolBatches = await toolRepo.bulkCreateBatched(tools);
+  const thoughtBatches = await thoughtRepo.bulkCreateBatched(thoughts);
+  const hookBatches = await hookRepo.bulkCreateBatched(hooks);
+  const narrative: NarrativeEntry[] = [
+    ...toolRepo.listByMessage(assistant.id).map((record) => ({
+      kind: "toolCall" as const,
+      sequence: 2,
+      sortOrder: record.sort_order,
+      record,
+    })),
+    ...thoughtRepo.listByMessage(assistant.id).map((record) => ({
+      kind: "narrationSegment" as const,
+      sequence: 2,
+      sortOrder: record.sort_order,
+      record,
+    })),
+    ...hookRepo.listByMessage(assistant.id).map((record) => ({
+      kind: "hook" as const,
+      sequence: 2,
+      sortOrder: record.sort_order,
+      record,
+    })),
   ];
-  const rowsChanged = db.transaction(() => statements.reduce((total, statement) => total + statement.run().changes, 0))();
-  return { rowsChanged };
+  const canonicalBatches = await sink.finishParentTurnBatched({
+    threadId: THREAD_ID,
+    turnId,
+    executionId,
+    providerId: "profile",
+    providerIdentities: [],
+    outcome: "completed",
+    projectTurn: () => ({ message: { ...assistant, is_internal: false }, narrative }),
+    finalizeCompatibility: () => messageRepo.publishAssistant(assistant.id),
+  });
+  const changes = db.prepare("SELECT total_changes() AS count").get() as { count: number };
+  const batchResults = [toolBatches, thoughtBatches, hookBatches, canonicalBatches.writeBatches];
+  return {
+    rowsChanged: changes.count,
+    batches: batchResults.reduce((total, result) => total + result.batches, 0),
+    boundedRows: batchResults.reduce((total, result) => total + result.rows, 0),
+    boundedBytes: batchResults.reduce((total, result) => total + result.bytes, 0),
+  };
 }
 
 function readConversation(db: Database.Database, limit: 100 | 1000): unknown {
@@ -535,6 +662,20 @@ function measureSync<T>(work: () => T): MeasuredResult<T> {
   const before = process.memoryUsage();
   const started = performance.now();
   const value = work();
+  const durationMs = performance.now() - started;
+  const after = process.memoryUsage();
+  return {
+    value,
+    durationMs,
+    returnedBytes: Buffer.byteLength(JSON.stringify(value) ?? "", "utf8"),
+    memory: memoryObservation(before, after),
+  };
+}
+
+async function measureAsync<T>(work: () => Promise<T>): Promise<MeasuredResult<T>> {
+  const before = process.memoryUsage();
+  const started = performance.now();
+  const value = await work();
   const durationMs = performance.now() - started;
   const after = process.memoryUsage();
   return {
