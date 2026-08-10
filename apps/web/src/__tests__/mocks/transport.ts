@@ -121,6 +121,8 @@ export const mockTransport: McodeTransport = {
   createBranch: vi.fn().mockResolvedValue({ branch: "feat/test" }),
   listWorktrees: vi.fn().mockResolvedValue([]),
   sendMessage: vi.fn().mockResolvedValue(1),
+  listTurnRecoveries: vi.fn().mockResolvedValue([]),
+  retryTurn: vi.fn().mockResolvedValue(undefined),
   stopAgent: vi.fn().mockImplementation((threadId: string) => Promise.resolve({
     threadId,
     turnExecutionId: null,

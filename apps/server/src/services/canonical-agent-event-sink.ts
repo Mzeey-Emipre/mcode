@@ -6,6 +6,8 @@ import {
   AgentTurnSchema,
   CanonicalAgentEventEnvelopeSchema,
   CollaborationActionSchema,
+  MAX_TURN_RECOVERIES,
+  ProviderIdentitySchema,
   CANONICAL_AGENT_EVENT_BATCH_MAX,
   createAgentModelState,
   reduceAgentEvent,
@@ -147,19 +149,36 @@ export class CanonicalAgentEventSink {
     const row = this.db
       .prepare("SELECT * FROM canonical_agent_ingest_checkpoints WHERE execution_id = ?")
       .get(executionId) as Record<string, unknown> | undefined;
-    if (!row) return null;
-    return {
-      executionId: String(row.execution_id),
-      threadId: String(row.thread_id),
-      turnId: String(row.turn_id),
-      lastAcceptedSequence: Number(row.last_accepted_sequence),
-      lastDurableSequence: Number(row.last_durable_sequence),
-      nativeCursor: row.native_cursor_json == null ? null : JSON.parse(String(row.native_cursor_json)),
-      phase: String(row.phase),
-      terminalOutcome: row.terminal_outcome as CanonicalAgentCheckpoint["terminalOutcome"],
-      error: row.error == null ? null : String(row.error),
-      updatedAt: String(row.updated_at),
-    };
+    return row ? this.checkpointFromRow(row) : null;
+  }
+
+  /** Load checkpoints whose canonical turn has no terminal outcome. */
+  listUnfinishedCheckpoints(): CanonicalAgentCheckpoint[] {
+    const rows = this.db.prepare(`
+      SELECT checkpoint.*
+      FROM canonical_agent_ingest_checkpoints checkpoint
+      JOIN canonical_agent_turns turn ON turn.id = checkpoint.turn_id
+      WHERE checkpoint.terminal_outcome IS NULL
+        AND turn.status IN ('Pending', 'Running')
+      ORDER BY checkpoint.updated_at ASC, checkpoint.execution_id ASC
+      LIMIT ?
+    `).all(MAX_TURN_RECOVERIES + 1) as Record<string, unknown>[];
+    return this.boundedCheckpointRows(rows, "unfinished");
+  }
+
+  /** Load interrupted checkpoints that permit an explicit recovery action. */
+  listInterruptedCheckpoints(): CanonicalAgentCheckpoint[] {
+    const rows = this.db.prepare(`
+      SELECT checkpoint.*
+      FROM canonical_agent_ingest_checkpoints checkpoint
+      JOIN canonical_agent_turns turn ON turn.id = checkpoint.turn_id
+      WHERE checkpoint.terminal_outcome = 'cancelled'
+        AND checkpoint.phase = 'interrupted'
+        AND turn.status = 'Interrupted'
+      ORDER BY checkpoint.updated_at ASC, checkpoint.execution_id ASC
+      LIMIT ?
+    `).all(MAX_TURN_RECOVERIES + 1) as Record<string, unknown>[];
+    return this.boundedCheckpointRows(rows, "interrupted");
   }
 
   /** Load the canonical assistant projection needed to replay terminal post-commit effects. */
@@ -200,6 +219,7 @@ export class CanonicalAgentEventSink {
     executionId: string;
     permissionMode: "supervised" | "full";
     providerIdentities: readonly ProviderIdentity[];
+    retryOfExecutionId?: string;
     projectUserMessage: () => Message;
   }): CanonicalAgentCommitResult {
     let userMessage: Message | null = null;
@@ -209,8 +229,21 @@ export class CanonicalAgentEventSink {
       turnId: input.turnId,
       executionId: input.executionId,
       phase: "running",
+      nativeCursor: input.providerIdentities.find((identity) => identity.provenance === "native"),
       replayGuard: "execution-started",
       projectCompatibility: () => {
+        if (input.retryOfExecutionId) {
+          const consumed = this.db.prepare(`
+            UPDATE canonical_agent_ingest_checkpoints
+            SET phase = 'retried', updated_at = ?
+            WHERE execution_id = ?
+              AND phase = 'interrupted'
+              AND terminal_outcome = 'cancelled'
+          `).run(now, input.retryOfExecutionId);
+          if (consumed.changes !== 1) {
+            throw new Error(`Interrupted execution not found: ${input.retryOfExecutionId}`);
+          }
+        }
         userMessage = input.projectUserMessage();
       },
       events: () => {
@@ -240,11 +273,92 @@ export class CanonicalAgentEventSink {
       phase: input.outcome,
       terminalOutcome: input.outcome,
       error: input.error,
+      nativeCursor: input.providerIdentities.find((identity) => identity.provenance === "native"),
       replayGuard: "terminal-confirmed",
       projectCompatibility: () => {
         projection = input.projectTurn();
       },
       events: () => this.parentTurnTerminalEvents(input, projection, endedAt),
+    });
+  }
+
+  /** Load the accepted user input for one canonical turn. */
+  loadUserMessage(turnId: string): Message | null {
+    const row = this.db.prepare(`
+      SELECT payload_json
+      FROM canonical_agent_items
+      WHERE turn_id = ?
+        AND kind = 'message'
+        AND json_extract(payload_json, '$.projection') = 'message'
+        AND json_extract(payload_json, '$.message.role') = 'user'
+      ORDER BY created_at ASC, id ASC
+      LIMIT 1
+    `).get(turnId) as { payload_json: string } | undefined;
+    return row
+      ? (JSON.parse(row.payload_json) as { message: Message }).message
+      : null;
+  }
+
+  /** Persist a native provider cursor for an unfinished execution. */
+  recordNativeCursor(executionId: string, nativeCursor: ProviderIdentity): boolean {
+    const cursor = ProviderIdentitySchema.parse(nativeCursor);
+    const result = this.db.prepare(`
+      UPDATE canonical_agent_ingest_checkpoints
+      SET native_cursor_json = ?, updated_at = ?
+      WHERE execution_id = ?
+        AND terminal_outcome IS NULL
+    `).run(JSON.stringify(cursor), new Date().toISOString(), executionId);
+    return result.changes === 1;
+  }
+
+  /** Record that one unfinished execution cannot be proved safe after restart. */
+  interruptUnfinishedExecution(
+    executionId: string,
+    reason: string,
+  ): CanonicalAgentCommitResult {
+    const checkpoint = this.loadCheckpoint(executionId);
+    const turn = this.loadTurnByExecution(executionId);
+    if (!checkpoint || !turn) {
+      throw new Error(`Canonical execution not found: ${executionId}`);
+    }
+    if (checkpoint.terminalOutcome || !["Pending", "Running"].includes(turn.status)) {
+      throw new Error(`Canonical execution is not unfinished: ${executionId}`);
+    }
+    const thread = this.loadThread(checkpoint.threadId);
+    if (!thread) throw new Error(`Canonical thread not found: ${checkpoint.threadId}`);
+    const endedAt = new Date().toISOString();
+    return this.commit({
+      threadId: checkpoint.threadId,
+      turnId: checkpoint.turnId,
+      executionId,
+      phase: "interrupted",
+      terminalOutcome: "cancelled",
+      error: reason,
+      nativeCursor: checkpoint.nativeCursor ?? undefined,
+      events: [{
+        eventId: `${executionId}:recovery-thread-idle`,
+        routing: { threadId: checkpoint.threadId, executionId },
+        sourceProviderId: thread.providerId,
+        sourceIdentities: thread.providerIdentities,
+        payload: {
+          type: "thread.recorded",
+          thread: {
+            ...thread,
+            activityState: "Idle",
+            updatedAt: endedAt,
+          },
+        },
+      }, {
+        eventId: `${executionId}:recovery-interrupted`,
+        routing: {
+          threadId: checkpoint.threadId,
+          turnId: checkpoint.turnId,
+          executionId,
+        },
+        sourceProviderId: thread.providerId,
+        sourceIdentities: thread.providerIdentities,
+        payload: { type: "turn.interrupted", endedAt, reason },
+      }],
     });
   }
 
@@ -1012,5 +1126,32 @@ export class CanonicalAgentEventSink {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     });
+  }
+
+  private checkpointFromRow(row: Record<string, unknown>): CanonicalAgentCheckpoint {
+    return {
+      executionId: String(row.execution_id),
+      threadId: String(row.thread_id),
+      turnId: String(row.turn_id),
+      lastAcceptedSequence: Number(row.last_accepted_sequence),
+      lastDurableSequence: Number(row.last_durable_sequence),
+      nativeCursor: row.native_cursor_json == null ? null : JSON.parse(String(row.native_cursor_json)),
+      phase: String(row.phase),
+      terminalOutcome: row.terminal_outcome as CanonicalAgentCheckpoint["terminalOutcome"],
+      error: row.error == null ? null : String(row.error),
+      updatedAt: String(row.updated_at),
+    };
+  }
+
+  private boundedCheckpointRows(
+    rows: Record<string, unknown>[],
+    phase: "unfinished" | "interrupted",
+  ): CanonicalAgentCheckpoint[] {
+    if (rows.length > MAX_TURN_RECOVERIES) {
+      throw new Error(
+        `Canonical ${phase} checkpoint count exceeds ${MAX_TURN_RECOVERIES}`,
+      );
+    }
+    return rows.map((row) => this.checkpointFromRow(row));
   }
 }

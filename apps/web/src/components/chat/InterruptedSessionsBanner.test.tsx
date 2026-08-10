@@ -4,14 +4,14 @@ import { describe, it, expect, vi } from "vitest";
 import { InterruptedSessionsBanner } from "./InterruptedSessionsBanner";
 
 describe("InterruptedSessionsBanner", () => {
-  const onResume = vi.fn();
+  const onRetry = vi.fn();
   const onDismiss = vi.fn();
 
   it("renders nothing when threadIds is empty", () => {
     const { container } = render(
       <InterruptedSessionsBanner
         threadIds={[]}
-        onResume={onResume}
+        onRetry={onRetry}
         onDismiss={onDismiss}
       />,
     );
@@ -22,7 +22,7 @@ describe("InterruptedSessionsBanner", () => {
     render(
       <InterruptedSessionsBanner
         threadIds={["thread-1"]}
-        onResume={onResume}
+        onRetry={onRetry}
         onDismiss={onDismiss}
       />,
     );
@@ -35,7 +35,7 @@ describe("InterruptedSessionsBanner", () => {
     render(
       <InterruptedSessionsBanner
         threadIds={["thread-1", "thread-2", "thread-3"]}
-        onResume={onResume}
+        onRetry={onRetry}
         onDismiss={onDismiss}
       />,
     );
@@ -44,33 +44,34 @@ describe("InterruptedSessionsBanner", () => {
     ).toBeInTheDocument();
   });
 
-  it("calls onResume with all threadIds when Resume all is clicked", async () => {
+  it("calls onRetry with all threadIds when Retry all is clicked", async () => {
     const user = userEvent.setup();
-    const mockResume = vi.fn();
+    const mockRetry = vi.fn();
     render(
       <InterruptedSessionsBanner
         threadIds={["thread-1", "thread-2"]}
-        onResume={mockResume}
+        onRetry={mockRetry}
         onDismiss={onDismiss}
       />,
     );
-    await user.click(screen.getByRole("button", { name: /resume all/i }));
-    expect(mockResume).toHaveBeenCalledOnce();
-    expect(mockResume).toHaveBeenCalledWith(["thread-1", "thread-2"]);
+    await user.click(screen.getByRole("button", { name: /retry all/i }));
+    expect(mockRetry).toHaveBeenCalledOnce();
+    expect(mockRetry).toHaveBeenCalledWith(["thread-1", "thread-2"]);
+    expect(screen.queryByRole("button", { name: /resume/i })).toBeNull();
   });
 
-  it("shows Resuming... state after clicking Resume all", async () => {
+  it("shows Retry state after clicking Retry all", async () => {
     const user = userEvent.setup();
     render(
       <InterruptedSessionsBanner
         threadIds={["thread-1"]}
-        onResume={vi.fn()}
+        onRetry={vi.fn()}
         onDismiss={onDismiss}
       />,
     );
-    await user.click(screen.getByRole("button", { name: /resume all/i }));
-    expect(screen.getByRole("button", { name: /resuming/i })).toBeDisabled();
-    expect(screen.queryByRole("button", { name: /resume all/i })).toBeNull();
+    await user.click(screen.getByRole("button", { name: /retry all/i }));
+    expect(screen.getByRole("button", { name: /retrying/i })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /retry all/i })).toBeNull();
   });
 
   it("calls onDismiss when X button is clicked", async () => {
@@ -79,7 +80,7 @@ describe("InterruptedSessionsBanner", () => {
     render(
       <InterruptedSessionsBanner
         threadIds={["thread-1"]}
-        onResume={onResume}
+        onRetry={onRetry}
         onDismiss={mockDismiss}
       />,
     );

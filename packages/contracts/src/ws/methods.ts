@@ -29,6 +29,7 @@ import { GitCommitSchema } from "../models/git-commit.js";
 import { PrInfoSchema, PrDetailSchema, PrDraftSchema, CreatePrResultSchema, ChecksStatusSchema } from "../github.js";
 import { TurnSnapshotSchema } from "../models/turn-snapshot.js";
 import { AgentStopResultSchema, TurnRuntimeSnapshotSchema } from "../models/turn-runtime.js";
+import { MAX_TURN_RECOVERIES, TurnRecoverySchema } from "../models/turn-recovery.js";
 import { PlanAnswerSchema } from "../models/plan-questions.js";
 import { PlanStatusSchema, PlanRecordSchema, PlanActionSchema } from "../models/plan-output.js";
 import { DiffStatsSchema } from "../models/diff-stats.js";
@@ -728,6 +729,16 @@ export const WS_METHODS = lazySchema(() => ({
   },
   "agent.send": {
     params: SendMessageSchema(),
+    result: z.void(),
+  },
+  /** List interrupted executions and their capability-safe user actions. */
+  "agent.recoveries": {
+    params: z.object({}).strict(),
+    result: z.array(TurnRecoverySchema()).max(MAX_TURN_RECOVERIES),
+  },
+  /** Retry one interrupted execution as a new execution. */
+  "agent.retry": {
+    params: z.object({ executionId: z.string().uuid() }).strict(),
     result: z.void(),
   },
   "agent.createAndSend": {

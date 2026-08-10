@@ -23,6 +23,8 @@ const {
     subscribeThread: vi.fn(),
     unsubscribeThread: vi.fn(),
     setThreadSubscriptions: vi.fn(),
+    listTurnRecoveries: vi.fn(),
+    retryTurn: vi.fn(),
   },
   chatViewThreadStoreSetStateMock: vi.fn(),
   chatViewResidencyMock: {
@@ -270,8 +272,12 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     chatViewConnectionStatusRef.current = "connected";
     chatViewTransportMock.subscribeThread.mockResolvedValue(undefined);
     chatViewTransportMock.unsubscribeThread.mockResolvedValue(undefined);
+    chatViewTransportMock.listTurnRecoveries.mockResolvedValue([]);
+    chatViewTransportMock.retryTurn.mockResolvedValue(undefined);
     chatViewTransportMock.subscribeThread.mockClear();
     chatViewTransportMock.unsubscribeThread.mockClear();
+    chatViewTransportMock.listTurnRecoveries.mockClear();
+    chatViewTransportMock.retryTurn.mockClear();
     chatViewGetTransportMock.mockReset();
     chatViewGetTransportMock.mockReturnValue(chatViewTransportMock);
     chatViewThreadStoreSetStateMock.mockClear();
@@ -289,6 +295,28 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     expect(screen.getByText("My Thread")).toBeInTheDocument();
     // No input is shown
     expect(screen.queryByTestId("chat-header-title-input")).not.toBeInTheDocument();
+  });
+
+  it("offers explicit Retry without Resume and starts the selected new execution", async () => {
+    chatViewTransportMock.listTurnRecoveries.mockResolvedValue([{
+      threadId: "thread-1",
+      executionId: "00000000-0000-4000-8000-000000000015",
+      acceptedThrough: 6,
+      durableThrough: 6,
+      phase: "interrupted",
+      error: "Provider execution was not proved active.",
+      actions: ["retry"],
+    }]);
+    const user = userEvent.setup();
+    render(<ChatView />);
+
+    const retry = await screen.findByRole("button", { name: /retry all/i });
+    expect(screen.queryByRole("button", { name: /resume/i })).toBeNull();
+    await user.click(retry);
+
+    expect(chatViewTransportMock.retryTurn).toHaveBeenCalledWith(
+      "00000000-0000-4000-8000-000000000015",
+    );
   });
 
   it("enters edit mode on double click", async () => {

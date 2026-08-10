@@ -36,6 +36,7 @@ import { ProviderRegistry } from "./providers/provider-registry";
 import { WorkspaceService } from "./services/workspace-service";
 import { ThreadService } from "./services/thread-service";
 import { AgentService } from "./services/agent-service";
+import { TurnRecoveryService } from "./services/turn-recovery-service";
 import { NarrativeStore } from "./services/narrative-store";
 import {
   CanonicalAgentEventSink,
@@ -349,6 +350,11 @@ export function setupContainer(mcodeDir: string): typeof container {
   container.register(
     CanonicalAgentEventSink,
     { useClass: CanonicalAgentEventSink },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    TurnRecoveryService,
+    { useClass: TurnRecoveryService },
     { lifecycle: Lifecycle.Singleton },
   );
   container.register(

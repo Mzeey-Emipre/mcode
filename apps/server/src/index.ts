@@ -21,6 +21,7 @@ import { sanitizePublicToolInput } from "./services/public-tool-input";
 import { WorkspaceService } from "./services/workspace-service";
 import { ThreadService } from "./services/thread-service";
 import { AgentService } from "./services/agent-service";
+import { TurnRecoveryService } from "./services/turn-recovery-service";
 import { ThreadControlService } from "./services/thread-control-service";
 import { ExternalThreadControlPairingService } from "./services/external-thread-control-pairing-service";
 import { ExternalThreadControlMcpRuntime } from "./services/external-thread-control-mcp-runtime";
@@ -242,6 +243,7 @@ browserAutomationCredentials.onRemoved((revocation) => {
 const workspaceService = container.resolve(WorkspaceService);
 const threadService = container.resolve(ThreadService);
 const agentService = container.resolve(AgentService);
+const turnRecoveryService = container.resolve(TurnRecoveryService);
 const threadControlService = container.resolve(ThreadControlService);
 const externalThreadControlPairingService = container.resolve(ExternalThreadControlPairingService);
 const externalThreadControlMcpRuntime = container.resolve(ExternalThreadControlMcpRuntime);
@@ -393,6 +395,12 @@ setInterval(() => {
 
 // AgentService self-wires persistence and session tracking against providers
 agentService.init();
+const startupRecovery = turnRecoveryService.reconcileOnStartup();
+if (startupRecovery.interrupted.length > 0) {
+  logger.info("Interrupted unproved executions during startup recovery", {
+    count: startupRecovery.interrupted.length,
+  });
+}
 
 // Register broadcast callback so settings changes propagate to clients
 providerAvailability.onChange((list) => {
@@ -638,6 +646,7 @@ const { httpServer, wss } = createWsServer({
   workspaceService,
   threadService,
   agentService,
+  turnRecoveryService,
   threadControlService,
   externalThreadControlPairingService,
   externalThreadControlMcpRuntime,
