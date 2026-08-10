@@ -5,11 +5,10 @@ import { SectionHeading } from "../SectionHeading";
 
 /**
  * Performance settings section. Exposes runtime-tunable knobs that affect
- * memory and latency trade-offs: server V8 heap size, thread cache size, and
- * preview memory-saver tab controls (warm tab limit and idle discard timers).
+ * memory and latency trade-offs: server V8 heap size and preview memory-saver
+ * tab controls (warm tab limit and idle discard timers).
  */
 export function PerformanceSection() {
-  const threadCacheSize = useSettingsStore((s) => s.settings.performance.threadCacheSize);
   const heapMb = useSettingsStore((s) => s.settings.server.memory.heapMb);
   const maxWarm = useSettingsStore((s) => s.settings.preview.memorySaver.maxWarm);
   const bgIdleMs = useSettingsStore((s) => s.settings.preview.memorySaver.bgIdleMs);
@@ -20,25 +19,6 @@ export function PerformanceSection() {
     <div>
       <SectionHeading>Performance</SectionHeading>
       <div>
-        <SettingRow
-          label="Thread cache size"
-          configKey="performance.threadCacheSize"
-          hint="Keeps the last N threads in memory for instant switching. 10 is a good default for most workflows. Takes effect immediately."
-        >
-          <RangeControl
-            min={1}
-            max={50}
-            step={1}
-            value={threadCacheSize}
-            onCommit={(v) => void update({ performance: { threadCacheSize: v } })}
-            formatValue={(v) => `${v} thread${v === 1 ? "" : "s"}`}
-          />
-        </SettingRow>
-        {threadCacheSize <= 3 && (
-          <p className="text-xs text-amber-500/80 mt-2 px-0">
-            At this size, most thread switches will reload from the server.
-          </p>
-        )}
         <SettingRow
           label="Heap memory"
           configKey="server.memory.heapMb"

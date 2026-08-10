@@ -426,18 +426,6 @@ export const SettingsSchema = lazySchema(() =>
       })
       .default({}),
 
-    /** Runtime performance and resource-usage settings. */
-    performance: z
-      .object({
-        /**
-         * Maximum number of threads kept in the in-memory message cache.
-         * Higher values reduce thread-switch latency at the cost of memory;
-         * lower values free memory at the cost of more getMessages round-trips.
-         */
-        threadCacheSize: z.number().int().min(1).max(50).default(25),
-      })
-      .default({}),
-
     /** In-app browser preview settings. */
     preview: z
       .object({
@@ -663,11 +651,6 @@ export const PartialSettingsSchema = lazySchema(() =>
     diffSummary: z
       .object({
         enabled: z.boolean().optional(),
-      })
-      .optional(),
-    performance: z
-      .object({
-        threadCacheSize: z.number().int().min(1).max(50).optional(),
       })
       .optional(),
     preview: z

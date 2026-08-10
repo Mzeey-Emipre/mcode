@@ -64,6 +64,16 @@ export class LruCache<K, V> {
     return this.map.has(key);
   }
 
+  /** Return entries in least-recently-used order without changing recency. */
+  entries(): Array<[K, V]> {
+    return [...this.map.entries()];
+  }
+
+  /** Return keys in least-recently-used order without changing recency. */
+  keys(): K[] {
+    return [...this.map.keys()];
+  }
+
   /** Remove an entry. Returns true if the key existed, false otherwise. */
   delete(key: K): boolean {
     return this.map.delete(key);

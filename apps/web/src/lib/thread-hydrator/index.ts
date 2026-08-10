@@ -22,7 +22,6 @@ export {
   takePrefetchedHistoryPage,
   projectConversationCacheState,
   clearRecordCache,
-  resizeRecordCache,
   RECORD_CACHE_SIZE,
   RECORD_MESSAGE_CACHE_SIZE,
 } from "./record-cache";

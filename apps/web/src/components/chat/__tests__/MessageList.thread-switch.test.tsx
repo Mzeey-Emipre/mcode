@@ -504,6 +504,66 @@ describe("MessageList thread switch", () => {
     rectSpy.mockRestore();
   });
 
+  it("preserves the visible message and pixel offset when pressure removes resident rows", () => {
+    loadingValue = false;
+    activeThreadIdValue = "thread-A";
+    messagesValue = [
+      { id: "m1", sequence: 1 },
+      { id: "m2", sequence: 2 },
+      { id: "m3", sequence: 3 },
+    ];
+    let scrollTop = 100;
+    let layoutShift = 0;
+    const rectSpy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: HTMLElement) {
+        const messageId = this.getAttribute("data-message-id");
+        if (messageId === "m1") return { top: -80, bottom: 0 } as DOMRect;
+        if (messageId === "m2") {
+          const top = 100 + layoutShift - (scrollTop - 100);
+          return { top, bottom: top + 80 } as DOMRect;
+        }
+        if (this.classList.contains("overflow-y-auto")) {
+          return { top: 0, bottom: 400 } as DOMRect;
+        }
+        return { top: 0, bottom: 0 } as DOMRect;
+      });
+    const animationFrames: FrameRequestCallback[] = [];
+    const animationFrameSpy = vi.spyOn(globalThis, "requestAnimationFrame")
+      .mockImplementation((callback) => {
+        animationFrames.push(callback);
+        return animationFrames.length;
+      });
+    const { rerender, container } = render(<MessageList />);
+    const scrollEl = container.querySelector(".overflow-y-auto") as HTMLDivElement;
+    Object.defineProperty(scrollEl, "scrollHeight", { configurable: true, value: 1_000 });
+    Object.defineProperty(scrollEl, "clientHeight", { configurable: true, value: 400 });
+    Object.defineProperty(scrollEl, "scrollTop", {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => { scrollTop = value; },
+    });
+
+    act(() => {
+      while (animationFrames.length > 0) animationFrames.shift()?.(0);
+    });
+    scrollTop = 100;
+    rememberScrollTop("thread-A", 100, false, { messageId: "m2", top: 100 });
+    layoutShift = -80;
+    messagesValue = [
+      { id: "m2", sequence: 2 },
+      { id: "m3", sequence: 3 },
+    ];
+    act(() => rerender(<MessageList />));
+    act(() => {
+      while (animationFrames.length > 0) animationFrames.shift()?.(0);
+    });
+
+    expect(scrollTop).toBe(20);
+    expect(container.querySelector('[data-message-id="m2"]')?.getBoundingClientRect().top).toBe(100);
+    animationFrameSpy.mockRestore();
+    rectSpy.mockRestore();
+  });
+
   it("does not restore tail pin when wheel-up remains inside the bottom cushion", () => {
     loadingValue = false;
     activeThreadIdValue = "thread-A";

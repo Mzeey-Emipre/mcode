@@ -9,10 +9,28 @@ import type {
   ConversationOlderPageIdentity,
   ConversationPage,
 } from "@mcode/contracts";
+import {
+  ACTIVE_CONVERSATION_MESSAGE_BYTES,
+  ACTIVE_CONVERSATION_BYTES,
+  CONVERSATION_NARRATIVE_BYTES,
+  CRITICAL_ACTIVE_CONVERSATION_MESSAGE_BYTES,
+  INACTIVE_CONVERSATION_BYTES,
+  PREFETCHED_CONVERSATION_BYTES,
+  measureConversationValue,
+  selectConversationNarrative,
+  selectConversationWindow,
+} from "./conversation-memory-policy";
+
+/** Automatic byte budgets for each conversation residency class. */
+export const CONVERSATION_MEMORY_BUDGETS = {
+  activeBytes: ACTIVE_CONVERSATION_BYTES,
+  inactiveBytes: INACTIVE_CONVERSATION_BYTES,
+  prefetchedBytes: PREFETCHED_CONVERSATION_BYTES,
+  narrativeBytes: CONVERSATION_NARRATIVE_BYTES,
+} as const;
 
 /**
- * Initial default thread cache capacity.
- * Overridden by the `performance.threadCacheSize` user setting at runtime.
+ * Secondary entry-count ceiling. Byte budgets are the primary eviction policy.
  */
 export const RECORD_CACHE_SIZE = 25;
 
@@ -79,6 +97,32 @@ interface PrefetchedHistoryPage {
 }
 
 const prefetchedHistoryCache = new LruCache<string, PrefetchedHistoryPage>(RECORD_CACHE_SIZE);
+const recordByteSizes = new Map<string, number>();
+const recordNarrativeByteSizes = new Map<string, number>();
+const prefetchByteSizes = new Map<string, number>();
+const prefetchNarrativeByteSizes = new Map<string, number>();
+let activeConversationId: string | null = null;
+
+function measureRecord(record: ConversationCacheState): number {
+  return measureConversationValue({
+    ...record,
+    answeredPlanMessageIds: [...record.answeredPlanMessageIds],
+  });
+}
+
+function measurePage(entry: PrefetchedHistoryPage): number {
+  return measureConversationValue(entry);
+}
+
+function pruneNarrative(
+  narrativeByMessage: ConversationCacheState["narrativeByMessage"],
+  messages: readonly ConversationCacheState["messages"][number][],
+  maxBytes = CONVERSATION_NARRATIVE_BYTES,
+): ConversationCacheState["narrativeByMessage"] {
+  return selectConversationNarrative(narrativeByMessage, messages, {
+    maxBytes,
+  });
+}
 
 function filterMessageMetadata<T>(
   metadata: Record<string, T>,
@@ -89,47 +133,144 @@ function filterMessageMetadata<T>(
   );
 }
 
-function boundRecord(threadId: string, record: ConversationCacheState): ConversationCacheState {
-  if (record.messages.length <= RECORD_MESSAGE_CACHE_SIZE) return record;
-
-  const messages = record.messages.slice(-RECORD_MESSAGE_CACHE_SIZE);
-  const retainedMessageIds = new Set(messages.map((message) => message.id));
+function boundRecord(
+  threadId: string,
+  record: ConversationCacheState,
+  maxBytes = activeConversationId === threadId
+    ? ACTIVE_CONVERSATION_MESSAGE_BYTES
+    : ACTIVE_CONVERSATION_MESSAGE_BYTES / 2,
+): ConversationCacheState {
   const rememberedPosition = recallScrollPosition(threadId);
-  if (
-    rememberedPosition?.anchorMessageId
-    && !retainedMessageIds.has(rememberedPosition.anchorMessageId)
-  ) {
-    forgetScrollTop(threadId);
-  }
+  const isActive = activeConversationId === threadId;
+  const preference = rememberedPosition?.anchorMessageId ? "older" : "newer";
+  let messageBudget = maxBytes;
 
-  return {
-    ...record,
-    messages,
-    oldestLoadedSequence: messages[0]?.sequence ?? record.oldestLoadedSequence,
-    newestLoadedSequence: messages.at(-1)?.sequence ?? record.newestLoadedSequence,
-    hasMoreMessages: true,
-    persistedToolCallCounts: filterMessageMetadata(
-      record.persistedToolCallCounts,
-      retainedMessageIds,
-    ),
-    persistedFilesChanged: filterMessageMetadata(
-      record.persistedFilesChanged,
-      retainedMessageIds,
-    ),
-    serverMessageIds: filterMessageMetadata(record.serverMessageIds, retainedMessageIds),
-    narrativeByMessage: filterMessageMetadata(record.narrativeByMessage, retainedMessageIds),
-    answeredPlanMessageIds: new Set(
-      [...record.answeredPlanMessageIds].filter((messageId) => retainedMessageIds.has(messageId)),
-    ),
-    assistantResponseKeys: filterMessageMetadata(
-      record.assistantResponseKeys,
-      retainedMessageIds,
-    ),
-    latestTurnWithChanges:
-      record.latestTurnWithChanges && retainedMessageIds.has(record.latestTurnWithChanges)
-        ? record.latestTurnWithChanges
-        : null,
-  };
+  while (true) {
+    const window = selectConversationWindow(record.messages, {
+      anchorMessageId: rememberedPosition?.anchorMessageId,
+      maxBytes: messageBudget,
+      maxMessages: RECORD_MESSAGE_CACHE_SIZE,
+      preference,
+    });
+    const messages = window.messages;
+    const retainedMessageIds = new Set(messages.map((message) => message.id));
+    const windowWasTrimmed = window.evictedOlder || window.evictedNewer;
+    const withoutNarrative: ConversationCacheState = {
+      ...record,
+      messages,
+      oldestLoadedSequence: windowWasTrimmed
+        ? messages[0]?.sequence ?? record.oldestLoadedSequence
+        : record.oldestLoadedSequence,
+      newestLoadedSequence: windowWasTrimmed
+        ? messages.at(-1)?.sequence ?? record.newestLoadedSequence
+        : record.newestLoadedSequence,
+      hasMoreMessages: record.hasMoreMessages || window.evictedOlder,
+      hasNewerMessages: record.hasNewerMessages || window.evictedNewer,
+      persistedToolCallCounts: windowWasTrimmed ? filterMessageMetadata(
+        record.persistedToolCallCounts,
+        retainedMessageIds,
+      ) : record.persistedToolCallCounts,
+      persistedFilesChanged: windowWasTrimmed ? filterMessageMetadata(
+        record.persistedFilesChanged,
+        retainedMessageIds,
+      ) : record.persistedFilesChanged,
+      serverMessageIds: windowWasTrimmed
+        ? filterMessageMetadata(record.serverMessageIds, retainedMessageIds)
+        : record.serverMessageIds,
+      narrativeByMessage: {},
+      answeredPlanMessageIds: windowWasTrimmed
+        ? new Set(
+            [...record.answeredPlanMessageIds]
+              .filter((messageId) => retainedMessageIds.has(messageId)),
+          )
+        : record.answeredPlanMessageIds,
+      assistantResponseKeys: windowWasTrimmed
+        ? filterMessageMetadata(record.assistantResponseKeys, retainedMessageIds)
+        : record.assistantResponseKeys,
+      latestTurnWithChanges:
+        !windowWasTrimmed
+          || (record.latestTurnWithChanges
+            && retainedMessageIds.has(record.latestTurnWithChanges))
+          ? record.latestTurnWithChanges
+          : null,
+    };
+    const narrativeBudget = isActive
+      ? Math.min(
+          CONVERSATION_NARRATIVE_BYTES,
+          Math.max(0, ACTIVE_CONVERSATION_BYTES - measureRecord(withoutNarrative)),
+        )
+      : CONVERSATION_NARRATIVE_BYTES;
+    const boundedRecord = {
+      ...withoutNarrative,
+      narrativeByMessage: pruneNarrative(
+        filterMessageMetadata(record.narrativeByMessage, retainedMessageIds),
+        messages,
+        narrativeBudget,
+      ),
+    };
+    const overflow = isActive ? measureRecord(boundedRecord) - ACTIVE_CONVERSATION_BYTES : 0;
+    if (overflow <= 0 || messages.length <= 1) return boundedRecord;
+    messageBudget = Math.max(0, messageBudget - overflow - 1);
+  }
+}
+
+function evictOldestPrefetch(): string | undefined {
+  const threadId = prefetchedHistoryCache.keys()[0];
+  if (threadId) {
+    prefetchedHistoryCache.delete(threadId);
+    prefetchByteSizes.delete(threadId);
+    prefetchNarrativeByteSizes.delete(threadId);
+  }
+  return threadId;
+}
+
+function inactiveEntries(): Array<[string, ConversationCacheState]> {
+  return cache.entries().filter(([threadId]) => threadId !== activeConversationId);
+}
+
+function evictOldestInactive(): string | undefined {
+  const threadId = inactiveEntries()[0]?.[0];
+  if (!threadId) return undefined;
+  cache.delete(threadId);
+  prefetchedHistoryCache.delete(threadId);
+  recordByteSizes.delete(threadId);
+  recordNarrativeByteSizes.delete(threadId);
+  prefetchByteSizes.delete(threadId);
+  prefetchNarrativeByteSizes.delete(threadId);
+  forgetScrollTop(threadId);
+  return threadId;
+}
+
+function enforceNarrativeByteBudget(): void {
+  for (const [threadId, entry] of prefetchedHistoryCache.entries()) {
+    if (getConversationCacheUsage().narrativeBytes <= CONVERSATION_NARRATIVE_BYTES) return;
+    if ((prefetchNarrativeByteSizes.get(threadId) ?? 0) === 0) continue;
+    const withoutNarrative = {
+      ...entry,
+      page: { ...entry.page, narrativeByMessage: {} },
+    };
+    prefetchedHistoryCache.set(threadId, withoutNarrative);
+    prefetchByteSizes.set(threadId, measurePage(withoutNarrative));
+    prefetchNarrativeByteSizes.set(threadId, 0);
+  }
+  for (const [threadId, record] of inactiveEntries()) {
+    if (getConversationCacheUsage().narrativeBytes <= CONVERSATION_NARRATIVE_BYTES) return;
+    if ((recordNarrativeByteSizes.get(threadId) ?? 0) === 0) continue;
+    const withoutNarrative = { ...record, narrativeByMessage: {} };
+    cache.set(threadId, withoutNarrative);
+    recordByteSizes.set(threadId, measureRecord(withoutNarrative));
+    recordNarrativeByteSizes.set(threadId, 0);
+  }
+}
+
+function enforceAutomaticByteBudgets(): void {
+  while (getConversationCacheUsage().prefetchedBytes > PREFETCHED_CONVERSATION_BYTES) {
+    if (!evictOldestPrefetch()) break;
+  }
+  while (getConversationCacheUsage().inactiveBytes > INACTIVE_CONVERSATION_BYTES) {
+    if (!evictOldestInactive()) break;
+  }
+  enforceNarrativeByteBudget();
 }
 
 function boundHistoryPage(
@@ -167,9 +308,17 @@ function trimPrefetchedHistory(threadId: string, recordMessageCount: number): vo
   );
   if (!page) {
     prefetchedHistoryCache.delete(threadId);
+    prefetchByteSizes.delete(threadId);
+    prefetchNarrativeByteSizes.delete(threadId);
     return;
   }
-  prefetchedHistoryCache.set(threadId, { ...prefetched, page });
+  const entry = { ...prefetched, page };
+  prefetchedHistoryCache.set(threadId, entry);
+  prefetchByteSizes.set(threadId, measurePage(entry));
+  prefetchNarrativeByteSizes.set(
+    threadId,
+    measureConversationValue(page.narrativeByMessage),
+  );
 }
 
 /** Read the cached record for a thread, refreshing LRU recency on hit. */
@@ -186,11 +335,21 @@ export function hasCachedRecord(threadId: string): boolean {
 export function cacheRecord(threadId: string, record: ConversationCacheState): void {
   const boundedRecord = boundRecord(threadId, record);
   const evicted = cache.set(threadId, boundedRecord);
+  recordByteSizes.set(threadId, measureRecord(boundedRecord));
+  recordNarrativeByteSizes.set(
+    threadId,
+    measureConversationValue(boundedRecord.narrativeByMessage),
+  );
   trimPrefetchedHistory(threadId, boundedRecord.messages.length);
   if (evicted) {
+    recordByteSizes.delete(evicted);
+    recordNarrativeByteSizes.delete(evicted);
+    prefetchByteSizes.delete(evicted);
+    prefetchNarrativeByteSizes.delete(evicted);
     forgetScrollTop(evicted);
     prefetchedHistoryCache.delete(evicted);
   }
+  enforceAutomaticByteBudgets();
 }
 
 /** Cache one older-history page without attaching its messages to live React state. */
@@ -203,9 +362,17 @@ export function cachePrefetchedHistoryPage(
   const boundedPage = boundHistoryPage(page, RECORD_MESSAGE_CACHE_SIZE - recordMessageCount);
   if (!boundedPage) {
     prefetchedHistoryCache.delete(threadId);
+    prefetchByteSizes.delete(threadId);
+    prefetchNarrativeByteSizes.delete(threadId);
     return;
   }
   prefetchedHistoryCache.set(threadId, { before, page: boundedPage });
+  prefetchByteSizes.set(threadId, measurePage({ before, page: boundedPage }));
+  prefetchNarrativeByteSizes.set(
+    threadId,
+    measureConversationValue(boundedPage.narrativeByMessage),
+  );
+  enforceAutomaticByteBudgets();
 }
 
 /** Check whether the requested older-history cursor is already warm. */
@@ -230,6 +397,8 @@ export function takePrefetchedHistoryPage(
     ))
   ) return undefined;
   prefetchedHistoryCache.delete(identity.threadId);
+  prefetchByteSizes.delete(identity.threadId);
+  prefetchNarrativeByteSizes.delete(identity.threadId);
   return {
     ...entry.page,
     identity,
@@ -243,25 +412,79 @@ export function takePrefetchedHistoryPage(
 export function evictCachedRecord(threadId: string): void {
   cache.delete(threadId);
   prefetchedHistoryCache.delete(threadId);
+  recordByteSizes.delete(threadId);
+  recordNarrativeByteSizes.delete(threadId);
+  prefetchByteSizes.delete(threadId);
+  prefetchNarrativeByteSizes.delete(threadId);
 }
 
 /** Drop all cached records. Used in tests and on workspace deletion. */
 export function clearRecordCache(): void {
   cache.clear();
   prefetchedHistoryCache.clear();
+  recordByteSizes.clear();
+  recordNarrativeByteSizes.clear();
+  prefetchByteSizes.clear();
+  prefetchNarrativeByteSizes.clear();
+  activeConversationId = null;
 }
 
-/**
- * Change the record-cache capacity at runtime. Clamped to a minimum of 1.
- * When shrinking, evicts the least-recently-used threads until size <= capacity
- * and forgets each evicted thread's scroll position to keep scroll memory
- * consistent with cache contents.
- */
-export function resizeRecordCache(capacity: number): void {
-  const evicted = cache.resize(capacity);
-  prefetchedHistoryCache.resize(capacity);
-  for (const threadId of evicted) {
-    forgetScrollTop(threadId);
-    prefetchedHistoryCache.delete(threadId);
+/** Mark the selected conversation so automatic pressure protects its visible window. */
+export function setActiveConversation(threadId: string | null): void {
+  activeConversationId = threadId;
+  if (threadId) void cache.get(threadId);
+  enforceAutomaticByteBudgets();
+}
+/** Current encoded residency totals by cache class. */
+export function getConversationCacheUsage(): {
+  activeBytes: number;
+  inactiveBytes: number;
+  prefetchedBytes: number;
+  narrativeBytes: number;
+} {
+  let activeBytes = 0;
+  let inactiveBytes = 0;
+  for (const [threadId] of cache.entries()) {
+    const bytes = recordByteSizes.get(threadId) ?? 0;
+    if (threadId === activeConversationId) activeBytes += bytes;
+    else inactiveBytes += bytes;
   }
+  const prefetchedBytes = [...prefetchByteSizes.values()].reduce((total, bytes) => total + bytes, 0);
+  const narrativeBytes = [...recordNarrativeByteSizes.values(), ...prefetchNarrativeByteSizes.values()]
+    .reduce((total, bytes) => total + bytes, 0);
+  return { activeBytes, inactiveBytes, prefetchedBytes, narrativeBytes };
+}
+
+/** Apply warning or critical pressure in least-value-first order. */
+export function applyConversationMemoryPressure(level: "warning" | "critical"): {
+  evictionOrder: Array<"prefetched" | "inactive" | "active">;
+  activeTrimmed: boolean;
+} {
+  const evictionOrder: Array<"prefetched" | "inactive" | "active"> = [];
+  while (evictOldestPrefetch()) evictionOrder.push("prefetched");
+  const inactiveTarget = level === "critical" ? 0 : INACTIVE_CONVERSATION_BYTES / 2;
+  while (getConversationCacheUsage().inactiveBytes > inactiveTarget) {
+    if (!evictOldestInactive()) break;
+    evictionOrder.push("inactive");
+  }
+  let activeTrimmed = false;
+  if (level === "critical" && activeConversationId) {
+    const active = cache.get(activeConversationId);
+    if (active) {
+      const bounded = boundRecord(
+        activeConversationId,
+        active,
+        CRITICAL_ACTIVE_CONVERSATION_MESSAGE_BYTES,
+      );
+      activeTrimmed = bounded.messages.length < active.messages.length;
+      cache.set(activeConversationId, bounded);
+      recordByteSizes.set(activeConversationId, measureRecord(bounded));
+      recordNarrativeByteSizes.set(
+        activeConversationId,
+        measureConversationValue(bounded.narrativeByMessage),
+      );
+      if (activeTrimmed) evictionOrder.push("active");
+    }
+  }
+  return { evictionOrder, activeTrimmed };
 }

@@ -40,6 +40,7 @@ export function useIdleReclamation(): void {
 
         // Evict client-side caches
         useThreadStore.getState().clearToolCallRecordCache();
+        useThreadStore.getState().applyConversationMemoryPressure("warning");
       }, BACKGROUND_IDLE_DELAY_MS);
     };
 
