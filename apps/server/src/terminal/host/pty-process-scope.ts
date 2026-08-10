@@ -1,5 +1,6 @@
 import {
   gracefulKillProcessTree,
+  killProcessTree,
   listDirectChildren,
 } from "../../services/process-kill.js";
 import { WindowsProcessScopeFactory } from "../../services/windows-process-scope.js";
@@ -18,21 +19,45 @@ export function createPtyProcessScope(rootPid: number): PtyProcessScope {
         return (await scope.reconcile(rootPid)).ok;
       },
       hasChildren: async () => {
+        const reconciled = await scope.reconcile(rootPid);
+        if (!reconciled.ok) return true;
         const snapshot = scope.queryProcessIds();
-        return (
-          snapshot.ok && snapshot.processIds.some((pid) => pid !== rootPid)
-        );
+        if (!snapshot.ok || snapshot.overflow) return true;
+        return snapshot.processIds.some((pid) => pid !== rootPid);
       },
       close: async () => {
+        const cleanupErrors: unknown[] = [];
+        const reconciled = await scope.reconcile(rootPid);
+        if (!reconciled.ok) {
+          const [fallbackResult] = await Promise.allSettled([
+            killProcessTree(rootPid),
+          ]);
+          if (fallbackResult.status === "rejected") {
+            cleanupErrors.push(fallbackResult.reason);
+          }
+        }
         const terminated = scope.terminate(0);
         if (!terminated.ok) {
-          throw new Error(
-            terminated.error ?? "PTY Job Object termination failed",
+          cleanupErrors.push(
+            new Error(
+              terminated.error ?? "PTY Job Object termination failed",
+            ),
           );
         }
         const emptied = await scope.waitForEmpty(5_000);
         if (!emptied.ok) {
-          throw new Error(emptied.error ?? "PTY Job Object remained non-empty");
+          cleanupErrors.push(
+            new Error(emptied.error ?? "PTY Job Object remained non-empty"),
+          );
+        }
+        if (cleanupErrors.length === 1) {
+          throw cleanupErrors[0];
+        }
+        if (cleanupErrors.length > 1) {
+          throw new AggregateError(
+            cleanupErrors,
+            "PTY process scope cleanup failed",
+          );
         }
       },
       dispose: () => scope.close(),

@@ -10,6 +10,24 @@ import {
 const UUID = "abcdef12-abcd-4abc-8abc-abcdefabcdef";
 
 describe("PTY host v1 protocol", () => {
+  it("accepts a generation-bound child-inspection result", () => {
+    expect(
+      PtyHostEventSchema().parse({
+        contractVersion: 1,
+        kind: "children",
+        sessionId: UUID,
+        hostGeneration: "7",
+        hasChildren: true,
+      }),
+    ).toEqual({
+      contractVersion: 1,
+      kind: "children",
+      sessionId: UUID,
+      hostGeneration: "7",
+      hasChildren: true,
+    });
+  });
+
   it("validates host generation before dispatch for child inspection", () => {
     const message = {
       contractVersion: 1,

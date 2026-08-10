@@ -85,7 +85,15 @@ export class PtyHostProcessRuntime {
         this.applyCommand(message);
         return;
       case "inspectChildren":
-        await this.requireSession(message.sessionId).scope.hasChildren();
+        this.options.publish({
+          contractVersion: 1,
+          kind: "children",
+          sessionId: message.sessionId,
+          hostGeneration: message.hostGeneration,
+          hasChildren: await this.requireSession(
+            message.sessionId,
+          ).scope.hasChildren(),
+        });
         return;
       case "close":
         await this.closeSession(
