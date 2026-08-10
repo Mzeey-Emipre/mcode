@@ -8,13 +8,16 @@ import {
 } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import Database from "better-sqlite3";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   createMigrationBackup,
   pruneMigrationBackups,
+  restoreMigrationBackupAfterFailure,
   restoreMigrationBackup,
 } from "../store/migration-backup.js";
+import { resolveElectronNativeBinding } from "../store/database.js";
 
 describe("migration-backup", () => {
   let dir: string;
@@ -26,6 +29,7 @@ describe("migration-backup", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -38,6 +42,36 @@ describe("migration-backup", () => {
     const result = createMigrationBackup(dbPath);
     expect(result).toBeNull();
     expect(readdirSync(dir)).toHaveLength(0);
+  });
+
+  it("rejects a migration before backup creation when five generations cannot fit", () => {
+    writeFileSync(dbPath, "1234567890");
+
+    expect(() =>
+      createMigrationBackup(dbPath, {
+        availableBytes: 49n,
+        retainedGenerations: 5,
+      }),
+    ).toThrow(/requires 50 bytes.*49 bytes available/);
+
+    expect(readdirSync(dir)).toEqual(["mcode.db"]);
+  });
+
+  it("requires space for only one new copy when five generations exist", () => {
+    writeFileSync(dbPath, "1234567890");
+    for (let generation = 1; generation <= 5; generation++) {
+      writeFileSync(
+        join(dir, `mcode.db.bak-${generation}`),
+        `generation ${generation}`,
+      );
+    }
+
+    const backupPath = createMigrationBackup(dbPath, {
+      availableBytes: 10n,
+      retainedGenerations: 5,
+    });
+
+    expect(backupPath).not.toBeNull();
   });
 
   it("copies the DB file and a present WAL sidecar", () => {
@@ -68,7 +102,70 @@ describe("migration-backup", () => {
     expect(readdirSync(dir).filter((f) => f.endsWith("-shm"))).toEqual([]);
   });
 
-  it("prunes old backups but keeps the N most recent (with their WALs)", () => {
+  it("creates distinct generations when backups share a timestamp", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-09T12:00:00.000Z"));
+    writeFileSync(dbPath, "generation one");
+    const firstBackup = createMigrationBackup(dbPath)!;
+
+    writeFileSync(dbPath, "generation two");
+    const secondBackup = createMigrationBackup(dbPath)!;
+
+    expect(secondBackup).not.toBe(firstBackup);
+    expect(readFileSync(firstBackup, "utf-8")).toBe("generation one");
+    expect(readFileSync(secondBackup, "utf-8")).toBe("generation two");
+  });
+
+  it("restores public text identifiers after a migration failure", () => {
+    const originalError = new Error("forced migration failure");
+    let database = new Database(dbPath, {
+      nativeBinding: resolveElectronNativeBinding(),
+    });
+    database.exec("CREATE TABLE records (id TEXT PRIMARY KEY)");
+    database.prepare("INSERT INTO records (id) VALUES (?)").run("thread-public-id");
+    database.close();
+
+    const backupPath = createMigrationBackup(dbPath)!;
+    database = new Database(dbPath, {
+      nativeBinding: resolveElectronNativeBinding(),
+    });
+    database.prepare("UPDATE records SET id = ?").run("mutated-id");
+    database.close();
+
+    expect(() =>
+      restoreMigrationBackupAfterFailure(backupPath, dbPath, originalError),
+    ).toThrow(originalError);
+
+    database = new Database(dbPath, {
+      nativeBinding: resolveElectronNativeBinding(),
+    });
+    expect(database.prepare("SELECT id FROM records").get()).toEqual({
+      id: "thread-public-id",
+    });
+    database.close();
+  });
+
+  it("reports both the migration and restore failures", () => {
+    writeFileSync(dbPath, "usable database");
+    const backupPath = createMigrationBackup(dbPath)!;
+    const migrationError = new Error("forced migration failure");
+    rmSync(backupPath);
+
+    let reportedError: unknown;
+    try {
+      restoreMigrationBackupAfterFailure(backupPath, dbPath, migrationError);
+    } catch (error) {
+      reportedError = error;
+    }
+
+    expect(reportedError).toBeInstanceOf(AggregateError);
+    expect(reportedError).toMatchObject({
+      message: "Database migration failed and automatic restore failed.",
+      errors: [migrationError, expect.any(Error)],
+    });
+  });
+
+  it("retains exactly five recent backup generations with their WALs", () => {
     writeFileSync(dbPath, "DB");
 
     // Author 5 backup pairs with explicit filenames AND explicit, ordered
@@ -81,6 +178,8 @@ describe("migration-backup", () => {
       "mcode.db.bak-3",
       "mcode.db.bak-4",
       "mcode.db.bak-5",
+      "mcode.db.bak-6",
+      "mcode.db.bak-7",
     ];
     backupNames.forEach((name, i) => {
       const path = join(dir, name);
@@ -91,19 +190,25 @@ describe("migration-backup", () => {
       utimesSync(`${path}-wal`, t, t);
     });
 
-    pruneMigrationBackups(dbPath, 3);
+    pruneMigrationBackups(dbPath);
 
     const remaining = readdirSync(dir)
       .filter((f) => f.startsWith("mcode.db.bak-") && !f.endsWith("-wal"))
       .sort();
-    expect(remaining).toEqual(["mcode.db.bak-3", "mcode.db.bak-4", "mcode.db.bak-5"]);
+    expect(remaining).toEqual([
+      "mcode.db.bak-3",
+      "mcode.db.bak-4",
+      "mcode.db.bak-5",
+      "mcode.db.bak-6",
+      "mcode.db.bak-7",
+    ]);
 
     const dirContents = readdirSync(dir);
     expect(dirContents).not.toContain("mcode.db.bak-1");
     expect(dirContents).not.toContain("mcode.db.bak-1-wal");
     expect(dirContents).not.toContain("mcode.db.bak-2");
     expect(dirContents).not.toContain("mcode.db.bak-2-wal");
-    expect(dirContents).toContain("mcode.db.bak-5-wal");
+    expect(dirContents).toContain("mcode.db.bak-7-wal");
   });
 
   it("does nothing when keep is larger than the number of backups", () => {
