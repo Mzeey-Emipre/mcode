@@ -123,7 +123,9 @@ vi.mock("@/stores/workspaceStore", () => ({
 
 // Stub heavy children.
 vi.mock("../MessageBubble", () => ({
-  MessageBubble: ({ message }: { message: { content: string } }) => <div>{message.content}</div>,
+  MessageBubble: ({ message }: { message: { id: string; content: string } }) => (
+    <div data-message-id={message.id}>{message.content}</div>
+  ),
 }));
 vi.mock("../ToolCallCard", () => ({ ToolCallCard: () => null }));
 vi.mock("../StreamingIndicator", () => ({ StreamingIndicator: () => null }));
@@ -354,6 +356,79 @@ describe("MessageList thread switch", () => {
     act(() => rerender(<MessageList />));
 
     expect(scrollTop).toBe(5000);
+  });
+
+  it("preserves the first visible message when the initial tail does not fill the viewport", async () => {
+    loadingValue = false;
+    activeThreadIdValue = "thread-A";
+    hasMoreMessagesValue = true;
+    messagesValue = [{ id: "m1", sequence: 1 }];
+    let scrollHeight = 300;
+    let scrollTop = 0;
+    let prependedHeight = 0;
+    const rectSpy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: HTMLElement) {
+        if (this.getAttribute("data-message-id") === "m1") {
+          return {
+            top: 100 + prependedHeight - scrollTop,
+            bottom: 180 + prependedHeight - scrollTop,
+          } as DOMRect;
+        }
+        if (this.classList.contains("overflow-y-auto")) {
+          return { top: 0, bottom: 400 } as DOMRect;
+        }
+        return { top: 0, bottom: 0 } as DOMRect;
+      });
+    const { rerender, container } = render(<MessageList />);
+
+    const scrollEl = container.querySelector(".overflow-y-auto") as HTMLDivElement;
+    Object.defineProperty(scrollEl, "scrollHeight", {
+      configurable: true,
+      get: () => scrollHeight,
+    });
+    Object.defineProperty(scrollEl, "clientHeight", {
+      configurable: true,
+      value: 400,
+    });
+    Object.defineProperty(scrollEl, "scrollTop", {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => {
+        scrollTop = value;
+      },
+    });
+    fireEvent.wheel(scrollEl, { deltaY: -100 });
+    fireEvent.scroll(scrollEl);
+    prependedHeight = 2_000;
+    scrollHeight = 2_300;
+    messagesValue = [
+      { id: "m0", sequence: 0 },
+      { id: "m1", sequence: 1 },
+    ];
+    const animationFrames: FrameRequestCallback[] = [];
+    const animationFrameSpy = vi.spyOn(globalThis, "requestAnimationFrame")
+      .mockImplementation((callback) => {
+        animationFrames.push(callback);
+        return animationFrames.length;
+      });
+    act(() => rerender(<MessageList />));
+    act(() => {
+      while (animationFrames.length > 0) animationFrames.shift()?.(0);
+    });
+    animationFrameSpy.mockRestore();
+
+    expect(scrollTop).toBe(2_000);
+    expect(container.querySelector('[data-message-id="m1"]')?.getBoundingClientRect().top).toBe(100);
+    await vi.waitFor(() => {
+      expect((container.querySelector(".relative.w-full") as HTMLDivElement).style.height).toBe("220px");
+      expect(scrollEl.style.opacity).toBe("1");
+    });
+    scrollTop = 3_000;
+    act(() => fireEvent.scroll(scrollEl));
+    await vi.waitFor(() => {
+      expect((container.querySelector(".relative.w-full") as HTMLDivElement).style.height).toBe("0px");
+    });
+    rectSpy.mockRestore();
   });
 
   it("does not restore tail pin when wheel-up remains inside the bottom cushion", () => {

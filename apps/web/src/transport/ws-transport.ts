@@ -59,7 +59,7 @@ import type {
   TerminalBackendCapabilities,
 } from "@mcode/contracts";
 import { emitPtyReconnectGap } from "@/terminal/legacy/pty-data-registry";
-import type { PaginatedMessages, ConversationPage, ConversationTail, SetThreadSubscriptionsInput, SetThreadSubscriptionsResult, TurnSnapshot, PrDraft, CreatePrResult, ProviderUsageInfo, ChecksStatus, ProviderAvailability, GoalLookupResult } from "@mcode/contracts";
+import type { PaginatedMessages, ConversationPage, ConversationOlderPage, ConversationOlderPageRequest, ConversationTail, SetThreadSubscriptionsInput, SetThreadSubscriptionsResult, TurnSnapshot, PrDraft, CreatePrResult, ProviderUsageInfo, ChecksStatus, ProviderAvailability, GoalLookupResult } from "@mcode/contracts";
 import {
   TERMINAL_DATA_TAG,
   decodeTerminalDataFrame,
@@ -721,6 +721,8 @@ export function createWsTransport(
       rpc<PaginatedMessages>("message.list", { threadId, limit, ...(before != null ? { before } : {}) }),
     loadConversationPage: (threadId, limit, before?) =>
       rpc<ConversationPage>("conversation.page", { threadId, limit, ...(before != null ? { before } : {}) }),
+    loadOlderConversationPage: (request: ConversationOlderPageRequest) =>
+      rpc<ConversationOlderPage>("conversation.olderPage", request),
     loadConversationTail: (threadId, limit) =>
       rpc<ConversationTail>("conversation.tail", { threadId, limit }),
 

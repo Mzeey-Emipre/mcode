@@ -4,7 +4,11 @@ import {
   recallScrollPosition,
 } from "@/components/chat/scrollPositionMemory";
 import type { ThreadRecord } from "@/stores/thread-record";
-import type { ConversationPage } from "@mcode/contracts";
+import type {
+  ConversationOlderPage,
+  ConversationOlderPageIdentity,
+  ConversationPage,
+} from "@mcode/contracts";
 
 /**
  * Initial default thread cache capacity.
@@ -67,7 +71,7 @@ const cache = new LruCache<string, ConversationCacheState>(RECORD_CACHE_SIZE);
 
 interface PrefetchedHistoryPage {
   before: number;
-  page: ConversationPage;
+  page: ConversationOlderPage | ConversationPage;
 }
 
 const prefetchedHistoryCache = new LruCache<string, PrefetchedHistoryPage>(RECORD_CACHE_SIZE);
@@ -123,18 +127,29 @@ function boundRecord(threadId: string, record: ConversationCacheState): Conversa
   };
 }
 
-function boundHistoryPage(page: ConversationPage, limit: number): ConversationPage | undefined {
+function boundHistoryPage(
+  page: ConversationOlderPage | ConversationPage,
+  limit: number,
+): ConversationOlderPage | ConversationPage | undefined {
   if (limit <= 0) return undefined;
   const droppedMessages = page.messages.length > limit;
   const messages = droppedMessages ? page.messages.slice(-limit) : page.messages;
   const retainedMessageIds = new Set(messages.map((message) => message.id));
-  return {
+  const boundedPage = {
+    ...page,
     messages,
     hasMore: page.hasMore || droppedMessages,
     answeredPlanMessageIds: page.answeredPlanMessageIds?.filter((messageId) =>
       retainedMessageIds.has(messageId),
     ),
     narrativeByMessage: filterMessageMetadata(page.narrativeByMessage, retainedMessageIds),
+  };
+  if (!("identity" in page)) return boundedPage;
+  return {
+    ...boundedPage,
+    nextCursor: boundedPage.hasMore
+      ? { version: 1, beforeSequence: messages[0].sequence }
+      : null,
   };
 }
 
@@ -177,7 +192,7 @@ export function cacheRecord(threadId: string, record: ConversationCacheState): v
 export function cachePrefetchedHistoryPage(
   threadId: string,
   before: number,
-  page: ConversationPage,
+  page: ConversationOlderPage | ConversationPage,
 ): void {
   const recordMessageCount = cache.get(threadId)?.messages.length ?? 0;
   const boundedPage = boundHistoryPage(page, RECORD_MESSAGE_CACHE_SIZE - recordMessageCount);
@@ -196,13 +211,27 @@ export function hasPrefetchedHistoryPage(threadId: string, before: number): bool
 
 /** Consume the warm older-history page for the requested cursor. */
 export function takePrefetchedHistoryPage(
-  threadId: string,
-  before: number,
-): ConversationPage | undefined {
-  const entry = prefetchedHistoryCache.get(threadId);
-  if (entry?.before !== before) return undefined;
-  prefetchedHistoryCache.delete(threadId);
-  return entry.page;
+  identity: ConversationOlderPageIdentity,
+): ConversationOlderPage | undefined {
+  const entry = prefetchedHistoryCache.get(identity.threadId);
+  if (
+    entry?.before !== identity.cursor.beforeSequence
+    || ("identity" in entry.page && (
+      entry.page.identity.threadId !== identity.threadId
+      || entry.page.identity.cursor.beforeSequence !== identity.cursor.beforeSequence
+      || entry.page.identity.direction !== identity.direction
+      || entry.page.identity.generation !== identity.generation
+      || entry.page.identity.conversationRevision !== identity.conversationRevision
+    ))
+  ) return undefined;
+  prefetchedHistoryCache.delete(identity.threadId);
+  return {
+    ...entry.page,
+    identity,
+    nextCursor: entry.page.hasMore && entry.page.messages.length > 0
+      ? { version: 1, beforeSequence: entry.page.messages[0].sequence }
+      : null,
+  };
 }
 
 /** Remove a single thread's cached record. No-op when absent. */

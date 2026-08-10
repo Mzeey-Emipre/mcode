@@ -254,10 +254,17 @@ describe("PullRequestReviewTaskDialog", () => {
     );
 
     const nameInput = await screen.findByLabelText("Worktree name");
-    await user.click(screen.getByRole("button", { name: "Create Review task" }));
+    const requestAnimationFrameSpy = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation(() => 1);
+    try {
+      await user.click(screen.getByRole("button", { name: "Create Review task" }));
 
-    expect(await screen.findByText("Destination already exists")).toBeVisible();
-    await waitFor(() => expect(nameInput).toHaveFocus());
+      expect(await screen.findByText("Destination already exists")).toBeVisible();
+      await waitFor(() => expect(nameInput).toHaveFocus());
+    } finally {
+      requestAnimationFrameSpy.mockRestore();
+    }
   });
 
   it("re-prepares before submit when the rendered head OID advances", async () => {

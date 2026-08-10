@@ -75,7 +75,7 @@ describe("prefetch", () => {
 
     // Advance past debounce
     vi.advanceTimersByTime(50);
-    expect(mockTransport.loadConversationPage).toHaveBeenCalledWith("t1", 100);
+    expect(mockTransport.loadConversationPage).toHaveBeenCalledWith("t1", 2);
     expect(mockTransport.getMessages).not.toHaveBeenCalled();
 
     // Let the async prefetch settle
@@ -149,7 +149,7 @@ describe("prefetch", () => {
     prefetchOnPointerDown("t1");
 
     expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(1);
-    expect(mockTransport.loadConversationPage).toHaveBeenCalledWith("t1", 100);
+    expect(mockTransport.loadConversationPage).toHaveBeenCalledWith("t1", 2);
 
     vi.advanceTimersByTime(100);
     expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(1);
@@ -183,7 +183,7 @@ describe("prefetch", () => {
     // Only the last one should fire after full debounce
     vi.advanceTimersByTime(50);
     expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(1);
-    expect(mockTransport.loadConversationPage).toHaveBeenCalledWith("t3", 100);
+    expect(mockTransport.loadConversationPage).toHaveBeenCalledWith("t3", 2);
   });
 
   it("keeps rapid unique pointer prefetches within two shared slots", async () => {

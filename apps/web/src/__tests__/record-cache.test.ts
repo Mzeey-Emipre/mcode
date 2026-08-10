@@ -222,7 +222,13 @@ describe("recordCache", () => {
       }])),
     });
 
-    const prefetched = takePrefetchedHistoryPage("warm", 61);
+    const prefetched = takePrefetchedHistoryPage({
+      threadId: "warm",
+      cursor: { version: 1, beforeSequence: 61 },
+      direction: "older",
+      generation: 2,
+      conversationRevision: 3,
+    });
     expect(prefetched?.messages).toHaveLength(RECORD_MESSAGE_CACHE_SIZE - cachedMessages.length);
     expect(prefetched?.messages[0].id).toBe("history-41");
     expect(prefetched?.hasMore).toBe(true);

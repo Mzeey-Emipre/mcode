@@ -90,6 +90,8 @@ export interface ThreadRecord {
   hasMoreMessages: boolean;
   isLoadingMore: boolean;
   loadEpoch: number;
+  /** Monotonic identity for renderer-owned conversation content. */
+  conversationRevision: number;
   persistedToolCallCounts: Record<string, number>;
   persistedFilesChanged: Record<string, string[]>;
   latestTurnWithChanges: string | null;
@@ -148,6 +150,24 @@ const DEFAULT_THREAD_SETTINGS: ThreadSettings = {
 };
 const EMPTY_PENDING_TURN_PERSIST_MESSAGE_IDS: string[] = [];
 const EMPTY_NARRATIVE_BY_MESSAGE: ThreadNarrativeByMessage = {};
+const CONVERSATION_REVISION_FIELDS = new Set<keyof ThreadRecord>([
+  "messages",
+  "persistedToolCallCounts",
+  "persistedFilesChanged",
+  "latestTurnWithChanges",
+  "serverMessageIds",
+  "narrativeByMessage",
+  "answeredPlanMessageIds",
+  "streaming",
+  "streamingPreview",
+  "toolCalls",
+  "thoughtSegments",
+  "hooks",
+  "currentTurnMessageId",
+  "pendingTurnPersistMessageIds",
+  "currentTurnResponseKey",
+  "assistantResponseKeys",
+]);
 
 /** Returns a fresh empty {@link ThreadRecord} for lazy Map insertion. */
 export function createEmptyThreadRecord(): ThreadRecord {
@@ -160,6 +180,7 @@ export function createEmptyThreadRecord(): ThreadRecord {
     hasMoreMessages: false,
     isLoadingMore: false,
     loadEpoch: 0,
+    conversationRevision: 0,
     persistedToolCallCounts: {},
     persistedFilesChanged: {},
     latestTurnWithChanges: null,
@@ -205,6 +226,7 @@ export function getThreadRecord(
   if (
     record.pendingTurnPersistMessageIds != null
     && record.narrativeByMessage != null
+    && record.conversationRevision != null
   ) {
     return record;
   }
@@ -213,6 +235,7 @@ export function getThreadRecord(
     pendingTurnPersistMessageIds:
       record.pendingTurnPersistMessageIds ?? EMPTY_PENDING_TURN_PERSIST_MESSAGE_IDS,
     narrativeByMessage: record.narrativeByMessage ?? EMPTY_NARRATIVE_BY_MESSAGE,
+    conversationRevision: record.conversationRevision ?? 0,
   };
 }
 
@@ -227,7 +250,16 @@ export function patchThreadRecord(
   const next = new Map(records);
   const current = getThreadRecord(records, threadId);
   const delta = typeof patch === "function" ? patch(current) : patch;
-  const updated = { ...current, ...delta };
+  const advancesConversation = Object.keys(delta).some((key) =>
+    CONVERSATION_REVISION_FIELDS.has(key as keyof ThreadRecord)
+  );
+  const updated = {
+    ...current,
+    ...delta,
+    conversationRevision: advancesConversation
+      ? current.conversationRevision + 1
+      : current.conversationRevision,
+  };
   if (!("messages" in delta || "serverMessageIds" in delta || "pendingTurnPersistMessageIds" in delta)) {
     next.set(threadId, updated);
     return next;
