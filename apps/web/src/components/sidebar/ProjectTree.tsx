@@ -102,6 +102,10 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
+import {
+  getThreadCompletionPrototypeVariant,
+  ThreadCompletionProjectTreePrototype,
+} from "./ThreadCompletionProjectTreePrototype";
 
 // Persist expand/collapse in localStorage
 function getExpandedState(): Record<string, boolean> {
@@ -222,8 +226,16 @@ function buildThreadTree(threads: WorkspaceThread[]): ThreadTreeItem[] {
   return result;
 }
 
-/** Sidebar tree listing workspaces and their threads with CRUD actions. */
+/** Renders the project tree or its development-only completion-flow prototype. */
 export function ProjectTree() {
+  const prototypeVariant = getThreadCompletionPrototypeVariant();
+  if (prototypeVariant) {
+    return <ThreadCompletionProjectTreePrototype initialVariant={prototypeVariant} />;
+  }
+  return <ProjectTreeContents />;
+}
+
+function ProjectTreeContents() {
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
