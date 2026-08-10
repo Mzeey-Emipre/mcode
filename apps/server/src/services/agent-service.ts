@@ -586,7 +586,7 @@ export class AgentService {
 
     const thread = this.threadRepo.findById(threadId);
     if (!thread) throw new Error(`Thread not found: ${threadId}`);
-    if (["errored", "failed", "stopped", "archived", "deleted"].includes(thread.status)) {
+    if (["failed", "stopped", "archived", "deleted"].includes(thread.status)) {
       throw new Error(`Cannot send message to terminal thread: ${threadId}`);
     }
     // Use the thread's stored provider as authoritative fallback; only override
