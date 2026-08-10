@@ -320,7 +320,7 @@ export const toolCallRecords = sqliteTable(
     sortOrder: integer("sort_order").notNull().default(0),
   },
   (table) => [
-    index("idx_tool_call_records_message").on(table.messageId),
+    index("idx_tool_call_records_message_sort_order").on(table.messageId, table.sortOrder),
     index("idx_tool_call_records_parent").on(table.parentToolCallId),
   ],
 );
@@ -345,7 +345,7 @@ export const thoughtSegments = sqliteTable(
     isFinalResponse: integer("is_final_response").notNull().default(0),
   },
   (table) => [
-    index("idx_thought_segments_message").on(table.messageId),
+    index("idx_thought_segments_message_sort_order").on(table.messageId, table.sortOrder),
   ],
 );
 
@@ -367,7 +367,7 @@ export const hookExecutions = sqliteTable(
     sortOrder: integer("sort_order").notNull().default(0),
   },
   (table) => [
-    index("idx_hook_executions_message").on(table.messageId),
+    index("idx_hook_executions_message_sort_order").on(table.messageId, table.sortOrder),
   ],
 );
 
@@ -607,7 +607,7 @@ export const planQuestionAnswers = sqliteTable(
     answeredAt: text("answered_at").notNull().default(timestampDefault),
   },
   (table) => [
-    index("idx_plan_question_answers_thread").on(table.threadId),
+    index("idx_plan_question_answers_thread_answered_at").on(table.threadId, table.answeredAt),
   ],
 );
 

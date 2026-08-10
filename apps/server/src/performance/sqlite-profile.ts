@@ -148,6 +148,13 @@ const WORKSPACE_ID = "sqlite-profile-workspace";
 const THREAD_ID = "sqlite-profile-thread";
 const CONTENT = "Mcode deterministic SQLite profile content. ".repeat(8);
 
+const PROTECTED_CONVERSATION_HISTORY_INDEXES = [
+  ["tool_call_records", "idx_tool_call_records_message_sort_order"],
+  ["thought_segments", "idx_thought_segments_message_sort_order"],
+  ["hook_executions", "idx_hook_executions_message_sort_order"],
+  ["plan_question_answers", "idx_plan_question_answers_thread_answered_at"],
+] as const;
+
 const distributionSchema = z.object({
   min: z.number().finite().nonnegative(),
   max: z.number().finite().nonnegative(),
@@ -438,17 +445,22 @@ function runWorkload(
       break;
   }
 
+  const queryPlans = workload === "conversation-read-100"
+    ? captureConversationReadQueryPlans(db, 100)
+    : workload === "conversation-read-1000"
+      ? captureConversationReadQueryPlans(db, 1000)
+      : captureQueryPlans(db, workload);
+  if (workload === "conversation-read-100" || workload === "conversation-read-1000") {
+    assertConversationHistoryQueryPlans(queryPlans);
+  }
+
   return {
     workload,
     sample,
     durationMs: measured.durationMs,
     returnedBytes: measured.returnedBytes,
     memory: measured.memory,
-    queryPlans: workload === "conversation-read-100"
-      ? captureConversationReadQueryPlans(db, 100)
-      : workload === "conversation-read-1000"
-        ? captureConversationReadQueryPlans(db, 1000)
-        : captureQueryPlans(db, workload),
+    queryPlans,
     pragmas: capturePragmas(db),
   };
 }
@@ -617,6 +629,31 @@ function captureConversationReadQueryPlans(
       rows: rows.map(({ id, parent, detail }) => ({ id, parent, detail })),
     };
   });
+}
+
+/** Reject conversation-history plans that lose a retained ordering index or restore scan or sort work. */
+export function assertConversationHistoryQueryPlans(plans: readonly SQLiteQueryPlan[]): void {
+  for (const [table, index] of PROTECTED_CONVERSATION_HISTORY_INDEXES) {
+    const queryPlan = plans.find((plan) =>
+      /^\s*SELECT\b/i.test(plan.sql)
+      && new RegExp(`\\bFROM\\s+${table}\\b`, "i").test(plan.sql)
+    );
+    if (!queryPlan) {
+      throw new Error(`Conversation history profile did not capture the ${table} query.`);
+    }
+
+    const details = queryPlan.rows.map((row) => row.detail);
+    if (details.some((detail) => detail.includes("USE TEMP B-TREE"))) {
+      throw new Error(`Conversation history query for ${table} uses a temporary sort.`);
+    }
+    if (details.some((detail) => new RegExp(`^SCAN ${table}\\b`, "i").test(detail))) {
+      throw new Error(`Conversation history query for ${table} uses a full scan.`);
+    }
+    if (!details.some((detail) => detail.includes(`USING INDEX ${index}`)
+      || detail.includes(`USING COVERING INDEX ${index}`))) {
+      throw new Error(`Conversation history query for ${table} does not use ${index}.`);
+    }
+  }
 }
 
 function capturePragmas(db: Database.Database): Record<string, string | number> {

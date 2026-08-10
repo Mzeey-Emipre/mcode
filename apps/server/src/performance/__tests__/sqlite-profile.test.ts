@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   SQLITE_PROFILE_WORKLOADS,
+  assertConversationHistoryQueryPlans,
   compareSQLiteProfileReports,
   parseSQLiteProfileBaseline,
   parseSQLiteProfileCliOptions,
   summarizeSQLiteProfileSamples,
   type SQLiteProfileAggregate,
+  type SQLiteQueryPlan,
   type SQLiteProfileReport,
 } from "../sqlite-profile";
 
@@ -147,5 +149,50 @@ describe("summarizeSQLiteProfileSamples", () => {
       p95: 100,
       standardDeviation: Math.sqrt(1522),
     });
+  });
+});
+
+describe("conversation history query plans", () => {
+  const protectedPlans: SQLiteQueryPlan[] = [
+    [
+      "tool_call_records",
+      "idx_tool_call_records_message_sort_order",
+      "SELECT id FROM tool_call_records WHERE message_id IN (?) ORDER BY message_id, sort_order",
+    ],
+    [
+      "thought_segments",
+      "idx_thought_segments_message_sort_order",
+      "SELECT id FROM thought_segments WHERE message_id IN (?) ORDER BY message_id, sort_order",
+    ],
+    [
+      "hook_executions",
+      "idx_hook_executions_message_sort_order",
+      "SELECT id FROM hook_executions WHERE message_id IN (?) ORDER BY message_id, sort_order",
+    ],
+    [
+      "plan_question_answers",
+      "idx_plan_question_answers_thread_answered_at",
+      "SELECT assistant_message_id FROM plan_question_answers WHERE thread_id = ? ORDER BY answered_at",
+    ],
+  ].map(([table, index, sql], position) => ({
+    name: `readQuery${position + 1}`,
+    sql,
+    rows: [{ id: 1, parent: 0, detail: `SEARCH ${table} USING INDEX ${index} (message_id=?)` }],
+  }));
+
+  it("accepts each protected history query when its ordering index removes scan and sort work", () => {
+    expect(() => assertConversationHistoryQueryPlans(protectedPlans)).not.toThrow();
+  });
+
+  it("rejects temporary sorts and full scans on protected history queries", () => {
+    const temporarySort = protectedPlans.map((plan, index) => index === 0
+      ? { ...plan, rows: [...plan.rows, { id: 2, parent: 0, detail: "USE TEMP B-TREE FOR ORDER BY" }] }
+      : plan);
+    const fullScan = protectedPlans.map((plan, index) => index === 1
+      ? { ...plan, rows: [{ id: 1, parent: 0, detail: "SCAN thought_segments" }] }
+      : plan);
+
+    expect(() => assertConversationHistoryQueryPlans(temporarySort)).toThrow("temporary sort");
+    expect(() => assertConversationHistoryQueryPlans(fullScan)).toThrow("full scan");
   });
 });
