@@ -391,6 +391,60 @@ await activateTestConversation(threadId);
     expect(getTestThreadPersistedFilesChanged(threadId)[olderMessage.id]).toBeUndefined();
   });
 
+  it("does not let delayed snapshot metadata invalidate a newer page request", async () => {
+    const resident = createMockMessage({ id: "resident", thread_id: threadId, sequence: 10 });
+    const firstPageMessage = createMockMessage({ id: "first-page", thread_id: threadId, sequence: 8 });
+    const secondPageMessage = createMockMessage({ id: "second-page", thread_id: threadId, sequence: 6 });
+    resetThreadStoreForTests({
+      currentThreadId: threadId,
+      records: new Map<string, ThreadRecord>([[threadId, {
+        ...createEmptyThreadRecord(),
+        messages: [resident],
+        oldestLoadedSequence: resident.sequence,
+        hasMoreMessages: true,
+      }]]),
+    });
+
+    let resolveSnapshots!: (snapshots: TurnSnapshot[]) => void;
+    let resolveSecondPage!: (page: { messages: Message[]; hasMore: boolean }) => void;
+    (mockTransport.getMessages as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ messages: [firstPageMessage], hasMore: true })
+      .mockReturnValueOnce(new Promise((resolve) => { resolveSecondPage = resolve; }));
+    (mockTransport.listSnapshots as ReturnType<typeof vi.fn>)
+      .mockReturnValueOnce(new Promise((resolve) => { resolveSnapshots = resolve; }))
+      .mockResolvedValueOnce([]);
+
+    await useThreadStore.getState().loadOlderMessages(threadId);
+    const secondLoad = useThreadStore.getState().loadOlderMessages(threadId);
+    expect(getTestThreadIsLoadingMore(threadId)).toBe(true);
+
+    resolveSnapshots([{
+      id: "delayed-snapshot",
+      message_id: firstPageMessage.id,
+      thread_id: threadId,
+      ref_before: "before",
+      ref_after: "after",
+      files_changed: ["stale.ts"],
+      worktree_path: null,
+      created_at: new Date().toISOString(),
+    }]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(getTestThreadIsLoadingMore(threadId)).toBe(true);
+    expect(getTestThreadPersistedFilesChanged(threadId)[firstPageMessage.id]).toBeUndefined();
+
+    resolveSecondPage({ messages: [secondPageMessage], hasMore: false });
+    await secondLoad;
+
+    expect(getTestThreadIsLoadingMore(threadId)).toBe(false);
+    expect(getTestActiveMessages().map((message) => message.id)).toEqual([
+      secondPageMessage.id,
+      firstPageMessage.id,
+      resident.id,
+    ]);
+  });
+
   it("loadOlderMessages resets isLoadingMore on network error", async () => {
     resetThreadStoreForTests({
       currentThreadId: threadId,

@@ -1351,6 +1351,14 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
 
       // Hydrate file change data for older messages from snapshots
       const olderMsgIds = new Set(olderMessages.map((m) => m.id));
+      const committedRecord = getRec(threadId);
+      const snapshotIdentity = {
+        threadId,
+        cursor: { version: 1 as const, beforeSequence: committedRecord.oldestLoadedSequence },
+        direction: "older" as const,
+        generation: committedRecord.loadEpoch,
+        conversationRevision: committedRecord.conversationRevision,
+      };
       getTransport()
         .listSnapshots(threadId)
         .then((snapshots) => {
@@ -1363,7 +1371,10 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
             if (
               state.currentThreadId !== threadId
               || !rec
-              || rec.loadEpoch !== epoch
+              || rec.isLoadingMore
+              || rec.oldestLoadedSequence !== snapshotIdentity.cursor.beforeSequence
+              || rec.loadEpoch !== snapshotIdentity.generation
+              || rec.conversationRevision !== snapshotIdentity.conversationRevision
             ) return {};
             const retainedMessageIds = new Set(rec.messages.map((message) => message.id));
             const retained = relevant.filter((snapshot) => retainedMessageIds.has(snapshot.message_id));
@@ -1382,7 +1393,10 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
           if (
             get().currentThreadId !== threadId
             || !current
-            || current.loadEpoch !== epoch
+            || current.isLoadingMore
+            || current.oldestLoadedSequence !== snapshotIdentity.cursor.beforeSequence
+            || current.loadEpoch !== snapshotIdentity.generation
+            || current.conversationRevision !== snapshotIdentity.conversationRevision + 1
           ) return;
           const retainedMessageIds = new Set(current.messages.map((message) => message.id));
           const retained = relevant.filter((snapshot) => retainedMessageIds.has(snapshot.message_id));
