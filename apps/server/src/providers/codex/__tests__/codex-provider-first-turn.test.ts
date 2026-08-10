@@ -22,8 +22,9 @@ vi.mock("../codex-version.js", () => ({
   meetsMinVersion: meetsMinVersionMock,
 }));
 
-const { sendTurnMock, appServers, startError } = vi.hoisted(() => ({
+const { sendTurnMock, readConfigMock, appServers, startError } = vi.hoisted(() => ({
   sendTurnMock: vi.fn().mockResolvedValue("turn-test-id"),
+  readConfigMock: vi.fn(),
   appServers: [] as Array<import("events").EventEmitter & {
     isAlive: boolean;
     options: Record<string, unknown>;
@@ -50,6 +51,9 @@ vi.mock("../codex-app-server.js", async () => {
       const env = getSpawnEnv?.();
       this.spawnedEnv = env ? { ...env } : undefined;
       if (startError.current) throw startError.current;
+    }
+    async readConfig(cwd: string): Promise<unknown> {
+      return readConfigMock(cwd);
     }
     async sendTurn(input: unknown, turnOptions: unknown): Promise<string> {
       return sendTurnMock(input, turnOptions);
@@ -113,6 +117,10 @@ describe("CodexProvider first turn on new session", () => {
     meetsMinVersionMock.mockClear();
     appServers.length = 0;
     startError.current = null;
+    readConfigMock.mockReset();
+    readConfigMock.mockResolvedValue({
+      config: { mcp_servers: { mcode_internal_thread_control: {} } },
+    });
   });
 
   it("passes loopback browser MCP config and a child-only bearer token", async () => {
@@ -1032,6 +1040,50 @@ describe("CodexProvider first turn on new session", () => {
 
     expect(close).toHaveBeenCalledWith("mcode-mcp-failure");
     expect((provider as unknown as { runtime: { get: (sessionId: string) => unknown } }).runtime.get("mcode-mcp-failure")).toBeUndefined();
+  });
+
+  it("contains an internal MCP startup timeout while effective config is stalled", async () => {
+    vi.useFakeTimers();
+    try {
+      readConfigMock.mockImplementation(() => new Promise(() => undefined));
+      const close = vi.fn().mockResolvedValue(undefined);
+      const provider = makeProvider(undefined, new BrowserAutomationSessionLease(), {
+        createCodexConfiguration: vi.fn().mockResolvedValue({ configOverrides: [], env: {} }),
+        close,
+      });
+      const events: AgentEvent[] = [];
+      provider.on("event", (event: AgentEvent) => events.push(event));
+
+      const send = provider.sendTurn({
+        turnExecutionId: "test-execution",
+        sessionId: "mcode-mcp-startup-timeout",
+        workspaceId: "workspace-mcp-timeout",
+        threadId: "mcp-startup-timeout",
+        message: "hello",
+        cwd: process.cwd(),
+        model: "gpt-5.4",
+        interactionMode: "build",
+        providerOptions: {},
+        permissionMode: "auto",
+      });
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      await send;
+
+      expect(close).toHaveBeenCalledWith("mcode-mcp-startup-timeout");
+      expect(appServers.at(-1)?.isAlive).toBe(false);
+      expect(events).toEqual([
+        {
+          type: AgentEventType.Error,
+          threadId: "mcp-startup-timeout",
+          error: "Codex internal MCP startup timed out",
+          turnExecutionId: "test-execution",
+        },
+        { type: AgentEventType.Ended, threadId: "mcp-startup-timeout", turnExecutionId: "test-execution" },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("maps side-channel CLI preflight failures to transient errors before creating a server", async () => {
