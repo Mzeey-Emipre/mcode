@@ -1,0 +1,4 @@
+interface:
+  display_name: "Performance Engineer"
+  short_description: "Measure first, then optimize safely"
+  default_prompt: "Use $performance-engineer to measure this critical path, identify the cause, make the smallest safe change, and verify the result."

@@ -4,6 +4,35 @@ Performance principles for building a fast, memory-efficient Electron + React ap
 
 ---
 
+## Performance Change Workflow
+
+Before a performance investigation or implementation, load the repository's
+[`performance-engineer` skill](../../.codex/skills/performance-engineer/SKILL.md).
+Use this guide as the source of truth for Mcode budgets and verification.
+
+1. Name one user-visible or system-visible critical path and its behavior gates.
+2. Record the environment, input, metric, and a specific cause hypothesis.
+3. Capture a repeatable baseline before the change. Use multiple samples when the metric is noisy.
+4. Attribute the cost before selecting an optimization.
+5. Make the smallest change that removes the measured cost.
+6. Repeat the same measurement and behavior gates under the same conditions.
+
+For frontend and Electron work, keep four signals separate:
+
+| Signal | Measures | Does not prove |
+| --- | --- | --- |
+| React Profiler | React commits and render duration | Layout, paint, dropped frames, or GPU use |
+| Chromium trace | Scripting, layout, paint, long tasks, and frame delivery | React component identity or OS GPU use |
+| `app.getAppMetrics()` | Electron process CPU and memory | Hardware GPU utilization |
+| OS GPU counters or traces | GPU-engine work attributed to a process | Which React component caused the work |
+
+Record the hardware-acceleration state and keep it fixed within a comparison.
+Use a profiling build for React evidence. Use a normal production build without
+open DevTools for process and GPU evidence. Store raw evidence under
+`.dev/verification/performance/`.
+
+---
+
 ## 1. Virtualize All Scrollable Lists
 
 Any list that can grow beyond ~30 items must use virtual scrolling. Only DOM nodes visible in the viewport (plus a small overscan) should exist.
