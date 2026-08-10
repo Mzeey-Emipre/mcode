@@ -8,6 +8,11 @@ import { getHeapStatistics } from "node:v8";
 import { injectable, inject } from "tsyringe";
 import type Database from "better-sqlite3";
 import { logger } from "@mcode/shared";
+import {
+  optimizeSQLiteConnection,
+  SQLITE_ACTIVE_CACHE_KIB,
+  SQLITE_BACKGROUND_CACHE_KIB,
+} from "../store/sqlite-connection-policy.js";
 
 /**
  * Idle state levels, from most active to most aggressive reclamation.
@@ -48,12 +53,6 @@ const WARNING_HEAP_RATIO = 0.8;
 
 /** Critical threshold: new turns are rejected until pressure clears. */
 const CRITICAL_HEAP_RATIO = 0.9;
-
-/** Normal SQLite page cache size (2MB, set by database.ts). */
-const NORMAL_CACHE_KB = 2000;
-
-/** Reduced SQLite page cache size during background idle (500KB). */
-const BACKGROUND_CACHE_KB = 500;
 
 /** Minimum time between full GC invocations (5 minutes). */
 const MIN_FULL_GC_INTERVAL_MS = 5 * 60_000;
@@ -287,6 +286,13 @@ export class MemoryPressureService {
     this.state = "warm-idle";
     logger.info("Entering warm idle: shrinking SQLite + minor GC");
     try {
+      optimizeSQLiteConnection(this.db, "maintenance");
+    } catch (err) {
+      logger.warn("SQLite optimization failed", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    try {
       this.db.pragma("shrink_memory");
     } catch (err) {
       logger.warn("shrink_memory failed", {
@@ -306,7 +312,7 @@ export class MemoryPressureService {
   private enterBackgroundIdle(): void {
     logger.info("Entering background idle: full GC + cache reduction");
     try {
-      this.db.pragma(`cache_size = -${BACKGROUND_CACHE_KB}`);
+      this.db.pragma(`cache_size = -${SQLITE_BACKGROUND_CACHE_KIB}`);
     } catch (err) {
       logger.warn("cache_size reduction failed", {
         error: err instanceof Error ? err.message : String(err),
@@ -327,7 +333,7 @@ export class MemoryPressureService {
   private restoreFromBackground(): void {
     logger.info("Restoring from background idle: normal cache size");
     try {
-      this.db.pragma(`cache_size = -${NORMAL_CACHE_KB}`);
+      this.db.pragma(`cache_size = -${SQLITE_ACTIVE_CACHE_KIB}`);
     } catch (err) {
       logger.warn("cache_size restore failed", {
         error: err instanceof Error ? err.message : String(err),
