@@ -1432,11 +1432,16 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     // Propagates start failures to the runtime, which surfaces them to the
     // `acquire` caller in `sendTurn` (emits Error/Ended there).
     try {
-      await server.start();
+      if (internalMcpStartup) {
+        await Promise.all([server.start(), internalMcpStartup.promise]);
+      } else {
+        await server.start();
+      }
     } catch (error) {
       if (browserGrant) this.browserAutomationLease.release(browserGrant.leaseId);
       internalMcpStartup?.cancel();
       await this.threadControlMcp?.close(sessionId);
+      if (internalMcpStartup) await server.kill().catch(() => undefined);
       throw error;
     } finally {
       delete spawnEnv[browserTokenEnvName];
@@ -1448,7 +1453,6 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         if (!hasCodexInternalThreadControlMcp(effectiveConfig)) {
           throw new Error("Codex app-server did not register mcode_internal_thread_control in effective configuration");
         }
-        await internalMcpStartup!.promise;
       } catch (error) {
         internalMcpStartup?.cancel();
         if (browserGrant) this.browserAutomationLease.release(browserGrant.leaseId);
