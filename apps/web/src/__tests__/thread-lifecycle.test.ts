@@ -156,7 +156,11 @@ describe("Thread Lifecycle Behavior", () => {
       currentThreadId: threadId,
       runningThreadIds: new Set([threadId]),
       records: new Map<string, ThreadRecord>([
-        [threadId, { ...createEmptyThreadRecord(), messages: [existing] }],
+        [threadId, {
+          ...createEmptyThreadRecord(),
+          messages: [existing],
+          runtimePhase: "running",
+        }],
       ]),
     });
 
