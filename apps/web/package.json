@@ -21,7 +21,7 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@fontsource-variable/geist": "^5.2.8",
     "@lexical/react": "^0.42.0",
-    "@legendapp/list": "3.3.4",
+    "@legendapp/list": "3.3.3",
     "@mcode/contracts": "workspace:*",
     "@mcode/shared": "workspace:*",
     "@radix-ui/react-collapsible": "^1.1.12",
