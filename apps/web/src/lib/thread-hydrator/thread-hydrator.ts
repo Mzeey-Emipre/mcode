@@ -320,6 +320,7 @@ export class ThreadHydrator {
   /** Discard a stale cached conversation before an authoritative mutation. */
   invalidateConversation(threadId: string): void {
     this.auxiliaryHydrator.invalidatePermissions(threadId);
+    this.cancelDeferredForThread(threadId);
     if (this.activeHydrates.has(threadId) || this.backgroundHydrates.has(threadId)) {
       this.invalidationGenerations.set(
         threadId,
@@ -327,6 +328,16 @@ export class ThreadHydrator {
       );
     }
     evictCachedRecord(threadId);
+    this.deps.setState((state: ThreadHydratorWriteState) => {
+      if (!state.records.has(threadId)) return {};
+      return {
+        records: patchThreadRecord(state.records, threadId, (record) => ({
+          loading: false,
+          isLoadingMore: false,
+          loadEpoch: record.loadEpoch + 1,
+        })),
+      };
+    });
   }
 
   /** Invalidate permission snapshots when live request state changes. */

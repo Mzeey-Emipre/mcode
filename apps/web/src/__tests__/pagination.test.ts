@@ -12,6 +12,7 @@ import {
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { TurnSnapshot } from "@mcode/contracts";
 import { useThreadStore } from "@/stores/threadStore";
+import { getConversationResidency } from "@/stores/conversation-residency";
 import {
   cacheRecord as cacheConversationRecord,
   cachePrefetchedHistoryPage,
@@ -160,8 +161,9 @@ await activateTestConversation(threadId);
 
     const loadPromise = useThreadStore.getState().loadOlderMessages(threadId);
 
-    // Switch to a different thread before the fetch resolves
+    getConversationResidency().invalidateConversation(threadId);
     useThreadStore.setState({ currentThreadId: "thread-other" });
+    expect(getTestThreadIsLoadingMore(threadId)).toBe(false);
 
     resolveGetMessages({
       messages: [createMockMessage({ id: "m1", thread_id: threadId, sequence: 1 })],
@@ -196,8 +198,8 @@ await activateTestConversation(threadId);
 
     const loadPromise = useThreadStore.getState().loadOlderMessages(threadId);
 
-    // Simulate A->B->A: loadMessages increments epoch while fetch is in-flight
-    patchTestThreadLoadEpoch(threadId, 2);
+    getConversationResidency().invalidateConversation(threadId);
+    expect(getTestThreadIsLoadingMore(threadId)).toBe(false);
 
     resolveGetMessages({
       messages: [createMockMessage({ id: "m1", thread_id: threadId, sequence: 1 })],
@@ -209,6 +211,69 @@ await activateTestConversation(threadId);
     expect(getTestActiveMessages()).toHaveLength(1);
     expect(getTestActiveMessages()[0].id).toBe("m2");
     expect(getTestThreadIsLoadingMore(threadId)).toBe(false);
+  });
+
+  it("lets a new thread-owned request proceed while an invalidated response is still pending", async () => {
+    const resident = createMockMessage({ id: "resident", thread_id: threadId, sequence: 10 });
+    resetThreadStoreForTests({
+      currentThreadId: threadId,
+      records: new Map<string, ThreadRecord>([[threadId, {
+        ...createEmptyThreadRecord(),
+        messages: [resident],
+        oldestLoadedSequence: resident.sequence,
+        hasMoreMessages: true,
+        loadEpoch: 3,
+      }]]),
+    });
+    const pending: Array<{
+      request: Parameters<typeof mockTransport.loadOlderConversationPage>[0];
+      resolve: (page: Awaited<ReturnType<typeof mockTransport.loadOlderConversationPage>>) => void;
+    }> = [];
+    const holdRequest = (
+      request: Parameters<typeof mockTransport.loadOlderConversationPage>[0],
+    ) => new Promise<Awaited<ReturnType<typeof mockTransport.loadOlderConversationPage>>>(
+      (resolve) => pending.push({ request, resolve }),
+    );
+    (mockTransport.loadOlderConversationPage as ReturnType<typeof vi.fn>)
+      .mockImplementationOnce(holdRequest)
+      .mockImplementationOnce(holdRequest);
+
+    const staleLoad = useThreadStore.getState().loadOlderMessages(threadId);
+    expect(pending).toHaveLength(1);
+
+    getConversationResidency().invalidateConversation(threadId);
+
+    expect(readThreadField(threadId, (record) => record.messages)).toEqual([resident]);
+    expect(readThreadField(threadId, (record) => record.loadEpoch)).toBe(4);
+    const currentLoad = useThreadStore.getState().loadOlderMessages(threadId);
+    expect(pending).toHaveLength(2);
+
+    const stale = pending[0]!;
+    stale.resolve({
+      identity: stale.request,
+      messages: [createMockMessage({ id: "stale", thread_id: threadId, sequence: 8 })],
+      hasMore: true,
+      nextCursor: { version: 1, beforeSequence: 8 },
+      narrativeByMessage: {},
+    });
+    await staleLoad;
+
+    expect(getTestThreadIsLoadingMore(threadId)).toBe(true);
+    expect(readThreadField(threadId, (record) => record.messages)).toEqual([resident]);
+
+    const current = pending[1]!;
+    const fresh = createMockMessage({ id: "fresh", thread_id: threadId, sequence: 9 });
+    current.resolve({
+      identity: current.request,
+      messages: [fresh],
+      hasMore: false,
+      nextCursor: null,
+      narrativeByMessage: {},
+    });
+    await currentLoad;
+
+    expect(getTestThreadIsLoadingMore(threadId)).toBe(false);
+    expect(readThreadField(threadId, (record) => record.messages)).toEqual([fresh, resident]);
   });
 
   it("loadOlderMessages writes async snapshot file lists into the message cache", async () => {
@@ -324,6 +389,60 @@ await activateTestConversation(threadId);
       "replacement-message": ["replacement.ts"],
     });
     expect(getTestThreadPersistedFilesChanged(threadId)[olderMessage.id]).toBeUndefined();
+  });
+
+  it("does not let delayed snapshot metadata invalidate a newer page request", async () => {
+    const resident = createMockMessage({ id: "resident", thread_id: threadId, sequence: 10 });
+    const firstPageMessage = createMockMessage({ id: "first-page", thread_id: threadId, sequence: 8 });
+    const secondPageMessage = createMockMessage({ id: "second-page", thread_id: threadId, sequence: 6 });
+    resetThreadStoreForTests({
+      currentThreadId: threadId,
+      records: new Map<string, ThreadRecord>([[threadId, {
+        ...createEmptyThreadRecord(),
+        messages: [resident],
+        oldestLoadedSequence: resident.sequence,
+        hasMoreMessages: true,
+      }]]),
+    });
+
+    let resolveSnapshots!: (snapshots: TurnSnapshot[]) => void;
+    let resolveSecondPage!: (page: { messages: Message[]; hasMore: boolean }) => void;
+    (mockTransport.getMessages as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ messages: [firstPageMessage], hasMore: true })
+      .mockReturnValueOnce(new Promise((resolve) => { resolveSecondPage = resolve; }));
+    (mockTransport.listSnapshots as ReturnType<typeof vi.fn>)
+      .mockReturnValueOnce(new Promise((resolve) => { resolveSnapshots = resolve; }))
+      .mockResolvedValueOnce([]);
+
+    await useThreadStore.getState().loadOlderMessages(threadId);
+    const secondLoad = useThreadStore.getState().loadOlderMessages(threadId);
+    expect(getTestThreadIsLoadingMore(threadId)).toBe(true);
+
+    resolveSnapshots([{
+      id: "delayed-snapshot",
+      message_id: firstPageMessage.id,
+      thread_id: threadId,
+      ref_before: "before",
+      ref_after: "after",
+      files_changed: ["stale.ts"],
+      worktree_path: null,
+      created_at: new Date().toISOString(),
+    }]);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(getTestThreadIsLoadingMore(threadId)).toBe(true);
+    expect(getTestThreadPersistedFilesChanged(threadId)[firstPageMessage.id]).toBeUndefined();
+
+    resolveSecondPage({ messages: [secondPageMessage], hasMore: false });
+    await secondLoad;
+
+    expect(getTestThreadIsLoadingMore(threadId)).toBe(false);
+    expect(getTestActiveMessages().map((message) => message.id)).toEqual([
+      secondPageMessage.id,
+      firstPageMessage.id,
+      resident.id,
+    ]);
   });
 
   it("loadOlderMessages resets isLoadingMore on network error", async () => {

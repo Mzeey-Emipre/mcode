@@ -86,4 +86,56 @@ describe("ConversationResidency", () => {
     expect(mergeCachedFileChanges).toHaveBeenCalledWith("thread-a", { message: ["src/a.ts"] });
     expect(prefetchConversation).toHaveBeenCalledWith("thread-a");
   });
+
+  it("owns overlapping page requests independently by complete thread identity", () => {
+    const residency = createConversationResidency({
+      restoreConversation: vi.fn().mockResolvedValue(undefined),
+      deactivateConversation: vi.fn(),
+      ...requiredDeps(),
+    });
+    const requestA = {
+      threadId: "thread-a",
+      cursor: { version: 1 as const, beforeSequence: 10 },
+      direction: "older" as const,
+      generation: 2,
+      conversationRevision: 4,
+    };
+    const requestB = { ...requestA, threadId: "thread-b" };
+
+    const handleA = residency.beginOlderPageRequest(requestA)!;
+    const handleB = residency.beginOlderPageRequest(requestB)!;
+
+    expect(residency.beginOlderPageRequest(requestA)).toBeUndefined();
+    expect(residency.canCommitOlderPageRequest(handleA, requestA)).toBe(true);
+    expect(residency.canCommitOlderPageRequest(handleB, requestB)).toBe(true);
+
+    residency.invalidateConversation("thread-a");
+
+    expect(residency.canCommitOlderPageRequest(handleA, requestA)).toBe(false);
+    expect(residency.canCommitOlderPageRequest(handleB, requestB)).toBe(true);
+    expect(residency.canCommitOlderPageRequest(handleB, requestB, {
+      ...requestB,
+      threadId: "thread-a",
+    })).toBe(false);
+  });
+
+  it("cancels another thread's page request when selection changes", async () => {
+    const residency = createConversationResidency({
+      restoreConversation: vi.fn().mockResolvedValue(undefined),
+      deactivateConversation: vi.fn(),
+      ...requiredDeps(),
+    });
+    const request = {
+      threadId: "thread-a",
+      cursor: { version: 1 as const, beforeSequence: 10 },
+      direction: "older" as const,
+      generation: 1,
+      conversationRevision: 1,
+    };
+    const handle = residency.beginOlderPageRequest(request)!;
+
+    await residency.activate("thread-b", [{ id: "thread-a" }, { id: "thread-b" }]);
+
+    expect(residency.canCommitOlderPageRequest(handle, request)).toBe(false);
+  });
 });

@@ -1269,21 +1269,23 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     if (!rec.hasMoreMessages) return;
     if (rec.isLoadingMore) return;
 
+    const requestRecord = getRec(threadId);
+    const cursor = requestRecord.oldestLoadedSequence;
+    const epoch = requestRecord.loadEpoch;
+    const request = {
+      threadId,
+      cursor: { version: 1 as const, beforeSequence: cursor },
+      direction: "older" as const,
+      generation: epoch,
+      conversationRevision: requestRecord.conversationRevision,
+      limit: OLDER_PAGE_SIZE,
+      maxBytes: CONVERSATION_OLDER_PAGE_MAX_BYTES,
+    };
+    const requestHandle = conversationResidency.beginOlderPageRequest(request);
+    if (!requestHandle) return;
     patchRec(threadId, { isLoadingMore: true });
 
     try {
-      const requestRecord = getRec(threadId);
-      const cursor = requestRecord.oldestLoadedSequence;
-      const epoch = requestRecord.loadEpoch;
-      const request = {
-        threadId,
-        cursor: { version: 1 as const, beforeSequence: cursor },
-        direction: "older" as const,
-        generation: epoch,
-        conversationRevision: requestRecord.conversationRevision,
-        limit: OLDER_PAGE_SIZE,
-        maxBytes: CONVERSATION_OLDER_PAGE_MAX_BYTES,
-      };
       const prefetchedPage = conversationResidency.takePrefetchedHistoryPage(request);
       const {
         identity: responseIdentity,
@@ -1294,19 +1296,24 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
       } = prefetchedPage
         ?? await getTransport().loadOlderConversationPage(request);
 
-      const isStale = get().currentThreadId !== threadId
-        || getRec(threadId).loadEpoch !== epoch
-        || getRec(threadId).conversationRevision !== request.conversationRevision
-        || responseIdentity.threadId !== request.threadId
-        || responseIdentity.cursor.version !== request.cursor.version
-        || responseIdentity.cursor.beforeSequence !== request.cursor.beforeSequence
-        || responseIdentity.direction !== request.direction
-        || responseIdentity.generation !== request.generation
-        || responseIdentity.conversationRevision !== request.conversationRevision;
-      if (isStale) {
-        patchRec(threadId, { isLoadingMore: false });
+      const currentRecord = getRec(threadId);
+      const currentIdentity = {
+        threadId,
+        cursor: { version: 1 as const, beforeSequence: currentRecord.oldestLoadedSequence },
+        direction: "older" as const,
+        generation: currentRecord.loadEpoch,
+        conversationRevision: currentRecord.conversationRevision,
+      };
+      const ownsCurrentRequest = conversationResidency.canCommitOlderPageRequest(
+        requestHandle,
+        currentIdentity,
+        responseIdentity,
+      );
+      if (get().currentThreadId !== threadId) {
+        if (ownsCurrentRequest) patchRec(threadId, { isLoadingMore: false });
         return;
       }
+      if (!ownsCurrentRequest) return;
 
       const newCounts: Record<string, number> = {};
       for (const msg of olderMessages) {
@@ -1347,6 +1354,14 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
 
       // Hydrate file change data for older messages from snapshots
       const olderMsgIds = new Set(olderMessages.map((m) => m.id));
+      const committedRecord = getRec(threadId);
+      const snapshotIdentity = {
+        threadId,
+        cursor: { version: 1 as const, beforeSequence: committedRecord.oldestLoadedSequence },
+        direction: "older" as const,
+        generation: committedRecord.loadEpoch,
+        conversationRevision: committedRecord.conversationRevision,
+      };
       getTransport()
         .listSnapshots(threadId)
         .then((snapshots) => {
@@ -1359,7 +1374,10 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
             if (
               state.currentThreadId !== threadId
               || !rec
-              || rec.loadEpoch !== epoch
+              || rec.isLoadingMore
+              || rec.oldestLoadedSequence !== snapshotIdentity.cursor.beforeSequence
+              || rec.loadEpoch !== snapshotIdentity.generation
+              || rec.conversationRevision !== snapshotIdentity.conversationRevision
             ) return {};
             const retainedMessageIds = new Set(rec.messages.map((message) => message.id));
             const retained = relevant.filter((snapshot) => retainedMessageIds.has(snapshot.message_id));
@@ -1378,7 +1396,10 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
           if (
             get().currentThreadId !== threadId
             || !current
-            || current.loadEpoch !== epoch
+            || current.isLoadingMore
+            || current.oldestLoadedSequence !== snapshotIdentity.cursor.beforeSequence
+            || current.loadEpoch !== snapshotIdentity.generation
+            || current.conversationRevision !== snapshotIdentity.conversationRevision + 1
           ) return;
           const retainedMessageIds = new Set(current.messages.map((message) => message.id));
           const retained = relevant.filter((snapshot) => retainedMessageIds.has(snapshot.message_id));
@@ -1389,7 +1410,18 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
         })
         .catch(() => {});
     } catch {
-      patchRec(threadId, { isLoadingMore: false });
+      const currentRecord = getRec(threadId);
+      if (conversationResidency.canCommitOlderPageRequest(requestHandle, {
+        threadId,
+        cursor: { version: 1, beforeSequence: currentRecord.oldestLoadedSequence },
+        direction: "older",
+        generation: currentRecord.loadEpoch,
+        conversationRevision: currentRecord.conversationRevision,
+      })) {
+        patchRec(threadId, { isLoadingMore: false });
+      }
+    } finally {
+      conversationResidency.finishOlderPageRequest(requestHandle);
     }
   },
 

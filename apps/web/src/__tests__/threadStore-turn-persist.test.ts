@@ -136,7 +136,10 @@ describe("handleTurnPersisted", () => {
       deletions: 1,
       effects: [],
     });
-    useThreadStore.setState({ runningThreadIds: new Set() });
+    useThreadStore.setState({
+      records: seedThreadRecord(THREAD_ID, { runtimePhase: "idle" }),
+      runningThreadIds: new Set(),
+    });
 
     await useThreadStore.getState().sendMessage(THREAD_ID, "next turn");
     useThreadStore.getState().handleFileEffectsUpdated(THREAD_ID, "turn-1", {
