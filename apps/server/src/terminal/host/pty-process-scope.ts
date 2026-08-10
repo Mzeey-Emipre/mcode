@@ -29,33 +29,26 @@ export function createPtyProcessScope(rootPid: number): PtyProcessScope {
         const cleanupErrors: unknown[] = [];
         const reconciled = await scope.reconcile(rootPid);
         if (!reconciled.ok) {
-          try {
-            await killProcessTree(rootPid);
-          } catch (error) {
-            cleanupErrors.push(error);
+          const [fallbackResult] = await Promise.allSettled([
+            killProcessTree(rootPid),
+          ]);
+          if (fallbackResult.status === "rejected") {
+            cleanupErrors.push(fallbackResult.reason);
           }
         }
-        try {
-          const terminated = scope.terminate(0);
-          if (!terminated.ok) {
-            cleanupErrors.push(
-              new Error(
-                terminated.error ?? "PTY Job Object termination failed",
-              ),
-            );
-          }
-        } catch (error) {
-          cleanupErrors.push(error);
+        const terminated = scope.terminate(0);
+        if (!terminated.ok) {
+          cleanupErrors.push(
+            new Error(
+              terminated.error ?? "PTY Job Object termination failed",
+            ),
+          );
         }
-        try {
-          const emptied = await scope.waitForEmpty(5_000);
-          if (!emptied.ok) {
-            cleanupErrors.push(
-              new Error(emptied.error ?? "PTY Job Object remained non-empty"),
-            );
-          }
-        } catch (error) {
-          cleanupErrors.push(error);
+        const emptied = await scope.waitForEmpty(5_000);
+        if (!emptied.ok) {
+          cleanupErrors.push(
+            new Error(emptied.error ?? "PTY Job Object remained non-empty"),
+          );
         }
         if (cleanupErrors.length === 1) {
           throw cleanupErrors[0];
