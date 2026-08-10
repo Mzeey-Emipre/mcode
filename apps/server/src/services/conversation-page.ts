@@ -1,5 +1,7 @@
 import type {
   ConversationNarrativeBatch,
+  ConversationNewerPage,
+  ConversationNewerPageRequest,
   ConversationOlderPage,
   ConversationOlderPageRequest,
   ConversationPage,
@@ -164,6 +166,81 @@ export function loadOlderConversationPage(
   }
 
   return buildOlderConversationPage(request, page, false);
+}
+
+function buildNewerConversationPage(
+  request: ConversationNewerPageRequest,
+  page: ConversationPage,
+  droppedMessages: boolean,
+): ConversationNewerPage {
+  const retainedMessageIds = new Set(page.messages.map((message) => message.id));
+  const hasMore = page.hasMore || droppedMessages;
+  return {
+    identity: {
+      threadId: request.threadId,
+      cursor: request.cursor,
+      direction: request.direction,
+      generation: request.generation,
+      conversationRevision: request.conversationRevision,
+    },
+    messages: page.messages,
+    hasMore,
+    nextCursor: hasMore && page.messages.length > 0
+      ? { version: 1, afterSequence: page.messages.at(-1)!.sequence }
+      : null,
+    answeredPlanMessageIds: page.answeredPlanMessageIds?.filter((messageId) =>
+      retainedMessageIds.has(messageId)
+    ),
+    narrativeByMessage: Object.fromEntries(
+      Object.entries(page.narrativeByMessage).filter(([messageId]) =>
+        retainedMessageIds.has(messageId)
+      ),
+    ),
+  };
+}
+
+/** Loads the nearest newer messages under the caller's bounded response budget. */
+export function loadNewerConversationPage(
+  deps: ConversationPageDeps,
+  request: ConversationNewerPageRequest,
+): ConversationNewerPage {
+  const persistedPage = deps.messageRepo.listByThreadAfter(
+    request.threadId,
+    request.limit,
+    request.cursor.afterSequence,
+  );
+  const messages = persistedPage.messages;
+  const page: ConversationPage = {
+    messages,
+    hasMore: persistedPage.hasMore,
+    answeredPlanMessageIds: deps.planQuestionAnswersRepo.listAnsweredForThread(request.threadId),
+    narrativeByMessage: groupNarrativeEntriesByMessage(
+      deps.narrativeStore.loadForMessages(messages),
+    ),
+  };
+  let retainedMessages = messages;
+  let droppedMessages = false;
+
+  while (retainedMessages.length > 0) {
+    const candidate = buildNewerConversationPage(
+      request,
+      { ...page, messages: retainedMessages },
+      droppedMessages,
+    );
+    if (Buffer.byteLength(JSON.stringify(candidate), "utf8") <= request.maxBytes) {
+      return candidate;
+    }
+    retainedMessages = retainedMessages.slice(0, -1);
+    droppedMessages = true;
+  }
+
+  if (messages.length > 0) {
+    throw new Error(
+      `The nearest newer conversation message cannot fit within ${request.maxBytes} bytes`,
+    );
+  }
+
+  return buildNewerConversationPage(request, page, false);
 }
 
 /** Loads the newest visible messages without narrative or plan-answer queries. */

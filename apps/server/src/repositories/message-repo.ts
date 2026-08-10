@@ -158,12 +158,12 @@ const MESSAGE_COLUMNS_PREFIXED =
  * Pre-aggregates tool call counts for the selected page only.
  * The page CTE prevents a correlated count from running once per message row.
  */
-function pagedMessageQuery(whereClause: string): string {
+function pagedMessageQuery(whereClause: string, direction: "ASC" | "DESC" = "DESC"): string {
   return `WITH page AS (
   SELECT ${MESSAGE_COLUMNS_PREFIXED}
   FROM messages m
   WHERE ${whereClause}
-  ORDER BY m.sequence DESC
+  ORDER BY m.sequence ${direction}
   LIMIT ?
 ),
 tool_counts AS (
@@ -436,6 +436,26 @@ export class MessageRepo {
       rows = rows.slice(rows.length - clampedLimit);
     }
 
+    return { messages: rows.map(rowToMessage), hasMore };
+  }
+
+  /** Return the first N messages after a sequence cursor in ascending order. */
+  listByThreadAfter(
+    threadId: string,
+    limit: number,
+    after: number,
+  ): { messages: Message[]; hasMore: boolean } {
+    const clampedLimit = Math.max(1, Math.min(1000, limit));
+    const fetchLimit = clampedLimit + 1;
+    let rows = this.db
+      .prepare(pagedMessageQuery(
+        "m.thread_id = ? AND m.sequence > ? AND m.is_internal = 0",
+        "ASC",
+      ))
+      .all(threadId, after, fetchLimit) as MessageRow[];
+
+    const hasMore = rows.length > clampedLimit;
+    if (hasMore) rows = rows.slice(0, clampedLimit);
     return { messages: rows.map(rowToMessage), hasMore };
   }
 

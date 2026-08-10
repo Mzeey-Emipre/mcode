@@ -28,7 +28,9 @@ export const RECORD_MESSAGE_CACHE_SIZE = 100;
 export interface ConversationCacheState {
   messages: ThreadRecord["messages"];
   oldestLoadedSequence: ThreadRecord["oldestLoadedSequence"];
+  newestLoadedSequence: ThreadRecord["newestLoadedSequence"];
   hasMoreMessages: ThreadRecord["hasMoreMessages"];
+  hasNewerMessages: ThreadRecord["hasNewerMessages"];
   persistedToolCallCounts: ThreadRecord["persistedToolCallCounts"];
   persistedFilesChanged: ThreadRecord["persistedFilesChanged"];
   latestTurnWithChanges: ThreadRecord["latestTurnWithChanges"];
@@ -47,7 +49,9 @@ export function projectConversationCacheState(record: ThreadRecord): Conversatio
   return {
     messages: record.messages,
     oldestLoadedSequence: record.oldestLoadedSequence,
+    newestLoadedSequence: record.newestLoadedSequence,
     hasMoreMessages: record.hasMoreMessages,
+    hasNewerMessages: record.hasNewerMessages,
     persistedToolCallCounts: record.persistedToolCallCounts,
     persistedFilesChanged: record.persistedFilesChanged,
     latestTurnWithChanges: record.latestTurnWithChanges,
@@ -102,6 +106,7 @@ function boundRecord(threadId: string, record: ConversationCacheState): Conversa
     ...record,
     messages,
     oldestLoadedSequence: messages[0]?.sequence ?? record.oldestLoadedSequence,
+    newestLoadedSequence: messages.at(-1)?.sequence ?? record.newestLoadedSequence,
     hasMoreMessages: true,
     persistedToolCallCounts: filterMessageMetadata(
       record.persistedToolCallCounts,

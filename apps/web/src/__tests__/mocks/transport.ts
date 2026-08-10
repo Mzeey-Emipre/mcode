@@ -168,6 +168,7 @@ export const mockTransport: McodeTransport = {
   getMessages: vi.fn().mockResolvedValue({ messages: [], hasMore: false }),
   loadConversationPage: vi.fn(),
   loadOlderConversationPage: vi.fn(),
+  loadNewerConversationPage: vi.fn(),
   createAndSendMessage: vi.fn(),
   updateThreadTitle: vi.fn().mockResolvedValue(true),
   updateThreadSettings: vi.fn().mockResolvedValue(true),

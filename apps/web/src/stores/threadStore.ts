@@ -10,7 +10,7 @@ import {
   ProviderIdSchema,
   isGoalOpen,
   previewAnnotationSnapshotStoredAttachments,
-  CONVERSATION_OLDER_PAGE_MAX_BYTES,
+  CONVERSATION_HISTORY_PAGE_MAX_BYTES,
 } from "@mcode/contracts";
 import { getTransport } from "@/transport";
 import { useWorkspaceStore } from "./workspaceStore";
@@ -204,6 +204,7 @@ interface ThreadState {
 
   // Message actions
   loadOlderMessages: (threadId: string) => Promise<void>;
+  loadNewerMessages: (threadId: string) => Promise<void>;
   sendMessage: (threadId: string, content: string, model?: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], displayContent?: string, reasoningLevel?: ReasoningLevel, provider?: string, copilotAgent?: string, contextWindow?: ContextWindowMode, thinking?: boolean, codexFastMode?: boolean, replyToMessageId?: string, quotedText?: string, planAction?: import("@mcode/contracts").PlanAction, mentions?: MessageMention[], previewAnnotations?: PreviewAnnotationBundle, goalObjective?: string, orchestrationMode?: OrchestrationMode) => Promise<void>;
   stopAgent: (threadId: string) => Promise<void>;
   /** Apply one authoritative runtime snapshot without replacing other running threads. */
@@ -722,8 +723,8 @@ export function countActiveSubagentCalls(calls: ToolCall[] | undefined): number 
   return n;
 }
 
-/** Number of older messages to fetch per pagination request. */
-export const OLDER_PAGE_SIZE = 50;
+/** Number of messages to fetch per directional pagination request. */
+export const HISTORY_PAGE_SIZE = 50;
 
 /** Maximum messages kept in the in-memory sliding window. */
 export const MESSAGE_WINDOW_SIZE = 200;
@@ -772,6 +773,57 @@ function capMessages(messages: Message[]): { messages: Message[]; evicted: boole
     messages: messages.slice(messages.length - MESSAGE_WINDOW_SIZE),
     evicted: true,
   };
+}
+
+type ConversationPageDirection = "older" | "newer";
+
+interface MergedConversationWindow {
+  messages: Message[];
+  evictedOlder: boolean;
+  evictedNewer: boolean;
+}
+
+/** Merge one directional page while resident identities and sequences keep precedence. */
+function mergeConversationWindow(
+  residentMessages: readonly Message[],
+  pageMessages: readonly Message[],
+  direction: ConversationPageDirection,
+): MergedConversationWindow {
+  const residentIds = new Set(residentMessages.map((message) => message.id));
+  const byId = new Map([...pageMessages, ...residentMessages].map((message) => [message.id, message]));
+  const bySequence = new Map<number, Message>();
+  for (const message of byId.values()) {
+    const existing = bySequence.get(message.sequence);
+    if (!existing || (residentIds.has(message.id) && !residentIds.has(existing.id))) {
+      bySequence.set(message.sequence, message);
+    }
+  }
+  const merged = [...bySequence.values()].sort((left, right) =>
+    left.sequence - right.sequence || left.id.localeCompare(right.id),
+  );
+  if (merged.length <= MESSAGE_WINDOW_SIZE) {
+    return { messages: merged, evictedOlder: false, evictedNewer: false };
+  }
+  return direction === "older"
+    ? {
+        messages: merged.slice(0, MESSAGE_WINDOW_SIZE),
+        evictedOlder: false,
+        evictedNewer: true,
+      }
+    : {
+        messages: merged.slice(-MESSAGE_WINDOW_SIZE),
+        evictedOlder: true,
+        evictedNewer: false,
+      };
+}
+
+function filterPaginationMetadata<T>(
+  metadata: Record<string, T>,
+  retainedMessageIds: ReadonlySet<string>,
+): Record<string, T> {
+  return Object.fromEntries(
+    Object.entries(metadata).filter(([messageId]) => retainedMessageIds.has(messageId)),
+  );
 }
 
 /** Keeps turn response keys only for assistant messages still loaded in memory. */
@@ -1238,6 +1290,80 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
   });
   registerConversationResidency(conversationResidency);
 
+  const hydratePaginationFileChanges = (
+    threadId: string,
+    pageMessageIds: ReadonlySet<string>,
+    identity: {
+      direction: "older" | "newer";
+      boundarySequence: number;
+      generation: number;
+      conversationRevision: number;
+    },
+  ): void => {
+    getTransport()
+      .listSnapshots(threadId)
+      .then((snapshots) => {
+        const relevant = snapshots.filter(
+          (snapshot) => snapshot.files_changed.length > 0
+            && pageMessageIds.has(snapshot.message_id),
+        );
+        if (relevant.length === 0) return;
+
+        set((state) => {
+          const record = state.records.get(threadId);
+          if (
+            state.currentThreadId !== threadId
+            || !record
+            || (identity.direction === "older" ? record.isLoadingMore : record.isLoadingNewer)
+            || (identity.direction === "older"
+              ? record.oldestLoadedSequence
+              : record.newestLoadedSequence) !== identity.boundarySequence
+            || record.loadEpoch !== identity.generation
+            || record.conversationRevision !== identity.conversationRevision
+          ) return {};
+
+          const retainedMessageIds = new Set(record.messages.map((message) => message.id));
+          const retained = relevant.filter((snapshot) =>
+            retainedMessageIds.has(snapshot.message_id));
+          if (retained.length === 0) return {};
+
+          const nextFilesChanged = { ...record.persistedFilesChanged };
+          for (const snapshot of retained) {
+            nextFilesChanged[snapshot.message_id] = snapshot.files_changed;
+          }
+          return {
+            records: patchThreadRecord(state.records, threadId, {
+              persistedFilesChanged: nextFilesChanged,
+            }),
+          };
+        });
+
+        const current = get().records.get(threadId);
+        if (
+          get().currentThreadId !== threadId
+          || !current
+          || (identity.direction === "older" ? current.isLoadingMore : current.isLoadingNewer)
+          || (identity.direction === "older"
+            ? current.oldestLoadedSequence
+            : current.newestLoadedSequence) !== identity.boundarySequence
+          || current.loadEpoch !== identity.generation
+          || current.conversationRevision !== identity.conversationRevision + 1
+        ) return;
+
+        const retainedMessageIds = new Set(current.messages.map((message) => message.id));
+        const retained = relevant.filter((snapshot) =>
+          retainedMessageIds.has(snapshot.message_id));
+        conversationResidency.mergePaginationFileChanges(
+          threadId,
+          Object.fromEntries(retained.map((snapshot) => [
+            snapshot.message_id,
+            snapshot.files_changed,
+          ])),
+        );
+      })
+      .catch(() => {});
+  };
+
   return {
     records: new Map<string, ThreadRecord>(),
     currentThreadId: null,
@@ -1278,10 +1404,10 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
       direction: "older" as const,
       generation: epoch,
       conversationRevision: requestRecord.conversationRevision,
-      limit: OLDER_PAGE_SIZE,
-      maxBytes: CONVERSATION_OLDER_PAGE_MAX_BYTES,
+      limit: HISTORY_PAGE_SIZE,
+      maxBytes: CONVERSATION_HISTORY_PAGE_MAX_BYTES,
     };
-    const requestHandle = conversationResidency.beginOlderPageRequest(request);
+    const requestHandle = conversationResidency.beginHistoryPageRequest(request);
     if (!requestHandle) return;
     patchRec(threadId, { isLoadingMore: true });
 
@@ -1304,7 +1430,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
         generation: currentRecord.loadEpoch,
         conversationRevision: currentRecord.conversationRevision,
       };
-      const ownsCurrentRequest = conversationResidency.canCommitOlderPageRequest(
+      const ownsCurrentRequest = conversationResidency.canCommitHistoryPageRequest(
         requestHandle,
         currentIdentity,
         responseIdentity,
@@ -1322,96 +1448,61 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
         }
       }
 
-      const newOldest = olderMessages.length > 0 ? olderMessages[0].sequence : cursor;
-
       patchRec(threadId, (r) => ({
-        messages: (() => {
-          const residentIds = new Set(r.messages.map((message) => message.id));
-          const byId = new Map([...olderMessages, ...r.messages].map((message) => [message.id, message]));
-          const bySequence = new Map<number, Message>();
-          for (const message of byId.values()) {
-            const existing = bySequence.get(message.sequence);
-            if (!existing || (residentIds.has(message.id) && !residentIds.has(existing.id))) {
-              bySequence.set(message.sequence, message);
-            }
-          }
-          return [...bySequence.values()].sort((left, right) =>
-            left.sequence - right.sequence || left.id.localeCompare(right.id),
-          );
+        ...(() => {
+          const merged = mergeConversationWindow(r.messages, olderMessages, "older");
+          const retainedMessageIds = new Set(merged.messages.map((message) => message.id));
+          return {
+            messages: merged.messages,
+            persistedToolCallCounts: filterPaginationMetadata(
+              { ...newCounts, ...r.persistedToolCallCounts },
+              retainedMessageIds,
+            ),
+            persistedFilesChanged: filterPaginationMetadata(
+              r.persistedFilesChanged,
+              retainedMessageIds,
+            ),
+            serverMessageIds: filterPaginationMetadata(r.serverMessageIds, retainedMessageIds),
+            narrativeByMessage: filterPaginationMetadata(
+              { ...narrativeByMessage, ...r.narrativeByMessage },
+              retainedMessageIds,
+            ),
+            answeredPlanMessageIds: new Set([
+              ...r.answeredPlanMessageIds,
+              ...(answeredPlanMessageIds ?? []),
+            ].filter((messageId) => retainedMessageIds.has(messageId))),
+            assistantResponseKeys: pruneAssistantResponseKeys(
+              r.assistantResponseKeys,
+              merged.messages,
+            ),
+            latestTurnWithChanges: r.latestTurnWithChanges
+              && retainedMessageIds.has(r.latestTurnWithChanges)
+              ? r.latestTurnWithChanges
+              : null,
+            oldestLoadedSequence: merged.messages[0]?.sequence ?? cursor,
+            newestLoadedSequence: merged.messages.at(-1)?.sequence ?? r.newestLoadedSequence,
+            hasMoreMessages: hasMore,
+            hasNewerMessages: r.hasNewerMessages || merged.evictedNewer,
+            isLoadingMore: false,
+          };
         })(),
-        persistedToolCallCounts: { ...newCounts, ...r.persistedToolCallCounts },
-        narrativeByMessage: { ...narrativeByMessage, ...r.narrativeByMessage },
-        answeredPlanMessageIds: new Set([
-          ...r.answeredPlanMessageIds,
-          ...(answeredPlanMessageIds ?? []),
-        ]),
-        oldestLoadedSequence: newOldest,
-        hasMoreMessages: hasMore,
-        isLoadingMore: false,
       }));
 
       conversationResidency.commitPagination(threadId);
-
-      // Hydrate file change data for older messages from snapshots
-      const olderMsgIds = new Set(olderMessages.map((m) => m.id));
       const committedRecord = getRec(threadId);
-      const snapshotIdentity = {
+      hydratePaginationFileChanges(
         threadId,
-        cursor: { version: 1 as const, beforeSequence: committedRecord.oldestLoadedSequence },
-        direction: "older" as const,
-        generation: committedRecord.loadEpoch,
-        conversationRevision: committedRecord.conversationRevision,
-      };
-      getTransport()
-        .listSnapshots(threadId)
-        .then((snapshots) => {
-          const relevant = snapshots.filter(
-            (s) => s.files_changed.length > 0 && olderMsgIds.has(s.message_id),
-          );
-          if (relevant.length === 0) return;
-          set((state) => {
-            const rec = state.records.get(threadId);
-            if (
-              state.currentThreadId !== threadId
-              || !rec
-              || rec.isLoadingMore
-              || rec.oldestLoadedSequence !== snapshotIdentity.cursor.beforeSequence
-              || rec.loadEpoch !== snapshotIdentity.generation
-              || rec.conversationRevision !== snapshotIdentity.conversationRevision
-            ) return {};
-            const retainedMessageIds = new Set(rec.messages.map((message) => message.id));
-            const retained = relevant.filter((snapshot) => retainedMessageIds.has(snapshot.message_id));
-            if (retained.length === 0) return {};
-            const nextFilesChanged = { ...rec.persistedFilesChanged };
-            for (const snap of retained) {
-              nextFilesChanged[snap.message_id] = snap.files_changed;
-            }
-            return {
-              records: patchThreadRecord(state.records, threadId, {
-                persistedFilesChanged: nextFilesChanged,
-              }),
-            };
-          });
-          const current = get().records.get(threadId);
-          if (
-            get().currentThreadId !== threadId
-            || !current
-            || current.isLoadingMore
-            || current.oldestLoadedSequence !== snapshotIdentity.cursor.beforeSequence
-            || current.loadEpoch !== snapshotIdentity.generation
-            || current.conversationRevision !== snapshotIdentity.conversationRevision + 1
-          ) return;
-          const retainedMessageIds = new Set(current.messages.map((message) => message.id));
-          const retained = relevant.filter((snapshot) => retainedMessageIds.has(snapshot.message_id));
-          conversationResidency.mergePaginationFileChanges(
-            threadId,
-            Object.fromEntries(retained.map((snapshot) => [snapshot.message_id, snapshot.files_changed])),
-          );
-        })
-        .catch(() => {});
+        new Set(olderMessages.map((message) => message.id)),
+        {
+          direction: "older",
+          boundarySequence: committedRecord.oldestLoadedSequence,
+          generation: committedRecord.loadEpoch,
+          conversationRevision: committedRecord.conversationRevision,
+        },
+      );
     } catch {
       const currentRecord = getRec(threadId);
-      if (conversationResidency.canCommitOlderPageRequest(requestHandle, {
+      if (conversationResidency.canCommitHistoryPageRequest(requestHandle, {
         threadId,
         cursor: { version: 1, beforeSequence: currentRecord.oldestLoadedSequence },
         direction: "older",
@@ -1421,7 +1512,131 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
         patchRec(threadId, { isLoadingMore: false });
       }
     } finally {
-      conversationResidency.finishOlderPageRequest(requestHandle);
+      conversationResidency.finishHistoryPageRequest(requestHandle);
+    }
+  },
+
+  /** Fetch the next batch below the resident window after newer rows were evicted. */
+  loadNewerMessages: async (threadId) => {
+    const rec = getRec(threadId);
+    if (!rec.hasNewerMessages || rec.isLoadingNewer) return;
+
+    const requestRecord = getRec(threadId);
+    const cursor = requestRecord.newestLoadedSequence;
+    const epoch = requestRecord.loadEpoch;
+    const request = {
+      threadId,
+      cursor: { version: 1 as const, afterSequence: cursor },
+      direction: "newer" as const,
+      generation: epoch,
+      conversationRevision: requestRecord.conversationRevision,
+      limit: HISTORY_PAGE_SIZE,
+      maxBytes: CONVERSATION_HISTORY_PAGE_MAX_BYTES,
+    };
+    const requestHandle = conversationResidency.beginHistoryPageRequest(request);
+    if (!requestHandle) return;
+    patchRec(threadId, { isLoadingNewer: true });
+
+    try {
+      const {
+        identity: responseIdentity,
+        messages: newerMessages,
+        hasMore,
+        answeredPlanMessageIds,
+        narrativeByMessage,
+      } = await getTransport().loadNewerConversationPage(request);
+
+      const currentRecord = getRec(threadId);
+      const currentIdentity = {
+        threadId,
+        cursor: { version: 1 as const, afterSequence: currentRecord.newestLoadedSequence },
+        direction: "newer" as const,
+        generation: currentRecord.loadEpoch,
+        conversationRevision: currentRecord.conversationRevision,
+      };
+      const ownsCurrentRequest = conversationResidency.canCommitHistoryPageRequest(
+        requestHandle,
+        currentIdentity,
+        responseIdentity,
+      );
+      if (get().currentThreadId !== threadId) {
+        if (ownsCurrentRequest) patchRec(threadId, { isLoadingNewer: false });
+        return;
+      }
+      if (!ownsCurrentRequest) return;
+
+      const newCounts: Record<string, number> = {};
+      for (const message of newerMessages) {
+        if (message.tool_call_count && message.tool_call_count > 0) {
+          newCounts[message.id] = message.tool_call_count;
+        }
+      }
+
+      patchRec(threadId, (r) => ({
+        ...(() => {
+          const merged = mergeConversationWindow(r.messages, newerMessages, "newer");
+          const retainedMessageIds = new Set(merged.messages.map((message) => message.id));
+          return {
+            messages: merged.messages,
+            persistedToolCallCounts: filterPaginationMetadata(
+              { ...newCounts, ...r.persistedToolCallCounts },
+              retainedMessageIds,
+            ),
+            persistedFilesChanged: filterPaginationMetadata(
+              r.persistedFilesChanged,
+              retainedMessageIds,
+            ),
+            serverMessageIds: filterPaginationMetadata(r.serverMessageIds, retainedMessageIds),
+            narrativeByMessage: filterPaginationMetadata(
+              { ...narrativeByMessage, ...r.narrativeByMessage },
+              retainedMessageIds,
+            ),
+            answeredPlanMessageIds: new Set([
+              ...r.answeredPlanMessageIds,
+              ...(answeredPlanMessageIds ?? []),
+            ].filter((messageId) => retainedMessageIds.has(messageId))),
+            assistantResponseKeys: pruneAssistantResponseKeys(
+              r.assistantResponseKeys,
+              merged.messages,
+            ),
+            latestTurnWithChanges: r.latestTurnWithChanges
+              && retainedMessageIds.has(r.latestTurnWithChanges)
+              ? r.latestTurnWithChanges
+              : null,
+            oldestLoadedSequence: merged.messages[0]?.sequence ?? r.oldestLoadedSequence,
+            newestLoadedSequence: merged.messages.at(-1)?.sequence ?? cursor,
+            hasMoreMessages: r.hasMoreMessages || merged.evictedOlder,
+            hasNewerMessages: hasMore,
+            isLoadingNewer: false,
+          };
+        })(),
+      }));
+
+      conversationResidency.commitPagination(threadId);
+      const committedRecord = getRec(threadId);
+      hydratePaginationFileChanges(
+        threadId,
+        new Set(newerMessages.map((message) => message.id)),
+        {
+          direction: "newer",
+          boundarySequence: committedRecord.newestLoadedSequence,
+          generation: committedRecord.loadEpoch,
+          conversationRevision: committedRecord.conversationRevision,
+        },
+      );
+    } catch {
+      const currentRecord = getRec(threadId);
+      if (conversationResidency.canCommitHistoryPageRequest(requestHandle, {
+        threadId,
+        cursor: { version: 1, afterSequence: currentRecord.newestLoadedSequence },
+        direction: "newer",
+        generation: currentRecord.loadEpoch,
+        conversationRevision: currentRecord.conversationRevision,
+      })) {
+        patchRec(threadId, { isLoadingNewer: false });
+      }
+    } finally {
+      conversationResidency.finishHistoryPageRequest(requestHandle);
     }
   },
 
@@ -1803,8 +2018,11 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
           currentTurnResponseKey: "",
           assistantResponseKeys: {},
           oldestLoadedSequence: 0,
+          newestLoadedSequence: 0,
           hasMoreMessages: false,
+          hasNewerMessages: false,
           isLoadingMore: false,
+          isLoadingNewer: false,
           loadEpoch: getThreadRecord(state.records, current).loadEpoch,
           persistedToolCallCounts: {},
           persistedFilesChanged: {},

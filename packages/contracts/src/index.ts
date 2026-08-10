@@ -230,6 +230,25 @@ export type {
   ConversationOlderPageIdentity,
   ConversationOlderPageRequest,
 } from "./models/conversation-older-page.js";
+export {
+  CONVERSATION_HISTORY_PAGE_MAX_BYTES,
+  CONVERSATION_HISTORY_PAGE_MAX_MESSAGES,
+  CONVERSATION_HISTORY_PAGE_MAX_REQUEST_BYTES,
+  CONVERSATION_HISTORY_PAGE_MIN_BYTES,
+  conversationHistoryPageBytes,
+} from "./models/conversation-history-page.js";
+export {
+  ConversationNewerPageCursorSchema,
+  ConversationNewerPageIdentitySchema,
+  ConversationNewerPageRequestSchema,
+  ConversationNewerPageSchema,
+} from "./models/conversation-newer-page.js";
+export type {
+  ConversationNewerPage,
+  ConversationNewerPageCursor,
+  ConversationNewerPageIdentity,
+  ConversationNewerPageRequest,
+} from "./models/conversation-newer-page.js";
 
 export {
   CONVERSATION_TAIL_MAX_MESSAGES,

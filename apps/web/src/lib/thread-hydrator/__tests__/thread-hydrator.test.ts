@@ -148,6 +148,21 @@ function resetStores() {
       };
     },
   );
+  (mockTransport.loadNewerConversationPage as ReturnType<typeof vi.fn>).mockImplementation(
+    async (request) => ({
+      identity: {
+        threadId: request.threadId,
+        cursor: request.cursor,
+        direction: request.direction,
+        generation: request.generation,
+        conversationRevision: request.conversationRevision,
+      },
+      messages: [],
+      hasMore: false,
+      nextCursor: null,
+      narrativeByMessage: {},
+    }),
+  );
   (mockTransport.listSnapshots as ReturnType<typeof vi.fn>).mockResolvedValue([]);
   (mockTransport.listPendingPermissions as ReturnType<typeof vi.fn>).mockResolvedValue([]);
   (mockTransport.getThreadTasks as ReturnType<typeof vi.fn>).mockResolvedValue(null);
@@ -505,6 +520,88 @@ describe("ThreadHydrator", () => {
 
     expect(getTestActiveMessages()).toEqual([tail]);
     expect(readActiveThreadField((record) => record.isLoadingMore)).toBe(false);
+  });
+
+  it("moves a bounded resident window backward and forward without gaps or duplicates", async () => {
+    const history = Array.from({ length: 400 }, (_, index) => createMockMessage({
+      id: `history-${index + 1}`,
+      thread_id: THREAD_A,
+      sequence: index + 1,
+    }));
+    resetThreadStoreForTests({
+      currentThreadId: THREAD_A,
+      records: new Map([[THREAD_A, {
+        ...createEmptyThreadRecord(),
+        messages: history.slice(200),
+        oldestLoadedSequence: 201,
+        newestLoadedSequence: 400,
+        hasMoreMessages: true,
+        hasNewerMessages: false,
+        loadEpoch: 3,
+      }]]),
+    });
+    (mockTransport.loadOlderConversationPage as ReturnType<typeof vi.fn>).mockImplementation(
+      async (request) => {
+        const eligible = history.filter((message) => message.sequence < request.cursor.beforeSequence);
+        const messages = eligible.slice(-request.limit);
+        return {
+          identity: {
+            threadId: request.threadId,
+            cursor: request.cursor,
+            direction: request.direction,
+            generation: request.generation,
+            conversationRevision: request.conversationRevision,
+          },
+          messages,
+          hasMore: eligible.length > messages.length,
+          nextCursor: eligible.length > messages.length
+            ? { version: 1, beforeSequence: messages[0].sequence }
+            : null,
+          narrativeByMessage: {},
+        };
+      },
+    );
+    (mockTransport.loadNewerConversationPage as ReturnType<typeof vi.fn>).mockImplementation(
+      async (request) => {
+        const eligible = history.filter((message) => message.sequence > request.cursor.afterSequence);
+        const messages = eligible.slice(0, request.limit);
+        return {
+          identity: {
+            threadId: request.threadId,
+            cursor: request.cursor,
+            direction: request.direction,
+            generation: request.generation,
+            conversationRevision: request.conversationRevision,
+          },
+          messages,
+          hasMore: eligible.length > messages.length,
+          nextCursor: eligible.length > messages.length
+            ? { version: 1, afterSequence: messages.at(-1)!.sequence }
+            : null,
+          narrativeByMessage: {},
+        };
+      },
+    );
+
+    for (let index = 0; index < 4; index++) {
+      await useThreadStore.getState().loadOlderMessages(THREAD_A);
+    }
+
+    expect(getTestActiveMessages().map((message) => message.sequence)).toEqual(
+      Array.from({ length: 200 }, (_, index) => index + 1),
+    );
+    expect(readActiveThreadField((record) => record.hasNewerMessages)).toBe(true);
+
+    for (let index = 0; index < 4; index++) {
+      await useThreadStore.getState().loadNewerMessages(THREAD_A);
+    }
+
+    expect(getTestActiveMessages().map((message) => message.sequence)).toEqual(
+      Array.from({ length: 200 }, (_, index) => index + 201),
+    );
+    expect(new Set(getTestActiveMessages().map((message) => message.id)).size).toBe(200);
+    expect(readActiveThreadField((record) => record.hasMoreMessages)).toBe(true);
+    expect(readActiveThreadField((record) => record.hasNewerMessages)).toBe(false);
   });
 
   it("compacts cached history for restore and keeps its older rows warm", async () => {

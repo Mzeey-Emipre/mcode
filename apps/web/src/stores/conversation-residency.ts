@@ -1,4 +1,5 @@
 import type {
+  ConversationNewerPageIdentity,
   ConversationOlderPage,
   ConversationOlderPageIdentity,
 } from "@mcode/contracts";
@@ -25,22 +26,31 @@ export interface ConversationResidencyDeps {
   prefetchConversation: (threadId: string) => Promise<void>;
 }
 
-/** One thread-owned older-page request that can commit only while it remains current. */
-export interface ConversationOlderPageRequestHandle {
+type ConversationHistoryPageIdentity =
+  | ConversationOlderPageIdentity
+  | ConversationNewerPageIdentity;
+
+/** One thread-owned history-page request that can commit only while it remains current. */
+export interface ConversationHistoryPageRequestHandle {
   readonly id: number;
-  readonly identity: ConversationOlderPageIdentity;
+  readonly identity: ConversationHistoryPageIdentity;
 }
 
 function identitiesMatch(
-  left: ConversationOlderPageIdentity,
-  right: ConversationOlderPageIdentity,
+  left: ConversationHistoryPageIdentity,
+  right: ConversationHistoryPageIdentity,
 ): boolean {
-  return left.threadId === right.threadId
-    && left.cursor.version === right.cursor.version
-    && left.cursor.beforeSequence === right.cursor.beforeSequence
-    && left.direction === right.direction
-    && left.generation === right.generation
-    && left.conversationRevision === right.conversationRevision;
+  if (
+    left.threadId !== right.threadId
+    || left.direction !== right.direction
+    || left.cursor.version !== right.cursor.version
+    || left.generation !== right.generation
+    || left.conversationRevision !== right.conversationRevision
+  ) return false;
+  return left.direction === "older" && right.direction === "older"
+    ? left.cursor.beforeSequence === right.cursor.beforeSequence
+    : left.direction === "newer" && right.direction === "newer"
+      && left.cursor.afterSequence === right.cursor.afterSequence;
 }
 
 /**
@@ -49,8 +59,8 @@ function identitiesMatch(
  */
 export class ConversationResidency {
   private activationGeneration = 0;
-  private olderPageRequestId = 0;
-  private readonly olderPageRequests = new Map<string, ConversationOlderPageRequestHandle>();
+  private historyPageRequestId = 0;
+  private readonly historyPageRequests = new Map<string, ConversationHistoryPageRequestHandle>();
   private readonly adjacentPrefetch;
 
   constructor(private readonly deps: ConversationResidencyDeps) {
@@ -65,12 +75,12 @@ export class ConversationResidency {
     this.adjacentPrefetch.cancel();
     const thread = threadId ? threads.find((candidate) => candidate.id === threadId) : undefined;
     if (!thread || thread.clientPreparing || thread.clientError) {
-      this.olderPageRequests.clear();
+      this.historyPageRequests.clear();
       this.deps.deactivateConversation();
       return Promise.resolve();
     }
-    for (const requestThreadId of this.olderPageRequests.keys()) {
-      if (requestThreadId !== thread.id) this.olderPageRequests.delete(requestThreadId);
+    for (const requestThreadId of this.historyPageRequests.keys()) {
+      if (requestThreadId !== thread.id) this.historyPageRequests.delete(requestThreadId);
     }
     return this.deps.restoreConversation(thread.id).then(() => {
       if (activationGeneration === this.activationGeneration) {
@@ -93,36 +103,36 @@ export class ConversationResidency {
 
   /** Invalidate stale conversation cache state before an authoritative mutation. */
   invalidateConversation(threadId: string): void {
-    this.olderPageRequests.delete(threadId);
+    this.historyPageRequests.delete(threadId);
     this.deps.invalidateConversation(threadId);
   }
 
-  /** Start or supersede the older-page request for one thread. */
-  beginOlderPageRequest(
-    identity: ConversationOlderPageIdentity,
-  ): ConversationOlderPageRequestHandle | undefined {
-    const current = this.olderPageRequests.get(identity.threadId);
+  /** Start or supersede the directional history-page request for one thread. */
+  beginHistoryPageRequest(
+    identity: ConversationHistoryPageIdentity,
+  ): ConversationHistoryPageRequestHandle | undefined {
+    const current = this.historyPageRequests.get(identity.threadId);
     if (current && identitiesMatch(current.identity, identity)) return undefined;
-    const handle = { id: ++this.olderPageRequestId, identity };
-    this.olderPageRequests.set(identity.threadId, handle);
+    const handle = { id: ++this.historyPageRequestId, identity };
+    this.historyPageRequests.set(identity.threadId, handle);
     return handle;
   }
 
   /** Return true when the request, response, and current thread state still have one identity. */
-  canCommitOlderPageRequest(
-    handle: ConversationOlderPageRequestHandle,
-    currentIdentity: ConversationOlderPageIdentity,
-    responseIdentity: ConversationOlderPageIdentity = handle.identity,
+  canCommitHistoryPageRequest(
+    handle: ConversationHistoryPageRequestHandle,
+    currentIdentity: ConversationHistoryPageIdentity,
+    responseIdentity: ConversationHistoryPageIdentity = handle.identity,
   ): boolean {
-    return this.olderPageRequests.get(handle.identity.threadId)?.id === handle.id
+    return this.historyPageRequests.get(handle.identity.threadId)?.id === handle.id
       && identitiesMatch(handle.identity, currentIdentity)
       && identitiesMatch(handle.identity, responseIdentity);
   }
 
   /** Release a request only when it still owns the thread's in-flight slot. */
-  finishOlderPageRequest(handle: ConversationOlderPageRequestHandle): void {
-    if (this.olderPageRequests.get(handle.identity.threadId)?.id === handle.id) {
-      this.olderPageRequests.delete(handle.identity.threadId);
+  finishHistoryPageRequest(handle: ConversationHistoryPageRequestHandle): void {
+    if (this.historyPageRequests.get(handle.identity.threadId)?.id === handle.id) {
+      this.historyPageRequests.delete(handle.identity.threadId);
     }
   }
 

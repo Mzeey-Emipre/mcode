@@ -77,14 +77,26 @@ const MESSAGE_LIST_TOP_PADDING_PX = 16;
 const TAIL_SETTLE_STABLE_FRAMES = 4;
 const TAIL_SETTLE_MAX_FRAMES = 60;
 
-/** Keep the prior viewport mounted while prepended rows receive their new indexes. */
-export function preservePrependedVirtualRange(range: Range, prependedCount: number): number[] {
+/** Keep the prior viewport and retained anchor mounted while history rows change indexes. */
+export function preservePrependedVirtualRange(
+  range: Range,
+  prependedCount: number,
+  retainedAnchorIndex = -1,
+): number[] {
   const currentIndexes = defaultRangeExtractor(range);
-  if (prependedCount <= 0) return currentIndexes;
-  const previousViewportIndexes = currentIndexes
-    .map((index) => index + prependedCount)
-    .filter((index) => index < range.count);
-  return [...new Set([...currentIndexes, ...previousViewportIndexes])].sort((left, right) => left - right);
+  const previousViewportIndexes = prependedCount > 0
+    ? currentIndexes
+        .map((index) => index + prependedCount)
+        .filter((index) => index < range.count)
+    : [];
+  const retainedAnchorIndexes = retainedAnchorIndex >= 0 && retainedAnchorIndex < range.count
+    ? [retainedAnchorIndex]
+    : [];
+  return [...new Set([
+    ...currentIndexes,
+    ...previousViewportIndexes,
+    ...retainedAnchorIndexes,
+  ])].sort((left, right) => left - right);
 }
 
 /** Renders a single virtual item based on its type discriminant. */
@@ -246,6 +258,8 @@ export function MessageList({ displayThreadId, onBranch, onReply }: MessageListP
   const prevScrollHeightRef = useRef(0);
   /** Tracks the first message ID to detect real prepends vs appends. */
   const firstMessageIdRef = useRef<string | null>(null);
+  /** Tracks the last message ID to detect a bounded window shift. */
+  const lastMessageIdRef = useRef<string | null>(null);
   /** Number of inserted rows whose previous viewport must remain mounted until layout compensation. */
   const pendingPrependCountRef = useRef(0);
   /** Previous virtual row count used to translate retained keys after a prepend. */
@@ -254,6 +268,8 @@ export function MessageList({ displayThreadId, onBranch, onReply }: MessageListP
   const firstVirtualItemKeyRef = useRef<string | null>(null);
   /** Visible message and viewport offset held steady while older history settles. */
   const pendingHistoryAnchorRef = useRef<{ messageId: string; top: number } | null>(null);
+  /** Current virtual row index for the retained pagination anchor. */
+  const pendingHistoryAnchorIndexRef = useRef(-1);
   /** Invalidates stale history-anchor settle loops after navigation or another prepend. */
   const historyAnchorSettleGenerationRef = useRef(0);
   /** True until initial messages are positioned at the bottom after a thread switch. */
@@ -306,6 +322,8 @@ export function MessageList({ displayThreadId, onBranch, onReply }: MessageListP
   const prevScrollTopRef = useRef(0);
   /** Prevents layout-driven scroll events from consuming warm history before the user asks for it. */
   const olderHistoryRequestedRef = useRef(false);
+  /** Prevents layout-driven scroll events from reloading evicted newer history. */
+  const newerHistoryRequestedRef = useRef(false);
   /** Ref mirror of sticky-user-message visibility to avoid redundant setState on scroll. */
   const showStickyUserMessageRef = useRef(false);
   /** Previous effective top padding; used to compensate scrollTop when padding changes. */
@@ -343,11 +361,14 @@ export function MessageList({ displayThreadId, onBranch, onReply }: MessageListP
   );
   const latestTurnWithChanges = useThreadRecord(renderedThreadId, (r) => r.latestTurnWithChanges);
   const hasMore = useThreadRecord(renderedThreadId, (r) => r.hasMoreMessages);
+  const hasNewer = useThreadRecord(renderedThreadId, (r) => r.hasNewerMessages);
   const handoffStatus = useThreadStore((s) =>
     renderedThreadId ? getHandoffStatus(getThreadRecord(s.records, renderedThreadId)) : undefined,
   );
   const isLoadingMore = useThreadRecord(renderedThreadId, (r) => r.isLoadingMore);
+  const isLoadingNewer = useThreadRecord(renderedThreadId, (r) => r.isLoadingNewer);
   const loadOlderMessages = useThreadStore((s) => s.loadOlderMessages);
+  const loadNewerMessages = useThreadStore((s) => s.loadNewerMessages);
   const transcriptThreadId = messages[0]?.thread_id ?? null;
   const permissions = useThreadRecord(renderedThreadId, (r) => r.permissions);
   const hooks = useThreadRecord(renderedThreadId, (r) => r.hooks);
@@ -471,6 +492,34 @@ export function MessageList({ displayThreadId, onBranch, onReply }: MessageListP
     void loadOlderMessages(renderedThreadId);
   }, [activeThreadId, renderedThreadId, hasMore, historyAnchorTrailingSpace, isLoadingMore, loadOlderMessages]);
 
+  /** Load newer messages only after a downward gesture reaches the bottom threshold. */
+  const loadNewerHistoryWhenRequested = useCallback(() => {
+    const el = containerRef.current;
+    if (
+      !newerHistoryRequestedRef.current
+      || !el
+      || el.scrollHeight - el.scrollTop - el.clientHeight >= PAGINATION_THRESHOLD
+      || !renderedThreadId
+      || renderedThreadId !== activeThreadId
+      || !hasNewer
+      || isLoadingNewer
+    ) {
+      return;
+    }
+
+    newerHistoryRequestedRef.current = false;
+    const viewportTop = el.getBoundingClientRect().top;
+    const anchor = [...el.querySelectorAll<HTMLElement>("[data-message-id]")]
+      .find((node) => node.getBoundingClientRect().bottom > viewportTop + 2);
+    pendingHistoryAnchorRef.current = anchor
+      ? {
+          messageId: anchor.getAttribute("data-message-id") ?? "",
+          top: anchor.getBoundingClientRect().top,
+        }
+      : null;
+    void loadNewerMessages(renderedThreadId);
+  }, [activeThreadId, hasNewer, isLoadingNewer, loadNewerMessages, renderedThreadId]);
+
   /** Clears tail pin when the user scrolls content upward (wheel / trackpad). */
   const handleWheel = useCallback((e: WheelEvent<HTMLDivElement>) => {
     if (e.deltaY < 0) {
@@ -488,8 +537,11 @@ export function MessageList({ displayThreadId, onBranch, onReply }: MessageListP
       }
       streamingFollowPauseUntilRef.current = Date.now() + WHEEL_UP_FOLLOW_PAUSE_MS;
       loadOlderHistoryWhenRequested();
+    } else if (e.deltaY > 0) {
+      newerHistoryRequestedRef.current = true;
+      loadNewerHistoryWhenRequested();
     }
-  }, [loadOlderHistoryWhenRequested]);
+  }, [loadNewerHistoryWhenRequested, loadOlderHistoryWhenRequested]);
 
   /** Track scroll-to-bottom button visibility and trigger upward pagination near the top. */
   const handleScroll = useCallback(() => {
@@ -565,6 +617,7 @@ export function MessageList({ displayThreadId, onBranch, onReply }: MessageListP
     syncStickyUserMessageVisibility();
 
     loadOlderHistoryWhenRequested();
+    loadNewerHistoryWhenRequested();
 
     if (
       historyAnchorTrailingSpaceRef.current > 0
@@ -576,7 +629,7 @@ export function MessageList({ displayThreadId, onBranch, onReply }: MessageListP
     }
 
     prevScrollTopRef.current = el.scrollTop;
-  }, [historyAnchorTrailingSpace, renderedThreadId, loadOlderHistoryWhenRequested, transcriptThreadId, syncStickyUserMessageVisibility]);
+  }, [historyAnchorTrailingSpace, renderedThreadId, loadNewerHistoryWhenRequested, loadOlderHistoryWhenRequested, transcriptThreadId, syncStickyUserMessageVisibility]);
 
   useEffect(() => {
     for (const message of messages) {
@@ -733,8 +786,17 @@ export function MessageList({ displayThreadId, onBranch, onReply }: MessageListP
     && items[0]?.key !== firstVirtualItemKeyRef.current
       ? items.length - previousVirtualItemCount
       : 0;
+  const pendingAnchorMessageId = pendingHistoryAnchorRef.current?.messageId;
+  pendingHistoryAnchorIndexRef.current = pendingAnchorMessageId
+    ? items.findIndex((item) =>
+        item.type === "message" && item.message.id === pendingAnchorMessageId)
+    : -1;
   const rangeExtractor = useCallback(
-    (range: Range) => preservePrependedVirtualRange(range, pendingPrependCountRef.current),
+    (range: Range) => preservePrependedVirtualRange(
+      range,
+      pendingPrependCountRef.current,
+      pendingHistoryAnchorIndexRef.current,
+    ),
     [],
   );
 
@@ -1033,6 +1095,7 @@ export function MessageList({ displayThreadId, onBranch, onReply }: MessageListP
       turnExpandRef.current.clear();
       scrollToTailIntentRef.current = false;
       olderHistoryRequestedRef.current = false;
+      newerHistoryRequestedRef.current = false;
       pendingHistoryAnchorRef.current = null;
       historyAnchorTrailingSpaceRef.current = 0;
       setHistoryAnchorTrailingSpace(0);
@@ -1040,6 +1103,7 @@ export function MessageList({ displayThreadId, onBranch, onReply }: MessageListP
       scrollRestoreGenerationRef.current += 1;
       prevMessageCountRef.current = 0;
       firstMessageIdRef.current = null;
+      lastMessageIdRef.current = null;
       prevScrollHeightRef.current = 0;
       isScrolledUpRef.current = false;
       setShowScrollBtn(false);
@@ -1096,74 +1160,84 @@ export function MessageList({ displayThreadId, onBranch, onReply }: MessageListP
     }
   }, [renderedThreadId, loading, messages.length, virtualizer, positionAtBottom, items.length]);
 
-  // Stabilize scroll position when older messages are prepended.
-  // Detects real prepends by comparing the first message ID before and after
-  // the render, avoiding false positives from appends while near the top.
+  // Stabilize scroll position when directional pagination shifts the resident window.
   useLayoutEffect(() => {
     const el = containerRef.current;
     const prevCount = prevMessageCountRef.current;
     const prevFirstId = firstMessageIdRef.current;
+    const prevLastId = lastMessageIdRef.current;
+    const nextFirstId = messages[0]?.id ?? null;
+    const nextLastId = messages.at(-1)?.id ?? null;
     prevMessageCountRef.current = messages.length;
-    firstMessageIdRef.current = messages.length > 0 ? messages[0].id : null;
+    firstMessageIdRef.current = nextFirstId;
+    lastMessageIdRef.current = nextLastId;
 
-    if (!el || messages.length <= prevCount || prevCount === 0) {
+    if (!el || prevCount === 0) {
       pendingPrependCountRef.current = 0;
-      if (!isLoadingMore) {
+      if (!isLoadingMore && !isLoadingNewer) {
         pendingHistoryAnchorRef.current = null;
       }
       prevScrollHeightRef.current = el?.scrollHeight ?? 0;
       return;
     }
 
-    // A prepend occurred if the first message ID changed (new items at the front)
-    const wasPrepend = prevFirstId !== null && messages[0].id !== prevFirstId;
-    if (wasPrepend) {
-      const newScrollHeight = el.scrollHeight;
-      const anchorSnapshot = pendingHistoryAnchorRef.current;
-      const findAnchor = () => anchorSnapshot
-        ? [...el.querySelectorAll<HTMLElement>("[data-message-id]")]
-            .find((node) => node.getAttribute("data-message-id") === anchorSnapshot.messageId)
-        : undefined;
-      const correctAnchor = () => {
-        const anchor = findAnchor();
-        if (!anchor || !anchorSnapshot) return 0;
-        const delta = anchor.getBoundingClientRect().top - anchorSnapshot.top;
-        if (Math.abs(delta) > 0.5) {
-          el.scrollTop += delta;
-        }
-        return Math.abs(delta);
-      };
+    const windowChanged = messages.length !== prevCount
+      || nextFirstId !== prevFirstId
+      || nextLastId !== prevLastId;
+    if (!windowChanged) {
+      if (!isLoadingMore && !isLoadingNewer) pendingHistoryAnchorRef.current = null;
+      prevScrollHeightRef.current = el.scrollHeight;
+      return;
+    }
 
-      if (anchorSnapshot && findAnchor()) {
-        correctAnchor();
-        const generation = ++historyAnchorSettleGenerationRef.current;
-        let stableFrames = 0;
-        let attempts = 0;
-        const settleAnchor = () => {
-          if (historyAnchorSettleGenerationRef.current !== generation) return;
-          attempts += 1;
-          stableFrames = correctAnchor() <= 0.5 ? stableFrames + 1 : 0;
-          if (stableFrames >= 3 || attempts >= 12) {
-            pendingHistoryAnchorRef.current = null;
-            return;
-          }
-          requestAnimationFrame(settleAnchor);
-        };
-        requestAnimationFrame(settleAnchor);
+    const newScrollHeight = el.scrollHeight;
+    const anchorSnapshot = pendingHistoryAnchorRef.current;
+    const findAnchor = () => anchorSnapshot
+      ? [...el.querySelectorAll<HTMLElement>("[data-message-id]")]
+          .find((node) => node.getAttribute("data-message-id") === anchorSnapshot.messageId)
+      : undefined;
+    const correctAnchor = (): number | null => {
+      const anchor = findAnchor();
+      if (!anchor || !anchorSnapshot) return null;
+      const delta = anchor.getBoundingClientRect().top - anchorSnapshot.top;
+      if (Math.abs(delta) > 0.5) el.scrollTop += delta;
+      return Math.abs(delta);
+    };
+
+    if (anchorSnapshot) {
+      const anchorIndex = pendingHistoryAnchorIndexRef.current;
+      if (!findAnchor() && anchorIndex >= 0) {
+        virtualizer.scrollToIndex(anchorIndex, { align: "start" });
       } else {
-        const addedHeight = newScrollHeight - prevScrollHeightRef.current;
-        if (addedHeight > 0) {
-          el.scrollTop += addedHeight;
-        }
-        pendingHistoryAnchorRef.current = null;
+        correctAnchor();
       }
-      prevScrollHeightRef.current = newScrollHeight;
+      const generation = ++historyAnchorSettleGenerationRef.current;
+      let stableFrames = 0;
+      let attempts = 0;
+      const settleAnchor = () => {
+        if (historyAnchorSettleGenerationRef.current !== generation) return;
+        attempts += 1;
+        const remainingDrift = correctAnchor();
+        stableFrames = remainingDrift !== null && remainingDrift <= 0.5
+          ? stableFrames + 1
+          : 0;
+        if (stableFrames >= 3 || attempts >= 12) {
+          pendingHistoryAnchorRef.current = null;
+          return;
+        }
+        requestAnimationFrame(settleAnchor);
+      };
+      requestAnimationFrame(settleAnchor);
+    } else if (messages.length > prevCount && prevFirstId !== nextFirstId) {
+      const addedHeight = newScrollHeight - prevScrollHeightRef.current;
+      if (addedHeight > 0) el.scrollTop += addedHeight;
+      pendingHistoryAnchorRef.current = null;
     } else {
       pendingHistoryAnchorRef.current = null;
-      prevScrollHeightRef.current = el.scrollHeight;
     }
+    prevScrollHeightRef.current = newScrollHeight;
     pendingPrependCountRef.current = 0;
-  }, [isLoadingMore, messages]);
+  }, [isLoadingMore, isLoadingNewer, messages]);
 
   // Empty thread: reveal without a tail jump. Non-empty initial tail positioning
   // runs in the active-thread useLayoutEffect so cache-miss completion (same
@@ -1438,6 +1512,14 @@ export function MessageList({ displayThreadId, onBranch, onReply }: MessageListP
       {/* Loading spinner overlay for scroll-up pagination */}
       {isLoadingMore && (
         <div className="absolute top-2 left-1/2 z-10 -translate-x-1/2">
+          <div className="rounded-md border border-border/40 bg-background/80 px-2 py-1 backdrop-blur-sm">
+            <Spinner size={14} className="text-muted-foreground/70" />
+          </div>
+        </div>
+      )}
+
+      {isLoadingNewer && (
+        <div className="absolute bottom-2 left-1/2 z-10 -translate-x-1/2">
           <div className="rounded-md border border-border/40 bg-background/80 px-2 py-1 backdrop-blur-sm">
             <Spinner size={14} className="text-muted-foreground/70" />
           </div>

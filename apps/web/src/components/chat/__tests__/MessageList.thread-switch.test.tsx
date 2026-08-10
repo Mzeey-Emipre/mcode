@@ -24,6 +24,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 const measureSpy = vi.fn();
 const scrollToIndexSpy = vi.fn();
 const loadOlderMessagesSpy = vi.fn();
+const loadNewerMessagesSpy = vi.fn();
 const loadNarrativeForMessageSpy = vi.fn();
 let totalSizeValue = 0;
 let virtualizerOptions: { count: number } | null = null;
@@ -68,6 +69,7 @@ let messagesValue: {
   content?: string;
 }[] = [{ id: "m1", sequence: 1 }];
 let hasMoreMessagesValue = false;
+let hasNewerMessagesValue = false;
 let runningThreadIdsValue = new Set<string>();
 let handoffStatusByThread: Record<string, "generating" | "ready" | "fallback" | "error"> = {};
 
@@ -82,7 +84,9 @@ function buildMockRecord(threadId = currentThreadIdValue) {
     persistedFilesChanged: {},
     latestTurnWithChanges: null,
     hasMoreMessages: hasMoreMessagesValue,
+    hasNewerMessages: hasNewerMessagesValue,
     isLoadingMore: false,
+    isLoadingNewer: false,
     permissions: [],
     hooks: [],
     thoughtSegments: [],
@@ -104,6 +108,7 @@ vi.mock("@/stores/threadStore", () => ({
       currentThreadId: currentThreadIdValue,
       runningThreadIds: runningThreadIdsValue,
       loadOlderMessages: loadOlderMessagesSpy,
+      loadNewerMessages: loadNewerMessagesSpy,
       loadNarrativeForMessage: loadNarrativeForMessageSpy,
     });
   }),
@@ -151,9 +156,11 @@ beforeEach(() => {
   measureSpy.mockClear();
   scrollToIndexSpy.mockClear();
   loadOlderMessagesSpy.mockClear();
+  loadNewerMessagesSpy.mockClear();
   loadNarrativeForMessageSpy.mockClear();
   totalSizeValue = 0;
   hasMoreMessagesValue = false;
+  hasNewerMessagesValue = false;
   currentThreadIdValue = "thread-A";
   runningThreadIdsValue = new Set();
   handoffStatusByThread = {};
@@ -249,6 +256,15 @@ describe("MessageList thread switch", () => {
       overscan: 2,
       count: 105,
     }, 100)).toEqual([0, 1, 2, 3, 4, 5, 6, 100, 101, 102, 103, 104]);
+  });
+
+  it("keeps a retained anchor mounted when a bounded window replaces rows", () => {
+    expect(preservePrependedVirtualRange({
+      startIndex: 0,
+      endIndex: 4,
+      overscan: 2,
+      count: 200,
+    }, 0, 50)).toEqual([0, 1, 2, 3, 4, 5, 6, 50]);
   });
 
   it("keeps the measured transcript tail pinned as virtualized content grows", () => {
@@ -431,6 +447,63 @@ describe("MessageList thread switch", () => {
     rectSpy.mockRestore();
   });
 
+  it("preserves the visible message and pixel offset when a newer page replaces older rows", () => {
+    loadingValue = false;
+    activeThreadIdValue = "thread-A";
+    hasNewerMessagesValue = true;
+    messagesValue = [
+      { id: "m1", sequence: 1 },
+      { id: "m2", sequence: 2 },
+    ];
+    let scrollTop = 100;
+    let layoutShift = 0;
+    const rectSpy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: HTMLElement) {
+        const messageId = this.getAttribute("data-message-id");
+        if (messageId === "m1") return { top: -80, bottom: 0 } as DOMRect;
+        if (messageId === "m2") {
+          const top = 100 + layoutShift - (scrollTop - 100);
+          return { top, bottom: top + 80 } as DOMRect;
+        }
+        if (this.classList.contains("overflow-y-auto")) {
+          return { top: 0, bottom: 400 } as DOMRect;
+        }
+        return { top: 0, bottom: 0 } as DOMRect;
+      });
+    const { rerender, container } = render(<MessageList />);
+    const scrollEl = container.querySelector(".overflow-y-auto") as HTMLDivElement;
+    Object.defineProperty(scrollEl, "scrollHeight", { configurable: true, value: 500 });
+    Object.defineProperty(scrollEl, "clientHeight", { configurable: true, value: 400 });
+    Object.defineProperty(scrollEl, "scrollTop", {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => { scrollTop = value; },
+    });
+
+    fireEvent.wheel(scrollEl, { deltaY: 100 });
+    fireEvent.scroll(scrollEl);
+    layoutShift = -80;
+    messagesValue = [
+      { id: "m2", sequence: 2 },
+      { id: "m3", sequence: 3 },
+    ];
+    const animationFrames: FrameRequestCallback[] = [];
+    const animationFrameSpy = vi.spyOn(globalThis, "requestAnimationFrame")
+      .mockImplementation((callback) => {
+        animationFrames.push(callback);
+        return animationFrames.length;
+      });
+    act(() => rerender(<MessageList />));
+    act(() => {
+      while (animationFrames.length > 0) animationFrames.shift()?.(0);
+    });
+
+    expect(scrollTop).toBe(20);
+    expect(container.querySelector('[data-message-id="m2"]')?.getBoundingClientRect().top).toBe(100);
+    animationFrameSpy.mockRestore();
+    rectSpy.mockRestore();
+  });
+
   it("does not restore tail pin when wheel-up remains inside the bottom cushion", () => {
     loadingValue = false;
     activeThreadIdValue = "thread-A";
@@ -505,6 +578,38 @@ describe("MessageList thread switch", () => {
 
     expect(loadOlderMessagesSpy).toHaveBeenCalledOnce();
     expect(loadOlderMessagesSpy).toHaveBeenCalledWith("thread-A");
+  });
+
+  it("loads evicted newer history only after a downward gesture reaches the bottom threshold", async () => {
+    hasNewerMessagesValue = true;
+    messagesValue = Array.from({ length: 20 }, (_, index) => ({
+      id: `m${index + 1}`,
+      sequence: index + 1,
+    }));
+    totalSizeValue = 1_600;
+    const { getByTestId } = render(<MessageList />);
+    const scrollEl = getByTestId("message-list").firstElementChild as HTMLDivElement;
+    Object.defineProperty(scrollEl, "scrollHeight", { configurable: true, value: 1_600 });
+    Object.defineProperty(scrollEl, "clientHeight", { configurable: true, value: 400 });
+    Object.defineProperty(scrollEl, "scrollTop", {
+      configurable: true,
+      value: 1_200,
+      writable: true,
+    });
+    await vi.waitFor(() => expect(scrollEl.style.opacity).toBe("1"));
+
+    act(() => {
+      fireEvent.scroll(scrollEl);
+    });
+    expect(loadNewerMessagesSpy).not.toHaveBeenCalled();
+
+    act(() => {
+      fireEvent.wheel(scrollEl, { deltaY: 100 });
+      fireEvent.scroll(scrollEl);
+    });
+
+    expect(loadNewerMessagesSpy).toHaveBeenCalledOnce();
+    expect(loadNewerMessagesSpy).toHaveBeenCalledWith("thread-A");
   });
 
   it("does not call virtualizer.measure() on a cache-hit switch", () => {

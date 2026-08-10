@@ -1,22 +1,26 @@
 import { z } from "zod";
 import { lazySchema } from "../utils/lazySchema.js";
 import { ConversationNarrativeBatchSchema } from "./conversation-page.js";
+import {
+  CONVERSATION_HISTORY_PAGE_MAX_BYTES,
+  CONVERSATION_HISTORY_PAGE_MAX_MESSAGES,
+  CONVERSATION_HISTORY_PAGE_MAX_REQUEST_BYTES,
+  CONVERSATION_HISTORY_PAGE_MIN_BYTES,
+  conversationHistoryPageBytes,
+} from "./conversation-history-page.js";
 import { MessageSchema } from "./message.js";
 
 /** Maximum messages accepted in one older-conversation page. */
-export const CONVERSATION_OLDER_PAGE_MAX_MESSAGES = 100;
+export const CONVERSATION_OLDER_PAGE_MAX_MESSAGES = CONVERSATION_HISTORY_PAGE_MAX_MESSAGES;
 
 /** Minimum response-byte budget accepted for one older-conversation page. */
-export const CONVERSATION_OLDER_PAGE_MIN_BYTES = 65_536;
+export const CONVERSATION_OLDER_PAGE_MIN_BYTES = CONVERSATION_HISTORY_PAGE_MIN_BYTES;
 
 /** Maximum encoded bytes accepted for one older-conversation page response. */
-export const CONVERSATION_OLDER_PAGE_MAX_BYTES = 4_194_304;
+export const CONVERSATION_OLDER_PAGE_MAX_BYTES = CONVERSATION_HISTORY_PAGE_MAX_BYTES;
 
 /** Maximum encoded bytes accepted for one older-conversation page request. */
-export const CONVERSATION_OLDER_PAGE_MAX_REQUEST_BYTES = 4_096;
-
-const utf8Bytes = (value: unknown): number =>
-  new TextEncoder().encode(JSON.stringify(value)).byteLength;
+export const CONVERSATION_OLDER_PAGE_MAX_REQUEST_BYTES = CONVERSATION_HISTORY_PAGE_MAX_REQUEST_BYTES;
 
 /** Versioned stable-sequence cursor for older conversation history. */
 export const ConversationOlderPageCursorSchema = lazySchema(() =>
@@ -40,15 +44,15 @@ export const ConversationOlderPageIdentitySchema = lazySchema(() =>
 /** Bounded request for one page before a stable sequence cursor. */
 export const ConversationOlderPageRequestSchema = lazySchema(() =>
   ConversationOlderPageIdentitySchema().extend({
-    limit: z.number().int().min(1).max(CONVERSATION_OLDER_PAGE_MAX_MESSAGES),
+    limit: z.number().int().min(1).max(CONVERSATION_HISTORY_PAGE_MAX_MESSAGES),
     maxBytes: z.number().int()
-      .min(CONVERSATION_OLDER_PAGE_MIN_BYTES)
-      .max(CONVERSATION_OLDER_PAGE_MAX_BYTES),
+      .min(CONVERSATION_HISTORY_PAGE_MIN_BYTES)
+      .max(CONVERSATION_HISTORY_PAGE_MAX_BYTES),
   }).strict().superRefine((request, context) => {
-    if (utf8Bytes(request) > CONVERSATION_OLDER_PAGE_MAX_REQUEST_BYTES) {
+    if (conversationHistoryPageBytes(request) > CONVERSATION_HISTORY_PAGE_MAX_REQUEST_BYTES) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
-        message: `Older conversation page request exceeds ${CONVERSATION_OLDER_PAGE_MAX_REQUEST_BYTES} bytes`,
+        message: `Older conversation page request exceeds ${CONVERSATION_HISTORY_PAGE_MAX_REQUEST_BYTES} bytes`,
       });
     }
   }),
@@ -58,10 +62,10 @@ export const ConversationOlderPageRequestSchema = lazySchema(() =>
 export const ConversationOlderPageSchema = lazySchema(() =>
   z.object({
     identity: ConversationOlderPageIdentitySchema(),
-    messages: z.array(MessageSchema()).max(CONVERSATION_OLDER_PAGE_MAX_MESSAGES),
+    messages: z.array(MessageSchema()).max(CONVERSATION_HISTORY_PAGE_MAX_MESSAGES),
     hasMore: z.boolean(),
     nextCursor: ConversationOlderPageCursorSchema().nullable(),
-    answeredPlanMessageIds: z.array(z.string()).max(CONVERSATION_OLDER_PAGE_MAX_MESSAGES).optional(),
+    answeredPlanMessageIds: z.array(z.string()).max(CONVERSATION_HISTORY_PAGE_MAX_MESSAGES).optional(),
     narrativeByMessage: z.record(ConversationNarrativeBatchSchema()),
   }).strict().superRefine((page, context) => {
     if (page.hasMore !== (page.nextCursor !== null)) {
@@ -94,10 +98,10 @@ export const ConversationOlderPageSchema = lazySchema(() =>
         message: "Older conversation page cursor must continue before its first message",
       });
     }
-    if (utf8Bytes(page) > CONVERSATION_OLDER_PAGE_MAX_BYTES) {
+    if (conversationHistoryPageBytes(page) > CONVERSATION_HISTORY_PAGE_MAX_BYTES) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
-        message: `Older conversation page exceeds ${CONVERSATION_OLDER_PAGE_MAX_BYTES} bytes`,
+        message: `Older conversation page exceeds ${CONVERSATION_HISTORY_PAGE_MAX_BYTES} bytes`,
       });
     }
   }),

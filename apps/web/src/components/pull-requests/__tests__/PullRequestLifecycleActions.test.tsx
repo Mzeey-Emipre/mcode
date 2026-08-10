@@ -2,7 +2,7 @@ import type {
   PullRequestDetail,
   PullRequestMergeResult,
 } from "@mcode/contracts";
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -163,15 +163,17 @@ describe("PullRequestLifecycleActions", () => {
       screen.queryByRole("button", { name: "Close" }),
     ).not.toBeInTheDocument();
 
-    resolve({
-      ok: true,
-      effect: "merge",
-      idempotencyKey: request.idempotencyKey,
-      state: "merged",
-      mergeCommit: {
-        oid: "c".repeat(40),
-        url: "https://github.com/Mzeey-Empire/mcode/commit/cccccccccccccccccccccccccccccccccccccccc",
-      },
+    await act(async () => {
+      resolve({
+        ok: true,
+        effect: "merge",
+        idempotencyKey: request.idempotencyKey,
+        state: "merged",
+        mergeCommit: {
+          oid: "c".repeat(40),
+          url: "https://github.com/Mzeey-Empire/mcode/commit/cccccccccccccccccccccccccccccccccccccccc",
+        },
+      });
     });
     await vi.waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
