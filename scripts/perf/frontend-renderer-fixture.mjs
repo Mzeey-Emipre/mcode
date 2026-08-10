@@ -445,3 +445,220 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7) {
     pageErrors,
   };
 }
+
+/** Run the issue 1242 volatile narrative comparison against one Playwright page. */
+export async function runVolatileNarrativePrototype(page, runtime, sampleCount = 7) {
+  await installFixtureRuntime(page);
+  const consoleErrors = [];
+  const pageErrors = [];
+  const onConsole = (message) => {
+    if (message.type() === "error") consoleErrors.push(message.text());
+  };
+  const onPageError = (error) => pageErrors.push(String(error));
+  page.on("console", onConsole);
+  page.on("pageerror", onPageError);
+
+  const updates = await timeFixture(page, sampleCount, async (sample) => {
+    return page.evaluate(async (sampleIndex) => {
+      const fixture = window.__issue1240;
+      const metrics = window.__issue1242;
+      if (!metrics) throw new Error("The issue 1242 render metrics are unavailable.");
+      const revision = ++fixture.revision;
+      const threadId = `perf-volatile-narrative-${revision}`;
+      const activeToolId = `${threadId}-active-tool`;
+      const startedAt = 1_754_772_400_000;
+      const completedTools = Array.from({ length: 30 }, (_, index) => ({
+        id: `${threadId}-tool-${index}`,
+        toolName: index % 3 === 0 ? "Bash" : index % 3 === 1 ? "Read" : "Edit",
+        toolInput: { path: `/fixture/${index}.ts` },
+        output: `Fixture output ${index}`,
+        isError: false,
+        isComplete: true,
+        startedAt: startedAt + index * 30,
+        durationMs: 5,
+      }));
+      const agentParents = Array.from({ length: 4 }, (_, index) => ({
+        id: `${threadId}-agent-${index}`,
+        toolName: "Agent",
+        toolInput: { description: `Parallel agent ${index}` },
+        output: null,
+        isError: false,
+        isComplete: false,
+        startedAt: startedAt + index * 30 + 5,
+      }));
+      const agentChildren = agentParents.flatMap((parent, parentIndex) =>
+        Array.from({ length: 5 }, (_, childIndex) => ({
+          id: `${parent.id}-child-${childIndex}`,
+          toolName: "Read",
+          toolInput: { path: `/agent-${parentIndex}/${childIndex}.ts` },
+          output: `Child output ${childIndex}`,
+          isError: false,
+          isComplete: true,
+          parentToolCallId: parent.id,
+          startedAt: startedAt + parentIndex * 30 + childIndex + 6,
+          durationMs: 2,
+        })),
+      );
+      const activeTool = {
+        id: activeToolId,
+        toolName: "Bash",
+        toolInput: { command: "prototype-progress" },
+        output: null,
+        isError: false,
+        isComplete: false,
+        elapsedSeconds: 0,
+        startedAt: startedAt + 2_000,
+      };
+      const thoughts = Array.from({ length: 20 }, (_, index) => ({
+        text: `Narration segment ${index} ${"detail ".repeat(20)}`,
+        startedAt: startedAt + index * 30 + 10,
+        endedAt: startedAt + index * 30 + 15,
+        isExplicitNonFinal: true,
+      }));
+      const hooks = Array.from({ length: 10 }, (_, index) => ({
+        hookName: `FixtureHook${index}`,
+        hookType: "permission",
+        toolName: "Bash",
+        status: index === 9 ? "running" : "completed",
+        outputLines: [`Hook output ${index}`],
+        fullOutput: [`Hook output ${index}`],
+        exitCode: 0,
+        durationMs: 3,
+        didBlock: false,
+        startedAt: startedAt + index * 60 + 20,
+      }));
+      fixture.activate(
+        threadId,
+        `Volatile narrative ${metrics.variant}`,
+        fixture.makeMessages(threadId, 100, metrics.variant),
+        {
+          runtimePhase: "running",
+          turnExecutionId: `${threadId}-turn`,
+          toolCalls: [...completedTools, ...agentParents, ...agentChildren, activeTool],
+          thoughtSegments: thoughts,
+          hooks,
+          agentStartTime: startedAt,
+        },
+      );
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+      const list = document.querySelector('[data-testid="message-list"]')?.firstElementChild;
+      if (list instanceof HTMLElement) {
+        list.scrollTop = Math.max(0, list.scrollHeight - list.clientHeight - 500);
+        list.dispatchEvent(new Event("scroll"));
+      }
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const scrollTopBefore = list?.scrollTop ?? 0;
+      const scrollBottomDistanceBefore = list
+        ? list.scrollHeight - list.clientHeight - list.scrollTop
+        : 0;
+      metrics.reset();
+      const updateStartedAt = performance.now();
+      for (let index = 1; index <= 200; index += 1) {
+        fixture.threadStore.getState().handleAgentEvent({
+          type: "toolProgress",
+          threadId,
+          toolCallId: activeToolId,
+          elapsedSeconds: index,
+        });
+      }
+      for (let index = 0; index < 50; index += 1) {
+        fixture.threadStore.getState().handleAgentEvent({
+          type: "hookProgress",
+          threadId,
+          hookName: "FixtureHook9",
+          output: `Progress ${index}\n`,
+        });
+      }
+      for (let index = 0; index < 200; index += 1) {
+        fixture.threadStore.getState().handleAgentEvent({
+          type: "textDelta",
+          threadId,
+          delta: `thought-${index} `,
+          isFinalResponse: false,
+        });
+      }
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const durationMs = performance.now() - updateStartedAt;
+      const updateSnapshot = metrics.snapshot();
+      const beforePersist = fixture.threadStore.getState().records.get(threadId);
+
+      fixture.threadStore.getState().handleTurnPersisted({
+        threadId,
+        messageId: `${threadId}-server-message`,
+        turnId: `${threadId}-turn`,
+        toolCallCount: beforePersist?.toolCalls.length ?? 0,
+        filesChanged: [],
+      });
+      const afterPersist = fixture.threadStore.getState().records.get(threadId);
+
+      const otherThreadId = `${threadId}-other`;
+      const otherThread = fixture.baseThread(otherThreadId, "Other resident thread");
+      const otherRecord = {
+        ...fixture.recordModule.createEmptyThreadRecord(),
+        messages: fixture.makeMessages(otherThreadId, 100, "other"),
+      };
+      fixture.workspaceStore.setState((state) => ({
+        ...state,
+        threads: [otherThread, ...state.threads.filter((item) => item.id !== otherThreadId)],
+      }));
+      fixture.threadStore.setState((state) => ({
+        ...state,
+        records: new Map(state.records).set(otherThreadId, otherRecord),
+        currentThreadId: otherThreadId,
+      }));
+      fixture.workspaceStore.setState({ activeThreadId: otherThreadId });
+      fixture.threadStore.setState({ currentThreadId: threadId });
+      fixture.workspaceStore.setState({ activeThreadId: threadId });
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+      const finalRecord = fixture.threadStore.getState().records.get(threadId);
+      const rowKeys = [...document.querySelectorAll("[data-narrative-prototype-row]")]
+        .map((node) => node.getAttribute("data-narrative-prototype-row"));
+      return {
+        durationMs,
+        check: {
+          variant: updateSnapshot.variant,
+          commits: updateSnapshot.commits,
+          actualDurationMs: updateSnapshot.actualDurationMs,
+          baseDurationMs: updateSnapshot.baseDurationMs,
+          rowRenders: updateSnapshot.rowRenders,
+          changedRowCount: Object.keys(updateSnapshot.rowRendersByKey).length,
+          visibleRows: rowKeys.length,
+          uniqueRowKeys: new Set(rowKeys).size,
+          activeToolElapsedSeconds: finalRecord?.toolCalls.find((tool) => tool.id === activeToolId)?.elapsedSeconds,
+          thoughtSuffixPresent: finalRecord?.thoughtSegments.at(-1)?.text.endsWith("thought-199 ") ?? false,
+          hookProgressLines: finalRecord?.hooks.at(-1)?.fullOutput.length ?? 0,
+          toolCallsSurvivedPersist: afterPersist?.toolCalls.length === beforePersist?.toolCalls.length,
+          thoughtsSurvivedPersist: afterPersist?.thoughtSegments.length === beforePersist?.thoughtSegments.length,
+          hooksSurvivedPersist: afterPersist?.hooks.length === beforePersist?.hooks.length,
+          visibleThreadId: document.querySelector("[data-message-id]")?.getAttribute("data-thread-id") ?? null,
+          expectedThreadId: threadId,
+          scrollTopBefore,
+          scrollTopAfter: list?.scrollTop ?? 0,
+          scrollBottomDistanceBefore,
+          scrollBottomDistanceAfter: list
+            ? list.scrollHeight - list.clientHeight - list.scrollTop
+            : 0,
+          usedJsHeapBytes: performance.memory?.usedJSHeapSize ?? null,
+          sampleIndex,
+        },
+      };
+    }, sample);
+  });
+
+  page.off("console", onConsole);
+  page.off("pageerror", onPageError);
+  return {
+    runtime,
+    sampleCount,
+    metrics: {
+      updates: {
+        ...summarizeSamples(updates.samples),
+        checks: updates.checks,
+      },
+    },
+    consoleErrors,
+    pageErrors,
+  };
+}

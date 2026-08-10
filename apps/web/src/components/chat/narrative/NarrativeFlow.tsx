@@ -1,4 +1,6 @@
-import { useMemo } from "react";
+import { memo, Profiler, useLayoutEffect, useMemo } from "react";
+import { batch, type Observable } from "@legendapp/state";
+import { useObservable, useValue } from "@legendapp/state/react";
 import type { ToolCall, HookExecution } from "@/transport/types";
 import type { ThoughtSegment, NarrativeItem } from "./types";
 import { buildNarrativeItems } from "./build-narrative";
@@ -8,6 +10,11 @@ import { HookRow } from "./HookRow";
 import { SubagentRow } from "./SubagentRow";
 import { ActiveToolRow } from "./ActiveToolRow";
 import { DeltaBlock } from "./DeltaBlock";
+import {
+  readNarrativePrototypeVariant,
+  recordNarrativePrototypeCommit,
+  recordNarrativePrototypeRowRender,
+} from "./narrative-prototype-metrics";
 
 /** Props for the NarrativeFlow container component. */
 export interface NarrativeFlowProps {
@@ -78,6 +85,144 @@ function keyForItem(item: NarrativeItem, index: number): string {
     default:
       return `item-${index}`;
   }
+}
+
+interface NarrativeRowProps {
+  item: NarrativeItem;
+  index: number;
+  mostActiveSubagentId: string | null;
+  allToolCalls: readonly ToolCall[];
+}
+
+function sameReferences<T>(left: readonly T[], right: readonly T[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function sameNarrativeItem(left: NarrativeItem, right: NarrativeItem): boolean {
+  if (left.type !== right.type) return false;
+  switch (left.type) {
+    case "thought":
+      return right.type === "thought"
+        && left.segment === right.segment
+        && left.isActive === right.isActive;
+    case "tool-group":
+      return right.type === "tool-group"
+        && left.hasError === right.hasError
+        && left.hasCancelled === right.hasCancelled
+        && sameReferences(left.group.calls, right.group.calls);
+    case "hook":
+      return right.type === "hook" && left.hook === right.hook;
+    case "subagent":
+      return right.type === "subagent"
+        && left.lifecycle === right.lifecycle
+        && left.toolCall === right.toolCall
+        && sameReferences(left.participants, right.participants)
+        && sameReferences(left.children, right.children)
+        && sameReferences(left.hooks, right.hooks);
+    case "active-tool":
+      return right.type === "active-tool" && left.toolCall === right.toolCall;
+    case "delta":
+      return right.type === "delta" && left.text === right.text;
+  }
+}
+
+function NarrativeRow({
+  item,
+  index,
+  mostActiveSubagentId,
+  allToolCalls,
+}: NarrativeRowProps) {
+  const rowKey = keyForItem(item, index);
+  recordNarrativePrototypeRowRender(rowKey);
+  return (
+    <div
+      className={[
+        marginClassForItem(item, index),
+        "narrative-row-enter min-w-0 max-w-full",
+      ].join(" ")}
+      data-narrative-prototype-row={rowKey}
+    >
+      {renderItem(item, mostActiveSubagentId, allToolCalls)}
+    </div>
+  );
+}
+
+const TargetedNarrativeRow = memo(NarrativeRow, (left, right) =>
+  left.index === right.index
+  && left.mostActiveSubagentId === right.mostActiveSubagentId
+  && sameNarrativeItem(left.item, right.item),
+);
+
+type LegendRowPayload = NarrativeRowProps;
+
+interface LegendTimelineState {
+  order: string[];
+  rows: Record<string, LegendRowPayload | undefined>;
+}
+
+function sameLegendRowPayload(
+  left: LegendRowPayload | undefined,
+  right: LegendRowPayload,
+): boolean {
+  return left !== undefined
+    && left.index === right.index
+    && left.mostActiveSubagentId === right.mostActiveSubagentId
+    && sameNarrativeItem(left.item, right.item);
+}
+
+function LegendNarrativeRow({
+  rowKey,
+  rows$,
+}: {
+  rowKey: string;
+  rows$: Observable<LegendTimelineState["rows"]>;
+}) {
+  const payload = useValue(rows$[rowKey]);
+  if (!payload) return null;
+  return <NarrativeRow {...payload} />;
+}
+
+function LegendNarrativeTimeline({
+  items,
+  mostActiveSubagentId,
+  allToolCalls,
+}: {
+  items: readonly NarrativeItem[];
+  mostActiveSubagentId: string | null;
+  allToolCalls: readonly ToolCall[];
+}) {
+  const state$ = useObservable<LegendTimelineState>({ order: [], rows: {} });
+  const entries = useMemo(
+    () => items.map((item, index) => ({
+      key: keyForItem(item, index),
+      payload: { item, index, mostActiveSubagentId, allToolCalls },
+    })),
+    [items, mostActiveSubagentId, allToolCalls],
+  );
+
+  useLayoutEffect(() => {
+    const nextOrder = entries.map((entry) => entry.key);
+    batch(() => {
+      if (!sameReferences(state$.order.peek(), nextOrder)) {
+        state$.order.set(nextOrder);
+      }
+      const currentRows = state$.rows.peek();
+      for (const { key, payload } of entries) {
+        if (!sameLegendRowPayload(currentRows[key], payload)) {
+          state$.rows[key].set(payload);
+        }
+      }
+      const retainedKeys = new Set(nextOrder);
+      for (const key of Object.keys(currentRows)) {
+        if (!retainedKeys.has(key)) state$.rows[key].delete();
+      }
+    });
+  }, [entries, state$]);
+
+  const order = useValue(state$.order);
+  return order.map((rowKey) => (
+    <LegendNarrativeRow key={rowKey} rowKey={rowKey} rows$={state$.rows} />
+  ));
 }
 
 /**
@@ -195,26 +340,45 @@ export function NarrativeFlow({
   // outside the timeline so it can transition seamlessly into the persisted
   // MessageBubble on turnComplete.
   const timelineItems = items.filter((it) => it.type !== "delta");
+  const prototypeVariant = readNarrativePrototypeVariant();
+
+  const timeline = (() => {
+    if (prototypeVariant === "legend") {
+      return (
+        <LegendNarrativeTimeline
+          items={timelineItems}
+          mostActiveSubagentId={mostActiveSubagentId}
+          allToolCalls={toolCalls}
+        />
+      );
+    }
+    const Row = prototypeVariant === "zustand-targeted"
+      ? TargetedNarrativeRow
+      : NarrativeRow;
+    return timelineItems.map((item, index) => (
+      <Row
+        key={keyForItem(item, index)}
+        item={item}
+        index={index}
+        mostActiveSubagentId={mostActiveSubagentId}
+        allToolCalls={toolCalls}
+      />
+    ));
+  })();
 
   return (
-    <div className="relative min-w-0 max-w-full">
+    <Profiler id={`narrative-${prototypeVariant}`} onRender={recordNarrativePrototypeCommit}>
+      <div
+        className="relative min-w-0 max-w-full"
+        data-narrative-prototype-variant={prototypeVariant}
+      >
       {/* Timeline — no vertical rail, no row dots. Each row component carries
           its own visual marker (chevron, icon, badge), and consecutive action
           rows (tools, hooks, sub-agents) stack tightly as one "actions
           molecule" while text rows breathe with a larger top margin. */}
       {timelineItems.length > 0 && (
         <div className="flex min-w-0 max-w-full flex-col">
-          {timelineItems.map((item, i) => (
-            <div
-              key={keyForItem(item, i)}
-              className={[
-                marginClassForItem(item, i),
-                "narrative-row-enter min-w-0 max-w-full",
-              ].join(" ")}
-            >
-              {renderItem(item, mostActiveSubagentId, toolCalls)}
-            </div>
-          ))}
+          {timeline}
         </div>
       )}
 
@@ -240,6 +404,7 @@ export function NarrativeFlow({
           it ABOVE the message body — which is exactly the bug we are
           fixing — because this container itself sits before the bubble in
           the virtual-list order. */}
-    </div>
+      </div>
+    </Profiler>
   );
 }
