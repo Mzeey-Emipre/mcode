@@ -25,7 +25,9 @@ export type ThreadRecordPatch = Pick<
   ThreadRecord,
   | "messages"
   | "oldestLoadedSequence"
+  | "newestLoadedSequence"
   | "hasMoreMessages"
+  | "hasNewerMessages"
   | "persistedToolCallCounts"
   | "persistedFilesChanged"
   | "latestTurnWithChanges"
@@ -52,12 +54,15 @@ export class SnapshotBuilder {
     }
 
     const oldestLoadedSequence = messages.length > 0 ? messages[0].sequence : 0;
+    const newestLoadedSequence = messages.at(-1)?.sequence ?? 0;
     const fileChanges = SnapshotBuilder.deriveFileChanges(snapshots);
 
     return {
       messages,
       oldestLoadedSequence,
+      newestLoadedSequence,
       hasMoreMessages: hasMore,
+      hasNewerMessages: false,
       persistedToolCallCounts,
       persistedFilesChanged: fileChanges.persistedFilesChanged,
       latestTurnWithChanges: fileChanges.latestTurnWithChanges,

@@ -1,5 +1,5 @@
 import type { Message, ToolCallRecord, ThoughtSegmentRecord, HookExecutionRecord } from "@/transport";
-import type { TurnSnapshot, PermissionRequest, PlanRecord, NarrativeEntry, ConversationOlderPage, ConversationOlderPageRequest, ConversationPage, ConversationTail, GoalLookupResult } from "@mcode/contracts";
+import type { TurnSnapshot, PermissionRequest, PlanRecord, NarrativeEntry, ConversationNewerPage, ConversationNewerPageRequest, ConversationOlderPage, ConversationOlderPageRequest, ConversationPage, ConversationTail, GoalLookupResult } from "@mcode/contracts";
 import type { TaskItem } from "@/stores/taskStore";
 import type { PlanQuestion } from "@mcode/contracts";
 import type { ThreadRecord } from "@/stores/thread-record";
@@ -35,6 +35,7 @@ export interface ThreadHydratorTransport {
   getMessages(threadId: string, limit: number, before?: number): Promise<PaginatedMessages>;
   loadConversationPage(threadId: string, limit: number, before?: number): Promise<ConversationPage>;
   loadOlderConversationPage(request: ConversationOlderPageRequest): Promise<ConversationOlderPage>;
+  loadNewerConversationPage(request: ConversationNewerPageRequest): Promise<ConversationNewerPage>;
   /** Fetch only the bounded tail needed for first paint when supported. */
   loadConversationTail?: (threadId: string, limit: number) => Promise<ConversationTail>;
   listSnapshots(threadId: string): Promise<TurnSnapshot[]>;

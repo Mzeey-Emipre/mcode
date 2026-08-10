@@ -14,6 +14,14 @@ import type {
   ConversationOlderPageRequest,
 } from "../models/conversation-older-page.js";
 import {
+  ConversationNewerPageRequestSchema,
+  ConversationNewerPageSchema,
+} from "../models/conversation-newer-page.js";
+import type {
+  ConversationNewerPage,
+  ConversationNewerPageRequest,
+} from "../models/conversation-newer-page.js";
+import {
   CONVERSATION_TAIL_THREAD_ID_MAX_LENGTH,
   ConversationTailParamsSchema,
   ConversationTailSchema,
@@ -331,6 +339,14 @@ const ConversationOlderPageMethod: {
 } = {
   params: ConversationOlderPageRequestSchema(),
   result: ConversationOlderPageSchema(),
+};
+
+const ConversationNewerPageMethod: {
+  params: z.ZodType<ConversationNewerPageRequest>;
+  result: z.ZodType<ConversationNewerPage>;
+} = {
+  params: ConversationNewerPageRequestSchema(),
+  result: ConversationNewerPageSchema(),
 };
 
 /** All RPC method definitions keyed by method name with params and result schemas. */
@@ -856,6 +872,9 @@ export const WS_METHODS = lazySchema(() => ({
   },
   "conversation.olderPage": {
     ...ConversationOlderPageMethod,
+  },
+  "conversation.newerPage": {
+    ...ConversationNewerPageMethod,
   },
   "conversation.tail": {
     params: ConversationTailParamsSchema(),

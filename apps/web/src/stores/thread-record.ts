@@ -87,8 +87,11 @@ export interface ThreadRecord {
   messages: Message[];
   loading: boolean;
   oldestLoadedSequence: number;
+  newestLoadedSequence: number;
   hasMoreMessages: boolean;
+  hasNewerMessages: boolean;
   isLoadingMore: boolean;
+  isLoadingNewer: boolean;
   loadEpoch: number;
   /** Monotonic identity for renderer-owned conversation content. */
   conversationRevision: number;
@@ -177,8 +180,11 @@ export function createEmptyThreadRecord(): ThreadRecord {
     messages: [],
     loading: false,
     oldestLoadedSequence: 0,
+    newestLoadedSequence: 0,
     hasMoreMessages: false,
+    hasNewerMessages: false,
     isLoadingMore: false,
+    isLoadingNewer: false,
     loadEpoch: 0,
     conversationRevision: 0,
     persistedToolCallCounts: {},
@@ -256,7 +262,15 @@ export function patchThreadRecord(
   const updated = {
     ...current,
     ...delta,
-    ...(advancesConversation ? { isLoadingMore: false } : {}),
+    ...(advancesConversation ? { isLoadingMore: false, isLoadingNewer: false } : {}),
+    ...(delta.messages
+      ? {
+          oldestLoadedSequence:
+            delta.oldestLoadedSequence ?? delta.messages[0]?.sequence ?? 0,
+          newestLoadedSequence:
+            delta.newestLoadedSequence ?? delta.messages.at(-1)?.sequence ?? 0,
+        }
+      : {}),
     conversationRevision: advancesConversation
       ? current.conversationRevision + 1
       : current.conversationRevision,

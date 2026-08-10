@@ -149,7 +149,9 @@ function mergeResidentConversationCacheState(
     ...residentCacheState,
     messages,
     oldestLoadedSequence: messages[0]?.sequence ?? residentCacheState.oldestLoadedSequence,
+    newestLoadedSequence: messages.at(-1)?.sequence ?? residentCacheState.newestLoadedSequence,
     hasMoreMessages: cached.hasMoreMessages || residentCacheState.hasMoreMessages,
+    hasNewerMessages: cached.hasNewerMessages || residentCacheState.hasNewerMessages,
     persistedToolCallCounts: mergeMessageMetadata(
       cached.persistedToolCallCounts,
       residentCacheState.persistedToolCallCounts,
@@ -334,6 +336,7 @@ export class ThreadHydrator {
         records: patchThreadRecord(state.records, threadId, (record) => ({
           loading: false,
           isLoadingMore: false,
+          isLoadingNewer: false,
           loadEpoch: record.loadEpoch + 1,
         })),
       };
@@ -398,6 +401,7 @@ export class ThreadHydrator {
         records: patchThreadRecord(state.records, threadId, (record) => ({
           loading: false,
           isLoadingMore: false,
+          isLoadingNewer: false,
           loadEpoch: record.loadEpoch + 1,
         })),
         currentThreadId: null,
@@ -621,6 +625,7 @@ export class ThreadHydrator {
           loading: false,
           error: null,
           isLoadingMore: false,
+          isLoadingNewer: false,
           loadEpoch: current.loadEpoch + 1,
           settings: this.deps.getWorkspaceThreadSettings(threadId),
         }),
@@ -838,6 +843,7 @@ export class ThreadHydrator {
           loading: false,
           loadEpoch: opts?.bumpLoadEpoch === false ? current.loadEpoch : current.loadEpoch + 1,
           isLoadingMore: false,
+          isLoadingNewer: false,
           settings: this.deps.getWorkspaceThreadSettings(threadId),
         }),
         currentThreadId: threadId,
@@ -936,6 +942,7 @@ export class ThreadHydrator {
             persistedFilesChanged: {},
             latestTurnWithChanges: null,
             isLoadingMore: false,
+            isLoadingNewer: false,
             loadEpoch: current.loadEpoch + 1,
             streaming: "",
             streamingPreview: "",
@@ -960,6 +967,7 @@ export class ThreadHydrator {
           loading: true,
           error: null,
           isLoadingMore: false,
+          isLoadingNewer: false,
           loadEpoch: current.loadEpoch + 1,
           settings: this.deps.getWorkspaceThreadSettings(threadId),
         }),
@@ -1030,6 +1038,7 @@ export class ThreadHydrator {
               records: patchThreadRecord(state.records, threadId, {
                 loading: false,
                 isLoadingMore: false,
+                isLoadingNewer: false,
               }),
             };
           });
@@ -1044,6 +1053,7 @@ export class ThreadHydrator {
             records: patchThreadRecord(state.records, threadId, {
               loading: false,
               isLoadingMore: false,
+              isLoadingNewer: false,
             }),
           };
         });
@@ -1079,6 +1089,7 @@ export class ThreadHydrator {
                 : {}),
             loading: false,
             isLoadingMore: false,
+            isLoadingNewer: false,
             // Reserve the auxiliary freshness window with the conversation commit.
             // The fanout itself is deferred so the first paint is not blocked.
             lastHydratedAt: Date.now(),

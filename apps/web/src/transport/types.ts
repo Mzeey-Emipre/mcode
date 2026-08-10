@@ -38,6 +38,8 @@ import type {
   PermissionRequest,
   CreateAndSendResult,
   ConversationPage,
+  ConversationNewerPage,
+  ConversationNewerPageRequest,
   ConversationOlderPage,
   ConversationOlderPageRequest,
   ConversationTail,
@@ -391,6 +393,8 @@ export interface McodeTransport {
   loadConversationPage(threadId: string, limit: number, before?: number): Promise<ConversationPage>;
   /** Fetch one identity-bound and byte-bounded page of older conversation history. */
   loadOlderConversationPage(request: ConversationOlderPageRequest): Promise<ConversationOlderPage>;
+  /** Fetch one identity-bound and byte-bounded page of newer conversation history. */
+  loadNewerConversationPage(request: ConversationNewerPageRequest): Promise<ConversationNewerPage>;
   /** Fetch only the bounded tail needed for first paint. */
   loadConversationTail?(threadId: string, limit: number): Promise<ConversationTail>;
 

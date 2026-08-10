@@ -103,6 +103,7 @@ import type { HandoffStorage } from "../services/handoff/handoff-storage.js";
 import {
   loadConversationPage,
   loadConversationTail,
+  loadNewerConversationPage,
   loadOlderConversationPage,
 } from "../services/conversation-page.js";
 import type { ThreadTeardownService } from "../services/thread-teardown-service.js";
@@ -944,6 +945,8 @@ async function dispatch(
       });
     case "conversation.olderPage":
       return loadOlderConversationPage(deps, params);
+    case "conversation.newerPage":
+      return loadNewerConversationPage(deps, params);
     case "conversation.tail":
       return loadConversationTail(deps, {
         threadId: params.threadId,

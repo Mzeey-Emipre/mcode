@@ -11,6 +11,7 @@ import { NarrativeStore } from "../narrative-store";
 import {
   loadConversationPage,
   loadConversationTail,
+  loadNewerConversationPage,
   loadOlderConversationPage,
 } from "../conversation-page";
 
@@ -274,5 +275,67 @@ describe("loadOlderConversationPage", () => {
       limit: 1,
       maxBytes: 65_536,
     })).toThrow("cannot fit within 65536 bytes");
+  });
+});
+
+describe("loadNewerConversationPage", () => {
+  it("returns the nearest newer sequence window within the shared byte budget", () => {
+    const db = openMemoryDatabase();
+    seedThread(db);
+    insertMessage(db, "m1", "user", "old", 1);
+    insertMessage(db, "m2", "assistant", "b".repeat(40_000), 2);
+    insertMessage(db, "m3", "user", "c".repeat(40_000), 3);
+    insertMessage(db, "m4", "assistant", "d".repeat(40_000), 4);
+
+    const request = {
+      threadId: "thread-1",
+      cursor: { version: 1 as const, afterSequence: 1 },
+      direction: "newer" as const,
+      generation: 5,
+      conversationRevision: 9,
+      limit: 3,
+      maxBytes: 65_536,
+    };
+    const page = loadNewerConversationPage(createDeps(db), request);
+
+    expect(page.identity).toEqual({
+      threadId: request.threadId,
+      cursor: request.cursor,
+      direction: request.direction,
+      generation: request.generation,
+      conversationRevision: request.conversationRevision,
+    });
+    expect(page.messages.map((message) => message.sequence)).toEqual([2]);
+    expect(page.hasMore).toBe(true);
+    expect(page.nextCursor).toEqual({ version: 1, afterSequence: 2 });
+    expect(Buffer.byteLength(JSON.stringify(page), "utf8")).toBeLessThanOrEqual(request.maxBytes);
+  });
+
+  it("traverses forward without gaps or duplicate boundary rows", () => {
+    const db = openMemoryDatabase();
+    seedThread(db);
+    for (let sequence = 1; sequence <= 8; sequence++) {
+      insertMessage(db, `m${sequence}`, sequence % 2 === 0 ? "assistant" : "user", `message ${sequence}`, sequence);
+    }
+    const deps = createDeps(db);
+    const sequences: number[] = [];
+    let afterSequence = 0;
+
+    for (;;) {
+      const page = loadNewerConversationPage(deps, {
+        threadId: "thread-1",
+        cursor: { version: 1, afterSequence },
+        direction: "newer",
+        generation: 1,
+        conversationRevision: 1,
+        limit: 3,
+        maxBytes: 65_536,
+      });
+      sequences.push(...page.messages.map((message) => message.sequence));
+      if (!page.nextCursor) break;
+      afterSequence = page.nextCursor.afterSequence;
+    }
+
+    expect(sequences).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
   });
 });

@@ -100,20 +100,26 @@ describe("ConversationResidency", () => {
       generation: 2,
       conversationRevision: 4,
     };
-    const requestB = { ...requestA, threadId: "thread-b" };
+    const requestB = {
+      threadId: "thread-b",
+      cursor: { version: 1 as const, afterSequence: 10 },
+      direction: "newer" as const,
+      generation: 2,
+      conversationRevision: 4,
+    };
 
-    const handleA = residency.beginOlderPageRequest(requestA)!;
-    const handleB = residency.beginOlderPageRequest(requestB)!;
+    const handleA = residency.beginHistoryPageRequest(requestA)!;
+    const handleB = residency.beginHistoryPageRequest(requestB)!;
 
-    expect(residency.beginOlderPageRequest(requestA)).toBeUndefined();
-    expect(residency.canCommitOlderPageRequest(handleA, requestA)).toBe(true);
-    expect(residency.canCommitOlderPageRequest(handleB, requestB)).toBe(true);
+    expect(residency.beginHistoryPageRequest(requestA)).toBeUndefined();
+    expect(residency.canCommitHistoryPageRequest(handleA, requestA)).toBe(true);
+    expect(residency.canCommitHistoryPageRequest(handleB, requestB)).toBe(true);
 
     residency.invalidateConversation("thread-a");
 
-    expect(residency.canCommitOlderPageRequest(handleA, requestA)).toBe(false);
-    expect(residency.canCommitOlderPageRequest(handleB, requestB)).toBe(true);
-    expect(residency.canCommitOlderPageRequest(handleB, requestB, {
+    expect(residency.canCommitHistoryPageRequest(handleA, requestA)).toBe(false);
+    expect(residency.canCommitHistoryPageRequest(handleB, requestB)).toBe(true);
+    expect(residency.canCommitHistoryPageRequest(handleB, requestB, {
       ...requestB,
       threadId: "thread-a",
     })).toBe(false);
@@ -132,10 +138,10 @@ describe("ConversationResidency", () => {
       generation: 1,
       conversationRevision: 1,
     };
-    const handle = residency.beginOlderPageRequest(request)!;
+    const handle = residency.beginHistoryPageRequest(request)!;
 
     await residency.activate("thread-b", [{ id: "thread-a" }, { id: "thread-b" }]);
 
-    expect(residency.canCommitOlderPageRequest(handle, request)).toBe(false);
+    expect(residency.canCommitHistoryPageRequest(handle, request)).toBe(false);
   });
 });

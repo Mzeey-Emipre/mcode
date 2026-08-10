@@ -1,6 +1,7 @@
 import "reflect-metadata";
 import { performance } from "node:perf_hooks";
 import type Database from "better-sqlite3";
+import { CONVERSATION_HISTORY_PAGE_MAX_BYTES } from "@mcode/contracts";
 import { openMemoryDatabase } from "../src/store/database.js";
 import { MessageRepo } from "../src/repositories/message-repo.js";
 import { ToolCallRecordRepo } from "../src/repositories/tool-call-record-repo.js";
@@ -8,11 +9,17 @@ import { ThoughtSegmentRepo } from "../src/repositories/thought-segment-repo.js"
 import { HookExecutionRepo } from "../src/repositories/hook-execution-repo.js";
 import { PlanQuestionAnswersRepo } from "../src/repositories/plan-question-answers-repo.js";
 import { NarrativeStore } from "../src/services/narrative-store.js";
-import { loadConversationPage } from "../src/services/conversation-page.js";
+import {
+  loadConversationPage,
+  loadNewerConversationPage,
+  loadOlderConversationPage,
+} from "../src/services/conversation-page.js";
 
 const assistantCount = Number(process.argv[2] ?? 100);
 const iterations = Number(process.argv[3] ?? 50);
 const threadId = "bench-thread";
+const directionalPageSize = Math.min(100, assistantCount);
+const midpointSequence = assistantCount;
 
 function seedThread(db: Database.Database): void {
   const now = new Date().toISOString();
@@ -112,11 +119,52 @@ for (let i = 0; i < iterations; i++) {
     .reduce((sum, item) => sum + item.tools.length + item.thoughts.length + item.hooks.length, 0);
 }
 const elapsedMs = performance.now() - started;
+const prepareCallsPerLoad = Number((prepareCount / iterations).toFixed(1));
+
+const olderRequest = {
+  threadId,
+  cursor: { version: 1 as const, beforeSequence: midpointSequence + 1 },
+  direction: "older" as const,
+  generation: 1,
+  conversationRevision: 1,
+  limit: directionalPageSize,
+  maxBytes: CONVERSATION_HISTORY_PAGE_MAX_BYTES,
+};
+const newerRequest = {
+  threadId,
+  cursor: { version: 1 as const, afterSequence: midpointSequence },
+  direction: "newer" as const,
+  generation: 1,
+  conversationRevision: 1,
+  limit: directionalPageSize,
+  maxBytes: CONVERSATION_HISTORY_PAGE_MAX_BYTES,
+};
+
+loadOlderConversationPage(deps, olderRequest);
+const olderStarted = performance.now();
+let olderRows = 0;
+for (let i = 0; i < iterations; i++) {
+  olderRows = loadOlderConversationPage(deps, olderRequest).messages.length;
+}
+const olderElapsedMs = performance.now() - olderStarted;
+
+loadNewerConversationPage(deps, newerRequest);
+const newerStarted = performance.now();
+let newerRows = 0;
+for (let i = 0; i < iterations; i++) {
+  newerRows = loadNewerConversationPage(deps, newerRequest).messages.length;
+}
+const newerElapsedMs = performance.now() - newerStarted;
 
 console.log(JSON.stringify({
   assistantMessages: assistantCount,
   iterations,
   avgMs: Number((elapsedMs / iterations).toFixed(3)),
-  prepareCallsPerLoad: Number((prepareCount / iterations).toFixed(1)),
+  prepareCallsPerLoad,
   narrativeRows: lastRows,
+  directionalPageSize,
+  olderRows,
+  olderAvgMs: Number((olderElapsedMs / iterations).toFixed(3)),
+  newerRows,
+  newerAvgMs: Number((newerElapsedMs / iterations).toFixed(3)),
 }));
