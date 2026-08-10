@@ -104,6 +104,14 @@ buffer fills. Unbounded retention is never acceptable, even "temporarily."
 or behind a cheap guard. Measure before adding validation inside a hot path. When
 in doubt, bound the work first, optimize second.
 
+## Performance Work
+
+Before a change intended to improve speed, rendering, responsiveness, startup,
+CPU, memory, GPU, bundle size, or throughput, load
+[`$performance-engineer`](.codex/skills/performance-engineer/SKILL.md) and follow
+the [performance audit](docs/guides/performance-audit.md). Establish the baseline
+before the edit and repeat the same measurement after it.
+
 ## UI Design Workflow
 
 For user-visible frontend work, use this instruction order:
