@@ -256,6 +256,7 @@ export function patchThreadRecord(
   const updated = {
     ...current,
     ...delta,
+    ...(advancesConversation ? { isLoadingMore: false } : {}),
     conversationRevision: advancesConversation
       ? current.conversationRevision + 1
       : current.conversationRevision,

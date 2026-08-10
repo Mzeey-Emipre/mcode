@@ -25,12 +25,32 @@ export interface ConversationResidencyDeps {
   prefetchConversation: (threadId: string) => Promise<void>;
 }
 
+/** One thread-owned older-page request that can commit only while it remains current. */
+export interface ConversationOlderPageRequestHandle {
+  readonly id: number;
+  readonly identity: ConversationOlderPageIdentity;
+}
+
+function identitiesMatch(
+  left: ConversationOlderPageIdentity,
+  right: ConversationOlderPageIdentity,
+): boolean {
+  return left.threadId === right.threadId
+    && left.cursor.version === right.cursor.version
+    && left.cursor.beforeSequence === right.cursor.beforeSequence
+    && left.direction === right.direction
+    && left.generation === right.generation
+    && left.conversationRevision === right.conversationRevision;
+}
+
 /**
  * Owns selected-conversation activation, revalidation, and cache routing.
  * Transport, cache freshness, and live-record precedence stay in ThreadHydrator.
  */
 export class ConversationResidency {
   private activationGeneration = 0;
+  private olderPageRequestId = 0;
+  private readonly olderPageRequests = new Map<string, ConversationOlderPageRequestHandle>();
   private readonly adjacentPrefetch;
 
   constructor(private readonly deps: ConversationResidencyDeps) {
@@ -45,8 +65,12 @@ export class ConversationResidency {
     this.adjacentPrefetch.cancel();
     const thread = threadId ? threads.find((candidate) => candidate.id === threadId) : undefined;
     if (!thread || thread.clientPreparing || thread.clientError) {
+      this.olderPageRequests.clear();
       this.deps.deactivateConversation();
       return Promise.resolve();
+    }
+    for (const requestThreadId of this.olderPageRequests.keys()) {
+      if (requestThreadId !== thread.id) this.olderPageRequests.delete(requestThreadId);
     }
     return this.deps.restoreConversation(thread.id).then(() => {
       if (activationGeneration === this.activationGeneration) {
@@ -69,7 +93,37 @@ export class ConversationResidency {
 
   /** Invalidate stale conversation cache state before an authoritative mutation. */
   invalidateConversation(threadId: string): void {
+    this.olderPageRequests.delete(threadId);
     this.deps.invalidateConversation(threadId);
+  }
+
+  /** Start or supersede the older-page request for one thread. */
+  beginOlderPageRequest(
+    identity: ConversationOlderPageIdentity,
+  ): ConversationOlderPageRequestHandle | undefined {
+    const current = this.olderPageRequests.get(identity.threadId);
+    if (current && identitiesMatch(current.identity, identity)) return undefined;
+    const handle = { id: ++this.olderPageRequestId, identity };
+    this.olderPageRequests.set(identity.threadId, handle);
+    return handle;
+  }
+
+  /** Return true when the request, response, and current thread state still have one identity. */
+  canCommitOlderPageRequest(
+    handle: ConversationOlderPageRequestHandle,
+    currentIdentity: ConversationOlderPageIdentity,
+    responseIdentity: ConversationOlderPageIdentity = handle.identity,
+  ): boolean {
+    return this.olderPageRequests.get(handle.identity.threadId)?.id === handle.id
+      && identitiesMatch(handle.identity, currentIdentity)
+      && identitiesMatch(handle.identity, responseIdentity);
+  }
+
+  /** Release a request only when it still owns the thread's in-flight slot. */
+  finishOlderPageRequest(handle: ConversationOlderPageRequestHandle): void {
+    if (this.olderPageRequests.get(handle.identity.threadId)?.id === handle.id) {
+      this.olderPageRequests.delete(handle.identity.threadId);
+    }
   }
 
   /** Commit a pagination page after its state guards have accepted it. */

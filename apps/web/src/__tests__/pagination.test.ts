@@ -12,6 +12,7 @@ import {
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { TurnSnapshot } from "@mcode/contracts";
 import { useThreadStore } from "@/stores/threadStore";
+import { getConversationResidency } from "@/stores/conversation-residency";
 import {
   cacheRecord as cacheConversationRecord,
   cachePrefetchedHistoryPage,
@@ -160,8 +161,9 @@ await activateTestConversation(threadId);
 
     const loadPromise = useThreadStore.getState().loadOlderMessages(threadId);
 
-    // Switch to a different thread before the fetch resolves
+    getConversationResidency().invalidateConversation(threadId);
     useThreadStore.setState({ currentThreadId: "thread-other" });
+    expect(getTestThreadIsLoadingMore(threadId)).toBe(false);
 
     resolveGetMessages({
       messages: [createMockMessage({ id: "m1", thread_id: threadId, sequence: 1 })],
@@ -196,8 +198,8 @@ await activateTestConversation(threadId);
 
     const loadPromise = useThreadStore.getState().loadOlderMessages(threadId);
 
-    // Simulate A->B->A: loadMessages increments epoch while fetch is in-flight
-    patchTestThreadLoadEpoch(threadId, 2);
+    getConversationResidency().invalidateConversation(threadId);
+    expect(getTestThreadIsLoadingMore(threadId)).toBe(false);
 
     resolveGetMessages({
       messages: [createMockMessage({ id: "m1", thread_id: threadId, sequence: 1 })],
@@ -209,6 +211,69 @@ await activateTestConversation(threadId);
     expect(getTestActiveMessages()).toHaveLength(1);
     expect(getTestActiveMessages()[0].id).toBe("m2");
     expect(getTestThreadIsLoadingMore(threadId)).toBe(false);
+  });
+
+  it("lets a new thread-owned request proceed while an invalidated response is still pending", async () => {
+    const resident = createMockMessage({ id: "resident", thread_id: threadId, sequence: 10 });
+    resetThreadStoreForTests({
+      currentThreadId: threadId,
+      records: new Map<string, ThreadRecord>([[threadId, {
+        ...createEmptyThreadRecord(),
+        messages: [resident],
+        oldestLoadedSequence: resident.sequence,
+        hasMoreMessages: true,
+        loadEpoch: 3,
+      }]]),
+    });
+    const pending: Array<{
+      request: Parameters<typeof mockTransport.loadOlderConversationPage>[0];
+      resolve: (page: Awaited<ReturnType<typeof mockTransport.loadOlderConversationPage>>) => void;
+    }> = [];
+    const holdRequest = (
+      request: Parameters<typeof mockTransport.loadOlderConversationPage>[0],
+    ) => new Promise<Awaited<ReturnType<typeof mockTransport.loadOlderConversationPage>>>(
+      (resolve) => pending.push({ request, resolve }),
+    );
+    (mockTransport.loadOlderConversationPage as ReturnType<typeof vi.fn>)
+      .mockImplementationOnce(holdRequest)
+      .mockImplementationOnce(holdRequest);
+
+    const staleLoad = useThreadStore.getState().loadOlderMessages(threadId);
+    expect(pending).toHaveLength(1);
+
+    getConversationResidency().invalidateConversation(threadId);
+
+    expect(readThreadField(threadId, (record) => record.messages)).toEqual([resident]);
+    expect(readThreadField(threadId, (record) => record.loadEpoch)).toBe(4);
+    const currentLoad = useThreadStore.getState().loadOlderMessages(threadId);
+    expect(pending).toHaveLength(2);
+
+    const stale = pending[0]!;
+    stale.resolve({
+      identity: stale.request,
+      messages: [createMockMessage({ id: "stale", thread_id: threadId, sequence: 8 })],
+      hasMore: true,
+      nextCursor: { version: 1, beforeSequence: 8 },
+      narrativeByMessage: {},
+    });
+    await staleLoad;
+
+    expect(getTestThreadIsLoadingMore(threadId)).toBe(true);
+    expect(readThreadField(threadId, (record) => record.messages)).toEqual([resident]);
+
+    const current = pending[1]!;
+    const fresh = createMockMessage({ id: "fresh", thread_id: threadId, sequence: 9 });
+    current.resolve({
+      identity: current.request,
+      messages: [fresh],
+      hasMore: false,
+      nextCursor: null,
+      narrativeByMessage: {},
+    });
+    await currentLoad;
+
+    expect(getTestThreadIsLoadingMore(threadId)).toBe(false);
+    expect(readThreadField(threadId, (record) => record.messages)).toEqual([fresh, resident]);
   });
 
   it("loadOlderMessages writes async snapshot file lists into the message cache", async () => {
