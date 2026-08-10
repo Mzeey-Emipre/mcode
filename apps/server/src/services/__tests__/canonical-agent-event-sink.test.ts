@@ -3,6 +3,7 @@ import type Database from "better-sqlite3";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   type CanonicalAgentEventEnvelope,
+  MAX_TURN_RECOVERIES,
   type ProviderIdentity,
 } from "@mcode/contracts";
 import { openMemoryDatabase } from "../../store/database.js";
@@ -90,6 +91,47 @@ function initialDrafts(): CanonicalAgentEventDraft[] {
   ];
 }
 
+function seedUnfinishedCheckpointCount(
+  db: Database.Database,
+  sink: CanonicalAgentEventSink,
+  count: number,
+): void {
+  const messageRepo = new MessageRepo(db);
+  sink.startParentTurn({
+    thread: {
+      id: THREAD_ID,
+      workspaceId: "workspace-1",
+      providerId: "codex",
+      createdAt: NOW,
+    },
+    turnId: TURN_ID,
+    executionId: EXECUTION_ID,
+    permissionMode: "supervised",
+    providerIdentities: [],
+    projectUserMessage: () => messageRepo.create(THREAD_ID, "user", "bounded recovery", 1),
+  });
+  const insertTurn = db.prepare(`
+    INSERT INTO canonical_agent_turns (
+      id, thread_id, execution_id, status, trigger_json, permission_mode,
+      provider_identities_json, started_at, ended_at, created_at, updated_at
+    ) VALUES (?, ?, ?, 'Running', '{"kind":"user"}', 'supervised', '[]', ?, NULL, ?, ?)
+  `);
+  const insertCheckpoint = db.prepare(`
+    INSERT INTO canonical_agent_ingest_checkpoints (
+      execution_id, thread_id, turn_id, last_accepted_sequence, last_durable_sequence,
+      native_cursor_json, phase, terminal_outcome, error, updated_at
+    ) VALUES (?, ?, ?, 4, 4, NULL, 'running', NULL, NULL, ?)
+  `);
+  db.transaction(() => {
+    for (let index = 1; index < count; index += 1) {
+      const turnId = `bounded-turn-${index}`;
+      const executionId = `bounded-execution-${index}`;
+      insertTurn.run(turnId, THREAD_ID, executionId, NOW, NOW, NOW);
+      insertCheckpoint.run(executionId, THREAD_ID, turnId, NOW);
+    }
+  })();
+}
+
 function terminalDraft(
   type: "turn.completed" | "turn.errored",
 ): CanonicalAgentEventDraft {
@@ -174,6 +216,87 @@ describe("CanonicalAgentEventSink", () => {
       durableThrough: 3,
     });
     expect(published).not.toHaveBeenCalled();
+  });
+
+  it("marks unfinished work interrupted without removing accepted content", () => {
+    const messageRepo = new MessageRepo(db);
+    sink.startParentTurn({
+      thread: {
+        id: THREAD_ID,
+        workspaceId: "workspace-1",
+        providerId: "codex",
+        createdAt: NOW,
+      },
+      turnId: TURN_ID,
+      executionId: EXECUTION_ID,
+      permissionMode: "supervised",
+      providerIdentities: [identity()],
+      projectUserMessage: () => messageRepo.create(THREAD_ID, "user", "keep this work", 1),
+    });
+
+    const result = sink.interruptUnfinishedExecution(
+      EXECUTION_ID,
+      "The provider could not prove that this execution was still active after restart.",
+    );
+
+    expect(result.outcome).toBe("committed");
+    expect(sink.loadTurn(TURN_ID)).toMatchObject({ status: "Interrupted" });
+    expect(sink.loadCheckpoint(EXECUTION_ID)).toMatchObject({
+      phase: "interrupted",
+      terminalOutcome: "cancelled",
+      lastAcceptedSequence: 6,
+      lastDurableSequence: 6,
+      nativeCursor: identity(),
+    });
+    expect(sink.loadConversationProjection(THREAD_ID, 10).messages).toEqual([
+      expect.objectContaining({ role: "user", content: "keep this work" }),
+    ]);
+    expect(published).toHaveBeenLastCalledWith([
+      expect.objectContaining({ payload: expect.objectContaining({ type: "thread.recorded" }) }),
+      expect.objectContaining({ payload: expect.objectContaining({ type: "turn.interrupted" }) }),
+    ]);
+  });
+
+  it.each([MAX_TURN_RECOVERIES - 1, MAX_TURN_RECOVERIES])(
+    "loads %i unfinished checkpoints within the recovery bound",
+    (count) => {
+      seedUnfinishedCheckpointCount(db, sink, count);
+
+      expect(sink.listUnfinishedCheckpoints()).toHaveLength(count);
+    },
+  );
+
+  it("rejects unfinished checkpoint overflow explicitly", () => {
+    seedUnfinishedCheckpointCount(db, sink, MAX_TURN_RECOVERIES + 1);
+
+    expect(() => sink.listUnfinishedCheckpoints()).toThrow(
+      `Canonical unfinished checkpoint count exceeds ${MAX_TURN_RECOVERIES}`,
+    );
+  });
+
+  it("persists a native cursor that arrives while a turn is running", () => {
+    const messageRepo = new MessageRepo(db);
+    sink.startParentTurn({
+      thread: {
+        id: THREAD_ID,
+        workspaceId: "workspace-1",
+        providerId: "codex",
+        createdAt: NOW,
+      },
+      turnId: TURN_ID,
+      executionId: EXECUTION_ID,
+      permissionMode: "supervised",
+      providerIdentities: [],
+      projectUserMessage: () => messageRepo.create(THREAD_ID, "user", "checkpoint cursor", 1),
+    });
+
+    expect(sink.recordNativeCursor(EXECUTION_ID, identity())).toBe(true);
+    expect(sink.loadCheckpoint(EXECUTION_ID)).toMatchObject({
+      phase: "running",
+      nativeCursor: identity(),
+      lastAcceptedSequence: 4,
+      lastDurableSequence: 4,
+    });
   });
 
   it("reloads one ordinary parent turn from canonical message and narrative items", () => {

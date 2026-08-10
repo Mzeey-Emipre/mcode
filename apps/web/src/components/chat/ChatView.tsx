@@ -3,7 +3,6 @@ import { Bug, GitFork, Hammer, SearchCode, ScanSearch } from "lucide-react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import {
   useActiveWorkspaceThread,
-  useInterruptedThreadIds,
   useParentThreadExists,
 } from "@/stores/workspace-selectors";
 import { useThreadStore } from "@/stores/threadStore";
@@ -43,7 +42,11 @@ import {
   recordThreadHoldEnd,
   recordThreadHoldStart,
 } from "@/lib/thread-switch-telemetry";
-import { MAX_THREAD_SUBSCRIPTIONS, type SetThreadSubscriptionsInput } from "@mcode/contracts";
+import {
+  MAX_THREAD_SUBSCRIPTIONS,
+  type SetThreadSubscriptionsInput,
+  type TurnRecovery,
+} from "@mcode/contracts";
 
 /** Entry point suggestions shown in the empty state — each maps to a real Mcode capability. */
 const ENTRY_POINTS = [
@@ -397,14 +400,13 @@ export function ChatView() {
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const activeThread = useActiveWorkspaceThread((t) => t);
   const parentThreadExists = useParentThreadExists(activeThread?.parent_thread_id);
-  const interruptedCandidates = useInterruptedThreadIds();
   const sessionError = useActiveThreadRecord((r) => r.error);
   const [dismissedError, setDismissedError] = useState<string | null>(null);
-  const [interruptedThreadIds, setInterruptedThreadIds] = useState<string[]>([]);
+  const [turnRecoveries, setTurnRecoveries] = useState<TurnRecovery[]>([]);
   const [bannerDismissed, setBannerDismissed] = useState(false);
+  const interruptedThreadIds = turnRecoveries.map((recovery) => recovery.threadId);
 
   const connectionStatus = useConnectionStore((s) => s.status);
-  const sendMessage = useThreadStore((s) => s.sendMessage);
   const chatPaneRef = useRef<HTMLDivElement>(null);
   // ChatView also renders the projectless/new-thread canvas, where the measured
   // chat pane does not exist yet. Reattach the observer when a thread becomes
@@ -437,60 +439,45 @@ export function ChatView() {
     if (connectionStatus !== "connected") setBannerDismissed(false);
   }, [connectionStatus]);
 
-  // Detect interrupted threads whenever the connection is re-established so the
-  // banner can offer to resume any sessions that were cut off by a server restart.
-  // Always update so the banner clears when threads recover on their own.
+  // Load only canonical interrupted executions. Legacy thread status alone does
+  // not prove that Mcode has accepted input which it can retry safely.
   useEffect(() => {
-    if (connectionStatus === "connected" && !bannerDismissed) {
-      setInterruptedThreadIds((prev) => {
-        if (
-          prev.length === interruptedCandidates.length &&
-          prev.every((id, i) => id === interruptedCandidates[i])
-        ) {
-          return prev;
-        }
-        return interruptedCandidates;
-      });
-    }
-  }, [connectionStatus, interruptedCandidates, bannerDismissed]);
+    if (connectionStatus !== "connected" || bannerDismissed) return;
+    let cancelled = false;
+    void getTransport().listTurnRecoveries().then((recoveries) => {
+      if (!cancelled) setTurnRecoveries(recoveries);
+    }).catch((error: unknown) => {
+      console.error("Failed to load interrupted turn recoveries", error);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [connectionStatus, bannerDismissed]);
 
-  /** Sends a continuation message to each interrupted thread, then hides the banner. */
-  const handleResumeInterrupted = useCallback(
+  /** Retries each selected interruption as a new execution, then hides the banner. */
+  const handleRetryInterrupted = useCallback(
     async (threadIds: string[]) => {
-      // Dismiss immediately so the effect does not repopulate the banner while
-      // resume messages are in flight and threads still read as "interrupted".
       setBannerDismissed(true);
-      // Read threads from store at call time to avoid closing over a stale
-      // `threads` array, which would also make this callback unstable.
-      const currentThreads = useWorkspaceStore.getState().threads;
       const failedIds: string[] = [];
       for (const threadId of threadIds) {
         try {
-          const thread = currentThreads.find((t) => t.id === threadId);
-          if (!thread) {
-            failedIds.push(threadId);
-            continue;
-          }
-          await sendMessage(
-            threadId,
-            "Continue where you left off. The server was restarted.",
-            thread.model ?? undefined,
-            thread.permission_mode ?? undefined,
-          );
-        } catch (err) {
-          console.error("Failed to resume thread", threadId, err);
+          const recovery = turnRecoveries.find((candidate) => candidate.threadId === threadId);
+          if (!recovery || !recovery.actions.includes("retry")) throw new Error("Retry is unavailable");
+          await getTransport().retryTurn(recovery.executionId);
+        } catch (error) {
+          console.error("Failed to retry interrupted thread", threadId, error);
           failedIds.push(threadId);
         }
       }
       if (failedIds.length > 0) {
-        // Keep banner visible for threads that failed to resume.
-        setInterruptedThreadIds(failedIds);
+        setTurnRecoveries((recoveries) =>
+          recoveries.filter((recovery) => failedIds.includes(recovery.threadId)));
         setBannerDismissed(false);
       } else {
-        setInterruptedThreadIds([]);
+        setTurnRecoveries([]);
       }
     },
-    [sendMessage],
+    [turnRecoveries],
   );
 
   /** Activates inline fork mode on the composer for the given message. */
@@ -949,10 +936,10 @@ export function ChatView() {
         <div className="px-4 pt-2">
           <InterruptedSessionsBanner
             threadIds={interruptedThreadIds}
-            onResume={handleResumeInterrupted}
+            onRetry={handleRetryInterrupted}
             onDismiss={() => {
               setBannerDismissed(true);
-              setInterruptedThreadIds([]);
+              setTurnRecoveries([]);
             }}
           />
         </div>

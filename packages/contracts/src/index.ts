@@ -168,6 +168,13 @@ export {
 export { ThreadSchema, RecentThreadSchema, ThreadCheckoutStateSchema } from "./models/thread.js";
 export type { Thread, RecentThread, ThreadCheckoutState } from "./models/thread.js";
 
+export {
+  MAX_TURN_RECOVERIES,
+  TurnRecoveryActionSchema,
+  TurnRecoverySchema,
+} from "./models/turn-recovery.js";
+export type { TurnRecoveryAction, TurnRecovery } from "./models/turn-recovery.js";
+
 export { MessageSchema, PaginatedMessagesSchema } from "./models/message.js";
 export type { Message, PaginatedMessages } from "./models/message.js";
 

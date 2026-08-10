@@ -95,6 +95,26 @@ function displayNameFromPath(filePath: string): string {
 /** Persists and reads file attachments for agent threads. */
 @injectable()
 export class AttachmentService {
+  /** Rebuild outbound attachment metadata from Mcode-owned stored files for an explicit Retry. */
+  prepareRetryAttachments(
+    threadId: string,
+    attachments: readonly StoredAttachment[],
+  ): AttachmentMeta[] {
+    assertSafeId("thread ID", threadId);
+    const baseDir = join(getAttachmentsDir(), threadId);
+    return attachments.map((attachment) => {
+      assertSafeId("attachment ID", attachment.id);
+      if (shouldPersistAttachmentWithoutFile({ ...attachment, sourcePath: "" })) {
+        return { ...attachment, id: randomUUID(), sourcePath: "" };
+      }
+      const sourcePath = resolveStoredAttachmentPath(baseDir, attachment.id, attachment.mimeType);
+      if (!existsSync(sourcePath) || !statSync(sourcePath).isFile()) {
+        throw new Error(`Stored attachment file not found: ${attachment.id}`);
+      }
+      return { ...attachment, id: randomUUID(), sourcePath };
+    });
+  }
+
   /**
    * Copy and validate attachments for a thread.
    * Returns both stored metadata (for DB) and persisted metadata (with new paths).

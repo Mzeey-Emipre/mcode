@@ -5,8 +5,8 @@ import { Button } from "@/components/ui/button";
 interface InterruptedSessionsBannerProps {
   /** Thread IDs that have "interrupted" status */
   threadIds: string[];
-  /** Callback to resume a set of interrupted threads */
-  onResume: (threadIds: string[]) => void;
+  /** Callback to retry a set of interrupted threads as new executions. */
+  onRetry: (threadIds: string[]) => void;
   /** Callback to dismiss the banner */
   onDismiss: () => void;
 }
@@ -14,16 +14,16 @@ interface InterruptedSessionsBannerProps {
 /** Banner shown after server restart when threads were interrupted mid-task. */
 export function InterruptedSessionsBanner({
   threadIds,
-  onResume,
+  onRetry,
   onDismiss,
 }: InterruptedSessionsBannerProps) {
-  const [resuming, setResuming] = useState(false);
+  const [retrying, setRetrying] = useState(false);
 
   if (threadIds.length === 0) return null;
 
-  const handleResume = () => {
-    setResuming(true);
-    onResume(threadIds);
+  const handleRetry = () => {
+    setRetrying(true);
+    onRetry(threadIds);
   };
 
   const count = threadIds.length;
@@ -38,11 +38,11 @@ export function InterruptedSessionsBanner({
       <Button
         variant="outline"
         size="sm"
-        disabled={resuming}
-        onClick={handleResume}
+        disabled={retrying}
+        onClick={handleRetry}
       >
-        <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${resuming ? "animate-spin" : ""}`} />
-        {resuming ? "Resuming..." : "Resume all"}
+        <RefreshCw className={`mr-1.5 h-3.5 w-3.5 ${retrying ? "animate-spin" : ""}`} />
+        {retrying ? "Retrying..." : "Retry all"}
       </Button>
       <Button
         variant="ghost"

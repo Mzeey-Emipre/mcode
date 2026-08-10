@@ -45,6 +45,7 @@ import type { MessageRepo } from "../repositories/message-repo";
 import type { ToolCallRecordRepo } from "../repositories/tool-call-record-repo";
 import type { NarrativeStore } from "../services/narrative-store";
 import type { CanonicalAgentEventSink } from "../services/canonical-agent-event-sink.js";
+import type { TurnRecoveryService } from "../services/turn-recovery-service.js";
 import type { ThoughtSegmentRepo } from "../repositories/thought-segment-repo";
 import type { HookExecutionRepo } from "../repositories/hook-execution-repo";
 import type { TurnSnapshotRepo } from "../repositories/turn-snapshot-repo";
@@ -170,6 +171,8 @@ export interface RouterDeps {
   workspaceService: WorkspaceService;
   threadService: ThreadService;
   agentService: AgentService;
+  /** Owns restart reconciliation and explicit turn recovery actions. */
+  turnRecoveryService: TurnRecoveryService;
   /** Owns durable approvals for protected delegated-thread mutations. */
   threadControlService: ThreadControlService;
   gitService: GitService;
@@ -875,6 +878,16 @@ async function dispatch(
         content: appendPreviewAnnotationsForAgent(params.content, params.previewAnnotations),
         displayContent: params.displayContent ?? params.content,
       });
+      return;
+    case "agent.recoveries":
+      return deps.turnRecoveryService.listRecoveries();
+    case "agent.retry":
+      await deps.turnRecoveryService.retry(params.executionId, (command) =>
+        deps.agentService.sendMessage({
+          ...command,
+          content: appendPreviewAnnotationsForAgent(command.content, command.previewAnnotations),
+          displayContent: command.content,
+        }));
       return;
     case "agent.createAndSend": {
       const thread = await deps.agentService.createAndSend({

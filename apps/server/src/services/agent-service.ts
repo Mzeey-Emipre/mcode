@@ -127,6 +127,10 @@ export type SendMessageCommand = Omit<SendMessageInput, "permissionMode" | "prov
   mutationReservationToken?: string;
   /** Resolves the authoritative first-turn handshake before provider I/O continues. */
   onTurnStarted?: (snapshot: TurnRuntimeSnapshot) => void;
+  /** Starts a new provider execution instead of continuing the thread's prior native session. */
+  forceFreshSession?: boolean;
+  /** Interrupted execution consumed atomically when the replacement turn starts. */
+  retryOfExecutionId?: string;
 };
 
 /** Command accepted by {@link AgentService.createAndSend}, including service defaults for model and permission mode. */
@@ -570,6 +574,8 @@ export class AgentService {
     originSourceTurnId,
     mutationReservationToken,
     onTurnStarted,
+    forceFreshSession = false,
+    retryOfExecutionId,
   }: SendMessageCommand): Promise<void> {
     const provenance = [originSourceThreadId, originSourceTurnId, originSourceProviderId];
     const hasAnyProvenance = provenance.some((value) => value !== undefined);
@@ -779,7 +785,7 @@ export class AgentService {
           sourceProviderId: originSourceProviderId,
         }
       : undefined;
-    const canonicalProviderIdentities = thread.sdk_session_id
+    const canonicalProviderIdentities = !forceFreshSession && thread.sdk_session_id
       && effectiveProvider === thread.provider
       ? [{
           providerId: effectiveProvider,
@@ -802,6 +808,7 @@ export class AgentService {
         ? "full"
         : "supervised",
       providerIdentities: canonicalProviderIdentities,
+      retryOfExecutionId,
       projectUserMessage: () => {
         const args = [
           threadId,
@@ -966,7 +973,7 @@ export class AgentService {
     const sessionName = `mcode-${threadId}`;
     // A branched child has a system handoff at seq 1 but no sdk_session_id.
     // Only treat as resume if there is actually a session to resume.
-    const isResume = nextSeq > 1 && !!thread.sdk_session_id;
+    const isResume = !forceFreshSession && nextSeq > 1 && !!thread.sdk_session_id;
 
     // Resume signal: defined ⇒ resume that SDK session, undefined ⇒ fresh.
     // Replaces the former setSdkSessionId(...) + resume:true two-step dance.
@@ -3271,6 +3278,15 @@ export class AgentService {
             if (!sdkId) return;
             try {
               this.threadRepo.updateSdkSessionId(event.threadId, sdkId);
+              const executionId = this.turnRuntime.snapshot(event.threadId)?.turnExecutionId;
+              if (executionId) {
+                this.canonicalSink.recordNativeCursor(executionId, {
+                  providerId: provider.id,
+                  scope: provider.id === "codex" ? "thread" : "session",
+                  value: sdkId,
+                  provenance: "native",
+                });
+              }
             } catch (err) {
               logger.warn("Failed to persist sdk_session_id", {
                 threadId: event.threadId,

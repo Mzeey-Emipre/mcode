@@ -78,6 +78,7 @@ import type {
   SendMessageInput,
   CreateAndSendInput,
   AgentStopResult,
+  TurnRecovery,
   TerminalBackendCapabilities,
   ThreadControlIdentity,
   ThreadControlReadResult,
@@ -298,6 +299,10 @@ export interface McodeTransport {
 
   // Agent commands
   sendMessage(input: SendMessageInput): Promise<void>;
+  /** List interrupted executions and their capability-safe recovery actions. */
+  listTurnRecoveries(): Promise<TurnRecovery[]>;
+  /** Retry one interrupted turn as a fresh provider execution. */
+  retryTurn(executionId: string): Promise<void>;
   createAndSendMessage(input: CreateAndSendInput): Promise<CreateAndSendResult>;
   stopAgent(threadId: string): Promise<AgentStopResult>;
   /** Respond to a tool permission request from the agent. */

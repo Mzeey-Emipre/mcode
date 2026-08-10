@@ -673,6 +673,9 @@ export function createWsTransport(
         ...guardrails,
       });
     },
+    listTurnRecoveries: () =>
+      rpc<import("@mcode/contracts").TurnRecovery[]>("agent.recoveries", {}),
+    retryTurn: (executionId) => rpc<void>("agent.retry", { executionId }),
     createAndSendMessage: (input: CreateAndSendInput) => {
       const state = useSettingsStore.getState();
       const guardrails = state.loaded
