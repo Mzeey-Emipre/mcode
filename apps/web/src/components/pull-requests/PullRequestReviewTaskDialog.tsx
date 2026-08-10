@@ -242,6 +242,12 @@ export function PullRequestReviewTaskDialog({
   const busy = phase === "preparing" || phase === "submitting" || phase === "navigating";
   const closeBlocked = phase === "submitting" || phase === "navigating";
 
+  useEffect(() => {
+    if (open && phase === "ready" && error?.code === "path_collision") {
+      nameInputRef.current?.focus();
+    }
+  }, [error, open, phase]);
+
   const finishReady = useCallback(
     async (
       result: Extract<PullRequestCreateReviewTaskResult, { ok: true; status: "ready" }>,
@@ -384,9 +390,6 @@ export function PullRequestReviewTaskDialog({
       if (!result.ok) {
         setError(result.error);
         setPhase("ready");
-        if (result.error.code === "path_collision") {
-          requestAnimationFrame(() => nameInputRef.current?.focus());
-        }
         return;
       }
       if (result.status === "ready") {
