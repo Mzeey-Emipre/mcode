@@ -76,7 +76,7 @@ describe("ConversationResidency", () => {
     });
     residency.invalidateConversation("thread-a");
     residency.retainInactiveConversation("thread-a");
-    residency.commitPagination("thread-a");
+    residency.synchronizeConversation("thread-a");
     residency.mergePaginationFileChanges("thread-a", { message: ["src/a.ts"] });
     await residency.prefetch("thread-a");
 

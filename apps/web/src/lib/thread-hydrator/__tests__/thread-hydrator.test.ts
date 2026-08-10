@@ -454,7 +454,7 @@ describe("ThreadHydrator", () => {
     expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(2);
   });
 
-  it("binds an older-page request to generation and conversation revision before commit", async () => {
+  it("merges an older page after a live-only conversation revision", async () => {
     const tail = createMockMessage({
       id: "tail-10",
       thread_id: THREAD_A,
@@ -518,7 +518,10 @@ describe("ThreadHydrator", () => {
     });
     await pending;
 
-    expect(getTestActiveMessages()).toEqual([tail]);
+    expect(getTestActiveMessages()).toEqual([
+      expect.objectContaining({ id: "older-9", sequence: 9 }),
+      tail,
+    ]);
     expect(readActiveThreadField((record) => record.isLoadingMore)).toBe(false);
   });
 
@@ -1794,24 +1797,13 @@ describe("ThreadHydrator", () => {
     expect(useThreadStore.getState().records.get(THREAD_A)?.messages).not.toEqual([staleMessage]);
   });
 
-  it("keeps resident messages after a cache eviction triggers same-selection restoration", async () => {
+  it("restores a live message from the synchronized cache without a fetch", async () => {
     const resident = createMockMessage({
       id: "resident-before-eviction",
       thread_id: THREAD_A,
       content: "resident before eviction",
       sequence: 1,
     });
-    const staleMessage = createMockMessage({
-      id: "stale-restoration-response",
-      thread_id: THREAD_A,
-      content: "stale restoration response",
-      sequence: 1,
-    });
-    let resolvePage!: (value: {
-      messages: typeof staleMessage[];
-      hasMore: boolean;
-      narrativeByMessage: Record<string, never>;
-    }) => void;
     resetThreadStoreForTests({
       currentThreadId: THREAD_A,
       records: new Map<string, ThreadRecord>([[
@@ -1823,24 +1815,16 @@ describe("ThreadHydrator", () => {
     useThreadStore.getState().handleAgentEvent({
       type: "message",
       threadId: THREAD_A,
-      content: "message after cache eviction",
-      messageId: "resident-after-eviction",
+      content: "live cached message",
+      messageId: "live-cached-message",
       tokens: null,
     } satisfies AgentEvent);
-    (mockTransport.loadConversationPage as ReturnType<typeof vi.fn>).mockImplementation(
-      () => new Promise((resolve) => {
-        resolvePage = resolve;
-      }),
-    );
-
-    const restoration = hydrator.hydrate(THREAD_A, "active");
-    await vi.waitFor(() => expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(1));
-    resolvePage({ messages: [staleMessage], hasMore: false, narrativeByMessage: {} });
-    await restoration;
+    await hydrator.hydrate(THREAD_A, "active");
 
     expect(getTestActiveMessages()).toEqual(expect.arrayContaining([
-      expect.objectContaining({ id: "resident-after-eviction", content: "message after cache eviction" }),
+      expect.objectContaining({ id: "live-cached-message", content: "live cached message" }),
     ]));
+    expect(mockTransport.loadConversationPage).not.toHaveBeenCalled();
   });
 
   it("commits messages and narrative from one conversation page fetch", async () => {

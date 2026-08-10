@@ -262,7 +262,6 @@ export function patchThreadRecord(
   const updated = {
     ...current,
     ...delta,
-    ...(advancesConversation ? { isLoadingMore: false, isLoadingNewer: false } : {}),
     ...(delta.messages
       ? {
           oldestLoadedSequence:

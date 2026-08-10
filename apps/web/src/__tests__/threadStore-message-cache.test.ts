@@ -154,17 +154,20 @@ await activateTestConversation("t1");
   });
 });
 
-describe("loadMessages cache eviction", () => {
+describe("loadMessages cache synchronization", () => {
   beforeEach(() => {
     resetThreadStoreTestState();
   });
 
-  it("evicts when handleAgentEvent fires for the thread", async () => {
+  it("synchronizes a live message into the cache", async () => {
     await activateTestConversation("t1");
     expect(getCachedRecord("t1")).toBeDefined();
 
     useThreadStore.getState().handleAgentEvent({ type: "message", threadId: "t1", content: "x", tokens: null } satisfies AgentEvent);
-    expect(getCachedRecord("t1")).toBeUndefined();
+    expect(getCachedRecord("t1")?.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "m1", content: "hello" }),
+      expect.objectContaining({ role: "assistant", content: "x" }),
+    ]));
   });
 
   it("evicts when handleTurnPersisted fires", async () => {

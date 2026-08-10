@@ -1510,7 +1510,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
         })(),
       }));
 
-      conversationResidency.commitPagination(threadId);
+      conversationResidency.synchronizeConversation(threadId);
       const committedRecord = getRec(threadId);
       hydratePaginationFileChanges(
         threadId,
@@ -1641,7 +1641,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
         })(),
       }));
 
-      conversationResidency.commitPagination(threadId);
+      conversationResidency.synchronizeConversation(threadId);
       const committedRecord = getRec(threadId);
       hydratePaginationFileChanges(
         threadId,
@@ -2580,7 +2580,6 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     const isStructuralEvent =
       event.type === "turnComplete" ||
       event.type === "ended" ||
-      event.type === "message" ||
       event.type === "error";
     if (isStructuralEvent) {
       conversationResidency.invalidateConversation(threadId);
@@ -2805,7 +2804,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
             }),
           };
         });
-        conversationResidency.retainInactiveConversation(threadId);
+        conversationResidency.synchronizeConversation(threadId);
       }
       return;
     }
