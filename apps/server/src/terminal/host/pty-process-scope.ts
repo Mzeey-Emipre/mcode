@@ -26,19 +26,45 @@ export function createPtyProcessScope(rootPid: number): PtyProcessScope {
         return snapshot.processIds.some((pid) => pid !== rootPid);
       },
       close: async () => {
+        const cleanupErrors: unknown[] = [];
         const reconciled = await scope.reconcile(rootPid);
         if (!reconciled.ok) {
-          await killProcessTree(rootPid);
+          try {
+            await killProcessTree(rootPid);
+          } catch (error) {
+            cleanupErrors.push(error);
+          }
         }
-        const terminated = scope.terminate(0);
-        if (!terminated.ok) {
-          throw new Error(
-            terminated.error ?? "PTY Job Object termination failed",
+        try {
+          const terminated = scope.terminate(0);
+          if (!terminated.ok) {
+            cleanupErrors.push(
+              new Error(
+                terminated.error ?? "PTY Job Object termination failed",
+              ),
+            );
+          }
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+        try {
+          const emptied = await scope.waitForEmpty(5_000);
+          if (!emptied.ok) {
+            cleanupErrors.push(
+              new Error(emptied.error ?? "PTY Job Object remained non-empty"),
+            );
+          }
+        } catch (error) {
+          cleanupErrors.push(error);
+        }
+        if (cleanupErrors.length === 1) {
+          throw cleanupErrors[0];
+        }
+        if (cleanupErrors.length > 1) {
+          throw new AggregateError(
+            cleanupErrors,
+            "PTY process scope cleanup failed",
           );
-        }
-        const emptied = await scope.waitForEmpty(5_000);
-        if (!emptied.ok) {
-          throw new Error(emptied.error ?? "PTY Job Object remained non-empty");
         }
       },
       dispose: () => scope.close(),
