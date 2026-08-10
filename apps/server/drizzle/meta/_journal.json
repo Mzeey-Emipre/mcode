@@ -253,6 +253,13 @@
       "when": 1786310362845,
       "tag": "0034_fair_tempest",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "6",
+      "when": 1786372356371,
+      "tag": "0035_bouncy_madelyne_pryor",
+      "breakpoints": true
     }
   ]
 }
