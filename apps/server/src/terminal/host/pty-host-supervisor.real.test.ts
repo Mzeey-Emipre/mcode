@@ -9,6 +9,7 @@ import { PtyHostSupervisor, type PtyHostChild } from "./pty-host-supervisor.js";
 
 const SESSION_ID = "abcdef12-abcd-4abc-8abc-abcdefabcdef";
 const OUTPUT_MARKER = "__MCODE_ISOLATED_HOST_OK__";
+const CHILD_PID_MARKER = "__MCODE_CHILD_PID__";
 const SECOND_SESSION_ID = "12345678-abcd-4abc-8abc-abcdefabcdef";
 const nativeRequire = createRequire(import.meta.url);
 
@@ -26,6 +27,40 @@ async function waitForEvent(
   throw new Error(
     `Timed out after ${timeoutMs}ms waiting for isolated PTY host event`,
   );
+}
+
+async function waitForProcessExit(
+  pid: number,
+  timeoutMs = 5_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return;
+    }
+    await new Promise((resolvePoll) => setTimeout(resolvePoll, 20));
+  }
+  throw new Error(`Process ${pid} survived for ${timeoutMs}ms after PTY close`);
+}
+
+async function waitForChildInspection(
+  supervisor: PtyHostSupervisor,
+  sessionId: string,
+  hostGeneration: string,
+  timeoutMs = 5_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (
+      (await supervisor.inspectChildren(sessionId, hostGeneration)).hasChildren
+    ) {
+      return;
+    }
+    await new Promise((resolvePoll) => setTimeout(resolvePoll, 20));
+  }
+  throw new Error(`PTY child was not visible after ${timeoutMs}ms`);
 }
 
 describe.runIf(process.platform === "win32")(
@@ -141,7 +176,9 @@ describe.runIf(process.platform === "win32")(
           attachmentEpoch: "1",
           commandSeq: "1",
           kind: "input",
-          data: Buffer.from(`echo ${OUTPUT_MARKER}\r`),
+          data: Buffer.from(
+            `node.exe -e "const p=require('node:child_process').spawn('ping.exe',['-n','30','127.0.0.1'],{stdio:'ignore'});console.log('${CHILD_PID_MARKER}'+p.pid);p.unref()" & echo ${OUTPUT_MARKER}\r`,
+          ),
         });
         await waitForEvent(
           events,
@@ -151,9 +188,19 @@ describe.runIf(process.platform === "win32")(
               .toString("utf8")
               .includes(OUTPUT_MARKER),
         );
-        await expect(
-          supervisor.inspectChildren(SESSION_ID, "1"),
-        ).resolves.toEqual({ hasChildren: false });
+        await waitForChildInspection(supervisor, SESSION_ID, "1");
+        const output = events
+          .filter((event) => event.kind === "output")
+          .map((event) =>
+            Buffer.from(event.dataBase64, "base64").toString("utf8"),
+          )
+          .join("");
+        const childPidMatch = new RegExp(
+          `${CHILD_PID_MARKER}[^\\d]{0,64}(\\d+)`,
+        ).exec(output);
+        if (!childPidMatch)
+          throw new Error("Expected the descendant PID marker");
+        const descendantPid = Number(childPidMatch[1]);
         await supervisor.close({
           sessionId: SESSION_ID,
           hostGeneration: "1",
@@ -166,6 +213,7 @@ describe.runIf(process.platform === "win32")(
           kind: "exit",
           reason: "user-close",
         });
+        await waitForProcessExit(descendantPid);
 
         await supervisor.create({
           sessionId: SECOND_SESSION_ID,
@@ -204,7 +252,7 @@ describe.runIf(process.platform === "win32")(
         ) {
           await new Promise((resolvePoll) => setTimeout(resolvePoll, 20));
         }
-        expect(supervisor.health()).toEqual({
+        expect(supervisor.health(), diagnostics.join("\n")).toEqual({
           hostGeneration: "2",
           state: "healthy",
         });

@@ -1,5 +1,6 @@
 import {
   gracefulKillProcessTree,
+  killProcessTree,
   listDirectChildren,
 } from "../../services/process-kill.js";
 import { WindowsProcessScopeFactory } from "../../services/windows-process-scope.js";
@@ -18,12 +19,17 @@ export function createPtyProcessScope(rootPid: number): PtyProcessScope {
         return (await scope.reconcile(rootPid)).ok;
       },
       hasChildren: async () => {
+        const reconciled = await scope.reconcile(rootPid);
+        if (!reconciled.ok) return true;
         const snapshot = scope.queryProcessIds();
-        return (
-          snapshot.ok && snapshot.processIds.some((pid) => pid !== rootPid)
-        );
+        if (!snapshot.ok || snapshot.overflow) return true;
+        return snapshot.processIds.some((pid) => pid !== rootPid);
       },
       close: async () => {
+        const reconciled = await scope.reconcile(rootPid);
+        if (!reconciled.ok) {
+          await killProcessTree(rootPid);
+        }
         const terminated = scope.terminate(0);
         if (!terminated.ok) {
           throw new Error(

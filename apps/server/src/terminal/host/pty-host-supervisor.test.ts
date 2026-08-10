@@ -32,6 +32,7 @@ const createRequest = {
 class FakeHostChild extends EventEmitter implements PtyHostChild {
   readonly pid = 42;
   readonly connected = true;
+  respondToInspection = true;
   readonly send = vi.fn(
     (
       message: PtyHostServerMessage,
@@ -40,6 +41,18 @@ class FakeHostChild extends EventEmitter implements PtyHostChild {
       queueMicrotask(() => callback?.(null));
       if (message.kind === "shutdown") {
         this.emit("exit", 0, null);
+        return true;
+      }
+      if (message.kind === "inspectChildren" && this.respondToInspection) {
+        queueMicrotask(() => {
+          this.emitMessage({
+            contractVersion: 1,
+            kind: "children",
+            sessionId: message.sessionId,
+            hostGeneration: message.hostGeneration,
+            hasChildren: true,
+          });
+        });
         return true;
       }
       if (message.kind !== "handshake") return true;
@@ -154,11 +167,9 @@ describe("PtyHostSupervisor", () => {
 
   it("waits for running and exit events at the adapter boundary", async () => {
     const child = new FakeHostChild();
-    const inspectProcessTree = vi.fn(async () => true);
     const supervisor = new PtyHostSupervisor({
       platform: "windows",
       spawnHost: () => child,
-      inspectProcessTree,
     });
     await supervisor.start();
 
@@ -176,6 +187,10 @@ describe("PtyHostSupervisor", () => {
     await expect(supervisor.inspectChildren(UUID, "1")).resolves.toEqual({
       hasChildren: true,
     });
+    expect(child.send).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "inspectChildren", sessionId: UUID }),
+      expect.any(Function),
+    );
 
     let closed = false;
     const closing = supervisor
@@ -216,6 +231,42 @@ describe("PtyHostSupervisor", () => {
       "PTY host channel is unavailable",
     );
     expect(supervisor.health().state).toBe("unhealthy");
+  });
+
+  it("rejects child inspection when the session exits before the host responds", async () => {
+    const child = new FakeHostChild();
+    child.respondToInspection = false;
+    const supervisor = new PtyHostSupervisor({
+      platform: "windows",
+      spawnHost: () => child,
+    });
+    await supervisor.start();
+    const creating = supervisor.create(createRequest);
+    child.emitMessage({
+      contractVersion: 1,
+      kind: "running",
+      sessionId: UUID,
+      hostGeneration: "1",
+      rootPid: 123,
+      processGroupId: "job-123",
+      containment: "job-object",
+    });
+    await creating;
+
+    const inspection = supervisor.inspectChildren(UUID, "1");
+    child.emitMessage({
+      contractVersion: 1,
+      kind: "exit",
+      sessionId: UUID,
+      hostGeneration: "1",
+      finalOutputSeq: "0",
+      code: 0,
+      signal: null,
+      reason: "natural",
+    });
+
+    await expect(inspection).rejects.toThrow("PTY session exited");
+    await supervisor.shutdown();
   });
 
   it("retains failed cleanup records and blocks replacement", async () => {

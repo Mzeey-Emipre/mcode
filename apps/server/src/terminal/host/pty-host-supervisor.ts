@@ -1,10 +1,7 @@
 import type { TerminalPlatform } from "@mcode/contracts";
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
-import {
-  killProcessTree,
-  listDirectChildren,
-} from "../../services/process-kill.js";
+import { killProcessTree } from "../../services/process-kill.js";
 import {
   PtyHostCleanupLedger,
   type PtyHostCleanupRecord,
@@ -30,6 +27,7 @@ const HEARTBEAT_DEGRADED_MS = 750;
 const HEARTBEAT_UNHEALTHY_MS = 1_000;
 const OPERATION_TIMEOUT_MS = 5_000;
 const MAX_IPC_QUEUE_BYTES = 1_048_576;
+const CONTAINMENT_SETTLE_TIMEOUT_MS = 500;
 
 /** Minimal child-process surface used by the PTY host supervisor. */
 export interface PtyHostChild {
@@ -64,9 +62,6 @@ export interface PtyHostSupervisorOptions {
   readonly heartbeatUnhealthyMs?: number;
   readonly cleanupLedger?: PtyHostCleanupLedger;
   readonly reapProcessTree?: (record: PtyHostCleanupRecord) => Promise<void>;
-  readonly inspectProcessTree?: (
-    record: PtyHostCleanupRecord,
-  ) => Promise<boolean>;
   readonly operationTimeoutMs?: number;
   readonly shutdownTimeoutMs?: number;
 }
@@ -83,6 +78,13 @@ interface PendingCreate {
 interface PendingClose {
   readonly promise: Promise<void>;
   readonly resolve: () => void;
+  readonly reject: (error: Error) => void;
+  readonly timer: ReturnType<typeof setTimeout>;
+}
+
+interface PendingInspection {
+  readonly promise: Promise<{ hasChildren: boolean }>;
+  readonly resolve: (result: { hasChildren: boolean }) => void;
   readonly reject: (error: Error) => void;
   readonly timer: ReturnType<typeof setTimeout>;
 }
@@ -105,6 +107,7 @@ export class PtyHostSupervisor implements PtyHostAdapter {
   private readonly listeners = new Set<(event: PtyHostEvent) => void>();
   private readonly pendingCreates = new Map<string, PendingCreate>();
   private readonly pendingCloses = new Map<string, PendingClose>();
+  private readonly pendingInspections = new Map<string, PendingInspection>();
   private readonly cleanupLedger: PtyHostCleanupLedger;
 
   constructor(private readonly options: PtyHostSupervisorOptions) {
@@ -211,20 +214,45 @@ export class PtyHostSupervisor implements PtyHostAdapter {
     hostGeneration: string,
   ): Promise<{ hasChildren: boolean }> {
     this.requireHealthyGeneration(hostGeneration);
-    this.sendMessage({
-      contractVersion: 1,
-      kind: "inspectChildren",
-      sessionId,
-      hostGeneration,
-    });
     const record = this.cleanupLedger.get(sessionId);
     if (!record || record.hostGeneration !== hostGeneration) {
       throw new Error(`PTY session not found: ${sessionId}`);
     }
-    const inspect =
-      this.options.inspectProcessTree ??
-      (async ({ rootPid }) => (await listDirectChildren(rootPid)).length > 0);
-    return { hasChildren: await inspect(record) };
+    const existing = this.pendingInspections.get(sessionId);
+    if (existing) return existing.promise;
+    let resolveInspection!: (result: { hasChildren: boolean }) => void;
+    let rejectInspection!: (error: Error) => void;
+    const promise = new Promise<{ hasChildren: boolean }>((resolve, reject) => {
+      resolveInspection = resolve;
+      rejectInspection = reject;
+    });
+    const timer = setTimeout(() => {
+      this.pendingInspections.delete(sessionId);
+      rejectInspection(
+        new Error(
+          `PTY child inspection exceeded ${this.operationTimeoutMs()}ms`,
+        ),
+      );
+    }, this.operationTimeoutMs());
+    this.pendingInspections.set(sessionId, {
+      promise,
+      resolve: resolveInspection,
+      reject: rejectInspection,
+      timer,
+    });
+    try {
+      this.sendMessage({
+        contractVersion: 1,
+        kind: "inspectChildren",
+        sessionId,
+        hostGeneration,
+      });
+    } catch (error) {
+      clearTimeout(timer);
+      this.pendingInspections.delete(sessionId);
+      throw error;
+    }
+    return promise;
   }
 
   /** Sends one ordered close barrier. */
@@ -400,11 +428,29 @@ export class PtyHostSupervisor implements PtyHostAdapter {
     }
     if (event.kind === "exit") {
       this.cleanupLedger.remove(event.sessionId);
+      const pendingInspection = this.pendingInspections.get(event.sessionId);
+      if (pendingInspection) {
+        clearTimeout(pendingInspection.timer);
+        pendingInspection.reject(
+          new Error(
+            `PTY session exited during child inspection: ${event.sessionId}`,
+          ),
+        );
+        this.pendingInspections.delete(event.sessionId);
+      }
       const pending = this.pendingCloses.get(event.sessionId);
       if (pending) {
         clearTimeout(pending.timer);
         pending.resolve();
         this.pendingCloses.delete(event.sessionId);
+      }
+    }
+    if (event.kind === "children") {
+      const pending = this.pendingInspections.get(event.sessionId);
+      if (pending) {
+        clearTimeout(pending.timer);
+        pending.resolve({ hasChildren: event.hasChildren });
+        this.pendingInspections.delete(event.sessionId);
       }
     }
     if (event.kind === "failure") this.rejectPending(new Error(event.code));
@@ -445,7 +491,7 @@ export class PtyHostSupervisor implements PtyHostAdapter {
     const records = this.cleanupLedger.forGeneration(failedGeneration);
     const reap =
       this.options.reapProcessTree ??
-      (async ({ rootPid }) => killProcessTree(rootPid));
+      ((record: PtyHostCleanupRecord) => this.reapProcessTree(record));
     setTimeout(async () => {
       if (this.stopping || this.child) return;
       const results = await Promise.allSettled(
@@ -495,10 +541,38 @@ export class PtyHostSupervisor implements PtyHostAdapter {
       pending.reject(error);
     }
     this.pendingCloses.clear();
+    for (const pending of this.pendingInspections.values()) {
+      clearTimeout(pending.timer);
+      pending.reject(error);
+    }
+    this.pendingInspections.clear();
   }
 
   private operationTimeoutMs(): number {
     return this.options.operationTimeoutMs ?? OPERATION_TIMEOUT_MS;
+  }
+
+  private async reapProcessTree(
+    record: PtyHostCleanupRecord,
+  ): Promise<void> {
+    const deadline = Date.now() + CONTAINMENT_SETTLE_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      if (!this.isProcessAlive(record.rootPid)) return;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    if (this.isProcessAlive(record.rootPid)) {
+      await killProcessTree(record.rootPid);
+    }
+  }
+
+  private isProcessAlive(pid: number): boolean {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+      throw error;
+    }
   }
 
   private clearStartupTimer(): void {

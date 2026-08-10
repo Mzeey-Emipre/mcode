@@ -134,6 +134,13 @@ describe("PtyHostProcessRuntime", () => {
       hostGeneration: "7",
     });
     expect(scope.hasChildren).toHaveBeenCalledOnce();
+    expect(events.at(-1)).toEqual({
+      contractVersion: 1,
+      kind: "children",
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      hasChildren: false,
+    });
 
     const close = runtime.receive({
       contractVersion: 1,
