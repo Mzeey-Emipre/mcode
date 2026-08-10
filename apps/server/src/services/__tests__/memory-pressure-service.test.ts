@@ -83,6 +83,19 @@ describe("MemoryPressureService", () => {
 
     await vi.advanceTimersByTimeAsync(30_000);
 
+    expect(db.pragma).toHaveBeenCalledWith("optimize");
     expect(db.pragma).toHaveBeenCalledWith("shrink_memory");
+  });
+
+  it("uses the background cache budget and restores the active budget", async () => {
+    service.markIdle();
+    await vi.advanceTimersByTimeAsync(30_000);
+    service.markBackground();
+
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(db.pragma).toHaveBeenCalledWith("cache_size = -500");
+
+    service.markForeground();
+    expect(db.pragma).toHaveBeenCalledWith("cache_size = -2000");
   });
 });

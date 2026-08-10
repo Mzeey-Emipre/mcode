@@ -1,5 +1,5 @@
 /**
- * SQLite database setup with WAL mode, foreign keys, and Drizzle migrations.
+ * SQLite database setup with the approved connection policy and Drizzle migrations.
  */
 
 import Database from "better-sqlite3";
@@ -16,6 +16,10 @@ import {
   pruneMigrationBackups,
   restoreMigrationBackupAfterFailure,
 } from "./migration-backup.js";
+import {
+  applySQLiteConnectionPolicy,
+  optimizeSQLiteConnection,
+} from "./sqlite-connection-policy.js";
 
 /**
  * Drizzle's migrator joins paths with `/` inside readMigrationFiles; normalize so
@@ -136,22 +140,6 @@ export function resolveElectronNativeBinding(): string {
   }
 
   return canonicalBinding;
-}
-
-/**
- * Apply pragmas common to all database connections.
- *
- * @param db SQLite database handle.
- * @param isFileBacked When false (`:memory:`), skips WAL / mmap tuning pragmas.
- */
-function applyPragmas(db: Database.Database, isFileBacked: boolean): void {
-  if (isFileBacked) {
-    db.pragma("journal_mode = WAL");
-    db.pragma("busy_timeout = 5000"); // Wait up to 5s for concurrent writer to finish
-    db.pragma("cache_size = -2000"); // 2MB page cache (negative = KB)
-    db.pragma("mmap_size = 0"); // Disable memory-mapped I/O
-  }
-  db.pragma("foreign_keys = ON");
 }
 
 /**
@@ -290,6 +278,14 @@ function runMigrations(db: Database.Database): void {
   applySchemaPatches(db);
 }
 
+function readSchemaVersion(db: Database.Database): number {
+  const version = db.pragma("schema_version", { simple: true });
+  if (typeof version !== "number") {
+    throw new Error(`PRAGMA schema_version returned ${typeof version}, expected number.`);
+  }
+  return version;
+}
+
 /**
  * Open (or create) a SQLite database with WAL mode and foreign keys enabled,
  * then run any pending Drizzle migrations.
@@ -320,8 +316,13 @@ export function openDatabase(opts?: {
   let db: Database.Database | undefined;
   try {
     db = new Database(resolvedPath, { nativeBinding });
-    applyPragmas(db, true);
+    applySQLiteConnectionPolicy(db, true);
+    optimizeSQLiteConnection(db, "open");
+    const schemaVersionBeforeMigrations = readSchemaVersion(db);
     runMigrations(db);
+    if (readSchemaVersion(db) !== schemaVersionBeforeMigrations) {
+      optimizeSQLiteConnection(db, "maintenance");
+    }
     if (backupPath) {
       pruneMigrationBackups(resolvedPath);
     }
@@ -346,7 +347,7 @@ export function openDatabase(opts?: {
 export function openMemoryDatabase(): Database.Database {
   const nativeBinding = resolveElectronNativeBinding();
   const db = new Database(":memory:", { nativeBinding });
-  applyPragmas(db, false);
+  applySQLiteConnectionPolicy(db, false);
   try {
     runMigrations(db);
   } catch (err) {
