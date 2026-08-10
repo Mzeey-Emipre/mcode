@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  ACTIVE_TURN_WRITE_POLICY,
   SQLITE_PROFILE_WORKLOADS,
   assertConversationHistoryQueryPlans,
   compareSQLiteProfileReports,
@@ -194,5 +195,26 @@ describe("conversation history query plans", () => {
 
     expect(() => assertConversationHistoryQueryPlans(temporarySort)).toThrow("temporary sort");
     expect(() => assertConversationHistoryQueryPlans(fullScan)).toThrow("full scan");
+  });
+});
+
+describe("runSQLiteProfile", () => {
+  it("records the finite active-turn statement set and transaction limits", () => {
+    expect(ACTIVE_TURN_WRITE_POLICY).toEqual({
+      retainedStatements: [
+        "messages.create",
+        "messages.createAssistantIdempotent",
+        "messages.publishAssistant",
+        "tool_call_records.insert",
+        "thought_segments.insert",
+        "hook_executions.insert",
+        "canonical_agent_threads.upsert",
+        "canonical_agent_turns.upsert",
+        "canonical_agent_items.upsert",
+        "canonical_agent_events.insert",
+        "canonical_agent_ingest_checkpoints.upsert",
+      ],
+      batchLimits: { maxRows: 64, maxBytes: 262_144, maxElapsedMs: 4 },
+    });
   });
 });

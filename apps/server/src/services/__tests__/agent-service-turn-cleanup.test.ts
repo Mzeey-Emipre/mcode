@@ -226,8 +226,10 @@ function buildService(
     create: vi.fn(),
   } as unknown as ThreadService;
 
+  const bulkCreateToolCalls = vi.fn();
   const toolCallRecordRepo = {
-    bulkCreate: vi.fn(),
+    bulkCreate: bulkCreateToolCalls,
+    bulkCreateBatched: bulkCreateToolCalls,
   } as unknown as ToolCallRecordRepo;
 
   const turnSnapshotRepo = {

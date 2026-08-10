@@ -522,7 +522,7 @@ describe("TurnFinalizer.finalize — git snapshot write", () => {
     const narrativeStore = {
       getBufferedToolCalls: vi.fn(() => []),
       hasBufferedNarrative: vi.fn(() => true),
-      persistNarrative: vi.fn(() => ({ toolCallCount: 0 })),
+      persistNarrativeBatched: vi.fn(async () => ({ toolCallCount: 0 })),
       clearTurn: vi.fn(),
     } as unknown as NarrativeStore;
     const snapshotService = {
@@ -600,7 +600,7 @@ describe("TurnFinalizer.finalize — git snapshot write", () => {
     const narrativeStore = {
       getBufferedToolCalls: vi.fn(() => []),
       hasBufferedNarrative: vi.fn(() => true),
-      persistNarrative: vi.fn(() => ({ toolCallCount: 0 })),
+      persistNarrativeBatched: vi.fn(async () => ({ toolCallCount: 0 })),
       clearTurn: vi.fn(),
     } as unknown as NarrativeStore;
     const snapshotService = { captureRef, getFilesChanged } as unknown as SnapshotService;

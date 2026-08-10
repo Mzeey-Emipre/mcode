@@ -7,6 +7,12 @@ import { randomUUID } from "crypto";
 import { injectable, inject } from "tsyringe";
 import type Database from "better-sqlite3";
 import type { ThoughtSegmentRecord } from "@mcode/contracts";
+import {
+  ACTIVE_TURN_WRITE_BATCH_LIMITS,
+  runBoundedWriteBatches,
+  type WriteBatchLimits,
+  type WriteBatchResult,
+} from "../store/bounded-write-batches.js";
 
 /** Row shape returned by SQLite for the thought_segments table. */
 interface ThoughtSegmentRow {
@@ -106,6 +112,30 @@ export class ThoughtSegmentRepo {
       }
     });
     tx(inputs);
+  }
+
+  /** Insert thought rows in bounded transactions with an event-loop yield between commits. */
+  async bulkCreateBatched(
+    inputs: readonly CreateThoughtSegmentInput[],
+    limits: WriteBatchLimits = ACTIVE_TURN_WRITE_BATCH_LIMITS,
+  ): Promise<WriteBatchResult> {
+    return runBoundedWriteBatches({
+      db: this.db,
+      items: inputs,
+      limits,
+      byteLength: (item) => Buffer.byteLength(JSON.stringify(item), "utf8"),
+      write: (item) => {
+        this.stmtInsert.run(
+          item.id ?? randomUUID(),
+          item.messageId,
+          item.text,
+          item.startedAt,
+          item.endedAt,
+          item.sortOrder,
+          item.isFinalResponse ?? 0,
+        );
+      },
+    });
   }
 
   /** List all thought segments for a message, ordered by sort_order ascending. */

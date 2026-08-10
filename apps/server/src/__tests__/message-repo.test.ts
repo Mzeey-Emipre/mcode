@@ -52,6 +52,44 @@ describe("MessageRepo", () => {
     repo = new MessageRepo(db);
   });
 
+  it("prepares each active write statement lazily and only once", () => {
+    const localDb = createTestDb();
+    const preparedSql: string[] = [];
+    const originalPrepare = localDb.prepare.bind(localDb);
+    (localDb as unknown as { prepare: Database.Database["prepare"] }).prepare = ((sql: string) => {
+      preparedSql.push(sql);
+      return originalPrepare(sql);
+    }) as Database.Database["prepare"];
+    const localRepo = new MessageRepo(localDb);
+
+    localRepo.listByThread("thread-1", 10);
+    expect(preparedSql.some((sql) => sql.startsWith("INSERT"))).toBe(false);
+
+    localRepo.create("thread-1", "user", "one", 1);
+    localRepo.create("thread-1", "user", "two", 2);
+    localRepo.createAssistantIdempotent({
+      id: "assistant-1",
+      threadId: "thread-1",
+      content: "three",
+      sequence: 3,
+      isInternal: true,
+    });
+    localRepo.createAssistantIdempotent({
+      id: "assistant-1",
+      threadId: "thread-1",
+      content: "three",
+      sequence: 3,
+      isInternal: true,
+    });
+    localRepo.publishAssistant("assistant-1");
+    localRepo.publishAssistant("assistant-1");
+
+    expect(preparedSql.filter((sql) => sql.startsWith("INSERT INTO messages")).length).toBe(1);
+    expect(preparedSql.filter((sql) => sql.startsWith("INSERT OR IGNORE INTO messages")).length).toBe(1);
+    expect(preparedSql.filter((sql) => sql.startsWith("UPDATE messages SET is_internal")).length).toBe(1);
+    localDb.close();
+  });
+
   describe("listByThread", () => {
     it("returns tool_call_count per message via indexed lookup", () => {
       const m1 = repo.create("thread-1", "user", "a", 1);

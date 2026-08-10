@@ -119,11 +119,20 @@ function build(): Built {
   } as unknown as IProviderRegistry;
   const threadService = { create: vi.fn() } as unknown as ThreadService;
   const toolBulk = vi.fn();
-  const toolCallRecordRepo = { bulkCreate: toolBulk } as unknown as ToolCallRecordRepo;
+  const toolCallRecordRepo = {
+    bulkCreate: toolBulk,
+    bulkCreateBatched: toolBulk,
+  } as unknown as ToolCallRecordRepo;
   const thoughtBulk = vi.fn();
-  const thoughtSegmentRepo = { bulkCreate: thoughtBulk } as unknown as ThoughtSegmentRepo;
+  const thoughtSegmentRepo = {
+    bulkCreate: thoughtBulk,
+    bulkCreateBatched: thoughtBulk,
+  } as unknown as ThoughtSegmentRepo;
   const hookBulk = vi.fn();
-  const hookExecutionRepo = { bulkCreate: hookBulk } as unknown as HookExecutionRepo;
+  const hookExecutionRepo = {
+    bulkCreate: hookBulk,
+    bulkCreateBatched: hookBulk,
+  } as unknown as HookExecutionRepo;
   const turnSnapshotRepo = {
     listByThread: vi.fn(() => []),
     create: vi.fn(),

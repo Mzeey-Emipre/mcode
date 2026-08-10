@@ -101,6 +101,12 @@ export interface PersistNarrativeResult {
   toolCallCount: number;
 }
 
+interface PreparedNarrativePersistence {
+  toolCalls: BufferedToolCall[];
+  thoughts: CreateThoughtSegmentInput[];
+  hooks: CreateHookExecutionInput[];
+}
+
 /** Bounds persisted shell commands while retaining enough text for readable expansion. */
 const MAX_PERSISTED_COMMAND_CHARS = 4096;
 
@@ -580,37 +586,16 @@ export class NarrativeStore {
     outcome: TurnOutcome,
     options: { strict?: boolean } = {},
   ): PersistNarrativeResult {
-    const buffer = this.turnToolCalls.get(threadId) ?? [];
-    const settledAt = new Date().toISOString();
+    const prepared = this.prepareNarrativePersistence(
+      threadId,
+      messageId,
+      messageContent,
+      outcome,
+    );
 
-    for (const tc of buffer) {
-      if (tc.status === "running") {
-        // A tool still running when the turn ends inherits the turn outcome:
-        // a crash marks it "failed", a user stop marks it "cancelled". A tool
-        // that returned its own error already has status "failed" from
-        // updateBufferedToolCallOutput.
-        tc.status =
-          outcome === "errored" ? "failed" : outcome === "cancelled" ? "cancelled" : "completed";
-        tc.completedAt = settledAt;
-      }
-      tc.messageId = messageId;
-
-      // Deferred summarization: compute inputSummary from raw tool input.
-      if (!tc.inputSummary && tc._rawToolInput) {
-        if (tc.toolName === "Agent") {
-          tc.displayName = resolveSubagentDisplayName(tc._rawToolInput);
-          tc.providerAgentKey = resolveProviderAgentKey(tc._rawToolInput);
-          tc.model = resolveSubagentMetadata(tc._rawToolInput.model);
-          tc.reasoningEffort = resolveSubagentMetadata(tc._rawToolInput.reasoningEffort);
-        }
-        tc.inputSummary = this.summarizeInput(tc.toolName, tc._rawToolInput);
-        delete tc._rawToolInput;
-      }
-    }
-
-    if (buffer.length > 0) {
+    if (prepared.toolCalls.length > 0) {
       try {
-        this.toolCallRecordRepo.bulkCreate(buffer);
+        this.toolCallRecordRepo.bulkCreate(prepared.toolCalls);
       } catch (err) {
         if (options.strict) throw err;
         logger.error("Failed to persist tool call records", {
@@ -620,8 +605,145 @@ export class NarrativeStore {
       }
     }
 
-    // Drain any in-flight thought / hook before persisting so a turn that ends
-    // without a trailing tool call still records its tail thought + hook.
+    if (prepared.thoughts.length > 0) {
+      try {
+        this.thoughtSegmentRepo.bulkCreate(prepared.thoughts);
+      } catch (err) {
+        if (options.strict) throw err;
+        logger.error("Failed to persist thought segments", {
+          threadId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    if (prepared.hooks.length > 0) {
+      try {
+        this.hookExecutionRepo.bulkCreate(prepared.hooks);
+      } catch (err) {
+        if (options.strict) throw err;
+        logger.error("Failed to persist hook executions", {
+          threadId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    return { toolCallCount: prepared.toolCalls.length };
+  }
+
+  /** Persist one active turn through bounded transactions that yield between commits. */
+  async persistNarrativeBatched(
+    threadId: string,
+    messageId: string,
+    messageContent: string,
+    outcome: TurnOutcome,
+    options: { strict?: boolean } = {},
+  ): Promise<PersistNarrativeResult> {
+    const persistedToolCalls = new Set<string>();
+    const persistedThoughts = new Set<string>();
+    const persistedHooks = new Set<string>();
+
+    for (let pass = 0; pass < 16; pass += 1) {
+      const prepared = this.prepareNarrativePersistence(
+        threadId,
+        messageId,
+        messageContent,
+        outcome,
+      );
+      const toolCalls = prepared.toolCalls.filter((item) => !persistedToolCalls.has(item.toolCallId!));
+      const thoughts = prepared.thoughts.filter((item) => !persistedThoughts.has(item.id!));
+      const hooks = prepared.hooks.filter((item) => !persistedHooks.has(item.id!));
+      if (toolCalls.length === 0 && thoughts.length === 0 && hooks.length === 0) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        const afterYield = this.prepareNarrativePersistence(
+          threadId,
+          messageId,
+          messageContent,
+          outcome,
+        );
+        const hasLateRows = afterYield.toolCalls.some((item) => !persistedToolCalls.has(item.toolCallId!))
+          || afterYield.thoughts.some((item) => !persistedThoughts.has(item.id!))
+          || afterYield.hooks.some((item) => !persistedHooks.has(item.id!));
+        if (!hasLateRows) return { toolCallCount: persistedToolCalls.size };
+        continue;
+      }
+
+      if (toolCalls.length > 0) {
+        try {
+          await this.toolCallRecordRepo.bulkCreateBatched(toolCalls);
+          for (const item of toolCalls) persistedToolCalls.add(item.toolCallId!);
+        } catch (err) {
+          if (options.strict) throw err;
+          for (const item of toolCalls) persistedToolCalls.add(item.toolCallId!);
+          logger.error("Failed to persist tool call records", {
+            threadId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+      if (thoughts.length > 0) {
+        try {
+          await this.thoughtSegmentRepo.bulkCreateBatched(thoughts);
+          for (const item of thoughts) persistedThoughts.add(item.id!);
+        } catch (err) {
+          if (options.strict) throw err;
+          for (const item of thoughts) persistedThoughts.add(item.id!);
+          logger.error("Failed to persist thought segments", {
+            threadId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+      if (hooks.length > 0) {
+        try {
+          await this.hookExecutionRepo.bulkCreateBatched(hooks);
+          for (const item of hooks) persistedHooks.add(item.id!);
+        } catch (err) {
+          if (options.strict) throw err;
+          for (const item of hooks) persistedHooks.add(item.id!);
+          logger.error("Failed to persist hook executions", {
+            threadId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+    }
+
+    throw new Error(`Narrative persistence did not quiesce for ${threadId}`);
+  }
+
+  private prepareNarrativePersistence(
+    threadId: string,
+    messageId: string,
+    messageContent: string,
+    outcome: TurnOutcome,
+  ): PreparedNarrativePersistence {
+    const toolCalls = this.turnToolCalls.get(threadId) ?? [];
+    const settledAt = new Date().toISOString();
+    for (const toolCall of toolCalls) {
+      toolCall.toolCallId ??= randomUUID();
+      if (toolCall.status === "running") {
+        toolCall.status = outcome === "errored"
+          ? "failed"
+          : outcome === "cancelled"
+            ? "cancelled"
+            : "completed";
+        toolCall.completedAt = settledAt;
+      }
+      toolCall.messageId = messageId;
+      if (!toolCall.inputSummary && toolCall._rawToolInput) {
+        if (toolCall.toolName === "Agent") {
+          toolCall.displayName = resolveSubagentDisplayName(toolCall._rawToolInput);
+          toolCall.providerAgentKey = resolveProviderAgentKey(toolCall._rawToolInput);
+          toolCall.model = resolveSubagentMetadata(toolCall._rawToolInput.model);
+          toolCall.reasoningEffort = resolveSubagentMetadata(toolCall._rawToolInput.reasoningEffort);
+        }
+        toolCall.inputSummary = this.summarizeInput(toolCall.toolName, toolCall._rawToolInput);
+        delete toolCall._rawToolInput;
+      }
+    }
+
     this.closeOpenThought(threadId);
     const openHookMap = this.turnOpenHooks.get(threadId);
     if (openHookMap && openHookMap.size > 0) {
@@ -646,67 +768,34 @@ export class NarrativeStore {
       openHookMap.clear();
     }
 
-    const thoughts = (this.turnThoughts.get(threadId) ?? []).map((t) => ({
-      ...t,
+    const bufferedThoughts = this.turnThoughts.get(threadId) ?? [];
+    for (const thought of bufferedThoughts) thought.id ??= randomUUID();
+    const thoughts = bufferedThoughts.map((thought) => ({
+      ...thought,
       messageId,
     }));
-    if (thoughts.length > 0) {
-      // Suffix-match safeguard: the last chronological thought segment whose
-      // text (trimmed) is a suffix of the assistant message body is the
-      // final user-facing response — tag it so the client doesn't render it
-      // as a ThoughtBlock.  This catches provider edge cases and tool-free
-      // turns where the provider cannot set isFinalResponse at stream time.
-      const msgTrimmed = (messageContent ?? "").trim();
-      if (msgTrimmed.length > 0) {
-        // Identify the last segment by sortOrder (suffix guard targets the tail).
-        let maxSortOrder = -Infinity;
-        for (const t of thoughts) {
-          if (t.sortOrder > maxSortOrder) maxSortOrder = t.sortOrder;
+    const message = messageContent.trim();
+    if (message.length > 0 && thoughts.length > 0) {
+      const maxSortOrder = Math.max(...thoughts.map((thought) => thought.sortOrder));
+      for (const thought of thoughts) {
+        const text = thought.text.trim();
+        if (text.length === 0) continue;
+        if (text === message || (
+          thought.sortOrder === maxSortOrder
+          && (thought.isFinalResponse === 1 || message.endsWith(text))
+        )) {
+          thought.isFinalResponse = 1;
         }
-        for (const t of thoughts) {
-          const segTrimmed = t.text.trim();
-          if (segTrimmed.length === 0) continue;
-          if (segTrimmed === msgTrimmed) {
-            t.isFinalResponse = 1;
-            continue;
-          }
-          if (
-            t.sortOrder === maxSortOrder &&
-            (t.isFinalResponse === 1 || msgTrimmed.endsWith(segTrimmed))
-          ) {
-            t.isFinalResponse = 1;
-          }
-        }
-      }
-
-      try {
-        this.thoughtSegmentRepo.bulkCreate(thoughts);
-      } catch (err) {
-        if (options.strict) throw err;
-        logger.error("Failed to persist thought segments", {
-          threadId,
-          error: err instanceof Error ? err.message : String(err),
-        });
       }
     }
 
-    const hooks = (this.turnHooks.get(threadId) ?? []).map((h) => ({
-      ...h,
+    const bufferedHooks = this.turnHooks.get(threadId) ?? [];
+    for (const hook of bufferedHooks) hook.id ??= randomUUID();
+    const hooks = bufferedHooks.map((hook) => ({
+      ...hook,
       messageId,
     }));
-    if (hooks.length > 0) {
-      try {
-        this.hookExecutionRepo.bulkCreate(hooks);
-      } catch (err) {
-        if (options.strict) throw err;
-        logger.error("Failed to persist hook executions", {
-          threadId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-
-    return { toolCallCount: buffer.length };
+    return { toolCalls, thoughts, hooks };
   }
 
   /**

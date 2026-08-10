@@ -8,6 +8,7 @@ import {
 } from "@mcode/contracts";
 import { openMemoryDatabase } from "../../store/database.js";
 import { MessageRepo } from "../../repositories/message-repo.js";
+import { ACTIVE_TURN_WRITE_BATCH_LIMITS } from "../../store/bounded-write-batches.js";
 import {
   CanonicalAgentEventSink,
   type CanonicalAgentEventDraft,
@@ -189,6 +190,43 @@ describe("CanonicalAgentEventSink", () => {
     expect(published).toHaveBeenCalledTimes(1);
     expect(published.mock.calls[0]![0]).toHaveLength(3);
     expect(published.mock.calls[0]![0].every((event) => event.durableRevision === 1)).toBe(true);
+  });
+
+  it("retains only the five fixed active-turn write statements", () => {
+    const preparedSql: string[] = [];
+    const originalPrepare = db.prepare.bind(db);
+    (db as unknown as { prepare: Database.Database["prepare"] }).prepare = ((sql: string) => {
+      preparedSql.push(sql);
+      return originalPrepare(sql);
+    }) as Database.Database["prepare"];
+    const instrumentedSink = new CanonicalAgentEventSink(db, vi.fn());
+
+    instrumentedSink.commit({
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      executionId: EXECUTION_ID,
+      phase: "running",
+      events: initialDrafts(),
+    });
+    instrumentedSink.commit({
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      executionId: EXECUTION_ID,
+      phase: "completed",
+      terminalOutcome: "completed",
+      events: [terminalDraft("turn.completed")],
+    });
+
+    const retainedTargets = [
+      "INSERT INTO canonical_agent_threads",
+      "INSERT INTO canonical_agent_turns",
+      "INSERT INTO canonical_agent_items",
+      "INSERT INTO canonical_agent_events",
+      "INSERT INTO canonical_agent_ingest_checkpoints",
+    ];
+    expect(retainedTargets.map((target) =>
+      preparedSql.filter((sql) => sql.includes(target)).length
+    )).toEqual([1, 1, 1, 1, 1]);
   });
 
   it("accepts duplicate input idempotently without a revision or publication", () => {
@@ -391,6 +429,89 @@ describe("CanonicalAgentEventSink", () => {
       provider_identities_json: JSON.stringify([identity()]),
     });
     expect(messageRepo.listByThread(THREAD_ID, 10).messages).toHaveLength(2);
+  });
+
+  it("resumes bounded terminal batches without gaps and confirms visibility last", async () => {
+    const messageRepo = new MessageRepo(db);
+    let interruptPublication = false;
+    let interrupted = false;
+    const batches: number[] = [];
+    sink = new CanonicalAgentEventSink(db, (events) => {
+      batches.push(events.length);
+      if (interruptPublication && !interrupted) {
+        interrupted = true;
+        throw new Error("simulated interruption");
+      }
+    });
+    sink.startParentTurn({
+      thread: {
+        id: THREAD_ID,
+        workspaceId: "workspace-1",
+        providerId: "codex",
+        createdAt: NOW,
+      },
+      turnId: TURN_ID,
+      executionId: EXECUTION_ID,
+      permissionMode: "supervised",
+      providerIdentities: [],
+      projectUserMessage: () => messageRepo.create(THREAD_ID, "user", "question", 1),
+    });
+    interruptPublication = true;
+    const message = messageRepo.create(THREAD_ID, "assistant", "answer", 2, undefined, undefined, undefined, undefined, true);
+    const narrative = Array.from({ length: 100 }, (_, index) => ({
+      kind: "toolCall" as const,
+      sequence: 2,
+      sortOrder: index,
+      record: {
+        id: `tool-${index}`,
+        message_id: message.id,
+        parent_tool_call_id: null,
+        tool_name: "Read",
+        input_summary: `file-${index}`,
+        output_summary: "ok",
+        status: "completed" as const,
+        started_at: NOW,
+        completed_at: NOW,
+        sort_order: index,
+      },
+    }));
+    const input = {
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      executionId: EXECUTION_ID,
+      providerId: "codex",
+      providerIdentities: [],
+      outcome: "completed" as const,
+      projectTurn: () => ({ message: { ...message, is_internal: false }, narrative }),
+      finalizeCompatibility: () => messageRepo.publishAssistant(message.id),
+    };
+
+    await expect(sink.finishParentTurnBatched(input)).rejects.toThrow("simulated interruption");
+    expect(sink.loadCheckpoint(EXECUTION_ID)?.terminalOutcome).toBeNull();
+    expect(messageRepo.listByThread(THREAD_ID, 10).messages).toHaveLength(1);
+    expect(sink.loadConversationProjection(THREAD_ID, 10).messages).toHaveLength(1);
+
+    const result = await sink.finishParentTurnBatched(input);
+
+    expect(result.outcome).toBe("committed");
+    expect(sink.loadCheckpoint(EXECUTION_ID)).toMatchObject({
+      terminalOutcome: "completed",
+      lastAcceptedSequence: 106,
+      lastDurableSequence: 106,
+    });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM canonical_agent_events").get()).toEqual({ count: 106 });
+    expect(messageRepo.listByThread(THREAD_ID, 10).messages).toHaveLength(2);
+    expect(sink.loadConversationProjection(THREAD_ID, 10).messages).toHaveLength(2);
+    const maximumItemEventsPerBatch = Math.floor(
+      (ACTIVE_TURN_WRITE_BATCH_LIMITS.maxRows - 3) / 2,
+    );
+    expect(Math.max(...batches)).toBeLessThanOrEqual(maximumItemEventsPerBatch);
+    expect(db.prepare(`
+      SELECT DISTINCT durable_revision
+      FROM canonical_agent_events
+      WHERE accepted_sequence > 4
+    `).all()).toEqual([{ durable_revision: 2 }]);
+    expect(sink.loadThread(THREAD_ID)?.conversationRevision).toBe(2);
   });
 
   it("keeps the first confirmed terminal outcome", () => {

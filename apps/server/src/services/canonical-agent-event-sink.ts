@@ -25,6 +25,11 @@ import {
   type ProviderIdentity,
 } from "@mcode/contracts";
 import { broadcast } from "../transport/push.js";
+import {
+  ACTIVE_TURN_WRITE_BATCH_LIMITS,
+  runBoundedWriteBatches,
+  type WriteBatchResult,
+} from "../store/bounded-write-batches.js";
 
 /** Server input before accepted sequence, durable revision, and server timestamps are assigned. */
 export interface CanonicalAgentEventDraft {
@@ -83,6 +88,24 @@ export interface CanonicalParentTurnProjection {
   narrative: readonly NarrativeEntry[];
 }
 
+/** Canonical result plus the physical transaction work used to commit it. */
+export interface CanonicalAgentBatchedCommitResult extends CanonicalAgentCommitResult {
+  writeBatches: WriteBatchResult;
+}
+
+/** Inputs for terminal parent-turn projection and canonical persistence. */
+export interface CanonicalParentTurnFinishInput {
+  threadId: string;
+  turnId: string;
+  executionId: string;
+  providerId: string;
+  providerIdentities: readonly ProviderIdentity[];
+  outcome: "completed" | "errored" | "cancelled";
+  error?: string;
+  projectTurn: () => CanonicalParentTurnProjection;
+  finalizeCompatibility?: () => void;
+}
+
 /** Canonical conversation rows used by the staged compatibility read. */
 export interface CanonicalConversationProjection {
   messages: Message[];
@@ -110,11 +133,76 @@ export const publishCanonicalAgentEvents: CanonicalAgentEventPublisher = (events
 /** Owns validation, semantic reduction, atomic canonical persistence, and post-commit publication. */
 @injectable()
 export class CanonicalAgentEventSink {
+  private readonly persistThreadStatement: Database.Statement;
+  private readonly persistTurnStatement: Database.Statement;
+  private readonly persistItemStatement: Database.Statement;
+  private readonly insertEventStatement: Database.Statement;
+  private readonly persistCheckpointStatement: Database.Statement;
+
   constructor(
     @inject("Database") private readonly db: Database.Database,
     @inject("CanonicalAgentEventPublisher")
     private readonly publish: CanonicalAgentEventPublisher = publishCanonicalAgentEvents,
-  ) {}
+  ) {
+    this.persistThreadStatement = db.prepare(`
+      INSERT INTO canonical_agent_threads (
+        id, workspace_id, parent_thread_id, root_thread_id, owning_parent_thread_id,
+        provider_id, provider_identities_json, activity_state, conversation_revision,
+        roster_revision, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        provider_id = excluded.provider_id,
+        provider_identities_json = excluded.provider_identities_json,
+        activity_state = excluded.activity_state,
+        conversation_revision = excluded.conversation_revision,
+        roster_revision = excluded.roster_revision,
+        updated_at = excluded.updated_at
+    `);
+    this.persistTurnStatement = db.prepare(`
+      INSERT INTO canonical_agent_turns (
+        id, thread_id, execution_id, status, trigger_json, permission_mode,
+        provider_identities_json, started_at, ended_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        status = excluded.status,
+        provider_identities_json = excluded.provider_identities_json,
+        started_at = excluded.started_at,
+        ended_at = excluded.ended_at,
+        updated_at = excluded.updated_at
+    `);
+    this.persistItemStatement = db.prepare(`
+      INSERT INTO canonical_agent_items (
+        id, thread_id, turn_id, parent_item_id, kind, provider_identities_json,
+        payload_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        parent_item_id = excluded.parent_item_id,
+        kind = excluded.kind,
+        provider_identities_json = excluded.provider_identities_json,
+        payload_json = excluded.payload_json,
+        updated_at = excluded.updated_at
+    `);
+    this.insertEventStatement = db.prepare(`
+      INSERT INTO canonical_agent_events (
+        event_id, thread_id, turn_id, execution_id, accepted_sequence,
+        durable_revision, roster_revision, envelope_json, accepted_at, persisted_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    this.persistCheckpointStatement = db.prepare(`
+      INSERT INTO canonical_agent_ingest_checkpoints (
+        execution_id, thread_id, turn_id, last_accepted_sequence, last_durable_sequence,
+        native_cursor_json, phase, terminal_outcome, error, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(execution_id) DO UPDATE SET
+        last_accepted_sequence = excluded.last_accepted_sequence,
+        last_durable_sequence = excluded.last_durable_sequence,
+        native_cursor_json = excluded.native_cursor_json,
+        phase = excluded.phase,
+        terminal_outcome = excluded.terminal_outcome,
+        error = excluded.error,
+        updated_at = excluded.updated_at
+    `);
+  }
 
   /** Commit one semantic batch and publish only the applied events after SQLite commits. */
   commit(input: CanonicalAgentCommitInput): CanonicalAgentCommitResult {
@@ -254,16 +342,7 @@ export class CanonicalAgentEventSink {
   }
 
   /** Commit the first terminal result and its message and narrative projection. */
-  finishParentTurn(input: {
-    threadId: string;
-    turnId: string;
-    executionId: string;
-    providerId: string;
-    providerIdentities: readonly ProviderIdentity[];
-    outcome: "completed" | "errored" | "cancelled";
-    error?: string;
-    projectTurn: () => CanonicalParentTurnProjection;
-  }): CanonicalAgentCommitResult {
+  finishParentTurn(input: CanonicalParentTurnFinishInput): CanonicalAgentCommitResult {
     let projection: CanonicalParentTurnProjection | null = null;
     const endedAt = new Date().toISOString();
     return this.commit({
@@ -362,6 +441,186 @@ export class CanonicalAgentEventSink {
     });
   }
 
+  /** Persist a terminal parent turn in bounded transactions and confirm it only in the final batch. */
+  async finishParentTurnBatched(
+    input: CanonicalParentTurnFinishInput,
+  ): Promise<CanonicalAgentBatchedCommitResult> {
+    const checkpoint = this.loadCheckpoint(input.executionId);
+    if (checkpoint?.terminalOutcome) {
+      const thread = this.loadThread(input.threadId);
+      return {
+        outcome: "terminal-outcome-confirmed",
+        conversationRevision: thread?.conversationRevision ?? 0,
+        rosterRevision: thread?.rosterRevision ?? 0,
+        acceptedThrough: checkpoint.lastAcceptedSequence,
+        durableThrough: checkpoint.lastDurableSequence,
+        events: [],
+        writeBatches: { batches: 0, rows: 0, bytes: 0 },
+      };
+    }
+
+    const projection = input.projectTurn();
+    const endedAt = new Date().toISOString();
+    const drafts = this.parentTurnTerminalEvents(input, projection, endedAt);
+    const partialRevision = this.db
+      .prepare("SELECT durable_revision FROM canonical_agent_events WHERE event_id = ?")
+      .get(drafts[0]!.eventId) as { durable_revision: number } | undefined;
+    const terminalRevision = partialRevision?.durable_revision
+      ?? (this.loadThread(input.threadId)?.conversationRevision ?? 0) + 1;
+    const batchOverheadBytes = Buffer.byteLength(JSON.stringify({
+      thread: this.loadThread(input.threadId),
+      turn: this.loadTurn(input.turnId),
+      checkpoint,
+    }), "utf8");
+    const terminalEventId = `${input.executionId}:turn.${input.outcome === "cancelled" ? "interrupted" : input.outcome}`;
+    let latest: CanonicalAgentCommitResult | null = null;
+    const published: CanonicalAgentEventEnvelope[] = [];
+    const pendingPublication: CanonicalAgentEventEnvelope[] = [];
+    let batchState: AgentModelState | null = null;
+    let batchCheckpoint: CanonicalAgentCheckpoint | null = null;
+    let batchAcceptedAt = "";
+    let batchAcceptedSequence = 0;
+    let batchChanged = false;
+    let batchWrote = false;
+    let batchTerminal = false;
+    let batchIgnoredTerminal = false;
+
+    const writeBatches = await runBoundedWriteBatches({
+      db: this.db,
+      items: drafts,
+      limits: ACTIVE_TURN_WRITE_BATCH_LIMITS,
+      batchOverheadRows: 3,
+      batchOverheadBytes,
+      rowCount: (draft) => draft.payload.type === "item.recorded"
+        || draft.payload.type === "collaboration-action.recorded"
+        ? 2
+        : 1,
+      byteLength: (draft) => Buffer.byteLength(JSON.stringify(draft), "utf8"),
+      onBatchStarted: () => {
+        batchState = this.loadState(input.threadId, input.executionId);
+        batchCheckpoint = this.loadCheckpoint(input.executionId);
+        batchAcceptedAt = new Date().toISOString();
+        batchAcceptedSequence = batchCheckpoint?.lastAcceptedSequence ?? 0;
+        batchChanged = false;
+        batchWrote = false;
+        batchTerminal = false;
+        batchIgnoredTerminal = false;
+      },
+      write: (draft) => {
+        const terminal = draft.eventId === terminalEventId;
+        if (terminal) input.finalizeCompatibility?.();
+        const existingRow = this.db
+          .prepare("SELECT envelope_json FROM canonical_agent_events WHERE event_id = ?")
+          .get(draft.eventId) as { envelope_json: string } | undefined;
+        if (existingRow) {
+          this.assertDuplicateMatches(
+            draft,
+            CanonicalAgentEventEnvelopeSchema.parse(JSON.parse(existingRow.envelope_json)),
+          );
+          return;
+        }
+        if (!batchState) throw new Error("Canonical batch state was not initialized");
+        batchAcceptedSequence += 1;
+        const event = this.createEnvelope(
+          draft,
+          batchAcceptedSequence,
+          terminalRevision,
+          batchAcceptedAt,
+        );
+        const reduction = reduceAgentEventBatch(batchState, [event]);
+        if (reduction.outcome === "rejected") {
+          throw new Error(`Canonical event ${reduction.eventId} rejected: ${reduction.reason}`);
+        }
+        const [application] = this.applyIndividually(batchState, [event]);
+        batchIgnoredTerminal ||= application?.outcome === "terminal-outcome-confirmed";
+        batchState = reduction.state;
+        if (reduction.appliedCount > 0) {
+          const thread = batchState.threads[input.threadId];
+          if (thread) {
+            batchState = {
+              ...batchState,
+              threads: {
+                ...batchState.threads,
+                [thread.id]: {
+                  ...thread,
+                  conversationRevision: terminalRevision,
+                  updatedAt: batchAcceptedAt,
+                },
+              },
+            };
+          }
+          batchChanged = true;
+        }
+        if (event.payload.type === "item.recorded") {
+          const item = batchState.items[event.payload.item.id];
+          if (item) this.persistItem(item);
+        } else if (event.payload.type === "collaboration-action.recorded") {
+          const action = batchState.collaborationActions[event.payload.collaborationAction.id];
+          if (action) this.persistAction(action);
+        }
+        this.insertEvent(event);
+        if (application?.outcome === "applied") {
+          pendingPublication.push(event);
+          published.push(event);
+        }
+        batchWrote = true;
+        batchTerminal ||= terminal;
+      },
+      onBatchFinishing: () => {
+        if (!batchState) throw new Error("Canonical batch state was not initialized");
+        if (!batchWrote) {
+          const thread = batchState.threads[input.threadId];
+          latest = {
+            outcome: "duplicate",
+            conversationRevision: thread?.conversationRevision ?? 0,
+            rosterRevision: thread?.rosterRevision ?? 0,
+            acceptedThrough: batchAcceptedSequence,
+            durableThrough: batchAcceptedSequence,
+            events: [],
+          };
+          return;
+        }
+        if (batchChanged) {
+          const thread = batchState.threads[input.threadId];
+          if (thread) this.persistThread(thread);
+          const turn = batchState.turns[input.turnId];
+          if (turn?.threadId === input.threadId) this.persistTurn(turn, input.executionId);
+        }
+        this.persistCheckpoint({
+          executionId: input.executionId,
+          threadId: input.threadId,
+          turnId: input.turnId,
+          lastAcceptedSequence: batchAcceptedSequence,
+          lastDurableSequence: batchAcceptedSequence,
+          nativeCursor: batchCheckpoint?.nativeCursor ?? null,
+          phase: batchTerminal ? input.outcome : "running",
+          terminalOutcome: batchTerminal ? input.outcome : null,
+          error: batchTerminal ? input.error ?? null : null,
+          updatedAt: batchAcceptedAt,
+        });
+        const thread = batchState.threads[input.threadId];
+        latest = {
+          outcome: !batchChanged && batchIgnoredTerminal
+            ? "terminal-outcome-confirmed"
+            : "committed",
+          conversationRevision: thread?.conversationRevision ?? terminalRevision,
+          rosterRevision: thread?.rosterRevision ?? 0,
+          acceptedThrough: batchAcceptedSequence,
+          durableThrough: batchAcceptedSequence,
+          events: [],
+        };
+      },
+      onBatchCommitted: () => {
+        if (pendingPublication.length === 0) return;
+        this.publish(pendingPublication.splice(0));
+      },
+    });
+
+    const committed = latest as CanonicalAgentCommitResult | null;
+    if (!committed) throw new Error("Canonical terminal batch did not contain an event");
+    return { ...committed, events: published, writeBatches };
+  }
+
   /** Load canonical message and narrative items for one paginated conversation page. */
   loadConversationProjection(
     threadId: string,
@@ -377,6 +636,15 @@ export class CanonicalAgentEventSink {
         AND json_extract(payload_json, '$.projection') = 'message'
         AND json_extract(payload_json, '$.message.sequence') < ?
         AND COALESCE(json_extract(payload_json, '$.message.is_internal'), 0) = 0
+        AND (
+          json_extract(payload_json, '$.message.role') <> 'assistant'
+          OR EXISTS (
+            SELECT 1
+            FROM canonical_agent_ingest_checkpoints checkpoint
+            WHERE checkpoint.turn_id = canonical_agent_items.turn_id
+              AND checkpoint.terminal_outcome IS NOT NULL
+          )
+        )
       ORDER BY json_extract(payload_json, '$.message.sequence') DESC
       LIMIT ?
     `).all(threadId, before ?? Number.MAX_SAFE_INTEGER, clampedLimit + 1) as Array<{ payload_json: string }>;
@@ -525,13 +793,7 @@ export class CanonicalAgentEventSink {
       : input.outcome === "cancelled"
         ? { type: "turn.interrupted", endedAt, reason: input.error ?? "Turn cancelled" }
         : { type: "turn.errored", endedAt, error: input.error ?? "Provider turn failed" };
-    const events: CanonicalAgentEventDraft[] = [{
-      eventId: `${input.executionId}:${terminalPayload.type}`,
-      routing,
-      sourceProviderId: input.providerId,
-      sourceIdentities,
-      payload: terminalPayload,
-    }];
+    const events: CanonicalAgentEventDraft[] = [];
     const currentThread = this.loadThread(input.threadId);
     if (currentThread
       && JSON.stringify(currentThread.providerIdentities) !== JSON.stringify(sourceIdentities)) {
@@ -582,6 +844,13 @@ export class CanonicalAgentEventSink {
           : {}),
       }));
     }
+    events.push({
+      eventId: `${input.executionId}:${terminalPayload.type}`,
+      routing,
+      sourceProviderId: input.providerId,
+      sourceIdentities,
+      payload: terminalPayload,
+    });
     return events;
   }
 
@@ -628,7 +897,10 @@ export class CanonicalAgentEventSink {
     };
   }
 
-  private commitInsideTransaction(input: CanonicalAgentCommitInput): CanonicalAgentCommitResult {
+  private commitInsideTransaction(
+    input: CanonicalAgentCommitInput,
+    durableRevisionOverride?: number,
+  ): CanonicalAgentCommitResult {
     const currentThread = this.loadThread(input.threadId);
     const currentCheckpoint = this.loadCheckpoint(input.executionId);
     const replayedStart = input.replayGuard === "execution-started" && currentCheckpoint;
@@ -688,7 +960,8 @@ export class CanonicalAgentEventSink {
 
     const state = this.loadState(input.threadId, input.executionId);
     const acceptedAt = new Date().toISOString();
-    const candidateRevision = (currentThread?.conversationRevision ?? 0) + 1;
+    const candidateRevision = durableRevisionOverride
+      ?? (currentThread?.conversationRevision ?? 0) + 1;
     let acceptedSequence = currentCheckpoint?.lastAcceptedSequence ?? 0;
     let candidateEvents = newDrafts.map((draft) => {
       acceptedSequence += 1;
@@ -701,7 +974,7 @@ export class CanonicalAgentEventSink {
 
     const conversationChanged = reduction.appliedCount > 0;
     const conversationRevision = currentThread?.conversationRevision ?? 0;
-    const durableRevision = conversationChanged ? conversationRevision + 1 : conversationRevision;
+    const durableRevision = conversationChanged ? candidateRevision : conversationRevision;
     if (durableRevision !== candidateRevision) {
       candidateEvents = candidateEvents.map((event) => ({ ...event, durableRevision }));
       reduction = reduceAgentEventBatch(state, candidateEvents);
@@ -734,6 +1007,7 @@ export class CanonicalAgentEventSink {
       input.turnId,
       input.executionId,
       conversationChanged,
+      candidateEvents,
     );
     for (const event of candidateEvents) this.insertEvent(event);
 
@@ -886,36 +1160,38 @@ export class CanonicalAgentEventSink {
     turnId: string,
     executionId: string,
     conversationChanged: boolean,
+    events: readonly CanonicalAgentEventEnvelope[],
   ): void {
     if (!conversationChanged) return;
     const thread = state.threads[threadId];
     if (thread) this.persistThread(thread);
     const turn = state.turns[turnId];
     if (turn?.threadId === threadId) this.persistTurn(turn, executionId);
-    for (const item of Object.values(state.items)) {
-      if (item.threadId === threadId) this.persistItem(item);
+    const changedItemIds = new Set(
+      events
+        .filter((event) => event.payload.type === "item.recorded")
+        .map((event) => event.payload.type === "item.recorded" ? event.payload.item.id : ""),
+    );
+    for (const itemId of changedItemIds) {
+      const item = state.items[itemId];
+      if (item?.threadId === threadId) this.persistItem(item);
     }
-    for (const action of Object.values(state.collaborationActions)) {
-      if (action.source.threadId === threadId) this.persistAction(action);
+    const changedActionIds = new Set(
+      events
+        .filter((event) => event.payload.type === "collaboration-action.recorded")
+        .map((event) => event.payload.type === "collaboration-action.recorded"
+          ? event.payload.collaborationAction.id
+          : ""),
+    );
+    for (const actionId of changedActionIds) {
+      const action = state.collaborationActions[actionId];
+      if (action?.source.threadId === threadId) this.persistAction(action);
     }
   }
 
   private persistThread(thread: AgentThread): void {
     const parsed = AgentThreadSchema.parse(thread);
-    this.db.prepare(`
-      INSERT INTO canonical_agent_threads (
-        id, workspace_id, parent_thread_id, root_thread_id, owning_parent_thread_id,
-        provider_id, provider_identities_json, activity_state, conversation_revision,
-        roster_revision, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        provider_id = excluded.provider_id,
-        provider_identities_json = excluded.provider_identities_json,
-        activity_state = excluded.activity_state,
-        conversation_revision = excluded.conversation_revision,
-        roster_revision = excluded.roster_revision,
-        updated_at = excluded.updated_at
-    `).run(
+    this.persistThreadStatement.run(
       parsed.id,
       parsed.workspaceId,
       parsed.parentThreadId ?? null,
@@ -933,18 +1209,7 @@ export class CanonicalAgentEventSink {
 
   private persistTurn(turn: AgentTurn, executionId: string): void {
     const parsed = AgentTurnSchema.parse(turn);
-    this.db.prepare(`
-      INSERT INTO canonical_agent_turns (
-        id, thread_id, execution_id, status, trigger_json, permission_mode,
-        provider_identities_json, started_at, ended_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        status = excluded.status,
-        provider_identities_json = excluded.provider_identities_json,
-        started_at = excluded.started_at,
-        ended_at = excluded.ended_at,
-        updated_at = excluded.updated_at
-    `).run(
+    this.persistTurnStatement.run(
       parsed.id,
       parsed.threadId,
       executionId,
@@ -961,18 +1226,7 @@ export class CanonicalAgentEventSink {
 
   private persistItem(item: AgentItem): void {
     const parsed = AgentItemSchema.parse(item);
-    this.db.prepare(`
-      INSERT INTO canonical_agent_items (
-        id, thread_id, turn_id, parent_item_id, kind, provider_identities_json,
-        payload_json, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        parent_item_id = excluded.parent_item_id,
-        kind = excluded.kind,
-        provider_identities_json = excluded.provider_identities_json,
-        payload_json = excluded.payload_json,
-        updated_at = excluded.updated_at
-    `).run(
+    this.persistItemStatement.run(
       parsed.id,
       parsed.threadId,
       parsed.turnId,
@@ -1014,12 +1268,7 @@ export class CanonicalAgentEventSink {
   }
 
   private insertEvent(event: CanonicalAgentEventEnvelope): void {
-    this.db.prepare(`
-      INSERT INTO canonical_agent_events (
-        event_id, thread_id, turn_id, execution_id, accepted_sequence,
-        durable_revision, roster_revision, envelope_json, accepted_at, persisted_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
+    this.insertEventStatement.run(
       event.eventId,
       event.routing.threadId,
       event.routing.turnId ?? null,
@@ -1034,20 +1283,7 @@ export class CanonicalAgentEventSink {
   }
 
   private persistCheckpoint(checkpoint: CanonicalAgentCheckpoint): void {
-    this.db.prepare(`
-      INSERT INTO canonical_agent_ingest_checkpoints (
-        execution_id, thread_id, turn_id, last_accepted_sequence, last_durable_sequence,
-        native_cursor_json, phase, terminal_outcome, error, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(execution_id) DO UPDATE SET
-        last_accepted_sequence = excluded.last_accepted_sequence,
-        last_durable_sequence = excluded.last_durable_sequence,
-        native_cursor_json = excluded.native_cursor_json,
-        phase = excluded.phase,
-        terminal_outcome = excluded.terminal_outcome,
-        error = excluded.error,
-        updated_at = excluded.updated_at
-    `).run(
+    this.persistCheckpointStatement.run(
       checkpoint.executionId,
       checkpoint.threadId,
       checkpoint.turnId,
