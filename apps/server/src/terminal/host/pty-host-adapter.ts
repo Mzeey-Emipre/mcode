@@ -4,7 +4,7 @@ import type { PtyHostEvent } from "./pty-host-protocol.js";
 /** Host health returned when a PTY host starts. */
 export interface PtyHostHealth {
   readonly hostGeneration: string;
-  readonly state: "starting" | "healthy";
+  readonly state: "starting" | "healthy" | "degraded" | "unhealthy" | "stopped";
 }
 
 /** Strict request that creates one native PTY. */
@@ -13,7 +13,10 @@ export interface PtyHostCreate {
   readonly hostGeneration: string;
   readonly launch: TerminalLaunchSnapshot;
   readonly cwd: string;
-  readonly protectedEnv: ReadonlyArray<{ readonly name: string; readonly value: string }>;
+  readonly protectedEnv: ReadonlyArray<{
+    readonly name: string;
+    readonly value: string;
+  }>;
   readonly cols: number;
   readonly rows: number;
 }
@@ -58,7 +61,10 @@ export interface PtyHostAdapter {
   start(): Promise<PtyHostHealth>;
   create(input: PtyHostCreate): Promise<PtyHostRunning>;
   send(command: PtyHostCommand): Promise<void>;
-  inspectChildren(sessionId: string, hostGeneration: string): Promise<{ hasChildren: boolean }>;
+  inspectChildren(
+    sessionId: string,
+    hostGeneration: string,
+  ): Promise<{ hasChildren: boolean }>;
   close(input: PtyHostClose): Promise<void>;
   shutdown(): Promise<void>;
   subscribe(listener: (event: PtyHostEvent) => void): () => void;
