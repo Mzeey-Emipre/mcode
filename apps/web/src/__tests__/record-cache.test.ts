@@ -366,7 +366,7 @@ describe("recordCache", () => {
 
 });
 
-describe("selective cache eviction in handleAgentEvent", () => {
+describe("selective cache updates in handleAgentEvent", () => {
   const THREAD_ID = "thread-evict-test";
 
   beforeEach(() => {
@@ -407,13 +407,15 @@ describe("selective cache eviction in handleAgentEvent", () => {
     expect(getCachedRecord(THREAD_ID)).toBeUndefined();
   });
 
-  it("session.message evicts the cache", () => {
+  it("session.message synchronizes the cache", () => {
     cacheRecord(THREAD_ID, makeRecord(THREAD_ID));
     expect(getCachedRecord(THREAD_ID)).toBeDefined();
 
     useThreadStore.getState().handleAgentEvent({ type: "message", threadId: THREAD_ID, content: "done", tokens: null } satisfies AgentEvent);
 
-    expect(getCachedRecord(THREAD_ID)).toBeUndefined();
+    expect(getCachedRecord(THREAD_ID)?.messages).toEqual([
+      expect.objectContaining({ role: "assistant", content: "done" }),
+    ]);
   });
 
   it("session.error evicts the cache", () => {
