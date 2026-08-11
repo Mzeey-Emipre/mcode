@@ -461,6 +461,16 @@ export class AgentService {
       this.db,
       this.turnFileTracker,
       this.canonicalSink,
+      (threadId, executionId) => {
+        if (this.turnRuntime.snapshot(threadId)?.turnExecutionId !== executionId) return;
+        void this.stopSession(threadId).catch((error) => {
+          logger.warn("Failed to stop canonical execution after ingest overflow", {
+            threadId,
+            executionId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+      },
     );
     this.goalCommand = new GoalCommand(
       { messageRepo: this.messageRepo, db: this.db },
@@ -2691,6 +2701,15 @@ export class AgentService {
             if (deferredEvent) handleEvent(deferredEvent);
           });
           return;
+        }
+        if (event.turnExecutionId) {
+          this.canonicalSink.recordProviderDiagnostic({
+            executionId: event.turnExecutionId,
+            event,
+            terminal: event.type === AgentEventType.TurnComplete
+              || event.type === AgentEventType.Error
+              || event.type === AgentEventType.Ended,
+          });
         }
         // Plan mode: feed streaming text to the question parser.
         // Buffer questions until the session closes (`ended`) so the client

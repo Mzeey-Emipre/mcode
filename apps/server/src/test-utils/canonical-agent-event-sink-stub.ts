@@ -20,5 +20,6 @@ export function createCanonicalAgentEventSinkStub(
       };
     },
     loadTurnByExecution: () => null,
+    recordProviderDiagnostic: () => undefined,
   } as unknown as CanonicalAgentEventSink;
 }

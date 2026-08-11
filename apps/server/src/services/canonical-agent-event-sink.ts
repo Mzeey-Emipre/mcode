@@ -30,6 +30,15 @@ import {
   runBoundedWriteBatches,
   type WriteBatchResult,
 } from "../store/bounded-write-batches.js";
+import {
+  CanonicalAgentDiagnostics,
+  type CanonicalDiagnosticExport,
+} from "./canonical-agent-diagnostics.js";
+
+/** Capacity held back so volatile input cannot consume every semantic batch slot. */
+export const CANONICAL_AGENT_CONTROL_EVENT_RESERVE = 16;
+const CANONICAL_EXECUTION_DIAGNOSTIC_INDEX_CAPACITY = 128;
+const CANONICAL_DIAGNOSTIC_EXPORT_EVENT_CAPACITY = 1_024;
 
 /** Server input before accepted sequence, durable revision, and server timestamps are assigned. */
 export interface CanonicalAgentEventDraft {
@@ -39,6 +48,8 @@ export interface CanonicalAgentEventDraft {
   sourceIdentities: readonly ProviderIdentity[];
   sourceSequence?: number;
   providerTimestamp?: string;
+  /** Volatile drafts can be truncated so structural and terminal drafts always retain capacity. */
+  ingestClass?: "volatile";
   payload: CanonicalAgentEvent;
 }
 
@@ -70,11 +81,13 @@ export interface CanonicalAgentCommitInput {
   projectCompatibility?: () => void;
   /** Prevents replay from repeating compatibility writes for an accepted semantic phase. */
   replayGuard?: "execution-started" | "terminal-confirmed";
+  /** Stops the exact provider execution after a durable overflow record commits. */
+  onOverflow?: () => void;
 }
 
 /** Observable result after one canonical batch commits. */
 export interface CanonicalAgentCommitResult {
-  outcome: "committed" | "duplicate" | "terminal-outcome-confirmed";
+  outcome: "committed" | "duplicate" | "terminal-outcome-confirmed" | "ingest-overflow";
   conversationRevision: number;
   rosterRevision: number;
   acceptedThrough: number;
@@ -104,6 +117,23 @@ export interface CanonicalParentTurnFinishInput {
   error?: string;
   projectTurn: () => CanonicalParentTurnProjection;
   finalizeCompatibility?: () => void;
+  /** Stops the exact provider execution after a durable overflow record commits. */
+  onOverflow?: () => void;
+}
+
+/** Durable canonical context included with one bounded diagnostic export. */
+export interface CanonicalTurnDiagnosticContext {
+  thread: AgentThread;
+  turn: AgentTurn;
+  checkpoint: CanonicalAgentCheckpoint;
+  events: CanonicalAgentEventEnvelope[];
+  eventTruncation: { droppedEvents: number };
+  truncationMarkers: CanonicalAgentEventEnvelope[];
+}
+
+/** Redacted diagnostic entries plus durable records and stopping-point provenance. */
+export interface CanonicalTurnDiagnosticExport extends CanonicalDiagnosticExport {
+  canonical: CanonicalTurnDiagnosticContext;
 }
 
 /** Canonical conversation rows used by the staged compatibility read. */
@@ -117,6 +147,16 @@ type EventApplication = {
   event: CanonicalAgentEventEnvelope;
   outcome: ReturnType<typeof reduceAgentEvent>["outcome"];
 };
+
+class StructuralIngestOverflow extends Error {
+  constructor(
+    readonly input: CanonicalAgentCommitInput,
+    readonly acceptedStoppingSequence: number,
+    readonly durableStoppingSequence: number,
+  ) {
+    super("Canonical structural ingestion capacity saturated");
+  }
+}
 
 /** Publishes one committed canonical semantic batch. */
 export type CanonicalAgentEventPublisher = (
@@ -138,6 +178,8 @@ export class CanonicalAgentEventSink {
   private readonly persistItemStatement: Database.Statement;
   private readonly insertEventStatement: Database.Statement;
   private readonly persistCheckpointStatement: Database.Statement;
+  private readonly diagnostics = new CanonicalAgentDiagnostics();
+  private readonly turnIdByExecution = new Map<string, string>();
 
   constructor(
     @inject("Database") private readonly db: Database.Database,
@@ -207,9 +249,86 @@ export class CanonicalAgentEventSink {
   /** Commit one semantic batch and publish only the applied events after SQLite commits. */
   commit(input: CanonicalAgentCommitInput): CanonicalAgentCommitResult {
     const transaction = this.db.transaction(() => this.commitInsideTransaction(input));
-    const result = transaction();
+    let result: CanonicalAgentCommitResult;
+    try {
+      result = transaction();
+    } catch (error) {
+      if (!(error instanceof StructuralIngestOverflow)) throw error;
+      return this.commitStructuralOverflow(error);
+    }
+    this.recordCanonicalDiagnostics(result.events);
     if (result.events.length > 0) this.publish(result.events);
     return result;
+  }
+
+  /** Start raw capture for one turn after explicit consent. */
+  startRawTurnCapture(input: { turnId: string; consent: boolean; expiresInMs: number }): void {
+    this.diagnostics.startRawCapture(input);
+  }
+
+  /** Record one provider event in the bounded diagnostic service. */
+  recordProviderDiagnostic(input: {
+    executionId: string;
+    event: unknown;
+    terminal?: boolean;
+  }): void {
+    const turnId = this.turnIdByExecution.get(input.executionId)
+      ?? this.loadTurnByExecution(input.executionId)?.id;
+    if (!turnId) return;
+    this.diagnostics.record({ ...input, turnId, source: "provider" });
+    if (input.terminal) this.turnIdByExecution.delete(input.executionId);
+  }
+
+  /** Export bounded diagnostics, with separate confirmation for raw content. */
+  exportTurnDiagnostics(
+    turnId: string,
+    options: { includeRaw?: boolean; confirmRaw?: boolean } = {},
+  ): CanonicalTurnDiagnosticExport {
+    const row = this.db.prepare(`
+      SELECT thread_id, execution_id
+      FROM canonical_agent_turns
+      WHERE id = ?
+    `).get(turnId) as { thread_id: string; execution_id: string } | undefined;
+    if (!row) throw new Error(`Canonical diagnostic turn not found: ${turnId}`);
+    const thread = this.loadThread(row.thread_id);
+    const turn = this.loadTurn(turnId);
+    const checkpoint = this.loadCheckpoint(row.execution_id);
+    if (!thread || !turn || !checkpoint) {
+      throw new Error(`Canonical diagnostic context is incomplete: ${turnId}`);
+    }
+    const eventRows = this.db.prepare(`
+      SELECT envelope_json
+      FROM canonical_agent_events
+      WHERE execution_id = ?
+      ORDER BY accepted_sequence DESC
+      LIMIT ?
+    `).all(
+      row.execution_id,
+      CANONICAL_DIAGNOSTIC_EXPORT_EVENT_CAPACITY,
+    ) as Array<{ envelope_json: string }>;
+    const eventCount = this.db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM canonical_agent_events
+      WHERE execution_id = ?
+    `).get(row.execution_id) as { count: number };
+    const droppedEvents = Math.max(0, eventCount.count - eventRows.length);
+    const events = eventRows.reverse().map((event) => (
+      CanonicalAgentEventEnvelopeSchema.parse(JSON.parse(event.envelope_json))
+    ));
+    return {
+      ...this.diagnostics.exportTurn(turnId, options),
+      canonical: {
+        thread,
+        turn,
+        checkpoint,
+        events,
+        eventTruncation: { droppedEvents },
+        truncationMarkers: events.filter((event) => (
+          event.payload.type === "ingest.volatile-truncated"
+          || event.payload.type === "ingest.overflow"
+        )),
+      },
+    };
   }
 
   /** Load one canonical thread record. */
@@ -226,10 +345,15 @@ export class CanonicalAgentEventSink {
 
   /** Load the canonical turn bound to one Mcode execution identity. */
   loadTurnByExecution(executionId: string): AgentTurn | null {
+    const cachedTurnId = this.turnIdByExecution.get(executionId);
+    if (cachedTurnId) return this.loadTurn(cachedTurnId);
     const row = this.db
       .prepare("SELECT * FROM canonical_agent_turns WHERE execution_id = ?")
       .get(executionId);
-    return row ? this.turnFromRow(row as Record<string, unknown>) : null;
+    if (!row) return null;
+    const turn = this.turnFromRow(row as Record<string, unknown>);
+    this.cacheTurnExecution(executionId, turn.id);
+    return turn;
   }
 
   /** Load one durable ingest checkpoint. */
@@ -312,7 +436,7 @@ export class CanonicalAgentEventSink {
   }): CanonicalAgentCommitResult {
     let userMessage: Message | null = null;
     const now = new Date().toISOString();
-    return this.commit({
+    const result = this.commit({
       threadId: input.thread.id,
       turnId: input.turnId,
       executionId: input.executionId,
@@ -339,6 +463,8 @@ export class CanonicalAgentEventSink {
         return this.parentTurnStartEvents(input, userMessage, now);
       },
     });
+    this.cacheTurnExecution(input.executionId, input.turnId);
+    return result;
   }
 
   /** Commit the first terminal result and its message and narrative projection. */
@@ -461,7 +587,29 @@ export class CanonicalAgentEventSink {
 
     const projection = input.projectTurn();
     const endedAt = new Date().toISOString();
-    const drafts = this.parentTurnTerminalEvents(input, projection, endedAt);
+    const commitInput: CanonicalAgentCommitInput = {
+      threadId: input.threadId,
+      turnId: input.turnId,
+      executionId: input.executionId,
+      phase: input.outcome,
+      terminalOutcome: input.outcome,
+      error: input.error,
+      nativeCursor: input.providerIdentities.find((identity) => identity.provenance === "native"),
+      events: [],
+      onOverflow: input.onOverflow,
+    };
+    const candidateDrafts = this.parentTurnTerminalEvents(input, projection, endedAt);
+    let drafts: readonly CanonicalAgentEventDraft[];
+    try {
+      drafts = this.boundIngestBatch(commitInput, candidateDrafts, checkpoint);
+    } catch (error) {
+      if (!(error instanceof StructuralIngestOverflow)) throw error;
+      const overflow = this.commitStructuralOverflow(error);
+      return {
+        ...overflow,
+        writeBatches: { batches: 0, rows: 0, bytes: 0 },
+      };
+    }
     const partialRevision = this.db
       .prepare("SELECT durable_revision FROM canonical_agent_events WHERE event_id = ?")
       .get(drafts[0]!.eventId) as { durable_revision: number } | undefined;
@@ -612,7 +760,9 @@ export class CanonicalAgentEventSink {
       },
       onBatchCommitted: () => {
         if (pendingPublication.length === 0) return;
-        this.publish(pendingPublication.splice(0));
+        const events = pendingPublication.splice(0);
+        this.recordCanonicalDiagnostics(events);
+        this.publish(events);
       },
     });
 
@@ -923,19 +1073,15 @@ export class CanonicalAgentEventSink {
     if (events.length === 0) {
       throw new Error("Canonical semantic batch must contain at least one event");
     }
-    if (events.length > CANONICAL_AGENT_EVENT_BATCH_MAX) {
-      throw new Error(
-        `Canonical semantic batch exceeds ${CANONICAL_AGENT_EVENT_BATCH_MAX} events`,
-      );
-    }
-    if (events.some((event) => event.routing.executionId !== input.executionId)) {
+    const boundedEvents = this.boundIngestBatch(input, events, currentCheckpoint);
+    if (boundedEvents.some((event) => event.routing.executionId !== input.executionId)) {
       throw new Error("Canonical semantic batch contains another execution identity");
     }
-    if (events.some((event) => event.routing.threadId !== input.threadId)) {
+    if (boundedEvents.some((event) => event.routing.threadId !== input.threadId)) {
       throw new Error("Canonical semantic batch contains another thread identity");
     }
     const existingById = new Map<string, CanonicalAgentEventEnvelope>();
-    for (const draft of events) {
+    for (const draft of boundedEvents) {
       const row = this.db
         .prepare("SELECT envelope_json FROM canonical_agent_events WHERE event_id = ?")
         .get(draft.eventId) as { envelope_json: string } | undefined;
@@ -945,7 +1091,7 @@ export class CanonicalAgentEventSink {
       existingById.set(draft.eventId, stored);
     }
 
-    const newDrafts = events.filter((draft) => !existingById.has(draft.eventId));
+    const newDrafts = boundedEvents.filter((draft) => !existingById.has(draft.eventId));
     if (newDrafts.length === 0) {
       const acceptedThrough = currentCheckpoint?.lastAcceptedSequence ?? 0;
       return {
@@ -1054,8 +1200,9 @@ export class CanonicalAgentEventSink {
           },
         }
       : draft.payload;
+    const { ingestClass: _ingestClass, ...envelopeDraft } = draft;
     return CanonicalAgentEventEnvelopeSchema.parse({
-      ...draft,
+      ...envelopeDraft,
       sourceIdentities: [...draft.sourceIdentities],
       acceptedSequence,
       durableRevision,
@@ -1087,10 +1234,156 @@ export class CanonicalAgentEventSink {
       providerTimestamp: stored.providerTimestamp,
       payload: storedPayload,
     };
-    const normalizedDraft = JSON.parse(JSON.stringify({ ...draft, sourceIdentities: [...draft.sourceIdentities] }));
+    const { ingestClass: _ingestClass, ...comparableDraft } = draft;
+    const normalizedDraft = JSON.parse(JSON.stringify({
+      ...comparableDraft,
+      sourceIdentities: [...draft.sourceIdentities],
+    }));
     if (JSON.stringify(normalizedDraft) !== JSON.stringify(JSON.parse(JSON.stringify(comparable)))) {
       throw new Error(`Canonical event identity conflict: ${draft.eventId}`);
     }
+  }
+
+  private boundIngestBatch(
+    input: CanonicalAgentCommitInput,
+    events: readonly CanonicalAgentEventDraft[],
+    checkpoint: CanonicalAgentCheckpoint | null,
+  ): readonly CanonicalAgentEventDraft[] {
+    const structural = events.filter((event) => event.ingestClass !== "volatile");
+    const volatile = events.filter((event) => event.ingestClass === "volatile");
+    if (structural.length > CANONICAL_AGENT_EVENT_BATCH_MAX
+      || (structural.length === CANONICAL_AGENT_EVENT_BATCH_MAX && volatile.length > 0)) {
+      throw new StructuralIngestOverflow(
+        input,
+        checkpoint?.lastAcceptedSequence ?? 0,
+        checkpoint?.lastDurableSequence ?? 0,
+      );
+    }
+
+    const volatileCapacity = Math.min(
+      CANONICAL_AGENT_EVENT_BATCH_MAX - CANONICAL_AGENT_CONTROL_EVENT_RESERVE,
+      CANONICAL_AGENT_EVENT_BATCH_MAX - structural.length,
+    );
+    if (volatile.length <= volatileCapacity) return events;
+
+    const markerCapacity = CANONICAL_AGENT_EVENT_BATCH_MAX - structural.length - 1;
+    const retainedVolatile = new Set(volatile.slice(
+      0,
+      Math.max(0, Math.min(volatileCapacity, markerCapacity)),
+    ));
+    const retained = events.filter(
+      (event) => event.ingestClass !== "volatile" || retainedVolatile.has(event),
+    );
+    const droppedEventCount = volatile.length - retainedVolatile.size;
+    const source = volatile[0];
+    if (!source) return retained;
+    const marker: CanonicalAgentEventDraft = {
+      eventId: `${input.executionId}:volatile-truncated:${source.eventId.slice(-96)}`,
+      routing: {
+        threadId: input.threadId,
+        turnId: input.turnId,
+        executionId: input.executionId,
+      },
+      sourceProviderId: source.sourceProviderId,
+      sourceIdentities: source.sourceIdentities,
+      payload: { type: "ingest.volatile-truncated", droppedEventCount },
+    };
+    const terminalIndex = retained.findIndex((event) => this.isTerminalDraft(event));
+    if (terminalIndex < 0) return [...retained, marker];
+    return [
+      ...retained.slice(0, terminalIndex),
+      marker,
+      ...retained.slice(terminalIndex),
+    ];
+  }
+
+  private isTerminalDraft(event: CanonicalAgentEventDraft): boolean {
+    return this.isTerminalPayload(event.payload);
+  }
+
+  private isTerminalPayload(payload: CanonicalAgentEvent): boolean {
+    return payload.type === "turn.completed"
+      || payload.type === "turn.interrupted"
+      || payload.type === "turn.errored"
+      || payload.type === "ingest.overflow";
+  }
+
+  private recordIngestOverflow(
+    input: CanonicalAgentCommitInput,
+    acceptedStoppingSequence: number,
+    durableStoppingSequence: number,
+  ): CanonicalAgentCommitResult {
+    const checkpoint = this.loadCheckpoint(input.executionId);
+    if (!checkpoint) {
+      throw new Error(
+        `Canonical semantic batch exceeds ${CANONICAL_AGENT_EVENT_BATCH_MAX} events`,
+      );
+    }
+    const turn = this.loadTurn(input.turnId);
+    const thread = this.loadThread(input.threadId);
+    if (!turn || !thread) throw new Error("Canonical overflow target is not durable");
+    const endedAt = new Date().toISOString();
+    const result = this.commit({
+      threadId: input.threadId,
+      turnId: input.turnId,
+      executionId: input.executionId,
+      phase: "ingest_overflow",
+      terminalOutcome: "errored",
+      error: "ingest_overflow",
+      events: [{
+        eventId: `${input.executionId}:ingest-overflow`,
+        routing: {
+          threadId: input.threadId,
+          turnId: input.turnId,
+          executionId: input.executionId,
+        },
+        sourceProviderId: thread.providerId,
+        sourceIdentities: thread.providerIdentities,
+        payload: {
+          type: "ingest.overflow",
+          endedAt,
+          acceptedStoppingSequence,
+          durableStoppingSequence,
+        },
+      }],
+    });
+    return result;
+  }
+
+  private commitStructuralOverflow(error: StructuralIngestOverflow): CanonicalAgentCommitResult {
+    const overflow = this.recordIngestOverflow(
+      error.input,
+      error.acceptedStoppingSequence,
+      error.durableStoppingSequence,
+    );
+    error.input.onOverflow?.();
+    return { ...overflow, outcome: "ingest-overflow" };
+  }
+
+  private recordCanonicalDiagnostics(events: readonly CanonicalAgentEventEnvelope[]): void {
+    for (const event of events) {
+      const turnId = event.routing.turnId;
+      if (!turnId) continue;
+      const terminal = this.isTerminalPayload(event.payload);
+      this.diagnostics.record({
+        turnId,
+        executionId: event.routing.executionId,
+        source: "canonical",
+        event,
+        terminal,
+      });
+      if (terminal) {
+        this.turnIdByExecution.delete(event.routing.executionId);
+      }
+    }
+  }
+
+  private cacheTurnExecution(executionId: string, turnId: string): void {
+    this.turnIdByExecution.delete(executionId);
+    this.turnIdByExecution.set(executionId, turnId);
+    if (this.turnIdByExecution.size <= CANONICAL_EXECUTION_DIAGNOSTIC_INDEX_CAPACITY) return;
+    const oldestExecutionId = this.turnIdByExecution.keys().next().value as string | undefined;
+    if (oldestExecutionId) this.turnIdByExecution.delete(oldestExecutionId);
   }
 
   private applyIndividually(
