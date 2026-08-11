@@ -237,15 +237,9 @@ export function App() {
   );
 
   const closeSettings = useCallback(() => {
-    if (
-      isDesktop &&
-      useNavigationHistoryStore.getState().canGoBack(isValidLocation)
-    ) {
-      navigateHistory("back");
-    } else {
-      setSettingsOpen(false);
-    }
-  }, [isDesktop, isValidLocation, navigateHistory]);
+    setSettingsOpen(false);
+    useUiStore.getState().setPrimarySurface("chat");
+  }, []);
 
   useEffect(() => {
     if (!isDesktop) return;

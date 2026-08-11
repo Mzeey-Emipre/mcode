@@ -75,7 +75,7 @@ export function Sidebar({
                 variant="ghost"
                 size="icon-sm"
                 onClick={onCloseSettings}
-                aria-label="Back to projects"
+                aria-label="Back to chat"
                 className="text-muted-foreground"
               >
                 <ArrowLeft size={15} />

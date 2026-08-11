@@ -262,6 +262,27 @@ describe("App", () => {
     });
   });
 
+  it("returns from Settings to Chat instead of the previous surface", async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Pull requests" }));
+    await screen.findByRole("heading", { name: "Pull requests" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Settings" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Back to chat" }),
+    );
+
+    await waitFor(() => {
+      expect(
+        within(screen.getByRole("main")).getByText("What should we work on?"),
+      ).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByRole("heading", { name: "Pull requests" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("renders the persistent navigation title bar only for Electron", () => {
     (window as unknown as Record<string, unknown>).desktopBridge = {
       window: {
