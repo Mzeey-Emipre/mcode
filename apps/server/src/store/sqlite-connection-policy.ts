@@ -1,10 +1,13 @@
 import type Database from "better-sqlite3";
 
 /** Active SQLite page-cache budget in kibibytes. */
-export const SQLITE_ACTIVE_CACHE_KIB = 2_000;
+export const SQLITE_ACTIVE_CACHE_KIB = 2_048;
 
 /** Background SQLite page-cache budget in kibibytes. */
 export const SQLITE_BACKGROUND_CACHE_KIB = 500;
+
+/** SQLite page-cache policy selected by the application lifecycle. */
+export type SQLiteCacheBudget = "active" | "background";
 
 function assertPragmaValue(
   db: Database.Database,
@@ -27,7 +30,7 @@ export function applySQLiteConnectionPolicy(
   if (isFileBacked) {
     db.pragma("journal_mode = WAL");
     db.pragma("busy_timeout = 5000");
-    db.pragma(`cache_size = -${SQLITE_ACTIVE_CACHE_KIB}`);
+    applySQLiteCacheBudget(db, "active");
     db.pragma("mmap_size = 0");
   }
   db.pragma("foreign_keys = ON");
@@ -36,11 +39,23 @@ export function applySQLiteConnectionPolicy(
   if (isFileBacked) {
     assertPragmaValue(db, "journal_mode", "wal");
     assertPragmaValue(db, "busy_timeout", 5_000);
-    assertPragmaValue(db, "cache_size", -SQLITE_ACTIVE_CACHE_KIB);
     assertPragmaValue(db, "mmap_size", 0);
   }
   assertPragmaValue(db, "foreign_keys", 1);
   assertPragmaValue(db, "synchronous", 2);
+}
+
+/** Apply and assert one bounded SQLite page-cache budget. */
+export function applySQLiteCacheBudget(
+  db: Database.Database,
+  budget: SQLiteCacheBudget,
+): number {
+  const cacheKiB = budget === "active"
+    ? SQLITE_ACTIVE_CACHE_KIB
+    : SQLITE_BACKGROUND_CACHE_KIB;
+  db.pragma(`cache_size = -${cacheKiB}`);
+  assertPragmaValue(db, "cache_size", -cacheKiB);
+  return cacheKiB;
 }
 
 /** Run SQLite's bounded optimization for connection startup or later maintenance. */

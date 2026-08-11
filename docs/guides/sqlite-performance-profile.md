@@ -38,3 +38,24 @@ The command exits with code 1 when a candidate median exceeds its baseline by
 more than 5 percent. Runtime differences remain in the report as warnings.
 Use `--threshold-percent` only when the issue or experiment defines another
 limit. Use `--samples` to select from 3 through 50 samples per workload.
+
+## Release certification
+
+Use an approved report from the same profile schema, runtime, and computer:
+
+```sh
+bun run certify:database --baseline .dev/verification/sqlite-approved-baseline.json --output .dev/verification/sqlite-certification.json
+```
+
+The command fails if the runtime changed or a workload regressed by more than
+5 percent. It also fails if a workload omits duration, returned bytes, memory,
+query plans, or the required pragma values.
+
+The certification also applies the production lifecycle cache policy and
+records the observed `cache_size` pragma after both transitions: 500 KiB while
+backgrounded and 2,048 KiB when active.
+
+The same Electron process runs three recovery checks. It forces a migration
+failure and checks the restored database bytes. It rejects a backup with no
+available disk space before mutation. It also runs seven upgrades and checks
+that five generations remain and the public text identifier is unchanged.

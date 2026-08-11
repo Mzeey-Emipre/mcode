@@ -96,6 +96,6 @@ describe("MemoryPressureService", () => {
     expect(db.pragma).toHaveBeenCalledWith("cache_size = -500");
 
     service.markForeground();
-    expect(db.pragma).toHaveBeenCalledWith("cache_size = -2000");
+    expect(db.pragma).toHaveBeenCalledWith("cache_size = -2048");
   });
 });

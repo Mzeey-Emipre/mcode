@@ -9,9 +9,8 @@ import { injectable, inject } from "tsyringe";
 import type Database from "better-sqlite3";
 import { logger } from "@mcode/shared";
 import {
+  applySQLiteCacheBudget,
   optimizeSQLiteConnection,
-  SQLITE_ACTIVE_CACHE_KIB,
-  SQLITE_BACKGROUND_CACHE_KIB,
 } from "../store/sqlite-connection-policy.js";
 
 /**
@@ -312,7 +311,7 @@ export class MemoryPressureService {
   private enterBackgroundIdle(): void {
     logger.info("Entering background idle: full GC + cache reduction");
     try {
-      this.db.pragma(`cache_size = -${SQLITE_BACKGROUND_CACHE_KIB}`);
+      applySQLiteCacheBudget(this.db, "background");
     } catch (err) {
       logger.warn("cache_size reduction failed", {
         error: err instanceof Error ? err.message : String(err),
@@ -333,7 +332,7 @@ export class MemoryPressureService {
   private restoreFromBackground(): void {
     logger.info("Restoring from background idle: normal cache size");
     try {
-      this.db.pragma(`cache_size = -${SQLITE_ACTIVE_CACHE_KIB}`);
+      applySQLiteCacheBudget(this.db, "active");
     } catch (err) {
       logger.warn("cache_size restore failed", {
         error: err instanceof Error ? err.message : String(err),

@@ -15,6 +15,7 @@ import {
   createMigrationBackup,
   pruneMigrationBackups,
   restoreMigrationBackupAfterFailure,
+  type MigrationBackupSpaceOptions,
 } from "./migration-backup.js";
 import {
   applySQLiteConnectionPolicy,
@@ -67,14 +68,15 @@ function resolveDrizzleMigrationsDir(): string {
   );
 }
 
-/** Cached migrations folder (absolute); recomputed lazily so Vitest env applies before first DB open. */
-let drizzleDirMemo: string | null = null;
+/** Cached migrations folder and the override that selected it. */
+let drizzleDirMemo: { override: string | undefined; directory: string } | null = null;
 
 function getDrizzleMigrationsDir(): string {
-  if (!drizzleDirMemo) {
-    drizzleDirMemo = resolveDrizzleMigrationsDir();
+  const override = process.env.MCODE_DRIZZLE_MIGRATIONS_DIR;
+  if (!drizzleDirMemo || drizzleDirMemo.override !== override) {
+    drizzleDirMemo = { override, directory: resolveDrizzleMigrationsDir() };
   }
-  return drizzleDirMemo;
+  return drizzleDirMemo.directory;
 }
 
 /** Resolves and validates the approved better-sqlite3 binding for this process. */
@@ -286,6 +288,14 @@ function readSchemaVersion(db: Database.Database): number {
   return version;
 }
 
+/** Options for a file-backed application database connection. */
+export interface OpenDatabaseOptions {
+  dbPath?: string;
+  branch?: string;
+  gitToplevel?: string;
+  migrationBackupSpace?: MigrationBackupSpaceOptions;
+}
+
 /**
  * Open (or create) a SQLite database with WAL mode and foreign keys enabled,
  * then run any pending Drizzle migrations.
@@ -293,11 +303,7 @@ function readSchemaVersion(db: Database.Database): number {
  * In non-production, a linked git worktree uses `<toplevel>/.mcode-local/mcode.db`; otherwise a
  * branch opts in to `dbs/dev-<hash>.db`. Resolution matches `resolveDbPath` from `@mcode/shared`.
  */
-export function openDatabase(opts?: {
-  dbPath?: string;
-  branch?: string;
-  gitToplevel?: string;
-}): Database.Database {
+export function openDatabase(opts?: OpenDatabaseOptions): Database.Database {
   const resolvedPath =
     opts?.dbPath ??
     process.env.MCODE_DB_PATH ??
@@ -312,7 +318,9 @@ export function openDatabase(opts?: {
   }
 
   const nativeBinding = resolveElectronNativeBinding();
-  const backupPath = createMigrationBackup(resolvedPath);
+  const backupPath = opts?.migrationBackupSpace
+    ? createMigrationBackup(resolvedPath, opts.migrationBackupSpace)
+    : createMigrationBackup(resolvedPath);
   let db: Database.Database | undefined;
   try {
     db = new Database(resolvedPath, { nativeBinding });
