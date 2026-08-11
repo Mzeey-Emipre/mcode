@@ -8,10 +8,13 @@ import {
   takePrefetchedHistoryPage,
   evictCachedRecord,
   clearRecordCache,
-  resizeRecordCache,
   RECORD_CACHE_SIZE,
   RECORD_MESSAGE_CACHE_SIZE,
+  CONVERSATION_MEMORY_BUDGETS,
+  applyConversationMemoryPressure,
+  getConversationCacheUsage,
   projectConversationCacheState,
+  setActiveConversation,
 } from "@/lib/thread-hydrator/record-cache";
 import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-record";
 import {
@@ -59,6 +62,7 @@ describe("recordCache", () => {
   beforeEach(() => {
     clearRecordCache();
     clearScrollMemory();
+    setActiveConversation(null);
   });
 
   it("returns undefined for a thread that was never cached", () => {
@@ -163,7 +167,7 @@ describe("recordCache", () => {
     expect(cached?.latestTurnWithChanges).toBeNull();
   });
 
-  it("forgets a remembered anchor when the message cap evicts it", () => {
+  it("keeps a remembered anchor when the message cap trims around it", () => {
     const messages = Array.from({ length: RECORD_MESSAGE_CACHE_SIZE + 1 }, (_, index) => ({
       ...makeRecord("anchor").messages[0],
       id: `anchor-${index + 1}`,
@@ -177,7 +181,8 @@ describe("recordCache", () => {
       oldestLoadedSequence: 1,
     });
 
-    expect(recallScrollPosition("anchor")).toBeUndefined();
+    expect(recallScrollPosition("anchor")?.anchorMessageId).toBe("anchor-1");
+    expect(getCachedRecord("anchor")?.messages[0]?.id).toBe("anchor-1");
   });
 
   it("keeps a remembered anchor that remains inside the message cap", () => {
@@ -236,6 +241,106 @@ describe("recordCache", () => {
     expect(prefetched?.narrativeByMessage["history-1"]).toBeUndefined();
   });
 
+  it("keeps inactive and prefetched residency inside separate byte budgets", () => {
+    const content = "x".repeat(1_000_000);
+    for (let index = 0; index < 30; index++) {
+      const threadId = `inactive-${index}`;
+      cacheRecord(threadId, {
+        ...makeRecord(threadId),
+        messages: [{ ...makeRecord(threadId).messages[0], content }],
+      });
+      cachePrefetchedHistoryPage(threadId, 2, {
+        messages: [{ ...makeRecord(threadId).messages[0], id: `${threadId}-prefetch`, content }],
+        hasMore: false,
+        narrativeByMessage: {},
+      });
+    }
+
+    const usage = getConversationCacheUsage();
+    expect(usage.inactiveBytes).toBeLessThanOrEqual(CONVERSATION_MEMORY_BUDGETS.inactiveBytes);
+    expect(usage.prefetchedBytes).toBeLessThanOrEqual(CONVERSATION_MEMORY_BUDGETS.prefetchedBytes);
+  });
+
+  it("keeps retained narrative metadata inside its own byte budget", () => {
+    for (let index = 0; index < 8; index++) {
+      const threadId = `narrative-${index}`;
+      const record = makeRecord(threadId);
+      cacheRecord(threadId, {
+        ...record,
+        narrativeByMessage: {
+          [record.messages[0].id]: {
+            tools: [{ output: "x".repeat(700_000) }],
+            thoughts: [],
+            hooks: [],
+          } as never,
+        },
+      });
+    }
+
+    expect(getConversationCacheUsage().narrativeBytes).toBeLessThanOrEqual(
+      CONVERSATION_MEMORY_BUDGETS.narrativeBytes,
+    );
+  });
+
+  it("keeps the active cache record inside its total byte budget", () => {
+    const record = makeRecord("active-budget");
+    setActiveConversation("active-budget");
+    cacheRecord("active-budget", {
+      ...record,
+      messages: Array.from({ length: 10 }, (_, index) => ({
+        ...record.messages[0],
+        id: `active-budget-${index}`,
+        sequence: index + 1,
+        content: "x".repeat(1_000_000),
+      })),
+      narrativeByMessage: {
+        "active-budget-9": {
+          tools: [{ output: "x".repeat(4_000_000) }],
+          thoughts: [],
+          hooks: [],
+        } as never,
+      },
+    });
+
+    expect(getConversationCacheUsage().activeBytes).toBeLessThanOrEqual(
+      CONVERSATION_MEMORY_BUDGETS.activeBytes,
+    );
+  });
+
+  it("evicts prefetched and inactive data before trimming the active conversation", () => {
+    const content = "x".repeat(1_000_000);
+    const activeMessages = Array.from({ length: 10 }, (_, index) => ({
+      ...makeRecord("active").messages[0],
+      id: `active-${index + 1}`,
+      sequence: index + 1,
+      content,
+    }));
+    setActiveConversation("active");
+    rememberScrollTop("active", 400, false, { messageId: "active-5", top: 28 });
+    cacheRecord("active", {
+      ...createEmptyThreadRecord(),
+      messages: activeMessages,
+      oldestLoadedSequence: 1,
+      newestLoadedSequence: 10,
+    });
+    cacheRecord("inactive", {
+      ...makeRecord("inactive"),
+      messages: [{ ...makeRecord("inactive").messages[0], content }],
+    });
+    cachePrefetchedHistoryPage("prefetched", 2, {
+      messages: [{ ...makeRecord("prefetched").messages[0], content }],
+      hasMore: false,
+      narrativeByMessage: {},
+    });
+
+    const result = applyConversationMemoryPressure("critical");
+
+    expect(result.evictionOrder.slice(0, 2)).toEqual(["prefetched", "inactive"]);
+    expect(result.activeTrimmed).toBe(true);
+    expect(getCachedRecord("active")?.messages.some((message) => message.id === "active-5")).toBe(true);
+    expect(recallScrollPosition("active")?.anchorMessageId).toBe("active-5");
+  });
+
   it("cleans up scroll memory when evicting via LRU capacity", () => {
     for (let i = 0; i < RECORD_CACHE_SIZE; i++) {
       cacheRecord(`t${i}`, makeRecord(`t${i}`));
@@ -259,39 +364,6 @@ describe("recordCache", () => {
     expect(recallScrollTop("new")).toBe(9999);
   });
 
-  it("resizeRecordCache shrinks the active cache and evicts oldest entries", () => {
-    for (let i = 0; i < RECORD_CACHE_SIZE; i++) {
-      cacheRecord(`t${i}`, makeRecord(`t${i}`));
-    }
-    resizeRecordCache(2);
-    expect(getCachedRecord("t0")).toBeUndefined();
-    expect(getCachedRecord(`t${RECORD_CACHE_SIZE - 1}`)).toBeDefined();
-    expect(getCachedRecord(`t${RECORD_CACHE_SIZE - 2}`)).toBeDefined();
-    resizeRecordCache(RECORD_CACHE_SIZE);
-  });
-
-  it("resizeRecordCache grows the cache without dropping entries", () => {
-    cacheRecord("t1", makeRecord("t1"));
-    cacheRecord("t2", makeRecord("t2"));
-    resizeRecordCache(25);
-    expect(getCachedRecord("t1")).toBeDefined();
-    expect(getCachedRecord("t2")).toBeDefined();
-    resizeRecordCache(RECORD_CACHE_SIZE);
-  });
-
-  it("resizeRecordCache forgets scroll positions for evicted threads", () => {
-    for (let i = 0; i < RECORD_CACHE_SIZE; i++) {
-      cacheRecord(`t${i}`, makeRecord(`t${i}`));
-      rememberScrollTop(`t${i}`, i * 100);
-    }
-    resizeRecordCache(2);
-    expect(recallScrollTop(`t${RECORD_CACHE_SIZE - 1}`)).toBe(
-      (RECORD_CACHE_SIZE - 1) * 100,
-    );
-    expect(recallScrollTop("t0")).toBeUndefined();
-    expect(recallScrollTop(`t${RECORD_CACHE_SIZE - 3}`)).toBeUndefined();
-    resizeRecordCache(RECORD_CACHE_SIZE);
-  });
 });
 
 describe("selective cache eviction in handleAgentEvent", () => {

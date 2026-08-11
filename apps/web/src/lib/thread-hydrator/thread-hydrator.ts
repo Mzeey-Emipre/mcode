@@ -1,6 +1,7 @@
 import {
   cachePrefetchedHistoryPage,
   cacheRecord,
+  applyConversationMemoryPressure as applyCacheMemoryPressure,
   evictCachedRecord,
   getCachedRecord,
   hasCachedRecord,
@@ -317,6 +318,19 @@ export class ThreadHydrator {
     const state = this.deps.getState();
     if (state.currentThreadId === threadId) return;
     cacheRecord(threadId, projectConversationCacheState(getThreadRecord(state.records, threadId)));
+  }
+
+  /** Apply cache pressure and project a critically trimmed active window into live state. */
+  applyMemoryPressure(level: "warning" | "critical"): void {
+    const activeThreadId = this.deps.getState().currentThreadId;
+    if (activeThreadId) {
+      const activeRecord = getThreadRecord(this.deps.getState().records, activeThreadId);
+      cacheRecord(activeThreadId, projectConversationCacheState(activeRecord));
+    }
+    const result = applyCacheMemoryPressure(level);
+    if (!activeThreadId || !result.activeTrimmed) return;
+    const bounded = getCachedRecord(activeThreadId);
+    if (bounded) this.restoreFromCache(activeThreadId, bounded, { bumpLoadEpoch: false });
   }
 
   /** Discard a stale cached conversation before an authoritative mutation. */

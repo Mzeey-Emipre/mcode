@@ -23,6 +23,11 @@ import {
 import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-record";
 import { mockTransport, createMockMessage } from "./mocks/transport";
 import type { Message } from "@/transport";
+import { rememberScrollTop } from "@/components/chat/scrollPositionMemory";
+import {
+  ACTIVE_CONVERSATION_MESSAGE_BYTES,
+  measureConversationMessages,
+} from "@/lib/thread-hydrator/conversation-memory-policy";
 
 vi.mock("@/transport", async () => ({
   ...(await vi.importActual("@/transport")),
@@ -552,5 +557,40 @@ await activateTestConversation(threadId);
       duplicateIdAtEarlierSequence,
       resident,
     ]);
+  });
+
+  it("evicts by active byte budget without removing the visible anchor", async () => {
+    const makeLargeMessage = (sequence: number) => createMockMessage({
+      id: `message-${sequence}`,
+      thread_id: threadId,
+      sequence,
+      content: "x".repeat(100_000),
+    });
+    const resident = Array.from({ length: 100 }, (_, index) => makeLargeMessage(index + 101));
+    resetThreadStoreForTests({
+      currentThreadId: threadId,
+      records: new Map([[threadId, {
+        ...createEmptyThreadRecord(),
+        messages: resident,
+        oldestLoadedSequence: 101,
+        newestLoadedSequence: 200,
+        hasMoreMessages: true,
+      }]]),
+    });
+    rememberScrollTop(threadId, 1_200, false, { messageId: "message-120", top: 24 });
+    (mockTransport.getMessages as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      messages: Array.from({ length: 50 }, (_, index) => makeLargeMessage(index + 51)),
+      hasMore: true,
+    });
+
+    await useThreadStore.getState().loadOlderMessages(threadId);
+
+    const messages = getTestActiveMessages();
+    expect(measureConversationMessages(messages)).toBeLessThanOrEqual(
+      ACTIVE_CONVERSATION_MESSAGE_BYTES,
+    );
+    expect(messages.some((message) => message.id === "message-120")).toBe(true);
+    expect(readThreadField(threadId, (record) => record.hasMoreMessages)).toBe(true);
+    expect(readThreadField(threadId, (record) => record.hasNewerMessages)).toBe(true);
   });
 });

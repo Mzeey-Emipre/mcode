@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { renderHook } from "@testing-library/react";
 
 const setBackground = vi.fn().mockResolvedValue(undefined);
+const applyConversationMemoryPressure = vi.fn();
 
 vi.mock("@/transport", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/transport")>();
@@ -15,7 +16,7 @@ vi.mock("@/transport", async (importOriginal) => {
 // so we don't pull in its ambient dependencies.
 vi.mock("@/stores/threadStore", () => ({
   useThreadStore: {
-    getState: () => ({ clearToolCallRecordCache: vi.fn() }),
+    getState: () => ({ clearToolCallRecordCache: vi.fn(), applyConversationMemoryPressure }),
   },
 }));
 
@@ -29,6 +30,7 @@ const LEGACY_CLEAR_EVENT = "mcode:clear-terminal-buffers";
 describe("useIdleReclamation (regression #305)", () => {
   beforeEach(() => {
     setBackground.mockClear();
+    applyConversationMemoryPressure.mockClear();
     vi.useFakeTimers();
   });
 
@@ -61,5 +63,14 @@ describe("useIdleReclamation (regression #305)", () => {
     vi.advanceTimersByTime(61_000);
 
     expect(setBackground).toHaveBeenCalledWith(true);
+  });
+
+  it("applies warning pressure to conversation residency during background idle", () => {
+    renderHook(() => useIdleReclamation());
+
+    window.dispatchEvent(new Event("blur"));
+    vi.advanceTimersByTime(61_000);
+
+    expect(applyConversationMemoryPressure).toHaveBeenCalledWith("warning");
   });
 });

@@ -18,19 +18,13 @@ describe("settings.provider.enabled", () => {
   });
 });
 
-describe("settings.performance.threadCacheSize", () => {
-  it("defaults the thread cache to 25 entries", () => {
-    expect(getDefaultSettings().performance.threadCacheSize).toBe(25);
-    expect(SettingsSchema().parse({}).performance.threadCacheSize).toBe(25);
-  });
-
-  it("accepts bounded user overrides", () => {
-    expect(
-      SettingsSchema().parse({ performance: { threadCacheSize: 50 } }).performance.threadCacheSize,
-    ).toBe(50);
-    expect(
-      PartialSettingsSchema().parse({ performance: { threadCacheSize: 12 } }).performance?.threadCacheSize,
-    ).toBe(12);
+describe("conversation memory settings", () => {
+  it("does not expose the retired thread-cache memory control", () => {
+    expect(getDefaultSettings()).not.toHaveProperty("performance");
+    expect(SettingsSchema().parse({ performance: { threadCacheSize: 50 } }))
+      .not.toHaveProperty("performance");
+    expect(PartialSettingsSchema().parse({ performance: { threadCacheSize: 12 } }))
+      .not.toHaveProperty("performance");
   });
 });
 

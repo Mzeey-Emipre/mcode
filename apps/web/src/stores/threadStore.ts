@@ -33,7 +33,17 @@ import {
   transferTurnResponseMetadata,
 } from "./turn-response-projection";
 import { shallowEqualBy } from "@/lib/shallowEqualBy";
-import { forgetScrollTop } from "@/components/chat/scrollPositionMemory";
+import {
+  forgetScrollTop,
+  recallScrollPosition,
+} from "@/components/chat/scrollPositionMemory";
+import {
+  ACTIVE_CONVERSATION_MESSAGE_BYTES,
+  CONVERSATION_NARRATIVE_BYTES,
+  selectConversationNarrative,
+  selectConversationWindow,
+} from "@/lib/thread-hydrator/conversation-memory-policy";
+import { setActiveConversation } from "@/lib/thread-hydrator/record-cache";
 import { releaseBrowserCaptureSpills } from "@/lib/browser-capture-spill";
 import { isGoalControlCommand } from "@/lib/goal-command";
 import { resolveGoalLookupGoal } from "@/lib/goal-lookup";
@@ -201,6 +211,8 @@ interface ThreadState {
   getCachedToolCallRecords: (key: string) => ToolCallRecord[] | null;
   /** Evict the entire tool call record cache. Records are re-fetched on next expand. */
   clearToolCallRecordCache: () => void;
+  /** Apply automatic pressure to conversation caches. */
+  applyConversationMemoryPressure: (level: "warning" | "critical") => void;
 
   // Message actions
   loadOlderMessages: (threadId: string) => Promise<void>;
@@ -766,12 +778,14 @@ export const TOOL_CALL_CACHE_SIZE = 200;
  * Returns the trimmed array and whether messages were evicted.
  */
 function capMessages(messages: Message[]): { messages: Message[]; evicted: boolean } {
-  if (messages.length <= MESSAGE_WINDOW_SIZE) {
-    return { messages, evicted: false };
-  }
+  const selected = selectConversationWindow(messages, {
+    maxBytes: ACTIVE_CONVERSATION_MESSAGE_BYTES,
+    maxMessages: MESSAGE_WINDOW_SIZE,
+    preference: "newer",
+  });
   return {
-    messages: messages.slice(messages.length - MESSAGE_WINDOW_SIZE),
-    evicted: true,
+    messages: selected.messages,
+    evicted: selected.evictedOlder || selected.evictedNewer,
   };
 }
 
@@ -785,6 +799,7 @@ interface MergedConversationWindow {
 
 /** Merge one directional page while resident identities and sequences keep precedence. */
 function mergeConversationWindow(
+  threadId: string,
   residentMessages: readonly Message[],
   pageMessages: readonly Message[],
   direction: ConversationPageDirection,
@@ -801,20 +816,12 @@ function mergeConversationWindow(
   const merged = [...bySequence.values()].sort((left, right) =>
     left.sequence - right.sequence || left.id.localeCompare(right.id),
   );
-  if (merged.length <= MESSAGE_WINDOW_SIZE) {
-    return { messages: merged, evictedOlder: false, evictedNewer: false };
-  }
-  return direction === "older"
-    ? {
-        messages: merged.slice(0, MESSAGE_WINDOW_SIZE),
-        evictedOlder: false,
-        evictedNewer: true,
-      }
-    : {
-        messages: merged.slice(-MESSAGE_WINDOW_SIZE),
-        evictedOlder: true,
-        evictedNewer: false,
-      };
+  return selectConversationWindow(merged, {
+    anchorMessageId: recallScrollPosition(threadId)?.anchorMessageId,
+    maxBytes: ACTIVE_CONVERSATION_MESSAGE_BYTES,
+    maxMessages: MESSAGE_WINDOW_SIZE,
+    preference: direction,
+  });
 }
 
 function filterPaginationMetadata<T>(
@@ -1272,9 +1279,13 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
   });
   registerThreadHydrator(threadHydrator);
   const conversationResidency = createConversationResidency({
-    restoreConversation: (threadId) => threadHydrator.hydrate(threadId, "active"),
+    restoreConversation: (threadId) => {
+      setActiveConversation(threadId);
+      return threadHydrator.hydrate(threadId, "active");
+    },
     refreshConversation: (threadId) => threadHydrator.hydrate(threadId, "active", { force: true }),
     deactivateConversation: () => {
+      setActiveConversation(null);
       const current = get().currentThreadId;
       if (current) invalidateDeferredNarrativeEvents(current);
       threadHydrator.deactivate();
@@ -1385,6 +1396,10 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     get().toolCallRecordCache.clear();
   },
 
+  applyConversationMemoryPressure: (level) => {
+    threadHydrator.applyMemoryPressure(level);
+  },
+
   /**
    * Fetch the next batch of older messages for scroll-up pagination.
    * Uses sequence cursor to load messages older than what is currently in memory.
@@ -1450,7 +1465,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
 
       patchRec(threadId, (r) => ({
         ...(() => {
-          const merged = mergeConversationWindow(r.messages, olderMessages, "older");
+          const merged = mergeConversationWindow(threadId, r.messages, olderMessages, "older");
           const retainedMessageIds = new Set(merged.messages.map((message) => message.id));
           return {
             messages: merged.messages,
@@ -1463,9 +1478,16 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
               retainedMessageIds,
             ),
             serverMessageIds: filterPaginationMetadata(r.serverMessageIds, retainedMessageIds),
-            narrativeByMessage: filterPaginationMetadata(
-              { ...narrativeByMessage, ...r.narrativeByMessage },
-              retainedMessageIds,
+            narrativeByMessage: selectConversationNarrative(
+              filterPaginationMetadata(
+                { ...narrativeByMessage, ...r.narrativeByMessage },
+                retainedMessageIds,
+              ),
+              merged.messages,
+              {
+                anchorMessageId: recallScrollPosition(threadId)?.anchorMessageId,
+                maxBytes: CONVERSATION_NARRATIVE_BYTES,
+              },
             ),
             answeredPlanMessageIds: new Set([
               ...r.answeredPlanMessageIds,
@@ -1574,7 +1596,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
 
       patchRec(threadId, (r) => ({
         ...(() => {
-          const merged = mergeConversationWindow(r.messages, newerMessages, "newer");
+          const merged = mergeConversationWindow(threadId, r.messages, newerMessages, "newer");
           const retainedMessageIds = new Set(merged.messages.map((message) => message.id));
           return {
             messages: merged.messages,
@@ -1587,9 +1609,16 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
               retainedMessageIds,
             ),
             serverMessageIds: filterPaginationMetadata(r.serverMessageIds, retainedMessageIds),
-            narrativeByMessage: filterPaginationMetadata(
-              { ...narrativeByMessage, ...r.narrativeByMessage },
-              retainedMessageIds,
+            narrativeByMessage: selectConversationNarrative(
+              filterPaginationMetadata(
+                { ...narrativeByMessage, ...r.narrativeByMessage },
+                retainedMessageIds,
+              ),
+              merged.messages,
+              {
+                anchorMessageId: recallScrollPosition(threadId)?.anchorMessageId,
+                maxBytes: CONVERSATION_NARRATIVE_BYTES,
+              },
             ),
             answeredPlanMessageIds: new Set([
               ...r.answeredPlanMessageIds,
@@ -2437,7 +2466,14 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
       .listNarrative(messageId)
       .then((res) => {
         patchRec(currentId, (r) => ({
-          narrativeByMessage: { ...r.narrativeByMessage, [messageId]: res },
+          narrativeByMessage: selectConversationNarrative(
+            { ...r.narrativeByMessage, [messageId]: res },
+            r.messages,
+            {
+              anchorMessageId: messageId,
+              maxBytes: CONVERSATION_NARRATIVE_BYTES,
+            },
+          ),
         }));
       })
       .catch((err) => {

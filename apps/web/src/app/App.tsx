@@ -16,7 +16,6 @@ import type { UpdateStatus } from "@/transport/desktop-bridge";
 import { useCommandPaletteStore } from "@/stores/commandPaletteStore";
 import { ShortcutHelpDialog } from "@/components/ShortcutHelpDialog";
 import { useSettingsStore } from "@/stores/settingsStore";
-import { resizeRecordCache } from "@/lib/thread-hydrator/record-cache";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { COMPOSER_MIN_WIDTH } from "@/stores/diffStore";
 import { usePreviewFocusStore } from "@/stores/previewFocusStore";
@@ -70,9 +69,6 @@ const LazyPullRequestSurface = lazy(async () => {
 export function App() {
   const isDesktop = Boolean(window.desktopBridge?.window);
   const theme = useSettingsStore((s) => s.settings.appearance.theme);
-  const threadCacheSize = useSettingsStore(
-    (s) => s.settings.performance.threadCacheSize,
-  );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] =
     useState<SettingsSection>("model");
@@ -295,12 +291,6 @@ export function App() {
     useSettingsStore.getState().fetch();
     return () => stopPushListeners();
   }, []);
-
-  // Mirror the user-controlled record-cache capacity (threadCacheSize) into the runtime cache.
-  // Runs on every settings change; LruCache.resize is a no-op when capacity is unchanged.
-  useEffect(() => {
-    resizeRecordCache(threadCacheSize);
-  }, [threadCacheSize]);
 
   // Hydrate app version + auto-updater status from the Electron preload bridge.
   useEffect(() => {

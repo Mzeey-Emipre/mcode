@@ -1191,7 +1191,17 @@ export function MessageList({ displayThreadId, onBranch, onReply }: MessageListP
     }
 
     const newScrollHeight = el.scrollHeight;
-    const anchorSnapshot = pendingHistoryAnchorRef.current;
+    const rememberedPosition = renderedThreadId && messages.length < prevCount
+      ? recallScrollPosition(renderedThreadId)
+      : undefined;
+    const anchorSnapshot = pendingHistoryAnchorRef.current ?? (
+      rememberedPosition?.anchorMessageId && rememberedPosition.anchorTop != null
+        ? {
+            messageId: rememberedPosition.anchorMessageId,
+            top: rememberedPosition.anchorTop,
+          }
+        : null
+    );
     const findAnchor = () => anchorSnapshot
       ? [...el.querySelectorAll<HTMLElement>("[data-message-id]")]
           .find((node) => node.getAttribute("data-message-id") === anchorSnapshot.messageId)
