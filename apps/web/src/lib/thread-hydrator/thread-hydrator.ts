@@ -44,6 +44,7 @@ import {
 import { scheduleDeferredWork } from "./deferred-work";
 import type { DeferredWorkHandle } from "./deferred-work";
 import { hasResidentContent } from "./resident-content";
+import { readConversationRevision } from "./conversation-revision";
 
 interface PendingHistoryPrefetch {
   expectedEpoch: number;
@@ -51,26 +52,9 @@ interface PendingHistoryPrefetch {
   promise: Promise<void>;
 }
 
-/** Snapshot the transcript and volatile layers that an active page fetch must not replace. */
-function conversationRevision(record: ThreadRecord): string {
-  return JSON.stringify({
-    messages: record.messages,
-    persistedToolCallCounts: record.persistedToolCallCounts,
-    persistedFilesChanged: record.persistedFilesChanged,
-    latestTurnWithChanges: record.latestTurnWithChanges,
-    serverMessageIds: record.serverMessageIds,
-    narrativeByMessage: record.narrativeByMessage,
-    answeredPlanMessageIds: [...record.answeredPlanMessageIds],
-    streaming: record.streaming,
-    streamingPreview: record.streamingPreview,
-    toolCalls: record.toolCalls,
-    thoughtSegments: record.thoughtSegments,
-    hooks: record.hooks,
-    currentTurnMessageId: record.currentTurnMessageId,
-    pendingTurnPersistMessageIds: record.pendingTurnPersistMessageIds,
-    currentTurnResponseKey: record.currentTurnResponseKey,
-    assistantResponseKeys: record.assistantResponseKeys,
-  });
+/** Read the transcript revision that an active page fetch must not replace. */
+function conversationRevision(record: ThreadRecord): number {
+  return readConversationRevision(record);
 }
 
 function mergeMessageMetadata<T>(

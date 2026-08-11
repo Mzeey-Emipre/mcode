@@ -153,7 +153,8 @@ const DEFAULT_THREAD_SETTINGS: ThreadSettings = {
 };
 const EMPTY_PENDING_TURN_PERSIST_MESSAGE_IDS: string[] = [];
 const EMPTY_NARRATIVE_BY_MESSAGE: ThreadNarrativeByMessage = {};
-const CONVERSATION_REVISION_FIELDS = new Set<keyof ThreadRecord>([
+/** Fields whose mutation advances the renderer-owned conversation revision. */
+export const CONVERSATION_REVISION_FIELD_KEYS = [
   "messages",
   "persistedToolCallCounts",
   "persistedFilesChanged",
@@ -170,7 +171,11 @@ const CONVERSATION_REVISION_FIELDS = new Set<keyof ThreadRecord>([
   "pendingTurnPersistMessageIds",
   "currentTurnResponseKey",
   "assistantResponseKeys",
-]);
+] as const satisfies readonly (keyof ThreadRecord)[];
+
+const CONVERSATION_REVISION_FIELDS = new Set<keyof ThreadRecord>(
+  CONVERSATION_REVISION_FIELD_KEYS,
+);
 
 /** Returns a fresh empty {@link ThreadRecord} for lazy Map insertion. */
 export function createEmptyThreadRecord(): ThreadRecord {
