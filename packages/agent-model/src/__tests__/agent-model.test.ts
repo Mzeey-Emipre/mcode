@@ -141,6 +141,13 @@ describe("canonical agent model", () => {
       { type: "turn.completed", endedAt: timestamps.updatedAt },
       { type: "turn.interrupted", endedAt: timestamps.updatedAt, reason: "restart" },
       { type: "turn.errored", endedAt: timestamps.updatedAt, error: "provider failed" },
+      {
+        type: "ingest.overflow",
+        endedAt: timestamps.updatedAt,
+        acceptedStoppingSequence: 12,
+        durableStoppingSequence: 10,
+      },
+      { type: "ingest.volatile-truncated", droppedEventCount: 4 },
     ];
 
     for (const event of eventTypes) {
@@ -209,6 +216,48 @@ describe("canonical agent model", () => {
 
     expect(lateError.outcome).toBe("terminal-outcome-confirmed");
     expect(lateError.state.turns["turn-1"]?.status).toBe("Completed");
+  });
+
+  it("marks a saturated turn interrupted and its thread idle", () => {
+    const initialState = createAgentModelState();
+    const thread = threadRecordedEvent("event-1", 1);
+    const created = AgentEventEnvelopeSchema(CanonicalAgentEventSchema).parse({
+      ...thread,
+      eventId: "event-2",
+      acceptedSequence: 2,
+      routing: { threadId: "thread-1", turnId: "turn-1", executionId },
+      payload: {
+        type: "turn.created",
+        turn: {
+          id: "turn-1",
+          threadId: "thread-1",
+          status: "Pending",
+          trigger: { kind: "user" },
+          permissionMode: "full",
+          providerIdentities: [],
+          startedAt: null,
+          endedAt: null,
+          ...timestamps,
+        },
+      },
+    });
+    const overflow = AgentEventEnvelopeSchema(CanonicalAgentEventSchema).parse({
+      ...created,
+      eventId: "event-3",
+      acceptedSequence: 3,
+      payload: {
+        type: "ingest.overflow",
+        endedAt: timestamps.updatedAt,
+        acceptedStoppingSequence: 2,
+        durableStoppingSequence: 2,
+      },
+    });
+
+    const result = reduceAgentEventBatch(initialState, [thread, created, overflow]);
+
+    expect(result.outcome).toBe("applied");
+    expect(result.state.turns["turn-1"]?.status).toBe("Interrupted");
+    expect(result.state.threads["thread-1"]?.activityState).toBe("Idle");
   });
 
   it("rejects a batch atomically when canonical routing conflicts", () => {

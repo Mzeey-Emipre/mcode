@@ -1,5 +1,6 @@
 import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { CANONICAL_AGENT_EVENT_BATCH_MAX } from "@mcode/contracts";
 import type Database from "better-sqlite3";
 import { openMemoryDatabase } from "../../store/database";
 import { MessageRepo } from "../../repositories/message-repo";
@@ -322,7 +323,7 @@ describe("TurnFinalizer canonical commit recovery", () => {
   const executionId = "00000000-0000-4000-8000-000000000010";
   const turnId = "canonical-turn-1";
 
-  function buildCanonicalHarness() {
+  function buildCanonicalHarness(toolCallCount = 1, stopExecution = vi.fn()) {
     const db = openMemoryDatabase();
     seedThread(db);
     const messageRepo = new MessageRepo(db);
@@ -357,16 +358,19 @@ describe("TurnFinalizer canonical commit recovery", () => {
       db,
       undefined,
       sink,
+      stopExecution,
     );
     finalizer.bufferAssistantBody(THREAD, "answer", "claude-sonnet-4-6");
     narrativeStore.beginTurn(THREAD);
     narrativeStore.resetTurnCounters(THREAD);
-    narrativeStore.bufferToolCall(THREAD, {
-      toolCallId: "tool-1",
-      toolName: "Read",
-      toolInput: { path: "README.md" },
-    });
-    return { db, finalizer, messageRepo, sink };
+    for (let index = 0; index < toolCallCount; index += 1) {
+      narrativeStore.bufferToolCall(THREAD, {
+        toolCallId: `tool-${index}`,
+        toolName: "Read",
+        toolInput: { path: `file-${index}.md` },
+      });
+    }
+    return { db, finalizer, messageRepo, sink, stopExecution };
   }
 
   it("retains volatile buffers when the canonical transaction rolls back", async () => {
@@ -414,6 +418,25 @@ describe("TurnFinalizer canonical commit recovery", () => {
       toolCallCount: 1,
     }));
     expect(messageRepo.listByThread(THREAD, 10).messages).toHaveLength(2);
+  });
+
+  it("stops the exact execution and keeps compatibility output hidden after ingest overflow", async () => {
+    const { finalizer, messageRepo, sink, stopExecution } = buildCanonicalHarness(
+      CANONICAL_AGENT_EVENT_BATCH_MAX,
+    );
+    vi.mocked(broadcast).mockClear();
+
+    await finalizer.finalize(THREAD, "completed", Promise.resolve(), executionId);
+
+    expect(stopExecution).toHaveBeenCalledWith(THREAD, executionId);
+    expect(sink.loadCheckpoint(executionId)).toMatchObject({
+      phase: "ingest_overflow",
+      terminalOutcome: "errored",
+    });
+    expect(messageRepo.listByThread(THREAD, 10).messages.map((message) => message.content)).toEqual([
+      "question",
+    ]);
+    expect(broadcast).not.toHaveBeenCalledWith("turn.persisted", expect.anything());
   });
 });
 

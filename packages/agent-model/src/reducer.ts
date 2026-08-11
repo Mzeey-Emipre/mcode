@@ -170,6 +170,34 @@ export function reduceAgentEvent(
         acceptedInputState,
         { status: "Errored", endedAt: payload.endedAt },
       );
+    case "ingest.overflow": {
+      const lifecycle = updateTurnLifecycle(
+        state,
+        event.routing.threadId,
+        event.routing.turnId,
+        acceptedInputState,
+        { status: "Interrupted", endedAt: payload.endedAt },
+      );
+      if (lifecycle.outcome !== "applied") return lifecycle;
+      const thread = lifecycle.state.threads[event.routing.threadId];
+      if (!thread) return { state, outcome: "routing-conflict" };
+      return {
+        state: {
+          ...lifecycle.state,
+          threads: {
+            ...lifecycle.state.threads,
+            [thread.id]: {
+              ...thread,
+              activityState: "Idle",
+              updatedAt: payload.endedAt,
+            },
+          },
+        },
+        outcome: "applied",
+      };
+    }
+    case "ingest.volatile-truncated":
+      return { state: { ...state, ...acceptedInputState }, outcome: "applied" };
     case "item.recorded": {
       if (
         event.routing.threadId !== payload.item.threadId ||

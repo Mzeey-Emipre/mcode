@@ -2,6 +2,7 @@ import "reflect-metadata";
 import type Database from "better-sqlite3";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  CANONICAL_AGENT_EVENT_BATCH_MAX,
   type CanonicalAgentEventEnvelope,
   MAX_TURN_RECOVERIES,
   type ProviderIdentity,
@@ -10,6 +11,7 @@ import { openMemoryDatabase } from "../../store/database.js";
 import { MessageRepo } from "../../repositories/message-repo.js";
 import { ACTIVE_TURN_WRITE_BATCH_LIMITS } from "../../store/bounded-write-batches.js";
 import {
+  CANONICAL_AGENT_CONTROL_EVENT_RESERVE,
   CanonicalAgentEventSink,
   type CanonicalAgentEventDraft,
 } from "../canonical-agent-event-sink.js";
@@ -514,6 +516,76 @@ describe("CanonicalAgentEventSink", () => {
     expect(sink.loadThread(THREAD_ID)?.conversationRevision).toBe(2);
   });
 
+  it("fails closed when the production terminal projection saturates structural capacity", async () => {
+    const messageRepo = new MessageRepo(db);
+    sink.startParentTurn({
+      thread: {
+        id: THREAD_ID,
+        workspaceId: "workspace-1",
+        providerId: "codex",
+        createdAt: NOW,
+      },
+      turnId: TURN_ID,
+      executionId: EXECUTION_ID,
+      permissionMode: "supervised",
+      providerIdentities: [],
+      projectUserMessage: () => messageRepo.create(THREAD_ID, "user", "question", 1),
+    });
+    const message = messageRepo.create(
+      THREAD_ID,
+      "assistant",
+      "answer",
+      2,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      true,
+    );
+    const narrative = Array.from({ length: CANONICAL_AGENT_EVENT_BATCH_MAX }, (_, index) => ({
+      kind: "toolCall" as const,
+      sequence: 2,
+      sortOrder: index,
+      record: {
+        id: `overflow-tool-${index}`,
+        message_id: message.id,
+        parent_tool_call_id: null,
+        tool_name: "Read",
+        input_summary: `file-${index}`,
+        output_summary: "ok",
+        status: "completed" as const,
+        started_at: NOW,
+        completed_at: NOW,
+        sort_order: index,
+      },
+    }));
+    const stopExecution = vi.fn();
+
+    const result = await sink.finishParentTurnBatched({
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      executionId: EXECUTION_ID,
+      providerId: "codex",
+      providerIdentities: [],
+      outcome: "completed",
+      projectTurn: () => ({ message: { ...message, is_internal: false }, narrative }),
+      onOverflow: stopExecution,
+    });
+
+    expect(result.outcome).toBe("ingest-overflow");
+    expect(stopExecution).toHaveBeenCalledOnce();
+    expect(sink.loadTurn(TURN_ID)).toMatchObject({ status: "Interrupted" });
+    expect(sink.loadCheckpoint(EXECUTION_ID)).toMatchObject({
+      phase: "ingest_overflow",
+      terminalOutcome: "errored",
+      lastAcceptedSequence: 5,
+      lastDurableSequence: 5,
+    });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM canonical_agent_events").get()).toEqual({
+      count: 5,
+    });
+  });
+
   it("keeps the first confirmed terminal outcome", () => {
     sink.commit({
       threadId: THREAD_ID,
@@ -612,6 +684,230 @@ describe("CanonicalAgentEventSink", () => {
 
     expect(messageRepo.listByThread(THREAD_ID, 10).messages).toEqual([]);
     expect(db.prepare("SELECT COUNT(*) AS count FROM canonical_agent_events").get()).toEqual({ count: 0 });
+  });
+
+  it("fails closed with durable stopping sequences when structural capacity saturates", () => {
+    sink.commit({
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      executionId: EXECUTION_ID,
+      phase: "running",
+      events: initialDrafts(),
+    });
+    const stopExecution = vi.fn();
+    const structuralEvents = Array.from(
+      { length: CANONICAL_AGENT_EVENT_BATCH_MAX + 1 },
+      (_, index): CanonicalAgentEventDraft => ({
+        eventId: `${EXECUTION_ID}:structural-${index}`,
+        routing: { threadId: THREAD_ID, turnId: TURN_ID, executionId: EXECUTION_ID },
+        sourceProviderId: "codex",
+        sourceIdentities: [identity()],
+        payload: {
+          type: "item.recorded",
+          item: {
+            id: `structural-${index}`,
+            threadId: THREAD_ID,
+            turnId: TURN_ID,
+            kind: "system",
+            providerIdentities: [identity()],
+            payload: { index },
+            createdAt: NOW,
+            updatedAt: NOW,
+          },
+        },
+      }),
+    );
+
+    const result = sink.commit({
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      executionId: EXECUTION_ID,
+      phase: "running",
+      events: structuralEvents,
+      onOverflow: stopExecution,
+    });
+
+    expect(result).toMatchObject({
+      outcome: "ingest-overflow",
+      acceptedThrough: 4,
+      durableThrough: 4,
+    });
+    expect(stopExecution).toHaveBeenCalledOnce();
+    expect(sink.loadTurn(TURN_ID)).toMatchObject({ status: "Interrupted" });
+    expect(sink.loadCheckpoint(EXECUTION_ID)).toMatchObject({
+      phase: "ingest_overflow",
+      terminalOutcome: "errored",
+      lastAcceptedSequence: 4,
+      lastDurableSequence: 4,
+    });
+    const overflow = db.prepare(`
+      SELECT envelope_json
+      FROM canonical_agent_events
+      WHERE event_id = ?
+    `).get(`${EXECUTION_ID}:ingest-overflow`) as { envelope_json: string };
+    expect(JSON.parse(overflow.envelope_json).payload).toMatchObject({
+      type: "ingest.overflow",
+      acceptedStoppingSequence: 3,
+      durableStoppingSequence: 3,
+    });
+  });
+
+  it("exports canonical provenance and stopping-point context with redacted diagnostics", () => {
+    sink.commit({
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      executionId: EXECUTION_ID,
+      phase: "running",
+      events: initialDrafts(),
+    });
+
+    const exported = sink.exportTurnDiagnostics(TURN_ID);
+
+    expect(exported.canonical).toMatchObject({
+      thread: {
+        id: THREAD_ID,
+        providerIdentities: [identity()],
+        conversationRevision: 1,
+        rosterRevision: 0,
+      },
+      turn: {
+        id: TURN_ID,
+        providerIdentities: [identity()],
+      },
+      checkpoint: {
+        executionId: EXECUTION_ID,
+        lastAcceptedSequence: 3,
+        lastDurableSequence: 3,
+      },
+    });
+    expect(exported.canonical.events.map((event) => event.payload.type)).toEqual([
+      "thread.recorded",
+      "turn.created",
+      "turn.started",
+    ]);
+    expect(exported.canonical.eventTruncation).toEqual({ droppedEvents: 0 });
+    expect(exported.canonical.truncationMarkers).toEqual([]);
+  });
+
+  it.each([
+    CANONICAL_AGENT_EVENT_BATCH_MAX - 1,
+    CANONICAL_AGENT_EVENT_BATCH_MAX,
+  ])("accepts %i structural events within the semantic bound", (count) => {
+    sink.commit({
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      executionId: EXECUTION_ID,
+      phase: "running",
+      events: initialDrafts(),
+    });
+    const structuralEvents = Array.from(
+      { length: count },
+      (_, index): CanonicalAgentEventDraft => ({
+        eventId: `${EXECUTION_ID}:bounded-structural-${index}`,
+        routing: {
+          threadId: THREAD_ID,
+          turnId: TURN_ID,
+          executionId: EXECUTION_ID,
+          itemId: `bounded-structural-${index}`,
+        },
+        sourceProviderId: "codex",
+        sourceIdentities: [],
+        payload: {
+          type: "item.recorded",
+          item: {
+            id: `bounded-structural-${index}`,
+            threadId: THREAD_ID,
+            turnId: TURN_ID,
+            kind: "system",
+            providerIdentities: [],
+            payload: { index },
+            createdAt: NOW,
+            updatedAt: NOW,
+          },
+        },
+      }),
+    );
+
+    const result = sink.commit({
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      executionId: EXECUTION_ID,
+      phase: "running",
+      events: structuralEvents,
+    });
+
+    expect(result.outcome).toBe("committed");
+    expect(result.events).toHaveLength(count);
+  });
+
+  it("keeps control capacity and records explicit volatile truncation metadata", () => {
+    sink.commit({
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      executionId: EXECUTION_ID,
+      phase: "running",
+      events: initialDrafts(),
+    });
+    const volatileEvents = Array.from(
+      { length: CANONICAL_AGENT_EVENT_BATCH_MAX },
+      (_, index): CanonicalAgentEventDraft => ({
+        eventId: `${EXECUTION_ID}:volatile-${index}`,
+        routing: {
+          threadId: THREAD_ID,
+          turnId: TURN_ID,
+          executionId: EXECUTION_ID,
+          itemId: `volatile-${index}`,
+        },
+        sourceProviderId: "codex",
+        sourceIdentities: [],
+        ingestClass: "volatile",
+        payload: {
+          type: "item.recorded",
+          item: {
+            id: `volatile-${index}`,
+            threadId: THREAD_ID,
+            turnId: TURN_ID,
+            kind: "reasoning",
+            providerIdentities: [],
+            payload: { delta: "x" },
+            createdAt: NOW,
+            updatedAt: NOW,
+          },
+        },
+      }),
+    );
+
+    const result = sink.commit({
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      executionId: EXECUTION_ID,
+      phase: "completed",
+      terminalOutcome: "completed",
+      events: [...volatileEvents, terminalDraft("turn.completed")],
+    });
+
+    expect(result.outcome).toBe("committed");
+    expect(result.events.at(-2)?.payload).toMatchObject({
+      type: "ingest.volatile-truncated",
+      droppedEventCount: CANONICAL_AGENT_CONTROL_EVENT_RESERVE,
+    });
+    expect(result.events.at(-1)?.payload.type).toBe("turn.completed");
+
+    const replay = sink.commit({
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      executionId: EXECUTION_ID,
+      phase: "completed",
+      terminalOutcome: "completed",
+      events: [...volatileEvents, terminalDraft("turn.completed")],
+    });
+    expect(replay.outcome).toBe("duplicate");
+    const markers = db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM canonical_agent_events
+      WHERE envelope_json LIKE '%ingest.volatile-truncated%'
+    `).get() as { count: number };
+    expect(markers.count).toBe(1);
   });
 
   it("rolls back records and publishes nothing when the checkpoint write fails", () => {

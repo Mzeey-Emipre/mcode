@@ -38,6 +38,20 @@ export const CanonicalAgentEventSchema = z.discriminatedUnion("type", [
       error: z.string().trim().min(1).max(8_000),
     })
     .strict(),
+  z
+    .object({
+      type: z.literal("ingest.overflow"),
+      endedAt: CanonicalTimestampSchema,
+      acceptedStoppingSequence: z.number().int().nonnegative(),
+      durableStoppingSequence: z.number().int().nonnegative(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("ingest.volatile-truncated"),
+      droppedEventCount: z.number().int().positive(),
+    })
+    .strict(),
   z.object({ type: z.literal("item.recorded"), item: AgentItemSchema }).strict(),
   z
     .object({
