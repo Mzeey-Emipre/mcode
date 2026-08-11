@@ -15,6 +15,7 @@ import {
   getConversationCacheUsage,
   projectConversationCacheState,
   setActiveConversation,
+  setConversationTransientTextBytes,
 } from "@/lib/thread-hydrator/record-cache";
 import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-record";
 import {
@@ -304,6 +305,30 @@ describe("recordCache", () => {
 
     expect(getConversationCacheUsage().activeBytes).toBeLessThanOrEqual(
       CONVERSATION_MEMORY_BUDGETS.activeBytes,
+    );
+  });
+
+  it("includes live assistant text in the active byte budget", () => {
+    const record = makeRecord("active-stream");
+    setActiveConversation("active-stream");
+    cacheRecord("active-stream", {
+      ...record,
+      messages: Array.from({ length: 10 }, (_, index) => ({
+        ...record.messages[0],
+        id: `active-stream-${index}`,
+        sequence: index + 1,
+        content: "x".repeat(1_000_000),
+      })),
+    });
+    const messagesBeforeStreaming = getCachedRecord("active-stream")?.messages.length ?? 0;
+
+    setConversationTransientTextBytes("active-stream", 6_000_000);
+
+    expect(getConversationCacheUsage().activeBytes).toBeLessThanOrEqual(
+      CONVERSATION_MEMORY_BUDGETS.activeBytes,
+    );
+    expect(getCachedRecord("active-stream")?.messages.length).toBeLessThan(
+      messagesBeforeStreaming,
     );
   });
 

@@ -9,6 +9,11 @@ import { createEmptyThreadRecord } from "@/stores/thread-record";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useThreadStore } from "@/stores/threadStore";
 import { mockTransport } from "./mocks/transport";
+import {
+  clearRecordCache,
+  getConversationCacheUsage,
+  setActiveConversation,
+} from "@/lib/thread-hydrator/record-cache";
 
 vi.mock("@/transport", async () => ({
   ...(await vi.importActual("@/transport")),
@@ -17,6 +22,7 @@ vi.mock("@/transport", async () => ({
 
 describe("threadStore textDelta batching", () => {
   beforeEach(() => {
+    clearRecordCache();
     resetThreadStoreForTests();
     vi.mocked(mockTransport.listNarrative).mockReset();
     vi.mocked(mockTransport.listNarrative).mockResolvedValue({
@@ -49,6 +55,28 @@ describe("threadStore textDelta batching", () => {
     queue[0]!(0);
 
     expect(getTestThreadStreaming(tid)).toBe("01234567");
+  });
+
+  it("accounts for flushed streaming text in active conversation usage", () => {
+    const queue: FrameRequestCallback[] = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb: FrameRequestCallback) => {
+      queue.push(cb);
+      return queue.length;
+    });
+    const tid = "thread-streaming-bytes";
+    resetThreadStoreForTests({ currentThreadId: tid, runningThreadIds: new Set([tid]) });
+    setActiveConversation(tid);
+
+    useThreadStore.getState().handleAgentEvent({
+      type: "textDelta",
+      threadId: tid,
+      delta: "streamed response",
+    } satisfies AgentEvent);
+    queue[0]!(0);
+
+    expect(getConversationCacheUsage().activeBytes).toBe(
+      new TextEncoder().encode("streamed response").byteLength,
+    );
   });
 
   it("drops pending deltas for threads reset by running-session hydration", () => {

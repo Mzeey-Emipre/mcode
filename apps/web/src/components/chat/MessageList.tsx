@@ -1206,38 +1206,47 @@ export function MessageList({ displayThreadId, onBranch, onReply }: MessageListP
       ? [...el.querySelectorAll<HTMLElement>("[data-message-id]")]
           .find((node) => node.getAttribute("data-message-id") === anchorSnapshot.messageId)
       : undefined;
-    const correctAnchor = (): number | null => {
+    const measureAnchorDrift = (): number | null => {
       const anchor = findAnchor();
       if (!anchor || !anchorSnapshot) return null;
-      const delta = anchor.getBoundingClientRect().top - anchorSnapshot.top;
-      if (Math.abs(delta) > 0.5) el.scrollTop += delta;
-      return Math.abs(delta);
+      return anchor.getBoundingClientRect().top - anchorSnapshot.top;
     };
 
     if (anchorSnapshot) {
       const anchorIndex = pendingHistoryAnchorIndexRef.current;
       if (!findAnchor() && anchorIndex >= 0) {
         virtualizer.scrollToIndex(anchorIndex, { align: "start" });
-      } else {
-        correctAnchor();
       }
       const generation = ++historyAnchorSettleGenerationRef.current;
       let stableFrames = 0;
       let attempts = 0;
-      const settleAnchor = () => {
+      const measureAnchor = () => {
         if (historyAnchorSettleGenerationRef.current !== generation) return;
         attempts += 1;
-        const remainingDrift = correctAnchor();
-        stableFrames = remainingDrift !== null && remainingDrift <= 0.5
+        const drift = measureAnchorDrift();
+        stableFrames = drift !== null && Math.abs(drift) <= 0.5
           ? stableFrames + 1
           : 0;
-        if (stableFrames >= 3 || attempts >= 12) {
+        if (stableFrames >= 3) {
           pendingHistoryAnchorRef.current = null;
           return;
         }
-        requestAnimationFrame(settleAnchor);
+        if (drift !== null && Math.abs(drift) > 0.5) {
+          requestAnimationFrame(() => {
+            if (historyAnchorSettleGenerationRef.current !== generation) return;
+            el.scrollTop += drift;
+            if (attempts >= 12) pendingHistoryAnchorRef.current = null;
+            else requestAnimationFrame(measureAnchor);
+          });
+          return;
+        }
+        if (attempts >= 12) {
+          pendingHistoryAnchorRef.current = null;
+          return;
+        }
+        requestAnimationFrame(measureAnchor);
       };
-      requestAnimationFrame(settleAnchor);
+      requestAnimationFrame(measureAnchor);
     } else if (messages.length > prevCount && prevFirstId !== nextFirstId) {
       const addedHeight = newScrollHeight - prevScrollHeightRef.current;
       if (addedHeight > 0) el.scrollTop += addedHeight;

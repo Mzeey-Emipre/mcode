@@ -382,9 +382,14 @@ describe("MessageList thread switch", () => {
     let scrollHeight = 300;
     let scrollTop = 0;
     let prependedHeight = 0;
+    let activeFrame = 0;
+    let captureSettlePhases = false;
+    const anchorReadFrames: number[] = [];
+    const scrollWriteFrames: number[] = [];
     const rectSpy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect")
       .mockImplementation(function (this: HTMLElement) {
         if (this.getAttribute("data-message-id") === "m1") {
+          if (captureSettlePhases) anchorReadFrames.push(activeFrame);
           return {
             top: 100 + prependedHeight - scrollTop,
             bottom: 180 + prependedHeight - scrollTop,
@@ -410,6 +415,7 @@ describe("MessageList thread switch", () => {
       configurable: true,
       get: () => scrollTop,
       set: (value: number) => {
+        if (captureSettlePhases) scrollWriteFrames.push(activeFrame);
         scrollTop = value;
       },
     });
@@ -427,13 +433,21 @@ describe("MessageList thread switch", () => {
         animationFrames.push(callback);
         return animationFrames.length;
       });
+    captureSettlePhases = true;
     act(() => rerender(<MessageList />));
     act(() => {
-      while (animationFrames.length > 0) animationFrames.shift()?.(0);
+      while (animationFrames.length > 0) {
+        activeFrame += 1;
+        animationFrames.shift()?.(0);
+      }
     });
+    captureSettlePhases = false;
     animationFrameSpy.mockRestore();
 
     expect(scrollTop).toBe(2_000);
+    expect(anchorReadFrames.length).toBeGreaterThan(0);
+    expect(scrollWriteFrames.length).toBeGreaterThan(0);
+    expect(scrollWriteFrames.some((frame) => anchorReadFrames.includes(frame))).toBe(false);
     expect(container.querySelector('[data-message-id="m1"]')?.getBoundingClientRect().top).toBe(100);
     await vi.waitFor(() => {
       expect((container.querySelector(".relative.w-full") as HTMLDivElement).style.height).toBe("220px");
