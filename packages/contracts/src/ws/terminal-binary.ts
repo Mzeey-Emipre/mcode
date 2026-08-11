@@ -18,7 +18,7 @@ export const TERMINAL_BINARY_HEADER_BYTES = 52;
 export const TERMINAL_BINARY_MAX_FRAME_BYTES = 70_000;
 
 /** Frozen Terminal v1 frame-kind byte assignments. */
-export const TERMINAL_BINARY_FRAME_KINDS = {
+export const TERMINAL_BINARY_FRAME_KINDS = Object.freeze({
   input: 0x01,
   resize: 0x02,
   outputAck: 0x03,
@@ -30,7 +30,7 @@ export const TERMINAL_BINARY_FRAME_KINDS = {
   state: 0x85,
   gap: 0x86,
   exitBarrier: 0x87,
-} as const;
+} as const);
 
 /** Terminal v1 binary frame kind. */
 export type TerminalBinaryFrameKind = keyof typeof TERMINAL_BINARY_FRAME_KINDS;

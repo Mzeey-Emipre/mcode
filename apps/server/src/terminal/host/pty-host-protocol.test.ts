@@ -86,6 +86,27 @@ describe("PTY host v1 protocol", () => {
     expect(protocol.events()).toEqual([failure]);
   });
 
+  it("rejects a duplicate output sequence with different bytes", () => {
+    const protocol = new InMemoryPtyHostProtocol("7");
+    const output = {
+      contractVersion: 1,
+      kind: "output",
+      sessionId: UUID,
+      hostGeneration: "7",
+      outputSeq: "1",
+      dataBase64: Buffer.from("first").toString("base64"),
+    } as const;
+
+    expect(protocol.receiveFromHost(output)).toEqual(output);
+    expect(protocol.receiveFromHost(output)).toEqual(output);
+    expect(() =>
+      protocol.receiveFromHost({
+        ...output,
+        dataBase64: Buffer.from("different").toString("base64"),
+      }),
+    ).toThrow(/duplicate output/i);
+  });
+
   it("evicts the oldest retained protocol records", () => {
     const protocol = new InMemoryPtyHostProtocol("7");
     for (let index = 0; index <= PTY_HOST_MAX_RETAINED_RECORDS; index += 1) {

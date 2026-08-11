@@ -1021,6 +1021,7 @@ export type {
 } from "./models/terminal.js";
 
 export {
+  TERMINAL_MAX_EXECUTABLE_TRACE_STEPS,
   TERMINAL_BOOT_TRANSITIONS,
   TERMINAL_SESSION_TRANSITIONS,
   TERMINAL_HOST_HEALTH_TRANSITIONS,
@@ -1029,9 +1030,13 @@ export {
   TERMINAL_TOMBSTONE_TRANSITIONS,
   TERMINAL_CHECKPOINT_TRANSITIONS,
   TERMINAL_SEQUENCE_TRACES,
+  executeTerminalSequenceTrace,
+  executeTerminalTransitionTrace,
   resolveTerminalSessionTransition,
 } from "./models/terminal-lifecycle.js";
 export type {
+  TerminalSequenceTraceAction,
+  TerminalSequenceTraceName,
   TerminalTransition,
   TerminalBootState,
   TerminalHostHealthState,

@@ -116,6 +116,7 @@ export function parsePtyHostEvent(value: unknown, expectedGeneration: string): P
 export class InMemoryPtyHostProtocol {
   private readonly sentMessages: PtyHostServerMessage[] = [];
   private readonly receivedEvents: PtyHostEvent[] = [];
+  private readonly outputBySequence = new Map<string, string>();
 
   constructor(private readonly hostGeneration: string) {
     u64.parse(hostGeneration);
@@ -131,6 +132,20 @@ export class InMemoryPtyHostProtocol {
   /** Validates and retains one host event. */
   receiveFromHost(value: unknown): PtyHostEvent {
     const event = parsePtyHostEvent(value, this.hostGeneration);
+    if (event.kind === "output") {
+      const key = `${event.hostGeneration}:${event.sessionId}:${event.outputSeq}`;
+      const retainedPayload = this.outputBySequence.get(key);
+      if (retainedPayload !== undefined && retainedPayload !== event.dataBase64) {
+        throw new Error("PTY host duplicate output sequence has different bytes");
+      }
+      if (retainedPayload === undefined) {
+        this.outputBySequence.set(key, event.dataBase64);
+        if (this.outputBySequence.size > PTY_HOST_MAX_RETAINED_RECORDS) {
+          const oldestKey = this.outputBySequence.keys().next().value;
+          if (oldestKey !== undefined) this.outputBySequence.delete(oldestKey);
+        }
+      }
+    }
     this.retain(this.receivedEvents, event);
     return event;
   }
