@@ -1,17 +1,138 @@
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import type { TerminalPlatform } from "@mcode/contracts";
+import { execFileSync } from "node:child_process";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { createRequire } from "node:module";
 import { delimiter, dirname, join, resolve } from "node:path";
 import { build } from "esbuild";
 import { describe, expect, it } from "vitest";
-import type { PtyHostEvent } from "./pty-host-protocol.js";
+import {
+  evaluateTerminalWorkload,
+  listTerminalWorkloads,
+  TERMINAL_WORKLOAD_LIMITS,
+  type TerminalResizeObservation,
+} from "../../services/terminal-workload-corpus.js";
+import type { PtyHostCreate } from "./pty-host-adapter.js";
 import { spawnPtyHostChild } from "./pty-host-child.js";
+import type { PtyHostEvent } from "./pty-host-protocol.js";
 import { PtyHostSupervisor, type PtyHostChild } from "./pty-host-supervisor.js";
 
-const SESSION_ID = "abcdef12-abcd-4abc-8abc-abcdefabcdef";
-const OUTPUT_MARKER = "__MCODE_ISOLATED_HOST_OK__";
-const CHILD_PID_MARKER = "__MCODE_CHILD_PID__";
 const SECOND_SESSION_ID = "12345678-abcd-4abc-8abc-abcdefabcdef";
 const nativeRequire = createRequire(import.meta.url);
+const TEST_PLATFORM: TerminalPlatform =
+  process.platform === "win32"
+    ? "windows"
+    : process.platform === "darwin"
+      ? "macos"
+      : "linux";
+const IS_POSIX = TEST_PLATFORM !== "windows";
+
+function createShellLaunchRequest(sessionId: string): PtyHostCreate["launch"] {
+  const executable =
+    TEST_PLATFORM === "windows" ? process.env.ComSpec ?? "cmd.exe" : "/bin/bash";
+  const arguments_ =
+    TEST_PLATFORM === "windows" ? ["/Q"] : ["--noprofile", "--norc"];
+  return {
+    requestedProfileId: "automatic",
+    resolvedProfile: {
+      id:
+        TEST_PLATFORM === "windows"
+          ? "certified:windows-cmd"
+          : `certified:${TEST_PLATFORM}-bash`,
+      name: TEST_PLATFORM === "windows" ? "Command Prompt" : "Bash",
+      executable,
+      arguments: arguments_,
+      source: "certified",
+      platform: TEST_PLATFORM,
+    },
+    scope: { kind: "workspace", workspaceId: sessionId },
+    arguments: arguments_,
+  };
+}
+
+function resolveNodeExecutable(): string {
+  if (/[\\/]node(?:\.exe)?$/i.test(process.execPath)) return process.execPath;
+  const pathValue =
+    TEST_PLATFORM === "windows"
+      ? execFileSync(
+          "powershell.exe",
+          [
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "[Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')",
+          ],
+          { encoding: "utf8", timeout: 5_000 },
+        ).trim()
+      : execFileSync(process.env.SHELL ?? "/bin/sh", ["-ilc", "printf %s \"$PATH\""], {
+          encoding: "utf8",
+          timeout: 5_000,
+        }).trim();
+  if (pathValue) {
+    const executableName = TEST_PLATFORM === "windows" ? "node.exe" : "node";
+    for (const directory of pathValue.split(delimiter)) {
+      const candidate = join(directory, executableName);
+      if (existsSync(candidate)) return candidate;
+    }
+  }
+  throw new Error("Node.js is required for the PTY workload corpus");
+}
+
+function workloadCommand(scriptPath: string, nodeExecutable: string): Buffer {
+  const quote = (value: string): string =>
+    TEST_PLATFORM === "windows"
+      ? `"${value.replace(/"/g, '""')}"`
+      : `'${value.replace(/'/g, `'"'"'`)}'`;
+  if (TEST_PLATFORM === "windows") {
+    const wrapperPath = `${scriptPath}.cmd`;
+    writeFileSync(
+      wrapperPath,
+      `@echo off\r\n${quote(nodeExecutable)} ${quote(scriptPath)}\r\necho WF:runner-exit:%errorlevel%\r\n`,
+      "utf8",
+    );
+    return Buffer.from(`${quote(wrapperPath)}\r`);
+  }
+  return Buffer.from(
+    `${quote(nodeExecutable)} ${quote(scriptPath)}; printf 'WF:runner-exit:%s\\n' $?\r`,
+  );
+}
+
+function corpusSessionId(index: number): string {
+  return `0000000${String(index + 1)}-0000-4000-8000-000000000000`;
+}
+
+function outputText(
+  events: readonly PtyHostEvent[],
+  sessionId: string,
+): string {
+  return events
+    .flatMap((event) =>
+      event.kind === "output" && event.sessionId === sessionId
+        ? [Buffer.from(event.dataBase64, "base64").toString("utf8")]
+        : [],
+    )
+    .join("");
+}
+
+async function waitForOutput(
+  events: readonly PtyHostEvent[],
+  sessionId: string,
+  predicate: (output: string) => boolean,
+  timeoutMs = 30_000,
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const output = outputText(events, sessionId);
+    if (predicate(output)) return output;
+    await new Promise((resolvePoll) => setTimeout(resolvePoll, 20));
+  }
+  throw new Error(`Timed out after ${timeoutMs}ms waiting for PTY host output`);
+}
 
 async function waitForEvent(
   events: readonly PtyHostEvent[],
@@ -63,10 +184,10 @@ async function waitForChildInspection(
   throw new Error(`PTY child was not visible after ${timeoutMs}ms`);
 }
 
-describe.runIf(process.platform === "win32")(
+describe.runIf(["win32", "darwin", "linux"].includes(process.platform))(
   "isolated PTY host supervisor",
   () => {
-    it("runs a real ConPTY through a separate versioned Node host", async () => {
+    it("runs a real contained PTY through a separate versioned Node host", async () => {
       const repoRoot = resolve(process.cwd(), "../..");
       const devDir = join(repoRoot, ".dev");
       mkdirSync(devDir, { recursive: true });
@@ -93,10 +214,11 @@ describe.runIf(process.platform === "win32")(
         const diagnostics: string[] = [];
         const children: PtyHostChild[] = [];
         supervisor = new PtyHostSupervisor({
-          platform: "windows",
+          platform: TEST_PLATFORM,
           startupTimeoutMs: 20_000,
           heartbeatDegradedMs: 5_000,
           heartbeatUnhealthyMs: 10_000,
+          operationTimeoutMs: 20_000,
           spawnHost: () => {
             const child = spawnPtyHostChild({
               entryPath,
@@ -124,9 +246,16 @@ describe.runIf(process.platform === "win32")(
           state: "healthy",
         });
 
+        const nodeExecutable = resolveNodeExecutable();
         const envNames = [
           "PATH",
           "Path",
+          "HOME",
+          "LANG",
+          "LC_ALL",
+          "SHELL",
+          "TERM",
+          "TMPDIR",
           "SystemRoot",
           "ComSpec",
           "TEMP",
@@ -138,99 +267,232 @@ describe.runIf(process.platform === "win32")(
           const value = process.env[name];
           return value === undefined ? [] : [{ name, value }];
         });
-        const create = supervisor.create({
-          sessionId: SESSION_ID,
-          hostGeneration: "1",
-          launch: {
-            requestedProfileId: "automatic",
-            resolvedProfile: {
-              id: "certified:windows-powershell-7",
-              name: "Command Prompt",
-              executable: process.env.ComSpec ?? "cmd.exe",
-              arguments: ["/Q"],
-              source: "certified",
-              platform: "windows",
+        for (const [index, workload] of listTerminalWorkloads().entries()) {
+          const sessionId = corpusSessionId(index);
+          const scriptPath = join(tempDir, `${workload.id}.cjs`);
+          writeFileSync(scriptPath, workload.program.source, "utf8");
+          const running = await supervisor.create({
+            sessionId,
+            hostGeneration: "1",
+            launch: createShellLaunchRequest(sessionId),
+            cwd: process.cwd(),
+            protectedEnv: env,
+            cols: workload.initialDimensions.cols,
+            rows: workload.initialDimensions.rows,
+          });
+          expect(running).toMatchObject({
+            state: "running",
+            containment: IS_POSIX ? "process-group" : "job-object",
+          });
+          await waitForOutput(
+            events,
+            sessionId,
+            (value) =>
+              TEST_PLATFORM === "windows" ? value.includes(">") : value.length > 0,
+            10_000,
+          );
+          const startedAt = Date.now();
+          const resizeTrace: TerminalResizeObservation[] = [
+            {
+              kind: "initial",
+              cols: workload.initialDimensions.cols,
+              rows: workload.initialDimensions.rows,
+              elapsedMs: 0,
             },
-            scope: { kind: "workspace", workspaceId: SESSION_ID },
-            arguments: ["/Q"],
-          },
-          cwd: process.cwd(),
-          protectedEnv: env,
-          cols: 80,
-          rows: 24,
-        });
-        await expect(
-          create.catch((error: unknown) => {
+          ];
+          await supervisor.send({
+            sessionId,
+            hostGeneration: "1",
+            attachmentEpoch: "1",
+            commandSeq: "1",
+            kind: "input",
+            data: workloadCommand(scriptPath, nodeExecutable),
+          });
+          await waitForEvent(
+            events,
+            (event) =>
+              event.kind === "commandAck" &&
+              event.sessionId === sessionId &&
+              event.appliedCommandSeq === "1",
+            TERMINAL_WORKLOAD_LIMITS.maxDurationMs,
+          );
+          await waitForOutput(
+            events,
+            sessionId,
+            (value) => value.includes(workload.synchronizationMarker),
+            TERMINAL_WORKLOAD_LIMITS.maxDurationMs,
+          ).catch((error: unknown) => {
             throw new Error(
-              `${error instanceof Error ? error.message : String(error)} ${diagnostics.join("")}`,
+              `${workload.id}: ${error instanceof Error ? error.message : String(error)}; output=${JSON.stringify(outputText(events, sessionId))}; diagnostics=${diagnostics.join("")}`,
             );
-          }),
-        ).resolves.toMatchObject({
-          state: "running",
-          containment: "job-object",
-        });
+          });
 
-        await supervisor.send({
-          sessionId: SESSION_ID,
-          hostGeneration: "1",
-          attachmentEpoch: "1",
-          commandSeq: "1",
-          kind: "input",
-          data: Buffer.from(
-            `node.exe -e "const p=require('node:child_process').spawn('ping.exe',['-n','30','127.0.0.1'],{stdio:'ignore'});console.log('${CHILD_PID_MARKER}'+p.pid);p.unref()" & echo ${OUTPUT_MARKER}\r`,
-          ),
-        });
-        await waitForEvent(
-          events,
-          (event) =>
-            event.kind === "output" &&
-            Buffer.from(event.dataBase64, "base64")
-              .toString("utf8")
-              .includes(OUTPUT_MARKER),
+          let commandSeq = 1;
+          let disconnectedAtBytes: number | null = null;
+          let detachedOutputBytes = 0;
+          for (const step of workload.steps) {
+            if (step.kind === "wait") {
+              await new Promise((resolveWait) =>
+                setTimeout(resolveWait, step.durationMs),
+              );
+              continue;
+            }
+            if (step.kind === "disconnect") {
+              disconnectedAtBytes = Buffer.byteLength(
+                outputText(events, sessionId),
+                "utf8",
+              );
+              continue;
+            }
+            if (step.kind === "reconnect") {
+              if (disconnectedAtBytes !== null) {
+                detachedOutputBytes =
+                  Buffer.byteLength(outputText(events, sessionId), "utf8") -
+                  disconnectedAtBytes;
+              }
+              continue;
+            }
+            commandSeq += 1;
+            const sequence = String(commandSeq);
+            await supervisor.send(
+              step.kind === "write"
+                ? {
+                    sessionId,
+                    hostGeneration: "1",
+                    attachmentEpoch: "1",
+                    commandSeq: sequence,
+                    kind: "input",
+                    data: Buffer.from(
+                      process.platform === "win32"
+                        ? step.data.replace(/\n/g, "\r")
+                        : step.data,
+                    ),
+                  }
+                : {
+                    sessionId,
+                    hostGeneration: "1",
+                    attachmentEpoch: "1",
+                    commandSeq: sequence,
+                    kind: "resize",
+                    data: step.dimensions,
+                  },
+            );
+            await waitForEvent(
+              events,
+              (event) =>
+                event.kind === "commandAck" &&
+                event.sessionId === sessionId &&
+                event.appliedCommandSeq === sequence,
+              TERMINAL_WORKLOAD_LIMITS.maxDurationMs,
+            );
+            if (step.kind === "resize") {
+              resizeTrace.push({
+                kind: "resize",
+                cols: step.dimensions.cols,
+                rows: step.dimensions.rows,
+                elapsedMs: Date.now() - startedAt,
+              });
+            }
+          }
+
+          if (workload.completion.input) {
+            commandSeq += 1;
+            await supervisor.send({
+              sessionId,
+              hostGeneration: "1",
+              attachmentEpoch: "1",
+              commandSeq: String(commandSeq),
+              kind: "input",
+              data: Buffer.from(
+                process.platform === "win32"
+                  ? workload.completion.input.replace(/\n/g, "\r")
+                  : workload.completion.input,
+              ),
+            });
+          }
+
+          await waitForOutput(
+            events,
+            sessionId,
+            (value) =>
+              workload.expectedMarkers.every((marker) =>
+                value.includes(marker),
+              ) &&
+              (workload.completion.terminateAfter ||
+                value.includes("WF:runner-exit:")),
+            workload.completion.waitMs,
+          ).catch((error: unknown) => {
+            throw new Error(
+              `${workload.id}: ${error instanceof Error ? error.message : String(error)}; missing=${workload.expectedMarkers.filter((marker) => !outputText(events, sessionId).includes(marker)).join(",")}; output=${JSON.stringify(outputText(events, sessionId))}`,
+            );
+          });
+
+          let descendantPid: number | null = null;
+          if (workload.completion.terminateAfter) {
+            await waitForChildInspection(supervisor, sessionId, "1");
+            const childPidMatch = /WF:cleanup:child:[^\d]{0,64}(\d+)/.exec(
+              outputText(events, sessionId),
+            );
+            if (!childPidMatch) {
+              throw new Error("Expected the corpus descendant PID marker");
+            }
+            descendantPid = Number(childPidMatch[1]);
+          }
+          const workloadDurationMs = Date.now() - startedAt;
+          const cleanupStartedAt = Date.now();
+          commandSeq += 1;
+          await supervisor.close({
+            sessionId,
+            hostGeneration: "1",
+            closeSeq: String(commandSeq),
+            reason: "user",
+          });
+          const exit = await waitForEvent(
+            events,
+            (event) => event.kind === "exit" && event.sessionId === sessionId,
+            TERMINAL_WORKLOAD_LIMITS.maxDurationMs,
+          );
+          if (exit.kind !== "exit") throw new Error("Expected a PTY exit event");
+          if (descendantPid !== null) {
+            await waitForProcessExit(
+              descendantPid,
+              TERMINAL_WORKLOAD_LIMITS.maxProcessLifetimeMs,
+            );
+          }
+
+          const output = outputText(events, sessionId);
+          const runnerExitCode = workload.completion.terminateAfter
+            ? exit.code
+            : Number(/WF:runner-exit:[^\d-]*(-?\d+)/.exec(output)?.[1]);
+          const result = evaluateTerminalWorkload(workload, {
+            output,
+            outputBytes: Buffer.byteLength(output, "utf8"),
+            outputTruncated: false,
+            detachedOutputBytes,
+            resizeTrace,
+            durationMs: workloadDurationMs,
+            synchronizationObserved: true,
+            exitObserved: true,
+            exitCode: runnerExitCode,
+            childPids: descendantPid === null ? [] : [descendantPid],
+            childPidsAliveAfterKill: [],
+            childPidsAliveAfterCleanup: [],
+            cleanupDurationMs: Date.now() - cleanupStartedAt,
+          });
+          expect(result.failedChecks, workload.id).toEqual([]);
+          expect(result.normalizedOutputSha256).toMatch(/^[a-f0-9]{64}$/);
+        }
+
+        const cleanupWorkload = listTerminalWorkloads().find(
+          (workload) => workload.id === "process-cleanup",
         );
-        await waitForChildInspection(supervisor, SESSION_ID, "1");
-        const output = events
-          .filter((event) => event.kind === "output")
-          .map((event) =>
-            Buffer.from(event.dataBase64, "base64").toString("utf8"),
-          )
-          .join("");
-        const childPidMatch = new RegExp(
-          `${CHILD_PID_MARKER}[^\\d]{0,64}(\\d+)`,
-        ).exec(output);
-        if (!childPidMatch)
-          throw new Error("Expected the descendant PID marker");
-        const descendantPid = Number(childPidMatch[1]);
-        await supervisor.close({
-          sessionId: SESSION_ID,
-          hostGeneration: "1",
-          closeSeq: "2",
-          reason: "user",
-        });
-        await expect(
-          waitForEvent(events, (event) => event.kind === "exit"),
-        ).resolves.toMatchObject({
-          kind: "exit",
-          reason: "user-close",
-        });
-        await waitForProcessExit(descendantPid);
-
+        if (!cleanupWorkload) throw new Error("Process cleanup corpus is missing");
+        const cleanupScriptPath = join(tempDir, "crash-process-cleanup.cjs");
+        writeFileSync(cleanupScriptPath, cleanupWorkload.program.source, "utf8");
         await supervisor.create({
           sessionId: SECOND_SESSION_ID,
           hostGeneration: "1",
-          launch: {
-            requestedProfileId: "automatic",
-            resolvedProfile: {
-              id: "certified:windows-powershell-7",
-              name: "Command Prompt",
-              executable: process.env.ComSpec ?? "cmd.exe",
-              arguments: ["/Q"],
-              source: "certified",
-              platform: "windows",
-            },
-            scope: { kind: "workspace", workspaceId: SESSION_ID },
-            arguments: ["/Q"],
-          },
+          launch: createShellLaunchRequest(SECOND_SESSION_ID),
           cwd: process.cwd(),
           protectedEnv: env,
           cols: 80,
@@ -243,6 +505,33 @@ describe.runIf(process.platform === "win32")(
         );
         if (running.kind !== "running")
           throw new Error("Expected a running PTY event");
+        await waitForOutput(
+          events,
+          SECOND_SESSION_ID,
+          (value) =>
+            TEST_PLATFORM === "windows" ? value.includes(">") : value.length > 0,
+          10_000,
+        );
+        await supervisor.send({
+          sessionId: SECOND_SESSION_ID,
+          hostGeneration: "1",
+          attachmentEpoch: "1",
+          commandSeq: "1",
+          kind: "input",
+          data: workloadCommand(cleanupScriptPath, nodeExecutable),
+        });
+        const crashOutput = await waitForOutput(
+          events,
+          SECOND_SESSION_ID,
+          (value) => value.includes("WF:cleanup:child:"),
+          TERMINAL_WORKLOAD_LIMITS.maxDurationMs,
+        );
+        const crashDescendantPid = Number(
+          /WF:cleanup:child:[^\d]{0,64}(\d+)/.exec(crashOutput)?.[1],
+        );
+        if (!Number.isSafeInteger(crashDescendantPid)) {
+          throw new Error("Expected the crash descendant PID marker");
+        }
         children[0]!.kill("SIGKILL");
         const recoveryDeadline = Date.now() + 20_000;
         while (
@@ -258,6 +547,10 @@ describe.runIf(process.platform === "win32")(
         });
         expect(children).toHaveLength(2);
         expect(() => process.kill(running.rootPid, 0)).toThrow();
+        await waitForProcessExit(
+          crashDescendantPid,
+          TERMINAL_WORKLOAD_LIMITS.maxProcessLifetimeMs,
+        );
       } finally {
         await supervisor?.shutdown();
         rmSync(tempDir, { recursive: true, force: true });

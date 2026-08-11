@@ -20,6 +20,7 @@ import {
   type PtyHostEvent,
   type PtyHostServerMessage,
 } from "./pty-host-protocol.js";
+import { reapPosixProcessSession } from "./posix-process-scope.js";
 
 const STARTUP_TIMEOUT_MS = 5_000;
 const REPLACEMENT_DELAY_MS = 250;
@@ -555,6 +556,13 @@ export class PtyHostSupervisor implements PtyHostAdapter {
   private async reapProcessTree(
     record: PtyHostCleanupRecord,
   ): Promise<void> {
+    if (this.options.platform !== "windows") {
+      await reapPosixProcessSession(
+        record.rootPid,
+        record.processGroupId,
+      );
+      return;
+    }
     const deadline = Date.now() + CONTAINMENT_SETTLE_TIMEOUT_MS;
     while (Date.now() < deadline) {
       if (!this.isProcessAlive(record.rootPid)) return;

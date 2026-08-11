@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createPosixProcessScope,
+  reapPosixProcessSession,
   type PosixProcessScopeDependencies,
 } from "./posix-process-scope.js";
 
@@ -113,5 +114,42 @@ describe("POSIX PTY process scope", () => {
       401,
       "SIGKILL",
     );
+  });
+
+  it("reaps surviving process groups after the PTY root exits", async () => {
+    const liveProcessGroups = new Set([401, 402]);
+    const dependencies = createDependencies({
+      signalProcessGroup: vi.fn((processGroupId, signal) => {
+        if (signal === "SIGKILL") liveProcessGroups.delete(processGroupId);
+      }),
+      readProcessTable: vi.fn(async () =>
+        [...liveProcessGroups].map((processGroupId) => ({
+          pid: processGroupId,
+          processGroupId,
+          sessionId: 400,
+        })),
+      ),
+    });
+
+    await expect(
+      reapPosixProcessSession(400, "400", dependencies),
+    ).resolves.toBeUndefined();
+    expect(dependencies.signalProcessGroup).toHaveBeenCalledWith(
+      401,
+      "SIGKILL",
+    );
+    expect(dependencies.signalProcessGroup).toHaveBeenCalledWith(
+      402,
+      "SIGKILL",
+    );
+  });
+
+  it("rejects a cleanup record with a mismatched process group", async () => {
+    const dependencies = createDependencies();
+
+    await expect(
+      reapPosixProcessSession(400, "401", dependencies),
+    ).rejects.toThrow("process identity does not match");
+    expect(dependencies.readProcessTable).not.toHaveBeenCalled();
   });
 });

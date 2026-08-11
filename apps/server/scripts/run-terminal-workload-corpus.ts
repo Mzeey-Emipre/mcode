@@ -99,8 +99,9 @@ function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+    throw error;
   }
 }
 
@@ -108,15 +109,17 @@ async function terminateProcess(pid: number, deadlineMs: number): Promise<void> 
   if (!isProcessAlive(pid)) return;
   try {
     process.kill(pid, "SIGTERM");
-  } catch {
-    if (!isProcessAlive(pid)) return;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") return;
+    throw error;
   }
   await sleep(Math.min(100, Math.max(0, deadlineMs - Date.now())));
   if (!isProcessAlive(pid)) return;
   try {
     process.kill(pid, "SIGKILL");
-  } catch {
-    if (!isProcessAlive(pid)) return;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") return;
+    throw error;
   }
   await sleep(Math.min(100, Math.max(0, deadlineMs - Date.now())));
 }

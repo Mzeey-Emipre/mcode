@@ -26,15 +26,22 @@ export interface PosixProcessScopeDependencies {
   readonly sleep: (durationMs: number) => Promise<void>;
 }
 
-/** Creates one fail-closed POSIX process-group scope for a native PTY. */
-export function createPosixProcessScope(
-  rootPid: number,
-  dependencies: PosixProcessScopeDependencies = defaultDependencies,
-): PtyProcessScope {
-  let established = false;
-  const knownProcessGroupIds = new Set<number>();
+interface PosixSessionOperations {
+  readonly knownProcessGroupIds: ReadonlySet<number>;
+  readonly readMembers: () => Promise<readonly PosixProcessRecord[]>;
+  readonly signalAll: (
+    signal: NodeJS.Signals,
+    delayBeforeRoot: boolean,
+  ) => Promise<boolean>;
+  readonly waitForEmpty: (deadlineMs: number) => Promise<boolean>;
+}
 
-  const readSessionMembers = async (): Promise<readonly PosixProcessRecord[]> => {
+function createPosixSessionOperations(
+  rootPid: number,
+  dependencies: PosixProcessScopeDependencies,
+): PosixSessionOperations {
+  const knownProcessGroupIds = new Set<number>();
+  const readMembers = async (): Promise<readonly PosixProcessRecord[]> => {
     const members = (await dependencies.readProcessTable()).filter(
       (record) => record.sessionId === rootPid,
     );
@@ -44,14 +51,52 @@ export function createPosixProcessScope(
     }
     return members;
   };
-
   const waitForEmpty = async (deadlineMs: number): Promise<boolean> => {
-    while ((await readSessionMembers()).length > 0) {
+    while ((await readMembers()).length > 0) {
       if (dependencies.monotonicNow() >= deadlineMs) return false;
       await dependencies.sleep(CLOSE_POLL_INTERVAL_MS);
     }
     return true;
   };
+  const signalAll = async (
+    signal: NodeJS.Signals,
+    delayBeforeRoot: boolean,
+  ): Promise<boolean> => {
+    const members = await readMembers();
+    if (members.length === 0) return false;
+    const processGroupIds = [
+      ...new Set(members.map((member) => member.processGroupId)),
+    ].sort((left, right) => {
+      if (left === rootPid) return 1;
+      if (right === rootPid) return -1;
+      return left - right;
+    });
+    for (const processGroupId of processGroupIds) {
+      if (
+        delayBeforeRoot &&
+        processGroupId === rootPid &&
+        processGroupIds.length > 1
+      ) {
+        await dependencies.sleep(CLOSE_POLL_INTERVAL_MS);
+      }
+      try {
+        dependencies.signalProcessGroup(processGroupId, signal);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+      }
+    }
+    return true;
+  };
+  return { knownProcessGroupIds, readMembers, signalAll, waitForEmpty };
+}
+
+/** Creates one fail-closed POSIX process-group scope for a native PTY. */
+export function createPosixProcessScope(
+  rootPid: number,
+  dependencies: PosixProcessScopeDependencies = defaultDependencies,
+): PtyProcessScope {
+  let established = false;
+  const session = createPosixSessionOperations(rootPid, dependencies);
 
   const signal = (value: NodeJS.Signals | 0): boolean => {
     try {
@@ -63,49 +108,25 @@ export function createPosixProcessScope(
     }
   };
 
-  const signalSession = async (value: NodeJS.Signals): Promise<boolean> => {
-    const members = await readSessionMembers();
-    if (members.length === 0) return false;
-    const processGroupIds = [
-      ...new Set(members.map((member) => member.processGroupId)),
-    ].sort((left, right) => {
-      if (left === rootPid) return 1;
-      if (right === rootPid) return -1;
-      return left - right;
-    });
-    for (const processGroupId of processGroupIds) {
-      if (processGroupId === rootPid && processGroupIds.length > 1) {
-        await dependencies.sleep(CLOSE_POLL_INTERVAL_MS);
-      }
-      try {
-        dependencies.signalProcessGroup(processGroupId, value);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
-      }
-    }
-    return true;
-  };
-
   return {
     mechanism: "process-group",
     processGroupId: String(rootPid),
     establish: async () => {
       if (!Number.isSafeInteger(rootPid) || rootPid <= 1) return false;
-      const root = (await dependencies.readProcessTable()).find(
+      const root = (await session.readMembers()).find(
         (record) => record.pid === rootPid,
       );
       if (root?.processGroupId !== rootPid || root.sessionId !== rootPid) {
         return false;
       }
       if (!signal(0)) return false;
-      knownProcessGroupIds.add(rootPid);
       established = true;
       return true;
     },
     hasChildren: async () => {
       if (!established)
         throw new Error("POSIX PTY process group is not established");
-      return (await readSessionMembers()).some(
+      return (await session.readMembers()).some(
         (record) => record.pid !== rootPid,
       );
     },
@@ -113,20 +134,21 @@ export function createPosixProcessScope(
       if (!established)
         throw new Error("POSIX PTY process group is not established");
       const startedAt = dependencies.monotonicNow();
-      if (!(await signalSession("SIGHUP"))) return;
-      if (await waitForEmpty(startedAt + GRACEFUL_CLOSE_TIMEOUT_MS)) return;
+      if (!(await session.signalAll("SIGHUP", true))) return;
+      if (await session.waitForEmpty(startedAt + GRACEFUL_CLOSE_TIMEOUT_MS))
+        return;
       while (dependencies.monotonicNow() < startedAt + FORCED_CLOSE_TIMEOUT_MS) {
-        if (!(await signalSession("SIGKILL"))) return;
+        if (!(await session.signalAll("SIGKILL", false))) return;
         await dependencies.sleep(CLOSE_POLL_INTERVAL_MS);
       }
-      if ((await readSessionMembers()).length === 0) return;
+      if ((await session.readMembers()).length === 0) return;
       throw new Error(
         `POSIX PTY session ${rootPid} remained non-empty after forced close`,
       );
     },
     dispose: () => {
       if (!established) return;
-      for (const processGroupId of knownProcessGroupIds) {
+      for (const processGroupId of session.knownProcessGroupIds) {
         try {
           dependencies.signalProcessGroup(processGroupId, "SIGKILL");
         } catch {
@@ -135,6 +157,31 @@ export function createPosixProcessScope(
       }
     },
   };
+}
+
+/** Reaps every surviving process group from one crashed POSIX PTY session. */
+export async function reapPosixProcessSession(
+  rootPid: number,
+  processGroupId: string,
+  dependencies: PosixProcessScopeDependencies = defaultDependencies,
+): Promise<void> {
+  if (
+    !Number.isSafeInteger(rootPid) ||
+    rootPid <= 1 ||
+    processGroupId !== String(rootPid)
+  ) {
+    throw new Error("POSIX PTY process identity does not match");
+  }
+  const session = createPosixSessionOperations(rootPid, dependencies);
+  const deadline = dependencies.monotonicNow() + FORCED_CLOSE_TIMEOUT_MS;
+  while (dependencies.monotonicNow() < deadline) {
+    if (!(await session.signalAll("SIGKILL", false))) return;
+    await dependencies.sleep(CLOSE_POLL_INTERVAL_MS);
+  }
+  if ((await session.readMembers()).length === 0) return;
+  throw new Error(
+    `POSIX PTY session ${rootPid} remained non-empty after crash cleanup`,
+  );
 }
 
 const defaultDependencies: PosixProcessScopeDependencies = {
