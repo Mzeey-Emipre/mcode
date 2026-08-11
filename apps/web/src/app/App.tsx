@@ -587,7 +587,6 @@ export function App() {
     <TerminalPoolSlotProvider>
       <TooltipProvider delay={400}>
         <div className="flex h-screen flex-col overflow-hidden bg-page text-foreground">
-          <ConnectionBanner />
           {isDesktop ? (
             <DesktopTitleBar
               canGoBack={navigationHistory.canGoBack(isValidLocation)}
@@ -596,6 +595,7 @@ export function App() {
               onForward={() => navigateHistory("forward")}
             />
           ) : null}
+          <ConnectionBanner />
           <div ref={outerRowRef} className="flex flex-1 overflow-hidden">
             {/* Retain the docked shell while collapsed so its grid track can
               animate. Settings force-shows it on web; cramped layouts float it. */}
@@ -635,7 +635,7 @@ export function App() {
                   aria-label="Close project tree"
                   aria-hidden={floatingSidebarExiting}
                   inert={floatingSidebarExiting}
-                  className={`fixed inset-0 z-40 bg-black/20 duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:animate-none ${
+                  className={`app-viewport-fixed fixed z-40 bg-black/20 duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:animate-none ${
                     floatingSidebarExiting
                       ? "pointer-events-none animate-out fade-out-0"
                       : "animate-in fade-in-0"
@@ -647,7 +647,7 @@ export function App() {
                   data-testid="sidebar-floating"
                   aria-hidden={floatingSidebarExiting}
                   inert={floatingSidebarExiting}
-                  className={`fixed bottom-1.5 left-1.5 top-1.5 z-50 flex w-72 overflow-hidden rounded-lg bg-page shadow-xl ring-1 ring-border/40 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:animate-none ${
+                  className={`app-panel-top-inset fixed bottom-1.5 left-1.5 z-50 flex w-72 overflow-hidden rounded-lg bg-page shadow-xl ring-1 ring-border/40 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:animate-none ${
                     floatingSidebarExiting
                       ? "pointer-events-none animate-out fade-out-0 slide-out-to-left-4 duration-200"
                       : "animate-in fade-in-0 slide-in-from-left-4 duration-250"

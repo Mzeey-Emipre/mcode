@@ -197,6 +197,7 @@ export function DesktopTitleBar({
   return (
     <header
       data-testid="desktop-title-bar"
+      style={{ zIndex: "var(--z-desktop-title-bar)" }}
       className={cn(
         "relative flex h-10 shrink-0 select-none items-center gap-2 border-b border-border/40 bg-page px-2 [app-region:drag]",
         platform === "darwin" ? "pl-20" : "pr-36",

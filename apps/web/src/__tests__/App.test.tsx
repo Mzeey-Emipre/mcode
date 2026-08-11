@@ -8,6 +8,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { App } from "../app/App";
+import { useConnectionStore } from "@/stores/connectionStore";
 import { useUiStore } from "@/stores/uiStore";
 
 if (typeof globalThis.ResizeObserver === "undefined") {
@@ -101,6 +102,7 @@ describe("App", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+    useConnectionStore.setState({ status: "connecting" });
     delete (window as unknown as Record<string, unknown>).desktopBridge;
   });
 
@@ -274,6 +276,7 @@ describe("App", () => {
     const { unmount } = render(<App />);
     const titleBar = screen.getByTestId("desktop-title-bar");
     expect(titleBar).toHaveClass("h-10", "bg-page");
+    expect(titleBar).toHaveStyle({ zIndex: "var(--z-desktop-title-bar)" });
     expect(
       within(titleBar).getByRole("button", { name: "Back" }),
     ).toBeDisabled();
@@ -282,6 +285,25 @@ describe("App", () => {
     ).toBeDisabled();
 
     unmount();
+  });
+
+  it("keeps the reconnect banner below the Electron title bar", () => {
+    (window as unknown as Record<string, unknown>).desktopBridge = {
+      window: {
+        platform: "win32",
+        isDevelopment: false,
+        perform: vi.fn(),
+      },
+    };
+    useConnectionStore.setState({ status: "reconnecting" });
+
+    render(<App />);
+
+    const titleBar = screen.getByTestId("desktop-title-bar");
+    const banner = screen.getByText("Connection lost. Reconnecting to server...");
+    expect(
+      titleBar.compareDocumentPosition(banner) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).not.toBe(0);
   });
 
   it("does not render the desktop title bar for a partial feature bridge", () => {
