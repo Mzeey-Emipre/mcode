@@ -129,9 +129,9 @@ export class TerminalService {
     // Keep server-side scrollback retention in sync with the terminal.scrollback
     // setting: when the user changes it, resize all live replay buffers so
     // running sessions honour the new retention window.
-    this.lastScrollback = this.settingsService.get().terminal.scrollback;
+    this.lastScrollback = this.settingsService.get().terminal.behavior.scrollback;
     this.unsubscribeSettings = this.settingsService.on("change", (next) => {
-      this.applyScrollbackToReplayBuffers(next.terminal.scrollback);
+      this.applyScrollbackToReplayBuffers(next.terminal.behavior.scrollback);
     });
   }
 
@@ -254,7 +254,7 @@ export class TerminalService {
     // drives the client xterm buffer) so reattach can replay roughly the
     // user's configured scrollback window, not a fixed 512 KB.
     const replayBuffer = new TerminalReplayBuffer(
-      replayCapBytesForScrollback(terminalSettings.scrollback),
+      replayCapBytesForScrollback(terminalSettings.behavior.scrollback),
     );
     this.replayBuffers.set(id, replayBuffer);
 

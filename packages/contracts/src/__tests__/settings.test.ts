@@ -91,49 +91,34 @@ describe("SettingsSchema", () => {
     });
   });
 
-  describe("terminal.scrollback", () => {
+  describe("terminal.behavior.scrollback", () => {
     it("defaults to 1000 when parsing an empty object", () => {
       const result = SettingsSchema().parse({});
-      expect(result.terminal.scrollback).toBe(1000);
+      expect(result.terminal.behavior.scrollback).toBe(1000);
     });
 
     it("accepts a custom scrollback value within range", () => {
-      const result = SettingsSchema().parse({ terminal: { scrollback: 2500 } });
-      expect(result.terminal.scrollback).toBe(2500);
+      const defaults = getDefaultSettings();
+      const result = SettingsSchema().parse({
+        ...defaults,
+        terminal: {
+          ...defaults.terminal,
+          behavior: { ...defaults.terminal.behavior, scrollback: 2500 },
+        },
+      });
+      expect(result.terminal.behavior.scrollback).toBe(2500);
     });
 
-    it("accepts the maximum value of 5000", () => {
-      const result = SettingsSchema().parse({ terminal: { scrollback: 5000 } });
-      expect(result.terminal.scrollback).toBe(5000);
-    });
-
-    it("rejects negative scrollback", () => {
-      const result = SettingsSchema().safeParse({ terminal: { scrollback: -1 } });
+    it.each([0, 99, 5001, 100.5])("rejects out-of-range scrollback %s", (scrollback) => {
+      const defaults = getDefaultSettings();
+      const result = SettingsSchema().safeParse({
+        ...defaults,
+        terminal: {
+          ...defaults.terminal,
+          behavior: { ...defaults.terminal.behavior, scrollback },
+        },
+      });
       expect(result.success).toBe(false);
-    });
-
-    it("rejects non-integer scrollback", () => {
-      const result = SettingsSchema().safeParse({ terminal: { scrollback: 100.5 } });
-      expect(result.success).toBe(false);
-    });
-
-    it("clamps scrollback above 5000 down to 5000", () => {
-      const result = SettingsSchema().parse({ terminal: { scrollback: 5001 } });
-      expect(result.terminal.scrollback).toBe(5000);
-    });
-
-    it("clamps very large scrollback values down to 5000", () => {
-      const result = SettingsSchema().parse({ terminal: { scrollback: 100000 } });
-      expect(result.terminal.scrollback).toBe(5000);
-    });
-
-    it("accepts zero for unlimited scrollback", () => {
-      const result = SettingsSchema().parse({ terminal: { scrollback: 0 } });
-      expect(result.terminal.scrollback).toBe(0);
-    });
-
-    it("includes terminal.scrollback in getDefaultSettings()", () => {
-      expect(getDefaultSettings().terminal.scrollback).toBe(1000);
     });
   });
 

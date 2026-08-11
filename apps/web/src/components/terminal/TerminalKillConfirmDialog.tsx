@@ -22,7 +22,7 @@ export interface TerminalKillConfirmDialogProps {
 }
 
 /**
- * Confirmation dialog shown when `terminal.confirmOnKill` is enabled and
+ * Confirmation dialog shown when `terminal.behavior.confirmOnKill` requires it and
  * the target PTY has live child processes. Presents "Kill anyway" and
  * "Cancel" actions.
  */

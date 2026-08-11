@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 // Stub the transport before TerminalPanel imports it. Storing on globalThis
@@ -6,6 +6,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 const terminalKillByThread = vi.fn().mockResolvedValue(undefined);
 const terminalKill = vi.fn().mockResolvedValue(undefined);
 const terminalCreate = vi.fn().mockResolvedValue({ ptyId: "pty-new", shell: "pwsh" });
+const terminalHasChildren = vi.fn().mockResolvedValue({ hasChildren: false });
 
 vi.mock("@/transport", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/transport")>();
@@ -15,6 +16,7 @@ vi.mock("@/transport", async (importOriginal) => {
       terminalKillByThread,
       terminalKill,
       terminalCreate,
+      terminalHasChildren,
     }),
   };
 });
@@ -34,6 +36,7 @@ describe("TerminalPanel", () => {
     terminalKillByThread.mockClear();
     terminalKill.mockClear();
     terminalCreate.mockClear();
+    terminalHasChildren.mockClear();
     useTerminalStore.setState({
       terminals: {},
       terminalPanelByThread: {},
@@ -44,7 +47,7 @@ describe("TerminalPanel", () => {
 
   // Regression guard for issue #303: clicking the bin button must kill the
   // PTY processes AND collapse the panel (previously left an empty panel open).
-  it("hides the panel after closing all terminals via the bin button", () => {
+  it("hides the panel after closing all terminals via the bin button", async () => {
     useTerminalStore.setState({
       terminals: {
         "thread-1": [{ id: "pty-1", threadId: "thread-1", label: "Terminal 1" }],
@@ -59,7 +62,10 @@ describe("TerminalPanel", () => {
     const bin = screen.getByRole("button", { name: /kill all terminals/i });
     fireEvent.click(bin);
 
-    expect(terminalKillByThread).toHaveBeenCalledWith("thread-1");
+    await waitFor(() => {
+      expect(terminalHasChildren).toHaveBeenCalledWith("pty-1");
+      expect(terminalKillByThread).toHaveBeenCalledWith("thread-1");
+    });
 
     const panel = useTerminalStore.getState().terminalPanelByThread["thread-1"];
     expect(panel?.visible).toBe(false);

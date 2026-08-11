@@ -33,6 +33,16 @@ export const workspaces = sqliteTable(
   ],
 );
 
+/** Explicit workspace-only Terminal default-profile overrides. */
+export const workspaceTerminalPreferences = sqliteTable("workspace_terminal_preferences", {
+  workspaceId: text("workspace_id")
+    .primaryKey()
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  defaultProfileId: text("default_profile_id").notNull(),
+  updatedAt: text("updated_at").notNull().default(timestampDefault),
+});
+
 /** Server-only stable identities for registered worktrees in each workspace. */
 export const workspaceWorktrees = sqliteTable(
   "workspace_worktrees",

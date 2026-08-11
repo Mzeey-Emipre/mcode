@@ -44,7 +44,7 @@ describe("Terminal scrollback from settings", () => {
 
   it("default settings use 1000 scrollback", () => {
     const settings = useSettingsStore.getState().settings;
-    expect(settings.terminal.scrollback).toBe(1000);
+    expect(settings.terminal.behavior.scrollback).toBe(1000);
   });
 
   it("settings store accepts custom scrollback value", () => {
@@ -52,11 +52,14 @@ describe("Terminal scrollback from settings", () => {
     useSettingsStore.setState({
       settings: {
         ...defaults,
-        terminal: { ...defaults.terminal, scrollback: 2500 },
+        terminal: {
+          ...defaults.terminal,
+          behavior: { ...defaults.terminal.behavior, scrollback: 2500 },
+        },
       },
     });
     // 2500 is intentionally different from the 1000 default so this test
     // catches a regression where the override is silently ignored.
-    expect(useSettingsStore.getState().settings.terminal.scrollback).toBe(2500);
+    expect(useSettingsStore.getState().settings.terminal.behavior.scrollback).toBe(2500);
   });
 });

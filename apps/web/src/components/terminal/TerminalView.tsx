@@ -319,7 +319,7 @@ export const TerminalView = memo(function TerminalView({
   const prevShownRef = useRef(shown);
   const [hydrated, setHydrated] = useState(false);
 
-  const scrollback = useSettingsStore((s) => s.settings.terminal.scrollback);
+  const scrollback = useSettingsStore((s) => s.settings.terminal.behavior.scrollback);
   const scrollbackRef = useRef(scrollback);
   scrollbackRef.current = scrollback;
 

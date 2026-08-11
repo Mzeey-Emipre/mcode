@@ -7,7 +7,7 @@ import { SectionHeading } from "../SectionHeading";
  * Terminal settings section: scrollback buffer size.
  */
 export function TerminalSection() {
-  const scrollback = useSettingsStore((s) => s.settings.terminal.scrollback);
+  const scrollback = useSettingsStore((s) => s.settings.terminal.behavior.scrollback);
   const update = useSettingsStore((s) => s.update);
 
   return (
@@ -16,15 +16,15 @@ export function TerminalSection() {
       <div>
       <SettingRow
         label="Scrollback lines"
-        configKey="terminal.scrollback"
-        hint="Lines to retain in the buffer. Set to 0 for unlimited."
+        configKey="terminal.behavior.scrollback"
+        hint="Lines to retain in the buffer. Reducing this limit discards the oldest lines."
       >
         <RangeControl
-          min={0}
+          min={100}
           max={5000}
           step={100}
           value={scrollback}
-          onCommit={(v) => void update({ terminal: { scrollback: v } })}
+          onCommit={(v) => void update({ terminal: { behavior: { scrollback: v } } })}
         />
       </SettingRow>
       </div>

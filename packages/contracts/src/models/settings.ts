@@ -1,6 +1,14 @@
 import { z } from "zod";
 import { InteractionModeSchema, PermissionModeSchema } from "./enums.js";
 import { lazySchema } from "../utils/lazySchema.js";
+import {
+  TERMINAL_SETTINGS_SCHEMA_VERSION,
+  TerminalAccessibilitySettingsSchema,
+  TerminalBehaviorSettingsSchema,
+  TerminalPresentationSettingsSchema,
+  TerminalSettingsSchema,
+  getDefaultTerminalSettingsDocument,
+} from "./terminal-settings.js";
 
 // ---------------------------------------------------------------------------
 // Enum schemas
@@ -113,6 +121,14 @@ const CursorUsageEmailSchema = z
 /** Schema for the full user settings object. Every field has a default. */
 export const SettingsSchema = lazySchema(() =>
   z.object({
+    /** Persisted settings document metadata. */
+    meta: z
+      .object({
+        /** Current settings document schema version. */
+        schemaVersion: z.literal(TERMINAL_SETTINGS_SCHEMA_VERSION),
+      })
+      .strict()
+      .default({ schemaVersion: TERMINAL_SETTINGS_SCHEMA_VERSION }),
     /** Visual appearance settings. */
     appearance: z
       .object({
@@ -187,62 +203,9 @@ export const SettingsSchema = lazySchema(() =>
       })
       .default({}),
 
-    /** Terminal emulator settings. */
-    terminal: z
-      .object({
-        /**
-         * Number of scrollback lines to retain per terminal instance.
-         * Values above 5000 are clamped to 5000 (rather than rejected) so that
-         * users with legacy settings from before the cap was introduced do not
-         * have their entire settings object silently reset by the server's
-         * safeParse fallback at settings-service.ts:94.
-         * Zero means unlimited (not recommended for long-running sessions).
-         * Negative or non-integer values are still rejected as invalid input.
-         */
-        scrollback: z
-          .number()
-          .int()
-          .nonnegative()
-          .transform((n) => Math.min(n, 5000))
-          .default(1000),
-        /**
-         * When to prompt for confirmation before killing a terminal with
-         * running child processes.
-         *
-         * - "never"  — kill immediately, no prompt (default, preserves prior behaviour)
-         * - "panel"  — prompt when the bin button is clicked in the terminal panel
-         * - "always" — prompt in all kill paths
-         * - "editor" — reserved for future use; currently behaves like "panel"
-         */
-        confirmOnKill: z
-          .enum(["never", "editor", "panel", "always"])
-          .default("never"),
-        /** Flow control settings for PTY backpressure handling. */
-        flowControl: z
-          .object({
-            /** Server-side high-water mark in bytes. Pause PTY drain when ws.bufferedAmount exceeds this. */
-            serverHighBytes: z.number().int().positive(),
-            /** Server-side low-water mark in bytes. Resume PTY drain when ws.bufferedAmount drops below this. */
-            serverLowBytes: z.number().int().positive(),
-            /** Client-side high-water mark in bytes. Send terminal.pause when xterm write backlog exceeds this. */
-            clientHighBytes: z.number().int().positive(),
-            /** Client-side low-water mark in bytes. Send terminal.resume when xterm write backlog drops below this. */
-            clientLowBytes: z.number().int().positive(),
-          })
-          .refine((v) => v.serverLowBytes < v.serverHighBytes, {
-            message: "serverLowBytes must be less than serverHighBytes",
-          })
-          .refine((v) => v.clientLowBytes < v.clientHighBytes, {
-            message: "clientLowBytes must be less than clientHighBytes",
-          })
-          .default({
-            serverHighBytes: 1_048_576,
-            serverLowBytes: 262_144,
-            clientHighBytes: 262_144,
-            clientLowBytes: 65_536,
-          }),
-      })
-      .default({}),
+    /** Versioned Terminal settings and custom profiles. */
+    terminal: TerminalSettingsSchema().default(() =>
+      getDefaultTerminalSettingsDocument().terminal),
 
     /** Notification settings. */
     notifications: z
@@ -501,6 +464,12 @@ export function getDefaultSettings(): Settings {
  */
 export const PartialSettingsSchema = lazySchema(() =>
   z.object({
+    meta: z
+      .object({
+        schemaVersion: z.literal(TERMINAL_SETTINGS_SCHEMA_VERSION).optional(),
+      })
+      .strict()
+      .optional(),
     appearance: z
       .object({
         theme: ThemeSchema.optional(),
@@ -545,22 +514,11 @@ export const PartialSettingsSchema = lazySchema(() =>
       .optional(),
     terminal: z
       .object({
-        scrollback: z
-          .number()
-          .int()
-          .nonnegative()
-          .transform((n) => Math.min(n, 5000))
-          .optional(),
-        confirmOnKill: z.enum(["never", "editor", "panel", "always"]).optional(),
-        flowControl: z
-          .object({
-            serverHighBytes: z.number().int().positive().optional(),
-            serverLowBytes: z.number().int().positive().optional(),
-            clientHighBytes: z.number().int().positive().optional(),
-            clientLowBytes: z.number().int().positive().optional(),
-          })
-          .optional(),
+        presentation: TerminalPresentationSettingsSchema().partial().strict().optional(),
+        behavior: TerminalBehaviorSettingsSchema().partial().strict().optional(),
+        accessibility: TerminalAccessibilitySettingsSchema().partial().strict().optional(),
       })
+      .strict()
       .optional(),
     notifications: z
       .object({

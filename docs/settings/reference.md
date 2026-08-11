@@ -19,7 +19,21 @@ Per-setting reference for Mcode's `settings.json`. For schema conventions and st
 | `model.defaults.reasoning` | enum | `"high"` | `"none"` \| `"minimal"` \| `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` \| `"max"` | - | Default reasoning effort level. Tiers in ascending order: `low < medium < high < xhigh < max`. `"none"` and `"minimal"` map to OpenAI Codex effort presets; Claude models normalize them to `"low"`. `"xhigh"` requires Opus 4.8 or Opus 4.7 for Claude. `"max"` requires Fable 5, Sonnet 5, Opus 4.8, Opus 4.7, Opus 4.6, or Sonnet 4.6; it normalizes to `"high"` at runtime on other Claude models. Stored legacy `"ultra"` and `"ultrathink"` values normalize to `"max"`. Haiku 4.5 ignores this setting because the effort parameter is not sent for that model. Ultra and Ultracode are composer orchestration capabilities, not reasoning settings. |
 | `model.defaults.fallbackId` | string | `"claude-sonnet-4-6"` | - | - | Fallback model when the primary is unavailable. Set to `""` to disable fallback. |
 | `model.defaults.contextWindow` | integer | - | > 0, ≤ 2,000,000 | - | Override the context window (tokens) for the default model. When set, takes priority over API-fetched and SDK-reported values. Useful when the SDK reports stale data (e.g. 200K instead of 1M). Omit to use the automatically detected value. Claude only. |
-| `terminal.scrollback` | integer | `250` | >= 0 | - | Number of scrollback lines to retain |
+| `meta.schemaVersion` | string | `"0.0.1"` | `"0.0.1"` | - | Version of the persisted settings document. A malformed or newer version blocks writes until repair or reset. |
+| `terminal.defaultProfileId` | profile ID | `"automatic"` | `"automatic"`, a certified profile ID, or a configured custom profile ID | - | Profile selection for new Terminal sessions when the workspace has no explicit override. |
+| `terminal.profiles` | array | `[]` | Up to 32 custom profiles | - | Custom profile definitions. Each profile contains a stable ID, name, executable, and argument list. |
+| `terminal.presentation.fontFamily` | string | `"mcodeMono"` | 1-128 characters | - | Terminal font family. |
+| `terminal.presentation.fontSize` | enum | `"sm"` | `"xs"` \| `"sm"` \| `"md"` \| `"lg"` \| `"xl"` | - | Terminal font size. |
+| `terminal.presentation.lineHeight` | enum | `"normal"` | `"compact"` \| `"normal"` \| `"relaxed"` | - | Terminal line spacing. |
+| `terminal.presentation.cursorStyle` | enum | `"block"` | `"block"` \| `"underline"` \| `"bar"` | - | Terminal cursor shape. |
+| `terminal.presentation.cursorBlink` | boolean | `false` | - | - | Whether the Terminal cursor blinks. |
+| `terminal.presentation.ligatures` | boolean | `false` | - | - | Whether the Terminal uses font ligatures. |
+| `terminal.behavior.scrollback` | integer | `1000` | 100-5000 | - | Number of scrollback lines to retain. |
+| `terminal.behavior.sessionLimit` | integer | `20` | 1-20 | - | App-wide Terminal session capacity. |
+| `terminal.behavior.confirmOnKill` | enum | `"withChildProcesses"` | `"never"` \| `"withChildProcesses"` \| `"always"` | - | When Mcode asks before it closes a Terminal session. |
+| `terminal.behavior.copyOnSelect` | boolean | `false` | - | - | Whether selecting Terminal text copies it. |
+| `terminal.behavior.confirmMultilinePaste` | boolean | `true` | - | - | Whether Mcode asks before a multiline paste. |
+| `terminal.accessibility.screenReaderMode` | enum | `"off"` | `"off"` \| `"auto"` \| `"on"` | - | Terminal screen reader mode. |
 | `notifications.enabled` | boolean | `true` | - | - | Whether desktop notifications are enabled |
 | `updates.channel` | enum | `"stable"` | `"stable"` \| `"nightly"` | - | Desktop auto-update release line. Stable uses normal GitHub releases; nightly uses the maintainers' prerelease channel when CI publishes it. **Channel switch behavior:** Stable to Nightly, electron-updater checks the latest per-build nightly release and offers it as an available update with `allowPrerelease` enabled. Nightly to Stable, if the running version is newer than the latest stable, the app shows a confirmation dialog. Confirming triggers a one-shot downgrade install. Cancelling leaves you on nightly. Per-build nightly releases are tagged `v<version>-nightly.<YYYYMMDD>.<runNumber>` and marked as GitHub prereleases. The "Latest" badge on the repo always points to the most recent stable. |
 | `updates.autoDownload` | boolean | `true` | - | - | Download updates automatically when available |
