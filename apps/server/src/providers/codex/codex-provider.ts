@@ -277,7 +277,8 @@ function observeCodexInternalMcpStartup(server: CodexAppServer): {
     const status = typeof value.params.status === "string" ? value.params.status : "";
     if (status === "ready") finish();
     else if (status === "failed" || status === "error") {
-      finish(new Error(`Codex internal MCP startup failed (${status})`));
+      // Codex keeps the thread usable when one MCP is unavailable.
+      finish();
     }
   };
   server.on("notification", onNotification);
