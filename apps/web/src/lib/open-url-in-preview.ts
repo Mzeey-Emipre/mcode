@@ -69,25 +69,23 @@ function findActiveTab(
   return tabs.find((t) => t.active);
 }
 
-/**
- * Returns whether a modifier-open should create a new preview tab. Reuses the
- * active tab when it is still blank; opens a new tab when the active tab already
- * has a page loaded.
- */
-async function shouldOpenInNewTab(
+/** Resolves the tab that must receive a preview URL, or a new-tab request. */
+async function resolvePreviewTabTarget(
   threadId: string,
   workspaceId: string,
   tabsApi: NonNullable<NonNullable<typeof window.desktopBridge>["preview"]>["tabs"],
-): Promise<boolean> {
-  if (!tabsApi?.list) return false;
+  newTab: boolean,
+): Promise<{ readonly tabId?: string } | null> {
+  if (!tabsApi?.list || !tabsApi.open) return null;
 
   const listed = await tabsApi.list(threadId, workspaceId);
-  if (!listed.ok) return true;
+  if (!listed.ok) return newTab ? {} : null;
 
   const active = findActiveTab(listed.data.tabs, listed.data.activeTabId);
-  if (!active) return false;
+  if (!active) return {};
 
-  return !isEmptyPreviewTabUrl(active.url);
+  if (newTab && !isEmptyPreviewTabUrl(active.url)) return {};
+  return { tabId: active.id };
 }
 
 /**
@@ -128,11 +126,18 @@ export function openUrlInPreview({
     const exactWorkspaceId = workspaceId ?? threadId;
     const resolved = await preview.resolveNavigation?.(url, wsPath ?? undefined);
     if (!resolved?.ok) return;
-    const openInNewTab = newTab && (await shouldOpenInNewTab(threadId, exactWorkspaceId, preview.tabs));
+    const target = await resolvePreviewTabTarget(
+      threadId,
+      exactWorkspaceId,
+      preview.tabs,
+      newTab,
+    );
 
-    if (openInNewTab && preview.tabs?.open) {
+    if (target && preview.tabs?.open) {
       const opened = await preview.tabs.open(threadId, exactWorkspaceId, {
         activate: true,
+        ...target,
+        initialAddress: resolved.url,
       });
       if (!opened.ok) return;
     }

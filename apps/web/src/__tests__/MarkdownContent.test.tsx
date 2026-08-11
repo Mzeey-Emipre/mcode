@@ -243,6 +243,7 @@ describe("MarkdownContent workspace preview navigation", () => {
     );
     expect(mockOpen).toHaveBeenCalledWith("thread-prev", "ws-prev", {
       activate: true,
+      initialAddress: "mcode-workspace:///sub/page.html",
     });
     expect(setPreviewUrlForThread).toHaveBeenCalledWith("thread-prev", "mcode-workspace:///sub/page.html");
     expect(mockNavigate).not.toHaveBeenCalled();
@@ -258,6 +259,7 @@ describe("MarkdownContent workspace preview navigation", () => {
     });
     expect(mockOpen).toHaveBeenCalledWith("thread-prev", "ws-prev", {
       activate: true,
+      initialAddress: "mcode-workspace:///sub/page.html",
     });
     expect(mockResolveNavigation).toHaveBeenCalledWith(
       "mcode-workspace:///sub/page.html",
@@ -306,6 +308,7 @@ describe("MarkdownContent workspace preview navigation", () => {
     });
     expect(mockOpen).toHaveBeenCalledWith("thread-prev", "ws-prev", {
       activate: true,
+      initialAddress: "mcode-workspace:///report.html",
     });
     expect(mockResolveNavigation).toHaveBeenCalledWith(
       "mcode-workspace:///report.html",
@@ -359,6 +362,48 @@ describe("MarkdownContent workspace preview navigation", () => {
       "thread-prev",
       "mcode-workspace:///page.html",
     );
+  });
+
+  it("binds a ctrl+click URL to the existing blank preview tab", async () => {
+    window.desktopBridge = {
+      openExternalUrl: vi.fn(),
+      preview: {
+        resolveNavigation: mockResolveNavigation,
+        tabs: {
+          open: mockOpen,
+          list: vi.fn().mockResolvedValue({
+            ok: true,
+            data: {
+              threadId: "thread-prev",
+              activeTabId: "tab-1",
+              tabs: [{
+                id: "tab-1",
+                threadId: "thread-prev",
+                title: null,
+                url: null,
+                faviconUrl: null,
+                warm: true,
+                active: true,
+              }],
+            },
+          }),
+        },
+      },
+    } as unknown as typeof window.desktopBridge;
+
+    const { container } = render(<MarkdownContent content="[doc](https://example.com/page)" />);
+    const link = container.querySelector("a");
+    expect(link).toBeTruthy();
+    await act(async () => {
+      fireEvent.click(link!, { ctrlKey: true });
+      await vi.runAllTimersAsync();
+    });
+
+    expect(mockOpen).toHaveBeenCalledWith("thread-prev", "ws-prev", {
+      activate: true,
+      tabId: "tab-1",
+      initialAddress: "https://example.com/page",
+    });
   });
 
   it("stores the resolved URL without calling retired navigation", async () => {
