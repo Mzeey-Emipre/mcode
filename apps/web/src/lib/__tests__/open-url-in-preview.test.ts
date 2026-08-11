@@ -129,6 +129,7 @@ describe("openUrlInPreview", () => {
     expect(setRightPanelTab).toHaveBeenCalledWith("ws-1", "thread-1", "preview");
     expect(mockOpen).toHaveBeenCalledWith("thread-1", "ws-1", {
       activate: true,
+      initialAddress: "https://example.com/pr/1",
     });
     expect(mockNavigate).not.toHaveBeenCalled();
     expect(setPreviewUrlForThread).toHaveBeenCalledWith("thread-1", "https://example.com/pr/1");
@@ -146,7 +147,11 @@ describe("openUrlInPreview", () => {
     openUrlInPreview({ url: "https://example.com/pr/1", threadId: "thread-1" });
     await vi.runAllTimersAsync();
 
-    expect(mockOpen).not.toHaveBeenCalled();
+    expect(mockOpen).toHaveBeenCalledWith("thread-1", "ws-1", {
+      activate: true,
+      tabId: "tab-1",
+      initialAddress: "https://example.com/pr/1",
+    });
     expect(setPreviewUrlForThread).toHaveBeenCalledWith("thread-1", "https://example.com/pr/1");
     expect(mockNavigate).not.toHaveBeenCalled();
   });
@@ -159,7 +164,11 @@ describe("openUrlInPreview", () => {
     });
     await vi.runAllTimersAsync();
 
-    expect(mockOpen).not.toHaveBeenCalled();
+    expect(mockOpen).toHaveBeenCalledWith("thread-1", "ws-1", {
+      activate: true,
+      tabId: "tab-1",
+      initialAddress: "https://example.com",
+    });
     expect(setPreviewUrlForThread).toHaveBeenCalledWith("thread-1", "https://example.com");
     expect(mockNavigate).not.toHaveBeenCalled();
   });
