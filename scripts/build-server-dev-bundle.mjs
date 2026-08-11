@@ -482,8 +482,46 @@ export function findCopilotSdkPath(serverCjsOut, platform, arch) {
   return existsSync(copilotIndex) && existsSync(platformEntry) ? copilotIndex : undefined;
 }
 
+/** Bundle the server and its isolated PTY host from one compiled server tree. */
+export async function buildServerRuntimeBundles({
+  serverRoot,
+  serverOutFile,
+  ptyHostOutFile,
+  production = false,
+}) {
+  const shared = {
+    bundle: true,
+    platform: "node",
+    target: "node20",
+    sourcemap: true,
+    format: "cjs",
+    external: ["better-sqlite3", "node-pty", "electron", "koffi"],
+    banner: {
+      js: 'var __importMetaUrl = require("url").pathToFileURL(__filename).href;',
+    },
+    define: {
+      "import.meta.url": "__importMetaUrl",
+      ...(production ? { "process.env.NODE_ENV": '"production"' } : {}),
+    },
+  };
+  await Promise.all([
+    build({
+      ...shared,
+      entryPoints: [resolve(serverRoot, "dist-tsc/index.js")],
+      outfile: serverOutFile,
+    }),
+    build({
+      ...shared,
+      entryPoints: [
+        resolve(serverRoot, "dist-tsc/terminal/host/pty-host-entry.js"),
+      ],
+      outfile: ptyHostOutFile,
+    }),
+  ]);
+}
+
 /**
- * Produce `apps/desktop/dist/server/server.cjs` from current server sources.
+ * Produce the server and PTY-host bundles from current server sources.
  *
  * @param {object} [options]
  * @param {string} [options.repoRoot] Repository root; defaults to the parent of `scripts/`.
@@ -493,26 +531,16 @@ export async function rebuildServerDevBundle(options = {}) {
   const desktopRoot = resolve(repoRoot, "apps/desktop");
   const serverRoot = resolve(repoRoot, "apps/server");
   const serverOutFile = resolve(desktopRoot, "dist/server/server.cjs");
+  const ptyHostOutFile = resolve(desktopRoot, "dist/server/pty-host.cjs");
 
   console.log("[server-dev-bundle] Compiling apps/server with swc...");
   compileServerWithSwc(serverRoot);
 
-  console.log("[server-dev-bundle] Bundling to dist/server/server.cjs...");
-  await build({
-    bundle: true,
-    platform: "node",
-    target: "node20",
-    sourcemap: true,
-    format: "cjs",
-    entryPoints: [resolve(serverRoot, "dist-tsc/index.js")],
-    outfile: serverOutFile,
-    external: ["better-sqlite3", "node-pty", "electron", "koffi"],
-    banner: {
-      js: 'var __importMetaUrl = require("url").pathToFileURL(__filename).href;',
-    },
-    define: {
-      "import.meta.url": "__importMetaUrl",
-    },
+  console.log("[server-dev-bundle] Bundling server and PTY host...");
+  await buildServerRuntimeBundles({
+    serverRoot,
+    serverOutFile,
+    ptyHostOutFile,
   });
 
   copyClaudeSdkCliNextTo(serverOutFile, serverRoot);
@@ -526,5 +554,5 @@ export async function rebuildServerDevBundle(options = {}) {
     console.log(`[server-dev-bundle] Copied Drizzle migrations -> ${drizzleDst}`);
   }
 
-  console.log(`[server-dev-bundle] Complete: ${serverOutFile}`);
+  console.log(`[server-dev-bundle] Complete: ${serverOutFile}, ${ptyHostOutFile}`);
 }

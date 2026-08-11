@@ -16,7 +16,11 @@ import { execFileSync } from "child_process";
 import { cpSync, existsSync, rmSync } from "fs";
 import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
-import { compileServerWithSwc, copyClaudeSdkCliNextTo } from "../../../scripts/build-server-dev-bundle.mjs";
+import {
+  buildServerRuntimeBundles,
+  compileServerWithSwc,
+  copyClaudeSdkCliNextTo,
+} from "../../../scripts/build-server-dev-bundle.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const desktopRoot = resolve(__dirname, "..");
@@ -78,23 +82,14 @@ compileServerWithSwc(serverRoot);
 // import.meta.url must resolve to a real file:// URL at runtime because the
 // Claude Agent SDK calls fileURLToPath(import.meta.url) to locate its native CLI binary.
 // A plain __filename substitution breaks fileURLToPath with ERR_INVALID_URL_SCHEME.
-await build({
-  ...shared,
-  entryPoints: [resolve(serverRoot, "dist-tsc/index.js")],
-  outfile: "dist/server/server.cjs",
-  external: ["better-sqlite3", "node-pty", "electron", "koffi"],
-  banner: {
-    js: 'var __importMetaUrl = require("url").pathToFileURL(__filename).href;',
-  },
-  define: {
-    "import.meta.url": "__importMetaUrl",
-    // Server bundle is only used in packaged builds. Setting NODE_ENV
-    // at build time ensures getMcodeDir() returns ~/.mcode.
-    "process.env.NODE_ENV": '"production"',
-  },
+await buildServerRuntimeBundles({
+  serverRoot,
+  serverOutFile: resolve(desktopRoot, "dist/server/server.cjs"),
+  ptyHostOutFile: resolve(desktopRoot, "dist/server/pty-host.cjs"),
+  production: true,
 });
 
-console.log("Server bundle complete: dist/server/server.cjs");
+console.log("Server bundles complete: dist/server/server.cjs, dist/server/pty-host.cjs");
 
 const drizzleSrc = resolve(serverRoot, "drizzle");
 const drizzleDst = resolve(desktopRoot, "dist/server/drizzle");

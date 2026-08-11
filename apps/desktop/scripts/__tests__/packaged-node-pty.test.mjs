@@ -38,6 +38,21 @@ describe("ensurePackagedConptyRuntime", () => {
     );
   });
 
+  it("accepts a complete runtime beside a target prebuilt binding", () => {
+    rmSync(path.join(nodePtyRoot, "build"), { recursive: true, force: true });
+    rmSync(path.join(nodePtyRoot, "third_party"), { recursive: true, force: true });
+    const prebuildDir = path.join(nodePtyRoot, "prebuilds", "win32-x64");
+    mkdirSync(path.join(prebuildDir, "conpty"), { recursive: true });
+    writeFileSync(path.join(prebuildDir, "conpty.node"), "binding");
+    writeFileSync(path.join(prebuildDir, "conpty", "conpty.dll"), "prebuilt-dll");
+    writeFileSync(path.join(prebuildDir, "conpty", "OpenConsole.exe"), "prebuilt-console");
+
+    const result = ensurePackagedConptyRuntime({ nodePtyRoot, arch: "x64" });
+
+    expect(readFileSync(result.dllPath, "utf8")).toBe("prebuilt-dll");
+    expect(readFileSync(result.openConsolePath, "utf8")).toBe("prebuilt-console");
+  });
+
   it("fails packaging when the rebuilt binding has no matching runtime", () => {
     rmSync(path.join(nodePtyRoot, "third_party"), { recursive: true, force: true });
 
