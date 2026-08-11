@@ -1,9 +1,6 @@
-import {
-  gracefulKillProcessTree,
-  killProcessTree,
-  listDirectChildren,
-} from "../../services/process-kill.js";
+import { killProcessTree } from "../../services/process-kill.js";
 import { WindowsProcessScopeFactory } from "../../services/windows-process-scope.js";
+import { createPosixProcessScope } from "./posix-process-scope.js";
 import type { PtyProcessScope } from "./pty-host-runtime.js";
 
 /** Creates an authoritative process scope for one native PTY. */
@@ -64,26 +61,5 @@ export function createPtyProcessScope(rootPid: number): PtyProcessScope {
     };
   }
 
-  return {
-    mechanism: "process-group",
-    processGroupId: String(rootPid),
-    establish: async () => {
-      if (!Number.isInteger(rootPid) || rootPid <= 1) return false;
-      try {
-        process.kill(-rootPid, 0);
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    hasChildren: async () => (await listDirectChildren(rootPid)).length > 0,
-    close: async () => gracefulKillProcessTree(rootPid),
-    dispose: () => {
-      try {
-        process.kill(-rootPid, "SIGKILL");
-      } catch {
-        /* process group is already gone */
-      }
-    },
-  };
+  return createPosixProcessScope(rootPid);
 }
