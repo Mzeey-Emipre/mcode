@@ -1042,6 +1042,53 @@ describe("CodexProvider first turn on new session", () => {
     expect((provider as unknown as { runtime: { get: (sessionId: string) => unknown } }).runtime.get("mcode-mcp-failure")).toBeUndefined();
   });
 
+  it("continues the first turn when internal MCP startup reports failure", async () => {
+    const close = vi.fn().mockResolvedValue(undefined);
+    const provider = makeProvider(undefined, new BrowserAutomationSessionLease(), {
+      createCodexConfiguration: vi.fn().mockResolvedValue({ configOverrides: [], env: {} }),
+      close,
+    });
+    const events: AgentEvent[] = [];
+    provider.on("event", (event: AgentEvent) => events.push(event));
+
+    const send = provider.sendTurn({
+      turnExecutionId: "test-execution",
+      sessionId: "mcode-mcp-startup-failure",
+      workspaceId: "workspace-mcp-failure",
+      threadId: "mcp-startup-failure",
+      message: "continue without the failed MCP",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "auto",
+    });
+
+    await vi.waitFor(() => expect(appServers.at(-1)).toBeDefined());
+    const server = appServers.at(-1)!;
+    server.emit("notification", {
+      method: "mcpServer/startupStatus/updated",
+      params: {
+        threadId: "sdk-thread-1",
+        name: "mcode_internal_thread_control",
+        status: "failed",
+        error: "fixture MCP failed to start",
+      },
+    });
+
+    await send;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(sendTurnMock).toHaveBeenCalledWith(
+      [{ type: "text", text: "continue without the failed MCP" }],
+      { model: "gpt-5.4" },
+    );
+    expect(server.isAlive).toBe(true);
+    expect(close).not.toHaveBeenCalled();
+    expect(events).not.toContainEqual(expect.objectContaining({ type: AgentEventType.Error }));
+    await provider.stopSession("mcode-mcp-startup-failure");
+  });
+
   it("contains an internal MCP startup timeout while effective config is stalled", async () => {
     vi.useFakeTimers();
     try {
