@@ -53,7 +53,7 @@ export function TerminalPanel() {
   const allPanels = useTerminalStore((s) => s.terminalPanelByThread);
 
   const splitMode = useTerminalStore((s) => s.splitMode);
-  const confirmOnKill = useSettingsStore((s) => s.settings.terminal.confirmOnKill);
+  const confirmOnKill = useSettingsStore((s) => s.settings.terminal.behavior.confirmOnKill);
 
   const draggingRef = useRef(false);
 

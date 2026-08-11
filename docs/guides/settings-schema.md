@@ -68,7 +68,7 @@ When a category has only one setting or settings that don't share a qualifier, k
 // Good: standalone settings within a category
 {
   "appearance": { "theme": "system" },
-  "terminal": { "scrollback": 500 }
+  "notifications": { "enabled": true }
 }
 ```
 
@@ -109,6 +109,9 @@ When adding a new setting, ask these questions in order:
 
 ```jsonc
 {
+  "meta": {
+    "schemaVersion": "0.0.1"
+  },
   "appearance": {
     "theme": "system"                  // "system" | "dark" | "light"
   },
@@ -133,7 +136,32 @@ When adding a new setting, ask these questions in order:
     }
   },
   "terminal": {
-    "scrollback": 500
+    "defaultProfileId": "automatic",
+    "profiles": [],
+    "presentation": {
+      "fontFamily": "mcodeMono",
+      "fontSize": "sm",
+      "lineHeight": "normal",
+      "cursorStyle": "block",
+      "cursorBlink": false,
+      "ligatures": false
+    },
+    "behavior": {
+      "scrollback": 1000,
+      "sessionLimit": 20,
+      "confirmOnKill": "withChildProcesses",
+      "copyOnSelect": false,
+      "confirmMultilinePaste": true
+    },
+    "accessibility": {
+      "screenReaderMode": "off"
+    },
+    "flowControl": {
+      "serverHighBytes": 1048576,
+      "serverLowBytes": 262144,
+      "clientHighBytes": 262144,
+      "clientLowBytes": 65536
+    }
   },
   "notifications": {
     "enabled": true

@@ -7,6 +7,7 @@ vi.mock("fs", () => ({
   readFileSync: vi.fn(() => { throw new Error("ENOENT"); }),
   writeFileSync: vi.fn(),
   renameSync: vi.fn(),
+  copyFileSync: vi.fn(),
   mkdirSync: vi.fn(),
   unlinkSync: vi.fn(),
   existsSync: vi.fn(() => false),
@@ -24,8 +25,9 @@ vi.mock("../../transport/push.js", () => ({
 
 import { SettingsService } from "../settings-service.js";
 import { broadcast } from "../../transport/push.js";
-import { readFileSync, renameSync, unlinkSync, writeFileSync } from "fs";
+import { copyFileSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "fs";
 import { join } from "path";
+import { getDefaultSettings } from "@mcode/contracts";
 
 const legacySettings = (
   engine: unknown,
@@ -74,6 +76,7 @@ describe("SettingsService in-process change listener", () => {
 describe("SettingsService rendering-engine migration", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(renameSync).mockImplementation(() => undefined);
     vi.mocked(readFileSync).mockImplementation(() => { throw new Error("ENOENT"); });
   });
 
@@ -117,7 +120,7 @@ describe("SettingsService rendering-engine migration", () => {
     const persisted = JSON.parse(
       vi.mocked(writeFileSync).mock.calls[0]![1] as string,
     ) as Record<string, unknown>;
-    expect(persisted).not.toHaveProperty("preview");
+    expect(persisted).not.toHaveProperty("preview.rendering");
   });
 
   it("does not persist a migration when the remaining settings fail validation", () => {
@@ -147,6 +150,11 @@ describe("SettingsService rendering-engine migration", () => {
     expect(unlinkSync).toHaveBeenCalledWith(join("/fake/mcode", "settings.json.tmp"));
     expect(service.get()).toBe(settings);
     expect(readFileSync).toHaveBeenCalledOnce();
+    expect(service.getTerminalMigrationStatus()).toEqual({
+      status: "blocked",
+      reason: "migration-write-failed",
+    });
+    expect(() => service.update({ appearance: { theme: "light" } })).toThrow(/blocked/i);
   });
 
   it("does not rewrite current settings or repeat a completed migration", () => {
@@ -161,11 +169,112 @@ describe("SettingsService rendering-engine migration", () => {
     expect(renameSync).toHaveBeenCalledOnce();
 
     vi.clearAllMocks();
-    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ appearance: { theme: "dark" } }));
+    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({
+      ...getDefaultSettings(),
+      appearance: { theme: "dark" },
+    }));
     new SettingsService().get();
 
     expect(writeFileSync).not.toHaveBeenCalled();
     expect(renameSync).not.toHaveBeenCalled();
     expect(unlinkSync).not.toHaveBeenCalled();
+  });
+});
+
+describe("SettingsService Terminal settings persistence", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(renameSync).mockImplementation(() => undefined);
+    vi.mocked(readFileSync).mockImplementation(() => { throw new Error("ENOENT"); });
+  });
+
+  it("backs up and atomically persists the exact Terminal 0.0.1 migration once", () => {
+    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({
+      appearance: { theme: "dark" },
+      terminal: { scrollback: 0, confirmOnKill: "panel" },
+    }));
+    const service = new SettingsService();
+
+    const settings = service.get();
+    service.get();
+
+    expect(settings.meta.schemaVersion).toBe("0.0.1");
+    expect(settings.terminal.behavior).toMatchObject({
+      scrollback: 5_000,
+      confirmOnKill: "withChildProcesses",
+    });
+    expect(copyFileSync).toHaveBeenCalledOnce();
+    expect(copyFileSync).toHaveBeenCalledWith(
+      join("/fake/mcode", "settings.json"),
+      join("/fake/mcode", "settings.json.pre-terminal-0.0.1.bak"),
+    );
+    expect(writeFileSync).toHaveBeenCalledOnce();
+  });
+
+  it("blocks writes for a future document until explicit reset repairs it", () => {
+    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({
+      meta: { schemaVersion: "0.1.0" },
+      terminal: {},
+    }));
+    const service = new SettingsService();
+
+    expect(service.getTerminalMigrationStatus()).toEqual({
+      status: "blocked",
+      reason: "future-version",
+    });
+    expect(() => service.update({ appearance: { theme: "dark" } })).toThrow(/blocked/i);
+    expect(writeFileSync).not.toHaveBeenCalled();
+
+    service.resetTerminalPreferences();
+
+    expect(service.getTerminalMigrationStatus()).toEqual({ status: "current" });
+    expect(service.get().terminal.profiles).toEqual([]);
+    expect(writeFileSync).toHaveBeenCalledOnce();
+  });
+
+  it("preserves valid custom profiles when reset repairs a missing default reference", () => {
+    const defaults = getDefaultSettings();
+    const preservedProfile = {
+      id: "custom:22222222-2222-4222-8222-222222222222" as const,
+      name: "Tool",
+      executable: "tool",
+      arguments: ["--login"],
+    };
+    vi.mocked(readFileSync).mockReturnValue(JSON.stringify({
+      ...defaults,
+      terminal: {
+        ...defaults.terminal,
+        defaultProfileId: "custom:11111111-1111-4111-8111-111111111111",
+        profiles: [preservedProfile],
+      },
+    }));
+    const service = new SettingsService();
+
+    const reset = service.resetTerminalPreferences();
+
+    expect(reset.defaultProfileId).toBe("automatic");
+    expect(reset.profiles).toEqual([preservedProfile]);
+    expect(service.getTerminalMigrationStatus()).toEqual({ status: "current" });
+  });
+
+  it("resets preferences while preserving custom profiles", () => {
+    const service = new SettingsService();
+    service.replaceTerminalSettings({
+      ...service.get().terminal,
+      defaultProfileId: "custom:11111111-1111-4111-8111-111111111111",
+      profiles: [{
+        id: "custom:11111111-1111-4111-8111-111111111111",
+        name: "Tool",
+        executable: "tool",
+        arguments: [],
+      }],
+      presentation: { ...service.get().terminal.presentation, fontSize: "xl" },
+    });
+
+    const reset = service.resetTerminalPreferences();
+
+    expect(reset.defaultProfileId).toBe("automatic");
+    expect(reset.presentation.fontSize).toBe("sm");
+    expect(reset.profiles).toHaveLength(1);
   });
 });

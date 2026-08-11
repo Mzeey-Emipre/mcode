@@ -58,6 +58,8 @@ import { TerminalBackend, TERMINAL_BACKEND_TOKEN } from "./terminal/terminal-bac
 import { TerminalBackendSelector } from "./terminal/terminal-backend-selector.js";
 import { LegacyTerminalBackend } from "./terminal/legacy/legacy-terminal-backend.js";
 import { TerminalService as LegacyTerminalService } from "./terminal/legacy/terminal-service.js";
+import { TerminalProfileService } from "./terminal/profiles/terminal-profile-service.js";
+import { WorkspaceTerminalPreferencesService } from "./terminal/preferences/workspace-terminal-preferences-service.js";
 import { AttachmentService } from "./services/attachment-service";
 import { HandoffStorage } from "./services/handoff/handoff-storage.js";
 import { HandoffPipelineService } from "./services/handoff/handoff-pipeline.js";
@@ -494,6 +496,17 @@ export function setupContainer(mcodeDir: string): typeof container {
   );
   container.register("SettingsService", {
     useFactory: (c) => c.resolve(SettingsService),
+  });
+  container.register(
+    WorkspaceTerminalPreferencesService,
+    { useClass: WorkspaceTerminalPreferencesService },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(TerminalProfileService, {
+    useFactory: (c) => new TerminalProfileService(
+      c.resolve(SettingsService),
+      c.resolve(WorkspaceTerminalPreferencesService),
+    ),
   });
   container.register(
     GitWatcherService,

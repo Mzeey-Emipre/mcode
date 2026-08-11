@@ -39,7 +39,7 @@ function terminalServiceWithReplay(
   data: ReturnType<typeof vi.fn>,
 ): TerminalService {
   const settingsService = {
-    get: () => ({ terminal: { scrollback: 1_000 } }),
+    get: () => ({ terminal: { behavior: { scrollback: 1_000 } } }),
     on: () => vi.fn(),
   };
   const service = new TerminalService(
@@ -138,7 +138,7 @@ describe("TerminalService Windows teardown", () => {
       clear: vi.fn(),
     };
     const settingsService = {
-      get: () => ({ terminal: { scrollback: 1_000 } }),
+      get: () => ({ terminal: { behavior: { scrollback: 1_000 } } }),
       on: () => vi.fn(),
     };
     const service = new TerminalService(
@@ -194,7 +194,7 @@ describe("TerminalService Windows teardown", () => {
       {
         get: () => ({
           terminal: {
-            scrollback: 1_000,
+            behavior: { scrollback: 1_000 },
             flowControl: { serverHighBytes: 1_024, serverLowBytes: 512 },
           },
         }),
@@ -508,7 +508,7 @@ describe("TerminalService Windows teardown", () => {
       {
         get: () => ({
           terminal: {
-            scrollback: 1_000,
+            behavior: { scrollback: 1_000 },
             flowControl: { serverHighBytes: 1_024, serverLowBytes: 512 },
           },
         }),

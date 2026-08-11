@@ -5,19 +5,37 @@
  */
 
 import { injectable } from "tsyringe";
-import { readFileSync, writeFileSync, renameSync, mkdirSync, watch, existsSync, unlinkSync } from "fs";
+import { copyFileSync, readFileSync, writeFileSync, renameSync, mkdirSync, watch, existsSync, unlinkSync } from "fs";
 import { join, dirname } from "path";
 import type { FSWatcher } from "fs";
 
 import {
-  PartialSettingsSchema,
   SettingsSchema,
   getDefaultSettings,
   type Settings,
   type PartialSettings,
+  type TerminalPreferencesUpdate,
+  type TerminalSettings,
+  type TerminalCustomProfile,
+  TerminalCustomProfileSchema,
+  getDefaultTerminalSettingsDocument,
 } from "@mcode/contracts";
 import { getMcodeDir, logger } from "@mcode/shared";
 import { broadcast } from "../transport/push";
+import { migrateTerminalSettingsDocument } from "../terminal/preferences/terminal-settings-migration.js";
+
+const SETTINGS_MAX_BYTES = 512 * 1_024;
+const TERMINAL_SETTINGS_BACKUP_NAME = "settings.json.pre-terminal-0.0.1.bak";
+
+/** Raised when a malformed or future settings file must remain untouched. */
+export class SettingsWriteBlockedError extends Error {
+  readonly code = "SETTINGS_WRITE_BLOCKED" as const;
+
+  constructor() {
+    super("Settings writes are blocked until the settings file is repaired or reset");
+    this.name = "SettingsWriteBlockedError";
+  }
+}
 
 /**
  * Deep-merge two plain objects. Primitive values and arrays in `source`
@@ -102,6 +120,18 @@ export class SettingsService {
 
   /** In-process change listeners registered via `on("change", cb)`. */
   private changeListeners: Array<(next: Settings) => void> = [];
+  private terminalMigrationStatus:
+    | { readonly status: "current" | "migrated" }
+    | {
+        readonly status: "blocked";
+        readonly reason:
+          | "malformed"
+          | "future-version"
+          | "missing-profile-reference"
+          | "migration-write-failed";
+      }
+    = { status: "current" };
+  private blockedTerminalProfiles: readonly TerminalCustomProfile[] = [];
 
   constructor() {
     this.filePath = join(getMcodeDir(), "settings.json");
@@ -121,21 +151,43 @@ export class SettingsService {
 
     try {
       const raw = readFileSync(this.filePath, "utf-8");
+      if (Buffer.byteLength(raw, "utf8") > SETTINGS_MAX_BYTES) {
+        this.terminalMigrationStatus = { status: "blocked", reason: "malformed" };
+        return getDefaultSettings();
+      }
       const parsed = JSON.parse(raw) as unknown;
       const migration = removeLegacyPreviewRenderingSetting(parsed);
-      const documentResult = PartialSettingsSchema().safeParse(migration.document);
-      if (!documentResult.success) {
-        logger.warn("Settings file failed validation, returning defaults", {
-          error: documentResult.error.message,
+      const terminalMigration = migrateTerminalSettingsDocument(migration.document);
+      if (terminalMigration.status === "blocked") {
+        this.terminalMigrationStatus = {
+          status: "blocked",
+          reason: terminalMigration.reason,
+        };
+        this.blockedTerminalProfiles = terminalMigration.reason === "missing-profile-reference"
+          ? parseBlockedTerminalProfiles(terminalMigration.original)
+          : [];
+        logger.warn("Settings file failed Terminal migration, returning temporary defaults", {
+          reason: terminalMigration.reason,
         });
         return getDefaultSettings();
       }
-      const result = SettingsSchema().safeParse(documentResult.data);
+      const result = SettingsSchema().safeParse(terminalMigration.document);
       if (result.success) {
-        if (migration.changed) {
+        this.blockedTerminalProfiles = [];
+        this.terminalMigrationStatus = { status: terminalMigration.status };
+        if (migration.changed || terminalMigration.status === "migrated") {
           try {
-            this.writeAtomically(documentResult.data);
+            if (terminalMigration.status === "migrated") {
+              this.preserveTerminalMigrationBackup();
+            }
+            this.writeAtomically(result.data);
           } catch (error) {
+            if (terminalMigration.status === "migrated") {
+              this.terminalMigrationStatus = {
+                status: "blocked",
+                reason: "migration-write-failed",
+              };
+            }
             logger.warn("Failed to persist migrated settings", {
               error: error instanceof Error ? error.message : String(error),
             });
@@ -149,7 +201,12 @@ export class SettingsService {
       });
       return getDefaultSettings();
     } catch {
-      // File doesn't exist or is not valid JSON
+      if (existsSync(this.filePath)) {
+        this.terminalMigrationStatus = { status: "blocked", reason: "malformed" };
+      } else {
+        this.terminalMigrationStatus = { status: "current" };
+      }
+      this.blockedTerminalProfiles = [];
       return getDefaultSettings();
     }
   }
@@ -160,6 +217,7 @@ export class SettingsService {
    * Returns the merged settings with defaults applied.
    */
   update(partial: PartialSettings): Settings {
+    this.assertWritesAllowed();
     const current = this.get();
     const merged = deepMerge(
       current as unknown as Record<string, unknown>,
@@ -186,6 +244,88 @@ export class SettingsService {
     this.emitChange(validated);
 
     return validated;
+  }
+
+  /** Returns the current Terminal settings migration state. */
+  getTerminalMigrationStatus():
+    | { readonly status: "current" | "migrated" }
+    | {
+        readonly status: "blocked";
+        readonly reason:
+          | "malformed"
+          | "future-version"
+          | "missing-profile-reference"
+          | "migration-write-failed";
+      } {
+    this.get();
+    return this.terminalMigrationStatus;
+  }
+
+  /** Replaces the validated Terminal subtree and persists the complete settings document. */
+  replaceTerminalSettings(terminal: TerminalSettings): TerminalSettings {
+    this.assertWritesAllowed();
+    const validated = SettingsSchema().parse({ ...this.get(), terminal });
+    this.persistValidatedSettings(validated);
+    return validated.terminal;
+  }
+
+  /** Applies presentation, behavior, or accessibility changes through the dedicated Terminal seam. */
+  updateTerminalPreferences(update: TerminalPreferencesUpdate): TerminalSettings {
+    this.assertWritesAllowed();
+    const current = this.get().terminal;
+    return this.replaceTerminalSettings({
+      ...current,
+      presentation: { ...current.presentation, ...update.presentation },
+      behavior: { ...current.behavior, ...update.behavior },
+      accessibility: { ...current.accessibility, ...update.accessibility },
+    });
+  }
+
+  /** Restores Terminal preferences and default selection while preserving custom profiles. */
+  resetTerminalPreferences(): TerminalSettings {
+    this.get();
+    if (this.terminalMigrationStatus.status === "blocked") {
+      const defaults = getDefaultSettings();
+      const repaired = {
+        ...defaults,
+        terminal: {
+          ...defaults.terminal,
+          profiles: [...this.blockedTerminalProfiles],
+        },
+      };
+      this.terminalMigrationStatus = { status: "current" };
+      this.blockedTerminalProfiles = [];
+      this.persistValidatedSettings(repaired);
+      return repaired.terminal;
+    }
+
+    const current = this.get().terminal;
+    const defaults = getDefaultTerminalSettingsDocument().terminal;
+    return this.replaceTerminalSettings({
+      ...defaults,
+      profiles: current.profiles,
+    });
+  }
+
+  private assertWritesAllowed(): void {
+    this.get();
+    if (this.terminalMigrationStatus.status === "blocked") {
+      throw new SettingsWriteBlockedError();
+    }
+  }
+
+  private persistValidatedSettings(validated: Settings): void {
+    this.writeAtomically(validated);
+    this.cache = validated;
+    broadcast("settings.changed", validated);
+    this.emitChange(validated);
+  }
+
+  private preserveTerminalMigrationBackup(): void {
+    const backupPath = join(dirname(this.filePath), TERMINAL_SETTINGS_BACKUP_NAME);
+    if (!existsSync(backupPath)) {
+      copyFileSync(this.filePath, backupPath);
+    }
   }
 
   private writeAtomically(document: unknown): void {
@@ -316,4 +456,13 @@ export class SettingsService {
       });
     }
   }
+}
+
+function parseBlockedTerminalProfiles(value: unknown): readonly TerminalCustomProfile[] {
+  if (!isRecord(value) || !isRecord(value.terminal)) return [];
+  const result = TerminalCustomProfileSchema().array().max(32).safeParse(value.terminal.profiles);
+  if (!result.success || new Set(result.data.map((profile) => profile.id)).size !== result.data.length) {
+    return [];
+  }
+  return result.data;
 }
