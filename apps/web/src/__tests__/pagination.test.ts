@@ -10,7 +10,11 @@ import {
   readThreadField,
 } from "@/stores/thread-store-test-utils";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import type { TurnSnapshot } from "@mcode/contracts";
+import type {
+  ConversationNewerPage,
+  ConversationOlderPage,
+  TurnSnapshot,
+} from "@mcode/contracts";
 import { useThreadStore } from "@/stores/threadStore";
 import { getConversationResidency } from "@/stores/conversation-residency";
 import {
@@ -592,5 +596,135 @@ await activateTestConversation(threadId);
     expect(messages.some((message) => message.id === "message-120")).toBe(true);
     expect(readThreadField(threadId, (record) => record.hasMoreMessages)).toBe(true);
     expect(readThreadField(threadId, (record) => record.hasNewerMessages)).toBe(true);
+  });
+
+  it("merges a late older page without replacing a live message that arrived during the load", async () => {
+    const resident = Array.from({ length: 100 }, (_, index) => createMockMessage({
+      id: `resident-${index + 101}`,
+      thread_id: threadId,
+      sequence: index + 101,
+    }));
+    resetThreadStoreForTests({
+      currentThreadId: threadId,
+      records: new Map([[threadId, {
+        ...createEmptyThreadRecord(),
+        messages: resident,
+        oldestLoadedSequence: 101,
+        newestLoadedSequence: 200,
+        hasMoreMessages: true,
+      }]]),
+    });
+    let resolvePage!: (page: ConversationOlderPage) => void;
+    (mockTransport.loadOlderConversationPage as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () => new Promise((resolve) => { resolvePage = resolve; }),
+    );
+
+    const pending = useThreadStore.getState().loadOlderMessages(threadId);
+    const request = (mockTransport.loadOlderConversationPage as ReturnType<typeof vi.fn>)
+      .mock.calls[0]![0];
+    useThreadStore.getState().handleAgentEvent({
+      type: "message",
+      threadId,
+      content: "live response",
+      messageId: "live-201",
+      tokens: null,
+    });
+    expect(readThreadField(threadId, (record) => record.conversationRevision))
+      .toBeGreaterThan(request.conversationRevision);
+    expect(readThreadField(threadId, (record) => record.isLoadingMore)).toBe(true);
+    await useThreadStore.getState().loadOlderMessages(threadId);
+    expect(mockTransport.loadOlderConversationPage).toHaveBeenCalledOnce();
+    resolvePage({
+      identity: request,
+      messages: Array.from({ length: 50 }, (_, index) => createMockMessage({
+        id: `older-${index + 51}`,
+        thread_id: threadId,
+        sequence: index + 51,
+      })),
+      hasMore: true,
+      nextCursor: { version: 1, beforeSequence: 51 },
+      narrativeByMessage: {},
+    });
+
+    await pending;
+
+    expect(getTestActiveMessages()).toContainEqual(expect.objectContaining({
+      id: "older-51",
+      sequence: 51,
+    }));
+    expect(getTestActiveMessages()).toContainEqual(expect.objectContaining({
+      id: "live-201",
+      content: "live response",
+    }));
+    expect(getTestActiveMessages()).toHaveLength(151);
+  });
+
+  it("merges a late newer page while resident live content wins the shared message identity", async () => {
+    const resident = Array.from({ length: 100 }, (_, index) => createMockMessage({
+      id: `resident-${index + 1}`,
+      thread_id: threadId,
+      sequence: index + 1,
+    }));
+    resetThreadStoreForTests({
+      currentThreadId: threadId,
+      records: new Map([[threadId, {
+        ...createEmptyThreadRecord(),
+        messages: resident,
+        oldestLoadedSequence: 1,
+        newestLoadedSequence: 100,
+        hasNewerMessages: true,
+      }]]),
+    });
+    let resolvePage!: (page: ConversationNewerPage) => void;
+    (mockTransport.loadNewerConversationPage as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () => new Promise((resolve) => { resolvePage = resolve; }),
+    );
+
+    const pending = useThreadStore.getState().loadNewerMessages(threadId);
+    const request = (mockTransport.loadNewerConversationPage as ReturnType<typeof vi.fn>)
+      .mock.calls[0]![0];
+    useThreadStore.getState().handleAgentEvent({
+      type: "message",
+      threadId,
+      content: "live response",
+      messageId: "live-101",
+      tokens: null,
+    });
+    expect(readThreadField(threadId, (record) => record.conversationRevision))
+      .toBeGreaterThan(request.conversationRevision);
+    expect(readThreadField(threadId, (record) => record.isLoadingNewer)).toBe(true);
+    await useThreadStore.getState().loadNewerMessages(threadId);
+    expect(mockTransport.loadNewerConversationPage).toHaveBeenCalledOnce();
+    resolvePage({
+      identity: request,
+      messages: [
+        createMockMessage({
+          id: "live-101",
+          thread_id: threadId,
+          content: "stale persisted response",
+          sequence: 101,
+        }),
+        ...Array.from({ length: 49 }, (_, index) => createMockMessage({
+          id: `newer-${index + 102}`,
+          thread_id: threadId,
+          sequence: index + 102,
+        })),
+      ],
+      hasMore: false,
+      nextCursor: null,
+      narrativeByMessage: {},
+    });
+
+    await pending;
+
+    expect(getTestActiveMessages()).toContainEqual(expect.objectContaining({
+      id: "live-101",
+      content: "live response",
+    }));
+    expect(getTestActiveMessages()).toContainEqual(expect.objectContaining({
+      id: "newer-150",
+      sequence: 150,
+    }));
+    expect(getTestActiveMessages()).toHaveLength(150);
   });
 });

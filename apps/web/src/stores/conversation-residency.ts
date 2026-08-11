@@ -53,6 +53,16 @@ function identitiesMatch(
       && left.cursor.afterSequence === right.cursor.afterSequence;
 }
 
+function currentStateCanMerge(
+  request: ConversationHistoryPageIdentity,
+  current: ConversationHistoryPageIdentity,
+): boolean {
+  return request.threadId === current.threadId
+    && request.direction === current.direction
+    && request.generation === current.generation
+    && current.conversationRevision >= request.conversationRevision;
+}
+
 /**
  * Owns selected-conversation activation, revalidation, and cache routing.
  * Transport, cache freshness, and live-record precedence stay in ThreadHydrator.
@@ -125,7 +135,7 @@ export class ConversationResidency {
     responseIdentity: ConversationHistoryPageIdentity = handle.identity,
   ): boolean {
     return this.historyPageRequests.get(handle.identity.threadId)?.id === handle.id
-      && identitiesMatch(handle.identity, currentIdentity)
+      && currentStateCanMerge(handle.identity, currentIdentity)
       && identitiesMatch(handle.identity, responseIdentity);
   }
 
@@ -136,8 +146,8 @@ export class ConversationResidency {
     }
   }
 
-  /** Commit a pagination page after its state guards have accepted it. */
-  commitPagination(threadId: string): void {
+  /** Synchronize resident conversation content into the bounded cache. */
+  synchronizeConversation(threadId: string): void {
     this.deps.synchronizeConversation(threadId);
   }
 
