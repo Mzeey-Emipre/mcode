@@ -8,6 +8,8 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
+  --desktop-title-bar-height: 0px;
+  --z-desktop-title-bar: 60;
   /* Cool light theme: minimal chroma (0.005) at hue 260 so the amber lamp remains a point accent */
   /* --page sits a few percent below --background so floating panel surfaces read as
      slightly elevated against the page chrome. Replaces inter-panel divider lines. */
@@ -63,6 +65,22 @@
   --subagent-identity-3: oklch(0.48 0.14 185);
   --subagent-identity-4: oklch(0.5 0.16 340);
   --subagent-identity-5: oklch(0.48 0.14 145);
+}
+
+:root[data-mcode-desktop] {
+  --desktop-title-bar-height: 4rem;
+}
+
+.app-viewport-fixed {
+  inset: var(--desktop-title-bar-height) 0 0;
+}
+
+.app-panel-top-inset {
+  top: calc(var(--desktop-title-bar-height) + 0.6rem);
+}
+
+.app-toast-stack {
+  max-height: calc(100vh - var(--desktop-title-bar-height) - 1.2rem);
 }
 
 .dark {

@@ -95,7 +95,7 @@ export function CommandPalette() {
   return (
     <DialogPrimitive.Root open={isOpen} onOpenChange={(o) => !o && close()} modal="trap-focus">
       <DialogPrimitive.Portal>
-        <DialogPrimitive.Backdrop className="fixed inset-0 z-50 bg-black/55 backdrop-blur-xs duration-150 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0 motion-reduce:animate-none" />
+        <DialogPrimitive.Backdrop className="app-viewport-fixed fixed z-50 bg-black/55 backdrop-blur-xs duration-150 data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0 motion-reduce:animate-none" />
         <DialogPrimitive.Popup
           data-testid="command-palette"
           aria-label="Command palette"

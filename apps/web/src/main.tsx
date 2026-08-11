@@ -60,6 +60,10 @@ function renderConnecting(container: HTMLElement): void {
 }
 
 const root = document.getElementById("root")!;
+document.documentElement.toggleAttribute(
+  "data-mcode-desktop",
+  Boolean(window.desktopBridge?.window),
+);
 
 // Show loading state immediately so the screen is never blank.
 renderConnecting(root);

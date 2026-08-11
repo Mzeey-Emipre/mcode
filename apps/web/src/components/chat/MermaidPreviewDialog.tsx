@@ -124,7 +124,7 @@ export const MermaidPreviewDialog = memo(function MermaidPreviewDialog({
         <DialogOverlay className="bg-background/92 supports-backdrop-filter:backdrop-blur-sm" />
         <DialogPrimitive.Popup
           className={cn(
-            "fixed inset-0 z-50 flex min-h-0 flex-col bg-background outline-none",
+            "app-viewport-fixed fixed z-50 flex min-h-0 flex-col bg-background outline-none",
             "data-open:animate-in data-open:fade-in-0 data-open:duration-150",
             "data-closed:animate-out data-closed:fade-out-0 data-closed:duration-100",
             "motion-reduce:animate-none",
