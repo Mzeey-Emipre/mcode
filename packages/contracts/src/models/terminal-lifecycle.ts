@@ -1,10 +1,20 @@
 import type { TerminalRetryClass, TerminalSessionState } from "./terminal.js";
 
+/** Maximum actions in one executable Terminal v1 contract trace. */
+export const TERMINAL_MAX_EXECUTABLE_TRACE_STEPS = 256;
+
 const freezeTable = <const Table extends ReadonlyArray<Readonly<Record<string, unknown>>>>(
   table: Table,
 ): Table => {
   for (const row of table) Object.freeze(row);
   return Object.freeze(table);
+};
+
+const freezeTraceCatalog = <const Traces extends Readonly<Record<string, readonly string[]>>>(
+  traces: Traces,
+): Traces => {
+  for (const trace of Object.values(traces)) Object.freeze(trace);
+  return Object.freeze(traces);
 };
 
 /** One immutable state-machine transition. */
@@ -13,6 +23,34 @@ export interface TerminalTransition<State extends string, Event extends string> 
   readonly event: Event;
   readonly to: State | null;
   readonly retry?: TerminalRetryClass;
+}
+
+/** Executes an ordered event trace against one frozen transition table. */
+export function executeTerminalTransitionTrace<
+  const Table extends ReadonlyArray<TerminalTransition<string, string>>,
+>(
+  table: Table,
+  initialState: Table[number]["from"],
+  events: ReadonlyArray<Table[number]["event"]>,
+): Array<Table[number]["to"]> {
+  if (events.length > TERMINAL_MAX_EXECUTABLE_TRACE_STEPS) {
+    throw new Error("Terminal trace exceeds 256 steps");
+  }
+  let state: string | null = initialState;
+  const states: Array<Table[number]["to"]> = [];
+
+  for (const event of events) {
+    const transition = table.find(
+      (candidate) => candidate.from === state && candidate.event === event,
+    );
+    if (!transition) {
+      throw new Error(`Invalid Terminal transition: ${state ?? "none"} + ${event}`);
+    }
+    state = transition.to;
+    states.push(transition.to);
+  }
+
+  return states;
 }
 
 /** Boot-selection states for Terminal v1. */
@@ -136,7 +174,7 @@ export const TERMINAL_CHECKPOINT_TRANSITIONS = freezeTable([
 ] as const satisfies ReadonlyArray<TerminalTransition<TerminalCheckpointState, string>>);
 
 /** Normative actor-level Terminal v1 sequence traces. */
-export const TERMINAL_SEQUENCE_TRACES = {
+export const TERMINAL_SEQUENCE_TRACES = freezeTraceCatalog({
   create: ["session.create", "scope-profile-capacity.validate", "host.create", "containment.running", "snapshot.running", "attach", "hydrate"],
   attach: ["attach", "prior-epoch.revoke", "descriptor.input-disabled", "hydration.chunks", "hydration.complete", "output.ack", "input.enable"],
   hide: ["detach.hide", "writes.settle", "checkpoint.begin", "checkpoint.chunks", "checkpoint.complete-authority", "delivery.pause", "host.output-to-replay"],
@@ -152,4 +190,23 @@ export const TERMINAL_SEQUENCE_TRACES = {
   workspaceReset: ["workspace-preference.reset", "override.delete", "sessions.unchanged", "future-global-default"],
   startupFallback: ["modern.start", "monotonic-five-seconds", "health.fail", "legacy.select-for-boot", "persistent-notice"],
   restartWithLegacy: ["modern-recovery.exhausted", "backend-restart-required", "user.restart", "new-boot-legacy-selection", "no-session-migration"],
-} as const;
+} as const);
+
+/** Named Terminal v1 actor-level sequence trace. */
+export type TerminalSequenceTraceName = keyof typeof TERMINAL_SEQUENCE_TRACES;
+
+/** One action from a named Terminal v1 actor-level sequence trace. */
+export type TerminalSequenceTraceAction =
+  (typeof TERMINAL_SEQUENCE_TRACES)[TerminalSequenceTraceName][number];
+
+/** Executes one frozen actor-level sequence trace in normative order. */
+export function executeTerminalSequenceTrace<Result>(
+  traceName: TerminalSequenceTraceName,
+  executeAction: (action: TerminalSequenceTraceAction, index: number) => Result,
+): Result[] {
+  const trace: readonly TerminalSequenceTraceAction[] = TERMINAL_SEQUENCE_TRACES[traceName];
+  if (trace.length > TERMINAL_MAX_EXECUTABLE_TRACE_STEPS) {
+    throw new Error("Terminal sequence trace exceeds 256 steps");
+  }
+  return trace.map(executeAction);
+}

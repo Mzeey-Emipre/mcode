@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  executeTerminalSequenceTrace,
+  executeTerminalTransitionTrace,
   resolveTerminalSessionTransition,
   TERMINAL_BOOT_TRANSITIONS,
   TERMINAL_ATTACHMENT_TRANSITIONS,
   TERMINAL_CHECKPOINT_TRANSITIONS,
+  TERMINAL_HYDRATION_DECISIONS,
   TERMINAL_SEQUENCE_TRACES,
   TERMINAL_TOMBSTONE_TRANSITIONS,
 } from "../terminal-lifecycle.js";
@@ -12,6 +15,8 @@ describe("Terminal v1 lifecycle contract", () => {
   it("allows only frozen session transitions", () => {
     expect(Object.isFrozen(TERMINAL_BOOT_TRANSITIONS)).toBe(true);
     expect(Object.isFrozen(TERMINAL_BOOT_TRANSITIONS[0])).toBe(true);
+    expect(Object.isFrozen(TERMINAL_SEQUENCE_TRACES)).toBe(true);
+    expect(Object.isFrozen(TERMINAL_SEQUENCE_TRACES.create)).toBe(true);
     expect(resolveTerminalSessionTransition(null, "create-accepted")).toBe("starting");
     expect(resolveTerminalSessionTransition("running", "close-requested")).toBe("exiting");
     expect(resolveTerminalSessionTransition("exited", "explicit-close")).toBeNull();
@@ -56,5 +61,78 @@ describe("Terminal v1 lifecycle contract", () => {
       ),
     ).toMatchObject({ to: "retained", retry: "NEW_SESSION" });
     expect(TERMINAL_SEQUENCE_TRACES.headlessClose).toContain("tombstone");
+  });
+
+  it("executes complete frozen traces and rejects forbidden events", () => {
+    expect(
+      executeTerminalTransitionTrace(TERMINAL_BOOT_TRANSITIONS, "starting", [
+        "modern-ready",
+        "host-unhealthy",
+        "replacement-ready",
+        "shutdown",
+      ]),
+    ).toEqual(["modern-selected", "modern-recovering", "modern-selected", "stopped"]);
+
+    expect(
+      executeTerminalTransitionTrace(TERMINAL_CHECKPOINT_TRANSITIONS, null, [
+        "begin-validated",
+        "chunk-accepted",
+        "missing-chunk",
+      ]),
+    ).toEqual(["open", "open", "aborted"]);
+
+    expect(() =>
+      executeTerminalTransitionTrace(TERMINAL_ATTACHMENT_TRANSITIONS, null, [
+        "attach-validated",
+        "detach",
+      ]),
+    ).toThrow(/transition/i);
+
+    expect(() =>
+      executeTerminalTransitionTrace(
+        TERMINAL_BOOT_TRANSITIONS,
+        "starting",
+        Array.from({ length: 257 }, () => "create-requested" as const),
+      ),
+    ).toThrow(/256/);
+  });
+
+  it("executes every normative actor trace in frozen order", () => {
+    for (const traceName of Object.keys(TERMINAL_SEQUENCE_TRACES) as Array<
+      keyof typeof TERMINAL_SEQUENCE_TRACES
+    >) {
+      const visited = executeTerminalSequenceTrace(traceName, (action, index) => ({
+        action,
+        index,
+      }));
+
+      expect(visited).toEqual(
+        TERMINAL_SEQUENCE_TRACES[traceName].map((action, index) => ({ action, index })),
+      );
+    }
+  });
+
+  it("executes checkpoint installation and preserves each reconnect decision", () => {
+    expect(
+      executeTerminalTransitionTrace(TERMINAL_CHECKPOINT_TRANSITIONS, null, [
+        "begin-validated",
+        "chunk-accepted",
+        "complete-valid",
+      ]),
+    ).toEqual(["open", "open", "installed"]);
+    expect(TERMINAL_HYDRATION_DECISIONS).toEqual([
+      { condition: "requested-output-contiguous", mode: "delta", retry: null },
+      {
+        condition: "checkpoint-valid-and-tail-contiguous",
+        mode: "checkpoint-delta",
+        retry: null,
+      },
+      {
+        condition: "retention-or-checkpoint-gap",
+        mode: "reset-tail-gap",
+        retry: "REATTACH",
+      },
+      { condition: "host-generation-mismatch", mode: null, retry: "NEW_SESSION" },
+    ]);
   });
 });

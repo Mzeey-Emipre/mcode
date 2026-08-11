@@ -86,6 +86,10 @@ const validFrame = (kind: keyof typeof TERMINAL_BINARY_FRAME_KINDS): TerminalBin
 };
 
 describe("Terminal v1 binary codec", () => {
+  it("freezes the version 1 frame-kind assignments", () => {
+    expect(Object.isFrozen(TERMINAL_BINARY_FRAME_KINDS)).toBe(true);
+  });
+
   it("round-trips every frame kind with canonical u64 fields", () => {
     for (const kind of Object.keys(TERMINAL_BINARY_FRAME_KINDS) as Array<
       keyof typeof TERMINAL_BINARY_FRAME_KINDS
