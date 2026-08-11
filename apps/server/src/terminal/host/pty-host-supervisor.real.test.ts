@@ -98,7 +98,7 @@ function workloadCommand(scriptPath: string, nodeExecutable: string): Buffer {
     return Buffer.from(`${quote(wrapperPath)}\r`);
   }
   return Buffer.from(
-    `${quote(nodeExecutable)} ${quote(scriptPath)}; printf 'WF:runner-exit:%s\\n' $?\r`,
+    `${quote(nodeExecutable)} ${quote(scriptPath)}; printf 'WF:%s:%s\\n' runner-exit $?\r`,
   );
 }
 
@@ -419,7 +419,7 @@ describe.runIf(["win32", "darwin", "linux"].includes(process.platform))(
                 value.includes(marker),
               ) &&
               (workload.completion.terminateAfter ||
-                value.includes("WF:runner-exit:")),
+                /WF:runner-exit:\s*-?\d+\r?(?:\n|$)/.test(value)),
             workload.completion.waitMs,
           ).catch((error: unknown) => {
             throw new Error(

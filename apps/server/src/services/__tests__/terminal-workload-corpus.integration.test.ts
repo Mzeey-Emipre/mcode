@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -14,6 +15,10 @@ interface CliRun {
 const TEST_DIRECTORY = dirname(fileURLToPath(import.meta.url));
 const REPOSITORY_ROOT = resolve(TEST_DIRECTORY, "../../../../..");
 const CORPUS_SCRIPT = resolve(REPOSITORY_ROOT, "apps/server/scripts/run-terminal-workload-corpus.ts");
+const VITE_NODE_CLI = resolve(
+  dirname(createRequire(import.meta.url).resolve("vite-node/package.json")),
+  "dist/cli.mjs",
+);
 
 function runWorkload(workloadId: string): Promise<CliRun> {
   const executable = process.platform === "win32" ? "node.exe" : "node";
@@ -21,7 +26,9 @@ function runWorkload(workloadId: string): Promise<CliRun> {
   const child = spawn(
     executable,
     [
-      "--experimental-strip-types",
+      VITE_NODE_CLI,
+      "--root",
+      resolve(REPOSITORY_ROOT, "apps/server"),
       CORPUS_SCRIPT,
       "--workload",
       workloadId,
@@ -63,7 +70,7 @@ describe("terminal workload corpus CLI integration", () => {
 
     expect(run.timedOut).toBe(false);
     expect(run.signal).toBeNull();
-    expect(run.status).toBe(0);
+    expect(run.status, run.stderr || run.stdout).toBe(0);
     const report = JSON.parse(run.stdout) as {
       readonly passed: boolean;
       readonly ptyMode: string;
@@ -80,7 +87,7 @@ describe("terminal workload corpus CLI integration", () => {
 
     expect(run.timedOut).toBe(false);
     expect(run.signal).toBeNull();
-    expect(run.status).toBe(0);
+    expect(run.status, run.stderr || run.stdout).toBe(0);
     const report = JSON.parse(run.stdout) as {
       readonly passed: boolean;
       readonly results: readonly [{
