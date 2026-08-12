@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - '.release-please-manifest.json'
+      - ".release-please-manifest.json"
   workflow_dispatch:
 
 permissions:
@@ -14,7 +14,6 @@ permissions:
 concurrency:
   group: nightly-release-mutations
   cancel-in-progress: false
-  queue: max
 
 jobs:
   release-please:
@@ -42,8 +41,17 @@ jobs:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
 
-  cleanup-superseded-nightlies:
+  build-stable-release:
     needs: release-please
+    if: needs.release-please.outputs.releases_created == 'true'
+    uses: ./.github/workflows/build-release.yml
+    with:
+      tag: ${{ needs.release-please.outputs.tag_name }}
+      version: ${{ needs.release-please.outputs.version }}
+    secrets: inherit
+
+  cleanup-superseded-nightlies:
+    needs: [release-please, build-stable-release]
     if: needs.release-please.outputs.releases_created == 'true'
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10

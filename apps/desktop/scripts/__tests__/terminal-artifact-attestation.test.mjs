@@ -99,6 +99,8 @@ describe("attestPackagedTerminalArtifacts", () => {
         platform: "win32",
         arch: "x64",
         modulesAbi: "127",
+        nodeVersion: "22.18.0",
+        electronVersion: "35.7.5",
         hostReady: true,
         nativeModules: [
           { packageName: "node-pty", path: nodePtyBinding },
@@ -110,6 +112,7 @@ describe("attestPackagedTerminalArtifacts", () => {
     expect(report).toMatchObject({
       contractVersion: 1,
       target: { platform: "win32", arch: "x64", modulesAbi: "127" },
+      runtime: { node: "22.18.0", electron: "35.7.5" },
       dependencies: { "node-pty": "1.0.0", koffi: "2.16.1" },
     });
     expect(report.artifacts.map((artifact) => artifact.kind)).toEqual([
@@ -154,6 +157,8 @@ describe("attestPackagedTerminalArtifacts", () => {
           platform: "win32",
           arch: "x64",
           modulesAbi: "127",
+          nodeVersion: "22.18.0",
+          electronVersion: "35.7.5",
           hostReady: true,
           nativeModules: [
             { packageName: "node-pty", path: nodePtyBinding },
@@ -215,6 +220,8 @@ describe("attestPackagedTerminalArtifacts", () => {
         platform: "linux",
         arch: "x64",
         modulesAbi: "127",
+        nodeVersion: "22.18.0",
+        electronVersion: "35.7.5",
         hostReady: true,
         nativeModules: [
           { packageName: "node-pty", path: linuxNodePtyBinding },
@@ -257,10 +264,7 @@ describe("attestPackagedTerminalArtifacts", () => {
   });
 
   it("removes node-gyp tool links before enforcing the package inventory", () => {
-    const toolLink = path.join(
-      nodePtyRoot,
-      "build/node_gyp_bins/python3",
-    );
+    const toolLink = path.join(nodePtyRoot, "build/node_gyp_bins/python3");
     mkdirSync(path.dirname(toolLink), { recursive: true });
     symlinkSync(runtimePath, toolLink, "file");
 
@@ -286,6 +290,8 @@ describe("attestPackagedTerminalArtifacts", () => {
           platform: "win32",
           arch: "x64",
           modulesAbi: "127",
+          nodeVersion: "22.18.0",
+          electronVersion: "35.7.5",
           hostReady: true,
           nativeModules: [
             { packageName: "node-pty", path: nodePtyBinding },
@@ -326,6 +332,8 @@ describe("attestPackagedTerminalArtifacts", () => {
           platform: "win32",
           arch: "x64",
           modulesAbi: "127",
+          nodeVersion: "22.18.0",
+          electronVersion: "35.7.5",
           hostReady: true,
           nativeModules: [
             { packageName: "node-pty", path: nodePtyBinding },
@@ -393,6 +401,8 @@ describe("attestPackagedTerminalArtifacts", () => {
           platform: "win32",
           arch: "x64",
           modulesAbi: "127",
+          nodeVersion: "22.18.0",
+          electronVersion: "35.7.5",
           hostReady: false,
           nativeModules: [],
         }),
