@@ -291,6 +291,10 @@ export interface McodeTransport {
     limit?: number;
   }): Promise<{ threads: Thread[]; workspaces: { id: string; name: string; path: string }[] }>;
   deleteThread(threadId: string, cleanupWorktree: boolean): Promise<boolean>;
+  /** Persist explicit user completion after server-side lifecycle guards pass. */
+  completeThread(threadId: string): Promise<Thread>;
+  /** Reopen a completed thread and cancel its pending automatic deletion. */
+  reopenThread(threadId: string): Promise<Thread>;
 
   // Git branch commands
   listBranches(workspaceId: string): Promise<GitBranch[]>;

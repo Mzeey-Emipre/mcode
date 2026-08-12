@@ -98,6 +98,7 @@ import { UtilityCompletionService } from "./services/utility-completion-service"
 import { DiffSummaryService } from "./services/diff-summary-service";
 import { RecapService } from "./services/recap-service";
 import { ThreadTeardownService } from "./services/thread-teardown-service";
+import { ThreadCompletionService } from "./services/thread-completion-service";
 import { RealGitExecutor } from "./services/git-executor/index.js";
 import { GithubPullRequestClient } from "./services/pull-requests/github-pull-request-client.js";
 import { PullRequestService } from "./services/pull-requests/pull-request-service.js";
@@ -396,6 +397,11 @@ export function setupContainer(mcodeDir: string): typeof container {
   container.register(
     ThreadTeardownService,
     { useClass: ThreadTeardownService },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    ThreadCompletionService,
+    { useClass: ThreadCompletionService },
     { lifecycle: Lifecycle.Singleton },
   );
   container.register(

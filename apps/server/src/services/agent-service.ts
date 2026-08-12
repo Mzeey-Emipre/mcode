@@ -596,6 +596,7 @@ export class AgentService {
 
     const thread = this.threadRepo.findById(threadId);
     if (!thread) throw new Error(`Thread not found: ${threadId}`);
+    const wasUserCompleted = thread.user_completed_at !== null;
     if (["failed", "stopped", "archived", "deleted"].includes(thread.status)) {
       throw new Error(`Cannot send message to terminal thread: ${threadId}`);
     }
@@ -804,6 +805,7 @@ export class AgentService {
           provenance: "native" as const,
         }]
       : [];
+    let reopenedThread: Thread | null = null;
     this.canonicalSink.startParentTurn({
       thread: {
         id: threadId,
@@ -820,6 +822,10 @@ export class AgentService {
       providerIdentities: canonicalProviderIdentities,
       retryOfExecutionId,
       projectUserMessage: () => {
+        if (wasUserCompleted) {
+          reopenedThread = this.threadRepo.reopen(threadId);
+          if (!reopenedThread) throw new Error(`Thread not found: ${threadId}`);
+        }
         const args = [
           threadId,
           "user" as const,
@@ -848,6 +854,10 @@ export class AgentService {
         return message;
       },
     });
+
+    if (reopenedThread) {
+      broadcast("thread.lifecycleChanged", { thread: reopenedThread });
+    }
 
     // Notify other tabs/clients on the same thread that the wizard can be
     // hidden. Fired only after the tx commits so listeners never see a

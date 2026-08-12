@@ -64,6 +64,7 @@ import { ModelCacheService } from "./services/model-cache-service";
 import { DiffSummaryService } from "./services/diff-summary-service";
 import { RecapService } from "./services/recap-service";
 import { ThreadTeardownService } from "./services/thread-teardown-service";
+import { ThreadCompletionService } from "./services/thread-completion-service";
 import { PullRequestService } from "./services/pull-requests/pull-request-service";
 import { PullRequestMutationService } from "./services/pull-requests/pull-request-mutation-service";
 import { ReviewWorktreeService } from "./services/pull-requests/review-worktree-service";
@@ -330,6 +331,7 @@ function warmCodexVersionGate(s = settingsService.get()): void {
 
 const cleanupWorker = container.resolve(CleanupWorker);
 const threadTeardownService = container.resolve(ThreadTeardownService);
+const threadCompletionService = container.resolve(ThreadCompletionService);
 const prDraftService = container.resolve(PrDraftService);
 const diffSummaryService = container.resolve(DiffSummaryService);
 const recapService = container.resolve(RecapService);
@@ -362,6 +364,9 @@ const ciWatcherService = new CiWatcherService(githubService, (channel, data) => 
   broadcast("thread.prLinked", payload);
   portPush.send("thread.prLinked", payload);
 });
+threadCompletionService.registerResourceOwner("ci-watcher", (threadId) =>
+  ciWatcherService.teardownThread(threadId),
+);
 gitWatcherService.setThreadCheckoutChangedListener((threadId) => {
   ciWatcherService.unwatch(threadId);
 });
@@ -688,6 +693,7 @@ const { httpServer, wss } = createWsServer({
   recapService,
   handoffStorage,
   threadTeardownService,
+  threadCompletionService,
   browserAutomationBroker,
   browserAutomationMcpHandler,
   authToken: AUTH_TOKEN,

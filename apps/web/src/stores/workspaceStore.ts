@@ -280,6 +280,12 @@ interface WorkspaceState {
   /** Surface connection loss while {@link WorkspaceThread.clientPreparing} is true. */
   failPreparingThreadOnConnectionLost: (placeholderId: string) => void;
   deleteThread: (threadId: string, cleanupWorktree: boolean) => Promise<void>;
+  /** Complete an idle thread and release renderer-owned runtime resources. */
+  completeThread: (threadId: string) => Promise<void>;
+  /** Reopen a completed thread and cancel its pending automatic deletion. */
+  reopenThread: (threadId: string) => Promise<void>;
+  /** Apply a server-authoritative completion lifecycle push. */
+  applyThreadLifecycle: (thread: Thread) => void;
   setActiveThread: (id: string | null) => void;
   /** Enter a clean pending-thread composer, optionally selecting its workspace first. */
   beginNewThread: (workspaceId?: string | null) => void;
@@ -1192,6 +1198,45 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     } catch (e) {
       set({ error: String(e) });
       throw e;
+    }
+  },
+
+  completeThread: async (threadId) => {
+    set({ error: null });
+    try {
+      const completed = await getTransport().completeThread(threadId);
+      get().applyThreadLifecycle(completed);
+    } catch (e) {
+      set({ error: String(e) });
+      throw e;
+    }
+  },
+
+  reopenThread: async (threadId) => {
+    set({ error: null });
+    try {
+      const reopened = await getTransport().reopenThread(threadId);
+      get().applyThreadLifecycle(reopened);
+    } catch (e) {
+      set({ error: String(e) });
+      throw e;
+    }
+  },
+
+  applyThreadLifecycle: (thread) => {
+    set((state) => {
+      const existing = state.threads.find((candidate) => candidate.id === thread.id);
+      const nextThread = existing ? { ...existing, ...thread } : thread;
+      return {
+        threads: existing
+          ? state.threads.map((candidate) => candidate.id === thread.id ? nextThread : candidate)
+          : [...state.threads, nextThread],
+      };
+    });
+    if (thread.user_completed_at !== null) {
+      releaseBrowserAutomationThreadScope(thread.workspace_id, thread.id);
+      void clearPreviewResources(thread.workspace_id, thread.id);
+      useTerminalStore.getState().clearThread(thread.id);
     }
   },
 

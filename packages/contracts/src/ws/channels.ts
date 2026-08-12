@@ -2,6 +2,7 @@ import { z } from "zod";
 import { AgentEventSchema } from "../events/agent-event.js";
 import { CanonicalAgentEventEnvelopeSchema } from "../compat/agent-model.js";
 import { ThreadStatusSchema } from "../models/enums.js";
+import { ThreadSchema } from "../models/thread.js";
 import { ProviderIdSchema, SettingsSchema } from "../models/settings.js";
 import { PlanQuestionSchema } from "../models/plan-questions.js";
 import { PlanRecordSchema } from "../models/plan-output.js";
@@ -73,6 +74,10 @@ export const WS_CHANNELS = {
   "thread.status": z.object({
     threadId: z.string(),
     status: ThreadStatusSchema,
+  }),
+  /** Synchronizes durable user completion or reopen changes across clients. */
+  "thread.lifecycleChanged": z.object({
+    thread: ThreadSchema(),
   }),
   "thread.prLinked": z.object({
     threadId: z.string(),

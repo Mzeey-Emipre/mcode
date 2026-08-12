@@ -335,3 +335,73 @@ describe("AgentService.sendMessage — plan-questions answered marker", () => {
     expect(planQuestionAnswersRepo.listAnsweredForThread(thread.id)).toEqual([]);
   });
 });
+
+describe("AgentService.sendMessage completed-thread lifecycle", () => {
+  let db: Database.Database;
+  let thread: Thread;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    db = openMemoryDatabase();
+    const { workspaceRepo, threadRepo } = buildService(db);
+    const workspace = workspaceRepo.create("test-ws", process.cwd(), false);
+    thread = threadRepo.create(workspace.id, "completed thread", "direct", "main");
+    threadRepo.complete(
+      thread.id,
+      "2026-08-12T08:00:00.000Z",
+      "2026-08-15T08:00:00.000Z",
+    );
+  });
+
+  it("atomically reopens a completed thread when persisting a new user message", async () => {
+    const { svc, threadRepo, messageRepo } = buildService(db);
+
+    await svc.sendMessage({
+      threadId: thread.id,
+      content: "continue",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+
+    expect(threadRepo.findById(thread.id)?.user_completed_at).toBeNull();
+    expect(threadRepo.findById(thread.id)?.scheduled_deletion_at).toBeNull();
+    expect(messageRepo.listByThread(thread.id, 10).messages).toEqual([
+      expect.objectContaining({ role: "user", content: "continue" }),
+    ]);
+    expect(broadcast).toHaveBeenCalledWith(
+      "thread.lifecycleChanged",
+      expect.objectContaining({
+        thread: expect.objectContaining({ id: thread.id, user_completed_at: null }),
+      }),
+    );
+  });
+
+  it("keeps completion when user-message persistence fails", async () => {
+    db.exec(`
+      CREATE TRIGGER reject_completed_thread_message
+      BEFORE INSERT ON messages
+      BEGIN
+        SELECT RAISE(ABORT, 'message persistence rejected');
+      END
+    `);
+    const { svc, threadRepo } = buildService(db);
+
+    await expect(svc.sendMessage({
+      threadId: thread.id,
+      content: "continue",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    })).rejects.toThrow("message persistence rejected");
+
+    expect(threadRepo.findById(thread.id)?.user_completed_at).toBe(
+      "2026-08-12T08:00:00.000Z",
+    );
+    expect(threadRepo.findById(thread.id)?.scheduled_deletion_at).toBe(
+      "2026-08-15T08:00:00.000Z",
+    );
+  });
+});

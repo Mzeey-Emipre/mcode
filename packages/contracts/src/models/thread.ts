@@ -35,6 +35,10 @@ export const ThreadSchema = lazySchema(() =>
   /** The AI provider used by this thread (e.g. "claude", "codex"). */
   provider: z.string().default("claude"),
   deleted_at: z.string().nullable(),
+  /** Server timestamp for explicit user completion. Independent from runtime status. */
+  user_completed_at: z.string().nullable(),
+  /** Server timestamp after which automatic deletion can begin. */
+  scheduled_deletion_at: z.string().nullable(),
   /** Last known input token count from the most recent turn. */
   last_context_tokens: z.number().int().nonnegative().nullable(),
   /** Model's context window size from the most recent turn. */

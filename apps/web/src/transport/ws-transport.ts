@@ -627,6 +627,8 @@ export function createWsTransport(
       ),
     deleteThread: (threadId, cleanupWorktree) =>
       rpc<boolean>("thread.delete", { threadId, cleanupWorktree }),
+    completeThread: (threadId) => rpc<Thread>("thread.complete", { threadId }),
+    reopenThread: (threadId) => rpc<Thread>("thread.reopen", { threadId }),
     updateThreadTitle: (threadId, title) =>
       rpc<boolean>("thread.updateTitle", { threadId, title }),
     updateThreadSettings: (threadId, settings) =>

@@ -83,6 +83,8 @@ export const threads = sqliteTable(
     createdAt: text("created_at").notNull().default(timestampDefault),
     updatedAt: text("updated_at").notNull().default(timestampDefault),
     deletedAt: text("deleted_at"),
+    userCompletedAt: text("user_completed_at"),
+    scheduledDeletionAt: text("scheduled_deletion_at"),
     model: text("model"),
     worktreeManaged: integer("worktree_managed").notNull().default(1),
     sdkSessionId: text("sdk_session_id"),
@@ -116,6 +118,7 @@ export const threads = sqliteTable(
   (table) => [
     index("idx_threads_workspace").on(table.workspaceId),
     index("idx_threads_workspace_deleted").on(table.workspaceId, table.deletedAt),
+    index("idx_threads_workspace_completed").on(table.workspaceId, table.userCompletedAt),
     index("idx_threads_workspace_recency").on(table.workspaceId, desc(table.updatedAt)),
     index("idx_threads_status").on(table.status),
     index("idx_threads_parent_thread_id").on(table.parentThreadId),
