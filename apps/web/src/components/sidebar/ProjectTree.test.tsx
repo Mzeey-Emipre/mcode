@@ -169,6 +169,8 @@ const WORKSPACE = {
 /** Wire up store mocks so ProjectTree renders a workspace with one thread. */
 function setupStoreMocks({
   thread = makeThread(),
+  threads,
+  workspaces = [WORKSPACE],
   setActiveThread = vi.fn(),
   setActiveWorkspace = vi.fn(),
   beginNewThread = vi.fn(),
@@ -177,6 +179,8 @@ function setupStoreMocks({
   reopenThread = vi.fn().mockResolvedValue(undefined),
 }: {
   thread?: Thread | null;
+  threads?: Thread[];
+  workspaces?: typeof WORKSPACE[];
   setActiveThread?: ReturnType<typeof vi.fn>;
   setActiveWorkspace?: ReturnType<typeof vi.fn>;
   beginNewThread?: ReturnType<typeof vi.fn>;
@@ -185,10 +189,10 @@ function setupStoreMocks({
   reopenThread?: ReturnType<typeof vi.fn>;
 } = {}) {
   const state = {
-    workspaces: [WORKSPACE],
+    workspaces,
     activeWorkspaceId: "ws-1",
     activeThreadId: null,
-    threads: thread ? [thread] : [],
+    threads: threads ?? (thread ? [thread] : []),
     loadWorkspaces: vi.fn(),
     loadThreads: vi.fn(),
     setActiveWorkspace,
@@ -227,6 +231,7 @@ describe("ProjectTree thread interactions", () => {
       "mcode-expanded-projects",
       JSON.stringify({ "ws-1": true }),
     );
+    useUiStore.setState({ projectThreadViews: {} });
     vi.useFakeTimers();
   });
 
@@ -323,8 +328,7 @@ describe("ProjectTree thread interactions", () => {
     });
     expect(viewSwitch).toHaveAttribute("aria-pressed", "false");
     expect(viewSwitch).toHaveAttribute("data-view", "active");
-    expect(viewSwitch.querySelector(".lucide-folder")).not.toBeNull();
-    expect(viewSwitch.querySelector(".lucide-folder-open")).toBeNull();
+    expect(viewSwitch.querySelector(".lucide-folder-open")).not.toBeNull();
     expect(viewSwitch.querySelector(".lucide-folder-check")).not.toBeNull();
     viewSwitch.focus();
     expect(viewSwitch).toHaveFocus();
@@ -341,8 +345,84 @@ describe("ProjectTree thread interactions", () => {
     });
     expect(activeViewSwitch).toBeVisible();
     expect(activeViewSwitch.querySelector(".lucide-folder-check")).not.toBeNull();
-    expect(activeViewSwitch.querySelector(".lucide-folder")).not.toBeNull();
-    expect(activeViewSwitch.querySelector(".lucide-folder-open")).toBeNull();
+    expect(activeViewSwitch.querySelector(".lucide-folder-open")).not.toBeNull();
+  });
+
+  it("shows one lifecycle set at a time and remembers the Project view across remounts", () => {
+    const activeThread = makeThread({ id: "thread-active", title: "Active work" });
+    const completedThread = makeThread({
+      id: "thread-completed",
+      title: "Completed work",
+      user_completed_at: "2026-08-12T08:00:00.000Z",
+    });
+    setupStoreMocks({ threads: [activeThread, completedThread] });
+
+    const firstRender = render(<ProjectTree />);
+    expect(screen.getByRole("button", { name: /Active work/i })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Completed work/i })).toBeNull();
+    expect(
+      screen.getByRole("group", {
+        name: "Test Project project, active view, 1 active thread, 1 completed thread",
+      }),
+    ).toBeVisible();
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "View 1 completed thread for Test Project",
+      }),
+    );
+    expect(screen.queryByRole("button", { name: /Active work/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /Completed work/i })).toBeVisible();
+
+    firstRender.unmount();
+    render(<ProjectTree />);
+    expect(screen.getByRole("button", { name: /Completed work/i })).toBeVisible();
+    expect(useUiStore.getState().projectThreadViews).toEqual({
+      "ws-1": "completed",
+    });
+  });
+
+  it("switches each Project independently", () => {
+    const secondWorkspace = {
+      ...WORKSPACE,
+      id: "ws-2",
+      name: "Second Project",
+      path: "/second",
+    };
+    localStorage.setItem(
+      "mcode-expanded-projects",
+      JSON.stringify({ "ws-1": true, "ws-2": true }),
+    );
+    setupStoreMocks({
+      workspaces: [WORKSPACE, secondWorkspace],
+      threads: [
+        makeThread({
+          id: "first-completed",
+          title: "First completed",
+          user_completed_at: "2026-08-12T08:00:00.000Z",
+        }),
+        makeThread({
+          id: "second-active",
+          workspace_id: "ws-2",
+          title: "Second active",
+        }),
+      ],
+    });
+
+    render(<ProjectTree />);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "View 1 completed thread for Test Project",
+      }),
+    );
+
+    expect(
+      screen.getByRole("button", { name: "View 0 active threads for Test Project" }),
+    ).toHaveAttribute("data-view", "completed");
+    expect(
+      screen.getByRole("button", { name: "View 0 completed threads for Second Project" }),
+    ).toHaveAttribute("data-view", "active");
+    expect(screen.getByRole("button", { name: /Second active/i })).toBeVisible();
   });
 
   it("uses the approved completed-row treatment and hover details", async () => {

@@ -18,8 +18,10 @@ import {
   type ThreadSortField,
 } from "@/stores/sidebarSearchStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useUiStore } from "@/stores/uiStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useShallow } from "zustand/shallow";
+import { cn } from "@/lib/utils";
 import type { ChecksStatus } from "@mcode/contracts";
 import type { RecentThread, Thread } from "@/transport/types";
 
@@ -68,6 +70,7 @@ function ThreadSearchResult({
   onSelect: () => void;
 }) {
   const { thread } = row;
+  const isUserCompleted = thread.user_completed_at !== null;
   const marker = getThreadStateMarker({
     thread,
     checks,
@@ -82,7 +85,13 @@ function ThreadSearchResult({
       className="group min-h-9 gap-3 rounded-md px-3 py-1.5"
       data-testid={`thread-search-result-${thread.id}`}
     >
-      <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+      <span
+        className={cn(
+          "min-w-0 flex-1 truncate text-sm font-medium text-foreground",
+          isUserCompleted &&
+            "text-muted-foreground line-through decoration-muted-foreground decoration-1",
+        )}
+      >
         {thread.title}
       </span>
       <div className="flex min-w-0 shrink items-center justify-end gap-2 whitespace-nowrap text-xs text-muted-foreground">
@@ -93,7 +102,9 @@ function ThreadSearchResult({
         <span className="max-w-40 truncate font-mono" title={thread.branch} aria-label={`Branch, ${thread.branch}`}>
           {thread.branch}
         </span>
-        <ThreadStateMarker marker={marker} />
+        <span className={cn(isUserCompleted && "grayscale opacity-45")}>
+          <ThreadStateMarker marker={marker} />
+        </span>
       </div>
     </CommandItem>
   );
@@ -123,6 +134,9 @@ export function ThreadSearchView() {
     (state) => state.setActiveWorkspace,
   );
   const setActiveThread = useWorkspaceStore((state) => state.setActiveThread);
+  const setProjectThreadView = useUiStore(
+    (state) => state.setProjectThreadView,
+  );
   const checksById = useWorkspaceStore((state) => state.checksById);
   const runningThreadIds = useThreadStore((state) => state.runningThreadIds);
   const pendingPermissionIds = useThreadStore(
@@ -202,6 +216,10 @@ export function ThreadSearchView() {
   );
 
   const handleSelect = (thread: Thread | RecentThread) => {
+    setProjectThreadView(
+      thread.workspace_id,
+      thread.user_completed_at === null ? "active" : "completed",
+    );
     setActiveWorkspace(thread.workspace_id);
     setActiveThread(thread.id);
     close();
