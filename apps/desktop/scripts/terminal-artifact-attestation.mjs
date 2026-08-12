@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   existsSync,
@@ -399,6 +399,30 @@ function measureCompressedDelta(files) {
   );
 }
 
+/** Parses bounded runtime evidence while preserving useful process diagnostics. */
+export function parseLoadProbeProcessResult(result) {
+  if (result.error) {
+    throw new Error(`Packaged runtime load probe failed: ${result.error.message}`);
+  }
+  const output = typeof result.stdout === "string" ? result.stdout.trim() : "";
+  if (output.length > 0) {
+    try {
+      return JSON.parse(output);
+    } catch (error) {
+      throw new Error(
+        `Packaged runtime load probe emitted invalid JSON: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  const processFailure = result.signal
+    ? `signal ${result.signal}`
+    : `status ${result.status ?? "unknown"}`;
+  const stderr = typeof result.stderr === "string" ? result.stderr.trim() : "";
+  throw new Error(
+    `Packaged runtime load probe emitted no evidence after ${processFailure}${stderr ? `: ${stderr}` : ""}`,
+  );
+}
+
 function defaultLoadProbe({
   runtimePath,
   hostBundlePath,
@@ -476,7 +500,7 @@ function defaultLoadProbe({
       platform,
     });
   `;
-  const output = execFileSync(runtimePath, ["-e", probe], {
+  const result = spawnSync(runtimePath, ["-e", probe], {
     env: {
       ...process.env,
       ELECTRON_RUN_AS_NODE: "1",
@@ -488,7 +512,7 @@ function defaultLoadProbe({
     timeout: startupTimeoutMs + 5_000,
     maxBuffer: 64 * 1024,
   });
-  return JSON.parse(output);
+  return parseLoadProbeProcessResult(result);
 }
 
 function validateLoadProbe(probe, targetPlatform, targetArch, packageRoots) {
