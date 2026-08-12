@@ -24,6 +24,9 @@ export interface PersistedNarrativeInputs {
 }
 
 const AGENT_TOOL_NAME = "Agent";
+const toolCallCache = new WeakMap<ToolCallRecord, ToolCall>();
+const thoughtSegmentCache = new WeakMap<ThoughtSegmentRecord, ThoughtSegment>();
+const hookExecutionCache = new WeakMap<HookExecutionRecord, HookExecution>();
 
 /**
  * Parse an ISO-8601 timestamp string to epoch ms. Returns 0 on parse failure
@@ -65,12 +68,15 @@ function persistedToolInput(r: ToolCallRecord): Record<string, unknown> {
 
 /** Map a persisted tool record to the live `ToolCall` shape used by row components. */
 export function recordToToolCall(r: ToolCallRecord): ToolCall {
+  const cached = toolCallCache.get(r);
+  if (cached) return cached;
+
   const durationMs = persistedDurationMs(r.started_at, r.completed_at);
   const lifecycleInput = isSubagentLifecycleRecord(r)
     ? parseSubagentLifecycleInput(r.input_summary)
     : undefined;
 
-  return {
+  const toolCall: ToolCall = {
     id: r.id,
     toolName: r.tool_name,
     // Live components only inspect a few fields; the input summary suffices
@@ -93,24 +99,34 @@ export function recordToToolCall(r: ToolCallRecord): ToolCall {
     parentToolCallId: r.parent_tool_call_id ?? undefined,
     startedAt: isoToMs(r.started_at),
   };
+  toolCallCache.set(r, toolCall);
+  return toolCall;
 }
 
 /** Map a persisted thought record to the live `ThoughtSegment` shape. */
 function recordToThoughtSegment(r: ThoughtSegmentRecord): ThoughtSegment {
-  return {
+  const cached = thoughtSegmentCache.get(r);
+  if (cached) return cached;
+
+  const segment: ThoughtSegment = {
     text: r.text,
     startedAt: isoToMs(r.started_at),
     endedAt: r.ended_at ? isoToMs(r.ended_at) : undefined,
   };
+  thoughtSegmentCache.set(r, segment);
+  return segment;
 }
 
 /** Map a persisted hook record to the live `HookExecution` shape. */
 export function recordToHookExecution(r: HookExecutionRecord): HookExecution {
+  const cached = hookExecutionCache.get(r);
+  if (cached) return cached;
+
   // Phase strings from server are arbitrary; coerce to the live discriminator.
   const hookType: HookExecution["hookType"] =
     r.phase === "stop" ? "stop" : "permission";
   const detailLines = persistedHookDetailLines(r);
-  return {
+  const hook: HookExecution = {
     hookName: r.hook_name,
     hookType,
     toolName: r.tool_name ?? undefined,
@@ -122,6 +138,8 @@ export function recordToHookExecution(r: HookExecutionRecord): HookExecution {
     didBlock: r.did_block,
     startedAt: isoToMs(r.started_at),
   };
+  hookExecutionCache.set(r, hook);
+  return hook;
 }
 
 /** Format persisted hook metadata into bounded detail lines for HookRow. */

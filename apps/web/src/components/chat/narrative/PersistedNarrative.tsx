@@ -3,17 +3,13 @@ import { useThreadStore } from "@/stores/threadStore";
 import { useActiveThreadRecord } from "@/stores/thread-selectors";
 import type { NarrativeItem } from "./types";
 import type { ToolCall } from "@/transport/types";
-import { ThoughtBlock } from "./ThoughtBlock";
-import { ToolSummaryLine } from "./ToolSummaryLine";
-import { HookRow } from "./HookRow";
-import { SubagentRow } from "./SubagentRow";
+import { NarrativeRow } from "./NarrativeRow";
 import {
   buildPersistedNarrativeItems,
   recordToToolCall,
 } from "./build-persisted-narrative";
 import {
   NarrativePerformanceBoundary,
-  NarrativePerformanceRow,
   narrativePerformanceRowId,
 } from "./NarrativePerformanceBoundary";
 
@@ -62,37 +58,6 @@ function keyForItem(item: NarrativeItem, index: number): string {
       return `subagent-${item.toolCall.id}-${item.lifecycle}-${index}`;
     default:
       return `item-${index}`;
-  }
-}
-
-/** Render one persisted narrative row. */
-function renderItem(item: NarrativeItem, allToolCalls: readonly ToolCall[]): React.ReactNode {
-  switch (item.type) {
-    case "thought":
-      return <ThoughtBlock segment={item.segment} isActive={false} />;
-    case "tool-group":
-      return (
-        <ToolSummaryLine
-          group={item.group}
-          hasError={item.hasError}
-          hasCancelled={item.hasCancelled}
-        />
-      );
-    case "hook":
-      return <HookRow hook={item.hook} />;
-    case "subagent":
-      return (
-        <SubagentRow
-          toolCall={item.toolCall}
-          participants={item.participants}
-          lifecycle={item.lifecycle}
-          children={item.children}
-          hooks={item.hooks}
-          allToolCalls={allToolCalls}
-        />
-      );
-    default:
-      return null;
   }
 }
 
@@ -146,9 +111,11 @@ export function PersistedNarrative({ messageId, messageContent }: PersistedNarra
             data-performance-row-id={narrativePerformanceRowId(keyForItem(item, i))}
             className={`${marginClassForItem(item, i)} min-w-0 max-w-full`}
           >
-            <NarrativePerformanceRow rowId={keyForItem(item, i)}>
-              {renderItem(item, allToolCalls)}
-            </NarrativePerformanceRow>
+            <NarrativeRow
+              rowId={keyForItem(item, i)}
+              item={item}
+              allToolCalls={allToolCalls}
+            />
           </div>
         ))}
       </div>
