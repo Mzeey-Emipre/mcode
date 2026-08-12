@@ -164,7 +164,7 @@ export function createInternalThreadControlMcpSession(
         arguments: arguments_,
       })));
       server.registerTool("thread_create_batch", {
-        description: "Create and start one to twenty normal Mcode threads in registered Projects. providerId/modelId select the delegated target; discover named targets with thread_target_list first.",
+        description: "Create and start one to twenty normal Mcode threads in registered Projects. providerId/modelId select the provider and model; discover named options with thread_target_list first.",
         inputSchema: ThreadCreateBatchInputSchema(),
         outputSchema: ThreadCreateBatchResultSchema(),
       }, async (arguments_, extra) => createToolResult(await dispatch({
@@ -174,7 +174,7 @@ export function createInternalThreadControlMcpSession(
         arguments: arguments_,
       })));
       server.registerTool("thread_target_list", {
-        description: "List provider and model targets currently usable for delegated threads.",
+        description: "List provider and model targets currently usable for new Mcode threads.",
         inputSchema: ThreadTargetListInputSchema(),
         outputSchema: ThreadTargetListResultSchema(),
       }, async (arguments_, extra) => createToolResult(await dispatch({

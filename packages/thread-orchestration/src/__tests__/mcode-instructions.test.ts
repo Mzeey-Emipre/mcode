@@ -23,6 +23,8 @@ describe("Mcode runtime instruction plan", () => {
       browserAutomation: true,
     });
     expect(plan.text).toContain("mcode_internal_thread_control");
+    expect(plan.text).toContain("manage Mcode threads only when explicitly asked by the user");
+    expect(plan.text).not.toMatch(/delegat(?:e|ed|ion|ing)/i);
     expect(plan.text).toContain(MCODE_BROWSER_GUIDE.trim());
     expect(plan.text).toContain("thread-source");
     expect(plan.text).not.toContain("http://");
