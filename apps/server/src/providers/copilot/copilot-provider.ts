@@ -1000,7 +1000,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     const runtimeInstructions = renderMcodeInstructions(buildMcodeInstructionPlan({
       sourceThreadId: threadId,
       threadControlGranted: true,
-      browserAutomationGranted: Boolean(browserGrant),
+      browserAutomationGranted: browserGrant?.rolloutMode === "browser-v2",
     }));
     const sessionBase = {
       onPermissionRequest: approveAll,

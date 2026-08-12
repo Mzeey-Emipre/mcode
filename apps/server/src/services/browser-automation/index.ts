@@ -40,3 +40,25 @@ export {
   type BrowserAutomationSessionLeaseScope,
   type BrowserAutomationSessionLeaseStage,
 } from "./browser-automation-session-lease.js";
+
+/** Process-wide Browser v2 release selection. */
+export {
+  BROWSER_V2_LEGACY_ROLLBACK_ENV,
+  resolveBrowserAutomationRollout,
+  type BrowserAutomationRolloutDecision,
+  type BrowserAutomationRolloutMode,
+  type BrowserAutomationRolloutReason,
+} from "./rollout-policy.js";
+
+/** Privacy-safe Browser lifecycle telemetry and nightly evidence. */
+export {
+  BrowserAutomationTelemetry,
+  browserAutomationTerminalFields,
+  classifyBrowserAutomationFailure,
+  type BrowserAutomationFailureBundle,
+  type BrowserAutomationFailureClass,
+  type BrowserAutomationNightlyEvidenceReport,
+  type BrowserAutomationTelemetryEvent,
+  type BrowserAutomationTelemetryStage,
+  type BrowserAutomationZeroToleranceOutcomes,
+} from "./telemetry.js";

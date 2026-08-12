@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BROWSER_AUTOMATION_OPERATIONS } from "@mcode/contracts";
+import { BROWSER_AUTOMATION_OPERATIONS, BROWSER_V2_CORE_OPERATIONS } from "@mcode/contracts";
 import {
   BrowserAutomationSessionLease,
   type BrowserAutomationSessionLeaseScope,
@@ -59,7 +59,7 @@ describe("BrowserAutomationSessionLease", () => {
     expect(lease.status()).toEqual({ active: 2, pending: 0 });
   });
 
-  it("grants inspect before act for mutation-capable leases without duplicates", () => {
+  it("grants the ordered Browser v2 surface without duplicates", () => {
     const lease = configuredLease();
     const interact = lease.issue(scope({ permissionCapability: "interact" }))!;
     const privileged = lease.issue(scope({
@@ -68,13 +68,36 @@ describe("BrowserAutomationSessionLease", () => {
       mcodeSessionId: "privileged-mcode",
     }))!;
 
-    expect(interact.allowedOperations.slice(0, 2)).toEqual(["inspect", "act"]);
+    expect(interact.allowedOperations).toEqual(BROWSER_V2_CORE_OPERATIONS);
     expect(interact.allowedOperations).not.toContain("evaluate");
     expect(new Set(interact.allowedOperations).size).toBe(interact.allowedOperations.length);
-    expect(privileged.allowedOperations.slice(0, 2)).toEqual(["inspect", "act"]);
+    expect(privileged.allowedOperations.slice(0, 4)).toEqual(BROWSER_V2_CORE_OPERATIONS);
     expect(privileged.allowedOperations).toContain("evaluate");
-    expect(privileged.allowedOperations).toEqual(["inspect", "act", "tabs", ...BROWSER_AUTOMATION_OPERATIONS]);
+    expect(privileged.allowedOperations).toEqual([...BROWSER_V2_CORE_OPERATIONS, "evaluate"]);
+    expect(privileged.rolloutMode).toBe("browser-v2");
     expect(new Set(privileged.allowedOperations).size).toBe(privileged.allowedOperations.length);
+  });
+
+  it("applies the same nightly surface and global rollback to every provider", () => {
+    const providers = ["claude", "codex", "copilot", "cursor", "opencode"];
+    const nightly = configuredLease({
+      rollout: { mode: "browser-v2", reason: "nightly", rollbackActive: false },
+    });
+    const legacy = configuredLease({
+      rollout: { mode: "legacy", reason: "legacy-rollback", rollbackActive: true },
+    });
+
+    for (const [index, providerId] of providers.entries()) {
+      const overrides = {
+        providerId,
+        providerSessionId: `${providerId}-provider`,
+        mcodeSessionId: `${providerId}-mcode-${index}`,
+      };
+      expect(nightly.issue(scope(overrides))?.allowedOperations)
+        .toEqual(BROWSER_V2_CORE_OPERATIONS);
+      expect(legacy.issue(scope(overrides))?.allowedOperations)
+        .toEqual(BROWSER_AUTOMATION_OPERATIONS.filter((operation) => operation !== "evaluate"));
+    }
   });
 
   it("advertises browser_tabs for interact and privileged leases, but not observe", () => {

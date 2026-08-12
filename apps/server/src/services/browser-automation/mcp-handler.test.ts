@@ -10,6 +10,7 @@ import { MCODE_BROWSER_GUIDE } from "@mcode/thread-orchestration";
 import { BrowserAutomationBroker } from "./broker.js";
 import { BrowserAutomationCredentialRegistry } from "./credential-registry.js";
 import { BrowserAutomationMcpHandler } from "./mcp-handler.js";
+import { BrowserAutomationTelemetry, type BrowserAutomationTelemetryEvent } from "./telemetry.js";
 
 describe("BrowserAutomationMcpHandler", () => {
   let server: Server;
@@ -168,6 +169,73 @@ describe("BrowserAutomationMcpHandler", () => {
       });
     },
   );
+
+  it("omits Browser v2 instructions for the legacy rollback surface", async () => {
+    const issued = credentials.issue({
+      providerId: "codex",
+      providerSessionId: "legacy-provider-session",
+      mcodeSessionId: "legacy-mcode-session",
+      threadId: "legacy-thread",
+      workspaceId: "workspace-a",
+      worktreeIdentity: "worktree-a",
+      permissionCapability: "interact",
+      allowedOperations: ["open", "click", "type", "navigate", "screenshot"],
+    });
+    handler = new BrowserAutomationMcpHandler({
+      credentials,
+      broker: new BrowserAutomationBroker({ now: () => 1_000 }),
+      now: () => 1_000,
+    });
+
+    const initialized = await post(JSON.stringify({
+      jsonrpc: "2.0",
+      id: "legacy-initialize",
+      method: "initialize",
+      params: { protocolVersion: "2025-03-26" },
+    }), `Bearer ${issued.token}`);
+
+    expect((await initialized.json() as any).result.instructions).toBeUndefined();
+  });
+
+  it("keeps one correlation identity across MCP routing and receipt delivery", async () => {
+    const events: BrowserAutomationTelemetryEvent[] = [];
+    const telemetry = new BrowserAutomationTelemetry(
+      { mode: "browser-v2", reason: "nightly", rollbackActive: false },
+      { sink: (event) => events.push(event) },
+    );
+    const issued = credentials.issue({
+      providerId: "claude",
+      providerSessionId: "correlation-provider-session",
+      mcodeSessionId: "correlation-mcode-session",
+      threadId: "correlation-thread",
+      workspaceId: "workspace-a",
+      worktreeIdentity: "worktree-a",
+      permissionCapability: "observe",
+      allowedOperations: ["inspect"],
+    });
+    handler = new BrowserAutomationMcpHandler({
+      credentials,
+      broker: new BrowserAutomationBroker({ now: () => 1_000, telemetry }),
+      now: () => 1_000,
+    });
+
+    await post(JSON.stringify({
+      jsonrpc: "2.0",
+      id: "correlated-inspect",
+      method: "tools/call",
+      params: { name: "browser_inspect", arguments: {} },
+    }), `Bearer ${issued.token}`);
+
+    expect(events.map((event) => event.stage)).toEqual([
+      "mcp-routing",
+      "configuration",
+      "admission",
+      "settlement",
+      "cleanup",
+      "receipt-delivery",
+    ]);
+    expect(new Set(events.map((event) => event.correlationId)).size).toBe(1);
+  });
 
   it("advertises browser_evaluate only when live negotiation permits it", async () => {
     const issued = credentials.issue({

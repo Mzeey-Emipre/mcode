@@ -447,7 +447,17 @@ export class BrowserAutomationMcpHandler {
       const protocolVersion = typeof requested === "string" && MCP_PROTOCOL_VERSIONS.includes(requested as (typeof MCP_PROTOCOL_VERSIONS)[number])
         ? requested
         : MCP_PROTOCOL_VERSIONS[0];
-      return { jsonrpc: "2.0", id, result: { protocolVersion, capabilities: { tools: { listChanged: false } }, serverInfo: { name: "mcode-browser", version: String(BROWSER_AUTOMATION_CONTRACT_VERSION) }, instructions: MCODE_BROWSER_GUIDE } };
+      const browserV2Granted = claims.allowedOperations.includes("inspect");
+      return {
+        jsonrpc: "2.0",
+        id,
+        result: {
+          protocolVersion,
+          capabilities: { tools: { listChanged: false } },
+          serverInfo: { name: "mcode-browser", version: String(BROWSER_AUTOMATION_CONTRACT_VERSION) },
+          ...(browserV2Granted ? { instructions: MCODE_BROWSER_GUIDE } : {}),
+        },
+      };
     }
     if (request.method === "tools/list") {
       return { jsonrpc: "2.0", id, result: { tools: toolList(this.discoverableOperations(claims)) } };
@@ -504,6 +514,10 @@ export class BrowserAutomationMcpHandler {
       args: values,
     });
     if (!browserRequest.success) return jsonRpcError(id, -32602, "Invalid browser tool arguments");
+    const mcpStartedAt = this.now();
+    this.broker.recordMcpLifecycle?.("mcp-routing", claims.providerId, browserRequest.data, {
+      outcome: "accepted",
+    });
     const activeKey = this.activeCallKey(claims.credentialId, request.id);
     if (this.activeCalls.has(activeKey)) {
       return jsonRpcError(id, -32600, "Browser tool request id is already active");
@@ -523,6 +537,11 @@ export class BrowserAutomationMcpHandler {
     } finally {
       if (this.activeCalls.get(activeKey) === activeCall) this.activeCalls.delete(activeKey);
     }
+    this.broker.recordMcpLifecycle?.("receipt-delivery", claims.providerId, browserRequest.data, {
+      durationMs: Math.max(0, this.now() - mcpStartedAt),
+      outcome: result.ok ? "completed" : "failed",
+      settlement: result.ok || result.error.effect !== "unknown" ? "complete" : "unknown",
+    });
     return {
       jsonrpc: "2.0",
       id,

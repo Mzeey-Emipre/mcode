@@ -85,6 +85,7 @@ import {
   BrowserAutomationCredentialRegistry,
   BrowserAutomationMcpHandler,
   BrowserAutomationSessionLease,
+  BrowserAutomationTelemetry,
 } from "./services/browser-automation/index.js";
 
 // process.title affects `ps`/`top`/`htop` output on Unix and the console window
@@ -227,7 +228,14 @@ const container = setupContainer(getMcodeDir());
 
 const browserAutomationCredentials = container.resolve(BrowserAutomationCredentialRegistry);
 const browserAutomationSessionLease = container.resolve(BrowserAutomationSessionLease);
-const browserAutomationBroker = new BrowserAutomationBroker({});
+const browserAutomationTelemetry = new BrowserAutomationTelemetry(
+  browserAutomationSessionLease.rolloutStatus(),
+  {
+    sink: (event) => logger.info("Browser automation lifecycle", event),
+  },
+);
+logger.info("Browser automation rollout selected", browserAutomationSessionLease.rolloutStatus());
+const browserAutomationBroker = new BrowserAutomationBroker({ telemetry: browserAutomationTelemetry });
 const browserAutomationMcpHandler = new BrowserAutomationMcpHandler({
   credentials: browserAutomationCredentials,
   broker: browserAutomationBroker,

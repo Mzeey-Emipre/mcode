@@ -234,6 +234,25 @@ describe("/health endpoint", () => {
           latencyMaxMs: 25,
           roundTripLatency: { samples: 2, p50Ms: 20, p95Ms: 25, p99Ms: 25 },
         }),
+        nightlyEvidenceStatus: () => ({
+          rollout: { mode: "browser-v2", reason: "nightly", rollbackActive: false },
+          observedRequests: 4,
+          successfulRequests: 2,
+          expectedFailures: 1,
+          unexpectedFailures: 1,
+          unexpectedFailureRate: 0.25,
+          classifiedFailures: { "lost-transport": 1 },
+          zeroTolerance: {
+            falseSuccess: 0,
+            postTakeoverEffect: 0,
+            ambiguousOwnership: 0,
+            staleMutation: 0,
+            unknownOutcome: 0,
+            sensitiveDataViolation: 0,
+          },
+          retainedEvents: 12,
+          recentFailures: [],
+        }),
       } as never,
     });
     ({ httpServer: server } = createWsServer(deps));
@@ -246,6 +265,10 @@ describe("/health endpoint", () => {
       pending: 2,
       assignments: 3,
       reliability: expect.objectContaining({ dispatched: 4, timedOut: 1, hostLosses: 1 }),
+      nightlyEvidence: expect.objectContaining({
+        rollout: { mode: "browser-v2", reason: "nightly", rollbackActive: false },
+        unexpectedFailureRate: 0.25,
+      }),
     });
     expect(JSON.stringify(browserAutomation)).not.toMatch(/url|thread|credential/i);
   });

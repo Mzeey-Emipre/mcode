@@ -1527,7 +1527,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
     const runtimeInstructions = renderMcodeInstructions(buildMcodeInstructionPlan({
       sourceThreadId: args.threadId,
       threadControlGranted: Boolean(effectiveMcpServers.mcode_internal_thread_control),
-      browserAutomationGranted: Boolean(effectiveMcpServers["mcode-browser"]),
+      browserAutomationGranted: browserGrant?.rolloutMode === "browser-v2",
     }));
     const optionsWithRuntimeInstructions = {
       ...baseOptions,

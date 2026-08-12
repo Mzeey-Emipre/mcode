@@ -9,6 +9,7 @@ import {
   BrowserAutomationRequestSchema,
   BrowserAutomationResponseSchema,
   type BrowserAutomationErrorCode,
+  type BrowserAutomationActStep,
   type BrowserAutomationHostRegistration,
   type BrowserAutomationHostDispatchTarget,
   type BrowserAutomationHostDispatch,
@@ -18,6 +19,14 @@ import {
 } from "@mcode/contracts";
 import { sendToClient } from "../../transport/push.js";
 import type { BrowserAutomationCredentialClaims } from "./credential-registry.js";
+import {
+  BrowserAutomationTelemetry,
+  browserAutomationTerminalFields,
+  type BrowserAutomationNightlyEvidenceReport,
+  type BrowserAutomationTelemetryEvent,
+  type BrowserAutomationTelemetryStage,
+} from "./telemetry.js";
+import { resolveBrowserAutomationRollout } from "./rollout-policy.js";
 
 interface RegisteredHost {
   socket: WebSocket;
@@ -128,6 +137,7 @@ export interface BrowserAutomationBrokerOptions {
   maxHosts?: number;
   maxTargets?: number;
   maxLatencySamples?: number;
+  telemetry?: BrowserAutomationTelemetry;
 }
 
 const BROWSER_V2_OPERATIONS = new Set<BrowserAutomationOperation>([
@@ -197,7 +207,7 @@ function failure(
       stage: code === "TAB_UNAVAILABLE" || code === "BROWSER_BUSY" ? "allocation" : "transport",
       effect: code === "TAB_UNAVAILABLE" && !browserV2Request ? "unknown" : "none",
       recovery,
-      correlationId: randomUUID(),
+      correlationId: request.requestId,
     },
   };
 }
@@ -377,6 +387,19 @@ function responseWasTruncated(response: BrowserAutomationResponse): boolean {
   );
 }
 
+function requestWaitsForPage(request: BrowserAutomationRequest): boolean {
+  if (request.operation === "waitFor") return true;
+  if (request.operation !== "act") return false;
+  return request.args.steps.some((step: BrowserAutomationActStep) =>
+    step.operation === "wait" ||
+    step.operation === "assert" ||
+    step.operation === "navigate" ||
+    step.operation === "reload" ||
+    step.operation === "back" ||
+    step.operation === "forward",
+  );
+}
+
 function shapeNegotiatedResponse(
   response: BrowserAutomationResponse,
   pending: PendingRequest,
@@ -473,6 +496,7 @@ export class BrowserAutomationBroker {
   private readonly maxHosts: number;
   private readonly maxTargets: number;
   private readonly maxLatencySamples: number;
+  private readonly telemetry: BrowserAutomationTelemetry;
   private readonly openReplay = new Map<string, OpenReplayRecord>();
   private readonly actReplay = new Map<string, ActReplayRecord>();
   private readonly evaluateReplay = new Map<string, EvaluateReplayRecord>();
@@ -507,6 +531,7 @@ export class BrowserAutomationBroker {
     this.maxHosts = options.maxHosts ?? 8;
     this.maxTargets = options.maxTargets ?? 128;
     this.maxLatencySamples = options.maxLatencySamples ?? MAX_LATENCY_SAMPLES;
+    this.telemetry = options.telemetry ?? new BrowserAutomationTelemetry(resolveBrowserAutomationRollout());
     if (
       !Number.isInteger(this.maxPendingRequests) ||
       this.maxPendingRequests < 1 ||
@@ -861,13 +886,13 @@ export class BrowserAutomationBroker {
     if (existing) {
       existing.lastUsedAt = this.now();
       if (existing.fingerprint !== fingerprint) {
-        return Promise.resolve(failure(request, "IDEMPOTENCY_CONFLICT", "The idempotency key was already used with different browser_open arguments", false));
+        return this.finishWithoutDispatch(claims, request, failure(request, "IDEMPOTENCY_CONFLICT", "The idempotency key was already used with different browser_open arguments", false));
       }
-      return existing.promise.then((response) => ({ ...response, requestId: request.requestId, sequence: request.sequence }));
+      return existing.promise.then((response) => this.finishReplay(claims, request, response));
     }
     const sessionKey = sessionRoutingKey(claims.providerId, claims.providerSessionId);
     if (this.browserMutations.has(sessionKey)) {
-      return Promise.resolve(failure(request, "BROWSER_BUSY", "Another browser mutation is active for this provider session", true));
+      return this.finishWithoutDispatch(claims, request, failure(request, "BROWSER_BUSY", "Another browser mutation is active for this provider session", true));
     }
     const mutationToken = randomUUID();
     this.browserMutations.set(sessionKey, mutationToken);
@@ -910,13 +935,13 @@ export class BrowserAutomationBroker {
     if (existing) {
       existing.lastUsedAt = this.now();
       if (existing.fingerprint !== fingerprint) {
-        return Promise.resolve(failure(request, "IDEMPOTENCY_CONFLICT", "The idempotency key was already used with different browser_tabs arguments", false));
+        return this.finishWithoutDispatch(claims, request, failure(request, "IDEMPOTENCY_CONFLICT", "The idempotency key was already used with different browser_tabs arguments", false));
       }
-      return existing.promise.then((response) => ({ ...response, requestId: request.requestId, sequence: request.sequence }));
+      return existing.promise.then((response) => this.finishReplay(claims, request, response));
     }
     const sessionKey = sessionRoutingKey(claims.providerId, claims.providerSessionId);
     if (this.browserMutations.has(sessionKey)) {
-      return Promise.resolve(failure(request, "BROWSER_BUSY", "Another browser mutation is active for this provider session", true));
+      return this.finishWithoutDispatch(claims, request, failure(request, "BROWSER_BUSY", "Another browser mutation is active for this provider session", true));
     }
     const token = randomUUID();
     this.browserMutations.set(sessionKey, token);
@@ -952,13 +977,13 @@ export class BrowserAutomationBroker {
     if (existing) {
       existing.lastUsedAt = this.now();
       if (existing.fingerprint !== fingerprint) {
-        return Promise.resolve(failure(request, "IDEMPOTENCY_CONFLICT", "The idempotency key was already used with different browser_act arguments", false));
+        return this.finishWithoutDispatch(claims, request, failure(request, "IDEMPOTENCY_CONFLICT", "The idempotency key was already used with different browser_act arguments", false));
       }
-      return existing.promise.then((response) => ({ ...response, requestId: request.requestId, sequence: request.sequence }));
+      return existing.promise.then((response) => this.finishReplay(claims, request, response));
     }
     const sessionKey = sessionRoutingKey(claims.providerId, claims.providerSessionId);
     if (this.browserMutations.has(sessionKey)) {
-      return Promise.resolve(failure(request, "BROWSER_BUSY", "Another browser mutation is active for this provider session", true));
+      return this.finishWithoutDispatch(claims, request, failure(request, "BROWSER_BUSY", "Another browser mutation is active for this provider session", true));
     }
     const token = randomUUID();
     this.browserMutations.set(sessionKey, token);
@@ -996,13 +1021,13 @@ export class BrowserAutomationBroker {
     if (existing) {
       existing.lastUsedAt = this.now();
       if (existing.fingerprint !== fingerprint) {
-        return Promise.resolve(failure(request, "IDEMPOTENCY_CONFLICT", "The idempotency key was already used with different browser_evaluate arguments", false));
+        return this.finishWithoutDispatch(claims, request, failure(request, "IDEMPOTENCY_CONFLICT", "The idempotency key was already used with different browser_evaluate arguments", false));
       }
-      return existing.promise.then((response) => ({ ...response, requestId: request.requestId, sequence: request.sequence }));
+      return existing.promise.then((response) => this.finishReplay(claims, request, response));
     }
     const sessionKey = JSON.stringify([claims.providerId, claims.providerSessionId]);
     if (this.browserMutations.has(sessionKey)) {
-      return Promise.resolve(failure(request, "BROWSER_BUSY", "Another browser mutation is active for this provider session", true));
+      return this.finishWithoutDispatch(claims, request, failure(request, "BROWSER_BUSY", "Another browser mutation is active for this provider session", true));
     }
     const token = randomUUID();
     this.browserMutations.set(sessionKey, token);
@@ -1020,6 +1045,39 @@ export class BrowserAutomationBroker {
     return promise;
   }
 
+  private finishReplay(
+    claims: BrowserAutomationCredentialClaims,
+    request: BrowserAutomationRequest,
+    response: BrowserAutomationResponse,
+  ): Promise<BrowserAutomationResponse> {
+    const replayed = { ...response, requestId: request.requestId, sequence: request.sequence };
+    return this.finishWithoutDispatch(claims, request, replayed, false);
+  }
+
+  private finishWithoutDispatch(
+    claims: BrowserAutomationCredentialClaims,
+    request: BrowserAutomationRequest,
+    response: BrowserAutomationResponse,
+    countReliability = true,
+  ): Promise<BrowserAutomationResponse> {
+    this.recordLifecycle("configuration", claims.providerId, request, undefined, undefined, { outcome: "accepted" });
+    this.recordLifecycle("admission", claims.providerId, request, undefined, undefined, { outcome: "accepted" });
+    if (countReliability) {
+      this.reliability.dispatched = incrementBounded(this.reliability.dispatched);
+      this.recordOutcome(response, 0, false);
+    }
+    this.recordLifecycle("settlement", claims.providerId, request, undefined, undefined, {
+      durationMs: 0,
+      ...browserAutomationTerminalFields(response),
+    });
+    this.recordLifecycle("cleanup", claims.providerId, request, undefined, undefined, {
+      durationMs: 0,
+      outcome: response.ok ? "completed" : "failed",
+      settlement: response.ok || response.error.effect !== "unknown" ? "complete" : "unknown",
+    });
+    return Promise.resolve(response);
+  }
+
   private executeInternal(claims: BrowserAutomationCredentialClaims, input: unknown): Promise<BrowserAutomationResponse> {
     this.pruneExpiredState();
     const parsed = BrowserAutomationRequestSchema().safeParse(input);
@@ -1028,9 +1086,25 @@ export class BrowserAutomationBroker {
     }
     const request = parsed.data;
     const startedAt = this.now();
+    this.recordLifecycle("configuration", claims.providerId, request, undefined, undefined, {
+      outcome: "accepted",
+    });
+    this.recordLifecycle("admission", claims.providerId, request, undefined, undefined, {
+      outcome: "accepted",
+    });
     this.reliability.dispatched = incrementBounded(this.reliability.dispatched);
     const finishImmediately = (response: BrowserAutomationResponse): Promise<BrowserAutomationResponse> => {
-      this.recordOutcome(response, Math.max(0, this.now() - startedAt), false);
+      const durationMs = Math.max(0, this.now() - startedAt);
+      this.recordOutcome(response, durationMs, false);
+      this.recordLifecycle("settlement", claims.providerId, request, undefined, undefined, {
+        durationMs,
+        ...browserAutomationTerminalFields(response),
+      });
+      this.recordLifecycle("cleanup", claims.providerId, request, undefined, undefined, {
+        durationMs,
+        outcome: response.ok ? "completed" : "failed",
+        settlement: response.ok || response.error.effect !== "unknown" ? "complete" : "unknown",
+      });
       return Promise.resolve(response);
     };
     if (
@@ -1153,6 +1227,7 @@ export class BrowserAutomationBroker {
       };
       this.pending.set(key, pending);
       host.pending++;
+      this.recordLifecycle("queueing", claims.providerId, request, host, target, { outcome: "queued" });
       const preflightError = this.revalidatePendingBeforeSend(pending);
       if (preflightError) {
         this.settle(key, pending, preflightError);
@@ -1187,6 +1262,11 @@ export class BrowserAutomationBroker {
       });
       if (!sent) {
         this.settle(key, pending, failure(request, "HOST_UNAVAILABLE", "Browser host disconnected before delivery", true));
+        return;
+      }
+      this.recordLifecycle("execution", claims.providerId, request, host, target, { outcome: "dispatched" });
+      if (requestWaitsForPage(request)) {
+        this.recordLifecycle("page-waiting", claims.providerId, request, host, target, { outcome: "waiting" });
       }
     });
   }
@@ -1249,6 +1329,21 @@ export class BrowserAutomationBroker {
       ...this.reliability,
       roundTripLatency: summarizeLatency(this.latencySamples),
     };
+  }
+
+  /** Returns privacy-safe Browser v2 rollout evidence for health checks and release collection. */
+  nightlyEvidenceStatus(): BrowserAutomationNightlyEvidenceReport {
+    return this.telemetry.report();
+  }
+
+  /** Records MCP routing or receipt delivery with the broker's shared correlation collector. */
+  recordMcpLifecycle(
+    stage: "mcp-routing" | "receipt-delivery",
+    providerId: string,
+    request: BrowserAutomationRequest,
+    fields: Partial<Pick<BrowserAutomationTelemetryEvent, "durationMs" | "outcome" | "settlement">> = {},
+  ): void {
+    this.recordLifecycle(stage, providerId, request, undefined, undefined, fields);
   }
 
   /** Returns the operations both the credential and its selected executor support. */
@@ -1568,6 +1663,7 @@ export class BrowserAutomationBroker {
       const pending: PendingRequest = { host, providerId, request, resolve, timer, startedAt: this.now(), credentialOperations: [request.operation] };
       this.pending.set(key, pending);
       host.pending++;
+      this.recordLifecycle("queueing", providerId, request, host, undefined, { outcome: "queued" });
       const preflightError = this.revalidatePendingBeforeSend(pending);
       if (preflightError) {
         this.settle(key, pending, preflightError);
@@ -1580,7 +1676,9 @@ export class BrowserAutomationBroker {
       });
       if (!sent) {
         this.settle(key, pending, failure(request, "HOST_UNAVAILABLE", "Browser host disconnected before delivery", true));
+        return;
       }
+      this.recordLifecycle("execution", providerId, request, host, undefined, { outcome: "dispatched" });
     });
   }
 
@@ -1591,6 +1689,15 @@ export class BrowserAutomationBroker {
     const boundedResponse = this.applyNavigationRetryPolicy(pending, response);
     const latencyMs = Math.max(0, this.now() - pending.startedAt);
     this.recordOutcome(boundedResponse, latencyMs);
+    this.recordLifecycle("settlement", pending.providerId, pending.request, pending.host, pending.target, {
+      durationMs: latencyMs,
+      ...browserAutomationTerminalFields(boundedResponse),
+    });
+    this.recordLifecycle("cleanup", pending.providerId, pending.request, pending.host, pending.target, {
+      durationMs: latencyMs,
+      outcome: boundedResponse.ok ? "completed" : "failed",
+      settlement: boundedResponse.ok || boundedResponse.error.effect !== "unknown" ? "complete" : "unknown",
+    });
     pending.resolve(boundedResponse);
   }
 
@@ -1719,6 +1826,34 @@ export class BrowserAutomationBroker {
     }
     this.latencySamples[this.latencySampleCursor] = bounded;
     this.latencySampleCursor = (this.latencySampleCursor + 1) % this.maxLatencySamples;
+  }
+
+  private recordLifecycle(
+    stage: BrowserAutomationTelemetryStage,
+    providerId: string,
+    request: BrowserAutomationRequest,
+    host: RegisteredHost | undefined,
+    target: BrowserAutomationHostDispatchTarget | undefined,
+    fields: Partial<Omit<BrowserAutomationTelemetryEvent,
+      "timestampMs" | "correlationId" | "stage" | "provider" | "operation" | "contractVersion" | "runtime" |
+      "capabilityRevision" | "connectionGeneration" | "targetGeneration"
+    >>,
+  ): void {
+    this.telemetry.record({
+      timestampMs: this.now(),
+      correlationId: request.requestId,
+      stage,
+      provider: providerId,
+      operation: request.operation,
+      contractVersion: request.contractVersion,
+      ...(host ? {
+        runtime: host.registration.runtime,
+        capabilityRevision: host.registration.executorDescriptor.capabilityRevision,
+        connectionGeneration: host.generation,
+      } : {}),
+      ...(target ? { targetGeneration: target.targetGeneration } : {}),
+      ...fields,
+    });
   }
 
   private adoptBootstrapTarget(
