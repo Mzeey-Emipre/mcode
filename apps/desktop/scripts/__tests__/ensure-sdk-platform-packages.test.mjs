@@ -262,4 +262,14 @@ describe("desktop packaging workflow wiring", () => {
     expect(nightly).toContain("signing-required: false");
     expect(stable).toContain("signing-required: true");
   });
+
+  it("avoids empty Bash arrays when packaging unsigned macOS targets", () => {
+    const reusable = readFileSync(
+      path.join(repoRoot, ".github/workflows/desktop-package-target.yml"),
+      "utf8",
+    );
+
+    expect(reusable).not.toContain("notarize_args=()");
+    expect(reusable).not.toContain('"${notarize_args[@]}"');
+  });
 });

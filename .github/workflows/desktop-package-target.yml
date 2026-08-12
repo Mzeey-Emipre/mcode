@@ -188,11 +188,11 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ inputs.signing-required && 'true' || 'false' }}
         run: |
           set -euo pipefail
-          notarize_args=()
           if [ "${{ inputs.target-platform }}" = "macos" ] && [ "${{ inputs.signing-required }}" = "true" ]; then
-            notarize_args+=(--config.mac.notarize=true)
+            bun apps/desktop/scripts/ci-package.mjs --config.mac.notarize=true ${{ inputs.build-args }}
+          else
+            bun apps/desktop/scripts/ci-package.mjs ${{ inputs.build-args }}
           fi
-          bun apps/desktop/scripts/ci-package.mjs "${notarize_args[@]}" ${{ inputs.build-args }}
 
       - name: Smoke test packaged server
         if: inputs.target-platform != 'macos' || inputs.target-arch == 'arm64'
