@@ -400,6 +400,34 @@ await activateTestConversation(threadId);
     expect(getTestThreadPersistedFilesChanged(threadId)[olderMessage.id]).toBeUndefined();
   });
 
+  it("reports snapshot reconciliation failures after loading an older page", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    resetThreadStoreForTests({
+      currentThreadId: threadId,
+      records: new Map<string, ThreadRecord>([[threadId, {
+        ...createEmptyThreadRecord(),
+        messages: [createMockMessage({ id: "resident", thread_id: threadId, sequence: 2 })],
+        oldestLoadedSequence: 2,
+        hasMoreMessages: true,
+      }]]),
+    });
+    (mockTransport.getMessages as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      messages: [createMockMessage({ id: "older", thread_id: threadId, sequence: 1 })],
+      hasMore: false,
+    });
+    const failure = new Error("snapshot service unavailable");
+    (mockTransport.listSnapshots as ReturnType<typeof vi.fn>).mockRejectedValueOnce(failure);
+
+    await useThreadStore.getState().loadOlderMessages(threadId);
+    await vi.waitFor(() => {
+      expect(warning).toHaveBeenCalledWith(
+        `[threadStore] Failed to hydrate pagination snapshots for ${threadId}:`,
+        failure,
+      );
+    });
+    warning.mockRestore();
+  });
+
   it("does not let delayed snapshot metadata invalidate a newer page request", async () => {
     const resident = createMockMessage({ id: "resident", thread_id: threadId, sequence: 10 });
     const firstPageMessage = createMockMessage({ id: "first-page", thread_id: threadId, sequence: 8 });

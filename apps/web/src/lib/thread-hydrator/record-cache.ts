@@ -101,6 +101,7 @@ const recordByteSizes = new Map<string, number>();
 const recordNarrativeByteSizes = new Map<string, number>();
 const prefetchByteSizes = new Map<string, number>();
 const prefetchNarrativeByteSizes = new Map<string, number>();
+const transientTextByteSizes = new Map<string, number>();
 let activeConversationId: string | null = null;
 
 function measureRecord(record: ConversationCacheState): number {
@@ -194,10 +195,14 @@ function boundRecord(
           ? record.latestTurnWithChanges
           : null,
     };
+    const transientTextBytes = isActive ? transientTextByteSizes.get(threadId) ?? 0 : 0;
     const narrativeBudget = isActive
       ? Math.min(
           CONVERSATION_NARRATIVE_BYTES,
-          Math.max(0, ACTIVE_CONVERSATION_BYTES - measureRecord(withoutNarrative)),
+          Math.max(
+            0,
+            ACTIVE_CONVERSATION_BYTES - transientTextBytes - measureRecord(withoutNarrative),
+          ),
         )
       : CONVERSATION_NARRATIVE_BYTES;
     const boundedRecord = {
@@ -208,7 +213,9 @@ function boundRecord(
         narrativeBudget,
       ),
     };
-    const overflow = isActive ? measureRecord(boundedRecord) - ACTIVE_CONVERSATION_BYTES : 0;
+    const overflow = isActive
+      ? measureRecord(boundedRecord) + transientTextBytes - ACTIVE_CONVERSATION_BYTES
+      : 0;
     if (overflow <= 0 || messages.length <= 1) return boundedRecord;
     messageBudget = Math.max(0, messageBudget - overflow - 1);
   }
@@ -426,15 +433,49 @@ export function clearRecordCache(): void {
   recordNarrativeByteSizes.clear();
   prefetchByteSizes.clear();
   prefetchNarrativeByteSizes.clear();
+  transientTextByteSizes.clear();
   activeConversationId = null;
 }
 
 /** Mark the selected conversation so automatic pressure protects its visible window. */
 export function setActiveConversation(threadId: string | null): void {
   activeConversationId = threadId;
-  if (threadId) void cache.get(threadId);
+  if (threadId) {
+    const record = cache.get(threadId);
+    const residentBytes = recordByteSizes.get(threadId) ?? 0;
+    const transientBytes = transientTextByteSizes.get(threadId) ?? 0;
+    if (record && residentBytes + transientBytes > ACTIVE_CONVERSATION_BYTES) {
+      const boundedRecord = boundRecord(threadId, record);
+      cache.set(threadId, boundedRecord);
+      recordByteSizes.set(threadId, measureRecord(boundedRecord));
+      recordNarrativeByteSizes.set(
+        threadId,
+        measureConversationValue(boundedRecord.narrativeByMessage),
+      );
+    }
+  }
   enforceAutomaticByteBudgets();
 }
+
+/** Account for live assistant text without retaining a second copy in the record cache. */
+export function setConversationTransientTextBytes(threadId: string, bytes: number): void {
+  const boundedBytes = Number.isFinite(bytes) ? Math.max(0, Math.floor(bytes)) : 0;
+  if (boundedBytes === 0) transientTextByteSizes.delete(threadId);
+  else transientTextByteSizes.set(threadId, boundedBytes);
+
+  if (activeConversationId !== threadId) return;
+  const record = cache.get(threadId);
+  if (!record) return;
+  if ((recordByteSizes.get(threadId) ?? 0) + boundedBytes <= ACTIVE_CONVERSATION_BYTES) return;
+  const boundedRecord = boundRecord(threadId, record);
+  cache.set(threadId, boundedRecord);
+  recordByteSizes.set(threadId, measureRecord(boundedRecord));
+  recordNarrativeByteSizes.set(
+    threadId,
+    measureConversationValue(boundedRecord.narrativeByMessage),
+  );
+}
+
 /** Current encoded residency totals by cache class. */
 export function getConversationCacheUsage(): {
   activeBytes: number;
@@ -452,6 +493,9 @@ export function getConversationCacheUsage(): {
   const prefetchedBytes = [...prefetchByteSizes.values()].reduce((total, bytes) => total + bytes, 0);
   const narrativeBytes = [...recordNarrativeByteSizes.values(), ...prefetchNarrativeByteSizes.values()]
     .reduce((total, bytes) => total + bytes, 0);
+  activeBytes += activeConversationId
+    ? transientTextByteSizes.get(activeConversationId) ?? 0
+    : 0;
   return { activeBytes, inactiveBytes, prefetchedBytes, narrativeBytes };
 }
 

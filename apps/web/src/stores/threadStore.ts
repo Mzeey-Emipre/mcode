@@ -43,7 +43,10 @@ import {
   selectConversationNarrative,
   selectConversationWindow,
 } from "@/lib/thread-hydrator/conversation-memory-policy";
-import { setActiveConversation } from "@/lib/thread-hydrator/record-cache";
+import {
+  setActiveConversation,
+  setConversationTransientTextBytes,
+} from "@/lib/thread-hydrator/record-cache";
 import { releaseBrowserCaptureSpills } from "@/lib/browser-capture-spill";
 import { isGoalControlCommand } from "@/lib/goal-command";
 import { resolveGoalLookupGoal } from "@/lib/goal-lookup";
@@ -1016,6 +1019,12 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
   })) as typeof zustandSet;
   let textDeltaFlushRaf: number | null = null;
   const pendingTextDeltaByThread = new Map<string, PendingTextChunk[]>();
+  const streamingTextByteSizes = new Map<string, number>();
+  const textEncoder = new TextEncoder();
+  const clearStreamingTextUsage = (threadId: string): void => {
+    streamingTextByteSizes.delete(threadId);
+    setConversationTransientTextBytes(threadId, 0);
+  };
   const deferredNarrativeEventsByThread = new Map<
     string,
     { generation: number; events: AgentEvent[]; bytes: number }
@@ -1061,6 +1070,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
       })));
     }
     pendingTextDeltaByThread.clear();
+    const flushedTextByteSizes = new Map<string, number>();
     set((state) => {
       let records = state.records;
       for (const [tid, chunks] of batch) {
@@ -1069,11 +1079,14 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
         let streamingPreview = rec.streamingPreview;
         let segments = rec.thoughtSegments;
         let segmentsChanged = false;
+        let streamingTextBytes = streamingTextByteSizes.get(tid)
+          ?? textEncoder.encode(streaming).byteLength;
         for (const chunk of chunks) {
           const acc = chunk.delta;
           if (!acc) continue;
           const combined = streaming + acc;
           streaming = combined;
+          streamingTextBytes += textEncoder.encode(acc).byteLength;
           streamingPreview = combined.length > 200 ? combined.slice(-200) : combined;
 
           if (chunk.deferNarrative || chunk.isFinalResponse) {
@@ -1092,9 +1105,14 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
           patch.thoughtSegments = segments;
         }
         records = patchThreadRecord(records, tid, patch);
+        streamingTextByteSizes.set(tid, streamingTextBytes);
+        flushedTextByteSizes.set(tid, streamingTextBytes);
       }
       return { records };
     });
+    for (const [threadId, bytes] of flushedTextByteSizes) {
+      setConversationTransientTextBytes(threadId, bytes);
+    }
 
     const activeThreadId = get().currentThreadId;
     if (activeThreadId) promoteDeferredNarrativeEvents(activeThreadId);
@@ -1372,7 +1390,9 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
           ])),
         );
       })
-      .catch(() => {});
+      .catch((error: unknown) => {
+        console.warn(`[threadStore] Failed to hydrate pagination snapshots for ${threadId}:`, error);
+      });
   };
 
   return {
@@ -1970,6 +1990,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
       return { records, runningThreadIds: nextIds };
     });
     for (const threadId of resetPendingIds) {
+      clearStreamingTextUsage(threadId);
       invalidateDeferredNarrativeEvents(threadId);
       threadHydrator.invalidatePermissionSnapshots(threadId);
     }
@@ -2032,6 +2053,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
       conversationResidency.invalidateConversation(current);
     }
     flushPendingTextDeltas();
+    if (current) clearStreamingTextUsage(current);
 
     get().toolCallRecordCache.clear();
     if (current) {
@@ -2683,6 +2705,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
         && currentRecord.fileEffectTurnId === fileEffectTurnId) {
         return;
       }
+      clearStreamingTextUsage(threadId);
       useTaskStore.getState().prepareTaskBubbleForNewTurn(threadId);
       set((state) => {
         const rec = getThreadRecord(state.records, threadId);
@@ -2713,6 +2736,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     }
 
     if (event.type === "message") {
+      clearStreamingTextUsage(threadId);
       markPriorToolCallsComplete();
       const content = (event.content as string) || "";
       const isGoalNotice = isGoalStatusNotice(content);
@@ -3326,6 +3350,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     if (event.type === "turnComplete" || event.type === "ended") {
       if (!runtimeActive
         || (incomingExecutionId && runtimeRecord.turnExecutionId !== incomingExecutionId)) return;
+      clearStreamingTextUsage(threadId);
       useTaskStore.getState().clearTaskBubbleIfAwaitingReplacement(threadId);
       const turnComplete = event.type === "turnComplete" ? event : undefined;
       const costUsd = turnComplete?.costUsd ?? null;
@@ -3764,6 +3789,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     if (event.type === "error") {
       if (!runtimeActive
         || (incomingExecutionId && runtimeRecord.turnExecutionId !== incomingExecutionId)) return;
+      clearStreamingTextUsage(threadId);
       const errorMsg = typeof event.error === "string" ? event.error : String(event.error ?? "Unknown error");
       const errorMessage: Message = {
         id: crypto.randomUUID(),
