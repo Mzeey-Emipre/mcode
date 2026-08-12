@@ -44,5 +44,5 @@ export function resolveBrowserAutomationRollout(
     return { mode: "browser-v2", reason: "nightly", rollbackActive: false };
   }
 
-  return { mode: "legacy", reason: "stable", rollbackActive: false };
+  return { mode: "browser-v2", reason: "stable", rollbackActive: false };
 }

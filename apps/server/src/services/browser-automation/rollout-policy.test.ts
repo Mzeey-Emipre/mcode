@@ -12,9 +12,9 @@ describe("Browser v2 rollout policy", () => {
       .toEqual({ mode: "browser-v2", reason: "nightly", rollbackActive: false });
   });
 
-  it("keeps stable builds on the legacy surface before promotion", () => {
+  it("promotes stable builds to Browser v2", () => {
     expect(resolveBrowserAutomationRollout({ nodeEnv: "production", version: "0.13.0" }))
-      .toEqual({ mode: "legacy", reason: "stable", rollbackActive: false });
+      .toEqual({ mode: "browser-v2", reason: "stable", rollbackActive: false });
   });
 
   it("uses one exact hidden rollback switch for every release line", () => {
@@ -27,5 +27,10 @@ describe("Browser v2 rollout policy", () => {
       .toEqual({ mode: "legacy", reason: "legacy-rollback", rollbackActive: true });
     expect(resolveBrowserAutomationRollout({ ...input, environment: { [BROWSER_V2_LEGACY_ROLLBACK_ENV]: "true" } }).mode)
       .toBe("browser-v2");
+    expect(resolveBrowserAutomationRollout({
+      nodeEnv: "production",
+      version: "0.13.0",
+      environment: { [BROWSER_V2_LEGACY_ROLLBACK_ENV]: "1" },
+    })).toEqual({ mode: "legacy", reason: "legacy-rollback", rollbackActive: true });
   });
 });
