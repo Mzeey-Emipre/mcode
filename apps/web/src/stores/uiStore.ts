@@ -11,6 +11,9 @@ import { useWorkspaceStore } from "@/stores/workspaceStore";
 /** Top-level content surface displayed beside the application sidebar. */
 export type PrimarySurface = "chat" | "pullRequests";
 
+/** Thread lifecycle view selected for one Project in the current app session. */
+export type ProjectThreadView = "active" | "completed";
+
 /** UI state for cross-component toggles that commands need to control. */
 interface UiState {
   /** Top-level content surface displayed beside the application sidebar. */
@@ -34,6 +37,8 @@ interface UiState {
   rightPanelMaximized: boolean;
   /** Whether cramped layout, not the user, maximized the right panel. */
   rightPanelMaximizedByLayout: boolean;
+  /** Per-Project thread views for the current app session. */
+  projectThreadViews: Record<string, ProjectThreadView>;
 
   /** Select the top-level content surface. */
   setPrimarySurface: (surface: PrimarySurface) => void;
@@ -56,6 +61,10 @@ interface UiState {
   toggleRightPanelMaximized: () => void;
   /** Set the right panel maximized state explicitly. */
   setRightPanelMaximized: (maximized: boolean, source?: "user" | "layout") => void;
+  /** Select the Active or Completed thread view for one Project. */
+  setProjectThreadView: (workspaceId: string, view: ProjectThreadView) => void;
+  /** Toggle one Project between its Active and Completed thread views. */
+  toggleProjectThreadView: (workspaceId: string) => void;
 }
 
 /** Minimum content-row width needed given the current right-panel visibility. */
@@ -82,6 +91,7 @@ export const useUiStore = create<UiState>((set, get) => ({
   shortcutHelpOpen: false,
   rightPanelMaximized: false,
   rightPanelMaximizedByLayout: false,
+  projectThreadViews: {},
 
   setPrimarySurface: (surface) =>
     set({
@@ -128,4 +138,18 @@ export const useUiStore = create<UiState>((set, get) => ({
       rightPanelMaximized: maximized,
       rightPanelMaximizedByLayout: maximized && source === "layout",
     }),
+  setProjectThreadView: (workspaceId, view) =>
+    set((state) => ({
+      projectThreadViews: { ...state.projectThreadViews, [workspaceId]: view },
+    })),
+  toggleProjectThreadView: (workspaceId) =>
+    set((state) => ({
+      projectThreadViews: {
+        ...state.projectThreadViews,
+        [workspaceId]:
+          state.projectThreadViews[workspaceId] === "completed"
+            ? "active"
+            : "completed",
+      },
+    })),
 }));

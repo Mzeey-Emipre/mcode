@@ -282,9 +282,8 @@ export function ProjectTree() {
   const [threadListExpanded, setThreadListExpandedState] = useState<
     Record<string, boolean>
   >(getThreadListExpanded);
-  const [lifecycleViews, setLifecycleViews] = useState<
-    Record<string, "active" | "completed">
-  >({});
+  const lifecycleViews = useUiStore((s) => s.projectThreadViews);
+  const toggleLifecycleView = useUiStore((s) => s.toggleProjectThreadView);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [inlineEdit, setInlineEdit] = useState<InlineEditState | null>(null);
   const [deleteDialog, setDeleteDialog] = useState<DeleteDialogState | null>(
@@ -339,13 +338,6 @@ export function ProjectTree() {
   const toggleThreadList = useCallback((wsId: string) => {
     setThreadListExpandedState((prev) => ({ ...prev, [wsId]: !prev[wsId] }));
   }, []);
-  const toggleLifecycleView = useCallback((wsId: string) => {
-    setLifecycleViews((previous) => ({
-      ...previous,
-      [wsId]: previous[wsId] === "completed" ? "active" : "completed",
-    }));
-  }, []);
-
   // Auto-load worktrees for the active workspace so stale-worktree detection has data.
   useEffect(() => {
     if (!activeWorkspaceId || worktreesLoadedForWorkspace === activeWorkspaceId)
@@ -1028,7 +1020,8 @@ const ThreadRow = memo(function ThreadRow({
   const RowProviderIcon = providerMeta.icon;
   const [isLifecyclePending, setIsLifecyclePending] = useState(false);
   const isUserCompleted = thread.user_completed_at !== null;
-  const showEndMarker = !showPrCi && !isUserCompleted;
+  const showEndMarker =
+    !showPrCi && (!isUserCompleted || marker.kind !== "time");
   const lifecycleUnavailable =
     isLifecyclePending ||
     isEditing ||
@@ -1244,7 +1237,9 @@ const ThreadRow = memo(function ThreadRow({
         />
       ) : null}
       {!isEditing && showEndMarker && (
-        <ThreadStateMarker marker={marker} dim={Boolean(scaffoldDim)} />
+        <span className={cn(isUserCompleted && "grayscale opacity-45")}>
+          <ThreadStateMarker marker={marker} dim={Boolean(scaffoldDim)} />
+        </span>
       )}
     </div>
   );
@@ -1746,6 +1741,7 @@ const ProjectNode = memo(function ProjectNode({
       ? completedThreadCount
       : activeThreadCount;
   const lifecycleLabel = `View ${threadCountLabel(lifecycleDestinationCount, lifecycleDestination)} for ${workspace.name}`;
+  const projectLabel = `${workspace.name} project, ${lifecycleView} view, ${threadCountLabel(activeThreadCount, "active")}, ${threadCountLabel(completedThreadCount, "completed")}`;
   const handleToggle = useCallback(() => onToggle(wsId), [onToggle, wsId]);
   const handleToggleLifecycleView = useCallback(
     (event: React.MouseEvent) => {
@@ -1823,7 +1819,7 @@ const ProjectNode = memo(function ProjectNode({
       <div
         role="group"
         tabIndex={0}
-        aria-label={`${workspace.name} project`}
+        aria-label={projectLabel}
         data-testid={`project-row-${workspace.id}`}
         onClick={handleToggle}
         className={cn(
@@ -1856,7 +1852,7 @@ const ProjectNode = memo(function ProjectNode({
                       className="transition-opacity duration-150 group-hover/ws:opacity-0 group-focus-within/ws:opacity-0 motion-reduce:transition-none"
                       aria-hidden
                     />
-                    <Folder
+                    <FolderOpen
                       size={14}
                       className="absolute opacity-0 transition-opacity duration-150 group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 motion-reduce:transition-none"
                       aria-hidden
@@ -1864,7 +1860,7 @@ const ProjectNode = memo(function ProjectNode({
                   </>
                 ) : (
                   <>
-                    <Folder
+                    <FolderOpen
                       size={14}
                       className="transition-opacity duration-150 group-hover/ws:opacity-0 group-focus-within/ws:opacity-0 motion-reduce:transition-none"
                       aria-hidden

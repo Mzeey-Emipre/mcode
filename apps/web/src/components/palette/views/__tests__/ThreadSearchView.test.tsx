@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Command } from "@/components/ui/command";
 import { useCommandPaletteStore } from "@/stores/commandPaletteStore";
+import { useUiStore } from "@/stores/uiStore";
 import { createMockThread, createMockWorkspace } from "@/__tests__/mocks/transport";
 import type { RecentThread } from "@/transport/types";
 
@@ -27,6 +28,7 @@ const thread = createMockThread({
   mode: "worktree",
   worktree_path: "C:/worktrees/quiet-lantern",
   updated_at: new Date().toISOString(),
+  user_completed_at: "2026-08-12T08:00:00.000Z",
 });
 
 vi.mock("@/stores/recentThreadsStore", () => ({
@@ -80,6 +82,9 @@ beforeAll(() => {
 beforeEach(() => {
   vi.clearAllMocks();
   act(() => {
+    useUiStore.setState({
+      projectThreadViews: { "another-project": "active" },
+    });
     useCommandPaletteStore.getState().open({ intent: "threadSearch" });
     useCommandPaletteStore.getState().setQuery("quiet-lantern");
   });
@@ -94,6 +99,7 @@ describe("ThreadSearchView", () => {
     );
 
     expect(screen.getByText("Premium sidebar")).toBeInTheDocument();
+    expect(screen.getByText("Premium sidebar")).toHaveClass("line-through");
     expect(screen.getByText("Caravan")).toBeInTheDocument();
     expect(screen.getByText("feature/sidebar")).toBeInTheDocument();
     expect(screen.getByText("now")).toBeInTheDocument();
@@ -113,6 +119,10 @@ describe("ThreadSearchView", () => {
 
     expect(hoisted.setActiveWorkspace).toHaveBeenCalledWith("ws-search");
     expect(hoisted.setActiveThread).toHaveBeenCalledWith("thread-search");
+    expect(useUiStore.getState().projectThreadViews).toEqual({
+      "another-project": "active",
+      "ws-search": "completed",
+    });
     expect(useCommandPaletteStore.getState().isOpen).toBe(false);
   });
 
