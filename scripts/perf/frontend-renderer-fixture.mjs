@@ -1,4 +1,5 @@
 import {
+  createModeSignalCollector,
   createPageSignalCollector,
   summarizeDurationSamples,
 } from "./frontend-performance-collectors.mjs";
@@ -24,15 +25,17 @@ async function waitForFrames(page, count = 2) {
 }
 
 async function installFixtureRuntime(page) {
+  await page.waitForFunction(
+    () => Boolean(window.__mcodeFrontendPerformanceModules),
+    null,
+    { timeout: 30_000 },
+  );
   await page.evaluate(async () => {
-    const workspaceModule = await import("/src/stores/workspaceStore.ts");
-    const threadModule = await import("/src/stores/threadStore.ts");
-    const recordModule = await import("/src/stores/thread-record.ts");
-    const diffModule = await import("/src/stores/diffStore.ts");
-
-    const workspaceStore = workspaceModule.useWorkspaceStore;
-    const threadStore = threadModule.useThreadStore;
-    const diffStore = diffModule.useDiffStore;
+    const modules = window.__mcodeFrontendPerformanceModules;
+    if (!modules) throw new Error("The compiled performance fixture bridge is unavailable.");
+    const workspaceStore = modules.workspaceStore;
+    const threadStore = modules.threadStore;
+    const diffStore = modules.diffStore;
     const workspace = workspaceStore.getState().workspaces[0];
     if (!workspace) throw new Error("The performance fixture needs one seeded workspace.");
 
@@ -107,7 +110,7 @@ async function installFixtureRuntime(page) {
         threads: [thread, ...state.threads.filter((item) => item.id !== threadId)],
       }));
       const record = {
-        ...recordModule.createEmptyThreadRecord(),
+        ...modules.createEmptyThreadRecord(),
         messages,
         oldestLoadedSequence: messages[0]?.sequence ?? 0,
         ...patch,
@@ -124,7 +127,7 @@ async function installFixtureRuntime(page) {
       workspaceStore,
       threadStore,
       diffStore,
-      recordModule,
+      recordModule: { createEmptyThreadRecord: modules.createEmptyThreadRecord },
       baseThread,
       message,
       makeMessages,
@@ -134,16 +137,18 @@ async function installFixtureRuntime(page) {
   });
 }
 
-async function timeFixture(page, sampleCount, operation) {
+async function timeFixture(page, sampleCount, operation, modeCollector) {
   const samples = [];
   const checks = [];
+  const attributions = [];
   await operation(-1);
   for (let index = 0; index < sampleCount; index += 1) {
-    const result = await operation(index);
+    const { result, attribution } = await modeCollector.measure(() => operation(index));
     samples.push(result.durationMs);
     checks.push(result.check);
+    attributions.push(attribution);
   }
-  return { samples, checks };
+  return { samples, checks, attributions };
 }
 
 /** Returns correctness failures for one workload observation. */
@@ -205,7 +210,7 @@ export function validateWorkloadCheck(workload, check) {
 }
 
 /** Run the shared frontend renderer matrix against one Playwright page. */
-export async function runRendererMatrix(page, runtime, sampleCount = 7) {
+export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "production") {
   if (!Number.isSafeInteger(sampleCount) || sampleCount < 1 || sampleCount > 50) {
     throw new Error("sampleCount must be an integer from 1 through 50");
   }
@@ -213,6 +218,7 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7) {
   await page.bringToFront();
   await installFixtureRuntime(page);
   const signalCollector = await createPageSignalCollector(page);
+  const modeCollector = await createModeSignalCollector(page, mode);
 
   const message100 = await timeFixture(page, sampleCount, async (sample) => {
     const result = await page.evaluate(async (sampleIndex) => {
@@ -242,7 +248,7 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7) {
       };
     }, sample);
     return result;
-  });
+  }, modeCollector);
 
   const message1000 = await timeFixture(page, sampleCount, async (sample) => {
     return page.evaluate(async (sampleIndex) => {
@@ -271,7 +277,7 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7) {
         },
       };
     }, sample);
-  });
+  }, modeCollector);
 
   const threadSwitch = await timeFixture(page, sampleCount, async (sample) => {
     return page.evaluate(async (sampleIndex) => {
@@ -309,7 +315,7 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7) {
         },
       };
     }, sample);
-  });
+  }, modeCollector);
 
   const streaming = await timeFixture(page, sampleCount, async (sample) => {
     return page.evaluate(async (sampleIndex) => {
@@ -341,10 +347,10 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7) {
         },
       };
     }, sample);
-  });
+  }, modeCollector);
 
   const denseNarrative = await timeFixture(page, sampleCount, async (sample) => {
-    return page.evaluate(async (sampleIndex) => {
+    return page.evaluate(async ({ sampleIndex, profileUpdate }) => {
       const fixture = window.__issue1240;
       const revision = ++fixture.revision;
       const threadId = `perf-narrative-${revision}`;
@@ -389,11 +395,51 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7) {
         ended_at: "2026-08-09T21:00:00.003Z",
         sort_order: index * 3 + 2,
       }));
-      const startedAt = performance.now();
+      let startedAt = performance.now();
       fixture.activate(threadId, "Dense narrative fixture", [assistant], {
         narrativeByMessage: { [messageId]: { tools, thoughts, hooks } },
       });
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      let affectedRowId = null;
+      let stableSiblingRowIds = [];
+      if (profileUpdate) {
+        const narrativeRows = [...document.querySelectorAll("[data-performance-row-id]")];
+        const affectedRow = narrativeRows.find((candidate) =>
+          candidate.textContent?.includes("Narration segment 0"),
+        );
+        affectedRowId = affectedRow?.getAttribute("data-performance-row-id") ?? null;
+        stableSiblingRowIds = narrativeRows
+          .map((candidate) => candidate.getAttribute("data-performance-row-id"))
+          .filter((rowId) => rowId && rowId !== affectedRowId);
+        const attribution = window.__mcodePerformanceAttribution;
+        if (attribution) {
+          attribution.commits = [];
+          attribution.rowRenders = {};
+        }
+        startedAt = performance.now();
+        fixture.threadStore.setState((state) => {
+          const records = new Map(state.records);
+          const record = records.get(threadId);
+          const narrative = record?.narrativeByMessage[messageId];
+          if (!record || !narrative) return state;
+          records.set(threadId, {
+            ...record,
+            narrativeByMessage: {
+              ...record.narrativeByMessage,
+              [messageId]: {
+                ...narrative,
+                thoughts: narrative.thoughts.map((thought, index) =>
+                  index === 0
+                    ? { ...thought, text: `${thought.text} updated` }
+                    : thought,
+                ),
+              },
+            },
+          });
+          return { ...state, records };
+        });
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      }
       const row = document.querySelector(`[data-message-id="${messageId}"]`);
       const list = document.querySelector('[data-testid="message-list"]');
       return {
@@ -408,11 +454,13 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7) {
           toolVisible: list?.textContent?.includes("Fixture input 0") ?? false,
           lastToolVisible: list?.textContent?.includes("Fixture input 59") ?? false,
           hookVisible: list?.textContent?.includes("PreToolUse") ?? false,
+          affectedRowId,
+          stableSiblingRowIds,
           sampleIndex,
         },
       };
-    }, sample);
-  });
+    }, { sampleIndex: sample, profileUpdate: mode === "profiling" && sample >= 0 });
+  }, modeCollector);
 
   const markdownShiki = await timeFixture(page, sampleCount, async (sample) => {
     return page.evaluate(async (sampleIndex) => {
@@ -446,7 +494,7 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7) {
         },
       };
     }, sample);
-  });
+  }, modeCollector);
 
   const panelTransitions = await timeFixture(page, sampleCount, async (sample) => {
     return page.evaluate(async (sampleIndex) => {
@@ -472,11 +520,12 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7) {
         },
       };
     }, sample);
-  });
+  }, modeCollector);
 
   await waitForFrames(page);
   const observations = await signalCollector.read();
   signalCollector.dispose();
+  await modeCollector.dispose();
   const pageFailures = [];
   if (observations.consoleErrors.length > 0) {
     pageFailures.push(`console errors: ${observations.consoleErrors.join(" | ")}`);
@@ -507,9 +556,23 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7) {
       const rawSamples = result.samples.map((durationMs, sampleIndex) => {
         const observed = result.checks[sampleIndex];
         const failures = [...validateWorkloadCheck(name, observed), ...pageFailures];
+        const attribution = result.attributions[sampleIndex];
+        if (name === "denseNarrative" && attribution.react) {
+          attribution.react.affectedRow = observed.affectedRowId
+            ? {
+                rowId: observed.affectedRowId,
+                renderCount: attribution.react.rowRenders[observed.affectedRowId] ?? 0,
+              }
+            : null;
+          attribution.react.stableSiblingRows = observed.stableSiblingRowIds.map((rowId) => ({
+            rowId,
+            renderCount: attribution.react.rowRenders[rowId] ?? 0,
+          }));
+        }
         return {
           sampleIndex,
           durationMs,
+          attribution,
           correctness: {
             passed: failures.length === 0,
             failures,
@@ -540,6 +603,7 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7) {
 
   return {
     runtime,
+    buildMode: mode,
     sampleCount,
     metrics,
     observations,

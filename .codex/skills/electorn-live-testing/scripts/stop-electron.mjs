@@ -6,9 +6,13 @@ import { terminateProcessTree } from "./process-tree.mjs";
 const SESSION_FILE_NAME = "electron-live-testing.json";
 
 /** Stops only the Electron process tree recorded for this worktree. */
-export function stopElectron(repoRoot = process.cwd()) {
+export function stopElectron(repoRoot = process.cwd(), options = {}) {
   const root = resolve(repoRoot);
-  const sessionFile = join(root, ".dev", SESSION_FILE_NAME);
+  const sessionFileName = options.sessionFileName ?? SESSION_FILE_NAME;
+  if (!/^electron-[a-z0-9-]+\.json$/.test(sessionFileName)) {
+    throw new Error("sessionFileName must be a safe Electron session file name");
+  }
+  const sessionFile = join(root, ".dev", sessionFileName);
   if (!existsSync(sessionFile)) return { status: "not-running" };
 
   const record = JSON.parse(readFileSync(sessionFile, "utf8"));

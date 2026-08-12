@@ -47,11 +47,16 @@ export function ensurePlaywright(repoRoot = process.cwd()) {
       `Playwright installation failed with exit code ${install.status ?? "none"} and signal ${install.signal ?? "none"}`,
     );
   }
-  const installedPath = scratchRequire.resolve("playwright");
-  if (!isInside(nodeModulesDir, installedPath)) {
-    throw new Error("Playwright was not installed inside the scratch package");
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      const installedPath = scratchRequire.resolve("playwright");
+      if (isInside(nodeModulesDir, installedPath)) return nodeModulesDir;
+    } catch {
+      // Bun can finish the child process before Windows exposes the installed files.
+    }
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
   }
-  return nodeModulesDir;
+  throw new Error("Playwright was not installed inside the scratch package");
 }
 
 function isInside(parent, candidate) {

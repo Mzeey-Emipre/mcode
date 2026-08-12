@@ -452,6 +452,24 @@ interface DesktopBridge {
    * builds may not expose it.
    */
   setServerBusy?(busy: boolean): Promise<void>;
+  /** Process metrics exposed only in a maintained frontend performance run. */
+  performance?: {
+    getMetrics(): Promise<{
+      readonly hardwareAccelerationEnabled: boolean;
+      readonly devToolsOpen: boolean;
+      readonly processes: readonly {
+        readonly pid: number;
+        readonly type: string;
+        readonly cpuPercent: number | null;
+        readonly memory: {
+          readonly workingSetSizeKiB: number | null;
+          readonly peakWorkingSetSizeKiB: number | null;
+          readonly privateBytesKiB: number | null;
+        } | null;
+      }[];
+    }>;
+    quit(): Promise<void>;
+  };
   /** Open a native folder-picker dialog. Returns the selected path or null. */
   showOpenDialog(options: { title?: string }): Promise<string | null>;
   /** Open a URL in the default browser. */

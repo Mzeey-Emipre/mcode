@@ -82,6 +82,190 @@ export async function createPageSignalCollector(page) {
   };
 }
 
+function metricMap(metrics) {
+  return new Map(metrics.map(({ name, value }) => [name, value]));
+}
+
+function metricDelta(before, after, name) {
+  const beforeValue = before.get(name);
+  const afterValue = after.get(name);
+  return Number.isFinite(beforeValue) && Number.isFinite(afterValue)
+    ? Math.max(0, (afterValue - beforeValue) * 1_000)
+    : null;
+}
+
+function durationSummary(samples) {
+  return samples.length > 0 ? summarizeDurationSamples(samples) : null;
+}
+
+async function installAttributionRuntime(page) {
+  await page.evaluate(() => {
+    const state = {
+      commits: [],
+      frameTimes: [],
+      longTasks: [],
+      rowRenders: {},
+    };
+    window.__mcodePerformanceAttribution = state;
+    window.__mcodeReactPerformanceSink = {
+      recordCommit(commit) {
+        state.commits.push(commit);
+      },
+      recordRowRender(rowId) {
+        state.rowRenders[rowId] = (state.rowRenders[rowId] ?? 0) + 1;
+      },
+    };
+    new PerformanceObserver((list) => {
+      state.longTasks.push(...list.getEntries().map((entry) => entry.duration));
+    }).observe({ type: "longtask", buffered: true });
+    const recordFrame = (timestamp) => {
+      state.frameTimes.push(timestamp);
+      if (state.frameTimes.length > 10_000) state.frameTimes.splice(0, 5_000);
+      requestAnimationFrame(recordFrame);
+    };
+    requestAnimationFrame(recordFrame);
+  });
+}
+
+async function resetAttributionRuntime(page) {
+  return page.evaluate(() => {
+    const state = window.__mcodePerformanceAttribution;
+    if (!state) throw new Error("Performance attribution runtime is not installed");
+    state.commits = [];
+    state.rowRenders = {};
+    return {
+      frameIndex: state.frameTimes.length,
+      longTaskIndex: state.longTasks.length,
+    };
+  });
+}
+
+async function readAttributionRuntime(page, indexes) {
+  return page.evaluate(({ frameIndex, longTaskIndex }) => {
+    const state = window.__mcodePerformanceAttribution;
+    if (!state) throw new Error("Performance attribution runtime is not installed");
+    return {
+      commits: [...state.commits],
+      frameTimes: state.frameTimes.slice(frameIndex),
+      longTasks: state.longTasks.slice(longTaskIndex),
+      rowRenders: { ...state.rowRenders },
+    };
+  }, indexes);
+}
+
+function summarizeFrames(frameTimes) {
+  const intervals = frameTimes.slice(1).map((time, index) => time - frameTimes[index]);
+  return {
+    intervalsMs: intervals,
+    summary: durationSummary(intervals),
+  };
+}
+
+function summarizeTrace(events) {
+  const durationMs = (names) => {
+    const matching = events.filter(
+      (event) => event.ph === "X" && names.has(event.name) && Number.isFinite(event.dur),
+    );
+    return matching.length > 0
+      ? matching.reduce((total, event) => total + event.dur / 1_000, 0)
+      : null;
+  };
+  return {
+    paintMs: durationMs(new Set(["Paint", "PaintImage", "CompositeLayers"])),
+    traceEventCount: events.length,
+  };
+}
+
+async function readElectronProcessMetrics(page) {
+  return page.evaluate(async () => {
+    return window.desktopBridge?.performance?.getMetrics?.() ?? null;
+  });
+}
+
+/** Creates the mode-specific React, Chromium, and Electron process collector. */
+export async function createModeSignalCollector(page, mode) {
+  if (mode !== "profiling" && mode !== "production") {
+    throw new Error("mode must be profiling or production");
+  }
+  await installAttributionRuntime(page);
+  if (mode === "profiling") {
+    return {
+      /** Measures one profiling sample without mixing browser or process signals into it. */
+      async measure(operation) {
+        const indexes = await resetAttributionRuntime(page);
+        const result = await operation();
+        const signals = await readAttributionRuntime(page, indexes);
+        return {
+          result,
+          attribution: {
+            react: {
+              commits: signals.commits,
+              rowRenders: signals.rowRenders,
+            },
+            chromium: null,
+            electronProcess: null,
+            gpu: null,
+          },
+        };
+      },
+      async dispose() {},
+    };
+  }
+
+  const session = await page.context().newCDPSession(page);
+  await session.send("Performance.enable");
+  return {
+    /** Measures one production sample with Chromium trace and Electron process data. */
+    async measure(operation) {
+      const indexes = await resetAttributionRuntime(page);
+      const before = metricMap((await session.send("Performance.getMetrics")).metrics);
+      const processBefore = await readElectronProcessMetrics(page);
+      const traceEvents = [];
+      const onTraceData = ({ value }) => traceEvents.push(...value);
+      session.on("Tracing.dataCollected", onTraceData);
+      await session.send("Tracing.start", {
+        categories: "devtools.timeline,blink.user_timing,disabled-by-default-devtools.timeline.frame",
+        transferMode: "ReportEvents",
+      });
+      let result;
+      try {
+        result = await operation();
+      } finally {
+        const completed = new Promise((resolveComplete) => {
+          session.once("Tracing.tracingComplete", resolveComplete);
+        });
+        await session.send("Tracing.end");
+        await completed;
+        session.off("Tracing.dataCollected", onTraceData);
+      }
+      const processAfter = await readElectronProcessMetrics(page);
+      const after = metricMap((await session.send("Performance.getMetrics")).metrics);
+      const signals = await readAttributionRuntime(page, indexes);
+      return {
+        result,
+        attribution: {
+          react: null,
+          chromium: {
+            scriptingMs: metricDelta(before, after, "ScriptDuration"),
+            layoutMs: metricDelta(before, after, "LayoutDuration"),
+            taskMs: metricDelta(before, after, "TaskDuration"),
+            longTasksMs: signals.longTasks,
+            frameCadence: summarizeFrames(signals.frameTimes),
+            ...summarizeTrace(traceEvents),
+          },
+          electronProcess: processBefore && processAfter
+            ? { before: processBefore, after: processAfter }
+            : null,
+          gpu: null,
+        },
+      };
+    },
+    async dispose() {
+      await session.detach();
+    },
+  };
+}
+
 /** Returns stable host and source metadata for a performance result. */
 export function collectRunEnvironment(repoRoot, runtimeVersions = {}) {
   const cpuList = cpus();

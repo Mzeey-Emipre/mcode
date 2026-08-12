@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 const SESSION_FILE_NAME = "electron-live-testing.json";
 
 /** Connects Playwright to the Electron process owned by start-electron.mjs. */
-export async function connectElectronSession({ playwright, repoRoot }) {
+export async function connectElectronSession({ playwright, repoRoot, sessionFileName = SESSION_FILE_NAME }) {
   if (!playwright?.chromium?.connectOverCDP) {
     throw new Error("Pass the module returned by await import(\"playwright\")");
   }
@@ -13,7 +13,10 @@ export async function connectElectronSession({ playwright, repoRoot }) {
   }
 
   const root = resolve(repoRoot);
-  const sessionFile = join(root, ".dev", SESSION_FILE_NAME);
+  if (!/^electron-[a-z0-9-]+\.json$/.test(sessionFileName)) {
+    throw new Error("sessionFileName must be a safe Electron session file name");
+  }
+  const sessionFile = join(root, ".dev", sessionFileName);
   if (!existsSync(sessionFile)) {
     throw new Error("Run start-electron.mjs before connecting Playwright");
   }
@@ -30,15 +33,17 @@ export async function connectElectronSession({ playwright, repoRoot }) {
     throw new Error("Electron did not expose a Playwright browser context");
   }
 
-  await context.addCookies([
-    {
-      name: ports.seedLogin.cookieName,
-      value: ports.seedLogin.token,
-      url: ports.appUrl,
-    },
-  ]);
+  if (record.appUrlPrefix.startsWith(ports.appUrl)) {
+    await context.addCookies([
+      {
+        name: ports.seedLogin.cookieName,
+        value: ports.seedLogin.token,
+        url: ports.appUrl,
+      },
+    ]);
+  }
 
-  const page = await waitForAppPage(context, ports.appUrl);
+  const page = await waitForAppPage(context, record.appUrlPrefix);
   await page.reload({ waitUntil: "domcontentloaded" });
   return {
     appUrl: ports.appUrl,
@@ -80,6 +85,8 @@ function validateSessionRecord(record, root) {
     record.debugPort <= 0 ||
     record.debugPort > 65_535 ||
     typeof record.repoRoot !== "string" ||
+    typeof record.appUrlPrefix !== "string" ||
+    !(record.appUrlPrefix === "file://" || record.appUrlPrefix.startsWith("http://127.0.0.1:")) ||
     resolve(record.repoRoot).toLowerCase() !== root.toLowerCase()
   ) {
     throw new Error("Electron session record is invalid or not ready");

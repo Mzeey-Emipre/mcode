@@ -8,6 +8,11 @@ import { HookRow } from "./HookRow";
 import { SubagentRow } from "./SubagentRow";
 import { ActiveToolRow } from "./ActiveToolRow";
 import { DeltaBlock } from "./DeltaBlock";
+import {
+  NarrativePerformanceBoundary,
+  NarrativePerformanceRow,
+  narrativePerformanceRowId,
+} from "./NarrativePerformanceBoundary";
 
 /** Props for the NarrativeFlow container component. */
 export interface NarrativeFlowProps {
@@ -197,6 +202,7 @@ export function NarrativeFlow({
   const timelineItems = items.filter((it) => it.type !== "delta");
 
   return (
+    <NarrativePerformanceBoundary>
     <div className="relative min-w-0 max-w-full">
       {/* Timeline — no vertical rail, no row dots. Each row component carries
           its own visual marker (chevron, icon, badge), and consecutive action
@@ -207,12 +213,15 @@ export function NarrativeFlow({
           {timelineItems.map((item, i) => (
             <div
               key={keyForItem(item, i)}
+              data-performance-row-id={narrativePerformanceRowId(keyForItem(item, i))}
               className={[
                 marginClassForItem(item, i),
                 "narrative-row-enter min-w-0 max-w-full",
               ].join(" ")}
             >
-              {renderItem(item, mostActiveSubagentId, toolCalls)}
+              <NarrativePerformanceRow rowId={keyForItem(item, i)}>
+                {renderItem(item, mostActiveSubagentId, toolCalls)}
+              </NarrativePerformanceRow>
             </div>
           ))}
         </div>
@@ -241,5 +250,6 @@ export function NarrativeFlow({
           fixing — because this container itself sits before the bubble in
           the virtual-list order. */}
     </div>
+    </NarrativePerformanceBoundary>
   );
 }

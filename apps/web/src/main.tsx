@@ -69,7 +69,14 @@ document.documentElement.toggleAttribute(
 renderConnecting(root);
 
 initTransport()
-  .then(() => {
+  .then(async () => {
+    if (
+      import.meta.env.VITE_MCODE_PERFORMANCE_MODE === "profiling" ||
+      import.meta.env.VITE_MCODE_PERFORMANCE_MODE === "production"
+    ) {
+      const fixtureBridge = await import("./performance/frontend-renderer-fixture-bridge");
+      fixtureBridge.installFrontendRendererFixtureBridge();
+    }
     // Desktop only: report running turns / open terminals to the main
     // process so it can hold a power save blocker while the server is busy.
     initDesktopPowerReporting();
