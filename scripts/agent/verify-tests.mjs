@@ -233,13 +233,26 @@ export function selectTestPhases(changedFiles, { forceFull = false, cwd = proces
     buckets.set(workspace, files);
   }
   for (const [workspace, files] of buckets) {
+    const isServer = workspace === "apps/server";
+    const relatedArgsPrefix = isServer
+      ? [
+        "../../scripts/run-electron-node.mjs",
+        "--workspace-cli",
+        "vitest",
+        "vitest.mjs",
+        "related",
+      ]
+      : ["vitest", "related"];
+    const buildRelatedArgs = (filesChunk) => [
+      ...relatedArgsPrefix,
+      ...filesChunk,
+      "--run",
+    ];
     const chunks = [];
     let chunk = [];
     for (const file of files) {
       const candidate = [...chunk, file];
-      const argvBytes = Buffer.byteLength(
-        JSON.stringify(["vitest", "related", ...candidate, "--run"]),
-      );
+      const argvBytes = Buffer.byteLength(JSON.stringify(buildRelatedArgs(candidate)));
       if (chunk.length > 0
         && (candidate.length > MAX_RELATED_FILES || argvBytes > MAX_RELATED_ARG_BYTES)) {
         chunks.push(chunk);
@@ -253,8 +266,8 @@ export function selectTestPhases(changedFiles, { forceFull = false, cwd = proces
       const suffix = chunks.length > 1 ? ` ${index + 1}/${chunks.length}` : "";
       phases.push({
         name: `Unit Tests (${workspace}${suffix})`,
-        command: "bunx",
-        args: ["vitest", "related", ...filesChunk, "--run"],
+        command: isServer ? "bun" : "bunx",
+        args: buildRelatedArgs(filesChunk),
         cwd: resolvePath(cwd, workspace),
       });
     }
