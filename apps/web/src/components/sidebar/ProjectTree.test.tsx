@@ -850,7 +850,75 @@ describe("ProjectTree action-required indicator", () => {
     threadStoreOverrides.runningThreadIds = new Set(["thread-pending"]);
     render(<ProjectTree />);
 
-    expect(screen.getByLabelText("Running")).toBeInTheDocument();
+    const spinner = screen.getByLabelText("Running");
+    expect(spinner).toBeVisible();
+    expect(spinner.closest("button")).toHaveClass(
+      "opacity-100",
+      "disabled:opacity-100",
+    );
+  });
+
+  it.each([
+    ["completed", "Completed", "--diff-add-strong"],
+    ["interrupted", "Interrupted", "bg-amber-500"],
+    ["errored", "Errored", "--diff-remove-strong"],
+  ] as const)(
+    "shows the %s turn notification blob when a PR has checks",
+    (status, label, tone) => {
+      currentThread = makeThread({
+        id: "thread-pending",
+        status,
+        mode: "worktree",
+        pr_number: 42,
+        pr_status: "open",
+      });
+      currentChecks = {
+        "thread-pending": {
+          aggregate: "passing",
+          runs: [
+            {
+              name: "build",
+              status: "completed",
+              conclusion: "success",
+            },
+          ],
+        },
+      };
+      installWorkspaceMock();
+
+      render(<ProjectTree />);
+
+      const blob = screen.getByLabelText(label);
+      expect(blob).toBeVisible();
+      expect(blob.className).toContain(tone);
+      expect(blob.parentElement).toHaveClass("inline-flex");
+    },
+  );
+
+  it("keeps update time out of the thread row and shows it in hover details", async () => {
+    const updatedAt = "2026-08-12T07:15:00.000Z";
+    setupStoreMocks({
+      thread: makeThread({
+        id: "thread-updated",
+        title: "Updated Thread",
+        updated_at: updatedAt,
+      }),
+    });
+    render(<ProjectTree />);
+
+    const row = screen.getByRole("button", {
+      name: /^Provider, Claude Updated Thread/i,
+    });
+    const compactTime = new Intl.DateTimeFormat(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(new Date(updatedAt));
+
+    expect(row).not.toHaveTextContent(/\b(?:now|\d+[mhd]|\d+mo)\b/);
+    row.focus();
+    expect(
+      await screen.findByTestId("thread-preview-thread-updated"),
+    ).toHaveTextContent(`Updated ${compactTime}`);
   });
 
   it("disables completion while running or waiting for permission", () => {
