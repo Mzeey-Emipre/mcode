@@ -1856,7 +1856,7 @@ const ProjectNode = memo(function ProjectNode({
                       className="transition-opacity duration-150 group-hover/ws:opacity-0 group-focus-within/ws:opacity-0 motion-reduce:transition-none"
                       aria-hidden
                     />
-                    <FolderOpen
+                    <Folder
                       size={14}
                       className="absolute opacity-0 transition-opacity duration-150 group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 motion-reduce:transition-none"
                       aria-hidden
@@ -1864,7 +1864,7 @@ const ProjectNode = memo(function ProjectNode({
                   </>
                 ) : (
                   <>
-                    <FolderOpen
+                    <Folder
                       size={14}
                       className="transition-opacity duration-150 group-hover/ws:opacity-0 group-focus-within/ws:opacity-0 motion-reduce:transition-none"
                       aria-hidden

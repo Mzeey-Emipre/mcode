@@ -323,6 +323,9 @@ describe("ProjectTree thread interactions", () => {
     });
     expect(viewSwitch).toHaveAttribute("aria-pressed", "false");
     expect(viewSwitch).toHaveAttribute("data-view", "active");
+    expect(viewSwitch.querySelector(".lucide-folder")).not.toBeNull();
+    expect(viewSwitch.querySelector(".lucide-folder-open")).toBeNull();
+    expect(viewSwitch.querySelector(".lucide-folder-check")).not.toBeNull();
     viewSwitch.focus();
     expect(viewSwitch).toHaveFocus();
     fireEvent.click(viewSwitch);
@@ -333,9 +336,13 @@ describe("ProjectTree thread interactions", () => {
     fireEvent.click(action);
 
     expect(reopenThread).toHaveBeenCalledWith("thread-1");
-    expect(screen.getByRole("button", {
+    const activeViewSwitch = screen.getByRole("button", {
       name: "View 0 active threads for Test Project",
-    })).toBeVisible();
+    });
+    expect(activeViewSwitch).toBeVisible();
+    expect(activeViewSwitch.querySelector(".lucide-folder-check")).not.toBeNull();
+    expect(activeViewSwitch.querySelector(".lucide-folder")).not.toBeNull();
+    expect(activeViewSwitch.querySelector(".lucide-folder-open")).toBeNull();
   });
 
   it("uses the approved completed-row treatment and hover details", async () => {
