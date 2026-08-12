@@ -129,18 +129,6 @@ check(
   `Start the server once (bun run dev:web) or create manually: mkdir -p ${dataDir}`
 );
 
-// 9. git hooks path
-check(
-  'git hooks path configured (.githooks)',
-  () => {
-    const result = execSync('git config core.hooksPath', { cwd: root, stdio: 'pipe' })
-      .toString()
-      .trim();
-    if (result !== '.githooks') throw new Error();
-  },
-  'bun run setup'
-);
-
 // Summary
 console.log(`\n${passed + failed} checks: ${passed} passed, ${failed} failed`);
 if (failed > 0) process.exit(1);

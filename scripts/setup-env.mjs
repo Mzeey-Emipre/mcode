@@ -4,7 +4,6 @@
  * Replaces scripts/setup-env.sh with Node.js so it works on Windows/PowerShell.
  */
 import { existsSync, copyFileSync } from 'node:fs';
-import { execSync } from 'node:child_process';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -36,11 +35,6 @@ step('Create .env from .env.example', () => {
   if (existsSync(envPath)) return 'already exists, skipped';
   copyFileSync(examplePath, envPath);
   return 'created';
-});
-
-step('Configure git hooks path', () => {
-  execSync('git config core.hooksPath .githooks', { cwd: root, stdio: 'pipe' });
-  return '.githooks';
 });
 
 console.log('\nSetup complete. Next steps:');
