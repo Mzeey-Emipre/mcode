@@ -281,6 +281,13 @@
       "when": 1786503200176,
       "tag": "0038_curved_marvex",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "6",
+      "when": 1786526941663,
+      "tag": "0039_fantastic_loners",
+      "breakpoints": true
     }
   ]
 }

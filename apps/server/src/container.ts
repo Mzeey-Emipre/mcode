@@ -61,6 +61,7 @@ import { LegacyTerminalBackend } from "./terminal/legacy/legacy-terminal-backend
 import { TerminalService as LegacyTerminalService } from "./terminal/legacy/terminal-service.js";
 import { TerminalProfileService } from "./terminal/profiles/terminal-profile-service.js";
 import { WorkspaceTerminalPreferencesService } from "./terminal/preferences/workspace-terminal-preferences-service.js";
+import { PtyHostCleanupLedger } from "./terminal/cleanup/terminal-cleanup-ledger.js";
 import { AttachmentService } from "./services/attachment-service";
 import { HandoffStorage } from "./services/handoff/handoff-storage.js";
 import { HandoffPipelineService } from "./services/handoff/handoff-pipeline.js";
@@ -154,6 +155,9 @@ export function setupContainer(mcodeDir: string): typeof container {
   // Database
   const db = openDatabase();
   container.register("Database", { useValue: db });
+  container.register(PtyHostCleanupLedger, {
+    useValue: new PtyHostCleanupLedger(db),
+  });
 
   // Repositories (Singleton)
   container.register(

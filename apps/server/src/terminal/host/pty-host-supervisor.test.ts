@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import { describe, expect, it, vi } from "vitest";
+import { InMemoryPtyHostCleanupLedger } from "../testing/in-memory-pty-host-cleanup-ledger.js";
 import type {
   PtyHostEvent,
   PtyHostServerMessage,
@@ -102,12 +103,15 @@ describe("PtyHostSupervisor", () => {
     const children: FakeHostChild[] = [];
     const supervisor = new PtyHostSupervisor({
       platform: "windows",
+      cleanupLedger: new InMemoryPtyHostCleanupLedger(),
       spawnHost: () => {
         const child = new FakeHostChild();
         children.push(child);
         return child;
       },
     });
+    const events: PtyHostEvent[] = [];
+    supervisor.subscribe((event) => events.push(event));
 
     await expect(supervisor.start()).resolves.toEqual({
       hostGeneration: "1",
@@ -116,6 +120,14 @@ describe("PtyHostSupervisor", () => {
     expect(children).toHaveLength(1);
 
     children[0]!.crash();
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        kind: "failure",
+        hostGeneration: "1",
+        code: "HOST_UNHEALTHY",
+        recoverable: true,
+      }),
+    );
     await vi.advanceTimersByTimeAsync(250);
     expect(children[0]!.disposeContainment).toHaveBeenCalledOnce();
     await expect(supervisor.whenHealthy()).resolves.toEqual({
@@ -140,6 +152,7 @@ describe("PtyHostSupervisor", () => {
     const children: FakeHostChild[] = [];
     const supervisor = new PtyHostSupervisor({
       platform: "windows",
+      cleanupLedger: new InMemoryPtyHostCleanupLedger(),
       spawnHost: () => {
         const child = new FakeHostChild();
         children.push(child);
@@ -169,6 +182,7 @@ describe("PtyHostSupervisor", () => {
     const child = new FakeHostChild();
     const supervisor = new PtyHostSupervisor({
       platform: "windows",
+      cleanupLedger: new InMemoryPtyHostCleanupLedger(),
       spawnHost: () => child,
     });
     await supervisor.start();
@@ -224,6 +238,7 @@ describe("PtyHostSupervisor", () => {
     Object.defineProperty(child, "connected", { value: false });
     const supervisor = new PtyHostSupervisor({
       platform: "windows",
+      cleanupLedger: new InMemoryPtyHostCleanupLedger(),
       spawnHost: () => child,
     });
 
@@ -238,6 +253,7 @@ describe("PtyHostSupervisor", () => {
     child.respondToInspection = false;
     const supervisor = new PtyHostSupervisor({
       platform: "windows",
+      cleanupLedger: new InMemoryPtyHostCleanupLedger(),
       spawnHost: () => child,
     });
     await supervisor.start();
@@ -277,6 +293,7 @@ describe("PtyHostSupervisor", () => {
     });
     const supervisor = new PtyHostSupervisor({
       platform: "windows",
+      cleanupLedger: new InMemoryPtyHostCleanupLedger(),
       spawnHost: () => {
         const child = new FakeHostChild();
         children.push(child);
@@ -303,7 +320,72 @@ describe("PtyHostSupervisor", () => {
     expect(reapProcessTree).toHaveBeenCalledOnce();
     expect(children).toHaveLength(1);
     expect(supervisor.health().state).toBe("unhealthy");
-    await supervisor.shutdown();
+    await expect(supervisor.shutdown()).rejects.toThrow(
+      "PTY host shutdown cleanup failed",
+    );
+    expect(reapProcessTree).toHaveBeenCalledTimes(2);
     vi.useRealTimers();
+  });
+
+  it("reaps durable records before it starts a new host generation", async () => {
+    const ledger = new InMemoryPtyHostCleanupLedger();
+    ledger.record({
+      sessionId: UUID,
+      hostGeneration: "7",
+      rootPid: 123,
+      processGroupId: "job-123",
+      containment: "job-object",
+    });
+    const order: string[] = [];
+    const supervisor = new PtyHostSupervisor({
+      platform: "windows",
+      cleanupLedger: ledger,
+      reapProcessTree: vi.fn(async () => {
+        order.push("reap");
+      }),
+      spawnHost: () => {
+        order.push("spawn");
+        return new FakeHostChild();
+      },
+    });
+
+    await expect(supervisor.start()).resolves.toMatchObject({
+      hostGeneration: "1",
+      state: "healthy",
+    });
+    expect(order).toEqual(["reap", "spawn"]);
+    expect(ledger.list()).toEqual([]);
+    await supervisor.shutdown();
+  });
+
+  it("reaps sessions that do not confirm exit before host shutdown", async () => {
+    const ledger = new InMemoryPtyHostCleanupLedger();
+    const child = new FakeHostChild();
+    const reapProcessTree = vi.fn(async () => undefined);
+    const supervisor = new PtyHostSupervisor({
+      platform: "windows",
+      cleanupLedger: ledger,
+      reapProcessTree,
+      spawnHost: () => child,
+    });
+    await supervisor.start();
+    const creating = supervisor.create(createRequest);
+    child.emitMessage({
+      contractVersion: 1,
+      kind: "running",
+      sessionId: UUID,
+      hostGeneration: "1",
+      rootPid: 123,
+      processGroupId: "job-123",
+      containment: "job-object",
+    });
+    await creating;
+
+    await supervisor.shutdown();
+
+    expect(reapProcessTree).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: UUID, hostGeneration: "1" }),
+    );
+    expect(ledger.list()).toEqual([]);
   });
 });

@@ -3,9 +3,10 @@ import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import { killProcessTree } from "../../services/process-kill.js";
 import {
-  PtyHostCleanupLedger,
+  type PtyHostCleanupLedgerStore,
   type PtyHostCleanupRecord,
 } from "../cleanup/terminal-cleanup-ledger.js";
+import { reapPtyHostCleanupRecords } from "../cleanup/reap-orphaned-terminals.js";
 import type {
   PtyHostAdapter,
   PtyHostClose,
@@ -61,7 +62,7 @@ export interface PtyHostSupervisorOptions {
   readonly replacementDelayMs?: number;
   readonly heartbeatDegradedMs?: number;
   readonly heartbeatUnhealthyMs?: number;
-  readonly cleanupLedger?: PtyHostCleanupLedger;
+  readonly cleanupLedger: PtyHostCleanupLedgerStore;
   readonly reapProcessTree?: (record: PtyHostCleanupRecord) => Promise<void>;
   readonly operationTimeoutMs?: number;
   readonly shutdownTimeoutMs?: number;
@@ -109,7 +110,7 @@ export class PtyHostSupervisor implements PtyHostAdapter {
   private readonly pendingCreates = new Map<string, PendingCreate>();
   private readonly pendingCloses = new Map<string, PendingClose>();
   private readonly pendingInspections = new Map<string, PendingInspection>();
-  private readonly cleanupLedger: PtyHostCleanupLedger;
+  private readonly cleanupLedger: PtyHostCleanupLedgerStore;
 
   constructor(private readonly options: PtyHostSupervisorOptions) {
     const degradedMs = options.heartbeatDegradedMs ?? HEARTBEAT_DEGRADED_MS;
@@ -117,7 +118,7 @@ export class PtyHostSupervisor implements PtyHostAdapter {
     if (degradedMs < 1 || unhealthyMs <= degradedMs) {
       throw new Error("PTY host heartbeat bounds are invalid");
     }
-    this.cleanupLedger = options.cleanupLedger ?? new PtyHostCleanupLedger();
+    this.cleanupLedger = options.cleanupLedger;
   }
 
   /** Starts the initial PTY host generation. */
@@ -125,7 +126,8 @@ export class PtyHostSupervisor implements PtyHostAdapter {
     if (this.startPromise) return this.startPromise;
     if (this.state !== "stopped")
       throw new Error("PTY host is already started");
-    this.startPromise = this.spawnGeneration();
+    this.state = "starting";
+    this.startPromise = this.startAfterOrphanRecovery();
     return this.startPromise;
   }
 
@@ -327,6 +329,10 @@ export class PtyHostSupervisor implements PtyHostAdapter {
     this.resolveStart = null;
     this.rejectStart = null;
     this.rejectPending(new Error("PTY host stopped"));
+    const failures = await this.reapCleanupRecords(this.cleanupLedger.list());
+    if (failures.length > 0) {
+      throw new AggregateError(failures, "PTY host shutdown cleanup failed");
+    }
   }
 
   /** Subscribes to validated events from every supervised generation. */
@@ -355,7 +361,6 @@ export class PtyHostSupervisor implements PtyHostAdapter {
       this.resolveStart = resolve;
       this.rejectStart = reject;
     });
-    this.startPromise = promise;
     this.startupTimer = setTimeout(() => {
       this.handleHostFailure(
         child,
@@ -409,6 +414,7 @@ export class PtyHostSupervisor implements PtyHostAdapter {
           hostGeneration: event.hostGeneration,
           rootPid: event.rootPid,
           processGroupId: event.processGroupId,
+          containment: event.containment,
         });
       } catch (error) {
         this.handleHostFailure(
@@ -428,7 +434,7 @@ export class PtyHostSupervisor implements PtyHostAdapter {
       this.pendingCreates.delete(event.sessionId);
     }
     if (event.kind === "exit") {
-      this.cleanupLedger.remove(event.sessionId);
+      this.cleanupLedger.remove(event.sessionId, event.hostGeneration);
       const pendingInspection = this.pendingInspections.get(event.sessionId);
       if (pendingInspection) {
         clearTimeout(pendingInspection.timer);
@@ -455,7 +461,7 @@ export class PtyHostSupervisor implements PtyHostAdapter {
       }
     }
     if (event.kind === "failure") this.rejectPending(new Error(event.code));
-    for (const listener of this.listeners) listener(event);
+    this.publish(event);
     if (
       this.readyObserved &&
       this.heartbeatObserved &&
@@ -485,21 +491,23 @@ export class PtyHostSupervisor implements PtyHostAdapter {
     this.resolveStart = null;
     this.startPromise = null;
     this.state = "unhealthy";
+    this.publish({
+      contractVersion: 1,
+      kind: "failure",
+      hostGeneration: this.generation.toString(),
+      boundary: "shutdown",
+      recoverable: canReplace && !this.replacementUsed,
+      code: "HOST_UNHEALTHY",
+    });
     this.rejectPending(error);
     if (!canReplace || this.replacementUsed) return;
     this.replacementUsed = true;
     const failedGeneration = this.generation.toString();
     const records = this.cleanupLedger.forGeneration(failedGeneration);
-    const reap =
-      this.options.reapProcessTree ??
-      ((record: PtyHostCleanupRecord) => this.reapProcessTree(record));
     setTimeout(async () => {
       if (this.stopping || this.child) return;
-      const results = await Promise.allSettled(
-        records.map((record) => reap(record)),
-      );
-      if (results.some((result) => result.status === "rejected")) return;
-      this.cleanupLedger.removeGeneration(failedGeneration);
+      const failures = await this.reapCleanupRecords(records);
+      if (failures.length > 0) return;
       this.startPromise = this.spawnGeneration();
       void this.startPromise.catch(() => undefined);
     }, this.options.replacementDelayMs ?? REPLACEMENT_DELAY_MS);
@@ -557,11 +565,20 @@ export class PtyHostSupervisor implements PtyHostAdapter {
     record: PtyHostCleanupRecord,
   ): Promise<void> {
     if (this.options.platform !== "windows") {
+      if (record.containment !== "process-group") {
+        throw new Error("POSIX PTY cleanup record has invalid containment");
+      }
       await reapPosixProcessSession(
         record.rootPid,
         record.processGroupId,
       );
       return;
+    }
+    if (
+      record.containment !== "job-object" ||
+      record.processGroupId !== `job-${record.rootPid}`
+    ) {
+      throw new Error("Windows PTY cleanup record has invalid containment");
     }
     const deadline = Date.now() + CONTAINMENT_SETTLE_TIMEOUT_MS;
     while (Date.now() < deadline) {
@@ -571,6 +588,36 @@ export class PtyHostSupervisor implements PtyHostAdapter {
     if (this.isProcessAlive(record.rootPid)) {
       await killProcessTree(record.rootPid);
     }
+  }
+
+  private async startAfterOrphanRecovery(): Promise<PtyHostHealth> {
+    const records = this.cleanupLedger.list();
+    const failures = await this.reapCleanupRecords(records);
+    if (failures.length > 0) {
+      this.state = "unhealthy";
+      throw new AggregateError(
+        failures,
+        "PTY host startup orphan cleanup failed",
+      );
+    }
+    if (this.stopping) {
+      this.state = "stopped";
+      throw new Error("PTY host stopped during startup cleanup");
+    }
+    return this.spawnGeneration();
+  }
+
+  private reapCleanupRecords(
+    records: readonly PtyHostCleanupRecord[],
+  ): Promise<unknown[]> {
+    const reap =
+      this.options.reapProcessTree ??
+      ((record: PtyHostCleanupRecord) => this.reapProcessTree(record));
+    return reapPtyHostCleanupRecords(
+      this.cleanupLedger,
+      records,
+      reap,
+    );
   }
 
   private isProcessAlive(pid: number): boolean {
@@ -626,5 +673,9 @@ export class PtyHostSupervisor implements PtyHostAdapter {
     if (!this.heartbeatTimer) return;
     clearTimeout(this.heartbeatTimer);
     this.heartbeatTimer = null;
+  }
+
+  private publish(event: PtyHostEvent): void {
+    for (const listener of this.listeners) listener(event);
   }
 }
