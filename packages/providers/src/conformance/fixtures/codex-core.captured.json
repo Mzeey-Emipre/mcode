@@ -1,0 +1,19 @@
+{
+  "contractVersion": 1,
+  "providerId": "codex",
+  "cliVersion": "0.130.0",
+  "protocolVersion": "app-server-json-rpc-2.0",
+  "provenance": "captured",
+  "requiredProfiles": ["core"],
+  "scenario": "captured core lifecycle structure",
+  "sourceHash": "4b269acc63764f8f2b2582c1f941073dd2acbd0ef3a299ccf85bda7cb627035c",
+  "redaction": { "reviewed": true, "removedFields": ["prompt", "response", "environment", "tool output", "absolute paths"] },
+  "input": {
+    "events": [
+      { "kind": "session", "sequence": 1, "nativeId": "SESSION_1", "status": "started" },
+      { "kind": "turn", "sequence": 2, "nativeId": "TURN_1", "status": "started" },
+      { "kind": "terminal", "sequence": 3, "nativeId": "TURN_1", "status": "completed" }
+    ]
+  },
+  "expected": { "orderedKinds": ["session", "turn", "terminal"], "terminal": "completed", "toolPairs": [] }
+}

@@ -66,3 +66,5 @@ docs/superpowers/
 
 # Logs
 *.log
+# Raw Provider captures can contain prompts, responses, credentials, and local paths.
+packages/providers/.conformance-raw/

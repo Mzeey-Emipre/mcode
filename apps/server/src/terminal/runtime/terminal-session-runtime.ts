@@ -635,7 +635,11 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
       return;
     }
     if (event.kind === "output") {
-      if (record.state !== "running" && record.state !== "exiting") return;
+      if (
+        record.state !== "starting" &&
+        record.state !== "running" &&
+        record.state !== "exiting"
+      ) return;
       const sequence = BigInt(event.outputSeq);
       try {
         record.replay.append(sequence, Buffer.from(event.dataBase64, "base64"));

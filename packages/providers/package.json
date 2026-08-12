@@ -5,9 +5,11 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./conformance": "./src/conformance/index.ts",
     "./server-compat/session-runtime": "./src/server-compat/session-runtime.ts"
   },
   "scripts": {
+    "conformance:sanitize": "bun src/conformance/sanitize-cli.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },

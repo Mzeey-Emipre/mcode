@@ -54,6 +54,7 @@ class ManualPtyHostAdapter implements PtyHostAdapter {
   readonly closes: PtyHostClose[] = [];
   private readonly listeners = new Set<(event: PtyHostEvent) => void>();
   createFailure: Error | null = null;
+  createAction: ((input: PtyHostCreate) => Promise<void> | void) | null = null;
   closeAction: ((input: PtyHostClose) => Promise<void> | void) | null = null;
 
   async start(): Promise<PtyHostHealth> {
@@ -63,6 +64,7 @@ class ManualPtyHostAdapter implements PtyHostAdapter {
   async create(input: PtyHostCreate): Promise<PtyHostRunning> {
     this.creates.push(input);
     if (this.createFailure) throw this.createFailure;
+    await this.createAction?.(input);
     return {
       sessionId: input.sessionId,
       hostGeneration: input.hostGeneration,
@@ -193,6 +195,45 @@ describe("ModernTerminalSessionRuntime", () => {
     });
 
     expect(runtime.getSnapshot(SESSION_ID)).toBeNull();
+  });
+
+  it("retains output emitted while host creation is resolving", async () => {
+    const { host, runtime } = setup();
+    host.createAction = () => {
+      host.emit({
+        contractVersion: 1,
+        kind: "output",
+        sessionId: SESSION_ID,
+        hostGeneration: "7",
+        outputSeq: "1",
+        dataBase64: Buffer.from("initial output").toString("base64"),
+      });
+    };
+
+    const created = await createRunningSession(runtime);
+
+    expect(created.lastOutputSeq).toBe("1");
+    const descriptor = await runtime.attach({
+      sessionId: SESSION_ID,
+      attachmentId: ATTACHMENT_ID,
+      hostGeneration: "7",
+      lastOutputSeq: "0",
+      lastCommandSeq: "0",
+      checkpointSeq: null,
+    });
+    const hydration = runtime.consumeHydration({
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      attachmentEpoch: descriptor.attachmentEpoch,
+      hydrationId: descriptor.hydrationId,
+    });
+
+    expect(hydration.output).toEqual([
+      {
+        outputSeq: "1",
+        data: Uint8Array.from(Buffer.from("initial output")),
+      },
+    ]);
   });
 
   it("maps malformed create input to the closed protocol failure", async () => {
