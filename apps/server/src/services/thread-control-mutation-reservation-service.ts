@@ -7,7 +7,8 @@ export type ThreadMutationReservationState =
   | "activeTurn"
   | "stopping"
   | "completing"
-  | "reopening";
+  | "reopening"
+  | "cleaning";
 
 interface Reservation {
   token: string;

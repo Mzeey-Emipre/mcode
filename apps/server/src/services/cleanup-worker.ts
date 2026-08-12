@@ -22,6 +22,7 @@ import { WorkspaceRepo } from "../repositories/workspace-repo.js";
 import { broadcast } from "../transport/push.js";
 import { HandoffStorage } from "./handoff/handoff-storage.js";
 import { pruneStaleToolOutputArtifacts } from "./bounded-tool-output.js";
+import { ThreadControlMutationReservationService } from "./thread-control-mutation-reservation-service.js";
 
 /** How often to check for due cleanup jobs (ms). */
 const POLL_INTERVAL_MS = 5_000;
@@ -50,6 +51,7 @@ export class CleanupWorker {
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private running = false;
   private stopped = false;
+  private readonly mutationReservations: ThreadControlMutationReservationService;
 
   constructor(
     @inject("Database") private readonly db: Database.Database,
@@ -61,7 +63,12 @@ export class CleanupWorker {
     @inject(WorkspaceRepo) private readonly workspaceRepo: WorkspaceRepo,
     @inject(AttachmentService) private readonly attachmentService: AttachmentService,
     @inject(HandoffStorage) private readonly handoffStorage: HandoffStorage,
-  ) {}
+    @inject(ThreadControlMutationReservationService, { isOptional: true })
+    mutationReservations?: ThreadControlMutationReservationService,
+  ) {
+    this.mutationReservations = mutationReservations
+      ?? new ThreadControlMutationReservationService();
+  }
 
   /**
    * Start the worker and begin polling for due jobs.
@@ -130,6 +137,11 @@ export class CleanupWorker {
       attempt: job.attempts + 1,
     });
 
+    const mutationToken = job.kind === "retention"
+      ? this.mutationReservations.reserve(job.thread_id, "cleaning")
+      : null;
+    if (job.kind === "retention" && !mutationToken) return;
+
     try {
       const retentionThread = job.kind === "retention"
         ? this.threadRepo.claimRetentionCleanup(job.thread_id, new Date().toISOString())
@@ -142,7 +154,7 @@ export class CleanupWorker {
         return;
       }
       if (job.kind === "retention" && !job.worktree_path) {
-        await this.completeRetentionCleanup(job);
+        await this.completeCleanupWithoutWorktree(job);
         return;
       }
       if (!job.worktree_path) {
@@ -334,11 +346,9 @@ export class CleanupWorker {
           : this.threadRepo.retryRetentionCleanup(job.thread_id, reason);
         if (thread) broadcast("thread.lifecycleChanged", { thread });
       }
+    } finally {
+      if (mutationToken) this.mutationReservations.release(job.thread_id, mutationToken);
     }
-  }
-
-  private async completeRetentionCleanup(job: CleanupJob): Promise<void> {
-    await this.completeCleanupWithoutWorktree(job);
   }
 
   private async completeCleanupWithoutWorktree(job: CleanupJob): Promise<void> {
@@ -354,8 +364,10 @@ export class CleanupWorker {
   }
 
   private blockRetentionCleanup(job: CleanupJob, reason: string): void {
-    this.cleanupJobRepo.delete(job.id);
-    const thread = this.threadRepo.blockRetentionCleanup(job.thread_id, reason);
+    const thread = this.db.transaction(() => {
+      this.cleanupJobRepo.delete(job.id);
+      return this.threadRepo.blockRetentionCleanup(job.thread_id, reason);
+    })();
     if (thread) broadcast("thread.lifecycleChanged", { thread });
   }
 

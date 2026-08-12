@@ -302,7 +302,7 @@ describe("ProjectTree thread interactions", () => {
     setupStoreMocks({ completeThread });
 
     render(<ProjectTree />);
-    const action = screen.getByRole("button", { name: "Complete thread" });
+    const action = screen.getByRole("button", { name: "Complete My Thread" });
     expect(action).toHaveClass(
       "opacity-0",
       "group-hover/row:opacity-100",
@@ -336,7 +336,7 @@ describe("ProjectTree thread interactions", () => {
     expect(viewSwitch).toHaveFocus();
     fireEvent.click(viewSwitch);
 
-    const action = screen.getByRole("button", { name: "Undo completion" });
+    const action = screen.getByRole("button", { name: "Reopen My Thread" });
     action.focus();
     expect(action).toHaveFocus();
     fireEvent.click(action);
@@ -360,8 +360,8 @@ describe("ProjectTree thread interactions", () => {
     setupStoreMocks({ threads: [activeThread, completedThread] });
 
     const firstRender = render(<ProjectTree />);
-    expect(screen.getByRole("button", { name: /Active work/i })).toBeVisible();
-    expect(screen.queryByRole("button", { name: /Completed work/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /^Provider, Claude Active work/i })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /^Provider, Claude Completed work/i })).toBeNull();
     expect(
       screen.getByRole("group", {
         name: "Test Project project, active view, 1 active thread, 1 completed thread",
@@ -373,12 +373,12 @@ describe("ProjectTree thread interactions", () => {
         name: "View 1 completed thread for Test Project",
       }),
     );
-    expect(screen.queryByRole("button", { name: /Active work/i })).toBeNull();
-    expect(screen.getByRole("button", { name: /Completed work/i })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /^Provider, Claude Active work/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /^Provider, Claude Completed work/i })).toBeVisible();
 
     firstRender.unmount();
     render(<ProjectTree />);
-    expect(screen.getByRole("button", { name: /Completed work/i })).toBeVisible();
+    expect(screen.getByRole("button", { name: /^Provider, Claude Completed work/i })).toBeVisible();
     expect(useUiStore.getState().projectThreadViews).toEqual({
       "ws-1": "completed",
     });
@@ -424,7 +424,7 @@ describe("ProjectTree thread interactions", () => {
     expect(
       screen.getByRole("button", { name: "View 0 completed threads for Second Project" }),
     ).toHaveAttribute("data-view", "active");
-    expect(screen.getByRole("button", { name: /Second active/i })).toBeVisible();
+    expect(screen.getByRole("button", { name: /^Provider, Claude Second active/i })).toBeVisible();
   });
 
   it("uses the approved completed-row treatment and hover details", async () => {
@@ -456,7 +456,7 @@ describe("ProjectTree thread interactions", () => {
     expect(
       screen.getByTestId("thread-pr-indicator-thread-1"),
     ).toHaveClass("grayscale", "opacity-45");
-    screen.getByRole("button", { name: /Completed work/i }).focus();
+    screen.getByRole("button", { name: /^Provider, Claude Completed work/i }).focus();
     const preview = await screen.findByTestId("thread-preview-thread-1");
     expect(preview).toHaveTextContent("Completed");
     const exactDeadline = new Intl.DateTimeFormat(undefined, {
@@ -483,7 +483,7 @@ describe("ProjectTree thread interactions", () => {
         name: "View 1 completed thread for Test Project",
       }),
     );
-    screen.getByRole("button", { name: /Kept work/i }).focus();
+    screen.getByRole("button", { name: /^Provider, Claude Kept work/i }).focus();
 
     expect(await screen.findByTestId("thread-preview-thread-1")).toHaveTextContent(
       "Automatic deletion disabled",
@@ -509,7 +509,7 @@ describe("ProjectTree thread interactions", () => {
         name: "View 1 completed thread for Test Project",
       }),
     );
-    screen.getByRole("button", { name: /Dirty work/i }).focus();
+    screen.getByRole("button", { name: /^Provider, Claude Dirty work/i }).focus();
 
     const preview = await screen.findByTestId("thread-preview-thread-1");
     expect(preview).toHaveTextContent(
@@ -527,12 +527,12 @@ describe("ProjectTree thread interactions", () => {
     setupStoreMocks();
 
     render(<ProjectTree />);
-    expect(screen.getByRole("button", { name: /My Thread/i })).toBeVisible();
+    expect(screen.getByRole("button", { name: /^Provider, Claude My Thread/i })).toBeVisible();
     const projectRow = screen.getByTestId("project-row-ws-1");
     projectRow.focus();
     fireEvent.keyDown(projectRow, { key: " " });
 
-    expect(screen.getByRole("button", { name: /My Thread/i })).toBeVisible();
+    expect(screen.getByRole("button", { name: /^Provider, Claude My Thread/i })).toBeVisible();
     expect(
       screen.getByRole("button", { name: "Toggle threads for Test Project" }),
     ).toHaveAttribute("aria-expanded", "true");
@@ -566,7 +566,7 @@ describe("ProjectTree thread interactions", () => {
 
     render(<ProjectTree />);
 
-    const row = screen.getByRole("button", { name: /My Thread/i });
+    const row = screen.getByRole("button", { name: /^Provider, Claude My Thread/i });
     const provider = screen.getByLabelText("Provider, Claude");
     const leadingIcons = provider.parentElement;
     const leadingIconsWidth = Number.parseFloat(leadingIcons?.style.width ?? "");
@@ -607,7 +607,7 @@ describe("ProjectTree thread interactions", () => {
 
     render(<ProjectTree />);
 
-    const threadButton = screen.getByRole("button", { name: /My Thread/i });
+    const threadButton = screen.getByRole("button", { name: /^Provider, Claude My Thread/i });
     fireEvent.click(threadButton);
 
     // Navigation must fire on the first click — no debounce.
@@ -621,7 +621,7 @@ describe("ProjectTree thread interactions", () => {
 
     render(<ProjectTree />);
 
-    const threadButton = screen.getByRole("button", { name: /My Thread/i });
+    const threadButton = screen.getByRole("button", { name: /^Provider, Claude My Thread/i });
     fireEvent.pointerDown(threadButton);
     expect(prefetchOnPointerDown).toHaveBeenCalledWith("thread-1");
 
@@ -635,7 +635,7 @@ describe("ProjectTree thread interactions", () => {
 
     render(<ProjectTree />);
 
-    const threadButton = screen.getByRole("button", { name: /My Thread/i });
+    const threadButton = screen.getByRole("button", { name: /^Provider, Claude My Thread/i });
 
     // First click navigates immediately.
     fireEvent.click(threadButton);
@@ -659,7 +659,7 @@ describe("ProjectTree thread interactions", () => {
 
     render(<ProjectTree />);
 
-    const threadButton = screen.getByRole("button", { name: /My Thread/i });
+    const threadButton = screen.getByRole("button", { name: /^Provider, Claude My Thread/i });
 
     fireEvent.click(threadButton);
     act(() => {
@@ -678,7 +678,7 @@ describe("ProjectTree thread interactions", () => {
 
     render(<ProjectTree />);
 
-    const threadButton = screen.getByRole("button", { name: /My Thread/i });
+    const threadButton = screen.getByRole("button", { name: /^Provider, Claude My Thread/i });
 
     // Double-click to enter edit mode (first click navigates, second triggers rename).
     fireEvent.click(threadButton);
@@ -704,7 +704,7 @@ describe("ProjectTree thread interactions", () => {
 
     render(<ProjectTree />);
 
-    const threadButton = screen.getByRole("button", { name: /My Thread/i });
+    const threadButton = screen.getByRole("button", { name: /^Provider, Claude My Thread/i });
 
     // Focus and press Enter on the thread row.
     threadButton.focus();
@@ -857,7 +857,7 @@ describe("ProjectTree action-required indicator", () => {
     };
     render(<ProjectTree />);
 
-    expect(screen.getByRole("button", { name: "Complete thread" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Complete My Thread" })).toBeDisabled();
   });
 
   it("renders the ring on the right edge when the thread has a pr_number", () => {
@@ -933,7 +933,7 @@ describe("ProjectTree action-required indicator", () => {
     installWorkspaceMock();
     render(<ProjectTree />);
 
-    const row = screen.getByRole("button", { name: /My Thread/i });
+    const row = screen.getByRole("button", { name: /^Provider, Claude My Thread/i });
     expect(row.className).not.toContain("opacity-[0.72]");
 
     const titleCluster = screen.getByTestId("thread-title").parentElement;
@@ -1002,7 +1002,7 @@ describe("ProjectTree PR-ability gating by mode", () => {
       makeThread({ mode: "worktree", pr_number: 42, pr_status: "open" }),
     );
     const indicator = screen.getByTestId("thread-pr-indicator-thread-1");
-    const row = screen.getByRole("button", { name: /My Thread/i });
+    const row = screen.getByRole("button", { name: /^Provider, Claude My Thread/i });
     const title = screen.getByTestId("thread-title");
     expect(indicator).toHaveAttribute("aria-label", "PR #42, open");
     expect(indicator).toHaveClass("-mt-px");
@@ -1081,7 +1081,7 @@ describe("ProjectTree PR-ability gating by mode", () => {
       }),
     );
 
-    screen.getByRole("button", { name: /Branchless Thread/i }).focus();
+    screen.getByRole("button", { name: /^Provider, Codex Branchless Thread/i }).focus();
 
     const preview = await screen.findByTestId(
       "thread-preview-thread-branchless",

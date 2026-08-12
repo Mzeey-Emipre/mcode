@@ -8,6 +8,7 @@ import { ThreadControlMutationReservationService } from "./thread-control-mutati
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 const OVERDUE_SAFETY_MS = DAY_MS;
+const RETENTION_RECALCULATION_BATCH_SIZE = 100;
 
 function completionFailureMessage(result: PromiseRejectedResult): string {
   return result.reason instanceof Error ? result.reason.message : String(result.reason);
@@ -20,6 +21,7 @@ export class ThreadCompletionService {
   private deadlineChangesListener: ((threads: readonly Thread[]) => void) | null = null;
   private lastRetentionDays: CompletedThreadRetentionDays | undefined;
   private unsubscribeSettings: (() => void) | null = null;
+  private retentionRecalculationGeneration = 0;
 
   constructor(
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
@@ -44,9 +46,14 @@ export class ThreadCompletionService {
         this.lastRetentionDays = nextRetentionDays;
         return;
       }
-      const changed = this.recalculateDeadlines(previousRetentionDays, nextRetentionDays);
       this.lastRetentionDays = nextRetentionDays;
-      if (changed.length > 0) this.deadlineChangesListener?.(changed);
+      const generation = ++this.retentionRecalculationGeneration;
+      this.recalculateDeadlineBatch(
+        previousRetentionDays,
+        nextRetentionDays,
+        null,
+        generation,
+      );
     });
   }
 
@@ -54,6 +61,7 @@ export class ThreadCompletionService {
   stop(): void {
     this.unsubscribeSettings?.();
     this.unsubscribeSettings = null;
+    this.retentionRecalculationGeneration += 1;
   }
 
   /** Register the push publisher for recalculated thread deadlines. */
@@ -123,7 +131,10 @@ export class ThreadCompletionService {
       const reopened = this.threadRepo.reopen(threadId, (this.clock?.() ?? new Date()).toISOString());
       if (!reopened) {
         const current = this.threadRepo.findById(threadId);
-        if (current?.cleanup_state === "running") {
+        if (
+          current?.cleanup_state === "running"
+          || (current?.cleanup_state === "blocked" && this.threadRepo.hasRetentionCleanupJob(threadId))
+        ) {
           throw new Error("Thread cleanup has already started");
         }
         throw new Error(`Thread not found: ${threadId}`);
@@ -146,16 +157,23 @@ export class ThreadCompletionService {
     return settings.thread.completion.retentionDays;
   }
 
-  private recalculateDeadlines(
+  private recalculateDeadlineBatch(
     previousRetentionDays: CompletedThreadRetentionDays,
     nextRetentionDays: CompletedThreadRetentionDays,
-  ): Thread[] {
+    afterId: string | null,
+    generation: number,
+  ): void {
+    if (generation !== this.retentionRecalculationGeneration) return;
     const now = this.clock?.() ?? new Date();
     const nowMs = now.getTime();
     const safetyDeadline = new Date(nowMs + OVERDUE_SAFETY_MS).toISOString();
     const shorter = nextRetentionDays !== null
       && (previousRetentionDays === null || nextRetentionDays < previousRetentionDays);
-    const updates = this.threadRepo.listCompletedRetentionRecords().flatMap((record) => {
+    const records = this.threadRepo.listCompletedRetentionRecords(
+      afterId,
+      RETENTION_RECALCULATION_BATCH_SIZE,
+    );
+    const updates = records.flatMap((record) => {
       const calculatedDeadline = nextRetentionDays === null
         ? null
         : new Date(
@@ -173,6 +191,17 @@ export class ThreadCompletionService {
         ? []
         : [{ ...record, nextScheduledDeletionAt }];
     });
-    return this.threadRepo.updateCompletedThreadDeadlines(updates);
+    const changed = this.threadRepo.updateCompletedThreadDeadlines(updates);
+    if (changed.length > 0) this.deadlineChangesListener?.(changed);
+    if (records.length < RETENTION_RECALCULATION_BATCH_SIZE) return;
+    const nextAfterId = records.at(-1)!.id;
+    setTimeout(() => {
+      this.recalculateDeadlineBatch(
+        previousRetentionDays,
+        nextRetentionDays,
+        nextAfterId,
+        generation,
+      );
+    }, 0);
   }
 }
