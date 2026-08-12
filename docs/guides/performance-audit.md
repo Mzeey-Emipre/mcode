@@ -17,6 +17,35 @@ Use this guide as the source of truth for Mcode budgets and verification.
 5. Make the smallest change that removes the measured cost.
 6. Repeat the same measurement and behavior gates under the same conditions.
 
+### Paired frontend runner
+
+Use the maintained paired runner for chat and panel changes:
+
+```powershell
+bun run perf:frontend -- --sample-count 7 --output .dev/verification/performance/baseline.json
+```
+
+The command starts or reuses the worktree runtime. It runs the same ordered
+workloads in standalone web and Electron. Each workload gets one warmup and the
+same number of recorded samples at a 1440 by 1000 viewport.
+
+The result contains raw samples, summary statistics, source revision, runtime,
+environment, and correctness checks. The command rejects incorrect samples and
+returns a failure when a thread, response, narrative, code block, panel, console,
+or page state is wrong.
+
+Use this sequence for a performance change:
+
+1. Save a baseline result before you edit product code.
+2. Name one measured cause from the baseline or a trace.
+3. Make the smallest reversible change that removes that cause.
+4. Save the candidate result with the same sample count and environment.
+5. Compare accepted raw samples and summary statistics from both files.
+
+Do not compare results when the viewport, fixture order, warmup, sample count,
+source mode, hardware-acceleration state, or device changed. Store task results
+under `.dev/verification/performance/`.
+
 For frontend and Electron work, keep four signals separate:
 
 | Signal | Measures | Does not prove |

@@ -1,0 +1,204 @@
+import { spawn } from "node:child_process";
+import { existsSync, readFileSync, rmSync } from "node:fs";
+import { join, relative, resolve } from "node:path";
+import { agentDown } from "../agent/agent-down.mjs";
+import { readPortsFile } from "../agent/runtime-contract.mjs";
+import { ensurePlaywright } from "../../.codex/skills/electorn-live-testing/scripts/ensure-playwright.mjs";
+import { startElectron } from "../../.codex/skills/electorn-live-testing/scripts/start-electron.mjs";
+import { stopElectron } from "../../.codex/skills/electorn-live-testing/scripts/stop-electron.mjs";
+
+const POLL_INTERVAL_MS = 250;
+
+function readArgument(name) {
+  const index = process.argv.indexOf(name);
+  return index === -1 ? null : process.argv[index + 1] ?? null;
+}
+
+function parseSampleCount() {
+  const value = Number(readArgument("--sample-count") ?? "7");
+  if (!Number.isSafeInteger(value) || value < 3 || value > 20) {
+    throw new Error("--sample-count must be an integer from 3 through 20");
+  }
+  return value;
+}
+
+function resolveOutputFile(repoRoot) {
+  const outputRoot = resolve(repoRoot, ".dev", "verification", "performance");
+  const requested = readArgument("--output");
+  const outputFile = requested
+    ? resolve(repoRoot, requested)
+    : join(outputRoot, "frontend-latest.json");
+  const relativePath = relative(outputRoot, outputFile);
+  if (
+    relativePath.length === 0 ||
+    relativePath.startsWith("..") ||
+    resolve(outputFile) === outputRoot
+  ) {
+    throw new Error("--output must name a file inside .dev/verification/performance");
+  }
+  return outputFile;
+}
+
+function runCommand(command, args, options = {}) {
+  return new Promise((resolveCommand, rejectCommand) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      env: options.env ?? process.env,
+      shell: false,
+      stdio: "inherit",
+      windowsHide: true,
+    });
+    child.once("error", rejectCommand);
+    child.once("exit", (code, signal) => {
+      if (code === 0) {
+        resolveCommand();
+        return;
+      }
+      rejectCommand(
+        new Error(
+          `${command} exited with code ${code ?? "none"} and signal ${signal ?? "none"}`,
+        ),
+      );
+    });
+  });
+}
+
+async function isRuntimeReady(repoRoot) {
+  const ports = readPortsFile(repoRoot);
+  if (!ports) return false;
+  try {
+    if (
+      resolve(ports.worktreeIdentity).toLowerCase() !== repoRoot.toLowerCase() ||
+      !ports.healthUrl.startsWith("http://127.0.0.1:") ||
+      !ports.appUrl.startsWith("http://127.0.0.1:")
+    ) {
+      return false;
+    }
+    const [health, app] = await Promise.all([
+      fetch(ports.healthUrl),
+      fetch(ports.appUrl),
+    ]);
+    return health.ok && app.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function ensureRuntime(repoRoot) {
+  if (await isRuntimeReady(repoRoot)) return false;
+  await runCommand(
+    process.execPath,
+    ["scripts/agent/agent-up.mjs", "--quiet"],
+    {
+      cwd: repoRoot,
+      env: { ...process.env, BUN_BE_BUN: "1" },
+    },
+  );
+  if (!(await isRuntimeReady(repoRoot))) {
+    throw new Error("The worktree runtime did not become ready");
+  }
+  return true;
+}
+
+async function waitForWorker(outputFile, failureFile, sampleCount) {
+  const completionFile = `${outputFile}.complete`;
+  const timeoutMs = 120_000 + sampleCount * 120_000;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (existsSync(failureFile)) {
+      const failure = JSON.parse(readFileSync(failureFile, "utf8"));
+      throw new Error(`Frontend performance worker failed: ${failure.message}`);
+    }
+    if (existsSync(completionFile)) {
+      return JSON.parse(readFileSync(outputFile, "utf8"));
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, POLL_INTERVAL_MS));
+  }
+  throw new Error(`Frontend performance worker exceeded ${timeoutMs} ms`);
+}
+
+function printResult(result, outputFile) {
+  process.stdout.write(`Frontend performance result: ${outputFile}\n`);
+  for (const [runtimeName, runtime] of Object.entries(result.runtimes)) {
+    process.stdout.write(`${runtimeName}: correctness=${runtime.correctness.passed}\n`);
+    for (const workload of result.comparisonContract.workloadOrder) {
+      const metric = runtime.metrics[workload];
+      const median = metric.summary ? `${metric.summary.medianMs.toFixed(1)} ms` : "rejected";
+      process.stdout.write(
+        `  ${workload}: median=${median}, rejected=${metric.correctness.rejectedSamples}\n`,
+      );
+    }
+  }
+}
+
+/** Runs the paired standalone-web and Electron renderer matrix. */
+export async function runFrontendPerformance(repoRoot = process.cwd()) {
+  const root = resolve(repoRoot);
+  const sampleCount = parseSampleCount();
+  const outputFile = resolveOutputFile(root);
+  const completionFile = `${outputFile}.complete`;
+  const failureFile = resolve(
+    root,
+    ".dev",
+    "verification",
+    "performance",
+    "frontend-worker-error.json",
+  );
+  for (const artifact of [outputFile, completionFile, failureFile]) {
+    rmSync(artifact, { force: true });
+  }
+
+  let startedRuntime = false;
+  let startedElectron = false;
+  try {
+    startedRuntime = await ensureRuntime(root);
+    ensurePlaywright(root);
+    await runCommand(
+      process.execPath,
+      ["run", "--cwd", "apps/desktop", "build"],
+      { cwd: root },
+    );
+    const sessionFile = join(root, ".dev", "electron-live-testing.json");
+    const hadElectronSession = existsSync(sessionFile);
+    const electronRecord = await startElectron(root);
+    startedElectron = !hadElectronSession;
+
+    const worker = spawn(
+      electronRecord.executablePath,
+      [
+        join(root, "scripts", "perf", "frontend-performance-worker.mjs"),
+        "--sample-count",
+        String(sampleCount),
+        "--output",
+        outputFile,
+      ],
+      {
+        cwd: root,
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+        shell: false,
+        stdio: "inherit",
+        windowsHide: true,
+      },
+    );
+    const workerLaunchFailure = new Promise((_, rejectWorker) => {
+      worker.once("error", (error) => {
+        rejectWorker(new Error(`Frontend performance worker launch failed: ${error.message}`));
+      });
+    });
+
+    const result = await Promise.race([
+      waitForWorker(outputFile, failureFile, sampleCount),
+      workerLaunchFailure,
+    ]);
+    printResult(result, outputFile);
+    if (!result.correctness.passed) process.exitCode = 1;
+    return result;
+  } finally {
+    if (startedElectron) stopElectron(root);
+    if (startedRuntime) await agentDown(root);
+  }
+}
+
+if (import.meta.main) {
+  await runFrontendPerformance();
+}
