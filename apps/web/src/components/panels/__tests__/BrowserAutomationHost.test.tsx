@@ -1338,6 +1338,53 @@ describe("BrowserAutomationHost", () => {
     view.unmount();
   });
 
+  it("delivers the receipt when a tab lifecycle request removes its target", async () => {
+    const executing = deferred<BrowserAutomationResponse>();
+    const executeTabs = vi.spyOn(BrowserSessionDriver.prototype, "execute").mockReturnValueOnce(executing.promise);
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    const activeDispatch = dispatch(1, 24);
+    activeDispatch.request = {
+      ...activeDispatch.request,
+      operation: "tabs",
+      args: {
+        action: "finalize",
+        observationRef: "observation-1",
+        idempotencyKey: "finalize-1",
+        dispositions: [{ tabId: "tab-1", disposition: "close" }],
+      },
+    };
+    act(() => harness.emit("browserAutomation.request", {
+      hostId,
+      generation: 1,
+      dispatch: activeDispatch,
+    }));
+    await waitFor(() => expect(useBrowserAutomationStore.getState().activeRequests).toHaveLength(1));
+
+    act(() => useBrowserAutomationStore.getState().unregisterTarget("workspace-1", "thread-1", "tab-1"));
+    expect(cancel).not.toHaveBeenCalled();
+    expect(harness.transport.cancelBrowserAutomationRequest).not.toHaveBeenCalled();
+
+    const completedResponse = {
+      contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
+      requestId: activeDispatch.request.requestId,
+      sequence: activeDispatch.request.sequence,
+      ok: true,
+      result: { operation: "tabs", action: "finalize", tabs: [] },
+    } satisfies BrowserAutomationResponse;
+    executing.resolve(completedResponse);
+    await act(async () => executing.promise);
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledWith(
+      hostId,
+      1,
+      completedResponse,
+      activeDispatch.target,
+    ));
+    executeTabs.mockRestore();
+    view.unmount();
+  });
+
   it("interrupts only the exact thread and tab selected by the human", async () => {
     const first = deferred<BrowserAutomationResponse>();
     const second = deferred<BrowserAutomationResponse>();

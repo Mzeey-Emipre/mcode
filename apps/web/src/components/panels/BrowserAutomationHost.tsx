@@ -64,6 +64,11 @@ const viewportCoordinatorDispatches = new WeakMap<object, BrowserAutomationHostD
 
 export { isBrowserAutomationWebRuntimeEnabled } from "./browserAutomationRuntime";
 
+function requestRemovesBrowserTarget(dispatch: BrowserAutomationHostDispatch): boolean {
+  return dispatch.request.operation === "tabs" &&
+    (dispatch.request.args.action === "close" || dispatch.request.args.action === "finalize");
+}
+
 function escapeWebSelector(value: string): string {
   const escape = (globalThis as { CSS?: { escape?: (input: string) => string } }).CSS?.escape;
   return escape ? escape(value) : value.replace(/[^a-zA-Z0-9_-]/g, (character) => `\\${character}`);
@@ -1172,6 +1177,7 @@ export function BrowserAutomationHost() {
       recorderRef.current.disposeTarget(workspaceId, threadId, tabId);
       for (const [key, dispatch] of inFlightRef.current) {
         if (dispatch.scope.workspaceId !== workspaceId || dispatch.target.threadId !== threadId || dispatch.target.tabId !== tabId) continue;
+        if (requestRemovesBrowserTarget(dispatch)) continue;
         cancelHostedRequest(key, dispatch, "host-shutdown");
       }
     }

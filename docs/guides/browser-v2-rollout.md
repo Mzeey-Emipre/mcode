@@ -2,11 +2,11 @@
 
 Browser v2 uses one process-wide rollout decision. A provider cannot select a different Browser command surface.
 
-Development builds and versions that contain `-nightly.` use Browser v2. Stable builds use the legacy MCP tools until the stable promotion gate passes.
+Development, nightly, and stable builds use Browser v2. The legacy MCP tools are deprecated for normal use. Keep the hidden global rollback through one complete stable observation cycle.
 
 ## Evidence
 
-Read `browserAutomation.nightlyEvidence` from `GET /health`. The report contains:
+Read `browserAutomation.nightlyEvidence` from `GET /health`. The field name remains unchanged during the stable observation cycle. The report contains:
 
 - The rollout mode and reason.
 - The unexpected-failure rate.
@@ -34,7 +34,11 @@ Do not use `MCODE_ENABLE_LEGACY_BROWSER_USE_PIPE` for this procedure. That switc
 
 1. Stop Mcode.
 2. Remove `MCODE_BROWSER_V2_LEGACY_ROLLBACK` from the environment.
-3. Start a nightly or development build.
+3. Start Mcode.
 4. Request `GET /health` from the worktree server.
 5. Confirm that `browserAutomation.nightlyEvidence.rollout.mode` is `browser-v2`.
 6. Confirm that each supported provider lists `browser_open`, `browser_inspect`, `browser_act`, and `browser_tabs`.
+
+## Host lifecycle invariant
+
+Closing or finalizing an agent-controlled tab removes the target before the Browser response is delivered. The renderer host must keep that request alive until it reconciles the close and sends the final receipt. Target removal still cancels every operation that did not request the removal.

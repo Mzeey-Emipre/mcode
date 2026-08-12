@@ -1899,6 +1899,54 @@ describe("BrowserAutomationBroker", () => {
     expect(broker.status().assignments).toBe(0);
   });
 
+  it("accepts a successful close response after the target is intentionally removed", async () => {
+    const deliveries: Array<{ channel: string; data: any }> = [];
+    const broker = new BrowserAutomationBroker(options({
+      now: () => 10,
+      send: (_socket, channel, data) => {
+        deliveries.push({ channel, data });
+        return true;
+      },
+    }));
+    const hostSocket = socket("tabs-finalize");
+    const generation = broker.registerHost(hostSocket, {
+      ...registration("tabs-finalize", "workspace-a"),
+      executorDescriptor: { ...registration("tabs-finalize", "workspace-a").executorDescriptor, operations: ["inspect", "tabs"] },
+      capabilities: [{ operation: "tabs", available: true }],
+    }, authorization("tabs-finalize")).generation;
+    broker.updateTargets(hostSocket, "tabs-finalize", generation, [statusTarget("tabs-finalize", generation)]);
+    const scope = { ...claims("thread-a", "workspace-a"), permissionCapability: "interact" as const, allowedOperations: ["tabs" as const] };
+    const pending = broker.execute(scope, {
+      ...request(scope),
+      operation: "tabs" as const,
+      args: {
+        action: "close" as const,
+        tabId: "tab-thread-a",
+        idempotencyKey: "close-key",
+        observationRef: "obs-1",
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const delivery = deliveries.find(({ channel }) => channel === "browserAutomation.request")!;
+
+    broker.updateTargets(hostSocket, "tabs-finalize", generation, []);
+    broker.respond(hostSocket, "tabs-finalize", generation, {
+      contractVersion: 1,
+      requestId: delivery.data.dispatch.request.requestId,
+      sequence: delivery.data.dispatch.request.sequence,
+      ok: true,
+      result: { operation: "tabs", action: "close", tabs: [] },
+    }, delivery.data.dispatch.target);
+
+    await expect(pending).resolves.toMatchObject({ ok: true, result: { action: "close", tabs: [] } });
+    expect(broker.status()).toMatchObject({ pending: 0, assignments: 0 });
+    await expect(broker.execute(scope, {
+      ...request(scope, 2),
+      operation: "tabs" as const,
+      args: { action: "close" as const, tabId: "tab-thread-a", idempotencyKey: "close-again", observationRef: "obs-2" },
+    })).resolves.toMatchObject({ ok: false, error: { code: "TAB_UNAVAILABLE" } });
+  });
+
   it("replays browser_tabs idempotency keys and shares mutation exclusion with browser_act", async () => {
     const deliveries: Array<{ channel: string; data: any }> = [];
     const broker = new BrowserAutomationBroker(options({
