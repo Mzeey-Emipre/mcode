@@ -54,6 +54,7 @@ class ManualPtyHostAdapter implements PtyHostAdapter {
   readonly closes: PtyHostClose[] = [];
   private readonly listeners = new Set<(event: PtyHostEvent) => void>();
   createFailure: Error | null = null;
+  createAction: ((input: PtyHostCreate) => Promise<void> | void) | null = null;
   closeAction: ((input: PtyHostClose) => Promise<void> | void) | null = null;
 
   async start(): Promise<PtyHostHealth> {
@@ -63,6 +64,7 @@ class ManualPtyHostAdapter implements PtyHostAdapter {
   async create(input: PtyHostCreate): Promise<PtyHostRunning> {
     this.creates.push(input);
     if (this.createFailure) throw this.createFailure;
+    await this.createAction?.(input);
     return {
       sessionId: input.sessionId,
       hostGeneration: input.hostGeneration,
@@ -179,6 +181,35 @@ describe("ModernTerminalSessionRuntime", () => {
       lastOutputSeq: "0",
       exit: null,
       tombstone: false,
+    });
+  });
+
+  it("retains output emitted while host creation is still resolving", async () => {
+    const { host, runtime } = setup();
+    host.createAction = (input) => {
+      host.emit({
+        contractVersion: 1,
+        kind: "output",
+        sessionId: input.sessionId,
+        hostGeneration: input.hostGeneration,
+        outputSeq: "1",
+        dataBase64: Buffer.from("initial prompt").toString("base64"),
+      });
+    };
+
+    await createRunningSession(runtime);
+    host.emit({
+      contractVersion: 1,
+      kind: "output",
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      outputSeq: "2",
+      dataBase64: Buffer.from("shell output").toString("base64"),
+    });
+
+    expect(runtime.getSnapshot(SESSION_ID)).toMatchObject({
+      state: "running",
+      lastOutputSeq: "2",
     });
   });
 
