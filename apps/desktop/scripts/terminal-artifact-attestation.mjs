@@ -192,14 +192,24 @@ function expectedNativePaths(packageRoots, targetPlatform, targetArch) {
     `${targetPlatform}_${targetArch}`,
     "koffi.node",
   );
-  const nodePtyRuntime =
-    targetPlatform === "win32"
-      ? [
-          path.join(path.dirname(nodePtyBinding), "conpty", "conpty.dll"),
-          path.join(path.dirname(nodePtyBinding), "conpty", "OpenConsole.exe"),
-        ]
-      : [path.join(path.dirname(nodePtyBinding), "spawn-helper")];
+  const nodePtyRuntime = nodePtyRuntimePaths(
+    nodePtyBinding,
+    targetPlatform,
+  );
   return { nodePtyBinding, koffiBinding, nodePtyRuntime };
+}
+
+function nodePtyRuntimePaths(nodePtyBinding, targetPlatform) {
+  if (targetPlatform === "win32") {
+    return [
+      path.join(path.dirname(nodePtyBinding), "conpty", "conpty.dll"),
+      path.join(path.dirname(nodePtyBinding), "conpty", "OpenConsole.exe"),
+    ];
+  }
+  if (targetPlatform === "darwin") {
+    return [path.join(path.dirname(nodePtyBinding), "spawn-helper")];
+  }
+  return [];
 }
 
 function removeNodeGypToolArtifacts(nodePtyRoot) {
@@ -589,26 +599,10 @@ export function attestPackagedTerminalArtifacts({
     targetArch,
     packageRoots,
   );
-  const nodePtyRuntime =
-    targetPlatform === "win32"
-      ? [
-          path.join(
-            path.dirname(nativeByPackage.get("node-pty")),
-            "conpty",
-            "conpty.dll",
-          ),
-          path.join(
-            path.dirname(nativeByPackage.get("node-pty")),
-            "conpty",
-            "OpenConsole.exe",
-          ),
-        ]
-      : [
-          path.join(
-            path.dirname(nativeByPackage.get("node-pty")),
-            "spawn-helper",
-          ),
-        ];
+  const nodePtyRuntime = nodePtyRuntimePaths(
+    nativeByPackage.get("node-pty"),
+    targetPlatform,
+  );
   const expectedNativePaths = [
     nativeByPackage.get("node-pty"),
     nativeByPackage.get("koffi"),

@@ -29,6 +29,15 @@ function peBinary(machine) {
   return bytes;
 }
 
+function elfBinary(machine) {
+  const bytes = Buffer.alloc(64);
+  bytes.write("\x7fELF", 0, "binary");
+  bytes.writeUInt8(2, 4);
+  bytes.writeUInt8(1, 5);
+  bytes.writeUInt16LE(machine, 18);
+  return bytes;
+}
+
 describe("attestPackagedTerminalArtifacts", () => {
   let resourcesRoot;
   let nodePtyRoot;
@@ -177,6 +186,48 @@ describe("attestPackagedTerminalArtifacts", () => {
     expect(existsSync(koffiBinding)).toBe(true);
     expect(existsSync(foreignBinding)).toBe(false);
     expect(existsSync(foreignKoffi)).toBe(false);
+  });
+
+  it("attests a Linux package without the macOS-only spawn helper", () => {
+    const linuxNodePtyBinding = path.join(
+      nodePtyRoot,
+      "build/Release/pty.node",
+    );
+    const linuxKoffiBinding = path.join(
+      koffiRoot,
+      "build/koffi/linux_x64/koffi.node",
+    );
+    writeFile(linuxNodePtyBinding, elfBinary(62));
+    writeFile(linuxKoffiBinding, elfBinary(62));
+
+    retainTargetTerminalNativeArtifacts({
+      resourcesRoot,
+      targetPlatform: "linux",
+      targetArch: "x64",
+    });
+
+    const report = attestPackagedTerminalArtifacts({
+      resourcesRoot,
+      runtimePath,
+      targetPlatform: "linux",
+      targetArch: "x64",
+      runLoadProbe: () => ({
+        platform: "linux",
+        arch: "x64",
+        modulesAbi: "127",
+        hostReady: true,
+        nativeModules: [
+          { packageName: "node-pty", path: linuxNodePtyBinding },
+          { packageName: "koffi", path: linuxKoffiBinding },
+        ],
+      }),
+    });
+
+    expect(report.artifacts.map((artifact) => artifact.kind)).toEqual([
+      "pty-host",
+      "node-pty",
+      "koffi",
+    ]);
   });
 
   it("retains a valid target prebuild when a stale rebuilt binding is foreign", () => {
