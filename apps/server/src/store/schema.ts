@@ -534,6 +534,43 @@ export const canonicalAgentIngestCheckpoints = sqliteTable(
   (table) => [index("idx_canonical_agent_checkpoints_thread").on(table.threadId, table.updatedAt)],
 );
 
+/** Durable cursor for the bounded legacy parent-conversation migration. */
+export const canonicalLegacyMigrationCheckpoints = sqliteTable(
+  "canonical_legacy_migration_checkpoints",
+  {
+    version: integer("version").primaryKey().notNull(),
+    status: text("status").notNull().default("pending"),
+    migratedMessages: integer("migrated_messages").notNull().default(0),
+    ambiguousMessages: integer("ambiguous_messages").notNull().default(0),
+    updatedAt: text("updated_at").notNull().default(timestampDefault),
+    completedAt: text("completed_at"),
+  },
+);
+
+/** Source-to-canonical provenance for each retained legacy message row. */
+export const canonicalLegacyMessageProvenance = sqliteTable(
+  "canonical_legacy_message_provenance",
+  {
+    messageId: text("message_id")
+      .primaryKey()
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    migrationVersion: integer("migration_version").notNull(),
+    mappingStatus: text("mapping_status").notNull(),
+    canonicalThreadId: text("canonical_thread_id"),
+    canonicalTurnId: text("canonical_turn_id"),
+    canonicalItemId: text("canonical_item_id"),
+    reason: text("reason"),
+    createdAt: text("created_at").notNull().default(timestampDefault),
+  },
+  (table) => [
+    index("idx_canonical_legacy_message_mapping").on(
+      table.mappingStatus,
+      table.messageId,
+    ),
+  ],
+);
+
 /** Persisted AI-generated diff summaries, one per thread. */
 export const diffSummaries = sqliteTable(
   "diff_summaries",

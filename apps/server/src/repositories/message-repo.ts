@@ -139,6 +139,16 @@ function rowToMessage(row: MessageRow): Message {
     quoted_text: row.quoted_text,
     model: row.model,
     is_internal: row.is_internal === 1,
+    ...(row.origin_type === "legacy"
+      ? {
+          legacyProvenance: {
+            source: "messages" as const,
+            migrationVersion: null,
+            mapping: "legacy" as const,
+            reason: "The legacy structure does not prove a canonical turn mapping.",
+          },
+        }
+      : {}),
   };
 
   if (row.tool_call_count && row.tool_call_count > 0) {
