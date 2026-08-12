@@ -15,6 +15,7 @@ import type { GitService } from "../services/git-service";
 import { AttachmentService } from "../services/attachment-service";
 import { killDescendantsByName } from "../services/process-kill";
 import { getMcodeDir } from "@mcode/shared";
+import { ThreadControlMutationReservationService } from "../services/thread-control-mutation-reservation-service";
 
 vi.mock("../services/process-kill.js", () => ({
   killDescendantsByName: vi.fn().mockResolvedValue(undefined),
@@ -42,6 +43,7 @@ describe("CleanupWorker", () => {
   let mockClaudeProvider: ClaudeProvider;
   let mockTerminalService: TerminalService;
   let mockGitService: GitService;
+  let mutationReservations: ThreadControlMutationReservationService;
   let worker: CleanupWorker;
 
   beforeEach(() => {
@@ -50,6 +52,7 @@ describe("CleanupWorker", () => {
     cleanupJobRepo = new CleanupJobRepo(db);
     threadRepo = new ThreadRepo(db);
     workspaceRepo = new WorkspaceRepo(db);
+    mutationReservations = new ThreadControlMutationReservationService();
 
     mockClaudeProvider = {
       waitForSessionExit: vi.fn().mockResolvedValue(undefined),
@@ -90,6 +93,7 @@ describe("CleanupWorker", () => {
       workspaceRepo,
       { removeForThread: vi.fn() } as unknown as AttachmentService,
       { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as unknown as HandoffStorage,
+      mutationReservations,
     );
   });
 
@@ -107,6 +111,50 @@ describe("CleanupWorker", () => {
   }
 
   describe("poll", () => {
+    it("leaves cleanup queued while an active turn owns the thread mutation", async () => {
+      const workspace = workspaceRepo.create("Direct", "/direct-repo");
+      const completedAt = "2026-08-01T00:00:00.000Z";
+      db.prepare(
+        `INSERT INTO threads
+          (id, workspace_id, title, branch, mode, status, worktree_managed,
+           user_completed_at, scheduled_deletion_at, created_at, updated_at)
+         VALUES ('retention-send-race', ?, 'Direct', 'main', 'direct', 'paused', 0, ?, ?, ?, ?)`,
+      ).run(workspace.id, completedAt, completedAt, completedAt, completedAt);
+      const token = mutationReservations.reserve("retention-send-race", "activeTurn");
+
+      await worker.poll();
+
+      expect(threadRepo.findById("retention-send-race")?.cleanup_state).toBe("queued");
+      expect(cleanupJobRepo.findByThreadId("retention-send-race")).not.toBeNull();
+      mutationReservations.release("retention-send-race", token!);
+
+      await worker.poll();
+      expect(threadRepo.findById("retention-send-race")).toBeNull();
+    });
+
+    it("resumes a persisted running cleanup after a worker restart", async () => {
+      const workspace = workspaceRepo.create("Direct", "/direct-repo");
+      const completedAt = "2026-08-01T00:00:00.000Z";
+      db.prepare(
+        `INSERT INTO threads
+          (id, workspace_id, title, branch, mode, status, worktree_managed,
+           user_completed_at, scheduled_deletion_at, cleanup_state, created_at, updated_at)
+         VALUES ('retention-restart', ?, 'Direct', 'main', 'direct', 'paused', 0, ?, ?, 'running', ?, ?)`,
+      ).run(workspace.id, completedAt, completedAt, completedAt, completedAt);
+      cleanupJobRepo.insert({
+        thread_id: "retention-restart",
+        workspace_path: workspace.path,
+        worktree_path: null,
+        branch: "main",
+        kind: "retention",
+      });
+
+      await worker.poll();
+
+      expect(threadRepo.findById("retention-restart")).toBeNull();
+      expect(cleanupJobRepo.findByThreadId("retention-restart")).toBeNull();
+    });
+
     it("deletes an expired completed direct thread without repository cleanup", async () => {
       const workspace = workspaceRepo.create("Direct", "/direct-repo");
       const completedAt = "2026-08-01T00:00:00.000Z";
@@ -334,7 +382,7 @@ describe("CleanupWorker", () => {
       expect(mockGitService.removeWorktree).not.toHaveBeenCalled();
     });
 
-    it("persists retry exhaustion and keeps the completed thread recoverable", async () => {
+    it("blocks reopen after destructive cleanup exhausts its retries", async () => {
       const workspace = workspaceRepo.create("Retry", "/retry-repo");
       const completedAt = "2026-08-01T00:00:00.000Z";
       db.prepare(
@@ -376,6 +424,7 @@ describe("CleanupWorker", () => {
         attempts: MAX_CLEANUP_ATTEMPTS,
         last_error: expect.stringContaining("still exists"),
       });
+      expect(threadRepo.reopen("expired-retry")).toBeNull();
     }, 15_000);
 
     it("runs cleanup steps in correct order: session exit, terminal kill, SDK kill, worktree removal", async () => {

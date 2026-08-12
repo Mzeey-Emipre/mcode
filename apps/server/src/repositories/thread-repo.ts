@@ -401,14 +401,21 @@ export class ThreadRepo {
     return this.findById(id);
   }
 
-  /** List active completed threads for retention-policy calculation. */
-  listCompletedRetentionRecords(): CompletedThreadRetentionRecord[] {
+  /** List one bounded page of completed threads for retention-policy calculation. */
+  listCompletedRetentionRecords(
+    afterId: string | null = null,
+    limit = 100,
+  ): CompletedThreadRetentionRecord[] {
+    const boundedLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
     const rows = this.db.prepare(
       `SELECT id, user_completed_at, scheduled_deletion_at
        FROM threads
-       WHERE user_completed_at IS NOT NULL AND deleted_at IS NULL
-       ORDER BY id`,
-    ).all() as Array<{
+       WHERE user_completed_at IS NOT NULL
+         AND deleted_at IS NULL
+         AND (? IS NULL OR id > ?)
+       ORDER BY id
+       LIMIT ?`,
+    ).all(afterId, afterId, boundedLimit) as Array<{
       id: string;
       user_completed_at: string;
       scheduled_deletion_at: string | null;
@@ -432,7 +439,15 @@ export class ThreadRepo {
          AND user_completed_at = ?
          AND scheduled_deletion_at IS ?
          AND deleted_at IS NULL
-         AND cleanup_state IS NOT 'running'`,
+         AND cleanup_state IS NOT 'running'
+         AND NOT (
+           cleanup_state = 'blocked'
+           AND EXISTS (
+             SELECT 1 FROM cleanup_jobs
+             WHERE cleanup_jobs.thread_id = threads.id
+               AND cleanup_jobs.kind = 'retention'
+           )
+         )`,
     );
     const apply = this.db.transaction(() => {
       const changedIds: string[] = [];
@@ -469,7 +484,15 @@ export class ThreadRepo {
              updated_at = CASE WHEN user_completed_at IS NULL THEN updated_at ELSE ? END
          WHERE id = ?
            AND deleted_at IS NULL
-           AND cleanup_state IS NOT 'running'`,
+           AND cleanup_state IS NOT 'running'
+           AND NOT (
+             cleanup_state = 'blocked'
+             AND EXISTS (
+               SELECT 1 FROM cleanup_jobs
+               WHERE cleanup_jobs.thread_id = threads.id
+                 AND cleanup_jobs.kind = 'retention'
+             )
+           )`,
       ).run(reopenedAt, id);
       if (result.changes === 0) return null;
       this.db.prepare("DELETE FROM cleanup_jobs WHERE thread_id = ? AND kind = 'retention'").run(id);
@@ -487,7 +510,7 @@ export class ThreadRepo {
          AND user_completed_at IS NOT NULL
          AND scheduled_deletion_at IS NOT NULL
          AND scheduled_deletion_at <= ?
-         AND cleanup_state IN ('queued', 'retrying')`,
+         AND cleanup_state IN ('queued', 'retrying', 'running')`,
     ).run(id, nowIso);
     return result.changes > 0 ? this.findById(id) : null;
   }
@@ -515,10 +538,22 @@ export class ThreadRepo {
   retryRetentionCleanup(id: string, reason: string): Thread | null {
     this.db.prepare(
       `UPDATE threads
-       SET cleanup_state = 'retrying', cleanup_reason = ?
+       SET cleanup_state = CASE
+             WHEN cleanup_state = 'running' THEN 'running'
+             ELSE 'retrying'
+           END,
+           cleanup_reason = ?
        WHERE id = ? AND deleted_at IS NULL AND user_completed_at IS NOT NULL`,
     ).run(reason.slice(0, 240), id);
     return this.findById(id);
+  }
+
+  /** Check whether blocked finalization still owns a persisted retention job. */
+  hasRetentionCleanupJob(id: string): boolean {
+    const row = this.db.prepare(
+      "SELECT 1 AS found FROM cleanup_jobs WHERE thread_id = ? AND kind = 'retention' LIMIT 1",
+    ).get(id) as { found: number } | undefined;
+    return row?.found === 1;
   }
 
   /** Set the worktree filesystem path for a thread. Returns true if a row was changed. */

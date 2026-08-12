@@ -112,6 +112,22 @@ describe("ThreadCompletionService", () => {
     expect(changed).toHaveBeenCalledWith([recalculated]);
   });
 
+  it("recalculates large histories in bounded batches", async () => {
+    const updateSpy = vi.spyOn(threadRepo, "updateCompletedThreadDeadlines");
+    const workspaceId = threadRepo.findById(threadId)!.workspace_id;
+    for (let index = 0; index < 101; index += 1) {
+      const id = threadRepo.create(workspaceId, `Completed ${index}`, "direct", "main").id;
+      threadRepo.complete(id, now.toISOString(), "2026-08-15T08:00:00.000Z");
+    }
+
+    applyRetention(10);
+
+    await vi.waitFor(() => {
+      expect(updateSpy).toHaveBeenCalledTimes(2);
+    });
+    expect(updateSpy.mock.calls.every(([updates]) => updates.length <= 100)).toBe(true);
+  });
+
   it("shortens a future deadline from its original completion timestamp", async () => {
     await service.complete(threadId);
 
@@ -284,6 +300,32 @@ describe("ThreadCompletionService", () => {
     expect(threadRepo.findById(threadId)).toMatchObject({
       cleanup_state: "running",
       user_completed_at: expect.any(String),
+    });
+  });
+
+  it("keeps a retry-exhausted destructive cleanup closed", async () => {
+    await service.complete(threadId);
+    db.prepare("UPDATE threads SET cleanup_state = 'blocked' WHERE id = ?").run(threadId);
+    db.prepare(
+      `INSERT INTO cleanup_jobs
+        (id, thread_id, workspace_path, worktree_path, branch, kind, attempts, next_retry_at, created_at)
+       VALUES ('cleanup-blocked', ?, '/repo', NULL, 'main', 'retention', 5, 0, 1)`,
+    ).run(threadId);
+
+    expect(() => service.reopen(threadId)).toThrow("Thread cleanup has already started");
+    expect(threadRepo.findById(threadId)).toMatchObject({
+      cleanup_state: "blocked",
+      user_completed_at: expect.any(String),
+    });
+  });
+
+  it("allows reopen when cleanup is blocked before destructive work starts", async () => {
+    await service.complete(threadId);
+    db.prepare("UPDATE threads SET cleanup_state = 'blocked' WHERE id = ?").run(threadId);
+
+    expect(service.reopen(threadId)).toMatchObject({
+      cleanup_state: null,
+      user_completed_at: null,
     });
   });
 

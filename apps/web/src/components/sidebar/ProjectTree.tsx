@@ -1104,7 +1104,7 @@ const ThreadRow = memo(function ThreadRow({
                 type="button"
                 variant="ghost"
                 size="icon-xs"
-                aria-label={isUserCompleted ? "Undo completion" : "Complete thread"}
+                aria-label={isUserCompleted ? `Reopen ${thread.title}` : `Complete ${thread.title}`}
                 disabled={lifecycleUnavailable}
                 onPointerDown={(event) => event.stopPropagation()}
                 onKeyDown={(event) => event.stopPropagation()}
