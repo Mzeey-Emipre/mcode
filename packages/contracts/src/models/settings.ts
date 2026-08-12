@@ -83,6 +83,11 @@ export const UpdateReleaseLineSchema = z.enum(["stable", "nightly"]);
 /** Desktop auto-update release line value. */
 export type UpdateReleaseLine = z.infer<typeof UpdateReleaseLineSchema>;
 
+/** Days to retain completed threads, or null when automatic deletion is disabled. */
+export const CompletedThreadRetentionDaysSchema = z.number().int().min(1).max(365).nullable();
+/** Completed-thread retention value. */
+export type CompletedThreadRetentionDays = z.infer<typeof CompletedThreadRetentionDaysSchema>;
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -212,6 +217,19 @@ export const SettingsSchema = lazySchema(() =>
       .object({
         /** Whether desktop notifications are enabled. */
         enabled: z.boolean().default(true),
+      })
+      .default({}),
+
+    /** Thread lifecycle settings. */
+    thread: z
+      .object({
+        /** User-completion lifecycle settings. */
+        completion: z
+          .object({
+            /** Days before a completed thread becomes eligible for deletion. */
+            retentionDays: CompletedThreadRetentionDaysSchema.default(3),
+          })
+          .default({}),
       })
       .default({}),
 
@@ -523,6 +541,15 @@ export const PartialSettingsSchema = lazySchema(() =>
     notifications: z
       .object({
         enabled: z.boolean().optional(),
+      })
+      .optional(),
+    thread: z
+      .object({
+        completion: z
+          .object({
+            retentionDays: CompletedThreadRetentionDaysSchema.optional(),
+          })
+          .optional(),
       })
       .optional(),
     worktree: z

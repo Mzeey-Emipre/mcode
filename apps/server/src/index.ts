@@ -377,6 +377,14 @@ const ciWatcherService = new CiWatcherService(githubService, (channel, data) => 
 threadCompletionService.registerResourceOwner("ci-watcher", (threadId) =>
   ciWatcherService.teardownThread(threadId),
 );
+threadCompletionService.onDeadlineChanges((threads) => {
+  for (const thread of threads) {
+    const payload = { thread };
+    broadcast("thread.lifecycleChanged", payload);
+    portPush.send("thread.lifecycleChanged", payload);
+  }
+});
+threadCompletionService.start();
 gitWatcherService.setThreadCheckoutChangedListener((threadId) => {
   ciWatcherService.unwatch(threadId);
 });

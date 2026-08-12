@@ -5,7 +5,9 @@ import { openMemoryDatabase } from "../store/database";
 import { ThreadRepo } from "../repositories/thread-repo";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
 import { MessageRepo } from "../repositories/message-repo";
+import { getDefaultSettings, type CompletedThreadRetentionDays, type Settings } from "@mcode/contracts";
 import type { AgentService } from "../services/agent-service";
+import type { SettingsService } from "../services/settings-service";
 import type { ThreadTeardownService } from "../services/thread-teardown-service";
 import { ThreadControlMutationReservationService } from "../services/thread-control-mutation-reservation-service";
 import { ThreadCompletionService } from "../services/thread-completion-service";
@@ -15,8 +17,12 @@ describe("ThreadCompletionService", () => {
   let threadRepo: ThreadRepo;
   let agentService: AgentService;
   let teardownService: ThreadTeardownService;
+  let settingsService: SettingsService;
   let service: ThreadCompletionService;
   let threadId: string;
+  let now: Date;
+  let settings: Settings;
+  let settingsListener: ((settings: Settings) => void) | null;
 
   beforeEach(() => {
     db = openMemoryDatabase();
@@ -35,14 +41,36 @@ describe("ThreadCompletionService", () => {
     teardownService = {
       teardownThread: vi.fn().mockResolvedValue(undefined),
     } as unknown as ThreadTeardownService;
+    now = new Date("2026-08-12T08:00:00.000Z");
+    settings = getDefaultSettings();
+    settingsListener = null;
+    settingsService = {
+      get: vi.fn(() => settings),
+      on: vi.fn((_event, listener) => {
+        settingsListener = listener;
+        return () => {
+          settingsListener = null;
+        };
+      }),
+    } as unknown as SettingsService;
     service = new ThreadCompletionService(
       threadRepo,
       agentService,
       teardownService,
       new ThreadControlMutationReservationService(),
-      () => new Date("2026-08-12T08:00:00.000Z"),
+      settingsService,
+      () => now,
     );
+    service.start();
   });
+
+  function applyRetention(retentionDays: CompletedThreadRetentionDays): void {
+    settings = {
+      ...settings,
+      thread: { completion: { retentionDays } },
+    };
+    settingsListener?.(settings);
+  }
 
   it("persists completion separately from runtime status and releases resources", async () => {
     const completed = await service.complete(threadId);
@@ -61,6 +89,104 @@ describe("ThreadCompletionService", () => {
     expect(second.user_completed_at).toBe(first.user_completed_at);
     expect(second.scheduled_deletion_at).toBe(first.scheduled_deletion_at);
     expect(teardownService.teardownThread).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables automatic deletion when the setting is Never", async () => {
+    applyRetention(null);
+
+    const completed = await service.complete(threadId);
+
+    expect(completed.scheduled_deletion_at).toBeNull();
+  });
+
+  it("recalculates existing deadlines from their original completion timestamps", async () => {
+    const changed = vi.fn();
+    service.onDeadlineChanges(changed);
+    await service.complete(threadId);
+
+    applyRetention(10);
+
+    const recalculated = threadRepo.findById(threadId);
+    expect(recalculated?.user_completed_at).toBe("2026-08-12T08:00:00.000Z");
+    expect(recalculated?.scheduled_deletion_at).toBe("2026-08-22T08:00:00.000Z");
+    expect(changed).toHaveBeenCalledWith([recalculated]);
+  });
+
+  it("shortens a future deadline from its original completion timestamp", async () => {
+    await service.complete(threadId);
+
+    applyRetention(2);
+
+    expect(threadRepo.findById(threadId)?.scheduled_deletion_at).toBe(
+      "2026-08-14T08:00:00.000Z",
+    );
+  });
+
+  it("cancels every pending deadline without reopening completed threads", async () => {
+    const secondThreadId = threadRepo.create(
+      threadRepo.findById(threadId)!.workspace_id,
+      "Also complete",
+      "direct",
+      "main",
+    ).id;
+    await service.complete(threadId);
+    await service.complete(secondThreadId);
+
+    applyRetention(null);
+
+    expect(threadRepo.findById(threadId)).toMatchObject({
+      user_completed_at: "2026-08-12T08:00:00.000Z",
+      scheduled_deletion_at: null,
+    });
+    expect(threadRepo.findById(secondThreadId)).toMatchObject({
+      user_completed_at: "2026-08-12T08:00:00.000Z",
+      scheduled_deletion_at: null,
+    });
+  });
+
+  it("gives a newly overdue thread 24 hours after retention becomes shorter", async () => {
+    applyRetention(10);
+    now = new Date("2026-08-05T08:00:00.000Z");
+    await service.complete(threadId);
+    now = new Date("2026-08-12T08:00:00.000Z");
+
+    applyRetention(3);
+
+    expect(threadRepo.findById(threadId)?.scheduled_deletion_at).toBe(
+      "2026-08-13T08:00:00.000Z",
+    );
+  });
+
+  it("does not move deadlines when the same setting is applied again", async () => {
+    const changed = vi.fn();
+    service.onDeadlineChanges(changed);
+    await service.complete(threadId);
+
+    applyRetention(3);
+
+    expect(threadRepo.findById(threadId)?.scheduled_deletion_at).toBe(
+      "2026-08-15T08:00:00.000Z",
+    );
+    expect(changed).not.toHaveBeenCalled();
+  });
+
+  it("keeps recalculated deadlines after the service restarts", async () => {
+    await service.complete(threadId);
+    applyRetention(10);
+    service.stop();
+    const persistedDeadline = threadRepo.findById(threadId)?.scheduled_deletion_at;
+    const restarted = new ThreadCompletionService(
+      threadRepo,
+      agentService,
+      teardownService,
+      new ThreadControlMutationReservationService(),
+      settingsService,
+      () => new Date("2026-08-20T08:00:00.000Z"),
+    );
+
+    restarted.start();
+
+    expect(threadRepo.findById(threadId)?.scheduled_deletion_at).toBe(persistedDeadline);
   });
 
   it("keeps the thread active when runtime resource release fails", async () => {

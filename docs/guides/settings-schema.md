@@ -166,6 +166,11 @@ When adding a new setting, ask these questions in order:
   "notifications": {
     "enabled": true
   },
+  "thread": {
+    "completion": {
+      "retentionDays": 3              // 1-365, null disables automatic deletion
+    }
+  },
   "worktree": {},                      // Legacy worktree.naming.* values are tolerated on load only
   "server": {
     "memory": {

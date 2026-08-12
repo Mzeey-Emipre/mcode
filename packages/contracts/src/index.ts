@@ -334,6 +334,7 @@ export {
   NamingModeSchema,
   UpdateCheckIntervalSchema,
   UpdateReleaseLineSchema,
+  CompletedThreadRetentionDaysSchema,
   GRACE_PERIOD_DEFAULT_SECONDS,
   SERVER_HEAP_DEFAULT_MB,
   SERVER_HEAP_MIN_MB,
@@ -351,6 +352,7 @@ export type {
   NamingMode,
   UpdateCheckInterval,
   UpdateReleaseLine,
+  CompletedThreadRetentionDays,
 } from "./models/settings.js";
 
 export {

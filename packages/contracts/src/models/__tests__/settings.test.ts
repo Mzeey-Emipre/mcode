@@ -28,6 +28,32 @@ describe("conversation memory settings", () => {
   });
 });
 
+describe("thread.completion.retentionDays", () => {
+  it("defaults to 3 days", () => {
+    expect(getDefaultSettings().thread.completion.retentionDays).toBe(3);
+  });
+
+  it.each([null, 1, 365])("accepts %s", (retentionDays) => {
+    expect(
+      SettingsSchema().parse({ thread: { completion: { retentionDays } } })
+        .thread.completion.retentionDays,
+    ).toBe(retentionDays);
+    expect(
+      PartialSettingsSchema().parse({ thread: { completion: { retentionDays } } })
+        .thread?.completion?.retentionDays,
+    ).toBe(retentionDays);
+  });
+
+  it.each([0, -1, 366, 1.5, "3", "never", {}, []])(
+    "rejects malformed value %j at full and partial settings boundaries",
+    (retentionDays) => {
+      const input = { thread: { completion: { retentionDays } } };
+      expect(SettingsSchema().safeParse(input).success).toBe(false);
+      expect(PartialSettingsSchema().safeParse(input).success).toBe(false);
+    },
+  );
+});
+
 describe("preview.memorySaver", () => {
   it("applies ADR 0002 defaults", () => {
     const s = SettingsSchema().parse({});

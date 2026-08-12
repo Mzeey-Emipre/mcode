@@ -457,7 +457,35 @@ describe("ProjectTree thread interactions", () => {
     screen.getByRole("button", { name: /Completed work/i }).focus();
     const preview = await screen.findByTestId("thread-preview-thread-1");
     expect(preview).toHaveTextContent("Completed");
-    expect(preview).toHaveTextContent("Deletes");
+    const exactDeadline = new Intl.DateTimeFormat(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(new Date("2026-08-15T08:00:00.000Z"));
+    expect(preview).toHaveTextContent(`Deletes ${exactDeadline}`);
+    vi.useFakeTimers();
+  });
+
+  it("states when automatic deletion is disabled", async () => {
+    vi.useRealTimers();
+    setupStoreMocks({
+      thread: makeThread({
+        title: "Kept work",
+        user_completed_at: "2026-08-12T08:00:00.000Z",
+        scheduled_deletion_at: null,
+      }),
+    });
+
+    render(<ProjectTree />);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "View 1 completed thread for Test Project",
+      }),
+    );
+    screen.getByRole("button", { name: /Kept work/i }).focus();
+
+    expect(await screen.findByTestId("thread-preview-thread-1")).toHaveTextContent(
+      "Automatic deletion disabled",
+    );
     vi.useFakeTimers();
   });
 
