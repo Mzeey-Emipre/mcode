@@ -268,6 +268,28 @@ describe("TerminalSessionService", () => {
     expect(service.listSessions()).toEqual([replacement]);
   });
 
+  it("keeps the old tombstone when replacement creation fails", async () => {
+    const { service, runtime, sessions } = setup(1);
+    const exited = await service.createSession({ scope: WORKSPACE_SCOPE });
+    sessions.set(exited.sessionId, {
+      ...exited,
+      state: "exited",
+      exit: { code: 0, signal: null, reason: "natural" },
+      tombstone: true,
+    });
+    vi.mocked(runtime.createSession).mockRejectedValueOnce(new Error("replacement failed"));
+
+    await expect(service.createSession({
+      scope: WORKSPACE_SCOPE,
+      replacesSessionId: exited.sessionId,
+    })).rejects.toThrow("replacement failed");
+
+    expect(service.listSessions()).toEqual([
+      expect.objectContaining({ sessionId: exited.sessionId, state: "exited" }),
+    ]);
+    expect(runtime.close).not.toHaveBeenCalled();
+  });
+
   it("rolls back a replacement when removing the old tombstone fails", async () => {
     const { service, runtime, sessions } = setup(1);
     const exited = await service.createSession({ scope: WORKSPACE_SCOPE });

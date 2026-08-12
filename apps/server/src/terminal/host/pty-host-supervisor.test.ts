@@ -301,6 +301,8 @@ describe("PtyHostSupervisor", () => {
       },
       reapProcessTree,
     });
+    const events: PtyHostEvent[] = [];
+    supervisor.subscribe((event) => events.push(event));
     await supervisor.start();
     const creating = supervisor.create(createRequest);
     children[0]!.emitMessage({
@@ -320,6 +322,12 @@ describe("PtyHostSupervisor", () => {
     expect(reapProcessTree).toHaveBeenCalledOnce();
     expect(children).toHaveLength(1);
     expect(supervisor.health().state).toBe("unhealthy");
+    expect(events.filter((event) => event.kind === "failure").at(-1)).toMatchObject({
+      kind: "failure",
+      hostGeneration: "1",
+      code: "HOST_UNHEALTHY",
+      recoverable: false,
+    });
     await expect(supervisor.shutdown()).rejects.toThrow(
       "PTY host shutdown cleanup failed",
     );

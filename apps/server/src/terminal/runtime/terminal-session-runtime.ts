@@ -152,9 +152,16 @@ interface RuntimeSession {
   readonly attachmentEpochBySequence: Map<bigint, bigint>;
   commandTail: Promise<void>;
   inputStallTimer: ReturnType<typeof setTimeout> | null;
+  exitFlushTimer: ReturnType<typeof setTimeout> | null;
   deliveryUnknown: boolean;
   revokedAttachmentEpoch: bigint | null;
   readonly replay: TerminalReplayBuffer;
+  pendingExit: {
+    readonly finalOutputSeq: bigint;
+    readonly code: number | null;
+    readonly signal: number | null;
+    readonly reason: NonNullable<TerminalSessionSnapshot["exit"]>["reason"];
+  } | null;
   exit: TerminalSessionSnapshot["exit"];
 }
 
@@ -175,6 +182,7 @@ const MAX_COMMAND_BYTES = 65_536;
 const MAX_UNACKNOWLEDGED_INPUT_BYTES = 262_144;
 const MAX_CHECKPOINT_BYTES = 8_388_608;
 const INPUT_ACKNOWLEDGEMENT_TIMEOUT_MS = 2_000;
+const EXIT_FLUSH_TIMEOUT_MS = 2_000;
 const DEFAULT_INITIAL_DIMENSIONS = Object.freeze({ cols: 80, rows: 24 });
 const DEFAULT_REPLAY_CAPACITY_BYTES = replayBytesForScrollback(1_000);
 const u64 = TerminalU64Schema();
@@ -277,11 +285,13 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
       attachmentEpochBySequence: new Map(),
       commandTail: Promise.resolve(),
       inputStallTimer: null,
+      exitFlushTimer: null,
       deliveryUnknown: false,
       revokedAttachmentEpoch: null,
       replay: new TerminalReplayBuffer(
         this.options.replayCapacityBytes ?? DEFAULT_REPLAY_CAPACITY_BYTES,
       ),
+      pendingExit: null,
       exit: null,
     };
     this.sessions.set(sessionId, record);
@@ -416,6 +426,7 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
     ) {
       attachment.hydrationComplete = true;
     }
+    this.completeExitBarrier(record);
   }
 
   /** Retains one validated renderer checkpoint for the later hydration path. */
@@ -480,7 +491,25 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
 
   /** Starts the ordered host close barrier and returns its retained outcome. */
   async close(input: CloseRuntimeSession): Promise<TerminalSessionSnapshot> {
-    const record = this.requireRunningSession(input.sessionId, "SAFE_RETRY");
+    const record = this.requireSession(input.sessionId, "SAFE_RETRY");
+    if (record.state === "exited" || record.state === "failed") {
+      const tombstone = this.snapshot(record);
+      this.clearInputStallTimer(record);
+      this.clearExitFlushTimer(record);
+      this.sessions.delete(record.sessionId);
+      return tombstone;
+    }
+    if (record.state === "exiting" && record.pendingExit) {
+      record.attachment = null;
+      this.clearInputStallTimer(record);
+      this.completeExitBarrier(record);
+      const closed = this.snapshot(record);
+      this.sessions.delete(record.sessionId);
+      return closed;
+    }
+    if (record.state !== "running") {
+      throw this.error("SESSION_NOT_RUNNING", "SAFE_RETRY");
+    }
     record.state = "exiting";
     record.attachment = null;
     this.clearInputStallTimer(record);
@@ -494,7 +523,7 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
         reason: input.reason,
       });
     } catch (error) {
-      record.state = "running";
+      if (record.state === "exiting") record.state = "running";
       throw this.mapHostError(error, "HOST_UNHEALTHY", "SAFE_RETRY");
     }
     if (!record.exit) {
@@ -506,7 +535,9 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
       };
       throw this.error("EXIT_FLUSH_FAILED", "REATTACH");
     }
-    return this.snapshot(record);
+    const closed = this.snapshot(record);
+    this.sessions.delete(record.sessionId);
+    return closed;
   }
 
   /** Returns an immutable snapshot for a live session or tombstone. */
@@ -518,7 +549,10 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
   /** Stops the host and releases all runtime-owned memory. */
   async shutdown(): Promise<void> {
     this.unsubscribeHost();
-    for (const record of this.sessions.values()) this.clearInputStallTimer(record);
+    for (const record of this.sessions.values()) {
+      this.clearInputStallTimer(record);
+      this.clearExitFlushTimer(record);
+    }
     await this.options.host.shutdown();
     this.sessions.clear();
   }
@@ -582,6 +616,17 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
   }
 
   private onHostEvent(event: PtyHostEvent): void {
+    if (event.kind === "failure" && event.code === "HOST_UNHEALTHY") {
+      for (const record of this.sessions.values()) {
+        if (
+          record.hostGeneration === event.hostGeneration &&
+          (record.state === "running" || record.state === "exiting")
+        ) {
+          this.failSessionForHostCrash(record);
+        }
+      }
+      return;
+    }
     if (!("sessionId" in event)) return;
     const record = this.sessions.get(event.sessionId);
     if (!record || event.hostGeneration !== record.hostGeneration) return;
@@ -590,6 +635,7 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
       return;
     }
     if (event.kind === "output") {
+      if (record.state !== "running" && record.state !== "exiting") return;
       const sequence = BigInt(event.outputSeq);
       try {
         record.replay.append(sequence, Buffer.from(event.dataBase64, "base64"));
@@ -605,16 +651,73 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
       return;
     }
     if (event.kind === "exit" && (record.state === "running" || record.state === "exiting")) {
-      record.receivedOutputSeq = BigInt(event.finalOutputSeq);
-      record.state = event.reason === "host-crash" || event.reason === "containment-failure" || event.reason === "protocol-failure"
-        ? "failed"
-        : "exited";
-      record.exit = Object.freeze({
+      const finalOutputSeq = BigInt(event.finalOutputSeq);
+      if (finalOutputSeq !== record.receivedOutputSeq) {
+        this.failExitBarrier(record);
+        return;
+      }
+      record.state = "exiting";
+      record.pendingExit = Object.freeze({
+        finalOutputSeq,
         code: event.code,
         signal: event.signal,
         reason: event.reason,
       });
+      this.completeExitBarrier(record);
+      if (record.pendingExit && !record.exitFlushTimer) {
+        record.exitFlushTimer = setTimeout(() => {
+          record.exitFlushTimer = null;
+          if (record.pendingExit) this.failExitBarrier(record);
+        }, EXIT_FLUSH_TIMEOUT_MS);
+      }
     }
+  }
+
+  private completeExitBarrier(record: RuntimeSession): void {
+    const pendingExit = record.pendingExit;
+    if (!pendingExit) return;
+    if (
+      record.attachment &&
+      record.attachment.acknowledgedOutputSeq < pendingExit.finalOutputSeq
+    ) {
+      return;
+    }
+    record.pendingExit = null;
+    this.clearExitFlushTimer(record);
+    record.state = pendingExit.reason === "host-crash" ||
+        pendingExit.reason === "containment-failure" ||
+        pendingExit.reason === "protocol-failure"
+      ? "failed"
+      : "exited";
+    record.exit = Object.freeze({
+      code: pendingExit.code,
+      signal: pendingExit.signal,
+      reason: pendingExit.reason,
+    });
+  }
+
+  private failExitBarrier(record: RuntimeSession): void {
+    record.pendingExit = null;
+    this.clearExitFlushTimer(record);
+    record.state = "failed";
+    record.exit = Object.freeze({
+      code: null,
+      signal: null,
+      reason: "protocol-failure",
+    });
+  }
+
+  private failSessionForHostCrash(record: RuntimeSession): void {
+    record.attachment = null;
+    record.pendingExit = null;
+    this.clearInputStallTimer(record);
+    this.clearExitFlushTimer(record);
+    record.state = "failed";
+    record.exit = Object.freeze({
+      code: null,
+      signal: null,
+      reason: "host-crash",
+    });
   }
 
   private applyCommandAcknowledgement(
@@ -729,6 +832,12 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
     if (!record.inputStallTimer) return;
     clearTimeout(record.inputStallTimer);
     record.inputStallTimer = null;
+  }
+
+  private clearExitFlushTimer(record: RuntimeSession): void {
+    if (!record.exitFlushTimer) return;
+    clearTimeout(record.exitFlushTimer);
+    record.exitFlushTimer = null;
   }
 
   private mapHostError(
