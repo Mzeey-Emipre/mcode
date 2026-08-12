@@ -31,6 +31,8 @@ interface ThreadRow {
   deleted_at: string | null;
   user_completed_at: string | null;
   scheduled_deletion_at: string | null;
+  cleanup_state: string | null;
+  cleanup_reason: string | null;
   last_context_tokens: number | null;
   context_window: number | null;
   reasoning_level: string | null;
@@ -86,6 +88,14 @@ function rowToThread(row: ThreadRow): Thread {
     deleted_at: row.deleted_at,
     user_completed_at: row.user_completed_at,
     scheduled_deletion_at: row.scheduled_deletion_at,
+    cleanup_state:
+      row.cleanup_state === "queued"
+      || row.cleanup_state === "running"
+      || row.cleanup_state === "retrying"
+      || row.cleanup_state === "blocked"
+        ? row.cleanup_state
+        : null,
+    cleanup_reason: row.cleanup_reason,
     last_context_tokens: row.last_context_tokens ?? null,
     context_window: row.context_window ?? null,
     reasoning_level: parseStoredReasoningLevel(row.reasoning_level),
@@ -107,7 +117,7 @@ function rowToThread(row: ThreadRow): Thread {
 }
 
 const THREAD_COLUMNS =
-  "id, workspace_id, title, status, mode, worktree_path, branch, checkout_state, base_branch, worktree_managed, issue_number, pr_number, pr_status, sdk_session_id, model, provider, created_at, updated_at, deleted_at, user_completed_at, scheduled_deletion_at, last_context_tokens, context_window, reasoning_level, interaction_mode, orchestration_mode, permission_mode, context_window_mode, thinking, codex_fast_mode, copilot_agent, default_open_in_app, parent_thread_id, forked_from_message_id, last_compact_summary, has_file_changes";
+  "id, workspace_id, title, status, mode, worktree_path, branch, checkout_state, base_branch, worktree_managed, issue_number, pr_number, pr_status, sdk_session_id, model, provider, created_at, updated_at, deleted_at, user_completed_at, scheduled_deletion_at, cleanup_state, cleanup_reason, last_context_tokens, context_window, reasoning_level, interaction_mode, orchestration_mode, permission_mode, context_window_mode, thinking, codex_fast_mode, copilot_agent, default_open_in_app, parent_thread_id, forked_from_message_id, last_compact_summary, has_file_changes";
 
 /** Maximum active sibling paths considered during one worktree ownership decision. */
 export const MAX_ACTIVE_WORKTREE_OWNERSHIP_PATHS = 512;
@@ -197,6 +207,8 @@ export class ThreadRepo {
       deleted_at: null,
       user_completed_at: null,
       scheduled_deletion_at: null,
+      cleanup_state: null,
+      cleanup_reason: null,
       last_context_tokens: null,
       context_window: null,
       reasoning_level: null,
@@ -413,11 +425,14 @@ export class ThreadRepo {
     if (updates.length === 0) return [];
     const update = this.db.prepare(
       `UPDATE threads
-       SET scheduled_deletion_at = ?
+       SET scheduled_deletion_at = ?,
+           cleanup_state = NULL,
+           cleanup_reason = NULL
        WHERE id = ?
          AND user_completed_at = ?
          AND scheduled_deletion_at IS ?
-         AND deleted_at IS NULL`,
+         AND deleted_at IS NULL
+         AND cleanup_state IS NOT 'running'`,
     );
     const apply = this.db.transaction(() => {
       const changedIds: string[] = [];
@@ -430,6 +445,11 @@ export class ThreadRepo {
         );
         if (result.changes > 0) changedIds.push(entry.id);
       }
+      for (const id of changedIds) {
+        this.db.prepare(
+          "DELETE FROM cleanup_jobs WHERE thread_id = ? AND kind = 'retention'",
+        ).run(id);
+      }
       return changedIds;
     });
     return apply()
@@ -439,13 +459,65 @@ export class ThreadRepo {
 
   /** Clear user-completion metadata in one transaction-safe statement. */
   reopen(id: string, reopenedAt = new Date().toISOString()): Thread | null {
+    return this.db.transaction(() => {
+      const result = this.db.prepare(
+        `UPDATE threads
+         SET user_completed_at = NULL,
+             scheduled_deletion_at = NULL,
+             cleanup_state = NULL,
+             cleanup_reason = NULL,
+             updated_at = CASE WHEN user_completed_at IS NULL THEN updated_at ELSE ? END
+         WHERE id = ?
+           AND deleted_at IS NULL
+           AND cleanup_state IS NOT 'running'`,
+      ).run(reopenedAt, id);
+      if (result.changes === 0) return null;
+      this.db.prepare("DELETE FROM cleanup_jobs WHERE thread_id = ? AND kind = 'retention'").run(id);
+      return this.findById(id);
+    })();
+  }
+
+  /** Claim one queued retention cleanup immediately before destructive work starts. */
+  claimRetentionCleanup(id: string, nowIso: string): Thread | null {
+    const result = this.db.prepare(
+      `UPDATE threads
+       SET cleanup_state = 'running', cleanup_reason = NULL
+       WHERE id = ?
+         AND deleted_at IS NULL
+         AND user_completed_at IS NOT NULL
+         AND scheduled_deletion_at IS NOT NULL
+         AND scheduled_deletion_at <= ?
+         AND cleanup_state IN ('queued', 'retrying')`,
+    ).run(id, nowIso);
+    return result.changes > 0 ? this.findById(id) : null;
+  }
+
+  /** Clear a stale queued state after its deadline or completion state changed. */
+  releaseRetentionCleanup(id: string): void {
     this.db.prepare(
       `UPDATE threads
-       SET user_completed_at = NULL,
-           scheduled_deletion_at = NULL,
-           updated_at = CASE WHEN user_completed_at IS NULL THEN updated_at ELSE ? END
-       WHERE id = ? AND deleted_at IS NULL`,
-    ).run(reopenedAt, id);
+       SET cleanup_state = NULL, cleanup_reason = NULL
+       WHERE id = ? AND cleanup_state IN ('queued', 'retrying')`,
+    ).run(id);
+  }
+
+  /** Persist a user-safe terminal reason while retaining the completed thread. */
+  blockRetentionCleanup(id: string, reason: string): Thread | null {
+    this.db.prepare(
+      `UPDATE threads
+       SET cleanup_state = 'blocked', cleanup_reason = ?
+       WHERE id = ? AND deleted_at IS NULL AND user_completed_at IS NOT NULL`,
+    ).run(reason.slice(0, 240), id);
+    return this.findById(id);
+  }
+
+  /** Return a failed retention cleanup to the persisted retry queue. */
+  retryRetentionCleanup(id: string, reason: string): Thread | null {
+    this.db.prepare(
+      `UPDATE threads
+       SET cleanup_state = 'retrying', cleanup_reason = ?
+       WHERE id = ? AND deleted_at IS NULL AND user_completed_at IS NOT NULL`,
+    ).run(reason.slice(0, 240), id);
     return this.findById(id);
   }
 

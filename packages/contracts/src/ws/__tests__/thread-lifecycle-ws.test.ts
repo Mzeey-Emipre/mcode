@@ -36,6 +36,8 @@ describe("thread completion transport", () => {
       deleted_at: null,
       user_completed_at: "2026-08-12T08:00:00.000Z",
       scheduled_deletion_at: "2026-08-15T08:00:00.000Z",
+      cleanup_state: "blocked",
+      cleanup_reason: "The worktree has uncommitted changes.",
       last_context_tokens: null,
       context_window: null,
       reasoning_level: null,
@@ -53,5 +55,11 @@ describe("thread completion transport", () => {
     };
 
     expect(WS_CHANNELS["thread.lifecycleChanged"].parse({ thread })).toEqual({ thread });
+  });
+
+  it("validates automatic deletion pushes", () => {
+    expect(WS_CHANNELS["thread.deleted"].parse({ threadId: "thread-1" })).toEqual({
+      threadId: "thread-1",
+    });
   });
 });

@@ -238,6 +238,8 @@ function visibleThread(): Thread {
     deleted_at: null,
     user_completed_at: null,
     scheduled_deletion_at: null,
+    cleanup_state: null,
+    cleanup_reason: null,
     last_context_tokens: null,
     context_window: null,
     reasoning_level: null,

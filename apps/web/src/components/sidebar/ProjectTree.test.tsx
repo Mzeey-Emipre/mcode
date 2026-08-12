@@ -139,6 +139,8 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     deleted_at: null,
     user_completed_at: null,
     scheduled_deletion_at: null,
+    cleanup_state: null,
+    cleanup_reason: null,
     last_context_tokens: null,
     context_window: null,
     reasoning_level: null,
@@ -486,6 +488,34 @@ describe("ProjectTree thread interactions", () => {
     expect(await screen.findByTestId("thread-preview-thread-1")).toHaveTextContent(
       "Automatic deletion disabled",
     );
+    vi.useFakeTimers();
+  });
+
+  it("shows a bounded cleanup block reason in the completed hover details", async () => {
+    vi.useRealTimers();
+    setupStoreMocks({
+      thread: makeThread({
+        title: "Dirty work",
+        user_completed_at: "2026-08-12T08:00:00.000Z",
+        scheduled_deletion_at: "2026-08-15T08:00:00.000Z",
+        cleanup_state: "blocked",
+        cleanup_reason: "The worktree has uncommitted changes.",
+      }),
+    });
+
+    render(<ProjectTree />);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "View 1 completed thread for Test Project",
+      }),
+    );
+    screen.getByRole("button", { name: /Dirty work/i }).focus();
+
+    const preview = await screen.findByTestId("thread-preview-thread-1");
+    expect(preview).toHaveTextContent(
+      "Cleanup blocked: The worktree has uncommitted changes.",
+    );
+    expect(preview).not.toHaveTextContent("Deletes");
     vi.useFakeTimers();
   });
 

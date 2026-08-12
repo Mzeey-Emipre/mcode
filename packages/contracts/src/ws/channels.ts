@@ -79,6 +79,10 @@ export const WS_CHANNELS = {
   "thread.lifecycleChanged": z.object({
     thread: ThreadSchema(),
   }),
+  /** Removes a thread after successful automatic retention cleanup. */
+  "thread.deleted": z.object({
+    threadId: z.string(),
+  }),
   "thread.prLinked": z.object({
     threadId: z.string(),
     prNumber: z.number(),

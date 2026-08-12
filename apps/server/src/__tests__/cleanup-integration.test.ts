@@ -269,7 +269,7 @@ describe("Cleanup integration", () => {
     expect(cleanupJobRepo.count()).toBe(1);
   });
 
-  it("start() resets attempt counters for stale jobs from previous session", async () => {
+  it("start() preserves retry counters from the previous session", async () => {
     // Simulate a stale job from a previous app session
     const job = cleanupJobRepo.insert({
       thread_id: "thread-stale",
@@ -285,12 +285,12 @@ describe("Cleanup integration", () => {
     expect(before.attempts).toBe(3);
     expect(before.next_retry_at).toBeGreaterThan(0);
 
-    // Simulate app restart: start() resets counters
+    // Simulate app restart: start() must preserve the persisted retry schedule.
     worker.start();
 
     const after = cleanupJobRepo.findById(job.id)!;
-    expect(after.attempts).toBe(0);
-    expect(after.next_retry_at).toBe(0);
+    expect(after.attempts).toBe(3);
+    expect(after.next_retry_at).toBe(before.next_retry_at);
   });
 
   describe("Workspace deletion - full lifecycle", () => {

@@ -1375,11 +1375,17 @@ function SidebarThreadPreview({
             <div className="text-xs text-muted-foreground">
               Updated {formatLifecycleDate(thread.updated_at)}
             </div>
-            <div className="text-xs text-muted-foreground">
-              {thread.scheduled_deletion_at
-                ? `Deletes ${formatLifecycleDate(thread.scheduled_deletion_at)}`
-                : "Automatic deletion disabled"}
-            </div>
+            {thread.cleanup_state === "blocked" ? (
+              <div className="text-xs text-destructive" role="status">
+                Cleanup blocked: {thread.cleanup_reason ?? "User action is required."}
+              </div>
+            ) : (
+              <div className="text-xs text-muted-foreground">
+                {thread.scheduled_deletion_at
+                  ? `Deletes ${formatLifecycleDate(thread.scheduled_deletion_at)}`
+                  : "Automatic deletion disabled"}
+              </div>
+            )}
           </>
         ) : null}
         <div

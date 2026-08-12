@@ -1,6 +1,7 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { join } from "path";
+import { existsSync } from "fs";
 import type Database from "better-sqlite3";
 import { openMemoryDatabase } from "../store/database";
 import { CleanupJobRepo, MAX_CLEANUP_ATTEMPTS } from "../repositories/cleanup-job-repo";
@@ -44,6 +45,7 @@ describe("CleanupWorker", () => {
   let worker: CleanupWorker;
 
   beforeEach(() => {
+    vi.mocked(existsSync).mockReturnValue(true);
     db = openMemoryDatabase();
     cleanupJobRepo = new CleanupJobRepo(db);
     threadRepo = new ThreadRepo(db);
@@ -71,6 +73,10 @@ describe("CleanupWorker", () => {
         return siblingPaths.some((path) => normalize(path) === normalize(worktreePath))
           ? { safe: false, reason: "shared" as const }
           : { safe: true, reason: "exclusive" as const };
+      }),
+      assessBranchlessWorktreeRemoval: vi.fn().mockResolvedValue({
+        safe: true,
+        reason: "clean",
       }),
     } as unknown as GitService;
 
@@ -101,6 +107,277 @@ describe("CleanupWorker", () => {
   }
 
   describe("poll", () => {
+    it("deletes an expired completed direct thread without repository cleanup", async () => {
+      const workspace = workspaceRepo.create("Direct", "/direct-repo");
+      const completedAt = "2026-08-01T00:00:00.000Z";
+      db.prepare(
+        `INSERT INTO threads
+          (id, workspace_id, title, branch, mode, status, worktree_managed,
+           user_completed_at, scheduled_deletion_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'direct', 'active', 0, ?, ?, ?, ?)`,
+      ).run(
+        "expired-direct",
+        workspace.id,
+        "Expired direct thread",
+        "main",
+        completedAt,
+        completedAt,
+        completedAt,
+        completedAt,
+      );
+
+      await worker.poll();
+
+      expect(threadRepo.findById("expired-direct")).toBeNull();
+      expect(cleanupJobRepo.count()).toBe(0);
+      expect(mockGitService.removeWorktree).not.toHaveBeenCalled();
+    });
+
+    it("keeps an expired named-branch worktree visible with a cleanup reason", async () => {
+      const workspace = workspaceRepo.create("Named", "/named-repo");
+      const completedAt = "2026-08-01T00:00:00.000Z";
+      db.prepare(
+        `INSERT INTO threads
+          (id, workspace_id, title, branch, checkout_state, mode, status, worktree_path,
+           worktree_managed, user_completed_at, scheduled_deletion_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'named', 'worktree', 'active', ?, 1, ?, ?, ?, ?)`,
+      ).run(
+        "expired-named",
+        workspace.id,
+        "Expired named thread",
+        "feature/keep",
+        wt("named"),
+        completedAt,
+        completedAt,
+        completedAt,
+        completedAt,
+      );
+
+      await worker.poll();
+
+      const blocked = threadRepo.findById("expired-named");
+      expect(blocked).toMatchObject({
+        cleanup_state: "blocked",
+        cleanup_reason: "The worktree uses a named branch.",
+      });
+      expect(mockGitService.removeWorktree).not.toHaveBeenCalled();
+      expect(cleanupJobRepo.count()).toBe(0);
+    });
+
+    it("removes a safe branchless worktree without deleting a named branch", async () => {
+      const workspace = workspaceRepo.create("Branchless", "/branchless-repo");
+      const completedAt = "2026-08-01T00:00:00.000Z";
+      const worktreePath = wt("branchless-clean");
+      db.prepare(
+        `INSERT INTO threads
+          (id, workspace_id, title, branch, checkout_state, base_branch, mode, status,
+           worktree_path, worktree_managed, user_completed_at, scheduled_deletion_at,
+           created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'branchless', 'main', 'worktree', 'active', ?, 1, ?, ?, ?, ?)`,
+      ).run(
+        "expired-branchless",
+        workspace.id,
+        "Expired branchless thread",
+        "main",
+        worktreePath,
+        completedAt,
+        completedAt,
+        completedAt,
+        completedAt,
+      );
+
+      await worker.poll();
+
+      expect(threadRepo.findById("expired-branchless")).toBeNull();
+      expect(mockGitService.removeWorktree).toHaveBeenCalledWith(
+        expect.any(String),
+        "branchless-clean",
+        { deleteBranch: false, worktreePath: expect.stringContaining("branchless-clean") },
+      );
+    });
+
+    it("keeps an unmanaged expired worktree visible", async () => {
+      const workspace = workspaceRepo.create("Unmanaged", "/unmanaged-repo");
+      const completedAt = "2026-08-01T00:00:00.000Z";
+      db.prepare(
+        `INSERT INTO threads
+          (id, workspace_id, title, branch, checkout_state, base_branch, mode, status,
+           worktree_path, worktree_managed, user_completed_at, scheduled_deletion_at,
+           created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'branchless', 'main', 'worktree', 'active', ?, 0, ?, ?, ?, ?)`,
+      ).run(
+        "expired-unmanaged",
+        workspace.id,
+        "Expired unmanaged thread",
+        "main",
+        wt("unmanaged"),
+        completedAt,
+        completedAt,
+        completedAt,
+        completedAt,
+      );
+
+      await worker.poll();
+
+      expect(threadRepo.findById("expired-unmanaged")).toMatchObject({
+        cleanup_state: "blocked",
+        cleanup_reason: "Mcode does not manage this worktree.",
+      });
+      expect(mockGitService.removeWorktree).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["dirty", "The worktree has uncommitted changes."],
+      [
+        "unique_commits",
+        "The branchless worktree has commits that are not in its base branch.",
+      ],
+      [
+        "verification_failed",
+        "Mcode cannot prove that the worktree is safe to remove.",
+      ],
+    ] as const)("blocks branchless cleanup when safety reports %s", async (reason, message) => {
+      const workspace = workspaceRepo.create(`Blocked ${reason}`, `/blocked-${reason}`);
+      const completedAt = "2026-08-01T00:00:00.000Z";
+      db.prepare(
+        `INSERT INTO threads
+          (id, workspace_id, title, branch, checkout_state, base_branch, mode, status,
+           worktree_path, worktree_managed, user_completed_at, scheduled_deletion_at,
+           created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'branchless', 'main', 'worktree', 'active', ?, 1, ?, ?, ?, ?)`,
+      ).run(
+        `expired-${reason}`,
+        workspace.id,
+        `Expired ${reason} thread`,
+        "main",
+        wt(reason),
+        completedAt,
+        completedAt,
+        completedAt,
+        completedAt,
+      );
+      vi.mocked(mockGitService.assessBranchlessWorktreeRemoval).mockResolvedValueOnce({
+        safe: false,
+        reason,
+      });
+
+      await worker.poll();
+
+      expect(threadRepo.findById(`expired-${reason}`)).toMatchObject({
+        cleanup_state: "blocked",
+        cleanup_reason: message,
+      });
+      expect(mockGitService.removeWorktree).not.toHaveBeenCalled();
+    });
+
+    it("preserves a shared worktree until the last linked thread is deleted", async () => {
+      const workspace = workspaceRepo.create("Shared", "/shared-repo");
+      const completedAt = "2026-08-01T00:00:00.000Z";
+      const sharedPath = wt("shared");
+      for (const [id, deadline] of [
+        ["expired-shared", completedAt],
+        ["active-shared", null],
+      ] as const) {
+        db.prepare(
+          `INSERT INTO threads
+            (id, workspace_id, title, branch, checkout_state, base_branch, mode, status,
+             worktree_path, worktree_managed, user_completed_at, scheduled_deletion_at,
+             created_at, updated_at)
+           VALUES (?, ?, ?, ?, 'branchless', 'main', 'worktree', 'active', ?, 1, ?, ?, ?, ?)`,
+        ).run(
+          id,
+          workspace.id,
+          id,
+          "main",
+          sharedPath,
+          deadline,
+          deadline,
+          completedAt,
+          completedAt,
+        );
+      }
+
+      await worker.poll();
+
+      expect(threadRepo.findById("expired-shared")).toBeNull();
+      expect(threadRepo.findById("active-shared")).not.toBeNull();
+      expect(mockGitService.removeWorktree).not.toHaveBeenCalled();
+    });
+
+    it("deletes the thread when its managed worktree path is already missing", async () => {
+      const workspace = workspaceRepo.create("Missing", "/missing-repo");
+      const completedAt = "2026-08-01T00:00:00.000Z";
+      db.prepare(
+        `INSERT INTO threads
+          (id, workspace_id, title, branch, checkout_state, base_branch, mode, status,
+           worktree_path, worktree_managed, user_completed_at, scheduled_deletion_at,
+           created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'branchless', 'main', 'worktree', 'active', ?, 1, ?, ?, ?, ?)`,
+      ).run(
+        "expired-missing",
+        workspace.id,
+        "Expired missing thread",
+        "main",
+        wt("missing-worktree"),
+        completedAt,
+        completedAt,
+        completedAt,
+        completedAt,
+      );
+      vi.mocked(existsSync).mockImplementation(
+        (path) => !String(path).includes("missing-worktree"),
+      );
+
+      await worker.poll();
+
+      expect(threadRepo.findById("expired-missing")).toBeNull();
+      expect(mockGitService.removeWorktree).not.toHaveBeenCalled();
+    });
+
+    it("persists retry exhaustion and keeps the completed thread recoverable", async () => {
+      const workspace = workspaceRepo.create("Retry", "/retry-repo");
+      const completedAt = "2026-08-01T00:00:00.000Z";
+      db.prepare(
+        `INSERT INTO threads
+          (id, workspace_id, title, branch, checkout_state, base_branch, mode, status,
+           worktree_path, worktree_managed, user_completed_at, scheduled_deletion_at,
+           created_at, updated_at)
+         VALUES (?, ?, ?, ?, 'branchless', 'main', 'worktree', 'active', ?, 1, ?, ?, ?, ?)`,
+      ).run(
+        "expired-retry",
+        workspace.id,
+        "Expired retry thread",
+        "main",
+        wt("retry"),
+        completedAt,
+        completedAt,
+        completedAt,
+        completedAt,
+      );
+      vi.mocked(mockGitService.removeWorktree).mockResolvedValue(false);
+
+      for (let attempt = 0; attempt < MAX_CLEANUP_ATTEMPTS; attempt += 1) {
+        await worker.poll();
+        db.prepare(
+          "UPDATE cleanup_jobs SET next_retry_at = 0 WHERE thread_id = 'expired-retry'",
+        ).run();
+      }
+
+      expect(threadRepo.findById("expired-retry")).toMatchObject({
+        cleanup_state: "blocked",
+        cleanup_reason: `Cleanup failed after ${MAX_CLEANUP_ATTEMPTS} attempts.`,
+        user_completed_at: completedAt,
+      });
+      expect(
+        db.prepare(
+          "SELECT attempts, last_error FROM cleanup_jobs WHERE thread_id = 'expired-retry'",
+        ).get(),
+      ).toEqual({
+        attempts: MAX_CLEANUP_ATTEMPTS,
+        last_error: expect.stringContaining("still exists"),
+      });
+    }, 15_000);
+
     it("runs cleanup steps in correct order: session exit, terminal kill, SDK kill, worktree removal", async () => {
       const callOrder: string[] = [];
       (mockClaudeProvider.waitForSessionExit as ReturnType<typeof vi.fn>).mockImplementation(async () => {
@@ -467,7 +744,7 @@ describe("CleanupWorker", () => {
   });
 
   describe("start / dispose", () => {
-    it("resets all attempt counters on start", () => {
+    it("preserves retry counters across restart", () => {
       const job = cleanupJobRepo.insert({
         thread_id: "t-1",
         workspace_path: "/r",
@@ -478,9 +755,9 @@ describe("CleanupWorker", () => {
 
       worker.start();
 
-      const reset = cleanupJobRepo.findById(job.id)!;
-      expect(reset.attempts).toBe(0);
-      expect(reset.next_retry_at).toBe(0);
+      const persisted = cleanupJobRepo.findById(job.id)!;
+      expect(persisted.attempts).toBe(3);
+      expect(persisted.next_retry_at).toBe(999999);
     });
 
     it("does not process jobs after dispose is called", async () => {

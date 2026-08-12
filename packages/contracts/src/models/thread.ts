@@ -8,6 +8,11 @@ export const ThreadCheckoutStateSchema = z.enum(["named", "branchless"]);
 /** Thread checkout state discriminator. */
 export type ThreadCheckoutState = z.infer<typeof ThreadCheckoutStateSchema>;
 
+/** Persisted state for automatic cleanup of an expired completed thread. */
+export const ThreadCleanupStateSchema = z.enum(["queued", "running", "retrying", "blocked"]);
+/** Automatic cleanup state for a completed thread. */
+export type ThreadCleanupState = z.infer<typeof ThreadCleanupStateSchema>;
+
 /** Thread schema matching the SQLite row shape. */
 export const ThreadSchema = lazySchema(() =>
   z.object({
@@ -39,6 +44,10 @@ export const ThreadSchema = lazySchema(() =>
   user_completed_at: z.string().nullable(),
   /** Server timestamp after which automatic deletion can begin. */
   scheduled_deletion_at: z.string().nullable(),
+  /** Current automatic cleanup state, or null before cleanup becomes due. */
+  cleanup_state: ThreadCleanupStateSchema.nullable(),
+  /** Bounded user-safe reason when automatic cleanup needs attention. */
+  cleanup_reason: z.string().max(240).nullable(),
   /** Last known input token count from the most recent turn. */
   last_context_tokens: z.number().int().nonnegative().nullable(),
   /** Model's context window size from the most recent turn. */

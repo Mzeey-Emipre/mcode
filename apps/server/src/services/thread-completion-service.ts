@@ -121,7 +121,13 @@ export class ThreadCompletionService {
     try {
       this.requireThread(threadId);
       const reopened = this.threadRepo.reopen(threadId, (this.clock?.() ?? new Date()).toISOString());
-      if (!reopened) throw new Error(`Thread not found: ${threadId}`);
+      if (!reopened) {
+        const current = this.threadRepo.findById(threadId);
+        if (current?.cleanup_state === "running") {
+          throw new Error("Thread cleanup has already started");
+        }
+        throw new Error(`Thread not found: ${threadId}`);
+      }
       return reopened;
     } finally {
       this.mutationReservations.release(threadId, token);
