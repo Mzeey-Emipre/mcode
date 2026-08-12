@@ -306,8 +306,11 @@ describe("ProjectTree thread interactions", () => {
     expect(action).toHaveClass(
       "opacity-0",
       "group-hover/row:opacity-100",
-      "group-focus-within/row:opacity-100",
+      "group-focus-visible/row:opacity-100",
+      "focus-visible:opacity-100",
     );
+    expect(action).not.toHaveClass("group-focus-within/row:opacity-100");
+    expect(action).not.toHaveClass("focus:opacity-100");
 
     fireEvent.mouseEnter(action.closest('[role="button"]') ?? action);
     fireEvent.click(action);

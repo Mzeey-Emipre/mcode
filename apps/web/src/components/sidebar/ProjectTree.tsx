@@ -1109,7 +1109,7 @@ const ThreadRow = memo(function ThreadRow({
                 onPointerDown={(event) => event.stopPropagation()}
                 onKeyDown={(event) => event.stopPropagation()}
                 onClick={handleLifecycleClick}
-                className="size-5 shrink-0 rounded-full p-0 text-muted-foreground/65 opacity-0 transition-opacity shadow-none hover:bg-transparent hover:text-foreground group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus:opacity-100 disabled:cursor-not-allowed"
+                className="size-5 shrink-0 rounded-full p-0 text-muted-foreground/65 opacity-0 transition-opacity shadow-none hover:bg-transparent hover:text-foreground group-hover/row:opacity-100 group-focus-visible/row:opacity-100 focus-visible:opacity-100 disabled:cursor-not-allowed"
               >
                 {isLifecyclePending ? (
                   <Spinner size={11} />
