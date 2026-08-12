@@ -210,7 +210,6 @@ describe("desktop packaging workflow wiring", () => {
       "apps/desktop/scripts/terminal-release-evidence.mjs target",
     );
     for (const workflow of [
-      ".github/workflows/nightly-desktop.yml",
       ".github/workflows/build-release.yml",
       ".github/workflows/desktop-package-dry-run.yml",
     ]) {
@@ -221,9 +220,16 @@ describe("desktop packaging workflow wiring", () => {
       expect(source).not.toContain("ensure-sdk-platform-packages.mjs");
       expect(source).not.toContain("ci-package.mjs");
     }
+    const nightly = readFileSync(
+      path.join(repoRoot, ".github/workflows/nightly-desktop.yml"),
+      "utf8",
+    );
+    expect(nightly).not.toContain("./.github/workflows/desktop-package-target.yml");
+    expect(nightly).toContain("apps/desktop/scripts/ci-package.mjs");
+    expect(nightly).toContain("apps/desktop/scripts/smoke-test.mjs");
   });
 
-  it("publishes Nightly and Stable only after aggregate evidence passes", () => {
+  it("keeps aggregate evidence on Stable while Nightly uses direct uploads", () => {
     const nightly = readFileSync(
       path.join(repoRoot, ".github/workflows/nightly-desktop.yml"),
       "utf8",
@@ -236,9 +242,9 @@ describe("desktop packaging workflow wiring", () => {
       path.join(repoRoot, "release-please-config.json"),
       "utf8",
     );
-    expect(nightly.indexOf("terminal-release-evidence.mjs aggregate")).toBeLessThan(
-      nightly.indexOf("gh release edit"),
-    );
+    expect(nightly).not.toContain("terminal-release-evidence.mjs aggregate");
+    expect(nightly).toContain("gh release upload");
+    expect(nightly).toContain("gh release edit");
     expect(stable.indexOf("terminal-release-evidence.mjs aggregate")).toBeLessThan(
       stable.indexOf("gh release edit"),
     );
@@ -258,8 +264,17 @@ describe("desktop packaging workflow wiring", () => {
       path.join(repoRoot, ".github/workflows/build-release.yml"),
       "utf8",
     );
+    const afterPack = readFileSync(
+      path.join(repoRoot, "apps/desktop/scripts/after-pack.mjs"),
+      "utf8",
+    );
 
-    expect(nightly).toContain("signing-required: false");
+    expect(nightly).not.toContain("signing-required:");
+    expect(nightly).toContain("CSC_IDENTITY_AUTO_DISCOVERY");
+    expect(nightly).toContain("MCODE_SKIP_TERMINAL_ATTESTATION: \"1\"");
+    expect(afterPack).toContain(
+      'process.env.MCODE_SKIP_TERMINAL_ATTESTATION !== "1"',
+    );
     expect(stable).toContain("signing-required: true");
   });
 
