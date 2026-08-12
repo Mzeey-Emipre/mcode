@@ -10,7 +10,7 @@ const CONPTY_ARCHES = new Set(["x64", "arm64"]);
 const CONPTY_RUNTIME_FILES = ["conpty.dll", "OpenConsole.exe"];
 
 /**
- * Restores the ConPTY runtime files removed by electron-builder's node-pty rebuild.
+ * Ensures the ConPTY runtime is beside the selected rebuilt or prebuilt binding.
  *
  * @param {{ nodePtyRoot: string, arch: string }} options
  * @returns {{ dllPath: string, openConsolePath: string }}
@@ -20,10 +20,28 @@ export function ensurePackagedConptyRuntime({ nodePtyRoot, arch }) {
     throw new Error(`Unsupported Windows architecture for node-pty: ${arch}`);
   }
 
-  const releaseDir = path.join(nodePtyRoot, "build", "Release");
-  const bindingPath = path.join(releaseDir, "conpty.node");
-  if (!existsSync(bindingPath)) {
-    throw new Error(`Packaged node-pty binding is missing at ${bindingPath}`);
+  const bindingDirs = [
+    path.join(nodePtyRoot, "build", "Release"),
+    path.join(nodePtyRoot, "prebuilds", `win32-${arch}`),
+  ];
+  const bindingDir = bindingDirs.find((candidate) =>
+    existsSync(path.join(candidate, "conpty.node")),
+  );
+  if (!bindingDir) {
+    throw new Error(
+      `Packaged node-pty binding is missing from ${bindingDirs.join(" or ")}`,
+    );
+  }
+
+  const destinationDir = path.join(bindingDir, "conpty");
+  const destinationFiles = CONPTY_RUNTIME_FILES.map((file) =>
+    path.join(destinationDir, file),
+  );
+  if (destinationFiles.every((file) => existsSync(file))) {
+    return {
+      dllPath: destinationFiles[0],
+      openConsolePath: destinationFiles[1],
+    };
   }
 
   const thirdPartyRoot = path.join(nodePtyRoot, "third_party", "conpty");
@@ -42,7 +60,6 @@ export function ensurePackagedConptyRuntime({ nodePtyRoot, arch }) {
     );
   }
 
-  const destinationDir = path.join(releaseDir, "conpty");
   mkdirSync(destinationDir, { recursive: true });
   for (const file of CONPTY_RUNTIME_FILES) {
     copyFileSync(path.join(sourceDirs[0], file), path.join(destinationDir, file));
