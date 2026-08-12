@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
 
 interface MenuItem {
@@ -15,6 +16,7 @@ interface ContextMenuProps {
   onClose: () => void;
 }
 
+/** Renders a pointer-positioned menu above application layout boundaries. */
 export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
   const ref = useRef<HTMLDivElement>(null);
 
@@ -44,7 +46,7 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
     }
   }, [x, y]);
 
-  return (
+  return createPortal(
     <div
       ref={ref}
       style={{ position: "fixed", left: x, top: y, zIndex: 50 }}
@@ -72,6 +74,7 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
           </button>
         )
       )}
-    </div>
+    </div>,
+    document.body,
   );
 }
