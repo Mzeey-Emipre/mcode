@@ -54,6 +54,7 @@ class ManualPtyHostAdapter implements PtyHostAdapter {
   readonly closes: PtyHostClose[] = [];
   private readonly listeners = new Set<(event: PtyHostEvent) => void>();
   createFailure: Error | null = null;
+  closeAction: ((input: PtyHostClose) => Promise<void> | void) | null = null;
 
   async start(): Promise<PtyHostHealth> {
     return { hostGeneration: "7", state: "healthy" };
@@ -80,6 +81,7 @@ class ManualPtyHostAdapter implements PtyHostAdapter {
 
   async close(input: PtyHostClose): Promise<void> {
     this.closes.push(input);
+    await this.closeAction?.(input);
   }
 
   async shutdown(): Promise<void> {}
@@ -711,6 +713,211 @@ describe("ModernTerminalSessionRuntime", () => {
     expect(Buffer.from(hydration.output[0]?.data ?? []).toString()).toBe("after-checkpoint");
   });
 
+  it("publishes a natural exit only after the renderer writes the final output", async () => {
+    const { host, runtime } = setup();
+    await createRunningSession(runtime);
+    await attach(runtime);
+    host.emit({
+      contractVersion: 1,
+      kind: "output",
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      outputSeq: "1",
+      dataBase64: Buffer.from("final output").toString("base64"),
+    });
+
+    host.emit({
+      contractVersion: 1,
+      kind: "exit",
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      finalOutputSeq: "1",
+      code: 0,
+      signal: null,
+      reason: "natural",
+    });
+
+    expect(runtime.getSnapshot(SESSION_ID)).toMatchObject({
+      state: "exiting",
+      lastOutputSeq: "1",
+      exit: null,
+      tombstone: false,
+    });
+
+    runtime.acknowledgeOutput({
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      attachmentEpoch: "1",
+      outputSeq: "1",
+    });
+
+    expect(runtime.getSnapshot(SESSION_ID)).toMatchObject({
+      state: "exited",
+      lastOutputSeq: "1",
+      exit: { code: 0, signal: null, reason: "natural" },
+      tombstone: true,
+    });
+  });
+
+  it("removes an exited tombstone when the user closes its Terminal tab", async () => {
+    const { host, runtime } = setup();
+    await createRunningSession(runtime);
+    host.emit({
+      contractVersion: 1,
+      kind: "exit",
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      finalOutputSeq: "0",
+      code: 0,
+      signal: null,
+      reason: "natural",
+    });
+    expect(runtime.getSnapshot(SESSION_ID)).toMatchObject({
+      state: "exited",
+      tombstone: true,
+    });
+
+    await expect(runtime.close({ sessionId: SESSION_ID, reason: "user" })).resolves.toMatchObject({
+      state: "exited",
+      tombstone: true,
+    });
+
+    expect(runtime.getSnapshot(SESSION_ID)).toBeNull();
+    expect(host.closes).toHaveLength(0);
+  });
+
+  it("fails a natural exit when the final renderer write stalls", async () => {
+    vi.useFakeTimers();
+    const { host, runtime } = setup();
+    await createRunningSession(runtime);
+    await attach(runtime);
+    host.emit({
+      contractVersion: 1,
+      kind: "output",
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      outputSeq: "1",
+      dataBase64: Buffer.from("unacknowledged final output").toString("base64"),
+    });
+    host.emit({
+      contractVersion: 1,
+      kind: "exit",
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      finalOutputSeq: "1",
+      code: 0,
+      signal: null,
+      reason: "natural",
+    });
+
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    expect(runtime.getSnapshot(SESSION_ID)).toMatchObject({
+      state: "failed",
+      exit: { code: null, signal: null, reason: "protocol-failure" },
+      tombstone: true,
+    });
+  });
+
+  it("finishes a natural exit headlessly when its Terminal tab closes", async () => {
+    const { host, runtime } = setup();
+    await createRunningSession(runtime);
+    await attach(runtime);
+    host.emit({
+      contractVersion: 1,
+      kind: "output",
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      outputSeq: "1",
+      dataBase64: Buffer.from("final retained output").toString("base64"),
+    });
+    host.emit({
+      contractVersion: 1,
+      kind: "exit",
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      finalOutputSeq: "1",
+      code: 0,
+      signal: null,
+      reason: "natural",
+    });
+
+    await expect(runtime.close({ sessionId: SESSION_ID, reason: "user" })).resolves.toMatchObject({
+      state: "exited",
+      lastOutputSeq: "1",
+      exit: { code: 0, signal: null, reason: "natural" },
+    });
+
+    expect(runtime.getSnapshot(SESSION_ID)).toBeNull();
+    expect(host.closes).toHaveLength(0);
+  });
+
+  it("fails live sessions without recreating them when their host crashes", async () => {
+    const { host, runtime } = setup();
+    await createRunningSession(runtime);
+    host.emit({
+      contractVersion: 1,
+      kind: "output",
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      outputSeq: "1",
+      dataBase64: Buffer.from("retained before crash").toString("base64"),
+    });
+
+    host.emit({
+      contractVersion: 1,
+      kind: "failure",
+      hostGeneration: "7",
+      boundary: "shutdown",
+      recoverable: true,
+      code: "HOST_UNHEALTHY",
+    });
+
+    expect(runtime.getSnapshot(SESSION_ID)).toMatchObject({
+      state: "failed",
+      lastOutputSeq: "1",
+      exit: { code: null, signal: null, reason: "host-crash" },
+      tombstone: true,
+    });
+    host.emit({
+      contractVersion: 1,
+      kind: "output",
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      outputSeq: "2",
+      dataBase64: Buffer.from("late output from crashed host").toString("base64"),
+    });
+    expect(runtime.getSnapshot(SESSION_ID)?.lastOutputSeq).toBe("1");
+    expect(host.creates).toHaveLength(1);
+  });
+
+  it("keeps a host-crash tombstone when the close barrier rejects", async () => {
+    const { host, runtime } = setup();
+    await createRunningSession(runtime);
+    host.closeAction = () => {
+      host.emit({
+        contractVersion: 1,
+        kind: "failure",
+        hostGeneration: "7",
+        boundary: "shutdown",
+        recoverable: true,
+        code: "HOST_UNHEALTHY",
+      });
+      throw new Error("PTY host process exited");
+    };
+
+    await expect(runtime.close({ sessionId: SESSION_ID, reason: "user" })).rejects.toMatchObject({
+      code: "HOST_UNHEALTHY",
+      retry: "SAFE_RETRY",
+    });
+
+    expect(runtime.getSnapshot(SESSION_ID)).toMatchObject({
+      state: "failed",
+      exit: { code: null, signal: null, reason: "host-crash" },
+      tombstone: true,
+    });
+  });
+
   it("runs the lifecycle and close barrier through the in-memory host seam", async () => {
     const host = new InMemoryPtyHostAdapter("7");
     await host.start();
@@ -741,6 +948,7 @@ describe("ModernTerminalSessionRuntime", () => {
       tombstone: true,
       exit: { code: 0, signal: null, reason: "user-close" },
     });
+    expect(runtime.getSnapshot(SESSION_ID)).toBeNull();
     await expect(runtime.sendCommand({
       sessionId: SESSION_ID,
       hostGeneration: "7",
@@ -748,6 +956,6 @@ describe("ModernTerminalSessionRuntime", () => {
       commandSeq: "2",
       kind: "input",
       data: new Uint8Array([0x61]),
-    })).rejects.toMatchObject({ code: "SESSION_NOT_RUNNING" });
+    })).rejects.toMatchObject({ code: "SESSION_NOT_FOUND" });
   });
 });

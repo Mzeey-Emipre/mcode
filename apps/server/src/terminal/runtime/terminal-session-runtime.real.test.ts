@@ -6,6 +6,7 @@ import { build } from "esbuild";
 import { describe, expect, it } from "vitest";
 import { InMemoryPtyHostCleanupLedger } from "../testing/in-memory-pty-host-cleanup-ledger.js";
 import { spawnPtyHostChild } from "../host/pty-host-child.js";
+import type { PtyHostEvent } from "../host/pty-host-protocol.js";
 import { PtyHostSupervisor, type PtyHostChild } from "../host/pty-host-supervisor.js";
 import { ModernTerminalSessionRuntime } from "./terminal-session-runtime.js";
 
@@ -58,14 +59,20 @@ function protectedEnvironment(): Array<{ name: string; value: string }> {
   });
 }
 
-async function waitForOutput(runtime: ModernTerminalSessionRuntime): Promise<string> {
+async function waitForOutput(
+  runtime: ModernTerminalSessionRuntime,
+  diagnostics: readonly string[],
+  hostEvents: readonly PtyHostEvent[],
+): Promise<string> {
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
     const sequence = runtime.getSnapshot(SESSION_ID)?.lastOutputSeq;
     if (sequence && BigInt(sequence) > 0n) return sequence;
     await new Promise((resolvePoll) => setTimeout(resolvePoll, 20));
   }
-  throw new Error("Timed out after 10000ms waiting for runtime output");
+  throw new Error(
+    `Timed out after 10000ms waiting for runtime output; snapshot=${JSON.stringify(runtime.getSnapshot(SESSION_ID))}; hostEvents=${JSON.stringify(hostEvents)}; diagnostics=${JSON.stringify(diagnostics)}`,
+  );
 }
 
 async function waitForOutputAfter(
@@ -146,6 +153,7 @@ describe.runIf(["win32", "darwin", "linux"].includes(process.platform))(
           define: { "import.meta.url": "__importMetaUrl" },
         });
         const diagnostics: string[] = [];
+        const hostEvents: PtyHostEvent[] = [];
         const children: PtyHostChild[] = [];
         supervisor = new PtyHostSupervisor({
           platform: TEST_PLATFORM,
@@ -175,6 +183,7 @@ describe.runIf(["win32", "darwin", "linux"].includes(process.platform))(
           },
         });
         const health = await supervisor.start();
+        supervisor.subscribe((event) => hostEvents.push(event));
         runtime = new ModernTerminalSessionRuntime({
           host: supervisor,
         });
@@ -226,7 +235,7 @@ describe.runIf(["win32", "darwin", "linux"].includes(process.platform))(
           kind: "input",
           data: Buffer.from("echo runtime-live\r"),
         });
-        await waitForOutput(runtime);
+        await waitForOutput(runtime, diagnostics, hostEvents);
         await expect(runtime.sendCommand({
           sessionId: SESSION_ID,
           hostGeneration: health.hostGeneration,

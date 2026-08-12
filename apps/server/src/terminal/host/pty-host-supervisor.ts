@@ -507,7 +507,17 @@ export class PtyHostSupervisor implements PtyHostAdapter {
     setTimeout(async () => {
       if (this.stopping || this.child) return;
       const failures = await this.reapCleanupRecords(records);
-      if (failures.length > 0) return;
+      if (failures.length > 0) {
+        this.publish({
+          contractVersion: 1,
+          kind: "failure",
+          hostGeneration: failedGeneration,
+          boundary: "shutdown",
+          recoverable: false,
+          code: "HOST_UNHEALTHY",
+        });
+        return;
+      }
       this.startPromise = this.spawnGeneration();
       void this.startPromise.catch(() => undefined);
     }, this.options.replacementDelayMs ?? REPLACEMENT_DELAY_MS);
