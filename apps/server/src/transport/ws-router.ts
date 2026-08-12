@@ -504,9 +504,16 @@ async function dispatch(
       return;
     case "push.setThreadSubscriptions":
       if (context.client) {
-        return setClientThreadSubscriptions(context.client, params.threadIds, params.cursors);
+        const replay = setClientThreadSubscriptions(context.client, params.threadIds, params.cursors);
+        const canonicalRecoveries = params.revisions
+          ? params.threadIds.flatMap((threadId: string) => {
+              const revision = params.revisions?.[threadId];
+              return revision ? [deps.canonicalSink.recoverThread(threadId, revision)] : [];
+            })
+          : [];
+        return { ...replay, canonicalRecoveries };
       }
-      return { hydrationRequiredThreadIds: [], replayedThrough: {} };
+      return { hydrationRequiredThreadIds: [], replayedThrough: {}, canonicalRecoveries: [] };
 
     // Workspace
     case "workspace.list":

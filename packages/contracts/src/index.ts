@@ -42,6 +42,18 @@ export {
   AgentStopDispatchStateSchema,
   AgentStopResultSchema,
 } from "./models/turn-runtime.js";
+
+export {
+  CANONICAL_AGENT_RECONNECT_DELTA_MAX_EVENTS,
+  CanonicalAgentReconnectRecoverySchema,
+  CanonicalAgentRevisionSchema,
+  CanonicalAgentSnapshotSchema,
+} from "./models/canonical-agent-reconnect.js";
+export type {
+  CanonicalAgentReconnectRecovery,
+  CanonicalAgentRevision,
+  CanonicalAgentSnapshot,
+} from "./models/canonical-agent-reconnect.js";
 export type {
   TurnExecutionId,
   TurnRuntimePhase,

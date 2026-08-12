@@ -62,6 +62,10 @@ import {
 import { CopilotSubagentSchema, CopilotAgentNameSchema } from "../providers/copilot-agent.js";
 import { PermissionDecisionSchema, PermissionRequestSchema } from "../models/permission.js";
 import { GoalLookupResultSchema, GoalObjectiveSchema } from "../models/goal.js";
+import {
+  CanonicalAgentReconnectRecoverySchema,
+  CanonicalAgentRevisionSchema,
+} from "../models/canonical-agent-reconnect.js";
 import { PreviewAnnotationBundleSchema } from "../models/browser-preview.js";
 import {
   ThreadControlReadInputSchema,
@@ -185,6 +189,18 @@ export const SetThreadSubscriptionsSchema = lazySchema(() =>
         });
       }
     }).optional(),
+    /** Last installed canonical revisions per desired thread. */
+    revisions: z.record(
+      ThreadSubscriptionIdSchema,
+      CanonicalAgentRevisionSchema(),
+    ).superRefine((revisions, context) => {
+      if (Object.keys(revisions).length > MAX_THREAD_SUBSCRIPTIONS) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `revisions must contain at most ${MAX_THREAD_SUBSCRIPTIONS} entries`,
+        });
+      }
+    }).optional(),
   }),
 );
 
@@ -196,6 +212,8 @@ export const SetThreadSubscriptionsResultSchema = lazySchema(() =>
   z.object({
     hydrationRequiredThreadIds: z.array(ThreadSubscriptionIdSchema),
     replayedThrough: z.record(ThreadSubscriptionIdSchema, z.number().int().positive()),
+    canonicalRecoveries: z.array(CanonicalAgentReconnectRecoverySchema())
+      .max(MAX_THREAD_SUBSCRIPTIONS),
   }),
 );
 
@@ -347,6 +365,14 @@ const ConversationNewerPageMethod: {
 } = {
   params: ConversationNewerPageRequestSchema(),
   result: ConversationNewerPageSchema(),
+};
+
+const SetThreadSubscriptionsMethod: {
+  params: z.ZodType<SetThreadSubscriptionsInput>;
+  result: z.ZodType<SetThreadSubscriptionsResult>;
+} = {
+  params: SetThreadSubscriptionsSchema(),
+  result: SetThreadSubscriptionsResultSchema(),
 };
 
 /** All RPC method definitions keyed by method name with params and result schemas. */
@@ -803,10 +829,7 @@ export const WS_METHODS = lazySchema(() => ({
     params: z.object({ threadId: z.string() }),
     result: z.void(),
   },
-  "push.setThreadSubscriptions": {
-    params: SetThreadSubscriptionsSchema(),
-    result: SetThreadSubscriptionsResultSchema(),
-  },
+  "push.setThreadSubscriptions": SetThreadSubscriptionsMethod,
   "agent.answerQuestions": {
     params: z.object({
       threadId: z.string(),

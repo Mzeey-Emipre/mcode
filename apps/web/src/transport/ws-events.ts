@@ -88,6 +88,17 @@ export function startPushListeners(): void {
     }),
   );
 
+  unsubs.push(
+    pushEmitter.on("agent.canonical", (data) => {
+      const parsed = WS_CHANNELS["agent.canonical"].safeParse(data);
+      if (!parsed.success) return;
+      useThreadStore.getState().handleCanonicalAgentEvents(
+        parsed.data.threadId,
+        parsed.data.events,
+      );
+    }),
+  );
+
   // terminal.data: forward PTY output to the registered TerminalView callback.
   // Supports multiple payload encodings for forward/backward compatibility:
   //   - Uint8Array: direct binary WebSocket frames (preferred)
