@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   attestPackagedTerminalArtifacts,
+  parseLoadProbeProcessResult,
   retainTargetTerminalNativeArtifacts,
 } from "../terminal-artifact-attestation.mjs";
 
@@ -47,6 +48,30 @@ function machOBinary(cpuType) {
 }
 
 describe("attestPackagedTerminalArtifacts", () => {
+  it("accepts valid probe evidence independently of the child shutdown status", () => {
+    expect(
+      parseLoadProbeProcessResult({
+        error: undefined,
+        signal: null,
+        status: 1,
+        stderr: "",
+        stdout: JSON.stringify({ hostReady: true }),
+      }),
+    ).toEqual({ hostReady: true });
+  });
+
+  it("reports process diagnostics when the probe emits no evidence", () => {
+    expect(() =>
+      parseLoadProbeProcessResult({
+        error: undefined,
+        signal: "SIGTERM",
+        status: null,
+        stderr: "host stopped",
+        stdout: "",
+      }),
+    ).toThrow("signal SIGTERM: host stopped");
+  });
+
   it("does not treat a post-readiness shutdown status as a startup failure", () => {
     const source = readFileSync(
       new URL("../terminal-artifact-attestation.mjs", import.meta.url),
