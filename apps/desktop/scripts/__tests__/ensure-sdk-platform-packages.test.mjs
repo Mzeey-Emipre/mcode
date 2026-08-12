@@ -198,7 +198,17 @@ describe("target package download safety", () => {
 });
 
 describe("desktop packaging workflow wiring", () => {
-  it("uses the shared SDK preparation entrypoint", () => {
+  it("keeps target preparation in one reusable workflow", () => {
+    const reusable = readFileSync(
+      path.join(repoRoot, ".github/workflows/desktop-package-target.yml"),
+      "utf8",
+    );
+    expect(reusable).toContain(
+      "apps/desktop/scripts/ensure-sdk-platform-packages.mjs",
+    );
+    expect(reusable).toContain(
+      "apps/desktop/scripts/terminal-release-evidence.mjs target",
+    );
     for (const workflow of [
       ".github/workflows/nightly-desktop.yml",
       ".github/workflows/build-release.yml",
@@ -206,9 +216,36 @@ describe("desktop packaging workflow wiring", () => {
     ]) {
       const source = readFileSync(path.join(repoRoot, workflow), "utf8");
       expect(source).toContain(
-        "apps/desktop/scripts/ensure-sdk-platform-packages.mjs",
+        "./.github/workflows/desktop-package-target.yml",
       );
-      expect(source).not.toContain("ensure-claude-sdk-platform-package.mjs");
+      expect(source).not.toContain("ensure-sdk-platform-packages.mjs");
+      expect(source).not.toContain("ci-package.mjs");
     }
+  });
+
+  it("publishes Nightly and Stable only after aggregate evidence passes", () => {
+    const nightly = readFileSync(
+      path.join(repoRoot, ".github/workflows/nightly-desktop.yml"),
+      "utf8",
+    );
+    const stable = readFileSync(
+      path.join(repoRoot, ".github/workflows/build-release.yml"),
+      "utf8",
+    );
+    const releasePlease = readFileSync(
+      path.join(repoRoot, "release-please-config.json"),
+      "utf8",
+    );
+    expect(nightly.indexOf("terminal-release-evidence.mjs aggregate")).toBeLessThan(
+      nightly.indexOf("gh release edit"),
+    );
+    expect(stable.indexOf("terminal-release-evidence.mjs aggregate")).toBeLessThan(
+      stable.indexOf("gh release edit"),
+    );
+    expect(JSON.parse(releasePlease)).toMatchObject({
+      draft: true,
+      "force-tag-creation": true,
+    });
+    expect(stable).not.toContain("types: [published]");
   });
 });

@@ -460,6 +460,8 @@ function defaultLoadProbe({
         platform: process.platform,
         arch: process.arch,
         modulesAbi: process.versions.modules,
+        nodeVersion: process.versions.node,
+        electronVersion: process.versions.electron,
         hostReady,
         nativeModules,
       }));
@@ -494,6 +496,18 @@ function validateLoadProbe(probe, targetPlatform, targetArch, packageRoots) {
   }
   if (typeof probe.modulesAbi !== "string" || !/^\d+$/.test(probe.modulesAbi)) {
     throw new Error("Packaged runtime did not report a valid Node modules ABI");
+  }
+  if (
+    typeof probe.nodeVersion !== "string" ||
+    !/^\d+\.\d+\.\d+/.test(probe.nodeVersion)
+  ) {
+    throw new Error("Packaged runtime did not report its Node version");
+  }
+  if (
+    typeof probe.electronVersion !== "string" ||
+    !/^\d+\.\d+\.\d+/.test(probe.electronVersion)
+  ) {
+    throw new Error("Packaged runtime did not report its Electron version");
   }
   if (probe.hostReady !== true) {
     throw new Error("Packaged runtime did not start the PTY host bundle");
@@ -540,7 +554,12 @@ function validateLoadProbe(probe, targetPlatform, targetArch, packageRoots) {
       );
     }
   }
-  return { modulesAbi: probe.modulesAbi, nativeByPackage };
+  return {
+    modulesAbi: probe.modulesAbi,
+    nodeVersion: probe.nodeVersion,
+    electronVersion: probe.electronVersion,
+    nativeByPackage,
+  };
 }
 
 /**
@@ -593,7 +612,7 @@ export function attestPackagedTerminalArtifacts({
     nodePtyRoot: packageRoots["node-pty"],
     koffiRoot: packageRoots.koffi,
   });
-  const { modulesAbi, nativeByPackage } = validateLoadProbe(
+  const { modulesAbi, nodeVersion, electronVersion, nativeByPackage } = validateLoadProbe(
     probe,
     targetPlatform,
     targetArch,
@@ -680,6 +699,7 @@ export function attestPackagedTerminalArtifacts({
   return {
     contractVersion: 1,
     target: { platform: targetPlatform, arch: targetArch, modulesAbi },
+    runtime: { node: nodeVersion, electron: electronVersion },
     dependencies,
     compressedBytes,
     compressedLimitBytes: maxCompressedBytes,

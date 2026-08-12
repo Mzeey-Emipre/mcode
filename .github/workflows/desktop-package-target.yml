@@ -1,0 +1,249 @@
+name: Desktop Package Target
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        required: true
+        type: string
+      target-platform:
+        required: true
+        type: string
+      target-arch:
+        required: true
+        type: string
+      build-args:
+        required: false
+        type: string
+        default: ""
+      channel:
+        required: true
+        type: string
+      version:
+        required: false
+        type: string
+        default: ""
+      expected-legacy:
+        required: true
+        type: boolean
+      signing-required:
+        required: true
+        type: boolean
+      retention-days:
+        required: false
+        type: number
+        default: 7
+    secrets:
+      CSC_LINK:
+        required: false
+      CSC_KEY_PASSWORD:
+        required: false
+      APPLE_API_KEY_P8:
+        required: false
+      APPLE_API_KEY_ID:
+        required: false
+      APPLE_API_ISSUER:
+        required: false
+      LINUX_RELEASE_GPG_PRIVATE_KEY:
+        required: false
+      LINUX_RELEASE_GPG_KEY_ID:
+        required: false
+
+permissions:
+  contents: read
+
+env:
+  SEGMENT_DOWNLOAD_TIMEOUT_MINS: "2"
+
+jobs:
+  package:
+    name: ${{ inputs.target-platform }}-${{ inputs.target-arch }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Cache Bun install cache
+        uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-${{ inputs.target-arch }}-bun-runtime-${{ hashFiles('package.json') }}-lock-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ inputs.target-arch }}-bun-runtime-${{ hashFiles('package.json') }}-lock-
+
+      - name: Install locked dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            if bun install --frozen-lockfile; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            sleep $((attempt * 10))
+          done
+
+      - name: Set package version
+        if: inputs.version != ''
+        shell: bash
+        env:
+          MCODE_DESKTOP_VERSION: ${{ inputs.version }}
+        run: |
+          bun -e '
+            const fs = require("fs");
+            const file = "apps/desktop/package.json";
+            const value = JSON.parse(fs.readFileSync(file, "utf8"));
+            value.version = process.env.MCODE_DESKTOP_VERSION;
+            fs.writeFileSync(file, JSON.stringify(value, null, 2) + "\n");
+          '
+
+      - name: Check production signing inputs
+        if: inputs.signing-required
+        shell: bash
+        env:
+          TARGET_PLATFORM: ${{ inputs.target-platform }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          LINUX_RELEASE_GPG_PRIVATE_KEY: ${{ secrets.LINUX_RELEASE_GPG_PRIVATE_KEY }}
+          LINUX_RELEASE_GPG_KEY_ID: ${{ secrets.LINUX_RELEASE_GPG_KEY_ID }}
+        run: |
+          set -euo pipefail
+          case "$TARGET_PLATFORM" in
+            windows)
+              test -n "$CSC_LINK" && test -n "$CSC_KEY_PASSWORD"
+              ;;
+            macos)
+              test -n "$CSC_LINK" && test -n "$CSC_KEY_PASSWORD"
+              test -n "$APPLE_API_KEY_P8" && test -n "$APPLE_API_KEY_ID" && test -n "$APPLE_API_ISSUER"
+              ;;
+            linux)
+              test -n "$LINUX_RELEASE_GPG_PRIVATE_KEY" && test -n "$LINUX_RELEASE_GPG_KEY_ID"
+              ;;
+            *)
+              echo "Unsupported target platform: $TARGET_PLATFORM" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Prepare Apple notarization key
+        if: inputs.signing-required && inputs.target-platform == 'macos'
+        shell: bash
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$APPLE_API_KEY_P8" > "$RUNNER_TEMP/AuthKey.p8"
+          chmod 600 "$RUNNER_TEMP/AuthKey.p8"
+
+      - name: Import Linux release key
+        if: inputs.signing-required && inputs.target-platform == 'linux'
+        shell: bash
+        env:
+          LINUX_RELEASE_GPG_PRIVATE_KEY: ${{ secrets.LINUX_RELEASE_GPG_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$LINUX_RELEASE_GPG_PRIVATE_KEY" | gpg --batch --import
+
+      - name: Build main and renderer
+        run: bun run --cwd apps/desktop build
+
+      - name: Generate V8 snapshot
+        run: bun apps/desktop/scripts/generate-snapshot.mjs
+        env:
+          MCODE_TARGET_ARCH: ${{ inputs.target-arch }}
+
+      - name: Install Python setuptools
+        shell: bash
+        run: python3 -m pip install setuptools --break-system-packages 2>/dev/null || python3 -m pip install setuptools 2>/dev/null || pip install setuptools 2>/dev/null || true
+
+      - name: Prepare SDK target packages
+        run: bun apps/desktop/scripts/ensure-sdk-platform-packages.mjs
+        env:
+          MCODE_TARGET_ARCH: ${{ inputs.target-arch }}
+
+      - name: Set up Node 24 for desktop packaging
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+
+      - name: Package and sign target
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_API_KEY: ${{ runner.temp }}/AuthKey.p8
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ inputs.signing-required && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+          notarize_args=()
+          if [ "${{ inputs.target-platform }}" = "macos" ] && [ "${{ inputs.signing-required }}" = "true" ]; then
+            notarize_args+=(--config.mac.notarize=true)
+          fi
+          bun apps/desktop/scripts/ci-package.mjs "${notarize_args[@]}" ${{ inputs.build-args }}
+
+      - name: Smoke test packaged server
+        if: inputs.target-platform != 'macos' || inputs.target-arch == 'arm64'
+        run: bun apps/desktop/scripts/smoke-test.mjs
+
+      - name: Smoke test packaged server under Rosetta
+        if: inputs.target-platform == 'macos' && inputs.target-arch == 'x64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if /usr/bin/pgrep oahd >/dev/null 2>&1 || /usr/bin/arch -x86_64 /usr/bin/true >/dev/null 2>&1; then
+            bun apps/desktop/scripts/smoke-test.mjs
+          else
+            echo "Rosetta is required for the x64 macOS package smoke." >&2
+            exit 1
+          fi
+
+      - name: Verify Linux artifacts on Ubuntu 22.04
+        if: inputs.target-platform == 'linux'
+        run: bash apps/desktop/scripts/verify-linux-artifacts-ubuntu22.sh
+
+      - name: Stage target artifacts and evidence
+        shell: bash
+        env:
+          MCODE_COMMIT: ${{ github.sha }}
+          MCODE_CHANNEL: ${{ inputs.channel }}
+          MCODE_EXPECTED_LEGACY: ${{ inputs.expected-legacy }}
+          MCODE_RUNNER: ${{ inputs.runner }}
+          MCODE_SIGNING_REQUIRED: ${{ inputs.signing-required }}
+          MCODE_TARGET_PLATFORM: ${{ inputs.target-platform }}
+          MCODE_TARGET_ARCH: ${{ inputs.target-arch }}
+          MCODE_LINUX_SIGNING_KEY_ID: ${{ secrets.LINUX_RELEASE_GPG_KEY_ID }}
+        run: |
+          set -euo pipefail
+          version=$(bun -e 'process.stdout.write(require("./apps/desktop/package.json").version)')
+          bun apps/desktop/scripts/terminal-release-evidence.mjs target \
+            --release-dir apps/desktop/release \
+            --staging-dir "$RUNNER_TEMP/desktop-target-$MCODE_TARGET_PLATFORM-$MCODE_TARGET_ARCH" \
+            --commit "$MCODE_COMMIT" \
+            --version "$version" \
+            --channel "$MCODE_CHANNEL" \
+            --expected-legacy "$MCODE_EXPECTED_LEGACY" \
+            --platform "$MCODE_TARGET_PLATFORM" \
+            --arch "$MCODE_TARGET_ARCH" \
+            --runner "$MCODE_RUNNER" \
+            --signing-required "$MCODE_SIGNING_REQUIRED"
+
+      - name: Upload staged target
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-target-${{ inputs.target-platform }}-${{ inputs.target-arch }}
+          path: ${{ runner.temp }}/desktop-target-${{ inputs.target-platform }}-${{ inputs.target-arch }}
+          retention-days: ${{ inputs.retention-days }}
+          if-no-files-found: error

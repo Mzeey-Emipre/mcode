@@ -1089,12 +1089,21 @@ export {
   TerminalDiagnosticCounterSchema,
   TerminalDiagnosticHistogramSchema,
   TerminalDiagnosticsBundleSchema,
+  TerminalPackagedArtifactAttestationSchema,
+  TerminalArtifactAttestationSchema,
+  TerminalReleaseArtifactSchema,
+  TerminalReleaseSignatureCheckSchema,
+  TerminalTargetEvidenceManifestSchema,
+  TerminalTargetEvidenceReferenceSchema,
+  TerminalReleaseEvidenceManifestSchema,
 } from "./models/terminal-diagnostics.js";
 export type {
   TerminalMetricId,
   TerminalHealthSnapshot,
   TerminalDiagnosticEvent,
   TerminalDiagnosticsBundle,
+  TerminalTargetEvidenceManifest,
+  TerminalReleaseEvidenceManifest,
 } from "./models/terminal-diagnostics.js";
 
 export {
