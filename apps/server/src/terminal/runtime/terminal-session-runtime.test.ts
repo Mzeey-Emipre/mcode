@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TerminalLaunchSnapshot, TerminalScope } from "@mcode/contracts";
 import type {
@@ -93,7 +94,7 @@ class ManualPtyHostAdapter implements PtyHostAdapter {
   }
 }
 
-function setup() {
+function setup(replayCapacityBytes?: number) {
   const host = new ManualPtyHostAdapter();
   let hydrationIndex = 0;
   const runtime = new ModernTerminalSessionRuntime({
@@ -101,6 +102,7 @@ function setup() {
     now: () => new Date("2026-08-12T12:00:00.000Z"),
     createHydrationId: () => HYDRATION_IDS[hydrationIndex++]!,
     createCorrelationId: () => "corr-runtime-test",
+    replayCapacityBytes,
   });
   runtimes.push(runtime);
   return { host, runtime };
@@ -123,7 +125,7 @@ async function attach(
   runtime: ModernTerminalSessionRuntime,
   attachmentId = ATTACHMENT_ID,
 ) {
-  return runtime.attach({
+  const descriptor = await runtime.attach({
     sessionId: SESSION_ID,
     attachmentId,
     hostGeneration: "7",
@@ -131,6 +133,22 @@ async function attach(
     lastCommandSeq: "0",
     checkpointSeq: null,
   });
+  const hydration = runtime.consumeHydration({
+    sessionId: SESSION_ID,
+    hostGeneration: "7",
+    attachmentEpoch: descriptor.attachmentEpoch,
+    hydrationId: descriptor.hydrationId,
+  });
+  runtime.acknowledgeOutput({
+    sessionId: SESSION_ID,
+    hostGeneration: "7",
+    attachmentEpoch: descriptor.attachmentEpoch,
+    outputSeq:
+      hydration.descriptor.lastOutputSeq ??
+      hydration.descriptor.checkpointThroughSeq ??
+      hydration.descriptor.requestedAfterSeq,
+  });
+  return descriptor;
 }
 
 describe("ModernTerminalSessionRuntime", () => {
@@ -465,6 +483,232 @@ describe("ModernTerminalSessionRuntime", () => {
       attachmentEpoch: "1",
       outputSeq: "2",
     })).toThrow(TerminalSessionRuntimeError);
+  });
+
+  it("retains headless output and prepares a contiguous delta for reattachment", async () => {
+    const { host, runtime } = setup();
+    await createRunningSession(runtime);
+    host.emit({
+      contractVersion: 1,
+      kind: "output",
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      outputSeq: "1",
+      dataBase64: Buffer.from("first").toString("base64"),
+    });
+    host.emit({
+      contractVersion: 1,
+      kind: "output",
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      outputSeq: "2",
+      dataBase64: Buffer.from("second").toString("base64"),
+    });
+
+    const descriptor = await runtime.attach({
+      sessionId: SESSION_ID,
+      attachmentId: ATTACHMENT_ID,
+      hostGeneration: "7",
+      lastOutputSeq: "1",
+      lastCommandSeq: "0",
+      checkpointSeq: null,
+    });
+    runtime.acknowledgeOutput({
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      attachmentEpoch: descriptor.attachmentEpoch,
+      outputSeq: "2",
+    });
+    const hydration = runtime.consumeHydration({
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      attachmentEpoch: descriptor.attachmentEpoch,
+      hydrationId: descriptor.hydrationId,
+    });
+
+    expect(hydration.descriptor).toMatchObject({
+      mode: "delta",
+      requestedAfterSeq: "1",
+      firstOutputSeq: "2",
+      lastOutputSeq: "2",
+      gap: null,
+    });
+    expect(hydration.output.map((chunk) => Buffer.from(chunk.data).toString())).toEqual([
+      "second",
+    ]);
+    await expect(runtime.sendCommand({
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      attachmentEpoch: descriptor.attachmentEpoch,
+      commandSeq: "1",
+      kind: "input",
+      data: new Uint8Array([0x61]),
+    })).rejects.toMatchObject({ code: "SESSION_NOT_RUNNING", retry: "REATTACH" });
+
+    runtime.acknowledgeOutput({
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      attachmentEpoch: descriptor.attachmentEpoch,
+      outputSeq: "2",
+    });
+    await expect(runtime.sendCommand({
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      attachmentEpoch: descriptor.attachmentEpoch,
+      commandSeq: "1",
+      kind: "input",
+      data: new Uint8Array([0x61]),
+    })).resolves.toBeUndefined();
+  });
+
+  it("prepares retained tail with an explicit gap after bounded eviction", async () => {
+    const { host, runtime } = setup(65_536);
+    await createRunningSession(runtime);
+    host.emit({
+      contractVersion: 1,
+      kind: "output",
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      outputSeq: "1",
+      dataBase64: Buffer.from(new Uint8Array(40_000).fill(1)).toString("base64"),
+    });
+    host.emit({
+      contractVersion: 1,
+      kind: "output",
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      outputSeq: "2",
+      dataBase64: Buffer.from(new Uint8Array(40_000).fill(2)).toString("base64"),
+    });
+
+    const descriptor = await runtime.attach({
+      sessionId: SESSION_ID,
+      attachmentId: ATTACHMENT_ID,
+      hostGeneration: "7",
+      lastOutputSeq: "0",
+      lastCommandSeq: "0",
+      checkpointSeq: null,
+    });
+    const hydration = runtime.consumeHydration({
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      attachmentEpoch: descriptor.attachmentEpoch,
+      hydrationId: descriptor.hydrationId,
+    });
+
+    expect(hydration.descriptor).toMatchObject({
+      mode: "reset-tail-gap",
+      firstOutputSeq: "2",
+      lastOutputSeq: "2",
+      gap: {
+        firstMissingSeq: "1",
+        lastMissingSeq: "1",
+        retainedFromSeq: "2",
+        retainedThroughSeq: "2",
+        reason: "evicted",
+      },
+    });
+    expect(hydration.output).toHaveLength(1);
+    expect(hydration.output[0]?.data[0]).toBe(2);
+  });
+
+  it("fails the session visibly when host output is not contiguous", async () => {
+    const { host, runtime } = setup();
+    await createRunningSession(runtime);
+
+    host.emit({
+      contractVersion: 1,
+      kind: "output",
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      outputSeq: "2",
+      dataBase64: Buffer.from("missing-one").toString("base64"),
+    });
+
+    expect(runtime.getSnapshot(SESSION_ID)).toMatchObject({
+      state: "failed",
+      lastOutputSeq: "0",
+      tombstone: true,
+      exit: { reason: "protocol-failure" },
+    });
+  });
+
+  it("restores a validated checkpoint only after renderer writes are acknowledged", async () => {
+    const { host, runtime } = setup();
+    await createRunningSession(runtime);
+    const firstAttachment = await attach(runtime);
+    host.emit({
+      contractVersion: 1,
+      kind: "output",
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      outputSeq: "1",
+      dataBase64: Buffer.from("before-checkpoint").toString("base64"),
+    });
+    const checkpointData = Buffer.from("serialized-screen");
+    const sha256 = createHash("sha256").update(checkpointData).digest("hex");
+
+    await expect(runtime.saveCheckpoint({
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      attachmentEpoch: firstAttachment.attachmentEpoch,
+      baseOutputSeq: "1",
+      data: checkpointData,
+      sha256,
+    })).rejects.toMatchObject({ code: "CHECKPOINT_REJECTED" });
+    runtime.acknowledgeOutput({
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      attachmentEpoch: firstAttachment.attachmentEpoch,
+      outputSeq: "1",
+    });
+    await runtime.saveCheckpoint({
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      attachmentEpoch: firstAttachment.attachmentEpoch,
+      baseOutputSeq: "1",
+      data: checkpointData,
+      sha256,
+    });
+    await runtime.detach({
+      sessionId: SESSION_ID,
+      attachmentId: ATTACHMENT_ID,
+      attachmentEpoch: firstAttachment.attachmentEpoch,
+      reason: "hide",
+    });
+    host.emit({
+      contractVersion: 1,
+      kind: "output",
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      outputSeq: "2",
+      dataBase64: Buffer.from("after-checkpoint").toString("base64"),
+    });
+
+    const descriptor = await runtime.attach({
+      sessionId: SESSION_ID,
+      attachmentId: SECOND_ATTACHMENT_ID,
+      hostGeneration: "7",
+      lastOutputSeq: "0",
+      lastCommandSeq: "0",
+      checkpointSeq: "1",
+    });
+    const hydration = runtime.consumeHydration({
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      attachmentEpoch: descriptor.attachmentEpoch,
+      hydrationId: descriptor.hydrationId,
+    });
+
+    expect(hydration.descriptor).toMatchObject({
+      mode: "checkpoint-delta",
+      checkpointThroughSeq: "1",
+      firstOutputSeq: "2",
+      lastOutputSeq: "2",
+      gap: null,
+    });
+    expect(Buffer.from(hydration.checkpoint?.data ?? []).toString()).toBe("serialized-screen");
+    expect(Buffer.from(hydration.output[0]?.data ?? []).toString()).toBe("after-checkpoint");
   });
 
   it("runs the lifecycle and close barrier through the in-memory host seam", async () => {
