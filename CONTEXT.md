@@ -48,6 +48,12 @@ inheritance.
 
 ## Workspaces and worktrees
 
+### Platform command
+A Project environment command used by Setup or a Project action. It can define
+a default script and operating-system overrides. Mcode resolves one script for
+the current system and runs it from the active Thread's checkout root with the
+Project's configured terminal and its normal environment.
+
 ### Workspace
 The top-level container that owns a set of threads. Anchored 1:1 to a local
 repository or folder path; a workspace cannot exist without one. The
