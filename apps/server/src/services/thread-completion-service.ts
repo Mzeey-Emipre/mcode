@@ -1,11 +1,13 @@
 import { inject, injectable } from "tsyringe";
-import type { Thread } from "@mcode/contracts";
+import type { CompletedThreadRetentionDays, Settings, Thread } from "@mcode/contracts";
 import { ThreadRepo } from "../repositories/thread-repo";
 import { AgentService } from "./agent-service";
+import { SettingsService } from "./settings-service";
 import { ThreadTeardownService } from "./thread-teardown-service";
 import { ThreadControlMutationReservationService } from "./thread-control-mutation-reservation-service";
 
-const DEFAULT_RETENTION_MS = 72 * 60 * 60 * 1_000;
+const DAY_MS = 24 * 60 * 60 * 1_000;
+const OVERDUE_SAFETY_MS = DAY_MS;
 
 function completionFailureMessage(result: PromiseRejectedResult): string {
   return result.reason instanceof Error ? result.reason.message : String(result.reason);
@@ -15,6 +17,9 @@ function completionFailureMessage(result: PromiseRejectedResult): string {
 @injectable()
 export class ThreadCompletionService {
   private readonly resourceOwners = new Map<string, (threadId: string) => Promise<void>>();
+  private deadlineChangesListener: ((threads: readonly Thread[]) => void) | null = null;
+  private lastRetentionDays: CompletedThreadRetentionDays | undefined;
+  private unsubscribeSettings: (() => void) | null = null;
 
   constructor(
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
@@ -22,9 +27,39 @@ export class ThreadCompletionService {
     @inject(ThreadTeardownService) private readonly teardownService: ThreadTeardownService,
     @inject(ThreadControlMutationReservationService)
     private readonly mutationReservations: ThreadControlMutationReservationService,
+    @inject(SettingsService) private readonly settingsService: SettingsService,
     @inject("ThreadCompletionClock", { isOptional: true })
     private readonly clock?: () => Date,
   ) {}
+
+  /** Start retention reconciliation for settings changes. */
+  start(): void {
+    if (this.unsubscribeSettings) return;
+    this.lastRetentionDays = this.retentionDays(this.settingsService.get());
+    this.unsubscribeSettings = this.settingsService.on("change", (settings) => {
+      const nextRetentionDays = this.retentionDays(settings);
+      const previousRetentionDays = this.lastRetentionDays;
+      if (previousRetentionDays === nextRetentionDays) return;
+      if (previousRetentionDays === undefined) {
+        this.lastRetentionDays = nextRetentionDays;
+        return;
+      }
+      const changed = this.recalculateDeadlines(previousRetentionDays, nextRetentionDays);
+      this.lastRetentionDays = nextRetentionDays;
+      if (changed.length > 0) this.deadlineChangesListener?.(changed);
+    });
+  }
+
+  /** Stop retention reconciliation for settings changes. */
+  stop(): void {
+    this.unsubscribeSettings?.();
+    this.unsubscribeSettings = null;
+  }
+
+  /** Register the push publisher for recalculated thread deadlines. */
+  onDeadlineChanges(listener: (threads: readonly Thread[]) => void): void {
+    this.deadlineChangesListener = listener;
+  }
 
   /** Register an additional server-side owner of thread runtime resources. */
   registerResourceOwner(name: string, release: (threadId: string) => Promise<void>): void {
@@ -50,10 +85,13 @@ export class ThreadCompletionService {
       }
 
       const completedAt = this.clock?.() ?? new Date();
+      const retentionDays = this.retentionDays(this.settingsService.get());
       const completed = this.threadRepo.complete(
         thread.id,
         completedAt.toISOString(),
-        new Date(completedAt.getTime() + DEFAULT_RETENTION_MS).toISOString(),
+        retentionDays === null
+          ? null
+          : new Date(completedAt.getTime() + retentionDays * DAY_MS).toISOString(),
       );
       if (!completed) throw new Error(`Thread not found: ${threadId}`);
       const releases = [
@@ -96,5 +134,39 @@ export class ThreadCompletionService {
       throw new Error(`Thread not found: ${threadId}`);
     }
     return thread;
+  }
+
+  private retentionDays(settings: Settings): CompletedThreadRetentionDays {
+    return settings.thread.completion.retentionDays;
+  }
+
+  private recalculateDeadlines(
+    previousRetentionDays: CompletedThreadRetentionDays,
+    nextRetentionDays: CompletedThreadRetentionDays,
+  ): Thread[] {
+    const now = this.clock?.() ?? new Date();
+    const nowMs = now.getTime();
+    const safetyDeadline = new Date(nowMs + OVERDUE_SAFETY_MS).toISOString();
+    const shorter = nextRetentionDays !== null
+      && (previousRetentionDays === null || nextRetentionDays < previousRetentionDays);
+    const updates = this.threadRepo.listCompletedRetentionRecords().flatMap((record) => {
+      const calculatedDeadline = nextRetentionDays === null
+        ? null
+        : new Date(
+          new Date(record.userCompletedAt).getTime() + nextRetentionDays * DAY_MS,
+        ).toISOString();
+      const newlyOverdue = shorter
+        && calculatedDeadline !== null
+        && new Date(calculatedDeadline).getTime() <= nowMs
+        && (
+          record.scheduledDeletionAt === null
+          || new Date(record.scheduledDeletionAt).getTime() > nowMs
+        );
+      const nextScheduledDeletionAt = newlyOverdue ? safetyDeadline : calculatedDeadline;
+      return nextScheduledDeletionAt === record.scheduledDeletionAt
+        ? []
+        : [{ ...record, nextScheduledDeletionAt }];
+    });
+    return this.threadRepo.updateCompletedThreadDeadlines(updates);
   }
 }

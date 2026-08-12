@@ -118,6 +118,18 @@ export interface ActiveWorktreePathSet {
   truncated: boolean;
 }
 
+/** Completion timestamps used to calculate retention deadlines. */
+export interface CompletedThreadRetentionRecord {
+  id: string;
+  userCompletedAt: string;
+  scheduledDeletionAt: string | null;
+}
+
+/** Compare-and-set update for one completed thread's deletion deadline. */
+export interface CompletedThreadDeadlineUpdate extends CompletedThreadRetentionRecord {
+  nextScheduledDeletionAt: string | null;
+}
+
 /** Repository for thread lifecycle operations against SQLite. */
 @injectable()
 export class ThreadRepo {
@@ -362,8 +374,8 @@ export class ThreadRepo {
     return result.changes > 0;
   }
 
-  /** Persist the first user-completion timestamp and its fixed deletion deadline. */
-  complete(id: string, completedAt: string, scheduledDeletionAt: string): Thread | null {
+  /** Persist the first user-completion timestamp and its deletion deadline. */
+  complete(id: string, completedAt: string, scheduledDeletionAt: string | null): Thread | null {
     this.db.prepare(
       `UPDATE threads
        SET user_completed_at = COALESCE(user_completed_at, ?),
@@ -375,6 +387,54 @@ export class ThreadRepo {
        WHERE id = ? AND deleted_at IS NULL`,
     ).run(completedAt, scheduledDeletionAt, completedAt, id);
     return this.findById(id);
+  }
+
+  /** List active completed threads for retention-policy calculation. */
+  listCompletedRetentionRecords(): CompletedThreadRetentionRecord[] {
+    const rows = this.db.prepare(
+      `SELECT id, user_completed_at, scheduled_deletion_at
+       FROM threads
+       WHERE user_completed_at IS NOT NULL AND deleted_at IS NULL
+       ORDER BY id`,
+    ).all() as Array<{
+      id: string;
+      user_completed_at: string;
+      scheduled_deletion_at: string | null;
+    }>;
+    return rows.map((row) => ({
+      id: row.id,
+      userCompletedAt: row.user_completed_at,
+      scheduledDeletionAt: row.scheduled_deletion_at,
+    }));
+  }
+
+  /** Apply deadline changes only while each completion record still matches its source state. */
+  updateCompletedThreadDeadlines(updates: readonly CompletedThreadDeadlineUpdate[]): Thread[] {
+    if (updates.length === 0) return [];
+    const update = this.db.prepare(
+      `UPDATE threads
+       SET scheduled_deletion_at = ?
+       WHERE id = ?
+         AND user_completed_at = ?
+         AND scheduled_deletion_at IS ?
+         AND deleted_at IS NULL`,
+    );
+    const apply = this.db.transaction(() => {
+      const changedIds: string[] = [];
+      for (const entry of updates) {
+        const result = update.run(
+          entry.nextScheduledDeletionAt,
+          entry.id,
+          entry.userCompletedAt,
+          entry.scheduledDeletionAt,
+        );
+        if (result.changes > 0) changedIds.push(entry.id);
+      }
+      return changedIds;
+    });
+    return apply()
+      .map((id) => this.findById(id))
+      .filter((thread): thread is Thread => thread !== null);
   }
 
   /** Clear user-completion metadata in one transaction-safe statement. */
