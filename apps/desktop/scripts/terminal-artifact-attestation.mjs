@@ -458,7 +458,7 @@ function defaultLoadProbe({
           packageName: entry.startsWith(roots[0]) ? 'node-pty' : entry.startsWith(roots[1]) ? 'koffi' : 'unknown',
           path: entry,
         }));
-      process.stdout.write(JSON.stringify({
+      const result = JSON.stringify({
         platform: process.platform,
         arch: process.arch,
         modulesAbi: process.versions.modules,
@@ -466,7 +466,8 @@ function defaultLoadProbe({
         electronVersion: process.versions.electron,
         hostReady,
         nativeModules,
-      }));
+      });
+      process.stdout.write(result, () => process.exit(0));
     });
     host.send({
       contractVersion: 1,

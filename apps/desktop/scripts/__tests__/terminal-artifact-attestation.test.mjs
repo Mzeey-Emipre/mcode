@@ -55,6 +55,7 @@ describe("attestPackagedTerminalArtifacts", () => {
 
     expect(source).toContain("if (!hostReady) {");
     expect(source).not.toContain("if (!hostReady || code !== 0) {");
+    expect(source).toContain("process.stdout.write(result, () => process.exit(0));");
   });
 
   let resourcesRoot;
