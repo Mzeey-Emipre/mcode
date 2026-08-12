@@ -138,26 +138,28 @@ export default async function afterPack(context) {
     console.log(`[after-pack] Restored packaged ConPTY runtime at ${dllPath}`);
   }
 
-  const binaryPaths = resolveBinaryPaths({
-    appOutDir,
-    electronPlatformName,
-    productFilename,
-    executableName: context.packager.executableName,
-  });
-  retainTargetTerminalNativeArtifacts({
-    resourcesRoot: resolve(packagedServerDir, "../../.."),
-    targetPlatform: npmPlatform,
-    targetArch: npmArch,
-  });
-  const terminalAttestation = attestPackagedTerminalArtifacts({
-    resourcesRoot: resolve(packagedServerDir, "../../.."),
-    runtimePath: binaryPaths.dstBinary,
-    targetPlatform: npmPlatform,
-    targetArch: npmArch,
-  });
-  console.log(
-    `[after-pack] Terminal artifacts attested: ${JSON.stringify(terminalAttestation)}`,
-  );
+  if (process.env.MCODE_SKIP_TERMINAL_ATTESTATION !== "1") {
+    const binaryPaths = resolveBinaryPaths({
+      appOutDir,
+      electronPlatformName,
+      productFilename,
+      executableName: context.packager.executableName,
+    });
+    retainTargetTerminalNativeArtifacts({
+      resourcesRoot: resolve(packagedServerDir, "../../.."),
+      targetPlatform: npmPlatform,
+      targetArch: npmArch,
+    });
+    const terminalAttestation = attestPackagedTerminalArtifacts({
+      resourcesRoot: resolve(packagedServerDir, "../../.."),
+      runtimePath: binaryPaths.dstBinary,
+      targetPlatform: npmPlatform,
+      targetArch: npmArch,
+    });
+    console.log(
+      `[after-pack] Terminal artifacts attested: ${JSON.stringify(terminalAttestation)}`,
+    );
+  }
 
   // -------------------------------------------------------------------------
   // Step 2: V8 snapshot copy + fuse flip.

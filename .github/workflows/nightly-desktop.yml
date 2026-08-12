@@ -1,5 +1,7 @@
-# Builds each target once, validates one aggregate evidence manifest, and then
-# publishes the exact staged files to the per-build Nightly release.
+# Packs the desktop app from the default branch and uploads to the rolling
+# prerelease tagged `nightly`, using electron-builder publish channel `nightly`
+# so clients with `updates.channel` = `nightly` resolve `nightly.yml` (etc.).
+
 name: Nightly Desktop
 
 on:
@@ -10,6 +12,10 @@ on:
 concurrency:
   group: nightly-release-mutations
   cancel-in-progress: false
+  queue: max
+
+env:
+  SEGMENT_DOWNLOAD_TIMEOUT_MINS: "2"
 
 permissions:
   contents: write
@@ -20,6 +26,7 @@ jobs:
     timeout-minutes: 10
     outputs:
       should_build: ${{ steps.check.outputs.should_build }}
+      last_nightly_tag: ${{ steps.check.outputs.last_nightly_tag }}
       tag: ${{ steps.tag.outputs.tag }}
       version: ${{ steps.tag.outputs.version }}
     steps:
@@ -27,52 +34,86 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
+
       - uses: oven-sh/setup-bun@v2
+
       - id: check
-        name: Compare HEAD to last complete Nightly
+        name: Compare HEAD to last nightly tag
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          last_tag=$(gh release list --repo "${{ github.repository }}" --limit 100 --json tagName,isDraft,isPrerelease --jq '[.[] | select(.isDraft == false and .isPrerelease == true and (.tagName | test("^v.*-nightly\\.")))][0].tagName // ""')
+          last_tag=$(gh release list \
+            --repo "${{ github.repository }}" \
+            --limit 100 \
+            --json tagName,isDraft,isPrerelease \
+            --jq '[.[] | select(.isDraft == false and .isPrerelease == true and (.tagName | test("^v.*-nightly\\.")))][0].tagName // ""')
           if [ -z "$last_tag" ]; then
+            echo "No published nightly found; building one."
             echo "should_build=true" >> "$GITHUB_OUTPUT"
+            echo "last_nightly_tag=" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           last_sha=$(git rev-parse "${last_tag}^{commit}")
           head_sha=$(git rev-parse HEAD)
-          if [ "$last_sha" != "$head_sha" ]; then
-            echo "should_build=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          assets=$(gh release view "$last_tag" --repo "${{ github.repository }}" --json assets --jq '.assets[].name')
-          for required in nightly.yml nightly-linux.yml nightly-mac.yml terminal-release-manifest.json; do
-            if ! grep -Fxq "$required" <<< "$assets"; then
+          echo "last nightly tag: $last_tag ($last_sha)"
+          echo "HEAD: $head_sha"
+          if [ "$last_sha" = "$head_sha" ]; then
+            assets=$(gh release view "$last_tag" \
+              --repo "${{ github.repository }}" \
+              --json assets \
+              --jq '.assets[].name')
+            if grep -Fxq "nightly.yml" <<< "$assets" \
+              && grep -Fxq "nightly-linux.yml" <<< "$assets" \
+              && grep -Fxq "nightly-mac.yml" <<< "$assets"; then
+              echo "No new commits since the last complete nightly; skipping."
+              echo "should_build=false" >> "$GITHUB_OUTPUT"
+            else
+              echo "The last nightly is incomplete; rebuilding it."
               echo "should_build=true" >> "$GITHUB_OUTPUT"
-              exit 0
             fi
-          done
-          echo "should_build=false" >> "$GITHUB_OUTPUT"
-      - name: Compute Nightly version and tag
+          else
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "last_nightly_tag=$last_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Compute nightly version and tag
         if: steps.check.outputs.should_build == 'true'
         id: tag
         shell: bash
         env:
           GITHUB_RUN_NUMBER: ${{ github.run_number }}
         run: |
-          set -euo pipefail
-          version=$(bun -e '
-            const fs = require("fs");
-            const { computeNightlyVersion } = await import("./apps/desktop/scripts/compute-nightly-version.mjs");
-            process.stdout.write(computeNightlyVersion({
-              manifest: JSON.parse(fs.readFileSync(".release-please-manifest.json", "utf8")),
-              runNumber: Number(process.env.GITHUB_RUN_NUMBER),
+          version=$(bun -e "$(cat <<'NODE'
+          const fs = require("fs");
+          const path = require("path");
+          const { pathToFileURL } = require("url");
+          (async () => {
+            const modUrl = pathToFileURL(
+              path.resolve("apps/desktop/scripts/compute-nightly-version.mjs"),
+            ).href;
+            const { computeNightlyVersion } = await import(modUrl);
+            const manifest = JSON.parse(
+              fs.readFileSync(".release-please-manifest.json", "utf8"),
+            );
+            const v = computeNightlyVersion({
+              manifest,
+              runNumber: Number(process.env.GITHUB_RUN_NUMBER || "0"),
               date: new Date(),
-            }));
-          ')
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+            });
+            process.stdout.write(v);
+          })().catch((err) => {
+            console.error(err);
+            process.exit(1);
+          });
+          NODE
+          )")
+          tag="v${version}"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "Computed nightly tag: ${tag}"
+
       - name: Generate bot token
         if: steps.check.outputs.should_build == 'true'
         id: bot-token
@@ -80,101 +121,350 @@ jobs:
         with:
           app-id: ${{ secrets.APP_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
-      - name: Create draft Nightly release
+
+      - name: Create per-build nightly release
         if: steps.check.outputs.should_build == 'true'
         env:
           GH_TOKEN: ${{ steps.bot-token.outputs.token }}
           TAG: ${{ steps.tag.outputs.tag }}
-        shell: bash
         run: |
-          set -euo pipefail
-          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+          set -e
+          if gh release view "$TAG" --repo "${{ github.repository }}" &>/dev/null; then
+            echo "Release $TAG already exists (re-run); proceeding without recreate."
             exit 0
           fi
-          gh release create "$TAG" --draft --prerelease --latest=false \
-            --title "Mcode Nightly ${{ steps.tag.outputs.version }} ($(git rev-parse --short HEAD))" \
-            --notes "Automated Nightly build from ${{ github.sha }}." \
-            --target "${{ github.sha }}" --repo "${{ github.repository }}"
+          short_sha=$(git rev-parse --short HEAD)
+          gh release create "$TAG" \
+            --draft \
+            --prerelease \
+            --title "Mcode Nightly ${{ steps.tag.outputs.version }} (${short_sha})" \
+            --notes "Automated nightly build from ${{ github.sha }}. Not marked latest. Channel YAML: \`nightly.yml\`." \
+            --target ${{ github.sha }} \
+            --repo "${{ github.repository }}"
 
   build:
-    needs: setup
+    needs: [setup]
     if: needs.setup.outputs.should_build == 'true'
     strategy:
       fail-fast: false
       matrix:
         include:
-          - runner: blacksmith-2vcpu-windows-2025
-            platform: windows
-            arch: x64
-            build_args: ""
-          - runner: blacksmith-2vcpu-ubuntu-2404
-            platform: linux
-            arch: x64
-            build_args: ""
-          - runner: blacksmith-6vcpu-macos-26
-            platform: macos
-            arch: arm64
-            build_args: --mac --arm64
-          - runner: blacksmith-6vcpu-macos-26
-            platform: macos
-            arch: x64
-            build_args: --mac --x64
-    uses: ./.github/workflows/desktop-package-target.yml
-    with:
-      runner: ${{ matrix.runner }}
-      target-platform: ${{ matrix.platform }}
-      target-arch: ${{ matrix.arch }}
-      build-args: ${{ matrix.build_args }}
-      channel: nightly
-      version: ${{ needs.setup.outputs.version }}
-      expected-legacy: true
-      signing-required: false
-      retention-days: 90
-    secrets: inherit
+          - os: blacksmith-2vcpu-windows-2025
+            build-args: ""
+            target-arch: ""
+          - os: blacksmith-2vcpu-ubuntu-2404
+            build-args: ""
+            target-arch: ""
+          - os: blacksmith-6vcpu-macos-26
+            build-args: "--mac --arm64"
+            target-arch: "arm64"
+          - os: blacksmith-6vcpu-macos-26
+            build-args: "--mac --x64"
+            target-arch: "x64"
 
-  publish:
-    needs: [setup, build]
-    if: needs.setup.outputs.should_build == 'true'
-    runs-on: blacksmith-2vcpu-ubuntu-2404
-    timeout-minutes: 15
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+
     steps:
       - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
+
       - uses: oven-sh/setup-bun@v2
-      - uses: actions/download-artifact@v4
+      - name: Cache Bun install cache
+        uses: actions/cache@v4
+        continue-on-error: true
         with:
-          pattern: desktop-target-*
-          path: staged
-      - name: Merge macOS Nightly update metadata
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-${{ matrix.target-arch || 'default' }}-bun-runtime-${{ hashFiles('package.json') }}-lock-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ matrix.target-arch || 'default' }}-bun-runtime-${{ hashFiles('package.json') }}-lock-
+
+      - name: Install dependencies
         shell: bash
         run: |
-          bun apps/desktop/scripts/merge-electron-update-metadata.mjs \
-            staged/desktop-target-macos-arm64/nightly-mac.yml \
-            staged/desktop-target-macos-x64/nightly-mac.yml \
-            staged/nightly-mac.yml
-      - name: Validate aggregate release evidence
-        run: >-
-          bun apps/desktop/scripts/terminal-release-evidence.mjs aggregate
-          --input-dir staged
-          --output staged/terminal-release-manifest.json
-          --channel nightly
-      - name: Upload exact staged files and publish Nightly
+          for attempt in 1 2 3; do
+            if bun install --frozen-lockfile; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+            delay=$((attempt * 10))
+            echo "Dependency installation failed. Retrying in ${delay}s."
+            sleep "$delay"
+          done
+
+      - name: Set nightly package version
+        shell: bash
+        env:
+          MCODE_NIGHTLY_VERSION: ${{ needs.setup.outputs.version }}
+        run: |
+          bun -e "$(cat <<'NODE'
+          const fs = require("fs");
+          const version = process.env.MCODE_NIGHTLY_VERSION;
+          if (!version) {
+            console.error("MCODE_NIGHTLY_VERSION not set; this job depends on setup.");
+            process.exit(1);
+          }
+          const pkgPath = "apps/desktop/package.json";
+          const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+          pkg.version = version;
+          fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
+          console.log("Nightly desktop version (from setup):", version);
+          NODE
+          )"
+
+      - name: Build main & renderer
+        run: bun run --cwd apps/desktop build
+
+      - name: Generate V8 snapshot
+        run: bun apps/desktop/scripts/generate-snapshot.mjs
+        env:
+          MCODE_TARGET_ARCH: ${{ matrix.target-arch }}
+
+      - name: Install Python setuptools (node-gyp on Python 3.12+ needs it)
+        shell: bash
+        run: python3 -m pip install setuptools --break-system-packages 2>/dev/null || python3 -m pip install setuptools 2>/dev/null || pip install setuptools 2>/dev/null || true
+
+      - name: Ensure SDK platform packages for packaging target
+        run: bun apps/desktop/scripts/ensure-sdk-platform-packages.mjs
+        env:
+          MCODE_TARGET_ARCH: ${{ matrix.target-arch }}
+
+      - name: Set up Node 24 for desktop packaging
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+
+      - name: Package with electron-builder (nightly channel)
+        run: bun apps/desktop/scripts/ci-package.mjs --config.publish.channel=nightly ${{ matrix.build-args }}
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ runner.os == 'macOS' && 'false' || '' }}
+          MCODE_SKIP_TERMINAL_ATTESTATION: "1"
+
+      - name: Smoke test packaged server
+        if: matrix.target-arch == '' || matrix.target-arch == 'arm64'
+        run: bun apps/desktop/scripts/smoke-test.mjs
+
+      - name: Smoke test packaged server under Rosetta
+        if: runner.os == 'macOS' && matrix.target-arch == 'x64'
+        shell: bash
+        run: |
+          if /usr/bin/pgrep oahd >/dev/null 2>&1 || /usr/bin/arch -x86_64 /usr/bin/true >/dev/null 2>&1; then
+            bun apps/desktop/scripts/smoke-test.mjs
+          else
+            echo "Skipping x64 packaged-server smoke: Rosetta is unavailable on this macOS runner."
+          fi
+
+      - name: Verify Linux artifacts on Ubuntu 22.04
+        if: runner.os == 'Linux'
+        run: bash apps/desktop/scripts/verify-linux-artifacts-ubuntu22.sh
+
+      - name: Upload macOS update metadata (nightly channel)
+        if: matrix.target-arch == 'arm64' || matrix.target-arch == 'x64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: mac-yml-${{ matrix.target-arch }}-nightly
+          path: apps/desktop/release/nightly-mac.yml
+          retention-days: 1
+
+      - name: Collect nightly release artifacts
+        id: artifacts
+        shell: bash
+        run: |
+          shopt -s nullglob
+          files=()
+          for f in \
+            apps/desktop/release/*.exe \
+            apps/desktop/release/*.exe.blockmap \
+            apps/desktop/release/*.dmg \
+            apps/desktop/release/*.dmg.blockmap \
+            apps/desktop/release/*.zip \
+            apps/desktop/release/*.zip.blockmap \
+            apps/desktop/release/*.AppImage \
+            apps/desktop/release/*.deb \
+            apps/desktop/release/nightly.yml \
+            apps/desktop/release/nightly-linux.yml; do
+            [ -f "$f" ] || continue
+            base=$(basename "$f")
+            [[ "$base" == "elevate.exe" ]] && continue
+            files+=("$f")
+          done
+
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No artifacts found to upload"
+            exit 0
+          fi
+
+          printf '%s\n' "${files[@]}"
+          printf '%s\n' "${files[@]}" > artifact-list.txt
+          echo "count=${#files[@]}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload nightly release artifacts
+        if: steps.artifacts.outputs.count > 0
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.setup.outputs.tag }}
         run: |
+          while IFS= read -r f; do
+            echo "Uploading: $f -> $TAG"
+            gh release upload "$TAG" "$f" --clobber --repo "${{ github.repository }}"
+          done < artifact-list.txt
+
+  merge-mac-yml-nightly:
+    needs: [setup, build]
+    if: needs.setup.outputs.should_build == 'true'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Download arm64 yml
+        uses: actions/download-artifact@v4
+        with:
+          name: mac-yml-arm64-nightly
+          path: yml-arm64
+
+      - name: Download x64 yml
+        uses: actions/download-artifact@v4
+        with:
+          name: mac-yml-x64-nightly
+          path: yml-x64
+
+      - name: Merge nightly-mac.yml
+        shell: bash
+        run: |
+          ARM64_YML="yml-arm64/nightly-mac.yml"
+          X64_YML="yml-x64/nightly-mac.yml"
+
+          if [ ! -f "$ARM64_YML" ] || [ ! -f "$X64_YML" ]; then
+            echo "Both macOS update metadata files are required."
+            exit 1
+          fi
+          bun -e "
+              const fs = require('fs');
+              const arm64 = fs.readFileSync('$ARM64_YML', 'utf8');
+              const x64 = fs.readFileSync('$X64_YML', 'utf8');
+
+              function parseFiles(yml) {
+                const lines = yml.split('\n');
+                const files = [];
+                let inFiles = false;
+                let current = null;
+                for (const line of lines) {
+                  if (line.startsWith('files:')) { inFiles = true; continue; }
+                  if (inFiles) {
+                    if (line.match(/^  - url:/)) {
+                      if (current) files.push(current);
+                      current = line + '\n';
+                    } else if (line.match(/^    \w/) && current) {
+                      current += line + '\n';
+                    } else if (line.match(/^\w/) && line.trim()) {
+                      if (current) files.push(current);
+                      current = null;
+                      inFiles = false;
+                    } else if (current) {
+                      current += line + '\n';
+                    }
+                  }
+                }
+                if (current) files.push(current);
+                return files;
+              }
+
+              const arm64Files = parseFiles(arm64);
+              const x64Files = parseFiles(x64);
+
+              const arm64Urls = new Set(arm64Files.map(f => {
+                const m = f.match(/url:\s*(.+)/);
+                return m ? m[1].trim() : '';
+              }));
+
+              const newEntries = x64Files.filter(f => {
+                const m = f.match(/url:\s*(.+)/);
+                return m && !arm64Urls.has(m[1].trim());
+              });
+
+              if (newEntries.length === 0) {
+                fs.writeFileSync('nightly-mac.yml', arm64);
+              } else {
+                const lines = arm64.split('\n');
+                const out = [];
+                let insertedExtra = false;
+                let inFilesBlock = false;
+
+                for (let i = 0; i < lines.length; i++) {
+                  out.push(lines[i]);
+                  if (lines[i].startsWith('files:')) {
+                    inFilesBlock = true;
+                  }
+                  if (inFilesBlock && i > 0 && lines[i].match(/^\w/) && lines[i].trim() && !lines[i].startsWith('files:')) {
+                    if (!insertedExtra) {
+                      const lastLine = out.pop();
+                      for (const entry of newEntries) {
+                        out.push(entry.trimEnd());
+                      }
+                      out.push(lastLine);
+                      insertedExtra = true;
+                    }
+                    inFilesBlock = false;
+                  }
+                }
+                if (inFilesBlock && !insertedExtra) {
+                  for (const entry of newEntries) {
+                    out.push(entry.trimEnd());
+                  }
+                }
+                fs.writeFileSync('nightly-mac.yml', out.join('\n'));
+              }
+              console.log('Merged nightly-mac.yml:');
+              console.log(fs.readFileSync('nightly-mac.yml', 'utf8'));
+          "
+
+      - name: Upload merged nightly-mac.yml
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.setup.outputs.tag }}
+        run: |
+          if [ -f nightly-mac.yml ]; then
+            echo "Uploading merged nightly-mac.yml to $TAG"
+            gh release upload "$TAG" nightly-mac.yml --clobber --repo "${{ github.repository }}"
+          fi
+
+  publish-nightly:
+    needs: [setup, build, merge-mac-yml-nightly]
+    if: needs.setup.outputs.should_build == 'true'
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    timeout-minutes: 10
+    steps:
+      - name: Generate bot token
+        id: bot-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+
+      - name: Publish complete nightly release
+        env:
+          GH_TOKEN: ${{ steps.bot-token.outputs.token }}
+          TAG: ${{ needs.setup.outputs.tag }}
+        shell: bash
+        run: |
           set -euo pipefail
-          for required in \
-            staged/desktop-target-windows-x64/nightly.yml \
-            staged/desktop-target-linux-x64/nightly-linux.yml \
-            staged/nightly-mac.yml \
-            staged/terminal-release-manifest.json; do
-            test -f "$required"
+          assets=$(gh release view "$TAG" \
+            --repo "${{ github.repository }}" \
+            --json assets \
+            --jq '.assets[].name')
+          for required in nightly.yml nightly-linux.yml nightly-mac.yml; do
+            if ! grep -Fxq "$required" <<< "$assets"; then
+              echo "Required update metadata is missing: $required"
+              exit 1
+            fi
           done
-          mapfile -t files < <(find staged -type f \
-            ! -name 'terminal-target-manifest.json' \
-            ! -path '*/desktop-target-macos-*/nightly-mac.yml' | sort)
-          gh release upload "$TAG" "${files[@]}" --clobber --repo "${{ github.repository }}"
-          gh release edit "$TAG" --repo "${{ github.repository }}" --draft=false --prerelease --latest=false
+          gh release edit "$TAG" \
+            --repo "${{ github.repository }}" \
+            --draft=false \
+            --prerelease \
+            --latest=false
