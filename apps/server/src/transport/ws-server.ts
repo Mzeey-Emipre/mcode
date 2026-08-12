@@ -8,7 +8,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
 import { logger } from "@mcode/shared";
-import { BinaryUploadHeaderSchema, type BinaryUploadHeader } from "@mcode/contracts";
+import { TerminalBackendError } from "../terminal/terminal-backend.js";
+import { BinaryUploadHeaderSchema, TERMINAL_BINARY_MAGIC, type BinaryUploadHeader } from "@mcode/contracts";
 import { routeMessage, type RouterDeps } from "./ws-router";
 import { addClient, removeClient } from "./push";
 import { handleBinaryUpload } from "./binary-upload";
@@ -314,6 +315,21 @@ export function createWsServer(deps: WsServerDeps): {
     ws.on("message", (data: Buffer | string, isBinary: boolean) => {
       // Binary frame: match to pending header
       if (isBinary) {
+        const bytes = Buffer.isBuffer(data) ? data : Buffer.from(data);
+        if (bytes[0] === TERMINAL_BINARY_MAGIC[0] && bytes[1] === TERMINAL_BINARY_MAGIC[1]) {
+          void deps.terminalService.handleV1Frame(ws, bytes).catch((error: unknown) => {
+            logger.warn("Terminal v1 frame rejected", {
+              error: error instanceof Error ? error.message : String(error),
+            });
+            // v1 has no error binary frame. A typed retry class is therefore
+            // recovered through the existing authenticated WebSocket reconnect,
+            // which re-lists and reattaches sessions in the renderer.
+            if (error instanceof TerminalBackendError && error.retry !== "SAFE_RETRY" && ws.readyState === WebSocket.OPEN) {
+              ws.close(4002, `Terminal ${error.retry.toLowerCase()} required`);
+            }
+          });
+          return;
+        }
         const header = pendingBinaryHeader;
         pendingBinaryHeader = null;
 
@@ -408,12 +424,14 @@ export function createWsServer(deps: WsServerDeps): {
     ws.on("close", () => {
       logger.info("WebSocket client disconnected");
       deps.browserAutomationBroker?.disconnect(ws);
+      deps.terminalService.disconnectClient(ws);
       removeClient(ws);
     });
 
     ws.on("error", (err) => {
       logger.error("WebSocket error", { error: err.message });
       deps.browserAutomationBroker?.disconnect(ws);
+      deps.terminalService.disconnectClient(ws);
       removeClient(ws);
     });
   });

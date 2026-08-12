@@ -407,6 +407,9 @@ terminalService.setSender({
       seq,
     });
   },
+  frame: (client, bytes) => {
+    if (client.readyState === 1) client.send(bytes);
+  },
 });
 
 // Poll ws.bufferedAmount every 50ms and drive server-side flow control.

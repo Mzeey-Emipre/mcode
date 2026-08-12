@@ -7,8 +7,14 @@ import type { TerminalBackend } from "./terminal-backend.js";
 export class TerminalBackendSelector {
   private readonly selectedBackend: TerminalBackend;
 
-  constructor(legacyBackend: LegacyTerminalBackend) {
-    this.selectedBackend = legacyBackend;
+  constructor(
+    legacyBackend: LegacyTerminalBackend,
+    modernBackend?: TerminalBackend,
+    env: NodeJS.ProcessEnv = process.env,
+  ) {
+    this.selectedBackend = env.MCODE_TERMINAL_BACKEND === "modern" && modernBackend
+      ? modernBackend
+      : legacyBackend;
   }
 
   /** Returns the Terminal backend selected for this server boot. */

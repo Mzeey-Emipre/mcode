@@ -34,4 +34,44 @@ describe("TerminalClientSelector", () => {
     const selector = new TerminalClientSelector(vi.fn() as never);
     expect(() => selector.getSelected()).toThrow("Terminal client is not selected");
   });
+
+  it("selects the modern adapter and sends v1 input frames", async () => {
+    const rpc = vi.fn(async (method: string) => {
+      if (method === "terminal.session.create") {
+        return {
+          sessionId: "00000000-0000-4000-8000-000000000001",
+          launch: { resolvedProfile: { executable: "pwsh" } },
+        };
+      }
+      return [];
+    });
+    const sendFrame = vi.fn();
+    const selector = new TerminalClientSelector(rpc as never, sendFrame, async (scopeId) => ({
+      kind: "thread",
+      workspaceId: "00000000-0000-4000-8000-000000000003",
+      threadId: scopeId,
+    }));
+    const client = selector.select({
+      contractVersion: 1,
+      backend: "modern",
+      selectedAt: "2026-08-12T10:00:00.000Z",
+      publicFrameVersion: 1,
+      recovery: { replay: true, checkpoint: true, gap: true },
+      host: { state: "healthy", generation: "7" },
+      sessionLimit: 4,
+    });
+
+    await expect(client.create("00000000-0000-4000-8000-000000000002")).resolves.toEqual({
+      ptyId: "00000000-0000-4000-8000-000000000001",
+      shell: "pwsh",
+    });
+    expect(rpc).toHaveBeenCalledWith("terminal.session.create", {
+      scope: {
+        kind: "thread",
+        threadId: "00000000-0000-4000-8000-000000000002",
+        workspaceId: "00000000-0000-4000-8000-000000000003",
+      },
+    });
+    expect(selector.getSelected()).toBe(client);
+  });
 });

@@ -62,6 +62,7 @@ import { emitPtyReconnectGap } from "@/terminal/legacy/pty-data-registry";
 import type { PaginatedMessages, ConversationPage, ConversationNewerPage, ConversationNewerPageRequest, ConversationOlderPage, ConversationOlderPageRequest, ConversationTail, SetThreadSubscriptionsInput, SetThreadSubscriptionsResult, TurnSnapshot, PrDraft, CreatePrResult, ProviderUsageInfo, ChecksStatus, ProviderAvailability, GoalLookupResult } from "@mcode/contracts";
 import {
   TERMINAL_DATA_TAG,
+  TERMINAL_BINARY_MAGIC,
   decodeTerminalDataFrame,
 } from "@mcode/contracts";
 import { useSettingsStore } from "@/stores/settingsStore";
@@ -351,6 +352,10 @@ export function createWsTransport(
       // identifies the frame type so future binary channels can coexist.
       if (event.data instanceof ArrayBuffer) {
         const view = new Uint8Array(event.data);
+        if (view[0] === TERMINAL_BINARY_MAGIC[0] && view[1] === TERMINAL_BINARY_MAGIC[1]) {
+          terminalClientSelector.handleFrame(view);
+          return;
+        }
         if (view[0] === TERMINAL_DATA_TAG) {
           try {
             const decoded = decodeTerminalDataFrame(view);
@@ -474,6 +479,17 @@ export function createWsTransport(
 
   const terminalClientSelector = new TerminalClientSelector(
     <T>(method: string, params: Record<string, unknown>) => rpc<T>(method, params),
+    (frame) => ws.send(frame),
+    async (scopeId) => {
+      const { useWorkspaceStore } = await import("@/stores/workspaceStore");
+      const state = useWorkspaceStore.getState();
+      const thread = state.threads.find((candidate) => candidate.id === scopeId);
+      if (thread) return { kind: "thread", workspaceId: thread.workspace_id, threadId: thread.id };
+      if (state.workspaces.some((workspace) => workspace.id === scopeId)) {
+        return { kind: "workspace", workspaceId: scopeId };
+      }
+      throw new Error("Terminal scope is unavailable");
+    },
   );
 
   async function selectTerminalClient(): Promise<TerminalBackendCapabilities> {
@@ -812,7 +828,10 @@ export function createWsTransport(
       withTerminalClient((client) => client.listActive()),
     terminalHasChildren: (ptyId) =>
       withTerminalClient((client) => client.hasChildren(ptyId)),
-    ptySetLastSeq: (ptyId, seq) => { ptyLastSeqMap.set(ptyId, seq); },
+    ptySetLastSeq: (ptyId, seq) => {
+      ptyLastSeqMap.set(ptyId, seq);
+      terminalClientSelector.getSelected().acknowledgeOutput?.(ptyId, seq);
+    },
     ptyDeleteLastSeq: (ptyId) => { ptyLastSeqMap.delete(ptyId); },
 
     // Tool call records

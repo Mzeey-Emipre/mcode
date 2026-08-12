@@ -475,13 +475,13 @@ export const TerminalView = memo(function TerminalView({
       const writeChunk = (detail: PtyDataPayload) => {
         if (disposed || detail.seq <= lastWrittenSeq) return;
         lastWrittenSeq = detail.seq;
-        transport.ptySetLastSeq(ptyId, detail.seq);
         const n = detail.payload.length;
         fc.written(n);
         // xterm's callback form fires acked() only after bytes are committed to
         // the buffer, so client flow control reflects real write progress.
         trackedWrite(detail.payload, () => {
           fc.acked(n);
+          transport.ptySetLastSeq(ptyId, detail.seq);
         });
       };
 
@@ -525,10 +525,10 @@ export const TerminalView = memo(function TerminalView({
         }
         // #749: write the whole replay in one pass instead of one main-thread
         // task per chunk, so a large scrollback replay paints quickly.
-        transport.ptySetLastSeq(ptyId, lastWrittenSeq);
         fc.written(totalBytes);
         trackedWrite(concatChunks(frames, totalBytes), () => {
           fc.acked(totalBytes);
+          transport.ptySetLastSeq(ptyId, lastWrittenSeq);
           follow();
         });
       };

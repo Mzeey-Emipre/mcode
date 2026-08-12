@@ -123,8 +123,16 @@ export interface TerminalSessionRuntime {
   detach(input: DetachRuntimeSession): Promise<void>;
   close(input: CloseRuntimeSession): Promise<TerminalSessionSnapshot>;
   getSnapshot(sessionId: string): TerminalSessionSnapshot | null;
+  subscribeDelivery?(listener: (event: TerminalRuntimeDeliveryEvent) => void): () => void;
+  applySettings?(settings: { readonly scrollback: number }): void;
   shutdown(): Promise<void>;
 }
+
+/** Generation-bound runtime event ready for the public attachment transport. */
+export type TerminalRuntimeDeliveryEvent =
+  | { readonly kind: "commandAck"; readonly sessionId: string; readonly hostGeneration: string; readonly attachmentEpoch: string; readonly commandSeq: string; readonly outputSeq: string }
+  | { readonly kind: "output"; readonly sessionId: string; readonly hostGeneration: string; readonly attachmentEpoch: string; readonly outputSeq: string; readonly data: Uint8Array }
+  | { readonly kind: "exitBarrier"; readonly sessionId: string; readonly hostGeneration: string; readonly attachmentEpoch: string; readonly finalOutputSeq: string; readonly acknowledgedOutputSeq: string; readonly exit: NonNullable<TerminalSessionSnapshot["exit"]> };
 
 interface AttachmentLease {
   readonly attachmentId: string;
@@ -226,6 +234,7 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
   private readonly createCorrelationId: () => string;
   private readonly initialDimensions: { readonly cols: number; readonly rows: number };
   private readonly unsubscribeHost: () => void;
+  private readonly deliveryListeners = new Set<(event: TerminalRuntimeDeliveryEvent) => void>();
 
   constructor(private readonly options: ModernTerminalSessionRuntimeOptions) {
     this.now = options.now ?? (() => new Date());
@@ -547,9 +556,22 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
     return record ? this.snapshot(record) : null;
   }
 
+  /** Subscribes to validated live attachment delivery events. */
+  subscribeDelivery(listener: (event: TerminalRuntimeDeliveryEvent) => void): () => void {
+    this.deliveryListeners.add(listener);
+    return () => this.deliveryListeners.delete(listener);
+  }
+
+  /** Applies the live replay bound without replacing active PTYs. */
+  applySettings(settings: { readonly scrollback: number }): void {
+    const capacity = replayBytesForScrollback(settings.scrollback);
+    for (const record of this.sessions.values()) record.replay.resize(capacity);
+  }
+
   /** Stops the host and releases all runtime-owned memory. */
   async shutdown(): Promise<void> {
     this.unsubscribeHost();
+    this.deliveryListeners.clear();
     for (const record of this.sessions.values()) {
       this.clearInputStallTimer(record);
       this.clearExitFlushTimer(record);
@@ -633,6 +655,16 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
     if (!record || event.hostGeneration !== record.hostGeneration) return;
     if (event.kind === "commandAck") {
       this.applyCommandAcknowledgement(record, event);
+      if (record.attachment?.epoch.toString() === event.attachmentEpoch) {
+        this.publishDelivery({
+          kind: "commandAck",
+          sessionId: record.sessionId,
+          hostGeneration: record.hostGeneration,
+          attachmentEpoch: event.attachmentEpoch,
+          commandSeq: event.appliedCommandSeq,
+          outputSeq: event.appliedOutputSeq,
+        });
+      }
       return;
     }
     if (event.kind === "output") {
@@ -643,8 +675,19 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
       ) return;
       const sequence = BigInt(event.outputSeq);
       try {
-        record.replay.append(sequence, Buffer.from(event.dataBase64, "base64"));
+        const data = Buffer.from(event.dataBase64, "base64");
+        record.replay.append(sequence, data);
         record.receivedOutputSeq = sequence;
+        if (record.attachment) {
+          this.publishDelivery({
+            kind: "output",
+            sessionId: record.sessionId,
+            hostGeneration: record.hostGeneration,
+            attachmentEpoch: record.attachment.epoch.toString(),
+            outputSeq: sequence.toString(),
+            data: Uint8Array.from(data),
+          });
+        }
       } catch {
         record.state = "failed";
         record.exit = Object.freeze({
@@ -668,6 +711,17 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
         signal: event.signal,
         reason: event.reason,
       });
+      if (record.attachment) {
+        this.publishDelivery({
+          kind: "exitBarrier",
+          sessionId: record.sessionId,
+          hostGeneration: record.hostGeneration,
+          attachmentEpoch: record.attachment.epoch.toString(),
+          finalOutputSeq: event.finalOutputSeq,
+          acknowledgedOutputSeq: record.attachment.acknowledgedOutputSeq.toString(),
+          exit: Object.freeze({ code: event.code, signal: event.signal, reason: event.reason }),
+        });
+      }
       this.completeExitBarrier(record);
       if (record.pendingExit && !record.exitFlushTimer) {
         record.exitFlushTimer = setTimeout(() => {
@@ -676,6 +730,10 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
         }, EXIT_FLUSH_TIMEOUT_MS);
       }
     }
+  }
+
+  private publishDelivery(event: TerminalRuntimeDeliveryEvent): void {
+    for (const listener of this.deliveryListeners) listener(event);
   }
 
   private completeExitBarrier(record: RuntimeSession): void {

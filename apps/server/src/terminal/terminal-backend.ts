@@ -1,4 +1,9 @@
-import type { TerminalBackendCapabilities } from "@mcode/contracts";
+import type {
+  TerminalBackendCapabilities,
+  TerminalErrorCode,
+  TerminalRetryClass,
+} from "@mcode/contracts";
+import type { WebSocket } from "ws";
 
 /** Dependency-injection token for the boot-selected Terminal backend. */
 export const TERMINAL_BACKEND_TOKEN = "TerminalBackend";
@@ -7,6 +12,23 @@ export const TERMINAL_BACKEND_TOKEN = "TerminalBackend";
 export interface TerminalBackendSender {
   json(channel: string, data: Record<string, unknown>): void;
   data(ptyId: string, seq: number, bytes: Uint8Array): void;
+  frame?(client: WebSocket, bytes: Uint8Array): void;
+}
+
+/** Typed failure returned by the modern Terminal management boundary. */
+export class TerminalBackendError extends Error {
+  readonly correlationId: string;
+
+  constructor(
+    readonly code: TerminalErrorCode,
+    readonly retry: TerminalRetryClass,
+    message: string,
+    correlationId = `corr-${crypto.randomUUID()}`,
+  ) {
+    super(message);
+    this.name = "TerminalBackendError";
+    this.correlationId = correlationId;
+  }
 }
 
 /** Result of a legacy Terminal reattachment. */
@@ -36,4 +58,17 @@ export abstract class TerminalBackend {
   abstract checkpoint(ptyId: string, seq: number, data: string): { accepted: boolean };
   abstract listActiveSessions(): Array<{ ptyId: string; threadId: string }>;
   abstract hasChildren(ptyId: string): Promise<{ hasChildren: boolean }>;
+
+  /** Routes one strict Terminal v1 management operation for the owning client. */
+  routeV1(_method: string, _params: unknown, _client: WebSocket): Promise<unknown> {
+    return Promise.reject(new Error("Terminal v1 transport is unavailable"));
+  }
+
+  /** Applies one strict Terminal v1 binary frame from the owning client. */
+  handleV1Frame(_client: WebSocket, _bytes: Uint8Array): Promise<void> {
+    return Promise.reject(new Error("Terminal v1 transport is unavailable"));
+  }
+
+  /** Releases controller leases and uploads owned by a disconnected client. */
+  disconnectClient(_client: WebSocket): void {}
 }
