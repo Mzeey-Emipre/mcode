@@ -24,6 +24,32 @@ function parseSampleCount() {
   return value;
 }
 
+function parseMode() {
+  const mode = readArgument("--mode");
+  if (mode !== "profiling" && mode !== "production") {
+    throw new Error("--mode must be profiling or production");
+  }
+  return mode;
+}
+
+function parseWebUrl() {
+  const value = readArgument("--web-url");
+  if (!value) throw new Error("--web-url is required");
+  const url = new URL(value);
+  if (url.protocol !== "http:" || url.hostname !== "127.0.0.1" || !url.port) {
+    throw new Error("--web-url must be a loopback HTTP URL with an explicit port");
+  }
+  return url.origin;
+}
+
+function parseElectronSessionFile() {
+  const value = readArgument("--electron-session-file");
+  if (!value || !/^electron-[a-z0-9-]+\.json$/.test(value)) {
+    throw new Error("--electron-session-file must be a safe session file name");
+  }
+  return value;
+}
+
 function resolveOutputFile(repoRoot) {
   const outputRoot = resolve(repoRoot, ".dev", "verification", "performance");
   const requested = readArgument("--output");
@@ -45,7 +71,13 @@ async function collectPageEnvironment(page) {
   }));
 }
 
-function decorateRuntimeResult(result, runEnvironment, pageEnvironment) {
+function decorateRuntimeResult(
+  result,
+  runEnvironment,
+  pageEnvironment,
+  mode,
+  hardwareAccelerationState,
+) {
   const environment = {
     ...runEnvironment.host,
     ...pageEnvironment,
@@ -55,12 +87,18 @@ function decorateRuntimeResult(result, runEnvironment, pageEnvironment) {
     ...result,
     sourceRevision: runEnvironment.sourceRevision,
     sourceDirty: runEnvironment.sourceDirty,
+    buildMode: mode,
+    hardwareAccelerationState,
     environment,
     metrics: Object.fromEntries(
       Object.entries(result.metrics).map(([workload, metric]) => [workload, {
         ...metric,
         workload,
         runtime: result.runtime,
+        buildMode: mode,
+        hardwareAccelerationState,
+        warmupCount: WARMUP_COUNT,
+        sampleCount: result.sampleCount,
         sourceRevision: runEnvironment.sourceRevision,
         environment,
       }]),
@@ -71,6 +109,9 @@ function decorateRuntimeResult(result, runEnvironment, pageEnvironment) {
 async function run() {
   const repoRoot = process.cwd();
   const sampleCount = parseSampleCount();
+  const mode = parseMode();
+  const webUrl = parseWebUrl();
+  const electronSessionFile = parseElectronSessionFile();
   const { outputFile, outputRoot } = resolveOutputFile(repoRoot);
   await mkdir(outputRoot, { recursive: true });
 
@@ -108,33 +149,49 @@ async function run() {
       {
         name: ports.seedLogin.cookieName,
         value: ports.seedLogin.token,
-        url: ports.appUrl,
+        url: webUrl,
       },
     ]);
     const webPage = await context.newPage();
-    await webPage.goto(ports.appUrl, { waitUntil: "domcontentloaded" });
+    await webPage.goto(webUrl, { waitUntil: "domcontentloaded" });
     await webPage.bringToFront();
 
     electronSession = await electronHelper.connectElectronSession({
       playwright,
       repoRoot,
+      sessionFileName: electronSessionFile,
     });
     await electronSession.page.setViewportSize(VIEWPORT);
 
+    const electronStartupMetrics = await electronSession.page.evaluate(async () =>
+      window.desktopBridge?.performance?.getMetrics?.() ?? null,
+    );
+    if (!electronStartupMetrics) {
+      throw new Error("Electron performance metrics are unavailable");
+    }
+    if (mode === "production" && electronStartupMetrics.devToolsOpen) {
+      throw new Error("Production performance mode must run without open DevTools");
+    }
+
     const webResult = decorateRuntimeResult(
-      await runRendererMatrix(webPage, "standalone-web", sampleCount),
+      await runRendererMatrix(webPage, "standalone-web", sampleCount, mode),
       runEnvironment,
       await collectPageEnvironment(webPage),
+      mode,
+      null,
     );
     await electronSession.page.bringToFront();
     const electronResult = decorateRuntimeResult(
-      await runRendererMatrix(electronSession.page, "electron", sampleCount),
+      await runRendererMatrix(electronSession.page, "electron", sampleCount, mode),
       runEnvironment,
       await collectPageEnvironment(electronSession.page),
+      mode,
+      electronStartupMetrics.hardwareAccelerationEnabled,
     );
     const result = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       recordedAt: new Date().toISOString(),
+      buildMode: mode,
       comparisonContract: {
         viewport: VIEWPORT,
         workloadOrder: FRONTEND_RENDERER_WORKLOADS,
@@ -160,7 +217,18 @@ async function run() {
     if (!result.correctness.passed) process.exitCode = 1;
   } finally {
     if (electronSession) {
-      await electronHelper.disconnectElectronSession(electronSession);
+      try {
+        await electronSession.page.evaluate(async () => {
+          await window.desktopBridge?.performance?.quit?.();
+        });
+      } catch {
+        // The target can close before the quit IPC response reaches the renderer.
+      }
+      try {
+        await electronHelper.disconnectElectronSession(electronSession);
+      } catch {
+        // A graceful application quit closes the CDP connection first.
+      }
     }
     if (browser) await browser.close();
   }

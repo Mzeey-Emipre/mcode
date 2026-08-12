@@ -16,7 +16,7 @@ import { terminateProcessTree } from "./process-tree.mjs";
 const SESSION_FILE_NAME = "electron-live-testing.json";
 
 /** Starts one detached Electron process with an agent-owned dynamic CDP endpoint. */
-export async function startElectron(repoRoot = process.cwd()) {
+export async function startElectron(repoRoot = process.cwd(), options = {}) {
   const root = resolve(repoRoot);
   const runtimeContract = await import(
     pathToFileURL(join(root, "scripts", "agent", "runtime-contract.mjs")).href
@@ -30,7 +30,19 @@ export async function startElectron(repoRoot = process.cwd()) {
     throw new Error("ports.json belongs to a different worktree");
   }
 
-  const sessionFile = join(paths.devDir, SESSION_FILE_NAME);
+  const sessionFileName = options.sessionFileName ?? SESSION_FILE_NAME;
+  if (!/^electron-[a-z0-9-]+\.json$/.test(sessionFileName)) {
+    throw new Error("sessionFileName must be a safe Electron session file name");
+  }
+  const performanceMode = options.performanceMode ?? null;
+  if (performanceMode !== null && performanceMode !== "profiling" && performanceMode !== "production") {
+    throw new Error("performanceMode must be profiling or production");
+  }
+  const rendererUrl = options.rendererUrl === undefined ? ports.appUrl : options.rendererUrl;
+  if (rendererUrl !== null && (typeof rendererUrl !== "string" || !rendererUrl.startsWith("http://127.0.0.1:"))) {
+    throw new Error("rendererUrl must be a loopback HTTP URL or null");
+  }
+  const sessionFile = join(paths.devDir, sessionFileName);
   if (existsSync(sessionFile)) {
     const existing = JSON.parse(readFileSync(sessionFile, "utf8"));
     if (await isReusable(existing, root)) return existing;
@@ -50,12 +62,14 @@ export async function startElectron(repoRoot = process.cwd()) {
 
   const desktopRequire = createRequire(join(desktopRoot, "package.json"));
   const executablePath = desktopRequire("electron");
-  const userDataDir = join(paths.devDir, "electron-live-testing");
+  const sessionStem = sessionFileName.slice(0, -".json".length);
+  const userDataDir = join(paths.devDir, sessionStem);
   const electronRuntimeDir = join(userDataDir, "runtime");
   const record = {
     debugPort,
     endpoint,
     executablePath,
+    appUrlPrefix: rendererUrl ?? "file://",
     repoRoot: root,
     status: "starting",
     userDataDir,
@@ -78,8 +92,9 @@ export async function startElectron(repoRoot = process.cwd()) {
       MCODE_DB_PATH: join(electronRuntimeDir, "db", "app.sqlite"),
       MCODE_ELECTRON_USER_DATA_DIR: userDataDir,
     }),
-    ELECTRON_RENDERER_URL: ports.appUrl,
-    NODE_ENV: "development",
+    ...(rendererUrl ? { ELECTRON_RENDERER_URL: rendererUrl } : {}),
+    ...(performanceMode ? { MCODE_FRONTEND_PERFORMANCE_MODE: performanceMode } : {}),
+    NODE_ENV: rendererUrl ? "development" : "production",
   };
   delete env.ELECTRON_RUN_AS_NODE;
 

@@ -5,7 +5,10 @@ import {
   FRONTEND_RENDERER_WORKLOADS,
   validateWorkloadCheck,
 } from "../../perf/frontend-renderer-fixture.mjs";
-import { runFrontendPerformance } from "../../perf/run-frontend-performance.mjs";
+import {
+  parsePerformanceMode,
+  runFrontendPerformance,
+} from "../../perf/run-frontend-performance.mjs";
 
 describe("frontend performance runner", () => {
   it("uses the approved workload order", () => {
@@ -68,6 +71,18 @@ describe("frontend performance runner", () => {
         runFrontendPerformance(process.cwd()),
         /integer from 3 through 20/,
       );
+    } finally {
+      process.argv.splice(0, process.argv.length, ...originalArguments);
+    }
+  });
+
+  it("accepts only profiling and production modes", () => {
+    const originalArguments = [...process.argv];
+    try {
+      process.argv.push("--mode", "profiling");
+      assert.equal(parsePerformanceMode(), "profiling");
+      process.argv.splice(0, process.argv.length, ...originalArguments, "--mode", "development");
+      assert.throws(parsePerformanceMode, /profiling or production/);
     } finally {
       process.argv.splice(0, process.argv.length, ...originalArguments);
     }

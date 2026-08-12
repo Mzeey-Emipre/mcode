@@ -11,6 +11,11 @@ import {
   buildPersistedNarrativeItems,
   recordToToolCall,
 } from "./build-persisted-narrative";
+import {
+  NarrativePerformanceBoundary,
+  NarrativePerformanceRow,
+  narrativePerformanceRowId,
+} from "./NarrativePerformanceBoundary";
 
 /** Props for `PersistedNarrative`. */
 export interface PersistedNarrativeProps {
@@ -132,17 +137,22 @@ export function PersistedNarrative({ messageId, messageContent }: PersistedNarra
   if (items.length === 0) return null;
 
   return (
+    <NarrativePerformanceBoundary>
     <div className="relative min-w-0 max-w-full">
       <div className="flex min-w-0 max-w-full flex-col">
         {items.map((item, i) => (
           <div
             key={keyForItem(item, i)}
+            data-performance-row-id={narrativePerformanceRowId(keyForItem(item, i))}
             className={`${marginClassForItem(item, i)} min-w-0 max-w-full`}
           >
-            {renderItem(item, allToolCalls)}
+            <NarrativePerformanceRow rowId={keyForItem(item, i)}>
+              {renderItem(item, allToolCalls)}
+            </NarrativePerformanceRow>
           </div>
         ))}
       </div>
     </div>
+    </NarrativePerformanceBoundary>
   );
 }

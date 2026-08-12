@@ -22,6 +22,15 @@ function parseSampleCount() {
   return value;
 }
 
+/** Parses the required renderer build mode. */
+export function parsePerformanceMode() {
+  const value = readArgument("--mode") ?? "production";
+  if (value !== "profiling" && value !== "production") {
+    throw new Error("--mode must be profiling or production");
+  }
+  return value;
+}
+
 function resolveOutputFile(repoRoot) {
   const outputRoot = resolve(repoRoot, ".dev", "verification", "performance");
   const requested = readArgument("--output");
@@ -117,6 +126,56 @@ async function waitForWorker(outputFile, failureFile, sampleCount) {
   throw new Error(`Frontend performance worker exceeded ${timeoutMs} ms`);
 }
 
+async function startBuiltRendererServer(root, port) {
+  const child = spawn(
+    process.execPath,
+    [
+      join(root, "scripts", "perf", "frontend-performance-server.mjs"),
+      "--root",
+      join(root, "apps", "desktop", "dist", "renderer"),
+      "--contract",
+      join(root, ".dev", "ports.json"),
+      "--port",
+      String(port),
+    ],
+    {
+      cwd: root,
+      shell: false,
+      stdio: ["ignore", "ignore", "inherit"],
+      windowsHide: true,
+    },
+  );
+  const url = `http://127.0.0.1:${port}`;
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null) {
+      throw new Error(`Built renderer server exited with code ${child.exitCode}`);
+    }
+    try {
+      if ((await fetch(url)).ok) return { child, url };
+    } catch {
+      // The connection can fail while the bounded local server starts.
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, POLL_INTERVAL_MS));
+  }
+  child.kill();
+  throw new Error("Built renderer server did not become ready within 30 seconds");
+}
+
+function waitForSuccessfulExit(child, label) {
+  if (child.exitCode !== null) {
+    return child.exitCode === 0
+      ? Promise.resolve()
+      : Promise.reject(new Error(`${label} exited with code ${child.exitCode}`));
+  }
+  return new Promise((resolveExit, rejectExit) => {
+    child.once("exit", (code, signal) => {
+      if (code === 0) resolveExit();
+      else rejectExit(new Error(`${label} exited with code ${code ?? "none"} and signal ${signal ?? "none"}`));
+    });
+  });
+}
+
 function printResult(result, outputFile) {
   process.stdout.write(`Frontend performance result: ${outputFile}\n`);
   for (const [runtimeName, runtime] of Object.entries(result.runtimes)) {
@@ -135,6 +194,7 @@ function printResult(result, outputFile) {
 export async function runFrontendPerformance(repoRoot = process.cwd()) {
   const root = resolve(repoRoot);
   const sampleCount = parseSampleCount();
+  const mode = parsePerformanceMode();
   const outputFile = resolveOutputFile(root);
   const completionFile = `${outputFile}.complete`;
   const failureFile = resolve(
@@ -150,18 +210,39 @@ export async function runFrontendPerformance(repoRoot = process.cwd()) {
 
   let startedRuntime = false;
   let startedElectron = false;
+  let rendererServer = null;
+  const sessionFileName = `electron-performance-${mode}.json`;
   try {
     startedRuntime = await ensureRuntime(root);
     ensurePlaywright(root);
     await runCommand(
       process.execPath,
       ["run", "--cwd", "apps/desktop", "build"],
-      { cwd: root },
+      {
+        cwd: root,
+        env: {
+          ...process.env,
+          MCODE_FRONTEND_PERFORMANCE_MODE: mode,
+          VITE_MCODE_PERFORMANCE_MODE: mode,
+          VITE_MCODE_SINGLE_INSTANCE: "1",
+        },
+      },
     );
-    const sessionFile = join(root, ".dev", "electron-live-testing.json");
-    const hadElectronSession = existsSync(sessionFile);
-    const electronRecord = await startElectron(root);
-    startedElectron = !hadElectronSession;
+    const runtimeContract = await import("../agent/runtime-contract.mjs");
+    const webPort = await runtimeContract.findAvailablePort(
+      runtimeContract.computeDeterministicPort(root, 44_000),
+    );
+    rendererServer = await startBuiltRendererServer(root, webPort);
+    const performanceSessionFile = join(root, ".dev", sessionFileName);
+    if (existsSync(performanceSessionFile)) {
+      stopElectron(root, { sessionFileName });
+    }
+    const electronRecord = await startElectron(root, {
+      performanceMode: mode,
+      rendererUrl: null,
+      sessionFileName,
+    });
+    startedElectron = true;
 
     const worker = spawn(
       electronRecord.executablePath,
@@ -169,6 +250,12 @@ export async function runFrontendPerformance(repoRoot = process.cwd()) {
         join(root, "scripts", "perf", "frontend-performance-worker.mjs"),
         "--sample-count",
         String(sampleCount),
+        "--mode",
+        mode,
+        "--web-url",
+        rendererServer.url,
+        "--electron-session-file",
+        sessionFileName,
         "--output",
         outputFile,
       ],
@@ -190,11 +277,15 @@ export async function runFrontendPerformance(repoRoot = process.cwd()) {
       waitForWorker(outputFile, failureFile, sampleCount),
       workerLaunchFailure,
     ]);
+    await waitForSuccessfulExit(worker, "Frontend performance worker");
     printResult(result, outputFile);
     if (!result.correctness.passed) process.exitCode = 1;
     return result;
   } finally {
-    if (startedElectron) stopElectron(root);
+    if (startedElectron) stopElectron(root, { sessionFileName });
+    if (rendererServer?.child && rendererServer.child.exitCode === null) {
+      rendererServer.child.kill();
+    }
     if (startedRuntime) await agentDown(root);
   }
 }

@@ -21,18 +21,30 @@ Use this guide as the source of truth for Mcode budgets and verification.
 
 Use the maintained paired runner for chat and panel changes:
 
+Use profiling mode for React commits and narrative-row render counts:
+
 ```powershell
-bun run perf:frontend -- --sample-count 7 --output .dev/verification/performance/baseline.json
+bun run perf:frontend -- --mode profiling --sample-count 7 --output .dev/verification/performance/profiling.json
 ```
 
-The command starts or reuses the worktree runtime. It runs the same ordered
-workloads in standalone web and Electron. Each workload gets one warmup and the
-same number of recorded samples at a 1440 by 1000 viewport.
+Use production mode for Chromium and Electron process data:
 
-The result contains raw samples, summary statistics, source revision, runtime,
-environment, and correctness checks. The command rejects incorrect samples and
-returns a failure when a thread, response, narrative, code block, panel, console,
-or page state is wrong.
+```powershell
+bun run perf:frontend -- --mode production --sample-count 7 --output .dev/verification/performance/production.json
+```
+
+The command starts or reuses the worktree runtime. It builds the selected mode.
+It runs the same ordered workloads in standalone web and Electron. Each workload
+gets one warmup and the same sample count at a 1440 by 1000 viewport.
+
+Profiling results contain React commits and row counts. Production results
+contain Chromium scripting, layout, paint, long-task, and frame-cadence data.
+Production Electron results also contain process CPU and memory data from
+Electron. A signal that is not available has a `null` value.
+
+Each result contains the build mode, hardware-acceleration state, workload,
+warmup count, sample count, raw samples, summary, source revision, environment,
+and correctness checks. The command rejects each incorrect sample.
 
 Use this sequence for a performance change:
 

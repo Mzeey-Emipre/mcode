@@ -45,6 +45,13 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   setServerBusy: (busy: boolean): Promise<void> =>
     ipcRenderer.invoke("set-server-busy", busy),
 
+  /** Electron process data exposed only when the performance runner starts the app. */
+  performance: {
+    getMetrics: (): Promise<unknown> =>
+      ipcRenderer.invoke("performance:get-app-metrics"),
+    quit: (): Promise<void> => ipcRenderer.invoke("performance:quit"),
+  },
+
   /** Show a native open-directory dialog. Returns the selected path or null. */
   showOpenDialog: (opts: Record<string, unknown>): Promise<string | null> =>
     ipcRenderer.invoke("show-open-dialog", opts),

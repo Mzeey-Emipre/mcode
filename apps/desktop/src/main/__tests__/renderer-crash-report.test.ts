@@ -15,6 +15,18 @@ vi.mock("electron", () => ({
     exit: vi.fn(),
     quit: vi.fn(),
     disableHardwareAcceleration: vi.fn(),
+    getAppMetrics: vi.fn().mockReturnValue([
+      {
+        pid: 42,
+        type: "Renderer",
+        cpu: { percentCPUUsage: 3.5 },
+        memory: {
+          workingSetSize: 100,
+          peakWorkingSetSize: 120,
+          privateBytes: 80,
+        },
+      },
+    ]),
     commandLine: { appendSwitch: vi.fn() },
     setAppUserModelId: vi.fn(),
   },
@@ -95,6 +107,7 @@ vi.mock("../preview/preview-webview-security.js", () => ({
 }));
 
 import {
+  getFrontendPerformanceMetrics,
   handleRendererCrashReport,
   normalizeRendererCrashReport,
 } from "../main.js";
@@ -194,5 +207,26 @@ describe("renderer crash report IPC boundary", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("frontend performance metrics", () => {
+  it("keeps process CPU, memory, and hardware state separate", () => {
+    expect(getFrontendPerformanceMetrics()).toEqual({
+      hardwareAccelerationEnabled: false,
+      devToolsOpen: false,
+      processes: [
+        {
+          pid: 42,
+          type: "Renderer",
+          cpuPercent: 3.5,
+          memory: {
+            workingSetSizeKiB: 100,
+            peakWorkingSetSizeKiB: 120,
+            privateBytesKiB: 80,
+          },
+        },
+      ],
+    });
   });
 });

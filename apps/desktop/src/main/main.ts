@@ -138,7 +138,56 @@ function openIfAllowed(url: string): void {
 // ---------------------------------------------------------------------------
 
 const APP_ID = "com.mzeey.mcode";
+const HARDWARE_ACCELERATION_ENABLED = false;
 let mainWindow: BrowserWindow | null = null;
+
+/** Channel available only to the maintained frontend performance runner. */
+export const FRONTEND_PERFORMANCE_METRICS_CHANNEL = "performance:get-app-metrics";
+export const FRONTEND_PERFORMANCE_QUIT_CHANNEL = "performance:quit";
+
+function isFrontendPerformanceRun(): boolean {
+  return (
+    process.env.MCODE_FRONTEND_PERFORMANCE_MODE === "profiling" ||
+    process.env.MCODE_FRONTEND_PERFORMANCE_MODE === "production"
+  );
+}
+
+function finiteMetric(value: number | undefined): number | null {
+  return Number.isFinite(value) ? value! : null;
+}
+
+/** Returns bounded Electron process metrics for an authorized performance run. */
+export function getFrontendPerformanceMetrics(): {
+  readonly hardwareAccelerationEnabled: boolean;
+  readonly devToolsOpen: boolean;
+  readonly processes: readonly {
+    readonly pid: number;
+    readonly type: string;
+    readonly cpuPercent: number | null;
+    readonly memory: {
+      readonly workingSetSizeKiB: number | null;
+      readonly peakWorkingSetSizeKiB: number | null;
+      readonly privateBytesKiB: number | null;
+    } | null;
+  }[];
+} {
+  return {
+    hardwareAccelerationEnabled: HARDWARE_ACCELERATION_ENABLED,
+    devToolsOpen: mainWindow?.webContents.isDevToolsOpened() ?? false,
+    processes: app.getAppMetrics().map((metric) => ({
+      pid: metric.pid,
+      type: metric.type,
+      cpuPercent: finiteMetric(metric.cpu?.percentCPUUsage),
+      memory: metric.memory
+        ? {
+            workingSetSizeKiB: finiteMetric(metric.memory.workingSetSize),
+            peakWorkingSetSizeKiB: finiteMetric(metric.memory.peakWorkingSetSize),
+            privateBytesKiB: finiteMetric(metric.memory.privateBytes),
+          }
+        : null,
+    })),
+  };
+}
 
 /** Channel used by the renderer crash boundary to report local diagnostics. */
 export const RENDERER_CRASH_REPORT_CHANNEL = "renderer:crash-report";
@@ -497,6 +546,22 @@ function createWindow(): void {
 
 /** Register all native-only IPC handlers. */
 function registerIpcHandlers(): void {
+  if (isFrontendPerformanceRun()) {
+    ipcMain.handle(FRONTEND_PERFORMANCE_METRICS_CHANNEL, (event) => {
+      if (!mainWindow || event.sender !== mainWindow.webContents) {
+        throw new Error("Performance metrics require the main renderer");
+      }
+      return getFrontendPerformanceMetrics();
+    });
+    ipcMain.handle(FRONTEND_PERFORMANCE_QUIT_CHANNEL, async (event) => {
+      if (!mainWindow || event.sender !== mainWindow.webContents) {
+        throw new Error("Performance cleanup requires the main renderer");
+      }
+      await serverManager.forceReplace();
+      app.quit();
+    });
+  }
+
   // Server URL for WebSocket connection
   ipcMain.handle("get-server-url", () => ({
     url: `ws://localhost:${serverManager.port}?token=${serverManager.authToken}`,
@@ -822,7 +887,7 @@ function setupCloseHandler(): void {
 // Disable GPU process - the app renders text and markdown only, no WebGL or
 // hardware-accelerated graphics. Eliminates the ~70 MB GPU process.
 // Must be called before app.whenReady().
-app.disableHardwareAcceleration();
+if (!HARDWARE_ACCELERATION_ENABLED) app.disableHardwareAcceleration();
 
 // Pre-cache compiled V8 bytecode to disk so subsequent launches skip
 // re-parsing the renderer bundle (mirrors VS Code's approach).
