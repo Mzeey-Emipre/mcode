@@ -1,0 +1,94 @@
+import type {
+  AgentEventRouting,
+  CanonicalAgentEvent,
+  ProviderIdentity,
+} from "@mcode/agent-model";
+
+/** Provider event input submitted to the server-owned canonical event sink. */
+export interface ProviderEventDraft {
+  eventId: string;
+  routing: AgentEventRouting;
+  sourceProviderId: string;
+  sourceIdentities: readonly ProviderIdentity[];
+  sourceSequence?: number;
+  providerTimestamp?: string;
+  ingestClass?: "volatile";
+  payload: CanonicalAgentEvent;
+}
+
+/** Supplies one server-owned environment snapshot to a Provider session spawn. */
+export interface ProviderEnvironmentPort {
+  snapshot(): Readonly<Record<string, string>>;
+}
+
+/** Attaches and terminates child process trees without exposing the server process service. */
+export interface ProviderProcessPort {
+  attach(pid: number, description: string): void;
+  terminateTree(pid: number): Promise<void>;
+}
+
+/** Minimal browser lease request passed to the server-owned browser authority. */
+export interface ProviderBrowserLeaseRequest {
+  providerId: string;
+  providerSessionId: string;
+  mcodeSessionId: string;
+  threadId: string;
+  workspaceId: string;
+  permissionCapability: "observe" | "interact" | "privileged";
+}
+
+/** Opaque browser lease handle returned by the server. */
+export interface ProviderBrowserLeaseHandle {
+  leaseId: string;
+}
+
+/** Gives a Provider scoped access to server-owned browser leases. */
+export interface ProviderBrowserPort {
+  stage(request: ProviderBrowserLeaseRequest): ProviderBrowserLeaseHandle;
+  releaseSession(providerId: string, mcodeSessionId: string): number;
+}
+
+/** Input for one server-owned thread-control bootstrap. */
+export interface ProviderThreadControlRequest {
+  providerId: string;
+  sessionId: string;
+  threadId: string;
+  turnId: string;
+  protocol: "claude" | "codex" | "http";
+}
+
+/** Gives a Provider opaque thread-control bootstrap data for one scoped session. */
+export interface ProviderThreadControlPort {
+  bootstrap(request: ProviderThreadControlRequest): Promise<unknown | null>;
+  close(sessionId: string): Promise<void>;
+}
+
+/** Consumes a server-authorized, path-scoped grant. */
+export interface ProviderGrantPort {
+  consume(request: { threadId: string; toolName: string; path: string }): boolean;
+}
+
+/** Submits bounded semantic drafts to the server-owned canonical event sink. */
+export interface ProviderEventSinkPort {
+  submit(batch: ProviderEventBatch): Promise<void>;
+}
+
+/** One bounded provider batch submitted through the canonical server sink. */
+export interface ProviderEventBatch {
+  threadId: string;
+  turnId: string;
+  executionId: string;
+  phase: string;
+  nativeCursor?: unknown;
+  events: readonly ProviderEventDraft[];
+}
+
+/** Narrow server services that Provider implementations can use. */
+export interface ProviderHostPorts {
+  environment: ProviderEnvironmentPort;
+  processes: ProviderProcessPort;
+  browser: ProviderBrowserPort;
+  threadControl: ProviderThreadControlPort;
+  grants: ProviderGrantPort;
+  events: ProviderEventSinkPort;
+}

@@ -162,6 +162,32 @@ describe("SessionRuntime", () => {
     expect(rt.size).toBe(1);
   });
 
+  it("closes a session that finishes spawning after stop", async () => {
+    let releaseSpawn!: () => void;
+    const spawnGate = new Promise<void>((resolve) => {
+      releaseSpawn = resolve;
+    });
+    const slowAdapter = new FakeAdapter();
+    slowAdapter.spawn = async (args: SpawnArgs): Promise<SpawnResult<FakeState>> => {
+      slowAdapter.calls.push(`spawn:${args.sessionId}`);
+      await spawnGate;
+      return {
+        state: { id: args.sessionId, cwd: args.cwd, permissionMode: args.permissionMode, busy: false, dead: false },
+        pids: [],
+      };
+    };
+    const rt = makeRuntime(slowAdapter);
+
+    const acquire = rt.acquire(ACQUIRE);
+    const stop = rt.stop(ACQUIRE.sessionId);
+    releaseSpawn();
+
+    await expect(acquire).rejects.toThrow("stopped during spawn");
+    await stop;
+    expect(rt.size).toBe(0);
+    expect(slowAdapter.calls).toEqual(["spawn:s1", "interrupt:s1", "close:s1"]);
+  });
+
   it("shutdown() stops all sessions and clears the eviction timer", async () => {
     const rt = makeRuntime(adapter);
     await rt.acquire({ ...ACQUIRE, sessionId: "s1" });

@@ -31,6 +31,7 @@ import { CodexProvider } from "./providers/codex/codex-provider";
 import { CopilotProvider } from "./providers/copilot/copilot-provider";
 import { CursorProvider } from "./providers/cursor/cursor-provider";
 import { ProviderRegistry } from "./providers/provider-registry";
+import { createProviderHostPorts } from "./providers/provider-host-ports";
 
 // Services
 import { WorkspaceService } from "./services/workspace-service";
@@ -308,6 +309,17 @@ export function setupContainer(mcodeDir: string): typeof container {
   );
   container.register("IProviderRegistry", {
     useFactory: (c) => c.resolve(ProviderRegistry),
+  });
+
+  container.register("ProviderHostPorts", {
+    useFactory: (c) => createProviderHostPorts({
+      envService: c.resolve(EnvService),
+      jobObject: c.resolve<JobObject>("JobObject"),
+      browser: c.resolve(BrowserAutomationSessionLease),
+      threadControl: c.resolve(InternalThreadControlMcpRuntime),
+      grants: c.resolve(ScopedPreGrantService),
+      events: c.resolve(CanonicalAgentEventSink),
+    }),
   });
 
   // GitExecutor — registered before services that depend on it

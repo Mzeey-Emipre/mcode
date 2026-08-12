@@ -1,0 +1,22 @@
+{
+  "name": "@mcode/providers",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./server-compat/session-runtime": "./src/server-compat/session-runtime.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@mcode/agent-model": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.17",
+    "typescript": "^5.8.0",
+    "vitest": "^4.1.0"
+  }
+}
