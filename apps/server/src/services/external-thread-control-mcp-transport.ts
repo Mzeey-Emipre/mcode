@@ -163,13 +163,13 @@ function registerTools(
   };
   register("workspace_search", "Search selected Mcode Projects.", WorkspaceSearchInputSchema(), WorkspaceSearchResultSchema());
   register("worktree_list", "List opaque worktrees in one selected Project.", WorktreeListInputSchema(), WorktreeListResultSchema());
-  register("thread_create_batch", "Create one to twenty delegated Mcode threads. providerId/modelId select the delegated target; discover named targets with thread_target_list first.", ThreadCreateBatchInputSchema(), ThreadCreateBatchResultSchema());
-  register("thread_target_list", "List provider and model targets currently usable for delegated threads.", ThreadTargetListInputSchema(), ThreadTargetListResultSchema());
-  register("thread_search", "Search readable delegated threads.", ThreadSearchInputSchema(), ThreadSearchResultSchema());
-  register("thread_get", "Read one bounded delegated thread transcript.", ThreadGetInputSchema(), ThreadGetResultSchema());
-  register("thread_send", "Send a message to one readable delegated thread.", ThreadSendInputSchema(), ThreadSendResultSchema());
-  register("thread_stop", "Stop one mutable delegated thread.", ThreadStopInputSchema(), ThreadStopResultSchema());
-  register("thread_wait", "Wait for readable delegated threads.", ThreadWaitInputSchema(), ThreadWaitResultSchema());
+  register("thread_create_batch", "Create one to twenty Mcode threads. providerId/modelId select the provider and model; discover named options with thread_target_list first.", ThreadCreateBatchInputSchema(), ThreadCreateBatchResultSchema());
+  register("thread_target_list", "List provider and model targets currently usable for new Mcode threads.", ThreadTargetListInputSchema(), ThreadTargetListResultSchema());
+  register("thread_search", "Search readable Mcode threads.", ThreadSearchInputSchema(), ThreadSearchResultSchema());
+  register("thread_get", "Read one bounded Mcode thread transcript.", ThreadGetInputSchema(), ThreadGetResultSchema());
+  register("thread_send", "Send a message to one readable Mcode thread.", ThreadSendInputSchema(), ThreadSendResultSchema());
+  register("thread_stop", "Stop one mutable Mcode thread.", ThreadStopInputSchema(), ThreadStopResultSchema());
+  register("thread_wait", "Wait for readable Mcode threads.", ThreadWaitInputSchema(), ThreadWaitResultSchema());
 }
 
 function createToolResult(structuredContent: Record<string, unknown>) {

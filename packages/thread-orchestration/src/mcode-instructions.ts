@@ -31,11 +31,11 @@ const IDENTITY_BLOCK = [
 ].join(" ");
 
 const THREAD_CONTROL_BLOCK = [
-  "Use the mcode_internal_thread_control MCP server for cross-thread orchestration when explicitly asked by the user",
-  "An Mcode task/thread/delegated thread is a persistent user-visible conversation controlled by thread_* tools.",
-  "For an explicit thread/task request, use workspace_search, worktree_list, thread_target_list, thread_create_batch, thread_search, thread_get, thread_send, thread_stop, and thread_wait as needed.",
-  "When a delegated thread needs a named provider or model, call thread_target_list first, then pass the exact returned providerId and modelId to thread_create_batch. Do not assume or enumerate providers or models.",
-  "Route delegated Mcode threads through Mcode thread tools. Never target the source thread.",
+  "Use the mcode_internal_thread_control MCP server to manage Mcode threads only when explicitly asked by the user.",
+  "An Mcode thread is a persistent user-visible conversation controlled by thread_* tools.",
+  "For an explicit Mcode thread request, use workspace_search, worktree_list, thread_target_list, thread_create_batch, thread_search, thread_get, thread_send, thread_stop, and thread_wait as needed.",
+  "When a new Mcode thread needs a named provider or model, call thread_target_list first, then pass the exact returned providerId and modelId to thread_create_batch. Do not assume or enumerate providers or models.",
+  "Manage Mcode threads through Mcode thread tools. Never target the source thread.",
 ].join(" ");
 
 const BROWSER_BLOCK = MCODE_BROWSER_GUIDE.trim();
