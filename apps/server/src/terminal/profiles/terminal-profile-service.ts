@@ -213,18 +213,35 @@ export class TerminalProfileService {
     readonly workspaceId?: string;
     readonly requestedProfileId?: TerminalProfileReference;
   }): Promise<TerminalResolvedProfile> {
+    return (await this.resolveLaunchProfile(input)).resolvedProfile;
+  }
+
+  /** Resolves and retains the exact requested profile for an immutable launch snapshot. */
+  async resolveLaunchProfile(input: {
+    readonly workspaceId?: string;
+    readonly requestedProfileId?: TerminalProfileReference;
+  }): Promise<{
+    readonly requestedProfileId: TerminalProfileReference;
+    readonly resolvedProfile: TerminalResolvedProfile;
+  }> {
     const selected = input.requestedProfileId
       ?? (input.workspaceId ? this.workspacePreferences.get(input.workspaceId)?.defaultProfileId : undefined)
       ?? this.settings.get().terminal.defaultProfileId;
     if (selected !== "automatic") {
-      return await this.resolveReference(selected);
+      return Object.freeze({
+        requestedProfileId: selected,
+        resolvedProfile: await this.resolveReference(selected),
+      });
     }
     const available = await this.list();
     const automatic = available.certified[0];
     if (!automatic) {
       throw new TerminalProfileUnavailableError("automatic");
     }
-    return freezeResolvedProfile(automatic);
+    return Object.freeze({
+      requestedProfileId: selected,
+      resolvedProfile: freezeResolvedProfile(automatic),
+    });
   }
 
   private async resolveReference(profileId: Exclude<TerminalProfileReference, "automatic">): Promise<TerminalResolvedProfile> {

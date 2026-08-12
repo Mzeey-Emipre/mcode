@@ -11,6 +11,11 @@ export interface CreateRuntimeSession {
   readonly scope: TerminalScope;
   readonly launch: TerminalLaunchSnapshot;
   readonly hostGeneration: string;
+  readonly cwd: string;
+  readonly protectedEnv: ReadonlyArray<{
+    readonly name: string;
+    readonly value: string;
+  }>;
 }
 
 /** Runtime request that acquires one attachment lease. */

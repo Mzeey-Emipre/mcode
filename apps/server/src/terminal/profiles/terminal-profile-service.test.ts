@@ -94,6 +94,18 @@ describe("TerminalProfileService", () => {
     expect(Object.isFrozen(resolved.arguments)).toBe(true);
   });
 
+  it("captures the requested profile separately from the resolved snapshot", async () => {
+    const automatic = await service.resolveLaunchProfile({});
+    const selected = await service.resolveLaunchProfile({
+      requestedProfileId: "certified:windows-powershell-5.1",
+    });
+
+    expect(automatic.requestedProfileId).toBe("automatic");
+    expect(automatic.resolvedProfile.id).toBe("certified:windows-powershell-5.1");
+    expect(selected.requestedProfileId).toBe("certified:windows-powershell-5.1");
+    expect(Object.isFrozen(selected)).toBe(true);
+  });
+
   it("never substitutes an unavailable or missing explicit profile", async () => {
     available.delete("pwsh.exe");
     await expect(service.resolve({
