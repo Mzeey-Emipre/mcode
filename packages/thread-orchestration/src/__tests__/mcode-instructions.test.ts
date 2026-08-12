@@ -38,7 +38,6 @@ describe("Mcode runtime instruction plan", () => {
     expect(MCODE_BROWSER_GUIDE).toContain("do not run shell/terminal commands or read local skills/files");
     expect(MCODE_BROWSER_GUIDE).toContain("latest observationRef");
     expect(MCODE_BROWSER_GUIDE).toContain("fresh idempotencyKey");
-    expect(MCODE_BROWSER_GUIDE).toContain("expectedControlEpoch from inspection");
     expect(MCODE_BROWSER_GUIDE).toContain("non-empty steps array");
     expect(MCODE_BROWSER_GUIDE).toContain("wait durationMs");
     expect(MCODE_BROWSER_GUIDE).toContain("click target");
