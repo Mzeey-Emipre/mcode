@@ -318,6 +318,29 @@ describe("ProjectTree thread interactions", () => {
     await vi.waitFor(() => expect(completeThread).toHaveBeenCalledWith("thread-1"));
   });
 
+  it("keeps the lifecycle spinner in the completion control while completion is pending", async () => {
+    let resolveComplete!: () => void;
+    const completeThread = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveComplete = resolve;
+        }),
+    );
+    setupStoreMocks({ completeThread });
+
+    render(<ProjectTree />);
+    const action = screen.getByRole("button", { name: "Complete My Thread" });
+    fireEvent.click(action);
+
+    await vi.waitFor(() => expect(completeThread).toHaveBeenCalledWith("thread-1"));
+    expect(action).toBeDisabled();
+    expect(action.querySelector(".status-spin")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Running")).toBeNull();
+    await act(async () => {
+      resolveComplete();
+    });
+  });
+
   it("switches to completed threads and reopens one by keyboard", async () => {
     const reopenThread = vi.fn().mockResolvedValue(undefined);
     setupStoreMocks({
@@ -851,11 +874,15 @@ describe("ProjectTree action-required indicator", () => {
     render(<ProjectTree />);
 
     const spinner = screen.getByLabelText("Running");
+    const action = screen.getByRole("button", { name: "Complete My Thread" });
+    const title = screen.getByTestId("thread-title");
     expect(spinner).toBeVisible();
-    expect(spinner.closest("button")).toHaveClass(
-      "opacity-100",
-      "disabled:opacity-100",
-    );
+    expect(action).toBeDisabled();
+    expect(action).not.toHaveClass("opacity-100", "disabled:opacity-100");
+    expect(action).not.toContainElement(spinner);
+    expect(
+      title.compareDocumentPosition(spinner) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it.each([

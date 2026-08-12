@@ -1022,7 +1022,6 @@ const ThreadRow = memo(function ThreadRow({
   const isUserCompleted = thread.user_completed_at !== null;
   const showEndMarker =
     marker.kind !== "time" &&
-    marker.kind !== "running" &&
     (!showPrCi || marker.kind !== "ci");
   const lifecycleUnavailable =
     isLifecyclePending ||
@@ -1113,16 +1112,9 @@ const ThreadRow = memo(function ThreadRow({
                 onClick={handleLifecycleClick}
                 className={cn(
                   "size-5 shrink-0 rounded-full p-0 text-muted-foreground/65 opacity-0 transition-opacity shadow-none hover:bg-transparent hover:text-foreground group-hover/row:opacity-100 group-focus-visible/row:opacity-100 focus-visible:opacity-100 disabled:cursor-not-allowed",
-                  isRunning && "opacity-100 disabled:opacity-100",
                 )}
               >
-                {isRunning ? (
-                  <Spinner
-                    size={11}
-                    aria-label="Running"
-                    className="text-primary"
-                  />
-                ) : isLifecyclePending ? (
+                {isLifecyclePending ? (
                   <Spinner size={11} />
                 ) : isUserCompleted ? (
                   <Check size={13} strokeWidth={2.5} aria-hidden />
