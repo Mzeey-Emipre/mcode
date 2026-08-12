@@ -1,6 +1,10 @@
+import Database from "better-sqlite3";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { runBoundedWriteBatches } from "../bounded-write-batches";
-import { openMemoryDatabase } from "../database";
+import { openMemoryDatabase, resolveElectronNativeBinding } from "../database";
 
 describe("runBoundedWriteBatches", () => {
   it("commits bounded batches and yields only after each transaction closes", async () => {
@@ -56,6 +60,11 @@ describe("runBoundedWriteBatches", () => {
       },
     })).rejects.toThrow("interrupted");
 
+    expect(db.prepare("SELECT id FROM records ORDER BY id").all()).toEqual([
+      { id: 1 },
+      { id: 2 },
+    ]);
+
     await runBoundedWriteBatches({
       db,
       items,
@@ -104,5 +113,62 @@ describe("runBoundedWriteBatches", () => {
 
     expect(result).toEqual({ batches: 2, rows: 8, bytes: 5 });
     expect(committedRows).toEqual([5, 3]);
+  });
+
+  it("rolls back the active batch when the lock timeout expires", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "mcode-write-lock-"));
+    const databasePath = join(directory, "locked.sqlite");
+    const nativeBinding = resolveElectronNativeBinding();
+    const lockOwner = new Database(databasePath, { nativeBinding });
+    const writer = new Database(databasePath, { nativeBinding });
+
+    try {
+      lockOwner.exec("CREATE TABLE records (id INTEGER PRIMARY KEY, value TEXT NOT NULL)");
+      writer.pragma("busy_timeout = 10");
+      const insert = writer.prepare("INSERT INTO records (id, value) VALUES (?, ?)");
+      lockOwner.exec("BEGIN EXCLUSIVE");
+
+      await expect(runBoundedWriteBatches({
+        db: writer,
+        items: [{ id: 1, value: "blocked" }],
+        limits: { maxRows: 1, maxBytes: 100, maxElapsedMs: 100 },
+        byteLength: (item) => Buffer.byteLength(item.value),
+        write: (item) => insert.run(item.id, item.value),
+      })).rejects.toMatchObject({ code: "SQLITE_BUSY" });
+
+      expect(writer.inTransaction).toBe(false);
+      lockOwner.exec("ROLLBACK");
+      expect(writer.prepare("SELECT id FROM records").all()).toEqual([]);
+    } finally {
+      if (lockOwner.inTransaction) lockOwner.exec("ROLLBACK");
+      writer.close();
+      lockOwner.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("rolls back the active batch when SQLite reports a full disk", async () => {
+    const db = new Database(":memory:", { nativeBinding: resolveElectronNativeBinding() });
+
+    try {
+      db.pragma("page_size = 512");
+      db.exec("CREATE TABLE records (id INTEGER PRIMARY KEY, value BLOB NOT NULL)");
+      const pageCount = db.pragma("page_count", { simple: true }) as number;
+      db.pragma(`max_page_count = ${pageCount}`);
+      const insert = db.prepare("INSERT INTO records (id, value) VALUES (?, zeroblob(?))");
+
+      await expect(runBoundedWriteBatches({
+        db,
+        items: [{ id: 1, bytes: 4_096 }],
+        limits: { maxRows: 1, maxBytes: 8_192, maxElapsedMs: 100 },
+        byteLength: (item) => item.bytes,
+        write: (item) => insert.run(item.id, item.bytes),
+      })).rejects.toMatchObject({ code: "SQLITE_FULL" });
+
+      expect(db.inTransaction).toBe(false);
+      expect(db.prepare("SELECT id FROM records").all()).toEqual([]);
+    } finally {
+      db.close();
+    }
   });
 });
