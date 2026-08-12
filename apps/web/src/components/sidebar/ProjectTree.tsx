@@ -1021,7 +1021,9 @@ const ThreadRow = memo(function ThreadRow({
   const [isLifecyclePending, setIsLifecyclePending] = useState(false);
   const isUserCompleted = thread.user_completed_at !== null;
   const showEndMarker =
-    !showPrCi && (!isUserCompleted || marker.kind !== "time");
+    marker.kind !== "time" &&
+    marker.kind !== "running" &&
+    (!showPrCi || marker.kind !== "ci");
   const lifecycleUnavailable =
     isLifecyclePending ||
     isEditing ||
@@ -1109,9 +1111,18 @@ const ThreadRow = memo(function ThreadRow({
                 onPointerDown={(event) => event.stopPropagation()}
                 onKeyDown={(event) => event.stopPropagation()}
                 onClick={handleLifecycleClick}
-                className="size-5 shrink-0 rounded-full p-0 text-muted-foreground/65 opacity-0 transition-opacity shadow-none hover:bg-transparent hover:text-foreground group-hover/row:opacity-100 group-focus-visible/row:opacity-100 focus-visible:opacity-100 disabled:cursor-not-allowed"
+                className={cn(
+                  "size-5 shrink-0 rounded-full p-0 text-muted-foreground/65 opacity-0 transition-opacity shadow-none hover:bg-transparent hover:text-foreground group-hover/row:opacity-100 group-focus-visible/row:opacity-100 focus-visible:opacity-100 disabled:cursor-not-allowed",
+                  isRunning && "opacity-100 disabled:opacity-100",
+                )}
               >
-                {isLifecyclePending ? (
+                {isRunning ? (
+                  <Spinner
+                    size={11}
+                    aria-label="Running"
+                    className="text-primary"
+                  />
+                ) : isLifecyclePending ? (
                   <Spinner size={11} />
                 ) : isUserCompleted ? (
                   <Check size={13} strokeWidth={2.5} aria-hidden />
@@ -1237,7 +1248,12 @@ const ThreadRow = memo(function ThreadRow({
         />
       ) : null}
       {!isEditing && showEndMarker && (
-        <span className={cn(isUserCompleted && "grayscale opacity-45")}>
+        <span
+          className={cn(
+            "inline-flex shrink-0 items-center justify-center",
+            isUserCompleted && "grayscale opacity-45",
+          )}
+        >
           <ThreadStateMarker marker={marker} dim={Boolean(scaffoldDim)} />
         </span>
       )}
@@ -1367,13 +1383,13 @@ function SidebarThreadPreview({
         {thread.title}
       </div>
       <div className="grid gap-1.5">
+        <div className="text-xs text-muted-foreground">
+          Updated {formatLifecycleDate(thread.updated_at)}
+        </div>
         {thread.user_completed_at !== null ? (
           <>
             <div className="text-xs text-muted-foreground">
               Completed {formatLifecycleDate(thread.user_completed_at)}
-            </div>
-            <div className="text-xs text-muted-foreground">
-              Updated {formatLifecycleDate(thread.updated_at)}
             </div>
             {thread.cleanup_state === "blocked" ? (
               <div className="text-xs text-destructive" role="status">
