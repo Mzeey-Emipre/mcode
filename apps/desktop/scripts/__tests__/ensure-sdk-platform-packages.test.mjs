@@ -248,4 +248,18 @@ describe("desktop packaging workflow wiring", () => {
     });
     expect(stable).not.toContain("types: [published]");
   });
+
+  it("keeps Nightly unsigned while Stable requires production signing", () => {
+    const nightly = readFileSync(
+      path.join(repoRoot, ".github/workflows/nightly-desktop.yml"),
+      "utf8",
+    );
+    const stable = readFileSync(
+      path.join(repoRoot, ".github/workflows/build-release.yml"),
+      "utf8",
+    );
+
+    expect(nightly).toContain("signing-required: false");
+    expect(stable).toContain("signing-required: true");
+  });
 });
