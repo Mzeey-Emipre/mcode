@@ -128,7 +128,7 @@ jobs:
       channel: nightly
       version: ${{ needs.setup.outputs.version }}
       expected-legacy: true
-      signing-required: true
+      signing-required: false
       retention-days: 90
     secrets: inherit
 
