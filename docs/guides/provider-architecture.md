@@ -4,7 +4,7 @@ All agent providers must use a **persistent process per session**, not per-turn 
 
 ## Shared lifecycle: SessionRuntime + ProtocolAdapter
 
-The uniform session lifecycle lives in `apps/server/src/services/session-runtime.ts`.
+The uniform session lifecycle lives privately in `packages/providers`.
 Each Provider holds its own `SessionRuntime<TState>` and implements
 `ProtocolAdapter<TState>` (composition, not inheritance). The runtime owns the
 session pool, the lazy 60s idle-eviction timer with a `lastUsedAt + isBusy`

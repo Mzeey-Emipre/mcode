@@ -55,6 +55,7 @@
         "@anthropic-ai/claude-agent-sdk": "^0.3.212",
         "@github/copilot-sdk": "^0.2.2",
         "@mcode/contracts": "workspace:*",
+        "@mcode/providers": "workspace:*",
         "@mcode/shared": "workspace:*",
         "@mcode/thread-orchestration": "workspace:*",
         "@modelcontextprotocol/sdk": "1.29.0",
@@ -185,6 +186,18 @@
         "zod": "^3.24.2",
       },
       "devDependencies": {
+        "typescript": "^5.8.0",
+        "vitest": "^4.1.0",
+      },
+    },
+    "packages/providers": {
+      "name": "@mcode/providers",
+      "version": "0.0.1",
+      "dependencies": {
+        "@mcode/agent-model": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/node": "^22.19.17",
         "typescript": "^5.8.0",
         "vitest": "^4.1.0",
       },
@@ -585,6 +598,8 @@
     "@mcode/browser-conformance": ["@mcode/browser-conformance@workspace:packages/browser-conformance"],
 
     "@mcode/contracts": ["@mcode/contracts@workspace:packages/contracts"],
+
+    "@mcode/providers": ["@mcode/providers@workspace:packages/providers"],
 
     "@mcode/server": ["@mcode/server@workspace:apps/server"],
 
