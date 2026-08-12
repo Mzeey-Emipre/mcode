@@ -68,6 +68,46 @@ async function waitForOutput(runtime: ModernTerminalSessionRuntime): Promise<str
   throw new Error("Timed out after 10000ms waiting for runtime output");
 }
 
+async function waitForOutputAfter(
+  runtime: ModernTerminalSessionRuntime,
+  previousOutputSeq: string,
+): Promise<string> {
+  const deadline = Date.now() + 10_000;
+  let latestSequence: string | null = null;
+  let quietSince = 0;
+  while (Date.now() < deadline) {
+    const sequence = runtime.getSnapshot(SESSION_ID)?.lastOutputSeq;
+    if (sequence && BigInt(sequence) > BigInt(previousOutputSeq)) {
+      if (sequence !== latestSequence) {
+        latestSequence = sequence;
+        quietSince = Date.now();
+      } else if (Date.now() - quietSince >= 200) {
+        return sequence;
+      }
+    }
+    await new Promise((resolvePoll) => setTimeout(resolvePoll, 20));
+  }
+  throw new Error(`Timed out after 10000ms waiting for output after ${previousOutputSeq}`);
+}
+
+async function waitForOutputToSettle(runtime: ModernTerminalSessionRuntime): Promise<string> {
+  const sequence = runtime.getSnapshot(SESSION_ID)?.lastOutputSeq ?? "0";
+  const deadline = Date.now() + 10_000;
+  let latestSequence = sequence;
+  let quietSince = Date.now();
+  while (Date.now() < deadline) {
+    const nextSequence = runtime.getSnapshot(SESSION_ID)?.lastOutputSeq ?? "0";
+    if (nextSequence !== latestSequence) {
+      latestSequence = nextSequence;
+      quietSince = Date.now();
+    } else if (Date.now() - quietSince >= 200) {
+      return nextSequence;
+    }
+    await new Promise((resolvePoll) => setTimeout(resolvePoll, 20));
+  }
+  throw new Error("Timed out after 10000ms waiting for output to settle");
+}
+
 async function waitForCommand(
   runtime: ModernTerminalSessionRuntime,
   commandSeq: string,
@@ -83,7 +123,7 @@ async function waitForCommand(
 describe.runIf(["win32", "darwin", "linux"].includes(process.platform))(
   "ModernTerminalSessionRuntime with the supervised PTY host",
   () => {
-    it("creates, attaches, orders commands, rejects a stale lease, and closes a real shell", async () => {
+    it("restores bounded output after a real shell detaches, then closes its process tree", async () => {
       const repoRoot = resolve(process.cwd(), "../..");
       const devDir = join(repoRoot, ".dev");
       mkdirSync(devDir, { recursive: true });
@@ -155,6 +195,21 @@ describe.runIf(["win32", "darwin", "linux"].includes(process.platform))(
           lastCommandSeq: "0",
           checkpointSeq: null,
         });
+        const initialHydration = runtime.consumeHydration({
+          sessionId: SESSION_ID,
+          hostGeneration: health.hostGeneration,
+          attachmentEpoch: attachment.attachmentEpoch,
+          hydrationId: attachment.hydrationId,
+        });
+        runtime.acknowledgeOutput({
+          sessionId: SESSION_ID,
+          hostGeneration: health.hostGeneration,
+          attachmentEpoch: attachment.attachmentEpoch,
+          outputSeq:
+            initialHydration.descriptor.lastOutputSeq ??
+            initialHydration.descriptor.checkpointThroughSeq ??
+            initialHydration.descriptor.requestedAfterSeq,
+        });
         await runtime.sendCommand({
           sessionId: SESSION_ID,
           hostGeneration: health.hostGeneration,
@@ -171,7 +226,7 @@ describe.runIf(["win32", "darwin", "linux"].includes(process.platform))(
           kind: "input",
           data: Buffer.from("echo runtime-live\r"),
         });
-        const outputSeq = await waitForOutput(runtime);
+        await waitForOutput(runtime);
         await expect(runtime.sendCommand({
           sessionId: SESSION_ID,
           hostGeneration: health.hostGeneration,
@@ -181,29 +236,63 @@ describe.runIf(["win32", "darwin", "linux"].includes(process.platform))(
           data: Buffer.from("echo stale\r"),
         })).rejects.toMatchObject({ code: "STALE_ATTACHMENT" });
         await waitForCommand(runtime, "2");
+        const replayBaseSeq = await waitForOutputToSettle(runtime);
+        await runtime.sendCommand({
+          sessionId: SESSION_ID,
+          hostGeneration: health.hostGeneration,
+          attachmentEpoch: attachment.attachmentEpoch,
+          commandSeq: "3",
+          kind: "input",
+          data: Buffer.from("echo runtime-replay\r"),
+        });
+        await waitForCommand(runtime, "3");
+        await runtime.detach({
+          sessionId: SESSION_ID,
+          attachmentId: ATTACHMENT_ID,
+          attachmentEpoch: attachment.attachmentEpoch,
+          reason: "disconnect",
+        });
+        await waitForOutputAfter(runtime, replayBaseSeq);
         const recoveredAttachment = await runtime.attach({
           sessionId: SESSION_ID,
           attachmentId: SECOND_ATTACHMENT_ID,
           hostGeneration: health.hostGeneration,
-          lastOutputSeq: outputSeq,
-          lastCommandSeq: "2",
+          lastOutputSeq: replayBaseSeq,
+          lastCommandSeq: "3",
           checkpointSeq: null,
+        });
+        const recoveredHydration = runtime.consumeHydration({
+          sessionId: SESSION_ID,
+          hostGeneration: health.hostGeneration,
+          attachmentEpoch: recoveredAttachment.attachmentEpoch,
+          hydrationId: recoveredAttachment.hydrationId,
+        });
+        expect(recoveredHydration.descriptor).toMatchObject({
+          mode: "delta",
+          requestedAfterSeq: replayBaseSeq,
+          gap: null,
+        });
+        expect(
+          Buffer.concat(recoveredHydration.output.map((chunk) => Buffer.from(chunk.data))).toString(),
+        ).toContain("runtime-replay");
+        runtime.acknowledgeOutput({
+          sessionId: SESSION_ID,
+          hostGeneration: health.hostGeneration,
+          attachmentEpoch: recoveredAttachment.attachmentEpoch,
+          outputSeq:
+            recoveredHydration.descriptor.lastOutputSeq ??
+            recoveredHydration.descriptor.checkpointThroughSeq ??
+            recoveredHydration.descriptor.requestedAfterSeq,
         });
         await runtime.sendCommand({
           sessionId: SESSION_ID,
           hostGeneration: health.hostGeneration,
           attachmentEpoch: recoveredAttachment.attachmentEpoch,
-          commandSeq: "3",
+          commandSeq: "4",
           kind: "resize",
           data: { cols: 90, rows: 25 },
         });
-        await waitForCommand(runtime, "3");
-        runtime.acknowledgeOutput({
-          sessionId: SESSION_ID,
-          hostGeneration: health.hostGeneration,
-          attachmentEpoch: recoveredAttachment.attachmentEpoch,
-          outputSeq,
-        });
+        await waitForCommand(runtime, "4");
 
         await expect(runtime.close({ sessionId: SESSION_ID, reason: "user" })).resolves.toMatchObject({
           state: "exited",

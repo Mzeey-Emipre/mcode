@@ -24,6 +24,11 @@ import {
   PtyHostServerMessageSchema,
   type PtyHostEvent,
 } from "../host/pty-host-protocol.js";
+import {
+  replayBytesForScrollback,
+  TerminalReplayBuffer,
+  type TerminalHydration,
+} from "./terminal-replay-buffer.js";
 
 /** Runtime request that reserves and creates one shell session. */
 export interface CreateRuntimeSession {
@@ -99,10 +104,19 @@ export interface CloseRuntimeSession {
   readonly reason: "user" | "scope-reset" | "workspace-delete" | "app-shutdown";
 }
 
+/** Runtime request that consumes the prepared hydration for one attachment. */
+export interface ConsumeRuntimeHydration {
+  readonly sessionId: string;
+  readonly hostGeneration: string;
+  readonly attachmentEpoch: string;
+  readonly hydrationId: string;
+}
+
 /** Deep modern-session seam that owns lifecycle, ordering, replay, and exit barriers. */
 export interface TerminalSessionRuntime {
   createSession(input: CreateRuntimeSession): Promise<TerminalSessionSnapshot>;
   attach(input: AttachRuntimeSession): Promise<TerminalAttachmentDescriptor>;
+  consumeHydration(input: ConsumeRuntimeHydration): TerminalHydration;
   sendCommand(command: TerminalAttachmentCommand): Promise<void>;
   acknowledgeOutput(ack: TerminalOutputAcknowledgement): void;
   saveCheckpoint(checkpoint: ValidatedTerminalCheckpoint): Promise<void>;
@@ -116,12 +130,9 @@ interface AttachmentLease {
   readonly attachmentId: string;
   readonly epoch: bigint;
   acknowledgedOutputSeq: bigint;
-}
-
-interface RuntimeCheckpoint {
-  readonly baseOutputSeq: bigint;
-  readonly data: Uint8Array;
-  readonly sha256: string;
+  readonly hydrationThroughSeq: bigint;
+  hydrationComplete: boolean;
+  pendingHydration: TerminalHydration | null;
 }
 
 interface RuntimeSession {
@@ -143,7 +154,7 @@ interface RuntimeSession {
   inputStallTimer: ReturnType<typeof setTimeout> | null;
   deliveryUnknown: boolean;
   revokedAttachmentEpoch: bigint | null;
-  checkpoint: RuntimeCheckpoint | null;
+  readonly replay: TerminalReplayBuffer;
   exit: TerminalSessionSnapshot["exit"];
 }
 
@@ -157,6 +168,7 @@ export interface ModernTerminalSessionRuntimeOptions {
     readonly cols: number;
     readonly rows: number;
   };
+  readonly replayCapacityBytes?: number;
 }
 
 const MAX_COMMAND_BYTES = 65_536;
@@ -164,6 +176,7 @@ const MAX_UNACKNOWLEDGED_INPUT_BYTES = 262_144;
 const MAX_CHECKPOINT_BYTES = 8_388_608;
 const INPUT_ACKNOWLEDGEMENT_TIMEOUT_MS = 2_000;
 const DEFAULT_INITIAL_DIMENSIONS = Object.freeze({ cols: 80, rows: 24 });
+const DEFAULT_REPLAY_CAPACITY_BYTES = replayBytesForScrollback(1_000);
 const u64 = TerminalU64Schema();
 const uuid = TerminalUuidSchema();
 
@@ -266,7 +279,9 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
       inputStallTimer: null,
       deliveryUnknown: false,
       revokedAttachmentEpoch: null,
-      checkpoint: null,
+      replay: new TerminalReplayBuffer(
+        this.options.replayCapacityBytes ?? DEFAULT_REPLAY_CAPACITY_BYTES,
+      ),
       exit: null,
     };
     this.sessions.set(sessionId, record);
@@ -313,19 +328,34 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
     ) {
       throw this.protocolError();
     }
-    if (input.checkpointSeq !== null) {
-      const checkpointSeq = parseSequence(input.checkpointSeq, this.protocolError.bind(this));
-      if (checkpointSeq > record.receivedOutputSeq) throw this.protocolError();
+    const checkpointSeq = input.checkpointSeq === null
+      ? null
+      : parseSequence(input.checkpointSeq, this.protocolError.bind(this));
+    if (checkpointSeq !== null && checkpointSeq > record.receivedOutputSeq) {
+      throw this.protocolError();
     }
     const epoch = record.nextAttachmentEpoch;
     record.nextAttachmentEpoch += 1n;
     if (record.attachment && record.unacknowledgedInputBytes > 0) {
       record.deliveryUnknown = true;
     }
+    const hydrationId = parseContract(
+      uuid,
+      this.createHydrationId(),
+      this.protocolError.bind(this),
+    );
+    const hydration = record.replay.hydrate({
+      hydrationId,
+      requestedAfterSeq: lastOutputSeq,
+      checkpointSeq,
+    });
     record.attachment = {
       attachmentId,
       epoch,
       acknowledgedOutputSeq: lastOutputSeq,
+      hydrationThroughSeq: record.receivedOutputSeq,
+      hydrationComplete: false,
+      pendingHydration: hydration,
     };
     return Object.freeze({
       contractVersion: 1,
@@ -333,17 +363,30 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
       attachmentId,
       attachmentEpoch: epoch.toString(),
       hostGeneration: record.hostGeneration,
-      hydrationId: parseContract(
-        uuid,
-        this.createHydrationId(),
-        this.protocolError.bind(this),
-      ),
+      hydrationId,
       inputEnabled: false,
       serverHighBytes: 1_048_576,
       serverLowBytes: 262_144,
       clientHighBytes: 262_144,
       clientLowBytes: 65_536,
     });
+  }
+
+  /** Consumes the one bounded hydration prepared for the current attachment. */
+  consumeHydration(input: ConsumeRuntimeHydration): TerminalHydration {
+    const record = this.requireSession(input.sessionId);
+    this.requireGeneration(record, input.hostGeneration);
+    const attachment = this.requireAttachment(record, input.attachmentEpoch, "REATTACH");
+    const hydrationId = parseContract(uuid, input.hydrationId, this.protocolError.bind(this));
+    if (
+      attachment.pendingHydration === null ||
+      attachment.pendingHydration.descriptor.hydrationId !== hydrationId
+    ) {
+      throw this.error("STALE_ATTACHMENT", "REATTACH");
+    }
+    const hydration = attachment.pendingHydration;
+    attachment.pendingHydration = null;
+    return hydration;
   }
 
   /** Sends one input or resize command after all earlier accepted commands. */
@@ -367,13 +410,23 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
       throw this.protocolError();
     }
     attachment.acknowledgedOutputSeq = outputSeq;
+    if (
+      outputSeq >= attachment.hydrationThroughSeq &&
+      attachment.pendingHydration === null
+    ) {
+      attachment.hydrationComplete = true;
+    }
   }
 
   /** Retains one validated renderer checkpoint for the later hydration path. */
   async saveCheckpoint(checkpoint: ValidatedTerminalCheckpoint): Promise<void> {
     const record = this.requireSession(checkpoint.sessionId);
     this.requireGeneration(record, checkpoint.hostGeneration);
-    this.requireAttachment(record, checkpoint.attachmentEpoch, "REATTACH");
+    const attachment = this.requireAttachment(
+      record,
+      checkpoint.attachmentEpoch,
+      "REATTACH",
+    );
     const baseOutputSeq = parseSequence(
       checkpoint.baseOutputSeq,
       this.protocolError.bind(this),
@@ -387,12 +440,22 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
     ) {
       throw this.error("CHECKPOINT_REJECTED", "REATTACH");
     }
-    if (record.checkpoint && baseOutputSeq <= record.checkpoint.baseOutputSeq) return;
-    record.checkpoint = {
+    if (baseOutputSeq > attachment.acknowledgedOutputSeq) {
+      throw this.error("CHECKPOINT_REJECTED", "REATTACH");
+    }
+    const nextCheckpoint = {
       baseOutputSeq,
       data: Uint8Array.from(checkpoint.data),
       sha256: checkpoint.sha256,
     };
+    const installResult = record.replay.installCheckpoint({
+      baseOutputSeq: baseOutputSeq.toString(),
+      data: nextCheckpoint.data,
+      sha256: nextCheckpoint.sha256,
+    });
+    if (installResult === "rejected") {
+      throw this.error("CHECKPOINT_REJECTED", "REATTACH");
+    }
   }
 
   /** Releases only the current controller lease and leaves the shell running. */
@@ -465,7 +528,10 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
     command: TerminalAttachmentCommand,
   ): Promise<void> {
     this.requireGeneration(record, command.hostGeneration);
-    this.requireAttachment(record, command.attachmentEpoch, "REATTACH");
+    const attachment = this.requireAttachment(record, command.attachmentEpoch, "REATTACH");
+    if (!attachment.hydrationComplete) {
+      throw this.error("SESSION_NOT_RUNNING", "REATTACH");
+    }
     const sequence = parseSequence(command.commandSeq, this.protocolError.bind(this));
     if (sequence !== record.acceptedCommandSeq + 1n) {
       throw this.error("COMMAND_OUT_OF_ORDER", "REATTACH");
@@ -525,8 +591,16 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
     }
     if (event.kind === "output") {
       const sequence = BigInt(event.outputSeq);
-      if (sequence === record.receivedOutputSeq + 1n) {
+      try {
+        record.replay.append(sequence, Buffer.from(event.dataBase64, "base64"));
         record.receivedOutputSeq = sequence;
+      } catch {
+        record.state = "failed";
+        record.exit = Object.freeze({
+          code: null,
+          signal: null,
+          reason: "protocol-failure",
+        });
       }
       return;
     }
