@@ -319,8 +319,10 @@ describe("ProjectTree thread interactions", () => {
     });
     render(<ProjectTree />);
     const viewSwitch = screen.getByRole("button", {
-      name: "Show completed threads for Test Project",
+      name: "View 1 completed thread for Test Project",
     });
+    expect(viewSwitch).toHaveAttribute("aria-pressed", "false");
+    expect(viewSwitch).toHaveAttribute("data-view", "active");
     viewSwitch.focus();
     expect(viewSwitch).toHaveFocus();
     fireEvent.click(viewSwitch);
@@ -332,8 +334,44 @@ describe("ProjectTree thread interactions", () => {
 
     expect(reopenThread).toHaveBeenCalledWith("thread-1");
     expect(screen.getByRole("button", {
-      name: "Show active threads for Test Project",
+      name: "View 0 active threads for Test Project",
     })).toBeVisible();
+  });
+
+  it("uses the approved completed-row treatment and hover details", async () => {
+    vi.useRealTimers();
+    setupStoreMocks({
+      thread: makeThread({
+        title: "Completed work",
+        mode: "worktree",
+        worktree_path: "C:/test-worktree",
+        pr_number: 42,
+        pr_status: "open",
+        user_completed_at: "2026-08-12T08:00:00.000Z",
+        scheduled_deletion_at: "2026-08-15T08:00:00.000Z",
+      }),
+    });
+
+    render(<ProjectTree />);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "View 1 completed thread for Test Project",
+      }),
+    );
+
+    expect(screen.getByTestId("thread-title")).toHaveClass("line-through");
+    expect(screen.getByLabelText("Provider, Claude")).toHaveClass(
+      "grayscale",
+      "opacity-45",
+    );
+    expect(
+      screen.getByTestId("thread-pr-indicator-thread-1"),
+    ).toHaveClass("grayscale", "opacity-45");
+    screen.getByRole("button", { name: /Completed work/i }).focus();
+    const preview = await screen.findByTestId("thread-preview-thread-1");
+    expect(preview).toHaveTextContent("Completed");
+    expect(preview).toHaveTextContent("Deletes");
+    vi.useFakeTimers();
   });
 
   it("keeps expanded threads mounted when a project drag starts", () => {
@@ -814,16 +852,21 @@ describe("ProjectTree PR-ability gating by mode", () => {
     expect(screen.queryByTitle(/PR #42/)).toBeNull();
   });
 
-  it("optically aligns the PR icon without redundant number text", () => {
+  it("places the PR icon on the right without redundant number text", () => {
     renderWithThread(
       makeThread({ mode: "worktree", pr_number: 42, pr_status: "open" }),
     );
     const indicator = screen.getByTestId("thread-pr-indicator-thread-1");
+    const row = screen.getByRole("button", { name: /My Thread/i });
+    const title = screen.getByTestId("thread-title");
     expect(indicator).toHaveAttribute("aria-label", "PR #42, open");
     expect(indicator).toHaveClass("-mt-px");
-    const leadingIcons = indicator.parentElement;
-    expect(leadingIcons).toHaveClass("gap-1");
-    expect(within(leadingIcons!).getByLabelText(/^Provider,/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/^Provider,/)).toBeInTheDocument();
+    expect(
+      title.compareDocumentPosition(indicator) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(row).toContainElement(indicator);
     expect(screen.queryByText("#42")).toBeNull();
   });
 

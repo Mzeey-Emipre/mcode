@@ -1003,7 +1003,6 @@ const ThreadRow = memo(function ThreadRow({
       marker.kind !== "action" &&
       marker.kind !== "running",
   );
-  const showEndMarker = !showPrCi;
   const isStaleWorktree =
     worktreesLoadedFor === thread.workspace_id &&
     thread.mode === "worktree" &&
@@ -1029,6 +1028,7 @@ const ThreadRow = memo(function ThreadRow({
   const RowProviderIcon = providerMeta.icon;
   const [isLifecyclePending, setIsLifecyclePending] = useState(false);
   const isUserCompleted = thread.user_completed_at !== null;
+  const showEndMarker = !showPrCi && !isUserCompleted;
   const lifecycleUnavailable =
     isLifecyclePending ||
     isEditing ||
@@ -1098,37 +1098,11 @@ const ThreadRow = memo(function ThreadRow({
           ? "bg-accent text-foreground"
           : "text-muted-foreground/85 hover:bg-accent/40 hover:text-foreground",
       )}
-      style={{ paddingLeft: `${42 + depth * 12}px` }}
+      style={{ paddingLeft: `${46 + depth * 12}px` }}
     >
       <span
         className="absolute left-0.5 top-1/2 flex -translate-y-1/2 items-center justify-end gap-1"
-        style={{ width: `${36 + depth * 12}px` }}
-      >
-        {prable && thread.pr_number != null ? (
-          <ThreadPrIndicator
-            threadId={thread.id}
-            prNumber={thread.pr_number}
-            prStatus={thread.pr_status}
-            checks={checks}
-            showCi={showPrCi}
-          />
-        ) : null}
-        <span
-          aria-label={`Provider, ${providerMeta.label}`}
-          className={cn(
-            "-mt-px flex h-4 w-4 items-center justify-center",
-            providerMeta.color,
-            scaffoldDim,
-          )}
-        >
-          <RowProviderIcon size={12} />
-        </span>
-      </span>
-      <div
-        className={cn(
-          "flex min-w-0 flex-1 items-center gap-2",
-          scaffoldDim,
-        )}
+        style={{ width: `${40 + depth * 12}px` }}
       >
         <Tooltip>
           <TooltipTrigger
@@ -1142,14 +1116,14 @@ const ThreadRow = memo(function ThreadRow({
                 onPointerDown={(event) => event.stopPropagation()}
                 onKeyDown={(event) => event.stopPropagation()}
                 onClick={handleLifecycleClick}
-                className="-ml-1 size-5 shrink-0 opacity-0 transition-opacity hover:bg-background/60 group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus:opacity-100 disabled:cursor-not-allowed"
+                className="size-5 shrink-0 rounded-full p-0 text-muted-foreground/65 opacity-0 transition-opacity shadow-none hover:bg-transparent hover:text-foreground group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus:opacity-100 disabled:cursor-not-allowed"
               >
                 {isLifecyclePending ? (
                   <Spinner size={11} />
                 ) : isUserCompleted ? (
-                  <Check size={12} aria-hidden />
+                  <Check size={13} strokeWidth={2.5} aria-hidden />
                 ) : (
-                  <Circle size={12} aria-hidden />
+                  <Circle size={13} strokeWidth={1.8} aria-hidden />
                 )}
               </Button>
             }
@@ -1158,6 +1132,24 @@ const ThreadRow = memo(function ThreadRow({
             {isUserCompleted ? "Undo completion" : "Complete thread"}
           </TooltipContent>
         </Tooltip>
+        <span
+          aria-label={`Provider, ${providerMeta.label}`}
+          className={cn(
+            "-mt-px flex h-4 w-4 items-center justify-center",
+            providerMeta.color,
+            scaffoldDim,
+            isUserCompleted && "grayscale opacity-45",
+          )}
+        >
+          <RowProviderIcon size={12} />
+        </span>
+      </span>
+      <div
+        className={cn(
+          "flex min-w-0 flex-1 items-center gap-2",
+          scaffoldDim,
+        )}
+      >
         {isEditing ? (
           <Input
             type="text"
@@ -1181,6 +1173,8 @@ const ThreadRow = memo(function ThreadRow({
             <span
               className={cn(
                 "truncate flex-1",
+                isUserCompleted &&
+                  "text-muted-foreground/55 line-through decoration-muted-foreground/55 decoration-1",
                 isStaleWorktree &&
                   "text-[var(--diff-remove-strong)]/85 line-through",
               )}
@@ -1239,6 +1233,16 @@ const ThreadRow = memo(function ThreadRow({
           </Tooltip>
         )}
       </div>
+      {!isEditing && prable && thread.pr_number != null ? (
+        <ThreadPrIndicator
+          threadId={thread.id}
+          prNumber={thread.pr_number}
+          prStatus={thread.pr_status}
+          checks={checks}
+          showCi={showPrCi}
+          muted={isUserCompleted}
+        />
+      ) : null}
       {!isEditing && showEndMarker && (
         <ThreadStateMarker marker={marker} dim={Boolean(scaffoldDim)} />
       )}
@@ -1368,6 +1372,21 @@ function SidebarThreadPreview({
         {thread.title}
       </div>
       <div className="grid gap-1.5">
+        {thread.user_completed_at !== null ? (
+          <>
+            <div className="text-xs text-muted-foreground">
+              Completed {formatLifecycleDate(thread.user_completed_at)}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              Updated {formatLifecycleDate(thread.updated_at)}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              {thread.scheduled_deletion_at
+                ? `Deletes ${formatLifecycleDate(thread.scheduled_deletion_at)}`
+                : "Automatic deletion disabled"}
+            </div>
+          </>
+        ) : null}
         <div
           aria-label={`Project, ${workspaceName}`}
           className="flex min-w-0 items-center gap-2"
@@ -1393,6 +1412,21 @@ interface ThreadPrIndicatorProps {
   prStatus: string | null;
   checks: ChecksStatus | undefined;
   showCi: boolean;
+  muted?: boolean;
+}
+
+function formatLifecycleDate(iso: string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(iso));
+}
+
+function threadCountLabel(
+  count: number,
+  state: "active" | "completed",
+): string {
+  return `${count} ${state} ${count === 1 ? "thread" : "threads"}`;
 }
 
 /** Renders an optically aligned PR glyph with its CI state attached as a status dot. */
@@ -1402,6 +1436,7 @@ const ThreadPrIndicator = memo(function ThreadPrIndicator({
   prStatus,
   checks,
   showCi,
+  muted = false,
 }: ThreadPrIndicatorProps) {
   const { Icon: PrIcon, color: prColor } = getPrVisual(prStatus);
   const ciVisual =
@@ -1415,7 +1450,10 @@ const ThreadPrIndicator = memo(function ThreadPrIndicator({
       title={label}
       aria-label={label}
       data-testid={`thread-pr-indicator-${threadId}`}
-      className="-mt-px flex h-4 w-4 items-center justify-center"
+      className={cn(
+        "-mt-px flex h-4 w-4 items-center justify-center",
+        muted && "grayscale opacity-45",
+      )}
     >
       <span className="relative flex size-4 items-center justify-center">
         <PrIcon
@@ -1669,6 +1707,11 @@ const ProjectNode = memo(function ProjectNode({
   const hasRunning = useThreadStore((s) =>
     threads.some((thread) => s.runningThreadIds.has(thread.id)),
   );
+  const activeThreadCount = useMemo(
+    () => threads.filter((thread) => thread.user_completed_at === null).length,
+    [threads],
+  );
+  const completedThreadCount = threads.length - activeThreadCount;
   // Cap logic: show THREAD_LIST_CAP rows unless the user opted in, or the
   // active thread sits beyond the cap (force expand so the active row is
   // always visible without requiring the user to click Show more).
@@ -1696,6 +1739,13 @@ const ProjectNode = memo(function ProjectNode({
       : THREAD_LIST_CAP;
 
   const wsId = workspace.id;
+  const lifecycleDestination =
+    lifecycleView === "active" ? "completed" : "active";
+  const lifecycleDestinationCount =
+    lifecycleDestination === "completed"
+      ? completedThreadCount
+      : activeThreadCount;
+  const lifecycleLabel = `View ${threadCountLabel(lifecycleDestinationCount, lifecycleDestination)} for ${workspace.name}`;
   const handleToggle = useCallback(() => onToggle(wsId), [onToggle, wsId]);
   const handleToggleLifecycleView = useCallback(
     (event: React.MouseEvent) => {
@@ -1785,21 +1835,54 @@ const ProjectNode = memo(function ProjectNode({
         )}
         {...sortableListeners}
       >
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          aria-label={`Show ${lifecycleView === "active" ? "completed" : "active"} threads for ${workspace.name}`}
-          onKeyDown={(event) => event.stopPropagation()}
-          onClick={handleToggleLifecycleView}
-          className="size-6 shrink-0 rounded-sm hover:bg-transparent dark:hover:bg-transparent"
-        >
-          {lifecycleView === "completed" ? (
-            <FolderCheck size={14} className="text-muted-foreground/80" aria-hidden />
-          ) : (
-            <Folder size={14} className="text-muted-foreground/80" aria-hidden />
-          )}
-        </Button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                aria-label={lifecycleLabel}
+                aria-pressed={lifecycleView === "completed"}
+                data-view={lifecycleView}
+                onKeyDown={(event) => event.stopPropagation()}
+                onClick={handleToggleLifecycleView}
+                className="relative -m-1.5 mr-0 size-8 shrink-0 rounded-sm text-muted-foreground shadow-none hover:bg-transparent hover:text-foreground dark:hover:bg-transparent"
+              >
+                {lifecycleView === "completed" ? (
+                  <>
+                    <FolderCheck
+                      size={14}
+                      className="transition-opacity duration-150 group-hover/ws:opacity-0 group-focus-within/ws:opacity-0 motion-reduce:transition-none"
+                      aria-hidden
+                    />
+                    <FolderOpen
+                      size={14}
+                      className="absolute opacity-0 transition-opacity duration-150 group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 motion-reduce:transition-none"
+                      aria-hidden
+                    />
+                  </>
+                ) : (
+                  <>
+                    <FolderOpen
+                      size={14}
+                      className="transition-opacity duration-150 group-hover/ws:opacity-0 group-focus-within/ws:opacity-0 motion-reduce:transition-none"
+                      aria-hidden
+                    />
+                    <FolderCheck
+                      size={14}
+                      className="absolute opacity-0 transition-opacity duration-150 group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 motion-reduce:transition-none"
+                      aria-hidden
+                    />
+                  </>
+                )}
+              </Button>
+            }
+          />
+          <TooltipContent side="right" className="text-xs">
+            {lifecycleLabel}
+          </TooltipContent>
+        </Tooltip>
         <Button
           type="button"
           variant="ghost"
