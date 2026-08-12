@@ -43,6 +43,19 @@ export const workspaceTerminalPreferences = sqliteTable("workspace_terminal_pref
   updatedAt: text("updated_at").notNull().default(timestampDefault),
 });
 
+/** Durable process identities used to reap hosted Terminal sessions after a crash. */
+export const terminalCleanupLedger = sqliteTable("terminal_cleanup_ledger", {
+  sessionId: text("session_id").primaryKey().notNull(),
+  hostGeneration: text("host_generation").notNull(),
+  rootPid: integer("root_pid").notNull(),
+  processGroupId: text("process_group_id").notNull(),
+  containment: text("containment", {
+    enum: ["job-object", "process-group"],
+  }).notNull(),
+  createdAt: text("created_at").notNull().default(timestampDefault),
+  updatedAt: text("updated_at").notNull().default(timestampDefault),
+});
+
 /** Server-only stable identities for registered worktrees in each workspace. */
 export const workspaceWorktrees = sqliteTable(
   "workspace_worktrees",

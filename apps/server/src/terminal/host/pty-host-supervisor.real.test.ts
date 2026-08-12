@@ -17,6 +17,7 @@ import {
   TERMINAL_WORKLOAD_LIMITS,
   type TerminalResizeObservation,
 } from "../../services/terminal-workload-corpus.js";
+import { InMemoryPtyHostCleanupLedger } from "../testing/in-memory-pty-host-cleanup-ledger.js";
 import type { PtyHostCreate } from "./pty-host-adapter.js";
 import { spawnPtyHostChild } from "./pty-host-child.js";
 import type { PtyHostEvent } from "./pty-host-protocol.js";
@@ -215,6 +216,7 @@ describe.runIf(["win32", "darwin", "linux"].includes(process.platform))(
         const children: PtyHostChild[] = [];
         supervisor = new PtyHostSupervisor({
           platform: TEST_PLATFORM,
+          cleanupLedger: new InMemoryPtyHostCleanupLedger(),
           startupTimeoutMs: 20_000,
           heartbeatDegradedMs: 5_000,
           heartbeatUnhealthyMs: 10_000,
