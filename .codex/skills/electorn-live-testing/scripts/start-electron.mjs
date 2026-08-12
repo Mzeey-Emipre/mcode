@@ -9,7 +9,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { terminateProcessTree } from "./process-tree.mjs";
 
@@ -22,11 +22,14 @@ export async function startElectron(repoRoot = process.cwd(), options = {}) {
     pathToFileURL(join(root, "scripts", "agent", "runtime-contract.mjs")).href
   );
   const paths = runtimeContract.getRuntimePaths(root);
+  const packagedExecutablePath = options.packagedExecutablePath
+    ? resolve(options.packagedExecutablePath)
+    : null;
   const ports = runtimeContract.readPortsFile(root);
-  if (!ports) {
+  if (!packagedExecutablePath && !ports) {
     throw new Error("Start the worktree runtime before launching Electron");
   }
-  if (resolve(ports.worktreeIdentity).toLowerCase() !== root.toLowerCase()) {
+  if (ports && resolve(ports.worktreeIdentity).toLowerCase() !== root.toLowerCase()) {
     throw new Error("ports.json belongs to a different worktree");
   }
 
@@ -38,7 +41,21 @@ export async function startElectron(repoRoot = process.cwd(), options = {}) {
   if (performanceMode !== null && performanceMode !== "profiling" && performanceMode !== "production") {
     throw new Error("performanceMode must be profiling or production");
   }
-  const rendererUrl = options.rendererUrl === undefined ? ports.appUrl : options.rendererUrl;
+  const accelerationMode = options.accelerationMode ?? null;
+  if (
+    accelerationMode !== null &&
+    (performanceMode !== "production" ||
+      (accelerationMode !== "disabled" && accelerationMode !== "default"))
+  ) {
+    throw new Error(
+      "accelerationMode must be disabled or default for a production performance run",
+    );
+  }
+  const rendererUrl = options.rendererUrl === undefined
+    ? packagedExecutablePath
+      ? null
+      : ports.appUrl
+    : options.rendererUrl;
   if (rendererUrl !== null && (typeof rendererUrl !== "string" || !rendererUrl.startsWith("http://127.0.0.1:"))) {
     throw new Error("rendererUrl must be a loopback HTTP URL or null");
   }
@@ -55,13 +72,33 @@ export async function startElectron(repoRoot = process.cwd(), options = {}) {
   const debugPort = await runtimeContract.findAvailablePort(preferredPort);
   const endpoint = `http://127.0.0.1:${debugPort}`;
   const desktopRoot = join(root, "apps", "desktop");
-  const desktopEntry = join(desktopRoot, "dist", "main", "main.cjs");
-  if (!existsSync(desktopEntry)) {
-    throw new Error("Build the Electron main process before launching the session");
+  let executablePath;
+  let launchDirectory;
+  let launchTarget;
+  if (packagedExecutablePath) {
+    const releaseRoot = resolve(desktopRoot, "release");
+    const releaseRelativePath = relative(releaseRoot, packagedExecutablePath);
+    if (
+      !packagedExecutablePath.toLowerCase().endsWith(".exe") ||
+      isAbsolute(releaseRelativePath) ||
+      releaseRelativePath.startsWith("..") ||
+      !existsSync(packagedExecutablePath)
+    ) {
+      throw new Error("packagedExecutablePath must name an existing executable under apps/desktop/release");
+    }
+    executablePath = packagedExecutablePath;
+    launchDirectory = dirname(packagedExecutablePath);
+    launchTarget = [];
+  } else {
+    const desktopEntry = join(desktopRoot, "dist", "main", "main.cjs");
+    if (!existsSync(desktopEntry)) {
+      throw new Error("Build the Electron main process before launching the session");
+    }
+    const desktopRequire = createRequire(join(desktopRoot, "package.json"));
+    executablePath = desktopRequire("electron");
+    launchDirectory = desktopRoot;
+    launchTarget = ["."];
   }
-
-  const desktopRequire = createRequire(join(desktopRoot, "package.json"));
-  const executablePath = desktopRequire("electron");
   const sessionStem = sessionFileName.slice(0, -".json".length);
   const userDataDir = join(paths.devDir, sessionStem);
   const electronRuntimeDir = join(userDataDir, "runtime");
@@ -94,6 +131,9 @@ export async function startElectron(repoRoot = process.cwd(), options = {}) {
     }),
     ...(rendererUrl ? { ELECTRON_RENDERER_URL: rendererUrl } : {}),
     ...(performanceMode ? { MCODE_FRONTEND_PERFORMANCE_MODE: performanceMode } : {}),
+    ...(accelerationMode
+      ? { MCODE_FRONTEND_PERFORMANCE_ACCELERATION_MODE: accelerationMode }
+      : {}),
     NODE_ENV: rendererUrl ? "development" : "production",
   };
   delete env.ELECTRON_RUN_AS_NODE;
@@ -101,8 +141,8 @@ export async function startElectron(repoRoot = process.cwd(), options = {}) {
   let child;
   try {
     try {
-      child = spawn(executablePath, [`--remote-debugging-port=${debugPort}`, "."], {
-        cwd: desktopRoot,
+      child = spawn(executablePath, [`--remote-debugging-port=${debugPort}`, ...launchTarget], {
+        cwd: launchDirectory,
         detached: true,
         env,
         stdio: ["ignore", stdout, stderr],

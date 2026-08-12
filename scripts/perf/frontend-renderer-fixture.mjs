@@ -30,6 +30,13 @@ async function installFixtureRuntime(page) {
     null,
     { timeout: 30_000 },
   );
+  await page.waitForFunction(
+    () =>
+      (window.__mcodeFrontendPerformanceModules?.workspaceStore.getState()
+        .workspaces.length ?? 0) > 0,
+    null,
+    { timeout: 30_000 },
+  );
   await page.evaluate(async () => {
     const modules = window.__mcodeFrontendPerformanceModules;
     if (!modules) throw new Error("The compiled performance fixture bridge is unavailable.");

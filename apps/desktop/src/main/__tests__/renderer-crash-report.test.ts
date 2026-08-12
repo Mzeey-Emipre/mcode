@@ -15,9 +15,11 @@ vi.mock("electron", () => ({
     exit: vi.fn(),
     quit: vi.fn(),
     disableHardwareAcceleration: vi.fn(),
+    getGPUFeatureStatus: vi.fn().mockReturnValue({ gpu_compositing: "disabled_software" }),
     getAppMetrics: vi.fn().mockReturnValue([
       {
         pid: 42,
+        creationTime: 1_786_536_000_000,
         type: "Renderer",
         cpu: { percentCPUUsage: 3.5 },
         memory: {
@@ -110,6 +112,7 @@ import {
   getFrontendPerformanceMetrics,
   handleRendererCrashReport,
   normalizeRendererCrashReport,
+  resolveHardwareAccelerationMode,
 } from "../main.js";
 
 describe("renderer crash report IPC boundary", () => {
@@ -211,13 +214,35 @@ describe("renderer crash report IPC boundary", () => {
 });
 
 describe("frontend performance metrics", () => {
+  it("changes acceleration only for an explicit production performance run", () => {
+    expect(resolveHardwareAccelerationMode({})).toBe("disabled");
+    expect(resolveHardwareAccelerationMode({
+      MCODE_FRONTEND_PERFORMANCE_ACCELERATION_MODE: "default",
+    })).toBe("disabled");
+    expect(resolveHardwareAccelerationMode({
+      MCODE_FRONTEND_PERFORMANCE_MODE: "production",
+      MCODE_FRONTEND_PERFORMANCE_ACCELERATION_MODE: "disabled",
+    })).toBe("disabled");
+    expect(resolveHardwareAccelerationMode({
+      MCODE_FRONTEND_PERFORMANCE_MODE: "production",
+      MCODE_FRONTEND_PERFORMANCE_ACCELERATION_MODE: "default",
+    })).toBe("default");
+    expect(() => resolveHardwareAccelerationMode({
+      MCODE_FRONTEND_PERFORMANCE_MODE: "production",
+      MCODE_FRONTEND_PERFORMANCE_ACCELERATION_MODE: "invalid",
+    })).toThrow(/disabled or default/);
+  });
+
   it("keeps process CPU, memory, and hardware state separate", () => {
     expect(getFrontendPerformanceMetrics()).toEqual({
-      hardwareAccelerationEnabled: false,
+      packaged: false,
+      accelerationMode: "disabled",
+      gpuFeatureStatus: { gpu_compositing: "disabled_software" },
       devToolsOpen: false,
       processes: [
         {
           pid: 42,
+          creationTime: 1_786_536_000_000,
           type: "Renderer",
           cpuPercent: 3.5,
           memory: {
