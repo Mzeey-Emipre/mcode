@@ -47,6 +47,12 @@ export interface WorktreeRemovalSafety {
   reason: "exclusive" | "shared" | "truncated" | "identity_uncertain";
 }
 
+/** Fail-closed result for automatic removal of a branchless worktree. */
+export interface BranchlessWorktreeRemovalSafety {
+  safe: boolean;
+  reason: "clean" | "dirty" | "unique_commits" | "verification_failed";
+}
+
 /** Registered compatible worktree offered through an opaque server-issued ID. */
 export interface PullRequestReviewGitCandidate {
   candidateId: string;
@@ -1629,6 +1635,39 @@ export class GitService {
       }
     }
     return { safe: true, reason: "exclusive" };
+  }
+
+  /** Verify that a branchless worktree is clean and has no commits beyond its base. */
+  async assessBranchlessWorktreeRemoval(
+    worktreePath: string,
+    baseBranch: string,
+  ): Promise<BranchlessWorktreeRemovalSafety> {
+    try {
+      const status = await this.gitExecutor.exec(
+        ["-C", worktreePath, "status", "--porcelain"],
+        { timeout: 5_000 },
+      );
+      if (status.stdout.trim() !== "") return { safe: false, reason: "dirty" };
+
+      const unique = await this.gitExecutor.exec(
+        ["-C", worktreePath, "rev-list", "--count", `${baseBranch}..HEAD`],
+        { timeout: 5_000 },
+      );
+      const count = Number.parseInt(unique.stdout.trim(), 10);
+      if (!Number.isSafeInteger(count) || count < 0) {
+        return { safe: false, reason: "verification_failed" };
+      }
+      return count === 0
+        ? { safe: true, reason: "clean" }
+        : { safe: false, reason: "unique_commits" };
+    } catch (error) {
+      logger.warn("Automatic worktree cleanup verification failed", {
+        worktreePath,
+        baseBranch,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return { safe: false, reason: "verification_failed" };
+    }
   }
 
   /** Serialize Review provisioning and cleanup mutations for one repository. */

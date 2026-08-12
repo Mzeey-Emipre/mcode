@@ -131,17 +131,28 @@ describe("ThreadCompletionService", () => {
     ).id;
     await service.complete(threadId);
     await service.complete(secondThreadId);
+    db.prepare("UPDATE threads SET cleanup_state = 'queued' WHERE id = ?").run(threadId);
+    db.prepare(
+      `INSERT INTO cleanup_jobs
+        (id, thread_id, workspace_path, worktree_path, branch, kind, attempts, next_retry_at, created_at)
+       VALUES ('retention-cancel', ?, '/repo', NULL, 'main', 'retention', 0, 0, 1)`,
+    ).run(threadId);
 
     applyRetention(null);
 
     expect(threadRepo.findById(threadId)).toMatchObject({
       user_completed_at: "2026-08-12T08:00:00.000Z",
       scheduled_deletion_at: null,
+      cleanup_state: null,
+      cleanup_reason: null,
     });
     expect(threadRepo.findById(secondThreadId)).toMatchObject({
       user_completed_at: "2026-08-12T08:00:00.000Z",
       scheduled_deletion_at: null,
     });
+    expect(
+      db.prepare("SELECT COUNT(*) AS count FROM cleanup_jobs WHERE thread_id = ?").get(threadId),
+    ).toEqual({ count: 0 });
   });
 
   it("gives a newly overdue thread 24 hours after retention becomes shorter", async () => {
@@ -241,6 +252,39 @@ describe("ThreadCompletionService", () => {
     expect(reopened.user_completed_at).toBeNull();
     expect(reopened.scheduled_deletion_at).toBeNull();
     expect(threadRepo.findById(threadId)).toEqual(reopened);
+  });
+
+  it("atomically cancels queued retention cleanup when the user reopens", async () => {
+    await service.complete(threadId);
+    db.prepare("UPDATE threads SET cleanup_state = 'queued' WHERE id = ?").run(threadId);
+    db.prepare(
+      `INSERT INTO cleanup_jobs
+        (id, thread_id, workspace_path, worktree_path, branch, kind, attempts, next_retry_at, created_at)
+       VALUES ('cleanup-1', ?, '/repo', NULL, 'main', 'retention', 0, 0, 1)`,
+    ).run(threadId);
+
+    const reopened = service.reopen(threadId);
+
+    expect(reopened).toMatchObject({
+      user_completed_at: null,
+      scheduled_deletion_at: null,
+      cleanup_state: null,
+      cleanup_reason: null,
+    });
+    expect(
+      db.prepare("SELECT COUNT(*) AS count FROM cleanup_jobs WHERE thread_id = ?").get(threadId),
+    ).toEqual({ count: 0 });
+  });
+
+  it("returns one conflict after destructive cleanup starts", async () => {
+    await service.complete(threadId);
+    db.prepare("UPDATE threads SET cleanup_state = 'running' WHERE id = ?").run(threadId);
+
+    expect(() => service.reopen(threadId)).toThrow("Thread cleanup has already started");
+    expect(threadRepo.findById(threadId)).toMatchObject({
+      cleanup_state: "running",
+      user_completed_at: expect.any(String),
+    });
   });
 
   it("preserves conversation, attachments, and repository identity", async () => {

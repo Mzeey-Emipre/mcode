@@ -288,6 +288,20 @@
       "when": 1786526941663,
       "tag": "0039_fantastic_loners",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "6",
+      "when": 1786530053507,
+      "tag": "0040_safe_completed_thread_cleanup",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "6",
+      "when": 1786530667263,
+      "tag": "0041_index_completed_thread_cleanup",
+      "breakpoints": true
     }
   ]
 }

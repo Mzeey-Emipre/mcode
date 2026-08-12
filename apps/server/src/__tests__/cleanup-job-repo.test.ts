@@ -97,6 +97,46 @@ describe("CleanupJobRepo", () => {
       expect(due[0].thread_id).toBe("t-a");
       expect(due[1].thread_id).toBe("t-b");
     });
+
+    it("bounds the number of jobs returned for one worker poll", () => {
+      for (let index = 0; index < 25; index += 1) {
+        repo.insert({
+          thread_id: `t-${index}`,
+          workspace_path: "/r",
+          worktree_path: `/r/wt-${index}`,
+          branch: null,
+        });
+      }
+
+      expect(repo.findDue(Date.now())).toHaveLength(20);
+      expect(repo.findDue(Date.now(), 5)).toHaveLength(5);
+    });
+  });
+
+  describe("enqueueExpiredCompleted", () => {
+    it("queues only the bounded oldest eligible threads", () => {
+      const now = "2026-08-12T10:00:00.000Z";
+      db.prepare(
+        `INSERT INTO workspaces (id, name, path, created_at, updated_at)
+         VALUES ('workspace', 'Project', '/repo', ?, ?)`,
+      ).run(now, now);
+      const insert = db.prepare(
+        `INSERT INTO threads
+          (id, workspace_id, title, branch, mode, status, user_completed_at,
+           scheduled_deletion_at, created_at, updated_at)
+         VALUES (?, 'workspace', ?, 'main', 'direct', 'active', ?, ?, ?, ?)`,
+      );
+      for (let index = 0; index < 25; index += 1) {
+        const deadline = `2026-08-01T00:00:${String(index).padStart(2, "0")}.000Z`;
+        insert.run(`thread-${index}`, `Thread ${index}`, deadline, deadline, deadline, deadline);
+      }
+
+      expect(repo.enqueueExpiredCompleted(now)).toBe(20);
+      expect(repo.count()).toBe(20);
+      expect(
+        db.prepare("SELECT COUNT(*) AS count FROM threads WHERE cleanup_state IS NULL").get(),
+      ).toEqual({ count: 5 });
+    });
   });
 
   describe("recordFailure", () => {

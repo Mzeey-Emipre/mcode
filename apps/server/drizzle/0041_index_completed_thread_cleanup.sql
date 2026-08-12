@@ -1,0 +1,1 @@
+CREATE INDEX `idx_threads_cleanup_due` ON `threads` (`cleanup_state`,`scheduled_deletion_at`);

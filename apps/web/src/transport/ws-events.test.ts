@@ -39,6 +39,8 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     deleted_at: null,
     user_completed_at: null,
     scheduled_deletion_at: null,
+    cleanup_state: null,
+    cleanup_reason: null,
     last_context_tokens: null,
     context_window: null,
     reasoning_level: null,
@@ -78,6 +80,18 @@ describe("ws-events thread.lifecycleChanged", () => {
     pushEmitter.emit("thread.lifecycleChanged", { thread: completed });
 
     expect(applyThreadLifecycle).toHaveBeenCalledWith(completed);
+  });
+
+  it("removes a thread after an automatic deletion push", () => {
+    const applyThreadDeleted = vi.spyOn(
+      useWorkspaceStore.getState(),
+      "applyThreadDeleted",
+    );
+    startPushListeners();
+
+    pushEmitter.emit("thread.deleted", { threadId: "thread-1" });
+
+    expect(applyThreadDeleted).toHaveBeenCalledWith("thread-1");
   });
 });
 

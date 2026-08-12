@@ -2,7 +2,7 @@
  * Background worker that drains the cleanup_jobs queue.
  * Processes one job at a time to avoid git lock contention.
  * Retries with exponential backoff on failure.
- * Attempt counter resets on each app start so stale jobs are retried.
+ * Retry counters persist across app restarts so exhausted work stays blocked.
  */
 
 import { injectable, inject } from "tsyringe";
@@ -10,7 +10,7 @@ import { isAbsolute, relative, resolve } from "path";
 import { existsSync } from "fs";
 import type Database from "better-sqlite3";
 import { getMcodeDir, logger } from "@mcode/shared";
-import { CleanupJobRepo } from "../repositories/cleanup-job-repo.js";
+import { CleanupJobRepo, MAX_CLEANUP_ATTEMPTS } from "../repositories/cleanup-job-repo.js";
 import type { CleanupJob } from "../repositories/cleanup-job-repo.js";
 import { ThreadRepo } from "../repositories/thread-repo.js";
 import { ClaudeProvider } from "../providers/claude/claude-provider.js";
@@ -64,12 +64,10 @@ export class CleanupWorker {
   ) {}
 
   /**
-   * Start the worker. Resets attempt counters (new app session) and begins
-   * polling for due jobs.
+   * Start the worker and begin polling for due jobs.
    */
   start(): void {
     if (this.pollTimer !== null) return;
-    this.cleanupJobRepo.resetAttempts();
     const removedArtifacts = pruneStaleToolOutputArtifacts();
     if (removedArtifacts > 0) {
       logger.info("Pruned stale tool-output artifacts", { removed: removedArtifacts });
@@ -113,6 +111,7 @@ export class CleanupWorker {
     this.running = true;
 
     try {
+      this.cleanupJobRepo.enqueueExpiredCompleted(new Date().toISOString());
       const jobs = this.cleanupJobRepo.findDue(Date.now());
       for (const job of jobs) {
         if (this.stopped) break;
@@ -132,6 +131,36 @@ export class CleanupWorker {
     });
 
     try {
+      const retentionThread = job.kind === "retention"
+        ? this.threadRepo.claimRetentionCleanup(job.thread_id, new Date().toISOString())
+        : null;
+      if (job.kind === "retention" && !retentionThread) {
+        this.db.transaction(() => {
+          this.cleanupJobRepo.delete(job.id);
+          this.threadRepo.releaseRetentionCleanup(job.thread_id);
+        })();
+        return;
+      }
+      if (job.kind === "retention" && !job.worktree_path) {
+        await this.completeRetentionCleanup(job);
+        return;
+      }
+      if (!job.worktree_path) {
+        throw new Error("Explicit worktree cleanup job has no worktree path");
+      }
+      if (retentionThread && !retentionThread.worktree_managed) {
+        this.blockRetentionCleanup(job, "Mcode does not manage this worktree.");
+        return;
+      }
+      if (retentionThread?.checkout_state === "named") {
+        this.blockRetentionCleanup(job, "The worktree uses a named branch.");
+        return;
+      }
+      if (retentionThread && !retentionThread.base_branch) {
+        this.blockRetentionCleanup(job, "Mcode cannot verify the branchless worktree base.");
+        return;
+      }
+
       // Validate paths from DB before using them in filesystem operations.
       // Normalise Windows backslashes so resolve() works on all platforms.
       const worktreeBase = resolve(getMcodeDir(), "worktrees");
@@ -145,12 +174,11 @@ export class CleanupWorker {
           threadId: job.thread_id,
           workspacePath: resolvedWs,
         });
-        this.attachmentService.removeForThread(job.thread_id);
-        await this.handoffStorage.deleteThreadFiles(job.thread_id);
-        this.db.transaction(() => {
-          this.threadRepo.hardDelete(job.thread_id);
-          this.cleanupJobRepo.delete(job.id);
-        })();
+        if (job.kind === "retention" && existsSync(resolvedWt)) {
+          this.blockRetentionCleanup(job, "Mcode cannot access the Project repository.");
+          return;
+        }
+        await this.completeCleanupWithoutWorktree(job);
         await this.finalizeWorkspaceIfDone(job.workspace_path);
         return;
       }
@@ -203,12 +231,7 @@ export class CleanupWorker {
           threadId: job.thread_id,
           worktreePath: resolvedWt,
         });
-        this.attachmentService.removeForThread(job.thread_id);
-        await this.handoffStorage.deleteThreadFiles(job.thread_id);
-        this.db.transaction(() => {
-          this.threadRepo.hardDelete(job.thread_id);
-          this.cleanupJobRepo.delete(job.id);
-        })();
+        await this.completeCleanupWithoutWorktree(job);
         await this.finalizeWorkspaceIfDone(job.workspace_path);
         return;
       }
@@ -224,7 +247,7 @@ export class CleanupWorker {
         async () => {
           const siblings = this.threadRepo.listActiveSiblingWorktreePaths(job.thread_id);
           const safety = await this.gitService.assessWorktreeRemovalSafety(
-            job.worktree_path,
+            resolvedWt,
             siblings.paths,
             siblings.truncated,
           );
@@ -232,8 +255,20 @@ export class CleanupWorker {
             preserveWorktreeReason = safety.reason;
             return true;
           }
+          if (job.kind === "retention" && retentionThread?.base_branch) {
+            const automaticSafety = await this.gitService.assessBranchlessWorktreeRemoval(
+              resolvedWt,
+              retentionThread.base_branch,
+            );
+            if (!automaticSafety.safe) {
+              preserveWorktreeReason = automaticSafety.reason;
+              return true;
+            }
+          }
           const shouldDelete = job.branch ? this.shouldDeleteBranch(job) : false;
-          const removeOptions = (job.branch && shouldDelete)
+          const removeOptions = job.kind === "retention"
+            ? { deleteBranch: false, worktreePath: resolvedWt }
+            : (job.branch && shouldDelete)
             ? { branchName: job.branch, worktreePath: resolvedWt }
             : { deleteBranch: false, worktreePath: resolvedWt };
           return this.gitService.removeWorktree(resolvedWs, wtName, removeOptions);
@@ -246,12 +281,11 @@ export class CleanupWorker {
           worktreePath: resolvedWt,
           reason: preserveWorktreeReason,
         });
-        this.attachmentService.removeForThread(job.thread_id);
-        await this.handoffStorage.deleteThreadFiles(job.thread_id);
-        this.db.transaction(() => {
-          this.threadRepo.hardDelete(job.thread_id);
-          this.cleanupJobRepo.delete(job.id);
-        })();
+        if (job.kind === "retention" && preserveWorktreeReason !== "shared") {
+          this.blockRetentionCleanup(job, this.userSafeBlockReason(preserveWorktreeReason));
+          return;
+        }
+        await this.completeCleanupWithoutWorktree(job);
         await this.finalizeWorkspaceIfDone(job.workspace_path);
         return;
       }
@@ -271,6 +305,9 @@ export class CleanupWorker {
         this.threadRepo.hardDelete(job.thread_id);
         this.cleanupJobRepo.delete(job.id);
       })();
+      if (job.kind === "retention") {
+        broadcast("thread.deleted", { threadId: job.thread_id });
+      }
 
       logger.info("CleanupWorker job completed", {
         jobId: job.id,
@@ -287,7 +324,53 @@ export class CleanupWorker {
         attempt: job.attempts + 1,
         error,
       });
-      this.cleanupJobRepo.recordFailure(job.id, error);
+      const failed = this.cleanupJobRepo.recordFailure(job.id, error);
+      if (job.kind === "retention" && failed) {
+        const reason = failed.attempts >= MAX_CLEANUP_ATTEMPTS
+          ? `Cleanup failed after ${MAX_CLEANUP_ATTEMPTS} attempts.`
+          : "Cleanup failed. Mcode will retry.";
+        const thread = failed.attempts >= MAX_CLEANUP_ATTEMPTS
+          ? this.threadRepo.blockRetentionCleanup(job.thread_id, reason)
+          : this.threadRepo.retryRetentionCleanup(job.thread_id, reason);
+        if (thread) broadcast("thread.lifecycleChanged", { thread });
+      }
+    }
+  }
+
+  private async completeRetentionCleanup(job: CleanupJob): Promise<void> {
+    await this.completeCleanupWithoutWorktree(job);
+  }
+
+  private async completeCleanupWithoutWorktree(job: CleanupJob): Promise<void> {
+    this.attachmentService.removeForThread(job.thread_id);
+    await this.handoffStorage.deleteThreadFiles(job.thread_id);
+    this.db.transaction(() => {
+      this.threadRepo.hardDelete(job.thread_id);
+      this.cleanupJobRepo.delete(job.id);
+    })();
+    if (job.kind === "retention") {
+      broadcast("thread.deleted", { threadId: job.thread_id });
+    }
+  }
+
+  private blockRetentionCleanup(job: CleanupJob, reason: string): void {
+    this.cleanupJobRepo.delete(job.id);
+    const thread = this.threadRepo.blockRetentionCleanup(job.thread_id, reason);
+    if (thread) broadcast("thread.lifecycleChanged", { thread });
+  }
+
+  private userSafeBlockReason(reason: string): string {
+    switch (reason) {
+      case "dirty":
+        return "The worktree has uncommitted changes.";
+      case "unique_commits":
+        return "The branchless worktree has commits that are not in its base branch.";
+      case "truncated":
+      case "identity_uncertain":
+      case "verification_failed":
+        return "Mcode cannot prove that the worktree is safe to remove.";
+      default:
+        return "Mcode cannot prove that the worktree is safe to remove.";
     }
   }
 

@@ -286,6 +286,8 @@ interface WorkspaceState {
   reopenThread: (threadId: string) => Promise<void>;
   /** Apply a server-authoritative completion lifecycle push. */
   applyThreadLifecycle: (thread: Thread) => void;
+  /** Remove a thread after server-authoritative automatic cleanup. */
+  applyThreadDeleted: (threadId: string) => void;
   setActiveThread: (id: string | null) => void;
   /** Enter a clean pending-thread composer, optionally selecting its workspace first. */
   beginNewThread: (workspaceId?: string | null) => void;
@@ -1238,6 +1240,32 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       void clearPreviewResources(thread.workspace_id, thread.id);
       useTerminalStore.getState().clearThread(thread.id);
     }
+  },
+
+  applyThreadDeleted: (threadId) => {
+    const existing = get().threads.find((thread) => thread.id === threadId);
+    if (!existing) return;
+    releaseBrowserAutomationThreadScope(existing.workspace_id, threadId);
+    void clearPreviewResources(existing.workspace_id, threadId);
+    bumpThreadListMutationEpoch(existing.workspace_id);
+    useTerminalStore.getState().clearThread(threadId);
+    useQueueStore.getState().clearQueue(threadId);
+    useComposerDraftStore.getState().clearDraft(threadId);
+    useTaskStore.getState().clearTasks(threadId);
+    useDiffStore.getState().clearThread(threadId);
+    const didClearActiveThread = get().activeThreadId === threadId;
+    set((state) => ({
+      threads: state.threads.filter((thread) => thread.id !== threadId),
+      activeThreadId: state.activeThreadId === threadId ? null : state.activeThreadId,
+      prUrlsByThreadId: Object.fromEntries(
+        Object.entries(state.prUrlsByThreadId).filter(([id]) => id !== threadId),
+      ),
+      checksById: Object.fromEntries(
+        Object.entries(state.checksById).filter(([id]) => id !== threadId),
+      ) as typeof state.checksById,
+    }));
+    if (didClearActiveThread) reconcileSelectedConversation();
+    useThreadStore.getState().clearThreadState(threadId);
   },
 
   /**

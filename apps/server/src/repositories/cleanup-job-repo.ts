@@ -10,8 +10,11 @@ import { injectable, inject } from "tsyringe";
 import type Database from "better-sqlite3";
 import type { Statement } from "better-sqlite3";
 
-/** Max retry attempts per app session before a job is skipped until restart. */
+/** Max persisted retry attempts before a cleanup job requires user action. */
 export const MAX_CLEANUP_ATTEMPTS = 5;
+
+/** Maximum cleanup jobs one worker poll may execute. */
+export const CLEANUP_BATCH_LIMIT = 20;
 
 /** Max length for persisted error messages. */
 const MAX_ERROR_LENGTH = 500;
@@ -21,8 +24,9 @@ export interface CleanupJob {
   id: string;
   thread_id: string;
   workspace_path: string;
-  worktree_path: string;
+  worktree_path: string | null;
   branch: string | null;
+  kind: "explicit" | "retention";
   attempts: number;
   next_retry_at: number;
   last_error: string | null;
@@ -30,7 +34,7 @@ export interface CleanupJob {
 }
 
 const SELECT_COLS =
-  "id, thread_id, workspace_path, worktree_path, branch, attempts, next_retry_at, last_error, created_at";
+  "id, thread_id, workspace_path, worktree_path, branch, kind, attempts, next_retry_at, last_error, created_at";
 
 /** Repository for worktree cleanup job persistence. */
 @injectable()
@@ -47,13 +51,14 @@ export class CleanupJobRepo {
   constructor(@inject("Database") private readonly db: Database.Database) {
     this.stmtInsert = db.prepare(
       `INSERT OR IGNORE INTO cleanup_jobs
-        (id, thread_id, workspace_path, worktree_path, branch, attempts, next_retry_at, created_at)
-       VALUES (?, ?, ?, ?, ?, 0, 0, ?)`,
+        (id, thread_id, workspace_path, worktree_path, branch, kind, attempts, next_retry_at, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?)`,
     );
     this.stmtFindDue = db.prepare(
       `SELECT ${SELECT_COLS} FROM cleanup_jobs
-        WHERE next_retry_at <= ? AND attempts < ?
-        ORDER BY created_at ASC`,
+         WHERE next_retry_at <= ? AND attempts < ?
+         ORDER BY created_at ASC
+         LIMIT ?`,
     );
     this.stmtRecordFailure = db.prepare(
       `UPDATE cleanup_jobs
@@ -83,11 +88,13 @@ export class CleanupJobRepo {
   insert(job: {
     thread_id: string;
     workspace_path: string;
-    worktree_path: string;
+    worktree_path: string | null;
     branch: string | null;
+    kind?: "explicit" | "retention";
   }): CleanupJob {
     const id = randomUUID();
     const now = Date.now();
+    const kind = job.kind ?? "explicit";
 
     const result = this.stmtInsert.run(
       id,
@@ -95,6 +102,7 @@ export class CleanupJobRepo {
       job.workspace_path,
       job.worktree_path,
       job.branch ?? null,
+      kind,
       now,
     );
 
@@ -110,6 +118,7 @@ export class CleanupJobRepo {
       workspace_path: job.workspace_path,
       worktree_path: job.worktree_path,
       branch: job.branch,
+      kind,
       attempts: 0,
       next_retry_at: 0,
       last_error: null,
@@ -121,8 +130,58 @@ export class CleanupJobRepo {
    * Return jobs that are due to run: next_retry_at <= now and attempts < max.
    * Ordered by created_at ascending so oldest jobs are processed first.
    */
-  findDue(nowMs: number): CleanupJob[] {
-    return this.stmtFindDue.all(nowMs, MAX_CLEANUP_ATTEMPTS) as CleanupJob[];
+  findDue(nowMs: number, limit = CLEANUP_BATCH_LIMIT): CleanupJob[] {
+    const boundedLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
+    return this.stmtFindDue.all(nowMs, MAX_CLEANUP_ATTEMPTS, boundedLimit) as CleanupJob[];
+  }
+
+  /** Queue a bounded set of expired completed threads in one database transaction. */
+  enqueueExpiredCompleted(nowIso: string, limit = CLEANUP_BATCH_LIMIT): number {
+    const boundedLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
+    const due = this.db.prepare(
+      `SELECT t.id, w.path AS workspace_path, t.worktree_path, t.branch
+       FROM threads t
+       JOIN workspaces w ON w.id = t.workspace_id
+       WHERE t.deleted_at IS NULL
+         AND w.deleted_at IS NULL
+         AND t.user_completed_at IS NOT NULL
+         AND t.scheduled_deletion_at IS NOT NULL
+         AND t.scheduled_deletion_at <= ?
+         AND t.cleanup_state IS NULL
+       ORDER BY t.scheduled_deletion_at ASC, t.id ASC
+       LIMIT ?`,
+    ).all(nowIso, boundedLimit) as Array<{
+      id: string;
+      workspace_path: string;
+      worktree_path: string | null;
+      branch: string | null;
+    }>;
+
+    return this.db.transaction(() => {
+      let queued = 0;
+      for (const thread of due) {
+        const claimed = this.db.prepare(
+          `UPDATE threads
+           SET cleanup_state = 'queued', cleanup_reason = NULL
+           WHERE id = ?
+             AND deleted_at IS NULL
+             AND user_completed_at IS NOT NULL
+             AND scheduled_deletion_at IS NOT NULL
+             AND scheduled_deletion_at <= ?
+             AND cleanup_state IS NULL`,
+        ).run(thread.id, nowIso);
+        if (claimed.changes === 0) continue;
+        this.insert({
+          thread_id: thread.id,
+          workspace_path: thread.workspace_path,
+          worktree_path: thread.worktree_path,
+          branch: thread.branch,
+          kind: "retention",
+        });
+        queued += 1;
+      }
+      return queued;
+    })();
   }
 
   /**
@@ -130,9 +189,10 @@ export class CleanupJobRepo {
    * with exponential backoff (2^(attempts+1) seconds). Error message is
    * truncated to prevent unbounded growth.
    */
-  recordFailure(id: string, error: string): void {
+  recordFailure(id: string, error: string): CleanupJob | null {
     const truncated = error.slice(0, MAX_ERROR_LENGTH);
     this.stmtRecordFailure.run(Date.now(), truncated, id);
+    return this.findById(id);
   }
 
   /** Remove a completed cleanup job. */
@@ -143,7 +203,7 @@ export class CleanupJobRepo {
 
   /**
    * Reset all attempt counters to 0 and clear next_retry_at.
-   * Called on app startup so stale jobs are retried in the new session.
+   * Retained for explicit administrative recovery. Startup does not call this.
    */
   resetAttempts(): void {
     this.stmtResetAttempts.run();
@@ -165,12 +225,12 @@ export class CleanupJobRepo {
    * Insert multiple cleanup jobs in a single transaction.
    * Skips any thread_id that already has a pending job (ON CONFLICT IGNORE).
    */
-  insertBatch(jobs: Array<{ thread_id: string; workspace_path: string; worktree_path: string; branch: string | null }>): number {
+  insertBatch(jobs: Array<{ thread_id: string; workspace_path: string; worktree_path: string | null; branch: string | null }>): number {
     if (jobs.length === 0) return 0;
 
     const insert = this.db.prepare(
-      `INSERT OR IGNORE INTO cleanup_jobs (id, thread_id, workspace_path, worktree_path, branch, attempts, next_retry_at, created_at)
-       VALUES (?, ?, ?, ?, ?, 0, 0, ?)`,
+      `INSERT OR IGNORE INTO cleanup_jobs (id, thread_id, workspace_path, worktree_path, branch, kind, attempts, next_retry_at, created_at)
+       VALUES (?, ?, ?, ?, ?, 'explicit', 0, 0, ?)`,
     );
 
     let inserted = 0;
