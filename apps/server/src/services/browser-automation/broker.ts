@@ -1747,7 +1747,9 @@ export class BrowserAutomationBroker {
       pending.request.threadId,
     );
     const target = responseTarget ?? pending.target;
-    if (target) pending.host.targets.set(targetKey(target), target);
+    if (target && pending.host.targets.has(targetKey(target))) {
+      pending.host.targets.set(targetKey(target), target);
+    }
     if (result.action === "select" || result.action === "claim") {
       const selectedTarget = result.currentTabId
         ? pending.host.targets.get(JSON.stringify([pending.request.threadId, result.currentTabId])) ??
@@ -1938,9 +1940,12 @@ export class BrowserAutomationBroker {
     }
     for (const [key, pending] of this.pending) {
       if (pending.host === host && pending.target && targetKey(pending.target) === removedTargetKey) {
+        const targetRemovalIsRequested = pending.request.operation === "tabs" &&
+          (pending.request.args.action === "close" || pending.request.args.action === "finalize");
         if (
-          preserveTargetTransition &&
-          (pending.request.operation === "open" || pending.request.operation === "navigate")
+          targetRemovalIsRequested ||
+          (preserveTargetTransition &&
+            (pending.request.operation === "open" || pending.request.operation === "navigate"))
         ) continue;
         this.settle(
           key,
