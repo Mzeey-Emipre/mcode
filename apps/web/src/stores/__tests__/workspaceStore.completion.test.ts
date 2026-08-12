@@ -32,6 +32,7 @@ vi.mock("../browserAutomationStore", () => ({
 }));
 
 import { useTerminalStore } from "../terminalStore";
+import { useDiffStore } from "../diffStore";
 import { useWorkspaceStore } from "../workspaceStore";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
@@ -81,6 +82,10 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
 describe("workspaceStore completion lifecycle", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    useDiffStore.setState({
+      rightPanelByThread: {},
+      rightPanelFallbackByWorkspace: {},
+    });
     useWorkspaceStore.setState({ threads: [makeThread()], error: null });
   });
 
@@ -100,6 +105,71 @@ describe("workspaceStore completion lifecycle", () => {
     expect(clearScope).toHaveBeenCalledWith("workspace-1", completed.id);
     expect(clearPreviewReferences).toHaveBeenCalledWith(completed.id);
     expect(clearTerminal).toHaveBeenCalledWith(completed.id);
+  });
+
+  it("closes every right-panel tab without changing the workspace fallback", async () => {
+    const completed = makeThread({
+      user_completed_at: "2026-08-12T08:00:00.000Z",
+      scheduled_deletion_at: "2026-08-15T08:00:00.000Z",
+    });
+    completeThread.mockResolvedValue(completed);
+    const panelStore = useDiffStore.getState();
+    panelStore.showRightPanel("workspace-1", null);
+    panelStore.setRightPanelTab("workspace-1", null, "changes");
+    panelStore.showRightPanel("workspace-1", completed.id);
+    panelStore.setRightPanelTab("workspace-1", completed.id, "preview");
+    panelStore.addRightPanelTerminalTab("workspace-1", completed.id, "pty-1");
+
+    await useWorkspaceStore.getState().completeThread(completed.id);
+
+    expect(useDiffStore.getState().getRightPanel("workspace-1", completed.id)).toMatchObject({
+      visible: false,
+      openTabs: [],
+      tabInstances: [],
+      activeTabId: null,
+    });
+    expect(useDiffStore.getState().getRightPanel("workspace-1")).toMatchObject({
+      visible: true,
+      openTabs: ["changes"],
+    });
+  });
+
+  it("clears tabs from a hidden panel and tolerates a repeated completion event", () => {
+    const completed = makeThread({
+      user_completed_at: "2026-08-12T08:00:00.000Z",
+      scheduled_deletion_at: "2026-08-15T08:00:00.000Z",
+    });
+    const panelStore = useDiffStore.getState();
+    panelStore.setRightPanelTab("workspace-1", completed.id, "preview");
+    panelStore.addRightPanelTerminalTab("workspace-1", completed.id, "pty-1");
+
+    useWorkspaceStore.getState().applyThreadLifecycle(completed);
+    useWorkspaceStore.getState().applyThreadLifecycle(completed);
+
+    expect(useDiffStore.getState().getRightPanel("workspace-1", completed.id)).toMatchObject({
+      visible: false,
+      openTabs: [],
+      tabInstances: [],
+      activeTabId: null,
+    });
+  });
+
+  it("keeps panel resources when the server rejects completion", async () => {
+    completeThread.mockRejectedValueOnce(new Error("completion rejected"));
+    const panelStore = useDiffStore.getState();
+    panelStore.showRightPanel("workspace-1", "thread-1");
+    panelStore.setRightPanelTab("workspace-1", "thread-1", "preview");
+
+    await expect(useWorkspaceStore.getState().completeThread("thread-1")).rejects.toThrow(
+      "completion rejected",
+    );
+
+    expect(useDiffStore.getState().getRightPanel("workspace-1", "thread-1")).toMatchObject({
+      visible: true,
+      openTabs: ["preview"],
+    });
+    expect(releaseBrowserScope).not.toHaveBeenCalled();
+    expect(clearScope).not.toHaveBeenCalled();
   });
 
   it("reopens without clearing preserved renderer state", async () => {

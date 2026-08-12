@@ -547,6 +547,8 @@ interface DiffState {
    * is not open. See ADR-0004.
    */
   closeRightPanelTab: (workspaceId: string, threadId: string | null | undefined, tab: RightPanelTab) => void;
+  /** Close every tab and hide one right-panel scope while preserving its width. */
+  clearRightPanel: (workspaceId: string, threadId: string | null | undefined) => void;
   /** Read a thread's remembered Subagents roster view, if it has one. */
   getSubagentRosterTab: (threadId: string) => SubagentRosterTab | undefined;
   /** Remember the selected Subagents roster view for one thread. */
@@ -785,6 +787,17 @@ export const useDiffStore = create<DiffState>((set, get) => ({
 
   closeRightPanelTab: (workspaceId, threadId, tab) =>
     get().closeRightPanelTabInstance(workspaceId, threadId, rightPanelSingletonId(tab)),
+
+  clearRightPanel: (workspaceId, threadId) =>
+    set((state) => {
+      const current = effectiveRightPanel(state, workspaceId, threadId);
+      return writeRightPanel(state, workspaceId, threadId, {
+        ...current,
+        visible: false,
+        tabInstances: [],
+        activeTabId: null,
+      });
+    }),
 
   getSubagentRosterTab: (threadId) => get().subagentRosterTabByThread[threadId],
   setSubagentRosterTab: (threadId, tab) =>

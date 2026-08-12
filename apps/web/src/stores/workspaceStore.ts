@@ -1239,6 +1239,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       releaseBrowserAutomationThreadScope(thread.workspace_id, thread.id);
       void clearPreviewResources(thread.workspace_id, thread.id);
       useTerminalStore.getState().clearThread(thread.id);
+      useDiffStore.getState().clearRightPanel(thread.workspace_id, thread.id);
     }
   },
 
