@@ -311,6 +311,7 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
       ) {
         throw this.protocolError();
       }
+      if (record.state !== "starting") return this.snapshot(record);
       record.state = "running";
       return this.snapshot(record);
     } catch (error) {
