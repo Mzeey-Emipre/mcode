@@ -24,6 +24,8 @@ describe("thread switching WebSocket contracts", () => {
       model: "gpt-5.5",
       provider: "codex",
       deleted_at: null,
+      user_completed_at: null,
+      scheduled_deletion_at: null,
       last_context_tokens: null,
       context_window: null,
       reasoning_level: null,

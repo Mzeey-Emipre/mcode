@@ -24,12 +24,15 @@ import {
   ChevronRight,
   FolderPlus,
   Folder,
+  FolderCheck,
   FolderOpen,
   Activity,
   MoreHorizontal,
   Pencil,
   Plus,
   SquarePen,
+  Circle,
+  Check,
 } from "lucide-react";
 import {
   Tooltip,
@@ -239,6 +242,8 @@ export function ProjectTree() {
   const setActiveThread = useWorkspaceStore((s) => s.setActiveThread);
   const deleteWorkspace = useWorkspaceStore((s) => s.deleteWorkspace);
   const deleteThread = useWorkspaceStore((s) => s.deleteThread);
+  const completeThread = useWorkspaceStore((s) => s.completeThread);
+  const reopenThread = useWorkspaceStore((s) => s.reopenThread);
   const beginNewThread = useWorkspaceStore((s) => s.beginNewThread);
   const setPrimarySurface = useUiStore((s) => s.setPrimarySurface);
   const updateThreadTitle = useWorkspaceStore((s) => s.updateThreadTitle);
@@ -277,6 +282,9 @@ export function ProjectTree() {
   const [threadListExpanded, setThreadListExpandedState] = useState<
     Record<string, boolean>
   >(getThreadListExpanded);
+  const [lifecycleViews, setLifecycleViews] = useState<
+    Record<string, "active" | "completed">
+  >({});
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [inlineEdit, setInlineEdit] = useState<InlineEditState | null>(null);
   const [deleteDialog, setDeleteDialog] = useState<DeleteDialogState | null>(
@@ -330,6 +338,12 @@ export function ProjectTree() {
 
   const toggleThreadList = useCallback((wsId: string) => {
     setThreadListExpandedState((prev) => ({ ...prev, [wsId]: !prev[wsId] }));
+  }, []);
+  const toggleLifecycleView = useCallback((wsId: string) => {
+    setLifecycleViews((previous) => ({
+      ...previous,
+      [wsId]: previous[wsId] === "completed" ? "active" : "completed",
+    }));
   }, []);
 
   // Auto-load worktrees for the active workspace so stale-worktree detection has data.
@@ -631,6 +645,10 @@ export function ProjectTree() {
                     isExpanded={expanded[ws.id] ?? false}
                     isActive={activeWorkspaceId === ws.id}
                     threads={wsThreads}
+                    lifecycleView={lifecycleViews[ws.id] ?? "active"}
+                    onToggleLifecycleView={toggleLifecycleView}
+                    onCompleteThread={completeThread}
+                    onReopenThread={reopenThread}
                     pendingPermissionThreadIds={pendingPermissionThreadIds}
                     isThreadListExpanded={threadListExpanded[ws.id] ?? false}
                     checksById={checksById}
@@ -916,6 +934,8 @@ interface VirtualizedThreadListProps {
   onStartInlineEdit: (threadId: string, title: string) => void;
   onSelectThread: (id: string) => void;
   onThreadContextMenu: (e: React.MouseEvent, thread: Thread) => void;
+  onCompleteThread: (threadId: string) => Promise<void>;
+  onReopenThread: (threadId: string) => Promise<void>;
 }
 
 interface ThreadRowProps {
@@ -940,6 +960,8 @@ interface ThreadRowProps {
   onThreadDoubleClick: (threadId: string, title: string) => void;
   onSelectThread: (id: string) => void;
   onThreadContextMenu: (e: React.MouseEvent, thread: Thread) => void;
+  onCompleteThread: (threadId: string) => Promise<void>;
+  onReopenThread: (threadId: string) => Promise<void>;
 }
 
 /** Renders one sidebar thread row and subscribes only to its own active and running state. */
@@ -961,6 +983,8 @@ const ThreadRow = memo(function ThreadRow({
   onThreadDoubleClick,
   onSelectThread,
   onThreadContextMenu,
+  onCompleteThread,
+  onReopenThread,
 }: ThreadRowProps) {
   const isActive = useWorkspaceStore((s) => s.activeThreadId === thread.id);
   const isRunning = useThreadStore((s) => s.runningThreadIds.has(thread.id));
@@ -979,7 +1003,6 @@ const ThreadRow = memo(function ThreadRow({
       marker.kind !== "action" &&
       marker.kind !== "running",
   );
-  const showEndMarker = !showPrCi;
   const isStaleWorktree =
     worktreesLoadedFor === thread.workspace_id &&
     thread.mode === "worktree" &&
@@ -1003,6 +1026,36 @@ const ThreadRow = memo(function ThreadRow({
     (thread.clientPreparing || thread.clientError) && "opacity-[0.72]";
   const providerMeta = getProviderMeta(thread.provider);
   const RowProviderIcon = providerMeta.icon;
+  const [isLifecyclePending, setIsLifecyclePending] = useState(false);
+  const isUserCompleted = thread.user_completed_at !== null;
+  const showEndMarker = !showPrCi && !isUserCompleted;
+  const lifecycleUnavailable =
+    isLifecyclePending ||
+    isEditing ||
+    isRunning ||
+    hasPendingPermission ||
+    Boolean(thread.clientPreparing || thread.clientError);
+  const handleLifecycleClick = useCallback(
+    async (event: React.MouseEvent) => {
+      event.stopPropagation();
+      if (lifecycleUnavailable) return;
+      setIsLifecyclePending(true);
+      try {
+        await (isUserCompleted
+          ? onReopenThread(thread.id)
+          : onCompleteThread(thread.id));
+      } finally {
+        setIsLifecyclePending(false);
+      }
+    },
+    [
+      isUserCompleted,
+      lifecycleUnavailable,
+      onCompleteThread,
+      onReopenThread,
+      thread.id,
+    ],
+  );
   const row = (
     <div
       role="button"
@@ -1045,27 +1098,47 @@ const ThreadRow = memo(function ThreadRow({
           ? "bg-accent text-foreground"
           : "text-muted-foreground/85 hover:bg-accent/40 hover:text-foreground",
       )}
-      style={{ paddingLeft: `${42 + depth * 12}px` }}
+      style={{ paddingLeft: `${46 + depth * 12}px` }}
     >
       <span
         className="absolute left-0.5 top-1/2 flex -translate-y-1/2 items-center justify-end gap-1"
-        style={{ width: `${36 + depth * 12}px` }}
+        style={{ width: `${40 + depth * 12}px` }}
       >
-        {prable && thread.pr_number != null ? (
-          <ThreadPrIndicator
-            threadId={thread.id}
-            prNumber={thread.pr_number}
-            prStatus={thread.pr_status}
-            checks={checks}
-            showCi={showPrCi}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                aria-label={isUserCompleted ? "Undo completion" : "Complete thread"}
+                disabled={lifecycleUnavailable}
+                onPointerDown={(event) => event.stopPropagation()}
+                onKeyDown={(event) => event.stopPropagation()}
+                onClick={handleLifecycleClick}
+                className="size-5 shrink-0 rounded-full p-0 text-muted-foreground/65 opacity-0 transition-opacity shadow-none hover:bg-transparent hover:text-foreground group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus:opacity-100 disabled:cursor-not-allowed"
+              >
+                {isLifecyclePending ? (
+                  <Spinner size={11} />
+                ) : isUserCompleted ? (
+                  <Check size={13} strokeWidth={2.5} aria-hidden />
+                ) : (
+                  <Circle size={13} strokeWidth={1.8} aria-hidden />
+                )}
+              </Button>
+            }
           />
-        ) : null}
+          <TooltipContent side="right" className="text-xs">
+            {isUserCompleted ? "Undo completion" : "Complete thread"}
+          </TooltipContent>
+        </Tooltip>
         <span
           aria-label={`Provider, ${providerMeta.label}`}
           className={cn(
             "-mt-px flex h-4 w-4 items-center justify-center",
             providerMeta.color,
             scaffoldDim,
+            isUserCompleted && "grayscale opacity-45",
           )}
         >
           <RowProviderIcon size={12} />
@@ -1100,6 +1173,8 @@ const ThreadRow = memo(function ThreadRow({
             <span
               className={cn(
                 "truncate flex-1",
+                isUserCompleted &&
+                  "text-muted-foreground/55 line-through decoration-muted-foreground/55 decoration-1",
                 isStaleWorktree &&
                   "text-[var(--diff-remove-strong)]/85 line-through",
               )}
@@ -1158,6 +1233,16 @@ const ThreadRow = memo(function ThreadRow({
           </Tooltip>
         )}
       </div>
+      {!isEditing && prable && thread.pr_number != null ? (
+        <ThreadPrIndicator
+          threadId={thread.id}
+          prNumber={thread.pr_number}
+          prStatus={thread.pr_status}
+          checks={checks}
+          showCi={showPrCi}
+          muted={isUserCompleted}
+        />
+      ) : null}
       {!isEditing && showEndMarker && (
         <ThreadStateMarker marker={marker} dim={Boolean(scaffoldDim)} />
       )}
@@ -1287,6 +1372,21 @@ function SidebarThreadPreview({
         {thread.title}
       </div>
       <div className="grid gap-1.5">
+        {thread.user_completed_at !== null ? (
+          <>
+            <div className="text-xs text-muted-foreground">
+              Completed {formatLifecycleDate(thread.user_completed_at)}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              Updated {formatLifecycleDate(thread.updated_at)}
+            </div>
+            <div className="text-xs text-muted-foreground">
+              {thread.scheduled_deletion_at
+                ? `Deletes ${formatLifecycleDate(thread.scheduled_deletion_at)}`
+                : "Automatic deletion disabled"}
+            </div>
+          </>
+        ) : null}
         <div
           aria-label={`Project, ${workspaceName}`}
           className="flex min-w-0 items-center gap-2"
@@ -1312,6 +1412,21 @@ interface ThreadPrIndicatorProps {
   prStatus: string | null;
   checks: ChecksStatus | undefined;
   showCi: boolean;
+  muted?: boolean;
+}
+
+function formatLifecycleDate(iso: string): string {
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(iso));
+}
+
+function threadCountLabel(
+  count: number,
+  state: "active" | "completed",
+): string {
+  return `${count} ${state} ${count === 1 ? "thread" : "threads"}`;
 }
 
 /** Renders an optically aligned PR glyph with its CI state attached as a status dot. */
@@ -1321,6 +1436,7 @@ const ThreadPrIndicator = memo(function ThreadPrIndicator({
   prStatus,
   checks,
   showCi,
+  muted = false,
 }: ThreadPrIndicatorProps) {
   const { Icon: PrIcon, color: prColor } = getPrVisual(prStatus);
   const ciVisual =
@@ -1334,7 +1450,10 @@ const ThreadPrIndicator = memo(function ThreadPrIndicator({
       title={label}
       aria-label={label}
       data-testid={`thread-pr-indicator-${threadId}`}
-      className="-mt-px flex h-4 w-4 items-center justify-center"
+      className={cn(
+        "-mt-px flex h-4 w-4 items-center justify-center",
+        muted && "grayscale opacity-45",
+      )}
     >
       <span className="relative flex size-4 items-center justify-center">
         <PrIcon
@@ -1373,6 +1492,8 @@ function VirtualizedThreadList({
   onStartInlineEdit,
   onSelectThread,
   onThreadContextMenu,
+  onCompleteThread,
+  onReopenThread,
 }: VirtualizedThreadListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [scrollMargin, setScrollMargin] = useState(0);
@@ -1501,6 +1622,8 @@ function VirtualizedThreadList({
               onThreadDoubleClick={handleThreadDoubleClick}
               onSelectThread={onSelectThread}
               onThreadContextMenu={onThreadContextMenu}
+              onCompleteThread={onCompleteThread}
+              onReopenThread={onReopenThread}
             />
           </div>
         );
@@ -1546,6 +1669,10 @@ interface ProjectNodeProps {
   sortableListeners?: DraggableSyntheticListeners;
   /** True while this project row is the item being dragged. */
   isProjectDragging?: boolean;
+  lifecycleView: "active" | "completed";
+  onToggleLifecycleView: (workspaceId: string) => void;
+  onCompleteThread: (threadId: string) => Promise<void>;
+  onReopenThread: (threadId: string) => Promise<void>;
 }
 
 /** Renders a collapsible workspace row with its virtualized thread list. */
@@ -1572,15 +1699,32 @@ const ProjectNode = memo(function ProjectNode({
   onThreadContextMenu,
   sortableListeners,
   isProjectDragging = false,
+  lifecycleView,
+  onToggleLifecycleView,
+  onCompleteThread,
+  onReopenThread,
 }: ProjectNodeProps) {
   const hasRunning = useThreadStore((s) =>
     threads.some((thread) => s.runningThreadIds.has(thread.id)),
   );
+  const activeThreadCount = useMemo(
+    () => threads.filter((thread) => thread.user_completed_at === null).length,
+    [threads],
+  );
+  const completedThreadCount = threads.length - activeThreadCount;
   // Cap logic: show THREAD_LIST_CAP rows unless the user opted in, or the
   // active thread sits beyond the cap (force expand so the active row is
   // always visible without requiring the user to click Show more).
   // Use the flattened tree order (same order VirtualizedThreadList renders) for cap decisions.
-  const treeItems = useMemo(() => buildThreadTree(threads), [threads]);
+  const visibleThreads = useMemo(
+    () => threads.filter((thread) =>
+      lifecycleView === "completed"
+        ? thread.user_completed_at !== null
+        : thread.user_completed_at === null,
+    ),
+    [lifecycleView, threads],
+  );
+  const treeItems = useMemo(() => buildThreadTree(visibleThreads), [visibleThreads]);
   const needsCap = treeItems.length > THREAD_LIST_CAP;
   const forceExpand = useWorkspaceStore((s) => {
     if (!s.activeThreadId) return false;
@@ -1595,7 +1739,21 @@ const ProjectNode = memo(function ProjectNode({
       : THREAD_LIST_CAP;
 
   const wsId = workspace.id;
+  const lifecycleDestination =
+    lifecycleView === "active" ? "completed" : "active";
+  const lifecycleDestinationCount =
+    lifecycleDestination === "completed"
+      ? completedThreadCount
+      : activeThreadCount;
+  const lifecycleLabel = `View ${threadCountLabel(lifecycleDestinationCount, lifecycleDestination)} for ${workspace.name}`;
   const handleToggle = useCallback(() => onToggle(wsId), [onToggle, wsId]);
+  const handleToggleLifecycleView = useCallback(
+    (event: React.MouseEvent) => {
+      event.stopPropagation();
+      onToggleLifecycleView(wsId);
+    },
+    [onToggleLifecycleView, wsId],
+  );
   const handleToggleThreadList = useCallback(
     () => onToggleThreadList(wsId),
     [onToggleThreadList, wsId],
@@ -1677,22 +1835,67 @@ const ProjectNode = memo(function ProjectNode({
         )}
         {...sortableListeners}
       >
-        <button
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                aria-label={lifecycleLabel}
+                aria-pressed={lifecycleView === "completed"}
+                data-view={lifecycleView}
+                onKeyDown={(event) => event.stopPropagation()}
+                onClick={handleToggleLifecycleView}
+                className="relative -m-1.5 mr-0 size-8 shrink-0 rounded-sm text-muted-foreground shadow-none hover:bg-transparent hover:text-foreground dark:hover:bg-transparent"
+              >
+                {lifecycleView === "completed" ? (
+                  <>
+                    <FolderCheck
+                      size={14}
+                      className="transition-opacity duration-150 group-hover/ws:opacity-0 group-focus-within/ws:opacity-0 motion-reduce:transition-none"
+                      aria-hidden
+                    />
+                    <Folder
+                      size={14}
+                      className="absolute opacity-0 transition-opacity duration-150 group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 motion-reduce:transition-none"
+                      aria-hidden
+                    />
+                  </>
+                ) : (
+                  <>
+                    <Folder
+                      size={14}
+                      className="transition-opacity duration-150 group-hover/ws:opacity-0 group-focus-within/ws:opacity-0 motion-reduce:transition-none"
+                      aria-hidden
+                    />
+                    <FolderCheck
+                      size={14}
+                      className="absolute opacity-0 transition-opacity duration-150 group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 motion-reduce:transition-none"
+                      aria-hidden
+                    />
+                  </>
+                )}
+              </Button>
+            }
+          />
+          <TooltipContent side="right" className="text-xs">
+            {lifecycleLabel}
+          </TooltipContent>
+        </Tooltip>
+        <Button
           type="button"
+          variant="ghost"
+          size="xs"
           aria-label={`Open project ${workspace.name}`}
           onKeyDown={(event) => event.stopPropagation()}
           onClick={handleOpenProject}
-          className="flex min-w-0 items-center gap-1.5 rounded-sm text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/70"
+          className="h-auto min-w-0 justify-start rounded-sm p-0 text-left hover:bg-transparent dark:hover:bg-transparent"
         >
-          <Folder
-            size={14}
-            className="shrink-0 text-muted-foreground/80"
-            aria-hidden
-          />
           <span className="truncate font-medium tracking-tight">
             {workspace.name}
           </span>
-        </button>
+        </Button>
 
         {!workspace.is_git_repo && (
           <Tooltip>
@@ -1736,7 +1939,7 @@ const ProjectNode = memo(function ProjectNode({
 
         <span className="flex-1" />
 
-        <WorkspaceCiRollupChip threads={threads} checksById={checksById} />
+        <WorkspaceCiRollupChip threads={visibleThreads} checksById={checksById} />
 
         {hasRunning && (
           <Tooltip>
@@ -1754,9 +1957,9 @@ const ProjectNode = memo(function ProjectNode({
           </Tooltip>
         )}
 
-        {threads.length > 0 && (
+        {visibleThreads.length > 0 && (
           <span className="shrink-0 font-mono text-[9.5px] leading-none tabular-nums text-muted-foreground/40">
-            {threads.length}
+            {visibleThreads.length}
           </span>
         )}
 
@@ -1807,7 +2010,7 @@ const ProjectNode = memo(function ProjectNode({
       </div>
 
       {/* Threads (when expanded) — indented, no guide rail. */}
-      {isExpanded && threads.length > 0 && (
+      {isExpanded && visibleThreads.length > 0 && (
         <div>
           <VirtualizedThreadList
             workspaceName={workspace.name}
@@ -1823,6 +2026,8 @@ const ProjectNode = memo(function ProjectNode({
             onStartInlineEdit={onStartInlineEdit}
             onSelectThread={handleSelectThread}
             onThreadContextMenu={handleThreadContextMenu}
+            onCompleteThread={onCompleteThread}
+            onReopenThread={onReopenThread}
           />
 
           {needsCap && !forceExpand && (
@@ -1839,12 +2044,12 @@ const ProjectNode = memo(function ProjectNode({
           )}
         </div>
       )}
-      {isExpanded && threads.length === 0 && (
+      {isExpanded && visibleThreads.length === 0 && (
         <p
           data-testid={`project-empty-${workspace.id}`}
           className="px-9 py-1 font-mono text-xs text-muted-foreground/70"
         >
-          Empty
+          {lifecycleView === "completed" ? "No completed threads" : "No active threads"}
         </p>
       )}
     </div>

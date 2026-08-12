@@ -37,6 +37,8 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     model: null,
     provider: "claude",
     deleted_at: null,
+    user_completed_at: null,
+    scheduled_deletion_at: null,
     last_context_tokens: null,
     context_window: null,
     reasoning_level: null,
@@ -55,6 +57,29 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     ...overrides,
   };
 }
+
+describe("ws-events thread.lifecycleChanged", () => {
+  afterEach(() => {
+    stopPushListeners();
+    vi.restoreAllMocks();
+  });
+
+  it("applies a server-authoritative completion push", () => {
+    const applyThreadLifecycle = vi.spyOn(
+      useWorkspaceStore.getState(),
+      "applyThreadLifecycle",
+    );
+    const completed = makeThread({
+      user_completed_at: "2026-08-12T08:00:00.000Z",
+      scheduled_deletion_at: "2026-08-15T08:00:00.000Z",
+    });
+    startPushListeners();
+
+    pushEmitter.emit("thread.lifecycleChanged", { thread: completed });
+
+    expect(applyThreadLifecycle).toHaveBeenCalledWith(completed);
+  });
+});
 
 describe("ws-events thread.checkoutChanged", () => {
   beforeEach(() => {

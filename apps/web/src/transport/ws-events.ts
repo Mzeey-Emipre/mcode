@@ -52,6 +52,7 @@ function approxBase64DecodedBytes(encoded: string): number {
  * - Reconnect-gap banners are emitted from ws-transport after `terminal.reattach` RPC
  *   (there is no `terminal.reconnectGap` push channel on the server)
  * - `thread.status` -- thread status changes reflected in threadStore
+ * - `thread.lifecycleChanged` -- explicit completion/reopen persisted by any client
  * - `thread.prLinked` -- PR detected for a thread, updates pr_number/pr_status
  * - `thread.checksUpdated` -- CI check status polled for a thread's PR, updates checksById
  * - `thread.modelUpdated` -- thread model and provider synced after a message send (multi-client)
@@ -242,6 +243,14 @@ export function startPushListeners(): void {
       const parsed = WS_CHANNELS["thread.controlChanged"].safeParse(data);
       if (!parsed.success) return;
       void useThreadControlStore.getState().refreshByThreadId(parsed.data.threadId, parsed.data.workspaceId);
+    }),
+  );
+
+  unsubs.push(
+    pushEmitter.on("thread.lifecycleChanged", (data) => {
+      const parsed = WS_CHANNELS["thread.lifecycleChanged"].safeParse(data);
+      if (!parsed.success) return;
+      useWorkspaceStore.getState().applyThreadLifecycle(parsed.data.thread);
     }),
   );
 

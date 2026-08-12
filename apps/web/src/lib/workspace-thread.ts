@@ -116,6 +116,8 @@ export function buildPlaceholderWorkspaceThread(params: {
     model: params.model ?? null,
     provider: params.provider ?? "claude",
     deleted_at: null,
+    user_completed_at: null,
+    scheduled_deletion_at: null,
     last_context_tokens: null,
     context_window: null,
     reasoning_level: params.reasoningLevel ?? null,

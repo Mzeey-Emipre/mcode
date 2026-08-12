@@ -107,6 +107,7 @@ import {
   loadOlderConversationPage,
 } from "../services/conversation-page.js";
 import type { ThreadTeardownService } from "../services/thread-teardown-service.js";
+import type { ThreadCompletionService } from "../services/thread-completion-service.js";
 import type { PullRequestService } from "../services/pull-requests/pull-request-service.js";
 import type { PullRequestMutationService } from "../services/pull-requests/pull-request-mutation-service.js";
 import type { ReviewWorktreeService } from "../services/pull-requests/review-worktree-service.js";
@@ -230,8 +231,10 @@ export interface RouterDeps {
   diffSummaryService: DiffSummaryService;
   /** Generates stateless AI-powered thread recaps from caller-supplied messages. */
   recapService: RecapService;
-  /** Tears down provider and terminal resources owned by a thread before deletion. */
+  /** Tears down provider and terminal resources owned by a thread. */
   threadTeardownService: ThreadTeardownService;
+  /** Owns explicit user completion and reopen transitions. */
+  threadCompletionService: ThreadCompletionService;
   /** Serves provider-neutral pull request capabilities and inbox pages. */
   pullRequestService: PullRequestService;
   /** Executes explicit GitHub pull request writes after fresh preflight. */
@@ -613,6 +616,26 @@ async function dispatch(
         deps.gitWatcherService?.unwatchThreadWorktree?.(params.threadId);
       }
       return deleted;
+    }
+    case "thread.complete": {
+      let lifecyclePublished = false;
+      try {
+        const completed = await deps.threadCompletionService.complete(params.threadId);
+        broadcast("thread.lifecycleChanged", { thread: completed });
+        lifecyclePublished = true;
+        return completed;
+      } catch (error) {
+        const persisted = deps.threadRepo.findById(params.threadId);
+        if (!lifecyclePublished && persisted && persisted.user_completed_at !== null) {
+          broadcast("thread.lifecycleChanged", { thread: persisted });
+        }
+        throw error;
+      }
+    }
+    case "thread.reopen": {
+      const reopened = deps.threadCompletionService.reopen(params.threadId);
+      broadcast("thread.lifecycleChanged", { thread: reopened });
+      return reopened;
     }
     case "thread.updateTitle":
       return deps.threadService.updateTitle(

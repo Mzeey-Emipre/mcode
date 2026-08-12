@@ -10,6 +10,8 @@ import { CodexCatalogService } from "../services/codex-catalog-service.js";
 import { ProviderCatalogService } from "../services/provider-catalog-service.js";
 import { ProviderCatalogSnapshotRepo } from "../repositories/provider-catalog-snapshot-repo.js";
 import { openMemoryDatabase } from "../store/database.js";
+import { ThreadRepo } from "../repositories/thread-repo.js";
+import { WorkspaceRepo } from "../repositories/workspace-repo.js";
 import { _resetForTest, addClient } from "./push.js";
 import {
   RECAP_MAX_MESSAGE_CONTENT_CHARS,
@@ -1238,6 +1240,52 @@ describe("routeMessage workspace.delete watcher teardown", () => {
     expect(teardownThread.mock.invocationCallOrder[1]).toBeLessThan(
       unwatchThreadWorktree.mock.invocationCallOrder[0],
     );
+  });
+});
+
+describe("routeMessage thread completion lifecycle", () => {
+  afterEach(() => {
+    _resetForTest();
+  });
+
+  it("broadcasts persisted completion to every client", async () => {
+    const firstClient: Array<{ buf: Buffer; binary: boolean }> = [];
+    const secondClient: Array<{ buf: Buffer; binary: boolean }> = [];
+    addClient(fakeOpenSocket(firstClient));
+    addClient(fakeOpenSocket(secondClient));
+    const db = openMemoryDatabase();
+    const workspaceRepo = new WorkspaceRepo(db);
+    const threadRepo = new ThreadRepo(db);
+    const thread = threadRepo.create(
+      workspaceRepo.create("Project", "C:/repo", true).id,
+      "Complete me",
+      "direct",
+      "main",
+    );
+    const completed = threadRepo.complete(
+      thread.id,
+      "2026-08-12T08:00:00.000Z",
+      "2026-08-15T08:00:00.000Z",
+    )!;
+    const complete = vi.fn().mockResolvedValue(completed);
+    const deps = {
+      threadCompletionService: { complete },
+      threadRepo,
+    } as unknown as RouterDeps;
+
+    const response = await routeMessage(JSON.stringify({
+      id: "req-complete",
+      method: "thread.complete",
+      params: { threadId: thread.id },
+    }), deps);
+
+    expect(response.result).toEqual(completed);
+    for (const received of [firstClient, secondClient]) {
+      expect(JSON.parse(received[0].buf.toString("utf-8"))).toMatchObject({
+        channel: "thread.lifecycleChanged",
+        data: { thread: completed },
+      });
+    }
   });
 });
 

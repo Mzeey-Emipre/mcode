@@ -91,6 +91,8 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     parent_thread_id: null,
     forked_from_message_id: null,
     deleted_at: null,
+    user_completed_at: null,
+    scheduled_deletion_at: null,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     ...overrides,

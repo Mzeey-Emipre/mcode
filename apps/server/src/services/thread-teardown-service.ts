@@ -10,7 +10,7 @@ function failureMessage(result: PromiseRejectedResult): string {
   return result.reason instanceof Error ? result.reason.message : String(result.reason);
 }
 
-/** Tears down active and pooled runtime resources before a thread is deleted. */
+/** Tears down active and pooled runtime resources when a thread leaves active use. */
 @injectable()
 export class ThreadTeardownService {
   constructor(
@@ -19,7 +19,7 @@ export class ThreadTeardownService {
     @inject(TERMINAL_BACKEND_TOKEN) private readonly terminalService: TerminalBackend,
   ) {}
 
-  /** Stop provider sessions and kill PTYs for a thread before its row is deleted. */
+  /** Stop provider sessions and kill PTYs without deleting persisted thread data. */
   async teardownThread(threadId: string): Promise<void> {
     if (!this.threadRepo.findById(threadId)) return;
 

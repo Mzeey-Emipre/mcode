@@ -21,6 +21,8 @@ vi.mock("@/stores/workspaceStore", () => ({
       createWorkspace: vi.fn(),
       deleteWorkspace: vi.fn(),
       deleteThread: vi.fn(),
+      completeThread: vi.fn(),
+      reopenThread: vi.fn(),
       beginNewThread: vi.fn(),
       updateThreadTitle: vi.fn(),
       loadWorktrees: vi.fn(),
@@ -135,6 +137,8 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     model: null,
     provider: "claude",
     deleted_at: null,
+    user_completed_at: null,
+    scheduled_deletion_at: null,
     last_context_tokens: null,
     context_window: null,
     reasoning_level: null,
@@ -169,12 +173,16 @@ function setupStoreMocks({
   setActiveWorkspace = vi.fn(),
   beginNewThread = vi.fn(),
   updateThreadTitle = vi.fn(),
+  completeThread = vi.fn().mockResolvedValue(undefined),
+  reopenThread = vi.fn().mockResolvedValue(undefined),
 }: {
   thread?: Thread | null;
   setActiveThread?: ReturnType<typeof vi.fn>;
   setActiveWorkspace?: ReturnType<typeof vi.fn>;
   beginNewThread?: ReturnType<typeof vi.fn>;
   updateThreadTitle?: ReturnType<typeof vi.fn>;
+  completeThread?: ReturnType<typeof vi.fn>;
+  reopenThread?: ReturnType<typeof vi.fn>;
 } = {}) {
   const state = {
     workspaces: [WORKSPACE],
@@ -189,6 +197,8 @@ function setupStoreMocks({
     createWorkspace: vi.fn(),
     deleteWorkspace: vi.fn(),
     deleteThread: vi.fn(),
+    completeThread,
+    reopenThread,
     beginNewThread,
     updateThreadTitle,
     loadWorktrees: vi.fn(),
@@ -280,6 +290,97 @@ describe("ProjectTree thread interactions", () => {
     expect(state.loadThreads).toHaveBeenCalledWith("ws-1");
   });
 
+  it("completes an idle thread from its hover action", async () => {
+    const completeThread = vi.fn().mockResolvedValue(undefined);
+    setupStoreMocks({ completeThread });
+
+    render(<ProjectTree />);
+    const action = screen.getByRole("button", { name: "Complete thread" });
+    expect(action).toHaveClass(
+      "opacity-0",
+      "group-hover/row:opacity-100",
+      "group-focus-within/row:opacity-100",
+    );
+
+    fireEvent.mouseEnter(action.closest('[role="button"]') ?? action);
+    fireEvent.click(action);
+
+    await vi.waitFor(() => expect(completeThread).toHaveBeenCalledWith("thread-1"));
+  });
+
+  it("switches to completed threads and reopens one by keyboard", async () => {
+    const reopenThread = vi.fn().mockResolvedValue(undefined);
+    setupStoreMocks({
+      thread: makeThread({
+        user_completed_at: "2026-08-12T08:00:00.000Z",
+        scheduled_deletion_at: "2026-08-15T08:00:00.000Z",
+      }),
+      reopenThread,
+    });
+    render(<ProjectTree />);
+    const viewSwitch = screen.getByRole("button", {
+      name: "View 1 completed thread for Test Project",
+    });
+    expect(viewSwitch).toHaveAttribute("aria-pressed", "false");
+    expect(viewSwitch).toHaveAttribute("data-view", "active");
+    expect(viewSwitch.querySelector(".lucide-folder")).not.toBeNull();
+    expect(viewSwitch.querySelector(".lucide-folder-open")).toBeNull();
+    expect(viewSwitch.querySelector(".lucide-folder-check")).not.toBeNull();
+    viewSwitch.focus();
+    expect(viewSwitch).toHaveFocus();
+    fireEvent.click(viewSwitch);
+
+    const action = screen.getByRole("button", { name: "Undo completion" });
+    action.focus();
+    expect(action).toHaveFocus();
+    fireEvent.click(action);
+
+    expect(reopenThread).toHaveBeenCalledWith("thread-1");
+    const activeViewSwitch = screen.getByRole("button", {
+      name: "View 0 active threads for Test Project",
+    });
+    expect(activeViewSwitch).toBeVisible();
+    expect(activeViewSwitch.querySelector(".lucide-folder-check")).not.toBeNull();
+    expect(activeViewSwitch.querySelector(".lucide-folder")).not.toBeNull();
+    expect(activeViewSwitch.querySelector(".lucide-folder-open")).toBeNull();
+  });
+
+  it("uses the approved completed-row treatment and hover details", async () => {
+    vi.useRealTimers();
+    setupStoreMocks({
+      thread: makeThread({
+        title: "Completed work",
+        mode: "worktree",
+        worktree_path: "C:/test-worktree",
+        pr_number: 42,
+        pr_status: "open",
+        user_completed_at: "2026-08-12T08:00:00.000Z",
+        scheduled_deletion_at: "2026-08-15T08:00:00.000Z",
+      }),
+    });
+
+    render(<ProjectTree />);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "View 1 completed thread for Test Project",
+      }),
+    );
+
+    expect(screen.getByTestId("thread-title")).toHaveClass("line-through");
+    expect(screen.getByLabelText("Provider, Claude")).toHaveClass(
+      "grayscale",
+      "opacity-45",
+    );
+    expect(
+      screen.getByTestId("thread-pr-indicator-thread-1"),
+    ).toHaveClass("grayscale", "opacity-45");
+    screen.getByRole("button", { name: /Completed work/i }).focus();
+    const preview = await screen.findByTestId("thread-preview-thread-1");
+    expect(preview).toHaveTextContent("Completed");
+    expect(preview).toHaveTextContent("Deletes");
+    vi.useFakeTimers();
+  });
+
   it("keeps expanded threads mounted when a project drag starts", () => {
     localStorage.setItem(
       "mcode-expanded-projects",
@@ -359,7 +460,7 @@ describe("ProjectTree thread interactions", () => {
 
     render(<ProjectTree />);
 
-    expect(screen.getByText("Empty", { exact: true })).toBeVisible();
+    expect(screen.getByText("No active threads", { exact: true })).toBeVisible();
   });
 
   it("single click navigates immediately with no delay", () => {
@@ -611,6 +712,16 @@ describe("ProjectTree action-required indicator", () => {
     expect(screen.getByLabelText("Running")).toBeInTheDocument();
   });
 
+  it("disables completion while running or waiting for permission", () => {
+    threadStoreOverrides.runningThreadIds = new Set(["thread-pending"]);
+    threadStoreOverrides.permissionsByThread = {
+      "thread-pending": [{ settled: false }],
+    };
+    render(<ProjectTree />);
+
+    expect(screen.getByRole("button", { name: "Complete thread" })).toBeDisabled();
+  });
+
   it("renders the ring on the right edge when the thread has a pr_number", () => {
     currentThread = makeThread({
       id: "thread-pending",
@@ -748,16 +859,21 @@ describe("ProjectTree PR-ability gating by mode", () => {
     expect(screen.queryByTitle(/PR #42/)).toBeNull();
   });
 
-  it("optically aligns the PR icon without redundant number text", () => {
+  it("places the PR icon on the right without redundant number text", () => {
     renderWithThread(
       makeThread({ mode: "worktree", pr_number: 42, pr_status: "open" }),
     );
     const indicator = screen.getByTestId("thread-pr-indicator-thread-1");
+    const row = screen.getByRole("button", { name: /My Thread/i });
+    const title = screen.getByTestId("thread-title");
     expect(indicator).toHaveAttribute("aria-label", "PR #42, open");
     expect(indicator).toHaveClass("-mt-px");
-    const leadingIcons = indicator.parentElement;
-    expect(leadingIcons).toHaveClass("gap-1");
-    expect(within(leadingIcons!).getByLabelText(/^Provider,/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/^Provider,/)).toBeInTheDocument();
+    expect(
+      title.compareDocumentPosition(indicator) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(row).toContainElement(indicator);
     expect(screen.queryByText("#42")).toBeNull();
   });
 

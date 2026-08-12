@@ -5,7 +5,9 @@ import { injectable } from "tsyringe";
 export type ThreadMutationReservationState =
   | "pendingApproval"
   | "activeTurn"
-  | "stopping";
+  | "stopping"
+  | "completing"
+  | "reopening";
 
 interface Reservation {
   token: string;

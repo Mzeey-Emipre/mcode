@@ -29,6 +29,8 @@ interface ThreadRow {
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
+  user_completed_at: string | null;
+  scheduled_deletion_at: string | null;
   last_context_tokens: number | null;
   context_window: number | null;
   reasoning_level: string | null;
@@ -82,6 +84,8 @@ function rowToThread(row: ThreadRow): Thread {
     created_at: row.created_at,
     updated_at: row.updated_at,
     deleted_at: row.deleted_at,
+    user_completed_at: row.user_completed_at,
+    scheduled_deletion_at: row.scheduled_deletion_at,
     last_context_tokens: row.last_context_tokens ?? null,
     context_window: row.context_window ?? null,
     reasoning_level: parseStoredReasoningLevel(row.reasoning_level),
@@ -103,7 +107,7 @@ function rowToThread(row: ThreadRow): Thread {
 }
 
 const THREAD_COLUMNS =
-  "id, workspace_id, title, status, mode, worktree_path, branch, checkout_state, base_branch, worktree_managed, issue_number, pr_number, pr_status, sdk_session_id, model, provider, created_at, updated_at, deleted_at, last_context_tokens, context_window, reasoning_level, interaction_mode, orchestration_mode, permission_mode, context_window_mode, thinking, codex_fast_mode, copilot_agent, default_open_in_app, parent_thread_id, forked_from_message_id, last_compact_summary, has_file_changes";
+  "id, workspace_id, title, status, mode, worktree_path, branch, checkout_state, base_branch, worktree_managed, issue_number, pr_number, pr_status, sdk_session_id, model, provider, created_at, updated_at, deleted_at, user_completed_at, scheduled_deletion_at, last_context_tokens, context_window, reasoning_level, interaction_mode, orchestration_mode, permission_mode, context_window_mode, thinking, codex_fast_mode, copilot_agent, default_open_in_app, parent_thread_id, forked_from_message_id, last_compact_summary, has_file_changes";
 
 /** Maximum active sibling paths considered during one worktree ownership decision. */
 export const MAX_ACTIVE_WORKTREE_OWNERSHIP_PATHS = 512;
@@ -179,6 +183,8 @@ export class ThreadRepo {
       created_at: now,
       updated_at: now,
       deleted_at: null,
+      user_completed_at: null,
+      scheduled_deletion_at: null,
       last_context_tokens: null,
       context_window: null,
       reasoning_level: null,
@@ -240,7 +246,7 @@ export class ThreadRepo {
                 w.name AS workspace_name, w.path AS workspace_path
          FROM threads t
          JOIN workspaces w ON w.id = t.workspace_id
-         WHERE t.deleted_at IS NULL
+         WHERE t.deleted_at IS NULL AND t.user_completed_at IS NULL
          ORDER BY t.updated_at DESC
          LIMIT ?`,
       )
@@ -354,6 +360,33 @@ export class ThreadRepo {
       .run(status, now, id);
 
     return result.changes > 0;
+  }
+
+  /** Persist the first user-completion timestamp and its fixed deletion deadline. */
+  complete(id: string, completedAt: string, scheduledDeletionAt: string): Thread | null {
+    this.db.prepare(
+      `UPDATE threads
+       SET user_completed_at = COALESCE(user_completed_at, ?),
+           scheduled_deletion_at = CASE
+             WHEN user_completed_at IS NULL THEN ?
+             ELSE scheduled_deletion_at
+           END,
+           updated_at = CASE WHEN user_completed_at IS NULL THEN ? ELSE updated_at END
+       WHERE id = ? AND deleted_at IS NULL`,
+    ).run(completedAt, scheduledDeletionAt, completedAt, id);
+    return this.findById(id);
+  }
+
+  /** Clear user-completion metadata in one transaction-safe statement. */
+  reopen(id: string, reopenedAt = new Date().toISOString()): Thread | null {
+    this.db.prepare(
+      `UPDATE threads
+       SET user_completed_at = NULL,
+           scheduled_deletion_at = NULL,
+           updated_at = CASE WHEN user_completed_at IS NULL THEN updated_at ELSE ? END
+       WHERE id = ? AND deleted_at IS NULL`,
+    ).run(reopenedAt, id);
+    return this.findById(id);
   }
 
   /** Set the worktree filesystem path for a thread. Returns true if a row was changed. */
@@ -638,7 +671,9 @@ export class ThreadRepo {
     const rows = this.db.prepare(
       `SELECT workspace_id AS id, COUNT(*) AS n
        FROM threads
-       WHERE workspace_id IN (${placeholders}) AND deleted_at IS NULL
+       WHERE workspace_id IN (${placeholders})
+         AND deleted_at IS NULL
+         AND user_completed_at IS NULL
        GROUP BY workspace_id`,
     ).all(...ids) as { id: string; n: number }[];
     return new Map(rows.map((r) => [r.id, r.n]));
