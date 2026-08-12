@@ -138,6 +138,31 @@ describe("Browser narrative projection", () => {
     expect(JSON.stringify(result)).not.toContain("SECRET");
   });
 
+  it("projects nested MCP Browser errors as failed outcomes", () => {
+    const result = projectBrowserNarrativeResult(
+      "browser_act",
+      JSON.stringify({
+        ok: false,
+        error: {
+          code: "UNSUPPORTED_OPERATION",
+          effect: "none",
+          recovery: "inspect",
+          message: "SECRET_DETAILS",
+        },
+      }),
+      false,
+    );
+
+    expect(result).toEqual({
+      operation: "browser_act",
+      outcome: "failed",
+      effect: "none",
+      recovery: "inspect",
+      errorCode: "UNSUPPORTED_OPERATION",
+    });
+    expect(JSON.stringify(result)).not.toContain("SECRET");
+  });
+
   it("does not project unrelated tools", () => {
     expect(projectBrowserNarrativeInput("Read", { text: "SECRET" })).toBeNull();
     expect(projectBrowserNarrativeResult("Read", "SECRET", false)).toBeNull();

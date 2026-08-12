@@ -45,6 +45,7 @@ import { captureVisibleWebLocation, sanitizeWebLocation } from "./web-browser-au
 import {
   BrowserSessionDriver,
   ElectronBrowserSessionAdapter,
+  getBrowserAutomationRuntimeActOperations,
   getBrowserAutomationRuntimeOperations,
 } from "@/services/browser-automation/browserSessionDriver";
 import { WebBrowserSessionAdapter } from "@/services/browser-automation/webBrowserSessionAdapter";
@@ -869,9 +870,7 @@ export function BrowserAutomationHost() {
       electron: new ElectronBrowserSessionAdapter(
         (dispatch, signal) => executeBrowserDispatch(window.desktopBridge?.preview?.automation, recorderRef.current, dispatch, signal, executorDescriptor.operations),
       ),
-      supportedActOperations: window.desktopBridge?.preview?.automation
-        ? ["navigate", "click", "type", "press", "scroll"]
-        : ["navigate", "click", "type"],
+      supportedActOperations: getBrowserAutomationRuntimeActOperations(executorDescriptor.runtime),
       webTabs: {
         list: listLifecycleTargets,
         close: async (target, workspaceId) => {

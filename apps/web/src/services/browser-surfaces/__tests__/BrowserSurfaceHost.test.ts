@@ -190,6 +190,21 @@ describe("BrowserSurfaceHost", () => {
     scheduling.flush();
   });
 
+  it("does not retain a stale failure from an older address after a later load succeeds", () => {
+    const { host, adapter } = testHost();
+    adapter.emit({ type: "navigation-started", mainFrame: true, address: "https://example.test/old" });
+    adapter.emit({ type: "navigation-committed", mainFrame: true, address: "https://example.test/current" });
+    adapter.emit({ type: "load-stopped", mainFrame: true, address: "https://example.test/current" });
+    adapter.emit({ type: "load-failed", mainFrame: true, address: "https://example.test/old", error: "ERR_FAILED" });
+
+    expect(host.getSnapshot(IDENTITY)).toMatchObject({
+      phase: "loaded",
+      committedAddress: "https://example.test/current",
+      mainFrameError: null,
+    });
+    host.disposeHost();
+  });
+
   it("pauses hidden publication and flushes latest state on visible", () => {
     const { host, adapter, scheduling, visibility } = testHost();
     const updates: string[] = [];

@@ -8,6 +8,7 @@ import { BrowserAutomationResponseSchema } from "@mcode/contracts";
 import {
   BrowserSessionDriver,
   ElectronBrowserSessionAdapter,
+  getBrowserAutomationRuntimeActOperations,
   getBrowserAutomationRuntimeOperations,
   type BrowserSessionLifecycleTab,
 } from "./browserSessionDriver";
@@ -158,6 +159,27 @@ describe("BrowserSessionDriver", () => {
     expect(electronOperations).toContain("evaluate");
     expect(webOperations).toContain("act");
     expect(electronOperations).toContain("inspect");
+  });
+
+  it("derives truthful act-step mechanics without advertising unsupported steps", () => {
+    expect(getBrowserAutomationRuntimeActOperations("electron")).toEqual([
+      "navigate",
+      "back",
+      "forward",
+      "reload",
+      "wait",
+      "click",
+      "type",
+      "press",
+      "scroll",
+    ]);
+    expect(getBrowserAutomationRuntimeActOperations("electron")).not.toEqual(expect.arrayContaining([
+      "hover",
+      "drag",
+      "resize",
+      "recordingStart",
+      "recordingStop",
+    ]));
   });
 
   it("fails closed for web evaluate without invoking either runtime adapter", async () => {
@@ -409,6 +431,97 @@ describe("BrowserSessionDriver", () => {
     expect(calls).toEqual(["inspect", "click", "navigate"]);
     const replay = await driver.execute(actDispatch(observationRef!, [{ operation: "click", target: { cssSelector: "#save" } }], "second"), new AbortController().signal);
     expect(replay).toMatchObject({ ok: false, error: { code: "STALE_TARGET_GENERATION" } });
+  });
+
+  it("cancels an in-flight wait and skips later act steps", async () => {
+    const calls: string[] = [];
+    const execute = vi.fn((dispatch: BrowserAutomationHostDispatch, signal: AbortSignal) => {
+      calls.push(dispatch.request.operation);
+      if (dispatch.request.operation === "inspect") {
+        return Promise.resolve({ ok: true, result: { operation: "inspect" } } as unknown as BrowserAutomationResponse);
+      }
+      if (dispatch.request.operation === "wait") {
+        return new Promise<BrowserAutomationResponse>((resolve) => {
+          signal.addEventListener("abort", () => resolve({
+            ok: false,
+            error: {
+              code: "OPERATION_CANCELLED",
+              message: "Browser wait was cancelled",
+              retryable: true,
+              stage: "effect",
+              effect: "none",
+              recovery: "inspect",
+            },
+          } as BrowserAutomationResponse), { once: true });
+        });
+      }
+      return Promise.resolve({ ok: true, result: { operation: dispatch.request.operation } } as unknown as BrowserAutomationResponse);
+    });
+    const driver = new BrowserSessionDriver({
+      web: { execute },
+      electron: { execute },
+      isElectron: () => false,
+      supportedActOperations: ["wait", "click"],
+    });
+    const inspect = await driver.execute(inspectDispatch(), new AbortController().signal);
+    const observationRef = (inspect as { result: { observationRef: string } }).result.observationRef;
+    const controller = new AbortController();
+    const pending = driver.execute(actDispatch(observationRef, [
+      { operation: "wait", durationMs: 10_000 },
+      { operation: "click", target: { cssSelector: "#after-wait" } },
+    ], "wait-cancel"), controller.signal);
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledTimes(2));
+    controller.abort();
+
+    await expect(pending).resolves.toMatchObject({
+      ok: true,
+      result: {
+        outcome: "interrupted",
+        effect: "none",
+        receipts: [
+          { index: 0, operation: "wait", status: "interrupted" },
+          { index: 1, operation: "click", status: "skipped" },
+        ],
+      },
+    });
+    expect(calls).toEqual(["inspect", "wait"]);
+  });
+
+  it("stops an act batch at a reload document boundary", async () => {
+    const calls: string[] = [];
+    const execute = vi.fn(async (dispatch: BrowserAutomationHostDispatch) => {
+      calls.push(dispatch.request.operation);
+      if (dispatch.request.operation === "inspect") {
+        return { ok: true, result: { operation: "inspect" } } as unknown as BrowserAutomationResponse;
+      }
+      return { ok: true, result: { operation: dispatch.request.operation } } as unknown as BrowserAutomationResponse;
+    });
+    const driver = new BrowserSessionDriver({
+      web: { execute },
+      electron: { execute },
+      isElectron: () => false,
+      supportedActOperations: ["reload", "click"],
+    });
+    const inspect = await driver.execute(inspectDispatch(), new AbortController().signal);
+    const observationRef = (inspect as { result: { observationRef: string } }).result.observationRef;
+    const result = await driver.execute(actDispatch(observationRef, [
+      { operation: "reload" },
+      { operation: "click", target: { cssSelector: "#after-reload" } },
+    ], "reload-boundary"), new AbortController().signal);
+
+    expect(result).toMatchObject({
+      ok: true,
+      result: {
+        outcome: "completed",
+        stoppingPosition: 1,
+        effect: "complete",
+        receipts: [
+          { index: 0, operation: "reload", status: "applied" },
+          { index: 1, operation: "click", status: "skipped" },
+        ],
+      },
+    });
+    expect(calls).toEqual(["inspect", "reload"]);
   });
 
   it("preserves a host-issued observation reference for the next act", async () => {

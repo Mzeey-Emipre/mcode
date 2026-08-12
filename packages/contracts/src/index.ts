@@ -525,6 +525,7 @@ export {
 } from "./models/browser-automation.js";
 export type {
   BrowserAutomationOperation,
+  BrowserAutomationRequestOperation,
   BrowserAutomationOperationAnnotations,
   BrowserAutomationOperationMetadata,
   BrowserAutomationTarget,

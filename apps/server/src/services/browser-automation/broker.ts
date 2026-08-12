@@ -191,10 +191,11 @@ function failure(
   message: string,
   retryable: boolean,
 ): BrowserAutomationResponse {
-  const browserV2Request = BROWSER_V2_OPERATIONS.has(request.operation);
+  const operation = request.operation as BrowserAutomationOperation;
+  const browserV2Request = BROWSER_V2_OPERATIONS.has(operation);
   const recovery = browserV2Request
     ? browserV2Recovery(code)
-    : legacyBrowserRecovery(request.operation, code, retryable);
+    : legacyBrowserRecovery(operation, code, retryable);
   return {
     contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
     requestId: request.requestId,
@@ -1115,7 +1116,7 @@ export class BrowserAutomationBroker {
     ) {
       return finishImmediately(failure(request, "FORBIDDEN", "Browser request scope does not match its credential", false));
     }
-    if (!claims.allowedOperations.includes(request.operation)) {
+    if (!claims.allowedOperations.includes(request.operation as BrowserAutomationOperation)) {
       return finishImmediately(failure(request, "FORBIDDEN", "Browser operation is not allowed by this credential", false));
     }
     if (request.operation === "evaluate" && claims.permissionCapability !== "privileged") {
@@ -1581,7 +1582,7 @@ export class BrowserAutomationBroker {
   private supportsOperation(host: RegisteredHost, request: BrowserAutomationRequest): boolean {
     const descriptor = host.registration.executorDescriptor;
     if (request.operation === "evaluate" && host.registration.runtime !== "electron") return false;
-    if (!descriptor.operations.includes(request.operation)) return false;
+    if (!descriptor.operations.includes(request.operation as BrowserAutomationOperation)) return false;
     return host.registration.capabilities.some(
       (capability) => capability.operation === request.operation && capability.available,
     );
@@ -1592,7 +1593,7 @@ export class BrowserAutomationBroker {
     if (this.hostsBySocket.get(host.socket) !== host) {
       return failure(pending.request, "HOST_UNAVAILABLE", "Browser host changed before delivery", true);
     }
-    if (!pending.credentialOperations.includes(pending.request.operation)) {
+    if (!pending.credentialOperations.includes(pending.request.operation as BrowserAutomationOperation)) {
       return failure(pending.request, "FORBIDDEN", "Browser operation is no longer allowed by this credential", false);
     }
     if (pending.request.deadline <= this.now()) {
@@ -1660,7 +1661,7 @@ export class BrowserAutomationBroker {
         this.settle(key, pending, failure(request, "DEADLINE_EXCEEDED", "Browser request timed out", true));
       }, timeoutMs);
       timer.unref?.();
-      const pending: PendingRequest = { host, providerId, request, resolve, timer, startedAt: this.now(), credentialOperations: [request.operation] };
+      const pending: PendingRequest = { host, providerId, request, resolve, timer, startedAt: this.now(), credentialOperations: [request.operation as BrowserAutomationOperation] };
       this.pending.set(key, pending);
       host.pending++;
       this.recordLifecycle("queueing", providerId, request, host, undefined, { outcome: "queued" });
@@ -1846,7 +1847,7 @@ export class BrowserAutomationBroker {
       correlationId: request.requestId,
       stage,
       provider: providerId,
-      operation: request.operation,
+      operation: request.operation as BrowserAutomationOperation,
       contractVersion: request.contractVersion,
       ...(host ? {
         runtime: host.registration.runtime,

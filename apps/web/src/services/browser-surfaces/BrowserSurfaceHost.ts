@@ -558,6 +558,12 @@ export class BrowserSurfaceHost {
         });
       case "load-failed":
         if (!event.mainFrame || eventIsExpectedAbort(event)) return state;
+        if (
+          event.address !== undefined &&
+          state.committedAddress !== null &&
+          event.address !== state.pendingAddress &&
+          event.address !== state.committedAddress
+        ) return state;
         return this.mergeState(state, {
           ...(event.address === undefined ? {} : { pendingAddress: boundString(event.address, MAX_ADDRESS) }),
           phase: "error",

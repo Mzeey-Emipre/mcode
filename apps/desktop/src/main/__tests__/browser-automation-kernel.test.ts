@@ -143,6 +143,11 @@ class FakeWebContents extends EventEmitter {
     elementCount: 0,
   };
   stop = vi.fn();
+  canGoBack = vi.fn(() => true);
+  canGoForward = vi.fn(() => true);
+  goBack = vi.fn(() => queueMicrotask(() => this.emit("did-stop-loading")));
+  goForward = vi.fn(() => queueMicrotask(() => this.emit("did-stop-loading")));
+  reload = vi.fn(() => queueMicrotask(() => this.emit("did-stop-loading")));
   send = vi.fn();
   openDevTools = vi.fn();
   getMediaSourceId = vi.fn(() => `media-source-${this.id}`);
@@ -813,6 +818,20 @@ describe("BrowserAutomationKernel", () => {
     await expect(waitingOnClose).resolves.toMatchObject({ ok: false });
   });
 
+  it("cancels an in-flight browser wait through the request signal", async () => {
+    const waiting = kernel.execute(event(), payload(request(
+      "wait",
+      { durationMs: 5_000 },
+      { requestId: "wait-cancel" },
+    )));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(kernel.cancel("wait-cancel")).toBe(true);
+    await expect(waiting).resolves.toMatchObject({
+      ok: false,
+      error: { code: "OPERATION_CANCELLED" },
+    });
+  });
+
   it("stops an exact cancelled navigation and ignores its late completion", async () => {
     let finishNavigation!: () => void;
     currentWebContents!.loadURL.mockImplementationOnce(() => new Promise<void>((resolve) => {
@@ -1020,6 +1039,9 @@ describe("BrowserAutomationKernel", () => {
       ["status", {}, true],
       ["open", { activate: true }, true],
       ["navigate", { url: "https://example.test/" }, true],
+      ["back", {}, true],
+      ["forward", {}, true],
+      ["reload", {}, true],
       ["resize", { width: 800, height: 600 }, false],
       ["snapshot", { includeScreenshot: false }, true],
       ["screenshot", { maxWidth: 1_280, fullPage: false }, true],
@@ -1027,6 +1049,7 @@ describe("BrowserAutomationKernel", () => {
       ["type", { text: "hello", clear: false, submit: false }, true],
       ["press", { key: "A", modifiers: [] }, true],
       ["scroll", { deltaX: 0, deltaY: 100 }, true],
+      ["wait", { durationMs: 1 }, true],
       ["waitFor", { url: "https://example.test/" }, true],
       ["console", { limit: 10 }, true],
       ["network", { failedOnly: false, limit: 10 }, true],
