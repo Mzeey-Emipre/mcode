@@ -441,9 +441,9 @@ function defaultLoadProbe({
         });
       }
     });
-    host.on('exit', (code) => {
+    host.on('exit', () => {
       clearTimeout(timer);
-      if (!hostReady || code !== 0) {
+      if (!hostReady) {
         process.stderr.write('Packaged PTY host failed startup\n' + stderr);
         process.exitCode = 1;
         return;

@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   truncateSync,
@@ -46,6 +47,16 @@ function machOBinary(cpuType) {
 }
 
 describe("attestPackagedTerminalArtifacts", () => {
+  it("does not treat a post-readiness shutdown status as a startup failure", () => {
+    const source = readFileSync(
+      new URL("../terminal-artifact-attestation.mjs", import.meta.url),
+      "utf8",
+    );
+
+    expect(source).toContain("if (!hostReady) {");
+    expect(source).not.toContain("if (!hostReady || code !== 0) {");
+  });
+
   let resourcesRoot;
   let nodePtyRoot;
   let koffiRoot;
