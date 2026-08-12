@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   rmSync,
+  symlinkSync,
   truncateSync,
   writeFileSync,
 } from "node:fs";
@@ -202,6 +203,23 @@ describe("attestPackagedTerminalArtifacts", () => {
 
     expect(existsSync(nodePtyBinding)).toBe(false);
     expect(existsSync(targetPrebuild)).toBe(true);
+  });
+
+  it("removes node-gyp tool links before enforcing the package inventory", () => {
+    const toolLink = path.join(
+      nodePtyRoot,
+      "build/node_gyp_bins/python3",
+    );
+    mkdirSync(path.dirname(toolLink), { recursive: true });
+    symlinkSync(runtimePath, toolLink, "file");
+
+    retainTargetTerminalNativeArtifacts({
+      resourcesRoot,
+      targetPlatform: "win32",
+      targetArch: "x64",
+    });
+
+    expect(existsSync(path.dirname(toolLink))).toBe(false);
   });
 
   it("rejects a native module for a foreign architecture", () => {

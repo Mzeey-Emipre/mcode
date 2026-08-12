@@ -202,6 +202,13 @@ function expectedNativePaths(packageRoots, targetPlatform, targetArch) {
   return { nodePtyBinding, koffiBinding, nodePtyRuntime };
 }
 
+function removeNodeGypToolArtifacts(nodePtyRoot) {
+  const toolDirectory = path.join(nodePtyRoot, "build", "node_gyp_bins");
+  // node-gyp creates interpreter links for its build process. They are not
+  // runtime inputs and must not weaken the packaged tree's no-symlink rule.
+  rmSync(toolDirectory, { recursive: true, force: true });
+}
+
 /** Removes non-target native files from one unpacked Terminal package. */
 export function retainTargetTerminalNativeArtifacts({
   resourcesRoot,
@@ -227,6 +234,7 @@ export function retainTargetTerminalNativeArtifacts({
       "Packaged koffi",
     ),
   };
+  removeNodeGypToolArtifacts(packageRoots["node-pty"]);
   const expected = expectedNativePaths(
     packageRoots,
     targetPlatform,
