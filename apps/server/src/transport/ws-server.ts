@@ -154,6 +154,7 @@ export function createWsServer(deps: WsServerDeps): {
         body.browserAutomation = {
           ...deps.browserAutomationBroker.status(),
           reliability: deps.browserAutomationBroker.reliabilityStatus(),
+          nightlyEvidence: deps.browserAutomationBroker.nightlyEvidenceStatus(),
         };
       }
       if (!deps.singleInstance) {

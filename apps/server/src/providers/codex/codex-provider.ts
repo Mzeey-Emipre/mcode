@@ -1260,7 +1260,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     const mcodeInstructions = renderMcodeInstructions(buildMcodeInstructionPlan({
       sourceThreadId: threadId,
       threadControlGranted: Boolean(internalMcp),
-      browserAutomationGranted: Boolean(browserGrant),
+      browserAutomationGranted: browserGrant?.rolloutMode === "browser-v2",
     }));
     const spawnEnv = { ...args.env };
     const browserTokenEnvName = "MCODE_BROWSER_MCP_TOKEN";

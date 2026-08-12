@@ -9,6 +9,7 @@ import {
 import type { WebSocket } from "ws";
 import { BrowserAutomationBroker, type BrowserAutomationBrokerOptions } from "./broker.js";
 import type { BrowserAutomationCredentialClaims } from "./credential-registry.js";
+import { BrowserAutomationTelemetry, type BrowserAutomationTelemetryEvent } from "./telemetry.js";
 
 function socket(name: string): WebSocket {
   return { name } as unknown as WebSocket;
@@ -1668,6 +1669,81 @@ describe("BrowserAutomationBroker", () => {
     await expect(first).resolves.toMatchObject({ ok: true });
     await expect(joined).resolves.toMatchObject({ ok: true, requestId: "act-2" });
     expect(deliveries.filter(({ channel }) => channel === "browserAutomation.request")).toHaveLength(1);
+  });
+
+  it("uses one correlation identity through queue, execution, page wait, settlement, and cleanup", async () => {
+    const events: BrowserAutomationTelemetryEvent[] = [];
+    const telemetry = new BrowserAutomationTelemetry(
+      { mode: "browser-v2", reason: "nightly", rollbackActive: false },
+      { sink: (event) => events.push(event) },
+    );
+    const deliveries: Array<{ channel: string; data: any }> = [];
+    const broker = new BrowserAutomationBroker(options({
+      now: () => 10,
+      telemetry,
+      send: (_socket, channel, data) => { deliveries.push({ channel, data }); return true; },
+    }));
+    const hostSocket = socket("correlated-act");
+    const base = registration("correlated-act", "workspace-a");
+    const generation = broker.registerHost(hostSocket, {
+      ...base,
+      executorDescriptor: { ...base.executorDescriptor, operations: ["inspect", "act"] },
+      capabilities: [{ operation: "act", available: true }],
+    }, authorization("correlated-act")).generation;
+    broker.updateTargets(hostSocket, "correlated-act", generation, [statusTarget("correlated-act", generation)]);
+    const scope = {
+      ...claims("thread-a", "workspace-a"),
+      permissionCapability: "interact" as const,
+      allowedOperations: ["act" as const],
+    };
+    const correlatedRequest = {
+      ...request(scope),
+      requestId: "correlation-request",
+      operation: "act" as const,
+      args: {
+        idempotencyKey: "correlation-key",
+        observationRef: "obs",
+        deadlineMs: 10_000,
+        steps: [{ operation: "wait" as const, durationMs: 1 }],
+      },
+    };
+    const pending = broker.execute(scope, correlatedRequest);
+    const delivery = deliveries.find(({ channel }) => channel === "browserAutomation.request")!;
+    broker.respond(hostSocket, "correlated-act", generation, {
+      contractVersion: 1,
+      requestId: correlatedRequest.requestId,
+      sequence: correlatedRequest.sequence,
+      ok: true,
+      result: {
+        operation: "act",
+        outcome: "completed",
+        stoppingPosition: 1,
+        effect: "none",
+        recovery: "inspect",
+        receipts: [{ index: 0, operation: "wait", status: "applied" }],
+        finalObservation: {
+          observationRef: "next",
+          hostRevision: generation,
+          documentRevision: 0,
+          controlRevision: 0,
+          capabilityRevision: 1,
+          observationRevision: 1,
+        },
+        nextObservationRef: "next",
+      },
+    }, delivery.data.dispatch.target);
+
+    await expect(pending).resolves.toMatchObject({ ok: true });
+    expect(events.map((event) => event.stage)).toEqual([
+      "configuration",
+      "admission",
+      "queueing",
+      "execution",
+      "page-waiting",
+      "settlement",
+      "cleanup",
+    ]);
+    expect(new Set(events.map((event) => event.correlationId))).toEqual(new Set(["correlation-request"]));
   });
 
   it("serializes browser_evaluate, joins exact duplicates, and hashes expressions for conflicts", async () => {
