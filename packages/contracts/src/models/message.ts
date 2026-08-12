@@ -5,6 +5,17 @@ import { lazySchema } from "../utils/lazySchema.js";
 import { MessageMentionsSchema } from "./mention.js";
 import { PreviewAnnotationBundleSchema } from "./browser-preview.js";
 
+/** Provenance for a retained message that originated in the legacy conversation store. */
+export const LegacyMessageProvenanceSchema = z.object({
+  source: z.literal("messages"),
+  migrationVersion: z.number().int().positive().nullable(),
+  mapping: z.enum(["canonical", "legacy"]),
+  reason: z.string().optional(),
+});
+
+/** Provenance for a retained message that originated in the legacy conversation store. */
+export type LegacyMessageProvenance = z.infer<typeof LegacyMessageProvenanceSchema>;
+
 /** Message schema matching the SQLite row shape. */
 export const MessageSchema = lazySchema(() =>
   z.object({
@@ -37,6 +48,7 @@ export const MessageSchema = lazySchema(() =>
      * Omitted or false for all legacy rows that predate this column.
      */
     is_internal: z.boolean().optional(),
+    legacyProvenance: LegacyMessageProvenanceSchema.optional(),
   }),
 );
 /** Message record from the database. */

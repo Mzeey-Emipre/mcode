@@ -27,6 +27,7 @@ import { ExternalThreadControlPairingService } from "./services/external-thread-
 import { ExternalThreadControlMcpRuntime } from "./services/external-thread-control-mcp-runtime";
 import { NarrativeStore } from "./services/narrative-store";
 import { CanonicalAgentEventSink } from "./services/canonical-agent-event-sink";
+import { LegacyConversationMigration } from "./services/legacy-conversation-migration";
 import { GitService } from "./services/git-service";
 import { GithubService } from "./services/github-service";
 import { FileService } from "./services/file-service";
@@ -269,6 +270,7 @@ const thoughtSegmentRepo = container.resolve(ThoughtSegmentRepo);
 const hookExecutionRepo = container.resolve(HookExecutionRepo);
 const narrativeStore = container.resolve(NarrativeStore);
 const canonicalSink = container.resolve(CanonicalAgentEventSink);
+const legacyConversationMigration = container.resolve(LegacyConversationMigration);
 const turnSnapshotRepo = container.resolve(TurnSnapshotRepo);
 const snapshotService = container.resolve(SnapshotService);
 const settingsService = container.resolve(SettingsService);
@@ -400,6 +402,18 @@ setInterval(() => {
 
 // AgentService self-wires persistence and session tracking against providers
 agentService.init();
+void legacyConversationMigration.runToCompletion().then((result) => {
+  if (result.migratedMessages > 0 || result.ambiguousMessages > 0) {
+    logger.info("Legacy parent conversation migration completed", {
+      migratedMessages: result.migratedMessages,
+      ambiguousMessages: result.ambiguousMessages,
+    });
+  }
+}).catch((error) => {
+  logger.error("Legacy parent conversation migration stopped at its last checkpoint", {
+    error: error instanceof Error ? error.message : String(error),
+  });
+});
 const startupRecovery = turnRecoveryService.reconcileOnStartup();
 if (startupRecovery.interrupted.length > 0) {
   logger.info("Interrupted unproved executions during startup recovery", {

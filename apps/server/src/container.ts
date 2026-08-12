@@ -38,6 +38,7 @@ import { ThreadService } from "./services/thread-service";
 import { AgentService } from "./services/agent-service";
 import { TurnRecoveryService } from "./services/turn-recovery-service";
 import { NarrativeStore } from "./services/narrative-store";
+import { LegacyConversationMigration } from "./services/legacy-conversation-migration";
 import {
   CanonicalAgentEventSink,
   publishCanonicalAgentEvents,
@@ -353,6 +354,11 @@ export function setupContainer(mcodeDir: string): typeof container {
   container.register(
     CanonicalAgentEventSink,
     { useClass: CanonicalAgentEventSink },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    LegacyConversationMigration,
+    { useClass: LegacyConversationMigration },
     { lifecycle: Lifecycle.Singleton },
   );
   container.register(
