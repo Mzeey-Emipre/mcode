@@ -1,18 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
   classifySmokeOutcome,
-  getSmokeTimeoutMs,
+  getPackagedRuntimeStartupTimeoutMs,
 } from "../smoke-test-config.mjs";
 
-describe("getSmokeTimeoutMs", () => {
+describe("getPackagedRuntimeStartupTimeoutMs", () => {
   it("keeps the default budget for native and non-macOS targets", () => {
-    expect(getSmokeTimeoutMs({
+    expect(getPackagedRuntimeStartupTimeoutMs({
       hostPlatform: "linux",
       hostArch: "x64",
       targetPlatform: "linux",
       targetArch: "x64",
     })).toBe(30_000);
-    expect(getSmokeTimeoutMs({
+    expect(getPackagedRuntimeStartupTimeoutMs({
       hostPlatform: "darwin",
       hostArch: "arm64",
       targetPlatform: "darwin",
@@ -21,13 +21,13 @@ describe("getSmokeTimeoutMs", () => {
   });
 
   it("extends the budget only for an Apple Silicon host running x64 macOS", () => {
-    expect(getSmokeTimeoutMs({
+    expect(getPackagedRuntimeStartupTimeoutMs({
       hostPlatform: "darwin",
       hostArch: "arm64",
       targetPlatform: "darwin",
       targetArch: "x64",
     })).toBe(60_000);
-    expect(getSmokeTimeoutMs({
+    expect(getPackagedRuntimeStartupTimeoutMs({
       hostPlatform: "darwin",
       hostArch: "x64",
       targetPlatform: "darwin",

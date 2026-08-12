@@ -31,7 +31,7 @@ import {
 } from "../../../scripts/build-server-dev-bundle.mjs";
 import {
   classifySmokeOutcome,
-  getSmokeTimeoutMs,
+  getPackagedRuntimeStartupTimeoutMs,
 } from "./smoke-test-config.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -182,7 +182,7 @@ if (found.binding) {
 const sdkTarget = bundleOnly
   ? { platform: process.platform, arch: process.arch }
   : inferPackagedSdkTarget(found.server);
-const timeoutMs = getSmokeTimeoutMs({
+const timeoutMs = getPackagedRuntimeStartupTimeoutMs({
   hostPlatform: process.platform,
   hostArch: process.arch,
   targetPlatform: sdkTarget.platform,

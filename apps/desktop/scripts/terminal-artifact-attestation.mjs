@@ -11,6 +11,7 @@ import {
 } from "node:fs";
 import path from "node:path";
 import { gzipSync } from "node:zlib";
+import { getPackagedRuntimeStartupTimeoutMs } from "./smoke-test-config.mjs";
 
 /** Maximum compressed Terminal-specific package delta allowed per target. */
 export const TERMINAL_ARTIFACT_MAX_COMPRESSED_BYTES = 10 * 1024 * 1024;
@@ -403,6 +404,7 @@ function defaultLoadProbe({
   hostBundlePath,
   nodePtyRoot,
   koffiRoot,
+  startupTimeoutMs,
 }) {
   const probe = String.raw`
     const { fork } = require('node:child_process');
@@ -423,7 +425,7 @@ function defaultLoadProbe({
       host.kill('SIGKILL');
       process.stderr.write('Packaged PTY host startup timed out\n' + stderr);
       process.exit(1);
-    }, 10000);
+    }, ${startupTimeoutMs});
     host.on('error', (error) => {
       clearTimeout(timer);
       throw error;
@@ -482,7 +484,7 @@ function defaultLoadProbe({
       MCODE_KOFFI_ROOT: koffiRoot,
     },
     encoding: "utf8",
-    timeout: 15_000,
+    timeout: startupTimeoutMs + 5_000,
     maxBuffer: 64 * 1024,
   });
   return JSON.parse(output);
@@ -569,6 +571,8 @@ function validateLoadProbe(probe, targetPlatform, targetArch, packageRoots) {
 export function attestPackagedTerminalArtifacts({
   resourcesRoot,
   runtimePath,
+  hostPlatform = process.platform,
+  hostArch = process.arch,
   targetPlatform,
   targetArch,
   maxCompressedBytes = TERMINAL_ARTIFACT_MAX_COMPRESSED_BYTES,
@@ -611,6 +615,12 @@ export function attestPackagedTerminalArtifacts({
     hostBundlePath,
     nodePtyRoot: packageRoots["node-pty"],
     koffiRoot: packageRoots.koffi,
+    startupTimeoutMs: getPackagedRuntimeStartupTimeoutMs({
+      hostPlatform,
+      hostArch,
+      targetPlatform,
+      targetArch,
+    }),
   });
   const { modulesAbi, nodeVersion, electronVersion, nativeByPackage } = validateLoadProbe(
     probe,
