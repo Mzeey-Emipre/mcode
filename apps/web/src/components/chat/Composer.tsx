@@ -20,6 +20,7 @@ import {
   X,
   Zap,
   Folder,
+  FolderOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -2977,14 +2978,24 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
                   <X className="size-3.5" aria-hidden />
                 </Button>
               </div>
-              <ModeSelector
-                mode={composerMode}
-                onModeChange={setComposerMode}
-                locked={!isGitRepo}
-                options={modeOptions}
-                className={NEW_THREAD_CONTEXT_CONTROL_CLASS}
-                iconSize={14}
-              />
+              {isGitRepo ? (
+                <ModeSelector
+                  mode={composerMode}
+                  onModeChange={setComposerMode}
+                  locked={false}
+                  options={modeOptions}
+                  className={NEW_THREAD_CONTEXT_CONTROL_CLASS}
+                  iconSize={14}
+                />
+              ) : (
+                <span
+                  data-testid="local-environment-label"
+                  className="flex h-[28px] items-center gap-[6px] rounded-md px-[10px] text-xs font-medium leading-none text-muted-foreground/70"
+                >
+                  <FolderOpen size={14} aria-hidden />
+                  Local
+                </span>
+              )}
               {isGitRepo && composerMode === "direct" && (
                 <BranchPicker
                   branches={branches}

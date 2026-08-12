@@ -346,11 +346,15 @@ describe("Composer checkout confirmation", () => {
     expect(within(strip).getByTestId("branch-picker")).toHaveTextContent("feature/base");
   });
 
-  it("renders Local for a non-git project without overwriting the remembered mode", () => {
-    seedComposerState("worktree", false);
+  it("shows a non-git project as local without checkout controls", () => {
+    const workspace = seedComposerState("worktree", false);
     render(<Composer isNewThread workspaceId="ws-1" />);
 
-    expect(screen.getByTestId("mode-selector")).toHaveTextContent("direct");
+    const strip = screen.getByTestId("new-thread-context-strip");
+    expect(within(strip).getByText(workspace.name)).toBeInTheDocument();
+    expect(within(strip).getByText("Local")).toBeInTheDocument();
+    expect(within(strip).queryByTestId("mode-selector")).not.toBeInTheDocument();
+    expect(within(strip).queryByTestId("branch-picker")).not.toBeInTheDocument();
     expect(useWorkspaceStore.getState().newThreadMode).toBe("worktree");
   });
 

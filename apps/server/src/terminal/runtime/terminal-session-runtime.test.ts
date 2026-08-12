@@ -184,6 +184,89 @@ describe("ModernTerminalSessionRuntime", () => {
     });
   });
 
+  it("retains output emitted while host creation is still resolving", async () => {
+    const { host, runtime } = setup();
+    host.createAction = (input) => {
+      host.emit({
+        contractVersion: 1,
+        kind: "output",
+        sessionId: input.sessionId,
+        hostGeneration: input.hostGeneration,
+        outputSeq: "1",
+        dataBase64: Buffer.from("initial prompt").toString("base64"),
+      });
+    };
+
+    await createRunningSession(runtime);
+    host.emit({
+      contractVersion: 1,
+      kind: "output",
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      outputSeq: "2",
+      dataBase64: Buffer.from("shell output").toString("base64"),
+    });
+
+    const attachment = await runtime.attach({
+      sessionId: SESSION_ID,
+      attachmentId: ATTACHMENT_ID,
+      hostGeneration: "7",
+      lastOutputSeq: "0",
+      lastCommandSeq: "0",
+      checkpointSeq: null,
+    });
+    const hydration = runtime.consumeHydration({
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      attachmentEpoch: attachment.attachmentEpoch,
+      hydrationId: attachment.hydrationId,
+    });
+    expect(hydration.descriptor).toMatchObject({
+      mode: "delta",
+      requestedAfterSeq: "0",
+      lastOutputSeq: "2",
+    });
+    expect(hydration.output.map((chunk) => chunk.outputSeq)).toEqual(["1", "2"]);
+    expect(Buffer.concat(hydration.output.map((chunk) => Buffer.from(chunk.data))).toString())
+      .toBe("initial promptshell output");
+    runtime.acknowledgeOutput({
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      attachmentEpoch: attachment.attachmentEpoch,
+      outputSeq: "2",
+    });
+    expect(runtime.getSnapshot(SESSION_ID)).toMatchObject({
+      state: "running",
+      lastOutputSeq: "2",
+    });
+  });
+
+  it("preserves a protocol-failure tombstone from invalid startup output", async () => {
+    const { host, runtime } = setup();
+    host.createAction = (input) => {
+      host.emit({
+        contractVersion: 1,
+        kind: "output",
+        sessionId: input.sessionId,
+        hostGeneration: input.hostGeneration,
+        outputSeq: "2",
+        dataBase64: Buffer.from("invalid startup output").toString("base64"),
+      });
+    };
+
+    await expect(createRunningSession(runtime)).resolves.toMatchObject({
+      state: "failed",
+      lastOutputSeq: "0",
+      exit: { code: null, signal: null, reason: "protocol-failure" },
+      tombstone: true,
+    });
+    expect(runtime.getSnapshot(SESSION_ID)).toMatchObject({
+      state: "failed",
+      exit: { reason: "protocol-failure" },
+      tombstone: true,
+    });
+  });
+
   it("removes a starting session when host creation fails", async () => {
     const { host, runtime } = setup();
     host.createFailure = new Error("host create failed");
