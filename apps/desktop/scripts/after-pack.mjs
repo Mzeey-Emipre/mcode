@@ -97,7 +97,10 @@ export default async function afterPack(context) {
   // so build-time staging under dist/server/node_modules does not survive packaging.
   // -------------------------------------------------------------------------
 
-  const serverPackageRoot = resolve(desktopRoot, "..", "server");
+  const sourceRepoRoot = process.env.MCODE_PACKAGING_SOURCE_ROOT
+    ? resolve(process.env.MCODE_PACKAGING_SOURCE_ROOT)
+    : resolve(desktopRoot, "..", "..");
+  const serverPackageRoot = resolve(sourceRepoRoot, "apps", "server");
   const npmPlatform = electronPlatformToNpm(electronPlatformName);
   const npmArch = electronArchToNpm(context.arch);
   const packagedServerDir = resolvePackagedServerDir({

@@ -35,6 +35,7 @@
     "certify:database": "bun scripts/run-electron-node.mjs --workspace-cli vite-node dist/cli.mjs apps/server/scripts/profile-sqlite.ts --certify",
     "certify:conversation": "bun scripts/run-electron-node.mjs --workspace-cli vite-node dist/cli.mjs --config apps/web/vite.config.ts apps/web/scripts/certify-conversation-residency.ts",
     "perf:frontend": "bun scripts/perf/run-frontend-performance.mjs",
+    "perf:frontend:packaged-windows": "bun scripts/perf/run-packaged-windows-acceleration.mjs",
     "preagent:up": "bun run deps:ensure",
     "agent:up": "bun scripts/agent/agent-up.mjs",
     "agent:down": "bun scripts/agent/agent-down.mjs",

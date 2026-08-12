@@ -72,6 +72,31 @@ Use a profiling build for React evidence. Use a normal production build without
 open DevTools for process and GPU evidence. Store raw evidence under
 `.dev/verification/performance/`.
 
+### Packaged Windows acceleration evidence
+
+Run the paired packaged comparison on each Windows GPU class:
+
+```powershell
+bun run perf:frontend:packaged-windows -- --gpu-type integrated --adapter-name "Intel(R) Iris(R) Xe Graphics" --sample-count 7 --gpu-sample-count 30 --output .dev/verification/performance/integrated.json
+```
+
+Use `--gpu-type discrete` on the discrete-GPU device. Set `--adapter-name` to
+the exact adapter name that Windows reports. The runner rejects a name that is
+not present. It records the GPU type as an operator classification for that
+matched adapter.
+
+The command builds one normal production package. It runs the same warmup,
+workload order, sample count, and correctness checks with disabled acceleration
+and Electron's default acceleration. DevTools stay closed.
+
+The result keeps frame stability, CPU, memory, React data, and Windows GPU
+Engine data separate. A missing or zero attributable GPU counter has the
+`inconclusive` status. Do not treat that status as zero GPU use.
+
+Compare integrated and discrete results only when their source revision and
+comparison contract match. Store both result files for the hardware policy
+decision.
+
 ---
 
 ## 1. Virtualize All Scrollable Lists

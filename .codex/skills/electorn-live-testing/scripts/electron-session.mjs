@@ -23,8 +23,10 @@ export async function connectElectronSession({ playwright, repoRoot, sessionFile
   const record = JSON.parse(readFileSync(sessionFile, "utf8"));
   validateSessionRecord(record, root);
 
-  const ports = JSON.parse(readFileSync(join(root, ".dev", "ports.json"), "utf8"));
-  validatePortsRecord(ports, root);
+  const ports = record.appUrlPrefix.startsWith("http://127.0.0.1:")
+    ? JSON.parse(readFileSync(join(root, ".dev", "ports.json"), "utf8"))
+    : null;
+  if (ports) validatePortsRecord(ports, root);
   const endpoint = `http://127.0.0.1:${record.debugPort}`;
   const browser = await playwright.chromium.connectOverCDP(endpoint);
   const context = browser.contexts()[0];
@@ -33,7 +35,7 @@ export async function connectElectronSession({ playwright, repoRoot, sessionFile
     throw new Error("Electron did not expose a Playwright browser context");
   }
 
-  if (record.appUrlPrefix.startsWith(ports.appUrl)) {
+  if (ports && record.appUrlPrefix.startsWith(ports.appUrl)) {
     await context.addCookies([
       {
         name: ports.seedLogin.cookieName,
@@ -46,7 +48,7 @@ export async function connectElectronSession({ playwright, repoRoot, sessionFile
   const page = await waitForAppPage(context, record.appUrlPrefix);
   await page.reload({ waitUntil: "domcontentloaded" });
   return {
-    appUrl: ports.appUrl,
+    appUrl: ports?.appUrl ?? null,
     browser,
     context,
     endpoint,

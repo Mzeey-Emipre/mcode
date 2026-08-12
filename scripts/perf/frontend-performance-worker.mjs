@@ -186,7 +186,7 @@ async function run() {
       runEnvironment,
       await collectPageEnvironment(electronSession.page),
       mode,
-      electronStartupMetrics.hardwareAccelerationEnabled,
+      electronStartupMetrics.accelerationMode === "default",
     );
     const result = {
       schemaVersion: 2,

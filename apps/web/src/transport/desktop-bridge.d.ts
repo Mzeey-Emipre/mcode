@@ -455,10 +455,13 @@ interface DesktopBridge {
   /** Process metrics exposed only in a maintained frontend performance run. */
   performance?: {
     getMetrics(): Promise<{
-      readonly hardwareAccelerationEnabled: boolean;
+      readonly packaged: boolean;
+      readonly accelerationMode: "disabled" | "default";
+      readonly gpuFeatureStatus: Readonly<Record<string, string>>;
       readonly devToolsOpen: boolean;
       readonly processes: readonly {
         readonly pid: number;
+        readonly creationTime: number;
         readonly type: string;
         readonly cpuPercent: number | null;
         readonly memory: {
