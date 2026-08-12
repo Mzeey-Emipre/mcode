@@ -23,11 +23,8 @@ paths, writes `.dev/ports.json`, and prints that JSON as the final line after
 ports. On Windows, plain `bun run agent:up` still starts the runtime, but Bun
 Shell can drop the final stdout line.
 
-**For most development work, use `bun run dev:web`.** It builds the server bundle
-into `apps/desktop/dist/server/server.cjs` on startup (`scripts/build-server-dev-bundle.mjs`),
-then runs it under Electron's Node.js (`ELECTRON_RUN_AS_NODE=1`) so `better-sqlite3` matches
-Electron's ABI, and starts Vite. The Electron **package** must be installed (`bun install`);
-no Electron window is opened.
+Use `bun run dev:web` only when the task needs the live web runtime. It builds
+the server bundle and runs it with Electron's Node.js. It also starts Vite.
 
 Use `bun run dev:desktop` only when testing Electron-specific behavior (native IPC,
 tray, window management).
@@ -272,9 +269,11 @@ Slash commands are first-class in Claude Code. Other harnesses (Cursor, Codex, O
 | Start web runtime | Shared agent guidance | `bun run dev:web` |
 | Launch desktop runtime | Shared agent guidance | `bun run dev:desktop` |
 
-## Verifying a Feature Live
+## Live verification
 
-Start the web runtime with `bun run dev:web`. When it writes `.dev/ports.json`, use the URL recorded there and inspect the feature with browser use. For Electron-only behavior, launch `bun run dev:desktop` and inspect it with computer use. Put any task-specific scripts, fixtures, screenshots, annotations, or logs under `.dev/verification/`; the directory is ignored and disposable.
+Use live verification only when the agent workflow or the user requests it. For
+UI or Electron-only behavior, load `$electorn-live-testing`. Put temporary
+scripts, fixtures, screenshots, annotations, and logs under `.dev/verification/`.
 
 ---
 

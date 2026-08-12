@@ -13,6 +13,25 @@ Issues and PRDs for this repo live as GitHub issues at [Mzeey-Empire/mcode](http
 
 Infer the repo from `git remote -v` — `gh` does this automatically when run inside a clone.
 
+## Implementation context
+
+Before implementation, read the target issue, comments, and labels. Then follow
+all native and written links that can constrain the change:
+
+1. Read the parent issue from the native parent link or `## Parent`.
+2. Read blocked-by, blocking, related, reference, and decision issues.
+3. Read accepted decisions in issue bodies and comments.
+4. Run `gh issue develop --list <number>`. Read each linked or referenced
+   prototype branch and commit.
+
+Fetch a missing remote ref before inspection. Inspect a prototype with `git
+diff`, `git show`, and `git ls-tree`. Keep the implementation branch checked out.
+The prototype defines accepted behavior and design intent. It defines production
+structure only when an accepted decision says so.
+
+Do not edit code until you can state the issue scope, locked decisions,
+dependencies, and prototype behavior.
+
 ## Issue relationships and dependencies
 
 When a plan spans an epic and several features, wire the relationships natively. Native links are the source of truth; the epic body carries a human-readable view of them.
@@ -57,9 +76,7 @@ Publish issues in dependency order (blockers first) so the real numbers exist be
 
 ```bash
 # Sub-issue set? -> prints the parent number
-gh api graphql -H "GraphQL-Features: sub_issues" \
-  -f query='query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){issue(number:$n){parentIssue{number}}}}' \
-  -f o="$OWNER" -f r="$REPO" -F n=<child-number> --jq '.data.repository.issue.parentIssue.number'
+gh api repos/{owner}/{repo}/issues/<child-number>/parent --jq '.number'
 
 # Dependency set? -> prints the blocked-by count
 gh api repos/{owner}/{repo}/issues/<blocked-number> --jq '.issue_dependencies_summary.blocked_by'
