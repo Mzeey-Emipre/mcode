@@ -8,6 +8,7 @@ import { pathToFileURL } from "node:url";
 
 import { agentDown } from "./agent-down.mjs";
 import { agentUp } from "./agent-up.mjs";
+import { ensureDependencies } from "./ensure-dependencies.mjs";
 import { getRuntimePaths, resolveRepoRoot } from "./runtime-contract.mjs";
 
 /**
@@ -28,5 +29,6 @@ export async function agentReset(repoRoot = resolveRepoRoot(), options = {}) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const repoRoot = process.argv[2] ? resolve(process.argv[2]) : resolveRepoRoot();
+  ensureDependencies({ repoRoot });
   await agentReset(repoRoot);
 }

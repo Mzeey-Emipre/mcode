@@ -60,9 +60,9 @@ All UI primitives live in `apps/web/src/components/ui/`. **Always use these inst
 
 Vitest and Testing Library protect component behavior and store logic. State, layout, and visual regressions also need live inspection because they depend on the running browser or Electron renderer.
 
-### When live UI verification is required
+### Focused test scope
 
-Use browser use or computer use against the running app before claiming the change is done when you touch:
+Start with focused Vitest or Testing Library coverage when you touch:
 
 - **Interactive chat/sidebar components:** `Composer.tsx`, `MessageList.tsx`, `HeaderActions.tsx`, `RightPanel*`, `ProjectTree.tsx`, `ChatView.tsx`, `DiffToolbar.tsx`.
 - **Responsive layout:** anything that flips behaviour at a breakpoint or on container width, including consumers of `useElementWidth` / `useMediaQuery`, popover-vs-inline switches, and CSS `md:` / `lg:` branches.
@@ -79,33 +79,11 @@ Use browser use or computer use against the running app before claiming the chan
 - Comment-, docstring-, or doc-only edits.
 - Backend-only test additions.
 
-### Minimum bar
+### Minimum check
 
-For every matching change, inspect the affected state at relevant viewport sizes, exercise its interaction and keyboard paths, check accessibility state and console output, and capture visual evidence. Put temporary external Playwright specs and fixtures under `.dev/playwright-scratch`. Put logs, screenshots, and annotations under `.dev/verification/`.
+Add or update the nearest focused test. Run `bun run verify:changed`.
 
-Add or update focused Vitest or Testing Library coverage for durable behavior. Run `bun run verify` and report the live observation plus the regular test result. Do not claim success without fresh evidence.
-
-### Browser fallback order
-
-Use this order for local UI verification:
-
-1. Start the worktree-local runtime and exercise the exact changed state.
-2. Use browser use or computer use when an existing interactive session is
-   available or the behavior requires desktop-only inspection.
-3. Use an external Playwright installation with a temporary deterministic spec
-   under `.dev/playwright-scratch` when browser tooling is unavailable.
-4. When existing data does not expose the state, create a bounded fixture for
-   the temporary external spec.
-5. Declare live verification blocked only when the runtime and available
-   external tooling cannot launch or exercise the behavior.
-
-A missing connected browser is not an external Playwright failure. Do not treat it as a
-reason to skip live browser testing. Keep screenshots, logs, and
-other evidence under `.dev/verification/`, and remove temporary specs before
-committing.
-
-Report the evidence separately:
-
-- **DOM and interaction:** what the live tool exercised and asserted.
-- **Provider or runtime event:** whether the real event path was observed.
-- **Visual inspection:** which viewport and state were captured.
+Use `$electorn-live-testing` when the user requests live proof or the focused
+test cannot cover an Electron-only boundary. Check the exact state, interaction,
+accessibility data, console output, and viewport. Store temporary scripts under
+`.dev/playwright-scratch` and evidence under `.dev/verification/`.

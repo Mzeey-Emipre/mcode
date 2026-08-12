@@ -23,7 +23,8 @@ Start a worktree-local runtime with `bun run --shell system agent:up`. The
 command creates `.dev/`, starts the server and web app, writes `.dev/ports.json`,
 and prints that JSON as its final line after `/health` returns 200. Plain
 `bun run agent:up` still starts the runtime on Windows, but Bun Shell can drop
-that final stdout line.
+that final stdout line. If `node_modules` is absent, the command first runs
+`bun install --frozen-lockfile` once.
 
 Read `.dev/ports.json` instead of recomputing ports. It includes the paired
 `instanceToken` and `worktreeIdentity` used by this worktree's dev UI. Poll
@@ -32,8 +33,6 @@ Read `.dev/ports.json` instead of recomputing ports. It includes the paired
 live in `.dev/logs`. In single-instance dev mode, `/health` does not return a
 token or set an auth cookie.
 
-Use `.dev/playwright-scratch` for exploratory external Playwright setup when it
-helps; the repository does not install or configure Playwright.
 Stop the runtime with `bun run --shell system agent:down`; use
 `bun run --shell system agent:reset` to stop it, delete only `.dev/db`, and start
 a fresh seeded runtime.
@@ -140,7 +139,8 @@ viewport, split position, state, and transition that the user reported.
 
 When working on frontend code, follow the component registry and rules in **[docs/guides/ui-components.md](docs/guides/ui-components.md)**. Always use existing shadcn primitives from `apps/web/src/components/ui/` before creating custom elements.
 
-That guide's **Testing UI Changes** section defines the live checks required for interactive components, responsive layout, accessibility semantics, theme tokens, floating overlays, and persisted first-paint state. Use browser use or computer use against the running app, report the observed result, keep temporary Playwright specs under `.dev/playwright-scratch`, and keep captured evidence under `.dev/verification/`.
+Use the guide's **Testing UI Changes** section to select focused tests and any
+necessary live Electron check.
 
 ## Narrative Timeline
 
@@ -148,7 +148,8 @@ Before touching the Claude provider event pipeline, the agent-service, the `thre
 
 ## Cross-Package Changes
 
-This is a monorepo. When you change a function signature, return type, or shared interface, every package that imports it must still typecheck. Re-run `bun run verify` (it typechecks every package). Do not run `tsc --noEmit` per package — the workflow gate in [`docs/guides/agent-workflow.md`](docs/guides/agent-workflow.md) is the source of truth.
+When a shared interface changes, `bun run verify:changed` must cover its
+importers. Hosted CI owns the full repository gate.
 
 ## Settings
 
@@ -193,31 +194,3 @@ server startup before spawning children.
 ## Agent Development Workflow
 
 @docs/guides/agent-workflow.md
-
-## Verifying Behavior Changes
-
-When a change affects what the app does, verify it in this order. This includes
-UI behavior, IPC handlers, server endpoints, stores, and agent-service behavior.
-
-1. Run it live first. Start the affected app from
-   [docs/agents/runtime.md](docs/agents/runtime.md) with `bun run dev:web`,
-   `bun run dev:server`, or `bun run dev:desktop`. Exercise the changed path as a
-   user or client would. Observe the rendered UI, response body, IPC result, or
-   persisted data. This live run is the main verification step.
-2. Lock it in. Add or update a focused Vitest or Testing Library test in the
-   closest `__tests__/` directory that asserts the observed behavior. Do not
-   commit task-specific browser-driving or screenshot scripts.
-3. Run the regression floor with `bun run verify`.
-
-For local UI changes, use an external Playwright installation when a connected
-browser or computer-use session is unavailable. A missing connected browser
-does not block live verification. Write temporary deterministic specs in
-`.dev/playwright-scratch` and keep screenshots, logs, and other evidence under
-`.dev/verification/`. If existing data does not expose the changed state, create
-a bounded test fixture instead of skipping the UI check. Report live
-verification as blocked only when the runtime and available external tooling
-cannot launch or exercise the behavior.
-
-Report all three: the live action and observed outcome, the regular test that
-protects it, and the `bun run verify` result. If the environment blocks live
-verification, state that explicitly and list the manual check instead.

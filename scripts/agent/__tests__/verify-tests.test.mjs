@@ -85,27 +85,29 @@ test("desktop changes select desktop related tests", () => {
 test("agent script changes select maintained script tests", () => {
   const phases = selectTestPhases(["scripts/agent/hooks/codex-stop.mjs"]);
   assert.equal(phases.length, 1);
-  assert.equal(phases[0].name, SCRIPT_TEST_PHASE.name);
-  assert.deepEqual(phases[0].args, SCRIPT_TEST_PHASE.args);
+  assert.equal(phases[0].name, "Agent Script Test (verify-tests.test.mjs)");
+  assert.match(phases[0].args[1], /verify-tests\.test\.mjs$/);
 });
 
 test("the full gate is a strict superset for agent script changes", () => {
   const files = ["scripts/agent/hooks/codex-stop.mjs"];
-  const changedNames = selectTestPhases(files).map((phase) => phase.name);
   const fullNames = selectTestPhases(files, { forceFull: true }).map((phase) => phase.name);
   assert.deepEqual(fullNames, [FULL_TEST_PHASE.name, SCRIPT_TEST_PHASE.name]);
-  for (const name of changedNames) assert.ok(fullNames.includes(name));
 });
 
-test("shared package changes use the complete unit-test suite", () => {
-  for (const file of ["packages/contracts/src/index.ts", "packages/shared/src/index.ts"]) {
+test("shared package changes use related package tests", () => {
+  for (const [workspace, file] of [
+    ["packages/contracts", "packages/contracts/src/index.ts"],
+    ["packages/shared", "packages/shared/src/index.ts"],
+  ]) {
     const phases = selectTestPhases([file]);
     assert.equal(phases.length, 1);
-    assert.equal(phases[0].name, FULL_TEST_PHASE.name);
+    assert.equal(phases[0].name, `Unit Tests (${workspace})`);
+    assert.deepEqual(phases[0].args, ["vitest", "related", "src/index.ts", "--run"]);
   }
 });
 
-test("root manifests, locks, and verification config use the complete suite", () => {
+test("root manifests, locks, and verification config defer broad tests to CI", () => {
   for (const file of [
     "package.json",
     "bun.lock",
@@ -121,25 +123,36 @@ test("root manifests, locks, and verification config use the complete suite", ()
     "scripts/vitest-test-dir.ts",
   ]) {
     const phases = selectTestPhases([file]);
-    assert.equal(phases[0].name, FULL_TEST_PHASE.name, file);
+    assert.deepEqual(phases, [], file);
   }
 });
 
-test("oversized related-test scopes fall back to the complete suite", () => {
+test("oversized related-test scopes split into focused phases", () => {
   const files = Array.from(
     { length: MAX_RELATED_FILES + 1 },
     (_, index) => `apps/web/src/generated-${index}.ts`,
   );
   const phases = selectTestPhases(files);
-  assert.deepEqual(phases.map((phase) => phase.name), [FULL_TEST_PHASE.name]);
+  assert.equal(phases.length, 2);
+  assert.ok(phases.every((phase) => phase.name.startsWith("Unit Tests (apps/web")));
+  assert.ok(phases.every((phase) => phase.args.length <= MAX_RELATED_FILES + 3));
 });
 
-test("a script and root config change run complete and script test phases", () => {
+test("a script and root config change runs its focused script test", () => {
   const phases = selectTestPhases(["package.json", "scripts/agent/verify-tests.mjs"]);
   assert.deepEqual(phases.map((phase) => phase.name), [
-    FULL_TEST_PHASE.name,
-    SCRIPT_TEST_PHASE.name,
+    "Agent Script Test (verify-tests.test.mjs)",
   ]);
+});
+
+test("unknown agent scripts use the complete script suite", () => {
+  const phases = selectTestPhases(["scripts/agent/new-command.mjs"]);
+  assert.equal(phases.length, 1);
+  assert.equal(phases[0].name, SCRIPT_TEST_PHASE.name);
+});
+
+test("unknown changed files do not select the full suite", () => {
+  assert.deepEqual(selectTestPhases(null), []);
 });
 
 test("workspace changes are bucketed into independent related-test phases", () => {

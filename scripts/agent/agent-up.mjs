@@ -22,6 +22,7 @@ import {
 import { seedFixtureRepo } from "./fixture-repo.mjs";
 import { stopRecordedPidFile } from "./runtime-processes.mjs";
 import { stopRecordedRuntimePids } from "./agent-down.mjs";
+import { ensureDependencies } from "./ensure-dependencies.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(__dirname, "..", "..");
@@ -333,5 +334,6 @@ async function writeStdout(value) {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const repoArg = process.argv.slice(2).find((arg) => !arg.startsWith("--"));
   const repoRoot = repoArg ? resolve(repoArg) : resolveRepoRoot();
+  ensureDependencies({ repoRoot });
   await agentUp(repoRoot);
 }

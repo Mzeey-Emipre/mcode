@@ -47,6 +47,26 @@ test("repository orchestration scripts use Bun without a system Node contract", 
   assert.equal(packageJson.engines, undefined);
 });
 
+test("agent commands install missing dependencies before they start", () => {
+  const packageJson = JSON.parse(readFileSync(resolve("package.json"), "utf8"));
+  assert.equal(
+    packageJson.scripts["deps:ensure"],
+    "bun scripts/agent/ensure-dependencies.mjs",
+  );
+  for (const name of [
+    "dev",
+    "dev:desktop",
+    "dev:web",
+    "dev:server",
+    "verify",
+    "verify:changed",
+    "agent:up",
+    "agent:reset",
+  ]) {
+    assert.equal(packageJson.scripts[`pre${name}`], "bun run deps:ensure", name);
+  }
+});
+
 test("maintained test discovery fails when no tests exist", () => {
   const directory = mkdtempSync(resolve(tmpdir(), "mcode-agent-tests-"));
   try {

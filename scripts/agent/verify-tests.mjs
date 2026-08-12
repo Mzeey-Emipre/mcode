@@ -31,6 +31,8 @@ import {
 } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { ensureDependencies } from "./ensure-dependencies.mjs";
+
 const isWindows = process.platform === "win32";
 /** Maximum child output retained in memory for one phase. */
 export const MAX_RETAINED_OUTPUT_BYTES = 16 * 1024;
@@ -56,7 +58,6 @@ const TESTABLE_WORKSPACES = [
   "packages/contracts",
   "packages/shared",
 ];
-const SHARED_WORKSPACES = ["packages/contracts", "packages/shared"];
 const CODE_EXTENSIONS = new Set([
   ".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs",
 ]);
@@ -70,6 +71,15 @@ const ROOT_VERIFICATION_FILES = new Set([
   ".cursor/hooks.json",
   "scripts/vitest-global-setup.ts",
   "scripts/vitest-test-dir.ts",
+]);
+const AGENT_SCRIPT_TEST_MAP = new Map([
+  ["agent-down.mjs", "runtime-lifecycle.test.mjs"],
+  ["agent-reset.mjs", "runtime-lifecycle.test.mjs"],
+  ["agent-up.mjs", "runtime-lifecycle.test.mjs"],
+  ["ensure-dependencies.mjs", "ensure-dependencies.test.mjs"],
+  ["runtime-processes.mjs", "runtime-lifecycle.test.mjs"],
+  ["test-scripts.mjs", "root-dev-script.test.mjs"],
+  ["verify-tests.mjs", "verify-tests.test.mjs"],
 ]);
 const IDENTITY_CONFIG_FILES = [
   "package.json",
@@ -102,6 +112,29 @@ export const SCRIPT_TEST_PHASE = {
   command: "bun",
   args: ["run", "test:scripts"],
 };
+
+function selectAgentScriptTestPhases(changedFiles, cwd) {
+  const tests = new Set();
+  let needsFullScriptSuite = false;
+  for (const file of changedFiles.filter((path) => path.startsWith("scripts/agent/"))) {
+    if (file.startsWith("scripts/agent/__tests__/") && file.endsWith(".test.mjs")) {
+      tests.add(file);
+      continue;
+    }
+    const mapped = AGENT_SCRIPT_TEST_MAP.get(basename(file))
+      ?? (file.startsWith("scripts/agent/hooks/") ? "verify-tests.test.mjs" : null);
+    if (mapped) tests.add(`scripts/agent/__tests__/${mapped}`);
+    else needsFullScriptSuite = true;
+  }
+  if (needsFullScriptSuite) return [{ ...SCRIPT_TEST_PHASE, cwd }];
+  return [...tests].sort().map((file) => ({
+    name: `Agent Script Test (${basename(file)})`,
+    command: "bun",
+    args: ["test", resolvePath(cwd, file)],
+    cwd,
+    group: "scripts",
+  }));
+}
 
 /** Default phases for the complete regression gate. */
 export const DEFAULT_PHASES = [
@@ -176,13 +209,9 @@ export function hasCodeChanges(options) {
   return files === null || files.length > 0;
 }
 
-function isRootOrManifestChange(file) {
-  return isVerificationConfig(file);
-}
-
 /** Plans the smallest safe maintained test scope for the changed files. */
 export function selectTestPhases(changedFiles, { forceFull = false, cwd = process.cwd() } = {}) {
-  if (changedFiles === null) return [FULL_TEST_PHASE, { ...SCRIPT_TEST_PHASE, cwd }];
+  if (changedFiles === null) return [];
   if (forceFull) {
     return changedFiles.some((file) => file.startsWith("scripts/agent/"))
       ? [FULL_TEST_PHASE, { ...SCRIPT_TEST_PHASE, cwd }]
@@ -191,53 +220,47 @@ export function selectTestPhases(changedFiles, { forceFull = false, cwd = proces
   if (changedFiles.length === 0) return [];
 
   const needsScriptTests = changedFiles.some((file) => file.startsWith("scripts/agent/"));
-  const needsFull = changedFiles.some((file) =>
-    isRootOrManifestChange(file)
-    || SHARED_WORKSPACES.some((workspace) => file === workspace || file.startsWith(`${workspace}/`)),
-  );
-  let relatedScopeTooLarge = false;
-  const phases = needsFull ? [FULL_TEST_PHASE] : [];
-
-  if (!needsFull) {
-    const buckets = new Map();
-    for (const file of changedFiles) {
-      const workspace = TESTABLE_WORKSPACES.find(
-        (candidate) => file === candidate || file.startsWith(`${candidate}/`),
+  const phases = [];
+  const buckets = new Map();
+  for (const file of changedFiles) {
+    if (isVerificationConfig(file)) continue;
+    const workspace = TESTABLE_WORKSPACES.find(
+      (candidate) => file === candidate || file.startsWith(`${candidate}/`),
+    );
+    if (!workspace) continue;
+    const files = buckets.get(workspace) ?? [];
+    files.push(file.slice(workspace.length + 1));
+    buckets.set(workspace, files);
+  }
+  for (const [workspace, files] of buckets) {
+    const chunks = [];
+    let chunk = [];
+    for (const file of files) {
+      const candidate = [...chunk, file];
+      const argvBytes = Buffer.byteLength(
+        JSON.stringify(["vitest", "related", ...candidate, "--run"]),
       );
-      if (!workspace) continue;
-      const files = buckets.get(workspace) ?? [];
-      files.push(file);
-      buckets.set(workspace, files);
-    }
-    for (const [workspace, files] of buckets) {
-      const relatedArgs = files.map((file) => file.slice(workspace.length + 1));
-      const argvBytes = Buffer.byteLength(JSON.stringify(["vitest", "related", ...relatedArgs, "--run"]));
-      if (relatedArgs.length > MAX_RELATED_FILES || argvBytes > MAX_RELATED_ARG_BYTES) {
-        relatedScopeTooLarge = true;
-        break;
+      if (chunk.length > 0
+        && (candidate.length > MAX_RELATED_FILES || argvBytes > MAX_RELATED_ARG_BYTES)) {
+        chunks.push(chunk);
+        chunk = [file];
+      } else {
+        chunk = candidate;
       }
+    }
+    if (chunk.length > 0) chunks.push(chunk);
+    for (const [index, filesChunk] of chunks.entries()) {
+      const suffix = chunks.length > 1 ? ` ${index + 1}/${chunks.length}` : "";
       phases.push({
-        name: `Unit Tests (${workspace})`,
+        name: `Unit Tests (${workspace}${suffix})`,
         command: "bunx",
-        args: [
-          "vitest",
-          "related",
-          ...relatedArgs,
-          "--run",
-        ],
+        args: ["vitest", "related", ...filesChunk, "--run"],
         cwd: resolvePath(cwd, workspace),
       });
     }
   }
 
-  if (relatedScopeTooLarge) {
-    phases.length = 0;
-    phases.push(FULL_TEST_PHASE);
-  }
-
-  if (needsScriptTests && !phases.some((phase) => phase.name === SCRIPT_TEST_PHASE.name)) {
-    phases.push({ ...SCRIPT_TEST_PHASE, cwd });
-  }
+  if (needsScriptTests) phases.push(...selectAgentScriptTestPhases(changedFiles, cwd));
   return phases;
 }
 
@@ -497,8 +520,9 @@ export async function runPhasesInParallel(
 
 /** Runs core phases in parallel, then agent script tests without resource contention. */
 export async function runVerificationPhases(phases, options = {}) {
-  const corePhases = phases.filter((phase) => phase.name !== SCRIPT_TEST_PHASE.name);
-  const scriptPhases = phases.filter((phase) => phase.name === SCRIPT_TEST_PHASE.name);
+  const isScriptPhase = (phase) => phase.name === SCRIPT_TEST_PHASE.name || phase.group === "scripts";
+  const corePhases = phases.filter((phase) => !isScriptPhase(phase));
+  const scriptPhases = phases.filter(isScriptPhase);
   const core = await runPhasesInParallel(corePhases, options);
   if (scriptPhases.length === 0) return core;
 
@@ -853,6 +877,7 @@ async function main() {
     print(result.reason);
     process.exit(result.code);
   }
+  ensureDependencies();
   const result = await runVerification({ gate });
   process.exit(result.code);
 }
