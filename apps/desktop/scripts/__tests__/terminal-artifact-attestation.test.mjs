@@ -38,6 +38,13 @@ function elfBinary(machine) {
   return bytes;
 }
 
+function machOBinary(cpuType) {
+  const bytes = Buffer.alloc(32);
+  bytes.writeUInt32BE(0xfeedfacf, 0);
+  bytes.writeUInt32BE(cpuType, 4);
+  return bytes;
+}
+
 describe("attestPackagedTerminalArtifacts", () => {
   let resourcesRoot;
   let nodePtyRoot;
@@ -235,6 +242,57 @@ describe("attestPackagedTerminalArtifacts", () => {
       "node-pty",
       "koffi",
     ]);
+  });
+
+  it("gives a Rosetta artifact probe the shared packaged-runtime startup budget", () => {
+    const darwinNodePtyBinding = path.join(
+      nodePtyRoot,
+      "build/Release/pty.node",
+    );
+    const darwinSpawnHelper = path.join(
+      nodePtyRoot,
+      "build/Release/spawn-helper",
+    );
+    const darwinKoffiBinding = path.join(
+      koffiRoot,
+      "build/koffi/darwin_x64/koffi.node",
+    );
+    writeFile(darwinNodePtyBinding, machOBinary(0x01000007));
+    writeFile(darwinSpawnHelper, machOBinary(0x01000007));
+    writeFile(darwinKoffiBinding, machOBinary(0x01000007));
+
+    retainTargetTerminalNativeArtifacts({
+      resourcesRoot,
+      targetPlatform: "darwin",
+      targetArch: "x64",
+    });
+
+    let startupTimeoutMs;
+    attestPackagedTerminalArtifacts({
+      resourcesRoot,
+      runtimePath,
+      hostPlatform: "darwin",
+      hostArch: "arm64",
+      targetPlatform: "darwin",
+      targetArch: "x64",
+      runLoadProbe: (input) => {
+        startupTimeoutMs = input.startupTimeoutMs;
+        return {
+          platform: "darwin",
+          arch: "x64",
+          modulesAbi: "127",
+          nodeVersion: "22.18.0",
+          electronVersion: "35.7.5",
+          hostReady: true,
+          nativeModules: [
+            { packageName: "node-pty", path: darwinNodePtyBinding },
+            { packageName: "koffi", path: darwinKoffiBinding },
+          ],
+        };
+      },
+    });
+
+    expect(startupTimeoutMs).toBe(60_000);
   });
 
   it("retains a valid target prebuild when a stale rebuilt binding is foreign", () => {
