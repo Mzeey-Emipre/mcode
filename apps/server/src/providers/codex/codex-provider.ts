@@ -1289,6 +1289,9 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
               `mcp_servers.mcode-browser.bearer_token_env_var=${JSON.stringify(browserTokenEnvName)}`,
             ]
           : []),
+        ...(browserGrant?.rolloutMode === "browser-v2"
+          ? ['plugins."browser@openai-bundled".enabled=false']
+          : []),
       ],
     });
 

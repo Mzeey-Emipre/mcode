@@ -152,7 +152,11 @@ function receiptLabel(
   return `${COMPLETED_ACTION_LABELS[receipt.operation] ?? "Completed a Browser action"}${resizeSuffix(step)}`;
 }
 
-function failedToolLabel(result: BrowserNarrativeResult | null): string | null {
+function failedToolLabel(
+  result: BrowserNarrativeResult | null,
+  cancelled: boolean,
+): string | null {
+  if (cancelled) return "Browser action cancelled";
   if (!result || result.outcome === "completed") return null;
   if (result.recovery === "yield_to_user" || result.errorCode === "HUMAN_INTERRUPTED") {
     return "Stopped when you took control";
@@ -170,7 +174,7 @@ function failedToolLabel(result: BrowserNarrativeResult | null): string | null {
 }
 
 function toolLabel(toolCall: ToolCall, active: boolean, result: BrowserNarrativeResult | null): string {
-  const failureLabel = failedToolLabel(result);
+  const failureLabel = failedToolLabel(result, toolCall.isCancelled === true);
   if (!active && failureLabel) return failureLabel;
   const operation = resolveBrowserNarrativeTool(toolCall.toolName);
   const input = safeInput(toolCall);

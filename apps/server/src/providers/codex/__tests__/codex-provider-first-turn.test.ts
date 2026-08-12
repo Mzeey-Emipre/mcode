@@ -125,6 +125,7 @@ describe("CodexProvider first turn on new session", () => {
 
   it("passes loopback browser MCP config and a child-only bearer token", async () => {
     const lease = new BrowserAutomationSessionLease();
+    const inheritedBrowserToken = process.env.MCODE_BROWSER_MCP_TOKEN;
     lease.configure({
       mcpUrl: "http://127.0.0.1:19400/mcp",
       worktreeIdentity: "worktree-test",
@@ -148,16 +149,40 @@ describe("CodexProvider first turn on new session", () => {
     expect(server.options.configOverrides).toEqual([
       'mcp_servers.mcode-browser.url="http://127.0.0.1:19400/mcp"',
       'mcp_servers.mcode-browser.bearer_token_env_var="MCODE_BROWSER_MCP_TOKEN"',
+      'plugins."browser@openai-bundled".enabled=false',
     ]);
     expect(server.options.developerInstructions).toContain("browser_inspect");
     expect(server.options.developerInstructions).toContain("yield_to_user");
     expect(server.options.developerInstructions).not.toContain("browser_status");
     expect(server.options.developerInstructions).toContain(MCODE_BROWSER_GUIDE.trim());
     expect(server.spawnedEnv?.MCODE_BROWSER_MCP_TOKEN).toMatch(/^[A-Za-z0-9_-]{40,}$/);
-    expect(process.env.MCODE_BROWSER_MCP_TOKEN).toBeUndefined();
+    expect(process.env.MCODE_BROWSER_MCP_TOKEN).toBe(inheritedBrowserToken);
     await new Promise<void>((resolve) => setImmediate(resolve));
     await provider.stopSession(sessionId);
     expect(lease.credentials.size()).toBe(0);
+  });
+
+  it("does not disable the bundled Browser plugin without a Browser v2 grant", async () => {
+    const provider = makeProvider();
+
+    await provider.sendTurn({
+      turnExecutionId: "test-execution",
+      sessionId: "mcode-without-browser-grant",
+      workspaceId: "workspace-test",
+      threadId: "without-browser-grant",
+      message: "continue without Browser",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "supervised",
+    });
+
+    const server = appServers.at(-1)!;
+    expect(server.options.configOverrides).not.toContain(
+      'plugins."browser@openai-bundled".enabled=false',
+    );
+    await provider.stopSession("mcode-without-browser-grant");
   });
 
   it("revokes a browser credential when app-server startup fails", async () => {

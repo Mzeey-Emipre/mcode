@@ -222,6 +222,22 @@ describe("BrowserActivityRow", () => {
     expect(container.textContent).not.toContain("SECRET");
   });
 
+  it("renders a cancelled Browser call with no output as cancelled instead of completed", () => {
+    render(
+      <ToolSummaryLine
+        group={{
+          calls: [browserCall({ output: null, isCancelled: true })],
+        }}
+        hasError={false}
+        hasCancelled
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Used the browser" }));
+    expect(screen.getByText("Browser action cancelled")).toBeTruthy();
+    expect(screen.queryByText("Completed Browser actions")).toBeNull();
+  });
+
   it("restores persisted Browser input and receipt meaning", () => {
     const record: ToolCallRecord = {
       id: "browser-persisted",

@@ -14,6 +14,65 @@ import { pathToFileURL } from "node:url";
 import { terminateProcessTree } from "./process-tree.mjs";
 
 const SESSION_FILE_NAME = "electron-live-testing.json";
+const CDP_PROBE_TIMEOUT_MS = 1_000;
+
+function isCdpVersionPayload(value) {
+  if (!value || typeof value !== "object") return false;
+  const payload = value;
+  if (
+    typeof payload.Browser !== "string" ||
+    payload.Browser.trim().length === 0 ||
+    typeof payload["Protocol-Version"] !== "string" ||
+    payload["Protocol-Version"].trim().length === 0 ||
+    typeof payload.webSocketDebuggerUrl !== "string"
+  ) return false;
+  try {
+    const websocketUrl = new URL(payload.webSocketDebuggerUrl);
+    return (
+      (websocketUrl.protocol === "ws:" || websocketUrl.protocol === "wss:") &&
+      websocketUrl.pathname.startsWith("/devtools/browser/") &&
+      websocketUrl.pathname.length > "/devtools/browser/".length
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Probes a loopback CDP JSON/version endpoint with a bounded HTTP attempt. */
+export async function probeCdpVersion(
+  endpoint,
+  { fetchImpl = globalThis.fetch, timeoutMs = CDP_PROBE_TIMEOUT_MS } = {},
+) {
+  const timeoutSignal = typeof AbortSignal.timeout === "function"
+    ? AbortSignal.timeout(timeoutMs)
+    : (() => {
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(), timeoutMs).unref?.();
+        return controller.signal;
+      })();
+  let timeoutId;
+  const timeout = new Promise((resolveTimeout) => {
+    timeoutId = setTimeout(() => resolveTimeout(false), timeoutMs);
+  });
+  const request = Promise.resolve()
+    .then(() => fetchImpl(`${endpoint}/json/version`, { signal: timeoutSignal }))
+    .then(async (response) => {
+      if (!response?.ok) return false;
+      let payload;
+      try {
+        payload = await response.json();
+      } catch {
+        return false;
+      }
+      return isCdpVersionPayload(payload);
+    })
+    .catch(() => false);
+  try {
+    return await Promise.race([request, timeout]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
 
 /** Starts one detached Electron process with an agent-owned dynamic CDP endpoint. */
 export async function startElectron(repoRoot = process.cwd(), options = {}) {
@@ -186,8 +245,7 @@ async function isReusable(record, root) {
   }
   try {
     process.kill(record.pid, 0);
-    const response = await fetch(`http://127.0.0.1:${record.debugPort}/json/version`);
-    return response.ok;
+    return await probeCdpVersion(`http://127.0.0.1:${record.debugPort}`);
   } catch {
     return false;
   }
@@ -199,12 +257,7 @@ async function waitForDebugger(endpoint, child) {
     if (child.exitCode !== null) {
       throw new Error(`Electron exited before CDP became ready with code ${child.exitCode}`);
     }
-    try {
-      const response = await fetch(`${endpoint}/json/version`);
-      if (response.ok) return;
-    } catch {
-      // Connection refusal is expected while Electron starts.
-    }
+    if (await probeCdpVersion(endpoint)) return;
     await new Promise((resolveWait) => setTimeout(resolveWait, 200));
   }
   throw new Error("Electron CDP endpoint did not become ready within 60 seconds");
