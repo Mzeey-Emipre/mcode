@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { Message, ToolCall, HookExecution, PermissionMode, InteractionMode, AttachmentMeta, StoredAttachment, ToolCallRecord, ThoughtSegmentRecord } from "@/transport";
-import type { AgentEvent, ContextWindowMode, MessageMention, ReasoningLevel, OrchestrationMode, PlanQuestion, PlanAnswer, QuotaCategory, ProviderBillingMode, ProviderUsageInfo, GoalLookupResult, GoalState, PreviewAnnotationBundle, TurnFileEffectSummary, TurnRuntimeSnapshot } from "@mcode/contracts";
+import type { AgentEvent, CanonicalAgentEventEnvelope, CanonicalAgentReconnectRecovery, ContextWindowMode, MessageMention, ReasoningLevel, OrchestrationMode, PlanQuestion, PlanAnswer, QuotaCategory, ProviderBillingMode, ProviderUsageInfo, GoalLookupResult, GoalState, PreviewAnnotationBundle, TurnFileEffectSummary, TurnRuntimeSnapshot } from "@mcode/contracts";
 import type { PermissionRequest, PermissionDecision } from "@mcode/contracts";
 import type { ThoughtSegment } from "@/components/chat/narrative/types";
 import {
@@ -66,6 +66,10 @@ import {
   patchThreadRecord,
   deleteThreadRecord,
 } from "./thread-record";
+import {
+  applyCanonicalPushEvents,
+  applyCanonicalReconnectRecovery,
+} from "./canonical-agent-replica";
 
 function deriveRunningThreadIds(records: Map<string, ThreadRecord>): Set<string> {
   return new Set(
@@ -270,6 +274,15 @@ interface ThreadState {
   /** Mark a permission request as settled with its decision. */
   resolvePermissionRequest: (requestId: string, decision: PermissionDecision) => void;
   handleAgentEvent: (event: AgentEvent) => void;
+  /** Install ordered canonical reconnect results before later push revisions. */
+  applyCanonicalReconnectRecoveries: (
+    recoveries: readonly CanonicalAgentReconnectRecovery[],
+  ) => void;
+  /** Apply one committed canonical push batch to its thread replica. */
+  handleCanonicalAgentEvents: (
+    threadId: string,
+    events: readonly CanonicalAgentEventEnvelope[],
+  ) => void;
   /** Refresh the provider-neutral goal lookup for a thread and update cached thread state. */
   refreshThreadGoal: (threadId: string) => Promise<GoalLookupResult>;
   /** Clear the active goal through the app RPC and update cached thread state. */
@@ -1402,6 +1415,32 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     recapByThread: {},
     toolCallRecordCache: new LruCache<string, ToolCallRecord[]>(TOOL_CALL_CACHE_SIZE),
     recentlyAnsweredPlanMessageIds: new Set<string>(),
+
+  applyCanonicalReconnectRecoveries: (recoveries) => {
+    set((state) => {
+      let records = state.records;
+      let changed = false;
+      for (const recovery of recoveries) {
+        const current = getThreadRecord(records, recovery.threadId);
+        const update = applyCanonicalReconnectRecovery(current.canonicalAgent, recovery);
+        if (update.replica === current.canonicalAgent) continue;
+        records = patchThreadRecord(records, recovery.threadId, { canonicalAgent: update.replica });
+        changed = true;
+      }
+      return changed ? { records } : {};
+    });
+  },
+
+  handleCanonicalAgentEvents: (threadId, events) => {
+    set((state) => {
+      const current = getThreadRecord(state.records, threadId);
+      const update = applyCanonicalPushEvents(current.canonicalAgent, threadId, events);
+      if (update.replica === current.canonicalAgent) return {};
+      return {
+        records: patchThreadRecord(state.records, threadId, { canonicalAgent: update.replica }),
+      };
+    });
+  },
 
   cacheToolCallRecords: (key, records) => {
     get().toolCallRecordCache.set(key, records);

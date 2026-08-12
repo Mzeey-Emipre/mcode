@@ -13,6 +13,7 @@ const {
   chatViewGetTransportMock,
   chatViewTransportMock,
   chatViewThreadStoreSetStateMock,
+  chatViewApplyCanonicalRecoveriesMock,
   chatViewResidencyMock,
 } = vi.hoisted(() => ({
   chatViewWorkspaceMockRef: { current: null as Record<string, unknown> | null },
@@ -27,6 +28,7 @@ const {
     retryTurn: vi.fn(),
   },
   chatViewThreadStoreSetStateMock: vi.fn(),
+  chatViewApplyCanonicalRecoveriesMock: vi.fn(),
   chatViewResidencyMock: {
     invalidateConversation: vi.fn(),
     refresh: vi.fn().mockResolvedValue(undefined),
@@ -62,7 +64,10 @@ vi.mock("@/stores/threadStore", () => {
       }
       return selector(chatViewThreadMockRef.current);
     }),
-    { setState: chatViewThreadStoreSetStateMock },
+    {
+      setState: chatViewThreadStoreSetStateMock,
+      getState: () => chatViewThreadMockRef.current,
+    },
   );
   return { useThreadStore };
 });
@@ -239,7 +244,11 @@ function disableAtomicSubscriptionTransport() {
 
 /** Enable the atomic transport path and return its caller-boundary spy. */
 function enableAtomicSubscriptionTransport() {
-  const setThreadSubscriptions = vi.fn().mockResolvedValue(undefined);
+  const setThreadSubscriptions = vi.fn().mockResolvedValue({
+    hydrationRequiredThreadIds: [],
+    replayedThrough: {},
+    canonicalRecoveries: [],
+  });
   Object.defineProperty(chatViewTransportMock, "setThreadSubscriptions", {
     configurable: true,
     writable: true,
@@ -260,6 +269,7 @@ function defaultThreadState(overrides: Partial<{
     currentThreadId: overrides.currentThreadId ?? "thread-1",
     runningThreadIds: overrides.runningThreadIds ?? new Set<string>(),
     activeRecord: overrides.activeRecord ?? createEmptyThreadRecord(),
+    applyCanonicalReconnectRecoveries: chatViewApplyCanonicalRecoveriesMock,
     clearMessages: vi.fn(),
     deactivateConversation: vi.fn(),
     setForkMode: vi.fn(),
@@ -281,6 +291,7 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     chatViewGetTransportMock.mockReset();
     chatViewGetTransportMock.mockReturnValue(chatViewTransportMock);
     chatViewThreadStoreSetStateMock.mockClear();
+    chatViewApplyCanonicalRecoveriesMock.mockClear();
     chatViewResidencyMock.invalidateConversation.mockClear();
     chatViewResidencyMock.refresh.mockClear();
     __resetThreadSwitchTelemetryForTests();
@@ -695,7 +706,13 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     const { rerender } = render(<ChatView />);
 
     await waitFor(() => {
-      expect(setThreadSubscriptions).toHaveBeenCalledWith({ threadIds: ["thread-1", "thread-2"] });
+      expect(setThreadSubscriptions).toHaveBeenCalledWith({
+        threadIds: ["thread-1", "thread-2"],
+        revisions: {
+          "thread-1": { conversationRevision: 0, rosterRevision: 0 },
+          "thread-2": { conversationRevision: 0, rosterRevision: 0 },
+        },
+      });
     });
     expect(chatViewTransportMock.subscribeThread).not.toHaveBeenCalled();
     expect(chatViewTransportMock.unsubscribeThread).not.toHaveBeenCalled();
@@ -704,7 +721,10 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     rerender(<ChatView />);
 
     await waitFor(() => {
-      expect(setThreadSubscriptions).toHaveBeenCalledWith({ threadIds: ["thread-1"] });
+      expect(setThreadSubscriptions).toHaveBeenCalledWith({
+        threadIds: ["thread-1"],
+        revisions: { "thread-1": { conversationRevision: 0, rosterRevision: 0 } },
+      });
     });
     expect(setThreadSubscriptions).toHaveBeenCalledTimes(2);
   });
@@ -712,7 +732,15 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
   it("sends observed cursors without reconciling cursor-only changes", async () => {
     const setThreadSubscriptions = enableAtomicSubscriptionTransport();
     const runningThreadIds = new Set<string>();
-    const firstRecord = { ...createEmptyThreadRecord(), lastAgentEventSequence: 7 };
+    const emptyRecord = createEmptyThreadRecord();
+    const firstRecord = {
+      ...emptyRecord,
+      canonicalAgent: {
+        ...emptyRecord.canonicalAgent,
+        revision: { conversationRevision: 4, rosterRevision: 2 },
+      },
+      lastAgentEventSequence: 7,
+    };
     setupWorkspaceMock(defaultWorkspaceState({ activeThreadId: "thread-1" }));
     chatViewThreadMockRef.current = defaultThreadState({
       currentThreadId: "thread-1",
@@ -726,6 +754,7 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
       expect(setThreadSubscriptions).toHaveBeenCalledWith({
         threadIds: ["thread-1"],
         cursors: { "thread-1": 7 },
+        revisions: { "thread-1": { conversationRevision: 4, rosterRevision: 2 } },
       });
     });
 
@@ -739,6 +768,42 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     rerender(<ChatView />);
 
     expect(setThreadSubscriptions).toHaveBeenCalledTimes(1);
+  });
+
+  it("installs a canonical reconnect snapshot before it refreshes the visible conversation", async () => {
+    const record = createEmptyThreadRecord();
+    const recovery = {
+      mode: "snapshot" as const,
+      threadId: "thread-1",
+      snapshot: {
+        revision: { conversationRevision: 2, rosterRevision: 0 },
+        state: record.canonicalAgent.state,
+      },
+    };
+    const setThreadSubscriptions = vi.fn().mockResolvedValue({
+      hydrationRequiredThreadIds: [],
+      replayedThrough: {},
+      canonicalRecoveries: [recovery],
+    });
+    Object.defineProperty(chatViewTransportMock, "setThreadSubscriptions", {
+      configurable: true,
+      writable: true,
+      value: setThreadSubscriptions,
+    });
+    chatViewThreadMockRef.current = defaultThreadState({
+      currentThreadId: "thread-1",
+      activeRecord: record,
+      records: new Map([["thread-1", record]]),
+    });
+
+    render(<ChatView />);
+
+    await waitFor(() => {
+      expect(chatViewApplyCanonicalRecoveriesMock).toHaveBeenCalledWith([recovery]);
+      expect(chatViewResidencyMock.refresh).toHaveBeenCalledWith("thread-1", expect.any(Array));
+    });
+    expect(chatViewApplyCanonicalRecoveriesMock.mock.invocationCallOrder[0])
+      .toBeLessThan(chatViewResidencyMock.refresh.mock.invocationCallOrder[0]!);
   });
 
   it("does not record telemetry for an already-applied empty atomic subscription set", () => {
@@ -816,7 +881,10 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     const { rerender } = render(<ChatView />);
 
     await waitFor(() => expect(setThreadSubscriptions).toHaveBeenCalledTimes(1));
-    expect(requests[0]?.input).toEqual({ threadIds: ["thread-1"] });
+    expect(requests[0]?.input).toEqual({
+      threadIds: ["thread-1"],
+      revisions: { "thread-1": { conversationRevision: 0, rosterRevision: 0 } },
+    });
 
     setupWorkspaceMock({ ...defaultWorkspaceState(), activeThreadId: "thread-2", threads: [makeThread({ id: "thread-2" })] });
     rerender(<ChatView />);
@@ -827,7 +895,10 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     requests[0]?.resolve();
     await waitFor(() => {
       expect(setThreadSubscriptions).toHaveBeenCalledTimes(2);
-      expect(requests[1]?.input).toEqual({ threadIds: ["thread-2"] });
+      expect(requests[1]?.input).toEqual({
+        threadIds: ["thread-2"],
+        revisions: { "thread-2": { conversationRevision: 0, rosterRevision: 0 } },
+      });
     });
 
     requests[1]?.resolve();
@@ -846,7 +917,10 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     });
     const { rerender, unmount } = render(<ChatView />);
 
-    await waitFor(() => expect(setThreadSubscriptions).toHaveBeenCalledWith({ threadIds: ["thread-1"] }));
+    await waitFor(() => expect(setThreadSubscriptions).toHaveBeenCalledWith({
+      threadIds: ["thread-1"],
+      revisions: { "thread-1": { conversationRevision: 0, rosterRevision: 0 } },
+    }));
 
     setupWorkspaceMock({ ...defaultWorkspaceState(), activeThreadId: null, threads: [] });
     rerender(<ChatView />);
@@ -995,6 +1069,10 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
       expect(setThreadSubscriptions).toHaveBeenCalledTimes(2);
       expect(setThreadSubscriptions).toHaveBeenNthCalledWith(2, {
         threadIds: ["thread-1", "thread-2"],
+        revisions: {
+          "thread-1": { conversationRevision: 0, rosterRevision: 0 },
+          "thread-2": { conversationRevision: 0, rosterRevision: 0 },
+        },
       });
     });
     requests[1]?.reject(new Error("temporary atomic subscribe failure"));
@@ -1003,6 +1081,10 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
       expect(setThreadSubscriptions).toHaveBeenCalledTimes(3);
       expect(setThreadSubscriptions).toHaveBeenNthCalledWith(3, {
         threadIds: ["thread-1", "thread-2"],
+        revisions: {
+          "thread-1": { conversationRevision: 0, rosterRevision: 0 },
+          "thread-2": { conversationRevision: 0, rosterRevision: 0 },
+        },
       });
     }, { timeout: 3000 });
   });
@@ -1017,8 +1099,12 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
 
     await waitFor(() => {
       expect(setThreadSubscriptions).toHaveBeenCalledTimes(2);
-      expect(setThreadSubscriptions).toHaveBeenNthCalledWith(1, { threadIds: ["thread-1"] });
-      expect(setThreadSubscriptions).toHaveBeenNthCalledWith(2, { threadIds: ["thread-1"] });
+      const expected = {
+        threadIds: ["thread-1"],
+        revisions: { "thread-1": { conversationRevision: 0, rosterRevision: 0 } },
+      };
+      expect(setThreadSubscriptions).toHaveBeenNthCalledWith(1, expected);
+      expect(setThreadSubscriptions).toHaveBeenNthCalledWith(2, expected);
     }, { timeout: 3000 });
   });
 
@@ -1077,7 +1163,10 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
 
     await waitFor(() => {
       expect(setThreadSubscriptions).toHaveBeenCalledTimes(1);
-      expect(setThreadSubscriptions).toHaveBeenLastCalledWith({ threadIds: ["thread-1"] });
+      expect(setThreadSubscriptions).toHaveBeenLastCalledWith({
+        threadIds: ["thread-1"],
+        revisions: { "thread-1": { conversationRevision: 0, rosterRevision: 0 } },
+      });
     });
 
     chatViewConnectionStatusRef.current = "reconnecting";
@@ -1089,7 +1178,10 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
 
     await waitFor(() => {
       expect(setThreadSubscriptions).toHaveBeenCalledTimes(2);
-      expect(setThreadSubscriptions).toHaveBeenLastCalledWith({ threadIds: ["thread-1"] });
+      expect(setThreadSubscriptions).toHaveBeenLastCalledWith({
+        threadIds: ["thread-1"],
+        revisions: { "thread-1": { conversationRevision: 0, rosterRevision: 0 } },
+      });
     });
   });
 

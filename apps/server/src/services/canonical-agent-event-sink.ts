@@ -9,6 +9,7 @@ import {
   MAX_TURN_RECOVERIES,
   ProviderIdentitySchema,
   CANONICAL_AGENT_EVENT_BATCH_MAX,
+  CANONICAL_AGENT_RECONNECT_DELTA_MAX_EVENTS,
   createAgentModelState,
   reduceAgentEvent,
   reduceAgentEventBatch,
@@ -18,6 +19,8 @@ import {
   type AgentTurn,
   type CanonicalAgentEvent,
   type CanonicalAgentEventEnvelope,
+  type CanonicalAgentReconnectRecovery,
+  type CanonicalAgentRevision,
   type CollaborationAction,
   type ConversationNarrativeBatch,
   type Message,
@@ -335,6 +338,72 @@ export class CanonicalAgentEventSink {
   loadThread(threadId: string): AgentThread | null {
     const row = this.db.prepare("SELECT * FROM canonical_agent_threads WHERE id = ?").get(threadId);
     return row ? this.threadFromRow(row as Record<string, unknown>) : null;
+  }
+
+  /** Restore one renderer replica from contiguous durable events or a canonical snapshot. */
+  recoverThread(
+    threadId: string,
+    known: CanonicalAgentRevision,
+  ): CanonicalAgentReconnectRecovery {
+    const thread = this.loadThread(threadId);
+    const through = {
+      conversationRevision: thread?.conversationRevision ?? 0,
+      rosterRevision: thread?.rosterRevision ?? 0,
+    };
+    const snapshot = (): CanonicalAgentReconnectRecovery => ({
+      mode: "snapshot",
+      threadId,
+      snapshot: {
+        revision: through,
+        state: this.loadState(threadId),
+      },
+    });
+
+    if (
+      known.conversationRevision > through.conversationRevision
+      || known.rosterRevision > through.rosterRevision
+    ) {
+      return snapshot();
+    }
+
+    if (
+      known.conversationRevision === through.conversationRevision
+      && known.rosterRevision === through.rosterRevision
+    ) {
+      return { mode: "delta", threadId, from: known, through, events: [] };
+    }
+
+    const rows = this.db.prepare(`
+      SELECT envelope_json
+      FROM canonical_agent_events
+      WHERE thread_id = ?
+        AND (durable_revision > ? OR COALESCE(roster_revision, 0) > ?)
+      ORDER BY durable_revision ASC, persisted_at ASC, event_id ASC
+      LIMIT ?
+    `).all(
+      threadId,
+      known.conversationRevision,
+      known.rosterRevision,
+      CANONICAL_AGENT_RECONNECT_DELTA_MAX_EVENTS + 1,
+    ) as Array<{ envelope_json: string }>;
+    if (rows.length > CANONICAL_AGENT_RECONNECT_DELTA_MAX_EVENTS) return snapshot();
+
+    const events = rows.map((row) =>
+      CanonicalAgentEventEnvelopeSchema.parse(JSON.parse(row.envelope_json))
+    );
+    const conversationContiguous = this.hasContiguousRevisions(
+      events.map((event) => event.durableRevision),
+      known.conversationRevision,
+      through.conversationRevision,
+    );
+    const rosterContiguous = this.hasContiguousRevisions(
+      events.flatMap((event) => event.rosterRevision === undefined ? [] : [event.rosterRevision]),
+      known.rosterRevision,
+      through.rosterRevision,
+    );
+    if (!conversationContiguous || !rosterContiguous) return snapshot();
+
+    return { mode: "delta", threadId, from: known, through, events };
   }
 
   /** Load one canonical turn record. */
@@ -1402,7 +1471,7 @@ export class CanonicalAgentEventSink {
     return applications;
   }
 
-  private loadState(threadId: string, executionId: string): AgentModelState {
+  private loadState(threadId: string, executionId?: string): AgentModelState {
     const state = createAgentModelState();
     const thread = this.loadThread(threadId);
     if (thread) state.threads[thread.id] = thread;
@@ -1440,11 +1509,26 @@ export class CanonicalAgentEventSink {
       const current = state.lastAcceptedSequenceByExecution[event.execution_id] ?? 0;
       state.lastAcceptedSequenceByExecution[event.execution_id] = Math.max(current, event.accepted_sequence);
     }
-    const checkpoint = this.loadCheckpoint(executionId);
-    if (checkpoint) {
+    const checkpoint = executionId ? this.loadCheckpoint(executionId) : null;
+    if (executionId && checkpoint) {
       state.lastAcceptedSequenceByExecution[executionId] = checkpoint.lastAcceptedSequence;
     }
     return state;
+  }
+
+  private hasContiguousRevisions(
+    revisions: readonly number[],
+    from: number,
+    through: number,
+  ): boolean {
+    if (from === through) return true;
+    let expected = from + 1;
+    for (const revision of [...new Set(revisions)].sort((left, right) => left - right)) {
+      if (revision < expected) continue;
+      if (revision !== expected) return false;
+      expected += 1;
+    }
+    return expected === through + 1;
   }
 
   private persistState(

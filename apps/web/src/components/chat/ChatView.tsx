@@ -343,6 +343,13 @@ export function ChatView() {
   const branchFromMessageId = activeForkMode?.messageId;
   const branchFromMessageContent = activeForkMode?.content ?? undefined;
   const runningThreadIds = useThreadStore((s) => s.runningThreadIds);
+  const canonicalRecoverySignature = useThreadStore((state) =>
+    Array.from(state.records)
+      .filter(([, record]) => record.canonicalAgent.recoveryRequired)
+      .map(([threadId]) => threadId)
+      .sort()
+      .join("\u0000")
+  );
   const hydratedThreadId = useThreadStore((s) => s.currentThreadId);
   const messageCount = useActiveThreadRecord((r) => r.messages.length);
   const residentContent = useActiveThreadRecord(hasResidentContent);
@@ -582,8 +589,12 @@ export function ChatView() {
       const sortedThreadIds = orderedDesiredThreadIds;
       const sentThreadIds = new Set(sortedThreadIds);
       const confirmed = confirmedThreadIdsRef.current;
+      const needsCanonicalRecovery = sortedThreadIds.some((threadId) =>
+        readThreadRecord(threadId).canonicalAgent.recoveryRequired
+      );
       const alreadyApplied = confirmed.size === desired.size
-        && Array.from(confirmed).every((threadId) => desired.has(threadId));
+        && Array.from(confirmed).every((threadId) => desired.has(threadId))
+        && !needsCanonicalRecovery;
       const pending = atomicSubscriptionRequestRef.current;
       if (alreadyApplied) {
         const telemetryThreadId = activeThreadId ?? sortedThreadIds[0];
@@ -600,9 +611,11 @@ export function ChatView() {
       };
       pendingAtomicThreadIdsRef.current.set(requestId, sortedThreadIds);
       const cursors: NonNullable<SetThreadSubscriptionsInput["cursors"]> = {};
+      const revisions: NonNullable<SetThreadSubscriptionsInput["revisions"]> = {};
       const cursorAuthority = new Map<string, { epoch?: string; sequence?: number }>();
       for (const threadId of sortedThreadIds) {
         const record = readThreadRecord(threadId);
+        revisions[threadId] = record.canonicalAgent.revision;
         const sequence = record.lastAgentEventSequence;
         if (typeof sequence === "number" && sequence > 0) {
           cursorAuthority.set(threadId, {
@@ -615,8 +628,8 @@ export function ChatView() {
         }
       }
       const input = Object.keys(cursors).length > 0
-        ? { threadIds: sortedThreadIds, cursors }
-        : { threadIds: sortedThreadIds };
+        ? { threadIds: sortedThreadIds, cursors, revisions }
+        : { threadIds: sortedThreadIds, revisions };
       const isCurrentAtomicResponse = () => {
         const currentRequest = atomicSubscriptionRequestRef.current;
         const latestDesired = desiredThreadIdsRef.current;
@@ -631,8 +644,30 @@ export function ChatView() {
       };
       void setThreadSubscriptions(input).then((result) => {
         if (!isCurrentAtomicResponse()) return;
+        const canonicalRecoveries = result?.canonicalRecoveries ?? [];
+        if (canonicalRecoveries.length > 0) {
+          useThreadStore.getState().applyCanonicalReconnectRecoveries(canonicalRecoveries);
+        }
+        const residency = getConversationResidency();
+        for (const recovery of canonicalRecoveries) {
+          const requested = revisions[recovery.threadId];
+          const through = recovery.mode === "snapshot"
+            ? recovery.snapshot.revision
+            : recovery.through;
+          const changed = recovery.mode === "snapshot"
+            || !requested
+            || through.conversationRevision > requested.conversationRevision
+            || through.rosterRevision > requested.rosterRevision;
+          if (!changed) continue;
+          residency.invalidateConversation(recovery.threadId);
+          if (recovery.threadId === activeThreadId) {
+            void residency.refresh(
+              activeThreadId,
+              useWorkspaceStore.getState().threads,
+            ).catch(() => {});
+          }
+        }
         if (result?.hydrationRequiredThreadIds?.length) {
-          const residency = getConversationResidency();
           for (const threadId of result.hydrationRequiredThreadIds) {
             const expected = cursorAuthority.get(threadId);
             if (!isCurrentAtomicResponse()) return;
@@ -771,7 +806,7 @@ export function ChatView() {
         }
       }, delay);
     });
-  }, [activeThreadId, connectionStatus, runningThreadIds, subscriptionReconcileVersion]);
+  }, [activeThreadId, canonicalRecoverySignature, connectionStatus, runningThreadIds, subscriptionReconcileVersion]);
 
   useEffect(() => {
     subscriptionMountedRef.current = true;

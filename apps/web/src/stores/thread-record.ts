@@ -14,6 +14,10 @@ import type {
 import type { PermissionRequest, PermissionDecision } from "@mcode/contracts";
 import { PERMISSION_MODES, INTERACTION_MODES } from "@mcode/contracts";
 import type { ThoughtSegment } from "@/components/chat/narrative/types";
+import {
+  createCanonicalAgentReplica,
+  type CanonicalAgentReplica,
+} from "./canonical-agent-replica";
 /**
  * Ephemeral metadata for a handoff artifact received via the `thread.handoff` push channel.
  * Mirrors the server-side `HandoffMeta` fields that the UI needs, plus the pipeline status.
@@ -80,6 +84,8 @@ export interface ThreadForkMode {
  * Collapses the former ~30 parallel `Record<string, X>` maps and active-thread mirror fields.
  */
 export interface ThreadRecord {
+  /** Canonical durable state installed through the reconnect revision protocol. */
+  canonicalAgent: CanonicalAgentReplica;
   /** Mcode-owned identity for the current logical turn. */
   turnExecutionId: string | null;
   /** Authoritative lifecycle phase restored from server runtime snapshots. */
@@ -180,6 +186,7 @@ const CONVERSATION_REVISION_FIELDS = new Set<keyof ThreadRecord>(
 /** Returns a fresh empty {@link ThreadRecord} for lazy Map insertion. */
 export function createEmptyThreadRecord(): ThreadRecord {
   return {
+    canonicalAgent: createCanonicalAgentReplica(),
     turnExecutionId: null,
     runtimePhase: "idle",
     messages: [],
@@ -238,6 +245,7 @@ export function getThreadRecord(
     record.pendingTurnPersistMessageIds != null
     && record.narrativeByMessage != null
     && record.conversationRevision != null
+    && record.canonicalAgent != null
   ) {
     return record;
   }
@@ -247,6 +255,7 @@ export function getThreadRecord(
       record.pendingTurnPersistMessageIds ?? EMPTY_PENDING_TURN_PERSIST_MESSAGE_IDS,
     narrativeByMessage: record.narrativeByMessage ?? EMPTY_NARRATIVE_BY_MESSAGE,
     conversationRevision: record.conversationRevision ?? 0,
+    canonicalAgent: record.canonicalAgent ?? createCanonicalAgentReplica(),
   };
 }
 

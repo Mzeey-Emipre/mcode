@@ -84,6 +84,18 @@ describe("thread switching WebSocket contracts", () => {
     }).success).toBe(false);
     expect(method.params.safeParse({
       threadIds: ["thread-1"],
+      revisions: {
+        "thread-1": { conversationRevision: 4, rosterRevision: 2 },
+      },
+    }).success).toBe(true);
+    expect(method.params.safeParse({
+      threadIds: ["thread-1"],
+      revisions: {
+        "thread-1": { conversationRevision: -1, rosterRevision: 2 },
+      },
+    }).success).toBe(false);
+    expect(method.params.safeParse({
+      threadIds: ["thread-1"],
       cursors: Object.fromEntries(
         Array.from({ length: MAX_THREAD_SUBSCRIPTIONS + 1 }, (_, index) => [`thread-${index}`, index]),
       ),
@@ -95,6 +107,7 @@ describe("thread switching WebSocket contracts", () => {
     const result = {
       hydrationRequiredThreadIds: ["thread-1"],
       replayedThrough: { "thread-2": 12 },
+      canonicalRecoveries: [],
     };
 
     const parsed = method.result.safeParse(result);
@@ -112,6 +125,7 @@ describe("thread switching WebSocket contracts", () => {
     expect(method.result.safeParse({
       hydrationRequiredThreadIds: ["thread-1"],
       replayedThrough: { "thread-2": 0 },
+      canonicalRecoveries: [],
     }).success).toBe(false);
   });
 

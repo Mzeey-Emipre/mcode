@@ -194,6 +194,87 @@ describe("CanonicalAgentEventSink", () => {
     expect(published.mock.calls[0]![0].every((event) => event.durableRevision === 1)).toBe(true);
   });
 
+  it("returns only retained contiguous canonical deltas after known revisions", () => {
+    sink.commit({
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      executionId: EXECUTION_ID,
+      phase: "running",
+      events: initialDrafts(),
+    });
+
+    const recovery = sink.recoverThread(THREAD_ID, {
+      conversationRevision: 0,
+      rosterRevision: 0,
+    });
+
+    expect(recovery).toMatchObject({
+      mode: "delta",
+      from: { conversationRevision: 0, rosterRevision: 0 },
+      through: { conversationRevision: 1, rosterRevision: 0 },
+    });
+    expect(recovery.mode === "delta" ? recovery.events : []).toHaveLength(3);
+    expect(recovery.mode === "delta"
+      ? recovery.events.every((event) => event.durableRevision === 1)
+      : false).toBe(true);
+  });
+
+  it("returns a declared canonical snapshot when retained revisions contain a gap", () => {
+    sink.commit({
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      executionId: EXECUTION_ID,
+      phase: "running",
+      events: initialDrafts(),
+    });
+    sink.commit({
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      executionId: EXECUTION_ID,
+      phase: "completed",
+      terminalOutcome: "completed",
+      events: [terminalDraft("turn.completed")],
+    });
+    db.prepare("DELETE FROM canonical_agent_events WHERE durable_revision = 1").run();
+
+    const recovery = sink.recoverThread(THREAD_ID, {
+      conversationRevision: 0,
+      rosterRevision: 0,
+    });
+
+    expect(recovery).toMatchObject({
+      mode: "snapshot",
+      snapshot: {
+        revision: { conversationRevision: 2, rosterRevision: 0 },
+        state: {
+          threads: { [THREAD_ID]: { conversationRevision: 2 } },
+          turns: { [TURN_ID]: { status: "Completed" } },
+        },
+      },
+    });
+  });
+
+  it("returns an empty delta when the renderer already owns current revisions", () => {
+    sink.commit({
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      executionId: EXECUTION_ID,
+      phase: "running",
+      events: initialDrafts(),
+    });
+
+    expect(sink.recoverThread(THREAD_ID, {
+      conversationRevision: 1,
+      rosterRevision: 0,
+    })).toEqual({
+      mode: "delta",
+      threadId: THREAD_ID,
+      from: { conversationRevision: 1, rosterRevision: 0 },
+      through: { conversationRevision: 1, rosterRevision: 0 },
+      events: [],
+    });
+  });
+
   it("retains only the five fixed active-turn write statements", () => {
     const preparedSql: string[] = [];
     const originalPrepare = db.prepare.bind(db);
