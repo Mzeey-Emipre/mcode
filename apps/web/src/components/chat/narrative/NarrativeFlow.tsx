@@ -2,15 +2,9 @@ import { useMemo } from "react";
 import type { ToolCall, HookExecution } from "@/transport/types";
 import type { ThoughtSegment, NarrativeItem } from "./types";
 import { buildNarrativeItems } from "./build-narrative";
-import { ThoughtBlock } from "./ThoughtBlock";
-import { ToolSummaryLine } from "./ToolSummaryLine";
-import { HookRow } from "./HookRow";
-import { SubagentRow } from "./SubagentRow";
-import { ActiveToolRow } from "./ActiveToolRow";
-import { DeltaBlock } from "./DeltaBlock";
+import { NarrativeRow } from "./NarrativeRow";
 import {
   NarrativePerformanceBoundary,
-  NarrativePerformanceRow,
   narrativePerformanceRowId,
 } from "./NarrativePerformanceBoundary";
 
@@ -86,45 +80,6 @@ function keyForItem(item: NarrativeItem, index: number): string {
 }
 
 /**
- * Renders the correct child component for a given narrative item type.
- * `mostActiveSubagentId` is the tool call ID of the running subagent with the
- * most recent child activity - only that one receives the primary tint.
- */
-function renderItem(item: NarrativeItem, _mostActiveSubagentId: string | null, allToolCalls: readonly ToolCall[]): React.ReactNode {
-  switch (item.type) {
-    case "thought":
-      return <ThoughtBlock segment={item.segment} isActive={item.isActive} />;
-    case "tool-group":
-      return (
-        <ToolSummaryLine
-          group={item.group}
-          hasError={item.hasError}
-          hasCancelled={item.hasCancelled}
-        />
-      );
-    case "hook":
-      return <HookRow hook={item.hook} />;
-    case "subagent":
-      return (
-        <SubagentRow
-          toolCall={item.toolCall}
-          participants={item.participants}
-          lifecycle={item.lifecycle}
-          children={item.children}
-          hooks={item.hooks}
-          allToolCalls={allToolCalls}
-        />
-      );
-    case "active-tool":
-      return <ActiveToolRow toolCall={item.toolCall} />;
-    case "delta":
-      return <DeltaBlock text={item.text} />;
-    default:
-      return null;
-  }
-}
-
-/**
  * Main timeline container for the narrative flow.
  *
  * Renders a vertical line, dot markers for each item, and delegates
@@ -159,42 +114,6 @@ export function NarrativeFlow({
     ],
   );
 
-  /**
-   * ID of the running subagent with the most recent child tool call `startedAt`.
-   * Only this subagent receives the primary-tinted background.
-   * Subagents with no defined timestamps are skipped so we never pick a false winner via `0` fallbacks.
-   */
-  const mostActiveSubagentId = useMemo<string | null>(() => {
-    const runningSubagents = items.filter(
-      (item): item is Extract<NarrativeItem, { type: "subagent" }> =>
-        item.type === "subagent" && !item.toolCall.isComplete,
-    );
-    if (runningSubagents.length === 0) return null;
-
-    const latestKnownActivity = (
-      sa: Extract<NarrativeItem, { type: "subagent" }>,
-    ): number | null => {
-      const stamps: number[] = [];
-      if (sa.toolCall.startedAt != null) stamps.push(sa.toolCall.startedAt);
-      for (const tc of sa.children) {
-        if (tc.startedAt != null) stamps.push(tc.startedAt);
-      }
-      return stamps.length === 0 ? null : Math.max(...stamps);
-    };
-
-    let bestId: string | null = null;
-    let bestTime = -Infinity;
-    for (const sa of runningSubagents) {
-      const latest = latestKnownActivity(sa);
-      if (latest == null) continue;
-      if (latest > bestTime) {
-        bestTime = latest;
-        bestId = sa.toolCall.id;
-      }
-    }
-    return bestId;
-  }, [items]);
-
   // Split items: timeline rows (tools, sub-agents, hooks, in-line text) all
   // render in chronological order. The delta (final streaming response) lives
   // outside the timeline so it can transition seamlessly into the persisted
@@ -219,9 +138,11 @@ export function NarrativeFlow({
                 "narrative-row-enter min-w-0 max-w-full",
               ].join(" ")}
             >
-              <NarrativePerformanceRow rowId={keyForItem(item, i)}>
-                {renderItem(item, mostActiveSubagentId, toolCalls)}
-              </NarrativePerformanceRow>
+              <NarrativeRow
+                rowId={keyForItem(item, i)}
+                item={item}
+                allToolCalls={toolCalls}
+              />
             </div>
           ))}
         </div>

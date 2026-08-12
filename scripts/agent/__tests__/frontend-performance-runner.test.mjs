@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import { summarizeDurationSamples } from "../../perf/frontend-performance-collectors.mjs";
 import {
   FRONTEND_RENDERER_WORKLOADS,
+  validateNarrativeRowIsolation,
   validateWorkloadCheck,
 } from "../../perf/frontend-renderer-fixture.mjs";
 import {
@@ -74,6 +75,17 @@ describe("frontend performance runner", () => {
     } finally {
       process.argv.splice(0, process.argv.length, ...originalArguments);
     }
+  });
+
+  it("rejects stable narrative sibling renders", () => {
+    assert.deepEqual(validateNarrativeRowIsolation({
+      affectedRow: { rowId: "thought-1", renderCount: 1 },
+      stableSiblingRows: [{ rowId: "hook-1", renderCount: 1 }],
+    }), ["stable narrative row rendered: hook-1"]);
+    assert.deepEqual(validateNarrativeRowIsolation({
+      affectedRow: { rowId: "thought-1", renderCount: 1 },
+      stableSiblingRows: [{ rowId: "hook-1", renderCount: 0 }],
+    }), []);
   });
 
   it("accepts only profiling and production modes", () => {

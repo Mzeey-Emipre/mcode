@@ -209,6 +209,22 @@ export function validateWorkloadCheck(workload, check) {
   return failures;
 }
 
+/** Returns profiling failures for one measured narrative-row update. */
+export function validateNarrativeRowIsolation(reactAttribution) {
+  if (!reactAttribution) return [];
+  const failures = [];
+  if (reactAttribution.affectedRow?.renderCount !== 1) {
+    failures.push("expected the affected narrative row to render once");
+  }
+  const renderedSibling = reactAttribution.stableSiblingRows.find(
+    (row) => row.renderCount !== 0,
+  );
+  if (renderedSibling) {
+    failures.push(`stable narrative row rendered: ${renderedSibling.rowId}`);
+  }
+  return failures;
+}
+
 /** Run the shared frontend renderer matrix against one Playwright page. */
 export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "production") {
   if (!Number.isSafeInteger(sampleCount) || sampleCount < 1 || sampleCount > 50) {
@@ -555,7 +571,6 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
     }).map(([name, result]) => {
       const rawSamples = result.samples.map((durationMs, sampleIndex) => {
         const observed = result.checks[sampleIndex];
-        const failures = [...validateWorkloadCheck(name, observed), ...pageFailures];
         const attribution = result.attributions[sampleIndex];
         if (name === "denseNarrative" && attribution.react) {
           attribution.react.affectedRow = observed.affectedRowId
@@ -569,6 +584,14 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
             renderCount: attribution.react.rowRenders[rowId] ?? 0,
           }));
         }
+        const rowIsolationFailures = name === "denseNarrative"
+          ? validateNarrativeRowIsolation(attribution.react)
+          : [];
+        const failures = [
+          ...validateWorkloadCheck(name, observed),
+          ...rowIsolationFailures,
+          ...pageFailures,
+        ];
         return {
           sampleIndex,
           durationMs,

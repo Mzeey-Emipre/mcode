@@ -439,4 +439,38 @@ describe("buildPersistedNarrativeItems", () => {
     expect(firstTexts).toEqual(["note"]);
     expect(secondTexts).toEqual(["BODY", "note"]);
   });
+
+  it("preserves unchanged row inputs when one persisted record changes", () => {
+    const stableThought = makeThought({ id: "th-stable", text: "stable", sort_order: 2 });
+    const tool = makeTool({ id: "tool-stable", sort_order: 3 });
+    const hook = makeHook({ id: "hook-stable", sort_order: 4 });
+    const first = buildPersistedNarrativeItems({
+      tools: [tool],
+      thoughts: [makeThought({ id: "th-changing", text: "before" }), stableThought],
+      hooks: [hook],
+    });
+    const second = buildPersistedNarrativeItems({
+      tools: [tool],
+      thoughts: [makeThought({ id: "th-changing", text: "after" }), stableThought],
+      hooks: [hook],
+    });
+
+    const firstStableThought = first.find(
+      (item) => item.type === "thought" && item.segment.text === "stable",
+    );
+    const secondStableThought = second.find(
+      (item) => item.type === "thought" && item.segment.text === "stable",
+    );
+    const firstTool = first.find((item) => item.type === "tool-group");
+    const secondTool = second.find((item) => item.type === "tool-group");
+    const firstHook = first.find((item) => item.type === "hook");
+    const secondHook = second.find((item) => item.type === "hook");
+
+    expect(firstStableThought?.type === "thought" ? firstStableThought.segment : null)
+      .toBe(secondStableThought?.type === "thought" ? secondStableThought.segment : null);
+    expect(firstTool?.type === "tool-group" ? firstTool.group.calls[0] : null)
+      .toBe(secondTool?.type === "tool-group" ? secondTool.group.calls[0] : null);
+    expect(firstHook?.type === "hook" ? firstHook.hook : null)
+      .toBe(secondHook?.type === "hook" ? secondHook.hook : null);
+  });
 });
