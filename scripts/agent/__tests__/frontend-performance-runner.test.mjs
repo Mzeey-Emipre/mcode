@@ -88,6 +88,29 @@ describe("frontend performance runner", () => {
     }), []);
   });
 
+  it("enforces the dense narrative DOM and disclosure contract", () => {
+    const accepted = {
+      sourceRows: 90,
+      descendants: 499,
+      browseDescendants: 499,
+      browsed: true,
+      returnedToSummary: true,
+      visible: true,
+      assistantVisible: true,
+      thoughtVisible: true,
+      lastThoughtVisible: true,
+      toolVisible: true,
+      lastToolVisible: true,
+      hookVisible: true,
+    };
+
+    assert.deepEqual(validateWorkloadCheck("denseNarrative", accepted), []);
+    assert.deepEqual(validateWorkloadCheck("denseNarrative", {
+      ...accepted,
+      descendants: 500,
+    }), ["dense narrative viewport exceeded 499 descendants"]);
+  });
+
   it("accepts only profiling and production modes", () => {
     const originalArguments = [...process.argv];
     try {

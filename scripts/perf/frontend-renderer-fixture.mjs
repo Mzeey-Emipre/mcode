@@ -191,6 +191,10 @@ export function validateWorkloadCheck(workload, check) {
       break;
     case "denseNarrative":
       requireCheck(check.sourceRows === 90, "dense narrative fixture row count differs");
+      requireCheck(check.descendants < 500, "dense narrative viewport exceeded 499 descendants");
+      requireCheck(check.browseDescendants < 500, "dense narrative browser exceeded 499 descendants");
+      requireCheck(check.browsed === true, "dense narrative browser did not reach every page");
+      requireCheck(check.returnedToSummary === true, "dense narrative browser did not return to summary");
       requireCheck(check.visible === true, "dense narrative message is not visible");
       requireCheck(check.assistantVisible === true, "dense narrative response content is missing");
       requireCheck(check.thoughtVisible === true, "dense narrative thought content is missing");
@@ -465,6 +469,7 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
       }
       const row = document.querySelector(`[data-message-id="${messageId}"]`);
       const list = document.querySelector('[data-testid="message-list"]');
+      const toolSummaries = [...document.querySelectorAll("[data-first-tool-call-id]")];
       return {
         durationMs: performance.now() - startedAt,
         check: {
@@ -474,8 +479,12 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
           assistantVisible: list?.textContent?.includes("Dense narrative fixture completed.") ?? false,
           thoughtVisible: list?.textContent?.includes("Narration segment 0") ?? false,
           lastThoughtVisible: list?.textContent?.includes("Narration segment 19") ?? false,
-          toolVisible: list?.textContent?.includes("Fixture input 0") ?? false,
-          lastToolVisible: list?.textContent?.includes("Fixture input 59") ?? false,
+          toolVisible: toolSummaries.some((summary) =>
+            summary.getAttribute("data-first-tool-call-id") === `${messageId}-tool-0`,
+          ),
+          lastToolVisible: toolSummaries.some((summary) =>
+            summary.getAttribute("data-last-tool-call-id") === `${messageId}-tool-59`,
+          ),
           hookVisible: list?.textContent?.includes("PreToolUse") ?? false,
           affectedRowId,
           stableSiblingRowIds,
@@ -484,6 +493,43 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
       };
     }, { sampleIndex: sample, profileUpdate: mode === "profiling" && sample >= 0 });
   }, modeCollector);
+
+  const denseDisclosureCheck = await page.evaluate(async () => {
+    const list = document.querySelector('[data-testid="message-list"]');
+    const expand = [...document.querySelectorAll("button")].find((button) =>
+      button.textContent?.startsWith("Browse all "),
+    );
+    expand?.click();
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    let browseDescendants = list?.querySelectorAll("*").length ?? 0;
+    let pageCount = 0;
+    while (pageCount < 20) {
+      pageCount += 1;
+      const next = [...document.querySelectorAll("button")].find((button) =>
+        button.textContent === "Next" && !button.disabled,
+      );
+      if (!next) break;
+      next.click();
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      browseDescendants = Math.max(
+        browseDescendants,
+        list?.querySelectorAll("*").length ?? 0,
+      );
+    }
+    const summary = [...document.querySelectorAll("button")].find((button) =>
+      button.textContent === "Summary",
+    );
+    summary?.click();
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    return {
+      browsed: pageCount > 1,
+      returnedToSummary: [...document.querySelectorAll("button")].some((button) =>
+        button.textContent?.startsWith("Browse all "),
+      ),
+      browseDescendants,
+    };
+  });
+  for (const check of denseNarrative.checks) Object.assign(check, denseDisclosureCheck);
 
   const markdownShiki = await timeFixture(page, sampleCount, async (sample) => {
     return page.evaluate(async (sampleIndex) => {

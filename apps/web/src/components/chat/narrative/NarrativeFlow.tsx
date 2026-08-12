@@ -1,12 +1,9 @@
 import { useMemo } from "react";
 import type { ToolCall, HookExecution } from "@/transport/types";
-import type { ThoughtSegment, NarrativeItem } from "./types";
+import type { ThoughtSegment } from "./types";
 import { buildNarrativeItems } from "./build-narrative";
-import { NarrativeRow } from "./NarrativeRow";
-import {
-  NarrativePerformanceBoundary,
-  narrativePerformanceRowId,
-} from "./NarrativePerformanceBoundary";
+import { NarrativeRows } from "./NarrativeRows";
+import { NarrativePerformanceBoundary } from "./NarrativePerformanceBoundary";
 
 /** Props for the NarrativeFlow container component. */
 export interface NarrativeFlowProps {
@@ -27,56 +24,6 @@ export interface NarrativeFlowProps {
    * segments matching this body are suppressed until volatile state resets.
    */
   committedAssistantBody?: string;
-}
-
-/**
- * Returns the top-margin class for a given narrative item.
- *
- * Text rows get a comfortable gap so the response breathes apart from the
- * preceding action row. Tools, hooks, and sub-agents stack tightly into a
- * single "actions molecule" — they read as one group of agent activity
- * rather than independent timeline rows.
- */
-function marginClassForItem(item: NarrativeItem, index: number): string {
-  if (index === 0) return "mt-0";
-  switch (item.type) {
-    case "thought":
-      return "mt-3";
-    case "tool-group":
-    case "hook":
-      return "mt-1";
-    case "subagent":
-      return "mt-1";
-    case "active-tool":
-      return "mt-1";
-    case "delta":
-      return "mt-2";
-    default:
-      return "mt-0";
-  }
-}
-
-/**
- * Returns a stable key string for a given narrative item and index.
- * Uses type-specific identifiers where available to avoid unnecessary re-mounts.
- */
-function keyForItem(item: NarrativeItem, index: number): string {
-  switch (item.type) {
-    case "thought":
-      return `thought-${item.segment.startedAt}-${index}`;
-    case "tool-group":
-      return `tool-group-${item.group.calls[0]?.id ?? index}`;
-    case "hook":
-      return `hook-${item.hook.hookName}-${item.hook.startedAt}-${index}`;
-    case "subagent":
-      return `subagent-${item.toolCall.id}-${item.lifecycle}-${index}`;
-    case "active-tool":
-      return `active-tool-${item.toolCall.id}`;
-    case "delta":
-      return "delta";
-    default:
-      return `item-${index}`;
-  }
 }
 
 /**
@@ -128,24 +75,7 @@ export function NarrativeFlow({
           rows (tools, hooks, sub-agents) stack tightly as one "actions
           molecule" while text rows breathe with a larger top margin. */}
       {timelineItems.length > 0 && (
-        <div className="flex min-w-0 max-w-full flex-col">
-          {timelineItems.map((item, i) => (
-            <div
-              key={keyForItem(item, i)}
-              data-performance-row-id={narrativePerformanceRowId(keyForItem(item, i))}
-              className={[
-                marginClassForItem(item, i),
-                "narrative-row-enter min-w-0 max-w-full",
-              ].join(" ")}
-            >
-              <NarrativeRow
-                rowId={keyForItem(item, i)}
-                item={item}
-                allToolCalls={toolCalls}
-              />
-            </div>
-          ))}
-        </div>
+        <NarrativeRows items={timelineItems} allToolCalls={toolCalls} animateEntry />
       )}
 
       {/* The live "X steps · N subagents · phase…" indicator is rendered as

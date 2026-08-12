@@ -3,15 +3,12 @@ import { useThreadStore } from "@/stores/threadStore";
 import { useActiveThreadRecord } from "@/stores/thread-selectors";
 import type { NarrativeItem } from "./types";
 import type { ToolCall } from "@/transport/types";
-import { NarrativeRow } from "./NarrativeRow";
+import { NarrativeRows } from "./NarrativeRows";
 import {
   buildPersistedNarrativeItems,
   recordToToolCall,
 } from "./build-persisted-narrative";
-import {
-  NarrativePerformanceBoundary,
-  narrativePerformanceRowId,
-} from "./NarrativePerformanceBoundary";
+import { NarrativePerformanceBoundary } from "./NarrativePerformanceBoundary";
 
 /** Props for `PersistedNarrative`. */
 export interface PersistedNarrativeProps {
@@ -22,43 +19,6 @@ export interface PersistedNarrativeProps {
    * safety net to suppress thought segments that duplicate the message body.
    */
   messageContent?: string;
-}
-
-/**
- * Top-margin class for a persisted row. Mirrors the live `marginClassForItem`.
- *
- * Tools, hooks, and sub-agents stack tightly as one "actions molecule".
- * Text rows get a comfortable gap so the response breathes apart from the
- * preceding action group.
- */
-function marginClassForItem(item: NarrativeItem, index: number): string {
-  if (index === 0) return "mt-0";
-  switch (item.type) {
-    case "thought":
-      return "mt-3";
-    case "tool-group":
-    case "hook":
-    case "subagent":
-      return "mt-1";
-    default:
-      return "mt-0";
-  }
-}
-
-/** Stable key for a persisted row. */
-function keyForItem(item: NarrativeItem, index: number): string {
-  switch (item.type) {
-    case "thought":
-      return `thought-${item.segment.startedAt}-${index}`;
-    case "tool-group":
-      return `tool-group-${item.group.calls[0]?.id ?? index}`;
-    case "hook":
-      return `hook-${item.hook.hookName}-${item.hook.startedAt}-${index}`;
-    case "subagent":
-      return `subagent-${item.toolCall.id}-${item.lifecycle}-${index}`;
-    default:
-      return `item-${index}`;
-  }
 }
 
 /**
@@ -104,21 +64,7 @@ export function PersistedNarrative({ messageId, messageContent }: PersistedNarra
   return (
     <NarrativePerformanceBoundary>
     <div className="relative min-w-0 max-w-full">
-      <div className="flex min-w-0 max-w-full flex-col">
-        {items.map((item, i) => (
-          <div
-            key={keyForItem(item, i)}
-            data-performance-row-id={narrativePerformanceRowId(keyForItem(item, i))}
-            className={`${marginClassForItem(item, i)} min-w-0 max-w-full`}
-          >
-            <NarrativeRow
-              rowId={keyForItem(item, i)}
-              item={item}
-              allToolCalls={allToolCalls}
-            />
-          </div>
-        ))}
-      </div>
+      <NarrativeRows items={items} allToolCalls={allToolCalls} />
     </div>
     </NarrativePerformanceBoundary>
   );

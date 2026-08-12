@@ -139,7 +139,11 @@ export function ToolSummaryLine({
     : null;
 
   return (
-    <div className="min-w-0 max-w-full rounded-md">
+    <div
+      className="min-w-0 max-w-full rounded-md"
+      data-first-tool-call-id={group.calls[0]?.id}
+      data-last-tool-call-id={group.calls[group.calls.length - 1]?.id}
+    >
       {/* Summary row */}
       <NarrativeSummaryLine
         open={open}
@@ -153,11 +157,13 @@ export function ToolSummaryLine({
       </NarrativeSummaryLine>
 
       {/* Expanded detail list */}
-      <AnimatedCollapsible open={open}>
-        <ul className="mt-1 min-w-0 max-w-full space-y-1 pb-2 pl-6">
-          {group.calls.map((tc) => <ToolCallDetailRow key={tc.id} toolCall={tc} />)}
-        </ul>
-      </AnimatedCollapsible>
+      {open ? (
+        <AnimatedCollapsible open>
+          <ul className="mt-1 min-w-0 max-w-full space-y-1 pb-2 pl-6">
+            {group.calls.map((tc) => <ToolCallDetailRow key={tc.id} toolCall={tc} />)}
+          </ul>
+        </AnimatedCollapsible>
+      ) : null}
     </div>
   );
 }
