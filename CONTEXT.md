@@ -259,6 +259,20 @@ elsewhere."
 
 ## Chat lifecycle
 
+### Setup gate
+The Thread-owned decision that controls whether the first Turn can start while
+automatic Setup is required. A Setup pass or **Continue without setup** releases
+the gate permanently for that Thread. Manual Setup does not close a released
+gate.
+_Avoid_: Setup status
+
+### Setup attempt
+One execution of a Project environment's Setup command for a Thread. A Thread
+can have many Setup attempts, and each attempt keeps its own result. The Setup
+gate and Setup attempts are separate concepts: an attempt records what happened,
+while the gate records whether the first Turn can start.
+_Avoid_: Setup gate, Setup run status
+
 ### Turn
 One round of agent execution within a thread, bounded by a `TurnStarted`
 event and a `TurnCompleted` event. A turn may be triggered by a user, provider,
