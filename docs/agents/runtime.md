@@ -63,7 +63,7 @@ web frontend. No system Node.js executable or version manager is required.
 
 CI desktop packaging is the only exception. The packaging jobs provision Node
 24.18.0 with `actions/setup-node` before running
-`bun apps/desktop/scripts/ci-package.mjs`. Bun remains the workflow orchestrator;
+`bun apps/desktop/scripts/desktop-packaging/target-package/ci-package.mjs`. Bun remains the workflow orchestrator;
 the helper uses the provisioned Node executable for npm, electron-builder, and
 native-module rebuild compatibility. Local development and agent workflows need
 only Bun.

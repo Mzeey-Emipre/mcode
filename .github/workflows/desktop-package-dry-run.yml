@@ -9,8 +9,11 @@ on:
       - ".github/workflows/nightly-desktop.yml"
       - ".github/workflows/build-release.yml"
       - "apps/desktop/**"
-      - "apps/web/package.json"
-      - "packages/contracts/src/models/terminal-diagnostics.ts"
+      - "apps/server/**"
+      - "apps/web/**"
+      - "packages/**"
+      - "apps/desktop/scripts/**"
+      - ".github/workflows/**"
       - "scripts/build-server-dev-bundle.mjs"
       - "package.json"
       - "bun.lock"
@@ -23,20 +26,44 @@ permissions:
   contents: read
 
 jobs:
-  package-linux-desktop:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target-id: windows-x64
+            runner: blacksmith-2vcpu-windows-2025
+            platform: windows
+            arch: x64
+            build-args: ""
+          - target-id: linux-x64
+            runner: blacksmith-2vcpu-ubuntu-2404
+            platform: linux
+            arch: x64
+            build-args: ""
+          - target-id: macos-arm64
+            runner: blacksmith-6vcpu-macos-26
+            platform: macos
+            arch: arm64
+            build-args: --mac --arm64
+          - target-id: macos-x64
+            runner: blacksmith-6vcpu-macos-26
+            platform: macos
+            arch: x64
+            build-args: --mac --x64
     uses: ./.github/workflows/desktop-package-target.yml
     with:
-      runner: blacksmith-2vcpu-ubuntu-2404
-      target-platform: linux
-      target-arch: x64
-      build-args: --linux dir AppImage deb
+      runner: ${{ matrix.runner }}
+      target-platform: ${{ matrix.platform }}
+      target-arch: ${{ matrix.arch }}
+      build-args: ${{ matrix.build-args }}
       channel: pull-request
       expected-legacy: true
       signing-required: false
       retention-days: 1
 
   verify-release-evidence:
-    needs: package-linux-desktop
+    needs: package
     runs-on: blacksmith-2vcpu-ubuntu-2404
     timeout-minutes: 10
     steps:
@@ -46,10 +73,10 @@ jobs:
       - uses: oven-sh/setup-bun@v2
       - uses: actions/download-artifact@v4
         with:
-          name: desktop-target-linux-x64
-          path: staged/linux-x64
+          pattern: desktop-target-*
+          path: staged
       - name: Verify aggregate release evidence
         run: >-
-          bun apps/desktop/scripts/terminal-release-evidence.mjs aggregate
+          bun apps/desktop/scripts/desktop-packaging/package-validation/terminal-release-evidence.mjs aggregate
           --input-dir staged
           --channel pull-request

@@ -842,3 +842,17 @@ flowchart LR
     D --> F["macOS<br/>(DMG + zip)"]
     D --> G["Linux<br/>(AppImage + deb)"]
 ```
+
+All release channels use one target-package path: `desktop-package-target.yml`
+is called once for each Windows x64, Linux x64, macOS arm64, and macOS x64
+target. The final unpacked/staged target is validated for package shape, native
+inventory and load, packaged server startup, PTY host startup, signing
+evidence, hashes, and target metadata. Nightly and Stable are publication
+adapters over the same staged target evidence. Nightly uses unsigned targets;
+Stable requires production signing and notarization.
+
+The pull-request dry run uses the complete four-target matrix. An
+electron-builder failure is retryable only when its output identifies an
+Electron release download and EOF, ECONNRESET, ETIMEDOUT, or a temporary
+connection failure. Native rebuild, package validation, Terminal attestation,
+signing, and unknown failures remain deterministic failures and are not retried.

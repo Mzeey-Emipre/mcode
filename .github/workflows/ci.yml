@@ -194,7 +194,7 @@ jobs:
       - run: bun run build
 
       - name: Generate V8 snapshot
-        run: bun apps/desktop/scripts/generate-snapshot.mjs
+        run: bun apps/desktop/scripts/desktop-packaging/target-package/generate-snapshot.mjs
 
       - name: Smoke test server bundle
-        run: bun apps/desktop/scripts/smoke-test.mjs --bundle
+        run: bun apps/desktop/scripts/desktop-packaging/package-validation/smoke-test.mjs --bundle

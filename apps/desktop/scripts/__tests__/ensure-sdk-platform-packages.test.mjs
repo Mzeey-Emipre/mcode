@@ -13,7 +13,7 @@ import {
   resolveInstallRoot,
   verifyPackageIntegrity,
   resolveCopilotTargetPackagePlan,
-} from "../../../../apps/desktop/scripts/ensure-sdk-platform-packages.mjs";
+} from "../desktop-packaging/target-package/target-package.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "../../../..");
 const serverRoot = path.join(repoRoot, "apps/server");
@@ -204,10 +204,10 @@ describe("desktop packaging workflow wiring", () => {
       "utf8",
     );
     expect(reusable).toContain(
-      "apps/desktop/scripts/ensure-sdk-platform-packages.mjs",
+      "apps/desktop/scripts/desktop-packaging/target-package/target-package.mjs",
     );
     expect(reusable).toContain(
-      "apps/desktop/scripts/terminal-release-evidence.mjs target",
+      "apps/desktop/scripts/desktop-packaging/package-validation/terminal-release-evidence.mjs target",
     );
     for (const workflow of [
       ".github/workflows/build-release.yml",
@@ -224,12 +224,12 @@ describe("desktop packaging workflow wiring", () => {
       path.join(repoRoot, ".github/workflows/nightly-desktop.yml"),
       "utf8",
     );
-    expect(nightly).not.toContain("./.github/workflows/desktop-package-target.yml");
-    expect(nightly).toContain("apps/desktop/scripts/ci-package.mjs");
-    expect(nightly).toContain("apps/desktop/scripts/smoke-test.mjs");
+    expect(nightly).toContain("./.github/workflows/desktop-package-target.yml");
+    expect(nightly).not.toContain("apps/desktop/scripts/ci-package.mjs");
+    expect(nightly).not.toContain("apps/desktop/scripts/smoke-test.mjs");
   });
 
-  it("keeps aggregate evidence on Stable while Nightly uses direct uploads", () => {
+  it("keeps aggregate evidence on both Stable and Nightly", () => {
     const nightly = readFileSync(
       path.join(repoRoot, ".github/workflows/nightly-desktop.yml"),
       "utf8",
@@ -242,7 +242,7 @@ describe("desktop packaging workflow wiring", () => {
       path.join(repoRoot, "release-please-config.json"),
       "utf8",
     );
-    expect(nightly).not.toContain("terminal-release-evidence.mjs aggregate");
+    expect(nightly).toContain("terminal-release-evidence.mjs aggregate");
     expect(nightly).toContain("gh release upload");
     expect(nightly).toContain("gh release edit");
     expect(stable.indexOf("terminal-release-evidence.mjs aggregate")).toBeLessThan(
@@ -265,16 +265,17 @@ describe("desktop packaging workflow wiring", () => {
       "utf8",
     );
     const afterPack = readFileSync(
-      path.join(repoRoot, "apps/desktop/scripts/after-pack.mjs"),
+      path.join(
+        repoRoot,
+        "apps/desktop/scripts/desktop-packaging/target-package/after-pack.mjs",
+      ),
       "utf8",
     );
 
-    expect(nightly).not.toContain("signing-required:");
-    expect(nightly).toContain("CSC_IDENTITY_AUTO_DISCOVERY");
-    expect(nightly).toContain("MCODE_SKIP_TERMINAL_ATTESTATION: \"1\"");
-    expect(afterPack).toContain(
-      'process.env.MCODE_SKIP_TERMINAL_ATTESTATION !== "1"',
-    );
+    expect(nightly).toContain("signing-required: false");
+    const terminalSkipFlag = "MCODE" + "_SKIP_TERMINAL_ATTESTATION";
+    expect(nightly).not.toContain(terminalSkipFlag);
+    expect(afterPack).not.toContain(terminalSkipFlag);
     expect(stable).toContain("signing-required: true");
   });
 

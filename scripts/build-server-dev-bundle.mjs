@@ -239,7 +239,7 @@ export function resolveClaudeSdkCliSources(serverPackageRoot, platform, arch) {
 
   const label = candidates.join(" or ");
   throw new Error(
-    `${label} not installed - run 'bun install' or node apps/desktop/scripts/ensure-sdk-platform-packages.mjs (node_modules out of sync with bun.lock): ${failures.join("; ")}`,
+    `${label} not installed - run 'bun install' or node apps/desktop/scripts/desktop-packaging/target-package/target-package.mjs (node_modules out of sync with bun.lock): ${failures.join("; ")}`,
   );
 }
 
@@ -329,7 +329,7 @@ export function resolveCopilotSdkSources(serverPackageRoot, platform, arch) {
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     throw new Error(
-      `${platformPkg} not installed - run 'bun install' or node apps/desktop/scripts/ensure-sdk-platform-packages.mjs (Copilot SDK dependencies are out of sync): ${detail}`,
+      `${platformPkg} not installed - run 'bun install' or node apps/desktop/scripts/desktop-packaging/target-package/target-package.mjs (Copilot SDK dependencies are out of sync): ${detail}`,
     );
   }
 }

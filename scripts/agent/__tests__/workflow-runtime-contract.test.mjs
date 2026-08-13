@@ -6,14 +6,9 @@ import { test } from "node:test";
 
 const workflowDirectory = join(process.cwd(), ".github", "workflows");
 const packagingWorkflowAllowlist = new Set([
-  "build-release.yml",
-  "desktop-package-dry-run.yml",
-  "nightly-desktop.yml",
+  "desktop-package-target.yml",
 ]);
-const bunCheckoutJobs = new Map([
-  ["build-release.yml", "merge-mac-yml"],
-  ["nightly-desktop.yml", "merge-mac-yml-nightly"],
-]);
+const bunCheckoutJobs = new Map();
 const directNodeCommandPattern = /(?:^|(?:&&|\|\||;)\s*)node(?:\.exe)?(?=\s|$)/m;
 const directBunStdinPattern = /^\s*bun(?:\.exe)?\s+<<-?\s*['"]?[A-Za-z_][A-Za-z0-9_]*['"]?\s*$/m;
 
@@ -123,7 +118,11 @@ test("workflows use Bun runtime and repository commands", () => {
       assert.match(source, /actions\/setup-node@v\d+/i, file);
       assert.match(source, /node-version:\s*["']?24\.18\.0["']?(?:\s|$)/i, file);
       assert.doesNotMatch(source, /package-manager-cache\s*:/i, file);
-      assert.match(source, /run:\s*bun[^\r\n]*ci-package\.mjs/i, file);
+      assert.match(
+        extractRunCommands(source),
+        /bun[^\r\n]*desktop-packaging\/target-package\/ci-package\.mjs/i,
+        file,
+      );
       assert.ok(
         source.indexOf("actions/setup-node@") < source.indexOf("ci-package.mjs"),
         `${file}: Node setup must precede ci-package`,

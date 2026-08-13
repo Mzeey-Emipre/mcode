@@ -5,7 +5,7 @@
  * 2. Runs electron-mksnapshot to compile the IIFE into a V8 heap snapshot
  * 3. Renames the output to browser_v8_context_snapshot.bin
  *
- * Run:    bun scripts/generate-snapshot.mjs
+ * Run:    bun scripts/desktop-packaging/target-package/generate-snapshot.mjs
  * Output: dist/snapshot/browser_v8_context_snapshot.bin
  */
 
@@ -16,7 +16,7 @@ import { resolve, dirname } from "path";
 import { fileURLToPath } from "url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const desktopRoot = resolve(__dirname, "..");
+const desktopRoot = resolve(__dirname, "..", "..", "..");
 const snapshotDir = resolve(desktopRoot, "dist/snapshot");
 
 // ---------------------------------------------------------------------------

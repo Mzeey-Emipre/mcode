@@ -19,8 +19,9 @@ import {
   TerminalArtifactAttestationSchema,
   TerminalReleaseEvidenceManifestSchema,
   TerminalTargetEvidenceManifestSchema,
-} from "../../../packages/contracts/src/models/terminal-diagnostics.ts";
+} from "../../../../../packages/contracts/src/models/terminal-diagnostics.ts";
 import { attestPackagedTerminalArtifacts } from "./terminal-artifact-attestation.mjs";
+import { SUPPORTED_DESKTOP_TARGETS } from "../target-inventory/target-inventory.mjs";
 
 const MANIFEST_NAME = "terminal-target-manifest.json";
 const AGGREGATE_NAME = "terminal-release-manifest.json";
@@ -31,14 +32,9 @@ const REQUIRED_KINDS = {
   macos: ["dmg", "zip"],
   linux: ["appimage", "deb"],
 };
-const COMPLETE_TARGETS = [
-  "windows-x64",
-  "macos-x64",
-  "macos-arm64",
-  "linux-x64",
-];
+const COMPLETE_TARGETS = SUPPORTED_DESKTOP_TARGETS.map(({ id }) => id);
 const requireFromWeb = createRequire(
-  path.resolve(import.meta.dirname, "../../web/package.json"),
+  path.resolve(import.meta.dirname, "../../../../web/package.json"),
 );
 
 function sha256File(filePath) {
@@ -110,10 +106,15 @@ function findMacApp(releaseDir, arch) {
   throw new Error(`Packaged macOS application is missing for ${arch}`);
 }
 
-function attestFinalPackage(releaseDir, platform, arch) {
+function attestFinalPackage(
+  releaseDir,
+  platform,
+  arch,
+  terminalAttester = attestPackagedTerminalArtifacts,
+) {
   if (platform === "windows") {
     const resourcesRoot = path.join(releaseDir, "win-unpacked", "resources");
-    return attestPackagedTerminalArtifacts({
+    return terminalAttester({
       resourcesRoot,
       runtimePath: path.join(resourcesRoot, "bin", "mcode-server.exe"),
       targetPlatform: "win32",
@@ -122,7 +123,7 @@ function attestFinalPackage(releaseDir, platform, arch) {
   }
   if (platform === "linux") {
     const resourcesRoot = path.join(releaseDir, "linux-unpacked", "resources");
-    return attestPackagedTerminalArtifacts({
+    return terminalAttester({
       resourcesRoot,
       runtimePath: path.join(resourcesRoot, "bin", "mcode-server"),
       targetPlatform: "linux",
@@ -131,7 +132,7 @@ function attestFinalPackage(releaseDir, platform, arch) {
   }
   const appPath = findMacApp(releaseDir, arch);
   const resourcesRoot = path.join(appPath, "Contents", "Resources");
-  return attestPackagedTerminalArtifacts({
+  return terminalAttester({
     resourcesRoot,
     runtimePath: path.join(resourcesRoot, "bin", "mcode-server"),
     targetPlatform: "darwin",
@@ -294,6 +295,7 @@ export function createTargetEvidenceManifest({
   signingRequired,
   generatedAt = new Date().toISOString(),
   signatureVerifier = verifyTargetSignatures,
+  terminalAttester = attestPackagedTerminalArtifacts,
 }) {
   const platform = TARGET_PLATFORM[targetPlatform] ?? targetPlatform;
   if (!REQUIRED_KINDS[platform])
@@ -301,7 +303,7 @@ export function createTargetEvidenceManifest({
   const terminal = TerminalArtifactAttestationSchema().parse(
     attestationPath
       ? JSON.parse(readFileSync(attestationPath, "utf8"))
-      : attestFinalPackage(releaseDir, platform, targetArch),
+      : attestFinalPackage(releaseDir, platform, targetArch, terminalAttester),
   );
   const expectedAttestationPlatform = {
     windows: "win32",
@@ -427,7 +429,11 @@ export function createReleaseEvidenceManifest({
     }
   }
   const ids = parsed.map(({ manifest }) => targetId(manifest));
-  const required = channel === "pull-request" ? ids : COMPLETE_TARGETS;
+  const duplicateId = ids.find((id, index) => ids.indexOf(id) !== index);
+  if (duplicateId) {
+    throw new Error(`Duplicate release target: ${duplicateId}`);
+  }
+  const required = COMPLETE_TARGETS;
   for (const expected of required) {
     if (!ids.includes(expected))
       throw new Error(`Release target is missing: ${expected}`);

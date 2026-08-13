@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtemp, writeFile, readFile, mkdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import { buildServerBinary, resolveBinaryPaths } from "../build-server-binary.mjs";
+import { buildServerBinary, resolveBinaryPaths } from "../desktop-packaging/target-package/build-server-binary.mjs";
 
 // ---------------------------------------------------------------------------
 // resedit mock — must be declared before any import that triggers the module
@@ -193,7 +193,7 @@ describe("stampWindowsVersionInfo", () => {
   });
 
   it("reads the exe file, stamps VERSIONINFO, and writes it back", async () => {
-    const { stampWindowsVersionInfo } = await import("../build-server-binary.mjs");
+    const { stampWindowsVersionInfo } = await import("../desktop-packaging/target-package/build-server-binary.mjs");
     const {
       __mocks: { setFileVersion, setProductVersion, setStringValues, outputToResourceEntries, exeInstance, resInstance },
       NtExecutable,
@@ -246,7 +246,7 @@ describe("stampWindowsVersionInfo", () => {
   });
 
   it("passes companyName through to setStringValues", async () => {
-    const { stampWindowsVersionInfo } = await import("../build-server-binary.mjs");
+    const { stampWindowsVersionInfo } = await import("../desktop-packaging/target-package/build-server-binary.mjs");
     const { __mocks: { setStringValues } } = await import("resedit");
 
     const exePath = path.join(tmpDir, "mcode-server.exe");
@@ -268,7 +268,7 @@ describe("stampWindowsVersionInfo", () => {
   });
 
   it("stamps the favicon icon group when iconPath is provided", async () => {
-    const { stampWindowsVersionInfo } = await import("../build-server-binary.mjs");
+    const { stampWindowsVersionInfo } = await import("../desktop-packaging/target-package/build-server-binary.mjs");
     const { __mocks: { fromEntries, replaceIconsForResource }, Data } = await import("resedit");
 
     const exePath = path.join(tmpDir, "mcode-server.exe");
@@ -298,7 +298,7 @@ describe("stampWindowsVersionInfo", () => {
   });
 
   it("skips icon stamping when iconPath is omitted", async () => {
-    const { stampWindowsVersionInfo } = await import("../build-server-binary.mjs");
+    const { stampWindowsVersionInfo } = await import("../desktop-packaging/target-package/build-server-binary.mjs");
     const { __mocks: { replaceIconsForResource } } = await import("resedit");
 
     const exePath = path.join(tmpDir, "mcode-server.exe");
