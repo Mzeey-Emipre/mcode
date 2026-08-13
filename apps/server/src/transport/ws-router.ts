@@ -41,6 +41,9 @@ import type {
 } from "../services/codex-catalog-service";
 import type { ProviderCatalogService } from "../services/provider-catalog-service";
 import type { TerminalBackend } from "../terminal/terminal-backend.js";
+import { TerminalBackendError } from "../terminal/terminal-backend.js";
+import { TerminalSessionPolicyError } from "../terminal/terminal-session-service.js";
+import { TerminalSessionRuntimeError } from "../terminal/runtime/terminal-session-runtime.js";
 import type { MessageRepo } from "../repositories/message-repo";
 import type { ToolCallRecordRepo } from "../repositories/tool-call-record-repo";
 import type { NarrativeStore } from "../services/narrative-store";
@@ -317,6 +320,17 @@ export async function routeMessage(
     return { id: request.id, result };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    if (err instanceof TerminalBackendError || err instanceof TerminalSessionPolicyError || err instanceof TerminalSessionRuntimeError) {
+      return {
+        id: request.id,
+        error: {
+          code: err.code,
+          message,
+          retry: err.retry,
+          correlationId: err.correlationId,
+        },
+      };
+    }
     if (isProviderAvailabilityError(err)) {
       logger.info("Provider unavailable in RPC", { method: request.method, providerId: err.providerId, code: err.code });
       return {
@@ -414,6 +428,10 @@ async function dispatch(
   deps: RouterDeps,
   context: { client?: WebSocket; browserAutomationAuthorization?: BrowserAutomationHostConnectionAuthorization | null },
 ): Promise<unknown> {
+  if (method.startsWith("terminal.session.")) {
+    if (!context.client) throw new Error("Terminal v1 client identity is unavailable");
+    return deps.terminalService.routeV1(method, params, context.client);
+  }
   switch (method) {
     case "browserAutomation.host.register": {
       if (!context.client || !deps.browserAutomationBroker) {

@@ -1,7 +1,7 @@
 import { render } from "@testing-library/react";
 import { act } from "react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { emitPtyData, emitPtyExit } from "@/terminal/legacy/pty-data-registry";
+import { emitPtyData, emitPtyExit } from "@/terminal/pty-data-registry";
 import { dropRemountAnchor } from "@/components/terminal/terminalRemountScroll";
 
 // jsdom doesn't implement ResizeObserver; TerminalView instantiates one in

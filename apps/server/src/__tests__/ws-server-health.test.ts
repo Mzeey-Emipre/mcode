@@ -41,7 +41,7 @@ function makeMinimalDeps(
     fileService: undefined as unknown as RouterDeps["fileService"],
     configService: undefined as unknown as RouterDeps["configService"],
     skillService: undefined as unknown as RouterDeps["skillService"],
-    terminalService: undefined as unknown as RouterDeps["terminalService"],
+    terminalService: { disconnectClient: () => undefined } as unknown as RouterDeps["terminalService"],
     messageRepo: undefined as unknown as RouterDeps["messageRepo"],
     toolCallRecordRepo: undefined as unknown as RouterDeps["toolCallRecordRepo"],
     turnSnapshotRepo: undefined as unknown as RouterDeps["turnSnapshotRepo"],

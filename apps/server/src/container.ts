@@ -60,6 +60,11 @@ import { TerminalBackend, TERMINAL_BACKEND_TOKEN } from "./terminal/terminal-bac
 import { TerminalBackendSelector } from "./terminal/terminal-backend-selector.js";
 import { LegacyTerminalBackend } from "./terminal/legacy/legacy-terminal-backend.js";
 import { TerminalService as LegacyTerminalService } from "./terminal/legacy/terminal-service.js";
+import { ModernTerminalBackend } from "./terminal/modern/modern-terminal-backend.js";
+import { ModernTerminalSessionRuntime } from "./terminal/runtime/terminal-session-runtime.js";
+import { TerminalSessionService } from "./terminal/terminal-session-service.js";
+import { PtyHostSupervisor } from "./terminal/host/pty-host-supervisor.js";
+import { resolvePtyHostEntryPath, spawnPtyHostChild } from "./terminal/host/pty-host-child.js";
 import { TerminalProfileService } from "./terminal/profiles/terminal-profile-service.js";
 import { WorkspaceTerminalPreferencesService } from "./terminal/preferences/workspace-terminal-preferences-service.js";
 import { PtyHostCleanupLedger } from "./terminal/cleanup/terminal-cleanup-ledger.js";
@@ -489,13 +494,58 @@ export function setupContainer(mcodeDir: string): typeof container {
     { useClass: LegacyTerminalBackend },
     { lifecycle: Lifecycle.Singleton },
   );
+  let modernTerminalBackend: ModernTerminalBackend | undefined;
+  let terminalBackendSelector: TerminalBackendSelector | undefined;
+  container.register("ModernTerminalBackend", {
+    useFactory: (c: typeof container) => {
+      if (modernTerminalBackend) return modernTerminalBackend;
+      const platform = process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : "linux";
+      const host = new PtyHostSupervisor({
+        platform,
+        cleanupLedger: c.resolve(PtyHostCleanupLedger),
+        spawnHost: () => spawnPtyHostChild({
+          entryPath: resolvePtyHostEntryPath(process.argv[1] ?? process.cwd()),
+          env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+        }),
+      });
+      const runtime = new ModernTerminalSessionRuntime({ host });
+      const settings = c.resolve(SettingsService);
+      const sessions = new TerminalSessionService({
+        runtime,
+        profiles: c.resolve(TerminalProfileService),
+        settings,
+        liveSettings: { apply: (next) => runtime.applySettings(next) },
+        env: c.resolve(EnvService),
+        workspaces: c.resolve(WorkspaceRepo),
+        threads: c.resolve(ThreadRepo),
+        resolveWorkingDir: (workspacePath, mode, worktreePath) =>
+          c.resolve(GitService).resolveWorkingDir(workspacePath, mode, worktreePath),
+        hostGeneration: () => host.health().hostGeneration,
+      });
+      modernTerminalBackend = new ModernTerminalBackend(
+        sessions,
+        runtime,
+        host,
+        () => settings.get().terminal.behavior.sessionLimit,
+      );
+      return modernTerminalBackend;
+    },
+  } as never);
   container.register(
-    TerminalBackendSelector,
-    { useClass: TerminalBackendSelector },
-    { lifecycle: Lifecycle.Singleton },
+    "TerminalBackendSelector",
+    { useFactory: (c: typeof container) => {
+      if (terminalBackendSelector) return terminalBackendSelector;
+      terminalBackendSelector = new TerminalBackendSelector(
+        c.resolve(LegacyTerminalBackend),
+        process.env.MCODE_TERMINAL_BACKEND === "modern"
+          ? c.resolve("ModernTerminalBackend") as ModernTerminalBackend
+          : undefined,
+      );
+      return terminalBackendSelector;
+    } } as never,
   );
   container.register<TerminalBackend>(TERMINAL_BACKEND_TOKEN, {
-    useFactory: (c) => c.resolve(TerminalBackendSelector).getSelectedBackend(),
+    useFactory: (c) => c.resolve<TerminalBackendSelector>("TerminalBackendSelector").getSelectedBackend(),
   });
   container.register(
     SnapshotService,

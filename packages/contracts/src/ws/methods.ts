@@ -52,6 +52,7 @@ import {
 import { lazySchema } from "../utils/lazySchema.js";
 import { TerminalBackendCapabilitiesSchema } from "../models/terminal-backend.js";
 import { LegacyTerminalMethods } from "./terminal-legacy.js";
+import { TERMINAL_V1_METHODS } from "./terminal.js";
 import { ProviderModelInfoSchema } from "../providers/models.js";
 import { ProviderUsageInfoSchema } from "../providers/usage.js";
 import { ProviderAvailabilitySchema } from "../providers/availability.js";
@@ -373,6 +374,19 @@ const SetThreadSubscriptionsMethod: {
 } = {
   params: SetThreadSubscriptionsSchema(),
   result: SetThreadSubscriptionsResultSchema(),
+};
+
+const terminalV1SessionMethods = (): Record<string, { params: z.ZodTypeAny; result: z.ZodTypeAny }> => {
+  return {
+    "terminal.session.create": TERMINAL_V1_METHODS["terminal.session.create"],
+    "terminal.session.list": TERMINAL_V1_METHODS["terminal.session.list"],
+    "terminal.session.attach": TERMINAL_V1_METHODS["terminal.session.attach"],
+    "terminal.session.detach": TERMINAL_V1_METHODS["terminal.session.detach"],
+    "terminal.session.close": TERMINAL_V1_METHODS["terminal.session.close"],
+    "terminal.session.hasChildren": TERMINAL_V1_METHODS["terminal.session.hasChildren"],
+    "terminal.session.checkpoint.begin": TERMINAL_V1_METHODS["terminal.session.checkpoint.begin"],
+    "terminal.session.checkpoint.complete": TERMINAL_V1_METHODS["terminal.session.checkpoint.complete"],
+  } satisfies Record<string, { params: z.ZodTypeAny; result: z.ZodTypeAny }>;
 };
 
 /** All RPC method definitions keyed by method name with params and result schemas. */
@@ -1045,6 +1059,7 @@ export const WS_METHODS = lazySchema(() => ({
     params: z.object({}).strict(),
     result: TerminalBackendCapabilitiesSchema(),
   },
+  ...terminalV1SessionMethods(),
   ...LegacyTerminalMethods(),
   "app.version": {
     params: z.object({}),

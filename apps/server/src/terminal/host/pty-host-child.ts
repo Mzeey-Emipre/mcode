@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { dirname, resolve } from "node:path";
 import { WindowsProcessScopeFactory } from "../../services/windows-process-scope.js";
 import type { PtyHostChild } from "./pty-host-supervisor.js";
 
@@ -8,6 +9,11 @@ export interface SpawnPtyHostChildOptions {
   readonly executablePath?: string;
   readonly env?: NodeJS.ProcessEnv;
   readonly onStderr?: (text: string) => void;
+}
+
+/** Resolves the sibling bundled PTY host entry used by the server bundle. */
+export function resolvePtyHostEntryPath(serverEntryPath: string): string {
+  return resolve(dirname(serverEntryPath), "pty-host.cjs");
 }
 
 /** Spawns the separate PTY host with one inherited Node IPC channel. */

@@ -23,6 +23,7 @@ import {
   MAX_FAILURE_EXCERPT_CHARS,
   MAX_DISPLAYED_ARGV_CHARS,
   MAX_RELATED_FILES,
+  MAX_RELATED_ARG_BYTES,
   MAX_RETAINED_OUTPUT_BYTES,
   SCRIPT_TEST_PHASE,
   VERIFICATION_SCHEMA_VERSION,
@@ -105,6 +106,45 @@ test("shared package changes use related package tests", () => {
     assert.equal(phases[0].name, `Unit Tests (${workspace})`);
     assert.deepEqual(phases[0].args, ["vitest", "related", "src/index.ts", "--run"]);
   }
+});
+
+test("server related tests use the Electron Node wrapper", () => {
+  const [serverPhase] = selectTestPhases(["apps/server/src/index.ts"]);
+  assert.equal(serverPhase.command, "bun");
+  assert.deepEqual(serverPhase.args, [
+    "../../scripts/run-electron-node.mjs",
+    "--workspace-cli",
+    "vitest",
+    "vitest.mjs",
+    "related",
+    "src/index.ts",
+    "--run",
+  ]);
+  assert.equal(serverPhase.cwd, resolve(process.cwd(), "apps/server"));
+
+  for (const [file, relativeFile] of [
+    ["apps/web/src/index.ts", "src/index.ts"],
+    ["packages/contracts/src/index.ts", "src/index.ts"],
+  ]) {
+    const [phase] = selectTestPhases([file]);
+    assert.equal(phase.command, "bunx", file);
+    assert.deepEqual(phase.args, ["vitest", "related", relativeFile, "--run"], file);
+  }
+});
+
+test("server related-test chunks account for the Electron wrapper", () => {
+  const files = Array.from(
+    { length: 5 },
+    (_, index) => `apps/server/src/${"a".repeat(3_250)}-${index}.ts`,
+  );
+  const phases = selectTestPhases(files);
+  const selectedFiles = phases.flatMap((phase) => phase.args.slice(5, -1));
+
+  assert.equal(phases.length, 2);
+  assert.ok(phases.every((phase) => (
+    Buffer.byteLength(JSON.stringify(phase.args)) <= MAX_RELATED_ARG_BYTES
+  )));
+  assert.deepEqual(selectedFiles, files.map((file) => file.slice("apps/server/".length)));
 });
 
 test("root manifests, locks, and verification config defer broad tests to CI", () => {

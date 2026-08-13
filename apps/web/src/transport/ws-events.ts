@@ -19,7 +19,7 @@ import { useProviderAvailabilityStore } from "@/stores/providerAvailabilityStore
 import { useProviderCatalogStore } from "@/stores/providerCatalogStore";
 import { usePlanStore } from "@/stores/planStore";
 import { clearFileListCache } from "@/components/chat/useFileAutocomplete";
-import { emitPtyData, emitPtyExit } from "@/terminal/legacy/pty-data-registry";
+import { emitPtyData, emitPtyExit } from "@/terminal/pty-data-registry";
 import { useThreadControlStore } from "@/stores/threadControlStore";
 
 /** Unsubscribe handles for all push listeners. */

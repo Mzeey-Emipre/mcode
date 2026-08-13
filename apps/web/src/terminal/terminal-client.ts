@@ -27,4 +27,5 @@ export interface TerminalClient {
   checkpoint(ptyId: string, seq: number, data: string): Promise<{ accepted: boolean }>;
   listActive(): Promise<Array<{ ptyId: string; threadId: string }>>;
   hasChildren(ptyId: string): Promise<{ hasChildren: boolean }>;
+  acknowledgeOutput?(ptyId: string, seq: number): void;
 }

@@ -86,6 +86,7 @@ const POLICY_MESSAGES = {
 
 const MAX_ENVIRONMENT_ENTRIES = 256;
 const MAX_ENVIRONMENT_JSON_BYTES = 65_536;
+const SAFE_ENVIRONMENT_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 
 /** Applies product policy before work enters the deep Terminal session runtime. */
 export class TerminalSessionService {
@@ -294,7 +295,9 @@ function isExistingAbsoluteDirectory(path: string): boolean {
 }
 
 function snapshotEnvironment(env: Record<string, string>): ReadonlyArray<Readonly<{ name: string; value: string }>> {
-  const entries = Object.entries(env);
+  const entries = Object.entries(env).filter(([name, value]) =>
+    SAFE_ENVIRONMENT_NAME.test(name) && typeof value === "string",
+  );
   if (entries.length > MAX_ENVIRONMENT_ENTRIES) {
     throw new TerminalSessionPolicyError("CONTAINMENT_FAILED");
   }

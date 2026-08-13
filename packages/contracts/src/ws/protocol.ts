@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TerminalRetryClassSchema } from "../models/terminal.js";
 
 /** Client-to-server RPC request envelope. */
 export const WebSocketRequestSchema = z.object({
@@ -17,6 +18,8 @@ export const WebSocketResponseSchema = z.object({
     .object({
       code: z.string(),
       message: z.string(),
+      retry: TerminalRetryClassSchema().optional(),
+      correlationId: z.string().min(1).max(64).optional(),
       /** Optional structured payload for typed errors (e.g. provider availability errors). */
       data: z.record(z.unknown()).optional(),
     })

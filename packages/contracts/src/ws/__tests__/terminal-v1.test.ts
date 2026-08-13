@@ -7,6 +7,7 @@ import {
   TerminalRpcRequestSchema,
   TerminalRpcResponseSchema,
 } from "../terminal.js";
+import { WS_METHODS } from "../methods.js";
 
 const UUID = "abcdef12-abcd-4abc-8abc-abcdefabcdef";
 
@@ -120,6 +121,13 @@ describe("Terminal v1 management RPC", () => {
     expect(() =>
       TerminalRpcResponseSchema("terminal.session.detach").parse(response),
     ).toThrow();
+  });
+
+  it("keeps profile, settings, and diagnostics methods outside the general WebSocket router", () => {
+    const methods = Object.keys(WS_METHODS());
+    expect(methods).not.toContain("terminal.profile.list");
+    expect(methods).not.toContain("terminal.preferences.update");
+    expect(methods).not.toContain("terminal.diagnostics.report");
   });
 
   it("validates response errors against the method retry table", () => {
