@@ -3,6 +3,9 @@ import { useWorkspaceStore, type WorkspaceRpcCall } from "../workspaceStore";
 import { useDiffStore } from "../diffStore";
 import type { Workspace } from "@/transport/types";
 import { rememberComposerMode } from "@/lib/composer-mode-preference";
+import type { WorkspaceThread } from "@/lib/workspace-thread";
+import * as conversationResidency from "../conversation-residency";
+import type { ConversationResidency } from "../conversation-residency";
 
 function makeWs(overrides?: Partial<Workspace>): Workspace {
   return {
@@ -97,6 +100,70 @@ describe("workspaceStore reorderWorkspace", () => {
 });
 
 describe("workspaceStore new-thread panel transition", () => {
+  it("activates a selected resident thread before returning to the event loop", () => {
+    const activate = vi.fn().mockResolvedValue(undefined);
+    const residencySpy = vi.spyOn(conversationResidency, "getConversationResidency")
+      .mockReturnValue({ activate } as unknown as ConversationResidency);
+    useWorkspaceStore.setState({
+      threads: [
+        { id: "thread-a" } as WorkspaceThread,
+        { id: "thread-b" } as WorkspaceThread,
+      ],
+      activeThreadId: "thread-a",
+    });
+
+    useWorkspaceStore.getState().setActiveThread("thread-b");
+
+    expect(activate).toHaveBeenCalledOnce();
+    expect(activate).toHaveBeenCalledWith("thread-b", expect.any(Array));
+    residencySpy.mockRestore();
+  });
+
+  it("coalesces non-selection reconciliation until the microtask boundary", async () => {
+    const activate = vi.fn().mockResolvedValue(undefined);
+    const residencySpy = vi.spyOn(conversationResidency, "getConversationResidency")
+      .mockReturnValue({ activate } as unknown as ConversationResidency);
+    const touch = vi.fn().mockResolvedValue(undefined) as unknown as WorkspaceRpcCall;
+    useWorkspaceStore.setState({ activeWorkspaceId: null, activeThreadId: null });
+
+    useWorkspaceStore.getState().setActiveWorkspace("ws-1", touch, false);
+    useWorkspaceStore.getState().setActiveWorkspace(null, touch, false);
+
+    expect(activate).not.toHaveBeenCalled();
+    await Promise.resolve();
+    expect(activate).toHaveBeenCalledOnce();
+    expect(activate).toHaveBeenCalledWith(null, expect.any(Array));
+    residencySpy.mockRestore();
+  });
+
+  it("cancels stale reconciliation after workspace selection but allows a later reconcile", async () => {
+    const activate = vi.fn().mockResolvedValue(undefined);
+    const residencySpy = vi.spyOn(conversationResidency, "getConversationResidency")
+      .mockReturnValue({ activate } as unknown as ConversationResidency);
+    const touch = vi.fn().mockResolvedValue(undefined) as unknown as WorkspaceRpcCall;
+    useWorkspaceStore.setState({
+      activeWorkspaceId: null,
+      activeThreadId: "thread-a",
+      threads: [
+        { id: "thread-a", workspace_id: "ws-1" } as WorkspaceThread,
+        { id: "thread-b", workspace_id: "ws-1" } as WorkspaceThread,
+      ],
+    });
+
+    useWorkspaceStore.getState().setActiveWorkspace("ws-1", touch, false);
+    useWorkspaceStore.getState().setActiveThread("thread-b");
+
+    expect(activate).toHaveBeenCalledOnce();
+    expect(activate).toHaveBeenLastCalledWith("thread-b", expect.any(Array));
+
+    useWorkspaceStore.getState().setActiveWorkspace(null, touch, false);
+    await Promise.resolve();
+
+    expect(activate).toHaveBeenCalledTimes(2);
+    expect(activate).toHaveBeenLastCalledWith(null, expect.any(Array));
+    residencySpy.mockRestore();
+  });
+
   it("opens the projectless composer without inventing a workspace", () => {
     useWorkspaceStore.setState({
       activeWorkspaceId: null,
