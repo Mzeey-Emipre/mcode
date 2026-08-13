@@ -40,7 +40,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          last_tag=$(gh release list --repo "${{ github.repository }}" --limit 100 --json tagName,isDraft,isPrerelease --jq '[.[] | select(.isDraft == false and .isPrerelease == true and (.tagName | test("^v.*-nightly\.")))][0].tagName // ""')
+          last_tag=$(gh release list --repo "${{ github.repository }}" --limit 100 --json tagName,isDraft,isPrerelease --jq '[.[] | select(.isDraft == false and .isPrerelease == true and (.tagName | test("^v.*-nightly\\.")))][0].tagName // ""')
           if [ -z "$last_tag" ]; then
             echo "should_build=true" >> "$GITHUB_OUTPUT"
             exit 0

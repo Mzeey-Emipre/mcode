@@ -196,6 +196,15 @@ describe("desktop packaging workflow contract", () => {
     );
   });
 
+  it("keeps the Nightly tag jq regex escaped for gh", () => {
+    const nightly = readFileSync(
+      path.join(repoRoot, ".github/workflows/nightly-desktop.yml"),
+      "utf8",
+    );
+    expect(nightly).toContain(String.raw`test("^v.*-nightly\\.")`);
+    expect(nightly).not.toContain(String.raw`test("^v.*-nightly\.")`);
+  });
+
   it("requires the complete four-target matrix in PR dry-run", () => {
     const source = readFileSync(
       path.join(repoRoot, ".github/workflows/desktop-package-dry-run.yml"),
