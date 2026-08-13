@@ -164,6 +164,7 @@ type FakeChild = EventEmitter & {
 interface RpcRequest {
   id?: number;
   method?: string;
+  params?: Record<string, unknown>;
 }
 
 function findUnexpectedExitLogFields(): { stderrTail?: string[] } | undefined {
@@ -393,6 +394,192 @@ describe("CodexAppServer.start (failed handshake teardown)", () => {
     // Clean up the live fake session (taskkill is mocked under the forced win32 platform).
     await server.kill();
     void child;
+  }, 10_000);
+
+  it("appends configured instructions to thread/start in block order", async () => {
+    let configRequest: RpcRequest | undefined;
+    let startRequest: RpcRequest | undefined;
+    harnessFakeServer((req): Record<string, unknown> => {
+      if (req.method === "config/read") {
+        configRequest = req;
+        return { result: { config: { developer_instructions: "configured rules" } } };
+      }
+      if (req.method === "thread/start") {
+        startRequest = req;
+        return { result: { thread: { id: "thread-instructions-start" } } };
+      }
+      return { result: {} };
+    });
+    const server = new CodexAppServer({
+      cliPath: "codex",
+      workingDirectory: "/tmp",
+      getSpawnEnv: () => ({}),
+      developerInstructions: "mcode runtime",
+    });
+
+    await server.start();
+
+    expect(startRequest?.params).toEqual(expect.objectContaining({
+      cwd: "/tmp",
+      developerInstructions: "configured rules\n\nmcode runtime",
+    }));
+    expect(configRequest?.params).toEqual({ includeLayers: false, cwd: "/tmp" });
+    await server.kill();
+  }, 10_000);
+
+  it("appends configured instructions to thread/resume in block order", async () => {
+    let configRequest: RpcRequest | undefined;
+    let resumeRequest: RpcRequest | undefined;
+    harnessFakeServer((req): Record<string, unknown> => {
+      if (req.method === "config/read") {
+        configRequest = req;
+        return { result: { config: { developer_instructions: "configured rules" } } };
+      }
+      if (req.method === "thread/resume") {
+        resumeRequest = req;
+        return { result: { thread: { id: "thread-instructions-resume" } } };
+      }
+      return { result: {} };
+    });
+    const server = new CodexAppServer({
+      cliPath: "codex",
+      workingDirectory: "/tmp",
+      getSpawnEnv: () => ({}),
+      resumeThreadId: "thread-existing",
+      developerInstructions: "mcode runtime",
+    });
+
+    await server.start();
+
+    expect(resumeRequest?.params).toEqual(expect.objectContaining({
+      cwd: "/tmp",
+      threadId: "thread-existing",
+      developerInstructions: "configured rules\n\nmcode runtime",
+    }));
+    expect(configRequest?.params).toEqual({ includeLayers: false, cwd: "/tmp" });
+    await server.kill();
+  }, 10_000);
+
+  it("continues thread/start without an override when config/read fails", async () => {
+    let startRequest: RpcRequest | undefined;
+    harnessFakeServer((req): Record<string, unknown> => {
+      if (req.method === "config/read") return { error: { message: "config unavailable" } };
+      if (req.method === "thread/start") {
+        startRequest = req;
+        return { result: { thread: { id: "thread-instructions-fallback" } } };
+      }
+      return { result: {} };
+    });
+    const server = new CodexAppServer({
+      cliPath: "codex",
+      workingDirectory: "/tmp",
+      getSpawnEnv: () => ({}),
+      developerInstructions: "mcode runtime",
+    });
+
+    await expect(server.start()).resolves.toBeUndefined();
+
+    expect(startRequest?.params).not.toHaveProperty("developerInstructions");
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      "Codex config/read failed; omitting developer instructions",
+      expect.objectContaining({ error: expect.stringContaining("config unavailable") }),
+    );
+    await server.kill();
+  }, 10_000);
+
+  it("continues thread/start without an override when config/read is malformed", async () => {
+    let startRequest: RpcRequest | undefined;
+    harnessFakeServer((req): Record<string, unknown> => {
+      if (req.method === "config/read") return { result: { config: { developer_instructions: 42 } } };
+      if (req.method === "thread/start") {
+        startRequest = req;
+        return { result: { thread: { id: "thread-instructions-malformed" } } };
+      }
+      return { result: {} };
+    });
+    const server = new CodexAppServer({
+      cliPath: "codex",
+      workingDirectory: "/tmp",
+      getSpawnEnv: () => ({}),
+      developerInstructions: "mcode runtime",
+    });
+
+    await expect(server.start()).resolves.toBeUndefined();
+
+    expect(startRequest?.params).not.toHaveProperty("developerInstructions");
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      "Codex config/read failed; omitting developer instructions",
+      expect.objectContaining({ error: expect.stringContaining("invalid response") }),
+    );
+    await server.kill();
+  }, 10_000);
+
+  it("reuses composed instructions when recoverable resume falls back to thread/start", async () => {
+    let configReadCount = 0;
+    let resumeRequest: RpcRequest | undefined;
+    let startRequest: RpcRequest | undefined;
+    harnessFakeServer((req): Record<string, unknown> => {
+      if (req.method === "config/read") {
+        configReadCount += 1;
+        return { result: { config: { developer_instructions: "configured rules" } } };
+      }
+      if (req.method === "thread/resume") {
+        resumeRequest = req;
+        return { error: { message: "no rollout found for thread id thread-existing" } };
+      }
+      if (req.method === "thread/start") {
+        startRequest = req;
+        return { result: { thread: { id: "thread-instructions-fallback" } } };
+      }
+      return { result: {} };
+    });
+    const server = new CodexAppServer({
+      cliPath: "codex",
+      workingDirectory: "/tmp",
+      getSpawnEnv: () => ({}),
+      resumeThreadId: "thread-existing",
+      developerInstructions: "mcode runtime",
+    });
+
+    await expect(server.start()).resolves.toBeUndefined();
+
+    expect(configReadCount).toBe(1);
+    expect(resumeRequest?.params).toEqual(expect.objectContaining({
+      developerInstructions: "configured rules\n\nmcode runtime",
+    }));
+    expect(startRequest?.params).toEqual(expect.objectContaining({
+      developerInstructions: "configured rules\n\nmcode runtime",
+    }));
+    await server.kill();
+  }, 10_000);
+
+  it.each([
+    { name: "missing", config: {} },
+    { name: "blank", config: { developer_instructions: "  " } },
+  ])("sends Mcode instructions alone when config is $name", async ({ config }) => {
+    let startRequest: RpcRequest | undefined;
+    harnessFakeServer((req): Record<string, unknown> => {
+      if (req.method === "config/read") return { result: { config } };
+      if (req.method === "thread/start") {
+        startRequest = req;
+        return { result: { thread: { id: `thread-instructions-${config}` } } };
+      }
+      return { result: {} };
+    });
+    const server = new CodexAppServer({
+      cliPath: "codex",
+      workingDirectory: "/tmp",
+      getSpawnEnv: () => ({}),
+      developerInstructions: "mcode runtime",
+    });
+
+    await expect(server.start()).resolves.toBeUndefined();
+
+    expect(startRequest?.params).toEqual(expect.objectContaining({
+      developerInstructions: "mcode runtime",
+    }));
+    await server.kill();
   }, 10_000);
 
   it("uses the raised thread handshake budget for thread/start", async () => {

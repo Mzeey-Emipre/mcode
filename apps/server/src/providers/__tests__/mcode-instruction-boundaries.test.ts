@@ -2,6 +2,7 @@ import "reflect-metadata";
 import { describe, expect, it } from "vitest";
 import {
   addCodexDeveloperInstructions,
+  composeCodexDeveloperInstructions,
 } from "../codex/codex-app-server.js";
 import { mergeClaudeMcpServers } from "../claude/claude-provider.js";
 import {
@@ -26,6 +27,22 @@ describe("provider-native Mcode instruction boundaries", () => {
       threadId: "thread-1",
       developerInstructions: instructions,
     });
+  });
+
+  it("composes configured Codex instructions before Mcode guidance", () => {
+    expect(composeCodexDeveloperInstructions("user rules", "mcode runtime"))
+      .toBe("user rules\n\nmcode runtime");
+    expect(composeCodexDeveloperInstructions(undefined, "mcode runtime")).toBe("mcode runtime");
+    expect(composeCodexDeveloperInstructions("  ", "mcode runtime")).toBe("mcode runtime");
+    expect(composeCodexDeveloperInstructions("mcode runtime", "mcode runtime"))
+      .toBe("mcode runtime");
+    expect(composeCodexDeveloperInstructions("user rules\n\nmcode runtime", "mcode runtime"))
+      .toBe("user rules\n\nmcode runtime");
+    expect(composeCodexDeveloperInstructions("before\nmcode runtime\nafter", "mcode runtime"))
+      .toBe("before\nmcode runtime\nafter");
+    expect(composeCodexDeveloperInstructions("foobar", "foo"))
+      .toBe("foobar\n\nfoo");
+    expect(composeCodexDeveloperInstructions("user rules", undefined)).toBe("user rules");
   });
 
   it("keeps Claude internal and Browser MCP grants in one effective map", () => {
