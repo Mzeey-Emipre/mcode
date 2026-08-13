@@ -1,7 +1,21 @@
-import { memo, useState, useCallback, useRef, useEffect } from "react";
+import {
+  memo,
+  Profiler,
+  useState,
+  useCallback,
+  useRef,
+  useEffect,
+  type ProfilerOnRenderCallback,
+  type ReactNode,
+} from "react";
 import { Copy, Check } from "lucide-react";
 import { useHighlighter } from "@/hooks/useHighlighter";
 import { useShikiTheme } from "@/hooks/useTheme";
+import { recordShikiRendererCompletion } from "@/performance/shiki-performance";
+
+const performanceBuild =
+  import.meta.env.VITE_MCODE_PERFORMANCE_MODE === "profiling" ||
+  import.meta.env.VITE_MCODE_PERFORMANCE_MODE === "production";
 
 /** Props for {@link CodeBlock}. */
 interface CodeBlockProps {
@@ -19,6 +33,24 @@ interface CodeBlockProps {
   disableHighlighting?: boolean;
 }
 
+interface MeasuredCodeBlockProps {
+  children: ReactNode;
+  measurementId?: string | null;
+}
+
+/** Adds performance-only React lifecycle observation without changing the DOM tree. */
+function MeasuredCodeBlock({
+  children,
+  measurementId,
+}: MeasuredCodeBlockProps) {
+  const recordCommit: ProfilerOnRenderCallback = useCallback((_id, _phase, actualDuration, _baseDuration, startTime, commitTime) => {
+    if (!measurementId) return;
+    recordShikiRendererCompletion(measurementId, actualDuration, startTime, commitTime);
+  }, [measurementId]);
+
+  return <Profiler id="shiki-code-block" onRender={recordCommit}>{children}</Profiler>;
+}
+
 /**
  * Renders a syntax-highlighted code block with a language header and copy button.
  * Uses a CSS grid stack to crossfade from plain to highlighted code with zero layout shift.
@@ -33,7 +65,7 @@ export const CodeBlock = memo(function CodeBlock({
   const theme = useShikiTheme();
   // The hook is always called unconditionally (rules of hooks), but `enabled`
   // suppresses the Worker postMessage during streaming so no requests are wasted.
-  const { html } = useHighlighter(code, language || "text", theme, !isStreaming && !disableHighlighting);
+  const { html, measurementId } = useHighlighter(code, language || "text", theme, !isStreaming && !disableHighlighting);
 
   const [copied, setCopied] = useState(false);
   const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -62,7 +94,7 @@ export const CodeBlock = memo(function CodeBlock({
   const codeScrollBody = "overflow-x-auto bg-muted text-foreground text-sm font-mono leading-relaxed";
   const codePreInner = "m-0 min-w-full w-max bg-transparent p-3";
 
-  return (
+  const content = (
     <div className="my-2 min-w-0 rounded-lg overflow-hidden border border-border">
       <div className="flex items-center justify-between bg-background px-3 py-1 border-b border-border">
         <span className="text-xs text-muted-foreground">{languageLabel || language || "text"}</span>
@@ -112,4 +144,7 @@ export const CodeBlock = memo(function CodeBlock({
       )}
     </div>
   );
+  return performanceBuild
+    ? <MeasuredCodeBlock measurementId={measurementId}>{content}</MeasuredCodeBlock>
+    : content;
 });

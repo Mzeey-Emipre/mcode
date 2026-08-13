@@ -1,12 +1,18 @@
 import { useEffect, useRef, useState } from "react";
 import type { ShikiTheme } from "./useTheme";
 import { getWorker, workerGeneration, pending, nextRequestId } from "@/lib/shiki-worker-client";
+import {
+  recordShikiWorkerTiming,
+  shouldMeasureShiki,
+  startShikiMeasurement,
+} from "@/performance/shiki-performance";
 
 /** Response from the Shiki Web Worker for a highlight (codeToHtml) request. */
 interface HighlightResponse {
   id: string;
   type: "highlight";
   html: string;
+  timing?: unknown;
   error?: string;
 }
 
@@ -26,8 +32,9 @@ export function useHighlighter(
   language: string,
   theme: ShikiTheme,
   enabled: boolean = true,
-): { html: string | null } {
+): { html: string | null; measurementId?: string | null } {
   const [html, setHtml] = useState<string | null>(null);
+  const measurementIdRef = useRef<string | null>(null);
   const currentRequestId = useRef<string | null>(null);
   const prevCode = useRef(code);
   const prevLanguage = useRef(language);
@@ -37,6 +44,7 @@ export function useHighlighter(
     // When disabled, skip posting to the Worker entirely and clear any stale result.
     if (!enabled) {
       setHtml(null);
+      measurementIdRef.current = null;
       return;
     }
 
@@ -44,6 +52,7 @@ export function useHighlighter(
     // For theme-only changes, keep the old highlighted HTML visible during the transition.
     if (prevCode.current !== code || prevLanguage.current !== language) {
       setHtml(null);
+      measurementIdRef.current = null;
     }
     prevCode.current = code;
     prevLanguage.current = language;
@@ -61,6 +70,9 @@ export function useHighlighter(
     const generationAtRequest = workerGeneration;
     currentRequestId.current = id;
 
+    const measurePerformance = shouldMeasureShiki();
+    if (measurePerformance) startShikiMeasurement(id, performance.now());
+
     pending.set(id, (response) => {
       // Only apply if this request is still current and the worker hasn't crashed since
       if (
@@ -69,14 +81,26 @@ export function useHighlighter(
       ) {
         const r = response as HighlightResponse | null;
         if (!r || r.type !== "highlight") return;
+        let responseMeasured = false;
+        if (measurePerformance && r.timing) {
+          responseMeasured = recordShikiWorkerTiming(id, r.timing, performance.now());
+        }
         if (r?.error) {
           console.warn("[shiki-worker]", r.error);
         }
+        measurementIdRef.current = responseMeasured ? id : null;
         setHtml(r && !r.error ? r.html : null);
       }
     });
 
-    worker.postMessage({ id, type: "highlight", code, language, theme });
+    worker.postMessage({
+      id,
+      type: "highlight",
+      code,
+      language,
+      theme,
+      ...(measurePerformance ? { measurePerformance: true } : {}),
+    });
 
     return () => {
       pending.delete(id);
@@ -84,5 +108,5 @@ export function useHighlighter(
     };
   }, [code, language, theme, enabled]);
 
-  return { html };
+  return { html, measurementId: measurementIdRef.current };
 }

@@ -1,5 +1,19 @@
 import { createHighlighterCore } from "shiki/core";
 import { createJavaScriptRegexEngine } from "shiki/engine/javascript";
+import {
+  MAX_SHIKI_PERFORMANCE_DURATION_MS,
+  MAX_SHIKI_PERFORMANCE_RESPONSE_BYTES,
+  type ShikiWorkerTiming,
+} from "@/performance/shiki-performance-contract";
+
+const performanceBuild =
+  import.meta.env.VITE_MCODE_PERFORMANCE_MODE === "profiling" ||
+  import.meta.env.VITE_MCODE_PERFORMANCE_MODE === "production";
+
+// The worker contract is the producer; runner validation mirrors this serialized boundary.
+const workerModuleStartedAtMs = performanceBuild ? performance.now() : undefined;
+let measuredWorkerRequestSeen = false;
+let measuredLanguages: Set<string> | undefined;
 
 /** Highlight (codeToHtml) request — produces an HTML string. */
 interface HighlightRequest {
@@ -8,6 +22,7 @@ interface HighlightRequest {
   code: string;
   language: string;
   theme: "github-dark" | "github-light";
+  measurePerformance?: boolean;
 }
 
 /** Highlight response. */
@@ -15,6 +30,7 @@ interface HighlightResponse {
   id: string;
   type: "highlight";
   html: string;
+  timing?: ShikiWorkerTiming;
   error?: string;
 }
 
@@ -187,6 +203,14 @@ function yieldToWorkerQueue(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
+function boundedDuration(value: number): number {
+  return Math.max(0, Math.min(MAX_SHIKI_PERFORMANCE_DURATION_MS, value));
+}
+
+function responseBytes(value: string): number {
+  return Math.min(MAX_SHIKI_PERFORMANCE_RESPONSE_BYTES, new TextEncoder().encode(value).byteLength);
+}
+
 function tokenSpanBytes(lines: readonly TokenSpan[][]): number {
   let bytes = 0;
   for (const line of lines) {
@@ -203,8 +227,9 @@ function tokenSpanBytes(lines: readonly TokenSpan[][]): number {
  * startup; grammars are imported on demand from @shikijs/langs.
  * If creation fails, the cached promise is cleared so the next request retries.
  */
-function getHighlighter() {
+function getHighlighter(onCreate?: (startedAtMs: number) => void) {
   if (!highlighterPromise) {
+    onCreate?.(performance.now());
     highlighterPromise = createHighlighterCore({
       engine: createJavaScriptRegexEngine(),
       themes: [
@@ -269,11 +294,44 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
 
   if (req.type === "highlight") {
     const { id, code, language, theme } = req;
+    const measured = req.measurePerformance === true;
+    const firstMeasuredRequest = measured && !measuredWorkerRequestSeen;
+    const workerRequestStartedAtMs = measured ? performance.now() : undefined;
+    if (measured) {
+      if (firstMeasuredRequest) measuredWorkerRequestSeen = true;
+      measuredLanguages ??= new Set<string>();
+    }
     try {
-      const highlighter = await getHighlighter();
+      const highlighterWasReady = measured && highlighterPromise !== null;
+      let highlighterCreationStartedAtMs: number | null = null;
+      const highlighter = await getHighlighter(
+        measured
+          ? (startedAtMs) => {
+              highlighterCreationStartedAtMs = startedAtMs;
+            }
+          : undefined,
+      );
+      const highlighterCreationMs = measured
+        ? boundedDuration(
+            highlighterCreationStartedAtMs === null
+              ? 0
+              : performance.now() - highlighterCreationStartedAtMs,
+          )
+        : 0;
+      const canonicalLanguage = measured ? LANG_ALIASES[language] ?? language : "";
+      const languageWasReady = measured && highlighter.getLoadedLanguages().includes(canonicalLanguage);
+      const grammarLoadStartedAtMs = measured ? performance.now() : 0;
       const lang = await resolveLanguage(highlighter, language);
+      const grammarLoadMs = measured ? boundedDuration(performance.now() - grammarLoadStartedAtMs) : 0;
+      const phase = measured
+        ? (highlighterWasReady && languageWasReady) || measuredLanguages!.has(lang)
+          ? "warm"
+          : "cold"
+        : "warm";
+      if (measured) measuredLanguages!.add(lang);
 
       let html: string;
+      const codeToHtmlStartedAtMs = measured ? performance.now() : 0;
       try {
         html = highlighter.codeToHtml(code, { lang, theme });
       } catch {
@@ -283,8 +341,31 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
           .replace(/>/g, "&gt;");
         html = `<pre class="shiki"><code>${escaped}</code></pre>`;
       }
+      const codeToHtmlMs = measured ? boundedDuration(performance.now() - codeToHtmlStartedAtMs) : 0;
 
-      self.postMessage({ id, type: "highlight", html } satisfies HighlightResponse);
+      const timing: ShikiWorkerTiming | undefined = measured
+        ? {
+            phase,
+            workerStartupMs: boundedDuration(
+              firstMeasuredRequest
+                ? workerRequestStartedAtMs! - workerModuleStartedAtMs!
+                : 0,
+            ),
+            highlighterCreationMs,
+            grammarLoadMs,
+            codeToHtmlMs,
+            responseBytes: responseBytes(html),
+            workerPostTimeMs: performance.now(),
+            workerTimeOriginMs: performance.timeOrigin,
+          }
+        : undefined;
+
+      self.postMessage({
+        id,
+        type: "highlight",
+        html,
+        ...(timing ? { timing } : {}),
+      } satisfies HighlightResponse);
     } catch (err) {
       self.postMessage({
         id,
