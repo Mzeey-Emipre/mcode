@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
@@ -134,6 +140,48 @@ describe("Terminal release evidence", () => {
         /^[a-f0-9]{64}$/.test(artifact.sha256),
       ),
     ).toBe(true);
+  });
+
+  it("stages supported updater metadata but excludes builder diagnostics", () => {
+    fixtureRoot = mkdtempSync(
+      path.join(tmpdir(), "terminal-release-metadata-filter-"),
+    );
+    const releaseDir = path.join(fixtureRoot, "release");
+    const stagingDir = path.join(fixtureRoot, "stage", "windows-x64");
+    const attestationPath = path.join(fixtureRoot, "attestation.json");
+    mkdirSync(releaseDir, { recursive: true });
+    for (const file of [
+      ...TARGETS[0].files,
+      "latest.yml",
+      "builder-debug.yml",
+    ]) {
+      writeFileSync(path.join(releaseDir, file), file);
+    }
+    writeFileSync(attestationPath, JSON.stringify(attestation("win32", "x64")));
+
+    const manifest = createTargetEvidenceManifest({
+      releaseDir,
+      stagingDir,
+      attestationPath,
+      commit: COMMIT,
+      version: "0.13.0",
+      channel: "stable",
+      expectedLegacy: true,
+      targetPlatform: "windows",
+      targetArch: "x64",
+      runner: "windows-2025",
+      signingRequired: true,
+      signatureVerifier: ({ platform }) => passedSignatures(platform),
+    });
+
+    expect(manifest.artifacts.map((artifact) => artifact.name)).toContain(
+      "latest.yml",
+    );
+    expect(manifest.artifacts.map((artifact) => artifact.name)).not.toContain(
+      "builder-debug.yml",
+    );
+    expect(existsSync(path.join(stagingDir, "latest.yml"))).toBe(true);
+    expect(existsSync(path.join(stagingDir, "builder-debug.yml"))).toBe(false);
   });
 
   it("runs full final-package Terminal attestation when no report is supplied", () => {

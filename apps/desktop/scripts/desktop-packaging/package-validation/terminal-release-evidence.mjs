@@ -33,6 +33,14 @@ const REQUIRED_KINDS = {
   linux: ["appimage", "deb"],
 };
 const COMPLETE_TARGETS = SUPPORTED_DESKTOP_TARGETS.map(({ id }) => id);
+const UPDATE_METADATA_FILENAMES = new Set([
+  "latest.yml",
+  "latest-linux.yml",
+  "latest-mac.yml",
+  "nightly.yml",
+  "nightly-linux.yml",
+  "nightly-mac.yml",
+]);
 const requireFromWeb = createRequire(
   path.resolve(import.meta.dirname, "../../../../web/package.json"),
 );
@@ -58,7 +66,7 @@ function artifactKind(fileName) {
   if (lower.endsWith(".appimage")) return "appimage";
   if (lower.endsWith(".deb")) return "deb";
   if (lower.endsWith(".blockmap")) return "blockmap";
-  if (lower.endsWith(".yml")) return "update-metadata";
+  if (UPDATE_METADATA_FILENAMES.has(lower)) return "update-metadata";
   if (fileName === "SHA256SUMS") return "sha256-manifest";
   if (fileName === "SHA256SUMS.sig") return "sha256-signature";
   return undefined;
