@@ -144,7 +144,10 @@ async function run() {
   let electronSession;
   try {
     browser = await playwright.chromium.launch({ headless: true });
-    const context = await browser.newContext({ viewport: VIEWPORT });
+    const context = await browser.newContext({
+      viewport: VIEWPORT,
+      permissions: ["clipboard-read", "clipboard-write"],
+    });
     await context.addCookies([
       {
         name: ports.seedLogin.cookieName,

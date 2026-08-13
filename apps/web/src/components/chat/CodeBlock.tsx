@@ -1,7 +1,9 @@
-import { memo, useState, useCallback, useRef, useEffect } from "react";
+import { memo, Profiler, useState, useCallback, useRef, useEffect, useLayoutEffect } from "react";
+import type { ReactNode } from "react";
 import { Copy, Check } from "lucide-react";
 import { useHighlighter } from "@/hooks/useHighlighter";
 import { useShikiTheme } from "@/hooks/useTheme";
+import { isShikiPerformanceEnabled, recordShikiPerformance } from "@/lib/shiki-performance";
 
 /** Props for {@link CodeBlock}. */
 interface CodeBlockProps {
@@ -19,6 +21,33 @@ interface CodeBlockProps {
   disableHighlighting?: boolean;
 }
 
+function ShikiPerformanceBoundary({
+  children,
+  htmlReceivedAt,
+}: {
+  children: ReactNode;
+  htmlReceivedAt?: number | null;
+}) {
+  useLayoutEffect(() => {
+    if (htmlReceivedAt == null) return;
+    recordShikiPerformance({
+      stage: "htmlInsertion",
+      durationMs: Math.max(0, performance.now() - htmlReceivedAt),
+    });
+  }, [htmlReceivedAt]);
+
+  return (
+    <Profiler
+      id="markdown-highlight"
+      onRender={(_id, _phase, actualDuration) => {
+        recordShikiPerformance({ stage: "reactCommit", durationMs: actualDuration });
+      }}
+    >
+      {children}
+    </Profiler>
+  );
+}
+
 /**
  * Renders a syntax-highlighted code block with a language header and copy button.
  * Uses a CSS grid stack to crossfade from plain to highlighted code with zero layout shift.
@@ -33,7 +62,12 @@ export const CodeBlock = memo(function CodeBlock({
   const theme = useShikiTheme();
   // The hook is always called unconditionally (rules of hooks), but `enabled`
   // suppresses the Worker postMessage during streaming so no requests are wasted.
-  const { html } = useHighlighter(code, language || "text", theme, !isStreaming && !disableHighlighting);
+  const { html, htmlReceivedAt } = useHighlighter(
+    code,
+    language || "text",
+    theme,
+    !isStreaming && !disableHighlighting,
+  );
 
   const [copied, setCopied] = useState(false);
   const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -62,7 +96,7 @@ export const CodeBlock = memo(function CodeBlock({
   const codeScrollBody = "overflow-x-auto bg-muted text-foreground text-sm font-mono leading-relaxed";
   const codePreInner = "m-0 min-w-full w-max bg-transparent p-3";
 
-  return (
+  const content = (
     <div className="my-2 min-w-0 rounded-lg overflow-hidden border border-border">
       <div className="flex items-center justify-between bg-background px-3 py-1 border-b border-border">
         <span className="text-xs text-muted-foreground">{languageLabel || language || "text"}</span>
@@ -112,4 +146,7 @@ export const CodeBlock = memo(function CodeBlock({
       )}
     </div>
   );
+
+  if (!isShikiPerformanceEnabled()) return content;
+  return <ShikiPerformanceBoundary htmlReceivedAt={htmlReceivedAt}>{content}</ShikiPerformanceBoundary>;
 });

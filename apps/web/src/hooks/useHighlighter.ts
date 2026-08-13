@@ -1,6 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import type { ShikiTheme } from "./useTheme";
-import { getWorker, workerGeneration, pending, nextRequestId } from "@/lib/shiki-worker-client";
+import {
+  getWorker,
+  workerGeneration,
+  pending,
+  nextRequestId,
+  workerDeliveryDuration,
+} from "@/lib/shiki-worker-client";
+import {
+  isShikiPerformanceEnabled,
+  recordShikiPerformance,
+} from "@/lib/shiki-performance";
 
 /** Response from the Shiki Web Worker for a highlight (codeToHtml) request. */
 interface HighlightResponse {
@@ -8,6 +18,13 @@ interface HighlightResponse {
   type: "highlight";
   html: string;
   error?: string;
+  performance?: {
+    highlighterCreationMs: number;
+    grammarLoadMs: number;
+    codeToHtmlMs: number;
+    responseBytes: number;
+    sentAt: number;
+  };
 }
 
 /**
@@ -26,8 +43,12 @@ export function useHighlighter(
   language: string,
   theme: ShikiTheme,
   enabled: boolean = true,
-): { html: string | null } {
-  const [html, setHtml] = useState<string | null>(null);
+): { html: string | null; htmlReceivedAt?: number | null } {
+  const performanceEnabled = isShikiPerformanceEnabled();
+  const [result, setResult] = useState<{
+    html: string | null;
+    htmlReceivedAt: number | null;
+  }>({ html: null, htmlReceivedAt: null });
   const currentRequestId = useRef<string | null>(null);
   const prevCode = useRef(code);
   const prevLanguage = useRef(language);
@@ -36,14 +57,14 @@ export function useHighlighter(
   useEffect(() => {
     // When disabled, skip posting to the Worker entirely and clear any stale result.
     if (!enabled) {
-      setHtml(null);
+      setResult({ html: null, htmlReceivedAt: null });
       return;
     }
 
     // Only reset html when content changed (stale HTML would be misleading).
     // For theme-only changes, keep the old highlighted HTML visible during the transition.
     if (prevCode.current !== code || prevLanguage.current !== language) {
-      setHtml(null);
+      setResult({ html: null, htmlReceivedAt: null });
     }
     prevCode.current = code;
     prevLanguage.current = language;
@@ -69,10 +90,28 @@ export function useHighlighter(
       ) {
         const r = response as HighlightResponse | null;
         if (!r || r.type !== "highlight") return;
+        const receivedAt = performanceEnabled ? performance.now() : null;
+        if (r.performance && receivedAt !== null) {
+          const absoluteReceivedAt = performance.timeOrigin + receivedAt;
+          recordShikiPerformance({
+            stage: "highlighterCreation",
+            durationMs: r.performance.highlighterCreationMs,
+          });
+          recordShikiPerformance({ stage: "grammarLoad", durationMs: r.performance.grammarLoadMs });
+          recordShikiPerformance({ stage: "codeToHtml", durationMs: r.performance.codeToHtmlMs });
+          recordShikiPerformance({ stage: "responseBytes", value: r.performance.responseBytes });
+          const deliveryMs = workerDeliveryDuration(absoluteReceivedAt, r.performance.sentAt);
+          if (deliveryMs !== null) {
+            recordShikiPerformance({ stage: "workerDelivery", durationMs: deliveryMs });
+          }
+        }
         if (r?.error) {
           console.warn("[shiki-worker]", r.error);
         }
-        setHtml(r && !r.error ? r.html : null);
+        setResult({
+          html: r && !r.error ? r.html : null,
+          htmlReceivedAt: r && !r.error ? receivedAt : null,
+        });
       }
     });
 
@@ -84,5 +123,5 @@ export function useHighlighter(
     };
   }, [code, language, theme, enabled]);
 
-  return { html };
+  return result;
 }

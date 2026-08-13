@@ -206,6 +206,17 @@ export function validateWorkloadCheck(workload, check) {
     case "markdownShiki":
       requireCheck(check.codeBlocks === 10, "expected 10 Markdown code blocks");
       requireCheck(check.highlightedBlocks === 10, "expected 10 highlighted code blocks");
+      requireCheck(check.plainFallbackBlocks === 10, "plain fallback is missing");
+      requireCheck(
+        check.plainFallbackVisibleWhilePending === 10,
+        "plain fallback was not visible while highlighting was pending",
+      );
+      requireCheck(check.themedBlocks === 10, "highlighted theme is missing");
+      requireCheck(check.copyButtons === 10, "copy controls are missing");
+      requireCheck(check.copyWorked === true, "copy action failed");
+      requireCheck(check.scrollableBlocks === 10, "horizontal scrolling is missing");
+      requireCheck(check.selectionWorks === true, "code selection failed");
+      requireCheck(check.accessibleBlocks === 10, "code accessibility semantics are missing");
       break;
     case "panelTransitions":
       requireCheck(check.visible === true, "right panel is closed");
@@ -234,6 +245,83 @@ export function validateNarrativeRowIsolation(reactAttribution) {
     failures.push(`stable narrative row rendered: ${renderedSibling.rowId}`);
   }
   return failures;
+}
+
+/** Normalizes platform clipboard line endings before exact content comparison. */
+export function normalizeClipboardText(value) {
+  return value.replace(/\r\n?/g, "\n");
+}
+
+// Worker timings are additive per block; browser style/layout timings are additive per sample.
+const SHIKI_STAGE_NAMES = [
+  "workerStartup",
+  "highlighterCreation",
+  "grammarLoad",
+  "codeToHtml",
+  "responseBytes",
+  "workerDelivery",
+  "reactCommit",
+  "htmlInsertion",
+  "style",
+  "layout",
+  "totalCompletion",
+];
+
+function summarizeShikiStageValues(stage, values) {
+  const summary = summarizeDurationSamples(values);
+  if (!summary || stage !== "responseBytes") return summary;
+  return {
+    sampleCount: summary.sampleCount,
+    minBytes: summary.minMs,
+    medianBytes: summary.medianMs,
+    p95Bytes: summary.p95Ms,
+    maxBytes: summary.maxMs,
+  };
+}
+
+/** Summarizes comparable per-sample Shiki stage totals. */
+export function summarizeShikiStages(samples) {
+  const stageValues = Object.fromEntries(SHIKI_STAGE_NAMES.map((stage) => [stage, []]));
+  const tasksOver50Ms = [];
+  for (const sample of samples) {
+    const sampleValues = {};
+    const events = sample.attribution.shiki ?? [];
+    for (const event of events) {
+      const value = event.stage === "responseBytes" ? event.value : event.durationMs;
+      if (Number.isFinite(value)) {
+        sampleValues[event.stage] = (sampleValues[event.stage] ?? 0) + value;
+      }
+    }
+    const chromium = sample.attribution.chromium;
+    for (const durationMs of chromium?.longTasksMs ?? []) {
+      if (durationMs > 50) tasksOver50Ms.push({ task: "longtask", durationMs });
+    }
+    if (Number.isFinite(chromium?.styleMs)) sampleValues.style = chromium.styleMs;
+    if (Number.isFinite(chromium?.layoutMs)) sampleValues.layout = chromium.layoutMs;
+    if (Number.isFinite(sample.durationMs)) sampleValues.totalCompletion = sample.durationMs;
+    for (const stage of SHIKI_STAGE_NAMES) {
+      if (Number.isFinite(sampleValues[stage])) stageValues[stage].push(sampleValues[stage]);
+    }
+  }
+  const summaries = Object.fromEntries(SHIKI_STAGE_NAMES.map((stage) => [
+    stage,
+    summarizeShikiStageValues(stage, stageValues[stage]),
+  ]));
+  const candidates = SHIKI_STAGE_NAMES
+    .filter((stage) =>
+      stage !== "responseBytes" &&
+      // Each block reports response-to-layout-effect time, which overlaps with
+      // sibling blocks and is not an exclusive workload stage.
+      stage !== "htmlInsertion" &&
+      stage !== "totalCompletion",
+    )
+    .map((stage) => ({ stage, medianMs: summaries[stage]?.medianMs ?? -1 }))
+    .sort((left, right) => right.medianMs - left.medianMs);
+  return {
+    stages: summaries,
+    largestStage: candidates[0]?.medianMs >= 0 ? candidates[0].stage : null,
+    tasksOver50Ms,
+  };
 }
 
 /** Run the shared frontend renderer matrix against one Playwright page. */
@@ -531,22 +619,39 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
   });
   for (const check of denseNarrative.checks) Object.assign(check, denseDisclosureCheck);
 
-  const markdownShiki = await timeFixture(page, sampleCount, async (sample) => {
-    return page.evaluate(async (sampleIndex) => {
+  const measureMarkdownShiki = (sample) => page.evaluate(async ({ sampleIndex, mode }) => {
       const fixture = window.__issue1240;
       const revision = ++fixture.revision;
       const threadId = `perf-markdown-${revision}`;
-      const blocks = Array.from({ length: 10 }, (_, block) => {
+      const blockSources = Array.from({ length: 10 }, (_, block) => {
         const code = Array.from(
           { length: 100 },
-          (_, line) => `const fixture_${block}_${line}: number = ${line};`,
+          (_, line) => `const fixture_${block}_${line}: number = ${line}; ${"x".repeat(100)}`,
         ).join("\n");
-        return `## Block ${block}\n\n\`\`\`typescript\n${code}\n\`\`\``;
-      }).join("\n\n");
+        return { code, markdown: `## Block ${block}\n\n\`\`\`typescript\n${code}\n\`\`\`` };
+      });
+      const blocks = blockSources.map(({ markdown }) => markdown).join("\n\n");
       const assistant = fixture.message(threadId, 0, blocks, "assistant");
       const startedAt = performance.now();
       fixture.activate(threadId, "Markdown and Shiki fixture", [assistant]);
-      const deadline = startedAt + 15_000;
+      let plainFallbackVisibleWhilePending = 0;
+      const pendingDeadline = startedAt + 2_000;
+      do {
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+        const pendingBlocks = [...document.querySelectorAll(
+          `[data-thread-id="${threadId}"] [data-code-block]`,
+        )];
+        plainFallbackVisibleWhilePending = pendingBlocks.filter((block) =>
+          [...block.querySelectorAll(".overflow-x-auto")].some((element) =>
+            element.classList.contains("visible") &&
+            !element.classList.contains("invisible") &&
+            getComputedStyle(element).visibility !== "hidden" &&
+            Number.parseFloat(getComputedStyle(element).opacity) > 0,
+          ),
+        ).length;
+      } while (plainFallbackVisibleWhilePending < 10 && performance.now() < pendingDeadline);
+      const completionDeadlineMs = mode === "profiling" ? 30_000 : 15_000;
+      const deadline = startedAt + completionDeadlineMs;
       let highlightedBlocks = 0;
       do {
         await new Promise((resolve) => requestAnimationFrame(resolve));
@@ -554,16 +659,96 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
           `[data-thread-id="${threadId}"] .shiki`,
         ).length;
       } while (highlightedBlocks < 10 && performance.now() < deadline);
+      const blocksInThread = [...document.querySelectorAll(
+        `[data-thread-id="${threadId}"] [data-code-block]`,
+      )];
+      const highlighted = blocksInThread.filter((block) => block.querySelector(".shiki"));
+      const plainFallback = blocksInThread.filter((block) =>
+        block.querySelectorAll(".overflow-x-auto pre code").length > 0,
+      );
+      const themed = highlighted.filter((block) =>
+        block.querySelector(".shiki [style*='color'], .shiki[style*='color']"),
+      );
+      const copyControls = [...document.querySelectorAll(
+        `[data-thread-id="${threadId}"] button[aria-label='Copy code']`,
+      )];
+      const scrollable = blocksInThread.filter((block) =>
+        [...block.querySelectorAll(".overflow-x-auto")].some((element) => {
+          if (element.scrollWidth <= element.clientWidth) return false;
+          element.scrollLeft = 0;
+          const initialScrollLeft = element.scrollLeft;
+          element.scrollLeft = Math.min(32, element.scrollWidth - element.clientWidth);
+          return element.scrollLeft > initialScrollLeft;
+        }),
+      );
+      const firstCopy = copyControls[0];
+      const expectedCopyText = blocksInThread[0]
+        ?.querySelector(".overflow-x-auto pre code")
+        ?.textContent ?? null;
+      firstCopy?.click();
+      const copyDeadline = performance.now() + 2_000;
+      let copiedLabelVisible = false;
+      do {
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+        copiedLabelVisible = document.querySelector(
+          `[data-thread-id="${threadId}"] button[aria-label='Copied']`,
+        ) !== null;
+      } while (!copiedLabelVisible && performance.now() < copyDeadline);
+      let copiedText = null;
+      let copyReadError = null;
+      try {
+        copiedText = await navigator.clipboard.readText();
+      } catch (error) {
+        copyReadError = error instanceof Error ? error.name : String(error);
+        copiedText = null;
+      }
+      const normalizeClipboardLineEndings = (value) => value.replace(/\r\n?/g, "\n");
+      const selection = window.getSelection();
+      const range = document.createRange();
+      const firstCode = highlighted[0]?.querySelector(".shiki code");
+      if (firstCode) {
+        range.selectNodeContents(firstCode);
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+      }
+      const selectionWorks = selection?.toString().includes("fixture_0_0") ?? false;
+      selection?.removeAllRanges();
       return {
         durationMs: performance.now() - startedAt,
         check: {
           highlightedBlocks,
-          codeBlocks: document.querySelectorAll(`[data-thread-id="${threadId}"] [data-code-block]`).length,
+          codeBlocks: blocksInThread.length,
+          plainFallbackBlocks: plainFallback.length,
+          plainFallbackVisibleWhilePending,
+          themedBlocks: themed.length,
+          copyButtons: copyControls.length,
+          copyWorked: expectedCopyText !== null && copiedText !== null &&
+            normalizeClipboardLineEndings(copiedText) ===
+              normalizeClipboardLineEndings(expectedCopyText),
+          copyExpectedLength: expectedCopyText?.length ?? null,
+          copyObservedLength: copiedText?.length ?? null,
+          copyReadError,
+          scrollableBlocks: scrollable.length,
+          selectionWorks,
+          accessibleBlocks: blocksInThread.filter((block) =>
+            block.querySelector("pre code"),
+          ).length,
           sampleIndex,
         },
       };
-    }, sample);
-  }, modeCollector);
+    }, { sampleIndex: sample, mode });
+  const coldMarkdownShiki = { samples: [], checks: [], attributions: [] };
+  for (let index = 0; index < sampleCount; index += 1) {
+    const coldSample = await modeCollector.measure(async () => {
+      await page.evaluate(() => window.__mcodeFrontendPerformanceModules?.resetShikiWorker?.());
+      return measureMarkdownShiki(`cold-${index}`);
+    });
+    coldMarkdownShiki.samples.push(coldSample.result.durationMs);
+    coldMarkdownShiki.checks.push(coldSample.result.check);
+    coldMarkdownShiki.attributions.push(coldSample.attribution);
+  }
+  const markdownShiki = await timeFixture(page, sampleCount, measureMarkdownShiki, modeCollector);
+  markdownShiki.cold = coldMarkdownShiki;
 
   const panelTransitions = await timeFixture(page, sampleCount, async (sample) => {
     return page.evaluate(async (sampleIndex) => {
@@ -622,9 +807,7 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
       markdownShiki,
       panelTransitions,
     }).map(([name, result]) => {
-      const rawSamples = result.samples.map((durationMs, sampleIndex) => {
-        const observed = result.checks[sampleIndex];
-        const attribution = result.attributions[sampleIndex];
+      const makeSampleRecord = (durationMs, observed, attribution, sampleIndex) => {
         if (name === "denseNarrative" && attribution.react) {
           attribution.react.affectedRow = observed.affectedRowId
             ? {
@@ -655,17 +838,44 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
             observed,
           },
         };
-      });
+      };
+      const rawSamples = result.samples.map((durationMs, sampleIndex) =>
+        makeSampleRecord(
+          durationMs,
+          result.checks[sampleIndex],
+          result.attributions[sampleIndex],
+          sampleIndex,
+        ));
+      const coldSamples = result.cold
+        ? result.cold.samples.map((durationMs, coldIndex) =>
+            makeSampleRecord(
+              durationMs,
+              result.cold.checks[coldIndex],
+              result.cold.attributions[coldIndex],
+              `cold-${coldIndex}`,
+            ))
+        : [];
       const acceptedDurations = rawSamples
         .filter((sample) => sample.correctness.passed)
         .map((sample) => sample.durationMs);
       return [name, {
-        rawSamples,
-        summary: summarizeDurationSamples(acceptedDurations),
-        correctness: {
-          passed: rawSamples.every((sample) => sample.correctness.passed),
-          rejectedSamples: rawSamples.filter((sample) => !sample.correctness.passed).length,
-        },
+         rawSamples,
+         summary: summarizeDurationSamples(acceptedDurations),
+         ...(name === "markdownShiki"
+           ? {
+               cold: coldSamples,
+               stageAttribution: {
+                 cold: summarizeShikiStages(coldSamples),
+                 warm: summarizeShikiStages(rawSamples),
+               },
+             }
+           : {}),
+         correctness: {
+           passed: rawSamples.every((sample) => sample.correctness.passed) &&
+             coldSamples.every((sample) => sample.correctness.passed),
+           rejectedSamples: rawSamples.filter((sample) => !sample.correctness.passed).length +
+             coldSamples.filter((sample) => !sample.correctness.passed).length,
+         },
       }];
     }),
   );

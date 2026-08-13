@@ -16,6 +16,19 @@ interface HighlightResponse {
   type: "highlight";
   html: string;
   error?: string;
+  performance?: {
+    highlighterCreationMs: number;
+    grammarLoadMs: number;
+    codeToHtmlMs: number;
+    responseBytes: number;
+    sentAt: number;
+  };
+}
+
+/** Performance-only request used to align renderer and worker monotonic clocks. */
+interface ClockSyncRequest {
+  id: string;
+  type: "clock-sync";
 }
 
 /** A single syntax token with its display color. */
@@ -117,6 +130,7 @@ interface CancelRequest {
 
 type WorkerRequest =
   | HighlightRequest
+  | ClockSyncRequest
   | TokenizeRequest
   | PullRequestDiffTokenizeRequest
   | CancelRequest;
@@ -180,8 +194,16 @@ const LANG_ALIASES: Record<string, string> = {
 const languageLoading = new Map<string, Promise<void>>();
 
 let highlighterPromise: ReturnType<typeof createHighlighterCore> | null = null;
+const performanceEnabled =
+  import.meta.env.VITE_MCODE_PERFORMANCE_MODE === "profiling" ||
+  import.meta.env.VITE_MCODE_PERFORMANCE_MODE === "production";
+const grammarLoadDurations = new Map<string, number>();
 const activeRequestIds = new Set<string>();
 const cancelledRequestIds = new Set<string>();
+
+function monotonicTimestamp(): number {
+  return performance.timeOrigin + performance.now();
+}
 
 function yieldToWorkerQueue(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
@@ -240,7 +262,9 @@ async function resolveLanguage(
         loadPromise = (async () => {
           try {
             const mod = await importFn();
+            const startedAt = performance.now();
             await highlighter.loadLanguage(mod.default as ShikiLang);
+            if (performanceEnabled) grammarLoadDurations.set(lang, performance.now() - startedAt);
           } finally {
             languageLoading.delete(lang);
           }
@@ -262,6 +286,17 @@ async function resolveLanguage(
 self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
   const req = e.data;
 
+  if (req.type === "clock-sync") {
+    if (performanceEnabled) {
+      self.postMessage({
+        id: req.id,
+        type: "clock-sync",
+        workerTimestamp: monotonicTimestamp(),
+      });
+    }
+    return;
+  }
+
   if (req.type === "cancel") {
     if (activeRequestIds.has(req.id)) cancelledRequestIds.add(req.id);
     return;
@@ -270,10 +305,16 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
   if (req.type === "highlight") {
     const { id, code, language, theme } = req;
     try {
+      const highlighterStartedAt = performance.now();
       const highlighter = await getHighlighter();
+      const creationMs = performance.now() - highlighterStartedAt;
+      const grammarStartedAt = performance.now();
       const lang = await resolveLanguage(highlighter, language);
+      const grammarMs = performance.now() - grammarStartedAt;
+      grammarLoadDurations.delete(lang);
 
       let html: string;
+      const codeToHtmlStartedAt = performance.now();
       try {
         html = highlighter.codeToHtml(code, { lang, theme });
       } catch {
@@ -284,7 +325,22 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
         html = `<pre class="shiki"><code>${escaped}</code></pre>`;
       }
 
-      self.postMessage({ id, type: "highlight", html } satisfies HighlightResponse);
+      self.postMessage({
+        id,
+        type: "highlight",
+        html,
+        ...(performanceEnabled
+          ? {
+              performance: {
+                highlighterCreationMs: creationMs,
+                grammarLoadMs: grammarMs,
+                codeToHtmlMs: performance.now() - codeToHtmlStartedAt,
+                responseBytes: new TextEncoder().encode(html).byteLength,
+                sentAt: monotonicTimestamp(),
+              },
+            }
+          : {}),
+      } satisfies HighlightResponse);
     } catch (err) {
       self.postMessage({
         id,

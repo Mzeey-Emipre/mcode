@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { summarizeDurationSamples } from "../../perf/frontend-performance-collectors.mjs";
+import {
+  summarizeDurationSamples,
+  summarizeTrace,
+} from "../../perf/frontend-performance-collectors.mjs";
 import {
   FRONTEND_RENDERER_WORKLOADS,
+  normalizeClipboardText,
+  summarizeShikiStages,
   validateNarrativeRowIsolation,
   validateWorkloadCheck,
 } from "../../perf/frontend-renderer-fixture.mjs";
@@ -39,6 +44,56 @@ describe("frontend performance runner", () => {
     );
   });
 
+  it("classifies Chromium style and layout trace events without overlap", () => {
+    assert.deepEqual(summarizeTrace([
+      { ph: "X", name: "RecalculateStyles", dur: 500 },
+      { ph: "X", name: "UpdateLayoutTree", dur: 1_000 },
+      { ph: "X", name: "Layout", dur: 2_000 },
+    ]), {
+      paintMs: null,
+      styleMs: 1.5,
+      layoutMs: 2,
+      traceEventCount: 3,
+    });
+  });
+
+  it("aggregates Shiki block stages before comparing workload samples", () => {
+    const sample = ({ codeToHtml, responseBytes, workerDelivery, htmlInsertion, layout }) => ({
+      durationMs: 200,
+      attribution: {
+        shiki: [
+          ...codeToHtml.map((durationMs) => ({ stage: "codeToHtml", durationMs })),
+          ...responseBytes.map((value) => ({ stage: "responseBytes", value })),
+          ...workerDelivery.map((durationMs) => ({ stage: "workerDelivery", durationMs })),
+          ...htmlInsertion.map((durationMs) => ({ stage: "htmlInsertion", durationMs })),
+        ],
+        chromium: { styleMs: 10, layoutMs: layout, longTasksMs: [] },
+      },
+    });
+    const summary = summarizeShikiStages([
+      sample({ codeToHtml: [20, 30], responseBytes: [100, 200], workerDelivery: [1, 2], htmlInsertion: [100, 100], layout: 40 }),
+      sample({ codeToHtml: [10, 15], responseBytes: [50, 75], workerDelivery: [2, 3], htmlInsertion: [90, 90], layout: 30 }),
+      sample({ codeToHtml: [30, 20], responseBytes: [125, 125], workerDelivery: [3, 4], htmlInsertion: [80, 80], layout: 45 }),
+    ]);
+
+    assert.equal(summary.stages.codeToHtml.medianMs, 50);
+    assert.equal(summary.stages.responseBytes.medianBytes, 250);
+    assert.equal(summary.stages.workerDelivery.medianMs, 5);
+    assert.equal(summary.stages.htmlInsertion.medianMs, 180);
+    assert.equal(summary.largestStage, "codeToHtml");
+  });
+
+  it("normalizes clipboard line endings without changing content", () => {
+    assert.equal(
+      normalizeClipboardText("const x = 1;\r\nconst y = 2;\rconst z = 3;"),
+      "const x = 1;\nconst y = 2;\nconst z = 3;",
+    );
+    assert.notEqual(
+      normalizeClipboardText("const x = 1;\r\nconst y = 2;"),
+      "const x = 1;\nconst z = 3;",
+    );
+  });
+
   it("rejects wrong visible state for every workload contract", () => {
     assert.deepEqual(validateWorkloadCheck("message100", {
       activeThreadId: "left",
@@ -54,7 +109,41 @@ describe("frontend performance runner", () => {
     assert.deepEqual(validateWorkloadCheck("markdownShiki", {
       codeBlocks: 10,
       highlightedBlocks: 9,
-    }), ["expected 10 highlighted code blocks"]);
+    }), [
+      "expected 10 highlighted code blocks",
+      "plain fallback is missing",
+      "plain fallback was not visible while highlighting was pending",
+      "highlighted theme is missing",
+      "copy controls are missing",
+      "copy action failed",
+      "horizontal scrolling is missing",
+      "code selection failed",
+      "code accessibility semantics are missing",
+    ]);
+    assert.deepEqual(validateWorkloadCheck("markdownShiki", {
+      codeBlocks: 10,
+      highlightedBlocks: 10,
+      plainFallbackBlocks: 10,
+      plainFallbackVisibleWhilePending: 10,
+      themedBlocks: 10,
+      copyButtons: 10,
+      copyWorked: true,
+      scrollableBlocks: 10,
+      selectionWorks: true,
+      accessibleBlocks: 10,
+    }), []);
+    assert.deepEqual(validateWorkloadCheck("markdownShiki", {
+      codeBlocks: 10,
+      highlightedBlocks: 10,
+      plainFallbackBlocks: 10,
+      plainFallbackVisibleWhilePending: 10,
+      themedBlocks: 10,
+      copyButtons: 10,
+      copyWorked: false,
+      scrollableBlocks: 10,
+      selectionWorks: true,
+      accessibleBlocks: 10,
+    }), ["copy action failed"]);
     assert.deepEqual(validateWorkloadCheck("panelTransitions", {
       activeTab: "preview",
       browserTabOpen: true,

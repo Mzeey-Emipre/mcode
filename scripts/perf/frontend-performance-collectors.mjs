@@ -105,14 +105,24 @@ async function installAttributionRuntime(page) {
       frameTimes: [],
       longTasks: [],
       rowRenders: {},
+      shiki: [],
     };
     window.__mcodePerformanceAttribution = state;
     window.__mcodeReactPerformanceSink = {
       recordCommit(commit) {
         state.commits.push(commit);
+        if (commit.id === "markdown-highlight") {
+          state.shiki.push({ stage: "reactCommit", durationMs: commit.actualDurationMs });
+        }
       },
       recordRowRender(rowId) {
         state.rowRenders[rowId] = (state.rowRenders[rowId] ?? 0) + 1;
+      },
+    };
+    window.__mcodeShikiPerformanceSink = {
+      record(observation) {
+        if (state.shiki.length >= 512) return;
+        state.shiki.push(observation);
       },
     };
     new PerformanceObserver((list) => {
@@ -133,21 +143,24 @@ async function resetAttributionRuntime(page) {
     if (!state) throw new Error("Performance attribution runtime is not installed");
     state.commits = [];
     state.rowRenders = {};
+    state.shiki = [];
     return {
       frameIndex: state.frameTimes.length,
       longTaskIndex: state.longTasks.length,
+      shikiIndex: 0,
     };
   });
 }
 
 async function readAttributionRuntime(page, indexes) {
-  return page.evaluate(({ frameIndex, longTaskIndex }) => {
+  return page.evaluate(({ frameIndex, longTaskIndex, shikiIndex }) => {
     const state = window.__mcodePerformanceAttribution;
     if (!state) throw new Error("Performance attribution runtime is not installed");
     return {
       commits: [...state.commits],
       frameTimes: state.frameTimes.slice(frameIndex),
       longTasks: state.longTasks.slice(longTaskIndex),
+      shiki: state.shiki.slice(shikiIndex ?? 0),
       rowRenders: { ...state.rowRenders },
     };
   }, indexes);
@@ -161,7 +174,8 @@ function summarizeFrames(frameTimes) {
   };
 }
 
-function summarizeTrace(events) {
+/** Summarizes bounded Chromium trace stage durations without overlapping buckets. */
+export function summarizeTrace(events) {
   const durationMs = (names) => {
     const matching = events.filter(
       (event) => event.ph === "X" && names.has(event.name) && Number.isFinite(event.dur),
@@ -172,6 +186,8 @@ function summarizeTrace(events) {
   };
   return {
     paintMs: durationMs(new Set(["Paint", "PaintImage", "CompositeLayers"])),
+    styleMs: durationMs(new Set(["RecalculateStyles", "StyleRecalc", "UpdateLayoutTree"])),
+    layoutMs: durationMs(new Set(["Layout"])),
     traceEventCount: events.length,
   };
 }
@@ -202,6 +218,7 @@ export async function createModeSignalCollector(page, mode) {
               commits: signals.commits,
               rowRenders: signals.rowRenders,
             },
+            shiki: signals.shiki,
             chromium: null,
             electronProcess: null,
             gpu: null,
@@ -243,15 +260,17 @@ export async function createModeSignalCollector(page, mode) {
       const signals = await readAttributionRuntime(page, indexes);
       return {
         result,
-        attribution: {
-          react: null,
-          chromium: {
+          attribution: {
+            react: null,
+            shiki: signals.shiki,
+            chromium: {
             scriptingMs: metricDelta(before, after, "ScriptDuration"),
-            layoutMs: metricDelta(before, after, "LayoutDuration"),
+              layoutMs: metricDelta(before, after, "LayoutDuration"),
+              styleMs: null,
             taskMs: metricDelta(before, after, "TaskDuration"),
             longTasksMs: signals.longTasks,
             frameCadence: summarizeFrames(signals.frameTimes),
-            ...summarizeTrace(traceEvents),
+              ...summarizeTrace(traceEvents),
           },
           electronProcess: processBefore && processAfter
             ? { before: processBefore, after: processAfter }
