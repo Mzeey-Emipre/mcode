@@ -45,6 +45,7 @@ beforeEach(async () => {
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 describe("useHighlighter", () => {
@@ -65,6 +66,21 @@ describe("useHighlighter", () => {
         language: "typescript",
         theme: "github-dark",
       }),
+    );
+    expect(mockWorkerInstance.postMessage.mock.calls[0][0]).not.toHaveProperty("measurePerformance");
+  });
+
+  it("adds measurement metadata only when a performance build capture is active", async () => {
+    vi.stubEnv("VITE_MCODE_PERFORMANCE_MODE", "profiling");
+    vi.resetModules();
+    const performanceModule = await import("../performance/shiki-performance");
+    const highlighterModule = await import("../hooks/useHighlighter");
+    performanceModule.setShikiPerformanceCapture(true);
+
+    renderHook(() => highlighterModule.useHighlighter("const x = 1;", "typescript", "github-dark"));
+
+    expect(mockWorkerInstance.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ measurePerformance: true }),
     );
   });
 

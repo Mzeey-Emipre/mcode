@@ -15,6 +15,282 @@ export const FRONTEND_RENDERER_WORKLOADS = Object.freeze([
   "panelTransitions",
 ]);
 
+/** The worker contract is the producer; runner validation mirrors this serialized boundary. */
+export const SHIKI_STAGE_NAMES = Object.freeze([
+  "workerStartup",
+  "highlighterCreation",
+  "grammarLoad",
+  "codeToHtml",
+  "responseBytes",
+  "workerDelivery",
+  "reactCommit",
+  "htmlInsertion",
+  "style",
+  "layout",
+  "totalCompletion",
+]);
+
+const SHIKI_DURATION_STAGE_NAMES = Object.freeze(
+  SHIKI_STAGE_NAMES.filter((name) => name !== "responseBytes"),
+);
+const SHIKI_PHASES = Object.freeze(["cold", "warm"]);
+const SHIKI_WORKLOAD_PHASE = "workload";
+const SHIKI_BUILD_MODES = Object.freeze(["profiling", "production"]);
+const SHIKI_WORKER_STAGES = Object.freeze([
+  "workerStartup",
+  "highlighterCreation",
+  "grammarLoad",
+  "codeToHtml",
+  "responseBytes",
+  "workerDelivery",
+]);
+const SHIKI_RENDERER_STAGES = Object.freeze([
+  "reactCommit",
+  "htmlInsertion",
+  "totalCompletion",
+]);
+const MAX_SHIKI_STAGE_OBSERVATIONS = 1_000;
+const MAX_SHIKI_DURATION_MS = 60_000;
+const MAX_SHIKI_RESPONSE_BYTES = 64 * 1024 * 1024;
+
+function isPlainObject(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function hasExactKeys(value, keys) {
+  const actualKeys = Object.keys(value).sort();
+  return actualKeys.length === keys.length && keys.every((key, index) => actualKeys[index] === key);
+}
+
+function assertBoundedDuration(value) {
+  if (!Number.isFinite(value) || value < 0 || value > MAX_SHIKI_DURATION_MS) {
+    throw new TypeError(
+      `Shiki durations must be finite non-negative numbers at most ${MAX_SHIKI_DURATION_MS}ms`,
+    );
+  }
+}
+
+function assertBoundedResponseBytes(value) {
+  if (
+    !Number.isSafeInteger(value) ||
+    value < 0 ||
+    value > MAX_SHIKI_RESPONSE_BYTES
+  ) {
+    throw new TypeError(
+      `Shiki response bytes must be finite non-negative safe integers at most ${MAX_SHIKI_RESPONSE_BYTES}`,
+    );
+  }
+}
+
+/** Returns every finite Chromium long task over 50ms with its captured sample index. */
+export function extractShikiLongTasks(longTasksMs, sampleIndex) {
+  if (!Array.isArray(longTasksMs) || !Number.isSafeInteger(sampleIndex) || sampleIndex < 0) {
+    throw new TypeError("Shiki long tasks require an array and a non-negative sample index");
+  }
+  return longTasksMs
+    .filter((durationMs) => Number.isFinite(durationMs) && durationMs > 50)
+    .map((durationMs) => ({ sampleIndex, durationMs }));
+}
+
+function summarizeValues(values, unit) {
+  const sorted = [...values].sort((left, right) => left - right);
+  const percentile = (quantile) => sorted[Math.ceil(sorted.length * quantile) - 1];
+  const suffix = unit === "bytes" ? "Bytes" : "Ms";
+  return {
+    sampleCount: sorted.length,
+    [`min${suffix}`]: sorted[0],
+    [`median${suffix}`]: percentile(0.5),
+    [`p95${suffix}`]: percentile(0.95),
+    [`max${suffix}`]: sorted.at(-1),
+  };
+}
+
+/**
+ * Aggregates bounded, phase-labelled Shiki stage observations for one build mode.
+ * Production leaves React-derived stages null because the fixture duration is a whole workload, not a request boundary.
+ */
+export function aggregateShikiStageAttribution(observations, buildMode = "profiling") {
+  if (!Array.isArray(observations) || observations.length === 0) {
+    throw new TypeError("Shiki stage observations must be a non-empty array");
+  }
+  if (!SHIKI_BUILD_MODES.includes(buildMode)) {
+    throw new TypeError("Shiki build mode must be profiling or production");
+  }
+  const samples = Array.isArray(observations[0]) ? observations : [observations];
+  const observationCount = samples.reduce((count, sample) => count + sample.length, 0);
+  if (observationCount > MAX_SHIKI_STAGE_OBSERVATIONS) {
+    throw new RangeError(
+      `Shiki stage observations are limited to ${MAX_SHIKI_STAGE_OBSERVATIONS} entries`,
+    );
+  }
+
+  const stagesByPhase = Object.fromEntries(
+    SHIKI_PHASES.map((phase) => [
+      phase,
+      Object.fromEntries(SHIKI_DURATION_STAGE_NAMES.map((name) => [name, []])),
+    ]),
+  );
+  const workloadStages = Object.fromEntries(["style", "layout"].map((stage) => [stage, []]));
+  const responseBytesByPhase = Object.fromEntries(SHIKI_PHASES.map((phase) => [phase, []]));
+  const seenStages = new Set();
+  const stageObservationsOver50Ms = [];
+  const sampleStageTotals = [];
+
+  for (const sample of samples) {
+    if (!Array.isArray(sample) || sample.length === 0) {
+      throw new TypeError("Each Shiki sample must contain observations");
+    }
+    const sampleStages = {};
+    const sampleSeenStages = new Set();
+    const sampleStagePhases = Object.fromEntries(
+      SHIKI_STAGE_NAMES.map((stage) => [stage, new Set()]),
+    );
+    for (const observation of sample) {
+      if (!isPlainObject(observation)) {
+        throw new TypeError("Each Shiki stage observation must be an object");
+      }
+      const { phase, stage } = observation;
+      if (!SHIKI_PHASES.includes(phase) && phase !== SHIKI_WORKLOAD_PHASE) {
+        throw new TypeError("Shiki stage observation phase must be cold, warm, or workload");
+      }
+      if (!SHIKI_STAGE_NAMES.includes(stage)) {
+        throw new TypeError(`Unknown Shiki stage: ${String(stage)}`);
+      }
+      if (buildMode === "production" && SHIKI_RENDERER_STAGES.includes(stage)) {
+        if (!hasExactKeys(observation, ["durationMs", "phase", "stage"])) {
+          throw new TypeError("Production renderer observations must contain only phase, stage, and durationMs");
+        }
+        assertBoundedDuration(observation.durationMs);
+        continue;
+      }
+      if ((stage === "style" || stage === "layout") && phase !== SHIKI_WORKLOAD_PHASE) {
+        throw new TypeError("Style and layout observations must use the workload phase");
+      }
+      seenStages.add(stage);
+      sampleSeenStages.add(stage);
+      sampleStagePhases[stage].add(phase);
+      if (stage === "responseBytes") {
+        if (phase === SHIKI_WORKLOAD_PHASE) {
+          throw new TypeError("Workload Shiki observations cannot contain response bytes");
+        }
+        if (!hasExactKeys(observation, ["bytes", "phase", "stage"])) {
+          throw new TypeError("Response byte observations must contain only phase, stage, and bytes");
+        }
+        assertBoundedResponseBytes(observation.bytes);
+        responseBytesByPhase[phase].push(observation.bytes);
+        continue;
+      }
+
+      if (phase === SHIKI_WORKLOAD_PHASE) {
+        if ((stage !== "style" && stage !== "layout") ||
+          !hasExactKeys(observation, ["durationMs", "phase", "stage"])) {
+          throw new TypeError("Workload observations must contain only style or layout duration data");
+        }
+        assertBoundedDuration(observation.durationMs);
+        workloadStages[stage].push(observation.durationMs);
+      } else {
+        if (!hasExactKeys(observation, ["durationMs", "phase", "stage"])) {
+          throw new TypeError("Duration observations must contain only phase, stage, and durationMs");
+        }
+        assertBoundedDuration(observation.durationMs);
+        stagesByPhase[phase][stage].push(observation.durationMs);
+      }
+      sampleStages[stage] = (sampleStages[stage] ?? 0) + observation.durationMs;
+      if (observation.durationMs > 50) {
+        stageObservationsOver50Ms.push({ phase, stage, durationMs: observation.durationMs });
+      }
+    }
+    for (const stage of SHIKI_WORKER_STAGES) {
+      if (!sampleSeenStages.has(stage)) {
+        throw new TypeError(`Each Shiki sample must include ${stage}`);
+      }
+      if (!sampleStagePhases[stage].has("cold") ||
+        (stage !== "workerStartup" && !sampleStagePhases[stage].has("warm"))) {
+        throw new TypeError(`Each Shiki sample must include complete cold and warm ${stage} observations`);
+      }
+    }
+    if (buildMode === "profiling") {
+      for (const stage of SHIKI_RENDERER_STAGES) {
+        if (!sampleSeenStages.has(stage)) {
+          throw new TypeError(`Each profiling Shiki sample must include ${stage}`);
+        }
+      }
+    } else {
+      for (const stage of ["style", "layout"]) {
+        if (!sampleSeenStages.has(stage)) {
+          throw new TypeError(`Each production Shiki sample must include workload ${stage}`);
+        }
+      }
+    }
+    sampleStageTotals.push(sampleStages);
+  }
+
+  const requiredStages = buildMode === "profiling"
+    ? [...SHIKI_WORKER_STAGES, ...SHIKI_RENDERER_STAGES]
+    : [...SHIKI_WORKER_STAGES, "style", "layout"];
+  const missingStages = requiredStages.filter((stage) => !seenStages.has(stage));
+  if (missingStages.length > 0) {
+    throw new TypeError(`Missing Shiki stage observations: ${missingStages.join(", ")}`);
+  }
+  if (SHIKI_PHASES.some((phase) => stagesByPhase[phase] && responseBytesByPhase[phase].length === 0)) {
+    throw new TypeError("Shiki stage observations must include cold and warm phases");
+  }
+
+  const stages = Object.fromEntries(
+    SHIKI_PHASES.map((phase) => [
+      phase,
+      Object.fromEntries(
+        SHIKI_DURATION_STAGE_NAMES.map((name) => [
+          name,
+          stagesByPhase[phase][name].length > 0
+            ? summarizeValues(stagesByPhase[phase][name], "ms")
+            : null,
+        ]),
+      ),
+    ]),
+  );
+  const workload = Object.fromEntries(
+    Object.entries(workloadStages).map(([stage, values]) => [
+      stage,
+      values.length > 0 ? summarizeValues(values, "ms") : null,
+    ]),
+  );
+  const responseBytes = Object.fromEntries(
+    SHIKI_PHASES.map((phase) => [
+      phase,
+      summarizeValues(responseBytesByPhase[phase], "bytes"),
+    ]),
+  );
+
+  const largestStage = SHIKI_DURATION_STAGE_NAMES
+    .filter((stage) => stage !== "totalCompletion")
+    .map((stage) => {
+      const sampleTotals = sampleStageTotals
+        .map((totals) => totals[stage])
+        .filter((durationMs) => Number.isFinite(durationMs));
+      if (sampleTotals.length === 0) return null;
+      return {
+        stage,
+        medianMs: summarizeValues(sampleTotals, "ms").medianMs,
+        sampleTotals,
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => right.medianMs - left.medianMs)[0] ?? null;
+
+  return {
+    buildMode,
+    stages,
+    workload,
+    responseBytes,
+    largestStage: largestStage?.stage ?? null,
+    largestStageObservation: largestStage,
+    stageObservationsOver50Ms,
+  };
+}
+
 async function waitForFrames(page, count = 2) {
   await page.bringToFront();
   return page.evaluate(async (frameCount) => {
@@ -144,13 +420,57 @@ async function installFixtureRuntime(page) {
   });
 }
 
-async function timeFixture(page, sampleCount, operation, modeCollector) {
+async function timeFixture(page, sampleCount, operation, modeCollector, options = {}) {
   const samples = [];
   const checks = [];
   const attributions = [];
+  const captureShiki = options.captureShiki === true;
   await operation(-1);
+  if (captureShiki) {
+    await page.evaluate(() => {
+      const bridge = window.__mcodeFrontendPerformanceModules?.shikiPerformance;
+      bridge?.setCapture(false);
+      bridge?.reset();
+      bridge?.resetWorker();
+    });
+  }
   for (let index = 0; index < sampleCount; index += 1) {
-    const { result, attribution } = await modeCollector.measure(() => operation(index));
+    if (captureShiki) {
+      await page.evaluate(() => {
+        const bridge = window.__mcodeFrontendPerformanceModules?.shikiPerformance;
+        bridge?.reset();
+        bridge?.resetWorker();
+        bridge?.setCapture(true);
+      });
+    }
+    const { result, attribution } = await modeCollector.measure(
+      () => operation(index),
+      getShikiTraceOptions(captureShiki, options.buildMode),
+    );
+    if (captureShiki) {
+      result.check.buildMode = options.buildMode ?? "profiling";
+      result.check.shikiAttribution = await page.evaluate(() => {
+        const bridge = window.__mcodeFrontendPerformanceModules?.shikiPerformance;
+        bridge?.setCapture(false);
+        return bridge?.drain() ?? [];
+      });
+      const trace = attribution.chromium;
+      if (Number.isFinite(trace?.styleMs) && trace.styleMs >= 0 && trace.styleMs <= MAX_SHIKI_DURATION_MS) {
+        result.check.shikiAttribution.push({
+          phase: "workload",
+          stage: "style",
+          durationMs: trace.styleMs,
+        });
+      }
+      if (Number.isFinite(trace?.layoutMs) && trace.layoutMs >= 0 && trace.layoutMs <= MAX_SHIKI_DURATION_MS) {
+        result.check.shikiAttribution.push({
+          phase: "workload",
+          stage: "layout",
+          durationMs: trace.layoutMs,
+        });
+      }
+      result.check.shikiLongTasksOver50Ms = extractShikiLongTasks(trace?.longTasksMs ?? [], index);
+    }
     samples.push(result.durationMs);
     checks.push(result.check);
     attributions.push(attribution);
@@ -158,8 +478,13 @@ async function timeFixture(page, sampleCount, operation, modeCollector) {
   return { samples, checks, attributions };
 }
 
+/** Returns trace collection options only for production Shiki attribution. */
+export function getShikiTraceOptions(captureShiki, buildMode) {
+  return captureShiki && buildMode === "production" ? { trace: true } : undefined;
+}
+
 /** Returns correctness failures for one workload observation. */
-export function validateWorkloadCheck(workload, check) {
+export function validateWorkloadCheck(workload, check, buildMode = check?.buildMode ?? "profiling") {
   const failures = [];
   const requireCheck = (condition, message) => {
     if (!condition) failures.push(message);
@@ -206,6 +531,24 @@ export function validateWorkloadCheck(workload, check) {
     case "markdownShiki":
       requireCheck(check.codeBlocks === 10, "expected 10 Markdown code blocks");
       requireCheck(check.highlightedBlocks === 10, "expected 10 highlighted code blocks");
+      requireCheck(check.plainFallbackObserved === true, "expected plain fallback before highlight completion");
+      requireCheck(check.themeClassAndStyle === true, "expected Shiki theme class and style");
+      requireCheck(check.copyButtonsAccessible === true, "expected accessible copy buttons");
+      requireCheck(check.semanticCodeBlocks === true, "expected semantic pre/code elements");
+      requireCheck(check.highlightedContent === true, "expected highlighted code content");
+      requireCheck(check.horizontalOverflow === true, "expected horizontal code overflow to remain scrollable");
+      requireCheck(check.textSelection === true, "expected highlighted code text selection");
+      if (buildMode === "production") {
+        requireCheck(
+          Array.isArray(check.shikiLongTasksOver50Ms),
+          "expected Chromium long-task observations",
+        );
+      }
+      try {
+        aggregateShikiStageAttribution(check.shikiAttribution, buildMode);
+      } catch {
+        failures.push("expected Shiki stage attribution");
+      }
       break;
     case "panelTransitions":
       requireCheck(check.visible === true, "right panel is closed");
@@ -539,7 +882,7 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
       const blocks = Array.from({ length: 10 }, (_, block) => {
         const code = Array.from(
           { length: 100 },
-          (_, line) => `const fixture_${block}_${line}: number = ${line};`,
+          (_, line) => `const fixture_${block}_${line}: number = ${line};${line === 0 ? ` const overflow_${block} = "${"x".repeat(1800)}";` : ""}`,
         ).join("\n");
         return `## Block ${block}\n\n\`\`\`typescript\n${code}\n\`\`\``;
       }).join("\n\n");
@@ -548,22 +891,61 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
       fixture.activate(threadId, "Markdown and Shiki fixture", [assistant]);
       const deadline = startedAt + 15_000;
       let highlightedBlocks = 0;
+      let plainFallbackObserved = [...document.querySelectorAll(
+        `[data-thread-id="${threadId}"] [data-code-block]`,
+      )].some((block) => block.querySelector(".visible.opacity-100") !== null);
       do {
         await new Promise((resolve) => requestAnimationFrame(resolve));
         highlightedBlocks = document.querySelectorAll(
           `[data-thread-id="${threadId}"] .shiki`,
         ).length;
+        plainFallbackObserved ||= [...document.querySelectorAll(
+          `[data-thread-id="${threadId}"] [data-code-block]`,
+        )].some((block) => block.querySelector(".visible.opacity-100") !== null);
       } while (highlightedBlocks < 10 && performance.now() < deadline);
       return {
         durationMs: performance.now() - startedAt,
         check: {
           highlightedBlocks,
           codeBlocks: document.querySelectorAll(`[data-thread-id="${threadId}"] [data-code-block]`).length,
+          plainFallbackObserved,
+          themeClassAndStyle: [...document.querySelectorAll(
+            `[data-thread-id="${threadId}"] [data-code-block] .shiki`,
+          )].every((block) => {
+            const expectedTheme = document.documentElement.classList.contains("dark")
+              ? "github-dark"
+              : "github-light";
+            return block.classList.contains(expectedTheme) && Boolean(block.getAttribute("style"));
+          }),
+          copyButtonsAccessible: document.querySelectorAll(
+            `[data-thread-id="${threadId}"] button[aria-label="Copy code"]`,
+          ).length === 10,
+          semanticCodeBlocks: document.querySelectorAll(
+            `[data-thread-id="${threadId}"] [data-code-block] pre code`,
+          ).length >= 10,
+          highlightedContent: [...document.querySelectorAll(
+            `[data-thread-id="${threadId}"] [data-code-block] .shiki code`,
+          )].every((block) => block.textContent?.includes("fixture_")),
+          textSelection: (() => {
+            const code = document.querySelector(
+              `[data-thread-id="${threadId}"] [data-code-block] .shiki code`,
+            );
+            if (!code) return false;
+            const range = document.createRange();
+            range.selectNodeContents(code);
+            const selection = window.getSelection();
+            selection?.removeAllRanges();
+            selection?.addRange(range);
+            return selection?.toString().includes("fixture_") ?? false;
+          })(),
+          horizontalOverflow: [...document.querySelectorAll(
+            `[data-thread-id="${threadId}"] [data-code-block] .overflow-x-auto`,
+          )].some((container) => container.scrollWidth > container.clientWidth),
           sampleIndex,
         },
       };
     }, sample);
-  }, modeCollector);
+  }, modeCollector, { captureShiki: true, buildMode: mode });
 
   const panelTransitions = await timeFixture(page, sampleCount, async (sample) => {
     return page.evaluate(async (sampleIndex) => {
@@ -641,7 +1023,7 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
           ? validateNarrativeRowIsolation(attribution.react)
           : [];
         const failures = [
-          ...validateWorkloadCheck(name, observed),
+          ...validateWorkloadCheck(name, observed, mode),
           ...rowIsolationFailures,
           ...pageFailures,
         ];
@@ -662,6 +1044,20 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
       return [name, {
         rawSamples,
         summary: summarizeDurationSamples(acceptedDurations),
+        shikiAttribution: (() => {
+          if (name !== "markdownShiki") return null;
+          const acceptedShikiSamples = rawSamples
+            .filter((sample) => sample.correctness.passed)
+            .map((sample) => sample.correctness.observed.shikiAttribution ?? []);
+          if (acceptedShikiSamples.length === 0) return null;
+          const attribution = aggregateShikiStageAttribution(acceptedShikiSamples, mode);
+          return {
+            ...attribution,
+            longTasksOver50Ms: rawSamples
+              .filter((sample) => sample.correctness.passed)
+              .flatMap((sample) => sample.correctness.observed.shikiLongTasksOver50Ms ?? []),
+          };
+        })(),
         correctness: {
           passed: rawSamples.every((sample) => sample.correctness.passed),
           rejectedSamples: rawSamples.filter((sample) => !sample.correctness.passed).length,

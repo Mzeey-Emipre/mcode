@@ -64,6 +64,15 @@ export function getWorker(): Worker {
   return sharedWorker;
 }
 
+/** Resets the shared worker for a performance cold-cycle boundary. */
+export function resetWorkerForPerformance(): void {
+  if (!import.meta.env.VITE_MCODE_PERFORMANCE_MODE) return;
+  sharedWorker?.terminate();
+  sharedWorker = null;
+  workerGeneration++;
+  pending.clear();
+}
+
 let nextId = 0;
 
 /** Returns a unique request ID. */

@@ -186,6 +186,13 @@ function printResult(result, outputFile) {
       process.stdout.write(
         `  ${workload}: median=${median}, rejected=${metric.correctness.rejectedSamples}\n`,
       );
+      if (metric.shikiAttribution) {
+        process.stdout.write(
+          `    Shiki largest=${metric.shikiAttribution.largestStage ?? "none"}; ` +
+          `stageOver50=${JSON.stringify(metric.shikiAttribution.stageObservationsOver50Ms)}; ` +
+          `longTasksOver50=${JSON.stringify(metric.shikiAttribution.longTasksOver50Ms)}\n`,
+        );
+      }
     }
   }
 }

@@ -2,6 +2,12 @@ import { useDiffStore } from "@/stores/diffStore";
 import { createEmptyThreadRecord } from "@/stores/thread-record";
 import { useThreadStore } from "@/stores/threadStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { resetWorkerForPerformance } from "@/lib/shiki-worker-client";
+import {
+  drainShikiPerformanceObservations,
+  resetShikiPerformanceObservations,
+  setShikiPerformanceCapture,
+} from "./shiki-performance";
 
 declare global {
   interface Window {
@@ -10,6 +16,12 @@ declare global {
       readonly threadStore: typeof useThreadStore;
       readonly diffStore: typeof useDiffStore;
       readonly createEmptyThreadRecord: typeof createEmptyThreadRecord;
+      readonly shikiPerformance: {
+        readonly drain: typeof drainShikiPerformanceObservations;
+        readonly reset: typeof resetShikiPerformanceObservations;
+        readonly setCapture: typeof setShikiPerformanceCapture;
+        readonly resetWorker: typeof resetWorkerForPerformance;
+      };
     };
   }
 }
@@ -21,5 +33,11 @@ export function installFrontendRendererFixtureBridge(): void {
     threadStore: useThreadStore,
     diffStore: useDiffStore,
     createEmptyThreadRecord,
+    shikiPerformance: {
+      drain: drainShikiPerformanceObservations,
+      reset: resetShikiPerformanceObservations,
+      setCapture: setShikiPerformanceCapture,
+      resetWorker: resetWorkerForPerformance,
+    },
   };
 }

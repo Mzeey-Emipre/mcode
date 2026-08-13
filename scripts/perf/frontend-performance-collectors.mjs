@@ -171,6 +171,8 @@ function summarizeTrace(events) {
       : null;
   };
   return {
+    styleMs: durationMs(new Set(["RecalculateStyles", "UpdateLayoutTree"])),
+    layoutMs: durationMs(new Set(["Layout"])),
     paintMs: durationMs(new Set(["Paint", "PaintImage", "CompositeLayers"])),
     traceEventCount: events.length,
   };
@@ -188,71 +190,68 @@ export async function createModeSignalCollector(page, mode) {
     throw new Error("mode must be profiling or production");
   }
   await installAttributionRuntime(page);
-  if (mode === "profiling") {
-    return {
-      /** Measures one profiling sample without mixing browser or process signals into it. */
-      async measure(operation) {
-        const indexes = await resetAttributionRuntime(page);
-        const result = await operation();
-        const signals = await readAttributionRuntime(page, indexes);
-        return {
-          result,
-          attribution: {
-            react: {
-              commits: signals.commits,
-              rowRenders: signals.rowRenders,
-            },
-            chromium: null,
-            electronProcess: null,
-            gpu: null,
-          },
-        };
-      },
-      async dispose() {},
-    };
-  }
-
-  const session = await page.context().newCDPSession(page);
-  await session.send("Performance.enable");
+  let session = null;
+  const ensureSession = async () => {
+    if (!session) session = await page.context().newCDPSession(page);
+    await session.send("Performance.enable");
+    return session;
+  };
   return {
-    /** Measures one production sample with Chromium trace and Electron process data. */
-    async measure(operation) {
+    /** Measures one sample and optionally extracts trace-only browser stages. */
+    async measure(operation, options = {}) {
       const indexes = await resetAttributionRuntime(page);
-      const before = metricMap((await session.send("Performance.getMetrics")).metrics);
-      const processBefore = await readElectronProcessMetrics(page);
+      const traceEnabled = mode === "production" || options.trace === true;
+      const activeSession = traceEnabled ? await ensureSession() : null;
+      const before = activeSession && mode === "production"
+        ? metricMap((await activeSession.send("Performance.getMetrics")).metrics)
+        : null;
+      const processBefore = mode === "production" ? await readElectronProcessMetrics(page) : null;
       const traceEvents = [];
       const onTraceData = ({ value }) => traceEvents.push(...value);
-      session.on("Tracing.dataCollected", onTraceData);
-      await session.send("Tracing.start", {
-        categories: "devtools.timeline,blink.user_timing,disabled-by-default-devtools.timeline.frame",
-        transferMode: "ReportEvents",
-      });
+      if (activeSession) {
+        activeSession.on("Tracing.dataCollected", onTraceData);
+        await activeSession.send("Tracing.start", {
+          categories: "devtools.timeline,blink.user_timing,disabled-by-default-devtools.timeline.frame",
+          transferMode: "ReportEvents",
+        });
+      }
       let result;
       try {
         result = await operation();
       } finally {
-        const completed = new Promise((resolveComplete) => {
-          session.once("Tracing.tracingComplete", resolveComplete);
-        });
-        await session.send("Tracing.end");
-        await completed;
-        session.off("Tracing.dataCollected", onTraceData);
+        if (activeSession) {
+          const completed = new Promise((resolveComplete) => {
+            activeSession.once("Tracing.tracingComplete", resolveComplete);
+          });
+          await activeSession.send("Tracing.end");
+          await completed;
+          activeSession.off("Tracing.dataCollected", onTraceData);
+        }
       }
-      const processAfter = await readElectronProcessMetrics(page);
-      const after = metricMap((await session.send("Performance.getMetrics")).metrics);
+      const processAfter = mode === "production" ? await readElectronProcessMetrics(page) : null;
+      const after = activeSession && mode === "production"
+        ? metricMap((await activeSession.send("Performance.getMetrics")).metrics)
+        : null;
       const signals = await readAttributionRuntime(page, indexes);
-      return {
-        result,
-        attribution: {
-          react: null,
-          chromium: {
+      const chromium = mode === "production"
+        ? {
             scriptingMs: metricDelta(before, after, "ScriptDuration"),
             layoutMs: metricDelta(before, after, "LayoutDuration"),
             taskMs: metricDelta(before, after, "TaskDuration"),
             longTasksMs: signals.longTasks,
             frameCadence: summarizeFrames(signals.frameTimes),
             ...summarizeTrace(traceEvents),
-          },
+          }
+        : traceEnabled
+          ? { ...summarizeTrace(traceEvents), longTasksMs: signals.longTasks }
+          : null;
+      return {
+        result,
+        attribution: {
+          react: mode === "profiling"
+            ? { commits: signals.commits, rowRenders: signals.rowRenders }
+            : null,
+          chromium,
           electronProcess: processBefore && processAfter
             ? { before: processBefore, after: processAfter }
             : null,
@@ -261,7 +260,7 @@ export async function createModeSignalCollector(page, mode) {
       };
     },
     async dispose() {
-      await session.detach();
+      if (session) await session.detach();
     },
   };
 }

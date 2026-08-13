@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { summarizeDurationSamples } from "../../perf/frontend-performance-collectors.mjs";
 import {
+  aggregateShikiStageAttribution,
+  extractShikiLongTasks,
   FRONTEND_RENDERER_WORKLOADS,
+  getShikiTraceOptions,
+  SHIKI_STAGE_NAMES,
   validateNarrativeRowIsolation,
   validateWorkloadCheck,
 } from "../../perf/frontend-renderer-fixture.mjs";
@@ -10,6 +14,31 @@ import {
   parsePerformanceMode,
   runFrontendPerformance,
 } from "../../perf/run-frontend-performance.mjs";
+
+const completeShikiObservations = [
+  { phase: "cold", stage: "workerStartup", durationMs: 2 },
+  { phase: "cold", stage: "highlighterCreation", durationMs: 4 },
+  { phase: "cold", stage: "grammarLoad", durationMs: 6 },
+  { phase: "cold", stage: "codeToHtml", durationMs: 18 },
+  { phase: "cold", stage: "responseBytes", bytes: 512 },
+  { phase: "cold", stage: "workerDelivery", durationMs: 3 },
+  { phase: "cold", stage: "reactCommit", durationMs: 5 },
+  { phase: "cold", stage: "htmlInsertion", durationMs: 7 },
+  { phase: "workload", stage: "style", durationMs: 8 },
+  { phase: "workload", stage: "layout", durationMs: 9 },
+  { phase: "cold", stage: "totalCompletion", durationMs: 22 },
+  { phase: "warm", stage: "highlighterCreation", durationMs: 4 },
+  { phase: "warm", stage: "grammarLoad", durationMs: 6 },
+  { phase: "warm", stage: "codeToHtml", durationMs: 51 },
+  { phase: "warm", stage: "responseBytes", bytes: 512 },
+  { phase: "warm", stage: "workerDelivery", durationMs: 3 },
+  { phase: "warm", stage: "reactCommit", durationMs: 5 },
+  { phase: "warm", stage: "htmlInsertion", durationMs: 7 },
+  { phase: "warm", stage: "totalCompletion", durationMs: 61 },
+];
+const productionShikiObservations = completeShikiObservations.filter(
+  ({ stage }) => !["reactCommit", "htmlInsertion", "totalCompletion"].includes(stage),
+);
 
 describe("frontend performance runner", () => {
   it("uses the approved workload order", () => {
@@ -54,7 +83,43 @@ describe("frontend performance runner", () => {
     assert.deepEqual(validateWorkloadCheck("markdownShiki", {
       codeBlocks: 10,
       highlightedBlocks: 9,
-    }), ["expected 10 highlighted code blocks"]);
+    }), [
+      "expected 10 highlighted code blocks",
+      "expected plain fallback before highlight completion",
+      "expected Shiki theme class and style",
+      "expected accessible copy buttons",
+      "expected semantic pre/code elements",
+      "expected highlighted code content",
+      "expected horizontal code overflow to remain scrollable",
+      "expected highlighted code text selection",
+      "expected Shiki stage attribution",
+    ]);
+    assert.deepEqual(validateWorkloadCheck("markdownShiki", {
+      codeBlocks: 10,
+      highlightedBlocks: 10,
+      plainFallbackObserved: true,
+      themeClassAndStyle: true,
+      copyButtonsAccessible: true,
+      semanticCodeBlocks: true,
+      highlightedContent: true,
+      horizontalOverflow: true,
+      textSelection: true,
+      shikiAttribution: completeShikiObservations,
+    }), []);
+    assert.deepEqual(validateWorkloadCheck("markdownShiki", {
+      buildMode: "production",
+      codeBlocks: 10,
+      highlightedBlocks: 10,
+      plainFallbackObserved: true,
+      themeClassAndStyle: true,
+      copyButtonsAccessible: true,
+      semanticCodeBlocks: true,
+      highlightedContent: true,
+      horizontalOverflow: true,
+      textSelection: true,
+      shikiAttribution: productionShikiObservations,
+      shikiLongTasksOver50Ms: [],
+    }, "production"), []);
     assert.deepEqual(validateWorkloadCheck("panelTransitions", {
       activeTab: "preview",
       browserTabOpen: true,
@@ -62,6 +127,125 @@ describe("frontend performance runner", () => {
       terminalShell: true,
       visible: true,
     }), ["Terminal is not the active panel"]);
+  });
+
+  it("aggregates known Shiki stages by cold and warm phase", () => {
+    assert.deepEqual(SHIKI_STAGE_NAMES, [
+      "workerStartup",
+      "highlighterCreation",
+      "grammarLoad",
+      "codeToHtml",
+      "responseBytes",
+      "workerDelivery",
+      "reactCommit",
+      "htmlInsertion",
+      "style",
+      "layout",
+      "totalCompletion",
+    ]);
+    const result = aggregateShikiStageAttribution(completeShikiObservations);
+    assert.equal(result.stages.cold.codeToHtml.medianMs, 18);
+    assert.equal(result.stages.warm.codeToHtml.medianMs, 51);
+    assert.equal(result.workload.style.medianMs, 8);
+    assert.deepEqual(result.responseBytes, {
+      cold: { sampleCount: 1, minBytes: 512, medianBytes: 512, p95Bytes: 512, maxBytes: 512 },
+      warm: { sampleCount: 1, minBytes: 512, medianBytes: 512, p95Bytes: 512, maxBytes: 512 },
+    });
+    assert.equal(result.largestStage, "codeToHtml");
+    assert.deepEqual(result.largestStageObservation, {
+      stage: "codeToHtml",
+      medianMs: 69,
+      sampleTotals: [69],
+    });
+    assert.deepEqual(result.stageObservationsOver50Ms, [{
+      phase: "warm",
+      stage: "codeToHtml",
+      durationMs: 51,
+    }, {
+      phase: "warm",
+      stage: "totalCompletion",
+      durationMs: 61,
+    }]);
+  });
+
+  it("chooses the largest stage from per-sample totals", () => {
+    const secondSample = completeShikiObservations.map((observation) =>
+      observation.stage === "codeToHtml"
+        ? { ...observation, durationMs: observation.durationMs + 20 }
+        : observation,
+    );
+    const thirdSample = secondSample.map((observation) =>
+      observation.stage === "codeToHtml"
+        ? { ...observation, durationMs: observation.durationMs + 40 }
+        : observation,
+    );
+    const result = aggregateShikiStageAttribution([
+      completeShikiObservations,
+      secondSample,
+      thirdSample,
+    ]);
+    assert.deepEqual(result.largestStageObservation, {
+      stage: "codeToHtml",
+      medianMs: 109,
+      sampleTotals: [69, 109, 189],
+    });
+  });
+
+  it("keeps unavailable production React stages null", () => {
+    const result = aggregateShikiStageAttribution(productionShikiObservations, "production");
+    assert.equal(result.stages.cold.reactCommit, null);
+    assert.equal(result.stages.warm.htmlInsertion, null);
+    assert.equal(result.stages.cold.totalCompletion, null);
+    assert.equal(result.workload.style?.sampleCount, 1);
+    assert.notEqual(result.largestStage, "totalCompletion");
+  });
+
+  it("requires mode-specific Shiki stages", () => {
+    assert.throws(
+      () => aggregateShikiStageAttribution(productionShikiObservations, "profiling"),
+      /reactCommit/,
+    );
+    assert.throws(
+      () => aggregateShikiStageAttribution(
+        completeShikiObservations.filter(({ stage }) => stage !== "style"),
+        "production",
+      ),
+      /workload style/,
+    );
+  });
+
+  it("extracts every Chromium long task without mixing stage observations", () => {
+    assert.deepEqual(extractShikiLongTasks([49, 50, 50.5, 75, Number.NaN], 3), [
+      { sampleIndex: 3, durationMs: 50.5 },
+      { sampleIndex: 3, durationMs: 75 },
+    ]);
+    assert.deepEqual(extractShikiLongTasks([], 0), []);
+  });
+
+  it("collects Shiki tracing only in production mode", () => {
+    assert.equal(getShikiTraceOptions(true, "profiling"), undefined);
+    assert.deepEqual(getShikiTraceOptions(true, "production"), { trace: true });
+    assert.equal(getShikiTraceOptions(false, "production"), undefined);
+  });
+
+  it("rejects unknown, invalid, and unbounded Shiki observations", () => {
+    for (const invalid of [
+      [{ phase: "cold", stage: "unknown", durationMs: 1 }],
+      [{ phase: "cold", stage: "codeToHtml", durationMs: -1 }],
+      [{ phase: "cold", stage: "codeToHtml", durationMs: Infinity }],
+      [{ phase: "cold", stage: "codeToHtml", durationMs: 60_001 }],
+      [{ phase: "cold", stage: "responseBytes", bytes: 1.5 }],
+      [{ phase: "cold", stage: "responseBytes", bytes: 64 * 1024 * 1024 + 1 }],
+      [{ phase: "workload", stage: "codeToHtml", durationMs: 1 }],
+      completeShikiObservations.map((observation, index) =>
+        index === 5 ? { ...observation, phase: "workload" } : observation,
+      ),
+      completeShikiObservations.map((observation, index) =>
+        index === 0 ? { ...observation, extra: true } : observation,
+      ),
+    ]) {
+      assert.throws(() => aggregateShikiStageAttribution(invalid));
+    }
   });
 
   it("requires at least three samples", async () => {
