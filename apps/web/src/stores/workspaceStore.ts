@@ -364,14 +364,25 @@ interface WorkspaceState {
 /** Zustand store for workspace, thread, branch, and PR state management. */
 export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
   let activationQueued = false;
+  let activationGeneration = 0;
   const reconcileSelectedConversation = () => {
     if (activationQueued) return;
     activationQueued = true;
+    const queuedGeneration = ++activationGeneration;
     queueMicrotask(() => {
+      if (!activationQueued || queuedGeneration !== activationGeneration) return;
       activationQueued = false;
       const { activeThreadId, threads } = get();
       void getConversationResidency().activate(activeThreadId, threads);
     });
+  };
+  // Direct selection must publish the resident transcript in the same task as
+  // the sidebar selection so React does not spend a frame on a stale record.
+  const activateSelectedConversation = () => {
+    activationQueued = false;
+    activationGeneration += 1;
+    const { activeThreadId, threads } = get();
+    void getConversationResidency().activate(activeThreadId, threads);
   };
 
   const applyOptimisticSuccess = (
@@ -1291,7 +1302,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         : state.threads,
       }));
 
-    reconcileSelectedConversation();
+    activateSelectedConversation();
 
     if (isCompleted && id) {
       scheduleMarkThreadViewed(id);

@@ -672,8 +672,7 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
       }));
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       const startedAt = performance.now();
-      fixture.workspaceStore.setState({ activeThreadId: rightId });
-      fixture.threadStore.setState({ currentThreadId: rightId });
+      fixture.workspaceStore.getState().setActiveThread(rightId);
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       return {
         durationMs: performance.now() - startedAt,
