@@ -236,11 +236,12 @@ export function projectBrowserNarrativeResult(
   const operation = resolveBrowserNarrativeTool(toolName);
   if (!operation) return null;
   const raw = parseJsonRecord(output) ?? {};
+  const error = isRecord(raw.error) ? raw.error : raw;
   const rawOutcome = allowedString(raw.outcome, OUTCOMES) as BrowserNarrativeResult["outcome"];
-  const outcome = rawOutcome ?? (isError ? "failed" : "completed");
-  const effect = allowedString(raw.effect, EFFECTS);
-  const recovery = allowedString(raw.recovery, RECOVERIES);
-  const errorCode = allowedString(raw.code, ERROR_CODES);
+  const outcome = rawOutcome ?? (isError || isRecord(raw.error) ? "failed" : "completed");
+  const effect = allowedString(raw.effect, EFFECTS) ?? allowedString(error.effect, EFFECTS);
+  const recovery = allowedString(raw.recovery, RECOVERIES) ?? allowedString(error.recovery, RECOVERIES);
+  const errorCode = allowedString(raw.code, ERROR_CODES) ?? allowedString(error.code, ERROR_CODES);
   const action = operation === "browser_tabs"
     ? allowedString(raw.action, TAB_ACTIONS) as BrowserNarrativeResult["action"]
     : undefined;

@@ -93,4 +93,59 @@ describe("Browser automation telemetry", () => {
     expect(sink.mock.calls[1]?.[0]).not.toHaveProperty("headers");
     expect(JSON.stringify(telemetry.report())).not.toMatch(/cookie|credential|header|typed|screenshot|dom|expression|url/i);
   });
+
+  it("does not count document-boundary interruption as takeover", () => {
+    const interrupted = browserAutomationTerminalFields({
+      contractVersion: 1,
+      requestId: "reload",
+      sequence: 1,
+      ok: true,
+      result: {
+        operation: "evaluate",
+        outcome: "interrupted",
+        stoppingPosition: 0,
+        effect: "partial",
+        recovery: "inspect",
+        receipts: [{ index: 0, operation: "evaluate", status: "interrupted" }],
+        finalObservation: {
+          observationRef: "obs",
+          hostRevision: 1,
+          documentRevision: 2,
+          controlRevision: 0,
+          capabilityRevision: 1,
+          observationRevision: 1,
+        },
+      },
+    });
+    expect(interrupted).toMatchObject({
+      failureClass: "application-error",
+      takeover: false,
+      effect: "partial",
+    });
+
+    const telemetry = new BrowserAutomationTelemetry(rollout);
+    telemetry.record({
+      timestampMs: 1,
+      correlationId: "reload",
+      stage: "settlement",
+      provider: "codex",
+      operation: "evaluate",
+      contractVersion: 1,
+      ...interrupted,
+    });
+    expect(telemetry.report().zeroTolerance.postTakeoverEffect).toBe(0);
+  });
+
+  it("keeps explicit human interruption as takeover", () => {
+    expect(browserAutomationTerminalFields({
+      contractVersion: 1,
+      requestId: "human",
+      sequence: 1,
+      ok: false,
+      error: { code: "HUMAN_INTERRUPTED", message: "Stopped", retryable: true, effect: "preserved", recovery: "yield_to_user" },
+    })).toMatchObject({
+      failureClass: "user-takeover",
+      takeover: true,
+    });
+  });
 });

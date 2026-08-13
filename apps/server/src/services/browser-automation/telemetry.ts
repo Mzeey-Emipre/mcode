@@ -153,8 +153,9 @@ export function classifyBrowserAutomationFailure(
   if (effect === "unknown") return { failureClass: "unknown-outcome", expected: false };
   switch (code) {
     case "HUMAN_INTERRUPTED":
-    case "OPERATION_CANCELLED":
       return { failureClass: "user-takeover", expected: true };
+    case "OPERATION_CANCELLED":
+      return { failureClass: "application-error", expected: true };
     case "UNSUPPORTED_OPERATION":
     case "FORBIDDEN":
     case "UNAUTHORIZED":
@@ -212,7 +213,7 @@ export function browserAutomationTerminalFields(
   if ((result.operation === "act" || result.operation === "evaluate") && "outcome" in result) {
     if (result.outcome !== "completed") {
       const classification = result.outcome === "interrupted"
-        ? { failureClass: "user-takeover" as const, expected: true }
+        ? { failureClass: "application-error" as const, expected: true }
         : { failureClass: "application-error" as const, expected: true };
       return {
         outcome: result.outcome,
@@ -220,7 +221,7 @@ export function browserAutomationTerminalFields(
         expectedFailure: classification.expected,
         effect: result.effect,
         recovery: result.recovery,
-        takeover: result.outcome === "interrupted",
+        takeover: false,
         settlement: "complete",
       };
     }

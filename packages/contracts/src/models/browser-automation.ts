@@ -128,6 +128,14 @@ export const BROWSER_AUTOMATION_OPERATIONS = [
   "recordingStop",
 ] as const;
 
+/** Internal Browser step operations dispatched by browser_act. */
+export const BROWSER_AUTOMATION_INTERNAL_OPERATIONS = [
+  "back",
+  "forward",
+  "reload",
+  "wait",
+] as const;
+
 /** Stable Browser v2 operations discoverable during transient unavailability. */
 export const BROWSER_V2_CORE_OPERATIONS = ["open", "inspect", "act", "tabs"] as const;
 
@@ -135,6 +143,15 @@ export const BROWSER_V2_CORE_OPERATIONS = ["open", "inspect", "act", "tabs"] as 
 export type BrowserAutomationOperation =
   | (typeof BROWSER_AUTOMATION_OPERATIONS)[number]
   | (typeof BROWSER_V2_CORE_OPERATIONS)[number];
+/** Browser operation accepted by the host dispatch boundary, including act-step mechanics. */
+export type BrowserAutomationRequestOperation =
+  | BrowserAutomationOperation
+  | (typeof BROWSER_AUTOMATION_INTERNAL_OPERATIONS)[number];
+const browserRequestOperationSchema = z.union([
+  z.enum(BROWSER_AUTOMATION_OPERATIONS),
+  z.enum(BROWSER_V2_CORE_OPERATIONS),
+  z.enum(BROWSER_AUTOMATION_INTERNAL_OPERATIONS),
+]);
 const browserOperationSchema = z.union([
   z.enum(BROWSER_AUTOMATION_OPERATIONS),
   z.enum(BROWSER_V2_CORE_OPERATIONS),
@@ -542,7 +559,7 @@ export const BrowserAutomationActionEntrySchema = lazySchema(() =>
   z
     .object({
       timestamp: z.number().int().nonnegative(),
-      operation: browserOperationSchema,
+      operation: browserRequestOperationSchema,
       outcome: z.enum(["started", "succeeded", "failed", "interrupted"]),
       detail: z.string().max(SHORT_TEXT_MAX).optional(),
     })
@@ -666,7 +683,7 @@ export const BrowserAutomationControllerStateSchema = lazySchema(() =>
       controller: z.enum(["none", "human", "agent"]),
       controlEpoch: z.number().int().nonnegative(),
       providerSessionId: idSchema.optional(),
-      operation: z.enum(BROWSER_AUTOMATION_OPERATIONS).optional(),
+      operation: browserRequestOperationSchema.optional(),
       pointer: z.object({
         x: z.number().finite().min(0).max(100_000),
         y: z.number().finite().min(0).max(100_000),
@@ -1005,7 +1022,7 @@ export const BrowserAutomationTabsArgsSchema = lazySchema(() => tabsArgs);
 /** Typed Browser tab lifecycle mutation. */
 export type BrowserAutomationTabsArgs = z.infer<ReturnType<typeof BrowserAutomationTabsArgsSchema>>;
 
-const requestVariant = <T extends BrowserAutomationOperation>(
+const requestVariant = <T extends BrowserAutomationRequestOperation>(
   operation: T,
   args: z.ZodTypeAny,
 ) => z.object({ ...requestBase, operation: z.literal(operation), args }).strict();
@@ -1029,6 +1046,9 @@ export const BrowserAutomationRequestSchema = lazySchema(() =>
       }).strict(),
     ),
     requestVariant("navigate", urlArgs),
+    requestVariant("back", emptyArgs),
+    requestVariant("forward", emptyArgs),
+    requestVariant("reload", emptyArgs),
     requestVariant(
       "resize",
       z.object({ width: z.number().int().min(BROWSER_AUTOMATION_MIN_VIEWPORT_PX).max(BROWSER_AUTOMATION_MAX_VIEWPORT_PX), height: z.number().int().min(BROWSER_AUTOMATION_MIN_VIEWPORT_PX).max(BROWSER_AUTOMATION_MAX_VIEWPORT_PX) }).strict(),
@@ -1065,6 +1085,7 @@ export const BrowserAutomationRequestSchema = lazySchema(() =>
         z.object({ text: z.string().min(1).max(SHORT_TEXT_MAX), timeoutMs: timeoutSchema }).strict(),
       ]),
     ),
+    requestVariant("wait", z.object({ durationMs: z.number().int().min(1).max(BROWSER_AUTOMATION_MAX_TIMEOUT_MS) }).strict()),
     requestVariant(
       "console",
       z.object({ levels: z.array(z.enum(["debug", "info", "warning", "error"])).max(4).optional(), source: BrowserAutomationDiagnosticLocationSchema().optional(), limit: z.number().int().min(1).max(BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES).default(BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES), clear: z.never().optional() }).strict(),
@@ -1108,7 +1129,7 @@ const actionResultFields = {
   title: z.string().max(4_096),
   controlEpoch: z.number().int().nonnegative(),
 };
-const actionResult = <T extends BrowserAutomationOperation>(operation: T) =>
+const actionResult = <T extends BrowserAutomationRequestOperation>(operation: T) =>
   z.object({ operation: z.literal(operation), ...actionResultFields }).strict();
 
 /** One content-free receipt for a bounded Browser mutation step. */
@@ -1216,6 +1237,9 @@ export const BrowserAutomationResultSchema = lazySchema(() =>
       observationRef: idSchema.optional(),
     }).strict(),
     actionResult("navigate"),
+    actionResult("back"),
+    actionResult("forward"),
+    actionResult("reload"),
     z.object({ operation: z.literal("resize"), width: z.number().int().positive(), height: z.number().int().positive(), controlEpoch: z.number().int().nonnegative() }).strict(),
     z.object({ operation: z.literal("snapshot"), snapshot: BrowserAutomationSnapshotSchema(), controlEpoch: z.number().int().nonnegative() }).strict(),
     z.object({ operation: z.literal("screenshot"), screenshot: BrowserAutomationScreenshotSchema(), controlEpoch: z.number().int().nonnegative() }).strict(),
@@ -1224,6 +1248,7 @@ export const BrowserAutomationResultSchema = lazySchema(() =>
     actionResult("press"),
     actionResult("scroll"),
     actionResult("waitFor"),
+    actionResult("wait"),
     z.object({ operation: z.literal("console"), entries: z.array(BrowserAutomationConsoleEntrySchema()).max(BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES), truncation: BrowserAutomationTruncationSchema() }).strict(),
     z.object({ operation: z.literal("network"), entries: z.array(BrowserAutomationNetworkEntrySchema()).max(BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES), truncation: BrowserAutomationTruncationSchema() }).strict(),
     z.object({ operation: z.literal("accessibility"), nodes: z.array(BrowserAutomationAccessibilityNodeSchema()).max(BROWSER_AUTOMATION_MAX_AX_NODES), truncation: BrowserAutomationTruncationSchema() }).strict(),

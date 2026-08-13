@@ -46,6 +46,18 @@ const WEB_RUNTIME_OPERATIONS = [
   "click",
   "type",
 ] as const satisfies readonly BrowserAutomationOperation[];
+const WEB_RUNTIME_ACT_OPERATIONS = ["navigate", "click", "type"] as const satisfies readonly BrowserAutomationActStep["operation"][];
+const ELECTRON_RUNTIME_ACT_OPERATIONS = [
+  "navigate",
+  "back",
+  "forward",
+  "reload",
+  "wait",
+  "click",
+  "type",
+  "press",
+  "scroll",
+] as const satisfies readonly BrowserAutomationActStep["operation"][];
 
 function observationTargetKey(workspaceId: string, threadId: string, tabId: string): string {
   return JSON.stringify([workspaceId, threadId, tabId]);
@@ -71,6 +83,13 @@ export function getBrowserAutomationRuntimeOperations(
       recordingAvailable || (operation !== "recordingStart" && operation !== "recordingStop"),
     ),
   ];
+}
+
+/** Returns the act-step mechanics supported by the selected Browser runtime. */
+export function getBrowserAutomationRuntimeActOperations(
+  runtime: BrowserAutomationHostRuntime,
+): readonly BrowserAutomationActStep["operation"][] {
+  return runtime === "web" ? WEB_RUNTIME_ACT_OPERATIONS : ELECTRON_RUNTIME_ACT_OPERATIONS;
 }
 
 function sanitizePublicDetail(value: unknown): string {

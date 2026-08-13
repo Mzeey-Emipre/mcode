@@ -14,7 +14,7 @@ import {
   BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_CHARS,
   BrowserAutomationResponseSchema,
   BrowserAutomationHostDispatchSchema,
-  type BrowserAutomationOperation,
+  type BrowserAutomationRequestOperation,
   type BrowserAutomationErrorCode,
   type BrowserAutomationRequest,
   type BrowserAutomationResponse,
@@ -81,7 +81,7 @@ interface NetworkEntry {
 
 interface ActionEntry {
   timestamp: number;
-  operation: BrowserAutomationOperation;
+  operation: BrowserAutomationRequestOperation;
   outcome: "started" | "succeeded" | "failed" | "interrupted";
   detail?: string;
 }
@@ -1336,6 +1336,48 @@ export class BrowserAutomationKernel {
           ...(request.operation === "open" ? { observationRef: randomUUID() } : {}),
         };
       }
+      case "back":
+      case "forward":
+      case "reload": {
+        const canNavigate = request.operation === "back"
+          ? webContents.canGoBack()
+          : request.operation === "forward"
+            ? webContents.canGoForward()
+            : true;
+        if (!canNavigate) throw new KernelError("TARGET_NOT_FOUND", "Browser history has no requested entry", true);
+        const navigationSequence = ++state.navigationSequence;
+        const stopNavigation = () => {
+          if (state.navigationSequence !== navigationSequence) return;
+          state.navigationSequence += 1;
+          if (!webContents.isDestroyed()) webContents.stop();
+        };
+        state.automationNavigationDepth += 1;
+        let removeStoppedListener: () => void = () => undefined;
+        try {
+          const stopped = new Promise<void>((resolve) => {
+            const onStopped = () => {
+              webContents.removeListener("did-stop-loading", onStopped);
+              resolve();
+            };
+            removeStoppedListener = () => { webContents.removeListener("did-stop-loading", onStopped); };
+            webContents.once("did-stop-loading", onStopped);
+          });
+          signal.addEventListener("abort", stopNavigation, { once: true });
+          if (request.operation === "back") webContents.goBack();
+          else if (request.operation === "forward") webContents.goForward();
+          else webContents.reload();
+          markEffect();
+          await boundedRace(stopped, signal, request.deadline);
+          if (signal.aborted || state.navigationSequence !== navigationSequence) {
+            throw new BrowserAutomationCancelledError("Browser navigation was cancelled");
+          }
+        } finally {
+          removeStoppedListener();
+          signal.removeEventListener("abort", stopNavigation);
+          state.automationNavigationDepth -= 1;
+        }
+        return { operation: request.operation, ...base() };
+      }
       case "resize":
         throw new KernelError("UNSUPPORTED_OPERATION", "Renderer-hosted browser resize is unavailable", false);
       case "snapshot": {
@@ -1427,6 +1469,22 @@ export class BrowserAutomationKernel {
           Math.min(request.deadline, Date.now() + request.args.timeoutMs),
         );
         return { operation: "waitFor", ...base() };
+      case "wait": {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await boundedRace(
+            new Promise<void>((resolve) => {
+              timer = setTimeout(resolve, request.args.durationMs);
+              timer.unref?.();
+            }),
+            signal,
+            Math.min(request.deadline, Date.now() + request.args.durationMs),
+          );
+        } finally {
+          if (timer) clearTimeout(timer);
+        }
+        return { operation: "wait", ...base() };
+      }
       case "console": {
         const filtered = state.console.read(BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES).filter((entry) =>
           (!request.args.levels || request.args.levels.includes(entry.level)) &&
