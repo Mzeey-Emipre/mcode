@@ -803,6 +803,7 @@ export function MessageList({ displayThreadId, onBranch, onReply }: MessageListP
   const virtualizer = useVirtualizer({
     count: items.length,
     getScrollElement: () => containerRef.current,
+    onChange: syncStickyUserMessageVisibility,
     estimateSize: (index) => {
       const item = items[index];
       return item ? estimateItemHeight(item) : DEFAULT_ITEM_HEIGHT;
