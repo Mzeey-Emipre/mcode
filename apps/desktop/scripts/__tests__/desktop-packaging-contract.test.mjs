@@ -205,16 +205,35 @@ describe("desktop packaging workflow contract", () => {
     expect(nightly).not.toContain(String.raw`test("^v.*-nightly\.")`);
   });
 
-  it("derives the Nightly publish channel from its prerelease version", () => {
+  it("passes the Nightly channel and prerelease version to every target", () => {
     const nightly = readFileSync(
       path.join(repoRoot, ".github/workflows/nightly-desktop.yml"),
       "utf8",
     );
+    expect(nightly).toContain("compute-nightly-version.mjs");
     expect(nightly).toContain("version: ${{ needs.setup.outputs.version }}");
-    expect(nightly).not.toContain("config.publish.channel");
-    expect(nightly).toContain('build-args: ""');
-    expect(nightly).toContain("build-args: --mac --arm64");
-    expect(nightly).toContain("build-args: --mac --x64");
+    expect(
+      nightly.match(/--config\.publish\.channel=nightly/g),
+    ).toHaveLength(4);
+    expect(nightly).toContain(
+      "build-args: --config.publish.channel=nightly",
+    );
+    expect(nightly).toContain(
+      "build-args: --mac --arm64 --config.publish.channel=nightly",
+    );
+    expect(nightly).toContain(
+      "build-args: --mac --x64 --config.publish.channel=nightly",
+    );
+    expect(nightly).toContain(
+      "staged/desktop-target-macos-arm64/nightly-mac.yml",
+    );
+    expect(nightly).toContain(
+      "staged/desktop-target-macos-x64/nightly-mac.yml",
+    );
+    expect(nightly).toContain("staged/nightly-mac.yml");
+    expect(nightly).toContain(
+      "for required in nightly.yml nightly-linux.yml nightly-mac.yml terminal-release-manifest.json; do",
+    );
   });
 
   it("keeps unsigned packaging isolated from signing secrets", () => {
