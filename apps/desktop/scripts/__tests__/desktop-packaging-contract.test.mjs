@@ -205,6 +205,18 @@ describe("desktop packaging workflow contract", () => {
     expect(nightly).not.toContain(String.raw`test("^v.*-nightly\.")`);
   });
 
+  it("derives the Nightly publish channel from its prerelease version", () => {
+    const nightly = readFileSync(
+      path.join(repoRoot, ".github/workflows/nightly-desktop.yml"),
+      "utf8",
+    );
+    expect(nightly).toContain("version: ${{ needs.setup.outputs.version }}");
+    expect(nightly).not.toContain("config.publish.channel");
+    expect(nightly).toContain('build-args: ""');
+    expect(nightly).toContain("build-args: --mac --arm64");
+    expect(nightly).toContain("build-args: --mac --x64");
+  });
+
   it("requires the complete four-target matrix in PR dry-run", () => {
     const source = readFileSync(
       path.join(repoRoot, ".github/workflows/desktop-package-dry-run.yml"),

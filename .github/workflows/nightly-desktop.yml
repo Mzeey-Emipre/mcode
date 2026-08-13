@@ -105,22 +105,22 @@ jobs:
             runner: blacksmith-2vcpu-windows-2025
             platform: windows
             arch: x64
-            build-args: --config.publish.channel=nightly
+            build-args: ""
           - target-id: linux-x64
             runner: blacksmith-2vcpu-ubuntu-2404
             platform: linux
             arch: x64
-            build-args: --config.publish.channel=nightly
+            build-args: ""
           - target-id: macos-arm64
             runner: blacksmith-6vcpu-macos-26
             platform: macos
             arch: arm64
-            build-args: --config.publish.channel=nightly --mac --arm64
+            build-args: --mac --arm64
           - target-id: macos-x64
             runner: blacksmith-6vcpu-macos-26
             platform: macos
             arch: x64
-            build-args: --config.publish.channel=nightly --mac --x64
+            build-args: --mac --x64
     uses: ./.github/workflows/desktop-package-target.yml
     with:
       runner: ${{ matrix.runner }}
