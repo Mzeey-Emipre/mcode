@@ -14,8 +14,8 @@
  * - Missing Claude Agent SDK native CLI (after-pack regression)
  *
  * Usage:
- *   node apps/desktop/scripts/smoke-test.mjs             # auto-detect unpacked dir
- *   node apps/desktop/scripts/smoke-test.mjs --bundle    # test pre-packaging bundle (requires native deps on PATH)
+ *   node apps/desktop/scripts/desktop-packaging/package-validation/smoke-test.mjs             # auto-detect unpacked dir
+ *   node apps/desktop/scripts/desktop-packaging/package-validation/smoke-test.mjs --bundle    # test pre-packaging bundle (requires native deps on PATH)
  */
 
 import { spawn, execFileSync } from "child_process";
@@ -28,14 +28,14 @@ import { randomUUID } from "crypto";
 import {
   findClaudeSdkCliPath,
   expectedClaudeSdkCliPath,
-} from "../../../scripts/build-server-dev-bundle.mjs";
+} from "../../../../../scripts/build-server-dev-bundle.mjs";
 import {
   classifySmokeOutcome,
   getPackagedRuntimeStartupTimeoutMs,
 } from "./smoke-test-config.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const desktopRoot = resolve(__dirname, "..");
+const desktopRoot = resolve(__dirname, "..", "..", "..");
 const releaseDir = resolve(desktopRoot, "release");
 const desktopRequire = createRequire(resolve(desktopRoot, "package.json"));
 const serverRequire = createRequire(resolve(desktopRoot, "..", "server", "package.json"));
@@ -169,7 +169,7 @@ if (!found) {
   console.error(`[smoke-test] ERROR: Could not find ${target}.`);
   console.error(bundleOnly
     ? "  Run: bun run --cwd apps/desktop build"
-    : "  Run: node apps/desktop/scripts/ci-package.mjs");
+    : "  Run: node apps/desktop/scripts/desktop-packaging/target-package/ci-package.mjs");
   process.exit(1);
 }
 

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   classifySmokeOutcome,
   getPackagedRuntimeStartupTimeoutMs,
-} from "../smoke-test-config.mjs";
+} from "../desktop-packaging/package-validation/smoke-test-config.mjs";
 
 describe("getPackagedRuntimeStartupTimeoutMs", () => {
   it("keeps the default budget for native and non-macOS targets", () => {

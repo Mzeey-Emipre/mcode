@@ -89,13 +89,13 @@ jobs:
       - name: Merge macOS Stable update metadata
         shell: bash
         run: |
-          bun apps/desktop/scripts/merge-electron-update-metadata.mjs \
+          bun apps/desktop/scripts/desktop-packaging/publishers/merge-electron-update-metadata.mjs \
             staged/desktop-target-macos-arm64/latest-mac.yml \
             staged/desktop-target-macos-x64/latest-mac.yml \
             staged/latest-mac.yml
       - name: Validate aggregate release evidence
         run: >-
-          bun apps/desktop/scripts/terminal-release-evidence.mjs aggregate
+          bun apps/desktop/scripts/desktop-packaging/package-validation/terminal-release-evidence.mjs aggregate
           --input-dir staged
           --output staged/terminal-release-manifest.json
           --channel stable

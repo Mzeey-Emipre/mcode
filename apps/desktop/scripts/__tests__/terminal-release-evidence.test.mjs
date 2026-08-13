@@ -1,11 +1,17 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   createReleaseEvidenceManifest,
   createTargetEvidenceManifest,
-} from "../terminal-release-evidence.mjs";
+} from "../desktop-packaging/package-validation/terminal-release-evidence.mjs";
 
 const COMMIT = "a".repeat(40);
 const TARGETS = [
@@ -71,6 +77,24 @@ function passedSignatures(platform) {
   ];
 }
 
+function createMacTargetFixture(root) {
+  const releaseDir = path.join(root, "release");
+  const appPath = path.join(
+    releaseDir,
+    "mac-arm64",
+    "Mcode.app",
+    "Contents",
+  );
+  mkdirSync(path.join(appPath, "MacOS"), { recursive: true });
+  mkdirSync(path.join(appPath, "Resources", "bin"), { recursive: true });
+  writeFileSync(path.join(appPath, "MacOS", "Mcode"), "electron");
+  writeFileSync(path.join(appPath, "Resources", "bin", "mcode-server"), "server");
+  for (const file of TARGETS[2].files) {
+    writeFileSync(path.join(releaseDir, file), file);
+  }
+  return releaseDir;
+}
+
 describe("Terminal release evidence", () => {
   let fixtureRoot;
 
@@ -118,6 +142,126 @@ describe("Terminal release evidence", () => {
     ).toBe(true);
   });
 
+  it("stages supported updater metadata but excludes builder diagnostics", () => {
+    fixtureRoot = mkdtempSync(
+      path.join(tmpdir(), "terminal-release-metadata-filter-"),
+    );
+    const releaseDir = path.join(fixtureRoot, "release");
+    const stagingDir = path.join(fixtureRoot, "stage", "windows-x64");
+    const attestationPath = path.join(fixtureRoot, "attestation.json");
+    mkdirSync(releaseDir, { recursive: true });
+    for (const file of [
+      ...TARGETS[0].files,
+      "latest.yml",
+      "builder-debug.yml",
+    ]) {
+      writeFileSync(path.join(releaseDir, file), file);
+    }
+    writeFileSync(attestationPath, JSON.stringify(attestation("win32", "x64")));
+
+    const manifest = createTargetEvidenceManifest({
+      releaseDir,
+      stagingDir,
+      attestationPath,
+      commit: COMMIT,
+      version: "0.13.0",
+      channel: "stable",
+      expectedLegacy: true,
+      targetPlatform: "windows",
+      targetArch: "x64",
+      runner: "windows-2025",
+      signingRequired: true,
+      signatureVerifier: ({ platform }) => passedSignatures(platform),
+    });
+
+    expect(manifest.artifacts.map((artifact) => artifact.name)).toContain(
+      "latest.yml",
+    );
+    expect(manifest.artifacts.map((artifact) => artifact.name)).not.toContain(
+      "builder-debug.yml",
+    );
+    expect(existsSync(path.join(stagingDir, "latest.yml"))).toBe(true);
+    expect(existsSync(path.join(stagingDir, "builder-debug.yml"))).toBe(false);
+  });
+
+  it("runs full final-package Terminal attestation when no report is supplied", () => {
+    fixtureRoot = mkdtempSync(path.join(tmpdir(), "terminal-final-attestation-"));
+    const releaseDir = path.join(fixtureRoot, "release");
+    const stagingDir = path.join(fixtureRoot, "stage", "linux-x64");
+    mkdirSync(releaseDir, { recursive: true });
+    for (const file of TARGETS[3].files)
+      writeFileSync(path.join(releaseDir, file), file);
+    const calls = [];
+    const manifest = createTargetEvidenceManifest({
+      releaseDir,
+      stagingDir,
+      commit: COMMIT,
+      version: "0.13.0",
+      channel: "pull-request",
+      expectedLegacy: true,
+      targetPlatform: "linux",
+      targetArch: "x64",
+      runner: "ubuntu-24.04",
+      signingRequired: false,
+      signatureVerifier: () => [
+        { kind: "release-key", status: "skipped", subject: "SHA256SUMS.sig" },
+      ],
+      terminalAttester: (input) => {
+        calls.push(input);
+        return attestation("linux", "x64");
+      },
+    });
+
+    expect(manifest.terminal.target).toMatchObject({ platform: "linux", arch: "x64" });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toMatchObject({
+      targetPlatform: "linux",
+      targetArch: "x64",
+      resourcesRoot: path.join(releaseDir, "linux-unpacked", "resources"),
+      runtimePath: path.join(
+        releaseDir,
+        "linux-unpacked",
+        "resources",
+        "bin",
+        "mcode-server",
+      ),
+    });
+  });
+
+  it("selects the executable that matches macOS signing state for final attestation", () => {
+    fixtureRoot = mkdtempSync(path.join(tmpdir(), "terminal-macos-runtime-"));
+    const releaseDir = createMacTargetFixture(fixtureRoot);
+    const calls = [];
+
+    for (const [signingRequired, expectedRuntime] of [
+      [false, path.join(releaseDir, "mac-arm64", "Mcode.app", "Contents", "MacOS", "Mcode")],
+      [true, path.join(releaseDir, "mac-arm64", "Mcode.app", "Contents", "Resources", "bin", "mcode-server")],
+    ]) {
+      createTargetEvidenceManifest({
+        releaseDir,
+        stagingDir: path.join(
+          fixtureRoot,
+          "stage",
+          signingRequired ? "signed" : "unsigned",
+        ),
+        commit: COMMIT,
+        version: "0.13.0",
+        channel: "pull-request",
+        expectedLegacy: true,
+        targetPlatform: "macos",
+        targetArch: "arm64",
+        runner: "macos-14",
+        signingRequired,
+        signatureVerifier: () => passedSignatures("macos"),
+        terminalAttester: (input) => {
+          calls.push(input);
+          return attestation("darwin", "arm64");
+        },
+      });
+      expect(calls.at(-1).runtimePath).toBe(expectedRuntime);
+    }
+  });
+
   it("requires a complete, consistent target matrix before aggregate publication", () => {
     fixtureRoot = mkdtempSync(path.join(tmpdir(), "terminal-release-matrix-"));
     const inputDir = path.join(fixtureRoot, "stage");
@@ -147,7 +291,7 @@ describe("Terminal release evidence", () => {
         attestationPath,
         commit: COMMIT,
         version: "0.13.0-nightly.20260812.1",
-        channel: "nightly",
+        channel: "pull-request",
         expectedLegacy: true,
         targetPlatform: target.platform,
         targetArch: target.arch,
@@ -160,7 +304,7 @@ describe("Terminal release evidence", () => {
 
     const aggregate = createReleaseEvidenceManifest({
       inputDir,
-      channel: "nightly",
+      channel: "pull-request",
       generatedAt: "2026-08-12T13:00:00.000Z",
     });
 
@@ -174,6 +318,47 @@ describe("Terminal release evidence", () => {
       "node-pty": "1.0.0",
       koffi: "2.16.1",
     });
+  });
+
+  it("rejects duplicate target manifests before checking matrix completeness", () => {
+    fixtureRoot = mkdtempSync(path.join(tmpdir(), "terminal-release-duplicate-"));
+    const inputDir = path.join(fixtureRoot, "stage");
+
+    for (const suffix of ["first", "second"]) {
+      const releaseDir = path.join(fixtureRoot, `release-${suffix}`);
+      const stagingDir = path.join(inputDir, suffix);
+      const attestationPath = path.join(fixtureRoot, `attestation-${suffix}.json`);
+      mkdirSync(releaseDir, { recursive: true });
+      for (const file of TARGETS[3].files)
+        writeFileSync(path.join(releaseDir, file), file);
+      writeFileSync(
+        attestationPath,
+        JSON.stringify(attestation(TARGETS[3].nativePlatform, TARGETS[3].arch)),
+      );
+      createTargetEvidenceManifest({
+        releaseDir,
+        stagingDir,
+        attestationPath,
+        commit: COMMIT,
+        version: "0.13.0",
+        channel: "pull-request",
+        expectedLegacy: true,
+        targetPlatform: TARGETS[3].platform,
+        targetArch: TARGETS[3].arch,
+        runner: "ubuntu-24.04",
+        signingRequired: false,
+        signatureVerifier: () => [
+          { kind: "release-key", status: "skipped", subject: "SHA256SUMS.sig" },
+        ],
+      });
+    }
+
+    expect(() =>
+      createReleaseEvidenceManifest({
+        inputDir,
+        channel: "pull-request",
+      }),
+    ).toThrow("Duplicate release target: linux-x64");
   });
 
   it("rejects a staged artifact after its bytes change", () => {

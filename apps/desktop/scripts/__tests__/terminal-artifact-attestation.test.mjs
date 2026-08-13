@@ -15,7 +15,7 @@ import {
   attestPackagedTerminalArtifacts,
   parseLoadProbeProcessResult,
   retainTargetTerminalNativeArtifacts,
-} from "../terminal-artifact-attestation.mjs";
+} from "../desktop-packaging/package-validation/terminal-artifact-attestation.mjs";
 
 function writeFile(filePath, value) {
   mkdirSync(path.dirname(filePath), { recursive: true });
@@ -74,7 +74,7 @@ describe("attestPackagedTerminalArtifacts", () => {
 
   it("does not treat a post-readiness shutdown status as a startup failure", () => {
     const source = readFileSync(
-      new URL("../terminal-artifact-attestation.mjs", import.meta.url),
+      new URL("../desktop-packaging/package-validation/terminal-artifact-attestation.mjs", import.meta.url),
       "utf8",
     );
 

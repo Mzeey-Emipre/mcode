@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { mergeElectronUpdateMetadata } from "../merge-electron-update-metadata.mjs";
+import { mergeElectronUpdateMetadata } from "../desktop-packaging/publishers/merge-electron-update-metadata.mjs";
 
 describe("mergeElectronUpdateMetadata", () => {
   let fixtureRoot;

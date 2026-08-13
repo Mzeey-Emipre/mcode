@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { sanitizePackageManifest } from "../sanitize-package-manifest.mjs";
+import { sanitizePackageManifest } from "../desktop-packaging/target-package/sanitize-package-manifest.mjs";
 
 describe("sanitizePackageManifest", () => {
   it("removes workspace protocol entries from every npm dependency field", () => {

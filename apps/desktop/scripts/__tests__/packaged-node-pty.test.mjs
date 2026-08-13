@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { ensurePackagedConptyRuntime } from "../packaged-node-pty.mjs";
+import { ensurePackagedConptyRuntime } from "../desktop-packaging/target-package/packaged-node-pty.mjs";
 
 describe("ensurePackagedConptyRuntime", () => {
   /** @type {string} */

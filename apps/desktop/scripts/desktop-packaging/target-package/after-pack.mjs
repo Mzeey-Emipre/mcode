@@ -17,7 +17,6 @@ import { resolve, join, dirname } from "path";
 import { fileURLToPath } from "url";
 import {
   buildServerBinary,
-  resolveBinaryPaths,
 } from "./build-server-binary.mjs";
 import {
   copyClaudeSdkCliToDir,
@@ -25,19 +24,16 @@ import {
   electronArchToNpm,
   electronPlatformToNpm,
   resolvePackagedServerDir,
-} from "../../../scripts/build-server-dev-bundle.mjs";
+} from "../../../../../scripts/build-server-dev-bundle.mjs";
 import { ensurePackagedConptyRuntime } from "./packaged-node-pty.mjs";
-import {
-  attestPackagedTerminalArtifacts,
-  retainTargetTerminalNativeArtifacts,
-} from "./terminal-artifact-attestation.mjs";
+import { retainTargetTerminalNativeArtifacts } from "../package-validation/terminal-artifact-attestation.mjs";
 
 /**
  * @param {import("electron-builder").AfterPackContext} context
  */
 export default async function afterPack(context) {
   const { electronPlatformName, appOutDir } = context;
-  const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+  const desktopRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
   const snapshotFile = resolve(
     desktopRoot,
     "dist/snapshot/browser_v8_context_snapshot.bin",
@@ -141,28 +137,11 @@ export default async function afterPack(context) {
     console.log(`[after-pack] Restored packaged ConPTY runtime at ${dllPath}`);
   }
 
-  if (process.env.MCODE_SKIP_TERMINAL_ATTESTATION !== "1") {
-    const binaryPaths = resolveBinaryPaths({
-      appOutDir,
-      electronPlatformName,
-      productFilename,
-      executableName: context.packager.executableName,
-    });
-    retainTargetTerminalNativeArtifacts({
-      resourcesRoot: resolve(packagedServerDir, "../../.."),
-      targetPlatform: npmPlatform,
-      targetArch: npmArch,
-    });
-    const terminalAttestation = attestPackagedTerminalArtifacts({
-      resourcesRoot: resolve(packagedServerDir, "../../.."),
-      runtimePath: binaryPaths.dstBinary,
-      targetPlatform: npmPlatform,
-      targetArch: npmArch,
-    });
-    console.log(
-      `[after-pack] Terminal artifacts attested: ${JSON.stringify(terminalAttestation)}`,
-    );
-  }
+  retainTargetTerminalNativeArtifacts({
+    resourcesRoot: resolve(packagedServerDir, "../../.."),
+    targetPlatform: npmPlatform,
+    targetArch: npmArch,
+  });
 
   // -------------------------------------------------------------------------
   // Step 2: V8 snapshot copy + fuse flip.
