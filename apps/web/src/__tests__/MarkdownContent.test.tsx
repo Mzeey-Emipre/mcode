@@ -14,12 +14,13 @@ vi.mock("../components/chat/MermaidBlock", () => ({
 }));
 
 vi.mock("../components/chat/CodeBlock", () => ({
-  CodeBlock: vi.fn(({ code, language, languageLabel, disableHighlighting, isStreaming }: {
+  CodeBlock: vi.fn(({ code, language, languageLabel, disableHighlighting, isStreaming, chatHighlighting }: {
     code: string;
     language: string;
     languageLabel?: string;
     disableHighlighting?: boolean;
     isStreaming?: boolean;
+    chatHighlighting?: boolean;
   }) => (
     <pre
       data-testid="code-block"
@@ -27,6 +28,7 @@ vi.mock("../components/chat/CodeBlock", () => ({
       data-language-label={languageLabel ?? ""}
       data-disable-highlighting={String(disableHighlighting)}
       data-streaming={String(isStreaming)}
+      data-chat-highlighting={String(chatHighlighting)}
     >
       {code}
     </pre>
@@ -473,7 +475,15 @@ describe("MarkdownContent variant styling", () => {
     it("passes disableHighlighting=false to CodeBlock", () => {
       render(<MarkdownContent content={'```ts\nconst x = 1;\n```'} />);
       expect(mockCodeBlock).toHaveBeenCalledWith(
-        expect.objectContaining({ disableHighlighting: false, isStreaming: false }),
+        expect.objectContaining({ disableHighlighting: false, isStreaming: false, chatHighlighting: false }),
+        undefined,
+      );
+    });
+
+    it("does not schedule non-chat Markdown through the chat coordinator", () => {
+      render(<MarkdownContent content={'```ts\nconst x = 1;\n```'} />);
+      expect(mockCodeBlock).toHaveBeenCalledWith(
+        expect.objectContaining({ chatHighlighting: false }),
         undefined,
       );
     });

@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { afterEach, describe, it, expect, vi } from "vitest";
+import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { CodeBlock } from "../components/chat/CodeBlock";
 
 // Mock useHighlighter to control Worker responses
@@ -15,6 +15,11 @@ vi.mock("../hooks/useTheme", () => ({
 import { useHighlighter } from "../hooks/useHighlighter";
 
 const mockUseHighlighter = vi.mocked(useHighlighter);
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  mockUseHighlighter.mockReset();
+});
 
 describe("CodeBlock", () => {
   it("renders plain code as fallback when html is null", () => {
@@ -59,6 +64,7 @@ describe("CodeBlock", () => {
       "typescript",
       "github-dark",
       false,
+      undefined,
     );
   });
 
@@ -111,7 +117,67 @@ describe("CodeBlock", () => {
       "typescript",
       "github-dark",
       false,
+      undefined,
     );
+  });
+
+  it("registers the code block with the browser visibility signal", () => {
+    let observeCallback: IntersectionObserverCallback | undefined;
+    const observe = vi.fn();
+    const disconnect = vi.fn();
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        constructor(callback: IntersectionObserverCallback) {
+          observeCallback = callback;
+        }
+
+        observe(element: Element): void {
+          observe(element);
+        }
+
+        disconnect(): void {
+          disconnect();
+        }
+      },
+    );
+    mockUseHighlighter.mockReturnValue({ html: null });
+
+    const { unmount } = render(
+      <CodeBlock
+        code="const x = 1;"
+        language="typescript"
+        isStreaming={false}
+        threadId="thread-1"
+        chatHighlighting
+      />,
+    );
+
+    expect(observe).toHaveBeenCalledTimes(1);
+    expect(mockUseHighlighter).toHaveBeenLastCalledWith(
+      "const x = 1;",
+      "typescript",
+      "github-dark",
+      true,
+      { visible: false, threadId: "thread-1", coordinator: true },
+    );
+
+    act(() => {
+      observeCallback?.(
+        [{ isIntersecting: true } as IntersectionObserverEntry],
+        {} as IntersectionObserver,
+      );
+    });
+    expect(mockUseHighlighter).toHaveBeenLastCalledWith(
+      "const x = 1;",
+      "typescript",
+      "github-dark",
+      true,
+      { visible: true, threadId: "thread-1", coordinator: true },
+    );
+
+    unmount();
+    expect(disconnect).toHaveBeenCalledTimes(1);
   });
 
   it("still shows copy button when disableHighlighting is true", () => {
