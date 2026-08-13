@@ -65,6 +65,10 @@ export OPENSRC_HOME="$(git rev-parse --show-toplevel)/.opensrc"
 bunx --no-install opensrc path <package-or-owner/repo>
 ```
 
+## Code Organization
+
+Organize code by product feature first, then by responsibility inside that feature. For each file, ask: “Which product capability owns this concept?” and “What responsibility does this file have there?” Categories such as UI, components, services, and helpers are responsibilities, not features; use `shared` only when no single feature owns code that multiple features use.
+
 ## Code Style
 
 Write self-documenting code. Use precise names, small focused units, explicit types,
