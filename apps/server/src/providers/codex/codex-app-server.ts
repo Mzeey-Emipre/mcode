@@ -108,8 +108,53 @@ export interface CodexAppServerOptions {
 export function addCodexDeveloperInstructions<T extends ThreadStartParams | ThreadResumeParams>(
   params: T,
   developerInstructions?: string,
+  configuredInstructions?: string | null,
 ): T {
-  return developerInstructions ? { ...params, developerInstructions } : params;
+  const composedInstructions = composeCodexDeveloperInstructions(configuredInstructions, developerInstructions);
+  return composedInstructions ? { ...params, developerInstructions: composedInstructions } : params;
+}
+
+/** Composes configured Codex instructions with Mcode runtime guidance. */
+export function composeCodexDeveloperInstructions(
+  configuredInstructions?: string | null,
+  developerInstructions?: string | null,
+): string | undefined {
+  const configured = configuredInstructions?.trim() ? configuredInstructions : undefined;
+  const runtime = developerInstructions?.trim() ? developerInstructions : undefined;
+  if (!runtime) return configured;
+  if (!configured) return runtime;
+  if (containsCodexInstructionBlock(configured, runtime)) return configured;
+  return `${configured}\n\n${runtime}`;
+}
+
+function containsCodexInstructionBlock(text: string, block: string): boolean {
+  let searchFrom = 0;
+  while (searchFrom < text.length) {
+    const index = text.indexOf(block, searchFrom);
+    if (index < 0) return false;
+    const end = index + block.length;
+    const startsAtBoundary = index === 0 || text[index - 1] === "\n";
+    const endsAtBoundary = end === text.length || text[end] === "\n" || (text[end] === "\r" && text[end + 1] === "\n");
+    if (startsAtBoundary && endsAtBoundary) return true;
+    searchFrom = index + 1;
+  }
+  return false;
+}
+
+function getConfiguredDeveloperInstructions(result: unknown): string | undefined {
+  if (typeof result !== "object" || result === null || Array.isArray(result)) {
+    throw new Error("Codex config/read returned an invalid response");
+  }
+  const config = (result as Record<string, unknown>).config;
+  if (typeof config !== "object" || config === null || Array.isArray(config)) {
+    throw new Error("Codex config/read returned an invalid response");
+  }
+  const configuredInstructions = (config as Record<string, unknown>).developer_instructions;
+  if (configuredInstructions === undefined || configuredInstructions === null) return undefined;
+  if (typeof configuredInstructions !== "string") {
+    throw new Error("Codex config/read returned an invalid response");
+  }
+  return configuredInstructions;
 }
 
 /**
@@ -1247,6 +1292,11 @@ export class CodexAppServer extends EventEmitter {
       logger.warn("Codex model/list failed", { error: String(err) });
     }
 
+    const requestDeveloperInstructions = await this.resolveDeveloperInstructions(
+      workingDirectory,
+      developerInstructions,
+    );
+
     // Step 4: thread/resume or thread/start
     if (resumeThreadId) {
       logger.info("Codex thread/resume attempted", { resumeThreadId });
@@ -1261,8 +1311,7 @@ export class CodexAppServer extends EventEmitter {
             ...(sandbox && { sandbox }),
             ...(approvalPolicy && { approvalPolicy }),
             ...(workingDirectory && { cwd: workingDirectory }),
-            ...(developerInstructions && { developerInstructions }),
-          }, developerInstructions),
+          }, requestDeveloperInstructions),
           THREAD_HANDSHAKE_TIMEOUT_MS,
         );
         // Accept both flat `threadId` and nested `thread.id` shapes,
@@ -1290,7 +1339,6 @@ export class CodexAppServer extends EventEmitter {
         ...(model && { model }),
         ...(sandbox && { sandbox }),
         ...(approvalPolicy && { approvalPolicy }),
-        ...(developerInstructions && { developerInstructions }),
       };
 
       // Some codex app-server versions carry the threadId in the `thread/started`
@@ -1321,7 +1369,7 @@ export class CodexAppServer extends EventEmitter {
       try {
         startResult = await this.rpc.sendRequest<ThreadStartParams, ThreadStartResult>(
           "thread/start",
-          addCodexDeveloperInstructions(startParams, developerInstructions),
+          addCodexDeveloperInstructions(startParams, requestDeveloperInstructions),
           THREAD_HANDSHAKE_TIMEOUT_MS,
         );
         logger.debug("Codex thread/start response", { result: startResult });
@@ -1362,6 +1410,24 @@ export class CodexAppServer extends EventEmitter {
       }
 
       logger.info("Started Codex thread", { threadId: this.threadId });
+    }
+  }
+
+  /** Resolves configured instructions before adding request-level runtime guidance. */
+  private async resolveDeveloperInstructions(
+    workingDirectory: string,
+    developerInstructions?: string,
+  ): Promise<string | undefined> {
+    if (!developerInstructions?.trim()) return undefined;
+    try {
+      const configResult = await this.readConfig(workingDirectory);
+      const configuredInstructions = getConfiguredDeveloperInstructions(configResult);
+      return composeCodexDeveloperInstructions(configuredInstructions, developerInstructions);
+    } catch (error) {
+      if (developerInstructions?.trim()) {
+        logger.warn("Codex config/read failed; omitting developer instructions", { error: String(error) });
+      }
+      return undefined;
     }
   }
 }
