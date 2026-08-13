@@ -4,7 +4,7 @@ import {
   encodeTerminalFrame,
   type TerminalBackendCapabilities,
 } from "@mcode/contracts";
-import { onPtyData } from "../legacy/pty-data-registry";
+import { onPtyData } from "../pty-data-registry";
 import { ModernTerminalClient } from "./modern-terminal-client";
 
 const sessionId = "00000000-0000-4000-8000-000000000001";

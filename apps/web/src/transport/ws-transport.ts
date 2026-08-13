@@ -58,7 +58,7 @@ import type {
   CreateAndSendInput,
   TerminalBackendCapabilities,
 } from "@mcode/contracts";
-import { emitPtyReconnectGap } from "@/terminal/legacy/pty-data-registry";
+import { emitPtyReconnectGap } from "@/terminal/pty-data-registry";
 import type { PaginatedMessages, ConversationPage, ConversationNewerPage, ConversationNewerPageRequest, ConversationOlderPage, ConversationOlderPageRequest, ConversationTail, SetThreadSubscriptionsInput, SetThreadSubscriptionsResult, TurnSnapshot, PrDraft, CreatePrResult, ProviderUsageInfo, ChecksStatus, ProviderAvailability, GoalLookupResult } from "@mcode/contracts";
 import {
   TERMINAL_DATA_TAG,

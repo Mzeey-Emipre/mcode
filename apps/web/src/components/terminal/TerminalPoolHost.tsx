@@ -11,7 +11,7 @@ import { useTerminalPoolSlot } from "./TerminalPoolSlotContext";
 import { isContainerReadyForFit } from "./safeFit";
 import { dispatchTerminalPoolRefit } from "./terminalPoolRefit";
 import { resolveActiveTerminalId } from "./resolveActiveTerminalId";
-import { onPtyExit } from "@/terminal/legacy/pty-data-registry";
+import { onPtyExit } from "@/terminal/pty-data-registry";
 
 /**
  * Mounts at most one terminal view (ADR-0010): the active shell on the active

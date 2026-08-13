@@ -7,7 +7,7 @@ import {
   type TerminalScope,
   type TerminalSessionSnapshot,
 } from "@mcode/contracts";
-import { emitPtyData, emitPtyExit, emitPtyReconnectGap } from "../legacy/pty-data-registry";
+import { emitPtyData, emitPtyExit, emitPtyReconnectGap } from "../pty-data-registry";
 import type { TerminalClient, TerminalClientReattachResult, TerminalRpcCall } from "../terminal-client";
 
 interface ClientAttachment {

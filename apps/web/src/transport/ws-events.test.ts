@@ -14,7 +14,7 @@ import { useDiffStore } from "@/stores/diffStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useThreadControlStore } from "@/stores/threadControlStore";
 import { useTerminalStore } from "@/stores/terminalStore";
-import { onPtyExit } from "@/terminal/legacy/pty-data-registry";
+import { onPtyExit } from "@/terminal/pty-data-registry";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {

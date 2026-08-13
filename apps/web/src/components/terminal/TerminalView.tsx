@@ -14,7 +14,7 @@ import {
   onPtyExit,
   onPtyReconnectGap,
   type PtyDataPayload,
-} from "@/terminal/legacy/pty-data-registry";
+} from "@/terminal/pty-data-registry";
 import { isSafeTerminalDimensions, safeFit } from "./safeFit";
 import { terminalScroll } from "./terminalScrollController";
 import {
