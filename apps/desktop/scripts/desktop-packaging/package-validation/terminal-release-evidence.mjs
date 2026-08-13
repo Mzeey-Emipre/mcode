@@ -110,6 +110,7 @@ function attestFinalPackage(
   releaseDir,
   platform,
   arch,
+  signingRequired,
   terminalAttester = attestPackagedTerminalArtifacts,
 ) {
   if (platform === "windows") {
@@ -134,7 +135,9 @@ function attestFinalPackage(
   const resourcesRoot = path.join(appPath, "Contents", "Resources");
   return terminalAttester({
     resourcesRoot,
-    runtimePath: path.join(resourcesRoot, "bin", "mcode-server"),
+    runtimePath: signingRequired
+      ? path.join(resourcesRoot, "bin", "mcode-server")
+      : path.join(appPath, "Contents", "MacOS", "Mcode"),
     targetPlatform: "darwin",
     targetArch: arch,
   });
@@ -303,7 +306,13 @@ export function createTargetEvidenceManifest({
   const terminal = TerminalArtifactAttestationSchema().parse(
     attestationPath
       ? JSON.parse(readFileSync(attestationPath, "utf8"))
-      : attestFinalPackage(releaseDir, platform, targetArch, terminalAttester),
+      : attestFinalPackage(
+          releaseDir,
+          platform,
+          targetArch,
+          signingRequired,
+          terminalAttester,
+        ),
   );
   const expectedAttestationPlatform = {
     windows: "win32",

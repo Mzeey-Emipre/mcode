@@ -71,6 +71,24 @@ function passedSignatures(platform) {
   ];
 }
 
+function createMacTargetFixture(root) {
+  const releaseDir = path.join(root, "release");
+  const appPath = path.join(
+    releaseDir,
+    "mac-arm64",
+    "Mcode.app",
+    "Contents",
+  );
+  mkdirSync(path.join(appPath, "MacOS"), { recursive: true });
+  mkdirSync(path.join(appPath, "Resources", "bin"), { recursive: true });
+  writeFileSync(path.join(appPath, "MacOS", "Mcode"), "electron");
+  writeFileSync(path.join(appPath, "Resources", "bin", "mcode-server"), "server");
+  for (const file of TARGETS[2].files) {
+    writeFileSync(path.join(releaseDir, file), file);
+  }
+  return releaseDir;
+}
+
 describe("Terminal release evidence", () => {
   let fixtureRoot;
 
@@ -160,6 +178,40 @@ describe("Terminal release evidence", () => {
         "mcode-server",
       ),
     });
+  });
+
+  it("selects the executable that matches macOS signing state for final attestation", () => {
+    fixtureRoot = mkdtempSync(path.join(tmpdir(), "terminal-macos-runtime-"));
+    const releaseDir = createMacTargetFixture(fixtureRoot);
+    const calls = [];
+
+    for (const [signingRequired, expectedRuntime] of [
+      [false, path.join(releaseDir, "mac-arm64", "Mcode.app", "Contents", "MacOS", "Mcode")],
+      [true, path.join(releaseDir, "mac-arm64", "Mcode.app", "Contents", "Resources", "bin", "mcode-server")],
+    ]) {
+      createTargetEvidenceManifest({
+        releaseDir,
+        stagingDir: path.join(
+          fixtureRoot,
+          "stage",
+          signingRequired ? "signed" : "unsigned",
+        ),
+        commit: COMMIT,
+        version: "0.13.0",
+        channel: "pull-request",
+        expectedLegacy: true,
+        targetPlatform: "macos",
+        targetArch: "arm64",
+        runner: "macos-14",
+        signingRequired,
+        signatureVerifier: () => passedSignatures("macos"),
+        terminalAttester: (input) => {
+          calls.push(input);
+          return attestation("darwin", "arm64");
+        },
+      });
+      expect(calls.at(-1).runtimePath).toBe(expectedRuntime);
+    }
   });
 
   it("requires a complete, consistent target matrix before aggregate publication", () => {
