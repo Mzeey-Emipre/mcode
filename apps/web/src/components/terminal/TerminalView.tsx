@@ -10,11 +10,9 @@ import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { shouldInterceptKeyEvent } from "./terminalKeyHandler";
 import { ClientTerminalFlowControl } from "./terminalFlowControl";
 import {
-  onPtyData,
-  onPtyExit,
-  onPtyReconnectGap,
-  type PtyDataPayload,
-} from "@/terminal/pty-data-registry";
+  TERMINAL_CLEANUP_TIMEOUT_MS,
+  type TerminalDataEvent,
+} from "@/terminal/terminal-client";
 import { isSafeTerminalDimensions, safeFit } from "./safeFit";
 import { terminalScroll } from "./terminalScrollController";
 import {
@@ -39,6 +37,22 @@ type XtermModules = {
 
 let xtermModulesPromise: Promise<XtermModules> | null = null;
 const TERMINAL_BACKGROUND = "#0a0a0f";
+function settleWithin<T>(promise: Promise<T>, fallback: T): Promise<T> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value: T) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const timer = setTimeout(
+      () => finish(fallback),
+      TERMINAL_CLEANUP_TIMEOUT_MS,
+    );
+    promise.then(finish, () => finish(fallback));
+  });
+}
 
 /**
  * Loads the xterm core and fit addon once and caches the result so view
@@ -293,6 +307,8 @@ interface TerminalViewProps {
    * renderer stays attached so scroll position survives a return to the thread.
    */
   readonly threadActive: boolean;
+  /** Called after the renderer is fully disposed during a shell handoff. */
+  readonly onDisposed?: () => void;
 }
 
 /** Renders a single xterm.js terminal backed by a server-side PTY via WS transport. */
@@ -300,6 +316,7 @@ export const TerminalView = memo(function TerminalView({
   ptyId,
   visible: shown,
   threadActive,
+  onDisposed,
 }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -310,6 +327,9 @@ export const TerminalView = memo(function TerminalView({
   const rendererRef = useRef<IDisposable | null>(null);
   /** Cancels in-flight {@link loadRenderer} when the thread goes dormant or the effect cleans up. */
   const rendererInitCancelledRef = useRef(false);
+  const onDisposedRef = useRef(onDisposed);
+  onDisposedRef.current = onDisposed;
+  const disposedNotifiedRef = useRef(false);
   const shownRef = useRef(shown);
   shownRef.current = shown;
 
@@ -328,6 +348,7 @@ export const TerminalView = memo(function TerminalView({
     const container = containerRef.current;
     if (!container) return;
 
+    disposedNotifiedRef.current = false;
     let disposed = false;
     const mountStart = performance.now();
 
@@ -339,7 +360,13 @@ export const TerminalView = memo(function TerminalView({
           import("@xterm/addon-serialize"),
         ]);
 
-      if (disposed || !containerRef.current) return;
+      if (disposed || !containerRef.current) {
+        if (!disposedNotifiedRef.current) {
+          disposedNotifiedRef.current = true;
+          onDisposedRef.current?.();
+        }
+        return;
+      }
 
       const term = new XTerminal({
         scrollback: scrollbackRef.current,
@@ -436,7 +463,7 @@ export const TerminalView = memo(function TerminalView({
       // shows scrollback-then-tail, not a garbled tail-then-scrollback.
       let replaying = true;
       let replayMode: "cold" | "warm" = "cold";
-      const replayPending: PtyDataPayload[] = [];
+      const replayPending: TerminalDataEvent[] = [];
       let replayPrefix: Uint8Array | null = null;
       // Highest seq actually written. seq is monotonic per PTY, so anything not
       // strictly newer has already been painted. Guards against double delivery:
@@ -472,7 +499,7 @@ export const TerminalView = memo(function TerminalView({
         }
       };
 
-      const writeChunk = (detail: PtyDataPayload) => {
+      const writeChunk = (detail: TerminalDataEvent) => {
         if (disposed || detail.seq <= lastWrittenSeq) return;
         lastWrittenSeq = detail.seq;
         const n = detail.payload.length;
@@ -537,26 +564,26 @@ export const TerminalView = memo(function TerminalView({
       // awaiting the renderer so output that arrives during renderer init is
       // queued into the xterm buffer (term.write is renderer-independent) and
       // painted as soon as a renderer attaches — never dropped.
-      const unsubPtyData = onPtyData(ptyId, (detail) => {
+      const unsubPtyData = transport.terminalSubscribe(ptyId, { onData: (detail) => {
         if (replaying) {
           replayPending.push(detail);
           return;
         }
         writeChunk(detail);
-      });
+      }});
 
       // Show a reconnect banner when the server signals that the replay window
       // was exceeded and some output may have been missed.
-      const unsubReconnectGap = onPtyReconnectGap(ptyId, () => {
+      const unsubReconnectGap = transport.terminalSubscribe(ptyId, { onReconnectGap: () => {
         trackedWrite(
           "\r\n\x1b[90m[Reconnected - some output may be missing]\x1b[0m\r\n",
         );
-      });
+      }});
 
       // Listen for PTY exit via the direct callback registry (attached
       // pre-renderer for the same reason as pty-data: an early exit should
       // not be silently lost).
-      const unsubPtyExit = onPtyExit(ptyId, (detail) => {
+      const unsubPtyExit = transport.terminalSubscribe(ptyId, { onExit: (detail) => {
         exited = true;
         term.options.disableStdin = true;
         trackedWrite(
@@ -579,7 +606,7 @@ export const TerminalView = memo(function TerminalView({
             `terminal:${ptyId}`,
           );
         }
-      });
+      }});
 
       // Resize handling:
       //
@@ -676,18 +703,35 @@ export const TerminalView = memo(function TerminalView({
         clearWebglSlot(ptyId);
         clearActiveRenderer();
         unregisterTerminalScrollHarness(ptyId);
-        void Promise.all([...pendingWrites]).then(() => {
+        const checkpoint = settleWithin(Promise.all([...pendingWrites]).then(() => {
           // #751: remember where the user was before this view goes away so the
           // next remount can restore it (no-op when they followed the tail).
           captureRemountAnchor(ptyId, term);
           const checkpointSeq = Number.isFinite(lastWrittenSeq) ? lastWrittenSeq : -1;
-          const checkpoint = serializeAddon.serialize();
-          void transport
-            .terminalCheckpoint(ptyId, checkpointSeq, checkpoint)
-            .catch(() => {});
-          term.dispose();
-          decrementLiveTerminalCount();
-        });
+          return {
+            seq: checkpointSeq,
+            data: serializeAddon.serialize(),
+          };
+        }), undefined);
+        let detach: Promise<void>;
+        try {
+          // Capture the attachment before the checkpoint can yield. The client
+          // uses this synchronous call to bind checkpoint and detach together.
+          detach = transport.terminalDetachForSwitch(ptyId, checkpoint);
+        } catch {
+          detach = Promise.reject(new Error("Terminal detach failed"));
+        }
+        void settleWithin(detach, undefined).finally(() => {
+          try {
+            term.dispose();
+          } finally {
+            decrementLiveTerminalCount();
+            if (!disposedNotifiedRef.current) {
+              disposedNotifiedRef.current = true;
+              onDisposedRef.current?.();
+            }
+          }
+        }).catch(() => {});
       };
 
       // Register cleanup BEFORE awaiting the renderer so a mid-await unmount
@@ -774,10 +818,15 @@ export const TerminalView = memo(function TerminalView({
     void init(container).catch((err) => {
       console.warn("[terminal] Failed to initialize terminal", err);
       disposed = true;
+      const hadCleanup = cleanupRef.current !== null;
       cleanupRef.current?.();
       cleanupRef.current = null;
       termRef.current = null;
       fitAddonRef.current = null;
+      if (!hadCleanup && !disposedNotifiedRef.current) {
+        disposedNotifiedRef.current = true;
+        onDisposedRef.current?.();
+      }
     });
 
     return () => {
@@ -797,12 +846,10 @@ export const TerminalView = memo(function TerminalView({
     if (term && prevShownRef.current && !shown) {
       terminalScroll.onHide(ptyId, term);
       releaseWebglSlot(ptyId);
-      getTransport().terminalPause(ptyId).catch(() => {});
     }
 
     if (term && shown && !prevShownRef.current) {
       terminalScroll.onShow(ptyId);
-      resumeWarmViewRef.current?.();
     }
 
     prevShownRef.current = shown;

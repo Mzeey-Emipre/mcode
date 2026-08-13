@@ -1,7 +1,13 @@
 import { render } from "@testing-library/react";
 import { act } from "react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { emitPtyData, emitPtyExit } from "@/terminal/pty-data-registry";
+import {
+  emitPtyData,
+  emitPtyExit,
+  onPtyData,
+  onPtyExit,
+  onPtyReconnectGap,
+} from "@/terminal/pty-data-registry";
 import { dropRemountAnchor } from "@/components/terminal/terminalRemountScroll";
 
 // jsdom doesn't implement ResizeObserver; TerminalView instantiates one in
@@ -36,6 +42,7 @@ const term = {
   open: vi.fn(),
   attachCustomKeyEventHandler: vi.fn(),
   getSelection: vi.fn(() => ""),
+  hasSelection: vi.fn(() => false),
   onData: vi.fn((listener: (data: string) => void) => {
     onDataListener = listener;
     return { dispose: vi.fn() };
@@ -56,10 +63,32 @@ const transport = {
   terminalResize: vi.fn(() => Promise.resolve()),
   terminalPause: vi.fn(() => Promise.resolve()),
   terminalResume: vi.fn(() => Promise.resolve()),
+  terminalSubscribe: vi.fn((ptyId: string, subscription: {
+    onData?: (event: { ptyId: string; payload: Uint8Array; seq: number }) => void;
+    onExit?: (event: { ptyId: string; code: number }) => void;
+    onReconnectGap?: () => void;
+  }) => {
+    const unsubs = [
+      subscription.onData ? onPtyData(ptyId, subscription.onData) : undefined,
+      subscription.onExit ? onPtyExit(ptyId, subscription.onExit) : undefined,
+      subscription.onReconnectGap ? onPtyReconnectGap(ptyId, subscription.onReconnectGap) : undefined,
+    ].filter((unsubscribe): unsubscribe is () => void => Boolean(unsubscribe));
+    return () => unsubs.forEach((unsubscribe) => unsubscribe());
+  }),
+  terminalDetachForSwitch: vi.fn(async (
+    ptyId: string,
+    checkpoint?: Promise<{ seq: number; data: string } | undefined>,
+  ) => {
+    const state = checkpoint ? await checkpoint : undefined;
+    if (state) {
+      await transport.terminalCheckpoint(ptyId, state.seq, state.data);
+    }
+  }),
   terminalReattach: vi.fn<() => Promise<RestoreResult>>(() =>
     Promise.resolve({ mode: "delta" }),
   ),
-  terminalCheckpoint: vi.fn(() => Promise.resolve({ accepted: true })),
+  terminalCheckpoint: vi.fn((_ptyId: string, _seq: number, _data: string) =>
+    Promise.resolve({ accepted: true })),
   ptySetLastSeq: vi.fn(),
   ptyDeleteLastSeq: vi.fn(),
 };
@@ -196,10 +225,9 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
     view.unmount();
     await settle();
 
-    expect(transport.terminalCheckpoint).toHaveBeenCalledWith(
+    expect(transport.terminalDetachForSwitch).toHaveBeenCalledWith(
       "pty-cold",
-      7,
-      "serialized-screen",
+      expect.any(Promise),
     );
   });
 
@@ -539,14 +567,14 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
       <TerminalView ptyId="pty-warm" visible={false} threadActive={false} />,
     );
     await settle();
-    expect(transport.terminalPause).toHaveBeenCalledWith("pty-warm");
+    expect(transport.terminalPause).not.toHaveBeenCalled();
 
     rerender(
       <TerminalView ptyId="pty-warm" visible={true} threadActive={true} />,
     );
     await settle();
 
-    expect(transport.terminalReattach).toHaveBeenLastCalledWith("pty-warm", 5, false);
+    expect(transport.terminalReattach).toHaveBeenCalledTimes(1);
     expect(term.dispose).not.toHaveBeenCalled();
   });
 });

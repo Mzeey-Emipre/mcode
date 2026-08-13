@@ -58,7 +58,6 @@ import type {
   CreateAndSendInput,
   TerminalBackendCapabilities,
 } from "@mcode/contracts";
-import { emitPtyReconnectGap } from "@/terminal/pty-data-registry";
 import type { PaginatedMessages, ConversationPage, ConversationNewerPage, ConversationNewerPageRequest, ConversationOlderPage, ConversationOlderPageRequest, ConversationTail, SetThreadSubscriptionsInput, SetThreadSubscriptionsResult, TurnSnapshot, PrDraft, CreatePrResult, ProviderUsageInfo, ChecksStatus, ProviderAvailability, GoalLookupResult } from "@mcode/contracts";
 import {
   TERMINAL_DATA_TAG,
@@ -70,7 +69,11 @@ import { useThreadStore } from "@/stores/threadStore";
 import type { PermissionRequest } from "@mcode/contracts";
 import { setAttachmentTransportWsUrl } from "@/lib/attachment-url";
 import { TerminalClientSelector } from "@/terminal/terminal-client-selector";
-import type { TerminalClient } from "@/terminal/terminal-client";
+import type {
+  TerminalActiveSession,
+  TerminalClient,
+  TerminalClientSubscription,
+} from "@/terminal/terminal-client";
 
 /** Minimum reconnect delay in milliseconds. */
 const MIN_RECONNECT_MS = 1000;
@@ -170,6 +173,27 @@ export const suppressedPushChannels = new Set<string>();
  * reconnect handler to call terminal.reattach with the correct lastSeq.
  */
 export const ptyLastSeqMap = new Map<string, number>();
+
+/** Resolves the selected Terminal session in the currently active panel scope. */
+export function resolveSelectedTerminalId(input: {
+  readonly activeThreadId: string | null;
+  readonly activeWorkspaceId: string | null;
+  readonly terminalPanelByThread: Readonly<
+    Record<string, { readonly activeTerminalId: string | null }>
+  >;
+}): string | null {
+  const scopeId = input.activeThreadId ?? input.activeWorkspaceId;
+  return scopeId ? input.terminalPanelByThread[scopeId]?.activeTerminalId ?? null : null;
+}
+
+/** Returns whether reconnect may reattach the selected live Terminal session. */
+export function shouldReattachSelectedTerminal(
+  session: Pick<TerminalActiveSession, "ptyId" | "state">,
+  selectedTerminalId: string | null,
+): boolean {
+  return session.ptyId === selectedTerminalId &&
+    (session.state === "running" || session.state === "starting");
+}
 
 interface PendingCall {
   resolve: (value: unknown) => void;
@@ -319,23 +343,25 @@ export function createWsTransport(
           const terminalClient = terminalClientSelector.getSelected();
           const activePtys = await terminalClient.listActive();
           useTerminalStore.getState().reconcileActiveSessions(activePtys);
-
-          const clientPtyIds = new Set(
-            Object.values(useTerminalStore.getState().terminals)
-              .flat()
-              .map((t) => t.id),
-          );
+          const terminalState = useTerminalStore.getState();
+          const { useWorkspaceStore } = await import("@/stores/workspaceStore");
+          const workspaceState = useWorkspaceStore.getState();
+          const selectedTerminalId = resolveSelectedTerminalId({
+            activeThreadId: workspaceState.activeThreadId,
+            activeWorkspaceId: workspaceState.activeWorkspaceId,
+            terminalPanelByThread: terminalState.terminalPanelByThread,
+          });
 
           await Promise.allSettled(
             activePtys
-              .filter((p) => clientPtyIds.has(p.ptyId))
+              .filter((p) => shouldReattachSelectedTerminal(p, selectedTerminalId))
               .map(async (p) => {
                 // -1 means "I have seen nothing" — server replays everything including seq=0.
                 const lastSeq = ptyLastSeqMap.get(p.ptyId) ?? -1;
                 const result = await terminalClient.reattach(p.ptyId, lastSeq);
                 if (result.mode === "reset") {
                   ptyLastSeqMap.set(p.ptyId, result.discardThrough);
-                  emitPtyReconnectGap({ ptyId: p.ptyId });
+                  terminalClient.notifyReconnectGap(p.ptyId);
                 } else if (result.mode === "checkpoint") {
                   ptyLastSeqMap.set(p.ptyId, result.checkpointThrough);
                 }
@@ -818,6 +844,13 @@ export function createWsTransport(
     terminalKill: (ptyId) => withTerminalClient((client) => client.kill(ptyId)),
     terminalPause: (ptyId) => withTerminalClient((client) => client.pause(ptyId)),
     terminalResume: (ptyId) => withTerminalClient((client) => client.resume(ptyId)),
+    terminalSubscribe: (ptyId, subscription: TerminalClientSubscription) =>
+      terminalClientSelector.getSelected().subscribe(ptyId, subscription),
+    terminalDetachForSwitch: (ptyId, checkpoint) =>
+      withTerminalClient((client) => client.detachForSwitch(ptyId, checkpoint)),
+    terminalNotifyReconnectGap: (ptyId) => {
+      terminalClientSelector.getSelected().notifyReconnectGap(ptyId);
+    },
     terminalKillByThread: (threadId) =>
       withTerminalClient((client) => client.killByThread(threadId)),
     terminalReattach: (ptyId, lastSeq, cold) =>
