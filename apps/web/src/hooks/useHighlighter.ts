@@ -1,13 +1,32 @@
 import { useEffect, useRef, useState } from "react";
 import type { ShikiTheme } from "./useTheme";
-import { getWorker, workerGeneration, pending, nextRequestId } from "@/lib/shiki-worker-client";
+import {
+  chatHighlightCoordinator,
+  type ChatHighlightRequestHandle,
+} from "@/lib/chat-highlight-coordinator";
+import {
+  getWorker,
+  nextRequestId,
+  pending,
+  workerGeneration,
+} from "@/lib/shiki-worker-client";
 import {
   recordShikiWorkerTiming,
   shouldMeasureShiki,
   startShikiMeasurement,
 } from "@/performance/shiki-performance";
 
-/** Response from the Shiki Web Worker for a highlight (codeToHtml) request. */
+/** Optional chat scheduling context for one settled code block. */
+export interface UseHighlighterOptions {
+  /** Whether the code block intersects the browser viewport. */
+  visible?: boolean;
+  /** Thread identity that cancels and replaces a request when it changes. */
+  threadId?: string | null;
+  /** Enables the settled chat coordinator instead of direct worker scheduling. */
+  coordinator?: boolean;
+}
+
+/** Response from the Shiki Web Worker for a highlight request. */
 interface HighlightResponse {
   id: string;
   type: "highlight";
@@ -26,16 +45,20 @@ interface HighlightResponse {
  * @param enabled - When `false`, the hook skips posting to the Worker entirely.
  *   The hook is still called unconditionally (rules of hooks satisfied) but the
  *   side effect is suppressed. Defaults to `true`.
+ * @param options - Optional chat scheduling and thread context.
  */
 export function useHighlighter(
   code: string,
   language: string,
   theme: ShikiTheme,
   enabled: boolean = true,
+  options: UseHighlighterOptions = {},
 ): { html: string | null; measurementId?: string | null } {
   const [html, setHtml] = useState<string | null>(null);
   const measurementIdRef = useRef<string | null>(null);
-  const currentRequestId = useRef<string | null>(null);
+  const currentRequestRef = useRef<ChatHighlightRequestHandle | null>(null);
+  const currentRequestTokenRef = useRef<symbol | null>(null);
+  const currentRequestIdRef = useRef<string | null>(null);
   const prevCode = useRef(code);
   const prevLanguage = useRef(language);
 
@@ -57,56 +80,90 @@ export function useHighlighter(
     prevCode.current = code;
     prevLanguage.current = language;
 
-    // Always call getWorker() to get a fresh reference (never use a stale ref)
-    // If the worker crashed and was recreated, this picks up the new instance
-    let worker: Worker;
-    try {
-      worker = getWorker();
-    } catch {
-      return;
+    const measurePerformance = shouldMeasureShiki();
+    if (!options.coordinator) {
+      let worker: Worker;
+      try {
+        worker = getWorker();
+      } catch {
+        return;
+      }
+
+      const id = nextRequestId("hl");
+      const generationAtRequest = workerGeneration;
+      currentRequestIdRef.current = id;
+      if (measurePerformance) startShikiMeasurement(id, performance.now());
+
+      pending.set(id, (response) => {
+        if (
+          currentRequestIdRef.current !== id
+          || workerGeneration !== generationAtRequest
+        ) return;
+        const result = response as HighlightResponse | null;
+        if (!result || result.type !== "highlight") return;
+        let responseMeasured = false;
+        if (measurePerformance && result.timing) {
+          responseMeasured = recordShikiWorkerTiming(id, result.timing, performance.now());
+        }
+        if (result.error) console.warn("[shiki-worker]", result.error);
+        measurementIdRef.current = responseMeasured ? id : null;
+        setHtml(result.error ? null : result.html);
+      });
+
+      try {
+        worker.postMessage({
+          id,
+          type: "highlight",
+          code,
+          language,
+          theme,
+          ...(measurePerformance ? { measurePerformance: true } : {}),
+        });
+      } catch {
+        pending.delete(id);
+        setHtml(null);
+      }
+
+      return () => {
+        pending.delete(id);
+        if (currentRequestIdRef.current === id) currentRequestIdRef.current = null;
+      };
     }
 
-    const id = nextRequestId("hl");
-    const generationAtRequest = workerGeneration;
-    currentRequestId.current = id;
+    const measurementId = measurePerformance ? nextRequestId("hl") : null;
+    if (measurementId) startShikiMeasurement(measurementId, performance.now());
 
-    const measurePerformance = shouldMeasureShiki();
-    if (measurePerformance) startShikiMeasurement(id, performance.now());
-
-    pending.set(id, (response) => {
-      // Only apply if this request is still current and the worker hasn't crashed since
-      if (
-        currentRequestId.current === id &&
-        workerGeneration === generationAtRequest
-      ) {
-        const r = response as HighlightResponse | null;
-        if (!r || r.type !== "highlight") return;
-        let responseMeasured = false;
-        if (measurePerformance && r.timing) {
-          responseMeasured = recordShikiWorkerTiming(id, r.timing, performance.now());
-        }
-        if (r?.error) {
-          console.warn("[shiki-worker]", r.error);
-        }
-        measurementIdRef.current = responseMeasured ? id : null;
-        setHtml(r && !r.error ? r.html : null);
-      }
-    });
-
-    worker.postMessage({
-      id,
-      type: "highlight",
+    const requestToken = Symbol("chat-highlight-request");
+    currentRequestTokenRef.current = requestToken;
+    const requestHandle = chatHighlightCoordinator.request({
       code,
       language,
       theme,
+      visible: options.visible ?? true,
       ...(measurePerformance ? { measurePerformance: true } : {}),
+      onResult: (result, timing) => {
+        if (currentRequestTokenRef.current !== requestToken) return;
+        let responseMeasured = false;
+        if (measurementId && timing) {
+          responseMeasured = recordShikiWorkerTiming(measurementId, timing, performance.now());
+        }
+        measurementIdRef.current = responseMeasured ? measurementId : null;
+        setHtml(result);
+      },
     });
+    currentRequestRef.current = requestHandle;
 
     return () => {
-      pending.delete(id);
-      currentRequestId.current = null;
+      requestHandle.cancel();
+      if (currentRequestRef.current === requestHandle) currentRequestRef.current = null;
+      if (currentRequestTokenRef.current === requestToken) currentRequestTokenRef.current = null;
     };
-  }, [code, language, theme, enabled]);
+  }, [code, language, theme, enabled, options.coordinator, options.threadId]);
+
+  useEffect(() => {
+    if (!enabled || !options.coordinator) return;
+    currentRequestRef.current?.setVisible(options.visible ?? true);
+  }, [enabled, options.coordinator, options.visible]);
 
   return { html, measurementId: measurementIdRef.current };
 }

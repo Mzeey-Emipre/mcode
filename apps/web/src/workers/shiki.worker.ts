@@ -5,6 +5,7 @@ import {
   MAX_SHIKI_PERFORMANCE_RESPONSE_BYTES,
   type ShikiWorkerTiming,
 } from "@/performance/shiki-performance-contract";
+import { resolveShikiLanguage } from "@/lib/shiki-language";
 
 const performanceBuild =
   import.meta.env.VITE_MCODE_PERFORMANCE_MODE === "profiling" ||
@@ -174,24 +175,6 @@ const LANG_IMPORTS: Record<string, () => Promise<{ default: unknown }>> = {
   vue: () => import("@shikijs/langs/vue"),
 };
 
-/**
- * Common markdown fence aliases mapped to their canonical Shiki language names.
- * Prevents common short-forms (e.g. `ts`, `py`) from silently falling back to plain text.
- */
-const LANG_ALIASES: Record<string, string> = {
-  ts: "typescript",
-  tsx: "typescript",
-  js: "javascript",
-  jsx: "javascript",
-  py: "python",
-  sh: "shell",
-  zsh: "shell",
-  yml: "yaml",
-  cs: "csharp",
-  "c++": "cpp",
-  kt: "kotlin",
-};
-
 /** In-flight language load promises. Coalesces concurrent loads for the same language. */
 const languageLoading = new Map<string, Promise<void>>();
 
@@ -253,7 +236,7 @@ async function resolveLanguage(
   highlighter: Awaited<ReturnType<typeof createHighlighterCore>>,
   language: string,
 ): Promise<string> {
-  let lang = LANG_ALIASES[language] ?? language;
+  let lang = resolveShikiLanguage(language);
   const loadedLangs = highlighter.getLoadedLanguages();
 
   if (!loadedLangs.includes(lang)) {
@@ -318,7 +301,7 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
               : performance.now() - highlighterCreationStartedAtMs,
           )
         : 0;
-      const canonicalLanguage = measured ? LANG_ALIASES[language] ?? language : "";
+      const canonicalLanguage = measured ? resolveShikiLanguage(language) : "";
       const languageWasReady = measured && highlighter.getLoadedLanguages().includes(canonicalLanguage);
       const grammarLoadStartedAtMs = measured ? performance.now() : 0;
       const lang = await resolveLanguage(highlighter, language);

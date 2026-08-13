@@ -31,6 +31,10 @@ interface CodeBlockProps {
   isStreaming: boolean;
   /** When true, skips Shiki highlighting but keeps the copy button and language label. */
   disableHighlighting?: boolean;
+  /** Thread that owns this Markdown block. */
+  threadId?: string | null;
+  /** Uses the chat coordinator for settled assistant Markdown. */
+  chatHighlighting?: boolean;
 }
 
 interface MeasuredCodeBlockProps {
@@ -61,11 +65,49 @@ export const CodeBlock = memo(function CodeBlock({
   languageLabel,
   isStreaming,
   disableHighlighting = false,
+  threadId,
+  chatHighlighting = false,
 }: CodeBlockProps) {
   const theme = useShikiTheme();
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [isVisible, setIsVisible] = useState(
+    () => typeof IntersectionObserver === "undefined",
+  );
+
+  // Visibility is a scheduling signal. The fallback keeps unit-test and older
+  // browser environments functional when IntersectionObserver is unavailable.
+  useEffect(() => {
+    if (!chatHighlighting) return;
+    const element = containerRef.current;
+    if (!element || typeof IntersectionObserver === "undefined") {
+      setIsVisible(true);
+      return;
+    }
+
+    setIsVisible(false);
+    const observer = new IntersectionObserver(([entry]) => {
+      setIsVisible(entry?.isIntersecting === true);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [chatHighlighting]);
+
   // The hook is always called unconditionally (rules of hooks), but `enabled`
   // suppresses the Worker postMessage during streaming so no requests are wasted.
-  const { html, measurementId } = useHighlighter(code, language || "text", theme, !isStreaming && !disableHighlighting);
+  const highlightOptions = chatHighlighting
+    ? {
+        visible: isVisible,
+        threadId: threadId ?? null,
+        coordinator: true,
+      }
+    : undefined;
+  const { html, measurementId } = useHighlighter(
+    code,
+    language || "text",
+    theme,
+    !isStreaming && !disableHighlighting,
+    highlightOptions,
+  );
 
   const [copied, setCopied] = useState(false);
   const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -95,7 +137,7 @@ export const CodeBlock = memo(function CodeBlock({
   const codePreInner = "m-0 min-w-full w-max bg-transparent p-3";
 
   const content = (
-    <div className="my-2 min-w-0 rounded-lg overflow-hidden border border-border">
+    <div ref={containerRef} className="my-2 min-w-0 rounded-lg overflow-hidden border border-border">
       <div className="flex items-center justify-between bg-background px-3 py-1 border-b border-border">
         <span className="text-xs text-muted-foreground">{languageLabel || language || "text"}</span>
         {!isStreaming && (

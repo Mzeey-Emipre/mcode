@@ -3,11 +3,17 @@ import { createEmptyThreadRecord } from "@/stores/thread-record";
 import { useThreadStore } from "@/stores/threadStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { resetWorkerForPerformance } from "@/lib/shiki-worker-client";
+import { resetChatHighlightCoordinator } from "@/lib/chat-highlight-coordinator";
 import {
   drainShikiPerformanceObservations,
   resetShikiPerformanceObservations,
   setShikiPerformanceCapture,
 } from "./shiki-performance";
+
+function resetShikiPerformanceWorker(): void {
+  resetWorkerForPerformance();
+  resetChatHighlightCoordinator();
+}
 
 declare global {
   interface Window {
@@ -20,7 +26,7 @@ declare global {
         readonly drain: typeof drainShikiPerformanceObservations;
         readonly reset: typeof resetShikiPerformanceObservations;
         readonly setCapture: typeof setShikiPerformanceCapture;
-        readonly resetWorker: typeof resetWorkerForPerformance;
+        readonly resetWorker: typeof resetShikiPerformanceWorker;
       };
     };
   }
@@ -37,7 +43,7 @@ export function installFrontendRendererFixtureBridge(): void {
       drain: drainShikiPerformanceObservations,
       reset: resetShikiPerformanceObservations,
       setCapture: setShikiPerformanceCapture,
-      resetWorker: resetWorkerForPerformance,
+      resetWorker: resetShikiPerformanceWorker,
     },
   };
 }

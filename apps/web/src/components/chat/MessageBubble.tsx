@@ -793,7 +793,7 @@ export const MessageBubble = memo(function MessageBubble({
             />
           ) : (
             <Suspense fallback={null}>
-              <LazyMarkdownContent content={message.content} isStreaming={false} />
+              <LazyMarkdownContent content={message.content} isStreaming={false} threadId={message.thread_id} chatHighlighting />
             </Suspense>
           )}
         </div>

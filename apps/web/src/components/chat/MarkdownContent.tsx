@@ -42,6 +42,10 @@ interface MarkdownContentProps {
   variant?: "assistant" | "user";
   /** Optional react-markdown component overrides merged on top of defaults. */
   componentOverrides?: Partial<Components>;
+  /** Thread that owns the rendered Markdown. */
+  threadId?: string | null;
+  /** Uses the chat coordinator for settled assistant Markdown. */
+  chatHighlighting?: boolean;
 }
 
 /** GFM for assistant bubbles; user bubbles also enable single-newline line breaks. */
@@ -360,6 +364,8 @@ function makeComponents(
   isStreaming: boolean,
   variant: "assistant" | "user",
   workspacePath: string | null,
+  threadId: string | null,
+  chatHighlighting: boolean,
   componentOverrides?: Partial<Components>,
 ) {
   const isUser = variant === "user";
@@ -481,6 +487,8 @@ function makeComponents(
           languageLabel={label}
           isStreaming={isStreaming}
           disableHighlighting={isUser}
+          threadId={threadId}
+          chatHighlighting={chatHighlighting && !isUser}
         />
       );
   };
@@ -498,16 +506,22 @@ export const MarkdownContent = memo(function MarkdownContent({
   isStreaming = false,
   variant = "assistant",
   componentOverrides,
+  threadId,
+  chatHighlighting = false,
 }: MarkdownContentProps) {
   const workspacePath = useWorkspaceStore((s) => {
     const id = s.activeWorkspaceId;
     if (!id) return null;
     return s.workspaces.find((w) => w.id === id)?.path ?? null;
   });
+  const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
+  const highlightThreadId = chatHighlighting
+    ? (threadId === undefined ? activeThreadId : threadId)
+    : threadId ?? null;
 
   const components = useMemo(
-    () => makeComponents(isStreaming, variant, workspacePath, componentOverrides),
-    [isStreaming, variant, workspacePath, componentOverrides],
+    () => makeComponents(isStreaming, variant, workspacePath, highlightThreadId, chatHighlighting, componentOverrides),
+    [isStreaming, variant, workspacePath, highlightThreadId, chatHighlighting, componentOverrides],
   );
 
   const remarkPlugins = variant === "user" ? USER_REMARK_PLUGINS : ASSISTANT_REMARK_PLUGINS;
