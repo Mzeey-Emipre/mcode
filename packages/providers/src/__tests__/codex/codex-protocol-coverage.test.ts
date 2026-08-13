@@ -11,8 +11,8 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
 import { AgentEventType, type AgentEvent } from "@mcode/contracts";
-import { CodexEventMapper } from "../codex-event-mapper.js";
-import type { CodexNotification } from "../codex-types.js";
+import { CodexEventMapper } from "../../private/codex/codex-event-mapper.js";
+import type { CodexNotification } from "../../private/codex/codex-types.js";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_PATH = join(__dir, "fixtures", "codex-protocol-golden.ndjson");

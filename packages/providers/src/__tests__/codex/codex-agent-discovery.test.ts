@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   discoverCodexStandaloneAgents,
   resolveCodexAgentDiscoveryRoots,
-} from "./codex-agent-discovery.js";
+} from "../../private/codex/codex-agent-discovery.js";
 
 const temporaryDirectories: string[] = [];
 

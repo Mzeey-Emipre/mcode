@@ -17,8 +17,12 @@ function createHostPorts(): ProviderHostPorts {
       terminateTree: vi.fn(async () => undefined),
     },
     browser: {
-      stage: vi.fn(() => ({ leaseId: "lease-1" })),
+      stage: vi.fn(() => ({ leaseId: "lease-1", expiresAt: Date.now() + 1_000 })),
       releaseSession: vi.fn(() => 0),
+      isConfigured: vi.fn(() => false),
+      issue: vi.fn(() => null),
+      release: vi.fn((leaseId: string) => ({ leaseId, released: false })),
+      revokeCredential: vi.fn(() => false),
     },
     threadControl: {
       bootstrap: vi.fn(async () => null),
@@ -36,6 +40,16 @@ function createInput(): ProviderFactoryInput {
       idleSessionTtlMs: 600_000,
     },
     host: createHostPorts(),
+    codex: {
+      settings: { get: vi.fn(async () => ({ cliPath: "codex", fastMode: false })) },
+      attachments: { persistGeneratedImageFromPath: vi.fn() },
+      catalog: {
+        currentSkills: vi.fn(() => []),
+        currentPrompts: vi.fn(() => []),
+        refreshCustomPrompts: vi.fn(async () => ({ prompts: [] })),
+        shutdown: vi.fn(async () => undefined),
+      },
+    },
   };
 }
 
@@ -52,6 +66,27 @@ describe("Provider factories", () => {
 
     expect(provider.id).toBe(id);
     expect(provider.descriptor.id).toBe(id);
+    if (id === "codex") {
+      expect(provider.sendTurn).toBeTypeOf("function");
+      expect(provider.descriptor.capabilities).toEqual([
+        { name: "build", support: "supported" },
+        { name: "plan", support: "supported" },
+        { name: "goals", support: "supported" },
+        { name: "permissions", support: "supported" },
+        { name: "usage", support: "supported" },
+        { name: "session-eviction", support: "supported" },
+        { name: "clean-fork", support: "supported" },
+        { name: "orchestration", support: "supported" },
+        { name: "browser-access", support: "supported" },
+        { name: "thread-control", support: "supported" },
+      ]);
+      expect(provider.descriptor.capabilities).not.toContainEqual(
+        { name: "provider-continuation", support: "supported" },
+      );
+      expect(provider.descriptor.capabilities).not.toContainEqual(
+        { name: "child-cancellation", support: "supported" },
+      );
+    }
     expect(Object.values(input.host).flatMap((port) => Object.values(port))).toSatisfy(
       (methods: unknown[]) => methods.every((method) => !vi.mocked(method as never).mock.calls.length),
     );

@@ -16,7 +16,7 @@ import {
   type SettingsProviderId,
   type SkillInfo,
 } from "@mcode/contracts";
-import { isCodexCustomPromptCatalogItem } from "../providers/codex/codex-prompt.js";
+import { isCodexProviderCatalogPrompt } from "@mcode/providers";
 
 /** Inputs used to construct and validate one provider catalog snapshot. */
 export interface BuildProviderCatalogSnapshotInput {
@@ -37,7 +37,7 @@ function providerCommandCapabilityKind(
   providerId: SettingsProviderId,
   item: SkillInfo,
 ): "customPrompt" | "providerCommand" {
-  return providerId === "codex" && isCodexCustomPromptCatalogItem(item)
+  return providerId === "codex" && isCodexProviderCatalogPrompt(item)
     ? "customPrompt"
     : "providerCommand";
 }

@@ -6,7 +6,7 @@ import type { SkillInfo } from "@mcode/contracts";
 import {
   expandCodexPromptTemplate,
   resolveCodexPromptInvocation,
-} from "../codex-prompt.js";
+} from "../../private/codex/codex-prompt.js";
 
 const tempDirs: string[] = [];
 

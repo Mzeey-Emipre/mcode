@@ -37,6 +37,22 @@ export function createProviderHostPorts(
       stage: (request) => dependencies.browser.stage(request),
       releaseSession: (providerId, sessionId) =>
         dependencies.browser.releaseSession(providerId, sessionId),
+      isConfigured: () => dependencies.browser.isConfigured(),
+      issue: (stage) => {
+        const grant = dependencies.browser.issue(stage);
+        if (!grant) return null;
+        return {
+          leaseId: grant.leaseId,
+          mcpUrl: grant.mcpUrl,
+          token: grant.token,
+          credentialId: grant.credentialId,
+          expiresAt: grant.expiresAt,
+          allowedOperations: [...grant.allowedOperations],
+          rolloutMode: grant.rolloutMode,
+        };
+      },
+      release: (leaseId) => dependencies.browser.release(leaseId),
+      revokeCredential: (credentialId) => dependencies.browser.revokeCredential(credentialId),
     },
     threadControl: {
       bootstrap: async (request) => {

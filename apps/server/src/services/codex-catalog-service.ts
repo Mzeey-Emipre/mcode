@@ -1,4 +1,3 @@
-import { EventEmitter } from "events";
 import { basename } from "path";
 import { inject, injectable } from "tsyringe";
 import type {
@@ -18,18 +17,16 @@ import {
   SkillInfoSchema,
 } from "@mcode/contracts";
 import { logger } from "@mcode/shared";
-import { CodexAppServer, type CodexAppServerOptions } from "../providers/codex/codex-app-server.js";
-import type {
-  PluginListResult,
-  PluginReadParams,
-  PluginReadResult,
-  ConfigReadResult,
-  SkillsListResult,
-} from "../providers/codex/codex-types.js";
 import {
-  discoverCodexStandaloneAgents,
-  type CodexStandaloneAgentDiscovery,
-} from "../providers/codex/codex-agent-discovery.js";
+  createCodexCatalogClient,
+  discoverCodexCatalogAgents,
+  type CodexCatalogAgentDiscovery,
+  type CodexCatalogClient as ProviderCodexCatalogClient,
+  type CodexCatalogClientOptions,
+  type CodexCatalogPluginReadParams,
+  type CodexCatalogPluginReadResult,
+  type CodexCatalogPluginsResult,
+} from "@mcode/providers";
 import { codexPluginNameFromSkillPath } from "./skill-service.js";
 import { SettingsService } from "./settings-service.js";
 import { EnvService } from "./env-service.js";
@@ -64,22 +61,14 @@ export interface CodexCatalogRefreshResult {
 }
 
 /** Minimal app-server surface used by the provider-wide catalog connection. */
-export interface CodexCatalogClient extends EventEmitter {
-  readonly isAlive: boolean;
-  start(): Promise<void>;
-  listSkills(cwds?: string[], forceReload?: boolean): Promise<SkillsListResult>;
-  listPlugins(cwds?: string[]): Promise<PluginListResult>;
-  readPlugin(params: PluginReadParams): Promise<PluginReadResult>;
-  readConfig(cwd?: string): Promise<ConfigReadResult>;
-  kill(): Promise<void>;
-}
+export type CodexCatalogClient = ProviderCodexCatalogClient;
 
 /** Creates the external app-server client used by {@link CodexCatalogService}. */
 @injectable()
 export class CodexCatalogClientFactory {
   /** Creates one catalog-only Codex app-server client. */
-  create(options: CodexAppServerOptions): CodexCatalogClient {
-    return new CodexAppServer(options);
+  create(options: CodexCatalogClientOptions): CodexCatalogClient {
+    return createCodexCatalogClient(options);
   }
 }
 
@@ -187,7 +176,7 @@ function upstreamDiagnostics(rawErrors: unknown): ProviderCatalogSourceDiagnosti
   });
 }
 
-function pluginDetailDescription(result: PluginReadResult): string {
+function pluginDetailDescription(result: CodexCatalogPluginReadResult): string {
   const plugin = result.plugin;
   const summaryInterface = plugin.summary?.interface;
   return [
@@ -212,7 +201,7 @@ function pluginReadParams(
   marketplaceName: string,
   marketplacePath: string | null,
   pluginName: string,
-): PluginReadParams {
+): CodexCatalogPluginReadParams {
   return marketplacePath
     ? { marketplacePath, pluginName }
     : { remoteMarketplaceName: marketplaceName, pluginName };
@@ -273,7 +262,7 @@ async function readMissingPluginDescriptions(
 
 async function reconcilePlugins(
   client: CodexCatalogClient,
-  result: PluginListResult,
+  result: CodexCatalogPluginsResult,
 ): Promise<{
   plugins: ProviderPluginCapability[];
   diagnostics: ProviderCatalogSourceDiagnostic[];
@@ -520,8 +509,8 @@ export class CodexCatalogService {
       ? this.clientEnvironment
       : this.envService.getEnv();
     const promptRefresh = this.customPromptService.refresh();
-    const standalonePromise = discoverCodexStandaloneAgents({ environment, cwd }).catch(
-      (): CodexStandaloneAgentDiscovery => ({
+    const standalonePromise = discoverCodexCatalogAgents({ environment, cwd }).catch(
+      (): CodexCatalogAgentDiscovery => ({
         agents: [],
         diagnostics: [sourceDiagnostic(
           "standaloneAgentAdapter",
@@ -690,9 +679,13 @@ export class CodexCatalogService {
     const client = this.clientFactory.create({
       cliPath: settings.provider.cli.codex || "codex",
       workingDirectory: cwd ?? process.cwd(),
-      approvalPolicy: "never",
-      catalogOnly: true,
-      jobObject: this.jobObject,
+      processAttachment: {
+        attach: (pid, description) => {
+          if (!this.jobObject.isWindowsJob) return;
+          this.jobObject.assign(pid);
+          this.jobObject.setDescription(pid, description);
+        },
+      },
       getSpawnEnv: () => ({ ...environment }),
     });
     this.client = client;

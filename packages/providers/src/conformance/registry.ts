@@ -32,13 +32,29 @@ export const ENABLED_PROVIDER_CONFORMANCE: readonly ProviderConformanceRegistrat
   {
     providerId: "codex",
     factory: createCodexProvider,
-    requiredProfiles: ["core"],
-    fixtureFiles: [fixtureFile("codex"), namedFixtureFile("codex-core.captured.json")],
+    requiredProfiles: [
+      "core",
+      "build",
+      "plan",
+      "goals",
+      "permissions",
+      "usage",
+      "session-eviction",
+      "clean-fork",
+      "orchestration",
+      "browser-access",
+      "thread-control",
+    ],
+    fixtureFiles: [
+      fixtureFile("codex"),
+      namedFixtureFile("codex-core.captured.json"),
+      namedFixtureFile("codex-adversarial.synthetic.json"),
+    ],
     supportedVersions: [{
       component: "codex-cli",
       oldestSupported: "0.37.0",
       currentTested: "0.130.0",
-      source: "apps/server/src/providers/codex/codex-provider.ts and codex-protocol-golden.ndjson",
+      source: "packages/providers/src/private/codex/codex-provider.ts and codex-protocol-golden.ndjson",
     }],
   },
   {

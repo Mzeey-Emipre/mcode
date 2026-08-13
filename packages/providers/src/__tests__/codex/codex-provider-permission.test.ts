@@ -1,4 +1,3 @@
-import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("@mcode/shared", () => ({
@@ -6,12 +5,11 @@ vi.mock("@mcode/shared", () => ({
   logger: { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn() },
 }));
 
-import { CodexProvider } from "../codex-provider.js";
-import { CodexAppServer } from "../codex-app-server.js";
+import { CodexProvider, stubEnvService } from "./codex-provider-test-fixture.js";
+import { CodexAppServer } from "../../private/codex/codex-app-server.js";
 import type { PermissionRequest, PermissionDecision } from "@mcode/contracts";
 import { AgentEventType } from "@mcode/contracts";
 import { logger } from "@mcode/shared";
-import { stubEnvService } from "../../../__tests__/stub-env-service.js";
 
 /**
  * These tests exercise the provider-level permission plumbing in isolation:
@@ -59,7 +57,6 @@ describe("CodexProvider permission flow", () => {
     // settingsService and jobObject are unused for these paths; pass minimal stubs.
     provider = new CodexProvider(
       { get: async () => ({ provider: { cli: { codex: "codex" } } }) } as never,
-      { assign: vi.fn(), isWindowsJob: false } as never,
       stubEnvService() as never,
       { persistGeneratedImageFromPath: vi.fn() } as never,
       {
@@ -322,9 +319,9 @@ describe("CodexProvider permission flow", () => {
     // want to observe.
     (provider as unknown as {
       settingsService: { get: () => Promise<unknown> };
-    }).settingsService = {
-      get: async () => ({ provider: { cli: { codex: "/totally/bogus/codex-path" } } }),
-    };
+    }).settingsService.get = async () => ({
+      provider: { cli: { codex: "/totally/bogus/codex-path" } },
+    });
 
     vi.useRealTimers();
     await provider.sendTurn({

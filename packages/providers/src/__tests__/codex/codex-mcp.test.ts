@@ -1,6 +1,5 @@
-import "reflect-metadata";
 import { describe, expect, it } from "vitest";
-import { hasCodexInternalThreadControlMcp } from "./codex-provider.js";
+import { hasCodexInternalThreadControlMcp } from "../../private/codex/codex-provider.js";
 
 describe("Codex internal MCP configuration validation", () => {
   it("accepts effective config containing the internal server", () => {

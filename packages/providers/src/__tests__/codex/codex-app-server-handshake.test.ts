@@ -30,7 +30,7 @@ vi.mock("@mcode/shared", () => ({
   logger: { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn() },
 }));
 
-import { CodexAppServer, performInitialize, isRecoverableCodexResumeError } from "../codex-app-server.js";
+import { CodexAppServer, performInitialize, isRecoverableCodexResumeError } from "../../private/codex/codex-app-server.js";
 import { logger } from "@mcode/shared";
 
 const noSleep = (): Promise<void> => Promise.resolve();

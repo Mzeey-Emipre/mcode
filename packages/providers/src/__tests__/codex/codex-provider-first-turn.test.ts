@@ -1,4 +1,3 @@
-import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -17,7 +16,7 @@ const { checkCodexVersionMock, meetsMinVersionMock } = vi.hoisted(() => ({
   meetsMinVersionMock: vi.fn(() => true),
 }));
 
-vi.mock("../codex-version.js", () => ({
+vi.mock("../../private/codex/codex-version.js", () => ({
   checkCodexVersion: checkCodexVersionMock,
   meetsMinVersion: meetsMinVersionMock,
 }));
@@ -33,7 +32,7 @@ const { sendTurnMock, readConfigMock, appServers, startError } = vi.hoisted(() =
   startError: { current: null as Error | null },
 }));
 
-vi.mock("../codex-app-server.js", async () => {
+vi.mock("../../private/codex/codex-app-server.js", async () => {
   const { EventEmitter } = await import("events");
   class MockCodexAppServer extends EventEmitter {
     isAlive = true;
@@ -66,11 +65,9 @@ vi.mock("../codex-app-server.js", async () => {
   return { CodexAppServer: MockCodexAppServer };
 });
 
-import { CodexProvider } from "../codex-provider.js";
+import { BrowserAutomationSessionLease, CodexProvider, stubEnvService } from "./codex-provider-test-fixture.js";
 import { AgentEventType } from "@mcode/contracts";
 import type { AgentEvent } from "@mcode/contracts";
-import { stubEnvService } from "../../../__tests__/stub-env-service.js";
-import { BrowserAutomationSessionLease } from "../../../services/browser-automation/browser-automation-session-lease.js";
 
 function makeProvider(
   catalogService: {
@@ -93,7 +90,6 @@ function makeProvider(
 ): CodexProvider {
   return new CodexProvider(
     { get: async () => ({ provider: { cli: { codex: "codex" } } }) } as never,
-    { assign: vi.fn(), isWindowsJob: false } as never,
     stubEnvService() as never,
     { persistGeneratedImageFromPath: vi.fn() } as never,
     catalogService as never,
@@ -216,10 +212,9 @@ describe("CodexProvider first turn on new session", () => {
       mcpUrl: "http://127.0.0.1:19400/mcp",
       worktreeIdentity: "worktree-test",
     });
-    const provider = makeProvider(undefined, lease);
-    (provider as any).threadControlMcp = {
+    const provider = makeProvider(undefined, lease, {
       createCodexConfiguration: vi.fn().mockRejectedValue(new Error("MCP config failed")),
-    };
+    });
 
     await provider.sendTurn({
       turnExecutionId: "test-execution",

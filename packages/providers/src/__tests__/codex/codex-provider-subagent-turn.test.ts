@@ -1,4 +1,3 @@
-import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const { loggerWarnMock } = vi.hoisted(() => ({ loggerWarnMock: vi.fn() }));
@@ -7,7 +6,7 @@ vi.mock("@mcode/shared", () => ({
   logger: { warn: loggerWarnMock, info: vi.fn(), debug: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock("../codex-version.js", () => ({
+vi.mock("../../private/codex/codex-version.js", () => ({
   checkCodexVersion: () => ({ ok: true, version: "0.40.0" }),
   meetsMinVersion: () => true,
 }));
@@ -17,7 +16,7 @@ const { sendTurnMock, getChildThreadMetadataMock } = vi.hoisted(() => ({
   getChildThreadMetadataMock: vi.fn().mockResolvedValue({ model: "gpt-5.6-sol", reasoningEffort: "medium" }),
 }));
 
-vi.mock("../codex-app-server.js", async () => {
+vi.mock("../../private/codex/codex-app-server.js", async () => {
   const { EventEmitter } = await import("events");
   class MockCodexAppServer extends EventEmitter {
     isAlive = true;
@@ -36,10 +35,9 @@ vi.mock("../codex-app-server.js", async () => {
   return { CodexAppServer: MockCodexAppServer };
 });
 
-import { CodexProvider } from "../codex-provider.js";
+import { CodexProvider, stubEnvService } from "./codex-provider-test-fixture.js";
 import { AgentEventType } from "@mcode/contracts";
 import type { AgentEvent } from "@mcode/contracts";
-import { stubEnvService } from "../../../__tests__/stub-env-service.js";
 
 interface PoolEntry {
   pendingTurnId: string | null;
@@ -84,7 +82,6 @@ async function startSession(
 function makeProvider(): CodexProvider {
   return new CodexProvider(
     { get: async () => ({ provider: { cli: { codex: "codex" } } }) } as never,
-    { assign: vi.fn(), isWindowsJob: false } as never,
     stubEnvService() as never,
     { persistGeneratedImageFromPath: vi.fn() } as never,
     {

@@ -13,7 +13,6 @@ import { EventEmitter } from "events";
 import { isAbsolute } from "path";
 import which from "which";
 import { logger } from "@mcode/shared";
-import { flattenProcessEnv } from "../../services/shell-env-utils.js";
 import { CodexRpcClient } from "./codex-rpc-client.js";
 import { mapDecisionToCodexResponse } from "./codex-permission-mapper.js";
 import type {
@@ -46,6 +45,12 @@ import type {
   AskForApproval,
   ReasoningEffort,
 } from "./codex-types.js";
+
+function flattenProcessEnvironment(environment: NodeJS.ProcessEnv): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(environment).filter((entry): entry is [string, string] => entry[1] !== undefined),
+  );
+}
 
 /** Incoming approval request from the codex app-server, passed to approvalHandler. */
 export interface CodexApprovalRequest {
@@ -91,7 +96,9 @@ export interface CodexAppServerOptions {
    * Optional Windows Job Object to attach the spawned child to.
    * When set, the codex process dies with the server on crash.
    */
-  jobObject?: import("../../services/job-object.js").JobObject;
+  processAttachment?: {
+    attach(pid: number, description: string): void;
+  };
   /**
    * Supplies env for the child `codex` process. When unset, `process.env` is copied.
    */
@@ -615,7 +622,7 @@ export async function warmCodexAppServer(
       child = spawn(resolvedCliPath, ["app-server"], {
         stdio: ["pipe", "pipe", "ignore"],
         shell: needsShell,
-        env: getSpawnEnv ? getSpawnEnv() : flattenProcessEnv(process.env),
+        env: getSpawnEnv ? getSpawnEnv() : flattenProcessEnvironment(process.env),
         windowsHide: true,
       });
     } catch {
@@ -810,7 +817,7 @@ export class CodexAppServer extends EventEmitter {
       stdio: ["pipe", "pipe", "pipe"],
       shell: needsShell,
       cwd: workingDirectory,
-      env: this.options.getSpawnEnv ? this.options.getSpawnEnv() : flattenProcessEnv(process.env),
+      env: this.options.getSpawnEnv ? this.options.getSpawnEnv() : flattenProcessEnvironment(process.env),
       windowsHide: true,
     });
 
@@ -831,9 +838,8 @@ export class CodexAppServer extends EventEmitter {
 
     // Attach to the server's Job Object for crash cleanup.
     // Must happen after spawn succeeds but before any async handshake steps.
-    if (this.options.jobObject && child.pid) {
-      this.options.jobObject.assign(child.pid);
-      this.options.jobObject.setDescription(child.pid, "Mcode Agent: Codex");
+    if (this.options.processAttachment && child.pid) {
+      this.options.processAttachment.attach(child.pid, "Mcode Agent: Codex");
     }
 
     this.child = child;

@@ -21,7 +21,7 @@ import { killDescendantsByName } from "./process-kill.js";
 import { WorkspaceRepo } from "../repositories/workspace-repo.js";
 import { broadcast } from "../transport/push.js";
 import { HandoffStorage } from "./handoff/handoff-storage.js";
-import { pruneStaleToolOutputArtifacts } from "./bounded-tool-output.js";
+import { pruneStaleToolOutputArtifacts } from "@mcode/providers";
 import { ThreadControlMutationReservationService } from "./thread-control-mutation-reservation-service.js";
 
 /** How often to check for due cleanup jobs (ms). */

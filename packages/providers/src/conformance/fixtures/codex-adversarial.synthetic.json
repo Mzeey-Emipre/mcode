@@ -1,0 +1,23 @@
+{
+  "contractVersion": 1,
+  "providerId": "codex",
+  "cliVersion": "synthetic",
+  "protocolVersion": "synthetic-v1",
+  "provenance": "synthetic",
+  "requiredProfiles": ["core", "orchestration", "permissions", "browser-access", "thread-control"],
+  "scenario": "adversarial interleaved child activity with errored terminal",
+  "sourceHash": "36518f83bf1ce29c979dbba91cd86d7966b544059f7b99f3fb9568ce66077362",
+  "redaction": { "reviewed": true, "removedFields": ["prompt", "response", "environment", "tool output", "absolute paths"] },
+  "input": {
+    "events": [
+      { "kind": "session", "sequence": 1, "nativeId": "SESSION_MAIN", "status": "started" },
+      { "kind": "turn", "sequence": 2, "nativeId": "TURN_PARENT", "status": "started" },
+      { "kind": "item", "sequence": 3, "nativeId": "ITEM_PARENT_TOOL", "pairId": "PAIR_PARENT_TOOL", "status": "started" },
+      { "kind": "item", "sequence": 4, "nativeId": "ITEM_CHILD_STARTED", "pairId": "PAIR_CHILD", "status": "started" },
+      { "kind": "item", "sequence": 5, "nativeId": "ITEM_CHILD_COMPLETED", "pairId": "PAIR_CHILD", "size": 4096, "status": "completed" },
+      { "kind": "item", "sequence": 6, "nativeId": "ITEM_PARENT_TOOL_RESULT", "pairId": "PAIR_PARENT_TOOL", "status": "completed" },
+      { "kind": "terminal", "sequence": 7, "nativeId": "TURN_PARENT", "status": "errored" }
+    ]
+  },
+  "expected": { "orderedKinds": ["session", "turn", "item", "item", "item", "item", "terminal"], "terminal": "errored", "toolPairs": [["PAIR_PARENT_TOOL", "PAIR_PARENT_TOOL"], ["PAIR_CHILD", "PAIR_CHILD"]] }
+}

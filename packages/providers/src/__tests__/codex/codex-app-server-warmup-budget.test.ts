@@ -12,7 +12,7 @@ vi.mock("child_process", async (importOriginal) => {
 
 vi.mock("which", () => ({ default: mockWhich }));
 
-import { warmCodexAppServer } from "../codex-app-server.js";
+import { warmCodexAppServer } from "../../private/codex/codex-app-server.js";
 
 describe("warmCodexAppServer discovery budget", () => {
   beforeEach(() => {

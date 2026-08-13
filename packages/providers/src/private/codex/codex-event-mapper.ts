@@ -6,7 +6,7 @@ import {
   BoundedToolOutputBuffer,
   boundToolOutput,
   type BoundedToolOutputResult,
-} from "../../services/bounded-tool-output.js";
+} from "../../bounded-tool-output.js";
 import type {
   CodexNotification,
   CompletedItem,
