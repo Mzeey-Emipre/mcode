@@ -83,6 +83,10 @@ describe("ElectronWebviewBrowserSurfaceAdapter", () => {
     });
     const events: BrowserSurfaceAdapterEvent[] = [];
     adapter.subscribe((event) => events.push(event));
+    Object.assign(adapter.element, {
+      canGoBack: vi.fn(() => true),
+      canGoForward: vi.fn(() => false),
+    });
     adapter.present({ left: 10, top: 20, width: 640, height: 480, scale: 1.25, zIndex: 42, coveredLeft: 112 });
     expect(adapter.element.style.left).toBe("10px");
     expect(adapter.element.style.width).toBe("640px");
@@ -118,6 +122,50 @@ describe("ElectronWebviewBrowserSurfaceAdapter", () => {
     });
     expect(document.body.contains(adapter.element)).toBe(false);
     expect(() => adapter.element.dispatchEvent(new Event("did-navigate"))).not.toThrow();
+  });
+
+  it("publishes renderer history state after address, history, and in-page commits", () => {
+    const adapter = new ElectronWebviewBrowserSurfaceAdapter(IDENTITY, 4, {
+      root: document.body,
+      bridge: bridge(),
+    });
+    let canGoBack = false;
+    let canGoForward = false;
+    Object.assign(adapter.element, {
+      canGoBack: vi.fn(() => canGoBack),
+      canGoForward: vi.fn(() => canGoForward),
+    });
+    const navigationStates: Array<{ canGoBack: boolean; canGoForward: boolean } | null> = [];
+    adapter.subscribe((event) => {
+      if (event.type === "navigation-state") navigationStates.push(event.navigation);
+    });
+
+    const commit = (
+      type: "did-navigate" | "did-navigate-in-page",
+      address: string,
+      state: { canGoBack: boolean; canGoForward: boolean },
+    ): void => {
+      canGoBack = state.canGoBack;
+      canGoForward = state.canGoForward;
+      adapter.element.dispatchEvent(Object.assign(new Event(type), { url: address, isMainFrame: true }));
+    };
+
+    commit("did-navigate", "https://example.test/one", { canGoBack: false, canGoForward: false });
+    commit("did-navigate", "https://example.test/two", { canGoBack: true, canGoForward: false });
+    commit("did-navigate", "https://example.test/one", { canGoBack: false, canGoForward: true });
+    commit("did-navigate", "https://example.test/two", { canGoBack: true, canGoForward: false });
+    commit("did-navigate-in-page", "https://example.test/two#section", { canGoBack: true, canGoForward: false });
+    adapter.element.dispatchEvent(new Event("dom-ready"));
+
+    expect(navigationStates).toEqual([
+      { canGoBack: false, canGoForward: false },
+      { canGoBack: true, canGoForward: false },
+      { canGoBack: false, canGoForward: true },
+      { canGoBack: true, canGoForward: false },
+      { canGoBack: true, canGoForward: false },
+      { canGoBack: true, canGoForward: false },
+    ]);
+    adapter.dispose();
   });
 
   it("retries the bounded guest discovery race after did-attach", async () => {

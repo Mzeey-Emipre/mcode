@@ -145,6 +145,8 @@ function installMockWebviewMethods(options: {
     getURL?: () => string;
     getWebContentsId?: () => number;
     reload?: () => void;
+    canGoBack?: () => boolean;
+    canGoForward?: () => boolean;
   };
   const loadURLDescriptor = Object.getOwnPropertyDescriptor(proto, "loadURL");
   const getURLDescriptor = Object.getOwnPropertyDescriptor(proto, "getURL");
@@ -153,6 +155,8 @@ function installMockWebviewMethods(options: {
     "getWebContentsId",
   );
   const reloadDescriptor = Object.getOwnPropertyDescriptor(proto, "reload");
+  const canGoBackDescriptor = Object.getOwnPropertyDescriptor(proto, "canGoBack");
+  const canGoForwardDescriptor = Object.getOwnPropertyDescriptor(proto, "canGoForward");
   if (options.loadURL) {
     Object.defineProperty(proto, "loadURL", {
       configurable: true,
@@ -175,6 +179,14 @@ function installMockWebviewMethods(options: {
       value: options.reload,
     });
   }
+  Object.defineProperty(proto, "canGoBack", {
+    configurable: true,
+    value: () => false,
+  });
+  Object.defineProperty(proto, "canGoForward", {
+    configurable: true,
+    value: () => false,
+  });
 
   return () => {
     if (loadURLDescriptor) {
@@ -196,6 +208,16 @@ function installMockWebviewMethods(options: {
       Object.defineProperty(proto, "reload", reloadDescriptor);
     } else {
       delete proto.reload;
+    }
+    if (canGoBackDescriptor) {
+      Object.defineProperty(proto, "canGoBack", canGoBackDescriptor);
+    } else {
+      delete proto.canGoBack;
+    }
+    if (canGoForwardDescriptor) {
+      Object.defineProperty(proto, "canGoForward", canGoForwardDescriptor);
+    } else {
+      delete proto.canGoForward;
     }
   };
 }

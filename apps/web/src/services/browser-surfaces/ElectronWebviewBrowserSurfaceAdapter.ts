@@ -32,6 +32,8 @@ export interface ElectronWebviewBrowserSurfaceAdapterOptions {
 interface ElectronWebviewElement extends HTMLElement {
   src: string;
   referrerPolicy: string;
+  canGoBack(): boolean;
+  canGoForward(): boolean;
 }
 
 type WebviewEvent = Event & {
@@ -338,6 +340,7 @@ export class ElectronWebviewBrowserSurfaceAdapter implements BrowserSurfaceAdapt
     const address = eventAddress(typed);
     if (!address) return;
     this.emit({ type: "navigation-committed", mainFrame: mainFrame(typed), address });
+    this.emitNavigationState();
     if (address.startsWith("about:") || address.startsWith("chrome-error:")) {
       this.emit({ type: "title-updated", title: null });
       this.emit({ type: "favicon-updated", favicon: null });
@@ -372,8 +375,18 @@ export class ElectronWebviewBrowserSurfaceAdapter implements BrowserSurfaceAdapt
 
   private readonly onDomReady = (): void => {
     this.emit({ type: "document-access", access: "unknown" });
-    this.emit({ type: "navigation-state", navigation: null });
+    this.emitNavigationState();
   };
+
+  private emitNavigationState(): void {
+    this.emit({
+      type: "navigation-state",
+      navigation: {
+        canGoBack: this.frame.canGoBack(),
+        canGoForward: this.frame.canGoForward(),
+      },
+    });
+  }
 
   private readonly onIpcMessage = (event: Event): void => {
     const typed = event as WebviewEvent;
