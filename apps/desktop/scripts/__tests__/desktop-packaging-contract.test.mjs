@@ -217,6 +217,47 @@ describe("desktop packaging workflow contract", () => {
     expect(nightly).toContain("build-args: --mac --x64");
   });
 
+  it("keeps unsigned packaging isolated from signing secrets", () => {
+    const workflow = readFileSync(
+      path.join(repoRoot, ".github/workflows/desktop-package-target.yml"),
+      "utf8",
+    );
+    const unsignedBlock = workflow.match(
+      /- name: Package unsigned target\n([\s\S]*?)(?=\n      - name:)/,
+    )?.[1];
+    const signedBlock = workflow.match(
+      /- name: Package and sign target\n([\s\S]*?)(?=\n      - name:)/,
+    )?.[1];
+
+    expect(unsignedBlock).toBeDefined();
+    expect(unsignedBlock).toContain("if: inputs.signing-required == false");
+    expect(unsignedBlock).toContain('CSC_IDENTITY_AUTO_DISCOVERY: "false"');
+    for (const variable of [
+      "CSC_LINK",
+      "CSC_KEY_PASSWORD",
+      "APPLE_API_KEY",
+      "APPLE_API_KEY_ID",
+      "APPLE_API_ISSUER",
+    ]) {
+      expect(unsignedBlock).not.toContain(`${variable}:`);
+    }
+
+    expect(signedBlock).toBeDefined();
+    expect(signedBlock).toContain("if: inputs.signing-required");
+    expect(signedBlock).toContain("CSC_LINK: ${{ secrets.CSC_LINK }}");
+    expect(signedBlock).toContain(
+      "CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}",
+    );
+    expect(signedBlock).toContain(
+      "APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}",
+    );
+    expect(signedBlock).toContain(
+      "APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}",
+    );
+    expect(signedBlock).toContain('CSC_IDENTITY_AUTO_DISCOVERY: "true"');
+    expect(signedBlock).toContain("--config.mac.notarize=true");
+  });
+
   it("requires the complete four-target matrix in PR dry-run", () => {
     const source = readFileSync(
       path.join(repoRoot, ".github/workflows/desktop-package-dry-run.yml"),

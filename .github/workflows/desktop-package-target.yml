@@ -177,7 +177,15 @@ jobs:
         with:
           node-version: 24.18.0
 
+      - name: Package unsigned target
+        if: inputs.signing-required == false
+        shell: bash
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+        run: bun apps/desktop/scripts/desktop-packaging/target-package/ci-package.mjs ${{ inputs.build-args }}
+
       - name: Package and sign target
+        if: inputs.signing-required
         shell: bash
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
@@ -185,7 +193,7 @@ jobs:
           APPLE_API_KEY: ${{ runner.temp }}/AuthKey.p8
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          CSC_IDENTITY_AUTO_DISCOVERY: ${{ inputs.signing-required && 'true' || 'false' }}
+          CSC_IDENTITY_AUTO_DISCOVERY: "true"
         run: |
           set -euo pipefail
           if [ "${{ inputs.target-platform }}" = "macos" ] && [ "${{ inputs.signing-required }}" = "true" ]; then
