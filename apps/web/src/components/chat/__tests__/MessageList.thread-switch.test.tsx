@@ -27,7 +27,7 @@ const loadOlderMessagesSpy = vi.fn();
 const loadNewerMessagesSpy = vi.fn();
 const loadNarrativeForMessageSpy = vi.fn();
 let totalSizeValue = 0;
-let virtualizerOptions: { count: number } | null = null;
+let virtualizerOptions: { count: number; onChange?: () => void } | null = null;
 
 const mockVirtualizer = {
   getVirtualItems: () => Array.from(
@@ -172,6 +172,61 @@ afterEach(() => {
 });
 
 describe("MessageList thread switch", () => {
+  it("hides the sticky user message when virtualizer geometry makes the bubble visible", async () => {
+    messagesValue = [{
+      id: "last-user",
+      sequence: 1,
+      thread_id: "thread-A",
+      role: "user",
+      content: "The last user prompt",
+    }];
+    totalSizeValue = 800;
+
+    let messageVisible = false;
+    const createRect = (top: number, bottom: number): DOMRect => ({
+      top,
+      bottom,
+      left: 0,
+      right: 300,
+      width: 300,
+      height: bottom - top,
+      x: 0,
+      y: top,
+      toJSON: () => ({}),
+    });
+    const rectSpy = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect")
+      .mockImplementation(function (this: HTMLElement) {
+        if (this.getAttribute("data-message-id") === "last-user") {
+          return messageVisible
+            ? createRect(80, 160)
+            : createRect(-100, -20);
+        }
+        if (this.classList.contains("overflow-y-auto")) {
+          return createRect(0, 400);
+        }
+        return createRect(0, 0);
+      });
+
+    const { container } = render(<MessageList />);
+    const scrollEl = container.querySelector(".overflow-y-auto") as HTMLDivElement;
+    Object.defineProperty(scrollEl, "scrollHeight", { configurable: true, value: 800 });
+    Object.defineProperty(scrollEl, "clientHeight", { configurable: true, value: 400 });
+    Object.defineProperty(scrollEl, "scrollTop", { configurable: true, value: 400, writable: true });
+
+    await vi.waitFor(() => {
+      expect(scrollEl.style.opacity).toBe("1");
+      expect(container.querySelector('[data-testid="sticky-user-message"]')).not.toBeNull();
+    });
+
+    messageVisible = true;
+    act(() => {
+      virtualizerOptions?.onChange?.();
+    });
+
+    expect(container.querySelector('[data-testid="sticky-user-message"]')).toBeNull();
+    rectSpy.mockRestore();
+  });
+
   it("does not pair a cached transcript with another thread's running narrative", () => {
     activeThreadIdValue = "thread-B";
     currentThreadIdValue = "thread-A";
