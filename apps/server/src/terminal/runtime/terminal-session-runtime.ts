@@ -333,7 +333,9 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
 
   /** Acquires a new controller epoch and revokes the prior attachment. */
   async attach(input: AttachRuntimeSession): Promise<TerminalAttachmentDescriptor> {
-    const record = this.requireRunningSession(input.sessionId);
+    // Retained tombstones remain attachable so a remounted Terminal can
+    // hydrate completed output from the bounded replay/checkpoint state.
+    const record = this.requireSession(input.sessionId);
     this.requireGeneration(record, input.hostGeneration);
     const attachmentId = parseContract(
       uuid,

@@ -19,7 +19,7 @@ export class LegacyTerminalClient implements TerminalClient {
   constructor(private readonly rpc: TerminalRpcCall) {}
 
   /** Creates one legacy PTY. */
-  create(threadId: string): Promise<{ ptyId: string; shell: string }> {
+  create(threadId: string, _replacesSessionId?: string): Promise<{ ptyId: string; shell: string }> {
     return this.rpc("terminal.create", { threadId });
   }
 
@@ -67,8 +67,17 @@ export class LegacyTerminalClient implements TerminalClient {
   subscribe(ptyId: string, subscription: TerminalClientSubscription): () => void {
     const unsubs = [
       subscription.onData ? onPtyData(ptyId, subscription.onData) : undefined,
-      subscription.onExit ? onPtyExit(ptyId, subscription.onExit) : undefined,
-      subscription.onReconnectGap ? onPtyReconnectGap(ptyId, subscription.onReconnectGap) : undefined,
+      subscription.onExit
+        ? onPtyExit(ptyId, (detail) => subscription.onExit?.({
+            ptyId: detail.ptyId,
+            code: detail.code,
+            state: "exited",
+            exit: { code: detail.code, signal: null, reason: "natural" },
+          }))
+        : undefined,
+      subscription.onReconnectGap
+        ? onPtyReconnectGap(ptyId, () => subscription.onReconnectGap?.())
+        : undefined,
     ].filter((unsubscribe): unsubscribe is () => void => Boolean(unsubscribe));
     return () => unsubs.forEach((unsubscribe) => unsubscribe());
   }

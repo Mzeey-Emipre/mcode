@@ -60,6 +60,7 @@ import type {
   SendMessageInput,
   CreateAndSendInput,
   TerminalBackendCapabilities,
+  TerminalDiagnosticsBundle,
   TerminalCustomProfile,
   TerminalProfileReference,
 } from "@mcode/contracts";
@@ -204,13 +205,14 @@ export function resolveSelectedTerminalId(input: {
   return scopeId ? input.terminalPanelByThread[scopeId]?.activeTerminalId ?? null : null;
 }
 
-/** Returns whether reconnect may reattach the selected live Terminal session. */
+/** Returns whether reconnect may reattach the selected Terminal session for replay. */
 export function shouldReattachSelectedTerminal(
   session: Pick<TerminalActiveSession, "ptyId" | "state">,
   selectedTerminalId: string | null,
 ): boolean {
   return session.ptyId === selectedTerminalId &&
-    (session.state === "running" || session.state === "starting");
+    (session.state === "running" || session.state === "starting" ||
+      session.state === "exited" || session.state === "failed");
 }
 
 interface PendingCall {
@@ -885,7 +887,10 @@ export function createWsTransport(
     terminalPreferencesUpdate: (input) =>
       rpc<TerminalPreferencesResult>("terminal.preferences.update", input),
     terminalCapabilities,
-    terminalCreate: (threadId) => withTerminalClient((client) => client.create(threadId)),
+    terminalDiagnosticsGetBundle: () =>
+      rpc<TerminalDiagnosticsBundle>("terminal.diagnostics.getBundle", {}),
+    terminalCreate: (threadId, replacesSessionId) =>
+      withTerminalClient((client) => client.create(threadId, replacesSessionId)),
     terminalWrite: (ptyId, data) => withTerminalClient((client) => client.write(ptyId, data)),
     terminalResize: (ptyId, cols, rows) =>
       withTerminalClient((client) => client.resize(ptyId, cols, rows)),

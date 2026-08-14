@@ -1,10 +1,13 @@
 import {
   TERMINAL_CHECKPOINT_CHUNK_BYTES,
   decodeTerminalFrame,
+  TerminalExitMetadataSchema,
+  TerminalGapSchema,
   TerminalHydrationDescriptorSchema,
   encodeTerminalFrame,
   type TerminalBinaryFrame,
   type TerminalBackendCapabilities,
+  type TerminalGap,
   type TerminalScope,
   type TerminalSessionSnapshot,
 } from "@mcode/contracts";
@@ -61,9 +64,13 @@ export class ModernTerminalClient implements TerminalClient {
   ) {}
 
   /** Creates one modern session for the current thread or workspace scope. */
-  async create(scopeId: string): Promise<{ ptyId: string; shell: string }> {
+  async create(scopeId: string, replacesSessionId?: string): Promise<{ ptyId: string; shell: string }> {
     const scope = await this.resolveScope(scopeId);
-    const session = await this.rpc<TerminalSessionSnapshot>("terminal.session.create", { scope });
+    const session = await this.rpc<TerminalSessionSnapshot>("terminal.session.create", {
+      scope,
+      ...(replacesSessionId ? { replacesSessionId } : {}),
+    });
+    if (replacesSessionId) this.sessions.delete(replacesSessionId);
     this.sessions.set(session.sessionId, session);
     return { ptyId: session.sessionId, shell: session.launch.resolvedProfile.executable };
   }
@@ -258,6 +265,7 @@ export class ModernTerminalClient implements TerminalClient {
         ptyId: session.sessionId,
         threadId: session.scope.kind === "thread" ? session.scope.threadId : session.scope.workspaceId,
         state: session.state,
+        ...(session.exit ? { exit: session.exit } : {}),
       }));
   }
 
@@ -311,7 +319,7 @@ export class ModernTerminalClient implements TerminalClient {
       if (payload.byteLength > 0 && descriptor.mode !== "checkpoint-delta") {
         this.emitData({ ptyId: frame.sessionId, payload, seq: Number(outputSeq) });
       }
-      if (descriptor.gap) this.emitReconnectGap(frame.sessionId);
+      if (descriptor.gap) this.emitReconnectGap(frame.sessionId, descriptor.gap);
       for (const output of attachment.pendingOutput.splice(0)) {
         attachment.lastOutputSeq = BigInt(output.seq);
         this.emitData({ ptyId: frame.sessionId, payload: output.data, seq: Number(output.seq) });
@@ -330,12 +338,25 @@ export class ModernTerminalClient implements TerminalClient {
     }
     if (frame.kind === "commandAck" || frame.kind === "state") return;
     if (frame.kind === "gap") {
-      this.emitReconnectGap(frame.sessionId);
+      const gap = TerminalGapSchema().parse(
+        JSON.parse(new TextDecoder().decode(frame.payload)),
+      );
+      this.emitReconnectGap(frame.sessionId, gap);
       return;
     }
     if (frame.kind === "exitBarrier") {
-      const value = JSON.parse(new TextDecoder().decode(frame.payload)) as { exit: { code: number | null } };
-      this.emitExit({ ptyId: frame.sessionId, code: value.exit.code ?? 0 });
+      const value = JSON.parse(new TextDecoder().decode(frame.payload)) as { exit: unknown };
+      const exit = TerminalExitMetadataSchema().parse(value.exit);
+      this.emitExit({
+        ptyId: frame.sessionId,
+        code: exit.code ?? 0,
+        state: exit.reason === "host-crash" ||
+            exit.reason === "containment-failure" ||
+            exit.reason === "protocol-failure"
+          ? "failed"
+          : "exited",
+        exit,
+      });
     }
   }
 
@@ -392,8 +413,8 @@ export class ModernTerminalClient implements TerminalClient {
     for (const subscription of this.subscriptions.get(event.ptyId) ?? []) subscription.onExit?.(event);
   }
 
-  private emitReconnectGap(ptyId: string): void {
-    for (const subscription of this.subscriptions.get(ptyId) ?? []) subscription.onReconnectGap?.();
+  private emitReconnectGap(ptyId: string, gap?: TerminalGap): void {
+    for (const subscription of this.subscriptions.get(ptyId) ?? []) subscription.onReconnectGap?.(gap);
   }
 
   private send(

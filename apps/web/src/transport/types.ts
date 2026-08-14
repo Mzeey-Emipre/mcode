@@ -548,8 +548,10 @@ export interface McodeTransport {
   terminalPreferencesUpdate(input: TerminalPreferencesUpdate): Promise<TerminalPreferencesResult>;
   /** Report the Terminal backend and version selected for the current server boot. */
   terminalCapabilities(): Promise<TerminalBackendCapabilities>;
-  /** Create a new PTY attached to a thread's working directory. Returns the pty ID and shell name. */
-  terminalCreate(threadId: string): Promise<{ ptyId: string; shell: string }>;
+  /** Retrieve bounded, content-free Terminal diagnostics for recovery support. */
+  terminalDiagnosticsGetBundle?: () => Promise<import("@mcode/contracts").TerminalDiagnosticsBundle>;
+  /** Create a PTY, optionally atomically replacing an exited or failed session. */
+  terminalCreate(threadId: string, replacesSessionId?: string): Promise<{ ptyId: string; shell: string }>;
   /** Write data (keystrokes) to a PTY. */
   terminalWrite(ptyId: string, data: string): Promise<void>;
   /** Resize a PTY to the given dimensions. */
@@ -605,6 +607,7 @@ export interface McodeTransport {
     ptyId: string;
     threadId: string;
     state: import("@mcode/contracts").TerminalSessionState;
+    exit?: import("@mcode/contracts").TerminalExitMetadata;
   }>>;
   /** Check whether a PTY has non-shell child processes running. */
   terminalHasChildren(ptyId: string): Promise<{ hasChildren: boolean }>;

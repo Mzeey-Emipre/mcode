@@ -140,4 +140,25 @@ describe("terminalStore pause/resume wiring", () => {
 
     expect(useTerminalStore.getState().terminalSearchByPty["pty-stale"]).toBeUndefined();
   });
+
+  it("retains an exited terminal until the user explicitly closes it", () => {
+    const store = useTerminalStore.getState();
+    store.addTerminal("thread-1", "pty-exited");
+
+    store.recordTerminalExit("pty-exited", {
+      code: 7,
+      signal: null,
+      reason: "natural",
+    });
+
+    expect(useTerminalStore.getState().terminals["thread-1"]).toEqual([
+      expect.objectContaining({
+        id: "pty-exited",
+        state: "exited",
+        exit: { code: 7, signal: null, reason: "natural" },
+      }),
+    ]);
+    store.removeTerminal("pty-exited");
+    expect(useTerminalStore.getState().terminals["thread-1"]).toBeUndefined();
+  });
 });

@@ -12,6 +12,7 @@ import type {
   PtyHostClose,
   PtyHostCommand,
   PtyHostCreate,
+  PtyHostDiagnostics,
   PtyHostHealth,
   PtyHostRunning,
 } from "./pty-host-adapter.js";
@@ -98,6 +99,11 @@ export class PtyHostSupervisor implements PtyHostAdapter {
   private state: SupervisorState = "stopped";
   private readyObserved = false;
   private heartbeatObserved = false;
+  private lastHeartbeatAtMs: number | null = null;
+  private lastHeartbeatReceivedAtMs: number | null = null;
+  private heartbeatQueueBytes = 0;
+  private heartbeatRssBytes = "0";
+  private heartbeatEventLoopLagMs = 0;
   private replacementUsed = false;
   private stopping = false;
   private startupTimer: ReturnType<typeof setTimeout> | null = null;
@@ -136,6 +142,18 @@ export class PtyHostSupervisor implements PtyHostAdapter {
     return {
       hostGeneration: this.generation.toString(),
       state: this.state,
+    };
+  }
+
+  /** Returns the latest content-free host measurements for diagnostics. */
+  diagnostics(): PtyHostDiagnostics {
+    return {
+      lastHeartbeatMsAgo: this.lastHeartbeatAtMs === null
+        ? null
+        : Math.min(60_000, Math.max(0, Date.now() - this.lastHeartbeatAtMs)),
+      queueBytes: this.heartbeatQueueBytes,
+      eventLoopLagMs: this.heartbeatEventLoopLagMs,
+      hostRssBytes: this.heartbeatRssBytes,
     };
   }
 
@@ -324,6 +342,11 @@ export class PtyHostSupervisor implements PtyHostAdapter {
     child?.disposeContainment?.();
     child?.removeAllListeners();
     this.child = null;
+    this.lastHeartbeatAtMs = null;
+    this.lastHeartbeatReceivedAtMs = null;
+    this.heartbeatQueueBytes = 0;
+    this.heartbeatRssBytes = "0";
+    this.heartbeatEventLoopLagMs = 0;
     this.state = "stopped";
     this.startPromise = null;
     this.resolveStart = null;
@@ -404,6 +427,14 @@ export class PtyHostSupervisor implements PtyHostAdapter {
     if (event.kind === "ready") this.readyObserved = true;
     if (event.kind === "heartbeat") {
       this.heartbeatObserved = true;
+      const receivedAtMs = Date.now();
+      this.heartbeatEventLoopLagMs = this.lastHeartbeatReceivedAtMs === null
+        ? 0
+        : Math.max(0, receivedAtMs - this.lastHeartbeatReceivedAtMs - HEARTBEAT_INTERVAL_MS);
+      this.lastHeartbeatReceivedAtMs = receivedAtMs;
+      this.lastHeartbeatAtMs = receivedAtMs;
+      this.heartbeatQueueBytes = event.queueBytes;
+      this.heartbeatRssBytes = event.rssBytes;
       if (this.state === "degraded") this.state = "healthy";
       this.armHeartbeatWatchdog(child, generation);
     }
@@ -484,6 +515,11 @@ export class PtyHostSupervisor implements PtyHostAdapter {
     child.disposeContainment?.();
     this.child = null;
     this.outboundBytes = 0;
+    this.lastHeartbeatAtMs = null;
+    this.lastHeartbeatReceivedAtMs = null;
+    this.heartbeatQueueBytes = 0;
+    this.heartbeatRssBytes = "0";
+    this.heartbeatEventLoopLagMs = 0;
     this.clearStartupTimer();
     this.clearHeartbeatTimer();
     this.rejectStart?.(error);

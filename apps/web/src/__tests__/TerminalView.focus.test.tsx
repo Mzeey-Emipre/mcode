@@ -1,8 +1,9 @@
-import { render } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { act } from "react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { getDefaultSettings } from "@mcode/contracts";
 import { useSettingsStore } from "@/stores/settingsStore";
+import { useTerminalStore } from "@/stores/terminalStore";
 import {
   emitPtyData,
   emitPtyExit,
@@ -26,7 +27,40 @@ if (typeof globalThis.ResizeObserver === "undefined") {
 // Shared xterm term instance observable from the tests. write() invokes its
 // completion callback synchronously so the follow-the-tail scrollToBottom (which
 // runs in a trailing write callback) is exercised.
-const bufferActive = { viewportY: 42, length: 100 };
+type TerminalLink = {
+  readonly text: string;
+  readonly range: {
+    readonly start: { readonly x: number; readonly y: number };
+    readonly end: { readonly x: number; readonly y: number };
+  };
+  readonly activate: () => void;
+};
+
+type TerminalLinkProvider = {
+  readonly provideLinks: (
+    line: number,
+    callback: (links: TerminalLink[] | undefined) => void,
+  ) => void;
+};
+
+type BufferCell = {
+  readonly getChars: () => string;
+  readonly getWidth: () => number;
+};
+
+type BufferLine = {
+  readonly translateToString: (trimRight?: boolean) => string;
+  readonly length: number;
+  readonly getCell: (column: number) => BufferCell | undefined;
+};
+
+let activeLine: BufferLine | undefined;
+let linkProvider: TerminalLinkProvider | undefined;
+const bufferActive = {
+  viewportY: 42,
+  length: 100,
+  getLine: vi.fn(() => activeLine),
+};
 
 let onDataListener: ((data: string) => void) | null = null;
 let onSelectionListener: (() => void) | null = null;
@@ -46,6 +80,10 @@ const term = {
   loadAddon: vi.fn(),
   open: vi.fn(),
   attachCustomKeyEventHandler: vi.fn(),
+  registerLinkProvider: vi.fn((provider: TerminalLinkProvider) => {
+    linkProvider = provider;
+    return { dispose: vi.fn() };
+  }),
   getSelection: vi.fn(() => ""),
   hasSelection: vi.fn(() => false),
   onData: vi.fn((listener: (data: string) => void) => {
@@ -68,18 +106,36 @@ const term = {
 };
 
 const transport = {
+  terminalCapabilities: vi.fn(() => Promise.resolve({
+    contractVersion: 1,
+    backend: "modern",
+  })),
+  terminalCreate: vi.fn(() => Promise.resolve({ ptyId: "pty-replacement", shell: "pwsh" })),
+  terminalKill: vi.fn(() => Promise.resolve()),
   terminalWrite: vi.fn(() => Promise.resolve()),
   terminalResize: vi.fn(() => Promise.resolve()),
   terminalPause: vi.fn(() => Promise.resolve()),
   terminalResume: vi.fn(() => Promise.resolve()),
   terminalSubscribe: vi.fn((ptyId: string, subscription: {
     onData?: (event: { ptyId: string; payload: Uint8Array; seq: number }) => void;
-    onExit?: (event: { ptyId: string; code: number }) => void;
+    onExit?: (event: {
+      ptyId: string;
+      code: number;
+      state: "exited" | "failed";
+      exit: { code: number | null; signal: number | null; reason: "natural" };
+    }) => void;
     onReconnectGap?: () => void;
   }) => {
     const unsubs = [
       subscription.onData ? onPtyData(ptyId, subscription.onData) : undefined,
-      subscription.onExit ? onPtyExit(ptyId, subscription.onExit) : undefined,
+      subscription.onExit
+        ? onPtyExit(ptyId, (detail) => subscription.onExit?.({
+          ptyId: detail.ptyId,
+          code: detail.code,
+          state: "exited",
+          exit: { code: detail.code, signal: null, reason: "natural" },
+        }))
+        : undefined,
       subscription.onReconnectGap ? onPtyReconnectGap(ptyId, subscription.onReconnectGap) : undefined,
     ].filter((unsubscribe): unsubscribe is () => void => Boolean(unsubscribe));
     return () => unsubs.forEach((unsubscribe) => unsubscribe());
@@ -100,6 +156,19 @@ const transport = {
     Promise.resolve({ accepted: true })),
   ptySetLastSeq: vi.fn(),
   ptyDeleteLastSeq: vi.fn(),
+  listOpenInApps: vi.fn(() => Promise.resolve([{
+    id: "code",
+    label: "VS Code",
+    kind: "editor" as const,
+    iconKey: "code",
+    detected: true,
+  }])),
+  openIn: vi.fn(() => Promise.resolve()),
+  terminalDiagnosticsGetBundle: vi.fn(() => Promise.resolve({
+    contractVersion: 1,
+    backend: "modern",
+    redacted: true,
+  })),
 };
 
 vi.mock("@xterm/xterm", () => {
@@ -146,6 +215,43 @@ async function settle(): Promise<void> {
   }
 }
 
+function retainTerminal(
+  ptyId: string,
+  threadId = "thread-1",
+  state: "exited" | "failed" = "exited",
+): void {
+  useTerminalStore.setState({
+    terminals: {
+      [threadId]: [{
+        id: ptyId,
+        threadId,
+        label: "Terminal 1",
+        state,
+        exit: { code: 1, signal: null, reason: "natural" },
+      }],
+    },
+    terminalPanelByThread: {
+      [threadId]: { visible: true, height: 300, activeTerminalId: ptyId },
+    },
+    ptyToThread: { [ptyId]: threadId },
+  });
+}
+
+function makeLine(text: string): BufferLine {
+  const cells = Array.from(text).flatMap((chars) => {
+    const width = chars === "界" ? 2 : 1;
+    return [
+      { getChars: () => chars, getWidth: () => width },
+      ...(width === 2 ? [{ getChars: () => "", getWidth: () => 0 }] : []),
+    ];
+  });
+  return {
+    translateToString: () => text,
+    length: cells.length,
+    getCell: (column) => cells[column],
+  };
+}
+
 describe("TerminalView lifecycle (ADR-0010)", () => {
   beforeEach(() => {
     bufferActive.viewportY = 42;
@@ -154,6 +260,8 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
     vi.clearAllMocks();
     onDataListener = null;
     onSelectionListener = null;
+    activeLine = undefined;
+    linkProvider = undefined;
     lastTerminalOptions = undefined;
     serializedScreen = "serialized-screen";
     Object.assign(term.options, { scrollback: 0, disableStdin: false });
@@ -172,9 +280,20 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
       "pty-cold",
       "pty-exit",
       "pty-warm",
+      "pty-gap",
+      "pty-replace",
+      "pty-legacy",
+      "pty-diagnostics",
+      "pty-links",
     ]) {
       dropRemountAnchor(id);
     }
+    useTerminalStore.setState({
+      terminals: {},
+      terminalPanelByThread: {},
+      ptyToThread: {},
+      terminalSearchByPty: {},
+    });
   });
 
   it("mounts xterm in the padded fit host inside the render surface", async () => {
@@ -693,6 +812,162 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
 
     expect(transport.terminalWrite).not.toHaveBeenCalled();
     expect(term.options.disableStdin).toBe(true);
+  });
+
+  // Regression: an exited PTY must remain mounted so its completed output and
+  // recovery actions stay available to the user.
+  it("retains exited output and exposes retry and close actions", async () => {
+    retainTerminal("pty-exit");
+
+    render(
+      <TerminalView
+        ptyId="pty-exit"
+        ownerScopeId="thread-1"
+        sessionState="exited"
+        exit={{ code: 1, signal: null, reason: "natural" }}
+        visible={true}
+        threadActive={true}
+      />,
+    );
+    await settle();
+
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent(
+      "This terminal exited with code 1. Its completed output is retained.",
+    );
+    expect(within(status).queryByRole("button")).toBeNull();
+    expect(screen.getByTestId("terminal-render-content")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Retry terminal" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Close terminal" })).toBeInTheDocument();
+  });
+
+  // Regression: retry must replace the retained PTY atomically, or the old
+  // tombstone would continue consuming the session capacity.
+  it("retries an exited PTY by sending its replacement ID and replacing store state", async () => {
+    retainTerminal("pty-replace");
+
+    render(
+      <TerminalView
+        ptyId="pty-replace"
+        ownerScopeId="thread-1"
+        sessionState="exited"
+        exit={{ code: 1, signal: null, reason: "natural" }}
+        visible={true}
+        threadActive={true}
+      />,
+    );
+    await settle();
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Retry terminal" }).click();
+      await Promise.resolve();
+    });
+    await settle();
+
+    expect(transport.terminalCreate).toHaveBeenCalledWith("thread-1", "pty-replace");
+    expect(useTerminalStore.getState().terminals["thread-1"]).toEqual([
+      expect.objectContaining({ id: "pty-replacement", threadId: "thread-1" }),
+    ]);
+    expect(useTerminalStore.getState().ptyToThread["pty-replace"]).toBeUndefined();
+  });
+
+  // Regression: reload after a replay gap must restore focus to the visible
+  // terminal when its retained output becomes available again.
+  it("restores terminal focus after reloading output following a replay gap", async () => {
+    render(<TerminalView ptyId="pty-gap" visible={true} threadActive={true} />);
+    await settle();
+    term.focus.mockClear();
+    transport.terminalReattach.mockClear();
+
+    act(() => {
+      emitPtyReconnectGap({ ptyId: "pty-gap" });
+    });
+    expect(screen.getByRole("status")).toHaveTextContent("Some earlier output may be unavailable");
+
+    await act(async () => {
+      screen.getByRole("button", { name: "Reload available output" }).click();
+      await Promise.resolve();
+    });
+    await settle();
+
+    expect(transport.terminalReattach).toHaveBeenCalledWith("pty-gap", -1, true);
+    expect(term.focus).toHaveBeenCalled();
+  });
+
+  // Regression: legacy Terminal must not expose a diagnostics action whose
+  // route is unsupported.
+  it("hides diagnostics for the legacy backend", async () => {
+    render(
+      <TerminalView
+        ptyId="pty-legacy"
+        sessionState="exited"
+        exit={{ code: 1, signal: null, reason: "natural" }}
+        diagnosticsAvailable={false}
+        visible={true}
+        threadActive={true}
+      />,
+    );
+    await settle();
+    expect(screen.queryByRole("button", { name: "Copy diagnostics" })).toBeNull();
+  });
+
+  // Regression: modern diagnostics copy must contain only the redacted bundle.
+  it("copies only the redacted diagnostics bundle", async () => {
+    const clipboard = { writeText: vi.fn().mockResolvedValue(undefined) };
+    const originalClipboard = navigator.clipboard;
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: clipboard });
+    const safeBundle = { contractVersion: 1, backend: "modern", redacted: true };
+    transport.terminalDiagnosticsGetBundle.mockResolvedValueOnce(safeBundle);
+
+    render(
+      <TerminalView
+        ptyId="pty-diagnostics"
+        sessionState="exited"
+        exit={{ code: 1, signal: null, reason: "natural" }}
+        diagnosticsAvailable={true}
+        visible={true}
+        threadActive={true}
+      />,
+    );
+    await settle();
+    await act(async () => {
+      screen.getByRole("button", { name: "Copy diagnostics" }).click();
+      await Promise.resolve();
+    });
+    await settle();
+
+    expect(clipboard.writeText).toHaveBeenCalledWith(JSON.stringify(safeBundle));
+    expect(clipboard.writeText.mock.calls[0]?.[0]).not.toMatch(
+      /command|output|cwd|path|environment|secret/i,
+    );
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: originalClipboard });
+  });
+
+  // Regression: JavaScript offsets must not be used as xterm columns after a
+  // wide CJK cell, and unsafe targets must never reach openIn.
+  it("returns all safe links with wide-cell ranges and rejects unsafe activation targets", async () => {
+    const text = "界 /workspace/src/a.ts:8 /workspace/src/b.ts:12 ../../evil.ts:2";
+    activeLine = makeLine(text);
+    render(<TerminalView ptyId="pty-links" visible={true} threadActive={true} />);
+    await settle();
+
+    let links: TerminalLink[] | undefined;
+    linkProvider?.provideLinks(0, (provided) => {
+      links = provided;
+    });
+
+    expect(links).toHaveLength(2);
+    expect(links?.map((link) => link.range)).toEqual([
+      { start: { x: 4, y: 1 }, end: { x: 24, y: 1 } },
+      { start: { x: 26, y: 1 }, end: { x: 47, y: 1 } },
+    ]);
+    expect(activeLine?.getCell(links![0]!.range.end.x)?.getChars()).toBe(" ");
+    expect(activeLine?.getCell(links![1]!.range.end.x)?.getChars()).toBe(" ");
+    links?.[0]?.activate();
+    await settle();
+    expect(transport.openIn).toHaveBeenCalledWith("code", "/workspace/src/a.ts", 8);
+    expect(transport.openIn).toHaveBeenCalledTimes(1);
+    expect(transport.openIn).not.toHaveBeenCalledWith("code", "../../evil.ts", 2);
   });
 
   it("keeps the warm view and requests only output after its last sequence", async () => {

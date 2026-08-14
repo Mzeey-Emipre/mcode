@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { TerminalSessionState } from "@mcode/contracts";
+import type { TerminalExitMetadata, TerminalSessionState } from "@mcode/contracts";
 import { getTransport } from "@/transport";
 import { createBatchedUpdater } from "./batchMiddleware";
 
@@ -9,6 +9,7 @@ export interface TerminalInstance {
   readonly threadId: string;
   readonly label: string;
   readonly state?: TerminalSessionState;
+  readonly exit?: TerminalExitMetadata;
 }
 
 /** Server-authoritative PTY identity returned during reconnect. */
@@ -16,6 +17,7 @@ export interface ActiveTerminalSession {
   readonly ptyId: string;
   readonly threadId: string;
   readonly state?: TerminalSessionState;
+  readonly exit?: TerminalExitMetadata;
 }
 
 /** Search matching flags retained independently for each PTY. */
@@ -95,6 +97,8 @@ interface TerminalState {
   ) => void;
   clearTerminalSearchResult: (ptyId: string) => void;
   addTerminal: (threadId: string, ptyId: string, shell?: string) => void;
+  /** Retains terminal output metadata after a natural or failed session exit. */
+  recordTerminalExit: (ptyId: string, exit: TerminalExitMetadata) => void;
   /** Replaces stale client identities with the server's active PTY set. */
   reconcileActiveSessions: (sessions: readonly ActiveTerminalSession[]) => void;
   removeTerminal: (ptyId: string) => void;
@@ -312,6 +316,29 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       };
     }),
 
+  recordTerminalExit: (ptyId, exit) =>
+    set((state) => {
+      const ownerThreadId = state.ptyToThread[ptyId];
+      if (!ownerThreadId) return state;
+      const ownerInstances = state.terminals[ownerThreadId];
+      if (!ownerInstances) return state;
+      const nextState = exit.reason === "host-crash" ||
+          exit.reason === "containment-failure" ||
+          exit.reason === "protocol-failure"
+        ? "failed"
+        : "exited";
+      return {
+        terminals: {
+          ...state.terminals,
+          [ownerThreadId]: ownerInstances.map((terminal) =>
+            terminal.id === ptyId
+              ? { ...terminal, state: nextState, exit }
+              : terminal,
+          ),
+        },
+      };
+    }),
+
   reconcileActiveSessions: (sessions) =>
     set((state) => {
       const existingById = new Map(
@@ -326,12 +353,18 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         const existing = existingById.get(session.ptyId);
         const scopeTerminals = terminals[session.threadId] ?? [];
         const terminal: TerminalInstance = existing
-          ? { ...existing, threadId: session.threadId, state: session.state ?? "running" }
+          ? {
+              ...existing,
+              threadId: session.threadId,
+              state: session.state ?? "running",
+              ...(session.exit ? { exit: session.exit } : {}),
+            }
           : {
               id: session.ptyId,
               threadId: session.threadId,
               label: generateLabel(scopeTerminals),
               state: session.state ?? "running",
+              ...(session.exit ? { exit: session.exit } : {}),
             };
         terminals[session.threadId] = [...scopeTerminals, terminal];
         ptyToThread[session.ptyId] = session.threadId;
