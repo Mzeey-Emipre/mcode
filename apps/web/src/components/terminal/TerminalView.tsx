@@ -1,12 +1,13 @@
-import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Terminal, IDisposable } from "@xterm/xterm";
 import type { SerializeAddon } from "@xterm/addon-serialize";
+import type { SearchAddon } from "@xterm/addon-search";
 import { getTransport } from "@/transport";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useDiffStore } from "@/stores/diffStore";
-import { useTerminalStore } from "@/stores/terminalStore";
+import { useTerminalStore, type TerminalSearchOptions } from "@/stores/terminalStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
-import { shouldInterceptKeyEvent } from "./terminalKeyHandler";
+import { isTerminalSearchShortcut, shouldInterceptKeyEvent } from "./terminalKeyHandler";
 import { ClientTerminalFlowControl } from "./terminalFlowControl";
 import {
   TERMINAL_CLEANUP_TIMEOUT_MS,
@@ -31,6 +32,14 @@ import {
   registerTerminalScrollHarness,
   unregisterTerminalScrollHarness,
 } from "./terminalScrollHarness";
+import {
+  compileTerminalSearchRegex,
+  TerminalSearchShelf,
+  type TerminalSearchAddonState,
+  type TerminalSearchDirection,
+  type TerminalSearchRunResult,
+} from "./TerminalSearchShelf";
+import { loadTerminalSearchAddon } from "./terminalSearchAddon";
 // Static import so bundler deduplicates the stylesheet
 import "@xterm/xterm/css/xterm.css";
 
@@ -42,6 +51,28 @@ type XtermModules = {
 
 let xtermModulesPromise: Promise<XtermModules> | null = null;
 const TERMINAL_BACKGROUND = "#0a0a0f";
+
+function resolveTerminalSearchColor(token: string): string {
+  const color = getComputedStyle(document.documentElement)
+    .getPropertyValue(token)
+    .trim();
+  if (!color) {
+    throw new Error(`Terminal search color token ${token} is unavailable`);
+  }
+  return color;
+}
+
+function resolveTerminalSearchDecorations() {
+  return {
+    matchBackground: resolveTerminalSearchColor("--muted"),
+    matchBorder: resolveTerminalSearchColor("--border"),
+    matchOverviewRuler: resolveTerminalSearchColor("--primary"),
+    activeMatchBackground: resolveTerminalSearchColor("--primary"),
+    activeMatchBorder: resolveTerminalSearchColor("--ring"),
+    activeMatchColorOverviewRuler: resolveTerminalSearchColor("--ring"),
+  };
+}
+
 function settleWithin<T>(promise: Promise<T>, fallback: T): Promise<T> {
   return new Promise((resolve) => {
     let settled = false;
@@ -331,6 +362,12 @@ export const TerminalView = memo(function TerminalView({
   const flushResizeRpcRef = useRef<(() => void) | null>(null);
   const resumeWarmViewRef = useRef<(() => void) | null>(null);
   const rendererRef = useRef<IDisposable | null>(null);
+  const searchAddonRef = useRef<SearchAddon | null>(null);
+  const searchResultDisposableRef = useRef<IDisposable | null>(null);
+  const openSearchRef = useRef<() => void>(() => {});
+  const [searchAddonState, setSearchAddonState] = useState<TerminalSearchAddonState>("loading");
+  const [searchAddonRetry, setSearchAddonRetry] = useState(0);
+  const [termReady, setTermReady] = useState(false);
   /** Cancels in-flight {@link loadRenderer} when the thread goes dormant or the effect cleans up. */
   const rendererInitCancelledRef = useRef(false);
   const onDisposedRef = useRef(onDisposed);
@@ -366,7 +403,6 @@ export const TerminalView = memo(function TerminalView({
           loadXtermModules(),
           import("@xterm/addon-serialize"),
         ]);
-
       if (disposed || !containerRef.current || !fitHostRef.current) {
         if (!disposedNotifiedRef.current) {
           disposedNotifiedRef.current = true;
@@ -377,6 +413,7 @@ export const TerminalView = memo(function TerminalView({
 
       const term = new XTerminal({
         scrollback: scrollbackRef.current,
+        allowProposedApi: true,
         fontSize: 13,
         fontFamily: "monospace",
         theme: {
@@ -398,6 +435,11 @@ export const TerminalView = memo(function TerminalView({
       // Only call getSelection() (a DOM range query) when the key event actually
       // matches the copy shortcut — avoids the cost on every regular keystroke.
       term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+        if (isTerminalSearchShortcut(event)) {
+          event.preventDefault();
+          openSearchRef.current();
+          return false;
+        }
         if (shouldInterceptKeyEvent(event, term.hasSelection())) {
           const selection = term.getSelection();
           if (selection) {
@@ -409,6 +451,7 @@ export const TerminalView = memo(function TerminalView({
       });
 
       termRef.current = term;
+      setTermReady(true);
       registerTerminalScrollHarness(ptyId, term);
 
       const transport = getTransport();
@@ -642,6 +685,8 @@ export const TerminalView = memo(function TerminalView({
         resizeControllerRef.current = null;
         flushResizeRpcRef.current = null;
         resumeWarmViewRef.current = null;
+        openSearchRef.current = () => {};
+        setTermReady(false);
         dataDisposable.dispose();
         scrollDisposable.dispose();
         el.removeEventListener("wheel", onWheel);
@@ -794,8 +839,58 @@ export const TerminalView = memo(function TerminalView({
       cleanupRef.current?.();
       cleanupRef.current = null;
       termRef.current = null;
+      setTermReady(false);
     };
   }, [ptyId]);
+
+  // Keep SearchAddon loading separate from xterm construction so a rejected
+  // addon import can recover without remounting the sole terminal renderer.
+  useEffect(() => {
+    if (!termReady) return;
+    const term = termRef.current;
+    if (!term) return;
+
+    let cancelled = false;
+    let constructedSearchAddon: SearchAddon | null = null;
+    setSearchAddonState("loading");
+
+    void loadTerminalSearchAddon()
+      .then(({ SearchAddon: XSearchAddon }) => {
+        if (cancelled || termRef.current !== term) return;
+        const searchAddon = new XSearchAddon();
+        constructedSearchAddon = searchAddon;
+        if (cancelled || termRef.current !== term) {
+          searchAddon.dispose();
+          return;
+        }
+        term.loadAddon(searchAddon);
+        const resultDisposable = searchAddon.onDidChangeResults((result) => {
+          useTerminalStore
+            .getState()
+            .setTerminalSearchResult(ptyId, result.resultIndex, result.resultCount);
+        });
+        searchAddonRef.current = searchAddon;
+        searchResultDisposableRef.current = resultDisposable;
+        setSearchAddonState("ready");
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        constructedSearchAddon?.dispose();
+        constructedSearchAddon = null;
+        setSearchAddonState("failed");
+        if (import.meta.env.DEV) {
+          console.warn("[terminal] Search addon failed to load", error);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+      searchResultDisposableRef.current?.dispose();
+      searchResultDisposableRef.current = null;
+      searchAddonRef.current?.dispose();
+      searchAddonRef.current = null;
+    };
+  }, [ptyId, searchAddonRetry, termReady]);
 
   // Save scroll on hide; arm restore on show (restore runs after paint in finishShow).
   useLayoutEffect(() => {
@@ -947,10 +1042,76 @@ export const TerminalView = memo(function TerminalView({
     };
   }, [shown, threadActive, ptyId]);
 
+  openSearchRef.current = () => {
+    if (shownRef.current) {
+      useTerminalStore.getState().openTerminalSearch(ptyId);
+    }
+  };
+
+  const clearSearch = useCallback(() => {
+    searchAddonRef.current?.clearDecorations();
+    termRef.current?.clearSelection();
+    useTerminalStore.getState().clearTerminalSearchResult(ptyId);
+  }, [ptyId]);
+
+  const runSearch = useCallback(
+    (
+      query: string,
+      options: TerminalSearchOptions,
+      direction: TerminalSearchDirection,
+    ): TerminalSearchRunResult => {
+      const searchAddon = searchAddonRef.current;
+      if (!searchAddon) {
+        return { kind: "error", message: "Search unavailable" };
+      }
+      if (options.regex && !compileTerminalSearchRegex(query, options.caseSensitive)) {
+        searchAddon.clearDecorations();
+        useTerminalStore.getState().clearTerminalSearchResult(ptyId);
+        return "invalid-regex";
+      }
+      try {
+        const found = direction === "next"
+          ? searchAddon.findNext(query, {
+              ...options,
+              incremental: true,
+              decorations: resolveTerminalSearchDecorations(),
+            })
+          : searchAddon.findPrevious(query, {
+              ...options,
+              incremental: true,
+              decorations: resolveTerminalSearchDecorations(),
+            });
+        if (!found) {
+          useTerminalStore.getState().clearTerminalSearchResult(ptyId);
+          return "no-matches";
+        }
+        return "found";
+      } catch (error) {
+        searchAddon.clearDecorations();
+        useTerminalStore.getState().clearTerminalSearchResult(ptyId);
+        return {
+          kind: "error",
+          message: error instanceof Error && error.message
+            ? `Search failed: ${error.message}`
+            : "Search failed",
+        };
+      }
+    },
+    [ptyId],
+  );
+
+  const restoreFocus = useCallback(() => {
+    termRef.current?.focus();
+  }, []);
+
+  const retrySearchAddon = useCallback(() => {
+    setSearchAddonRetry((retry) => retry + 1);
+  }, []);
+
   return (
     <div
       ref={containerRef}
-      className="h-full min-h-0 w-full p-3"
+      className="flex h-full min-h-0 w-full flex-col overflow-hidden"
       data-terminal-hydrated={hydrated}
       data-testid="terminal-render-content"
       style={{
@@ -958,7 +1119,18 @@ export const TerminalView = memo(function TerminalView({
         visibility: shown && hydrated ? "visible" : "hidden",
       }}
     >
-      <div ref={fitHostRef} className="h-full min-h-0 w-full" />
+      <div ref={fitHostRef} className="min-h-0 flex-1 w-full p-3" />
+      {termReady ? (
+        <TerminalSearchShelf
+          ptyId={ptyId}
+          active={shown}
+          onSearch={runSearch}
+          onClear={clearSearch}
+          onRestoreFocus={restoreFocus}
+          addonState={searchAddonState}
+          onRetry={retrySearchAddon}
+        />
+      ) : null}
     </div>
   );
 });

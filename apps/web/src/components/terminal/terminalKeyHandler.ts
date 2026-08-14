@@ -29,3 +29,13 @@ export function shouldInterceptKeyEvent(
 
   return false;
 }
+
+/** Returns true for the platform-neutral Ctrl/Cmd+F terminal search shortcut. */
+export function isTerminalSearchShortcut(event: KeyboardEvent): boolean {
+  return (
+    (event.ctrlKey || event.metaKey) &&
+    !event.altKey &&
+    !event.shiftKey &&
+    event.key.toLowerCase() === "f"
+  );
+}

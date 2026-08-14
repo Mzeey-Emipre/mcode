@@ -18,6 +18,38 @@ export interface ActiveTerminalSession {
   readonly state?: TerminalSessionState;
 }
 
+/** Search matching flags retained independently for each PTY. */
+export interface TerminalSearchOptions {
+  readonly caseSensitive: boolean;
+  readonly wholeWord: boolean;
+  readonly regex: boolean;
+}
+
+/** Search query and match snapshot retained independently for each PTY. */
+export interface TerminalSearchState {
+  readonly open: boolean;
+  readonly query: string;
+  readonly options: TerminalSearchOptions;
+  readonly resultIndex: number;
+  readonly resultCount: number;
+}
+
+/** Default terminal search options. */
+export const TERMINAL_SEARCH_OPTIONS_DEFAULT: TerminalSearchOptions = {
+  caseSensitive: false,
+  wholeWord: false,
+  regex: false,
+} as const;
+
+/** Default terminal search state for a PTY without a saved query. */
+export const TERMINAL_SEARCH_STATE_DEFAULT: TerminalSearchState = {
+  open: false,
+  query: "",
+  options: TERMINAL_SEARCH_OPTIONS_DEFAULT,
+  resultIndex: -1,
+  resultCount: 0,
+} as const;
+
 /** Per-thread terminal panel state (visibility, height, active terminal). */
 export type TerminalPanelState = {
   readonly visible: boolean;
@@ -40,6 +72,7 @@ interface TerminalState {
   readonly terminalPanelByThread: Record<string, TerminalPanelState>;
   /** Reverse index: ptyId → threadId for O(1) owner lookup in removeTerminal. */
   readonly ptyToThread: Record<string, string>;
+  readonly terminalSearchByPty: Record<string, TerminalSearchState>;
   readonly splitMode: boolean;
 
   getTerminalPanel: (threadId: string) => TerminalPanelState;
@@ -48,6 +81,19 @@ interface TerminalState {
   hideTerminalPanel: (threadId: string) => void;
   setTerminalPanelHeight: (threadId: string, height: number) => void;
   setActiveTerminal: (threadId: string, ptyId: string | null) => void;
+  openTerminalSearch: (ptyId: string) => void;
+  closeTerminalSearch: (ptyId: string) => void;
+  setTerminalSearchQuery: (ptyId: string, query: string) => void;
+  setTerminalSearchOptions: (
+    ptyId: string,
+    options: TerminalSearchOptions,
+  ) => void;
+  setTerminalSearchResult: (
+    ptyId: string,
+    resultIndex: number,
+    resultCount: number,
+  ) => void;
+  clearTerminalSearchResult: (ptyId: string) => void;
   addTerminal: (threadId: string, ptyId: string, shell?: string) => void;
   /** Replaces stale client identities with the server's active PTY set. */
   reconcileActiveSessions: (sessions: readonly ActiveTerminalSession[]) => void;
@@ -90,6 +136,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   terminals: {},
   terminalPanelByThread: {},
   ptyToThread: {},
+  terminalSearchByPty: {},
   splitMode: true,
 
   getTerminalPanel: (threadId) =>
@@ -149,6 +196,95 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         terminalPanelByThread: {
           ...state.terminalPanelByThread,
           [threadId]: { ...current, activeTerminalId: ptyId },
+        },
+      };
+    }),
+
+  openTerminalSearch: (ptyId) =>
+    set((state) => {
+      const current = state.terminalSearchByPty[ptyId] ?? TERMINAL_SEARCH_STATE_DEFAULT;
+      return {
+        terminalSearchByPty: {
+          ...state.terminalSearchByPty,
+          [ptyId]: { ...current, open: true, options: { ...current.options } },
+        },
+      };
+    }),
+
+  closeTerminalSearch: (ptyId) =>
+    set((state) => {
+      const current = state.terminalSearchByPty[ptyId];
+      if (!current) return state;
+      return {
+        terminalSearchByPty: {
+          ...state.terminalSearchByPty,
+          [ptyId]: { ...current, open: false, options: { ...current.options } },
+        },
+      };
+    }),
+
+  setTerminalSearchQuery: (ptyId, query) =>
+    set((state) => {
+      const current = state.terminalSearchByPty[ptyId] ?? TERMINAL_SEARCH_STATE_DEFAULT;
+      return {
+        terminalSearchByPty: {
+          ...state.terminalSearchByPty,
+          [ptyId]: {
+            ...current,
+            query,
+            options: { ...current.options },
+            resultIndex: -1,
+            resultCount: 0,
+          },
+        },
+      };
+    }),
+
+  setTerminalSearchOptions: (ptyId, options) =>
+    set((state) => {
+      const current = state.terminalSearchByPty[ptyId] ?? TERMINAL_SEARCH_STATE_DEFAULT;
+      return {
+        terminalSearchByPty: {
+          ...state.terminalSearchByPty,
+          [ptyId]: {
+            ...current,
+            options: { ...options },
+            resultIndex: -1,
+            resultCount: 0,
+          },
+        },
+      };
+    }),
+
+  setTerminalSearchResult: (ptyId, resultIndex, resultCount) =>
+    set((state) => {
+      const current = state.terminalSearchByPty[ptyId] ?? TERMINAL_SEARCH_STATE_DEFAULT;
+      return {
+        terminalSearchByPty: {
+          ...state.terminalSearchByPty,
+          [ptyId]: {
+            ...current,
+            options: { ...current.options },
+            resultIndex,
+            resultCount,
+          },
+        },
+      };
+    }),
+
+  clearTerminalSearchResult: (ptyId) =>
+    set((state) => {
+      const current = state.terminalSearchByPty[ptyId];
+      if (!current) return state;
+      return {
+        terminalSearchByPty: {
+          ...state.terminalSearchByPty,
+          [ptyId]: {
+            ...current,
+            options: { ...current.options },
+            resultIndex: -1,
+            resultCount: 0,
+          },
         },
       };
     }),
@@ -218,16 +354,28 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         terminalPanelByThread[scopeId] = { ...current, activeTerminalId };
       }
 
-      return { terminals, ptyToThread, terminalPanelByThread };
+      const terminalSearchByPty = { ...state.terminalSearchByPty };
+      const activePtyIds = new Set(sessions.map((session) => session.ptyId));
+      for (const ptyId of Object.keys(terminalSearchByPty)) {
+        if (!activePtyIds.has(ptyId)) delete terminalSearchByPty[ptyId];
+      }
+
+      return { terminals, ptyToThread, terminalPanelByThread, terminalSearchByPty };
     }),
 
   removeTerminal: (ptyId) =>
     set((state) => {
+      const terminalSearchByPty = { ...state.terminalSearchByPty };
+      delete terminalSearchByPty[ptyId];
       // O(1) owner lookup via the reverse index.
       const ownerThreadId = state.ptyToThread[ptyId];
-      if (!ownerThreadId) return state;
+      if (!ownerThreadId) {
+        return state.terminalSearchByPty[ptyId]
+          ? { terminalSearchByPty }
+          : state;
+      }
       const ownerInstances = state.terminals[ownerThreadId];
-      if (!ownerInstances) return state;
+      if (!ownerInstances) return { terminalSearchByPty };
 
       const filtered = ownerInstances.filter((t) => t.id !== ptyId);
       const updatedTerminals =
@@ -249,6 +397,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       return {
         terminals: updatedTerminals,
         ptyToThread: remainingPtyToThread,
+        terminalSearchByPty,
         terminalPanelByThread: {
           ...state.terminalPanelByThread,
           [ownerThreadId]: { ...currentPanel, activeTerminalId: nextActive },
@@ -267,10 +416,14 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       const remainingPtyToThread = { ...state.ptyToThread };
       for (const t of threadTerminals) delete remainingPtyToThread[t.id];
 
+      const terminalSearchByPty = { ...state.terminalSearchByPty };
+      for (const t of threadTerminals) delete terminalSearchByPty[t.id];
+
       const currentPanel = state.terminalPanelByThread[threadId];
       return {
         terminals: remainingTerminals,
         ptyToThread: remainingPtyToThread,
+        terminalSearchByPty,
         ...(currentPanel
           ? {
               terminalPanelByThread: {
@@ -297,9 +450,15 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         for (const t of threadTerminals) delete remainingPtyToThread[t.id];
       }
 
+      const terminalSearchByPty = { ...state.terminalSearchByPty };
+      if (threadTerminals) {
+        for (const t of threadTerminals) delete terminalSearchByPty[t.id];
+      }
+
       return {
         terminals: remainingTerminals,
         ptyToThread: remainingPtyToThread,
+        terminalSearchByPty,
         terminalPanelByThread: remainingPanels,
       };
     }),

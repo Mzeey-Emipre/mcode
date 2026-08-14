@@ -19,6 +19,7 @@ describe("terminalStore pause/resume wiring", () => {
       terminals: {},
       terminalPanelByThread: {},
       ptyToThread: {},
+      terminalSearchByPty: {},
       splitMode: false,
     });
   });
@@ -95,5 +96,48 @@ describe("terminalStore pause/resume wiring", () => {
     expect(next.terminalPanelByThread["thread-2"]?.activeTerminalId).toBe(
       "server-pty",
     );
+  });
+
+  it("keeps search state per PTY and removes it with the PTY", () => {
+    const store = useTerminalStore.getState();
+    store.addTerminal("thread-1", "pty-a");
+    store.addTerminal("thread-1", "pty-b");
+
+    store.openTerminalSearch("pty-a");
+    store.setTerminalSearchQuery("pty-a", "alpha");
+    store.setTerminalSearchOptions("pty-a", {
+      caseSensitive: true,
+      wholeWord: true,
+      regex: true,
+    });
+    store.setTerminalSearchResult("pty-a", 2, 5);
+
+    store.openTerminalSearch("pty-b");
+    store.setTerminalSearchQuery("pty-b", "beta");
+
+    expect(useTerminalStore.getState().terminalSearchByPty).toMatchObject({
+      "pty-a": {
+        query: "alpha",
+        options: { caseSensitive: true, wholeWord: true, regex: true },
+        resultIndex: 2,
+        resultCount: 5,
+      },
+      "pty-b": { query: "beta" },
+    });
+
+    store.removeTerminal("pty-a");
+    expect(useTerminalStore.getState().terminalSearchByPty["pty-a"]).toBeUndefined();
+    expect(useTerminalStore.getState().terminalSearchByPty["pty-b"]?.query).toBe("beta");
+  });
+
+  it("removes search state for PTYs omitted by reconnect reconciliation", () => {
+    const store = useTerminalStore.getState();
+    store.addTerminal("thread-1", "pty-stale");
+    store.openTerminalSearch("pty-stale");
+    store.setTerminalSearchQuery("pty-stale", "stale");
+
+    store.reconcileActiveSessions([]);
+
+    expect(useTerminalStore.getState().terminalSearchByPty["pty-stale"]).toBeUndefined();
   });
 });

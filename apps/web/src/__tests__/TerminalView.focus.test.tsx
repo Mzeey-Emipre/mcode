@@ -162,7 +162,7 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
     }
   });
 
-  it("mounts xterm in the full-size host inside the padded render surface", async () => {
+  it("mounts xterm in the padded fit host inside the render surface", async () => {
     const { container } = render(
       <TerminalView ptyId="pty-1" visible={true} threadActive={true} />,
     );
@@ -173,8 +173,8 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
     );
     const fitHost = renderSurface?.firstElementChild;
 
-    expect(renderSurface).toHaveClass("p-3");
-    expect(fitHost).toHaveClass("h-full", "min-h-0", "w-full");
+    expect(renderSurface).toHaveClass("flex", "flex-col", "overflow-hidden");
+    expect(fitHost).toHaveClass("min-h-0", "flex-1", "w-full", "p-3");
     expect(fitHost?.parentElement).toBe(renderSurface);
     expect(term.open).toHaveBeenCalledWith(fitHost);
   });

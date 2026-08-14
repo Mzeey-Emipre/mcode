@@ -1,6 +1,9 @@
 // apps/web/src/__tests__/TerminalView.keyhandler.test.ts
 import { describe, it, expect } from "vitest";
-import { shouldInterceptKeyEvent } from "@/components/terminal/terminalKeyHandler";
+import {
+  isTerminalSearchShortcut,
+  shouldInterceptKeyEvent,
+} from "@/components/terminal/terminalKeyHandler";
 
 function makeEvent(overrides: Partial<KeyboardEvent>): KeyboardEvent {
   return {
@@ -88,5 +91,19 @@ describe("shouldInterceptKeyEvent", () => {
       const event = makeEvent({ key: " ", shiftKey: true });
       expect(shouldInterceptKeyEvent(event, false)).toBe(false);
     });
+  });
+});
+
+describe("isTerminalSearchShortcut", () => {
+  it("accepts Ctrl+F and Cmd+F", () => {
+    expect(isTerminalSearchShortcut(makeEvent({ key: "f", ctrlKey: true }))).toBe(true);
+    expect(isTerminalSearchShortcut(makeEvent({ key: "F", metaKey: true }))).toBe(true);
+  });
+
+  it("does not intercept modified or unrelated keys", () => {
+    expect(isTerminalSearchShortcut(makeEvent({ key: "f" }))).toBe(false);
+    expect(isTerminalSearchShortcut(makeEvent({ key: "f", ctrlKey: true, shiftKey: true }))).toBe(false);
+    expect(isTerminalSearchShortcut(makeEvent({ key: "f", metaKey: true, altKey: true }))).toBe(false);
+    expect(isTerminalSearchShortcut(makeEvent({ key: "g", ctrlKey: true }))).toBe(false);
   });
 });
