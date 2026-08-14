@@ -67,6 +67,7 @@ const term = {
   hasSelection: vi.fn(() => false),
   onData: vi.fn(() => ({ dispose: vi.fn() })),
   onScroll: vi.fn(() => ({ dispose: vi.fn() })),
+  onSelectionChange: vi.fn((_listener: () => void) => ({ dispose: vi.fn() })),
   write: vi.fn((_data: string | Uint8Array, callback?: () => void) => callback?.()),
   paste: vi.fn(),
   clear: vi.fn(),

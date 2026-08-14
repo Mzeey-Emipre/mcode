@@ -83,6 +83,11 @@ import type {
   AgentStopResult,
   TurnRecovery,
   TerminalBackendCapabilities,
+  TerminalCustomProfile,
+  TerminalPreferencesUpdate,
+  TerminalProfileReference,
+  TerminalResolvedProfile,
+  TerminalProfileRecovery,
   ThreadControlIdentity,
   ThreadControlReadResult,
   ThreadControlUserSendInput,
@@ -142,6 +147,28 @@ export type {
 } from "@mcode/contracts";
 
 export type { PaginatedMessages, ConversationPage, ConversationTail, ToolCallRecord, ThoughtSegmentRecord, HookExecutionRecord, TurnSnapshot, CopilotSubagent } from "@mcode/contracts";
+
+/** Server response containing detected certified and persisted custom profiles. */
+export interface TerminalProfileList {
+  readonly certified: readonly TerminalResolvedProfile[];
+  readonly custom: readonly TerminalCustomProfile[];
+  readonly recovery?: TerminalProfileRecovery;
+}
+
+/** Explicit or inherited workspace Terminal default-profile state. */
+export interface TerminalWorkspacePreference {
+  readonly workspaceId: string;
+  readonly defaultProfileId: TerminalProfileReference | null;
+}
+
+/** Result returned after a live Terminal preference update. */
+export interface TerminalPreferencesResult {
+  readonly terminal: {
+    readonly presentation: import("@mcode/contracts").TerminalSettings["presentation"];
+    readonly behavior: import("@mcode/contracts").TerminalSettings["behavior"];
+    readonly accessibility: import("@mcode/contracts").TerminalSettings["accessibility"];
+  };
+}
 
 export { PERMISSION_MODES, INTERACTION_MODES } from "@mcode/contracts";
 
@@ -499,6 +526,26 @@ export interface McodeTransport {
   getProviderCatalog(request: ProviderCatalogRequest): Promise<ProviderCatalogSnapshot>;
 
   // Terminal (PTY)
+  /** List detected certified profiles and persisted custom profiles. */
+  terminalProfileList(): Promise<TerminalProfileList>;
+  /** Create one validated custom Terminal profile. */
+  terminalProfileCreate(input: Omit<TerminalCustomProfile, "id">): Promise<TerminalCustomProfile>;
+  /** Update one validated custom Terminal profile. */
+  terminalProfileUpdate(input: Omit<TerminalCustomProfile, "id"> & { profileId: string }): Promise<TerminalCustomProfile>;
+  /** Delete one unreferenced custom Terminal profile. */
+  terminalProfileDelete(profileId: string): Promise<{ deleted: true }>;
+  /** Set the global Terminal profile used for new sessions. */
+  terminalProfileSetDefault(profileId: TerminalProfileReference): Promise<{ defaultProfileId: TerminalProfileReference }>;
+  /** Read the active workspace's explicit Terminal profile override. */
+  terminalWorkspacePreferencesGet(workspaceId: string): Promise<TerminalWorkspacePreference>;
+  /** Set an explicit workspace Terminal profile override. */
+  terminalWorkspacePreferencesUpdate(workspaceId: string, profileId: TerminalProfileReference): Promise<TerminalWorkspacePreference>;
+  /** Remove an explicit workspace override so it inherits the global profile. */
+  terminalWorkspacePreferencesReset(workspaceId: string): Promise<{ reset: true }>;
+  /** Restore Terminal defaults while preserving custom profiles. */
+  terminalPreferencesReset(workspaceId?: string): Promise<{ reset: true }>;
+  /** Apply safe Terminal presentation, behavior, or accessibility preferences. */
+  terminalPreferencesUpdate(input: TerminalPreferencesUpdate): Promise<TerminalPreferencesResult>;
   /** Report the Terminal backend and version selected for the current server boot. */
   terminalCapabilities(): Promise<TerminalBackendCapabilities>;
   /** Create a new PTY attached to a thread's working directory. Returns the pty ID and shell name. */

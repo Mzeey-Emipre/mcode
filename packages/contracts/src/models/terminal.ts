@@ -336,6 +336,21 @@ export const TerminalRetryClassSchema = lazySchema(() =>
   z.enum(["SAFE_RETRY", "UNKNOWN_DELIVERY", "REATTACH", "NEW_SESSION", "RESTART"]),
 );
 
+/** Bounded references that prevent deletion of a custom Terminal profile. */
+const TerminalProfileInUseReferencesSchema = lazySchema(() =>
+  z
+    .object({
+      globalDefault: z.boolean(),
+      workspaceIds: z.array(TerminalUuidSchema()).max(32),
+    })
+    .strict(),
+);
+
+/** Typed data attached to a profile-in-use failure. */
+export const TerminalProfileInUseDataSchema = lazySchema(() =>
+  z.object({ references: TerminalProfileInUseReferencesSchema() }).strict(),
+);
+
 /** Typed public Terminal failure. */
 export const TerminalErrorSchema = lazySchema(() =>
   z
@@ -344,6 +359,7 @@ export const TerminalErrorSchema = lazySchema(() =>
       message: z.string().min(1).max(512),
       retry: TerminalRetryClassSchema(),
       correlationId: z.string().min(1).max(64),
+      data: TerminalProfileInUseDataSchema().optional(),
     })
     .strict(),
 );
@@ -396,6 +412,8 @@ export type TerminalHydrationDescriptor = z.infer<ReturnType<typeof TerminalHydr
 export type TerminalErrorCode = z.infer<ReturnType<typeof TerminalErrorCodeSchema>>;
 /** Terminal retry class. */
 export type TerminalRetryClass = z.infer<ReturnType<typeof TerminalRetryClassSchema>>;
+/** Typed data attached to a public Terminal failure. */
+export type TerminalProfileInUseData = z.infer<ReturnType<typeof TerminalProfileInUseDataSchema>>;
 /** Public Terminal error. */
 export type TerminalError = z.infer<ReturnType<typeof TerminalErrorSchema>>;
 /** Terminal v1 backend capability report. */

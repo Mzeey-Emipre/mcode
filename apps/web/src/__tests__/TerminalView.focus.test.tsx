@@ -1,6 +1,8 @@
 import { render } from "@testing-library/react";
 import { act } from "react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { getDefaultSettings } from "@mcode/contracts";
+import { useSettingsStore } from "@/stores/settingsStore";
 import {
   emitPtyData,
   emitPtyExit,
@@ -27,14 +29,17 @@ if (typeof globalThis.ResizeObserver === "undefined") {
 const bufferActive = { viewportY: 42, length: 100 };
 
 let onDataListener: ((data: string) => void) | null = null;
+let onSelectionListener: (() => void) | null = null;
 let serializedScreen = "serialized-screen";
+let lastTerminalOptions: Record<string, unknown> | undefined;
 type RestoreResult =
   | { mode: "delta" }
   | { mode: "checkpoint"; checkpoint: string; checkpointThrough: number }
   | { mode: "reset"; discardThrough: number };
 
 const term = {
-  options: { scrollback: 0, disableStdin: false },
+  options: { scrollback: 0, disableStdin: false } as Record<string, unknown>,
+  element: { style: {} },
   buffer: { active: bufferActive },
   cols: 80,
   rows: 24,
@@ -48,6 +53,10 @@ const term = {
     return { dispose: vi.fn() };
   }),
   onScroll: vi.fn(() => ({ dispose: vi.fn() })),
+  onSelectionChange: vi.fn((listener: () => void) => {
+    onSelectionListener = listener;
+    return { dispose: vi.fn() };
+  }),
   write: vi.fn((_data: string | Uint8Array, cb?: () => void) => cb?.()),
   paste: vi.fn(),
   clear: vi.fn(),
@@ -95,7 +104,9 @@ const transport = {
 
 vi.mock("@xterm/xterm", () => {
   class Terminal {
-    constructor() {
+    constructor(options: Record<string, unknown>) {
+      lastTerminalOptions = options;
+      Object.assign(term.options, options);
       return term as unknown as Terminal;
     }
   }
@@ -142,7 +153,11 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
     term.options.disableStdin = false;
     vi.clearAllMocks();
     onDataListener = null;
+    onSelectionListener = null;
+    lastTerminalOptions = undefined;
     serializedScreen = "serialized-screen";
+    Object.assign(term.options, { scrollback: 0, disableStdin: false });
+    useSettingsStore.setState({ settings: getDefaultSettings(), loaded: true });
     term.write.mockImplementation((_data: string | Uint8Array, cb?: () => void) => cb?.());
     // clearAllMocks resets call history but keeps implementations.
     transport.terminalReattach.mockResolvedValue({ mode: "delta" });
@@ -177,6 +192,115 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
     expect(fitHost).toHaveClass("min-h-0", "flex-1", "w-full", "p-3");
     expect(fitHost?.parentElement).toBe(renderSurface);
     expect(term.open).toHaveBeenCalledWith(fitHost);
+  });
+
+  it("applies Terminal preferences to xterm and live selection and paste boundaries", async () => {
+    const defaults = getDefaultSettings();
+    const clipboard = { writeText: vi.fn().mockResolvedValue(undefined) };
+    const originalClipboard = navigator.clipboard;
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: clipboard });
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    useSettingsStore.setState({
+      settings: {
+        ...defaults,
+        terminal: {
+          ...defaults.terminal,
+          presentation: {
+            ...defaults.terminal.presentation,
+            fontFamily: "Test Sans",
+            fontSize: "xl",
+            lineHeight: "relaxed",
+            cursorStyle: "bar",
+            cursorBlink: true,
+            ligatures: true,
+          },
+          behavior: {
+            ...defaults.terminal.behavior,
+            scrollback: 2500,
+            copyOnSelect: true,
+            confirmMultilinePaste: true,
+          },
+          accessibility: { screenReaderMode: "on" },
+        },
+      },
+      loaded: true,
+    });
+
+    const { container } = render(
+      <TerminalView ptyId="pty-1" visible={true} threadActive={true} />,
+    );
+    await settle();
+
+    expect(lastTerminalOptions).toMatchObject({
+      scrollback: 2500,
+      fontFamily: "Test Sans",
+      fontSize: 19,
+      lineHeight: 1.4,
+      cursorStyle: "bar",
+      cursorBlink: true,
+      screenReaderMode: true,
+    });
+
+    term.getSelection.mockReturnValue("selected");
+    act(() => onSelectionListener?.());
+    expect(clipboard.writeText).toHaveBeenCalledWith("selected");
+
+    const pasteEvent = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(pasteEvent, "clipboardData", {
+      value: { getData: () => "one\ntwo" },
+    });
+    const pasteBoundary = container.querySelector<HTMLElement>(
+      '[data-testid="terminal-render-content"] > div',
+    );
+    expect(pasteBoundary).not.toBeNull();
+    act(() => pasteBoundary?.dispatchEvent(pasteEvent));
+    expect(confirm).toHaveBeenCalledWith("Paste multiple lines into the terminal?");
+    expect(term.paste).toHaveBeenCalledWith("one\ntwo");
+
+    const current = useSettingsStore.getState().settings.terminal;
+    act(() => {
+      useSettingsStore.getState()._applyTerminalPreferences({
+        presentation: {
+          ...current.presentation,
+          fontFamily: "Live Sans",
+          fontSize: "xs",
+          lineHeight: "compact",
+          cursorStyle: "underline",
+          cursorBlink: false,
+          ligatures: false,
+        },
+        behavior: { ...current.behavior, scrollback: 100 },
+        accessibility: { screenReaderMode: "off" },
+      });
+    });
+    await settle();
+    expect(term.options).toMatchObject({
+      scrollback: 100,
+      fontFamily: "Live Sans",
+      fontSize: 11,
+      lineHeight: 1.1,
+      cursorStyle: "underline",
+      cursorBlink: false,
+      screenReaderMode: false,
+    });
+
+    const applyScreenReaderMode = (screenReaderMode: "off" | "auto" | "on") => {
+      const next = useSettingsStore.getState().settings.terminal;
+      useSettingsStore.getState()._applyTerminalPreferences({
+        presentation: next.presentation,
+        behavior: next.behavior,
+        accessibility: { screenReaderMode },
+      });
+    };
+    act(() => applyScreenReaderMode("auto"));
+    await settle();
+    expect(term.options.screenReaderMode).toBe(false);
+    act(() => applyScreenReaderMode("on"));
+    await settle();
+    expect(term.options.screenReaderMode).toBe(true);
+
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: originalClipboard });
+    confirm.mockRestore();
   });
 
   // Regression guard: term.focus() must NOT fire when the window/tab regains

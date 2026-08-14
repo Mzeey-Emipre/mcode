@@ -232,6 +232,34 @@ export const mockTransport: McodeTransport = {
     publicFrameVersion: 0,
     recovery: { replay: true, checkpoint: true, gap: true },
   }),
+  terminalProfileList: vi.fn().mockResolvedValue({ certified: [], custom: [] }),
+  terminalProfileCreate: vi.fn().mockResolvedValue({
+    id: "custom:11111111-1111-4111-8111-111111111111",
+    name: "Custom",
+    executable: "sh",
+    arguments: [],
+  }),
+  terminalProfileUpdate: vi.fn().mockResolvedValue({
+    id: "custom:11111111-1111-4111-8111-111111111111",
+    name: "Custom",
+    executable: "sh",
+    arguments: [],
+  }),
+  terminalProfileDelete: vi.fn().mockResolvedValue({ deleted: true }),
+  terminalProfileSetDefault: vi.fn().mockResolvedValue({ defaultProfileId: "automatic" }),
+  terminalWorkspacePreferencesGet: vi.fn().mockImplementation((workspaceId: string) =>
+    Promise.resolve({ workspaceId, defaultProfileId: null })),
+  terminalWorkspacePreferencesUpdate: vi.fn().mockImplementation((workspaceId: string, defaultProfileId: string) =>
+    Promise.resolve({ workspaceId, defaultProfileId })),
+  terminalWorkspacePreferencesReset: vi.fn().mockResolvedValue({ reset: true }),
+  terminalPreferencesReset: vi.fn().mockResolvedValue({ reset: true }),
+  terminalPreferencesUpdate: vi.fn().mockImplementation(async (input) => ({
+    terminal: {
+      presentation: { ...getDefaultSettings().terminal.presentation, ...input.presentation },
+      behavior: { ...getDefaultSettings().terminal.behavior, ...input.behavior },
+      accessibility: { ...getDefaultSettings().terminal.accessibility, ...input.accessibility },
+    },
+  })),
   terminalCreate: vi.fn().mockResolvedValue({ ptyId: "pty-mock-1", shell: "pwsh" }),
   terminalWrite: vi.fn().mockResolvedValue(undefined),
   terminalResize: vi.fn().mockResolvedValue(undefined),
