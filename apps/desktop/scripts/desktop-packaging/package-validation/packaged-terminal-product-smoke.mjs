@@ -442,6 +442,14 @@ async function runProductBoot({ target, env, bootFault, isolationReceipt, worklo
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
+  let launchError = "";
+  child.stderr?.setEncoding("utf8");
+  child.stderr?.on("data", (chunk) => {
+    launchError = `${launchError}${chunk}`.slice(-8_192);
+  });
+  child.on("error", (error) => {
+    launchError = `${launchError}${error.message}`.slice(-8_192);
+  });
   const browser = await (async () => {
     const deadline = Date.now() + 15_000;
     while (Date.now() < deadline) {
@@ -451,7 +459,10 @@ async function runProductBoot({ target, env, bootFault, isolationReceipt, worklo
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
     }
-    throw new Error("Packaged Electron CDP did not become available");
+    const detail = launchError.trim() || "the packaged process produced no stderr";
+    throw new Error(
+      `Packaged Electron CDP did not become available (exit ${child.exitCode ?? "pending"}): ${detail}`,
+    );
   })();
   try {
     const page = browser.contexts()[0]?.pages()[0];
