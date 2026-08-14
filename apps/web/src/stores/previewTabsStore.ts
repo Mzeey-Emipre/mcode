@@ -208,8 +208,12 @@ export const usePreviewTabsStore = create<PreviewTabsState>((set, get) => ({
       const scopeKey = previewTabsScopeKey(workspaceId, scopeId);
       const previous = s.tabSetByScope[scopeKey] ?? null;
       if (sameBrowserTabSet(previous, value)) return s;
+      const activeTabChanged = previous?.activeTabId !== value?.activeTabId;
       return {
         tabSetByScope: { ...s.tabSetByScope, [scopeKey]: value },
+        ...(activeTabChanged
+          ? { liveChromeByScope: { ...s.liveChromeByScope, [scopeKey]: null } }
+          : {}),
       };
     }),
 
