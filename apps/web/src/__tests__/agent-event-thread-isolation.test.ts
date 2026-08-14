@@ -153,6 +153,90 @@ await activateTestConversation(THREAD_A);
     });
   });
 
+  describe("mcpServerStartupStatus toast isolation", () => {
+    it("shows an error toast without changing the active thread state", () => {
+      const beforeMessages = getTestThreadMessages(THREAD_A);
+      const beforeRunningThreadIds = new Set(useThreadStore.getState().runningThreadIds);
+      const beforeStatus = useWorkspaceStore.getState().threads.find((t) => t.id === THREAD_A)?.status;
+
+      useThreadStore.getState().handleAgentEvent({
+        type: "mcpServerStartupStatus",
+        threadId: THREAD_A,
+        providerId: "codex",
+        serverThreadId: "server-thread-a",
+        name: "filesystem",
+        status: "failed",
+        error: "Connection refused",
+      } as AgentEvent);
+
+      expect(useToastStore.getState().toasts).toMatchObject([{
+        level: "error",
+        title: "MCP server unavailable",
+        message: "The turn will continue without it. filesystem: Connection refused",
+      }]);
+      expect(getTestThreadMessages(THREAD_A)).toEqual(beforeMessages);
+      expect(readActiveThreadField((record) => record.runtimePhase)).toBe("running");
+      expect(useThreadStore.getState().runningThreadIds).toEqual(beforeRunningThreadIds);
+      expect(useWorkspaceStore.getState().threads.find((t) => t.id === THREAD_A)?.status).toBe(beforeStatus);
+    });
+
+    it.each([
+      ["failureReason", { failureReason: "Server exited" }, "Server exited"],
+      ["default reason", {}, "Startup failed"],
+    ] as const)("uses the %s when error is absent", (_label, details, reason) => {
+      useThreadStore.getState().handleAgentEvent({
+        type: "mcpServerStartupStatus",
+        threadId: THREAD_A,
+        providerId: "codex",
+        serverThreadId: "server-thread-a",
+        name: "filesystem",
+        status: "failed",
+        ...details,
+      } as AgentEvent);
+
+      expect(useToastStore.getState().toasts[0]).toMatchObject({
+        level: "error",
+        title: "MCP server unavailable",
+        message: `The turn will continue without it. filesystem: ${reason}`,
+      });
+    });
+
+    it("does not show a toast for a background thread failure", () => {
+      const beforeMessages = getTestThreadMessages(THREAD_B);
+      const beforeRunningThreadIds = new Set(useThreadStore.getState().runningThreadIds);
+      const beforeStatus = useWorkspaceStore.getState().threads.find((t) => t.id === THREAD_B)?.status;
+
+      useThreadStore.getState().handleAgentEvent({
+        type: "mcpServerStartupStatus",
+        threadId: THREAD_B,
+        providerId: "codex",
+        serverThreadId: "server-thread-b",
+        name: "filesystem",
+        status: "failed",
+        failureReason: "Server exited",
+      } as AgentEvent);
+
+      expect(useToastStore.getState().toasts).toHaveLength(0);
+      expect(getTestThreadMessages(THREAD_B)).toEqual(beforeMessages);
+      expect(readActiveThreadField((record) => record.runtimePhase)).toBe("running");
+      expect(useThreadStore.getState().runningThreadIds).toEqual(beforeRunningThreadIds);
+      expect(useWorkspaceStore.getState().threads.find((t) => t.id === THREAD_B)?.status).toBe(beforeStatus);
+    });
+
+    it.each(["starting", "ready", "cancelled"] as const)("does not show a toast for %s status", (status) => {
+      useThreadStore.getState().handleAgentEvent({
+        type: "mcpServerStartupStatus",
+        threadId: THREAD_A,
+        providerId: "codex",
+        serverThreadId: "server-thread-a",
+        name: "filesystem",
+        status,
+      } as AgentEvent);
+
+      expect(useToastStore.getState().toasts).toHaveLength(0);
+    });
+  });
+
   // ── TodoWrite panel isolation ────────────────────────────────────────
 
   describe("TodoWrite panel isolation", () => {

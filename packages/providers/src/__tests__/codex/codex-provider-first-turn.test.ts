@@ -49,7 +49,10 @@ vi.mock("../../private/codex/codex-app-server.js", async () => {
       const getSpawnEnv = (this.options as { getSpawnEnv?: () => Record<string, string> }).getSpawnEnv;
       const env = getSpawnEnv?.();
       this.spawnedEnv = env ? { ...env } : undefined;
-      if (startError.current) throw startError.current;
+      if (startError.current) {
+        this.isAlive = false;
+        throw startError.current;
+      }
     }
     async readConfig(cwd: string): Promise<unknown> {
       return readConfigMock(cwd);
@@ -66,8 +69,10 @@ vi.mock("../../private/codex/codex-app-server.js", async () => {
 });
 
 import { BrowserAutomationSessionLease, CodexProvider, stubEnvService } from "./codex-provider-test-fixture.js";
-import { AgentEventType } from "@mcode/contracts";
+import { AgentEventSchema, AgentEventType } from "@mcode/contracts";
 import type { AgentEvent } from "@mcode/contracts";
+
+const schemaValidExecutionId = "00000000-0000-4000-8000-000000000001";
 
 function makeProvider(
   catalogService: {
@@ -189,6 +194,8 @@ describe("CodexProvider first turn on new session", () => {
     });
     startError.current = new Error("handshake failed");
     const provider = makeProvider(undefined, lease);
+    const events: AgentEvent[] = [];
+    provider.on("event", (event: AgentEvent) => events.push(event));
 
     await provider.sendTurn({
       turnExecutionId: "test-execution",
@@ -204,20 +211,37 @@ describe("CodexProvider first turn on new session", () => {
     });
 
     expect(lease.credentials.size()).toBe(0);
+    expect(appServers.at(-1)?.isAlive).toBe(false);
+    expect(sendTurnMock).not.toHaveBeenCalled();
+    expect(events).toEqual([
+      {
+        type: AgentEventType.Error,
+        threadId: "browser-spawn-failure",
+        error: "handshake failed",
+        turnExecutionId: "test-execution",
+      },
+      {
+        type: AgentEventType.Ended,
+        threadId: "browser-spawn-failure",
+        turnExecutionId: "test-execution",
+      },
+    ]);
   });
 
-  it("releases staged browser access when internal MCP configuration fails", async () => {
+  it("keeps Browser available when internal MCP configuration fails", async () => {
     const lease = new BrowserAutomationSessionLease();
     lease.configure({
       mcpUrl: "http://127.0.0.1:19400/mcp",
       worktreeIdentity: "worktree-test",
     });
+    const events: AgentEvent[] = [];
     const provider = makeProvider(undefined, lease, {
       createCodexConfiguration: vi.fn().mockRejectedValue(new Error("MCP config failed")),
     });
+    provider.on("event", (event: AgentEvent) => events.push(event));
 
     await provider.sendTurn({
-      turnExecutionId: "test-execution",
+      turnExecutionId: schemaValidExecutionId,
       sessionId: "mcode-browser-config-failure",
       workspaceId: "workspace-test",
       threadId: "browser-config-failure",
@@ -228,9 +252,29 @@ describe("CodexProvider first turn on new session", () => {
       providerOptions: {},
       permissionMode: "supervised",
     });
+    await new Promise<void>((resolve) => setImmediate(resolve));
 
-    expect(lease.status()).toEqual({ active: 0, pending: 0 });
-    expect(appServers).toHaveLength(0);
+    expect(lease.status()).toEqual({ active: 1, pending: 0 });
+    expect(sendTurnMock).toHaveBeenCalledWith(
+      [{ type: "text", text: "inspect the page" }],
+      { model: "gpt-5.4" },
+    );
+    expect(appServers.at(-1)?.isAlive).toBe(true);
+    const failure = events.filter((event) => event.type === AgentEventType.McpServerStartupStatus);
+    expect(failure).toHaveLength(1);
+    expect(failure[0]).toMatchObject({
+      threadId: "browser-config-failure",
+      providerId: "codex",
+      serverThreadId: "sdk-thread-1",
+      name: "mcode_internal_thread_control",
+      status: "failed",
+      error: "MCP config failed",
+      turnExecutionId: schemaValidExecutionId,
+    });
+    expect(AgentEventSchema().parse(failure[0])).toEqual(failure[0]);
+    expect(events.some((event) => event.type === AgentEventType.Error)).toBe(false);
+    expect(events.some((event) => event.type === AgentEventType.Ended)).toBe(false);
+    await provider.stopSession("mcode-browser-config-failure");
   });
 
   it("releases the previous staged browser access for overlapping sends", async () => {
@@ -1038,15 +1082,17 @@ describe("CodexProvider first turn on new session", () => {
     await expect(result).resolves.toBe("# Handoff");
   });
 
-  it("closes internal MCP authority when spawn setup fails before runtime registration", async () => {
+  it("closes partial internal MCP authority when bootstrap fails", async () => {
     const close = vi.fn().mockResolvedValue(undefined);
+    const events: AgentEvent[] = [];
     const provider = makeProvider(undefined, new BrowserAutomationSessionLease(), {
       createCodexConfiguration: vi.fn().mockRejectedValue(new Error("MCP setup failed")),
       close,
     });
+    provider.on("event", (event: AgentEvent) => events.push(event));
 
     await provider.sendTurn({
-      turnExecutionId: "test-execution",
+      turnExecutionId: schemaValidExecutionId,
       sessionId: "mcode-mcp-failure",
       workspaceId: "workspace-mcp-failure",
       threadId: "mcp-failure",
@@ -1057,9 +1103,18 @@ describe("CodexProvider first turn on new session", () => {
       providerOptions: {},
       permissionMode: "auto",
     });
+    await new Promise<void>((resolve) => setImmediate(resolve));
 
     expect(close).toHaveBeenCalledWith("mcode-mcp-failure");
-    expect((provider as unknown as { runtime: { get: (sessionId: string) => unknown } }).runtime.get("mcode-mcp-failure")).toBeUndefined();
+    expect((provider as unknown as { runtime: { get: (sessionId: string) => unknown } }).runtime.get("mcode-mcp-failure")).toBeDefined();
+    expect(appServers.at(-1)?.isAlive).toBe(true);
+    expect(sendTurnMock).toHaveBeenCalledTimes(1);
+    const failure = events.filter((event) => event.type === AgentEventType.McpServerStartupStatus);
+    expect(failure).toHaveLength(1);
+    expect(AgentEventSchema().parse(failure[0])).toEqual(failure[0]);
+    expect(events.some((event) => event.type === AgentEventType.Error)).toBe(false);
+    expect(events.some((event) => event.type === AgentEventType.Ended)).toBe(false);
+    await provider.stopSession("mcode-mcp-failure");
   });
 
   it("continues the first turn when internal MCP startup reports failure", async () => {
@@ -1072,7 +1127,7 @@ describe("CodexProvider first turn on new session", () => {
     provider.on("event", (event: AgentEvent) => events.push(event));
 
     const send = provider.sendTurn({
-      turnExecutionId: "test-execution",
+      turnExecutionId: schemaValidExecutionId,
       sessionId: "mcode-mcp-startup-failure",
       workspaceId: "workspace-mcp-failure",
       threadId: "mcp-startup-failure",
@@ -1103,13 +1158,213 @@ describe("CodexProvider first turn on new session", () => {
       [{ type: "text", text: "continue without the failed MCP" }],
       { model: "gpt-5.4" },
     );
+    expect(readConfigMock).not.toHaveBeenCalled();
     expect(server.isAlive).toBe(true);
     expect(close).not.toHaveBeenCalled();
     expect(events).not.toContainEqual(expect.objectContaining({ type: AgentEventType.Error }));
+    const failures = events.filter((event) => event.type === AgentEventType.McpServerStartupStatus);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatchObject({
+      threadId: "mcp-startup-failure",
+      providerId: "codex",
+      serverThreadId: "sdk-thread-1",
+      name: "mcode_internal_thread_control",
+      status: "failed",
+      error: "fixture MCP failed to start",
+      turnExecutionId: schemaValidExecutionId,
+    });
+    expect(AgentEventSchema().parse(failures[0])).toEqual(failures[0]);
     await provider.stopSession("mcode-mcp-startup-failure");
   });
 
-  it("contains an internal MCP startup timeout while effective config is stalled", async () => {
+  it("normalizes a legacy internal MCP error status without duplicating the failure event", async () => {
+    const close = vi.fn().mockResolvedValue(undefined);
+    const provider = makeProvider(undefined, new BrowserAutomationSessionLease(), {
+      createCodexConfiguration: vi.fn().mockResolvedValue({ configOverrides: [], env: {} }),
+      close,
+    });
+    const events: AgentEvent[] = [];
+    provider.on("event", (event: AgentEvent) => events.push(event));
+
+    const send = provider.sendTurn({
+      turnExecutionId: schemaValidExecutionId,
+      sessionId: "mcode-mcp-legacy-error",
+      workspaceId: "workspace-mcp-legacy-error",
+      threadId: "mcp-legacy-error",
+      message: "continue after the legacy MCP error",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "auto",
+    });
+
+    await vi.waitFor(() => expect(appServers.at(-1)).toBeDefined());
+    const server = appServers.at(-1)!;
+    server.emit("notification", {
+      method: "mcpServer/startupStatus/updated",
+      params: {
+        threadId: "sdk-thread-1",
+        name: "mcode_internal_thread_control",
+        status: "error",
+        failureReason: "legacy fixture failure",
+      },
+    });
+
+    await send;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(sendTurnMock).toHaveBeenCalledWith(
+      [{ type: "text", text: "continue after the legacy MCP error" }],
+      { model: "gpt-5.4" },
+    );
+    expect(readConfigMock).not.toHaveBeenCalled();
+    expect(server.isAlive).toBe(true);
+    expect(close).not.toHaveBeenCalled();
+    const failures = events.filter((event) => event.type === AgentEventType.McpServerStartupStatus);
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatchObject({
+      status: "failed",
+      failureReason: "legacy fixture failure",
+      turnExecutionId: schemaValidExecutionId,
+    });
+    expect(AgentEventSchema().parse(failures[0])).toEqual(failures[0]);
+    expect(events.some((event) => event.type === AgentEventType.Error)).toBe(false);
+    expect(events.some((event) => event.type === AgentEventType.Ended)).toBe(false);
+    await provider.stopSession("mcode-mcp-legacy-error");
+  });
+
+  it("continues promptly when native internal MCP startup is cancelled", async () => {
+    const close = vi.fn().mockResolvedValue(undefined);
+    const provider = makeProvider(undefined, new BrowserAutomationSessionLease(), {
+      createCodexConfiguration: vi.fn().mockResolvedValue({ configOverrides: [], env: {} }),
+      close,
+    });
+    const events: AgentEvent[] = [];
+    provider.on("event", (event: AgentEvent) => events.push(event));
+
+    const send = provider.sendTurn({
+      turnExecutionId: schemaValidExecutionId,
+      sessionId: "mcode-mcp-cancelled",
+      workspaceId: "workspace-mcp-cancelled",
+      threadId: "mcp-cancelled",
+      message: "continue after MCP cancellation",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "auto",
+    });
+
+    await vi.waitFor(() => expect(appServers.at(-1)).toBeDefined());
+    const server = appServers.at(-1)!;
+    server.emit("notification", {
+      method: "mcpServer/startupStatus/updated",
+      params: {
+        threadId: "sdk-thread-1",
+        name: "mcode_internal_thread_control",
+        status: "cancelled",
+      },
+    });
+
+    await send;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(sendTurnMock).toHaveBeenCalledWith(
+      [{ type: "text", text: "continue after MCP cancellation" }],
+      { model: "gpt-5.4" },
+    );
+    expect(readConfigMock).not.toHaveBeenCalled();
+    expect(server.isAlive).toBe(true);
+    expect(close).not.toHaveBeenCalled();
+    const statuses = events.filter((event) => event.type === AgentEventType.McpServerStartupStatus);
+    expect(statuses).toHaveLength(1);
+    expect(statuses[0]).toMatchObject({
+      threadId: "mcp-cancelled",
+      providerId: "codex",
+      serverThreadId: "sdk-thread-1",
+      name: "mcode_internal_thread_control",
+      status: "cancelled",
+      turnExecutionId: schemaValidExecutionId,
+    });
+    expect(AgentEventSchema().parse(statuses[0])).toEqual(statuses[0]);
+    expect(events.some((event) => event.type === AgentEventType.Error)).toBe(false);
+    expect(events.some((event) => event.type === AgentEventType.Ended)).toBe(false);
+    expect(events.some((event) => event.type === AgentEventType.McpServerStartupStatus && event.status === "failed")).toBe(false);
+    await provider.stopSession("mcode-mcp-cancelled");
+  });
+
+  it.each([
+    ["missing registration", { config: { mcp_servers: {} } }, "Codex app-server did not register mcode_internal_thread_control in effective configuration"],
+    ["read failure", new Error("effective config unavailable"), "effective config unavailable"],
+  ] as const)("continues when internal MCP effective config has a $0", async (_name, result, expectedError) => {
+    if (result instanceof Error) {
+      readConfigMock.mockRejectedValue(result);
+    } else {
+      readConfigMock.mockResolvedValue(result);
+    }
+    const close = vi.fn().mockResolvedValue(undefined);
+    const provider = makeProvider(undefined, new BrowserAutomationSessionLease(), {
+      createCodexConfiguration: vi.fn().mockResolvedValue({ configOverrides: [], env: {} }),
+      close,
+    });
+    const events: AgentEvent[] = [];
+    provider.on("event", (event: AgentEvent) => events.push(event));
+
+    const sessionId = `mcode-mcp-config-${_name.replaceAll(" ", "-")}`;
+    const threadId = `mcp-config-${_name.replaceAll(" ", "-")}`;
+    const send = provider.sendTurn({
+      turnExecutionId: schemaValidExecutionId,
+      sessionId,
+      workspaceId: "workspace-mcp-config",
+      threadId,
+      message: "continue after config verification",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "auto",
+    });
+
+    await vi.waitFor(() => expect(appServers.at(-1)).toBeDefined());
+    const server = appServers.at(-1)!;
+    server.emit("notification", {
+      method: "mcpServer/startupStatus/updated",
+      params: {
+        threadId: "sdk-thread-1",
+        name: "mcode_internal_thread_control",
+        status: "ready",
+      },
+    });
+
+    await send;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(readConfigMock).toHaveBeenCalledTimes(1);
+    expect(sendTurnMock).toHaveBeenCalledWith(
+      [{ type: "text", text: "continue after config verification" }],
+      { model: "gpt-5.4" },
+    );
+    expect(server.isAlive).toBe(true);
+    expect(close).toHaveBeenCalledWith(sessionId);
+    const failures = events.filter((event) => event.type === AgentEventType.McpServerStartupStatus && event.status === "failed");
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toMatchObject({
+      threadId,
+      providerId: "codex",
+      serverThreadId: "sdk-thread-1",
+      name: "mcode_internal_thread_control",
+      status: "failed",
+      error: expectedError,
+      turnExecutionId: schemaValidExecutionId,
+    });
+    expect(AgentEventSchema().parse(failures[0])).toEqual(failures[0]);
+    expect(events.some((event) => event.type === AgentEventType.Error)).toBe(false);
+    expect(events.some((event) => event.type === AgentEventType.Ended)).toBe(false);
+    await provider.stopSession(sessionId);
+  });
+
+  it("continues after an internal MCP startup timeout and keeps the authority open", async () => {
     vi.useFakeTimers();
     try {
       readConfigMock.mockImplementation(() => new Promise(() => undefined));
@@ -1122,7 +1377,7 @@ describe("CodexProvider first turn on new session", () => {
       provider.on("event", (event: AgentEvent) => events.push(event));
 
       const send = provider.sendTurn({
-        turnExecutionId: "test-execution",
+        turnExecutionId: schemaValidExecutionId,
         sessionId: "mcode-mcp-startup-timeout",
         workspaceId: "workspace-mcp-timeout",
         threadId: "mcp-startup-timeout",
@@ -1136,18 +1391,31 @@ describe("CodexProvider first turn on new session", () => {
 
       await vi.advanceTimersByTimeAsync(10_000);
       await send;
+      await vi.runOnlyPendingTimersAsync();
+      await Promise.resolve();
 
-      expect(close).toHaveBeenCalledWith("mcode-mcp-startup-timeout");
-      expect(appServers.at(-1)?.isAlive).toBe(false);
-      expect(events).toEqual([
-        {
-          type: AgentEventType.Error,
-          threadId: "mcp-startup-timeout",
-          error: "Codex internal MCP startup timed out",
-          turnExecutionId: "test-execution",
-        },
-        { type: AgentEventType.Ended, threadId: "mcp-startup-timeout", turnExecutionId: "test-execution" },
-      ]);
+      expect(close).not.toHaveBeenCalled();
+      expect(appServers.at(-1)?.isAlive).toBe(true);
+      expect(sendTurnMock).toHaveBeenCalledWith(
+        [{ type: "text", text: "hello" }],
+        { model: "gpt-5.4" },
+      );
+      expect(readConfigMock).not.toHaveBeenCalled();
+      const failures = events.filter((event) => event.type === AgentEventType.McpServerStartupStatus);
+      expect(failures).toHaveLength(1);
+      expect(failures[0]).toMatchObject({
+        threadId: "mcp-startup-timeout",
+        providerId: "codex",
+        serverThreadId: "sdk-thread-1",
+        name: "mcode_internal_thread_control",
+        status: "failed",
+        error: "Codex internal MCP startup timed out",
+        turnExecutionId: schemaValidExecutionId,
+      });
+      expect(AgentEventSchema().parse(failures[0])).toEqual(failures[0]);
+      expect(events.some((event) => event.type === AgentEventType.Error)).toBe(false);
+      expect(events.some((event) => event.type === AgentEventType.Ended)).toBe(false);
+      await provider.stopSession("mcode-mcp-startup-timeout");
     } finally {
       vi.useRealTimers();
     }

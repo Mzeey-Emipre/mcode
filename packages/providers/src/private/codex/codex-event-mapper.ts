@@ -10,6 +10,7 @@ import {
 import type {
   CodexNotification,
   CompletedItem,
+  McpServerStartupStatus,
   ThreadGoal,
   ThreadSettingsUpdatedPayload,
 } from "./codex-types.js";
@@ -1427,13 +1428,17 @@ export class CodexEventMapper {
       const failureReason = typeof notification.params.failureReason === "string"
         ? notification.params.failureReason
         : undefined;
+      const rawStatus = notification.params.status as string;
+      const status: McpServerStartupStatus = rawStatus === "error"
+        ? "failed"
+        : notification.params.status;
       return [{
         type: AgentEventType.McpServerStartupStatus,
         threadId: this.threadId,
         providerId: "codex",
         serverThreadId,
         name: notification.params.name,
-        status: notification.params.status,
+        status,
         ...(error ? { error } : {}),
         ...(failureReason ? { failureReason } : {}),
       }];
