@@ -59,8 +59,9 @@ import {
   resolveMcodeWorkspacePreviewUrl,
   hardenPreviewWebviewAttachment,
   resolvePreviewGuestPreloadPath,
-} from "../features/preview/index.js";
+} from "./preview/index.js";
 import { isDesktopDev } from "./is-desktop-dev.js";
+import { shouldSetDockIcon } from "./dock-icon.js";
 import { shouldPrintVersion } from "./cli-args.js";
 
 // Isolate dev's Electron userData (cache, cookies, localStorage, IndexedDB)
@@ -1121,7 +1122,7 @@ app.whenReady().then(async () => {
       `[perf] V8 snapshot: ${globalThis.__v8Snapshot ? "loaded" : "not available"}`,
     );
     console.log(`Mcode v${app.getVersion()} starting`);
-    if (process.platform === "darwin") {
+    if (shouldSetDockIcon(process.platform, app.isPackaged)) {
       app.dock?.setIcon(getWindowIconPath());
     }
     configureApplicationMenu();
