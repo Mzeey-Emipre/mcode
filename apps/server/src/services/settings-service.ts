@@ -98,6 +98,26 @@ function removeLegacyPreviewRenderingSetting(value: unknown): {
   return { changed: true, document };
 }
 
+function getSettingsDefaults(): Settings {
+  const defaults = getDefaultSettings();
+  if (process.env.MCODE_AGENT_RUNTIME !== "1") {
+    return defaults;
+  }
+
+  return {
+    ...defaults,
+    model: {
+      ...defaults.model,
+      defaults: {
+        ...defaults.model.defaults,
+        provider: "codex",
+        id: "gpt-5.6-luna",
+        fallbackId: "",
+      },
+    },
+  };
+}
+
 /**
  * Manages persistent user settings stored as JSON on disk.
  * Provides get/update operations with Zod validation and broadcasts
@@ -142,7 +162,7 @@ export class SettingsService {
    * Read the current settings from disk.
    * Returns the cached value if available. On cache miss, reads from disk,
    * validates, and populates the cache. Never throws; returns
-   * getDefaultSettings() if the file is missing or contains invalid JSON.
+   * Runtime-aware defaults if the file is missing or contains invalid JSON.
    */
   get(): Settings {
     if (this.cache !== null) {
@@ -153,7 +173,7 @@ export class SettingsService {
       const raw = readFileSync(this.filePath, "utf-8");
       if (Buffer.byteLength(raw, "utf8") > SETTINGS_MAX_BYTES) {
         this.terminalMigrationStatus = { status: "blocked", reason: "malformed" };
-        return getDefaultSettings();
+        return getSettingsDefaults();
       }
       const parsed = JSON.parse(raw) as unknown;
       const migration = removeLegacyPreviewRenderingSetting(parsed);
@@ -169,7 +189,7 @@ export class SettingsService {
         logger.warn("Settings file failed Terminal migration, returning temporary defaults", {
           reason: terminalMigration.reason,
         });
-        return getDefaultSettings();
+        return getSettingsDefaults();
       }
       const result = SettingsSchema().safeParse(terminalMigration.document);
       if (result.success) {
@@ -199,7 +219,7 @@ export class SettingsService {
       logger.warn("Settings file failed validation, returning defaults", {
         error: result.error.message,
       });
-      return getDefaultSettings();
+      return getSettingsDefaults();
     } catch {
       if (existsSync(this.filePath)) {
         this.terminalMigrationStatus = { status: "blocked", reason: "malformed" };
@@ -207,7 +227,7 @@ export class SettingsService {
         this.terminalMigrationStatus = { status: "current" };
       }
       this.blockedTerminalProfiles = [];
-      return getDefaultSettings();
+      return getSettingsDefaults();
     }
   }
 
