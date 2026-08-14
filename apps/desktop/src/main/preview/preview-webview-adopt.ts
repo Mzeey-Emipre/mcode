@@ -11,9 +11,9 @@ import {
   getSession,
   getThreadTabSet,
   type TabState,
-} from "./preview-session.js";
-import { resolvePreviewNavigationTarget } from "./preview-navigation.js";
-import { trustMainProcessFileNavigation } from "./preview-local-file.js";
+} from "../../features/preview/state/window-session.js";
+import { resolvePreviewNavigationTarget } from "../../features/preview/navigation/resolve-target.js";
+import { trustMainProcessFileNavigation } from "../../features/preview/navigation/local-file.js";
 import {
   registerPreviewClipboardGuest,
   unregisterPreviewClipboardGuest,
@@ -23,7 +23,7 @@ import { PREVIEW_POPUP_REQUESTED_CHANNEL } from "../../features/preview/contract
 import type { PreviewPopupSurfaceRef } from "../../features/preview/contracts/popup.js";
 import { isBrowserAutomationAgentOperationActive } from "../browser-automation/active-operation.js";
 import { PREVIEW_SURFACE_DISCARD_REQUESTED_CHANNEL } from "../../features/preview/contracts/surface-lifecycle.js";
-import { bumpPerf } from "./preview-perf.js";
+import { bumpPerf } from "../../features/preview/observability/perf-counters.js";
 
 const MAX_SURFACE_ID_LENGTH = 256;
 const MAX_ADOPTION_TOKEN_LENGTH = 128;

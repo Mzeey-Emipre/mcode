@@ -57,7 +57,7 @@ import {
   disposePreviewForWindow,
 } from "./preview/index.js";
 import { disposeBrowserAutomationForWindow } from "./browser-automation/index.js";
-import { resolveMcodeWorkspacePreviewUrl } from "./preview/preview-local-file.js";
+import { resolveMcodeWorkspacePreviewUrl } from "../features/preview/navigation/local-file.js";
 import { isDesktopDev } from "./is-desktop-dev.js";
 import { shouldPrintVersion } from "./cli-args.js";
 import {

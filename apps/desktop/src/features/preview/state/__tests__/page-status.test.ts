@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { pageStatusReducer, initialPageStatus } from "../preview/page-status-reducer.js";
+import { pageStatusReducer, initialPageStatus } from "../page-status.js";
 import type { PreviewPageError } from "@mcode/contracts";
 
 const ERR: PreviewPageError = { kind: "http", status: 404, message: "Page not found" };

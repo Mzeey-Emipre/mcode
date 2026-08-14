@@ -4,7 +4,7 @@ import {
   getPerfCounters,
   resetPerfCounters,
   setPerf,
-} from "../preview/preview-perf.js";
+} from "../perf-counters.js";
 
 describe("preview-perf counters", () => {
   beforeEach(() => {

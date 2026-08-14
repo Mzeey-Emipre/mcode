@@ -30,7 +30,7 @@ vi.mock("@mcode/shared", () => ({
 }));
 
 import { registerTabHandlers } from "../preview/preview-tabs.js";
-import { getSession, previewTabScopeKey, sessions } from "../preview/preview-session.js";
+import { getSession, previewTabScopeKey, sessions } from "../../features/preview/state/window-session.js";
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 

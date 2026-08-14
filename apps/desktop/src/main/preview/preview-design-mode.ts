@@ -8,7 +8,7 @@
 
 import { BrowserWindow, ipcMain } from "electron";
 import { logger } from "@mcode/shared";
-import { getSession } from "./preview-session.js";
+import { getSession } from "../../features/preview/state/window-session.js";
 import { resolveActivePreviewWebContents } from "./preview-active-webcontents.js";
 
 const INSPECT_SCRIPT = String.raw`(() => {

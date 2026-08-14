@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { classifyLoadResult, crashError } from "../preview/classify-load-result.js";
+import { classifyLoadResult, crashError } from "../load-result.js";
 
 describe("classifyLoadResult", () => {
   it("returns 'ok' for a clean main-frame load (no error code, no http error)", () => {

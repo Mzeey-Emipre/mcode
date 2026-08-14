@@ -15,9 +15,9 @@ import {
   previewTabScopeKey,
   toBrowserTabSet,
   type PreviewSession,
-} from "./preview-session.js";
-import { bumpPerf } from "./preview-perf.js";
-import { type TabState } from "./preview-session.js";
+} from "../../features/preview/state/window-session.js";
+import { bumpPerf } from "../../features/preview/observability/perf-counters.js";
+import { type TabState } from "../../features/preview/state/window-session.js";
 
 type TabIpcResult<T> = { ok: true; data: T } | { ok: false; error: string };
 const MAX_PREVIEW_ID_LENGTH = 256;

@@ -112,7 +112,7 @@ import {
   registerPreviewSurfaceHandlers,
   requestRendererSurfaceDiscard,
 } from "../preview/preview-webview-adopt.js";
-import { getSession, previewTabScopeKey, sessions, toBrowserTabSet } from "../preview/preview-session.js";
+import { getSession, previewTabScopeKey, sessions, toBrowserTabSet } from "../../features/preview/state/window-session.js";
 
 const surface = (generation = 1) => ({
   identity: {

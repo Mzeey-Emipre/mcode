@@ -16,8 +16,10 @@ import {
   pageStatusReducer,
   initialPageStatus,
   type PageStatusEvent,
-} from "./page-status-reducer.js";
-import { bumpPerf } from "./preview-perf.js";
+} from "./page-status.js";
+import { bumpPerf } from "../observability/perf-counters.js";
+
+export { isAllowedHttpUrl, isAllowedPreviewUrl } from "../navigation/policy.js";
 
 /**
  * Result of a picture-reference capture; defined here so PreviewSession can reference
@@ -321,26 +323,4 @@ function pageStatusEqual(a: PreviewPageStatus, b: PreviewPageStatus): boolean {
     a.error?.code === b.error?.code &&
     a.error?.message === b.error?.message
   );
-}
-
-/**
- * Returns true when the URL is a valid HTTP or HTTPS URL.
- */
-export function isAllowedHttpUrl(url: string): boolean {
-  try {
-    const u = new URL(url);
-    return u.protocol === "http:" || u.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
-/** Accepts http, https, and file URLs for a Preview surface. */
-export function isAllowedPreviewUrl(url: string): boolean {
-  try {
-    const u = new URL(url);
-    return u.protocol === "http:" || u.protocol === "https:" || u.protocol === "file:";
-  } catch {
-    return false;
-  }
 }
