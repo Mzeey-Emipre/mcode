@@ -17,21 +17,21 @@ import {
   selectTabsToDiscard,
   type WarmTabRef,
   type DiscardConfig,
-} from "./select-tabs-to-discard.js";
+} from "./discard-policy.js";
 import {
   emitTabsUpdated,
   getThreadTabSet,
   type PreviewSession,
   type TabState,
   type ThreadTabSet,
-} from "../../features/preview/state/window-session.js";
+} from "../state/window-session.js";
 import {
   findAdoptedWebContentsForWindow,
   requestRendererSurfaceDiscard,
-} from "../../features/preview/surfaces/registry.js";
-import { validateResumeUrl } from "../../features/preview/navigation/local-file.js";
-import { isAllowedPreviewUrl } from "../../features/preview/navigation/policy.js";
-import { bumpPerf, setPerf } from "../../features/preview/observability/perf-counters.js";
+} from "../surfaces/registry.js";
+import { validateResumeUrl } from "../navigation/local-file.js";
+import { isAllowedPreviewUrl } from "../navigation/policy.js";
+import { bumpPerf, setPerf } from "../observability/perf-counters.js";
 
 /** Mirror server-manager's snapshot-aware schema resolution for packaged builds. */
 const SettingsSchema =
@@ -60,6 +60,18 @@ export function readMemorySaverConfig(): DiscardConfig {
     /* missing / unreadable / invalid JSON -> defaults */
   }
   return DEFAULT_CONFIG;
+}
+
+/** Cancels both Memory Saver timers for one Preview session. */
+export function clearDiscardTimers(s: PreviewSession): void {
+  if (s.discardSweepTimer) {
+    clearInterval(s.discardSweepTimer);
+    s.discardSweepTimer = null;
+  }
+  if (s.discardHiddenTimer) {
+    clearTimeout(s.discardHiddenTimer);
+    s.discardHiddenTimer = null;
+  }
 }
 
 /** Enumerates every warm tab across all threads in the session. */

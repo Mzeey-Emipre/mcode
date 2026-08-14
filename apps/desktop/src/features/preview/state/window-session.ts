@@ -247,18 +247,6 @@ export function toBrowserTabSet(s: PreviewSession, threadId: string): BrowserTab
     tabs,
   };
 }
-/** Cancels both memory-saver discard timers (sweep interval + hidden one-shot). */
-export function clearDiscardTimers(s: PreviewSession): void {
-  if (s.discardSweepTimer) {
-    clearInterval(s.discardSweepTimer);
-    s.discardSweepTimer = null;
-  }
-  if (s.discardHiddenTimer) {
-    clearTimeout(s.discardHiddenTimer);
-    s.discardHiddenTimer = null;
-  }
-}
-
 /**
  * Runs the page-status reducer for `event`, stores the result on the session,
  * and emits the full {@link PreviewPageStatus} on `preview:page-status` when it
@@ -285,7 +273,7 @@ export function applyPageStatus(
 /**
  * Sends the active-thread tab set to the renderer on `preview:tabs-updated`.
  * Used by the discard scheduler so the tab bar reflects freshly-discarded
- * (cold) tabs. Mirrors the emit in preview-tabs.ts but rebuilds from session
+ * (cold) tabs. Mirrors the emit in tabs/handlers.ts but rebuilds from session
  * state rather than a pre-synced set.
  */
 export function emitTabsUpdated(win: BrowserWindow, s: PreviewSession, threadId: string): void {
