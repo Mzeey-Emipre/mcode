@@ -3,7 +3,7 @@ import {
   selectTabsToDiscard,
   type WarmTabRef,
   type DiscardConfig,
-} from "../preview/select-tabs-to-discard.js";
+} from "../discard-policy.js";
 
 const CONFIG: DiscardConfig = { maxWarm: 3, bgIdleMs: 300_000, hiddenIdleMs: 60_000 };
 const NOW = 10_000_000;

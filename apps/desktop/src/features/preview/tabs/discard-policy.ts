@@ -1,5 +1,5 @@
 /**
- * Pure memory-saver discard policy for the embedded preview (ADR 0002).
+ * Pure Memory Saver discard policy for the embedded preview (ADR 0002).
  *
  * Decides which warm preview tabs to discard given the current warm set, which
  * tab is active, whether the panel is visible, the clock, and the tunable

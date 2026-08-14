@@ -25,7 +25,7 @@ import {
   resolvePreviewNavigationTarget,
   type PreviewResolveNavigationResult,
 } from "./resolve-target.js";
-import { onPreviewHidden, onPreviewVisible } from "../../../main/preview/preview-discard-scheduler.js";
+import { onPreviewHidden, onPreviewVisible } from "../tabs/discard-scheduler.js";
 import { previewSessionAdapter } from "../security/electron-session-policy.js";
 import { findAdoptedWebContentsForWindow } from "../surfaces/registry.js";
 

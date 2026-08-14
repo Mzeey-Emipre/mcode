@@ -29,8 +29,8 @@ vi.mock("@mcode/shared", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-import { registerTabHandlers } from "../preview/preview-tabs.js";
-import { getSession, previewTabScopeKey, sessions } from "../../features/preview/state/window-session.js";
+import { registerTabHandlers } from "../handlers.js";
+import { getSession, previewTabScopeKey, sessions } from "../../state/window-session.js";
 
 type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -137,6 +137,37 @@ describe("preview tab handlers", () => {
     expect(activated.ok && activated.data.tabs).toContainEqual(expect.objectContaining({
       id: opened.data.tabId,
       title: "Loaded page",
+      url: "https://example.test/loaded",
+      faviconUrl: "https://example.test/favicon.ico",
+    }));
+  });
+
+  it("clears explicit null chrome fields while preserving omitted fields", () => {
+    const listed = invoke<{ activeTabId: string }>("preview:tabs.list", {
+      workspaceId: "workspace-A",
+      threadId: "thread-A",
+    });
+    expect(listed.ok).toBe(true);
+    if (!listed.ok) return;
+
+    expect(invoke("preview:tabs.updateChrome", {
+      workspaceId: "workspace-A",
+      threadId: "thread-A",
+      tabId: listed.data.activeTabId,
+      title: "Loaded page",
+      url: "https://example.test/loaded",
+      faviconUrl: "https://example.test/favicon.ico",
+    })).toMatchObject({ ok: true });
+
+    const updated = invoke<{ tabs: Array<Record<string, unknown>> }>("preview:tabs.updateChrome", {
+      workspaceId: "workspace-A",
+      threadId: "thread-A",
+      tabId: listed.data.activeTabId,
+      title: null,
+    });
+    expect(updated.ok && updated.data.tabs).toContainEqual(expect.objectContaining({
+      id: listed.data.activeTabId,
+      title: null,
       url: "https://example.test/loaded",
       faviconUrl: "https://example.test/favicon.ico",
     }));

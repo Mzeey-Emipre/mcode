@@ -13,14 +13,15 @@ import { registerNavigationHandlers } from "../../features/preview/navigation/ha
 import { registerCaptureHandlers, registerWebRequestInterceptor } from "./preview-capture.js";
 import { registerOverlayHandlers } from "./preview-overlay.js";
 import { registerSpillHandlers } from "./preview-spill.js";
-import { registerTabHandlers } from "./preview-tabs.js";
+import { registerTabHandlers } from "../../features/preview/tabs/handlers.js";
 import { getPerfCounters } from "../../features/preview/observability/perf-counters.js";
 import { registerPreviewSurfaceHandlers } from "../../features/preview/surfaces/registry.js";
 import { registerDesignModeHandlers } from "./preview-design-mode.js";
 import { registerBrowserAutomationHandlers } from "../browser-automation/index.js";
 import { registerPreviewSessionPolicy } from "../../features/preview/security/electron-session-policy.js";
 import { abortOverlayCapture } from "./preview-overlay.js";
-import { clearDiscardTimers, sessions } from "../../features/preview/state/window-session.js";
+import { sessions } from "../../features/preview/state/window-session.js";
+import { clearDiscardTimers } from "../../features/preview/tabs/discard-scheduler.js";
 import { disposePreviewSurfacesForWindow } from "../../features/preview/surfaces/registry.js";
 
 /** Releases Preview resources owned by one closing renderer window. */

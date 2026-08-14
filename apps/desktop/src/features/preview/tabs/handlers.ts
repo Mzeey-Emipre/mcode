@@ -15,9 +15,9 @@ import {
   previewTabScopeKey,
   toBrowserTabSet,
   type PreviewSession,
-} from "../../features/preview/state/window-session.js";
-import { bumpPerf } from "../../features/preview/observability/perf-counters.js";
-import { type TabState } from "../../features/preview/state/window-session.js";
+} from "../state/window-session.js";
+import { bumpPerf } from "../observability/perf-counters.js";
+import { type TabState } from "../state/window-session.js";
 
 type TabIpcResult<T> = { ok: true; data: T } | { ok: false; error: string };
 const MAX_PREVIEW_ID_LENGTH = 256;
@@ -38,6 +38,10 @@ function normaliseTabId(value: unknown): string | null {
 
 function normaliseWorkspaceId(value: unknown): string | null {
   return normalisePreviewId(value);
+}
+
+function hasOwnField(value: unknown, field: string): boolean {
+  return typeof value === "object" && value !== null && Object.prototype.hasOwnProperty.call(value, field);
 }
 
 function normaliseChromeField(value: unknown, maxLength: number): string | null | undefined {
@@ -255,13 +259,24 @@ export function registerTabHandlers(): void {
       const tid = normaliseThreadId(payload?.threadId);
       const workspaceId = normaliseWorkspaceId(payload?.workspaceId);
       const tabId = normaliseTabId(payload?.tabId);
-      const title = normaliseChromeField(payload?.title, BROWSER_TAB_INFO_STRING_MAX.title);
-      const url = normaliseChromeUrl(payload?.url);
-      const faviconUrl = normaliseChromeField(payload?.faviconUrl, BROWSER_TAB_INFO_STRING_MAX.faviconUrl);
+      const hasTitle = hasOwnField(payload, "title");
+      const hasUrl = hasOwnField(payload, "url");
+      const hasFaviconUrl = hasOwnField(payload, "faviconUrl");
+      const title = hasTitle
+        ? normaliseChromeField(payload?.title, BROWSER_TAB_INFO_STRING_MAX.title)
+        : undefined;
+      const url = hasUrl ? normaliseChromeUrl(payload?.url) : undefined;
+      const faviconUrl = hasFaviconUrl
+        ? normaliseChromeField(payload?.faviconUrl, BROWSER_TAB_INFO_STRING_MAX.faviconUrl)
+        : undefined;
       if (!tid) return { ok: false, error: "invalid-thread-id" };
       if (!workspaceId) return { ok: false, error: "invalid-workspace-id" };
       if (!tabId) return { ok: false, error: "invalid-tab-id" };
-      if (title === undefined || url === undefined || faviconUrl === undefined) {
+      if (
+        (hasTitle && title === undefined) ||
+        (hasUrl && url === undefined) ||
+        (hasFaviconUrl && faviconUrl === undefined)
+      ) {
         return { ok: false, error: "invalid-tab-chrome" };
       }
 
@@ -270,9 +285,9 @@ export function registerTabHandlers(): void {
       const set = ensureThreadTabSet(s, tid);
       const tab = set.tabs.find((candidate) => candidate.id === tabId);
       if (!tab) return { ok: false, error: "tab-not-found" };
-      tab.title = title;
-      tab.resumeUrl = url;
-      tab.faviconUrl = faviconUrl;
+      if (hasTitle) tab.title = title ?? null;
+      if (hasUrl) tab.resumeUrl = url ?? null;
+      if (hasFaviconUrl) tab.faviconUrl = faviconUrl ?? null;
       return { ok: true, data: buildTabSet(s, tid) };
     },
   );
