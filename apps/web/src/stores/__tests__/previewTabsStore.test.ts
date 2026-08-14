@@ -139,6 +139,31 @@ describe("previewTabsStore", () => {
     unsubscribe();
   });
 
+  it("clears live chrome when the host activates another page", () => {
+    const { setTabSet, setLiveChrome } = usePreviewTabsStore.getState();
+    setTabSet(WORKSPACE_ID, SCOPE, set("first", [
+      page("first", { url: "https://example.com/?first", active: true }),
+      page("second", { url: "https://example.org/?second" }),
+    ]));
+    setLiveChrome(WORKSPACE_ID, SCOPE, {
+      title: "First",
+      url: "https://example.com/?first",
+      favicon: null,
+    });
+
+    setTabSet(WORKSPACE_ID, SCOPE, set("second", [
+      page("first", { url: "https://example.com/?first" }),
+      page("second", { url: "https://example.org/?second", active: true }),
+    ]));
+
+    const state = usePreviewTabsStore.getState();
+    const display = overlayDisplaySet(
+      state.tabSetByScope[SCOPE_KEY] ?? null,
+      state.liveChromeByScope[SCOPE_KEY] ?? null,
+    );
+    expect(display?.tabs.find((tab) => tab.id === "second")?.url).toBe("https://example.org/?second");
+  });
+
   it("keeps equal scope ids isolated by workspace", () => {
     const otherWorkspaceId = "workspace-2";
     const firstKey = previewTabsScopeKey(WORKSPACE_ID, SCOPE);
