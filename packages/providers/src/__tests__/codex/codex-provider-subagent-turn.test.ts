@@ -340,6 +340,21 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
       toolCallId: "child-tool",
       turnExecutionId: "exec-child-buffer",
     }));
+    const childToolEvents = events.filter((event) => (
+      event.type === AgentEventType.ToolUse && event.toolCallId === "child-tool"
+    ));
+    expect(childToolEvents).toHaveLength(1);
+    entry.server.emit("notification", {
+      method: "item/started",
+      params: {
+        threadId: "child-buffered",
+        turnId: "child-native-turn",
+        item: { type: "commandExecution", id: "child-tool", command: "echo child" },
+      },
+    });
+    expect(events.filter((event) => (
+      event.type === AgentEventType.ToolUse && event.toolCallId === "child-tool"
+    ))).toHaveLength(1);
 
     for (let i = 0; i < 140; i++) {
       entry.server.emit("notification", {
@@ -352,6 +367,132 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
       });
     }
     expect(state.pendingChildEvents).toHaveLength(128);
+  });
+
+  it("replays mapper and provider child buffers in structural order exactly once", async () => {
+    const provider = makeProvider();
+    const events: AgentEvent[] = [];
+    provider.on("event", (event: AgentEvent) => events.push(event));
+    const entry = await startSession(provider, "mcode-child-two-layer-replay", "child-two-layer-replay");
+    const state = entry as PoolEntry & {
+      currentTurnExecutionId?: string;
+      activeParentTurnExecutionId?: string;
+      turnBindingPhase: "idle" | "awaiting" | "bound";
+      currentNativeTurnId?: string;
+      turnExecutionIdsByNativeTurn: Map<string, string>;
+      childExecutionGenerations: Map<string, { executionId: string; generation: number }>;
+      nativeThreadExecutionIds: Map<string, string>;
+      pendingChildEvents: unknown[];
+    };
+    entry.mapper.prepareForTurn();
+    state.currentTurnExecutionId = "exec-mcode-child-two-layer-replay";
+    state.activeParentTurnExecutionId = "exec-mcode-child-two-layer-replay";
+    state.turnBindingPhase = "bound";
+    state.currentNativeTurnId = "main-native-turn";
+    state.turnExecutionIdsByNativeTurn.set("main-native-turn", state.currentTurnExecutionId);
+
+    entry.server.emit("notification", {
+      method: "item/started",
+      params: {
+        threadId: "sdk-thread-1",
+        turnId: "main-native-turn",
+        item: {
+          type: "collabAgentToolCall",
+          id: "agent-two-layer",
+          tool: "spawnAgent",
+          receiverThreadIds: ["child-two-layer"],
+        },
+      },
+    });
+    state.activeParentTurnExecutionId = undefined;
+    entry.server.emit("notification", {
+      method: "item/started",
+      params: {
+        threadId: "child-two-layer",
+        item: { type: "commandExecution", id: "child-two-layer-item", command: "echo child" },
+      },
+    });
+    entry.server.emit("notification", {
+      method: "item/completed",
+      params: {
+        threadId: "child-two-layer",
+        item: {
+          type: "commandExecution",
+          id: "child-two-layer-item",
+          command: "echo child",
+          aggregatedOutput: "child output",
+          exitCode: 0,
+        },
+      },
+    });
+    entry.server.emit("notification", {
+      method: "turn/started",
+      params: { threadId: "child-two-layer", turn: { id: "child-two-layer-turn" } },
+    });
+    expect(state.pendingChildEvents).toHaveLength(3);
+
+    state.activeParentTurnExecutionId = state.currentTurnExecutionId;
+    entry.server.emit("notification", {
+      method: "item/started",
+      params: {
+        threadId: "sdk-thread-1",
+        turnId: "main-native-turn",
+        item: {
+          type: "subAgentActivity",
+          id: "subagent-two-layer",
+          kind: "started",
+          agentThreadId: "child-two-layer",
+          agentPath: "agents/child-two-layer",
+        },
+      },
+    });
+
+    const childEvents = events.filter((event) => (
+      "codexChild" in event
+      && event.codexChild?.nativeThreadId === "child-two-layer"
+    ));
+    expect(childEvents.map((event) => event.type)).toEqual([
+      AgentEventType.TurnStarted,
+      AgentEventType.ToolUse,
+      AgentEventType.ToolResult,
+    ]);
+    expect(childEvents.map((event) => (
+      event.type === AgentEventType.ToolUse || event.type === AgentEventType.ToolResult
+        ? event.toolCallId
+        : event.type
+    ))).toEqual([
+      AgentEventType.TurnStarted,
+      "child-two-layer-item",
+      "child-two-layer-item",
+    ]);
+    expect(childEvents).toHaveLength(3);
+    expect(childEvents.every((event) => (
+      (event as AgentEvent & { turnExecutionId?: string }).turnExecutionId
+        === "exec-mcode-child-two-layer-replay"
+    ))).toBe(true);
+    const childEventIds = childEvents.map((event) => (
+      "codexChild" in event ? event.codexChild?.nativeEventId : undefined
+    ));
+    expect(childEventIds.every((id): id is string => Boolean(id))).toBe(true);
+    expect(new Set(childEventIds).size).toBe(3);
+
+    entry.server.emit("notification", {
+      method: "item/completed",
+      params: {
+        threadId: "child-two-layer",
+        item: {
+          type: "commandExecution",
+          id: "child-two-layer-item",
+          command: "echo child",
+          aggregatedOutput: "child output",
+          exitCode: 0,
+        },
+      },
+    });
+    expect(events.filter((event) => (
+      "codexChild" in event
+      && event.codexChild?.nativeThreadId === "child-two-layer"
+    ))).toHaveLength(3);
   });
 
   it("enriches nested native sub-agents from one authoritative child lookup each", async () => {

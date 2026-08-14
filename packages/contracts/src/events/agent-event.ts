@@ -6,6 +6,20 @@ import { GoalStateSchema } from "../models/goal.js";
 
 const TurnOutcomeSchema = z.enum(["completed", "errored", "cancelled"]);
 
+const CodexChildEvidenceSchema = z
+  .object({
+    nativeThreadId: z.string().trim().min(1).max(512),
+    nativeTurnId: z.string().trim().min(1).max(512).optional(),
+    parentCollaborationItemId: z.string().trim().min(1).max(512),
+    prompt: z.string().max(32_768).optional(),
+    nativeEventId: z.string().trim().min(1).max(1_024).optional(),
+    nativeItemId: z.string().trim().min(1).max(512).optional(),
+    itemEventKey: z.string().trim().min(1).max(512).optional(),
+    outcome: TurnOutcomeSchema.optional(),
+  })
+  .strict();
+
+
 /**
  * All valid `type` discriminants for `AgentEvent`.
  * Use these constants instead of string literals to get autocomplete and
@@ -54,6 +68,7 @@ const AgentEventPayloadSchema = z.discriminatedUnion("type", [
        *  Used by the client to populate `runningThreadIds` for live-session UI indicators. */
       type: z.literal(AgentEventType.TurnStarted),
       threadId: z.string(),
+      codexChild: CodexChildEvidenceSchema.optional(),
       /** Server tracker generation that owns live file effects for this turn. */
       fileEffectTurnId: z.string().optional(),
     }),
@@ -62,6 +77,7 @@ const AgentEventPayloadSchema = z.discriminatedUnion("type", [
       threadId: z.string(),
       content: z.string(),
       tokens: z.number().nullable(),
+      codexChild: CodexChildEvidenceSchema.optional(),
       /** Server-assigned message ID, injected after DB persistence. Used by the client for stable branching. */
       messageId: z.string().optional(),
       /**
@@ -87,6 +103,7 @@ const AgentEventPayloadSchema = z.discriminatedUnion("type", [
       toolName: z.string(),
       toolInput: z.record(z.unknown()),
       parentToolCallId: z.string().optional(),
+      codexChild: CodexChildEvidenceSchema.optional(),
     }),
     z.object({
       type: z.literal(AgentEventType.ToolResult),
@@ -104,6 +121,7 @@ const AgentEventPayloadSchema = z.discriminatedUnion("type", [
       outputArtifactPath: z.string().optional(),
       /** Optional late-arriving metadata merged into the matching tool call input. */
       toolInput: z.record(z.unknown()).optional(),
+      codexChild: CodexChildEvidenceSchema.optional(),
     }),
     z.object({
       type: z.literal(AgentEventType.TurnComplete),
@@ -120,17 +138,20 @@ const AgentEventPayloadSchema = z.discriminatedUnion("type", [
       cacheWriteTokens: z.number().optional(),
       costMultiplier: z.number().optional(),
       providerId: z.string().optional(),
+      codexChild: CodexChildEvidenceSchema.optional(),
     }),
     z.object({
       type: z.literal(AgentEventType.Error),
       threadId: z.string(),
       error: z.string(),
+      codexChild: CodexChildEvidenceSchema.optional(),
     }),
     z.object({
       type: z.literal(AgentEventType.Ended),
       threadId: z.string(),
       outcome: TurnOutcomeSchema.optional(),
       reason: z.string().optional(),
+      codexChild: CodexChildEvidenceSchema.optional(),
     }),
     z.object({
       type: z.literal(AgentEventType.System),
@@ -166,6 +187,7 @@ const AgentEventPayloadSchema = z.discriminatedUnion("type", [
       threadId: z.string(),
       /** Partial response text - append to accumulate the full response. */
       delta: z.string(),
+      codexChild: CodexChildEvidenceSchema.optional(),
       /**
        * Set to `true` when this delta belongs to the final user-facing response
        * for providers that can classify it while streaming. The client uses

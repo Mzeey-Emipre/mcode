@@ -2658,6 +2658,23 @@ export class AgentService {
         const normalizedEvent = this.prepareProviderEvent(event);
         if (!normalizedEvent) return;
         event = normalizedEvent;
+        if (
+          event.type === AgentEventType.ToolUse
+          && event.toolName === "Agent"
+          && event.toolInput.codexCollabKind === "spawnAgent"
+          && !event.codexChild
+          && event.turnExecutionId
+        ) {
+          this.startCodexChildFromProviderEvent(event);
+          // The child turn owns delegated input; the parent narrative keeps only its compact Agent reference.
+          event = {
+            ...event,
+            toolInput: Object.fromEntries(
+              Object.entries(event.toolInput).filter(([key]) => key !== "prompt"),
+            ),
+          };
+        }
+        if ("codexChild" in event && event.codexChild && this.handleCodexChildProviderEvent(event)) return;
         const priorFinalization = this.fileTrackingFinalizationByThread.get(event.threadId);
         const existingBarrier = this.providerEventBarrierByThread.get(event.threadId);
         if (!existingBarrier && priorFinalization && event.type === AgentEventType.TurnStarted) {
@@ -3394,6 +3411,222 @@ export class AgentService {
       };
       provider.on("event", handleEvent);
     }
+  }
+
+  private startCodexChildFromProviderEvent(
+    event: Extract<AgentEvent, { type: typeof AgentEventType.ToolUse }>,
+  ): void {
+    const executionId = event.turnExecutionId;
+    if (!executionId) return;
+    const parentTurn = this.canonicalSink.loadTurnByExecution(executionId);
+    const parentThread = this.canonicalSink.loadThread(event.threadId);
+    if (!parentTurn || !parentThread) return;
+    const description = typeof event.toolInput.description === "string"
+      ? event.toolInput.description
+      : undefined;
+    const prompt = typeof event.toolInput.prompt === "string" ? event.toolInput.prompt : undefined;
+    try {
+      this.canonicalSink.startCodexChildDelegation({
+        parentThreadId: parentThread.id,
+        parentTurnId: parentTurn.id,
+        parentExecutionId: executionId,
+        parentItemId: `toolCall:${event.toolCallId}`,
+        receiverThreadIds: [],
+        description,
+        prompt,
+        providerIdentities: parentThread.providerIdentities,
+      });
+    } catch (error) {
+      logger.warn("Codex child provisional persistence failed", {
+        threadId: event.threadId,
+        toolCallId: event.toolCallId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private handleCodexChildProviderEvent(event: AgentEvent): boolean {
+    if (!("codexChild" in event)) return false;
+    const evidence = event.codexChild;
+    if (!evidence || !evidence.nativeTurnId) {
+      this.recordCodexChildRoutingFailure(event, "missing-native-turn");
+      return true;
+    }
+    const parentExecutionId = event.turnExecutionId;
+    if (!parentExecutionId) {
+      this.recordCodexChildRoutingFailure(event, "missing-parent-execution");
+      return true;
+    }
+    const parentTurn = this.canonicalSink.loadTurnByExecution(parentExecutionId);
+    if (!parentTurn) {
+      this.recordCodexChildRoutingFailure(event, "parent-turn-not-found");
+      return true;
+    }
+    const parentItemId = `toolCall:${evidence.parentCollaborationItemId}`;
+    const delegation = this.canonicalSink.loadCodexChildDelegation(event.threadId, parentItemId);
+    if (!delegation) {
+      this.recordCodexChildRoutingFailure(event, "delegation-not-found");
+      return true;
+    }
+    try {
+      this.canonicalSink.registerCodexReceiverThreadIds({
+        parentThreadId: event.threadId,
+        parentTurnId: parentTurn.id,
+        parentExecutionId,
+        parentItemId,
+        nativeThreadId: evidence.nativeThreadId,
+        receiverThreadIds: [evidence.nativeThreadId],
+      });
+      if (event.type === AgentEventType.TurnStarted) {
+        this.canonicalSink.startCodexChildTurn({
+          parentThreadId: event.threadId,
+          parentTurnId: parentTurn.id,
+          parentExecutionId,
+          parentItemId,
+          nativeThreadId: evidence.nativeThreadId,
+          nativeTurnId: evidence.nativeTurnId,
+          ...(evidence.prompt ? { prompt: evidence.prompt } : {}),
+        });
+        return true;
+      }
+      const childThread = this.canonicalSink.bindCodexChildIdentity({
+        parentThreadId: event.threadId,
+        parentTurnId: parentTurn.id,
+        parentExecutionId,
+        parentItemId,
+        nativeThreadId: evidence.nativeThreadId,
+      }).childThread;
+      if (event.type === AgentEventType.TextDelta) {
+        if (!evidence.nativeItemId) return true;
+        this.canonicalSink.recordCodexChildItem({
+          childThreadId: childThread.id,
+          nativeTurnId: evidence.nativeTurnId,
+          nativeItemId: evidence.nativeItemId,
+          eventKey: evidence.itemEventKey ?? "completed",
+          kind: "reasoning",
+          payload: {
+            projection: "codexChildReasoning",
+            content: event.delta,
+          },
+        });
+        return true;
+      }
+      if (event.type === AgentEventType.ToolUse) {
+        this.canonicalSink.recordCodexChildItem({
+          childThreadId: childThread.id,
+          nativeTurnId: evidence.nativeTurnId,
+          nativeItemId: evidence.nativeItemId ?? event.toolCallId,
+          eventKey: evidence.itemEventKey ?? "started",
+          kind: "tool-call",
+          payload: {
+            projection: "codexChildToolCall",
+            toolName: event.toolName,
+            toolInput: event.toolInput,
+          },
+        });
+        return true;
+      }
+      if (event.type === AgentEventType.ToolResult) {
+        this.canonicalSink.recordCodexChildItem({
+          childThreadId: childThread.id,
+          nativeTurnId: evidence.nativeTurnId,
+          nativeItemId: evidence.nativeItemId ?? evidence.parentCollaborationItemId,
+          eventKey: evidence.itemEventKey ?? "assistant-result",
+          kind: evidence.nativeItemId ? "tool-result" : "message",
+          payload: evidence.nativeItemId
+            ? {
+                projection: "codexChildToolResult",
+                output: event.output,
+                isError: event.isError,
+              }
+            : {
+                projection: "message",
+                message: {
+                  id: `codex-child-message:${evidence.nativeTurnId}`,
+                  role: "assistant",
+                  content: event.output,
+                  timestamp: new Date().toISOString(),
+                },
+              },
+        });
+        return true;
+      }
+      if (event.type === AgentEventType.Message) {
+        const nativeItemId = evidence.nativeItemId ?? evidence.nativeTurnId;
+        this.canonicalSink.recordCodexChildItem({
+          childThreadId: childThread.id,
+          nativeTurnId: evidence.nativeTurnId,
+          nativeItemId,
+          eventKey: evidence.itemEventKey ?? "completed",
+          kind: "message",
+          payload: {
+            projection: "message",
+            message: {
+              id: `codex-child-message:${nativeItemId}`,
+              thread_id: childThread.id,
+              role: "assistant",
+              content: event.content,
+              tool_calls: null,
+              files_changed: null,
+              cost_usd: null,
+              tokens_used: event.tokens,
+              timestamp: new Date().toISOString(),
+              sequence: 0,
+              attachments: null,
+            },
+          },
+        });
+        return true;
+      }
+      if (event.type === AgentEventType.TurnComplete || event.type === AgentEventType.Ended) {
+        this.canonicalSink.finishCodexChildTurn({
+          childThreadId: childThread.id,
+          nativeTurnId: evidence.nativeTurnId,
+          outcome: evidence.outcome ?? "completed",
+        });
+        return true;
+      }
+      if (event.type === AgentEventType.Error) {
+        this.canonicalSink.finishCodexChildTurn({
+          childThreadId: childThread.id,
+          nativeTurnId: evidence.nativeTurnId,
+          outcome: "errored",
+          error: event.error,
+        });
+        return true;
+      }
+    } catch (error) {
+      this.recordCodexChildRoutingFailure(
+        event,
+        error instanceof Error ? error.message : String(error),
+      );
+      logger.warn("Codex child canonical event rejected", {
+        threadId: event.threadId,
+        nativeThreadId: evidence.nativeThreadId,
+        nativeTurnId: evidence.nativeTurnId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return true;
+  }
+
+  private recordCodexChildRoutingFailure(event: AgentEvent, reason: string): void {
+    const evidence = "codexChild" in event ? event.codexChild : undefined;
+    const persisted = this.canonicalSink.recordCodexChildRoutingDiagnostic({
+      threadId: event.threadId,
+      parentItemId: evidence ? `toolCall:${evidence.parentCollaborationItemId}` : undefined,
+      executionId: event.turnExecutionId,
+      event,
+      reason,
+    });
+    if (!persisted) {
+      throw new Error(`Codex child routing invariant failed: ${reason}`);
+    }
+    logger.warn("Codex child routing diagnostic", {
+      threadId: event.threadId,
+      parentCollaborationItemId: evidence?.parentCollaborationItemId,
+      reason,
+    });
   }
 
   private handleMemoryPressure(snapshot: MemoryPressureSnapshot): void {

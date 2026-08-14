@@ -50,6 +50,15 @@ interface ThreadRow {
   has_file_changes: number;
 }
 
+function canonicalChildVisibilityClause(alias: string): string {
+  return `NOT EXISTS (
+    SELECT 1
+    FROM canonical_agent_threads canonical_child
+    WHERE canonical_child.id = ${alias}.id
+      AND canonical_child.parent_thread_id IS NOT NULL
+  )`;
+}
+
 /** Persisted delegation provenance attached to a destination thread. */
 export interface ThreadDelegationLineageRecord {
   coordinatorThreadId: string | null;
@@ -245,7 +254,11 @@ export class ThreadRepo {
 
     const rows = this.db
       .prepare(
-        `SELECT ${THREAD_COLUMNS} FROM threads WHERE workspace_id = ? AND deleted_at IS NULL ORDER BY created_at DESC LIMIT ?`,
+        `SELECT ${THREAD_COLUMNS} FROM threads
+         WHERE workspace_id = ?
+           AND deleted_at IS NULL
+           AND ${canonicalChildVisibilityClause("threads")}
+         ORDER BY created_at DESC LIMIT ?`,
       )
       .all(workspaceId, clampedLimit) as ThreadRow[];
 
@@ -270,7 +283,9 @@ export class ThreadRepo {
                 w.name AS workspace_name, w.path AS workspace_path
          FROM threads t
          JOIN workspaces w ON w.id = t.workspace_id
-         WHERE t.deleted_at IS NULL AND t.user_completed_at IS NULL
+         WHERE t.deleted_at IS NULL
+           AND t.user_completed_at IS NULL
+           AND ${canonicalChildVisibilityClause("t")}
          ORDER BY t.updated_at DESC
          LIMIT ?`,
       )
@@ -294,7 +309,11 @@ export class ThreadRepo {
     limit?: number;
   }): { threads: Thread[]; workspaces: { id: string; name: string; path: string }[] } {
     const clampedLimit = Math.max(1, Math.min(200, opts.limit ?? 100));
-    const conditions: string[] = ["t.deleted_at IS NULL", "w.deleted_at IS NULL"];
+    const conditions: string[] = [
+      "t.deleted_at IS NULL",
+      "w.deleted_at IS NULL",
+      canonicalChildVisibilityClause("t"),
+    ];
     const params: unknown[] = [];
 
     if (opts.query) {
@@ -841,6 +860,7 @@ export class ThreadRepo {
        WHERE workspace_id IN (${placeholders})
          AND deleted_at IS NULL
          AND user_completed_at IS NULL
+         AND ${canonicalChildVisibilityClause("threads")}
        GROUP BY workspace_id`,
     ).all(...ids) as { id: string; n: number }[];
     return new Map(rows.map((r) => [r.id, r.n]));
@@ -950,7 +970,12 @@ export class ThreadRepo {
   /** Count active capacity owned by one paired external integration. */
   countActiveByIntegration(integrationId: string): number {
     const row = this.db.prepare(
-      "SELECT COUNT(*) AS count FROM threads WHERE created_by_integration_id = ? AND deleted_at IS NULL AND status IN ('active', 'paused')",
+      `SELECT COUNT(*) AS count
+       FROM threads
+       WHERE created_by_integration_id = ?
+         AND deleted_at IS NULL
+         AND status IN ('active', 'paused')
+         AND ${canonicalChildVisibilityClause("threads")}`,
     ).get(integrationId) as { count: number };
     return row.count;
   }
@@ -1008,7 +1033,8 @@ export class ThreadRepo {
          WHERE workspace_id = (SELECT workspace_id FROM threads WHERE id = ?)
          AND branch = ?
          AND id != ?
-         AND deleted_at IS NULL`,
+         AND deleted_at IS NULL
+         AND ${canonicalChildVisibilityClause("threads")}`,
       )
       .get(threadId, branch, threadId) as { count: number };
     return row.count;

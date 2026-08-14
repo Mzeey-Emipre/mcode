@@ -21,6 +21,21 @@ const PendingAgentTurnSchema = AgentTurnSchema.refine(
 /** Semantic event payload that records one canonical model entity. */
 export const CanonicalAgentEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("thread.recorded"), thread: AgentThreadSchema }).strict(),
+  z
+    .object({
+      type: z.literal("child-thread.recorded"),
+      parentThreadId: AgentThreadSchema.shape.id,
+      childThread: AgentThreadSchema,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("child-thread.bound"),
+      parentThreadId: AgentThreadSchema.shape.id,
+      childThreadId: AgentThreadSchema.shape.id,
+      providerIdentity: ProviderIdentitySchema,
+    })
+    .strict(),
   z.object({ type: z.literal("turn.created"), turn: PendingAgentTurnSchema }).strict(),
   z.object({ type: z.literal("turn.started"), startedAt: CanonicalTimestampSchema }).strict(),
   z.object({ type: z.literal("turn.completed"), endedAt: CanonicalTimestampSchema }).strict(),

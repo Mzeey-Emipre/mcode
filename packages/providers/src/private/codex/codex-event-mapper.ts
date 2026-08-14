@@ -1,4 +1,4 @@
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import { logger } from "@mcode/shared";
 import { AgentEventType } from "@mcode/contracts";
 import type { AgentEvent, GoalState, ProviderFileMutationStart } from "@mcode/contracts";
@@ -129,6 +129,16 @@ export class CodexEventMapper {
   private parentAgentToolCallIdById = new Map<string, string>();
   /** Private assistant text streamed by Codex child threads, keyed by child thread id. */
   private childAssistantTextByThreadId = new Map<string, BoundedToolOutputBuffer>();
+  /** Native assistant item ids used to give completed child messages structural identity. */
+  private childAssistantItemIdByThreadId = new Map<string, string>();
+  /** Native child turn ids learned from exact turn-start evidence. */
+  private childTurnIdByThreadId = new Map<string, string>();
+  /** Suppresses duplicate native child turn-start notifications. */
+  private readonly emittedChildTurnStarts = new Set<string>();
+  /** Suppresses duplicate child semantic events across mapper replay paths. */
+  private readonly emittedChildNativeEventIds = new Set<string>();
+  /** Suppresses repeated native child notifications before semantic mapping. */
+  private readonly seenChildNativeNotificationKeys = new Set<string>();
   /** Forces streamed output through artifact spooling during memory pressure. */
   private forceOutputArtifacts = false;
   /**
@@ -144,9 +154,14 @@ export class CodexEventMapper {
    * under the correct Agent row even when multiple sub-agents run in parallel.
    */
   private collabReceiverThreadToCollabId = new Map<string, string>();
+  /** Receiver ids present at item start require exact child-turn binding before routing. */
+  private readonly strictChildTurnThreads = new Set<string>();
   /** Bounded mutation/collab notifications received before spawn receiver metadata. */
   private earlyChildNotificationsByThread = new Map<string, CodexNotification[]>();
   private earlyChildNotificationCount = 0;
+  /** Bounded child items held until the receiver reports an exact native turn id. */
+  private readonly childNotificationsBeforeTurnByThread = new Map<string, CodexNotification[]>();
+  private childNotificationsBeforeTurnCount = 0;
   /** Child events replayed while the current main-thread notification registers receivers. */
   private replayedChildEvents: AgentEvent[] = [];
   /** Monotonic sequence that keeps repeated native subagent interactions distinct. */
@@ -171,6 +186,11 @@ export class CodexEventMapper {
   /** Updates the app-server thread id used to classify incoming notifications. */
   setMainCodexThreadId(threadId: string): void {
     this.mainCodexThreadId = threadId;
+  }
+
+  /** Reports whether a native thread was structurally registered by a Codex collaboration item. */
+  hasReceiverThread(threadId: string): boolean {
+    return this.collabReceiverThreadToCollabId.has(threadId);
   }
 
   /** Enables or disables artifact-first buffering for future output chunks. */
@@ -256,6 +276,109 @@ export class CodexEventMapper {
     return typeof tid === "string" && tid.length > 0 ? tid : undefined;
   }
 
+  private nativeTurnId(notification: CodexNotification): string | undefined {
+    const params = notification.params as Record<string, unknown>;
+    const turn = params.turn;
+    if (turn && typeof turn === "object") {
+      const id = (turn as Record<string, unknown>).id;
+      if (typeof id === "string" && id.length > 0) return id;
+    }
+    const id = params.turnId;
+    return typeof id === "string" && id.length > 0 ? id : undefined;
+  }
+
+  private bufferedChildTurnId(childThreadId: string | undefined): string | undefined {
+    return childThreadId ? this.childTurnIdByThreadId.get(childThreadId) : undefined;
+  }
+
+  private withChildEvidence(
+    events: AgentEvent[],
+    evidence: {
+      nativeThreadId: string;
+      nativeTurnId?: string;
+      parentCollaborationItemId: string;
+      prompt?: string;
+      nativeItemId?: string;
+      itemEventKey?: string;
+      outcome?: "completed" | "errored" | "cancelled";
+    },
+  ): AgentEvent[] {
+    return events.map((event) => ({
+      ...event,
+      codexChild: {
+        ...evidence,
+        nativeEventId: this.childNativeEventId(event.type, evidence),
+      },
+    } as AgentEvent));
+  }
+
+  private childNativeEventId(
+    eventType: string,
+    evidence: {
+      nativeThreadId: string;
+      nativeTurnId?: string;
+      parentCollaborationItemId: string;
+      nativeItemId?: string;
+      itemEventKey?: string;
+    },
+  ): string {
+    const structuralEvidence = JSON.stringify([
+      eventType,
+      evidence.nativeThreadId,
+      evidence.nativeTurnId ?? "",
+      evidence.parentCollaborationItemId,
+      evidence.nativeItemId ?? "",
+      evidence.itemEventKey ?? "",
+    ]);
+    return `codex-child:${createHash("sha256").update(structuralEvidence).digest("hex")}`;
+  }
+
+  private dedupeChildEvents(events: AgentEvent[]): AgentEvent[] {
+    const deduped: AgentEvent[] = [];
+    for (const event of events) {
+      if (!("codexChild" in event) || !event.codexChild?.nativeEventId) {
+        deduped.push(event);
+        continue;
+      }
+      const eventId = event.codexChild.nativeEventId;
+      if (this.emittedChildNativeEventIds.has(eventId)) continue;
+      this.emittedChildNativeEventIds.add(eventId);
+      while (this.emittedChildNativeEventIds.size > MAX_EARLY_CHILD_NOTIFICATIONS * 2) {
+        const oldest = this.emittedChildNativeEventIds.values().next().value as string | undefined;
+        if (!oldest) break;
+        this.emittedChildNativeEventIds.delete(oldest);
+      }
+      deduped.push(event);
+    }
+    return deduped;
+  }
+
+  private childNativeNotificationKey(notification: CodexNotification): string | undefined {
+    const childThreadId = this.notificationThreadId(notification);
+    if (!childThreadId) return undefined;
+    const item = (notification.params as Record<string, unknown>).item as { id?: unknown } | undefined;
+    const itemId = typeof item?.id === "string" ? item.id : undefined;
+    const nativeTurnId = this.nativeTurnId(notification);
+    if (notification.method === "turn/started" || notification.method === "turn/completed") {
+      return JSON.stringify([notification.method, childThreadId, nativeTurnId ?? ""]);
+    }
+    if (itemId) return JSON.stringify([notification.method, childThreadId, nativeTurnId ?? "", itemId]);
+    return undefined;
+  }
+
+  private markChildNativeNotification(notification: CodexNotification): boolean {
+    const key = this.childNativeNotificationKey(notification);
+    if (!key) return false;
+    if (this.seenChildNativeNotificationKeys.has(key)) return true;
+    this.seenChildNativeNotificationKeys.add(key);
+    while (this.seenChildNativeNotificationKeys.size > MAX_EARLY_CHILD_NOTIFICATIONS * 2) {
+      const oldest = this.seenChildNativeNotificationKeys.values().next().value as string | undefined;
+      if (!oldest) break;
+      this.seenChildNativeNotificationKeys.delete(oldest);
+    }
+    return false;
+  }
+
   /** Classifies the notification against the app-server's main and known receiver threads. */
   private classifyNotificationThread(notification: CodexNotification): "main" | "child" | "unknown" {
     const notifThread = this.notificationThreadId(notification);
@@ -271,6 +394,7 @@ export class CodexEventMapper {
   private bufferEligibleEarlyChildNotification(notification: CodexNotification): boolean {
     const childThreadId = this.notificationThreadId(notification);
     if (!childThreadId || !this.isEligibleEarlyChildNotification(notification)) return false;
+    if (this.markChildNativeNotification(notification)) return true;
     if (this.earlyChildNotificationCount >= MAX_EARLY_CHILD_NOTIFICATIONS) return false;
     let pending = this.earlyChildNotificationsByThread.get(childThreadId);
     if (!pending) {
@@ -286,6 +410,30 @@ export class CodexEventMapper {
       notificationThreadId: childThreadId,
     });
     return true;
+  }
+
+  /** Hold structurally attributed child items until exact native turn evidence arrives. */
+  private bufferChildNotificationBeforeTurn(notification: CodexNotification): boolean {
+    const childThreadId = this.notificationThreadId(notification);
+    if (!childThreadId || this.childNotificationsBeforeTurnCount >= MAX_EARLY_CHILD_NOTIFICATIONS) {
+      return false;
+    }
+    let pending = this.childNotificationsBeforeTurnByThread.get(childThreadId);
+    if (!pending) {
+      if (this.childNotificationsBeforeTurnByThread.size >= MAX_EARLY_CHILD_THREADS) return false;
+      pending = [];
+      this.childNotificationsBeforeTurnByThread.set(childThreadId, pending);
+    }
+    pending.push(notification);
+    this.childNotificationsBeforeTurnCount += 1;
+    return true;
+  }
+
+  private drainChildNotificationsBeforeTurn(childThreadId: string): CodexNotification[] {
+    const pending = this.childNotificationsBeforeTurnByThread.get(childThreadId) ?? [];
+    this.childNotificationsBeforeTurnByThread.delete(childThreadId);
+    this.childNotificationsBeforeTurnCount -= pending.length;
+    return pending;
   }
 
   /** Captures file state at an eligible unknown child start without publishing an attributed tool row. */
@@ -305,9 +453,15 @@ export class CodexEventMapper {
   }
 
   private isEligibleEarlyChildNotification(notification: CodexNotification): boolean {
-    if (notification.method !== "item/started" && notification.method !== "item/completed") {
+    if (
+      notification.method !== "item/started"
+      && notification.method !== "item/completed"
+      && notification.method !== "turn/started"
+      && notification.method !== "turn/completed"
+    ) {
       return false;
     }
+    if (notification.method === "turn/started" || notification.method === "turn/completed") return true;
     const item = notification.params.item as CompletedItem | undefined;
     if (item?.type === "fileChange" || item?.type === "collabAgentToolCall") return true;
     return item?.type === "function_call"
@@ -319,6 +473,50 @@ export class CodexEventMapper {
   private mapChildThreadNotification(notification: CodexNotification): AgentEvent[] {
     const { method } = notification;
     const childThreadId = this.notificationThreadId(notification);
+    const parentCollaborationItemId = childThreadId
+      ? this.collabReceiverThreadToCollabId.get(childThreadId)
+      : undefined;
+    const explicitNativeTurnId = this.nativeTurnId(notification);
+    if (method === "turn/started" && childThreadId && explicitNativeTurnId) {
+      this.childTurnIdByThreadId.set(childThreadId, explicitNativeTurnId);
+    }
+    const nativeTurnId = this.bufferedChildTurnId(childThreadId) ?? explicitNativeTurnId;
+
+    if (method === "turn/started" && childThreadId && parentCollaborationItemId && nativeTurnId) {
+      const startKey = `${childThreadId}:${nativeTurnId}`;
+      if (this.emittedChildTurnStarts.has(startKey)) return [];
+      this.emittedChildTurnStarts.add(startKey);
+      const turnStarted: AgentEvent = {
+        type: AgentEventType.TurnStarted,
+        threadId: this.threadId,
+        codexChild: {
+          nativeThreadId: childThreadId,
+          nativeTurnId,
+          parentCollaborationItemId,
+          ...(() => {
+            const prompt = this.stringField(
+              this.spawnAgentToolInputById.get(parentCollaborationItemId) ?? {},
+              "prompt",
+            );
+            return prompt ? { prompt } : {};
+          })(),
+          nativeEventId: this.childNativeEventId("turnStarted", {
+            nativeThreadId: childThreadId,
+            nativeTurnId,
+            parentCollaborationItemId,
+          }),
+        },
+      };
+      const pending = this.drainChildNotificationsBeforeTurn(childThreadId);
+      return pending.length === 0
+        ? [turnStarted]
+        : [
+            turnStarted,
+            ...pending.flatMap((pendingNotification) => (
+              this.mapChildThreadNotification(pendingNotification)
+            )),
+          ];
+    }
 
     if (method === "item/commandExecution/outputDelta") {
       const { itemId, delta } = notification.params;
@@ -330,8 +528,36 @@ export class CodexEventMapper {
 
     if (method === "item/agentMessage/delta") {
       const delta = notification.params.delta;
+      const itemId = typeof notification.params.itemId === "string"
+        ? notification.params.itemId
+        : undefined;
+      if (childThreadId && itemId) this.childAssistantItemIdByThreadId.set(childThreadId, itemId);
       this.appendChildAssistantText(childThreadId, delta);
       return [];
+    }
+
+    if (method === "item/reasoning/textDelta" || method === "item/reasoning/summaryTextDelta") {
+      // Reasoning deltas have no stable native event id. The completed reasoning
+      // item carries the full text and exact native item id.
+      return [];
+    }
+
+    if (method === "error") {
+      const error = notification.params.error;
+      const message = typeof error?.message === "string" ? error.message : "Unknown child error";
+      if (!childThreadId || !parentCollaborationItemId || !nativeTurnId) return [];
+      return this.withChildEvidence([{
+        type: AgentEventType.Error,
+        threadId: this.threadId,
+        error: message,
+      }], {
+        nativeThreadId: childThreadId,
+        nativeTurnId,
+        parentCollaborationItemId,
+        nativeItemId: "turn-error",
+        itemEventKey: "error",
+        outcome: "errored",
+      });
     }
 
     if (method === "item/started") {
@@ -339,23 +565,49 @@ export class CodexEventMapper {
       const itemType = item?.type;
       const itemId = typeof item?.id === "string" ? item.id : undefined;
       if (itemType === "subAgentActivity" && itemId && item) {
-        return this.mapSubAgentActivityStart(item, itemId, true, notification);
+        const events = this.mapSubAgentActivityStart(item, itemId, true, notification);
+        return childThreadId && parentCollaborationItemId
+          ? this.withChildEvidence(events, {
+              nativeThreadId: childThreadId,
+              ...(nativeTurnId ? { nativeTurnId } : {}),
+              parentCollaborationItemId,
+              nativeItemId: itemId,
+              itemEventKey: "started",
+            })
+          : events;
       }
       if (itemType === "collabAgentToolCall" && itemId && item) {
         if (this.isWaitCollab(item)) return [];
         this.collabToolUseFromStartIds.add(itemId);
-        if (this.isSpawnAgentCollab(item) && this.registerCollabReceiverThreads(itemId, item) > 0) {
+        if (this.isSpawnAgentCollab(item) && this.registerCollabReceiverThreads(itemId, item, true) > 0) {
           this.openSpawnAgentIds.add(itemId);
         }
         if (this.emittedAgentToolUseIds.has(itemId)) return [];
         this.emittedAgentToolUseIds.add(itemId);
-        return [this.buildCollabToolUseEvent(item, itemId, notification)];
+        const events = [this.buildCollabToolUseEvent(item, itemId, notification)];
+        return childThreadId && parentCollaborationItemId
+          ? this.withChildEvidence(events, {
+              nativeThreadId: childThreadId,
+              ...(nativeTurnId ? { nativeTurnId } : {}),
+              parentCollaborationItemId,
+              nativeItemId: itemId,
+              itemEventKey: "started",
+            })
+          : events;
       }
       if (itemType && itemId && TOOL_LIKE_ITEM_TYPES.has(itemType) && itemType !== "webSearch") {
         const toolUse = this.buildToolUseEvent(item as CompletedItem, itemId, notification);
         if (toolUse) {
           this.startedToolUseSignatures.set(itemId, this.toolUseSignature(toolUse));
-          return [toolUse];
+          return childThreadId && parentCollaborationItemId
+            ? this.withChildEvidence([toolUse], {
+                nativeThreadId: childThreadId,
+                ...(nativeTurnId ? { nativeTurnId } : {}),
+                parentCollaborationItemId,
+                nativeItemId: itemId,
+                itemEventKey: "started",
+              })
+            : [toolUse];
         }
       }
       logger.debug("Codex child thread notification consumed", { method, itemType });
@@ -367,7 +619,16 @@ export class CodexEventMapper {
       const itemType = item?.type;
       const itemId = typeof item?.id === "string" ? item.id : undefined;
       if (item && itemType === "subAgentActivity" && itemId) {
-        return this.mapSubAgentActivityStart(item, itemId, false, notification);
+        const events = this.mapSubAgentActivityStart(item, itemId, false, notification);
+        return childThreadId && parentCollaborationItemId
+          ? this.withChildEvidence(events, {
+              nativeThreadId: childThreadId,
+              ...(nativeTurnId ? { nativeTurnId } : {}),
+              parentCollaborationItemId,
+              nativeItemId: itemId,
+              itemEventKey: "completed",
+            })
+          : events;
       }
       if (
         itemType === "commandExecution"
@@ -375,11 +636,21 @@ export class CodexEventMapper {
         || itemType === "mcpToolCall"
         || itemType === "dynamicToolCall"
         || itemType === "function_call"
+        || itemType === "reasoning"
         || itemType === "collabAgentToolCall"
       ) {
-        return this.mapItemCompleted(item, notification, "child");
+        const events = this.mapItemCompleted(item, notification, "child");
+        return childThreadId && parentCollaborationItemId
+          ? this.withChildEvidence(events, {
+              nativeThreadId: childThreadId,
+              ...(nativeTurnId ? { nativeTurnId } : {}),
+              parentCollaborationItemId,
+              ...(itemId ? { nativeItemId: itemId, itemEventKey: "completed" } : {}),
+            })
+          : events;
       }
       if (itemType === "agentMessage" || itemType === "message") {
+        if (childThreadId && itemId) this.childAssistantItemIdByThreadId.set(childThreadId, itemId);
         this.mergeChildAssistantFullText(childThreadId, this.completedMessageText(item as CompletedItem));
         return [];
       }
@@ -395,7 +666,38 @@ export class CodexEventMapper {
         childThreadId != null
           ? (this.childAssistantTextByThreadId.get(childThreadId) ?? turn?.error?.message ?? "")
           : (turn?.error?.message ?? "");
-      return this.completeSpawnAgent(collabId, output, status === "failed");
+      const completion = this.completeSpawnAgent(collabId, output, status === "failed");
+      if (!childThreadId || !collabId || !nativeTurnId) return completion;
+      const childOutput = output instanceof BoundedToolOutputBuffer
+        ? output.retainedText()
+        : output;
+      const nativeItemId = this.childAssistantItemIdByThreadId.get(childThreadId) ?? nativeTurnId;
+      const evidence = {
+        nativeThreadId: childThreadId,
+        nativeTurnId,
+        parentCollaborationItemId: collabId,
+        outcome: status === "failed" ? "errored" : "completed",
+        nativeItemId,
+        itemEventKey: "completed",
+      } as const;
+      const childEvents: AgentEvent[] = [];
+      if (childOutput) {
+        childEvents.push(...this.withChildEvidence([{
+          type: AgentEventType.Message,
+          threadId: this.threadId,
+          content: childOutput,
+          tokens: null,
+        }], evidence));
+      }
+      childEvents.push(...this.withChildEvidence([{
+        type: AgentEventType.TurnComplete,
+        threadId: this.threadId,
+        reason: status === "failed" ? "failed" : "completed",
+        costUsd: null,
+        tokensIn: 0,
+        tokensOut: 0,
+      }], evidence));
+      return [...childEvents, ...completion];
     }
 
     logger.debug("Codex child thread notification consumed", { method });
@@ -427,7 +729,11 @@ export class CodexEventMapper {
    * Registers Codex receiver child threads so later notifications on those threads
    * nest under the matching `collabAgentToolCall` Agent row.
    */
-  private registerCollabReceiverThreads(collabId: string, item: CompletedItem): number {
+  private registerCollabReceiverThreads(
+    collabId: string,
+    item: CompletedItem,
+    requireTurnEvidence = false,
+  ): number {
     const raw = item as unknown as Record<string, unknown>;
     const receiverThreadIds = new Set<string>();
     const ids = raw.receiverThreadIds;
@@ -448,6 +754,7 @@ export class CodexEventMapper {
     }
     for (const id of receiverThreadIds) {
       this.registerReceiverThread(collabId, id);
+      if (requireTurnEvidence) this.strictChildTurnThreads.add(id);
     }
     return receiverThreadIds.size;
   }
@@ -523,10 +830,9 @@ export class CodexEventMapper {
     const reasoningEffort =
       this.stringField(raw, "reasoningEffort")
       ?? this.stringField(raw, "reasoning_effort");
-
     return {
       codexCollabKind: kind,
-      ...(prompt ? { description: this.promptDescription(prompt), prompt: prompt.slice(0, 2000) } : {}),
+      ...(prompt ? { description: this.promptDescription(prompt), prompt: prompt.slice(0, 32_768) } : {}),
       ...(model ? { model } : {}),
       ...(reasoningEffort ? { reasoningEffort } : {}),
     };
@@ -613,6 +919,17 @@ export class CodexEventMapper {
       toolName: "Agent",
       toolInput,
       ...(sourceAgentToolCallId ? { parentToolCallId: sourceAgentToolCallId } : {}),
+      ...(sourceAgentToolCallId ? {
+        codexChild: {
+          nativeThreadId: agentThreadId,
+          ...(notification && this.nativeTurnId(notification)
+            ? { nativeTurnId: this.nativeTurnId(notification) }
+            : {}),
+          parentCollaborationItemId: sourceAgentToolCallId,
+          nativeItemId: toolCallId,
+          itemEventKey: includeInteractions ? "started" : "completed",
+        },
+      } : {}),
     }];
   }
 
@@ -1012,9 +1329,11 @@ export class CodexEventMapper {
   mapNotification(notification: CodexNotification): AgentEvent[] {
     this.replayedChildEvents = [];
     const events = this.mapNotificationInternal(notification);
-    return this.replayedChildEvents.length > 0
-      ? [...events, ...this.replayedChildEvents]
-      : events;
+    return this.dedupeChildEvents(
+      this.replayedChildEvents.length > 0
+        ? [...events, ...this.replayedChildEvents]
+        : events,
+    );
   }
 
   private mapNotificationInternal(notification: CodexNotification): AgentEvent[] {
@@ -1041,6 +1360,20 @@ export class CodexEventMapper {
     }
 
     if (route === "child") {
+      const childThreadId = this.notificationThreadId(notification);
+      if (this.markChildNativeNotification(notification)) return [];
+      const knownNativeTurnId = this.bufferedChildTurnId(childThreadId);
+      const turnEvidenceMethod = notification.method === "item/started"
+        || notification.method === "item/completed";
+      if (
+        childThreadId
+        && this.strictChildTurnThreads.has(childThreadId)
+        && !knownNativeTurnId
+        && turnEvidenceMethod
+      ) {
+        this.bufferChildNotificationBeforeTurn(notification);
+        return [];
+      }
       return this.mapChildThreadNotification(notification);
     }
 
@@ -1146,7 +1479,7 @@ export class CodexEventMapper {
       if (itemType === "collabAgentToolCall" && itemId) {
         const collabItem = item as CompletedItem;
         const isSpawn = this.isSpawnAgentCollab(collabItem);
-        const receiverCount = isSpawn ? this.registerCollabReceiverThreads(itemId, collabItem) : 0;
+        const receiverCount = isSpawn ? this.registerCollabReceiverThreads(itemId, collabItem, true) : 0;
         if (this.collabToolUseFromStartIds.has(itemId)) {
           if (isSpawn) {
             this.mergeSpawnAgentToolInput(itemId, collabItem);
@@ -1391,10 +1724,16 @@ export class CodexEventMapper {
     this.childThreadMetadataById.clear();
     this.parentAgentToolCallIdById.clear();
     this.childAssistantTextByThreadId.clear();
+    this.childAssistantItemIdByThreadId.clear();
+    this.childTurnIdByThreadId.clear();
+    this.emittedChildTurnStarts.clear();
     this.pendingLegacyCollabPops.clear();
     this.collabReceiverThreadToCollabId.clear();
+    this.strictChildTurnThreads.clear();
     this.earlyChildNotificationsByThread.clear();
     this.earlyChildNotificationCount = 0;
+    this.childNotificationsBeforeTurnByThread.clear();
+    this.childNotificationsBeforeTurnCount = 0;
     this.replayedChildEvents = [];
     // Note: turnEnded is intentionally NOT cleared here. reset() is called
     // from inside turn/completed, and we want the latch to stay armed until

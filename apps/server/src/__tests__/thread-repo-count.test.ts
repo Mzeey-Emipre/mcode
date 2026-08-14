@@ -52,4 +52,23 @@ describe("ThreadRepo.countActiveByWorkspaceIds", () => {
     const counts = threadRepo.countActiveByWorkspaceIds([ws.id]);
     expect(counts.get(ws.id)).toBeUndefined();
   });
+
+  it("hides active canonical children from normal lists, search, and counts while retaining direct lookup", () => {
+    const ws = workspaceRepo.create("canonical", "/canonical", true);
+    const parent = threadRepo.create(ws.id, "Parent", "direct", "main", false, "codex");
+    const child = threadRepo.create(ws.id, "Sub-agent", "direct", "main", false, "codex");
+    db.prepare(`
+      INSERT INTO canonical_agent_threads (
+        id, workspace_id, parent_thread_id, root_thread_id, owning_parent_thread_id,
+        provider_id, provider_identities_json, activity_state, conversation_revision,
+        roster_revision, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, '[]', 'Starting', 0, 0, ?, ?)
+    `).run(child.id, ws.id, parent.id, parent.id, parent.id, "codex", child.created_at, child.updated_at);
+
+    expect(threadRepo.findById(child.id)?.id).toBe(child.id);
+    expect(threadRepo.listByWorkspace(ws.id).map((thread) => thread.id)).toEqual([parent.id]);
+    expect(threadRepo.listRecent(50).map((thread) => thread.id)).toEqual([parent.id]);
+    expect(threadRepo.search({ query: "Sub-agent" }).threads).toEqual([]);
+    expect(threadRepo.countActiveByWorkspaceIds([ws.id]).get(ws.id)).toBe(1);
+  });
 });
