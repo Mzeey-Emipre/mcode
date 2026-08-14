@@ -303,8 +303,7 @@ function findPackagedTarget(releaseDir, platform, arch) {
 /** Builds the isolated packaged Electron launch command for one target OS. */
 export function buildProductLaunch({ target, isolationReceipt, launchArgs }) {
   const executablePath = path.resolve(target.executablePath);
-  const cdpLaunchArgs = ["--remote-allow-origins=*", ...launchArgs];
-  const isolatedLaunchArgs = ["--no-sandbox", ...cdpLaunchArgs];
+  const isolatedLaunchArgs = ["--no-sandbox", ...launchArgs];
   if (isolationReceipt.mode === "linux-network-namespace") {
     return {
       command: "xvfb-run",
@@ -330,7 +329,7 @@ export function buildProductLaunch({ target, isolationReceipt, launchArgs }) {
       env: {},
     };
   }
-  return { command: executablePath, args: cdpLaunchArgs, env: {} };
+  return { command: executablePath, args: launchArgs, env: {} };
 }
 
 async function loadProcessCleanupWorkload() {

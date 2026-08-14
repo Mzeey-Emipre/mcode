@@ -152,6 +152,9 @@ describe("desktop packaging workflow contract", () => {
       "utf8",
     );
     expect(workflow).toContain("packaged-terminal-product-smoke.mjs");
+    expect(workflow).toContain(
+      "node apps/desktop/scripts/desktop-packaging/package-validation/packaged-terminal-product-smoke.mjs",
+    );
     expect(workflow).toContain("MCODE_TERMINAL_RELEASE_TEST=1");
     expect(workflow).toContain("terminal-product-evidence");
     expect(workflow).toContain("--product-evidence-dir");

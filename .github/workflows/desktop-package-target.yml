@@ -247,7 +247,7 @@ jobs:
             status=$?
             if [ -f "$MCODE_ISOLATION_RECEIPT" ]; then
               set +e
-              bun apps/desktop/scripts/desktop-packaging/package-validation/packaged-terminal-product-smoke.mjs cleanup --receipt "$MCODE_ISOLATION_RECEIPT"
+              node apps/desktop/scripts/desktop-packaging/package-validation/packaged-terminal-product-smoke.mjs cleanup --receipt "$MCODE_ISOLATION_RECEIPT"
               cleanup_status=$?
               set -e
             fi
@@ -271,7 +271,7 @@ jobs:
           esac
           test -x "$executable" || test -f "$executable"
           mkdir -p "$MCODE_PRODUCT_EVIDENCE_DIR"
-          bun apps/desktop/scripts/desktop-packaging/package-validation/packaged-terminal-product-smoke.mjs \
+          node apps/desktop/scripts/desktop-packaging/package-validation/packaged-terminal-product-smoke.mjs \
             isolation \
             --platform "$MCODE_TARGET_PLATFORM" \
             --executable "$executable" \
@@ -281,7 +281,7 @@ jobs:
               MCODE_TERMINAL_RELEASE_TEST=1 \
               MCODE_TERMINAL_BACKEND=modern \
               MCODE_TERMINAL_RELEASE_FAULT="$fault" \
-              bun apps/desktop/scripts/desktop-packaging/package-validation/packaged-terminal-product-smoke.mjs \
+              node apps/desktop/scripts/desktop-packaging/package-validation/packaged-terminal-product-smoke.mjs \
                 product \
                 --release-dir "$MCODE_RELEASE_DIR" \
                 --receipt-dir "$MCODE_PRODUCT_EVIDENCE_DIR" \
@@ -293,7 +293,7 @@ jobs:
               env -u MCODE_TERMINAL_RELEASE_FAULT \
                 MCODE_TERMINAL_RELEASE_TEST=1 \
                 MCODE_TERMINAL_BACKEND=modern \
-                bun apps/desktop/scripts/desktop-packaging/package-validation/packaged-terminal-product-smoke.mjs \
+                node apps/desktop/scripts/desktop-packaging/package-validation/packaged-terminal-product-smoke.mjs \
                   product \
                   --release-dir "$MCODE_RELEASE_DIR" \
                   --receipt-dir "$MCODE_PRODUCT_EVIDENCE_DIR" \
