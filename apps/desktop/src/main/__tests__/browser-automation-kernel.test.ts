@@ -195,7 +195,7 @@ vi.mock("electron", () => ({
   },
 }));
 
-vi.mock("../preview/preview-webview-adopt.js", () => ({
+vi.mock("../../features/preview/surfaces/registry.js", () => ({
   findAdoptedWebContentsForWindow: vi.fn((_windowId: number, threadId: string, tabId: string) => {
     const key = JSON.stringify([threadId, tabId]);
     return adoptedWebContents.has(key) ? adoptedWebContents.get(key) : currentWebContents;

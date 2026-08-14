@@ -1,5 +1,5 @@
 import type { IpcMain, IpcMainEvent, Session, WebContents } from "electron";
-import { PREVIEW_GUEST_CLIPBOARD_TRUST_CHANNEL } from "../../features/preview/contracts/guest-input.js";
+import { PREVIEW_GUEST_CLIPBOARD_TRUST_CHANNEL } from "../contracts/guest-input.js";
 
 const TRUST_LIFETIME_MS = 5_000;
 

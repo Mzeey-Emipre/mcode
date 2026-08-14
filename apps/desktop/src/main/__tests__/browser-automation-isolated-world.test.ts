@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("electron", () => ({ BrowserWindow: {} }));
-vi.mock("../preview/preview-webview-adopt.js", () => ({ findAdoptedWebContentsForWindow: vi.fn() }));
+vi.mock("../../features/preview/surfaces/registry.js", () => ({ findAdoptedWebContentsForWindow: vi.fn() }));
 vi.mock("../../features/preview/state/window-session.js", () => ({ getSession: vi.fn() }));
 
 import {

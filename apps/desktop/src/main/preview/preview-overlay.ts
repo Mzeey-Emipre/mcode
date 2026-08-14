@@ -26,7 +26,7 @@ import {
   sanitizeSelectorHintFromGuest,
   scrubHtmlExcerptForOutbound,
 } from "./preview-capture.js";
-import { resolveActivePreviewWebContents } from "./preview-active-webcontents.js";
+import { resolveActivePreviewWebContents } from "../../features/preview/surfaces/active-web-contents.js";
 
 /**
  * Element-pick runs entirely inside the guest page: capture-phase event handlers block

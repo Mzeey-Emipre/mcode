@@ -63,7 +63,7 @@ import { shouldPrintVersion } from "./cli-args.js";
 import {
   hardenPreviewWebviewAttachment,
   resolvePreviewGuestPreloadPath,
-} from "./preview/preview-webview-security.js";
+} from "../features/preview/security/webview-attachment-policy.js";
 
 // Isolate dev's Electron userData (cache, cookies, localStorage, IndexedDB)
 // from the installed prod build. Without this, both share %APPDATA%/Mcode/

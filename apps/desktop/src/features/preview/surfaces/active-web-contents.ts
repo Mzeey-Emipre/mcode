@@ -1,6 +1,6 @@
 import type { WebContents } from "electron";
-import { getActiveTab, sessions, type PreviewSession } from "../../features/preview/state/window-session.js";
-import { findAdoptedWebContentsForWindow } from "./preview-webview-adopt.js";
+import { getActiveTab, sessions, type PreviewSession } from "../state/window-session.js";
+import { findAdoptedWebContentsForWindow } from "./registry.js";
 
 /**
  * Resolves the active Preview guest WebContents from the exact adopted surface.

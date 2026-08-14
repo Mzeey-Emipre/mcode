@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { PREVIEW_PARTITION } from "./preview-session-adapter.js";
+import { PREVIEW_PARTITION } from "./electron-session-policy.js";
 
 /** Mutable web preferences received with Electron's will-attach-webview event. */
 export interface PreviewWebviewPreferences {

@@ -9,7 +9,7 @@
 import { BrowserWindow, ipcMain } from "electron";
 import { logger } from "@mcode/shared";
 import { getSession } from "../../features/preview/state/window-session.js";
-import { resolveActivePreviewWebContents } from "./preview-active-webcontents.js";
+import { resolveActivePreviewWebContents } from "../../features/preview/surfaces/active-web-contents.js";
 
 const INSPECT_SCRIPT = String.raw`(() => {
   if (window.__mcodeInspectActive) return;

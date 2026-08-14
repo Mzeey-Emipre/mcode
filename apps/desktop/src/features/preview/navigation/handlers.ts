@@ -26,8 +26,8 @@ import {
   type PreviewResolveNavigationResult,
 } from "./resolve-target.js";
 import { onPreviewHidden, onPreviewVisible } from "../../../main/preview/preview-discard-scheduler.js";
-import { previewSessionAdapter } from "../../../main/preview/preview-session-adapter.js";
-import { findAdoptedWebContentsForWindow } from "../../../main/preview/preview-webview-adopt.js";
+import { previewSessionAdapter } from "../security/electron-session-policy.js";
+import { findAdoptedWebContentsForWindow } from "../surfaces/registry.js";
 
 /** Lower bound on the preview zoom factor (25%), matching Chromium's floor. */
 const MIN_ZOOM_FACTOR = 0.25;

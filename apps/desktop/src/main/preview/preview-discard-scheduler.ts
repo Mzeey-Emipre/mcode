@@ -28,7 +28,7 @@ import {
 import {
   findAdoptedWebContentsForWindow,
   requestRendererSurfaceDiscard,
-} from "./preview-webview-adopt.js";
+} from "../../features/preview/surfaces/registry.js";
 import { validateResumeUrl } from "../../features/preview/navigation/local-file.js";
 import { isAllowedPreviewUrl } from "../../features/preview/navigation/policy.js";
 import { bumpPerf, setPerf } from "../../features/preview/observability/perf-counters.js";
