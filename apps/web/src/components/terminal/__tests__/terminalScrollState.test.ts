@@ -7,6 +7,7 @@ import {
   isScrollPinned,
   pinScrollAnchor,
   restoreScrollAnchor,
+  restoreScrollIntent,
   saveScrollAnchorOnHide,
   touchScrollAnchor,
   unpinScrollAnchor,
@@ -17,6 +18,7 @@ function mockTerm(viewportY: number, length: number, rows: number): Terminal {
     rows,
     buffer: { active: { viewportY, length } },
     scrollToLine: vi.fn(),
+    scrollToBottom: vi.fn(),
   } as unknown as Terminal;
 }
 
@@ -34,6 +36,19 @@ describe("terminalScrollState", () => {
     restoreScrollAnchor(term, anchor);
     // 200 - 50 - 24 = 126
     expect(term.scrollToLine).toHaveBeenCalledWith(126);
+  });
+
+  it("restoreScrollIntent keeps tail-following terminals at the bottom", () => {
+    const term = mockTerm(80, 104, 24);
+    restoreScrollIntent(term, { viewportY: 79, linesFromBottom: 1, bufferLength: 104 });
+    expect(term.scrollToBottom).toHaveBeenCalledTimes(1);
+    expect(term.scrollToLine).not.toHaveBeenCalled();
+  });
+
+  it("restoreScrollIntent keeps a reading anchor after reflow", () => {
+    const term = mockTerm(0, 200, 24);
+    restoreScrollIntent(term, { viewportY: 100, linesFromBottom: 8, bufferLength: 500 });
+    expect(term.scrollToLine).toHaveBeenCalledWith(168);
   });
 
   it("touchScrollAnchor round-trips through getScrollAnchor", () => {

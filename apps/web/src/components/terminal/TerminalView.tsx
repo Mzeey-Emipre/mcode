@@ -1,6 +1,5 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Terminal, IDisposable } from "@xterm/xterm";
-import type { FitAddon } from "@xterm/addon-fit";
 import type { SerializeAddon } from "@xterm/addon-serialize";
 import { getTransport } from "@/transport";
 import { useSettingsStore } from "@/stores/settingsStore";
@@ -13,8 +12,14 @@ import {
   TERMINAL_CLEANUP_TIMEOUT_MS,
   type TerminalDataEvent,
 } from "@/terminal/terminal-client";
-import { isSafeTerminalDimensions, safeFit } from "./safeFit";
 import { terminalScroll } from "./terminalScrollController";
+import {
+  captureScrollAnchor,
+} from "./terminalScrollState";
+import {
+  createTerminalResizeController,
+  type TerminalResizeController,
+} from "./terminalResizeController";
 import {
   applyRemountAnchor,
   captureRemountAnchor,
@@ -319,8 +324,9 @@ export const TerminalView = memo(function TerminalView({
   onDisposed,
 }: TerminalViewProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const fitHostRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
-  const fitAddonRef = useRef<FitAddon | null>(null);
+  const resizeControllerRef = useRef<TerminalResizeController | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
   const flushResizeRpcRef = useRef<(() => void) | null>(null);
   const resumeWarmViewRef = useRef<(() => void) | null>(null);
@@ -346,7 +352,8 @@ export const TerminalView = memo(function TerminalView({
   // Mount terminal
   useEffect(() => {
     const container = containerRef.current;
-    if (!container) return;
+    const fitHost = fitHostRef.current;
+    if (!container || !fitHost) return;
 
     disposedNotifiedRef.current = false;
     let disposed = false;
@@ -360,7 +367,7 @@ export const TerminalView = memo(function TerminalView({
           import("@xterm/addon-serialize"),
         ]);
 
-      if (disposed || !containerRef.current) {
+      if (disposed || !containerRef.current || !fitHostRef.current) {
         if (!disposedNotifiedRef.current) {
           disposedNotifiedRef.current = true;
           onDisposedRef.current?.();
@@ -401,10 +408,7 @@ export const TerminalView = memo(function TerminalView({
         return true;
       });
 
-      safeFit(fitAddon, el, term);
-
       termRef.current = term;
-      fitAddonRef.current = fitAddon;
       registerTerminalScrollHarness(ptyId, term);
 
       const transport = getTransport();
@@ -442,6 +446,7 @@ export const TerminalView = memo(function TerminalView({
       // Forward keystrokes to the backend via WS RPC
       const dataDisposable = term.onData((data) => {
         if (exited) return;
+        resizeControllerRef.current?.flushBeforeInput();
         transport.terminalWrite(ptyId, data).catch(() => {});
       });
 
@@ -608,77 +613,33 @@ export const TerminalView = memo(function TerminalView({
         }
       }});
 
-      // Resize handling:
-      //
-      // ResizeObserver can fire every animation frame during drag. Two distinct
-      // concerns, two strategies:
-      //   - Local fitAddon.fit() is cheap and keeps the terminal visibly aligned
-      //     during drag → coalesce to one call per animation frame via rAF.
-      //   - The terminal.resize RPC is expensive (WS → node-pty → shell repaint)
-      //     → debounce to a single trailing call 100 ms after the last change.
-      //
-      // Skip RPCs where the character grid (cols, rows) has not changed — drags
-      // that move by less than one cell of pixels otherwise send no-op resizes.
-      let rafId: number | null = null;
-      let rpcTimer: ReturnType<typeof setTimeout> | null = null;
-      let lastSentCols = -1;
-      let lastSentRows = -1;
-
-      const flushResizeRpc = () => {
-        // Clear any pending timeout so a manual flush (e.g. from the
-        // visibility effect) supersedes the scheduled trailing call
-        // instead of racing with it. Without this, a later timer fire
-        // could double-send the resize RPC or send stale dimensions.
-        if (rpcTimer !== null) {
-          clearTimeout(rpcTimer);
-          rpcTimer = null;
-        }
-        if (disposed || exited || terminalScroll.shouldDeferFitRefresh(ptyId)) return;
-        const dims = fitAddonRef.current?.proposeDimensions();
-        if (!isSafeTerminalDimensions(dims)) return;
-        if (dims.cols === lastSentCols && dims.rows === lastSentRows) return;
-        lastSentCols = dims.cols;
-        lastSentRows = dims.rows;
-        transport.terminalResize(ptyId, dims.cols, dims.rows).catch(() => {});
-      };
-      flushResizeRpcRef.current = flushResizeRpc;
-
-      const observer = new ResizeObserver(() => {
-        if (disposed || !fitAddonRef.current) return;
-        // Skip fit() when the container is display:none (visible=false).
-        // FitAddon.proposeDimensions() reads the parent's clientWidth/Height
-        // which are 0 when hidden, producing a 2×1 grid. Resizing xterm to
-        // 2 columns causes every line to wrap, overflowing the fixed-size
-        // scrollback buffer and permanently truncating history.
-        if (!shownRef.current || !threadActiveRef.current) return;
-        if (rafId === null) {
-          rafId = requestAnimationFrame(() => {
-            rafId = null;
-            if (
-              disposed ||
-              !shownRef.current ||
-              !threadActiveRef.current ||
-              terminalScroll.shouldDeferFitRefresh(ptyId)
-            ) {
-              return;
-            }
-            const fit = fitAddonRef.current;
-            const t = termRef.current;
-            if (fit && t) safeFit(fit, el, t);
-          });
-        }
-        if (rpcTimer !== null) clearTimeout(rpcTimer);
-        rpcTimer = setTimeout(flushResizeRpc, 100);
+      const resizeController = createTerminalResizeController({
+        container: el,
+        fitAddon,
+        term,
+        isActive: () => shownRef.current && threadActiveRef.current,
+        isDisposed: () => disposed || exited,
+        shouldDeferFit: () => terminalScroll.shouldDeferFitRefresh(ptyId),
+        runProgrammatic: (fn) => terminalScroll.runProgrammatic(ptyId, fn),
+        captureScrollIntent: () => captureScrollAnchor(term),
+        restoreScrollIntent: (intent) => {
+          terminalScroll.restoreAfterResize(ptyId, term, intent);
+        },
+        sendResize: ({ cols, rows }) =>
+          transport.terminalResize(ptyId, cols, rows).catch(() => {}),
       });
-      observer.observe(el);
+      resizeControllerRef.current = resizeController;
+      flushResizeRpcRef.current = resizeController.flushResize;
+      resizeController.observe();
+      resizeController.requestFit();
 
       let cleanupStarted = false;
       const cleanup = () => {
         if (cleanupStarted) return;
         cleanupStarted = true;
         disposed = true;
-        if (rafId !== null) cancelAnimationFrame(rafId);
-        if (rpcTimer !== null) clearTimeout(rpcTimer);
+        resizeController.dispose();
+        resizeControllerRef.current = null;
         flushResizeRpcRef.current = null;
         resumeWarmViewRef.current = null;
         dataDisposable.dispose();
@@ -690,7 +651,6 @@ export const TerminalView = memo(function TerminalView({
         unsubPtyExit();
         transport.ptyDeleteLastSeq(ptyId);
         terminalScroll.clear(ptyId);
-        observer.disconnect();
         releaseWebglSlot(ptyId);
         try {
           rendererRef.current?.dispose();
@@ -815,14 +775,13 @@ export const TerminalView = memo(function TerminalView({
     // cleanupRef is registered. If any of those steps reject, flip the
     // disposed latch and run whatever cleanup has been wired up so no
     // partial state (live counter increment, attached listeners) leaks.
-    void init(container).catch((err) => {
+    void init(fitHost).catch((err) => {
       console.warn("[terminal] Failed to initialize terminal", err);
       disposed = true;
       const hadCleanup = cleanupRef.current !== null;
       cleanupRef.current?.();
       cleanupRef.current = null;
       termRef.current = null;
-      fitAddonRef.current = null;
       if (!hadCleanup && !disposedNotifiedRef.current) {
         disposedNotifiedRef.current = true;
         onDisposedRef.current?.();
@@ -835,7 +794,6 @@ export const TerminalView = memo(function TerminalView({
       cleanupRef.current?.();
       cleanupRef.current = null;
       termRef.current = null;
-      fitAddonRef.current = null;
     };
   }, [ptyId]);
 
@@ -868,10 +826,7 @@ export const TerminalView = memo(function TerminalView({
       const t = termRef.current;
       if (!t) return;
       applyRestore();
-      const fit = fitAddonRef.current;
-      if (fit) {
-        safeFit(fit, containerRef.current, t);
-      }
+      resizeControllerRef.current?.requestFit();
       applyRestore();
       flushResizeRpcRef.current?.();
       const pinned = terminalScroll.isPinned(ptyId);
@@ -922,8 +877,7 @@ export const TerminalView = memo(function TerminalView({
         terminalScroll.restore(ptyId, term);
         return;
       }
-      const fit = fitAddonRef.current;
-      if (fit) safeFit(fit, containerRef.current, term);
+      resizeControllerRef.current?.requestFit();
       if (!terminalScroll.shouldDeferFitRefresh(ptyId) && !terminalScroll.isPinned(ptyId)) {
         term.refresh(0, term.rows - 1);
       }
@@ -1003,6 +957,8 @@ export const TerminalView = memo(function TerminalView({
         backgroundColor: TERMINAL_BACKGROUND,
         visibility: shown && hydrated ? "visible" : "hidden",
       }}
-    />
+    >
+      <div ref={fitHostRef} className="h-full min-h-0 w-full" />
+    </div>
   );
 });

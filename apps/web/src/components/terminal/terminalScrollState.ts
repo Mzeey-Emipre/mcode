@@ -12,6 +12,9 @@ export interface TerminalScrollAnchor {
   readonly bufferLength: number;
 }
 
+/** Maximum distance from the bottom that still represents tail-follow intent. */
+export const FOLLOW_TAIL_THRESHOLD = 1;
+
 /** Per-PTY scroll anchors preserved across workspace thread switches. */
 const anchorByPtyId = new Map<string, TerminalScrollAnchor>();
 
@@ -51,6 +54,11 @@ export function captureScrollAnchor(term: Terminal): TerminalScrollAnchor {
   return { viewportY, linesFromBottom, bufferLength: buf.length };
 }
 
+/** Returns whether a captured anchor represents following the terminal tail. */
+export function isFollowingTail(anchor: TerminalScrollAnchor): boolean {
+  return anchor.linesFromBottom <= FOLLOW_TAIL_THRESHOLD;
+}
+
 /**
  * Restores scroll position from an anchor. Prefers the lines-from-bottom metric
  * when the buffer length changed while the thread was dormant.
@@ -67,6 +75,29 @@ export function restoreScrollAnchor(term: Terminal, anchor: TerminalScrollAnchor
   const bufferGrew = buf.length > anchor.bufferLength;
   const target = buf.length > 0 && bufferGrew ? fromBottomY : fromViewportY;
   term.scrollToLine(target);
+}
+
+/** Restores an anchor from the bottom edge after a replayed buffer rebuild. */
+export function restoreScrollAnchorFromBottom(
+  term: Terminal,
+  anchor: TerminalScrollAnchor,
+): void {
+  const buf = term.buffer.active;
+  const maxViewportY = Math.max(0, buf.length - term.rows);
+  const target = Math.max(
+    0,
+    Math.min(maxViewportY, buf.length - anchor.linesFromBottom - term.rows),
+  );
+  term.scrollToLine(target);
+}
+
+/** Restores tail-follow or reading intent after a complete-cell reflow. */
+export function restoreScrollIntent(term: Terminal, anchor: TerminalScrollAnchor): void {
+  if (isFollowingTail(anchor)) {
+    term.scrollToBottom();
+    return;
+  }
+  restoreScrollAnchorFromBottom(term, anchor);
 }
 
 /**

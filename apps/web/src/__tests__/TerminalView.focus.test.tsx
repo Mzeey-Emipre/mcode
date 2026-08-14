@@ -162,6 +162,23 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
     }
   });
 
+  it("mounts xterm in the full-size host inside the padded render surface", async () => {
+    const { container } = render(
+      <TerminalView ptyId="pty-1" visible={true} threadActive={true} />,
+    );
+    await settle();
+
+    const renderSurface = container.querySelector(
+      '[data-testid="terminal-render-content"]',
+    );
+    const fitHost = renderSurface?.firstElementChild;
+
+    expect(renderSurface).toHaveClass("p-3");
+    expect(fitHost).toHaveClass("h-full", "min-h-0", "w-full");
+    expect(fitHost?.parentElement).toBe(renderSurface);
+    expect(term.open).toHaveBeenCalledWith(fitHost);
+  });
+
   // Regression guard: term.focus() must NOT fire when the window/tab regains
   // visibility. The user may be typing in the composer when the app returns to
   // the foreground — stealing focus into xterm would contradict the Ctrl+J

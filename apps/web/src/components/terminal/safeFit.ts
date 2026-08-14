@@ -7,8 +7,14 @@ import type { FitAddon } from "@xterm/addon-fit";
  */
 export const MIN_FIT_COLS = 10;
 
+/** Maximum terminal columns accepted from the renderer fit proposal. */
+export const MAX_FIT_COLS = 1_000;
+
 /** Minimum rows before fit is safe (avoids 1-row grids during layout). */
 export const MIN_FIT_ROWS = 3;
+
+/** Maximum terminal rows accepted from the renderer fit proposal. */
+export const MAX_FIT_ROWS = 500;
 
 /** Minimum container width (px) before trusting proposeDimensions. */
 const MIN_CONTAINER_WIDTH = 80;
@@ -25,8 +31,12 @@ export function isSafeTerminalDimensions(
 ): dims is { cols: number; rows: number } {
   return (
     dims != null &&
+    Number.isInteger(dims.cols) &&
+    Number.isInteger(dims.rows) &&
     dims.cols >= MIN_FIT_COLS &&
-    dims.rows >= MIN_FIT_ROWS
+    dims.cols <= MAX_FIT_COLS &&
+    dims.rows >= MIN_FIT_ROWS &&
+    dims.rows <= MAX_FIT_ROWS
   );
 }
 

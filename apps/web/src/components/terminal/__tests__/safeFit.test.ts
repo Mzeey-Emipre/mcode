@@ -3,6 +3,8 @@ import type { FitAddon } from "@xterm/addon-fit";
 import {
   isContainerReadyForFit,
   isSafeTerminalDimensions,
+  MAX_FIT_COLS,
+  MAX_FIT_ROWS,
   MIN_FIT_COLS,
   MIN_FIT_ROWS,
   safeFit,
@@ -15,6 +17,9 @@ describe("isSafeTerminalDimensions", () => {
     expect(isSafeTerminalDimensions({ cols: MIN_FIT_COLS, rows: MIN_FIT_ROWS - 1 })).toBe(
       false,
     );
+    expect(isSafeTerminalDimensions({ cols: MAX_FIT_COLS + 1, rows: 24 })).toBe(false);
+    expect(isSafeTerminalDimensions({ cols: 80, rows: MAX_FIT_ROWS + 1 })).toBe(false);
+    expect(isSafeTerminalDimensions({ cols: 80.5, rows: 24 })).toBe(false);
   });
 
   it("accepts dimensions at or above the minimum", () => {
