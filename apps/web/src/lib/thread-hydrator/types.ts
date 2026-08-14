@@ -13,6 +13,16 @@ export interface ThreadHydratorOptions {
   force?: boolean;
 }
 
+/** Lease-bound options for a non-selected displayed transcript. */
+export interface DisplayHydrationOptions {
+  /** Generation assigned by the display lease authority. */
+  generation: number;
+  /** Returns false after the final release or a newer lease takes ownership. */
+  isCurrent: () => boolean;
+  /** Bypass an existing resident or cache entry. */
+  force?: boolean;
+}
+
 /** Paginated message list returned by the transport. */
 export interface PaginatedMessages {
   messages: Message[];
@@ -90,4 +100,6 @@ export interface ThreadHydratorDeps {
   shallowEqualBy: <T>(a: readonly T[], b: readonly T[], keys: (keyof T)[]) => boolean;
   coerceTaskStatus: (status: string) => TaskItem["status"];
   getWorkspaceThreadSettings: (threadId: string) => import("@/stores/thread-record").ThreadSettings;
+  /** Protect leased transcripts from selected-thread retirement. */
+  isDisplayConversationVisible?: (threadId: string) => boolean;
 }

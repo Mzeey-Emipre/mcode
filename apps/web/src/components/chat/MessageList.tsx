@@ -43,6 +43,7 @@ import { isGoalStatusNotice } from "@/lib/goal-message";
 import { PRIMARY_CONTENT_RAIL_CLASS } from "@/lib/layout-rails";
 import { shouldShowStickyUserMessage, type StickyVisibilityVirtualizer } from "./sticky-user-message-visibility";
 import { resolveUserMessagePreview } from "./user-message-preview";
+import { isConversationVisible } from "@/stores/conversation-residency";
 
 const EMPTY_TOOL_CALLS: ToolCall[] = [];
 const EMPTY_TURN_MAP: Record<string, string> = {};
@@ -338,6 +339,9 @@ export function MessageList({ displayThreadId, onBranch, onReply }: MessageListP
 
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
   const renderedThreadId = displayThreadId ?? activeThreadId;
+  const isRenderedConversationVisible = displayThreadId
+    ? isConversationVisible(displayThreadId)
+    : renderedThreadId === activeThreadId;
   const messages = useThreadRecord(renderedThreadId, (r) => r.messages);
   const loading = useThreadRecord(renderedThreadId, (r) => r.loading);
   const isAgentRunning = useThreadStore((s) =>
@@ -462,7 +466,7 @@ export function MessageList({ displayThreadId, onBranch, onReply }: MessageListP
       !el ||
       el.scrollTop >= PAGINATION_THRESHOLD ||
       !renderedThreadId ||
-      renderedThreadId !== activeThreadId ||
+      !isRenderedConversationVisible ||
       !hasMore ||
       isLoadingMore
     ) {
@@ -490,7 +494,7 @@ export function MessageList({ displayThreadId, onBranch, onReply }: MessageListP
         }
       : null;
     void loadOlderMessages(renderedThreadId);
-  }, [activeThreadId, renderedThreadId, hasMore, historyAnchorTrailingSpace, isLoadingMore, loadOlderMessages]);
+  }, [activeThreadId, renderedThreadId, hasMore, historyAnchorTrailingSpace, isLoadingMore, loadOlderMessages, isRenderedConversationVisible]);
 
   /** Load newer messages only after a downward gesture reaches the bottom threshold. */
   const loadNewerHistoryWhenRequested = useCallback(() => {
@@ -500,7 +504,7 @@ export function MessageList({ displayThreadId, onBranch, onReply }: MessageListP
       || !el
       || el.scrollHeight - el.scrollTop - el.clientHeight >= PAGINATION_THRESHOLD
       || !renderedThreadId
-      || renderedThreadId !== activeThreadId
+      || !isRenderedConversationVisible
       || !hasNewer
       || isLoadingNewer
     ) {
@@ -518,7 +522,7 @@ export function MessageList({ displayThreadId, onBranch, onReply }: MessageListP
         }
       : null;
     void loadNewerMessages(renderedThreadId);
-  }, [activeThreadId, hasNewer, isLoadingNewer, loadNewerMessages, renderedThreadId]);
+  }, [activeThreadId, hasNewer, isLoadingNewer, loadNewerMessages, renderedThreadId, isRenderedConversationVisible]);
 
   /** Clears tail pin when the user scrolls content upward (wheel / trackpad). */
   const handleWheel = useCallback((e: WheelEvent<HTMLDivElement>) => {
@@ -635,9 +639,9 @@ export function MessageList({ displayThreadId, onBranch, onReply }: MessageListP
     for (const message of messages) {
       if (message.role !== "assistant") continue;
       if (persistedNarrativeByMessage[message.id] !== undefined) continue;
-      void loadNarrativeForMessage(message.id);
+      void loadNarrativeForMessage(message.id, renderedThreadId ?? undefined);
     }
-  }, [messages, persistedNarrativeByMessage, loadNarrativeForMessage]);
+  }, [messages, persistedNarrativeByMessage, loadNarrativeForMessage, renderedThreadId]);
 
   const stableItems = useMemo(
     () => buildStableItems(messages, persistedFilesChanged, latestTurnWithChanges, {

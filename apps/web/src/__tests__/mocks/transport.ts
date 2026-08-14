@@ -173,6 +173,12 @@ export const mockTransport: McodeTransport = {
   }),
   getMessages: vi.fn().mockResolvedValue({ messages: [], hasMore: false }),
   loadConversationPage: vi.fn(),
+  loadCanonicalSubagentRoster: vi.fn().mockResolvedValue({
+    owningParentThreadId: "thread-1",
+    rosterRevision: 0,
+    active: [],
+    done: [],
+  }),
   loadOlderConversationPage: vi.fn(),
   loadNewerConversationPage: vi.fn(),
   createAndSendMessage: vi.fn(),

@@ -1,9 +1,21 @@
-import { render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useDiffStore } from "@/stores/diffStore";
 import { createEmptyThreadRecord, getThreadRecord } from "@/stores/thread-record";
 import { useThreadStore } from "@/stores/threadStore";
 import { SubagentsPanel } from "../SubagentsPanel";
+
+vi.mock("@/transport", async () => ({
+  ...(await vi.importActual("@/transport")),
+  getTransport: () => ({
+    loadCanonicalSubagentRoster: vi.fn().mockResolvedValue({
+      owningParentThreadId: "thread-1",
+      rosterRevision: 1,
+      active: [],
+      done: [],
+    }),
+  }),
+}));
 
 describe("SubagentsPanel real thread store path", () => {
   beforeEach(() => {
@@ -14,12 +26,12 @@ describe("SubagentsPanel real thread store path", () => {
     });
   });
 
-  it("renders while the thread record is not hydrated", () => {
+  it("renders the canonical empty state while the thread record is not hydrated", async () => {
     expect(() => render(<SubagentsPanel threadId="thread-1" />)).not.toThrow();
-    expect(screen.getByTestId("subagents-empty")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId("subagents-empty")).toBeInTheDocument());
   });
 
-  it("survives a transient record missing hydrated narrative data", () => {
+  it("survives a transient record missing hydrated narrative data", async () => {
     const record = createEmptyThreadRecord();
     const partialRecord = { ...record, narrativeByMessage: undefined } as unknown as typeof record;
     useThreadStore.setState({
@@ -28,7 +40,7 @@ describe("SubagentsPanel real thread store path", () => {
     });
 
     expect(() => render(<SubagentsPanel threadId="thread-1" />)).not.toThrow();
-    expect(screen.getByTestId("subagents-empty")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId("subagents-empty")).toBeInTheDocument());
   });
 
   it("normalizes null narrative data and pending persistence ids", () => {

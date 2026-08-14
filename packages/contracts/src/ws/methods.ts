@@ -67,6 +67,10 @@ import {
   CanonicalAgentReconnectRecoverySchema,
   CanonicalAgentRevisionSchema,
 } from "../models/canonical-agent-reconnect.js";
+import {
+  CanonicalSubagentRosterRequestSchema,
+  CanonicalSubagentRosterSchema,
+} from "../models/canonical-subagent-roster.js";
 import { PreviewAnnotationBundleSchema } from "../models/browser-preview.js";
 import {
   ThreadControlReadInputSchema,
@@ -916,6 +920,11 @@ export const WS_METHODS = lazySchema(() => ({
       before: z.number().int().optional(),
     }),
     result: ConversationPageSchema(),
+  },
+  /** Read the canonical descendant roster rooted at one owning parent thread. */
+  "canonicalAgent.roster": {
+    params: CanonicalSubagentRosterRequestSchema() as z.ZodTypeAny,
+    result: CanonicalSubagentRosterSchema() as z.ZodTypeAny,
   },
   "conversation.olderPage": {
     ...ConversationOlderPageMethod,

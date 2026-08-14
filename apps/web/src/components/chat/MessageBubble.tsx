@@ -597,6 +597,17 @@ export const MessageBubble = memo(function MessageBubble({
   }
   const isUser = message.role === "user";
   const userDisplayText = userGoal ? userGoal.condition : textContent;
+  const parentAgentProvenance = message.parentAgentProvenance;
+  const parentAgentDetails = parentAgentProvenance
+    ? [
+        `Thread ${parentAgentProvenance.parentThreadId}`,
+        `Turn ${parentAgentProvenance.parentTurnId}`,
+        `Item ${parentAgentProvenance.parentItemId}`,
+        ...parentAgentProvenance.providerIdentities.map((identity) =>
+          `${identity.providerId} ${identity.scope}: ${identity.value} (${identity.provenance})`,
+        ),
+      ].join(" · ")
+    : "";
 
   if (isUser) {
 
@@ -657,6 +668,19 @@ export const MessageBubble = memo(function MessageBubble({
                   threadId={message.thread_id}
                   testId="sent-preview-annotation-bundle-chip"
                 />
+              </div>
+            ) : null}
+
+            {parentAgentProvenance ? (
+              <div
+                className="flex justify-end"
+                role="note"
+                aria-label={`Parent agent provenance: ${parentAgentDetails}`}
+                data-testid="parent-agent-provenance"
+              >
+                <span className="font-mono text-xs text-muted-foreground/70" title={parentAgentDetails}>
+                  Parent agent
+                </span>
               </div>
             ) : null}
 

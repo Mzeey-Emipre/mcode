@@ -294,7 +294,7 @@ interface ThreadState {
    * existing in-flight promise on concurrent calls to avoid duplicate RPCs.
    * Idempotent: returns immediately if the message is already cached.
    */
-  loadNarrativeForMessage: (messageId: string) => Promise<void>;
+  loadNarrativeForMessage: (messageId: string, threadId?: string) => Promise<void>;
   /** Drop the cached narrative for a message - call from edit/delete paths. */
   evictNarrativeForMessage: (messageId: string) => void;
 
@@ -1285,6 +1285,12 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     });
   };
 
+  // The hydrator and residency authorities close over each other for lease guards.
+  // eslint-disable-next-line prefer-const
+  let conversationResidency: ReturnType<typeof createConversationResidency>;
+  const isVisibleConversation = (threadId: string): boolean =>
+    conversationResidency?.isConversationVisible(threadId) ?? false;
+
   const threadHydrator = createThreadHydrator({
     getTransport: () => getTransport(),
     getState: () => get(),
@@ -1307,14 +1313,30 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     shallowEqualBy,
     coerceTaskStatus,
     getWorkspaceThreadSettings: resolveWorkspaceThreadSettings,
+    isDisplayConversationVisible: isVisibleConversation,
   });
   registerThreadHydrator(threadHydrator);
-  const conversationResidency = createConversationResidency({
+  conversationResidency = createConversationResidency({
     restoreConversation: (threadId) => {
       setActiveConversation(threadId);
       return threadHydrator.hydrate(threadId, "active");
     },
     refreshConversation: (threadId) => threadHydrator.hydrate(threadId, "active", { force: true }),
+    hydrateDisplayConversation: (threadId, generation) => threadHydrator.hydrateResident(threadId, {
+      generation,
+      isCurrent: () => conversationResidency.isDisplayLeaseCurrent(threadId, generation),
+    }),
+    refreshDisplayConversation: (threadId, generation) => threadHydrator.hydrateResident(threadId, {
+      generation,
+      force: true,
+      isCurrent: () => conversationResidency.isDisplayLeaseCurrent(threadId, generation),
+    }),
+    releaseDisplayConversation: (threadId, generation) => threadHydrator.releaseResident(
+      threadId,
+      generation,
+      () => conversationResidency.isDisplayLeaseCurrent(threadId, generation),
+    ),
+    getSelectedConversationId: () => get().currentThreadId,
     deactivateConversation: () => {
       setActiveConversation(null);
       const current = get().currentThreadId;
@@ -1354,7 +1376,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
         set((state) => {
           const record = state.records.get(threadId);
           if (
-            state.currentThreadId !== threadId
+            !conversationResidency.isConversationVisible(threadId)
             || !record
             || (identity.direction === "older" ? record.isLoadingMore : record.isLoadingNewer)
             || (identity.direction === "older"
@@ -1382,7 +1404,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
 
         const current = get().records.get(threadId);
         if (
-          get().currentThreadId !== threadId
+          !conversationResidency.isConversationVisible(threadId)
           || !current
           || (identity.direction === "older" ? current.isLoadingMore : current.isLoadingNewer)
           || (identity.direction === "older"
@@ -1432,14 +1454,29 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
   },
 
   handleCanonicalAgentEvents: (threadId, events) => {
+    const stateBeforePush = get();
+    if (
+      !stateBeforePush.records.has(threadId)
+      && stateBeforePush.currentThreadId !== threadId
+      && !conversationResidency.isDisplayConversationLeased(threadId)
+    ) return;
+    let accepted = false;
     set((state) => {
       const current = getThreadRecord(state.records, threadId);
       const update = applyCanonicalPushEvents(current.canonicalAgent, threadId, events);
       if (update.replica === current.canonicalAgent) return {};
+      accepted = true;
       return {
         records: patchThreadRecord(state.records, threadId, { canonicalAgent: update.replica }),
       };
     });
+    if (
+      accepted
+      && threadId !== get().currentThreadId
+      && conversationResidency.isDisplayConversationLeased(threadId)
+    ) {
+      void conversationResidency.refreshVisibleConversation(threadId);
+    }
   },
 
   cacheToolCallRecords: (key, records) => {
@@ -1509,7 +1546,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
         currentIdentity,
         responseIdentity,
       );
-      if (get().currentThreadId !== threadId) {
+      if (!conversationResidency.isConversationVisible(threadId)) {
         if (ownsCurrentRequest) patchRec(threadId, { isLoadingMore: false });
         return;
       }
@@ -1640,7 +1677,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
         currentIdentity,
         responseIdentity,
       );
-      if (get().currentThreadId !== threadId) {
+      if (!conversationResidency.isConversationVisible(threadId)) {
         if (ownsCurrentRequest) patchRec(threadId, { isLoadingNewer: false });
         return;
       }
@@ -2516,8 +2553,8 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     return lookup;
   },
 
-  loadNarrativeForMessage: async (messageId) => {
-    const currentId = get().currentThreadId;
+  loadNarrativeForMessage: async (messageId, explicitThreadId) => {
+    const currentId = explicitThreadId ?? get().currentThreadId;
     if (!currentId) return;
     const rec = getRec(currentId);
     if (rec.narrativeByMessage[messageId]) return;
@@ -2526,6 +2563,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     const p = getTransport()
       .listNarrative(messageId)
       .then((res) => {
+        if (!conversationResidency.isConversationVisible(currentId)) return;
         patchRec(currentId, (r) => ({
           narrativeByMessage: selectConversationNarrative(
             { ...r.narrativeByMessage, [messageId]: res },

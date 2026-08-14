@@ -4,6 +4,18 @@ import { StoredAttachmentSchema } from "./attachment.js";
 import { lazySchema } from "../utils/lazySchema.js";
 import { MessageMentionsSchema } from "./mention.js";
 import { PreviewAnnotationBundleSchema } from "./browser-preview.js";
+import { ProviderIdentitySchema } from "../compat/agent-model.js";
+
+/** Canonical provenance for a user-side message sent by a parent agent. */
+export const ParentAgentMessageProvenanceSchema = z.object({
+  parentThreadId: z.string().trim().min(1).max(256),
+  parentTurnId: z.string().trim().min(1).max(256),
+  parentItemId: z.string().trim().min(1).max(256),
+  providerIdentities: z.array(ProviderIdentitySchema).max(16),
+}).strict();
+
+/** Canonical provenance for a user-side message sent by a parent agent. */
+export type ParentAgentMessageProvenance = z.infer<typeof ParentAgentMessageProvenanceSchema>;
 
 /** Provenance for a retained message that originated in the legacy conversation store. */
 export const LegacyMessageProvenanceSchema = z.object({
@@ -49,6 +61,7 @@ export const MessageSchema = lazySchema(() =>
      */
     is_internal: z.boolean().optional(),
     legacyProvenance: LegacyMessageProvenanceSchema.optional(),
+    parentAgentProvenance: ParentAgentMessageProvenanceSchema.optional(),
   }),
 );
 /** Message record from the database. */

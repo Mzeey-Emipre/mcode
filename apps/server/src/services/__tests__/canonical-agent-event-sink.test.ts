@@ -3,6 +3,13 @@ import type Database from "better-sqlite3";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CANONICAL_AGENT_EVENT_BATCH_MAX,
+  CANONICAL_SUBAGENT_TASK_MAX_LENGTH,
+  CANONICAL_SUBAGENT_ROSTER_MAX_CHILDREN,
+  MessageSchema,
+  SUBAGENT_DISPLAY_NAME_MAX_LENGTH,
+  SUBAGENT_METADATA_MAX_LENGTH,
+  ThoughtSegmentRecordSchema,
+  ToolCallRecordSchema,
   type CanonicalAgentEventEnvelope,
   MAX_TURN_RECOVERIES,
   type ProviderIdentity,
@@ -165,6 +172,13 @@ function startCanonicalParent(sink: CanonicalAgentEventSink, db: Database.Databa
     providerIdentities: [],
     projectUserMessage: () => messageRepo.create(THREAD_ID, "user", "delegate", 1),
   });
+}
+
+function executionIdForTurn(db: Database.Database, turnId: string): string {
+  const row = db.prepare(
+    "SELECT execution_id FROM canonical_agent_turns WHERE id = ?",
+  ).get(turnId) as { execution_id: string };
+  return row.execution_id;
 }
 
 describe("CanonicalAgentEventSink", () => {
@@ -1075,6 +1089,447 @@ describe("CanonicalAgentEventSink", () => {
     expect(sink.loadTurnByExecution(delegation.childThread.id)).toBeNull();
     expect(db.prepare("SELECT COUNT(*) AS count FROM canonical_agent_turns WHERE thread_id = ?")
       .get(delegation.childThread.id)).toEqual({ count: 0 });
+  });
+
+  it("loads roster metadata from the exact parent source item", () => {
+    startCanonicalParent(sink, db);
+    const delegation = sink.startCodexChildDelegation({
+      parentThreadId: THREAD_ID,
+      parentTurnId: TURN_ID,
+      parentExecutionId: EXECUTION_ID,
+      parentItemId: "toolCall:spawn-roster-source",
+      receiverThreadIds: ["native-roster-source"],
+      description: "Inspect the source item",
+      identity: "Roster analyst",
+      model: "gpt-5.6-sol",
+      reasoningEffort: "high",
+      providerIdentities: [identity()],
+    });
+
+    const roster = sink.loadSubagentRoster({
+      owningParentThreadId: THREAD_ID,
+      limit: CANONICAL_SUBAGENT_ROSTER_MAX_CHILDREN,
+    });
+
+    expect(roster).toMatchObject({
+      owningParentThreadId: THREAD_ID,
+      active: [{
+        id: delegation.childThread.id,
+        parentThreadId: THREAD_ID,
+        lineage: [THREAD_ID, delegation.childThread.id],
+        task: "Inspect the source item",
+        identity: "Roster analyst",
+        model: "gpt-5.6-sol",
+        reasoning: "high",
+        sourceProviderIdentities: [identity()],
+        providerIdentities: [
+          identity(),
+          {
+            providerId: "codex",
+            scope: "parentItem",
+            value: "receiverThreadId:native-roster-source",
+            provenance: "native",
+          },
+        ],
+      }],
+      done: [],
+    });
+  });
+
+  it("bounds hostile roster metadata before canonical persistence", () => {
+    startCanonicalParent(sink, db);
+    const description = "d".repeat(CANONICAL_SUBAGENT_TASK_MAX_LENGTH + 1);
+    const identityValue = "i".repeat(SUBAGENT_DISPLAY_NAME_MAX_LENGTH + 1);
+    const model = "m".repeat(SUBAGENT_METADATA_MAX_LENGTH + 1);
+    const reasoningEffort = "r".repeat(SUBAGENT_METADATA_MAX_LENGTH + 1);
+    const delegation = sink.startCodexChildDelegation({
+      parentThreadId: THREAD_ID,
+      parentTurnId: TURN_ID,
+      parentExecutionId: EXECUTION_ID,
+      parentItemId: "toolCall:spawn-hostile-roster-metadata",
+      description,
+      identity: identityValue,
+      model,
+      reasoningEffort,
+      providerIdentities: [],
+    });
+
+    const row = sink.loadSubagentRoster({
+      owningParentThreadId: THREAD_ID,
+      limit: CANONICAL_SUBAGENT_ROSTER_MAX_CHILDREN,
+    }).active[0]!;
+
+    expect(row.task).toHaveLength(CANONICAL_SUBAGENT_TASK_MAX_LENGTH);
+    expect(row.identity).toHaveLength(SUBAGENT_DISPLAY_NAME_MAX_LENGTH);
+    expect(row.model).toBeUndefined();
+    expect(row.reasoning).toBeUndefined();
+    expect(JSON.stringify(sink.loadItem(delegation.parentItem.id)?.payload)).not.toContain(description);
+  });
+
+  it("bounds unique nested roster rows and orders active and terminal descendants", () => {
+    startCanonicalParent(sink, db);
+    const activeEarly = sink.startCodexChildDelegation({
+      parentThreadId: THREAD_ID,
+      parentTurnId: TURN_ID,
+      parentExecutionId: EXECUTION_ID,
+      parentItemId: "toolCall:spawn-active-early",
+      receiverThreadIds: ["native-active-early"],
+      providerIdentities: [],
+    });
+    const activeEarlyTurn = sink.startCodexChildTurn({
+      parentThreadId: THREAD_ID,
+      parentTurnId: TURN_ID,
+      parentExecutionId: EXECUTION_ID,
+      parentItemId: "toolCall:spawn-active-early",
+      nativeThreadId: "native-active-early",
+      nativeTurnId: "native-turn-active-early",
+    });
+    const activeLate = sink.startCodexChildDelegation({
+      parentThreadId: THREAD_ID,
+      parentTurnId: TURN_ID,
+      parentExecutionId: EXECUTION_ID,
+      parentItemId: "toolCall:spawn-active-late",
+      receiverThreadIds: ["native-active-late"],
+      providerIdentities: [],
+    });
+    const activeLateTurn = sink.startCodexChildTurn({
+      parentThreadId: THREAD_ID,
+      parentTurnId: TURN_ID,
+      parentExecutionId: EXECUTION_ID,
+      parentItemId: "toolCall:spawn-active-late",
+      nativeThreadId: "native-active-late",
+      nativeTurnId: "native-turn-active-late",
+    });
+    const nested = sink.startCodexChildDelegation({
+      parentThreadId: activeEarly.childThread.id,
+      parentTurnId: activeEarlyTurn.id,
+      parentExecutionId: executionIdForTurn(db, activeEarlyTurn.id),
+      parentItemId: "toolCall:spawn-nested",
+      receiverThreadIds: ["native-nested"],
+      providerIdentities: [],
+    });
+    const nestedTurn = sink.startCodexChildTurn({
+      parentThreadId: activeEarly.childThread.id,
+      parentTurnId: activeEarlyTurn.id,
+      parentExecutionId: executionIdForTurn(db, activeEarlyTurn.id),
+      parentItemId: "toolCall:spawn-nested",
+      nativeThreadId: "native-nested",
+      nativeTurnId: "native-turn-nested",
+    });
+    sink.finishCodexChildTurn({
+      childThreadId: nested.childThread.id,
+      nativeTurnId: "native-turn-nested",
+      outcome: "completed",
+    });
+    const errored = sink.startCodexChildDelegation({
+      parentThreadId: THREAD_ID,
+      parentTurnId: TURN_ID,
+      parentExecutionId: EXECUTION_ID,
+      parentItemId: "toolCall:spawn-errored",
+      receiverThreadIds: ["native-errored"],
+      providerIdentities: [],
+    });
+    const erroredTurn = sink.startCodexChildTurn({
+      parentThreadId: THREAD_ID,
+      parentTurnId: TURN_ID,
+      parentExecutionId: EXECUTION_ID,
+      parentItemId: "toolCall:spawn-errored",
+      nativeThreadId: "native-errored",
+      nativeTurnId: "native-turn-errored",
+    });
+    sink.finishCodexChildTurn({
+      childThreadId: errored.childThread.id,
+      nativeTurnId: "native-turn-errored",
+      outcome: "errored",
+    });
+    const interrupted = sink.startCodexChildDelegation({
+      parentThreadId: THREAD_ID,
+      parentTurnId: TURN_ID,
+      parentExecutionId: EXECUTION_ID,
+      parentItemId: "toolCall:spawn-interrupted",
+      receiverThreadIds: ["native-interrupted"],
+      providerIdentities: [],
+    });
+    const interruptedTurn = sink.startCodexChildTurn({
+      parentThreadId: THREAD_ID,
+      parentTurnId: TURN_ID,
+      parentExecutionId: EXECUTION_ID,
+      parentItemId: "toolCall:spawn-interrupted",
+      nativeThreadId: "native-interrupted",
+      nativeTurnId: "native-turn-interrupted",
+    });
+    sink.finishCodexChildTurn({
+      childThreadId: interrupted.childThread.id,
+      nativeTurnId: "native-turn-interrupted",
+      outcome: "cancelled",
+    });
+
+    db.prepare("UPDATE canonical_agent_turns SET started_at = ?, updated_at = ? WHERE id = ?")
+      .run("2026-08-09T20:00:01.000Z", "2026-08-09T20:00:01.000Z", activeEarlyTurn.id);
+    db.prepare("UPDATE canonical_agent_turns SET started_at = ?, updated_at = ? WHERE id = ?")
+      .run("2026-08-09T20:00:02.000Z", "2026-08-09T20:00:02.000Z", activeLateTurn.id);
+    db.prepare("UPDATE canonical_agent_turns SET ended_at = ?, updated_at = ? WHERE id = ?")
+      .run("2026-08-09T20:00:05.000Z", "2026-08-09T20:00:05.000Z", nestedTurn.id);
+    db.prepare("UPDATE canonical_agent_turns SET ended_at = ?, updated_at = ? WHERE id = ?")
+      .run("2026-08-09T20:00:04.000Z", "2026-08-09T20:00:04.000Z", erroredTurn.id);
+    db.prepare("UPDATE canonical_agent_turns SET ended_at = ?, updated_at = ? WHERE id = ?")
+      .run("2026-08-09T20:00:03.000Z", "2026-08-09T20:00:03.000Z", interruptedTurn.id);
+
+    const roster = sink.loadSubagentRoster({
+      owningParentThreadId: THREAD_ID,
+      limit: CANONICAL_SUBAGENT_ROSTER_MAX_CHILDREN,
+    });
+
+    expect(roster.active.map((row) => row.id)).toEqual([
+      activeEarly.childThread.id,
+      activeLate.childThread.id,
+    ]);
+    expect(roster.done.map((row) => row.id)).toEqual([
+      nested.childThread.id,
+      errored.childThread.id,
+      interrupted.childThread.id,
+    ]);
+    expect(roster.done.map((row) => row.terminalOutcome)).toEqual([
+      "Completed",
+      "Errored",
+      "Interrupted",
+    ]);
+    expect(roster.done.find((row) => row.id === nested.childThread.id)?.lineage).toEqual([
+      THREAD_ID,
+      activeEarly.childThread.id,
+      nested.childThread.id,
+    ]);
+    const ids = [...roster.active, ...roster.done].map((row) => row.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids.length).toBeLessThanOrEqual(CANONICAL_SUBAGENT_ROSTER_MAX_CHILDREN);
+    const bounded = sink.loadSubagentRoster({ owningParentThreadId: THREAD_ID, limit: 1 });
+    expect(bounded.active).toHaveLength(1);
+    expect(bounded.done).toHaveLength(0);
+  });
+
+  it("retains a newer active descendant when older done rows exceed the roster bound", () => {
+    startCanonicalParent(sink, db);
+    const insertThread = db.prepare(`
+      INSERT INTO threads (id, workspace_id, title, branch, provider, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    const insertCanonicalThread = db.prepare(`
+      INSERT INTO canonical_agent_threads (
+        id, workspace_id, parent_thread_id, root_thread_id, owning_parent_thread_id,
+        provider_id, provider_identities_json, activity_state, conversation_revision,
+        roster_revision, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const oldTimestamp = "2026-08-01T00:00:00.000Z";
+    for (let index = 0; index < CANONICAL_SUBAGENT_ROSTER_MAX_CHILDREN; index += 1) {
+      const id = `thread:fixture-done-${String(index).padStart(3, "0")}`;
+      insertThread.run(id, "workspace-1", id, "main", "codex", oldTimestamp, oldTimestamp);
+      insertCanonicalThread.run(
+        id,
+        "workspace-1",
+        THREAD_ID,
+        THREAD_ID,
+        THREAD_ID,
+        "codex",
+        "[]",
+        "Idle",
+        0,
+        0,
+        oldTimestamp,
+        oldTimestamp,
+      );
+    }
+    const newerActiveId = "thread:fixture-active-new";
+    const newerTimestamp = "2026-08-02T00:00:00.000Z";
+    insertThread.run(
+      newerActiveId,
+      "workspace-1",
+      newerActiveId,
+      "main",
+      "codex",
+      newerTimestamp,
+      newerTimestamp,
+    );
+    insertCanonicalThread.run(
+      newerActiveId,
+      "workspace-1",
+      THREAD_ID,
+      THREAD_ID,
+      THREAD_ID,
+      "codex",
+      "[]",
+      "Active",
+      0,
+      0,
+      newerTimestamp,
+      newerTimestamp,
+    );
+
+    const roster = sink.loadSubagentRoster({
+      owningParentThreadId: THREAD_ID,
+      limit: CANONICAL_SUBAGENT_ROSTER_MAX_CHILDREN,
+    });
+
+    expect(roster.active.map((row) => row.id)).toEqual([newerActiveId]);
+    expect(roster.done).toHaveLength(CANONICAL_SUBAGENT_ROSTER_MAX_CHILDREN - 1);
+    expect([...roster.active, ...roster.done]).toHaveLength(CANONICAL_SUBAGENT_ROSTER_MAX_CHILDREN);
+  });
+
+  it("projects child messages and narrative with persisted timestamps and native correlation", () => {
+    startCanonicalParent(sink, db);
+    const input = {
+      parentThreadId: THREAD_ID,
+      parentTurnId: TURN_ID,
+      parentExecutionId: EXECUTION_ID,
+      parentItemId: "toolCall:spawn-projection",
+      receiverThreadIds: ["native-projection"],
+      prompt: "Child prompt",
+      providerIdentities: [identity()],
+    };
+    const delegation = sink.startCodexChildDelegation(input);
+    sink.startCodexChildTurn({
+      ...input,
+      nativeThreadId: "native-projection",
+      nativeTurnId: "native-turn-projection",
+    });
+    const reasoning = sink.recordCodexChildItem({
+      childThreadId: delegation.childThread.id,
+      nativeTurnId: "native-turn-projection",
+      nativeItemId: "native-reasoning",
+      eventKey: "delta-1",
+      kind: "reasoning",
+      payload: { projection: "codexChildReasoning", content: "Thinking" },
+    });
+    const toolCall = sink.recordCodexChildItem({
+      childThreadId: delegation.childThread.id,
+      nativeTurnId: "native-turn-projection",
+      nativeItemId: "native-tool",
+      eventKey: "started",
+      kind: "tool-call",
+      payload: {
+        projection: "codexChildToolCall",
+        toolName: "Read",
+        toolInput: { path: "src/app.ts" },
+      },
+    });
+    const toolResult = sink.recordCodexChildItem({
+      childThreadId: delegation.childThread.id,
+      nativeTurnId: "native-turn-projection",
+      nativeItemId: "native-tool",
+      eventKey: "completed",
+      kind: "tool-result",
+      payload: {
+        projection: "codexChildToolResult",
+        output: "file contents",
+        isError: false,
+      },
+    });
+    sink.recordCodexChildItem({
+      childThreadId: delegation.childThread.id,
+      nativeTurnId: "native-turn-projection",
+      nativeItemId: "native-message",
+      eventKey: "completed",
+      kind: "message",
+      payload: {
+        projection: "message",
+        message: {
+          id: "child-answer",
+          role: "assistant",
+          content: "Child answer",
+          parentAgentProvenance: {
+            parentThreadId: THREAD_ID,
+            parentTurnId: TURN_ID,
+            parentItemId: input.parentItemId,
+            providerIdentities: [],
+          },
+        },
+      },
+    });
+    sink.finishCodexChildTurn({
+      childThreadId: delegation.childThread.id,
+      nativeTurnId: "native-turn-projection",
+      outcome: "completed",
+    });
+    db.prepare("UPDATE canonical_agent_items SET created_at = ?, updated_at = ? WHERE id = ?")
+      .run("2026-08-09T20:00:10.000Z", "2026-08-09T20:00:11.000Z", reasoning.id);
+    db.prepare("UPDATE canonical_agent_items SET created_at = ?, updated_at = ? WHERE id = ?")
+      .run("2026-08-09T20:00:12.000Z", "2026-08-09T20:00:13.000Z", toolCall.id);
+    db.prepare("UPDATE canonical_agent_items SET created_at = ?, updated_at = ? WHERE id = ?").run(
+      "2026-08-09T20:00:14.000Z",
+      "2026-08-09T20:00:15.000Z",
+      toolResult.id,
+    );
+    sink.startCodexChildTurn({
+      ...input,
+      prompt: undefined,
+      nativeThreadId: "native-projection",
+      nativeTurnId: "native-turn-unrelated",
+    });
+    sink.recordCodexChildItem({
+      childThreadId: delegation.childThread.id,
+      nativeTurnId: "native-turn-unrelated",
+      nativeItemId: "native-unrelated-reasoning",
+      eventKey: "completed",
+      kind: "reasoning",
+      payload: { projection: "codexChildReasoning", content: "Unrelated turn" },
+    });
+
+    const projection = sink.loadConversationProjection(delegation.childThread.id, 10);
+    const repeatedProjection = sink.loadConversationProjection(delegation.childThread.id, 10);
+
+    expect(projection).toEqual(repeatedProjection);
+    expect(projection.messages.map((message) => message.sequence)).toEqual([0, 1]);
+    expect(projection.messages.every((message) => message.thread_id === delegation.childThread.id)).toBe(true);
+    projection.messages.forEach((message) => MessageSchema().parse(message));
+    expect(projection.messages[0]).toMatchObject({
+      role: "user",
+      content: "Child prompt",
+      parentAgentProvenance: {
+        parentThreadId: THREAD_ID,
+        parentTurnId: TURN_ID,
+        parentItemId: input.parentItemId,
+      },
+    });
+    expect(projection.messages[1]).not.toHaveProperty("parentAgentProvenance");
+    expect(JSON.stringify(projection.narrativeByMessage)).not.toContain("Unrelated turn");
+    const childNarrative = projection.narrativeByMessage[projection.messages[1]!.id]!;
+    childNarrative.tools.forEach((record) => ToolCallRecordSchema.parse(record));
+    childNarrative.thoughts.forEach((record) => ThoughtSegmentRecordSchema.parse(record));
+    expect(childNarrative.tools).toEqual([expect.objectContaining({
+      tool_name: "Read",
+      input_summary: JSON.stringify({ path: "src/app.ts" }),
+      output_summary: "file contents",
+      status: "completed",
+      started_at: "2026-08-09T20:00:12.000Z",
+      completed_at: "2026-08-09T20:00:15.000Z",
+    })]);
+    expect(childNarrative.thoughts).toEqual([expect.objectContaining({
+      text: "Thinking",
+      started_at: "2026-08-09T20:00:10.000Z",
+      ended_at: "2026-08-09T20:00:11.000Z",
+    })]);
+
+    const newerPage = sink.loadConversationProjection(
+      delegation.childThread.id,
+      1,
+      undefined,
+      0,
+    );
+    expect(newerPage.messages.map((message) => message.id)).toEqual(["child-answer"]);
+    expect(newerPage.narrativeByMessage["child-answer"]!.tools).toEqual(childNarrative.tools);
+    expect(newerPage.narrativeByMessage["child-answer"]!.thoughts).toEqual(childNarrative.thoughts);
+
+    const olderPage = sink.loadConversationProjection(
+      delegation.childThread.id,
+      1,
+      1,
+    );
+    expect(olderPage.messages.map((message) => message.role)).toEqual(["user"]);
+    expect(olderPage.narrativeByMessage[projection.messages[0]!.id]).toEqual({
+      tools: [],
+      thoughts: [],
+      hooks: [],
+    });
   });
 
   it("binds only registered receiver identity and rejects reassignment", () => {

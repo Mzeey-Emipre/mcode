@@ -144,4 +144,54 @@ describe("ConversationResidency", () => {
 
     expect(residency.canCommitHistoryPageRequest(handle, request)).toBe(false);
   });
+
+  it("reference-counts display leases and coalesces resident refreshes", async () => {
+    const hydrateDisplayConversation = vi.fn().mockResolvedValue(undefined);
+    const refreshDisplayConversation = vi.fn().mockResolvedValue(undefined);
+    const releaseDisplayConversation = vi.fn();
+    const residency = createConversationResidency({
+      restoreConversation: vi.fn().mockResolvedValue(undefined),
+      deactivateConversation: vi.fn(),
+      ...requiredDeps(),
+      hydrateDisplayConversation,
+      refreshDisplayConversation,
+      releaseDisplayConversation,
+      getSelectedConversationId: () => "parent",
+    });
+
+    residency.mountDisplayConversation("child");
+    residency.mountDisplayConversation("child");
+    expect(residency.isConversationVisible("child")).toBe(true);
+    expect(hydrateDisplayConversation).toHaveBeenCalledOnce();
+
+    const first = residency.refreshVisibleConversation("child");
+    const second = residency.refreshVisibleConversation("child");
+    expect(first).toBe(second);
+    await first;
+    residency.unmountDisplayConversation("child");
+    expect(releaseDisplayConversation).not.toHaveBeenCalled();
+    residency.unmountDisplayConversation("child");
+    expect(residency.isConversationVisible("child")).toBe(false);
+    expect(releaseDisplayConversation).toHaveBeenCalledOnce();
+  });
+
+  it("rejects a late lease response after release and accepts a new generation", () => {
+    const hydrateDisplayConversation = vi.fn().mockResolvedValue(undefined);
+    const residency = createConversationResidency({
+      restoreConversation: vi.fn().mockResolvedValue(undefined),
+      deactivateConversation: vi.fn(),
+      ...requiredDeps(),
+      hydrateDisplayConversation,
+    });
+
+    residency.mountDisplayConversation("child");
+    const firstGeneration = hydrateDisplayConversation.mock.calls[0]?.[1];
+    residency.unmountDisplayConversation("child");
+    residency.mountDisplayConversation("child");
+    const secondGeneration = hydrateDisplayConversation.mock.calls[1]?.[1];
+
+    expect(secondGeneration).toBeGreaterThan(firstGeneration);
+    expect(residency.isDisplayLeaseCurrent("child", firstGeneration)).toBe(false);
+    expect(residency.isDisplayLeaseCurrent("child", secondGeneration)).toBe(true);
+  });
 });
