@@ -221,6 +221,7 @@ export class MessageRepo {
   private createStatement: Database.Statement | null = null;
   private createAssistantStatement: Database.Statement | null = null;
   private publishAssistantStatement: Database.Statement | null = null;
+  private latestSequenceStatement: Database.Statement | null = null;
 
   constructor(@inject("Database") private readonly db: Database.Database) {}
 
@@ -387,6 +388,15 @@ export class MessageRepo {
   /** Make a staged assistant message visible after its terminal checkpoint commits. */
   publishAssistant(messageId: string): void {
     this.getPublishAssistantStatement().run(messageId);
+  }
+
+  /** Return the newest sequence in a thread, including internal rows. */
+  getLatestSequenceIncludingInternal(threadId: string): number {
+    this.latestSequenceStatement ??= this.db.prepare(
+      "SELECT sequence FROM messages WHERE thread_id = ? ORDER BY sequence DESC LIMIT 1",
+    );
+    const row = this.latestSequenceStatement.get(threadId) as { sequence?: number } | undefined;
+    return row?.sequence ?? 0;
   }
 
   /** Append stored attachments to an existing message, deduping by attachment id. */

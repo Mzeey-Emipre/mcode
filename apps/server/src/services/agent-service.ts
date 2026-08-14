@@ -751,11 +751,7 @@ export class AgentService {
       this.memoryPressureService.markActive(threadId);
 
       // Compute next sequence number and persist user message
-      const { messages: existingMessages } = this.messageRepo.listByThread(threadId, 1);
-      const nextSeq =
-        existingMessages.length > 0
-          ? existingMessages[existingMessages.length - 1].sequence + 1
-          : 1;
+      const nextSeq = this.messageRepo.getLatestSequenceIncludingInternal(threadId) + 1;
 
       const persistedUserText = messageDisplayContent ?? content;
 
@@ -2796,13 +2792,14 @@ export class AgentService {
             if (isPostTurnGoalReceipt) {
               const { messages } = this.messageRepo.listByThread(event.threadId, 1);
               const last = messages[messages.length - 1] ?? null;
+              const nextSequence = this.messageRepo.getLatestSequenceIncludingInternal(event.threadId) + 1;
               const receipt = last?.role === "assistant" && last.content === event.content
                 ? last
                 : this.messageRepo.create(
                   event.threadId,
                   "assistant",
                   event.content,
-                  last ? last.sequence + 1 : 1,
+                  nextSequence,
                   undefined,
                   undefined,
                   undefined,
@@ -3274,11 +3271,7 @@ export class AgentService {
           this.compactionInProgressByThread.delete(event.threadId);
           // Compaction finished — persist a system divider message
           try {
-            const { messages: existing } = this.messageRepo.listByThread(event.threadId, 1);
-            const nextSeq =
-              existing.length > 0
-                ? existing[existing.length - 1].sequence + 1
-                : 1;
+            const nextSeq = this.messageRepo.getLatestSequenceIncludingInternal(event.threadId) + 1;
             this.messageRepo.create(
               event.threadId,
               "system",

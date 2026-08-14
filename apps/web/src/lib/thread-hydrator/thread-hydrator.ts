@@ -101,25 +101,17 @@ function mergeResidentConversationCacheState(
   if (
     residentSequence == null
     || (cachedSequence != null
-      && (cachedSequence > residentSequence
-        || (!preferResidentAtEqualSequence && cachedSequence === residentSequence)))
+      && cachedSequence > residentSequence)
   ) {
     return cached;
   }
-  const cachedMessageIds = new Set(cached.messages.map((message) => message.id));
-  const messagesBySequence = new Map(cached.messages.map((message) => [message.sequence, message]));
+  const messagesById = new Map(cached.messages.map((message) => [message.id, message]));
   for (const message of residentCacheState.messages) {
-    if (!preferResidentAtEqualSequence && cachedMessageIds.has(message.id)) continue;
-    if (preferResidentAtEqualSequence) {
-      for (const [sequence, existing] of messagesBySequence) {
-        if (existing.id === message.id) messagesBySequence.delete(sequence);
-      }
-    }
-    if (preferResidentAtEqualSequence || !messagesBySequence.has(message.sequence)) {
-      messagesBySequence.set(message.sequence, message);
+    if (preferResidentAtEqualSequence || !messagesById.has(message.id)) {
+      messagesById.set(message.id, message);
     }
   }
-  const messages = [...messagesBySequence.values()].sort((left, right) =>
+  const messages = [...messagesById.values()].sort((left, right) =>
     left.sequence - right.sequence || left.id.localeCompare(right.id),
   );
   const retainedMessageIds = new Set(messages.map((message) => message.id));
