@@ -35,12 +35,16 @@ export const LINUX_PRODUCT_NAMESPACE_MARKER = "MCODE_TERMINAL_PRODUCT_NAMESPACE"
 /** Proves that the marked verifier exposes only the configured loopback interface. */
 export function hasLinuxProductNamespaceProof({
   env = process.env,
-  readdir = readdirSync,
+  networkInterfaces = os.networkInterfaces,
 } = {}) {
   if (env[LINUX_PRODUCT_NAMESPACE_MARKER] !== "1") return false;
   try {
-    const interfaces = readdir("/sys/class/net");
-    return Array.isArray(interfaces) && interfaces.slice().sort().join("\0") === "lo";
+    const interfaces = networkInterfaces();
+    return (
+      interfaces !== null &&
+      typeof interfaces === "object" &&
+      Object.keys(interfaces).sort().join("\0") === "lo"
+    );
   } catch {
     return false;
   }
@@ -51,12 +55,12 @@ export function shouldReexecLinuxProductVerifier({
   command,
   platform,
   env = process.env,
-  readdir = readdirSync,
+  networkInterfaces = os.networkInterfaces,
 }) {
   return (
     command === "product" &&
     platform === "linux" &&
-    !hasLinuxProductNamespaceProof({ env, readdir })
+    !hasLinuxProductNamespaceProof({ env, networkInterfaces })
   );
 }
 
@@ -367,7 +371,7 @@ export function buildProductLaunch({
   launchArgs,
   platform,
   env = process.env,
-  readdir = readdirSync,
+  networkInterfaces = os.networkInterfaces,
 }) {
   const executablePath = path.resolve(target.executablePath);
   const isolatedLaunchArgs = ["--no-sandbox", ...launchArgs];
@@ -375,7 +379,7 @@ export function buildProductLaunch({
     throw new Error("Linux product launch requires Linux network namespace isolation");
   }
   if (isolationReceipt.mode === "linux-network-namespace") {
-    if (!hasLinuxProductNamespaceProof({ env, readdir })) {
+    if (!hasLinuxProductNamespaceProof({ env, networkInterfaces })) {
       throw new Error("Linux Electron launch requires the isolated product verifier");
     }
     return {
@@ -476,27 +480,26 @@ export async function openTerminal(page) {
   return terminal;
 }
 
-/** Activates the first seeded workspace before requiring its Terminal control. */
-export async function activateSeededWorkspace(
+/** Waits for the release-test workspace bootstrap to expose a visible Terminal control. */
+export async function waitForTerminalControl(
   page,
   { timeoutMs = 10_000, intervalMs = 100 } = {},
 ) {
   const terminalToggle = page.getByRole("button", { name: "Terminal" }).first();
-  if (await terminalToggle.count()) return;
-  const projectButton = page.getByRole("button", { name: /^Open project / }).first();
+  const html = page.locator("html");
   const deadline = Date.now() + timeoutMs;
-  let projectClicked = false;
-  while (Date.now() < deadline) {
+  while (true) {
+    const bootstrapError = await html.getAttribute(
+      "data-terminal-release-test-bootstrap-error",
+    );
+    if (bootstrapError) throw new Error(bootstrapError);
     if ((await terminalToggle.count()) > 0 && await terminalToggle.isVisible()) return;
-    if (!projectClicked && (await projectButton.count()) > 0) {
-      await projectButton.click();
-      projectClicked = true;
-      continue;
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      throw new Error("Timed out waiting for visible Terminal control");
     }
-    await page.waitForTimeout(intervalMs);
+    await page.waitForTimeout(Math.min(intervalMs, remainingMs));
   }
-  if (!projectClicked) throw new Error("Seeded workspace project control is missing");
-  throw new Error("Timed out waiting for Terminal control after opening seeded workspace");
 }
 
 async function runTerminalWorkload(page, terminal, workload) {
@@ -631,7 +634,7 @@ async function runProductBoot({ target, env, bootFault, isolationReceipt, worklo
         }
       });
     });
-    await activateSeededWorkspace(page);
+    await waitForTerminalControl(page);
     const initialTerminal = await openTerminal(page);
     const initialRuntime = await waitForRuntime(page, (runtime) => runtime.capabilities !== undefined);
     const initialCapabilities = initialRuntime.capabilities;

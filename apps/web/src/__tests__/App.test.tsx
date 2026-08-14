@@ -10,6 +10,24 @@ import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { App } from "../app/App";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useUiStore } from "@/stores/uiStore";
+import { useWorkspaceStore } from "@/stores/workspaceStore";
+import type { Workspace } from "@/transport/types";
+
+const defaultLoadWorkspaces = useWorkspaceStore.getState().loadWorkspaces;
+
+const terminalReleaseWorkspace: Workspace = {
+  id: "ws-release",
+  name: "Release fixture",
+  path: "/release-fixture",
+  provider_config: {},
+  is_git_repo: true,
+  created_at: "2026-08-14T00:00:00.000Z",
+  updated_at: "2026-08-14T00:00:00.000Z",
+  pinned: false,
+  last_opened_at: null,
+  sort_order: 0,
+  deleted_at: null,
+};
 
 if (typeof globalThis.ResizeObserver === "undefined") {
   globalThis.ResizeObserver = class ResizeObserverMock {
@@ -103,6 +121,14 @@ describe("App", () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
     useConnectionStore.setState({ status: "connecting" });
+    useWorkspaceStore.setState({
+      workspaces: [],
+      activeWorkspaceId: null,
+      loadWorkspaces: defaultLoadWorkspaces,
+    });
+    document.documentElement.removeAttribute(
+      "data-terminal-release-test-bootstrap-error",
+    );
     delete (window as unknown as Record<string, unknown>).desktopBridge;
   });
 
@@ -336,5 +362,57 @@ describe("App", () => {
     expect(screen.queryByTestId("desktop-title-bar")).not.toBeInTheDocument();
 
     unmount();
+  });
+
+  it("activates the first workspace only for the packaged Terminal release test", async () => {
+    const loadWorkspaces = vi.fn().mockResolvedValue(undefined);
+    useWorkspaceStore.setState({
+      workspaces: [terminalReleaseWorkspace],
+      activeWorkspaceId: null,
+      loadWorkspaces,
+    });
+    (window as unknown as Record<string, unknown>).desktopBridge = {
+      terminalReleaseTest: { enabled: true },
+      window: {
+        platform: "win32",
+        isDevelopment: false,
+        perform: vi.fn(),
+      },
+    };
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(loadWorkspaces).toHaveBeenCalled();
+      expect(useWorkspaceStore.getState().activeWorkspaceId).toBe("ws-release");
+    });
+    expect(document.documentElement).not.toHaveAttribute(
+      "data-terminal-release-test-bootstrap-error",
+    );
+  });
+
+  it("exposes the packaged Terminal workspace bootstrap error", async () => {
+    useWorkspaceStore.setState({
+      workspaces: [],
+      activeWorkspaceId: null,
+      loadWorkspaces: vi.fn().mockResolvedValue(undefined),
+    });
+    (window as unknown as Record<string, unknown>).desktopBridge = {
+      terminalReleaseTest: { enabled: true },
+      window: {
+        platform: "win32",
+        isDevelopment: false,
+        perform: vi.fn(),
+      },
+    };
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(document.documentElement).toHaveAttribute(
+        "data-terminal-release-test-bootstrap-error",
+        "Terminal release-test workspace is missing",
+      );
+    });
   });
 });

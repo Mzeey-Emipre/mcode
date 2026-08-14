@@ -44,6 +44,7 @@ import {
 } from "@/stores/navigationHistoryStore";
 import { usePullRequestDetailStore } from "@/stores/pullRequestDetailStore";
 import { usePullRequestStore } from "@/stores/pullRequestStore";
+import { bootstrapTerminalReleaseTestWorkspace } from "@/components/terminal/terminal-release-test-workspace";
 
 const LazySettingsView = lazy(async () => {
   const m = await import("@/components/settings/SettingsView");
@@ -284,6 +285,21 @@ export function App() {
     startPushListeners();
     useSettingsStore.getState().fetch();
     return () => stopPushListeners();
+  }, []);
+
+  useEffect(() => {
+    if (window.desktopBridge?.terminalReleaseTest?.enabled !== true) return;
+    const root = document.documentElement;
+    const errorAttribute = "data-terminal-release-test-bootstrap-error";
+    root.removeAttribute(errorAttribute);
+    void bootstrapTerminalReleaseTestWorkspace(useWorkspaceStore.getState)
+      .then(() => root.removeAttribute(errorAttribute))
+      .catch((error: unknown) => {
+        root.setAttribute(
+          errorAttribute,
+          error instanceof Error ? error.message : String(error),
+        );
+      });
   }, []);
 
   // Hydrate app version + auto-updater status from the Electron preload bridge.

@@ -5,7 +5,6 @@ import path from "node:path";
 import {
   PRODUCT_SMOKE_FAULTS,
   appendBoundedOutputTail,
-  activateSeededWorkspace,
   assertLoopbackIsolationReceipt,
   buildProductBootEnv,
   buildLinuxProductVerifierLaunch,
@@ -22,6 +21,7 @@ import {
   releaseProductProcess,
   shouldReexecLinuxProductVerifier,
   validateProductSmokeLaunchInput,
+  waitForTerminalControl,
   waitForRendererPage,
 } from "../desktop-packaging/package-validation/packaged-terminal-product-smoke.mjs";
 
@@ -153,27 +153,44 @@ describe("packaged Terminal product smoke contract", () => {
     );
     expect(hostileLaunch.args.slice(shellArgumentDelimiter + 1)).toEqual(hostileVerifierArgs);
 
-    const onlyLoopbackInterface = () => ["lo"];
-    const extraNetworkInterface = () => ["eth0", "lo"];
+    const onlyLoopbackInterfaces = () => ({
+      lo: [{ address: "127.0.0.1" }],
+    });
+    const extraNetworkInterfaces = () => ({
+      eth0: [{ address: "192.0.2.10" }],
+      lo: [{ address: "127.0.0.1" }],
+    });
     const unreadableInterfaces = () => {
-      throw new Error("sysfs unavailable");
+      throw new Error("network interfaces unavailable");
     };
     expect(
       hasLinuxProductNamespaceProof({
-        env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
-        readdir: onlyLoopbackInterface,
-      }),
-    ).toBe(true);
-    expect(
-      hasLinuxProductNamespaceProof({
-        env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
-        readdir: extraNetworkInterface,
+        env: {},
+        networkInterfaces: onlyLoopbackInterfaces,
       }),
     ).toBe(false);
     expect(
       hasLinuxProductNamespaceProof({
         env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
-        readdir: unreadableInterfaces,
+        networkInterfaces: onlyLoopbackInterfaces,
+      }),
+    ).toBe(true);
+    expect(
+      hasLinuxProductNamespaceProof({
+        env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
+        networkInterfaces: extraNetworkInterfaces,
+      }),
+    ).toBe(false);
+    expect(
+      hasLinuxProductNamespaceProof({
+        env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
+        networkInterfaces: unreadableInterfaces,
+      }),
+    ).toBe(false);
+    expect(
+      hasLinuxProductNamespaceProof({
+        env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
+        networkInterfaces: () => null,
       }),
     ).toBe(false);
     expect(
@@ -181,7 +198,7 @@ describe("packaged Terminal product smoke contract", () => {
         command: "product",
         platform: "linux",
         env: {},
-        readdir: onlyLoopbackInterface,
+        networkInterfaces: onlyLoopbackInterfaces,
       }),
     ).toBe(true);
     expect(
@@ -189,7 +206,7 @@ describe("packaged Terminal product smoke contract", () => {
         command: "product",
         platform: "linux",
         env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
-        readdir: extraNetworkInterface,
+        networkInterfaces: extraNetworkInterfaces,
       }),
     ).toBe(true);
     expect(
@@ -197,7 +214,7 @@ describe("packaged Terminal product smoke contract", () => {
         command: "product",
         platform: "linux",
         env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
-        readdir: onlyLoopbackInterface,
+        networkInterfaces: onlyLoopbackInterfaces,
       }),
     ).toBe(false);
 
@@ -207,7 +224,7 @@ describe("packaged Terminal product smoke contract", () => {
       launchArgs: ["--remote-debugging-port=39000"],
       platform: "linux",
       env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
-      readdir: onlyLoopbackInterface,
+      networkInterfaces: onlyLoopbackInterfaces,
     });
     expect(linuxLaunch.command).toBe(path.resolve(executable));
     expect(linuxLaunch.args.at(-1)).toBe("--remote-debugging-port=39000");
@@ -220,7 +237,17 @@ describe("packaged Terminal product smoke contract", () => {
         launchArgs: [],
         platform: "linux",
         env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
-        readdir: extraNetworkInterface,
+        networkInterfaces: extraNetworkInterfaces,
+      }),
+    ).toThrow("isolated product verifier");
+    expect(() =>
+      buildProductLaunch({
+        target: { executablePath: executable },
+        isolationReceipt: { mode: "linux-network-namespace" },
+        launchArgs: [],
+        platform: "linux",
+        env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
+        networkInterfaces: true,
       }),
     ).toThrow("isolated product verifier");
     const macLaunch = buildProductLaunch({
@@ -316,81 +343,47 @@ describe("packaged Terminal product smoke contract", () => {
     );
   });
 
-  it("keeps a seeded workspace activation a no-op when Terminal is present", async () => {
-    let projectLookups = 0;
-    await activateSeededWorkspace({
-      getByRole: (_role, { name }) => {
-        if (name === "Terminal") {
-          return { first: () => ({ count: async () => 1 }) };
-        }
-        projectLookups += 1;
-        throw new Error("Project control should not be queried");
-      },
-    });
-    expect(projectLookups).toBe(0);
-  });
-
-  it("opens the first seeded workspace and waits for Terminal", async () => {
+  it("waits for a delayed visible Terminal control", async () => {
     let terminalVisible = false;
-    let clicks = 0;
     const terminal = {
-      count: async () => (terminalVisible ? 1 : 0),
+      count: async () => 1,
       isVisible: async () => terminalVisible,
     };
-    await activateSeededWorkspace({
-      getByRole: (_role, { name }) => ({
-        first: () => name === "Terminal"
-          ? terminal
-          : {
-              count: async () => 1,
-              click: async () => {
-                clicks += 1;
-                terminalVisible = true;
-              },
-            },
-      }),
-      waitForTimeout: async () => undefined,
-    });
-    expect(clicks).toBe(1);
+    let waits = 0;
+    await waitForTerminalControl({
+      getByRole: () => ({ first: () => terminal }),
+      locator: () => ({ getAttribute: async () => null }),
+      waitForTimeout: async () => {
+        waits += 1;
+        if (waits === 2) terminalVisible = true;
+      },
+    }, { timeoutMs: 50, intervalMs: 1 });
+    expect(waits).toBe(2);
     expect(terminalVisible).toBe(true);
   });
 
-  it("waits for seeded project hydration before clicking", async () => {
-    let terminalVisible = false;
-    let projectChecks = 0;
-    let clicks = 0;
-    const terminal = {
-      count: async () => (terminalVisible ? 1 : 0),
-      isVisible: async () => terminalVisible,
-    };
-    const project = {
-      count: async () => (projectChecks++ === 0 ? 0 : 1),
-      click: async () => {
-        clicks += 1;
-        terminalVisible = true;
-      },
-    };
-    await activateSeededWorkspace({
-      getByRole: (_role, { name }) => ({
-        first: () => name === "Terminal" ? terminal : project,
-      }),
-      waitForTimeout: async () => undefined,
-    });
-    expect(clicks).toBe(1);
-    expect(projectChecks).toBeGreaterThan(1);
+  it("fails immediately on the renderer bootstrap error", async () => {
+    let waits = 0;
+    await expect(waitForTerminalControl({
+      getByRole: () => ({ first: () => ({ count: async () => 0, isVisible: async () => false }) }),
+      locator: () => ({ getAttribute: async () => "Terminal release-test workspace is missing" }),
+      waitForTimeout: async () => { waits += 1; },
+    })).rejects.toThrow("Terminal release-test workspace is missing");
+    expect(waits).toBe(0);
   });
 
-  it("fails clearly when the seeded workspace project control is missing", async () => {
+  it("times out when Terminal never becomes visible", async () => {
+    const terminal = {
+      count: async () => 1,
+      isVisible: async () => false,
+    };
     await expect(
-      activateSeededWorkspace({
-        getByRole: (_role, { name }) => ({
-          first: () => name === "Terminal"
-            ? { count: async () => 0 }
-            : { count: async () => 0 },
-        }),
+      waitForTerminalControl({
+        getByRole: () => ({ first: () => terminal }),
+        locator: () => ({ getAttribute: async () => null }),
         waitForTimeout: async () => undefined,
       }, { timeoutMs: 5, intervalMs: 1 }),
-    ).rejects.toThrow("Seeded workspace project control is missing");
+    ).rejects.toThrow("Timed out waiting for visible Terminal control");
   });
 
   it("keeps exactly the last 8192 launch-output characters", () => {
