@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, sep } from "node:path";
 import {
   isTerminalReleaseTestEnvironmentName,
   parseTerminalReleaseTestInput,
@@ -24,6 +27,31 @@ describe("protected Terminal release-test input", () => {
         packaged,
       ),
     ).toEqual({ enabled: true, backend: "modern" });
+  });
+
+  it("accepts the canonical packaged resources root passed to the server child", () => {
+    const resourcesRoot = realpathSync(mkdtempSync(join(tmpdir(), "mcode-resources-")));
+    try {
+      mkdirSync(join(resourcesRoot, "app.asar.unpacked"));
+      expect(
+        parseTerminalReleaseTestInput({
+          MCODE_TERMINAL_RELEASE_TEST: "1",
+          MCODE_TERMINAL_BACKEND: "modern",
+          MCODE_PACKAGED_RESOURCES_ROOT: resourcesRoot,
+        }),
+      ).toEqual({ enabled: true, backend: "modern" });
+
+      const nonCanonicalRoot = `${resourcesRoot}${sep}.`;
+      expect(() =>
+        parseTerminalReleaseTestInput({
+          MCODE_TERMINAL_RELEASE_TEST: "1",
+          MCODE_TERMINAL_BACKEND: "modern",
+          MCODE_PACKAGED_RESOURCES_ROOT: nonCanonicalRoot,
+        }),
+      ).toThrow(/packaged/i);
+    } finally {
+      rmSync(resourcesRoot, { recursive: true, force: true });
+    }
   });
 
   it("leaves protected development selection alone and rejects malformed release input", () => {

@@ -1,5 +1,5 @@
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { isAbsolute, resolve } from "node:path";
 
 const MAX_RELEASE_TEST_INPUT_BYTES = 128;
 const MAX_FAULT_VALUE_BYTES = 64;
@@ -35,10 +35,24 @@ export interface TerminalReleaseTestInputOptions {
   readonly resourcesPresent?: boolean;
 }
 
-function packagedResourcesPresent(): boolean {
-  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+function packagedResourcesPresent(env: Readonly<Record<string, string | undefined>>): boolean {
+  const configuredResourcesPath = env.MCODE_PACKAGED_RESOURCES_ROOT;
+  const electronResourcesPath = (process as NodeJS.Process & { resourcesPath?: string })
+    .resourcesPath;
+  const resourcesPath = configuredResourcesPath ?? electronResourcesPath;
   if (!resourcesPath) return false;
-  return existsSync(resolve(resourcesPath, "app.asar")) || existsSync(resolve(resourcesPath, "app.asar.unpacked"));
+  try {
+    if (configuredResourcesPath) {
+      if (!isAbsolute(configuredResourcesPath)) return false;
+      if (realpathSync(configuredResourcesPath) !== configuredResourcesPath) return false;
+    }
+    return (
+      existsSync(resolve(resourcesPath, "app.asar")) ||
+      existsSync(resolve(resourcesPath, "app.asar.unpacked"))
+    );
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -53,7 +67,7 @@ export function parseTerminalReleaseTestInput(
     (key) => key.startsWith(RELEASE_TEST_PREFIX),
   );
   if (releaseKeys.length === 0) return null;
-  if (!(options.resourcesPresent ?? packagedResourcesPresent())) {
+  if (!(options.resourcesPresent ?? packagedResourcesPresent(env))) {
     throw new Error("Protected Terminal release testing requires packaged resources");
   }
   for (const key of releaseKeys) {
