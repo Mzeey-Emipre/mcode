@@ -303,6 +303,7 @@ function findPackagedTarget(releaseDir, platform, arch) {
 /** Builds the isolated packaged Electron launch command for one target OS. */
 export function buildProductLaunch({ target, isolationReceipt, launchArgs }) {
   const executablePath = path.resolve(target.executablePath);
+  const isolatedLaunchArgs = ["--no-sandbox", ...launchArgs];
   if (isolationReceipt.mode === "linux-network-namespace") {
     return {
       command: "xvfb-run",
@@ -316,7 +317,7 @@ export function buildProductLaunch({ target, isolationReceipt, launchArgs }) {
         "-c",
         `${LINUX_NAMESPACE_SCRIPT}; exec "$MCODE_RELEASE_PROGRAM" "$@"`,
         "--",
-        ...launchArgs,
+        ...isolatedLaunchArgs,
       ],
       env: { MCODE_RELEASE_PROGRAM: executablePath },
     };
@@ -324,7 +325,7 @@ export function buildProductLaunch({ target, isolationReceipt, launchArgs }) {
   if (isolationReceipt.mode === "macos-network-sandbox") {
     return {
       command: "sandbox-exec",
-      args: ["-p", MACOS_LOOPBACK_PROFILE, executablePath, ...launchArgs],
+      args: ["-p", MACOS_LOOPBACK_PROFILE, executablePath, ...isolatedLaunchArgs],
       env: {},
     };
   }

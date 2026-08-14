@@ -123,7 +123,14 @@ describe("packaged Terminal product smoke contract", () => {
       "--net",
     ]);
     expect(linuxLaunch.args.at(-1)).toBe("--remote-debugging-port=39000");
+    expect(linuxLaunch.args).toContain("--no-sandbox");
     expect(linuxLaunch.env.MCODE_RELEASE_PROGRAM).toBe(path.resolve(executable));
+    const macLaunch = buildProductLaunch({
+      target: { executablePath: executable },
+      isolationReceipt: { mode: "macos-network-sandbox" },
+      launchArgs: ["--remote-debugging-port=39000"],
+    });
+    expect(macLaunch.args).toContain("--no-sandbox");
     expect(() =>
       assertLoopbackIsolationReceipt({ mode: "none", loopbackAllowed: false }),
     ).toThrow("not installed");
