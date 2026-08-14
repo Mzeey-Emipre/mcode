@@ -12,6 +12,7 @@ import {
   hashPackagedResources,
   parseProductSmokeArguments,
   pollProcessCleanup,
+  releaseProductProcess,
   validateProductSmokeLaunchInput,
 } from "../desktop-packaging/package-validation/packaged-terminal-product-smoke.mjs";
 
@@ -145,6 +146,22 @@ describe("packaged Terminal product smoke contract", () => {
     });
     expect(result).toMatchObject({ pids: [7], aliveAfterCleanup: [], passed: true });
     expect(result.cleanupDurationMs).toBeLessThanOrEqual(20);
+  });
+
+  it("releases every packaged process handle after a launch", () => {
+    const calls = [];
+    releaseProductProcess({
+      kill: (signal) => calls.push(["kill", signal]),
+      stdout: { destroy: () => calls.push(["stdout"]) },
+      stderr: { destroy: () => calls.push(["stderr"]) },
+      unref: () => calls.push(["unref"]),
+    });
+    expect(calls).toEqual([
+      ["kill", "SIGTERM"],
+      ["stdout"],
+      ["stderr"],
+      ["unref"],
+    ]);
   });
 
   it("hashes only Terminal and native artifacts", () => {

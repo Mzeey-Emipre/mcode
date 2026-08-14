@@ -429,7 +429,8 @@ function extractHostPids(runtime) {
   ];
 }
 
-function releaseProductProcess(child) {
+/** Releases every handle retained by a completed or failed product launch. */
+export function releaseProductProcess(child) {
   child.kill("SIGTERM");
   child.stdout?.destroy();
   child.stderr?.destroy();
