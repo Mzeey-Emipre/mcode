@@ -15,6 +15,21 @@ export const FRONTEND_RENDERER_WORKLOADS = Object.freeze([
   "panelTransitions",
 ]);
 
+/** Maximum descendants allowed in one renderer scrollable viewport. */
+export const MAX_RENDERER_VIEWPORT_DESCENDANTS = 499;
+
+/** Maximum duration allowed for one main-thread task. */
+export const MAX_MAIN_THREAD_TASK_DURATION_MS = 50;
+
+/** Layout events longer than this duration count toward the slow-layout budget. */
+export const SLOW_LAYOUT_DURATION_THRESHOLD_MS = 1;
+
+/** Maximum number of slow layout events allowed in one workload sample. */
+export const MAX_SLOW_LAYOUT_COUNT = 2;
+
+/** Minimum start-time gap between slow layout events. */
+export const MIN_SLOW_LAYOUT_START_GAP_MS = 16.7;
+
 /** The worker contract is the producer; runner validation mirrors this serialized boundary. */
 export const SHIKI_STAGE_NAMES = Object.freeze([
   "workerStartup",
@@ -52,6 +67,7 @@ const SHIKI_RENDERER_STAGES = Object.freeze([
 const MAX_SHIKI_STAGE_OBSERVATIONS = 1_000;
 const MAX_SHIKI_DURATION_MS = 60_000;
 const MAX_SHIKI_RESPONSE_BYTES = 64 * 1024 * 1024;
+const LAYOUT_TIME_COMPARISON_EPSILON_MS = 0.000001;
 
 function isPlainObject(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
@@ -483,6 +499,187 @@ export function getShikiTraceOptions(captureShiki, buildMode) {
   return captureShiki && buildMode === "production" ? { trace: true } : undefined;
 }
 
+function formatBudgetValue(value) {
+  if (value === undefined || value === null) return "unavailable";
+  return String(value);
+}
+
+function addBudgetFailure(failures, workload, metric, observed, budget) {
+  failures.push(
+    `${workload} ${metric}: observed ${formatBudgetValue(observed)}; budget ${budget}`,
+  );
+}
+
+/** Returns strict renderer budget failures for one measured workload sample. */
+export function validateRendererBudgetSample(
+  workload,
+  check,
+  attribution,
+  buildMode = "profiling",
+) {
+  if (buildMode !== "profiling" && buildMode !== "production") {
+    throw new TypeError("buildMode must be profiling or production");
+  }
+  const failures = [];
+  const viewportDescendants = check?.viewportDescendants;
+  if (!Number.isSafeInteger(viewportDescendants)) {
+    addBudgetFailure(
+      failures,
+      workload,
+      "viewport descendants",
+      "unavailable",
+      `<= ${MAX_RENDERER_VIEWPORT_DESCENDANTS}`,
+    );
+  } else if (viewportDescendants > MAX_RENDERER_VIEWPORT_DESCENDANTS) {
+    addBudgetFailure(
+      failures,
+      workload,
+      "viewport descendants",
+      viewportDescendants,
+      `<= ${MAX_RENDERER_VIEWPORT_DESCENDANTS}`,
+    );
+  }
+
+  if (workload === "denseNarrative") {
+    const browsingViewportDescendants = check?.browsingViewportDescendants ?? check?.browseDescendants;
+    if (!Number.isSafeInteger(browsingViewportDescendants)) {
+      addBudgetFailure(
+        failures,
+        workload,
+        "browsing viewport descendants",
+        "unavailable",
+        `<= ${MAX_RENDERER_VIEWPORT_DESCENDANTS}`,
+      );
+    } else if (browsingViewportDescendants > MAX_RENDERER_VIEWPORT_DESCENDANTS) {
+      addBudgetFailure(
+        failures,
+        workload,
+        "browsing viewport descendants",
+        browsingViewportDescendants,
+        `<= ${MAX_RENDERER_VIEWPORT_DESCENDANTS}`,
+      );
+    }
+  }
+
+  if (buildMode !== "production") return failures;
+
+  const chromium = attribution?.chromium;
+  if (!isPlainObject(chromium)) {
+    addBudgetFailure(
+      failures,
+      workload,
+      "Chromium trace",
+      "unavailable",
+      "production trace data required",
+    );
+    return failures;
+  }
+
+  if (chromium.longTaskObserverAvailable !== true || !Array.isArray(chromium.longTasksMs)) {
+    addBudgetFailure(
+      failures,
+      workload,
+      "main-thread task trace",
+      "unavailable",
+      "finite task durations with a long-task observer",
+    );
+  } else {
+    for (const durationMs of chromium.longTasksMs) {
+      if (!Number.isFinite(durationMs) || durationMs < 0) {
+        addBudgetFailure(
+          failures,
+          workload,
+          "main-thread task duration",
+          `${durationMs} ms`,
+          `finite values <= ${MAX_MAIN_THREAD_TASK_DURATION_MS} ms`,
+        );
+      } else if (durationMs > MAX_MAIN_THREAD_TASK_DURATION_MS) {
+        addBudgetFailure(
+          failures,
+          workload,
+          "main-thread task duration",
+          `${durationMs} ms`,
+          `<= ${MAX_MAIN_THREAD_TASK_DURATION_MS} ms`,
+        );
+      }
+    }
+  }
+
+  if (
+    !Array.isArray(chromium.layoutEvents) ||
+    !Number.isSafeInteger(chromium.traceEventCount) ||
+    chromium.traceEventCount < 1 ||
+    chromium.traceEventsTruncated === true ||
+    chromium.malformedTraceEventCount > 0 ||
+    chromium.malformedLayoutEventCount > 0
+  ) {
+    const observedLayoutTrace = !Array.isArray(chromium.layoutEvents)
+      ? "unavailable"
+      : chromium.traceEventsTruncated
+        ? `${chromium.traceEventCount} events (truncated)`
+        : chromium.malformedTraceEventCount > 0
+          ? `${chromium.malformedTraceEventCount} malformed events`
+          : chromium.malformedLayoutEventCount > 0
+            ? `${chromium.malformedLayoutEventCount} malformed layout events`
+            : chromium.traceEventCount < 1
+              ? "unavailable"
+              : "malformed";
+    addBudgetFailure(
+      failures,
+      workload,
+      "layout trace",
+      observedLayoutTrace,
+      "individual layout start and duration data",
+    );
+    return failures;
+  }
+
+  const invalidLayoutEvent = chromium.layoutEvents.find(
+    (event) =>
+      !isPlainObject(event) ||
+      !Number.isFinite(event.startTimeMs) ||
+      !Number.isFinite(event.durationMs) ||
+      event.startTimeMs < 0 ||
+      event.durationMs < 0,
+  );
+  if (invalidLayoutEvent) {
+    addBudgetFailure(
+      failures,
+      workload,
+      "layout event",
+      "malformed",
+      "finite non-negative start and duration values",
+    );
+    return failures;
+  }
+
+  const slowLayouts = chromium.layoutEvents
+    .filter((event) => event.durationMs > SLOW_LAYOUT_DURATION_THRESHOLD_MS)
+    .sort((left, right) => left.startTimeMs - right.startTimeMs);
+  if (slowLayouts.length > MAX_SLOW_LAYOUT_COUNT) {
+    addBudgetFailure(
+      failures,
+      workload,
+      "slow layout count",
+      slowLayouts.length,
+      `<= ${MAX_SLOW_LAYOUT_COUNT}`,
+    );
+  }
+  for (let index = 1; index < slowLayouts.length; index += 1) {
+    const gapMs = slowLayouts[index].startTimeMs - slowLayouts[index - 1].startTimeMs;
+    if (gapMs + LAYOUT_TIME_COMPARISON_EPSILON_MS < MIN_SLOW_LAYOUT_START_GAP_MS) {
+      addBudgetFailure(
+        failures,
+        workload,
+        "slow layout start gap",
+        `${gapMs} ms`,
+        `>= ${MIN_SLOW_LAYOUT_START_GAP_MS} ms`,
+      );
+    }
+  }
+  return failures;
+}
+
 /** Returns correctness failures for one workload observation. */
 export function validateWorkloadCheck(workload, check, buildMode = check?.buildMode ?? "profiling") {
   const failures = [];
@@ -516,8 +713,6 @@ export function validateWorkloadCheck(workload, check, buildMode = check?.buildM
       break;
     case "denseNarrative":
       requireCheck(check.sourceRows === 90, "dense narrative fixture row count differs");
-      requireCheck(check.descendants < 500, "dense narrative viewport exceeded 499 descendants");
-      requireCheck(check.browseDescendants < 500, "dense narrative browser exceeded 499 descendants");
       requireCheck(check.browsed === true, "dense narrative browser did not reach every page");
       requireCheck(check.returnedToSummary === true, "dense narrative browser did not return to summary");
       requireCheck(check.visible === true, "dense narrative message is not visible");
@@ -603,6 +798,7 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
       );
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       const list = document.querySelector('[data-testid="message-list"]');
+      const viewport = list?.querySelector(".overflow-y-auto") ?? list;
       return {
         durationMs: performance.now() - startedAt,
         check: {
@@ -610,6 +806,7 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
           currentThreadId: fixture.threadStore.getState().currentThreadId,
           mountedMessages: list?.querySelectorAll("[data-message-id]").length ?? 0,
           descendants: list?.querySelectorAll("*").length ?? 0,
+          viewportDescendants: viewport ? viewport.querySelectorAll("*").length : null,
           totalMessages: fixture.threadStore.getState().records.get(threadId)?.messages.length ?? 0,
           visibleThreadId: list
             ?.querySelector("[data-message-id]")
@@ -633,6 +830,7 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
       );
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       const list = document.querySelector('[data-testid="message-list"]');
+      const viewport = list?.querySelector(".overflow-y-auto") ?? list;
       return {
         durationMs: performance.now() - startedAt,
         check: {
@@ -640,6 +838,7 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
           currentThreadId: fixture.threadStore.getState().currentThreadId,
           mountedMessages: list?.querySelectorAll("[data-message-id]").length ?? 0,
           descendants: list?.querySelectorAll("*").length ?? 0,
+          viewportDescendants: viewport ? viewport.querySelectorAll("*").length : null,
           totalMessages: fixture.threadStore.getState().records.get(threadId)?.messages.length ?? 0,
           visibleThreadId: list
             ?.querySelector("[data-message-id]")
@@ -674,12 +873,15 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
       const startedAt = performance.now();
       fixture.workspaceStore.getState().setActiveThread(rightId);
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const list = document.querySelector('[data-testid="message-list"]');
+      const viewport = list?.querySelector(".overflow-y-auto") ?? list;
       return {
         durationMs: performance.now() - startedAt,
         check: {
           activeThreadId: fixture.workspaceStore.getState().activeThreadId,
           currentThreadId: fixture.threadStore.getState().currentThreadId,
           visibleThreadId: document.querySelector("[data-message-id]")?.getAttribute("data-thread-id") ?? null,
+          viewportDescendants: viewport ? viewport.querySelectorAll("*").length : null,
           sampleIndex,
         },
       };
@@ -703,6 +905,8 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
       }
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       const record = fixture.threadStore.getState().records.get(threadId);
+      const list = document.querySelector('[data-testid="message-list"]');
+      const viewport = list?.querySelector(".overflow-y-auto") ?? list;
       const expectedText = Array.from(
         { length: 200 },
         (_, index) => `token-${index} `,
@@ -712,6 +916,7 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
         check: {
           expectedText,
           streamingText: record?.streaming ?? "",
+          viewportDescendants: viewport ? viewport.querySelectorAll("*").length : null,
           sampleIndex,
         },
       };
@@ -811,12 +1016,14 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
       }
       const row = document.querySelector(`[data-message-id="${messageId}"]`);
       const list = document.querySelector('[data-testid="message-list"]');
+      const viewport = list?.querySelector(".overflow-y-auto") ?? list;
       const toolSummaries = [...document.querySelectorAll("[data-first-tool-call-id]")];
       return {
         durationMs: performance.now() - startedAt,
         check: {
           sourceRows: tools.length + thoughts.length + hooks.length,
           descendants: list?.querySelectorAll("*").length ?? 0,
+          viewportDescendants: viewport ? viewport.querySelectorAll("*").length : null,
           visible: Boolean(row),
           assistantVisible: list?.textContent?.includes("Dense narrative fixture completed.") ?? false,
           thoughtVisible: list?.textContent?.includes("Narration segment 0") ?? false,
@@ -843,7 +1050,8 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
     );
     expand?.click();
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-    let browseDescendants = list?.querySelectorAll("*").length ?? 0;
+    const viewport = list?.querySelector(".overflow-y-auto") ?? list;
+    let browseDescendants = viewport ? viewport.querySelectorAll("*").length : null;
     let pageCount = 0;
     while (pageCount < 20) {
       pageCount += 1;
@@ -853,10 +1061,12 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
       if (!next) break;
       next.click();
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-      browseDescendants = Math.max(
-        browseDescendants,
-        list?.querySelectorAll("*").length ?? 0,
-      );
+      const currentDescendants = viewport ? viewport.querySelectorAll("*").length : null;
+      if (currentDescendants !== null) {
+        browseDescendants = browseDescendants === null
+          ? currentDescendants
+          : Math.max(browseDescendants, currentDescendants);
+      }
     }
     const summary = [...document.querySelectorAll("button")].find((button) =>
       button.textContent === "Summary",
@@ -869,6 +1079,7 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
         button.textContent?.startsWith("Browse all "),
       ),
       browseDescendants,
+      browsingViewportDescendants: browseDescendants,
     };
   });
   for (const check of denseNarrative.checks) Object.assign(check, denseDisclosureCheck);
@@ -902,10 +1113,13 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
           `[data-thread-id="${threadId}"] [data-code-block]`,
         )].some((block) => block.querySelector(".visible.opacity-100") !== null);
       } while (highlightedBlocks < 10 && performance.now() < deadline);
+      const list = document.querySelector('[data-testid="message-list"]');
+      const viewport = list?.querySelector(".overflow-y-auto") ?? list;
       return {
         durationMs: performance.now() - startedAt,
         check: {
           highlightedBlocks,
+          viewportDescendants: viewport ? viewport.querySelectorAll("*").length : null,
           codeBlocks: document.querySelectorAll(`[data-thread-id="${threadId}"] [data-code-block]`).length,
           plainFallbackObserved,
           themeClassAndStyle: [...document.querySelectorAll(
@@ -949,8 +1163,14 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
   const panelTransitions = await timeFixture(page, sampleCount, async (sample) => {
     return page.evaluate(async (sampleIndex) => {
       const fixture = window.__issue1240;
-      const threadId = fixture.threadStore.getState().currentThreadId;
-      if (!threadId) throw new Error("The panel fixture needs an active thread.");
+      const revision = ++fixture.revision;
+      const threadId = `perf-panel-${revision}`;
+      fixture.activate(
+        threadId,
+        "Panel transitions fixture",
+        fixture.makeMessages(threadId, 100, String(revision)),
+      );
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       const startedAt = performance.now();
       fixture.diffStore.getState().showRightPanel(fixture.workspaceId, threadId);
       fixture.diffStore.getState().setRightPanelTab(fixture.workspaceId, threadId, "preview");
@@ -958,6 +1178,8 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
       fixture.diffStore.getState().setRightPanelTab(fixture.workspaceId, threadId, "terminal");
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       const state = fixture.diffStore.getState().getRightPanel(fixture.workspaceId, threadId);
+      const list = document.querySelector('[data-testid="message-list"]');
+      const viewport = list?.querySelector(".overflow-y-auto") ?? list;
       return {
         durationMs: performance.now() - startedAt,
         check: {
@@ -966,6 +1188,7 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
           browserTabOpen: state.openTabs.includes("preview"),
           terminalTabOpen: state.openTabs.includes("terminal"),
           terminalShell: Boolean(document.querySelector('[data-testid="terminal-pool-slot"]')),
+          viewportDescendants: viewport ? viewport.querySelectorAll("*").length : null,
           sampleIndex,
         },
       };
@@ -1022,9 +1245,16 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
           ? validateNarrativeRowIsolation(attribution.react)
           : [];
         const failures = [
-          ...validateWorkloadCheck(name, observed, mode),
-          ...rowIsolationFailures,
-          ...pageFailures,
+          ...validateWorkloadCheck(name, observed, mode).map(
+            (failure) => `${name} visible correctness: observed ${failure}; budget workload contract`,
+          ),
+          ...validateRendererBudgetSample(name, observed, attribution, mode),
+          ...rowIsolationFailures.map(
+            (failure) => `${name} narrative row isolation: observed ${failure}; budget affected row once and stable siblings zero`,
+          ),
+          ...pageFailures.map(
+            (failure) => `${name} page state: observed ${failure}; budget expected URL, visibility, title, and no page errors`,
+          ),
         ];
         return {
           sampleIndex,

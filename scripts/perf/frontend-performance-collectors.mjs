@@ -1,6 +1,19 @@
 import { execFileSync } from "node:child_process";
 import { cpus, platform, release, totalmem } from "node:os";
 
+/** Maximum Chromium trace events retained for one renderer sample. */
+export const MAX_CHROMIUM_TRACE_EVENTS = 10_000;
+
+const CHROMIUM_TRACE_STYLE_EVENTS = new Set(["RecalculateStyles", "UpdateLayoutTree"]);
+const CHROMIUM_TRACE_LAYOUT_EVENTS = new Set(["Layout"]);
+const CHROMIUM_TRACE_PAINT_EVENTS = new Set(["Paint", "PaintImage", "CompositeLayers"]);
+
+function isPlainObject(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
 function percentile(sortedSamples, quantile) {
   return sortedSamples[Math.ceil(sortedSamples.length * quantile) - 1] ?? Number.NaN;
 }
@@ -100,10 +113,14 @@ function durationSummary(samples) {
 
 async function installAttributionRuntime(page) {
   await page.evaluate(() => {
+    const longTaskObserverAvailable =
+      Array.isArray(PerformanceObserver.supportedEntryTypes) &&
+      PerformanceObserver.supportedEntryTypes.includes("longtask");
     const state = {
       commits: [],
       frameTimes: [],
       longTasks: [],
+      longTaskObserverAvailable,
       rowRenders: {},
     };
     window.__mcodePerformanceAttribution = state;
@@ -115,9 +132,11 @@ async function installAttributionRuntime(page) {
         state.rowRenders[rowId] = (state.rowRenders[rowId] ?? 0) + 1;
       },
     };
-    new PerformanceObserver((list) => {
-      state.longTasks.push(...list.getEntries().map((entry) => entry.duration));
-    }).observe({ type: "longtask", buffered: true });
+    if (longTaskObserverAvailable) {
+      new PerformanceObserver((list) => {
+        state.longTasks.push(...list.getEntries().map((entry) => entry.duration));
+      }).observe({ type: "longtask", buffered: true });
+    }
     const recordFrame = (timestamp) => {
       state.frameTimes.push(timestamp);
       if (state.frameTimes.length > 10_000) state.frameTimes.splice(0, 5_000);
@@ -148,6 +167,7 @@ async function readAttributionRuntime(page, indexes) {
       commits: [...state.commits],
       frameTimes: state.frameTimes.slice(frameIndex),
       longTasks: state.longTasks.slice(longTaskIndex),
+      longTaskObserverAvailable: state.longTaskObserverAvailable,
       rowRenders: { ...state.rowRenders },
     };
   }, indexes);
@@ -161,20 +181,91 @@ function summarizeFrames(frameTimes) {
   };
 }
 
-function summarizeTrace(events) {
-  const durationMs = (names) => {
-    const matching = events.filter(
-      (event) => event.ph === "X" && names.has(event.name) && Number.isFinite(event.dur),
+/** Converts Chromium trace events into bounded aggregate and individual layout signals. */
+export function summarizeChromiumTrace(
+  events,
+  {
+    totalEventCount = events?.length,
+    traceEventsTruncated = false,
+    malformedTraceEventCount: additionalMalformedTraceEventCount = 0,
+  } = {},
+) {
+  if (!Array.isArray(events)) {
+    throw new TypeError("Chromium trace events must be an array");
+  }
+  if (events.length > MAX_CHROMIUM_TRACE_EVENTS) {
+    throw new RangeError(
+      `Chromium trace events cannot exceed ${MAX_CHROMIUM_TRACE_EVENTS} retained events`,
     );
-    return matching.length > 0
-      ? matching.reduce((total, event) => total + event.dur / 1_000, 0)
-      : null;
-  };
+  }
+  if (
+    !Number.isSafeInteger(totalEventCount) ||
+    totalEventCount < 0 ||
+    totalEventCount < events.length
+  ) {
+    throw new TypeError("Chromium trace event count must be a bounded non-negative count");
+  }
+  if (typeof traceEventsTruncated !== "boolean") {
+    throw new TypeError("Chromium trace truncation must be a boolean");
+  }
+  if (
+    !Number.isSafeInteger(additionalMalformedTraceEventCount) ||
+    additionalMalformedTraceEventCount < 0
+  ) {
+    throw new TypeError("Malformed Chromium trace event count must be non-negative");
+  }
+  const durations = { style: 0, layout: 0, paint: 0 };
+  const durationCounts = { style: 0, layout: 0, paint: 0 };
+  const layoutEvents = [];
+  let layoutEventCount = 0;
+  let malformedTraceEventCount = 0;
+  let malformedLayoutEventCount = 0;
+  for (const event of events) {
+    if (!isPlainObject(event)) {
+      malformedTraceEventCount += 1;
+      continue;
+    }
+    if (event.ph !== "X") continue;
+    const isLayout = CHROMIUM_TRACE_LAYOUT_EVENTS.has(event.name);
+    const metric = CHROMIUM_TRACE_STYLE_EVENTS.has(event.name)
+      ? "style"
+      : isLayout
+        ? "layout"
+        : CHROMIUM_TRACE_PAINT_EVENTS.has(event.name)
+          ? "paint"
+          : null;
+    if (!metric) continue;
+    if (isLayout) layoutEventCount += 1;
+    if (
+      !Number.isFinite(event.ts) ||
+      event.ts < 0 ||
+      !Number.isFinite(event.dur) ||
+      event.dur < 0
+    ) {
+      malformedTraceEventCount += 1;
+      if (isLayout) malformedLayoutEventCount += 1;
+      continue;
+    }
+    durations[metric] += event.dur / 1_000;
+    durationCounts[metric] += 1;
+    if (isLayout) {
+      layoutEvents.push({
+        startTimeMs: event.ts / 1_000,
+        durationMs: event.dur / 1_000,
+      });
+    }
+  }
   return {
-    styleMs: durationMs(new Set(["RecalculateStyles", "UpdateLayoutTree"])),
-    layoutMs: durationMs(new Set(["Layout"])),
-    paintMs: durationMs(new Set(["Paint", "PaintImage", "CompositeLayers"])),
-    traceEventCount: events.length,
+    styleMs: durationCounts.style > 0 ? durations.style : null,
+    layoutMs: durationCounts.layout > 0 ? durations.layout : null,
+    paintMs: durationCounts.paint > 0 ? durations.paint : null,
+    traceEventCount: totalEventCount,
+    retainedTraceEventCount: events.length,
+    traceEventsTruncated: traceEventsTruncated || totalEventCount > events.length,
+    layoutEventCount,
+    layoutEvents,
+    malformedTraceEventCount: malformedTraceEventCount + additionalMalformedTraceEventCount,
+    malformedLayoutEventCount,
   };
 }
 
@@ -207,7 +298,20 @@ export async function createModeSignalCollector(page, mode) {
         : null;
       const processBefore = mode === "production" ? await readElectronProcessMetrics(page) : null;
       const traceEvents = [];
-      const onTraceData = ({ value }) => traceEvents.push(...value);
+      let traceEventCount = 0;
+      let traceEventsTruncated = false;
+      let malformedTraceBatchCount = 0;
+      const onTraceData = (payload) => {
+        const value = payload?.value;
+        if (!Array.isArray(value)) {
+          malformedTraceBatchCount += 1;
+          return;
+        }
+        traceEventCount += value.length;
+        const remainingCapacity = MAX_CHROMIUM_TRACE_EVENTS - traceEvents.length;
+        if (remainingCapacity > 0) traceEvents.push(...value.slice(0, remainingCapacity));
+        if (traceEventCount > traceEvents.length) traceEventsTruncated = true;
+      };
       if (activeSession) {
         activeSession.on("Tracing.dataCollected", onTraceData);
         await activeSession.send("Tracing.start", {
@@ -233,17 +337,23 @@ export async function createModeSignalCollector(page, mode) {
         ? metricMap((await activeSession.send("Performance.getMetrics")).metrics)
         : null;
       const signals = await readAttributionRuntime(page, indexes);
+      const traceSummary = () => summarizeChromiumTrace(traceEvents, {
+        totalEventCount: traceEventCount,
+        traceEventsTruncated,
+        malformedTraceEventCount: malformedTraceBatchCount,
+      });
       const chromium = mode === "production"
         ? {
             scriptingMs: metricDelta(before, after, "ScriptDuration"),
             layoutMs: metricDelta(before, after, "LayoutDuration"),
             taskMs: metricDelta(before, after, "TaskDuration"),
             longTasksMs: signals.longTasks,
+            longTaskObserverAvailable: signals.longTaskObserverAvailable,
             frameCadence: summarizeFrames(signals.frameTimes),
-            ...summarizeTrace(traceEvents),
+            ...traceSummary(),
           }
         : traceEnabled
-          ? { ...summarizeTrace(traceEvents), longTasksMs: signals.longTasks }
+          ? { ...traceSummary(), longTasksMs: signals.longTasks }
           : null;
       return {
         result,

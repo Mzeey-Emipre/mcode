@@ -6,29 +6,45 @@ import { readPortsFile } from "../agent/runtime-contract.mjs";
 import { ensurePlaywright } from "../../.codex/skills/electorn-live-testing/scripts/ensure-playwright.mjs";
 import { startElectron } from "../../.codex/skills/electorn-live-testing/scripts/start-electron.mjs";
 import { stopElectron } from "../../.codex/skills/electorn-live-testing/scripts/stop-electron.mjs";
+import {
+  parsePerformanceMode,
+  parsePerformanceOptions,
+  parsePerformanceRuntime,
+  parsePerformanceSampleCount,
+} from "./frontend-performance-options.mjs";
+
+export {
+  parsePerformanceMode,
+  parsePerformanceOptions,
+  parsePerformanceRuntime,
+  parsePerformanceSampleCount,
+};
+
+/** Returns the child environment required by the selected renderer runtime. */
+export function getWorkerEnvironment(runtime, baseEnvironment = process.env) {
+  const environment = { ...baseEnvironment };
+  if (runtime === "paired") {
+    environment.ELECTRON_RUN_AS_NODE = "1";
+  } else {
+    delete environment.ELECTRON_RUN_AS_NODE;
+  }
+  return environment;
+}
+
+/** Selects the worker executable without coupling standalone web to Electron. */
+export function getWorkerExecutable(runtime, electronExecutablePath, platform = process.platform) {
+  return runtime === "paired"
+    ? electronExecutablePath
+    : platform === "win32"
+      ? "node.exe"
+      : "node";
+}
 
 const POLL_INTERVAL_MS = 250;
 
 function readArgument(name) {
   const index = process.argv.indexOf(name);
   return index === -1 ? null : process.argv[index + 1] ?? null;
-}
-
-function parseSampleCount() {
-  const value = Number(readArgument("--sample-count") ?? "7");
-  if (!Number.isSafeInteger(value) || value < 3 || value > 20) {
-    throw new Error("--sample-count must be an integer from 3 through 20");
-  }
-  return value;
-}
-
-/** Parses the required renderer build mode. */
-export function parsePerformanceMode() {
-  const value = readArgument("--mode") ?? "production";
-  if (value !== "profiling" && value !== "production") {
-    throw new Error("--mode must be profiling or production");
-  }
-  return value;
 }
 
 function resolveOutputFile(repoRoot) {
@@ -126,13 +142,13 @@ async function waitForWorker(outputFile, failureFile, sampleCount) {
   throw new Error(`Frontend performance worker exceeded ${timeoutMs} ms`);
 }
 
-async function startBuiltRendererServer(root, port) {
+async function startBuiltRendererServer(root, rendererRoot, port) {
   const child = spawn(
     process.execPath,
     [
       join(root, "scripts", "perf", "frontend-performance-server.mjs"),
       "--root",
-      join(root, "apps", "desktop", "dist", "renderer"),
+      rendererRoot,
       "--contract",
       join(root, ".dev", "ports.json"),
       "--port",
@@ -186,6 +202,12 @@ function printResult(result, outputFile) {
       process.stdout.write(
         `  ${workload}: median=${median}, rejected=${metric.correctness.rejectedSamples}\n`,
       );
+      for (const sample of metric.rawSamples) {
+        if (sample.correctness.passed) continue;
+        for (const failure of sample.correctness.failures) {
+          process.stdout.write(`    sample ${sample.sampleIndex}: ${failure}\n`);
+        }
+      }
       if (metric.shikiAttribution) {
         process.stdout.write(
           `    Shiki largest=${metric.shikiAttribution.largestStage ?? "none"}; ` +
@@ -200,8 +222,7 @@ function printResult(result, outputFile) {
 /** Runs the paired standalone-web and Electron renderer matrix. */
 export async function runFrontendPerformance(repoRoot = process.cwd()) {
   const root = resolve(repoRoot);
-  const sampleCount = parseSampleCount();
-  const mode = parsePerformanceMode();
+  const { runtime, mode, sampleCount } = parsePerformanceOptions();
   const outputFile = resolveOutputFile(root);
   const completionFile = `${outputFile}.complete`;
   const failureFile = resolve(
@@ -218,13 +239,19 @@ export async function runFrontendPerformance(repoRoot = process.cwd()) {
   let startedRuntime = false;
   let startedElectron = false;
   let rendererServer = null;
-  const sessionFileName = `electron-performance-${mode}.json`;
+  const sessionFileName = runtime === "paired" ? `electron-performance-${mode}.json` : null;
   try {
     startedRuntime = await ensureRuntime(root);
-    ensurePlaywright(root);
+    if (runtime === "paired") ensurePlaywright(root);
+    const rendererRoot = runtime === "standalone-web"
+      ? join(root, "apps", "web", "dist")
+      : join(root, "apps", "desktop", "dist", "renderer");
+    const buildArgs = runtime === "standalone-web"
+      ? ["run", "--cwd", "apps/web", "build"]
+      : ["run", "--cwd", "apps/desktop", "build"];
     await runCommand(
       process.execPath,
-      ["run", "--cwd", "apps/desktop", "build"],
+      buildArgs,
       {
         cwd: root,
         env: {
@@ -239,36 +266,41 @@ export async function runFrontendPerformance(repoRoot = process.cwd()) {
     const webPort = await runtimeContract.findAvailablePort(
       runtimeContract.computeDeterministicPort(root, 44_000),
     );
-    rendererServer = await startBuiltRendererServer(root, webPort);
-    const performanceSessionFile = join(root, ".dev", sessionFileName);
-    if (existsSync(performanceSessionFile)) {
-      stopElectron(root, { sessionFileName });
+    rendererServer = await startBuiltRendererServer(root, rendererRoot, webPort);
+    let electronExecutablePath = process.execPath;
+    if (runtime === "paired") {
+      const performanceSessionFile = join(root, ".dev", sessionFileName);
+      if (existsSync(performanceSessionFile)) {
+        stopElectron(root, { sessionFileName });
+      }
+      const electronRecord = await startElectron(root, {
+        performanceMode: mode,
+        rendererUrl: null,
+        sessionFileName,
+      });
+      startedElectron = true;
+      electronExecutablePath = electronRecord.executablePath;
     }
-    const electronRecord = await startElectron(root, {
-      performanceMode: mode,
-      rendererUrl: null,
-      sessionFileName,
-    });
-    startedElectron = true;
 
     const worker = spawn(
-      electronRecord.executablePath,
+      getWorkerExecutable(runtime, electronExecutablePath),
       [
         join(root, "scripts", "perf", "frontend-performance-worker.mjs"),
+        "--runtime",
+        runtime,
         "--sample-count",
         String(sampleCount),
         "--mode",
         mode,
         "--web-url",
         rendererServer.url,
-        "--electron-session-file",
-        sessionFileName,
+        ...(sessionFileName ? ["--electron-session-file", sessionFileName] : []),
         "--output",
         outputFile,
       ],
       {
         cwd: root,
-        env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+        env: getWorkerEnvironment(runtime),
         shell: false,
         stdio: "inherit",
         windowsHide: true,
@@ -284,8 +316,8 @@ export async function runFrontendPerformance(repoRoot = process.cwd()) {
       waitForWorker(outputFile, failureFile, sampleCount),
       workerLaunchFailure,
     ]);
-    await waitForSuccessfulExit(worker, "Frontend performance worker");
     printResult(result, outputFile);
+    await waitForSuccessfulExit(worker, "Frontend performance worker");
     if (!result.correctness.passed) process.exitCode = 1;
     return result;
   } finally {

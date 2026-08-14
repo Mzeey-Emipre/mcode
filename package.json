@@ -36,6 +36,7 @@
     "certify:conversation": "bun scripts/run-electron-node.mjs --workspace-cli vite-node dist/cli.mjs --config apps/web/vite.config.ts apps/web/scripts/certify-conversation-residency.ts",
     "perf:frontend": "bun scripts/perf/run-frontend-performance.mjs",
     "perf:frontend:packaged-windows": "bun scripts/perf/run-packaged-windows-acceleration.mjs",
+    "perf:renderer:ci": "bun test scripts/agent/__tests__/frontend-performance-runner.test.mjs && bun run perf:frontend -- --runtime standalone-web --mode production --sample-count 1 --output .dev/verification/performance/renderer-ci.json && bun run --cwd apps/web perf:pull-requests",
     "preagent:up": "bun run deps:ensure",
     "agent:up": "bun scripts/agent/agent-up.mjs",
     "agent:down": "bun scripts/agent/agent-down.mjs",
@@ -53,6 +54,7 @@
     "@types/node": "^22.19.17",
     "esbuild": "^0.27.7",
     "opensrc": "0.7.3",
+    "playwright-core": "1.62.1",
     "turbo": "^2.5.0"
   },
   "packageManager": "bun@1.2.14",

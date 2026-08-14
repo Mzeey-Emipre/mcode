@@ -7,6 +7,7 @@ import {
   FRONTEND_RENDERER_WORKLOADS,
   runRendererMatrix,
 } from "./frontend-renderer-fixture.mjs";
+import { parsePerformanceOptions } from "./frontend-performance-options.mjs";
 
 const VIEWPORT = Object.freeze({ width: 1440, height: 1000 });
 const WARMUP_COUNT = 1;
@@ -14,22 +15,6 @@ const WARMUP_COUNT = 1;
 function readArgument(name) {
   const index = process.argv.indexOf(name);
   return index === -1 ? null : process.argv[index + 1] ?? null;
-}
-
-function parseSampleCount() {
-  const value = Number(readArgument("--sample-count") ?? "7");
-  if (!Number.isSafeInteger(value) || value < 1 || value > 50) {
-    throw new Error("--sample-count must be an integer from 1 through 50");
-  }
-  return value;
-}
-
-function parseMode() {
-  const mode = readArgument("--mode");
-  if (mode !== "profiling" && mode !== "production") {
-    throw new Error("--mode must be profiling or production");
-  }
-  return mode;
 }
 
 function parseWebUrl() {
@@ -108,33 +93,39 @@ function decorateRuntimeResult(
 
 async function run() {
   const repoRoot = process.cwd();
-  const sampleCount = parseSampleCount();
-  const mode = parseMode();
+  const { runtime, mode, sampleCount } = parsePerformanceOptions();
   const webUrl = parseWebUrl();
-  const electronSessionFile = parseElectronSessionFile();
+  const electronSessionFile = runtime === "paired" ? parseElectronSessionFile() : null;
   const { outputFile, outputRoot } = resolveOutputFile(repoRoot);
   await mkdir(outputRoot, { recursive: true });
 
   const ports = JSON.parse(
     await readFile(join(repoRoot, ".dev", "ports.json"), "utf8"),
   );
-  const scratchRequire = createRequire(
-    join(repoRoot, ".dev", "playwright-scratch", "package.json"),
-  );
-  const playwright = scratchRequire("playwright");
-  const playwrightVersion = scratchRequire("playwright/package.json").version;
-  const electronHelper = await import(
-    pathToFileURL(
-      join(
-        repoRoot,
-        ".codex",
-        "skills",
-        "electorn-live-testing",
-        "scripts",
-        "electron-session.mjs",
-      ),
-    ).href,
-  );
+  const rootRequire = createRequire(join(repoRoot, "package.json"));
+  const scratchRequire = runtime === "paired"
+    ? createRequire(join(repoRoot, ".dev", "playwright-scratch", "package.json"))
+    : null;
+  const playwright = runtime === "standalone-web"
+    ? rootRequire("playwright-core")
+    : scratchRequire("playwright");
+  const playwrightVersion = runtime === "standalone-web"
+    ? rootRequire("playwright-core/package.json").version
+    : scratchRequire("playwright/package.json").version;
+  const electronHelper = runtime === "paired"
+    ? await import(
+      pathToFileURL(
+        join(
+          repoRoot,
+          ".codex",
+          "skills",
+          "electorn-live-testing",
+          "scripts",
+          "electron-session.mjs",
+        ),
+      ).href,
+    )
+    : null;
 
   const runEnvironment = collectRunEnvironment(repoRoot, {
     electron: process.versions.electron,
@@ -143,7 +134,11 @@ async function run() {
   let browser;
   let electronSession;
   try {
-    browser = await playwright.chromium.launch({ headless: true });
+    browser = await playwright.chromium.launch(
+      runtime === "standalone-web"
+        ? { headless: true, channel: "chrome" }
+        : { headless: true },
+    );
     const context = await browser.newContext({ viewport: VIEWPORT });
     await context.addCookies([
       {
@@ -156,21 +151,14 @@ async function run() {
     await webPage.goto(webUrl, { waitUntil: "domcontentloaded" });
     await webPage.bringToFront();
 
-    electronSession = await electronHelper.connectElectronSession({
-      playwright,
-      repoRoot,
-      sessionFileName: electronSessionFile,
-    });
-    await electronSession.page.setViewportSize(VIEWPORT);
-
-    const electronStartupMetrics = await electronSession.page.evaluate(async () =>
-      window.desktopBridge?.performance?.getMetrics?.() ?? null,
-    );
-    if (!electronStartupMetrics) {
-      throw new Error("Electron performance metrics are unavailable");
-    }
-    if (mode === "production" && electronStartupMetrics.devToolsOpen) {
-      throw new Error("Production performance mode must run without open DevTools");
+    if (runtime === "standalone-web") {
+      const warmup = await runRendererMatrix(webPage, "standalone-web", 1, mode);
+      if (!warmup.correctness.passed) {
+        const failures = Object.values(warmup.metrics)
+          .flatMap((metric) => metric.rawSamples)
+          .flatMap((sample) => sample.correctness.failures);
+        throw new Error(`Standalone web warmup correctness failed: ${failures.join(" | ")}`);
+      }
     }
 
     const webResult = decorateRuntimeResult(
@@ -180,34 +168,67 @@ async function run() {
       mode,
       null,
     );
-    await electronSession.page.bringToFront();
-    const electronResult = decorateRuntimeResult(
-      await runRendererMatrix(electronSession.page, "electron", sampleCount, mode),
-      runEnvironment,
-      await collectPageEnvironment(electronSession.page),
-      mode,
-      electronStartupMetrics.accelerationMode === "default",
-    );
-    const result = {
-      schemaVersion: 2,
-      recordedAt: new Date().toISOString(),
-      buildMode: mode,
-      comparisonContract: {
-        viewport: VIEWPORT,
-        workloadOrder: FRONTEND_RENDERER_WORKLOADS,
-        warmupCount: WARMUP_COUNT,
-        sampleCount,
-      },
-      correctness: {
-        passed: webResult.correctness.passed && electronResult.correctness.passed,
-        rejectedSamples:
-          webResult.correctness.rejectedSamples + electronResult.correctness.rejectedSamples,
-      },
-      runtimes: {
-        standaloneWeb: webResult,
-        electron: electronResult,
-      },
-    };
+    let result;
+    if (runtime === "standalone-web") {
+      result = {
+        schemaVersion: 2,
+        recordedAt: new Date().toISOString(),
+        buildMode: mode,
+        comparisonContract: {
+          viewport: VIEWPORT,
+          workloadOrder: FRONTEND_RENDERER_WORKLOADS,
+          warmupCount: WARMUP_COUNT,
+          sampleCount,
+        },
+        correctness: webResult.correctness,
+        runtimes: { standaloneWeb: webResult },
+      };
+    } else {
+      electronSession = await electronHelper.connectElectronSession({
+        playwright,
+        repoRoot,
+        sessionFileName: electronSessionFile,
+      });
+      await electronSession.page.setViewportSize(VIEWPORT);
+
+      const electronStartupMetrics = await electronSession.page.evaluate(async () =>
+        window.desktopBridge?.performance?.getMetrics?.() ?? null,
+      );
+      if (!electronStartupMetrics) {
+        throw new Error("Electron performance metrics are unavailable");
+      }
+      if (mode === "production" && electronStartupMetrics.devToolsOpen) {
+        throw new Error("Production performance mode must run without open DevTools");
+      }
+      await electronSession.page.bringToFront();
+      const electronResult = decorateRuntimeResult(
+        await runRendererMatrix(electronSession.page, "electron", sampleCount, mode),
+        runEnvironment,
+        await collectPageEnvironment(electronSession.page),
+        mode,
+        electronStartupMetrics.accelerationMode === "default",
+      );
+      result = {
+        schemaVersion: 2,
+        recordedAt: new Date().toISOString(),
+        buildMode: mode,
+        comparisonContract: {
+          viewport: VIEWPORT,
+          workloadOrder: FRONTEND_RENDERER_WORKLOADS,
+          warmupCount: WARMUP_COUNT,
+          sampleCount,
+        },
+        correctness: {
+          passed: webResult.correctness.passed && electronResult.correctness.passed,
+          rejectedSamples:
+            webResult.correctness.rejectedSamples + electronResult.correctness.rejectedSamples,
+        },
+        runtimes: {
+          standaloneWeb: webResult,
+          electron: electronResult,
+        },
+      };
+    }
     await writeFile(outputFile, `${JSON.stringify(result, null, 2)}\n`, "utf8");
     process.stdout.write(`${JSON.stringify({
       outputFile,

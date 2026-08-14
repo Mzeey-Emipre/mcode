@@ -198,3 +198,36 @@ jobs:
 
       - name: Smoke test server bundle
         run: bun apps/desktop/scripts/desktop-packaging/package-validation/smoke-test.mjs --bundle
+
+  renderer-performance:
+    name: Renderer Performance Gate
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      SKIP_ELECTRON_REBUILD: "1"
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+      TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Configure node-gyp headers
+        shell: bash
+        run: |
+          node_dir="$(dirname "$(dirname "$(command -v node)")")"
+          test -f "$node_dir/include/node/common.gypi"
+          echo "npm_config_nodedir=$node_dir" >> "$GITHUB_ENV"
+      - uses: oven-sh/setup-bun@v2
+      - name: Cache Bun install cache
+        uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-bun-runtime-${{ hashFiles('package.json') }}-lock-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-bun-runtime-${{ hashFiles('package.json') }}-lock-
+      - run: bun install --frozen-lockfile
+      - run: bun run perf:renderer:ci
