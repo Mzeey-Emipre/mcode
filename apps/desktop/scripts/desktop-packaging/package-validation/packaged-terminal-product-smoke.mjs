@@ -545,15 +545,17 @@ export function releaseProductProcess(child) {
   child.unref();
 }
 
-/** Waits a bounded interval for Electron to create its first renderer page. */
+/** Waits a bounded interval for Electron to navigate a renderer page to a packaged file URL. */
 export async function waitForRendererPage(
   browser,
   { timeoutMs = 45_000, intervalMs = 100, getDiagnostics = () => ({}) } = {},
 ) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const page = browser.contexts().flatMap((context) => context.pages())[0];
-    if (page) return page;
+    const pages = browser.contexts().flatMap((context) => context.pages());
+    for (const page of pages) {
+      if (page.url().startsWith("file:")) return page;
+    }
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
   const { exitCode, launchOutputTail } = getDiagnostics();

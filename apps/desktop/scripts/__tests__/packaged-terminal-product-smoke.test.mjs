@@ -431,20 +431,31 @@ describe("packaged Terminal product smoke contract", () => {
   });
 
   it("waits for the packaged renderer page after CDP connects", async () => {
-    const pages = [];
-    const rendererPage = { url: "file:///packaged-renderer.html" };
-    setTimeout(() => pages.push(rendererPage), 1);
+    const unrelatedPage = { url: () => "http://127.0.0.1:3000/" };
+    let polls = 0;
+    const rendererPage = {
+      url: () => (polls > 1 ? "file:///packaged-renderer.html" : "about:blank"),
+    };
     await expect(
       waitForRendererPage(
-        { contexts: () => [{ pages: () => pages }] },
+        {
+          contexts: () => {
+            polls += 1;
+            return [
+              { pages: () => [rendererPage] },
+              { pages: () => [unrelatedPage] },
+            ];
+          },
+        },
         { timeoutMs: 50, intervalMs: 1 },
       ),
     ).resolves.toBe(rendererPage);
+    expect(polls).toBeGreaterThan(1);
   });
 
   it("reports launch diagnostics when the packaged renderer page is missing", async () => {
     const wait = waitForRendererPage(
-      { contexts: () => [{ pages: () => [] }] },
+      { contexts: () => [{ pages: () => [{ url: () => "about:blank" }] }] },
       {
         timeoutMs: 5,
         intervalMs: 1,
