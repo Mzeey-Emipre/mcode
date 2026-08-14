@@ -52,7 +52,7 @@ import {
 import { lazySchema } from "../utils/lazySchema.js";
 import { TerminalBackendCapabilitiesSchema } from "../models/terminal-backend.js";
 import { LegacyTerminalMethods } from "./terminal-legacy.js";
-import { TERMINAL_V1_METHODS } from "./terminal.js";
+import { TERMINAL_V1_METHODS, type TerminalV1MethodName } from "./terminal.js";
 import { ProviderModelInfoSchema } from "../providers/models.js";
 import { ProviderUsageInfoSchema } from "../providers/usage.js";
 import { ProviderAvailabilitySchema } from "../providers/availability.js";
@@ -380,7 +380,15 @@ const SetThreadSubscriptionsMethod: {
   result: SetThreadSubscriptionsResultSchema(),
 };
 
-const terminalV1SessionMethods = (): Record<string, { params: z.ZodTypeAny; result: z.ZodTypeAny }> => {
+type TerminalV1WsMethodName = Extract<
+  TerminalV1MethodName,
+  `terminal.session.${string}`
+    | `terminal.profile.${string}`
+    | `terminal.workspacePreferences.${string}`
+    | `terminal.preferences.${string}`
+>;
+
+const terminalV1SessionMethods = (): Record<TerminalV1WsMethodName, { params: z.ZodTypeAny; result: z.ZodTypeAny }> => {
   return {
     "terminal.session.create": TERMINAL_V1_METHODS["terminal.session.create"],
     "terminal.session.list": TERMINAL_V1_METHODS["terminal.session.list"],
@@ -390,6 +398,16 @@ const terminalV1SessionMethods = (): Record<string, { params: z.ZodTypeAny; resu
     "terminal.session.hasChildren": TERMINAL_V1_METHODS["terminal.session.hasChildren"],
     "terminal.session.checkpoint.begin": TERMINAL_V1_METHODS["terminal.session.checkpoint.begin"],
     "terminal.session.checkpoint.complete": TERMINAL_V1_METHODS["terminal.session.checkpoint.complete"],
+    "terminal.profile.list": TERMINAL_V1_METHODS["terminal.profile.list"],
+    "terminal.profile.create": TERMINAL_V1_METHODS["terminal.profile.create"],
+    "terminal.profile.update": TERMINAL_V1_METHODS["terminal.profile.update"],
+    "terminal.profile.delete": TERMINAL_V1_METHODS["terminal.profile.delete"],
+    "terminal.profile.setDefault": TERMINAL_V1_METHODS["terminal.profile.setDefault"],
+    "terminal.workspacePreferences.get": TERMINAL_V1_METHODS["terminal.workspacePreferences.get"],
+    "terminal.workspacePreferences.update": TERMINAL_V1_METHODS["terminal.workspacePreferences.update"],
+    "terminal.workspacePreferences.reset": TERMINAL_V1_METHODS["terminal.workspacePreferences.reset"],
+    "terminal.preferences.reset": TERMINAL_V1_METHODS["terminal.preferences.reset"],
+    "terminal.preferences.update": TERMINAL_V1_METHODS["terminal.preferences.update"],
   } satisfies Record<string, { params: z.ZodTypeAny; result: z.ZodTypeAny }>;
 };
 

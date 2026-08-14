@@ -21,6 +21,7 @@ import {
   TerminalAccessibilitySettingsSchema,
   TerminalBehaviorSettingsSchema,
   TerminalPreferencesUpdateSchema,
+  TerminalProfileRecoverySchema,
   TerminalPresentationSettingsSchema,
 } from "../models/terminal-settings.js";
 import {
@@ -155,7 +156,12 @@ export const TERMINAL_V1_METHODS = {
     { SESSION_NOT_FOUND: "REATTACH", STALE_ATTACHMENT: "REATTACH", STALE_HOST_GENERATION: "REATTACH", CHECKPOINT_REJECTED: "REATTACH", PROTOCOL_MISMATCH: "RESTART" }, "UNKNOWN_DELIVERY", "checkpoint-upload",
   ),
   "terminal.profile.list": contract(
-    empty, z.object({ certified: z.array(TerminalResolvedProfileSchema()).max(32), custom: z.array(TerminalCustomProfileSchema()).max(32) }).strict(),
+    empty,
+    z.object({
+      certified: z.array(TerminalResolvedProfileSchema()).max(32),
+      custom: z.array(TerminalCustomProfileSchema()).max(32),
+      recovery: TerminalProfileRecoverySchema().optional(),
+    }).strict(),
     { PROTOCOL_MISMATCH: "RESTART" }, "SAFE_RETRY",
   ),
   "terminal.profile.create": contract(

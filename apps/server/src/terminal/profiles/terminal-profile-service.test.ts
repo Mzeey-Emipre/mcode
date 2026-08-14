@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { TerminalPlatform, TerminalProfileReference } from "@mcode/contracts";
+import type { TerminalPlatform, TerminalProfileRecovery, TerminalProfileReference } from "@mcode/contracts";
 import type { SettingsService } from "../../services/settings-service.js";
 import type { WorkspaceTerminalPreferencesService } from "../preferences/workspace-terminal-preferences-service.js";
 import {
@@ -51,6 +51,18 @@ describe("TerminalProfileService", () => {
       workspaceId: "22222222-2222-4222-8222-222222222222",
       requestedProfileId: "certified:windows-powershell-5.1",
     })).id).toBe("certified:windows-powershell-5.1");
+  });
+
+  it("includes migration recovery details in profile listings", async () => {
+    const recovery = {
+      status: "blocked" as const,
+      reason: "missing-profile-reference" as const,
+      blockedProfiles: [],
+      unavailableProfileId: "custom:33333333-3333-4333-8333-333333333333" as const,
+    };
+    settings.getTerminalRecoveryState.mockReturnValue(recovery);
+
+    expect((await service.list()).recovery).toEqual(recovery);
   });
 
   it.each([
@@ -171,6 +183,7 @@ function settingsStub() {
       value.terminal = terminal;
       return terminal;
     }),
+    getTerminalRecoveryState: vi.fn<() => TerminalProfileRecovery | null>(() => null),
   };
 }
 

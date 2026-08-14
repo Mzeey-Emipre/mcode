@@ -13,6 +13,7 @@ import type { IncomingMessage } from "http";
 
 import {
   WS_METHODS,
+  TERMINAL_RPC_MAX_BYTES,
   WebSocketRequestSchema,
   type WebSocketRequest,
   type WebSocketResponse,
@@ -22,6 +23,7 @@ import {
   type ProviderCatalogContext,
   type ProviderCapabilityKind,
   type PreviewAnnotationBundle,
+  type TerminalProfileInUseData,
   getExtension,
 } from "@mcode/contracts";
 import { logger, validateBranchName } from "@mcode/shared";
@@ -44,6 +46,10 @@ import type { TerminalBackend } from "../terminal/terminal-backend.js";
 import { TerminalBackendError } from "../terminal/terminal-backend.js";
 import { TerminalSessionPolicyError } from "../terminal/terminal-session-service.js";
 import { TerminalSessionRuntimeError } from "../terminal/runtime/terminal-session-runtime.js";
+import type { TerminalProfileService } from "../terminal/profiles/terminal-profile-service.js";
+import type { WorkspaceTerminalPreferencesService } from "../terminal/preferences/workspace-terminal-preferences-service.js";
+import type { SettingsService } from "../services/settings-service";
+import { ZodError } from "zod";
 import type { MessageRepo } from "../repositories/message-repo";
 import type { ToolCallRecordRepo } from "../repositories/tool-call-record-repo";
 import type { NarrativeStore } from "../services/narrative-store";
@@ -56,7 +62,6 @@ import type { TaskRepo } from "../repositories/task-repo";
 import type { PlanQuestionAnswersRepo } from "../repositories/plan-question-answers-repo";
 import type { PlanRepo } from "../repositories/plan-repo";
 import type { SnapshotService } from "../services/snapshot-service";
-import type { SettingsService } from "../services/settings-service";
 import type { GitWatcherService } from "../services/git-watcher-service";
 import type { MemoryPressureService } from "../services/memory-pressure-service";
 import type { PrDraftService } from "../services/pr-draft-service";
@@ -190,6 +195,10 @@ export interface RouterDeps {
   /** Serves persisted snapshots and coordinates background catalog reconciliation. */
   providerCatalogService: ProviderCatalogService;
   terminalService: TerminalBackend;
+  /** Owns validated global and workspace Terminal profile operations. */
+  terminalProfileService: TerminalProfileService;
+  /** Reads explicit workspace Terminal profile overrides. */
+  workspaceTerminalPreferencesService: WorkspaceTerminalPreferencesService;
   messageRepo: MessageRepo;
   toolCallRecordRepo: ToolCallRecordRepo;
   thoughtSegmentRepo: ThoughtSegmentRepo;
@@ -311,6 +320,8 @@ export async function routeMessage(
       context,
     );
 
+    assertTerminalRpcResponseBudget(request.method as WsMethodName, request.id, result);
+
     getTransportPayloadValidator().validateRpcResult(
       request.method,
       result,
@@ -328,6 +339,7 @@ export async function routeMessage(
           message,
           retry: err.retry,
           correlationId: err.correlationId,
+          ...(err instanceof TerminalBackendError && err.data ? { data: err.data } : {}),
         },
       };
     }
@@ -420,6 +432,159 @@ async function teardownWorkspaceThreads(deps: RouterDeps, workspaceId: string): 
   }
 }
 
+const terminalSettingsInvalidMethods = new Set<WsMethodName>([
+  "terminal.profile.create",
+  "terminal.profile.update",
+  "terminal.profile.setDefault",
+  "terminal.workspacePreferences.update",
+  "terminal.preferences.reset",
+  "terminal.preferences.update",
+]);
+
+const terminalUnavailableAsSettingsMethods = new Set<WsMethodName>([
+  "terminal.profile.setDefault",
+  "terminal.workspacePreferences.update",
+]);
+
+function terminalManagementErrorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === "string" ? code : undefined;
+}
+
+function isZodValidationError(error: unknown): boolean {
+  return error instanceof ZodError || (
+    !!error &&
+    typeof error === "object" &&
+    Array.isArray((error as { issues?: unknown }).issues)
+  );
+}
+
+function assertTerminalRpcResponseBudget(
+  method: WsMethodName,
+  requestId: string,
+  result: unknown,
+): void {
+  if (!method.startsWith("terminal.")) return;
+  const encoded = new TextEncoder().encode(JSON.stringify({ id: requestId, result }));
+  if (encoded.length > TERMINAL_RPC_MAX_BYTES) {
+    throw new TerminalBackendError(
+      "PROTOCOL_MISMATCH",
+      "RESTART",
+      "Terminal response exceeds 128 KiB",
+    );
+  }
+}
+
+function mapTerminalManagementError(method: WsMethodName, error: unknown): never {
+  const message = error instanceof Error ? error.message : String(error);
+  const code = terminalManagementErrorCode(error);
+  if (code === "PROFILE_IN_USE") {
+    const references = (error as { references: TerminalProfileInUseData["references"] }).references;
+    throw new TerminalBackendError(
+      "PROFILE_IN_USE",
+      "NEW_SESSION",
+      message,
+      undefined,
+      { references },
+    );
+  }
+  if (code === "PROFILE_NOT_FOUND") {
+    throw new TerminalBackendError(
+      "PROFILE_NOT_FOUND",
+      method === "terminal.profile.delete" ? "SAFE_RETRY" : "NEW_SESSION",
+      message,
+    );
+  }
+  if (code === "PROFILE_UNAVAILABLE") {
+    throw new TerminalBackendError(
+      terminalUnavailableAsSettingsMethods.has(method) ? "SETTINGS_INVALID" : "PROFILE_UNAVAILABLE",
+      "NEW_SESSION",
+      message,
+    );
+  }
+  if (code === "WORKSPACE_NOT_FOUND") {
+    throw new TerminalBackendError(
+      method === "terminal.preferences.reset" ? "SETTINGS_INVALID" : "WORKSPACE_NOT_FOUND",
+      method === "terminal.workspacePreferences.reset" ? "SAFE_RETRY" : "NEW_SESSION",
+      message,
+    );
+  }
+  if (code === "SETTINGS_WRITE_BLOCKED") {
+    throw new TerminalBackendError("SETTINGS_WRITE_BLOCKED", "RESTART", message);
+  }
+  if (isZodValidationError(error) && terminalSettingsInvalidMethods.has(method)) {
+    throw new TerminalBackendError("SETTINGS_INVALID", "NEW_SESSION", message);
+  }
+  throw error;
+}
+
+async function dispatchTerminalManagement(
+  method: WsMethodName,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  params: any,
+  deps: RouterDeps,
+): Promise<unknown> {
+  try {
+    switch (method) {
+      case "terminal.profile.list":
+        return await deps.terminalProfileService.list();
+      case "terminal.profile.create":
+        return await deps.terminalProfileService.create(params);
+      case "terminal.profile.update":
+        return await deps.terminalProfileService.update(params);
+      case "terminal.profile.delete":
+        await deps.terminalProfileService.delete(params.profileId);
+        return { deleted: true };
+      case "terminal.profile.setDefault":
+        return {
+          defaultProfileId: await deps.terminalProfileService.setDefault(params.profileId),
+        };
+      case "terminal.workspacePreferences.get": {
+        const preference = deps.workspaceTerminalPreferencesService.get(params.workspaceId);
+        return {
+          workspaceId: params.workspaceId,
+          defaultProfileId: preference?.defaultProfileId ?? null,
+        };
+      }
+      case "terminal.workspacePreferences.update":
+        return {
+          workspaceId: params.workspaceId,
+          defaultProfileId: await deps.terminalProfileService.setWorkspaceDefault(
+            params.workspaceId,
+            params.defaultProfileId,
+          ),
+        };
+      case "terminal.workspacePreferences.reset":
+        deps.terminalProfileService.resetWorkspaceDefault(params.workspaceId);
+        return { reset: true };
+      case "terminal.preferences.reset":
+        if (params.workspaceId) {
+          deps.workspaceTerminalPreferencesService.get(params.workspaceId);
+        }
+        deps.settingsService.resetTerminalPreferences();
+        if (params.workspaceId) {
+          deps.terminalProfileService.resetWorkspaceDefault(params.workspaceId);
+        }
+        return { reset: true };
+      case "terminal.preferences.update": {
+        const terminal = deps.settingsService.updateTerminalPreferences(params);
+        return {
+          terminal: {
+            presentation: terminal.presentation,
+            behavior: terminal.behavior,
+            accessibility: terminal.accessibility,
+          },
+        };
+      }
+      default:
+        throw new Error(`Unsupported Terminal management method: ${method}`);
+    }
+  } catch (error) {
+    return mapTerminalManagementError(method, error);
+  }
+}
+
 /** Dispatch a validated method call to the appropriate service. */
 async function dispatch(
   method: WsMethodName,
@@ -431,6 +596,13 @@ async function dispatch(
   if (method.startsWith("terminal.session.")) {
     if (!context.client) throw new Error("Terminal v1 client identity is unavailable");
     return deps.terminalService.routeV1(method, params, context.client);
+  }
+  if (
+    method.startsWith("terminal.profile.") ||
+    method.startsWith("terminal.workspacePreferences.") ||
+    method.startsWith("terminal.preferences.")
+  ) {
+    return dispatchTerminalManagement(method, params, deps);
   }
   switch (method) {
     case "browserAutomation.host.register": {

@@ -13,6 +13,8 @@ interface RangeControlProps {
   onCommit: (value: number) => void;
   /** Optional formatter for the displayed value (e.g. append " MB"). */
   formatValue?: (value: number) => string;
+  /** Accessible name for the range input. */
+  ariaLabel?: string;
 }
 
 /**
@@ -26,6 +28,7 @@ export function RangeControl({
   value,
   onCommit,
   formatValue,
+  ariaLabel,
 }: RangeControlProps) {
   const [local, setLocal] = useState<number | null>(null);
   const display = local ?? value;
@@ -50,6 +53,7 @@ export function RangeControl({
           max={max}
           step={step}
           value={display}
+          aria-label={ariaLabel}
           onChange={(e) => setLocal(Number(e.target.value))}
           onMouseUp={handlePointerCommit}
           onKeyUp={(e) => { if (VALUE_KEYS.has(e.key)) commit(Number(e.currentTarget.value)); }}
