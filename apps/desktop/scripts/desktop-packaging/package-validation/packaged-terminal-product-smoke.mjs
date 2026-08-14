@@ -4,7 +4,6 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
-  readlinkSync,
   readFileSync,
   writeFileSync,
 } from "node:fs";
@@ -33,20 +32,15 @@ const MACOS_LOOPBACK_PROFILE =
 /** Marks the verifier process that was re-executed inside the Linux namespace. */
 export const LINUX_PRODUCT_NAMESPACE_MARKER = "MCODE_TERMINAL_PRODUCT_NAMESPACE";
 
-/** Proves that the marked verifier runs in a network namespace distinct from PID 1. */
+/** Proves that the marked verifier exposes only the configured loopback interface. */
 export function hasLinuxProductNamespaceProof({
   env = process.env,
-  readlink = readlinkSync,
+  readdir = readdirSync,
 } = {}) {
   if (env[LINUX_PRODUCT_NAMESPACE_MARKER] !== "1") return false;
   try {
-    const selfNamespace = readlink("/proc/self/ns/net");
-    const initNamespace = readlink("/proc/1/ns/net");
-    return (
-      typeof selfNamespace === "string" &&
-      typeof initNamespace === "string" &&
-      selfNamespace !== initNamespace
-    );
+    const interfaces = readdir("/sys/class/net");
+    return Array.isArray(interfaces) && interfaces.slice().sort().join("\0") === "lo";
   } catch {
     return false;
   }
@@ -57,12 +51,12 @@ export function shouldReexecLinuxProductVerifier({
   command,
   platform,
   env = process.env,
-  readlink = readlinkSync,
+  readdir = readdirSync,
 }) {
   return (
     command === "product" &&
     platform === "linux" &&
-    !hasLinuxProductNamespaceProof({ env, readlink })
+    !hasLinuxProductNamespaceProof({ env, readdir })
   );
 }
 
@@ -373,7 +367,7 @@ export function buildProductLaunch({
   launchArgs,
   platform,
   env = process.env,
-  readlink = readlinkSync,
+  readdir = readdirSync,
 }) {
   const executablePath = path.resolve(target.executablePath);
   const isolatedLaunchArgs = ["--no-sandbox", ...launchArgs];
@@ -381,7 +375,7 @@ export function buildProductLaunch({
     throw new Error("Linux product launch requires Linux network namespace isolation");
   }
   if (isolationReceipt.mode === "linux-network-namespace") {
-    if (!hasLinuxProductNamespaceProof({ env, readlink })) {
+    if (!hasLinuxProductNamespaceProof({ env, readdir })) {
       throw new Error("Linux Electron launch requires the isolated product verifier");
     }
     return {
@@ -490,15 +484,18 @@ export async function activateSeededWorkspace(
   const terminalToggle = page.getByRole("button", { name: "Terminal" }).first();
   if (await terminalToggle.count()) return;
   const projectButton = page.getByRole("button", { name: /^Open project / }).first();
-  if (!(await projectButton.count())) {
-    throw new Error("Seeded workspace project control is missing");
-  }
-  await projectButton.click();
   const deadline = Date.now() + timeoutMs;
+  let projectClicked = false;
   while (Date.now() < deadline) {
     if ((await terminalToggle.count()) > 0 && await terminalToggle.isVisible()) return;
+    if (!projectClicked && (await projectButton.count()) > 0) {
+      await projectButton.click();
+      projectClicked = true;
+      continue;
+    }
     await page.waitForTimeout(intervalMs);
   }
+  if (!projectClicked) throw new Error("Seeded workspace project control is missing");
   throw new Error("Timed out waiting for Terminal control after opening seeded workspace");
 }
 
