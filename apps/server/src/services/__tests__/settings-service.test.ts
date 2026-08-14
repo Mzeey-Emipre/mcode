@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Mock fs before importing SettingsService so the constructor's existsSync / watch
 // calls don't hit the real filesystem.
@@ -39,6 +39,60 @@ const legacySettings = (
     appearance: { theme: "dark" },
     preview: { ...preview, rendering: { engine } },
   });
+
+describe("SettingsService agent runtime defaults", () => {
+  const originalAgentRuntime = process.env.MCODE_AGENT_RUNTIME;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(readFileSync).mockImplementation(() => { throw new Error("ENOENT"); });
+  });
+
+  afterEach(() => {
+    if (originalAgentRuntime === undefined) {
+      delete process.env.MCODE_AGENT_RUNTIME;
+    } else {
+      process.env.MCODE_AGENT_RUNTIME = originalAgentRuntime;
+    }
+  });
+
+  it("uses Codex Luna without a fallback when settings are missing in the agent runtime", () => {
+    process.env.MCODE_AGENT_RUNTIME = "1";
+
+    const settings = new SettingsService().get();
+
+    expect(settings.model.defaults.provider).toBe("codex");
+    expect(settings.model.defaults.id).toBe("gpt-5.6-luna");
+    expect(settings.model.defaults.fallbackId).toBe("");
+  });
+
+  it("uses the normal Claude defaults when settings are missing outside the agent runtime", () => {
+    delete process.env.MCODE_AGENT_RUNTIME;
+
+    const settings = new SettingsService().get();
+    const defaults = getDefaultSettings();
+
+    expect(settings.model.defaults.provider).toBe("claude");
+    expect(settings.model.defaults.id).toBe("claude-opus-4-8");
+    expect(settings.model.defaults.fallbackId).toBe("claude-sonnet-4-6");
+    expect(settings.model.defaults.reasoning).toBe(defaults.model.defaults.reasoning);
+  });
+
+  it("preserves an explicit Claude model selection in a valid settings file", () => {
+    process.env.MCODE_AGENT_RUNTIME = "1";
+    const existingSettings = getDefaultSettings();
+    existingSettings.model.defaults.provider = "claude";
+    existingSettings.model.defaults.id = "claude-opus-4-8";
+    existingSettings.model.defaults.fallbackId = "claude-sonnet-4-6";
+    vi.mocked(readFileSync).mockReturnValue(JSON.stringify(existingSettings));
+
+    const settings = new SettingsService().get();
+
+    expect(settings.model.defaults.provider).toBe("claude");
+    expect(settings.model.defaults.id).toBe("claude-opus-4-8");
+    expect(settings.model.defaults.fallbackId).toBe("claude-sonnet-4-6");
+  });
+});
 
 describe("SettingsService in-process change listener", () => {
   beforeEach(() => {
