@@ -56,7 +56,6 @@ export interface ProviderBrowserLeaseGrant extends ProviderBrowserCredentialMeta
   mcpUrl: string;
   token: string;
   allowedOperations: readonly string[];
-  rolloutMode: "legacy" | "browser-v2";
 }
 
 /** Gives a Provider scoped access to server-owned browser leases. */

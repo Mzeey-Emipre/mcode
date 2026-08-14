@@ -9,28 +9,23 @@ import {
 describe("Browser narrative projection", () => {
   it.each([
     ["browser_open", "browser_open"],
-    ["mcp__mcode-browser__browser_status", "browser_status"],
-    ["mcp:mcode-browser:browser_navigate", "browser_navigate"],
-    ["browser_resize", "browser_resize"],
-    ["mcode-browser.browser_snapshot", "browser_snapshot"],
-    ["browser_screenshot", "browser_screenshot"],
-    ["browser_click", "browser_click"],
-    ["MCP__MCODE-BROWSER__BROWSER_TYPE", "browser_type"],
-    ["browser_press", "browser_press"],
-    ["browser_scroll", "browser_scroll"],
-    ["browser_wait_for", "browser_wait_for"],
-    ["browser_console", "browser_console"],
-    ["browser_network", "browser_network"],
-    ["browser_accessibility", "browser_accessibility"],
-    ["browser_performance", "browser_performance"],
-    ["browser_recording_start", "browser_recording_start"],
-    ["browser_recording_stop", "browser_recording_stop"],
     ["mcp__mcode-browser__browser_inspect", "browser_inspect"],
     ["mcp:mcode-browser:browser_act", "browser_act"],
     ["mcode-browser.browser_tabs", "browser_tabs"],
     ["MCP__MCODE-BROWSER__BROWSER_EVALUATE", "browser_evaluate"],
   ])("resolves %s", (toolName, expected) => {
     expect(resolveBrowserNarrativeTool(toolName)).toBe(expected);
+  });
+
+  it.each([
+    "browser_status",
+    "browser_navigate",
+    "browser_snapshot",
+    "browser_screenshot",
+    "browser_click",
+    "browser_recording_start",
+  ])("does not resolve retired tool %s", (toolName) => {
+    expect(resolveBrowserNarrativeTool(toolName)).toBeNull();
   });
 
   it("keeps only action identity and resize dimensions from Browser input", () => {
@@ -52,19 +47,6 @@ describe("Browser narrative projection", () => {
         { operation: "resize", width: 390, height: 844 },
       ],
     });
-    expect(JSON.stringify(input)).not.toContain("SECRET");
-    expect(JSON.stringify(input)).not.toContain("Password");
-  });
-
-  it.each([
-    ["browser_navigate", { url: "https://example.test/?token=SECRET_TOKEN" }, "navigate"],
-    ["browser_type", { text: "SECRET_TYPED_VALUE", target: { accessibleName: "Password" } }, "type"],
-    ["browser_click", { target: { accessibleName: "SECRET_BUTTON" } }, "click"],
-    ["browser_wait_for", { text: "SECRET_PAGE_TEXT" }, "wait"],
-  ])("reduces granular %s input to one content-free action", (toolName, rawInput, operation) => {
-    const input = projectBrowserNarrativeInput(toolName, rawInput);
-
-    expect(input).toEqual({ operation: toolName, steps: [{ operation }] });
     expect(JSON.stringify(input)).not.toContain("SECRET");
     expect(JSON.stringify(input)).not.toContain("Password");
   });

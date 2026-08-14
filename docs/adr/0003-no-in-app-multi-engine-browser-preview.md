@@ -33,7 +33,7 @@ options:
   to open and sync the page in the user's *real* browsers rather than embedding.
 
 The whole preview tooling surface (capture, design-mode inspect, region/element pick,
-and the Codex browser-use bridge over `webContents.debugger` CDP) is Chromium/CDP
+and the Browser automation bridge over `webContents.debugger` CDP) is Chromium/CDP
 coupled and does not port to non-Chromium engines regardless. Changing the Electron
 host surface does not change this engine decision.
 

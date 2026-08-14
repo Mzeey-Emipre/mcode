@@ -43,14 +43,10 @@ describe("BrowserAutomationMcpHandler", () => {
       sequence: request.sequence,
       ok: true,
       result: {
-        operation: "status",
-        available: true,
-        active: true,
-        url: "https://example.test/",
-        loading: false,
-        focused: true,
+        operation: "inspect",
+        tabs: [],
         viewport: { width: 1280, height: 720 },
-        capabilities: ["status"],
+        capabilities: [],
       },
     }));
     cancelFromProvider = vi.fn(() => false);
@@ -82,12 +78,18 @@ describe("BrowserAutomationMcpHandler", () => {
     return fetch(endpoint, { method: "POST", headers: { authorization, "content-type": "application/json" }, body });
   }
 
-  it("publishes all tools with MCP safety annotations", async () => {
+  it("publishes only the Browser v2 tools with MCP safety annotations", async () => {
     const response = await post(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }));
     const payload = await response.json() as any;
     expect(response.status).toBe(200);
-    expect(payload.result.tools).toHaveLength(18);
-    expect(payload.result.tools.find((tool: any) => tool.name === "browser_status").annotations).toMatchObject({
+    expect(payload.result.tools.map((tool: any) => tool.name)).toEqual([
+      "browser_open",
+      "browser_inspect",
+      "browser_act",
+      "browser_tabs",
+      "browser_evaluate",
+    ]);
+    expect(payload.result.tools.find((tool: any) => tool.name === "browser_inspect").annotations).toMatchObject({
       readOnlyHint: true,
       destructiveHint: false,
     });
@@ -102,6 +104,17 @@ describe("BrowserAutomationMcpHandler", () => {
       "deadlineMs",
       "expression",
     ]);
+  });
+
+  it("rejects retired top-level Browser tool names", async () => {
+    const response = await post(JSON.stringify({
+      jsonrpc: "2.0",
+      id: "retired-tool",
+      method: "tools/call",
+      params: { name: "browser_status" },
+    }));
+    expect((await response.json() as any).error.code).toBe(-32602);
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it.each(["claude", "codex", "cursor", "copilot"])(
@@ -148,7 +161,7 @@ describe("BrowserAutomationMcpHandler", () => {
       for (const toolName of expectedCoreToolNames) {
         expect(initialization.instructions).toContain(toolName);
       }
-      expect(JSON.stringify(tools)).not.toContain("browser_status");
+      expect(JSON.stringify(tools)).not.toMatch(/browser_(status|navigate|resize|snapshot|screenshot|click|type|press|scroll|wait_for|console|network|accessibility|performance|recording_start|recording_stop)/);
       expect(tools.find((tool: any) => tool.name === "browser_inspect").description)
         .toContain("canonical session-specific");
       expect(tools.find((tool: any) => tool.name === "browser_act").description)
@@ -170,39 +183,9 @@ describe("BrowserAutomationMcpHandler", () => {
     },
   );
 
-  it("omits Browser v2 instructions for the legacy rollback surface", async () => {
-    const issued = credentials.issue({
-      providerId: "codex",
-      providerSessionId: "legacy-provider-session",
-      mcodeSessionId: "legacy-mcode-session",
-      threadId: "legacy-thread",
-      workspaceId: "workspace-a",
-      worktreeIdentity: "worktree-a",
-      permissionCapability: "interact",
-      allowedOperations: ["open", "click", "type", "navigate", "screenshot"],
-    });
-    handler = new BrowserAutomationMcpHandler({
-      credentials,
-      broker: new BrowserAutomationBroker({ now: () => 1_000 }),
-      now: () => 1_000,
-    });
-
-    const initialized = await post(JSON.stringify({
-      jsonrpc: "2.0",
-      id: "legacy-initialize",
-      method: "initialize",
-      params: { protocolVersion: "2025-03-26" },
-    }), `Bearer ${issued.token}`);
-
-    expect((await initialized.json() as any).result.instructions).toBeUndefined();
-  });
-
   it("keeps one correlation identity across MCP routing and receipt delivery", async () => {
     const events: BrowserAutomationTelemetryEvent[] = [];
-    const telemetry = new BrowserAutomationTelemetry(
-      { mode: "browser-v2", reason: "nightly", rollbackActive: false },
-      { sink: (event) => events.push(event) },
-    );
+    const telemetry = new BrowserAutomationTelemetry({ sink: (event) => events.push(event) });
     const issued = credentials.issue({
       providerId: "claude",
       providerSessionId: "correlation-provider-session",
@@ -358,28 +341,6 @@ describe("BrowserAutomationMcpHandler", () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
-  it("advertises only the operations allowed by the authenticated credential", async () => {
-    const observe = credentials.issue({
-      providerId: "cursor",
-      providerSessionId: "observe-provider",
-      mcodeSessionId: "observe-mcode",
-      threadId: "thread-observe",
-      workspaceId: "workspace-a",
-      worktreeIdentity: "worktree-a",
-      permissionCapability: "observe",
-      allowedOperations: ["status", "snapshot"],
-    });
-    const response = await post(
-      JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }),
-      `Bearer ${observe.token}`,
-    );
-    const payload = await response.json() as any;
-    expect(payload.result.tools.map((tool: any) => tool.name)).toEqual([
-      "browser_status",
-      "browser_snapshot",
-    ]);
-  });
-
   it("discovers and routes browser_inspect for an authorized credential", async () => {
     const inspect = credentials.issue({
       providerId: "cursor",
@@ -454,64 +415,6 @@ describe("BrowserAutomationMcpHandler", () => {
     expect(content[1]).toEqual({ type: "image", data: screenshotData, mimeType: "image/png" });
   });
 
-  it("projects snapshot and screenshot payloads into MCP image blocks", async () => {
-    const observe = credentials.issue({
-      providerId: "cursor",
-      providerSessionId: "snapshot-provider",
-      mcodeSessionId: "snapshot-mcode",
-      threadId: "thread-snapshot",
-      workspaceId: "workspace-a",
-      worktreeIdentity: "worktree-a",
-      permissionCapability: "observe",
-      allowedOperations: ["snapshot", "screenshot"],
-    });
-    const authorization = `Bearer ${observe.token}`;
-    const snapshotData = "c25hcHNob3Q=";
-    const screenshotData = "c2NyZWVuc2hvdA==";
-    const screenshot = (dataBase64: string) => ({
-      mediaType: "image/png",
-      dataBase64,
-      width: 320,
-      height: 180,
-      truncation: { truncated: false },
-    });
-    execute.mockImplementationOnce(async (_claims, request) => ({
-      contractVersion: 1,
-      requestId: request.requestId,
-      sequence: request.sequence,
-      ok: true,
-      result: { operation: "snapshot", snapshot: { screenshot: screenshot(snapshotData) } },
-    }));
-    const snapshotResponse = await post(JSON.stringify({
-      jsonrpc: "2.0",
-      id: "snapshot-screenshot",
-      method: "tools/call",
-      params: { name: "browser_snapshot", arguments: { includeScreenshot: true, timeoutMs: 1_000 } },
-    }), authorization);
-    const snapshotContent = (await snapshotResponse.json() as any).result.content;
-    expect(snapshotContent).toHaveLength(2);
-    expect(snapshotContent[0].text).not.toContain(snapshotData);
-    expect(snapshotContent[1]).toEqual({ type: "image", data: snapshotData, mimeType: "image/png" });
-
-    execute.mockImplementationOnce(async (_claims, request) => ({
-      contractVersion: 1,
-      requestId: request.requestId,
-      sequence: request.sequence,
-      ok: true,
-      result: { operation: "screenshot", screenshot: screenshot(screenshotData) },
-    }));
-    const screenshotResponse = await post(JSON.stringify({
-      jsonrpc: "2.0",
-      id: "screenshot",
-      method: "tools/call",
-      params: { name: "browser_screenshot", arguments: { maxWidth: 320, fullPage: false } },
-    }), authorization);
-    const screenshotContent = (await screenshotResponse.json() as any).result.content;
-    expect(screenshotContent).toHaveLength(2);
-    expect(screenshotContent[0].text).not.toContain(screenshotData);
-    expect(screenshotContent[1]).toEqual({ type: "image", data: screenshotData, mimeType: "image/png" });
-  });
-
   it("keeps non-image inspect results and failures as one text content block", async () => {
     const inspect = credentials.issue({
       providerId: "cursor",
@@ -561,7 +464,7 @@ describe("BrowserAutomationMcpHandler", () => {
   });
 
   it("binds tool requests to credential scope instead of accepting caller scope", async () => {
-    const response = await post(JSON.stringify({ jsonrpc: "2.0", id: "call", method: "tools/call", params: { name: "browser_status" } }));
+    const response = await post(JSON.stringify({ jsonrpc: "2.0", id: "call", method: "tools/call", params: { name: "browser_inspect" } }));
     expect(response.status).toBe(200);
     expect(execute).toHaveBeenCalledOnce();
     expect(execute.mock.calls[0]?.[1]).toMatchObject({
@@ -569,7 +472,7 @@ describe("BrowserAutomationMcpHandler", () => {
       threadId: "thread-a",
       providerSessionId: "provider-session",
       providerInstanceId: "mcode-session",
-      operation: "status",
+      operation: "inspect",
     });
   });
 
@@ -581,7 +484,7 @@ describe("BrowserAutomationMcpHandler", () => {
   });
 
   it("bounds and explicitly releases per-credential sequence state", async () => {
-    await post(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "browser_status" } }));
+    await post(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "browser_inspect" } }));
     const second = credentials.issue({
       providerId: "cursor",
       providerSessionId: "provider-session-2",
@@ -590,9 +493,9 @@ describe("BrowserAutomationMcpHandler", () => {
       workspaceId: "workspace-a",
       worktreeIdentity: "worktree-a",
       permissionCapability: "observe",
-      allowedOperations: ["status"],
+      allowedOperations: ["inspect"],
     });
-    await post(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "browser_status" } }), `Bearer ${second.token}`);
+    await post(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "browser_inspect" } }), `Bearer ${second.token}`);
     expect(handler.releaseCredential(credentialId)).toBe(false);
     expect(handler.releaseCredential(second.credentialId)).toBe(true);
     expect(handler.releaseCredential(second.credentialId)).toBe(false);
@@ -610,9 +513,9 @@ describe("BrowserAutomationMcpHandler", () => {
   it("rejects malformed, hostile, and oversized requests before broker execution", async () => {
     const malformed = await post("{not-json");
     expect(malformed.status).toBe(400);
-    const hostile = await post(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "browser_status", arguments: { threadId: "thread-b" } } }));
+    const hostile = await post(JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "browser_inspect", arguments: { threadId: "thread-b" } } }));
     expect((await hostile.json() as any).error.code).toBe(-32602);
-    const oversized = await post(JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "browser_status", arguments: { padding: "x".repeat(256 * 1_024) } } }));
+    const oversized = await post(JSON.stringify({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "browser_inspect", arguments: { padding: "x".repeat(256 * 1_024) } } }));
     expect(oversized.status).toBe(413);
     expect(execute).not.toHaveBeenCalled();
   });
@@ -640,7 +543,7 @@ describe("BrowserAutomationMcpHandler", () => {
       jsonrpc: "2.0",
       id: "provider-call-1",
       method: "tools/call",
-      params: { name: "browser_status" },
+      params: { name: "browser_inspect" },
     }));
     await vi.waitFor(() => expect(execute).toHaveBeenCalledOnce());
     const internalRequest = execute.mock.calls[0]![1];
@@ -680,7 +583,7 @@ describe("BrowserAutomationMcpHandler", () => {
         jsonrpc: "2.0",
         id: 77,
         method: "tools/call",
-        params: { name: "browser_status" },
+        params: { name: "browser_inspect" },
       }),
       signal: controller.signal,
     });

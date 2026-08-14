@@ -5,11 +5,9 @@ import {
   browserAutomationTerminalFields,
 } from "./telemetry.js";
 
-const rollout = { mode: "browser-v2", reason: "nightly", rollbackActive: false } as const;
-
 describe("Browser automation telemetry", () => {
   it("classifies every terminal failure and reports unexpected rate", () => {
-    const telemetry = new BrowserAutomationTelemetry(rollout);
+    const telemetry = new BrowserAutomationTelemetry();
     const record = (correlationId: string, response: BrowserAutomationResponse) => telemetry.record({
       timestampMs: 1,
       correlationId,
@@ -65,7 +63,7 @@ describe("Browser automation telemetry", () => {
 
   it("retains only closed content-free fields and ignores sink failures", () => {
     const sink = vi.fn((_event: unknown) => { throw new Error("log unavailable"); });
-    const telemetry = new BrowserAutomationTelemetry(rollout, { maxEvents: 1, sink });
+    const telemetry = new BrowserAutomationTelemetry({ maxEvents: 1, sink });
     telemetry.record({
       timestampMs: 1,
       correlationId: "request-1",
@@ -123,7 +121,7 @@ describe("Browser automation telemetry", () => {
       effect: "partial",
     });
 
-    const telemetry = new BrowserAutomationTelemetry(rollout);
+    const telemetry = new BrowserAutomationTelemetry();
     telemetry.record({
       timestampMs: 1,
       correlationId: "reload",

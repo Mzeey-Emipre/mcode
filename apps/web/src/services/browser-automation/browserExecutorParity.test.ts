@@ -96,6 +96,10 @@ class WebExecutorSubject implements BrowserConformanceSubject {
       const candidate = result.result as { observationRef?: string; nextObservationRef?: string; finalObservation?: { observationRef?: string } };
       this.state.observationRef = candidate.nextObservationRef ?? candidate.finalObservation?.observationRef ?? candidate.observationRef ?? this.state.observationRef;
       if (["open", "navigate"].includes(command.operation)) this.state.url = String(args.url ?? this.state.url);
+      if (command.operation === "act" && Array.isArray(args.steps)) {
+        const navigation = args.steps.find((step) => typeof step === "object" && step !== null && (step as { operation?: unknown }).operation === "navigate");
+        if (navigation && typeof (navigation as { url?: unknown }).url === "string") this.state.url = navigation.url;
+      }
       if (["open", "navigate", "click", "type", "act", "tabs"].includes(command.operation)) this.state.owner = "agent";
     }
     const raw = {

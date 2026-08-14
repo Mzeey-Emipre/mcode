@@ -140,12 +140,6 @@ export function setupContainer(mcodeDir: string): typeof container {
     { useClass: ProtectedEnvStore },
     { lifecycle: Lifecycle.Singleton },
   );
-  // Eagerly resolve and explicitly protect the in-app browser pipe path so
-  // spawned children (Codex provider, terminals, OpenCode automation tools)
-  // inherit the value the desktop main process published at boot. The
-  // MCODE_ prefix already auto-protects, but this records intent and
-  // survives any future prefix-rule change.
-  container.resolve(ProtectedEnvStore).protect("MCODE_BROWSER_USE_PIPE_PATH");
   container.resolve(ProtectedEnvStore).protect("MCODE_CURSOR_ADMIN_API_KEY");
   container.register(
     ShellEnvResolver,

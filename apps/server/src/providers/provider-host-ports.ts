@@ -48,7 +48,6 @@ export function createProviderHostPorts(
           credentialId: grant.credentialId,
           expiresAt: grant.expiresAt,
           allowedOperations: [...grant.allowedOperations],
-          rolloutMode: grant.rolloutMode,
         };
       },
       release: (leaseId) => dependencies.browser.release(leaseId),

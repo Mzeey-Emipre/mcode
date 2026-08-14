@@ -1,7 +1,6 @@
 import {
-  BROWSER_AUTOMATION_OPERATIONS,
   BROWSER_V2_CORE_OPERATIONS,
-  type BrowserAutomationOperation,
+  type BrowserAutomationPublicOperation,
 } from "@mcode/contracts";
 import { randomUUID } from "crypto";
 import {
@@ -9,22 +8,6 @@ import {
   type BrowserAutomationCredentialScope,
   type BrowserAutomationPermissionCapability,
 } from "./credential-registry.js";
-import {
-  resolveBrowserAutomationRollout,
-  type BrowserAutomationRolloutDecision,
-} from "./rollout-policy.js";
-
-const OBSERVE_OPERATIONS = new Set<BrowserAutomationOperation>([
-  "inspect",
-  "status",
-  "snapshot",
-  "screenshot",
-  "waitFor",
-  "console",
-  "network",
-  "accessibility",
-  "performance",
-]);
 const DEFAULT_PENDING_TTL_MS = 30_000;
 const DEFAULT_MAX_PENDING = 256;
 
@@ -36,7 +19,7 @@ export interface BrowserAutomationSessionLeaseScope {
   threadId: string;
   workspaceId: string;
   permissionCapability: BrowserAutomationPermissionCapability;
-  allowedOperations?: readonly BrowserAutomationOperation[];
+  allowedOperations?: readonly BrowserAutomationPublicOperation[];
 }
 
 /** Input accepted by the lease staging boundary. */
@@ -63,9 +46,7 @@ export interface BrowserAutomationSessionLeaseGrant {
   token: string;
   credentialId: string;
   expiresAt: number;
-  allowedOperations: readonly BrowserAutomationOperation[];
-  /** Process-wide command surface shared by every provider. */
-  rolloutMode: BrowserAutomationRolloutDecision["mode"];
+  allowedOperations: readonly BrowserAutomationPublicOperation[];
 }
 
 /** Structured result for rotating an active lease credential. */
@@ -87,7 +68,6 @@ export interface BrowserAutomationSessionLeaseOptions
   pendingTtlMs?: number;
   maxPending?: number;
   now?: () => number;
-  rollout?: BrowserAutomationRolloutDecision;
 }
 
 interface PendingScope {
@@ -102,21 +82,9 @@ interface ActiveLease {
   credentialId: string;
 }
 
-function legacyAllowedOperations(
-  capability: BrowserAutomationPermissionCapability,
-): readonly BrowserAutomationOperation[] {
-  if (capability === "observe") {
-    return BROWSER_AUTOMATION_OPERATIONS.filter((operation) => OBSERVE_OPERATIONS.has(operation));
-  }
-  if (capability === "interact") {
-    return BROWSER_AUTOMATION_OPERATIONS.filter((operation) => operation !== "evaluate");
-  }
-  return [...BROWSER_AUTOMATION_OPERATIONS];
-}
-
 function browserV2AllowedOperations(
   capability: BrowserAutomationPermissionCapability,
-): readonly BrowserAutomationOperation[] {
+): readonly BrowserAutomationPublicOperation[] {
   if (capability === "observe") return ["inspect"];
   if (capability === "interact") return [...BROWSER_V2_CORE_OPERATIONS];
   return [...BROWSER_V2_CORE_OPERATIONS, "evaluate"];
@@ -151,16 +119,13 @@ function validateConfiguration(configuration: BrowserAutomationSessionLeaseConfi
 
 function normalizeRequest(
   request: BrowserAutomationSessionLeaseRequest,
-  rollout: BrowserAutomationRolloutDecision,
 ): BrowserAutomationSessionLeaseScope {
   const scope = "scope" in request ? request.scope : request;
   return {
     ...scope,
     allowedOperations: scope.allowedOperations
       ? [...scope.allowedOperations]
-      : rollout.mode === "browser-v2"
-        ? browserV2AllowedOperations(scope.permissionCapability)
-        : legacyAllowedOperations(scope.permissionCapability),
+      : browserV2AllowedOperations(scope.permissionCapability),
   };
 }
 
@@ -174,7 +139,6 @@ export class BrowserAutomationSessionLease {
   private readonly pendingTtlMs: number;
   private readonly maxPending: number;
   private readonly now: () => number;
-  private readonly rollout: BrowserAutomationRolloutDecision;
 
   constructor(optionsOrCredentials: BrowserAutomationSessionLeaseOptions | BrowserAutomationCredentialRegistry = {}) {
     const options = optionsOrCredentials instanceof BrowserAutomationCredentialRegistry
@@ -184,7 +148,6 @@ export class BrowserAutomationSessionLease {
     this.pendingTtlMs = options.pendingTtlMs ?? DEFAULT_PENDING_TTL_MS;
     this.maxPending = options.maxPending ?? DEFAULT_MAX_PENDING;
     this.now = options.now ?? Date.now;
-    this.rollout = options.rollout ?? resolveBrowserAutomationRollout();
     if (!Number.isInteger(this.pendingTtlMs) || this.pendingTtlMs < 1 || this.pendingTtlMs > 24 * 60 * 60_000) {
       throw new Error("Browser automation session lease pending TTL is invalid");
     }
@@ -198,11 +161,6 @@ export class BrowserAutomationSessionLease {
       }
       this.configure({ mcpUrl: options.mcpUrl, worktreeIdentity: options.worktreeIdentity });
     }
-  }
-
-  /** Returns the process-wide rollout applied to all provider leases. */
-  rolloutStatus(): BrowserAutomationRolloutDecision {
-    return this.rollout;
   }
 
   /** Configures the exact loopback endpoint used by future grants. */
@@ -237,7 +195,7 @@ export class BrowserAutomationSessionLease {
   stage(request: BrowserAutomationSessionLeaseRequest): BrowserAutomationSessionLeaseStage {
     this.cleanupPending();
     if (this.pending.size >= this.maxPending) this.evictOldestPending();
-    const scope = normalizeRequest(request, this.rollout);
+    const scope = normalizeRequest(request);
     const leaseId = randomUUID();
     const sessionKey = this.sessionKey(scope.providerId, scope.mcodeSessionId);
     const expiresAt = this.now() + this.pendingTtlMs;
@@ -350,11 +308,7 @@ export class BrowserAutomationSessionLease {
     const scope: BrowserAutomationCredentialScope = {
       ...pending.scope,
       worktreeIdentity: configuration.worktreeIdentity,
-      allowedOperations: pending.scope.allowedOperations ?? (
-        this.rollout.mode === "browser-v2"
-          ? browserV2AllowedOperations(pending.scope.permissionCapability)
-          : legacyAllowedOperations(pending.scope.permissionCapability)
-      ),
+      allowedOperations: pending.scope.allowedOperations ?? browserV2AllowedOperations(pending.scope.permissionCapability),
     };
     const issued = this.credentials.issue(scope);
     const active: ActiveLease = { scope: pending.scope, sessionKey: pending.sessionKey, credentialId: issued.credentialId };
@@ -367,7 +321,6 @@ export class BrowserAutomationSessionLease {
       credentialId: issued.credentialId,
       expiresAt: issued.expiresAt,
       allowedOperations: scope.allowedOperations,
-      rolloutMode: this.rollout.mode,
     };
   }
 

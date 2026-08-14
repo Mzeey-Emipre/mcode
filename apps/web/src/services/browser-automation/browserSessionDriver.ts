@@ -11,6 +11,7 @@ import type {
   BrowserAutomationHostRuntime,
 } from "@mcode/contracts";
 import {
+  BROWSER_AUTOMATION_HOST_OPERATIONS,
   BROWSER_AUTOMATION_MAX_EXPRESSION_BYTES,
   BROWSER_AUTOMATION_OPERATIONS,
 } from "@mcode/contracts";
@@ -75,14 +76,12 @@ export function getBrowserAutomationRuntimeOperations(
 ): readonly BrowserAutomationOperation[] {
   if (runtime === "web") return WEB_RUNTIME_OPERATIONS;
   const recordingAvailable = options.recordingAvailable ?? true;
-  return [
-    "inspect",
-    "act",
-    "tabs",
-    ...BROWSER_AUTOMATION_OPERATIONS.filter((operation) =>
+  return Array.from(new Set([
+    ...BROWSER_AUTOMATION_OPERATIONS,
+    ...BROWSER_AUTOMATION_HOST_OPERATIONS.filter((operation) =>
       recordingAvailable || (operation !== "recordingStart" && operation !== "recordingStop"),
     ),
-  ];
+  ]));
 }
 
 /** Returns the act-step mechanics supported by the selected Browser runtime. */
@@ -174,7 +173,7 @@ export interface BrowserSessionTabLifecycleAdapter {
   close(target: BrowserAutomationHostDispatchTarget, workspaceId: string): Promise<void>;
 }
 
-/** Renderer-side adapter that forwards Browser v1 commands to Electron preload. */
+/** Renderer-side adapter that forwards Browser v2 commands to Electron preload. */
 export class ElectronBrowserSessionAdapter implements BrowserSessionRuntimeAdapter {
   constructor(
     private readonly executeRequest: (
@@ -188,7 +187,7 @@ export class ElectronBrowserSessionAdapter implements BrowserSessionRuntimeAdapt
   }
 }
 
-/** Runtime selection inputs for the single Browser v1 command boundary. */
+/** Runtime selection inputs for the single Browser v2 command boundary. */
 export interface BrowserSessionDriverOptions {
   readonly web: BrowserSessionRuntimeAdapter;
   readonly electron: BrowserSessionRuntimeAdapter;
@@ -206,7 +205,7 @@ export interface BrowserSessionDriverOptions {
 }
 
 /**
- * Client orchestration boundary for Browser v1 commands. The driver chooses
+ * Client orchestration boundary for Browser v2 commands. The driver chooses
  * the active runtime adapter; broker transport and native Electron mechanics
  * stay outside this class.
  */
@@ -224,7 +223,7 @@ export class BrowserSessionDriver {
     this.isElectron = options.isElectron ?? (() => typeof window !== "undefined" && typeof window.desktopBridge?.preview === "object");
   }
 
-  /** Dispatch one broker-authorized Browser v1 command through the active runtime adapter. */
+  /** Dispatch one broker-authorized Browser v2 command through the active runtime adapter. */
   execute(
     dispatch: BrowserAutomationHostDispatch,
     signal: AbortSignal,

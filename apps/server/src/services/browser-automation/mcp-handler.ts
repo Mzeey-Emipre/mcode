@@ -4,11 +4,10 @@ import {
   BROWSER_AUTOMATION_CONTRACT_VERSION,
   BROWSER_AUTOMATION_MAX_RESULT_BYTES,
   BROWSER_AUTOMATION_OPERATION_METADATA,
-  BROWSER_AUTOMATION_OPERATIONS,
   BROWSER_V2_CORE_OPERATIONS,
   BrowserAutomationRequestSchema,
   type BrowserAutomationResult,
-  type BrowserAutomationOperation,
+  type BrowserAutomationPublicOperation,
   type BrowserAutomationResponse,
 } from "@mcode/contracts";
 import { MCODE_BROWSER_GUIDE } from "@mcode/thread-orchestration";
@@ -20,11 +19,8 @@ import type {
 
 const MAX_BODY_BYTES = 256 * 1_024;
 const MCP_PROTOCOL_VERSIONS = ["2025-03-26", "2024-11-05"] as const;
-const TOOL_NAME_TO_OPERATION = new Map<string, BrowserAutomationOperation>([
-  ["browser_inspect", "inspect" as BrowserAutomationOperation],
-  ["browser_act", "act" as BrowserAutomationOperation],
-  ["browser_tabs", "tabs" as BrowserAutomationOperation],
-  ...BROWSER_AUTOMATION_OPERATIONS.map((operation) => [
+const TOOL_NAME_TO_OPERATION = new Map<string, BrowserAutomationPublicOperation>([
+  ...[...BROWSER_V2_CORE_OPERATIONS, "evaluate" as const].map((operation) => [
     BROWSER_AUTOMATION_OPERATION_METADATA[operation].mcpName,
     operation,
   ] as const),
@@ -188,8 +184,8 @@ const tabsInputSchema = {
   additionalProperties: false,
 } satisfies Record<string, unknown>;
 
-function inputSchema(operation: BrowserAutomationOperation): Record<string, unknown> {
-  const schemas: Record<BrowserAutomationOperation, Record<string, unknown>> = {
+function inputSchema(operation: BrowserAutomationPublicOperation): Record<string, unknown> {
+  const schemas: Record<BrowserAutomationPublicOperation, Record<string, unknown>> = {
     inspect: { includeScreenshot: { type: "boolean", default: false }, includeDiagnostics: { type: "boolean", default: false } },
     act: {
       idempotencyKey: { type: "string", minLength: 1, maxLength: 256 },
@@ -197,24 +193,10 @@ function inputSchema(operation: BrowserAutomationOperation): Record<string, unkn
       deadlineMs: { type: "integer", minimum: 1, maximum: 60000 },
       steps: { type: "array", minItems: 1, maxItems: 8, items: { oneOf: actStepVariants } },
     },
-    status: {},
     open: {
       url: { type: "string", format: "uri" },
       idempotencyKey: { type: "string", minLength: 1, maxLength: 256 },
     },
-    navigate: { url: { type: "string", format: "uri" } },
-    resize: { width: { type: "integer", minimum: 320, maximum: 7680 }, height: { type: "integer", minimum: 240, maximum: 4320 } },
-    snapshot: { includeScreenshot: { type: "boolean", default: true }, timeoutMs: { type: "integer", minimum: 1, maximum: 60000 } },
-    screenshot: { maxWidth: { type: "integer", minimum: 1, maximum: 1280 }, fullPage: { type: "boolean", default: false } },
-    click: { target: { type: "object", description: "Exactly one of semanticId, role plus accessibleName, cssSelector, or x plus y." }, button: { enum: ["left", "middle", "right"] }, clickCount: { type: "integer", minimum: 1, maximum: 3 }, timeoutMs: { type: "integer", minimum: 1, maximum: 60000 } },
-    type: { target: { type: "object" }, text: { type: "string", maxLength: 16384 }, clear: { type: "boolean" }, submit: { type: "boolean" }, timeoutMs: { type: "integer", minimum: 1, maximum: 60000 } },
-    press: { key: { type: "string", minLength: 1, maxLength: 64 }, modifiers: { type: "array", items: { enum: ["Alt", "Control", "Meta", "Shift"] }, maxItems: 4 }, timeoutMs: { type: "integer", minimum: 1, maximum: 60000 } },
-    scroll: { target: { type: "object" }, deltaX: { type: "number", minimum: -100000, maximum: 100000 }, deltaY: { type: "number", minimum: -100000, maximum: 100000 }, timeoutMs: { type: "integer", minimum: 1, maximum: 60000 } },
-    waitFor: { target: { type: "object" }, url: { type: "string", format: "uri" }, text: { type: "string" }, state: { enum: ["attached", "visible", "hidden", "detached"] }, timeoutMs: { type: "integer", minimum: 1, maximum: 60000 } },
-    console: { levels: { type: "array", items: { enum: ["debug", "info", "warning", "error"] }, maxItems: 4 }, source: { type: "string", minLength: 1, maxLength: 2048 }, limit: { type: "integer", minimum: 1, maximum: 200 } },
-    network: { failedOnly: { type: "boolean" }, limit: { type: "integer", minimum: 1, maximum: 200 } },
-    accessibility: { root: { type: "object" }, limit: { type: "integer", minimum: 1, maximum: 1000 } },
-    performance: { includeMemory: { type: "boolean" } },
     evaluate: {
       idempotencyKey: { type: "string", minLength: 1, maxLength: 256 },
       observationRef: { type: "string", minLength: 1, maxLength: 256 },
@@ -223,12 +205,10 @@ function inputSchema(operation: BrowserAutomationOperation): Record<string, unkn
       awaitPromise: { type: "boolean" },
       timeoutMs: { type: "integer", minimum: 1, maximum: 60000 },
     },
-    recordingStart: { maxDurationMs: { type: "integer", minimum: 1000, maximum: 600000 } },
-    recordingStop: {},
     tabs: tabsInputSchema,
   };
-  const requiredByOperation: Partial<Record<BrowserAutomationOperation, string[]>> = {
-    open: ["idempotencyKey"], act: ["idempotencyKey", "observationRef", "deadlineMs", "steps"], navigate: ["url"], resize: ["width", "height"], click: ["target"], type: ["text"], press: ["key"], scroll: ["deltaY"], evaluate: ["idempotencyKey", "observationRef", "deadlineMs", "expression"],
+  const requiredByOperation: Partial<Record<BrowserAutomationPublicOperation, string[]>> = {
+    open: ["idempotencyKey"], act: ["idempotencyKey", "observationRef", "deadlineMs", "steps"], evaluate: ["idempotencyKey", "observationRef", "deadlineMs", "expression"],
   };
   if (operation === "tabs") return tabsInputSchema;
   return {
@@ -239,7 +219,7 @@ function inputSchema(operation: BrowserAutomationOperation): Record<string, unkn
   };
 }
 
-function toolDescription(operation: BrowserAutomationOperation): string {
+function toolDescription(operation: BrowserAutomationPublicOperation): string {
   switch (operation) {
     case "open":
       return "Create one agent-owned background tab and return its initial Browser observation. Use a fresh idempotency key; this does not reveal or focus the Browser panel.";
@@ -256,7 +236,7 @@ function toolDescription(operation: BrowserAutomationOperation): string {
   }
 }
 
-function toolList(operations: readonly BrowserAutomationOperation[]): Array<Record<string, unknown>> {
+function toolList(operations: readonly BrowserAutomationPublicOperation[]): Array<Record<string, unknown>> {
   return operations.map((operation) => {
     const metadata = BROWSER_AUTOMATION_OPERATION_METADATA[operation];
     return {
@@ -289,10 +269,7 @@ function screenshotFromResult(
 ): BrowserAutomationScreenshot | undefined {
   switch (result.operation) {
     case "inspect":
-    case "screenshot":
       return result.screenshot;
-    case "snapshot":
-      return result.snapshot.screenshot;
     default:
       return undefined;
   }
@@ -306,9 +283,7 @@ function mcpContent(result: BrowserAutomationResponse): Array<Record<string, unk
   if (!screenshot) return [{ type: "text", text: JSON.stringify(toolResult) }];
 
   const projection = screenshotProjection(screenshot);
-  const metadataResult = toolResult.operation === "snapshot"
-    ? { ...toolResult, snapshot: { ...toolResult.snapshot, screenshot: projection.metadata } }
-    : { ...toolResult, screenshot: projection.metadata };
+  const metadataResult = { ...toolResult, screenshot: projection.metadata };
   return [
     { type: "text", text: JSON.stringify(metadataResult) },
     { type: "image", data: projection.data, mimeType: projection.mimeType },
@@ -554,7 +529,7 @@ export class BrowserAutomationMcpHandler {
 
   private discoverableOperations(
     claims: BrowserAutomationCredentialClaims,
-  ): readonly BrowserAutomationOperation[] {
+  ): readonly BrowserAutomationPublicOperation[] {
     const negotiated = this.broker.availableOperations(claims);
     const core = BROWSER_V2_CORE_OPERATIONS.filter((operation) => claims.allowedOperations.includes(operation));
     return [

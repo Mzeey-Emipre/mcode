@@ -723,7 +723,7 @@ export class CursorProvider
       state.mcodeRuntimeInstructions = renderMcodeInstructions(buildMcodeInstructionPlan({
         sourceThreadId: threadId,
         threadControlGranted: true,
-        browserAutomationGranted: browserGrant?.rolloutMode === "browser-v2",
+        browserAutomationGranted: Boolean(browserGrant),
       }));
       state.mcodeRuntimeInstructionsSent = false;
       if (browserGrant) {

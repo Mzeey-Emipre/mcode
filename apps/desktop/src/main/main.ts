@@ -57,11 +57,6 @@ import {
   disposePreviewForWindow,
 } from "./preview/index.js";
 import { disposeBrowserAutomationForWindow } from "./browser-automation/index.js";
-import {
-  startBrowserUseBridge,
-  disposeBrowserUseBridge,
-} from "./browser-use/index.js";
-import { shouldStartLegacyBrowserUseBridge } from "./browser-use/rollout.js";
 import { resolveMcodeWorkspacePreviewUrl } from "./preview/preview-local-file.js";
 import { isDesktopDev } from "./is-desktop-dev.js";
 import { shouldPrintVersion } from "./cli-args.js";
@@ -482,7 +477,7 @@ function createWindow(): void {
       spellcheck: true,
       // Phase D of the in-app browser rewrite: enable <webview> so the
       // renderer can host a guest WebContents whose id is later adopted by
-      // the host bridge (browser-use). webview-tag carries Chromium guest
+      // the Browser automation host. webview-tag carries Chromium guest
       // process risks; the will-attach-webview hook below clamps webPreferences
       // and we never expose nodeIntegrationInSubFrames.
       webviewTag: true,
@@ -1122,16 +1117,6 @@ app.whenReady().then(async () => {
     }
     configureApplicationMenu();
 
-    // The typed browser MCP gateway is the default. Keep the raw pipe only as
-    // an explicit rollback path while providers migrate to the scoped contract.
-    delete process.env["MCODE_BROWSER_USE_PIPE_PATH"];
-    if (shouldStartLegacyBrowserUseBridge()) {
-      const pipePathEarly = await startBrowserUseBridge();
-      if (pipePathEarly) {
-        process.env["MCODE_BROWSER_USE_PIPE_PATH"] = pipePathEarly;
-      }
-    }
-
     // Start the server child process
     const { port } = await serverManager.start();
     console.log(
@@ -1229,7 +1214,6 @@ app.on("window-all-closed", () => {
 
 app.on("will-quit", () => {
   cleanupAutoUpdater();
-  void disposeBrowserUseBridge();
 });
 
 export { mainWindow };

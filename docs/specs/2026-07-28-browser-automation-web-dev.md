@@ -18,7 +18,7 @@ The solution must keep one shared page state for the user and the agent. It must
 also preserve the existing Electron control path, broker authority, security
 boundaries, tab identity, cancellation behavior, and bounded browser payloads.
 The client boundary is shared by both runtimes: `BrowserSessionDriver` is the
-single Browser v1 command entry, `BrowserTargetRegistry` owns logical target
+single Browser v2 command entry, `BrowserTargetRegistry` owns logical target
 lifetime outside React, and web and Electron provide one runtime-adapter
 contract. React only projects registry state and attaches or detaches runtime
 handles. Broker and MCP ownership remain unchanged.
@@ -167,7 +167,7 @@ or extension bridge if product requirements justify that boundary.
     preview, adoption, CDP, capture, and security behavior. Web mode selects a
     different executor behind the host capability boundary.
 14. **Client ownership.** `BrowserSessionDriver` selects the runtime adapter for
-    every Browser v1 dispatch. `BrowserTargetRegistry` retains logical records
+    every Browser v2 dispatch. `BrowserTargetRegistry` retains logical records
     across panel hiding, tab changes, thread switches, and ordinary remounts;
     explicit tab, thread, or workspace deletion releases them. React does not
     own target existence.
@@ -230,7 +230,7 @@ or extension bridge if product requirements justify that boundary.
 - Provider-specific transport rewrites.
 - Database migrations for browser target state.
 - Extracting provider session lifecycle before the web behavior stabilizes.
-- Changing the raw browser-use compatibility path as part of this MVP.
+- Changing the Electron preview host or Browser v2 contract as part of this MVP.
 
 ## Further Notes
 

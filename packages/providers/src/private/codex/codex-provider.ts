@@ -1335,7 +1335,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     const mcodeInstructions = renderMcodeInstructions(buildMcodeInstructionPlan({
       sourceThreadId: threadId,
       threadControlGranted: Boolean(internalMcp),
-      browserAutomationGranted: browserGrant?.rolloutMode === "browser-v2",
+      browserAutomationGranted: Boolean(browserGrant),
     }));
     const spawnEnv = { ...args.env };
     const browserTokenEnvName = "MCODE_BROWSER_MCP_TOKEN";
@@ -1364,9 +1364,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
               `mcp_servers.mcode-browser.bearer_token_env_var=${JSON.stringify(browserTokenEnvName)}`,
             ]
           : []),
-        ...(browserGrant?.rolloutMode === "browser-v2"
-          ? ['plugins."browser@openai-bundled".enabled=false']
-          : []),
+        ...(browserGrant ? ['plugins."browser@openai-bundled".enabled=false'] : []),
       ],
     });
 

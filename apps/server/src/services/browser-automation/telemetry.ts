@@ -3,9 +3,6 @@ import type {
   BrowserAutomationOperation,
   BrowserAutomationResponse,
 } from "@mcode/contracts";
-import type {
-  BrowserAutomationRolloutDecision,
-} from "./rollout-policy.js";
 
 /** Maximum content-free lifecycle events retained for local evidence. */
 export const BROWSER_AUTOMATION_MAX_TELEMETRY_EVENTS = 2_048;
@@ -24,7 +21,7 @@ export type BrowserAutomationTelemetryStage =
   | "receipt-delivery"
   | "cleanup";
 
-/** Stable nightly failure classes from the Browser v2 rollout decision. */
+/** Stable nightly failure classes from the Browser v2 release decision. */
 export type BrowserAutomationFailureClass =
   | "user-takeover"
   | "capability-rejection"
@@ -92,7 +89,6 @@ export interface BrowserAutomationZeroToleranceOutcomes {
 
 /** Privacy-safe nightly evidence report for the current process. */
 export interface BrowserAutomationNightlyEvidenceReport {
-  readonly rollout: BrowserAutomationRolloutDecision;
   readonly observedRequests: number;
   readonly successfulRequests: number;
   readonly expectedFailures: number;
@@ -106,7 +102,6 @@ export interface BrowserAutomationNightlyEvidenceReport {
 
 /** Options for the bounded Browser lifecycle telemetry collector. */
 export interface BrowserAutomationTelemetryOptions {
-  readonly rollout: BrowserAutomationRolloutDecision;
   readonly maxEvents?: number;
   readonly maxFailureBundles?: number;
   readonly sink?: (event: BrowserAutomationTelemetryEvent) => void;
@@ -255,7 +250,7 @@ export class BrowserAutomationTelemetry {
   private staleMutations = 0;
   private unknownOutcomes = 0;
 
-  constructor(private readonly rollout: BrowserAutomationRolloutDecision, options: Omit<BrowserAutomationTelemetryOptions, "rollout"> = {}) {
+  constructor(options: BrowserAutomationTelemetryOptions = {}) {
     this.maxEvents = options.maxEvents ?? BROWSER_AUTOMATION_MAX_TELEMETRY_EVENTS;
     this.maxFailureBundles = options.maxFailureBundles ?? BROWSER_AUTOMATION_MAX_FAILURE_BUNDLES;
     this.sink = options.sink;
@@ -324,7 +319,6 @@ export class BrowserAutomationTelemetry {
   /** Returns the bounded current-process nightly evidence report. */
   report(): BrowserAutomationNightlyEvidenceReport {
     return {
-      rollout: this.rollout,
       observedRequests: this.observedRequests,
       successfulRequests: this.successfulRequests,
       expectedFailures: this.expectedFailures,

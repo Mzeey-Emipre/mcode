@@ -229,13 +229,9 @@ const container = setupContainer(getMcodeDir());
 
 const browserAutomationCredentials = container.resolve(BrowserAutomationCredentialRegistry);
 const browserAutomationSessionLease = container.resolve(BrowserAutomationSessionLease);
-const browserAutomationTelemetry = new BrowserAutomationTelemetry(
-  browserAutomationSessionLease.rolloutStatus(),
-  {
-    sink: (event) => logger.info("Browser automation lifecycle", event),
-  },
-);
-logger.info("Browser automation rollout selected", browserAutomationSessionLease.rolloutStatus());
+const browserAutomationTelemetry = new BrowserAutomationTelemetry({
+  sink: (event) => logger.info("Browser automation lifecycle", event),
+});
 const browserAutomationBroker = new BrowserAutomationBroker({ telemetry: browserAutomationTelemetry });
 const browserAutomationMcpHandler = new BrowserAutomationMcpHandler({
   credentials: browserAutomationCredentials,

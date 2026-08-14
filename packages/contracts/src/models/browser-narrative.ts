@@ -2,23 +2,7 @@ import { BROWSER_AUTOMATION_ACT_MAX_STEPS, BROWSER_AUTOMATION_ERROR_CODES } from
 
 /** Browser v2 tools that render as first-class narrative activity. */
 export const BROWSER_NARRATIVE_TOOLS = [
-  "browser_status",
   "browser_open",
-  "browser_navigate",
-  "browser_resize",
-  "browser_snapshot",
-  "browser_screenshot",
-  "browser_click",
-  "browser_type",
-  "browser_press",
-  "browser_scroll",
-  "browser_wait_for",
-  "browser_console",
-  "browser_network",
-  "browser_accessibility",
-  "browser_performance",
-  "browser_recording_start",
-  "browser_recording_stop",
   "browser_inspect",
   "browser_act",
   "browser_tabs",
@@ -80,17 +64,6 @@ const STEP_OPERATIONS = new Set([
   "recordingStart",
   "recordingStop",
 ]);
-const GRANULAR_STEP_OPERATIONS: Partial<Record<BrowserNarrativeTool, string>> = {
-  browser_navigate: "navigate",
-  browser_resize: "resize",
-  browser_click: "click",
-  browser_type: "type",
-  browser_press: "press",
-  browser_scroll: "scroll",
-  browser_wait_for: "wait",
-  browser_recording_start: "recordingStart",
-  browser_recording_stop: "recordingStop",
-};
 const TAB_ACTIONS = new Set(["select", "claim", "release", "close", "finalize"]);
 const OUTCOMES = new Set(["completed", "failed", "interrupted"]);
 const RECEIPT_STATUSES = new Set(["applied", "satisfied", "failed", "interrupted", "skipped"]);
@@ -188,14 +161,6 @@ export function projectBrowserNarrativeInput(
   if (operation === "browser_tabs") {
     const action = allowedString(args.action, TAB_ACTIONS) as BrowserNarrativeInput["action"];
     return { operation, ...(action ? { action } : {}) };
-  }
-
-  const granularStepOperation = GRANULAR_STEP_OPERATIONS[operation];
-  if (granularStepOperation) {
-    const step = granularStepOperation === "resize"
-      ? projectStep({ operation: granularStepOperation, width: args.width, height: args.height })
-      : projectStep({ operation: granularStepOperation });
-    return { operation, ...(step ? { steps: [step] } : {}) };
   }
 
   return { operation };

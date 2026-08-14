@@ -14,7 +14,6 @@ describe("createProviderHostPorts", () => {
           credentialId: "credential-1",
           expiresAt: 123,
           allowedOperations: ["inspect"],
-          rolloutMode: "browser-v2",
         })),
       },
       threadControl: {},
@@ -29,7 +28,6 @@ describe("createProviderHostPorts", () => {
       credentialId: "credential-1",
       expiresAt: 123,
       allowedOperations: ["inspect"],
-      rolloutMode: "browser-v2",
     });
   });
 

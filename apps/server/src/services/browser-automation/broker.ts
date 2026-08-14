@@ -16,6 +16,8 @@ import {
   type BrowserAutomationRequest,
   type BrowserAutomationResponse,
   type BrowserAutomationOperation,
+  type BrowserAutomationPublicOperation,
+  type BrowserAutomationRequestOperation,
 } from "@mcode/contracts";
 import { sendToClient } from "../../transport/push.js";
 import type { BrowserAutomationCredentialClaims } from "./credential-registry.js";
@@ -26,7 +28,6 @@ import {
   type BrowserAutomationTelemetryEvent,
   type BrowserAutomationTelemetryStage,
 } from "./telemetry.js";
-import { resolveBrowserAutomationRollout } from "./rollout-policy.js";
 
 interface RegisteredHost {
   socket: WebSocket;
@@ -48,13 +49,7 @@ interface PendingRequest {
   resolve: (response: BrowserAutomationResponse) => void;
   timer: ReturnType<typeof setTimeout>;
   startedAt: number;
-  credentialOperations: readonly BrowserAutomationOperation[];
-  navigationAttemptKey?: string;
-}
-
-interface NavigationAttemptRecord {
-  attempts: number;
-  lastAttemptAt: number;
+  credentialOperations: readonly BrowserAutomationPublicOperation[];
 }
 
 interface OpenReplayRecord {
@@ -140,17 +135,13 @@ export interface BrowserAutomationBrokerOptions {
   telemetry?: BrowserAutomationTelemetry;
 }
 
-const BROWSER_V2_OPERATIONS = new Set<BrowserAutomationOperation>([
-  "open",
-  "inspect",
-  "act",
-  "tabs",
-  "evaluate",
-]);
-const NAVIGATION_MAX_RETRIES = 1;
-const NAVIGATION_MAX_ATTEMPTS = NAVIGATION_MAX_RETRIES + 1;
-const NAVIGATION_RETRY_WINDOW_MS = 60_000;
-const NAVIGATION_ATTEMPT_RECORD_LIMIT = 256;
+const PUBLIC_OPERATIONS = new Set<string>(["open", "inspect", "act", "tabs", "evaluate"]);
+
+function isPublicOperation(
+  operation: BrowserAutomationRequestOperation,
+): operation is BrowserAutomationPublicOperation {
+  return PUBLIC_OPERATIONS.has(operation);
+}
 const MAX_LATENCY_SAMPLES = 256;
 const MAX_LATENCY_SAMPLE_MS = 24 * 60 * 60 * 1_000;
 
@@ -174,28 +165,13 @@ function browserV2Recovery(code: BrowserAutomationErrorCode): "inspect" | "reope
   }
 }
 
-function legacyBrowserRecovery(
-  operation: BrowserAutomationOperation,
-  code: BrowserAutomationErrorCode,
-  retryable: boolean,
-): "inspect" | "wait" | "retry" | "manual" {
-  if (operation === "navigate" && code === "HOST_UNAVAILABLE") return "wait";
-  if (code === "BROWSER_BUSY") return "wait";
-  if (code === "CAPABILITY_CHANGED") return "inspect";
-  return retryable ? "retry" : "manual";
-}
-
 function failure(
   request: BrowserAutomationRequest,
   code: BrowserAutomationErrorCode,
   message: string,
   retryable: boolean,
 ): BrowserAutomationResponse {
-  const operation = request.operation as BrowserAutomationOperation;
-  const browserV2Request = BROWSER_V2_OPERATIONS.has(operation);
-  const recovery = browserV2Request
-    ? browserV2Recovery(code)
-    : legacyBrowserRecovery(operation, code, retryable);
+  const recovery = browserV2Recovery(code);
   return {
     contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
     requestId: request.requestId,
@@ -206,7 +182,7 @@ function failure(
       message,
       retryable,
       stage: code === "TAB_UNAVAILABLE" || code === "BROWSER_BUSY" ? "allocation" : "transport",
-      effect: code === "TAB_UNAVAILABLE" && !browserV2Request ? "unknown" : "none",
+      effect: "none",
       recovery,
       correlationId: request.requestId,
     },
@@ -268,46 +244,6 @@ function evaluateReplayKey(providerId: string, request: Extract<BrowserAutomatio
 
 function hashExpression(expression: string): string {
   return createHash("sha256").update(expression, "utf8").digest("hex");
-}
-
-function navigationAttemptKey(
-  providerId: string,
-  request: Extract<BrowserAutomationRequest, { operation: "navigate" }>,
-  host: RegisteredHost,
-  target: BrowserAutomationHostDispatchTarget,
-): string {
-  const normalizedUrl = new URL(request.args.url).toString();
-  return JSON.stringify([
-    providerId,
-    request.providerSessionId,
-    request.workspaceId,
-    request.threadId,
-    host.registration.hostId,
-    host.generation,
-    target.tabId,
-    createHash("sha256").update(normalizedUrl, "utf8").digest("hex"),
-  ]);
-}
-
-function navigationRetryLimitFailure(
-  request: Extract<BrowserAutomationRequest, { operation: "navigate" }>,
-): BrowserAutomationResponse {
-  const response = failure(
-    request,
-    "NAVIGATION_FAILED",
-    "Browser navigation retry limit reached",
-    false,
-  );
-  if (response.ok) return response;
-  return {
-    ...response,
-    error: {
-      ...response.error,
-      stage: "effect",
-      effect: "none",
-      recovery: "do_not_retry",
-    },
-  };
 }
 
 function tabsReplayKey(providerId: string, request: Extract<BrowserAutomationRequest, { operation: "tabs" }>): string {
@@ -389,7 +325,6 @@ function responseWasTruncated(response: BrowserAutomationResponse): boolean {
 }
 
 function requestWaitsForPage(request: BrowserAutomationRequest): boolean {
-  if (request.operation === "waitFor") return true;
   if (request.operation !== "act") return false;
   return request.args.steps.some((step: BrowserAutomationActStep) =>
     step.operation === "wait" ||
@@ -407,13 +342,13 @@ function shapeNegotiatedResponse(
 ): BrowserAutomationResponse {
   if (!response.ok) return response;
   const descriptor = pending.host.registration.executorDescriptor;
-  const allowed = new Set(pending.credentialOperations);
+  const allowed = new Set<string>(pending.credentialOperations);
   const liveHostCapabilities = new Set(
     pending.host.registration.capabilities
       .filter((capability) => capability.available)
       .map((capability) => capability.operation),
   );
-  const negotiatedCapabilities = descriptor.operations.filter((operation) =>
+  const negotiatedCapabilities = descriptor.operations.filter((operation): operation is BrowserAutomationPublicOperation =>
     allowed.has(operation) && liveHostCapabilities.has(operation),
   );
   if (response.result.operation === "inspect") {
@@ -469,17 +404,6 @@ function shapeNegotiatedResponse(
       },
     };
   }
-  if (response.result.operation === "status") {
-    return {
-      ...response,
-      result: {
-        ...response.result,
-        controller: pending.target?.controller,
-        capabilities: negotiatedCapabilities,
-        capabilityRevision: descriptor.capabilityRevision,
-      },
-    };
-  }
   return response;
 }
 
@@ -504,7 +428,6 @@ export class BrowserAutomationBroker {
   private readonly browserMutations = new Map<string, string>();
   private readonly tabsReplay = new Map<string, TabsReplayRecord>();
   private readonly sessionHosts = new Map<string, RegisteredHost>();
-  private readonly navigationAttempts = new Map<string, NavigationAttemptRecord>();
   private readonly latencySamples: number[] = [];
   private latencySampleCursor = 0;
   private nextGeneration = 1;
@@ -532,7 +455,7 @@ export class BrowserAutomationBroker {
     this.maxHosts = options.maxHosts ?? 8;
     this.maxTargets = options.maxTargets ?? 128;
     this.maxLatencySamples = options.maxLatencySamples ?? MAX_LATENCY_SAMPLES;
-    this.telemetry = options.telemetry ?? new BrowserAutomationTelemetry(resolveBrowserAutomationRollout());
+    this.telemetry = options.telemetry ?? new BrowserAutomationTelemetry();
     if (
       !Number.isInteger(this.maxPendingRequests) ||
       this.maxPendingRequests < 1 ||
@@ -1116,7 +1039,7 @@ export class BrowserAutomationBroker {
     ) {
       return finishImmediately(failure(request, "FORBIDDEN", "Browser request scope does not match its credential", false));
     }
-    if (!claims.allowedOperations.includes(request.operation as BrowserAutomationOperation)) {
+    if (!isPublicOperation(request.operation) || !claims.allowedOperations.includes(request.operation)) {
       return finishImmediately(failure(request, "FORBIDDEN", "Browser operation is not allowed by this credential", false));
     }
     if (request.operation === "evaluate" && claims.permissionCapability !== "privileged") {
@@ -1188,17 +1111,6 @@ export class BrowserAutomationBroker {
     if (this.pending.has(key)) {
       return finishImmediately(failure(request, "INVALID_REQUEST", "Browser request correlation is already pending", false));
     }
-    const navigationRequest = request.operation === "navigate" ? request : undefined;
-    const retryKey = navigationRequest
-      ? navigationAttemptKey(claims.providerId, navigationRequest, host, target)
-      : undefined;
-    const priorNavigationAttempts = retryKey
-      ? (this.navigationAttempts.get(retryKey)?.attempts ?? 0)
-      : 0;
-    if (navigationRequest && priorNavigationAttempts >= NAVIGATION_MAX_ATTEMPTS) {
-      return finishImmediately(navigationRetryLimitFailure(navigationRequest));
-    }
-
     return new Promise((resolve) => {
       const timeoutMs = Math.max(1, Math.min(60_000, request.deadline - this.now()));
       const timer = setTimeout(() => {
@@ -1233,28 +1145,6 @@ export class BrowserAutomationBroker {
       if (preflightError) {
         this.settle(key, pending, preflightError);
         return;
-      }
-      if (retryKey && navigationRequest) {
-        const prior = this.navigationAttempts.get(retryKey);
-        if ((prior?.attempts ?? 0) >= NAVIGATION_MAX_ATTEMPTS) {
-          this.settle(
-            key,
-            pending,
-            navigationRetryLimitFailure(navigationRequest),
-          );
-          return;
-        }
-        pending.navigationAttemptKey = retryKey;
-        this.navigationAttempts.delete(retryKey);
-        this.navigationAttempts.set(retryKey, {
-          attempts: (prior?.attempts ?? 0) + 1,
-          lastAttemptAt: this.now(),
-        });
-        while (this.navigationAttempts.size > NAVIGATION_ATTEMPT_RECORD_LIMIT) {
-          const oldest = this.navigationAttempts.keys().next().value as string | undefined;
-          if (!oldest) break;
-          this.navigationAttempts.delete(oldest);
-        }
       }
       const sent = this.trySend(host.socket, "browserAutomation.request", {
         hostId: host.registration.hostId,
@@ -1315,7 +1205,6 @@ export class BrowserAutomationBroker {
     this.browserMutations.clear();
     this.tabsReplay.clear();
     this.sessionHosts.clear();
-    this.navigationAttempts.clear();
   }
 
   /** Returns bounded broker counts for status and tests. */
@@ -1332,7 +1221,7 @@ export class BrowserAutomationBroker {
     };
   }
 
-  /** Returns privacy-safe Browser v2 rollout evidence for health checks and release collection. */
+  /** Returns privacy-safe Browser v2 evidence for health checks and release collection. */
   nightlyEvidenceStatus(): BrowserAutomationNightlyEvidenceReport {
     return this.telemetry.report();
   }
@@ -1350,7 +1239,7 @@ export class BrowserAutomationBroker {
   /** Returns the operations both the credential and its selected executor support. */
   availableOperations(
     claims: BrowserAutomationCredentialClaims,
-  ): readonly BrowserAutomationOperation[] {
+  ): readonly BrowserAutomationPublicOperation[] {
     const host = this.resolveSelectedHost(claims);
     if (!host) return [];
     const descriptorOperations = new Set(host.registration.executorDescriptor.operations);
@@ -1431,12 +1320,6 @@ export class BrowserAutomationBroker {
     for (const key of this.tabsReplay.keys()) {
       const parts = JSON.parse(key) as string[];
       if (parts[0] === providerId && parts[1] === providerSessionId) this.tabsReplay.delete(key);
-    }
-    for (const key of this.navigationAttempts.keys()) {
-      const parts = JSON.parse(key) as string[];
-      if (parts[0] === providerId && parts[1] === providerSessionId) {
-        this.navigationAttempts.delete(key);
-      }
     }
     this.browserMutations.delete(sessionRoutingKey(providerId, providerSessionId));
     return removed;
@@ -1582,7 +1465,7 @@ export class BrowserAutomationBroker {
   private supportsOperation(host: RegisteredHost, request: BrowserAutomationRequest): boolean {
     const descriptor = host.registration.executorDescriptor;
     if (request.operation === "evaluate" && host.registration.runtime !== "electron") return false;
-    if (!descriptor.operations.includes(request.operation as BrowserAutomationOperation)) return false;
+    if (!descriptor.operations.some((operation) => operation === request.operation)) return false;
     return host.registration.capabilities.some(
       (capability) => capability.operation === request.operation && capability.available,
     );
@@ -1593,7 +1476,7 @@ export class BrowserAutomationBroker {
     if (this.hostsBySocket.get(host.socket) !== host) {
       return failure(pending.request, "HOST_UNAVAILABLE", "Browser host changed before delivery", true);
     }
-    if (!pending.credentialOperations.includes(pending.request.operation as BrowserAutomationOperation)) {
+    if (!isPublicOperation(pending.request.operation) || !pending.credentialOperations.includes(pending.request.operation)) {
       return failure(pending.request, "FORBIDDEN", "Browser operation is no longer allowed by this credential", false);
     }
     if (pending.request.deadline <= this.now()) {
@@ -1661,7 +1544,7 @@ export class BrowserAutomationBroker {
         this.settle(key, pending, failure(request, "DEADLINE_EXCEEDED", "Browser request timed out", true));
       }, timeoutMs);
       timer.unref?.();
-      const pending: PendingRequest = { host, providerId, request, resolve, timer, startedAt: this.now(), credentialOperations: [request.operation as BrowserAutomationOperation] };
+      const pending: PendingRequest = { host, providerId, request, resolve, timer, startedAt: this.now(), credentialOperations: [request.operation as BrowserAutomationPublicOperation] };
       this.pending.set(key, pending);
       host.pending++;
       this.recordLifecycle("queueing", providerId, request, host, undefined, { outcome: "queued" });
@@ -1687,7 +1570,7 @@ export class BrowserAutomationBroker {
     if (!this.pending.delete(key)) return;
     clearTimeout(pending.timer);
     pending.host.pending = Math.max(0, pending.host.pending - 1);
-    const boundedResponse = this.applyNavigationRetryPolicy(pending, response);
+    const boundedResponse = response;
     const latencyMs = Math.max(0, this.now() - pending.startedAt);
     this.recordOutcome(boundedResponse, latencyMs);
     this.recordLifecycle("settlement", pending.providerId, pending.request, pending.host, pending.target, {
@@ -1700,39 +1583,6 @@ export class BrowserAutomationBroker {
       settlement: boundedResponse.ok || boundedResponse.error.effect !== "unknown" ? "complete" : "unknown",
     });
     pending.resolve(boundedResponse);
-  }
-
-  private applyNavigationRetryPolicy(
-    pending: PendingRequest,
-    response: BrowserAutomationResponse,
-  ): BrowserAutomationResponse {
-    if (pending.request.operation !== "navigate") return response;
-    const retryKey = pending.navigationAttemptKey;
-    if (response.ok) {
-      if (retryKey) this.navigationAttempts.delete(retryKey);
-      return response;
-    }
-    if (response.error.code === "HOST_UNAVAILABLE") {
-      return {
-        ...response,
-        error: { ...response.error, recovery: "wait" },
-      };
-    }
-    if (
-      response.error.code === "NAVIGATION_FAILED" &&
-      retryKey &&
-      (this.navigationAttempts.get(retryKey)?.attempts ?? 0) >= NAVIGATION_MAX_ATTEMPTS
-    ) {
-      return {
-        ...response,
-        error: {
-          ...response.error,
-          retryable: false,
-          recovery: "do_not_retry",
-        },
-      };
-    }
-    return response;
   }
 
   private updateTabsAssignment(
@@ -1990,11 +1840,6 @@ export class BrowserAutomationBroker {
     }
     for (const [key, assignment] of this.assignments) {
       if (now - assignment.lastUsedAt >= this.assignmentTtlMs) this.assignments.delete(key);
-    }
-    for (const [key, record] of this.navigationAttempts) {
-      if (now - record.lastAttemptAt >= NAVIGATION_RETRY_WINDOW_MS) {
-        this.navigationAttempts.delete(key);
-      }
     }
   }
 

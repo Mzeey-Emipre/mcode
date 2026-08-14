@@ -235,7 +235,6 @@ describe("/health endpoint", () => {
           roundTripLatency: { samples: 2, p50Ms: 20, p95Ms: 25, p99Ms: 25 },
         }),
         nightlyEvidenceStatus: () => ({
-          rollout: { mode: "browser-v2", reason: "nightly", rollbackActive: false },
           observedRequests: 4,
           successfulRequests: 2,
           expectedFailures: 1,
@@ -266,7 +265,6 @@ describe("/health endpoint", () => {
       assignments: 3,
       reliability: expect.objectContaining({ dispatched: 4, timedOut: 1, hostLosses: 1 }),
       nightlyEvidence: expect.objectContaining({
-        rollout: { mode: "browser-v2", reason: "nightly", rollbackActive: false },
         unexpectedFailureRate: 0.25,
       }),
     });
