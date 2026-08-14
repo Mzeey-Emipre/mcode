@@ -13,6 +13,9 @@ import { fileURLToPath } from "url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(__dirname, "..");
 
+/** Maximum time allowed for one Electron binary download attempt. */
+export const ELECTRON_INSTALL_TIMEOUT_MS = 180_000;
+
 /**
  * Resolve the on-disk Electron package directory (follows bun hoisting).
  * @param {string} [desktopRoot] - Path to apps/desktop; defaults to monorepo layout.
@@ -37,6 +40,20 @@ export function isElectronBinaryInstalled(electronPkgDir) {
 }
 
 /**
+ * Run Electron's postinstall downloader with a bounded timeout.
+ * @param {string} electronPkgDir
+ * @param {number} [timeoutMs]
+ */
+export function runElectronInstall(electronPkgDir, timeoutMs = ELECTRON_INSTALL_TIMEOUT_MS) {
+  execFileSync(process.execPath, [resolve(electronPkgDir, "install.js")], {
+    stdio: "inherit",
+    cwd: electronPkgDir,
+    env: process.env,
+    timeout: timeoutMs,
+  });
+}
+
+/**
  * Download the Electron binary if install.js was skipped.
  * @param {string} [desktopRoot]
  */
@@ -52,11 +69,7 @@ export function ensureElectronBinary(desktopRoot = resolve(rootDir, "apps", "des
   if (isElectronBinaryInstalled(electronPkgDir)) return;
 
   console.log("[dev] Electron binary missing; running install.js (postinstall was likely skipped).");
-  execFileSync(process.execPath, [resolve(electronPkgDir, "install.js")], {
-    stdio: "inherit",
-    cwd: electronPkgDir,
-    env: process.env,
-  });
+  runElectronInstall(electronPkgDir);
 
   if (!isElectronBinaryInstalled(electronPkgDir)) {
     throw new Error(

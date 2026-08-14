@@ -77,6 +77,16 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ inputs.target-arch }}-bun-runtime-${{ hashFiles('package.json') }}-lock-
 
+      - name: Cache Electron download
+        if: runner.os == 'macOS'
+        uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: ~/Library/Caches/electron
+          key: ${{ runner.os }}-${{ runner.arch }}-electron-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-electron-
+
       - name: Install locked dependencies
         shell: bash
         run: |
