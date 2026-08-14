@@ -156,6 +156,32 @@ describe("CodexEventMapper", () => {
     ]);
   });
 
+  it("normalizes the legacy MCP startup error status to schema-valid failed", () => {
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "mcpServer/startupStatus/updated",
+      params: {
+        threadId: "codex-thread",
+        name: "mcode_internal_thread_control",
+        status: "error",
+        error: "connection refused",
+      },
+    } as never);
+
+    expect(events).toEqual([
+      {
+        type: "mcpServerStartupStatus",
+        threadId: "test-thread",
+        providerId: "codex",
+        serverThreadId: "codex-thread",
+        name: "mcode_internal_thread_control",
+        status: "failed",
+        error: "connection refused",
+      },
+    ]);
+    expect(AgentEventSchema().parse(events[0])).toEqual(events[0]);
+  });
+
   it("maps golden MCP startup status without native thread id and null error into schema-safe event", () => {
     mapper = new CodexEventMapper("test-thread", "codex-thread");
 
