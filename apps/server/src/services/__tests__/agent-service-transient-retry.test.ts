@@ -112,9 +112,15 @@ function buildService(): {
   } as unknown as WorkspaceRepo;
 
   // A prior message means nextSeq > 1, so the first attempt is a resume.
+  let latestSequence = 1;
+  const createMessage = vi.fn((_threadId: string, _role: string, _content: string, sequence: number) => {
+    latestSequence = Math.max(latestSequence, sequence);
+    return { id: `msg-${sequence}`, sequence };
+  });
   const messageRepo = {
     listByThread: vi.fn(() => ({ messages: [{ id: "m0", sequence: 1, role: "user", content: "prev" }] })),
-    create: vi.fn(() => ({ id: "msg-1", sequence: 2 })),
+    getLatestSequenceIncludingInternal: vi.fn(() => latestSequence),
+    create: createMessage,
     findByIdInThread: vi.fn(),
     listByThreadUpToSequence: vi.fn(() => []),
   } as unknown as MessageRepo;

@@ -106,9 +106,14 @@ function build(options: { db?: Database.Database; canonicalSink?: CanonicalAgent
   const workspaceRepo = {
     findById: vi.fn(() => ({ id: "ws-1", path: "/workspace" })),
   } as unknown as WorkspaceRepo;
+  let latestSequence = 2;
   const messageRepo = {
     listByThread: vi.fn(() => ({ messages: [{ id: MSG_ID, role: "assistant", sequence: 2 }] })),
-    create: vi.fn(() => ({ id: MSG_ID, sequence: 2 })),
+    getLatestSequenceIncludingInternal: vi.fn(() => latestSequence),
+    create: vi.fn((_threadId: string, _role: string, _content: string, sequence: number) => {
+      latestSequence = Math.max(latestSequence, sequence);
+      return { id: MSG_ID, sequence };
+    }),
     findByIdInThread: vi.fn(),
     listByThreadUpToSequence: vi.fn(() => []),
   } as unknown as MessageRepo;

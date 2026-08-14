@@ -556,7 +556,7 @@ export class TurnFinalizer {
       ? this.mergeAttachments(buffered.attachments, bufferedAttachments)
       : bufferedAttachments;
 
-    const nextSeq = last ? last.sequence + 1 : 1;
+    const nextSeq = this.messageRepo.getLatestSequenceIncludingInternal(threadId) + 1;
     const anchorId = last ? last.id : `seq:${nextSeq}`;
     try {
       const msg = this.messageRepo.createAssistantIdempotent({

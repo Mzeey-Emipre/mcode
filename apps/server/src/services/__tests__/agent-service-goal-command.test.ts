@@ -238,6 +238,30 @@ describe("AgentService.sendMessage — /goal command", () => {
     expect(userMsg?.content).toBe("/goal analyse this branch");
   });
 
+  it("allocates a user sequence after a staged internal assistant", async () => {
+    const { svc, messageRepo } = buildService(db);
+    messageRepo.create(thread.id, "user", "prior question", 1);
+    messageRepo.createAssistantIdempotent({
+      id: "staged-assistant",
+      threadId: thread.id,
+      content: "staged answer",
+      sequence: 2,
+      isInternal: true,
+    });
+
+    await svc.sendMessage({
+      threadId: thread.id,
+      content: "follow-up question",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+
+    const { messages } = messageRepo.listByThread(thread.id, 100);
+    expect(messages.find((message) => message.content === "follow-up question")?.sequence).toBe(3);
+  });
+
   it("installs a typed composer goal without persisting slash-command text", async () => {
     const { svc, providerStub, messageRepo } = buildService(db);
 

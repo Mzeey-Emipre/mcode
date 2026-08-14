@@ -205,8 +205,7 @@ export class GoalCommand implements McodeCommand {
    * there is nothing for an Ended to clear in the idle case either.
    */
   private persistControlReply(threadId: string, userText: string, replyText: string): void {
-    const { messages: existing } = this.deps.messageRepo.listByThread(threadId, 1);
-    const baseSeq = existing.length > 0 ? existing[existing.length - 1].sequence : 0;
+    const baseSeq = this.deps.messageRepo.getLatestSequenceIncludingInternal(threadId);
     let assistantMsgId = "";
     this.deps.db.transaction(() => {
       this.deps.messageRepo.create(threadId, "user", userText, baseSeq + 1);

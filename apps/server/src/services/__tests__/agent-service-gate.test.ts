@@ -94,9 +94,14 @@ function buildService({
     findById: vi.fn(() => ({ id: "ws-1", path: process.cwd() })),
   } as unknown as WorkspaceRepo;
 
+  let latestSequence = 0;
   const messageRepo = {
     listByThread: vi.fn(() => ({ messages: [] })),
-    create: vi.fn(() => ({ id: "msg-1", sequence: 1 })),
+    getLatestSequenceIncludingInternal: vi.fn(() => latestSequence),
+    create: vi.fn((_threadId: string, _role: string, _content: string, sequence: number) => {
+      latestSequence = Math.max(latestSequence, sequence);
+      return { id: "msg-1", sequence };
+    }),
     findByIdInThread: vi.fn(),
     listByThreadUpToSequence: vi.fn(() => []),
   } as unknown as MessageRepo;

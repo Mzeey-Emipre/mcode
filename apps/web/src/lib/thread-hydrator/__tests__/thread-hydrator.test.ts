@@ -230,13 +230,7 @@ describe("ThreadHydrator", () => {
     expect(getTestActiveMessages()).toEqual([msgA]);
   });
 
-  it("prefers resident content and metadata when the cache has the same final sequence", async () => {
-    const cachedHistory = createMockMessage({
-      id: "cached-history",
-      thread_id: THREAD_A,
-      content: "older cached message",
-      sequence: 1,
-    });
+  it("retains distinct resident and cached messages with the same sequence", async () => {
     const staleCachedMessage = createMockMessage({
       id: "stale-cache-message",
       thread_id: THREAD_A,
@@ -250,10 +244,8 @@ describe("ThreadHydrator", () => {
       sequence: 2,
     });
     cacheRecord(THREAD_A, {
-      ...makeCachedRecord([cachedHistory, staleCachedMessage]),
+      ...makeCachedRecord([staleCachedMessage]),
       persistedToolCallCounts: { "stale-cache-message": 1 },
-      persistedFilesChanged: { "cached-history": ["older-change.ts"] },
-      latestTurnWithChanges: "cached-history",
       serverMessageIds: { "stale-cache-message": "server-stale" },
     });
     resetThreadStoreForTests({
@@ -263,17 +255,20 @@ describe("ThreadHydrator", () => {
         serverMessageIds: { "resident-message": "server-resident" },
       }]]),
     });
-
     await hydrator.hydrate(THREAD_A, "active");
 
-    expect(getTestActiveMessages()).toEqual([cachedHistory, residentMessage]);
+    expect(getTestActiveMessages().map((message) => message.id)).toEqual([
+      "resident-message",
+      "stale-cache-message",
+    ]);
     expect(readActiveThreadField((record) => record.persistedToolCallCounts)).toEqual({
+      "stale-cache-message": 1,
       "resident-message": 2,
     });
     expect(readActiveThreadField((record) => record.serverMessageIds)).toEqual({
+      "stale-cache-message": "server-stale",
       "resident-message": "server-resident",
     });
-    expect(readActiveThreadField((record) => record.latestTurnWithChanges)).toBe("cached-history");
   });
 
   it("deduplicates a resident message id when its cached sequence is stale", async () => {
@@ -297,6 +292,38 @@ describe("ThreadHydrator", () => {
     await hydrator.hydrate(THREAD_A, "active");
 
     expect(getTestActiveMessages()).toEqual([residentMessage]);
+  });
+
+  it("retains distinct resident and authoritative messages with the same sequence", async () => {
+    const residentAssistant = createMockMessage({
+      id: "assistant-34",
+      thread_id: THREAD_A,
+      role: "assistant",
+      content: "resident answer",
+      sequence: 34,
+    });
+    const authoritativeUser = createMockMessage({
+      id: "user-34",
+      thread_id: THREAD_A,
+      role: "user",
+      content: "authoritative follow-up",
+      sequence: 34,
+    });
+    (mockTransport.loadConversationPage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: [authoritativeUser],
+      hasMore: false,
+      narrativeByMessage: {},
+    });
+    resetThreadStoreForTests({
+      records: new Map([[THREAD_A, makeCachedRecord([residentAssistant])]]),
+    });
+
+    await hydrator.hydrate(THREAD_A, "active", { force: true });
+
+    expect(getTestActiveMessages().map((message) => message.id)).toEqual([
+      "assistant-34",
+      "user-34",
+    ]);
   });
 
   it("cache miss fetches a conversation page, commits store, and populates cache", async () => {
@@ -1720,12 +1747,14 @@ describe("ThreadHydrator", () => {
 
     expect(getCachedRecord(THREAD_A)?.messages).toEqual([
       expect.objectContaining({ id: "resident-websocket-message", content: "fresh WebSocket response" }),
+      staleMessage,
     ]);
 
     await hydrator.hydrate(THREAD_A, "active");
 
     expect(getTestActiveMessages()).toEqual([
       expect.objectContaining({ id: "resident-websocket-message", content: "fresh WebSocket response" }),
+      staleMessage,
     ]);
   });
 
