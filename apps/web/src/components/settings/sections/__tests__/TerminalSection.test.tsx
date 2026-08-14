@@ -61,6 +61,32 @@ describe("TerminalSection", () => {
     expect(screen.getByRole("combobox", { name: "Default Terminal profile" })).toHaveTextContent("Automatic");
   });
 
+  it("keeps profile dialog fields aligned with the Terminal font field", async () => {
+    const user = userEvent.setup();
+    render(<TerminalSection />);
+
+    await user.click(screen.getByRole("button", { name: "Add custom profile" }));
+
+    const dialog = await screen.findByRole("dialog", { name: "Add custom profile" });
+    expect(dialog).toHaveClass("sm:max-w-md");
+    expect(screen.getByLabelText("Profile arguments")).toHaveClass("min-h-28", "resize-none");
+
+    const fields = [
+      screen.getByLabelText("Profile name"),
+      screen.getByLabelText("Profile executable"),
+      screen.getByLabelText("Terminal font family"),
+    ];
+    for (const field of fields) {
+      expect(field).toHaveClass(
+        "bg-transparent",
+        "shadow-none",
+        "focus-visible:ring-3",
+        "focus-visible:ring-ring/50",
+        "dark:bg-input/30",
+      );
+    }
+  });
+
   it("keeps inherited and explicit Automatic workspace profiles distinct", { timeout: 15_000 }, async () => {
     const workspaceId = "workspace-1";
     const user = userEvent.setup();

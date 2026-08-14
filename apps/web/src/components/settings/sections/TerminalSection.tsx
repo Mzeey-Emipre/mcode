@@ -31,6 +31,9 @@ const profileName = (profileId: TerminalProfileReference): string => {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 };
 
+const terminalFieldClassName =
+  "bg-transparent shadow-none focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30";
+
 interface ProfileDialogProps {
   open: boolean;
   profile: TerminalCustomProfile | null;
@@ -69,7 +72,7 @@ function ProfileDialog({ open, profile, pending, onOpenChange, onSubmit }: Profi
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{profile ? "Edit custom profile" : "Add custom profile"}</DialogTitle>
           <DialogDescription>Changes apply to new terminals.</DialogDescription>
@@ -77,15 +80,33 @@ function ProfileDialog({ open, profile, pending, onOpenChange, onSubmit }: Profi
         <div className="grid gap-3">
           <label className="grid gap-1 text-sm">
             Name
-            <Input aria-label="Profile name" value={name} maxLength={64} onChange={(event) => setName(event.target.value)} />
+            <Input
+              aria-label="Profile name"
+              value={name}
+              maxLength={64}
+              className={terminalFieldClassName}
+              onChange={(event) => setName(event.target.value)}
+            />
           </label>
           <label className="grid gap-1 text-sm">
             Executable
-            <Input aria-label="Profile executable" value={executable} maxLength={1024} onChange={(event) => setExecutable(event.target.value)} />
+            <Input
+              aria-label="Profile executable"
+              value={executable}
+              maxLength={1024}
+              className={terminalFieldClassName}
+              onChange={(event) => setExecutable(event.target.value)}
+            />
           </label>
           <label className="grid gap-1 text-sm">
             Arguments
-            <Textarea aria-label="Profile arguments" value={argumentsText} onChange={(event) => setArgumentsText(event.target.value)} placeholder="One argument per line" />
+            <Textarea
+              aria-label="Profile arguments"
+              value={argumentsText}
+              className="min-h-28 resize-none"
+              onChange={(event) => setArgumentsText(event.target.value)}
+              placeholder="One argument per line"
+            />
           </label>
           {error ? <p role="alert" className="text-xs text-destructive">{error}</p> : null}
         </div>
@@ -401,7 +422,7 @@ export function TerminalSection() {
               }
             }}
             maxLength={128}
-            className="w-full sm:w-64"
+            className={`${terminalFieldClassName} w-full sm:w-64`}
           />
         </SettingRow>
         <SettingRow label="Font size" configKey="terminal.presentation.fontSize">
