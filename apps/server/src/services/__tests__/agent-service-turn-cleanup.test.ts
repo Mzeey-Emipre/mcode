@@ -185,16 +185,24 @@ function buildService(
   } as unknown as WorkspaceRepo;
 
   let assistantMessageCount = 0;
+  let latestSequence = 0;
   const messageRepo = {
     listByThread: vi.fn(() => ({ messages: [] })),
-    create: vi.fn(() => ({ id: "msg-1", sequence: 1 })),
+    getLatestSequenceIncludingInternal: vi.fn(() => latestSequence),
+    create: vi.fn((_threadId: string, _role: string, _content: string, sequence: number) => {
+      latestSequence = Math.max(latestSequence, sequence);
+      return { id: "msg-1", sequence };
+    }),
     findByIdInThread: vi.fn(),
     listByThreadUpToSequence: vi.fn(() => []),
-    createAssistantIdempotent: vi.fn(() => ({
-      id: `assistant-${++assistantMessageCount}`,
-      sequence: assistantMessageCount + 1,
-      content: "",
-    })),
+    createAssistantIdempotent: vi.fn((input: { id: string; content: string; sequence: number }) => {
+      latestSequence = Math.max(latestSequence, input.sequence);
+      return {
+        id: `assistant-${++assistantMessageCount}`,
+        sequence: input.sequence,
+        content: input.content,
+      };
+    }),
   } as unknown as MessageRepo;
 
   const gitService = {
