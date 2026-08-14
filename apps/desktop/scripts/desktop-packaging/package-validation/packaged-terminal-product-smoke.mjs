@@ -453,16 +453,20 @@ async function runProductBoot({ target, env, bootFault, isolationReceipt, worklo
   });
   const browser = await (async () => {
     const deadline = Date.now() + 15_000;
+    let connectionError = "";
     while (Date.now() < deadline) {
       try {
         return await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
-      } catch {
+      } catch (error) {
+        connectionError = error instanceof Error ? error.message : String(error);
+        if (child.exitCode !== null) break;
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
     }
-    const detail = launchError.trim() || "the packaged process produced no stderr";
+    child.kill("SIGTERM");
+    const detail = [connectionError, launchError.trim()].filter(Boolean).join("\n");
     throw new Error(
-      `Packaged Electron CDP did not become available (exit ${child.exitCode ?? "pending"}): ${detail}`,
+      `Packaged Electron CDP did not become available (exit ${child.exitCode ?? "pending"}): ${detail || "no launch diagnostics"}`,
     );
   })();
   try {
