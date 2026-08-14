@@ -468,7 +468,7 @@ export function buildProductBootEnv({ env, targetRoot, bootFault }) {
 
 /** Opens a packaged Terminal session after requiring both visible controls. */
 export async function openTerminal(page) {
-  const terminalToggle = page.getByRole("button", { name: "Terminal" }).first();
+  const terminalToggle = page.locator('[data-rail-tab="terminal"]').first();
   if (!(await terminalToggle.count())) throw new Error("Terminal control is missing");
   await terminalToggle.click();
   const newTerminal = page.getByRole("button", { name: "New terminal" }).first();
@@ -485,7 +485,7 @@ export async function waitForTerminalControl(
   page,
   { timeoutMs = 10_000, intervalMs = 100 } = {},
 ) {
-  const terminalToggle = page.getByRole("button", { name: "Terminal" }).first();
+  const terminalToggle = page.locator('[data-rail-tab="terminal"]').first();
   const html = page.locator("html");
   const deadline = Date.now() + timeoutMs;
   while (true) {

@@ -315,10 +315,14 @@ describe("packaged Terminal product smoke contract", () => {
   });
 
   it("fails immediately when the packaged Terminal controls are missing", async () => {
+    const missingTerminalSelectors = [];
     const missingTerminalPage = {
-      getByRole: () => ({
-        first: () => ({ count: async () => 0 }),
-      }),
+      locator: (selector) => {
+        missingTerminalSelectors.push(selector);
+        return {
+          first: () => ({ count: async () => 0 }),
+        };
+      },
       getByTestId: () => {
         throw new Error("terminal content should not be queried");
       },
@@ -326,14 +330,20 @@ describe("packaged Terminal product smoke contract", () => {
     await expect(openTerminal(missingTerminalPage)).rejects.toThrow(
       "Terminal control is missing",
     );
+    expect(missingTerminalSelectors).toEqual(['[data-rail-tab="terminal"]']);
 
+    const missingNewTerminalSelectors = [];
     const missingNewTerminalPage = {
       getByRole: (_role, { name }) => ({
         first: () => ({
-          count: async () => (name === "Terminal" ? 1 : 0),
+          count: async () => (name === "New terminal" ? 0 : 1),
           click: async () => undefined,
         }),
       }),
+      locator: (selector) => {
+        missingNewTerminalSelectors.push(selector);
+        return { first: () => ({ count: async () => 1, click: async () => undefined }) };
+      },
       getByTestId: () => {
         throw new Error("terminal content should not be queried");
       },
@@ -341,18 +351,59 @@ describe("packaged Terminal product smoke contract", () => {
     await expect(openTerminal(missingNewTerminalPage)).rejects.toThrow(
       "New terminal control is missing",
     );
+    expect(missingNewTerminalSelectors).toEqual(['[data-rail-tab="terminal"]']);
+  });
+
+  it("uses the stable Terminal rail selector when its accessible name is dynamic", async () => {
+    const selectors = [];
+    let terminalClicked = false;
+    const page = {
+      locator: (selector) => {
+        selectors.push(selector);
+        return {
+          first: () => ({
+            count: async () => 1,
+            click: async () => undefined,
+          }),
+        };
+      },
+      getByRole: (_role, { name }) => {
+        if (name === "Terminal") throw new Error("dynamic shell label must not be queried");
+        return {
+          first: () => ({ count: async () => 1, click: async () => undefined }),
+        };
+      },
+      getByTestId: () => ({
+        last: () => ({
+          waitFor: async () => undefined,
+          click: async () => {
+            terminalClicked = true;
+          },
+        }),
+      }),
+    };
+
+    await openTerminal(page);
+
+    expect(selectors).toEqual(['[data-rail-tab="terminal"]']);
+    expect(terminalClicked).toBe(true);
   });
 
   it("waits for a delayed visible Terminal control", async () => {
     let terminalVisible = false;
+    const selectors = [];
     const terminal = {
       count: async () => 1,
       isVisible: async () => terminalVisible,
     };
     let waits = 0;
     await waitForTerminalControl({
-      getByRole: () => ({ first: () => terminal }),
-      locator: () => ({ getAttribute: async () => null }),
+      locator: (selector) => {
+        selectors.push(selector);
+        return selector === "html"
+          ? { getAttribute: async () => null }
+          : { first: () => terminal };
+      },
       waitForTimeout: async () => {
         waits += 1;
         if (waits === 2) terminalVisible = true;
@@ -360,13 +411,16 @@ describe("packaged Terminal product smoke contract", () => {
     }, { timeoutMs: 50, intervalMs: 1 });
     expect(waits).toBe(2);
     expect(terminalVisible).toBe(true);
+    expect(selectors).toContain('[data-rail-tab="terminal"]');
   });
 
   it("fails immediately on the renderer bootstrap error", async () => {
     let waits = 0;
     await expect(waitForTerminalControl({
-      getByRole: () => ({ first: () => ({ count: async () => 0, isVisible: async () => false }) }),
-      locator: () => ({ getAttribute: async () => "Terminal release-test workspace is missing" }),
+      locator: (selector) =>
+        selector === "html"
+          ? { getAttribute: async () => "Terminal release-test workspace is missing" }
+          : { first: () => ({ count: async () => 0, isVisible: async () => false }) },
       waitForTimeout: async () => { waits += 1; },
     })).rejects.toThrow("Terminal release-test workspace is missing");
     expect(waits).toBe(0);
@@ -379,8 +433,10 @@ describe("packaged Terminal product smoke contract", () => {
     };
     await expect(
       waitForTerminalControl({
-        getByRole: () => ({ first: () => terminal }),
-        locator: () => ({ getAttribute: async () => null }),
+        locator: (selector) =>
+          selector === "html"
+            ? { getAttribute: async () => null }
+            : { first: () => terminal },
         waitForTimeout: async () => undefined,
       }, { timeoutMs: 5, intervalMs: 1 }),
     ).rejects.toThrow("Timed out waiting for visible Terminal control");
