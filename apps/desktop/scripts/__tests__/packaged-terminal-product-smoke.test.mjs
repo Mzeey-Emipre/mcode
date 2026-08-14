@@ -6,6 +6,7 @@ import {
   PRODUCT_SMOKE_FAULTS,
   assertLoopbackIsolationReceipt,
   buildLoopbackIsolationPlan,
+  buildProductLaunch,
   cleanupLoopbackIsolation,
   classifyProductSmokeOutcome,
   hashPackagedResources,
@@ -95,6 +96,31 @@ describe("packaged Terminal product smoke contract", () => {
       mode: "linux-network-namespace",
       command: "unshare",
     });
+    const relativeExecutable = path.relative(process.cwd(), executable);
+    expect(buildLoopbackIsolationPlan("win32", relativeExecutable).executablePath).toBe(
+      path.resolve(executable),
+    );
+    expect(buildLoopbackIsolationPlan("darwin", executable).args.join(" ")).toContain(
+      'localhost:*',
+    );
+    expect(buildLoopbackIsolationPlan("darwin", executable).args.join(" ")).not.toContain(
+      "127.0.0.1:*",
+    );
+    const linuxLaunch = buildProductLaunch({
+      target: { executablePath: executable },
+      isolationReceipt: { mode: "linux-network-namespace" },
+      launchArgs: ["--remote-debugging-port=39000"],
+    });
+    expect(linuxLaunch.command).toBe("xvfb-run");
+    expect(linuxLaunch.args.slice(0, 5)).toEqual([
+      "-a",
+      "unshare",
+      "--user",
+      "--map-root-user",
+      "--net",
+    ]);
+    expect(linuxLaunch.args.at(-1)).toBe("--remote-debugging-port=39000");
+    expect(linuxLaunch.env.MCODE_RELEASE_PROGRAM).toBe(path.resolve(executable));
     expect(() =>
       assertLoopbackIsolationReceipt({ mode: "none", loopbackAllowed: false }),
     ).toThrow("not installed");

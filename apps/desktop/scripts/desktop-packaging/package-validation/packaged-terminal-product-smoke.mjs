@@ -26,7 +26,7 @@ const TARGET_PLATFORM = { win32: "windows", darwin: "macos", linux: "linux" };
 const LINUX_NAMESPACE_SCRIPT =
   'set -eu; ip_cmd="$(command -v ip || command -v /sbin/ip)"; "$ip_cmd" link set lo up; "$ip_cmd" -4 addr add 127.0.0.1/8 dev lo 2>/dev/null || true; "$ip_cmd" -6 addr add ::1/128 dev lo 2>/dev/null || true; "$ip_cmd" -4 addr show dev lo | grep -q "127.0.0.1"; "$ip_cmd" -6 addr show dev lo | grep -q "::1"';
 const MACOS_LOOPBACK_PROFILE =
-  '(version 1) (deny network*) (allow network-outbound (remote ip "127.0.0.1:*")) (allow network-outbound (remote ip "::1:*")) (allow network-inbound (local ip "127.0.0.1:*")) (allow network-inbound (local ip "::1:*"))';
+  '(version 1) (deny network*) (allow network-outbound (remote ip "localhost:*")) (allow network-inbound (local ip "localhost:*"))';
 
 /** Validates the explicit packaged release-test launch boundary. */
 export function validateProductSmokeLaunchInput({
@@ -130,12 +130,13 @@ export function classifyProductSmokeOutcome({
 /** Builds the OS-level loopback-only launch plan. Proxy settings are not used. */
 export function buildLoopbackIsolationPlan(platform, executablePath) {
   if (!existsSync(executablePath)) throw new Error("Packaged Electron executable is missing");
+  const resolvedExecutablePath = path.resolve(executablePath);
   if (platform === "win32") {
     return {
       mode: "windows-firewall",
       command: "powershell.exe",
       args: ["-NoProfile", "-NonInteractive", "-Command"],
-      executablePath,
+      executablePath: resolvedExecutablePath,
     };
   }
   if (platform === "linux") {
@@ -143,7 +144,7 @@ export function buildLoopbackIsolationPlan(platform, executablePath) {
       mode: "linux-network-namespace",
       command: "unshare",
       args: ["--user", "--map-root-user", "--net", "/bin/sh", "-c", LINUX_NAMESPACE_SCRIPT],
-      executablePath,
+      executablePath: resolvedExecutablePath,
     };
   }
   if (platform === "darwin") {
@@ -151,7 +152,7 @@ export function buildLoopbackIsolationPlan(platform, executablePath) {
       mode: "macos-network-sandbox",
       command: "sandbox-exec",
       args: ["-p", MACOS_LOOPBACK_PROFILE],
-      executablePath,
+      executablePath: resolvedExecutablePath,
     };
   }
   throw new Error(`Unsupported isolation platform: ${platform}`);
@@ -183,7 +184,7 @@ export function installLoopbackIsolation({ platform, executablePath }) {
     execFileSync(plan.command, [...plan.args, script], {
       env: {
         ...process.env,
-        MCODE_RELEASE_PROGRAM: executablePath,
+        MCODE_RELEASE_PROGRAM: plan.executablePath,
         MCODE_RELEASE_FIREWALL_GROUP: group,
       },
       stdio: "pipe",
@@ -286,7 +287,7 @@ function findPackagedTarget(releaseDir, platform, arch) {
             { root: path.join(releaseDir, arch === "arm64" ? "mac-arm64" : "mac"), executable: path.join("Mcode.app", "Contents", "MacOS", "Mcode") },
           ];
   for (const candidate of candidates) {
-    const root = candidate.root;
+    const root = path.resolve(candidate.root);
     const executablePath = path.join(root, candidate.executable);
     const resourcesRoot =
       platform === "macos"
@@ -297,6 +298,37 @@ function findPackagedTarget(releaseDir, platform, arch) {
     }
   }
   throw new Error(`Unpacked ${platform}-${arch} Electron target is missing`);
+}
+
+/** Builds the isolated packaged Electron launch command for one target OS. */
+export function buildProductLaunch({ target, isolationReceipt, launchArgs }) {
+  const executablePath = path.resolve(target.executablePath);
+  if (isolationReceipt.mode === "linux-network-namespace") {
+    return {
+      command: "xvfb-run",
+      args: [
+        "-a",
+        "unshare",
+        "--user",
+        "--map-root-user",
+        "--net",
+        "/bin/sh",
+        "-c",
+        `${LINUX_NAMESPACE_SCRIPT}; exec "$MCODE_RELEASE_PROGRAM" "$@"`,
+        "--",
+        ...launchArgs,
+      ],
+      env: { MCODE_RELEASE_PROGRAM: executablePath },
+    };
+  }
+  if (isolationReceipt.mode === "macos-network-sandbox") {
+    return {
+      command: "sandbox-exec",
+      args: ["-p", MACOS_LOOPBACK_PROFILE, executablePath, ...launchArgs],
+      env: {},
+    };
+  }
+  return { command: executablePath, args: launchArgs, env: {} };
 }
 
 async function loadProcessCleanupWorkload() {
@@ -400,20 +432,7 @@ async function runProductBoot({ target, env, bootFault, isolationReceipt, worklo
   const bootStartedAt = performance.now();
   const cdpPort = 39_000 + (parseInt(randomUUID().slice(0, 4), 16) % 500);
   const launchArgs = [`--remote-debugging-port=${cdpPort}`];
-  const launch =
-    isolationReceipt.mode === "linux-network-namespace"
-      ? {
-          command: "unshare",
-          args: ["--user", "--map-root-user", "--net", "/bin/sh", "-c", `${LINUX_NAMESPACE_SCRIPT}; exec "$MCODE_RELEASE_PROGRAM" "$@"`, "--", ...launchArgs],
-          env: { MCODE_RELEASE_PROGRAM: target.executablePath },
-        }
-      : isolationReceipt.mode === "macos-network-sandbox"
-        ? {
-            command: "sandbox-exec",
-            args: ["-p", MACOS_LOOPBACK_PROFILE, target.executablePath, ...launchArgs],
-            env: {},
-          }
-        : { command: target.executablePath, args: launchArgs, env: {} };
+  const launch = buildProductLaunch({ target, isolationReceipt, launchArgs });
   const bootEnv = { ...env, MCODE_TERMINAL_RELEASE_TEST: "1", MCODE_TERMINAL_BACKEND: "modern" };
   if (bootFault) bootEnv.MCODE_TERMINAL_RELEASE_FAULT = bootFault;
   else delete bootEnv.MCODE_TERMINAL_RELEASE_FAULT;
