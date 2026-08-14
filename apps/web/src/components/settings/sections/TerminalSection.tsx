@@ -72,7 +72,7 @@ function ProfileDialog({ open, profile, pending, onOpenChange, onSubmit }: Profi
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{profile ? "Edit custom profile" : "Add custom profile"}</DialogTitle>
           <DialogDescription>Changes apply to new terminals.</DialogDescription>

@@ -68,7 +68,7 @@ describe("TerminalSection", () => {
     await user.click(screen.getByRole("button", { name: "Add custom profile" }));
 
     const dialog = await screen.findByRole("dialog", { name: "Add custom profile" });
-    expect(dialog).toHaveClass("sm:max-w-md");
+    expect(dialog).toHaveClass("sm:max-w-lg");
     expect(screen.getByLabelText("Profile arguments")).toHaveClass("min-h-28", "resize-none");
 
     const fields = [
