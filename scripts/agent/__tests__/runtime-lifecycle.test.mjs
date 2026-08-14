@@ -73,6 +73,189 @@ test("agentDown posts shutdown with seedLogin.authHeader and cleans only .dev/pi
   }
 });
 
+test("agentDown falls back to PID cleanup when the shutdown request never settles", { timeout: 1_000 }, async () => {
+  const repo = makeRepo();
+  const originalFetch = globalThis.fetch;
+  let stopCalled = false;
+  globalThis.fetch = async () => new Promise(() => {});
+
+  try {
+    const paths = getRuntimePaths(repo);
+    writePortsFile(buildPortsContract({
+      repoRoot: repo,
+      serverPort: 41_125,
+      webPort: 41_126,
+      instanceToken: "instance-token-abc1234567890abc1234567890",
+      worktreeIdentity: repo,
+      seedLogin: {
+        email: "agent@seed.local",
+        token: "seed-token",
+        authHeader: "Bearer seed-token",
+        cookieName: "mcode-auth",
+      },
+    }), repo);
+    mkdirSync(paths.pidsDir, { recursive: true });
+    const pidFile = join(paths.pidsDir, "server.pid");
+    writeFileSync(pidFile, "999998\n");
+
+    const stopping = agentDown(repo, {
+      shutdownTimeoutMs: 25,
+      serverGraceMs: 25,
+      isProcessAlive: () => true,
+      stop: async () => {
+        stopCalled = true;
+      },
+    });
+
+    await waitUntil(() => stopCalled, {
+      timeoutMs: 250,
+      intervalMs: 5,
+      message: "PID cleanup did not start after the bounded shutdown timeout",
+    });
+    await stopping;
+
+    assert.equal(existsSync(pidFile), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("agentDown does not force-stop a server that exits gracefully", async () => {
+  const repo = makeRepo();
+  const originalFetch = globalThis.fetch;
+  let forceStops = 0;
+  globalThis.fetch = async () => new Response("", { status: 200 });
+
+  try {
+    const paths = getRuntimePaths(repo);
+    writeGracefulRuntimeContract(repo, 41_127);
+    mkdirSync(paths.pidsDir, { recursive: true });
+    const pidFile = join(paths.pidsDir, "server.pid");
+    writeFileSync(pidFile, "700001\n");
+
+    await agentDown(repo, {
+      serverGraceMs: 10,
+      isProcessAlive: () => false,
+      now: () => 0,
+      sleep: async () => {},
+      stop: async () => { forceStops += 1; },
+    });
+
+    assert.equal(forceStops, 0);
+    assert.equal(existsSync(pidFile), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("agentDown force-stops a server that ignores graceful shutdown", async () => {
+  const repo = makeRepo();
+  const originalFetch = globalThis.fetch;
+  let forceStops = 0;
+  let clock = 0;
+  globalThis.fetch = async () => new Response("", { status: 200 });
+
+  try {
+    const paths = getRuntimePaths(repo);
+    writeGracefulRuntimeContract(repo, 41_129);
+    mkdirSync(paths.pidsDir, { recursive: true });
+    const pidFile = join(paths.pidsDir, "server.pid");
+    writeFileSync(pidFile, "700002\n");
+
+    await agentDown(repo, {
+      serverGraceMs: 10,
+      isProcessAlive: () => true,
+      now: () => clock,
+      sleep: async (durationMs) => { clock += durationMs; },
+      stop: async (pid, signal) => {
+        forceStops += 1;
+        assert.equal(pid, 700002);
+        assert.equal(signal, "SIGTERM");
+      },
+    });
+
+    assert.equal(forceStops, 1);
+    assert.equal(existsSync(pidFile), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("agentDown stops the web process before the server process", async () => {
+  const repo = makeRepo();
+  const originalFetch = globalThis.fetch;
+  const stops = [];
+  let clock = 0;
+  globalThis.fetch = async () => new Response("", { status: 200 });
+
+  try {
+    const paths = getRuntimePaths(repo);
+    writeGracefulRuntimeContract(repo, 41_131);
+    mkdirSync(paths.pidsDir, { recursive: true });
+    writeFileSync(join(paths.pidsDir, "server.pid"), "700003\n");
+    writeFileSync(join(paths.pidsDir, "web.pid"), "700004\n");
+
+    await agentDown(repo, {
+      serverGraceMs: 10,
+      isProcessAlive: () => true,
+      now: () => clock,
+      sleep: async (durationMs) => { clock += durationMs; },
+      stop: async (pid) => { stops.push(pid); },
+    });
+
+    assert.deepEqual(stops, [700004, 700003]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("agentDown retains the server PID file until forced termination settles", async () => {
+  const repo = makeRepo();
+  const originalFetch = globalThis.fetch;
+  let releaseStop;
+  let stopStarted = false;
+  let clock = 0;
+  const stopCompletion = new Promise((resolvePromise) => { releaseStop = resolvePromise; });
+  globalThis.fetch = async () => new Response("", { status: 200 });
+
+  try {
+    const paths = getRuntimePaths(repo);
+    writeGracefulRuntimeContract(repo, 41_133);
+    mkdirSync(paths.pidsDir, { recursive: true });
+    const pidFile = join(paths.pidsDir, "server.pid");
+    writeFileSync(pidFile, "700005\n");
+
+    const stopping = agentDown(repo, {
+      serverGraceMs: 10,
+      isProcessAlive: () => true,
+      now: () => clock,
+      sleep: async (durationMs) => { clock += durationMs; },
+      stop: async () => {
+        stopStarted = true;
+        await stopCompletion;
+      },
+    });
+
+    await waitUntil(() => stopStarted, {
+      timeoutMs: 250,
+      intervalMs: 5,
+      message: "forced server termination did not start",
+    });
+    assert.equal(existsSync(pidFile), true);
+
+    releaseStop();
+    await stopping;
+    assert.equal(existsSync(pidFile), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
 test("agentDown still cleans PID files when ports.json is malformed", async () => {
   const repo = makeRepo();
   const originalFetch = globalThis.fetch;
@@ -127,6 +310,31 @@ test("agentUp removes stale PID files before launching server and web processes"
 
     assert.equal(spawnAttempted, true);
     assert.equal(existsSync(join(paths.pidsDir, "server.pid")), false);
+  } finally {
+    restoreHooks();
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("agentUp hides the console window for runtime child processes", async () => {
+  const repo = makeRepo();
+  const spawnOptions = [];
+  const restoreHooks = setAgentUpTestHooks({
+    stopRecordedRuntimePids: async () => {},
+    seedFixtureRepo: () => join(repo, ".dev", "fixture-repo"),
+    computeAvailablePorts: async () => ({ serverPort: 41_227, webPort: 41_228 }),
+    getElectronBinary: () => process.execPath,
+    rebuildServerDevBundle: async () => {},
+    spawnLogged: (_command, _args, options) => {
+      spawnOptions.push(options);
+      throw new Error("stop before real launch");
+    },
+  });
+
+  try {
+    await assert.rejects(() => agentUp(repo), /stop before real launch/);
+    assert.equal(spawnOptions.length, 1);
+    assert.equal(spawnOptions[0].windowsHide, true);
   } finally {
     restoreHooks();
     rmSync(repo, { recursive: true, force: true });
@@ -417,4 +625,21 @@ function makeRepo() {
   execFileSync("git", ["init", "-q", "-b", "main"], { cwd: dir });
   writeFileSync(join(dir, ".gitignore"), ".dev/\n");
   return dir;
+}
+
+/** Writes a valid runtime contract for graceful shutdown tests. */
+function writeGracefulRuntimeContract(repo, serverPort) {
+  writePortsFile(buildPortsContract({
+    repoRoot: repo,
+    serverPort,
+    webPort: serverPort + 1,
+    instanceToken: "instance-token-abc1234567890abc1234567890",
+    worktreeIdentity: repo,
+    seedLogin: {
+      email: "agent@seed.local",
+      token: "seed-token",
+      authHeader: "Bearer seed-token",
+      cookieName: "mcode-auth",
+    },
+  }), repo);
 }

@@ -9,7 +9,7 @@
 import { injectable, inject } from "tsyringe";
 import { createHash } from "crypto";
 import { AsyncLocalStorage } from "async_hooks";
-import { rm, rmdir, realpath } from "fs/promises";
+import { rmdir, realpath } from "fs/promises";
 import { existsSync, mkdirSync, realpathSync } from "fs";
 import { join, basename, dirname, resolve, relative, isAbsolute } from "path";
 import { getMcodeDir, validateBranchName, validateWorktreeName, logger } from "@mcode/shared";
@@ -19,6 +19,7 @@ const MAX_REVIEW_COMPARISON_FILES = 10_000;
 import { WorkspaceRepo } from "../repositories/workspace-repo";
 import type { GitExecutor } from "./git-executor/index.js";
 import { normalizePathForComparison } from "./path-identity.js";
+import { WorktreeDirectoryRemover } from "./worktree-directory-remover.js";
 
 /** Normalized configured remote used for repository-identity matching. */
 export interface NormalizedGitRemote {
@@ -96,12 +97,6 @@ export class PullRequestReviewGitError extends Error {
     this.name = "PullRequestReviewGitError";
   }
 }
-
-/**
- * Options for fs.rm when removing worktree directories.
- * maxRetries handles transient EBUSY locks from antivirus/indexers on Windows.
- */
-const RM_RETRY_OPTIONS = { recursive: true, force: true, maxRetries: 5, retryDelay: 200 } as const;
 
 /** Max retries for rmdir on parent directories (handles transient Windows NTFS/AV locks). */
 const PARENT_RMDIR_MAX_RETRIES = 5;
@@ -378,11 +373,16 @@ interface ReviewProvisionAttempt {
 export class GitService {
   private readonly reviewRepositoryLocks = new Map<string, Promise<void>>();
   private readonly reviewRepositoryLockContext = new AsyncLocalStorage<ReadonlySet<string>>();
+  private readonly worktreeDirectoryRemover: WorktreeDirectoryRemover;
 
   constructor(
     @inject(WorkspaceRepo) private readonly workspaceRepo: WorkspaceRepo,
     @inject("GitExecutor") private readonly gitExecutor: GitExecutor,
-  ) {}
+    @inject(WorktreeDirectoryRemover, { isOptional: true })
+    worktreeDirectoryRemover?: WorktreeDirectoryRemover,
+  ) {
+    this.worktreeDirectoryRemover = worktreeDirectoryRemover ?? new WorktreeDirectoryRemover();
+  }
 
   /** List all branches (local, remote, and worktree-attached) for a workspace. */
   async listBranches(workspaceId: string): Promise<GitBranch[]> {
@@ -860,13 +860,13 @@ export class GitService {
     // 2. Fallback: remove directory manually if git didn't clean it up.
     if (existsSync(wtPath)) {
       logger.warn(
-        "Worktree directory still exists after git remove, falling back to fs.rm",
+        "Worktree directory still exists after git remove, falling back to bounded child removal",
         { wtPath },
       );
       try {
-        await rm(wtPath, RM_RETRY_OPTIONS);
+        await this.worktreeDirectoryRemover.remove(wtPath);
       } catch (err) {
-        logger.error("Fallback fs.rm failed", {
+        logger.error("Fallback worktree removal failed", {
           wtPath,
           error: err instanceof Error ? err.message : String(err),
         });
@@ -911,7 +911,7 @@ export class GitService {
   }
 
   /**
-   * Reject fallback fs.rm when a caller-supplied worktree path is outside the
+   * Reject fallback removal when a caller-supplied worktree path is outside the
    * managed mcode worktree root and not registered with git for the repo.
    */
   private async assertRemovableWorktreePath(
@@ -2062,7 +2062,7 @@ export class GitService {
         );
       } catch {
         if (isPathWithin(getWorktreeBaseDir(attempt.repoPath), attempt.createdWorktreePath)) {
-          await rm(attempt.createdWorktreePath, RM_RETRY_OPTIONS).catch(() => undefined);
+          await this.worktreeDirectoryRemover.remove(attempt.createdWorktreePath).catch(() => undefined);
           await this.gitExecutor.exec(
             [
               "-C",
