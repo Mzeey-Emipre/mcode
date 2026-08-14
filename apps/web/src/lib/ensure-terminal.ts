@@ -9,6 +9,27 @@ import { getTransport } from "@/transport";
  * double-invoked effects) spawn at most one terminal per scope.
  */
 const creationInFlight = new Set<string>();
+const TERMINAL_RELEASE_TEST_ERROR_ATTRIBUTE =
+  "data-terminal-release-test-bootstrap-error";
+const TERMINAL_RELEASE_TEST_ERROR_PREFIX = "Terminal creation failed: ";
+const TERMINAL_RELEASE_TEST_ERROR_MAX_LENGTH = 512;
+
+function reportTerminalReleaseTestError(error: unknown): void {
+  if (window.desktopBridge?.terminalReleaseTest?.enabled !== true) return;
+  const detail = error instanceof Error ? error.message : String(error);
+  document.documentElement.setAttribute(
+    TERMINAL_RELEASE_TEST_ERROR_ATTRIBUTE,
+    `${TERMINAL_RELEASE_TEST_ERROR_PREFIX}${detail}`.slice(
+      0,
+      TERMINAL_RELEASE_TEST_ERROR_MAX_LENGTH,
+    ),
+  );
+}
+
+function clearTerminalReleaseTestError(): void {
+  if (window.desktopBridge?.terminalReleaseTest?.enabled !== true) return;
+  document.documentElement.removeAttribute(TERMINAL_RELEASE_TEST_ERROR_ATTRIBUTE);
+}
 
 /**
  * Resolve the workspace that owns a terminal scope. The scope is a thread id
@@ -70,12 +91,15 @@ export function createTerminalForScope(scopeId: string): void {
         }
         useTerminalStore.getState().addTerminal(scopeId, ptyId, shell);
         diff.addRightPanelTerminalTab(workspaceId!, panelThreadId, ptyId);
+        clearTerminalReleaseTestError();
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         creationInFlight.delete(scopeId);
+        reportTerminalReleaseTestError(error);
       });
-  } catch {
+  } catch (error: unknown) {
     creationInFlight.delete(scopeId);
+    reportTerminalReleaseTestError(error);
   }
 }
 
