@@ -584,6 +584,36 @@ describe("CleanupWorker", () => {
       expect(updated.last_error).toBe("git error");
     });
 
+    it("records a timed-out first job and continues to the next due job", async () => {
+      const ws = workspaceRepo.create("test", "/repo");
+      insertThread("t-timeout", ws.id, "mcode/timeout", wt("feat-timeout"));
+      insertThread("t-after-timeout", ws.id, "mcode/after-timeout", wt("feat-after-timeout"));
+      const timedOutJob = cleanupJobRepo.insert({
+        thread_id: "t-timeout",
+        workspace_path: "/repo",
+        worktree_path: wt("feat-timeout"),
+        branch: "mcode/timeout",
+      });
+      const completedJob = cleanupJobRepo.insert({
+        thread_id: "t-after-timeout",
+        workspace_path: "/repo",
+        worktree_path: wt("feat-after-timeout"),
+        branch: "mcode/after-timeout",
+      });
+      (mockGitService.removeWorktree as ReturnType<typeof vi.fn>)
+        .mockRejectedValueOnce(new Error("removal timed out"))
+        .mockResolvedValueOnce(true);
+
+      await worker.poll();
+
+      expect(cleanupJobRepo.findById(timedOutJob.id)).toMatchObject({
+        attempts: 1,
+        last_error: "removal timed out",
+      });
+      expect(cleanupJobRepo.findById(completedJob.id)).toBeNull();
+      expect(threadRepo.findById("t-after-timeout")).toBeNull();
+    });
+
     it("continues processing remaining jobs even if terminal kill throws", async () => {
       (mockTerminalService.killByThread as ReturnType<typeof vi.fn>).mockImplementation(() => {
         throw new Error("terminal error");
@@ -821,6 +851,33 @@ describe("CleanupWorker", () => {
       await worker.poll();
 
       expect(mockGitService.removeWorktree).not.toHaveBeenCalled();
+    });
+
+    it("stops new admission and waits for the active poll during shutdown", async () => {
+      let releaseJob!: () => void;
+      const activeJob = new Promise<void>((resolve) => {
+        releaseJob = resolve;
+      });
+      const executeJob = vi.spyOn(worker as any, "executeJob").mockImplementation(() => activeJob);
+      vi.spyOn(cleanupJobRepo, "findDue").mockReturnValue([{} as any]);
+
+      const polling = worker.poll();
+      while (executeJob.mock.calls.length === 0) await Promise.resolve();
+
+      let shutdownSettled = false;
+      const shuttingDown = worker.shutdown().then(() => {
+        shutdownSettled = true;
+      });
+      await Promise.resolve();
+
+      expect(shutdownSettled).toBe(false);
+      await worker.poll();
+      expect(executeJob).toHaveBeenCalledOnce();
+
+      releaseJob();
+      await polling;
+      await shuttingDown;
+      expect(shutdownSettled).toBe(true);
     });
   });
 });

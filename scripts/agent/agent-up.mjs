@@ -136,6 +136,7 @@ export async function agentUp(repoRoot = resolveRepoRoot()) {
           MCODE_WORKTREE_IDENTITY: repoRoot,
           MCODE_WEB_AUTOMATION: buildWebAutomationEnv().MCODE_WEB_AUTOMATION,
         },
+        windowsHide: true,
       },
       resolve(paths.logsDir, "server.log"),
     );
@@ -159,6 +160,7 @@ export async function agentUp(repoRoot = resolveRepoRoot()) {
           VITE_MCODE_RUNTIME_CONTRACT: paths.portsFile,
           VITE_MCODE_WEB_AUTOMATION: buildWebAutomationEnv().VITE_MCODE_WEB_AUTOMATION,
         },
+        windowsHide: true,
       },
       resolve(paths.logsDir, "web.log"),
     );
@@ -218,6 +220,7 @@ function spawnLogged(command, args, options, logPath) {
     stdio: ["ignore", logFd, logFd],
     detached: true,
     shell: false,
+    windowsHide: true,
   });
   child.unref();
   return child;

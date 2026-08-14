@@ -46,6 +46,7 @@ import {
 } from "./services/canonical-agent-event-sink";
 import { PlanQuestionService } from "./services/plan-question-service";
 import { GitService } from "./services/git-service";
+import { WorktreeDirectoryRemover } from "./services/worktree-directory-remover.js";
 import { GithubService } from "./services/github-service";
 import { FileService } from "./services/file-service";
 import { ConfigService } from "./services/config-service";
@@ -331,6 +332,11 @@ export function setupContainer(mcodeDir: string): typeof container {
   container.register(
     GitService,
     { useClass: GitService },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    WorktreeDirectoryRemover,
+    { useClass: WorktreeDirectoryRemover },
     { lifecycle: Lifecycle.Singleton },
   );
   container.register("GitService", {

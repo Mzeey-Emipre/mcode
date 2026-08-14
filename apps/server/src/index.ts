@@ -76,6 +76,11 @@ import { seedAgentRuntimeWorkspace } from "./dev-agent-seed";
 import { WebSocket } from "ws";
 import { resolveGracePeriodMs, shouldShutdownOnIdle } from "./grace-period-ms";
 import { createGraceController } from "./grace-controller";
+import {
+  createShutdownCoordinator,
+  EXPLICIT_SHUTDOWN_DEADLINE_MS,
+  type ShutdownCoordinator,
+} from "./shutdown-coordinator.js";
 import { AgentEventType } from "@mcode/contracts";
 import type { AgentEvent } from "@mcode/contracts";
 import { normalizeAgentProviderError } from "./services/provider-agent-error-normalize.js";
@@ -865,6 +870,7 @@ void bootstrapServer();
  * Awaits server close handshakes so in-flight connections drain cleanly.
  */
 async function shutdown(): Promise<void> {
+  shutdownCoordinator.setPhase("begin shutdown");
   logger.info("Shutdown initiated");
 
   // Disarm the grace-period controller so its timer does not fire after
@@ -873,11 +879,14 @@ async function shutdown(): Promise<void> {
   graceController = null;
 
   // 0. Close the MessagePort stream transport
+  shutdownCoordinator.setPhase("detach message transport");
   portPush.detach();
 
   // Close IPC push server
+  shutdownCoordinator.setPhase("close IPC push server");
   await ipcServer.close();
 
+  shutdownCoordinator.setPhase("close external thread-control runtime");
   await externalThreadControlMcpRuntime.close();
 
   // Clean up IPC socket file on non-Windows
@@ -889,9 +898,11 @@ async function shutdown(): Promise<void> {
   const activeThreadIds = agentService.activeThreadIds();
 
   // 2. Stop all agent sessions
+  shutdownCoordinator.setPhase("stop agent sessions");
   await agentService.stopAll();
 
   // 3. Shutdown provider registry
+  shutdownCoordinator.setPhase("shutdown providers");
   providerRegistry.shutdown();
   browserAutomationBroker.shutdown();
   browserAutomationSessionLease.shutdown();
@@ -903,6 +914,7 @@ async function shutdown(): Promise<void> {
   settingsService.dispose();
 
   // 6. Shutdown terminal service — enable graceful signal ladder for this path only
+  shutdownCoordinator.setPhase("shutdown terminal service");
   terminalService.setGracefulKill(true);
   await terminalService.shutdown();
 
@@ -916,9 +928,11 @@ async function shutdown(): Promise<void> {
   memoryPressureService.dispose();
 
   // 8a. Dispose cleanup worker
-  cleanupWorker.dispose();
+  shutdownCoordinator.setPhase("shutdown cleanup worker");
+  await cleanupWorker.shutdown();
 
   // 8b. Dispose CI check watcher timers and in-flight GitHub CLI children
+  shutdownCoordinator.setPhase("shutdown CI watcher");
   await ciWatcherService.dispose();
 
   // 9. Close all WebSocket clients and shut down the WS server
@@ -929,6 +943,7 @@ async function shutdown(): Promise<void> {
   }
 
   // 10. Await WS and HTTP server close so pending handshakes can finish
+  shutdownCoordinator.setPhase("close HTTP and WebSocket servers");
   const wssClose = new Promise<void>((res, rej) => {
     wss.close((err) => (err ? rej(err) : res()));
   });
@@ -939,6 +954,7 @@ async function shutdown(): Promise<void> {
   await Promise.allSettled([wssClose, httpClose]);
 
   // 11. Close database
+  shutdownCoordinator.setPhase("close database");
   try {
     db.close();
   } catch {
@@ -949,6 +965,7 @@ async function shutdown(): Promise<void> {
   // marker write fails, the lock file stays put so the next startup still
   // detects an unclean exit (missing marker + present lock = warn).
   try {
+    shutdownCoordinator.setPhase("write clean-shutdown marker");
     writeFileSync(SHUTDOWN_MARKER_PATH, String(Date.now()), {
       mode: 0o600,
       encoding: "utf-8",
@@ -962,6 +979,7 @@ async function shutdown(): Promise<void> {
   }
 
   // 13. Remove server lock file
+  shutdownCoordinator.setPhase("remove server lock");
   try {
     unlinkSync(LOCK_FILE_PATH);
   } catch {
@@ -973,6 +991,7 @@ async function shutdown(): Promise<void> {
   // Best-effort: an unexpected throw from the native handle must not abort
   // the rest of shutdown.
   try {
+    shutdownCoordinator.setPhase("close Windows Job Object");
     jobObject.close();
   } catch (err) {
     logger.warn("JobObject close failed during shutdown", {
@@ -980,15 +999,26 @@ async function shutdown(): Promise<void> {
     });
   }
 
+  shutdownCoordinator.setPhase("complete shutdown");
   logger.info("Shutdown complete");
   process.exit(0);
 }
 
-let shutdownPromise: Promise<void> | null = null;
+let shutdownCoordinator: ShutdownCoordinator;
+
+shutdownCoordinator = createShutdownCoordinator({
+  shutdown,
+  onDeadline: (phase) => {
+    logger.error("Shutdown watchdog expired", {
+      deadlineMs: EXPLICIT_SHUTDOWN_DEADLINE_MS,
+      phase,
+    });
+  },
+});
 
 /** Initiate server shutdown once, regardless of which trigger won the race. */
 function requestShutdown(): void {
-  shutdownPromise ??= shutdown().catch((err) => {
+  shutdownCoordinator.requestShutdown()?.catch((err) => {
     logger.error("Shutdown error", { error: String(err) });
     process.exit(1);
   });
