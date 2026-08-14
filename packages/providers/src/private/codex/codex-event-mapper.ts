@@ -76,6 +76,7 @@ const TOOL_LIKE_ITEM_TYPES = new Set([
 const FALLBACK_ASSISTANT_ITEM_ID = "__codex_assistant_message__";
 const MAX_EARLY_CHILD_THREADS = 8;
 const MAX_EARLY_CHILD_NOTIFICATIONS = 64;
+const MAX_RETAINED_CHILD_THREADS = 32;
 const SUBAGENT_LIFECYCLE_TOOL_NAME = "__McodeSubagentLifecycle";
 const MAX_LIFECYCLE_PARENT_ID_LENGTH = 128;
 const EARLY_CHILD_FILE_TOOL_NAMES = new Set([
@@ -157,6 +158,8 @@ export class CodexEventMapper {
   private collabReceiverThreadToCollabId = new Map<string, string>();
   /** Receiver ids present at item start require exact child-turn binding before routing. */
   private readonly strictChildTurnThreads = new Set<string>();
+  /** Shared bounded retention order for child routing and exact turn evidence. */
+  private readonly retainedChildThreadIds = new Map<string, null>();
   /** Bounded mutation/collab notifications received before spawn receiver metadata. */
   private earlyChildNotificationsByThread = new Map<string, CodexNotification[]>();
   private earlyChildNotificationCount = 0;
@@ -479,6 +482,7 @@ export class CodexEventMapper {
       : undefined;
     const explicitNativeTurnId = this.nativeTurnId(notification);
     if (method === "turn/started" && childThreadId && explicitNativeTurnId) {
+      this.retainChildThread(childThreadId);
       this.childTurnIdByThreadId.set(childThreadId, explicitNativeTurnId);
     }
     const nativeTurnId = this.bufferedChildTurnId(childThreadId) ?? explicitNativeTurnId;
@@ -762,6 +766,7 @@ export class CodexEventMapper {
 
   /** Registers one child thread and replays mutations that arrived before its parent activity. */
   private registerReceiverThread(agentToolCallId: string, childThreadId: string): void {
+    this.retainChildThread(childThreadId);
     this.collabReceiverThreadToCollabId.set(childThreadId, agentToolCallId);
     const pending = this.earlyChildNotificationsByThread.get(childThreadId);
     if (pending) {
@@ -769,6 +774,35 @@ export class CodexEventMapper {
       this.earlyChildNotificationCount -= pending.length;
       for (const notification of pending) {
         this.replayedChildEvents.push(...this.mapChildThreadNotification(notification));
+      }
+    }
+  }
+
+  private retainChildThread(childThreadId: string): void {
+    this.retainedChildThreadIds.delete(childThreadId);
+    this.retainedChildThreadIds.set(childThreadId, null);
+    while (this.retainedChildThreadIds.size > MAX_RETAINED_CHILD_THREADS) {
+      const oldest = this.retainedChildThreadIds.keys().next().value as string | undefined;
+      if (!oldest) break;
+      this.retainedChildThreadIds.delete(oldest);
+      this.childTurnIdByThreadId.delete(oldest);
+      this.collabReceiverThreadToCollabId.delete(oldest);
+      this.strictChildTurnThreads.delete(oldest);
+      this.childAssistantTextByThreadId.delete(oldest);
+      this.childAssistantItemIdByThreadId.delete(oldest);
+      this.childThreadMetadataById.delete(oldest);
+      const early = this.earlyChildNotificationsByThread.get(oldest);
+      if (early) {
+        this.earlyChildNotificationsByThread.delete(oldest);
+        this.earlyChildNotificationCount -= early.length;
+      }
+      const beforeTurn = this.childNotificationsBeforeTurnByThread.get(oldest);
+      if (beforeTurn) {
+        this.childNotificationsBeforeTurnByThread.delete(oldest);
+        this.childNotificationsBeforeTurnCount -= beforeTurn.length;
+      }
+      for (const startKey of this.emittedChildTurnStarts) {
+        if (startKey.startsWith(`${oldest}:`)) this.emittedChildTurnStarts.delete(startKey);
       }
     }
   }
@@ -831,11 +865,19 @@ export class CodexEventMapper {
     const reasoningEffort =
       this.stringField(raw, "reasoningEffort")
       ?? this.stringField(raw, "reasoning_effort");
+    const senderThreadId = this.stringField(raw, "senderThreadId")?.slice(0, 512);
+    const receiverThreadIds = Array.isArray(raw.receiverThreadIds)
+      ? [...new Set(raw.receiverThreadIds.filter((value): value is string => (
+          typeof value === "string" && value.trim().length > 0
+        )).map((value) => value.trim().slice(0, 512)))].slice(0, 32)
+      : [];
     return {
       codexCollabKind: kind,
       ...(prompt ? { description: this.promptDescription(prompt), prompt: prompt.slice(0, 32_768) } : {}),
       ...(model ? { model } : {}),
       ...(reasoningEffort ? { reasoningEffort } : {}),
+      ...(!this.isSpawnAgentCollab(item) && senderThreadId ? { senderThreadId } : {}),
+      ...(!this.isSpawnAgentCollab(item) && receiverThreadIds.length > 0 ? { receiverThreadIds } : {}),
     };
   }
 
@@ -1730,11 +1772,8 @@ export class CodexEventMapper {
     this.parentAgentToolCallIdById.clear();
     this.childAssistantTextByThreadId.clear();
     this.childAssistantItemIdByThreadId.clear();
-    this.childTurnIdByThreadId.clear();
     this.emittedChildTurnStarts.clear();
     this.pendingLegacyCollabPops.clear();
-    this.collabReceiverThreadToCollabId.clear();
-    this.strictChildTurnThreads.clear();
     this.earlyChildNotificationsByThread.clear();
     this.earlyChildNotificationCount = 0;
     this.childNotificationsBeforeTurnByThread.clear();
