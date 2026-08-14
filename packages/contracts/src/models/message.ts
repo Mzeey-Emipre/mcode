@@ -4,7 +4,7 @@ import { StoredAttachmentSchema } from "./attachment.js";
 import { lazySchema } from "../utils/lazySchema.js";
 import { MessageMentionsSchema } from "./mention.js";
 import { PreviewAnnotationBundleSchema } from "./browser-preview.js";
-import { ProviderIdentitySchema } from "@mcode/agent-model";
+import { ProviderIdentitySchema } from "../compat/agent-model.js";
 
 /** Canonical provenance for a user-side message sent by a parent agent. */
 export const ParentAgentMessageProvenanceSchema = z.object({

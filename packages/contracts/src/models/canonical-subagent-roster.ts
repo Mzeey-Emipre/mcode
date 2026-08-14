@@ -6,7 +6,7 @@ import {
   CanonicalTimestampSchema,
   ProviderIdentitySchema,
   type AgentTurnStatus,
-} from "@mcode/agent-model";
+} from "../compat/agent-model.js";
 import { lazySchema } from "../utils/lazySchema.js";
 
 /** Maximum number of canonical children returned by one roster read. */
