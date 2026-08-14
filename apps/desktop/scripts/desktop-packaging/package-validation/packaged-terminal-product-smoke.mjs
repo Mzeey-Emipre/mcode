@@ -466,14 +466,11 @@ export function buildProductBootEnv({ env, targetRoot, bootFault }) {
   return bootEnv;
 }
 
-/** Opens a packaged Terminal session after requiring both visible controls. */
+/** Opens the current packaged Terminal session after requiring the rail control. */
 export async function openTerminal(page) {
   const terminalToggle = page.locator('[data-rail-tab="terminal"]').first();
   if (!(await terminalToggle.count())) throw new Error("Terminal control is missing");
   await terminalToggle.click();
-  const newTerminal = page.getByRole("button", { name: "New terminal" }).first();
-  if (!(await newTerminal.count())) throw new Error("New terminal control is missing");
-  await newTerminal.click();
   const terminal = page.getByTestId("terminal-render-content").last();
   await terminal.waitFor({ state: "visible", timeout: 15_000 });
   await terminal.click();

@@ -332,31 +332,18 @@ describe("packaged Terminal product smoke contract", () => {
     );
     expect(missingTerminalSelectors).toEqual(['[data-rail-tab="terminal"]']);
 
-    const missingNewTerminalSelectors = [];
-    const missingNewTerminalPage = {
-      getByRole: (_role, { name }) => ({
-        first: () => ({
-          count: async () => (name === "New terminal" ? 0 : 1),
-          click: async () => undefined,
-        }),
-      }),
-      locator: (selector) => {
-        missingNewTerminalSelectors.push(selector);
-        return { first: () => ({ count: async () => 1, click: async () => undefined }) };
-      },
-      getByTestId: () => {
-        throw new Error("terminal content should not be queried");
-      },
-    };
-    await expect(openTerminal(missingNewTerminalPage)).rejects.toThrow(
-      "New terminal control is missing",
-    );
-    expect(missingNewTerminalSelectors).toEqual(['[data-rail-tab="terminal"]']);
   });
 
-  it("uses the stable Terminal rail selector when its accessible name is dynamic", async () => {
+  it("opens the current Terminal without querying a New terminal control", async () => {
     const selectors = [];
+    const waitCalls = [];
     let terminalClicked = false;
+    const terminal = {
+      waitFor: async (options) => waitCalls.push(options),
+      click: async () => {
+        terminalClicked = true;
+      },
+    };
     const page = {
       locator: (selector) => {
         selectors.push(selector);
@@ -367,25 +354,19 @@ describe("packaged Terminal product smoke contract", () => {
           }),
         };
       },
-      getByRole: (_role, { name }) => {
-        if (name === "Terminal") throw new Error("dynamic shell label must not be queried");
-        return {
-          first: () => ({ count: async () => 1, click: async () => undefined }),
-        };
+      getByRole: () => {
+        throw new Error("New terminal control must not be queried");
       },
-      getByTestId: () => ({
-        last: () => ({
-          waitFor: async () => undefined,
-          click: async () => {
-            terminalClicked = true;
-          },
-        }),
-      }),
+      getByTestId: (testId) => {
+        expect(testId).toBe("terminal-render-content");
+        return { last: () => terminal };
+      },
     };
 
     await openTerminal(page);
 
     expect(selectors).toEqual(['[data-rail-tab="terminal"]']);
+    expect(waitCalls).toEqual([{ state: "visible", timeout: 15_000 }]);
     expect(terminalClicked).toBe(true);
   });
 
