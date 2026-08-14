@@ -14,6 +14,7 @@ import {
   pollProcessCleanup,
   releaseProductProcess,
   validateProductSmokeLaunchInput,
+  waitForRendererPage,
 } from "../desktop-packaging/package-validation/packaged-terminal-product-smoke.mjs";
 
 describe("packaged Terminal product smoke contract", () => {
@@ -162,6 +163,18 @@ describe("packaged Terminal product smoke contract", () => {
       ["stderr"],
       ["unref"],
     ]);
+  });
+
+  it("waits for the packaged renderer page after CDP connects", async () => {
+    const pages = [];
+    const rendererPage = { url: "file:///packaged-renderer.html" };
+    setTimeout(() => pages.push(rendererPage), 1);
+    await expect(
+      waitForRendererPage(
+        { contexts: () => [{ pages: () => pages }] },
+        { timeoutMs: 50, intervalMs: 1 },
+      ),
+    ).resolves.toBe(rendererPage);
   });
 
 

@@ -437,6 +437,20 @@ export function releaseProductProcess(child) {
   child.unref();
 }
 
+/** Waits a bounded interval for Electron to create its first renderer page. */
+export async function waitForRendererPage(
+  browser,
+  { timeoutMs = 15_000, intervalMs = 100 } = {},
+) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const page = browser.contexts().flatMap((context) => context.pages())[0];
+    if (page) return page;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  throw new Error("Packaged Electron renderer page is missing");
+}
+
 async function runProductBoot({ target, env, bootFault, isolationReceipt, workload }) {
   const bootStartedAt = performance.now();
   const cdpPort = 39_000 + (parseInt(randomUUID().slice(0, 4), 16) % 500);
@@ -480,8 +494,7 @@ async function runProductBoot({ target, env, bootFault, isolationReceipt, worklo
     );
   })();
   try {
-    const page = browser.contexts()[0]?.pages()[0];
-    if (!page) throw new Error("Packaged Electron renderer page is missing");
+    const page = await waitForRendererPage(browser);
     await page.waitForLoadState("domcontentloaded");
     const typedErrors = [];
     page.on("websocket", (socket) => {
