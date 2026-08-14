@@ -1,8 +1,18 @@
+import { withTerminalTimeout } from "../terminal-client";
 import type {
   TerminalClient,
+  TerminalCheckpoint,
+  TerminalClientSubscription,
   TerminalClientReattachResult,
   TerminalRpcCall,
+  TerminalActiveSession,
 } from "../terminal-client";
+import {
+  emitPtyReconnectGap,
+  onPtyData,
+  onPtyExit,
+  onPtyReconnectGap,
+} from "../pty-data-registry";
 
 /** Adapts the frozen version 0 Terminal RPCs to the client transport seam. */
 export class LegacyTerminalClient implements TerminalClient {
@@ -38,6 +48,36 @@ export class LegacyTerminalClient implements TerminalClient {
     return this.rpc("terminal.resume", { ptyId });
   }
 
+  /** Detaches the legacy renderer through its compatibility RPC. */
+  async detachForSwitch(
+    ptyId: string,
+    checkpoint?: Promise<TerminalCheckpoint | undefined>,
+  ): Promise<void> {
+    const state = checkpoint
+      ? await withTerminalTimeout(checkpoint).catch(() => undefined)
+      : undefined;
+    await withTerminalTimeout(
+      (state ? this.checkpoint(ptyId, state.seq, state.data) : Promise.resolve())
+        .catch(() => undefined)
+        .then(() => this.pause(ptyId)),
+    );
+  }
+
+  /** Bridges legacy global push events during the compatibility window. */
+  subscribe(ptyId: string, subscription: TerminalClientSubscription): () => void {
+    const unsubs = [
+      subscription.onData ? onPtyData(ptyId, subscription.onData) : undefined,
+      subscription.onExit ? onPtyExit(ptyId, subscription.onExit) : undefined,
+      subscription.onReconnectGap ? onPtyReconnectGap(ptyId, subscription.onReconnectGap) : undefined,
+    ].filter((unsubscribe): unsubscribe is () => void => Boolean(unsubscribe));
+    return () => unsubs.forEach((unsubscribe) => unsubscribe());
+  }
+
+  /** Delivers a reconnect gap through the legacy compatibility registry. */
+  notifyReconnectGap(ptyId: string): void {
+    emitPtyReconnectGap({ ptyId });
+  }
+
   /** Closes all legacy PTYs for one scope. */
   killByThread(threadId: string): Promise<void> {
     return this.rpc("terminal.killByThread", { threadId });
@@ -54,12 +94,13 @@ export class LegacyTerminalClient implements TerminalClient {
 
   /** Stores one bounded legacy renderer checkpoint. */
   checkpoint(ptyId: string, seq: number, data: string): Promise<{ accepted: boolean }> {
-    return this.rpc("terminal.checkpoint", { ptyId, seq, data });
+    return withTerminalTimeout(this.rpc("terminal.checkpoint", { ptyId, seq, data }));
   }
 
   /** Lists all active legacy PTYs. */
-  listActive(): Promise<Array<{ ptyId: string; threadId: string }>> {
-    return this.rpc("terminal.listActive", {});
+  async listActive(): Promise<TerminalActiveSession[]> {
+    const sessions = await this.rpc<Array<{ ptyId: string; threadId: string }>>("terminal.listActive", {});
+    return sessions.map((session) => ({ ...session, state: "running" }));
   }
 
   /** Reports whether one legacy PTY owns child processes. */

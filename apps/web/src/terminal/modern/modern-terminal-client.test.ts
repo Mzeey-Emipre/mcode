@@ -4,7 +4,6 @@ import {
   encodeTerminalFrame,
   type TerminalBackendCapabilities,
 } from "@mcode/contracts";
-import { onPtyData } from "../pty-data-registry";
 import { ModernTerminalClient } from "./modern-terminal-client";
 
 const sessionId = "00000000-0000-4000-8000-000000000001";
@@ -51,9 +50,9 @@ describe("ModernTerminalClient", () => {
       async () => ({ kind: "workspace", workspaceId: sessionId }),
     );
     const received: string[] = [];
-    const unsubscribe = onPtyData(sessionId, (detail) => {
+    const unsubscribe = client.subscribe(sessionId, { onData: (detail) => {
       received.push(`${detail.seq}:${new TextDecoder().decode(detail.payload)}`);
-    });
+    }});
 
     await client.reattach(sessionId, -1);
     const output = new TextEncoder().encode("abc");
@@ -129,9 +128,9 @@ describe("ModernTerminalClient", () => {
       async () => ({ kind: "workspace", workspaceId: sessionId }),
     );
     const received: string[] = [];
-    const unsubscribe = onPtyData(sessionId, (detail) => {
+    const unsubscribe = client.subscribe(sessionId, { onData: (detail) => {
       received.push(`${detail.seq}:${new TextDecoder().decode(detail.payload)}`);
-    });
+    }});
     const reattach = client.reattach(sessionId, -1);
     const checkpoint = new TextEncoder().encode("checkpoint");
     client.handleFrame(encodeTerminalFrame({
@@ -282,5 +281,171 @@ describe("ModernTerminalClient", () => {
     await thirdAttach;
     expect(attachCalls[1]).toHaveProperty("checkpointSeq", "2");
     expect(attachCalls[2]).not.toHaveProperty("checkpointSeq");
+  });
+
+  it("detaches the captured attachment when a replacement reattaches before checkpoint completion", async () => {
+    const attachCalls: Record<string, unknown>[] = [];
+    const detachCalls: Record<string, unknown>[] = [];
+    let attachCount = 0;
+    let releaseCheckpoint: (() => void) | undefined;
+    const rpc = vi.fn(async (method: string, params: Record<string, unknown>) => {
+      if (method === "terminal.session.attach") {
+        attachCalls.push(params);
+        attachCount += 1;
+        return {
+          attachmentId: params.attachmentId,
+          attachmentEpoch: String(attachCount),
+          hydrationId: crypto.randomUUID(),
+        };
+      }
+      if (method === "terminal.session.checkpoint.begin") return { uploadId: crypto.randomUUID() };
+      if (method === "terminal.session.checkpoint.complete") {
+        return { accepted: true, checkpointThroughSeq: String(params.baseOutputSeq ?? "0") };
+      }
+      if (method === "terminal.session.detach") {
+        detachCalls.push(params);
+        return { detached: true };
+      }
+      throw new Error(`Unexpected RPC: ${method}`);
+    });
+    const client = new ModernTerminalClient(
+      rpc as never,
+      vi.fn(),
+      capabilities,
+      async () => ({ kind: "workspace", workspaceId: sessionId }),
+    );
+    await client.reattach(sessionId, 0);
+    const checkpoint = new Promise<{ seq: number; data: string }>((resolve) => {
+      releaseCheckpoint = () => resolve({ seq: 4, data: "screen" });
+    });
+    const oldRelease = client.detachForSwitch(sessionId, checkpoint);
+    await client.reattach(sessionId, 0);
+    releaseCheckpoint?.();
+    await oldRelease;
+
+    expect(attachCalls).toHaveLength(2);
+    expect(detachCalls).toHaveLength(1);
+    expect(detachCalls[0]).toMatchObject({
+      attachmentId: attachCalls[0]?.attachmentId,
+      attachmentEpoch: "1",
+    });
+    expect(detachCalls[0]?.attachmentId).not.toBe(attachCalls[1]?.attachmentId);
+  });
+
+  it("retains exited and failed tombstones in the reconnect projection", async () => {
+    const rpc = vi.fn(async (method: string) => {
+      if (method !== "terminal.session.list") throw new Error(`Unexpected RPC: ${method}`);
+      return [
+        { sessionId: "pty-running", state: "running", scope: { kind: "workspace", workspaceId: sessionId } },
+        { sessionId: "pty-exited", state: "exited", scope: { kind: "workspace", workspaceId: sessionId } },
+        { sessionId: "pty-failed", state: "failed", scope: { kind: "thread", workspaceId: sessionId, threadId: sessionId } },
+      ];
+    });
+    const client = new ModernTerminalClient(
+      rpc as never,
+      vi.fn(),
+      capabilities,
+      async () => ({ kind: "workspace", workspaceId: sessionId }),
+    );
+
+    await expect(client.listActive()).resolves.toEqual([
+      { ptyId: "pty-running", threadId: sessionId, state: "running" },
+      { ptyId: "pty-exited", threadId: sessionId, state: "exited" },
+      { ptyId: "pty-failed", threadId: sessionId, state: "failed" },
+    ]);
+  });
+
+  it("rejects stale output, gap, and exit frames after a new attachment epoch", async () => {
+    let attachmentId = "";
+    const received: string[] = [];
+    const gaps: string[] = [];
+    const exits: number[] = [];
+    const rpc = vi.fn(async (method: string, params: Record<string, unknown>) => {
+      if (method !== "terminal.session.attach") throw new Error(`Unexpected RPC: ${method}`);
+      attachmentId = String(params.attachmentId);
+      return { attachmentId, attachmentEpoch: "1", hydrationId };
+    });
+    const client = new ModernTerminalClient(
+      rpc as never,
+      vi.fn(),
+      capabilities,
+      async () => ({ kind: "workspace", workspaceId: sessionId }),
+    );
+    client.subscribe(sessionId, {
+      onData: (event) => received.push(new TextDecoder().decode(event.payload)),
+      onReconnectGap: () => gaps.push("gap"),
+      onExit: (event) => exits.push(event.code),
+    });
+
+    const reattach = client.reattach(sessionId, -1);
+    client.handleFrame(encodeTerminalFrame({
+      kind: "hydrationComplete",
+      sessionId,
+      attachmentId,
+      hydrationId,
+      hostGeneration,
+      attachmentEpoch: "1",
+      primarySeq: "0",
+      relatedSeq: "0",
+      payload: new TextEncoder().encode(JSON.stringify({
+        hydrationId,
+        mode: "delta",
+        requestedAfterSeq: "0",
+        checkpointThroughSeq: null,
+        firstOutputSeq: null,
+        lastOutputSeq: null,
+        gap: null,
+        chunkCount: 0,
+        totalBytes: 0,
+      })),
+    }));
+    await reattach;
+
+    client.handleFrame(encodeTerminalFrame({
+      kind: "output",
+      sessionId,
+      attachmentId,
+      hostGeneration,
+      attachmentEpoch: "2",
+      primarySeq: "1",
+      relatedSeq: "0",
+      payload: new TextEncoder().encode("stale"),
+    }));
+    const gap = {
+      kind: "replay",
+      firstMissingSeq: "1",
+      lastMissingSeq: "1",
+      retainedFromSeq: "2",
+      retainedThroughSeq: "2",
+      reason: "evicted",
+    };
+    client.handleFrame(encodeTerminalFrame({
+      kind: "gap",
+      sessionId,
+      attachmentId,
+      hydrationId,
+      hostGeneration,
+      attachmentEpoch: "2",
+      primarySeq: "1",
+      relatedSeq: "1",
+      payload: new TextEncoder().encode(JSON.stringify(gap)),
+    }));
+    client.handleFrame(encodeTerminalFrame({
+      kind: "exitBarrier",
+      sessionId,
+      attachmentId,
+      hostGeneration,
+      attachmentEpoch: "2",
+      primarySeq: "1",
+      relatedSeq: "1",
+      payload: new TextEncoder().encode(JSON.stringify({
+        finalOutputSeq: "1",
+        exit: { code: 7, signal: null, reason: "natural" },
+      })),
+    }));
+
+    expect(received).toEqual([]);
+    expect(gaps).toEqual([]);
+    expect(exits).toEqual([]);
   });
 });

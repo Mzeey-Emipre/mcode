@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { TerminalSessionState } from "@mcode/contracts";
 import { getTransport } from "@/transport";
 import { createBatchedUpdater } from "./batchMiddleware";
 
@@ -7,12 +8,14 @@ export interface TerminalInstance {
   readonly id: string;
   readonly threadId: string;
   readonly label: string;
+  readonly state?: TerminalSessionState;
 }
 
 /** Server-authoritative PTY identity returned during reconnect. */
 export interface ActiveTerminalSession {
   readonly ptyId: string;
   readonly threadId: string;
+  readonly state?: TerminalSessionState;
 }
 
 /** Per-thread terminal panel state (visibility, height, active terminal). */
@@ -155,7 +158,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       const existing = state.terminals[threadId] ?? [];
       if (existing.length >= MAX_TERMINALS_PER_SCOPE) return state;
       const label = shell ?? generateLabel(existing);
-      const instance: TerminalInstance = { id: ptyId, threadId, label };
+      const instance: TerminalInstance = { id: ptyId, threadId, label, state: "running" };
       const currentPanel = state.terminalPanelByThread[threadId] ?? TERMINAL_PANEL_DEFAULTS;
       if (currentPanel.visible && currentPanel.activeTerminalId) {
         getTransport().terminalPause(currentPanel.activeTerminalId).catch(() => {});
@@ -187,11 +190,12 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         const existing = existingById.get(session.ptyId);
         const scopeTerminals = terminals[session.threadId] ?? [];
         const terminal: TerminalInstance = existing
-          ? { ...existing, threadId: session.threadId }
+          ? { ...existing, threadId: session.threadId, state: session.state ?? "running" }
           : {
               id: session.ptyId,
               threadId: session.threadId,
               label: generateLabel(scopeTerminals),
+              state: session.state ?? "running",
             };
         terminals[session.threadId] = [...scopeTerminals, terminal];
         ptyToThread[session.ptyId] = session.threadId;

@@ -1,5 +1,5 @@
 import { createPortal } from "react-dom";
-import { useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useDiffStore } from "@/stores/diffStore";
 import {
@@ -11,7 +11,7 @@ import { useTerminalPoolSlot } from "./TerminalPoolSlotContext";
 import { isContainerReadyForFit } from "./safeFit";
 import { dispatchTerminalPoolRefit } from "./terminalPoolRefit";
 import { resolveActiveTerminalId } from "./resolveActiveTerminalId";
-import { onPtyExit } from "@/terminal/pty-data-registry";
+import { getTransport } from "@/transport";
 
 /**
  * Mounts at most one terminal view (ADR-0010): the active shell on the active
@@ -59,7 +59,7 @@ export function TerminalPoolHost() {
 
   useEffect(() => {
     const unsubs = Object.values(terminals).flat().map((terminal) =>
-      onPtyExit(terminal.id, () => {
+      getTransport().terminalSubscribe(terminal.id, { onExit: () => {
         const state = useTerminalStore.getState();
         const scopeId = state.ptyToThread[terminal.id];
         if (!scopeId) return;
@@ -75,7 +75,7 @@ export function TerminalPoolHost() {
             `terminal:${terminal.id}`,
           );
         }
-      }),
+      }}),
     );
     return () => unsubs.forEach((unsubscribe) => unsubscribe());
   }, [terminals]);
@@ -116,7 +116,11 @@ export function TerminalPoolHost() {
 
   const visibleTerm =
     terminalTabVisible && terminalScopeId && activeTerminalId
-      ? terminals[terminalScopeId]?.find((t) => t.id === activeTerminalId)
+      ? terminals[terminalScopeId]?.find(
+          (terminal) =>
+            terminal.id === activeTerminalId &&
+            (terminal.state ?? "running") === "running",
+        )
       : undefined;
 
   useLayoutEffect(() => {
@@ -142,14 +146,38 @@ export function TerminalPoolHost() {
   const target = visibleTerm && terminalScopeId
     ? { scopeId: terminalScopeId, ptyId: visibleTerm.id }
     : warmTarget;
-  const mountedTerm = target
-    ? terminals[target.scopeId]?.find((terminal) => terminal.id === target.ptyId)
+  const [mountedTarget, setMountedTarget] = useState(target);
+  const pendingTargetRef = useRef<typeof target>(null);
+  const handoffPendingRef = useRef(false);
+
+  useLayoutEffect(() => {
+    if (handoffPendingRef.current) {
+      pendingTargetRef.current = target;
+      return;
+    }
+    if (
+      mountedTarget?.scopeId === target?.scopeId &&
+      mountedTarget?.ptyId === target?.ptyId
+    ) {
+      return;
+    }
+    if (mountedTarget) {
+      pendingTargetRef.current = target;
+      handoffPendingRef.current = true;
+      setMountedTarget(null);
+      return;
+    }
+    setMountedTarget(target);
+  }, [mountedTarget, target]);
+
+  const mountedTerm = mountedTarget
+    ? terminals[mountedTarget.scopeId]?.find((terminal) => terminal.id === mountedTarget.ptyId)
     : undefined;
   const shown = Boolean(
     visibleTerm &&
-      target &&
-      visibleTerm.id === target.ptyId &&
-      terminalScopeId === target.scopeId,
+      mountedTarget &&
+      visibleTerm.id === mountedTarget.ptyId &&
+      terminalScopeId === mountedTarget.scopeId,
   );
   const displayed = shown && Boolean(slotEl);
   const portalTarget = displayed ? slotEl : offScreenEl;
@@ -169,6 +197,14 @@ export function TerminalPoolHost() {
 
   if (!portalTarget || !mountedTerm) return null;
 
+  const handleDisposed = () => {
+    if (!handoffPendingRef.current) return;
+    handoffPendingRef.current = false;
+    const nextTarget = pendingTargetRef.current;
+    pendingTargetRef.current = null;
+    setMountedTarget(nextTarget);
+  };
+
   return createPortal(
     <div className="absolute inset-0 min-h-0">
       <TerminalView
@@ -176,6 +212,7 @@ export function TerminalPoolHost() {
         ptyId={mountedTerm.id}
         visible={displayed}
         threadActive={displayed}
+        onDisposed={handleDisposed}
       />
     </div>,
     mountEl,

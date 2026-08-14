@@ -507,6 +507,20 @@ export interface McodeTransport {
   terminalPause(ptyId: string): Promise<void>;
   /** Request the server to resume a paused PTY. Idempotent. */
   terminalResume(ptyId: string): Promise<void>;
+  /** Subscribe one renderer controller to its selected Terminal attachment. */
+  terminalSubscribe(
+    ptyId: string,
+    subscription: import("@/terminal/terminal-client").TerminalClientSubscription,
+  ): () => void;
+  /** Detach one renderer because its shell is being replaced. */
+  terminalDetachForSwitch(
+    ptyId: string,
+    checkpoint?: Promise<
+      { readonly seq: number; readonly data: string } | undefined
+    >,
+  ): Promise<void>;
+  /** Deliver a reconnect gap through the selected Terminal client. */
+  terminalNotifyReconnectGap(ptyId: string): void;
   /** Kill all PTYs attached to a thread. */
   terminalKillByThread(threadId: string): Promise<void>;
   /**
@@ -534,7 +548,11 @@ export interface McodeTransport {
     data: string,
   ): Promise<{ accepted: boolean }>;
   /** List all active PTY sessions on the server. Used during reconnect. */
-  terminalListActive(): Promise<Array<{ ptyId: string; threadId: string }>>;
+  terminalListActive(): Promise<Array<{
+    ptyId: string;
+    threadId: string;
+    state: import("@mcode/contracts").TerminalSessionState;
+  }>>;
   /** Check whether a PTY has non-shell child processes running. */
   terminalHasChildren(ptyId: string): Promise<{ hasChildren: boolean }>;
   /** Track the last seq number received for a PTY, used during reconnect reattach. */

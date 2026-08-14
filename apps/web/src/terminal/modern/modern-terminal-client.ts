@@ -3,12 +3,22 @@ import {
   decodeTerminalFrame,
   TerminalHydrationDescriptorSchema,
   encodeTerminalFrame,
+  type TerminalBinaryFrame,
   type TerminalBackendCapabilities,
   type TerminalScope,
   type TerminalSessionSnapshot,
 } from "@mcode/contracts";
-import { emitPtyData, emitPtyExit, emitPtyReconnectGap } from "../pty-data-registry";
-import type { TerminalClient, TerminalClientReattachResult, TerminalRpcCall } from "../terminal-client";
+import { withTerminalTimeout } from "../terminal-client";
+import type {
+  TerminalClient,
+  TerminalCheckpoint,
+  TerminalClientReattachResult,
+  TerminalClientSubscription,
+  TerminalActiveSession,
+  TerminalDataEvent,
+  TerminalExitEvent,
+  TerminalRpcCall,
+} from "../terminal-client";
 
 interface ClientAttachment {
   readonly sessionId: string;
@@ -41,6 +51,7 @@ export class ModernTerminalClient implements TerminalClient {
   private readonly sessions = new Map<string, TerminalSessionSnapshot>();
   private readonly attachments = new Map<string, ClientAttachment>();
   private readonly checkpointThroughSeq = new Map<string, string>();
+  private readonly subscriptions = new Map<string, Set<TerminalClientSubscription>>();
 
   constructor(
     private readonly rpc: TerminalRpcCall,
@@ -83,21 +94,55 @@ export class ModernTerminalClient implements TerminalClient {
     this.checkpointThroughSeq.delete(ptyId);
   }
 
-  /** Releases the current controller lease while the Terminal is hidden. */
+  /** Keeps the server attachment alive while the renderer changes visibility. */
   async pause(ptyId: string): Promise<void> {
-    const attachment = this.attachments.get(ptyId);
-    if (!attachment) return;
-    await this.rpc("terminal.session.detach", {
-      sessionId: ptyId,
-      attachmentId: attachment.attachmentId,
-      attachmentEpoch: attachment.attachmentEpoch,
-      reason: "hide",
-    });
-    this.attachments.delete(ptyId);
+    void ptyId;
   }
 
   /** Reattachment owns resume for v1, so this operation is intentionally empty. */
   async resume(): Promise<void> {}
+
+  /** Detaches the renderer lease when switching to another shell. */
+  detachForSwitch(
+    ptyId: string,
+    checkpoint?: Promise<TerminalCheckpoint | undefined>,
+  ): Promise<void> {
+    const attachment = this.attachments.get(ptyId);
+    if (!attachment) return Promise.resolve();
+    const checkpointState = checkpoint
+      ? withTerminalTimeout(checkpoint).catch(() => undefined)
+      : Promise.resolve(undefined);
+    const operation = checkpointState
+      .then((state) => state
+        ? withTerminalTimeout(this.checkpointAttachment(attachment, state.seq, state.data)).catch(() => undefined)
+        : undefined)
+      .then(() => withTerminalTimeout(this.rpc<void>("terminal.session.detach", {
+        sessionId: ptyId,
+        attachmentId: attachment.attachmentId,
+        attachmentEpoch: attachment.attachmentEpoch,
+        reason: "switch",
+      })))
+      .finally(() => {
+        if (this.attachments.get(ptyId) === attachment) this.attachments.delete(ptyId);
+      });
+    return operation;
+  }
+
+  /** Subscribes a renderer controller to this client's attachment delivery. */
+  subscribe(ptyId: string, subscription: TerminalClientSubscription): () => void {
+    const subscriptions = this.subscriptions.get(ptyId) ?? new Set<TerminalClientSubscription>();
+    subscriptions.add(subscription);
+    this.subscriptions.set(ptyId, subscriptions);
+    return () => {
+      subscriptions.delete(subscription);
+      if (subscriptions.size === 0) this.subscriptions.delete(ptyId);
+    };
+  }
+
+  /** Delivers a reconnect gap to the subscriptions for one modern session. */
+  notifyReconnectGap(ptyId: string): void {
+    this.emitReconnectGap(ptyId);
+  }
 
   /** Closes all sessions in the requested UI scope. */
   async killByThread(scopeId: string): Promise<void> {
@@ -143,7 +188,7 @@ export class ModernTerminalClient implements TerminalClient {
       });
     } catch (error) {
       this.checkpointThroughSeq.delete(ptyId);
-      this.attachments.delete(ptyId);
+      if (this.attachments.get(ptyId) === attachment) this.attachments.delete(ptyId);
       throw error;
     }
     attachment.attachmentEpoch = descriptor.attachmentEpoch;
@@ -166,12 +211,19 @@ export class ModernTerminalClient implements TerminalClient {
 
   /** Uploads one bounded renderer checkpoint through the v1 authority. */
   async checkpoint(ptyId: string, seq: number, value: string): Promise<{ accepted: boolean }> {
-    const attachment = this.requireAttachment(ptyId);
+    return withTerminalTimeout(this.checkpointAttachment(this.requireAttachment(ptyId), seq, value));
+  }
+
+  private async checkpointAttachment(
+    attachment: ClientAttachment,
+    seq: number,
+    value: string,
+  ): Promise<{ accepted: boolean }> {
     const data = new TextEncoder().encode(value);
     if (data.byteLength === 0) return { accepted: false };
     const sha256 = hex(await crypto.subtle.digest("SHA-256", data));
     const begun = await this.rpc<{ uploadId: string }>("terminal.session.checkpoint.begin", {
-      sessionId: ptyId,
+      sessionId: attachment.sessionId,
       attachmentId: attachment.attachmentId,
       attachmentEpoch: attachment.attachmentEpoch,
       hostGeneration: attachment.hostGeneration,
@@ -186,7 +238,7 @@ export class ModernTerminalClient implements TerminalClient {
       });
     }
     const completed = await this.rpc<{ accepted: true; checkpointThroughSeq: string }>("terminal.session.checkpoint.complete", {
-      sessionId: ptyId,
+      sessionId: attachment.sessionId,
       attachmentId: attachment.attachmentId,
       attachmentEpoch: attachment.attachmentEpoch,
       hostGeneration: attachment.hostGeneration,
@@ -194,19 +246,18 @@ export class ModernTerminalClient implements TerminalClient {
       totalBytes: data.byteLength,
       sha256,
     });
-    if (completed.accepted) this.checkpointThroughSeq.set(ptyId, completed.checkpointThroughSeq);
+    if (completed.accepted) this.checkpointThroughSeq.set(attachment.sessionId, completed.checkpointThroughSeq);
     return completed;
   }
 
   /** Lists server-authoritative sessions through the current UI shape. */
-  async listActive(): Promise<Array<{ ptyId: string; threadId: string }>> {
+  async listActive(): Promise<TerminalActiveSession[]> {
     const sessions = await this.rpc<TerminalSessionSnapshot[]>("terminal.session.list", {});
     for (const session of sessions) this.sessions.set(session.sessionId, session);
-    return sessions
-      .filter((session) => session.state === "running" || session.state === "starting")
-      .map((session) => ({
+    return sessions.map((session) => ({
         ptyId: session.sessionId,
         threadId: session.scope.kind === "thread" ? session.scope.threadId : session.scope.workspaceId,
+        state: session.state,
       }));
   }
 
@@ -215,16 +266,13 @@ export class ModernTerminalClient implements TerminalClient {
     return this.rpc("terminal.session.hasChildren", { sessionId: ptyId });
   }
 
-  /** Applies a server v1 frame to the exact attachment and existing PTY registry. */
+  /** Applies a server v1 frame to the exact client-owned attachment. */
   handleFrame(bytes: Uint8Array): void {
     const frame = decodeTerminalFrame(bytes);
     const attachment = this.attachments.get(frame.sessionId);
     if (!attachment || attachment.attachmentId !== frame.attachmentId) return;
-    if (attachment.hostGeneration !== frame.hostGeneration) return;
+    if (!this.acceptFrameIdentity(attachment, frame)) return;
     if (frame.kind === "hydrationChunk") {
-      if (frame.hydrationId !== attachment.hydrationId && attachment.attachmentEpoch !== "0") {
-        throw new Error("Terminal hydration belongs to a stale attachment");
-      }
       const index = Number(frame.primarySeq);
       const count = Number(frame.relatedSeq);
       if (!Number.isSafeInteger(index) || !Number.isSafeInteger(count) || attachment.hydrationChunks.has(index)) {
@@ -234,8 +282,6 @@ export class ModernTerminalClient implements TerminalClient {
         throw new Error("Terminal hydration chunk count changed");
       }
       attachment.hydrationChunkCount = count;
-      attachment.attachmentEpoch = frame.attachmentEpoch;
-      attachment.hydrationId = frame.hydrationId!;
       attachment.hydrationChunks.set(index, Uint8Array.from(frame.payload));
       return;
     }
@@ -243,10 +289,7 @@ export class ModernTerminalClient implements TerminalClient {
       const descriptor = TerminalHydrationDescriptorSchema().parse(
         JSON.parse(new TextDecoder().decode(frame.payload)),
       );
-      if (attachment.attachmentEpoch !== "0" && frame.hydrationId !== attachment.hydrationId) {
-        throw new Error("Terminal hydration belongs to a stale attachment");
-      }
-      attachment.hydrationId = frame.hydrationId!;
+      if (descriptor.hydrationId !== frame.hydrationId) return;
       const declaredChunks = attachment.hydrationChunkCount ?? 0;
       if (
         !Number.isInteger(declaredChunks) ||
@@ -258,7 +301,6 @@ export class ModernTerminalClient implements TerminalClient {
       for (let index = 0; index < declaredChunks; index += 1) {
         if (!attachment.hydrationChunks.has(index)) throw new Error("Terminal hydration chunks are not contiguous");
       }
-      attachment.attachmentEpoch = frame.attachmentEpoch;
       attachment.hydrated = true;
       const payload = concatBytes([...attachment.hydrationChunks.entries()].sort(([a], [b]) => a - b).map(([, chunk]) => chunk));
       attachment.hydrationChunks.clear();
@@ -267,38 +309,61 @@ export class ModernTerminalClient implements TerminalClient {
       const outputSeq = descriptor.lastOutputSeq ?? attachment.lastOutputSeq.toString();
       attachment.lastOutputSeq = BigInt(outputSeq);
       if (payload.byteLength > 0 && descriptor.mode !== "checkpoint-delta") {
-        emitPtyData({ ptyId: frame.sessionId, payload, seq: Number(outputSeq) });
+        this.emitData({ ptyId: frame.sessionId, payload, seq: Number(outputSeq) });
       }
-      if (descriptor.gap) emitPtyReconnectGap({ ptyId: frame.sessionId });
+      if (descriptor.gap) this.emitReconnectGap(frame.sessionId);
       for (const output of attachment.pendingOutput.splice(0)) {
         attachment.lastOutputSeq = BigInt(output.seq);
-        emitPtyData({ ptyId: frame.sessionId, payload: output.data, seq: Number(output.seq) });
+        this.emitData({ ptyId: frame.sessionId, payload: output.data, seq: Number(output.seq) });
       }
       return;
     }
     if (frame.kind === "output") {
       if (!attachment.hydrated) {
-        if (attachment.attachmentEpoch !== "0" && frame.hydrationId !== attachment.hydrationId) {
-          throw new Error("Terminal output belongs to a stale hydration");
-        }
-        attachment.attachmentEpoch = frame.attachmentEpoch;
-        attachment.hydrationId = frame.hydrationId!;
         attachment.hydrationOutputCount += 1;
         attachment.pendingOutput.push({ seq: frame.primarySeq, data: Uint8Array.from(frame.payload) });
         return;
       }
       attachment.lastOutputSeq = BigInt(frame.primarySeq);
-      emitPtyData({ ptyId: frame.sessionId, payload: frame.payload, seq: Number(frame.primarySeq) });
+      this.emitData({ ptyId: frame.sessionId, payload: frame.payload, seq: Number(frame.primarySeq) });
       return;
     }
+    if (frame.kind === "commandAck" || frame.kind === "state") return;
     if (frame.kind === "gap") {
-      emitPtyReconnectGap({ ptyId: frame.sessionId });
+      this.emitReconnectGap(frame.sessionId);
       return;
     }
     if (frame.kind === "exitBarrier") {
       const value = JSON.parse(new TextDecoder().decode(frame.payload)) as { exit: { code: number | null } };
-      emitPtyExit({ ptyId: frame.sessionId, code: value.exit.code ?? 0 });
+      this.emitExit({ ptyId: frame.sessionId, code: value.exit.code ?? 0 });
     }
+  }
+
+  private acceptFrameIdentity(
+    attachment: ClientAttachment,
+    frame: TerminalBinaryFrame,
+  ): boolean {
+    if (attachment.hostGeneration !== frame.hostGeneration) return false;
+    if (
+      attachment.attachmentEpoch !== "0" &&
+      attachment.attachmentEpoch !== frame.attachmentEpoch
+    ) {
+      return false;
+    }
+    if (attachment.hydrated) {
+      return frame.hydrationId === undefined || frame.hydrationId === attachment.hydrationId;
+    }
+    if (frame.hydrationId !== undefined) {
+      if (
+        attachment.attachmentEpoch !== "0" &&
+        attachment.hydrationId !== frame.hydrationId
+      ) {
+        return false;
+      }
+      attachment.hydrationId = frame.hydrationId;
+    }
+    attachment.attachmentEpoch = frame.attachmentEpoch;
+    return true;
   }
 
   /** Acknowledges output only after the renderer records it as written. */
@@ -317,6 +382,18 @@ export class ModernTerminalClient implements TerminalClient {
     const attachment = this.attachments.get(ptyId);
     if (!attachment || attachment.attachmentEpoch === "0") throw new Error("Terminal session is not attached");
     return attachment;
+  }
+
+  private emitData(event: TerminalDataEvent): void {
+    for (const subscription of this.subscriptions.get(event.ptyId) ?? []) subscription.onData?.(event);
+  }
+
+  private emitExit(event: TerminalExitEvent): void {
+    for (const subscription of this.subscriptions.get(event.ptyId) ?? []) subscription.onExit?.(event);
+  }
+
+  private emitReconnectGap(ptyId: string): void {
+    for (const subscription of this.subscriptions.get(ptyId) ?? []) subscription.onReconnectGap?.();
   }
 
   private send(
