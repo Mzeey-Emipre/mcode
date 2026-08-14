@@ -91,7 +91,7 @@ vi.mock("../preview/index.js", () => ({
 vi.mock("../browser-automation/index.js", () => ({
   disposeBrowserAutomationForWindow: vi.fn(),
 }));
-vi.mock("../preview/preview-local-file.js", () => ({
+vi.mock("../../features/preview/navigation/local-file.js", () => ({
   resolveMcodeWorkspacePreviewUrl: vi.fn(),
 }));
 vi.mock("../is-desktop-dev.js", () => ({ isDesktopDev: vi.fn().mockReturnValue(false) }));

@@ -9,18 +9,18 @@ export type {
 } from "./preview-capture.js";
 
 import { ipcMain } from "electron";
-import { registerNavigationHandlers } from "./preview-navigation.js";
+import { registerNavigationHandlers } from "../../features/preview/navigation/handlers.js";
 import { registerCaptureHandlers, registerWebRequestInterceptor } from "./preview-capture.js";
 import { registerOverlayHandlers } from "./preview-overlay.js";
 import { registerSpillHandlers } from "./preview-spill.js";
 import { registerTabHandlers } from "./preview-tabs.js";
-import { getPerfCounters } from "./preview-perf.js";
+import { getPerfCounters } from "../../features/preview/observability/perf-counters.js";
 import { registerPreviewSurfaceHandlers } from "./preview-webview-adopt.js";
 import { registerDesignModeHandlers } from "./preview-design-mode.js";
 import { registerBrowserAutomationHandlers } from "../browser-automation/index.js";
 import { registerPreviewSessionPolicy } from "./preview-session-adapter.js";
 import { abortOverlayCapture } from "./preview-overlay.js";
-import { clearDiscardTimers, sessions } from "./preview-session.js";
+import { clearDiscardTimers, sessions } from "../../features/preview/state/window-session.js";
 import { disposePreviewSurfacesForWindow } from "./preview-webview-adopt.js";
 
 /** Releases Preview resources owned by one closing renderer window. */

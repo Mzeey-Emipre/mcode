@@ -123,7 +123,7 @@ vi.mock("electron", () => ({
 }));
 vi.mock("../preview/preview-webview-adopt.js", () => ({ findAdoptedWebContentsForWindow: vi.fn(() => currentWebContents) }));
 vi.mock("../../features/preview/contracts/guest-input.js", () => ({ PREVIEW_GUEST_AGENT_INPUT_CHANNEL: "mcode:browser-agent-input" }));
-vi.mock("../preview/preview-session.js", () => ({
+vi.mock("../../features/preview/state/window-session.js", () => ({
   getSession: vi.fn(() => fakePreviewSession),
   getThreadTabSet: vi.fn((session, threadId) => session.tabsByThread.get(threadId)),
 }));

@@ -26,7 +26,7 @@ import {
 } from "@mcode/contracts";
 import { findAdoptedWebContentsForWindow } from "../preview/preview-webview-adopt.js";
 import { PREVIEW_GUEST_AGENT_INPUT_CHANNEL } from "../../features/preview/contracts/guest-input.js";
-import { getSession, getThreadTabSet } from "../preview/preview-session.js";
+import { getSession, getThreadTabSet } from "../../features/preview/state/window-session.js";
 import {
   BrowserAutomationCancelledError,
   BrowserAutomationQueueFullError,

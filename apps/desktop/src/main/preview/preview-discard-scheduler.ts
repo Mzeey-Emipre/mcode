@@ -21,17 +21,17 @@ import {
 import {
   emitTabsUpdated,
   getThreadTabSet,
-  isAllowedPreviewUrl,
   type PreviewSession,
   type TabState,
   type ThreadTabSet,
-} from "./preview-session.js";
+} from "../../features/preview/state/window-session.js";
 import {
   findAdoptedWebContentsForWindow,
   requestRendererSurfaceDiscard,
 } from "./preview-webview-adopt.js";
-import { validateResumeUrl } from "./preview-local-file.js";
-import { bumpPerf, setPerf } from "./preview-perf.js";
+import { validateResumeUrl } from "../../features/preview/navigation/local-file.js";
+import { isAllowedPreviewUrl } from "../../features/preview/navigation/policy.js";
+import { bumpPerf, setPerf } from "../../features/preview/observability/perf-counters.js";
 
 /** Mirror server-manager's snapshot-aware schema resolution for packaged builds. */
 const SettingsSchema =

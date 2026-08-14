@@ -178,7 +178,7 @@ vi.mock("../preview/preview-webview-adopt.js", () => ({
   findAdoptedWebContentsForWindow: vi.fn(() => currentWebContents),
 }));
 
-vi.mock("../preview/preview-session.js", () => ({
+vi.mock("../../features/preview/state/window-session.js", () => ({
   getSession: vi.fn(() => ({ workspaceId: "workspace", lastPreviewThreadId: "thread", tabsByThread })),
   getThreadTabSet: vi.fn((session, threadId, workspaceId = session.workspaceId ?? threadId) =>
     session.tabsByThread.get(JSON.stringify([workspaceId, threadId])) ?? session.tabsByThread.get(threadId)),

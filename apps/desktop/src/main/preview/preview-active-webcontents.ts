@@ -1,5 +1,5 @@
 import type { WebContents } from "electron";
-import { getActiveTab, sessions, type PreviewSession } from "./preview-session.js";
+import { getActiveTab, sessions, type PreviewSession } from "../../features/preview/state/window-session.js";
 import { findAdoptedWebContentsForWindow } from "./preview-webview-adopt.js";
 
 /**

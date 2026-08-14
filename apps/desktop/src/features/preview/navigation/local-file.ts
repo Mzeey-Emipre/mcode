@@ -10,7 +10,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { isMcodeWorkspacePreviewUrl } from "@mcode/contracts";
 
-import { type PreviewSession, isAllowedPreviewUrl } from "./preview-session.js";
+import { type PreviewSession } from "../state/window-session.js";
+import { isAllowedPreviewUrl } from "./policy.js";
 
 /** Pre-compiled regex for browser-viewable file extensions (hoisted to avoid recompilation per navigate). */
 export const BROWSER_VIEWABLE_EXT_RE =

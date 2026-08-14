@@ -9,7 +9,7 @@ import {
   resolveLocalFileUrl,
   resolveMcodeWorkspacePreviewUrl,
   validateResumeUrl,
-} from "../preview/preview-local-file.js";
+} from "../local-file.js";
 
 let workspacePath: string;
 

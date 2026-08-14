@@ -15,7 +15,7 @@ import {
   type Bounds,
   type PreviewSession,
   getSession,
-} from "./preview-session.js";
+} from "../../features/preview/state/window-session.js";
 import {
   type PreviewPictureReferenceResult,
   buildBrowserCapturePayload,
