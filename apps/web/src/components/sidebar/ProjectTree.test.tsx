@@ -393,6 +393,7 @@ describe("ProjectTree thread interactions", () => {
 
     await vi.waitFor(() => expect(completeThread).toHaveBeenCalledWith("thread-1"));
     expect(action).toBeDisabled();
+    expect(action).not.toHaveClass("disabled:opacity-0");
     expect(action.querySelector(".status-spin")).toBeInTheDocument();
     expect(screen.queryByLabelText("Running")).toBeNull();
     await act(async () => {
@@ -937,7 +938,16 @@ describe("ProjectTree action-required indicator", () => {
     const title = screen.getByTestId("thread-title");
     expect(spinner).toBeVisible();
     expect(action).toBeDisabled();
-    expect(action).not.toHaveClass("opacity-100", "disabled:opacity-100");
+    expect(action).toHaveClass(
+      "opacity-0",
+      "disabled:opacity-0",
+      "group-hover/row:opacity-100",
+      "group-focus-visible/row:opacity-100",
+      "focus-visible:opacity-100",
+      "group-hover/row:disabled:opacity-100",
+      "group-focus-visible/row:disabled:opacity-100",
+    );
+    expect(action).not.toHaveClass("disabled:opacity-50");
     expect(action).not.toContainElement(spinner);
     expect(
       title.compareDocumentPosition(spinner) & Node.DOCUMENT_POSITION_FOLLOWING,
