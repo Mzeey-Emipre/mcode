@@ -6,13 +6,13 @@
 export type {
   PreviewPictureReferenceResult,
   PreviewContextReferenceResult,
-} from "./preview-capture.js";
+} from "../../features/preview/capture/handlers.js";
 
 import { ipcMain } from "electron";
 import { registerNavigationHandlers } from "../../features/preview/navigation/handlers.js";
-import { registerCaptureHandlers, registerWebRequestInterceptor } from "./preview-capture.js";
-import { registerOverlayHandlers } from "./preview-overlay.js";
-import { registerSpillHandlers } from "./preview-spill.js";
+import { registerCaptureHandlers, registerWebRequestInterceptor } from "../../features/preview/capture/handlers.js";
+import { registerOverlayHandlers } from "../../features/preview/capture/overlay.js";
+import { registerSpillHandlers } from "../../features/preview/capture/spill-store.js";
 import { registerTabHandlers } from "../../features/preview/tabs/handlers.js";
 import { getPerfCounters } from "../../features/preview/observability/perf-counters.js";
 import { registerPreviewSurfaceHandlers } from "../../features/preview/surfaces/registry.js";
@@ -22,7 +22,7 @@ import {
   registerBrowserAutomationHandlers,
 } from "../../features/preview/automation/index.js";
 import { registerPreviewSessionPolicy } from "../../features/preview/security/electron-session-policy.js";
-import { abortOverlayCapture } from "./preview-overlay.js";
+import { abortOverlayCapture } from "../../features/preview/capture/overlay.js";
 import { sessions } from "../../features/preview/state/window-session.js";
 import { clearDiscardTimers } from "../../features/preview/tabs/discard-scheduler.js";
 import { disposePreviewSurfacesForWindow } from "../../features/preview/surfaces/registry.js";

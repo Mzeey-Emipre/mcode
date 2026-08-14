@@ -1,5 +1,5 @@
 /**
- * Browser-capture spill file management: persist, prune, and release large
+ * Browser capture spill file management: persist, prune, and release large
  * capture payloads stored under the Mcode app data directory.
  */
 

@@ -23,7 +23,7 @@ export { isAllowedHttpUrl, isAllowedPreviewUrl } from "../navigation/policy.js";
 
 /**
  * Result of a picture-reference capture; defined here so PreviewSession can reference
- * the finish callback type without creating a circular dependency with preview-capture.ts.
+ * the finish callback type without creating a circular dependency with capture handlers.
  */
 export type CaptureFinishResult =
   | { ok: true; meta: AttachmentMeta; previewBytes: Uint8Array; capture: McodeBrowserCaptureV2 }

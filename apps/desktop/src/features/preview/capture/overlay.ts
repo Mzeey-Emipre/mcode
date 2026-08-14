@@ -15,7 +15,7 @@ import {
   type Bounds,
   type PreviewSession,
   getSession,
-} from "../../features/preview/state/window-session.js";
+} from "../state/window-session.js";
 import {
   type PreviewPictureReferenceResult,
   buildBrowserCapturePayload,
@@ -25,8 +25,8 @@ import {
   parseBoundsRecord,
   sanitizeSelectorHintFromGuest,
   scrubHtmlExcerptForOutbound,
-} from "./preview-capture.js";
-import { resolveActivePreviewWebContents } from "../../features/preview/surfaces/active-web-contents.js";
+} from "./handlers.js";
+import { resolveActivePreviewWebContents } from "../surfaces/active-web-contents.js";
 
 /**
  * Element-pick runs entirely inside the guest page: capture-phase event handlers block

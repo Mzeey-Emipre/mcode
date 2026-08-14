@@ -14,9 +14,9 @@ import {
   type McodeBrowserCaptureV2,
 } from "@mcode/contracts";
 import { redactMcodeBrowserCaptureV2 } from "@mcode/shared";
-import { type Bounds, type PreviewSession, type CaptureFinishResult, sessions, getSession } from "../../features/preview/state/window-session.js";
-import { persistBrowserCaptureSpill } from "./preview-spill.js";
-import { resolveActivePreviewWebContents } from "../../features/preview/surfaces/active-web-contents.js";
+import { type Bounds, type PreviewSession, type CaptureFinishResult, sessions, getSession } from "../state/window-session.js";
+import { persistBrowserCaptureSpill } from "./spill-store.js";
+import { resolveActivePreviewWebContents } from "../surfaces/active-web-contents.js";
 
 /**
  * Outcome of capturing the visible preview viewport as a PNG attachment.
