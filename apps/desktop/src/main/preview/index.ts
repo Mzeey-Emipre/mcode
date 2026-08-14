@@ -16,7 +16,7 @@ import { registerSpillHandlers } from "../../features/preview/capture/spill-stor
 import { registerTabHandlers } from "../../features/preview/tabs/handlers.js";
 import { getPerfCounters } from "../../features/preview/observability/perf-counters.js";
 import { registerPreviewSurfaceHandlers } from "../../features/preview/surfaces/registry.js";
-import { registerDesignModeHandlers } from "./preview-design-mode.js";
+import { registerDesignModeHandlers } from "../../features/preview/design/handlers.js";
 import {
   disposeBrowserAutomationForWindow,
   registerBrowserAutomationHandlers,

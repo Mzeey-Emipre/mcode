@@ -116,6 +116,7 @@ export class TerminalProfileService {
   async list(): Promise<{
     readonly certified: readonly TerminalResolvedProfile[];
     readonly custom: readonly TerminalCustomProfile[];
+    readonly recovery?: ReturnType<SettingsService["getTerminalRecoveryState"]>;
   }> {
     const certified = (await Promise.all(
       CERTIFIED_PROFILES
@@ -123,7 +124,12 @@ export class TerminalProfileService {
         .map((profile) => this.resolveCertified(profile)),
     )).filter((profile): profile is TerminalResolvedProfile => profile !== null);
     const custom = this.settings.get().terminal.profiles.map((profile) => cloneCustomProfile(profile));
-    return Object.freeze({ certified: Object.freeze(certified), custom: Object.freeze(custom) });
+    const recovery = this.settings.getTerminalRecoveryState();
+    return Object.freeze({
+      certified: Object.freeze(certified),
+      custom: Object.freeze(custom),
+      ...(recovery ? { recovery } : {}),
+    });
   }
 
   /** Creates one validated custom profile with a server-generated identifier. */

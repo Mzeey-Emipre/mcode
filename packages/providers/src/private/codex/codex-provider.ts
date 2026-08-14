@@ -318,43 +318,51 @@ function transientHandoffError(message: string): Error & { code: string } {
   return err;
 }
 
+type CodexInternalMcpStartupOutcome =
+  | { status: "ready" }
+  | { status: "failed"; source: "native"; error?: string }
+  | { status: "timeout"; error: string }
+  | { status: "cancelled" };
+
 function observeCodexInternalMcpStartup(server: CodexAppServer): {
-  promise: Promise<void>;
+  promise: Promise<CodexInternalMcpStartupOutcome>;
   cancel: () => void;
 } {
   let settled = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let resolvePromise!: () => void;
-  let rejectPromise!: (error: Error) => void;
-  const promise = new Promise<void>((resolve, reject) => {
+  let resolvePromise!: (outcome: CodexInternalMcpStartupOutcome) => void;
+  const promise = new Promise<CodexInternalMcpStartupOutcome>((resolve) => {
     resolvePromise = resolve;
-    rejectPromise = reject;
   });
-  const finish = (error?: Error): void => {
+  const finish = (outcome: CodexInternalMcpStartupOutcome): void => {
     if (settled) return;
     settled = true;
     if (timer) clearTimeout(timer);
     server.off("notification", onNotification);
-    if (error) rejectPromise(error);
-    else resolvePromise();
+    resolvePromise(outcome);
   };
   const onNotification = (notification: unknown): void => {
     const value = notification as { method?: unknown; params?: Record<string, unknown> };
     if (value.method !== "mcpServer/startupStatus/updated") return;
     if (value.params?.name !== "mcode_internal_thread_control") return;
     const status = typeof value.params.status === "string" ? value.params.status : "";
-    if (status === "ready") finish();
+    if (status === "ready") finish({ status: "ready" });
     else if (status === "failed" || status === "error") {
       // Codex keeps the thread usable when one MCP is unavailable.
-      finish();
-    }
+      const error = typeof value.params.error === "string"
+        ? value.params.error
+        : typeof value.params.failureReason === "string"
+          ? value.params.failureReason
+          : undefined;
+      finish({ status: "failed", source: "native", ...(error ? { error } : {}) });
+    } else if (status === "cancelled") finish({ status: "cancelled" });
   };
   server.on("notification", onNotification);
   timer = setTimeout(
-    () => finish(new Error("Codex internal MCP startup timed out")),
+    () => finish({ status: "timeout", error: "Codex internal MCP startup timed out" }),
     CODEX_MCP_STARTUP_TIMEOUT_MS,
   );
-  return { promise, cancel: () => finish(new Error("Codex internal MCP startup cancelled")) };
+  return { promise, cancel: () => finish({ status: "cancelled" }) };
 }
 
 /**
@@ -935,6 +943,25 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     return ended;
   }
 
+  /** Reports a local internal MCP setup failure without changing turn lifecycle state. */
+  private emitInternalMcpStartupFailure(
+    threadId: string,
+    serverThreadId: string,
+    error: string,
+    turnExecutionId?: string,
+  ): void {
+    this.emit("event", {
+      type: AgentEventType.McpServerStartupStatus,
+      threadId,
+      providerId: this.id,
+      serverThreadId,
+      name: "mcode_internal_thread_control",
+      status: "failed",
+      error,
+      ...(turnExecutionId ? { turnExecutionId } : {}),
+    } satisfies AgentEvent);
+  }
+
   /** Convert a native Codex goal into Mcode's provider-neutral goal state. */
   private mapCodexGoal(sessionId: string, goal: ThreadGoal, turnId?: string | null): GoalState {
     return {
@@ -1347,6 +1374,20 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     const supervised = approvalPolicy === "on-request";
     const browserAccess = this.pendingBrowserAccess.get(sessionId);
     let internalMcp: { configOverrides: string[]; env: Record<string, string> } | undefined;
+    let internalMcpSetupError: string | undefined;
+    let internalMcpAuthorityClosed = false;
+    const closeInternalMcpAuthority = async (): Promise<void> => {
+      if (internalMcpAuthorityClosed) return;
+      internalMcpAuthorityClosed = true;
+      try {
+        await this.host.threadControl.close(sessionId);
+      } catch (error) {
+        logger.warn("Codex internal MCP authority close failed", {
+          sessionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    };
     try {
       internalMcp = await this.host.threadControl.bootstrap({
         providerId: this.id,
@@ -1356,8 +1397,8 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         protocol: "codex",
       }) as { configOverrides: string[]; env: Record<string, string> } | undefined;
     } catch (error) {
-      await this.host.threadControl.close(sessionId);
-      throw error;
+      internalMcpSetupError = error instanceof Error ? error.message : String(error);
+      await closeInternalMcpAuthority();
     }
     const browserGrant = browserAccess ? this.host.browser.issue(browserAccess.stage) : null;
     const mcodeInstructions = renderMcodeInstructions(buildMcodeInstructionPlan({
@@ -1487,6 +1528,9 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
             ? entry.currentTurnExecutionId
             : undefined)
         : undefined;
+      const startupEventExecutionId = n.method === "mcpServer/startupStatus/updated"
+        ? stagedExecutionId
+        : undefined;
       const mappedEvents = [...generatedImageEvents, ...events];
       for (const event of mappedEvents) {
         const eventKey = childEventIdentity(event);
@@ -1507,7 +1551,8 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         ) {
           if (eventKey && entry) rememberChildEventKey(entry, eventKey);
           this.recordGoalEvent(sessionId, event);
-          this.emit("event", { ...event, ...(eventExecutionId ? { turnExecutionId: eventExecutionId } : {}) });
+          const resolvedEventExecutionId = eventExecutionId ?? startupEventExecutionId;
+          this.emit("event", { ...event, ...(resolvedEventExecutionId ? { turnExecutionId: resolvedEventExecutionId } : {}) });
         } else {
           if (!entry || !nativeThreadId) continue;
           bufferPendingChildEvent(entry, event, nativeThreadId, nativeTurnId, eventKey);
@@ -1567,36 +1612,54 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       }
     });
 
-    // Propagates start failures to the runtime, which surfaces them to the
-    // `acquire` caller in `sendTurn` (emits Error/Ended there).
+    let internalMcpStartupOutcome: CodexInternalMcpStartupOutcome | undefined;
+
+    // Only app-server startup failures reject acquisition. Internal MCP
+    // failures resolve as degraded capability so the turn can continue.
     try {
       if (internalMcpStartup) {
-        await Promise.all([server.start(), internalMcpStartup.promise]);
+        const [, startupOutcome] = await Promise.all([server.start(), internalMcpStartup.promise]);
+        internalMcpStartupOutcome = startupOutcome;
       } else {
         await server.start();
       }
     } catch (error) {
       if (browserGrant) this.host.browser.release(browserGrant.leaseId);
       internalMcpStartup?.cancel();
-      await this.host.threadControl.close(sessionId);
+      await closeInternalMcpAuthority();
       if (internalMcpStartup) await server.kill().catch(() => undefined);
       throw error;
     } finally {
       delete spawnEnv[browserTokenEnvName];
       this.pendingBrowserAccess.delete(sessionId);
     }
+    if (internalMcpSetupError) {
+      this.emitInternalMcpStartupFailure(threadId, server.threadId ?? threadId, internalMcpSetupError, stagedExecutionId);
+    } else if (internalMcpStartupOutcome?.status === "timeout") {
+      this.emitInternalMcpStartupFailure(
+        threadId,
+        server.threadId ?? threadId,
+        internalMcpStartupOutcome.error,
+        stagedExecutionId,
+      );
+    }
     if (internalMcp) {
-      try {
-        const effectiveConfig = await server.readConfig(cwd);
-        if (!hasCodexInternalThreadControlMcp(effectiveConfig)) {
-          throw new Error("Codex app-server did not register mcode_internal_thread_control in effective configuration");
+      if (internalMcpStartupOutcome?.status === "ready") {
+        try {
+          const effectiveConfig = await server.readConfig(cwd);
+          if (!hasCodexInternalThreadControlMcp(effectiveConfig)) {
+            throw new Error("Codex app-server did not register mcode_internal_thread_control in effective configuration");
+          }
+        } catch (error) {
+          internalMcpStartup?.cancel();
+          await closeInternalMcpAuthority();
+          this.emitInternalMcpStartupFailure(
+            threadId,
+            server.threadId ?? threadId,
+            error instanceof Error ? error.message : String(error),
+            stagedExecutionId,
+          );
         }
-      } catch (error) {
-        internalMcpStartup?.cancel();
-        if (browserGrant) this.host.browser.release(browserGrant.leaseId);
-        await this.host.threadControl.close(sessionId);
-        await server.kill().catch(() => undefined);
-        throw error;
       }
     }
     this.refreshUsageFromServer(server, threadId);

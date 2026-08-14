@@ -135,6 +135,24 @@ describe("canonical agent model", () => {
     expect(missingSourceItem.success).toBe(false);
   });
 
+  it.each(["permission", "clarification"] as const)(
+    "preserves %s routing as a directional collaboration action",
+    (kind) => {
+      const action = CollaborationActionSchema.parse({
+        id: `action-${kind}`,
+        kind,
+        source: { threadId: "child-thread", turnId: "child-turn", itemId: `item-${kind}` },
+        target: { threadId: "parent-thread", turnId: "parent-turn" },
+        status: "Acknowledged",
+        deliveryUnknown: false,
+        providerIdentities: [],
+        ...timestamps,
+      });
+
+      expect(action).toMatchObject({ kind, source: { threadId: "child-thread" }, target: { threadId: "parent-thread" } });
+    },
+  );
+
   it("represents each explicit turn lifecycle event", () => {
     const eventTypes = [
       { type: "turn.started", startedAt: timestamps.createdAt },

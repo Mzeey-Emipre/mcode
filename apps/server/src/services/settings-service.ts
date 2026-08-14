@@ -17,6 +17,8 @@ import {
   type TerminalPreferencesUpdate,
   type TerminalSettings,
   type TerminalCustomProfile,
+  type TerminalProfileRecovery,
+  TerminalProfileReferenceSchema,
   TerminalCustomProfileSchema,
   getDefaultTerminalSettingsDocument,
 } from "@mcode/contracts";
@@ -152,6 +154,7 @@ export class SettingsService {
       }
     = { status: "current" };
   private blockedTerminalProfiles: readonly TerminalCustomProfile[] = [];
+  private blockedTerminalProfileReference: TerminalProfileRecovery["unavailableProfileId"] = null;
 
   constructor() {
     this.filePath = join(getMcodeDir(), "settings.json");
@@ -173,6 +176,8 @@ export class SettingsService {
       const raw = readFileSync(this.filePath, "utf-8");
       if (Buffer.byteLength(raw, "utf8") > SETTINGS_MAX_BYTES) {
         this.terminalMigrationStatus = { status: "blocked", reason: "malformed" };
+        this.blockedTerminalProfiles = [];
+        this.blockedTerminalProfileReference = null;
         return getSettingsDefaults();
       }
       const parsed = JSON.parse(raw) as unknown;
@@ -186,6 +191,9 @@ export class SettingsService {
         this.blockedTerminalProfiles = terminalMigration.reason === "missing-profile-reference"
           ? parseBlockedTerminalProfiles(terminalMigration.original)
           : [];
+        this.blockedTerminalProfileReference = terminalMigration.reason === "missing-profile-reference"
+          ? parseBlockedTerminalProfileReference(terminalMigration.original)
+          : null;
         logger.warn("Settings file failed Terminal migration, returning temporary defaults", {
           reason: terminalMigration.reason,
         });
@@ -194,6 +202,7 @@ export class SettingsService {
       const result = SettingsSchema().safeParse(terminalMigration.document);
       if (result.success) {
         this.blockedTerminalProfiles = [];
+        this.blockedTerminalProfileReference = null;
         this.terminalMigrationStatus = { status: terminalMigration.status };
         if (migration.changed || terminalMigration.status === "migrated") {
           try {
@@ -219,6 +228,8 @@ export class SettingsService {
       logger.warn("Settings file failed validation, returning defaults", {
         error: result.error.message,
       });
+      this.blockedTerminalProfiles = [];
+      this.blockedTerminalProfileReference = null;
       return getSettingsDefaults();
     } catch {
       if (existsSync(this.filePath)) {
@@ -227,6 +238,7 @@ export class SettingsService {
         this.terminalMigrationStatus = { status: "current" };
       }
       this.blockedTerminalProfiles = [];
+      this.blockedTerminalProfileReference = null;
       return getSettingsDefaults();
     }
   }
@@ -281,6 +293,18 @@ export class SettingsService {
     return this.terminalMigrationStatus;
   }
 
+  /** Returns bounded recovery data for a blocked Terminal settings document. */
+  getTerminalRecoveryState(): TerminalProfileRecovery | null {
+    const status = this.getTerminalMigrationStatus();
+    if (status.status !== "blocked") return null;
+    return {
+      status: "blocked",
+      reason: status.reason,
+      blockedProfiles: [...this.blockedTerminalProfiles],
+      unavailableProfileId: this.blockedTerminalProfileReference,
+    };
+  }
+
   /** Replaces the validated Terminal subtree and persists the complete settings document. */
   replaceTerminalSettings(terminal: TerminalSettings): TerminalSettings {
     this.assertWritesAllowed();
@@ -315,6 +339,7 @@ export class SettingsService {
       };
       this.terminalMigrationStatus = { status: "current" };
       this.blockedTerminalProfiles = [];
+      this.blockedTerminalProfileReference = null;
       this.persistValidatedSettings(repaired);
       return repaired.terminal;
     }
@@ -485,4 +510,12 @@ function parseBlockedTerminalProfiles(value: unknown): readonly TerminalCustomPr
     return [];
   }
   return result.data;
+}
+
+function parseBlockedTerminalProfileReference(
+  value: unknown,
+): TerminalProfileRecovery["unavailableProfileId"] {
+  if (!isRecord(value) || !isRecord(value.terminal)) return null;
+  const result = TerminalProfileReferenceSchema().safeParse(value.terminal.defaultProfileId);
+  return result.success ? result.data : null;
 }

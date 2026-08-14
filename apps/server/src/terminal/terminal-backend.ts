@@ -1,6 +1,7 @@
 import type {
   TerminalBackendCapabilities,
   TerminalErrorCode,
+  TerminalProfileInUseData,
   TerminalRetryClass,
 } from "@mcode/contracts";
 import type { WebSocket } from "ws";
@@ -24,6 +25,7 @@ export class TerminalBackendError extends Error {
     readonly retry: TerminalRetryClass,
     message: string,
     correlationId = `corr-${crypto.randomUUID()}`,
+    readonly data?: TerminalProfileInUseData,
   ) {
     super(message);
     this.name = "TerminalBackendError";

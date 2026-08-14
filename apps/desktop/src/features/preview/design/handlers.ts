@@ -2,14 +2,14 @@
  * Design Mode IPC handlers (Phase G MVP).
  *
  * Provides a read-only inspect overlay that injects a small in-guest script,
- *     highlights the hovered element and ships its selector + bounding box
- *     back to the renderer. No DOM mutations; no clicks captured.
+ * highlights the hovered element and ships its selector + bounding box
+ * back to the renderer. No DOM mutations; no clicks captured.
  */
 
 import { BrowserWindow, ipcMain } from "electron";
 import { logger } from "@mcode/shared";
-import { getSession } from "../../features/preview/state/window-session.js";
-import { resolveActivePreviewWebContents } from "../../features/preview/surfaces/active-web-contents.js";
+import { getSession } from "../state/window-session.js";
+import { resolveActivePreviewWebContents } from "../surfaces/active-web-contents.js";
 
 const INSPECT_SCRIPT = String.raw`(() => {
   if (window.__mcodeInspectActive) return;
@@ -115,6 +115,7 @@ const ANNOTATION_GUARD_TEARDOWN_SCRIPT = String.raw`(() => {
   }
 })();`;
 
+/** Registers the Preview design-mode IPC handlers. */
 export function registerDesignModeHandlers(): void {
   ipcMain.handle("preview:design.set-inspect", async (event, payload: { enabled?: boolean }) => {
     const win = BrowserWindow.fromWebContents(event.sender);

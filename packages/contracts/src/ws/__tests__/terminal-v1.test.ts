@@ -123,10 +123,10 @@ describe("Terminal v1 management RPC", () => {
     ).toThrow();
   });
 
-  it("keeps profile, settings, and diagnostics methods outside the general WebSocket router", () => {
+  it("registers profile and preference methods in the general WebSocket router", () => {
     const methods = Object.keys(WS_METHODS());
-    expect(methods).not.toContain("terminal.profile.list");
-    expect(methods).not.toContain("terminal.preferences.update");
+    expect(methods).toContain("terminal.profile.list");
+    expect(methods).toContain("terminal.preferences.update");
     expect(methods).not.toContain("terminal.diagnostics.report");
   });
 

@@ -19,6 +19,9 @@ import type {
   ProviderModelInfo,
   CopilotSubagent,
   GitRemoteUrl,
+  TerminalPreferencesResult,
+  TerminalProfileList,
+  TerminalWorkspacePreference,
 } from "./types";
 import { TurnRuntimeSnapshotSchema } from "@mcode/contracts";
 import type {
@@ -57,6 +60,8 @@ import type {
   SendMessageInput,
   CreateAndSendInput,
   TerminalBackendCapabilities,
+  TerminalCustomProfile,
+  TerminalProfileReference,
 } from "@mcode/contracts";
 import type { PaginatedMessages, ConversationPage, ConversationNewerPage, ConversationNewerPageRequest, ConversationOlderPage, ConversationOlderPageRequest, ConversationTail, CanonicalSubagentRoster, SetThreadSubscriptionsInput, SetThreadSubscriptionsResult, TurnSnapshot, PrDraft, CreatePrResult, ProviderUsageInfo, ChecksStatus, ProviderAvailability, GoalLookupResult } from "@mcode/contracts";
 import {
@@ -112,6 +117,19 @@ export function requestEnsureServerRunning(now: number = Date.now()): boolean {
 /** Reset the ensure-server throttle. Test-only. */
 export function resetEnsureServerThrottleForTest(): void {
   lastEnsureServerAt = 0;
+}
+
+/** Structured error returned by an RPC method, including typed error data. */
+export class RpcError extends Error {
+  constructor(
+    message: string,
+    readonly code: string,
+    readonly data?: Record<string, unknown>,
+    readonly retry?: string,
+  ) {
+    super(message);
+    this.name = "RpcError";
+  }
 }
 
 type Listener = (data: unknown) => void;
@@ -409,8 +427,8 @@ export function createWsTransport(
         const { resolve, reject } = pending.get(msg.id as string)!;
         pending.delete(msg.id as string);
         if (msg.error) {
-          const err = msg.error as { message?: string };
-          reject(new Error(err.message ?? "RPC error"));
+          const err = msg.error as { code?: string; message?: string; data?: Record<string, unknown>; retry?: string };
+          reject(new RpcError(err.message ?? "RPC error", err.code ?? "RPC_ERROR", err.data, err.retry));
         } else {
           resolve(msg.result);
         }
@@ -841,6 +859,31 @@ export function createWsTransport(
       rpc<ProviderCatalogSnapshot>("provider.catalog", request),
 
     // Terminal (PTY)
+    terminalProfileList: () => rpc<TerminalProfileList>("terminal.profile.list", {}),
+    terminalProfileCreate: (input) =>
+      rpc<TerminalCustomProfile>("terminal.profile.create", input),
+    terminalProfileUpdate: (input) =>
+      rpc<TerminalCustomProfile>("terminal.profile.update", input),
+    terminalProfileDelete: (profileId) =>
+      rpc<{ deleted: true }>("terminal.profile.delete", { profileId }),
+    terminalProfileSetDefault: (profileId) =>
+      rpc<{ defaultProfileId: TerminalProfileReference }>(
+        "terminal.profile.setDefault",
+        { profileId },
+      ),
+    terminalWorkspacePreferencesGet: (workspaceId) =>
+      rpc<TerminalWorkspacePreference>("terminal.workspacePreferences.get", { workspaceId }),
+    terminalWorkspacePreferencesUpdate: (workspaceId, profileId) =>
+      rpc<TerminalWorkspacePreference>("terminal.workspacePreferences.update", {
+        workspaceId,
+        defaultProfileId: profileId,
+      }),
+    terminalWorkspacePreferencesReset: (workspaceId) =>
+      rpc<{ reset: true }>("terminal.workspacePreferences.reset", { workspaceId }),
+    terminalPreferencesReset: (workspaceId) =>
+      rpc<{ reset: true }>("terminal.preferences.reset", workspaceId ? { workspaceId } : {}),
+    terminalPreferencesUpdate: (input) =>
+      rpc<TerminalPreferencesResult>("terminal.preferences.update", input),
     terminalCapabilities,
     terminalCreate: (threadId) => withTerminalClient((client) => client.create(threadId)),
     terminalWrite: (ptyId, data) => withTerminalClient((client) => client.write(ptyId, data)),

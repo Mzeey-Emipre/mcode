@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 
 import type { Terminal, IDisposable } from "@xterm/xterm";
 import type { SerializeAddon } from "@xterm/addon-serialize";
 import type { SearchAddon } from "@xterm/addon-search";
+import type { TerminalSettings } from "@mcode/contracts";
 import { getTransport } from "@/transport";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useDiffStore } from "@/stores/diffStore";
@@ -71,6 +72,55 @@ function resolveTerminalSearchDecorations() {
     activeMatchBorder: resolveTerminalSearchColor("--ring"),
     activeMatchColorOverviewRuler: resolveTerminalSearchColor("--ring"),
   };
+}
+
+const TERMINAL_FONT_SIZES: Record<TerminalSettings["presentation"]["fontSize"], number> = {
+  xs: 11,
+  sm: 13,
+  md: 15,
+  lg: 17,
+  xl: 19,
+};
+const TERMINAL_LINE_HEIGHTS: Record<TerminalSettings["presentation"]["lineHeight"], number> = {
+  compact: 1.1,
+  normal: 1.2,
+  relaxed: 1.4,
+};
+
+function getTerminalOptions(settings: TerminalSettings): {
+  readonly scrollback: number;
+  readonly fontFamily: string;
+  readonly fontSize: number;
+  readonly lineHeight: number;
+  readonly cursorStyle: TerminalSettings["presentation"]["cursorStyle"];
+  readonly cursorBlink: boolean;
+  readonly screenReaderMode: boolean;
+} {
+  return {
+    scrollback: settings.behavior.scrollback,
+    fontFamily: settings.presentation.fontFamily,
+    fontSize: TERMINAL_FONT_SIZES[settings.presentation.fontSize],
+    lineHeight: TERMINAL_LINE_HEIGHTS[settings.presentation.lineHeight],
+    cursorStyle: settings.presentation.cursorStyle,
+    cursorBlink: settings.presentation.cursorBlink,
+    // xterm exposes a boolean only. Automatic has no reliable renderer-side
+    // accessibility signal, so it keeps xterm's default disabled state.
+    screenReaderMode: settings.accessibility.screenReaderMode === "on",
+  };
+}
+
+function applyTerminalSettings(term: Terminal, settings: TerminalSettings): void {
+  const options = getTerminalOptions(settings);
+  term.options.scrollback = options.scrollback;
+  term.options.fontFamily = options.fontFamily;
+  term.options.fontSize = options.fontSize;
+  term.options.lineHeight = options.lineHeight;
+  term.options.cursorStyle = options.cursorStyle;
+  term.options.cursorBlink = options.cursorBlink;
+  term.options.screenReaderMode = options.screenReaderMode;
+  if (term.element) {
+    term.element.style.fontVariantLigatures = settings.presentation.ligatures ? "normal" : "none";
+  }
 }
 
 function settleWithin<T>(promise: Promise<T>, fallback: T): Promise<T> {
@@ -382,9 +432,13 @@ export const TerminalView = memo(function TerminalView({
   const prevShownRef = useRef(shown);
   const [hydrated, setHydrated] = useState(false);
 
-  const scrollback = useSettingsStore((s) => s.settings.terminal.behavior.scrollback);
-  const scrollbackRef = useRef(scrollback);
-  scrollbackRef.current = scrollback;
+  const terminalSettings = useSettingsStore((s) => s.settings.terminal);
+  const terminalSettingsRef = useRef(terminalSettings);
+  terminalSettingsRef.current = terminalSettings;
+  const copyOnSelectRef = useRef(terminalSettings.behavior.copyOnSelect);
+  copyOnSelectRef.current = terminalSettings.behavior.copyOnSelect;
+  const confirmMultilinePasteRef = useRef(terminalSettings.behavior.confirmMultilinePaste);
+  confirmMultilinePasteRef.current = terminalSettings.behavior.confirmMultilinePaste;
 
   // Mount terminal
   useEffect(() => {
@@ -412,10 +466,8 @@ export const TerminalView = memo(function TerminalView({
       }
 
       const term = new XTerminal({
-        scrollback: scrollbackRef.current,
+        ...getTerminalOptions(terminalSettingsRef.current),
         allowProposedApi: true,
-        fontSize: 13,
-        fontFamily: "monospace",
         theme: {
           background: TERMINAL_BACKGROUND,
           foreground: "#e4e4e7",
@@ -428,7 +480,25 @@ export const TerminalView = memo(function TerminalView({
       term.loadAddon(fitAddon);
       term.loadAddon(serializeAddon);
       term.open(el);
+      applyTerminalSettings(term, terminalSettingsRef.current);
       incrementLiveTerminalCount();
+      let exited = false;
+
+      const pasteText = (text: string) => {
+        if (!text) return;
+        if (confirmMultilinePasteRef.current && /\r?\n/.test(text) && !window.confirm("Paste multiple lines into the terminal?")) {
+          return;
+        }
+        term.paste(text);
+      };
+
+      const selectionDisposable = term.onSelectionChange(() => {
+        if (!copyOnSelectRef.current || exited) return;
+        const selection = term.getSelection();
+        if (selection) {
+          navigator.clipboard.writeText(selection).catch(() => {});
+        }
+      });
 
       // Intercept Ctrl/Cmd+C when text is selected — copy to clipboard instead of sending SIGINT.
       // Returning false prevents xterm from forwarding the raw \x03 byte to the PTY.
@@ -455,7 +525,6 @@ export const TerminalView = memo(function TerminalView({
       registerTerminalScrollHarness(ptyId, term);
 
       const transport = getTransport();
-      let exited = false;
 
       const flowSettings =
         useSettingsStore.getState().settings.terminal.flowControl;
@@ -478,13 +547,20 @@ export const TerminalView = memo(function TerminalView({
         navigator.clipboard
           .readText()
           .then((text) => {
-            if (text) {
-              term.paste(text);
-            }
+            pasteText(text);
           })
           .catch(() => {});
       };
       el.addEventListener("contextmenu", handleContextMenu);
+
+      const handlePaste = (event: ClipboardEvent) => {
+        if (!confirmMultilinePasteRef.current) return;
+        const text = event.clipboardData?.getData("text/plain") ?? "";
+        if (!text || !/\r?\n/.test(text)) return;
+        event.preventDefault();
+        pasteText(text);
+      };
+      el.addEventListener("paste", handlePaste, true);
 
       // Forward keystrokes to the backend via WS RPC
       const dataDisposable = term.onData((data) => {
@@ -689,8 +765,10 @@ export const TerminalView = memo(function TerminalView({
         setTermReady(false);
         dataDisposable.dispose();
         scrollDisposable.dispose();
+        selectionDisposable.dispose();
         el.removeEventListener("wheel", onWheel);
         el.removeEventListener("contextmenu", handleContextMenu);
+        el.removeEventListener("paste", handlePaste, true);
         unsubPtyData();
         unsubReconnectGap();
         unsubPtyExit();
@@ -989,12 +1067,12 @@ export const TerminalView = memo(function TerminalView({
     };
   }, []);
 
-  // Sync scrollback setting to live terminal without remounting
+  // Apply safe Terminal presentation and behavior changes to the open xterm.
   useEffect(() => {
     if (termRef.current) {
-      termRef.current.options.scrollback = scrollback;
+      applyTerminalSettings(termRef.current, terminalSettings);
     }
-  }, [scrollback]);
+  }, [terminalSettings]);
 
   // Attach WebGL only while shown and after scroll restore; one GL context pool-wide.
   useEffect(() => {

@@ -44,13 +44,14 @@ const SESSION_EXIT_TIMEOUT_MS = 5_000;
 /**
  * Drains the cleanup_jobs table with retry logic.
  * Must be started via start() after DI is fully resolved.
- * Call dispose() during graceful shutdown.
+ * Call shutdown() during graceful shutdown to await an active poll.
  */
 @injectable()
 export class CleanupWorker {
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private running = false;
   private stopped = false;
+  private pollPromise: Promise<void> | null = null;
   private readonly mutationReservations: ThreadControlMutationReservationService;
 
   constructor(
@@ -97,11 +98,21 @@ export class CleanupWorker {
   }
 
   /**
-   * Stop the worker. Matches the dispose() convention used by other
-   * timer-owning services in the codebase. The currently-executing job
-   * (if any) finishes before the poll loop halts.
+   * Stop admitting new work without waiting for an active poll.
+   * Use shutdown() when graceful shutdown must await that poll.
    */
   dispose(): void {
+    this.stopAdmission();
+  }
+
+  /** Stop admission and wait for a poll that already started to settle. */
+  async shutdown(): Promise<void> {
+    this.stopAdmission();
+    await this.pollPromise;
+  }
+
+  /** Stop new timer and poll admission without waiting for active work. */
+  private stopAdmission(): void {
     this.stopped = true;
     if (this.pollTimer !== null) {
       clearInterval(this.pollTimer);
@@ -112,11 +123,21 @@ export class CleanupWorker {
 
   /** Run a single poll cycle. Exported for testing. */
   async poll(): Promise<void> {
+    if (this.running || this.stopped) return;
+    const pollPromise = this.runPoll();
+    this.pollPromise = pollPromise;
+    try {
+      await pollPromise;
+    } finally {
+      if (this.pollPromise === pollPromise) this.pollPromise = null;
+    }
+  }
+
+  /** Execute one serial poll while exposing its completion to shutdown. */
+  private async runPoll(): Promise<void> {
     // Set running before findDue so a concurrent timer-fired poll
     // that arrives during the async job execution sees running=true.
-    if (this.running || this.stopped) return;
     this.running = true;
-
     try {
       this.cleanupJobRepo.enqueueExpiredCompleted(new Date().toISOString());
       const jobs = this.cleanupJobRepo.findDue(Date.now());

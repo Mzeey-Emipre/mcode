@@ -1564,6 +1564,267 @@ describe("CanonicalAgentEventSink", () => {
     expect(sink.loadThread(provisional.childThread.id)?.providerIdentities).toEqual(bound.childThread.providerIdentities);
   });
 
+  it("keeps one child thread across provider-started follow-up turns", () => {
+    startCanonicalParent(sink, db);
+    const delegationInput = {
+      parentThreadId: THREAD_ID,
+      parentTurnId: TURN_ID,
+      parentExecutionId: EXECUTION_ID,
+      parentItemId: "toolCall:spawn-multi-turn",
+      receiverThreadIds: ["native-child-multi-turn"],
+      providerIdentities: [] as ProviderIdentity[],
+    };
+    const delegation = sink.startCodexChildDelegation(delegationInput);
+    const firstTurn = sink.startCodexChildTurn({
+      ...delegationInput,
+      nativeThreadId: "native-child-multi-turn",
+      nativeTurnId: "native-child-turn-1",
+    });
+    sink.finishCodexChildTurn({
+      childThreadId: delegation.childThread.id,
+      nativeTurnId: "native-child-turn-1",
+      outcome: "completed",
+    });
+
+    const followUp = sink.recordCollaborationAction({
+      actionId: "collaboration:follow-up-1",
+      kind: "follow-up",
+      sourceThreadId: THREAD_ID,
+      sourceTurnId: TURN_ID,
+      sourceExecutionId: EXECUTION_ID,
+      sourceItemId: "toolCall:follow-up-1",
+      targetThreadId: delegation.childThread.id,
+      status: "Dispatched",
+      providerIdentities: [],
+      payload: { prompt: "Inspect the next case." },
+    });
+    expect(followUp.target).toEqual({ threadId: delegation.childThread.id });
+
+    const secondTurn = sink.startCodexChildTurn({
+      ...delegationInput,
+      nativeThreadId: "native-child-multi-turn",
+      nativeTurnId: "native-child-turn-2",
+      triggerActionId: followUp.id,
+    });
+
+    expect(secondTurn.id).not.toBe(firstTurn.id);
+    expect(secondTurn.threadId).toBe(delegation.childThread.id);
+    expect(secondTurn.trigger).toEqual({
+      kind: "child",
+      sourceThreadId: THREAD_ID,
+      sourceTurnId: TURN_ID,
+      sourceItemId: "toolCall:follow-up-1",
+    });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM canonical_agent_turns WHERE thread_id = ?")
+      .get(delegation.childThread.id)).toEqual({ count: 2 });
+    expect(db.prepare("SELECT target_turn_id FROM canonical_collaboration_actions WHERE id = ?")
+      .get(followUp.id)).toEqual({ target_turn_id: secondTurn.id });
+    expect(sink.loadCodexChildDelegation(THREAD_ID, delegationInput.parentItemId)?.collaborationAction.target)
+      .toEqual({ threadId: delegation.childThread.id, turnId: firstTurn.id });
+  });
+
+  it("links an injected message to the active child turn without creating a turn", () => {
+    startCanonicalParent(sink, db);
+    const delegationInput = {
+      parentThreadId: THREAD_ID,
+      parentTurnId: TURN_ID,
+      parentExecutionId: EXECUTION_ID,
+      parentItemId: "toolCall:spawn-active-message",
+      receiverThreadIds: ["native-child-active-message"],
+      providerIdentities: [] as ProviderIdentity[],
+    };
+    const delegation = sink.startCodexChildDelegation(delegationInput);
+    const childTurn = sink.startCodexChildTurn({
+      ...delegationInput,
+      nativeThreadId: "native-child-active-message",
+      nativeTurnId: "native-child-active-turn",
+    });
+
+    const messageAction = sink.recordCollaborationAction({
+      actionId: "collaboration:message-active",
+      kind: "message",
+      sourceThreadId: THREAD_ID,
+      sourceTurnId: TURN_ID,
+      sourceExecutionId: EXECUTION_ID,
+      sourceItemId: "toolCall:message-active",
+      targetThreadId: delegation.childThread.id,
+      status: "Acknowledged",
+      providerIdentities: [],
+      payload: { prompt: "Use the existing turn." },
+    });
+
+    expect(messageAction.target).toEqual({
+      threadId: delegation.childThread.id,
+      turnId: childTurn.id,
+    });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM canonical_agent_turns WHERE thread_id = ?")
+      .get(delegation.childThread.id)).toEqual({ count: 1 });
+  });
+
+  it("starts a parent assistant turn only from a recorded child continuation action", () => {
+    startCanonicalParent(sink, db);
+    const delegationInput = {
+      parentThreadId: THREAD_ID,
+      parentTurnId: TURN_ID,
+      parentExecutionId: EXECUTION_ID,
+      parentItemId: "toolCall:spawn-parent-continuation",
+      receiverThreadIds: ["native-child-parent-continuation"],
+      providerIdentities: [] as ProviderIdentity[],
+    };
+    const delegation = sink.startCodexChildDelegation(delegationInput);
+    const childTurn = sink.startCodexChildTurn({
+      ...delegationInput,
+      nativeThreadId: "native-child-parent-continuation",
+      nativeTurnId: "native-child-turn-parent-continuation",
+    });
+    const childExecutionId = sink.loadExecutionIdForTurn(childTurn.id);
+    const action = sink.recordCollaborationAction({
+      actionId: "collaboration:child-return-parent",
+      kind: "return-result",
+      sourceThreadId: delegation.childThread.id,
+      sourceTurnId: childTurn.id,
+      sourceExecutionId: childExecutionId,
+      sourceItemId: "item:child-return-parent",
+      targetThreadId: THREAD_ID,
+      status: "Dispatched",
+      providerIdentities: [{
+        providerId: "codex",
+        scope: "item",
+        value: "native-return-parent",
+        provenance: "native",
+      }],
+      payload: { projection: "codexCollaboration" },
+    });
+    const restoredSink = new CanonicalAgentEventSink(db, vi.fn());
+    expect(restoredSink.loadCollaborationActionBySourceProviderIdentity(
+      delegation.childThread.id,
+      childTurn.id,
+      {
+        providerId: "codex",
+        scope: "item",
+        value: "native-return-parent",
+        provenance: "native",
+      },
+    )?.id).toBe(action.id);
+    restoredSink.recordCollaborationAction({
+      actionId: "collaboration:child-return-parent-ambiguous",
+      kind: "return-result",
+      sourceThreadId: delegation.childThread.id,
+      sourceTurnId: childTurn.id,
+      sourceExecutionId: childExecutionId,
+      sourceItemId: "item:child-return-parent-ambiguous",
+      targetThreadId: THREAD_ID,
+      status: "Dispatched",
+      providerIdentities: [
+        {
+          providerId: "codex",
+          scope: "item",
+          value: "native-return-parent",
+          provenance: "native",
+        },
+      ],
+      payload: { projection: "codexCollaboration" },
+    });
+    expect(() => restoredSink.loadCollaborationActionBySourceProviderIdentity(
+      delegation.childThread.id,
+      childTurn.id,
+      {
+        providerId: "codex",
+        scope: "item",
+        value: "native-return-parent",
+        provenance: "native",
+      },
+    )).toThrow("ambiguous");
+    published.mockClear();
+
+    const continuation = sink.startProviderContinuation({
+      parentThreadId: THREAD_ID,
+      turnId: "turn:provider-continuation",
+      executionId: "00000000-0000-4000-8000-000000000002",
+      permissionMode: "full",
+      providerIdentities: [],
+      triggerActionId: action.id,
+    });
+
+    expect(continuation.threadId).toBe(THREAD_ID);
+    expect(continuation.trigger).toEqual({
+      kind: "child",
+      sourceThreadId: delegation.childThread.id,
+      sourceTurnId: childTurn.id,
+      sourceItemId: "item:child-return-parent",
+    });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM canonical_agent_items WHERE thread_id = ? AND kind = 'message'")
+      .get(THREAD_ID)).toEqual({ count: 1 });
+    expect(sink.loadCollaborationAction(action.id)?.target).toEqual({
+      threadId: THREAD_ID,
+      turnId: continuation.id,
+    });
+    expect(published).toHaveBeenCalledTimes(2);
+    expect(published.mock.calls[0]![0].every((event) => (
+      event.routing.threadId === delegation.childThread.id
+    ))).toBe(true);
+    expect(published.mock.calls[1]![0].every((event) => (
+      event.routing.threadId === THREAD_ID
+    ))).toBe(true);
+  });
+
+  it("rolls back continuation acknowledgement when parent turn creation fails", () => {
+    startCanonicalParent(sink, db);
+    const delegationInput = {
+      parentThreadId: THREAD_ID,
+      parentTurnId: TURN_ID,
+      parentExecutionId: EXECUTION_ID,
+      parentItemId: "toolCall:spawn-parent-continuation-rollback",
+      receiverThreadIds: ["native-child-parent-continuation-rollback"],
+      providerIdentities: [] as ProviderIdentity[],
+    };
+    const delegation = sink.startCodexChildDelegation(delegationInput);
+    const childTurn = sink.startCodexChildTurn({
+      ...delegationInput,
+      nativeThreadId: "native-child-parent-continuation-rollback",
+      nativeTurnId: "native-child-turn-parent-continuation-rollback",
+    });
+    const action = sink.recordCollaborationAction({
+      actionId: "collaboration:child-return-parent-rollback",
+      kind: "return-result",
+      sourceThreadId: delegation.childThread.id,
+      sourceTurnId: childTurn.id,
+      sourceExecutionId: sink.loadExecutionIdForTurn(childTurn.id),
+      sourceItemId: "item:child-return-parent-rollback",
+      targetThreadId: THREAD_ID,
+      status: "Dispatched",
+      providerIdentities: [],
+      payload: { projection: "codexCollaboration" },
+    });
+    published.mockClear();
+    db.exec(`
+      CREATE TRIGGER reject_provider_continuation_turn
+      BEFORE INSERT ON canonical_agent_turns
+      WHEN NEW.id = 'turn:provider-continuation-rollback'
+      BEGIN
+        SELECT RAISE(ABORT, 'forced provider continuation failure');
+      END;
+    `);
+
+    expect(() => sink.startProviderContinuation({
+      parentThreadId: THREAD_ID,
+      turnId: "turn:provider-continuation-rollback",
+      executionId: "00000000-0000-4000-8000-000000000003",
+      permissionMode: "full",
+      providerIdentities: [],
+      triggerActionId: action.id,
+    })).toThrow("forced provider continuation failure");
+
+    expect(db.prepare("SELECT COUNT(*) AS count FROM canonical_agent_turns WHERE id = ?")
+      .get("turn:provider-continuation-rollback")).toEqual({ count: 0 });
+    expect(sink.loadCollaborationAction(action.id)?.target).toEqual({
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+    });
+    expect(sink.loadCollaborationAction(action.id)?.status).toBe("Dispatched");
+    expect(published).not.toHaveBeenCalled();
+  });
+
   it("retains a bounded diagnostic when attributed child routing cannot persist", () => {
     startCanonicalParent(sink, db);
     sink.startCodexChildDelegation({

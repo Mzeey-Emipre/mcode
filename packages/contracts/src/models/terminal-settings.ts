@@ -118,6 +118,18 @@ export const WorkspaceTerminalPreferenceSchema = lazySchema(() =>
     .strict(),
 );
 
+/** Recovery details exposed while a persisted Terminal document is blocked. */
+export const TerminalProfileRecoverySchema = lazySchema(() =>
+  z
+    .object({
+      status: z.literal("blocked"),
+      reason: z.enum(["malformed", "future-version", "missing-profile-reference", "migration-write-failed"]),
+      blockedProfiles: z.array(TerminalCustomProfileSchema()).max(32),
+      unavailableProfileId: TerminalProfileReferenceSchema().nullable(),
+    })
+    .strict(),
+);
+
 /** Mutable Terminal preferences accepted by the dedicated update operation. */
 export const TerminalPreferencesUpdateSchema = lazySchema(() =>
   z
@@ -185,5 +197,7 @@ export type TerminalSettingsDocument = z.infer<ReturnType<typeof TerminalSetting
 export type TerminalSettings = z.infer<ReturnType<typeof TerminalSettingsSchema>>;
 /** Workspace Terminal profile preference. */
 export type WorkspaceTerminalPreference = z.infer<ReturnType<typeof WorkspaceTerminalPreferenceSchema>>;
+/** Recovery details exposed while a persisted Terminal document is blocked. */
+export type TerminalProfileRecovery = z.infer<ReturnType<typeof TerminalProfileRecoverySchema>>;
 /** Partial dedicated Terminal preferences update. */
 export type TerminalPreferencesUpdate = z.infer<ReturnType<typeof TerminalPreferencesUpdateSchema>>;

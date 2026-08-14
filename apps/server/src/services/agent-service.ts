@@ -8,7 +8,7 @@
 import { injectable, inject, delay } from "tsyringe";
 import { existsSync, statSync } from "fs";
 import { isAbsolute } from "path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { logger, validateBranchName } from "@mcode/shared";
 import {
   AgentEventType,
@@ -42,6 +42,7 @@ import type {
   ProviderFileMutationStart,
   TurnRuntimeSnapshot,
   AgentStopResult,
+  CollaborationActionKind,
 } from "@mcode/contracts";
 import { ThreadRepo } from "../repositories/thread-repo";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
@@ -2670,6 +2671,24 @@ export class AgentService {
             ),
           };
         }
+        if (
+          (event.type === AgentEventType.ToolUse || event.type === AgentEventType.ToolResult)
+          && !("codexChild" in event && event.codexChild)
+        ) {
+          this.recordCodexCollaborationAction(event, `toolCall:${event.toolCallId}`);
+        }
+        if (
+          event.type === AgentEventType.TurnStarted
+          && "codexContinuation" in event
+          && event.codexContinuation
+          && !this.startCodexProviderContinuationFromEvent(event)
+        ) {
+          logger.warn("Ignoring provider continuation without canonical collaboration action", {
+            threadId: event.threadId,
+            turnExecutionId: event.turnExecutionId,
+          });
+          return;
+        }
         if ("codexChild" in event && event.codexChild && this.handleCodexChildProviderEvent(event)) return;
         const priorFinalization = this.fileTrackingFinalizationByThread.get(event.threadId);
         const existingBarrier = this.providerEventBarrierByThread.get(event.threadId);
@@ -3431,7 +3450,11 @@ export class AgentService {
         parentTurnId: parentTurn.id,
         parentExecutionId: executionId,
         parentItemId: `toolCall:${event.toolCallId}`,
-        receiverThreadIds: [],
+        receiverThreadIds: Array.isArray(event.toolInput.receiverThreadIds)
+          ? event.toolInput.receiverThreadIds.filter((value): value is string => (
+              typeof value === "string" && value.trim().length > 0
+            )).map((value) => value.trim().slice(0, 512)).slice(0, 32)
+          : [],
         description,
         prompt,
         identity,
@@ -3445,6 +3468,252 @@ export class AgentService {
         toolCallId: event.toolCallId,
         error: error instanceof Error ? error.message : String(error),
       });
+    }
+  }
+
+  /** Map one explicit Codex collaboration tool name to the canonical action kind. */
+  private codexCollaborationKind(event: AgentEvent): CollaborationActionKind | undefined {
+    if (event.type !== AgentEventType.ToolUse && event.type !== AgentEventType.ToolResult) return undefined;
+    const value = event.toolInput?.codexCollabKind;
+    if (typeof value !== "string") return undefined;
+    const normalized = value.toLowerCase().replace(/[_-]/g, "");
+    if (normalized === "spawnagent") return undefined;
+    if (normalized === "sendinput" || normalized === "sendmessage") return "message";
+    if (normalized === "followup") return "follow-up";
+    if (normalized === "resume" || normalized === "resumeagent") return "resume";
+    if (normalized === "returnresult") return "return-result";
+    if (normalized === "permission" || normalized === "requestpermission") return "permission";
+    if (normalized === "clarification" || normalized === "requestclarification") return "clarification";
+    return undefined;
+  }
+
+  /** Persist one Codex collaboration action only when exact source and target IDs resolve. */
+  private recordCodexCollaborationAction(
+    event: Extract<AgentEvent, { type: typeof AgentEventType.ToolUse | typeof AgentEventType.ToolResult }>,
+    sourceItemId?: string,
+  ): void {
+    const isResult = event.type === AgentEventType.ToolResult;
+    const kind = this.codexCollaborationKind(event);
+    if (!kind) return;
+    const evidence = "codexChild" in event ? event.codexChild : undefined;
+    const senderThreadId = typeof event.toolInput?.senderThreadId === "string"
+      ? event.toolInput.senderThreadId.trim().slice(0, 512)
+      : evidence?.nativeThreadId;
+    const receiverThreadIds = Array.isArray(event.toolInput?.receiverThreadIds)
+      ? [...new Set(event.toolInput.receiverThreadIds.filter((value): value is string => (
+          typeof value === "string" && value.trim().length > 0
+        )).map((value) => value.trim().slice(0, 512)))]
+      : [];
+    const sourceThread = evidence?.nativeThreadId
+      ? this.canonicalSink.loadThreadByProviderIdentity({
+          providerId: "codex",
+          scope: "thread",
+          value: evidence.nativeThreadId,
+          provenance: "native",
+        })
+      : this.canonicalSink.loadThread(event.threadId);
+    if (!sourceThread) return;
+    const sourceTurn = evidence?.nativeTurnId
+      ? this.canonicalSink.loadTurnByProviderIdentity(sourceThread.id, {
+          providerId: "codex",
+          scope: "turn",
+          value: evidence.nativeTurnId,
+          provenance: "native",
+        })
+      : event.turnExecutionId
+        ? this.canonicalSink.loadTurnByExecution(event.turnExecutionId)
+        : null;
+    if (!sourceTurn || sourceTurn.threadId !== sourceThread.id) return;
+    if (senderThreadId) {
+      const senderThread = this.canonicalSink.loadThreadByProviderIdentity({
+        providerId: "codex",
+        scope: "thread",
+        value: senderThreadId,
+        provenance: "native",
+      });
+      if (!senderThread || senderThread.id !== sourceThread.id) return;
+    }
+    const nativeItemId = event.toolCallId;
+    if (isResult) {
+      const action = this.canonicalSink.loadCollaborationActionBySourceProviderIdentity(
+        sourceThread.id,
+        sourceTurn.id,
+        {
+          providerId: "codex",
+          scope: "item",
+          value: nativeItemId,
+          provenance: "native",
+        },
+      );
+      if (!action) return;
+      const targetThreadId = action.target.threadId;
+      try {
+        this.canonicalSink.recordCollaborationAction({
+          actionId: action.id,
+          kind: action.kind,
+          sourceThreadId: action.source.threadId,
+          sourceTurnId: action.source.turnId,
+          sourceExecutionId: this.canonicalSink.loadExecutionIdForTurn(action.source.turnId),
+          sourceItemId: action.source.itemId,
+          targetThreadId,
+          ...(action.target.turnId ? { targetTurnId: action.target.turnId } : {}),
+          status: event.isError ? "Failed" : "Acknowledged",
+          providerIdentities: action.providerIdentities,
+          payload: this.codexActionPayload(event, action.kind),
+        });
+      } catch (error) {
+        logger.warn("Codex collaboration result persistence failed", {
+          toolCallId: event.toolCallId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      return;
+    }
+    if (!sourceItemId || receiverThreadIds.length !== 1) return;
+    const targetThread = this.canonicalSink.loadThreadByProviderIdentity({
+      providerId: "codex",
+      scope: "thread",
+      value: receiverThreadIds[0]!,
+      provenance: "native",
+    });
+    if (!targetThread || targetThread.id === sourceThread.id) return;
+    const actionId = `collaboration:codex:${createHash("sha256")
+      .update(`${sourceThread.id}:${sourceTurn.id}:${sourceItemId}:${kind}`)
+      .digest("hex")}`;
+    try {
+      this.canonicalSink.recordCollaborationAction({
+        actionId,
+        kind,
+        sourceThreadId: sourceThread.id,
+        sourceTurnId: sourceTurn.id,
+        sourceExecutionId: this.canonicalSink.loadExecutionIdForTurn(sourceTurn.id),
+        sourceItemId,
+        targetThreadId: targetThread.id,
+        status: "Dispatched",
+        providerIdentities: [
+          ...(senderThreadId ? [{
+            providerId: "codex" as const,
+            scope: "thread" as const,
+            value: senderThreadId,
+            provenance: "native" as const,
+          }] : []),
+          ...receiverThreadIds.map((value) => ({
+            providerId: "codex" as const,
+            scope: "thread" as const,
+            value,
+            provenance: "native" as const,
+          })),
+          {
+            providerId: "codex" as const,
+            scope: "item" as const,
+            value: nativeItemId,
+            provenance: "native" as const,
+          },
+          ...(evidence?.nativeItemId ? [{
+            providerId: "codex" as const,
+            scope: "item" as const,
+            value: evidence.nativeItemId,
+            provenance: "native" as const,
+          }] : []),
+        ],
+        payload: this.codexActionPayload(event, kind),
+      });
+    } catch (error) {
+      logger.warn("Codex collaboration action persistence failed", {
+        toolCallId: event.toolCallId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /** Keep collaboration payloads small while retaining exact provider routing evidence. */
+  private codexActionPayload(
+    event: Extract<AgentEvent, { type: typeof AgentEventType.ToolUse | typeof AgentEventType.ToolResult }>,
+    kind: CollaborationActionKind,
+  ): Record<string, unknown> {
+    const input = event.toolInput ?? {};
+    const prompt = typeof input.prompt === "string" ? input.prompt.slice(0, 32_768) : undefined;
+    return {
+      projection: "codexCollaboration",
+      kind,
+      ...(event.type === AgentEventType.ToolUse ? { toolName: event.toolName } : {}),
+      toolCallId: event.toolCallId.slice(0, 512),
+      ...(typeof input.senderThreadId === "string" ? { senderThreadId: input.senderThreadId.slice(0, 512) } : {}),
+      ...(Array.isArray(input.receiverThreadIds)
+        ? {
+            receiverThreadIds: input.receiverThreadIds
+              .filter((value): value is string => typeof value === "string")
+              .slice(0, 32)
+              .map((value) => value.slice(0, 512)),
+          }
+        : {}),
+      ...(prompt ? { prompt } : {}),
+      ...(event.type === AgentEventType.ToolResult ? { isError: event.isError } : {}),
+    };
+  }
+
+  /** Start a parent turn only when Codex proves the exact child action that triggered it. */
+  private startCodexProviderContinuationFromEvent(
+    event: Extract<AgentEvent, { type: typeof AgentEventType.TurnStarted }>,
+  ): boolean {
+    const evidence = event.codexContinuation;
+    if (!evidence || !event.turnExecutionId) return false;
+    const sourceThread = this.canonicalSink.loadThreadByProviderIdentity({
+      providerId: "codex",
+      scope: "thread",
+      value: evidence.sourceNativeThreadId,
+      provenance: "native",
+    });
+    if (!sourceThread) return false;
+    const sourceTurn = this.canonicalSink.loadTurnByProviderIdentity(sourceThread.id, {
+      providerId: "codex",
+      scope: "turn",
+      value: evidence.sourceNativeTurnId,
+      provenance: "native",
+    });
+    if (!sourceTurn) return false;
+    const targetThread = this.canonicalSink.loadThreadByProviderIdentity({
+      providerId: "codex",
+      scope: "thread",
+      value: evidence.targetNativeThreadId,
+      provenance: "native",
+    });
+    if (!targetThread || targetThread.id !== event.threadId) return false;
+    const triggerAction = this.canonicalSink.loadCollaborationActionBySourceProviderIdentity(
+      sourceThread.id,
+      sourceTurn.id,
+      {
+        providerId: "codex",
+        scope: "item",
+        value: evidence.sourceNativeItemId,
+        provenance: "native",
+      },
+    );
+    if (!triggerAction) return false;
+    const parentThread = this.canonicalSink.loadThread(event.threadId);
+    if (!parentThread || parentThread.id !== targetThread.id) return false;
+    try {
+      this.canonicalSink.startProviderContinuation({
+        parentThreadId: parentThread.id,
+        turnId: randomUUID(),
+        executionId: event.turnExecutionId,
+        permissionMode: this.threadRepo.findById(parentThread.id)?.permission_mode === "full"
+          ? "full"
+          : "supervised",
+        providerIdentities: parentThread.providerIdentities,
+        triggerActionId: triggerAction.id,
+      });
+      this.threadRepo.updateStatus(parentThread.id, "active");
+      return true;
+    } catch (error) {
+      logger.warn("Codex provider continuation persistence failed", {
+        threadId: event.threadId,
+        sourceNativeThreadId: evidence.sourceNativeThreadId,
+        sourceNativeTurnId: evidence.sourceNativeTurnId,
+        sourceNativeItemId: evidence.sourceNativeItemId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return false;
     }
   }
 
@@ -3515,7 +3784,7 @@ export class AgentService {
         return true;
       }
       if (event.type === AgentEventType.ToolUse) {
-        this.canonicalSink.recordCodexChildItem({
+        const childItem = this.canonicalSink.recordCodexChildItem({
           childThreadId: childThread.id,
           nativeTurnId: evidence.nativeTurnId,
           nativeItemId: evidence.nativeItemId ?? event.toolCallId,
@@ -3527,6 +3796,7 @@ export class AgentService {
             toolInput: event.toolInput,
           },
         });
+        this.recordCodexCollaborationAction(event, childItem.id);
         return true;
       }
       if (event.type === AgentEventType.ToolResult) {
@@ -3552,6 +3822,7 @@ export class AgentService {
                 },
               },
         });
+        this.recordCodexCollaborationAction(event);
         return true;
       }
       if (event.type === AgentEventType.Message) {

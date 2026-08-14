@@ -3920,14 +3920,28 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
       return;
     }
 
+    if (event.type === "mcpServerStartupStatus") {
+      if (
+        event.status === "failed"
+        && useWorkspaceStore.getState().activeThreadId === threadId
+      ) {
+        const reason = event.error || event.failureReason || "Startup failed";
+        useToastStore.getState().show(
+          "error",
+          "MCP server unavailable",
+          `The turn will continue without it. ${event.name}: ${reason}`,
+        );
+      }
+      return;
+    }
+
     // These event types are either consumed server-side or have no thread
     // conversation effect in the current web client.
     if (
       event.type === "generatedAttachment" ||
       event.type === "compactSummary" ||
       event.type === "toolInputDelta" ||
-      event.type === "providerUnavailable" ||
-      event.type === "mcpServerStartupStatus"
+      event.type === "providerUnavailable"
     ) {
       return;
     }

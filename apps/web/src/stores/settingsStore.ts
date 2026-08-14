@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { getDefaultSettings, SettingsSchema, type Settings, type PartialSettings } from "@mcode/contracts";
+import { getDefaultSettings, SettingsSchema, type Settings, type PartialSettings, type TerminalSettings } from "@mcode/contracts";
 import { getTransport } from "@/transport";
 
 /**
@@ -94,6 +94,8 @@ interface SettingsState {
   fetch: () => Promise<void>;
   /** Update settings via server (deep merge). */
   update: (partial: DeepPartial<Settings>) => Promise<void>;
+  /** Apply the server result of a safe Terminal preference update. */
+  _applyTerminalPreferences: (terminal: Pick<TerminalSettings, "presentation" | "behavior" | "accessibility">) => void;
   /**
    * Apply a server push update. Validates the payload with Zod before
    * applying; invalid data is silently ignored to guard against wire corruption.
@@ -154,6 +156,18 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     } catch {
       // Best-effort: server-side state is unchanged, local state stays as-is.
     }
+  },
+
+  _applyTerminalPreferences: (terminal) => {
+    set((state) => ({
+      settings: {
+        ...state.settings,
+        terminal: {
+          ...state.settings.terminal,
+          ...terminal,
+        },
+      },
+    }));
   },
 
   _applyPush: (raw) => {

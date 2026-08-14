@@ -8,7 +8,7 @@ import { useProviderModelsStore } from "@/stores/providerModelsStore";
 import { useProviderAvailabilityStore } from "@/stores/providerAvailabilityStore";
 
 /** Re-exported transport and domain types for use across the web app. */
-export type { McodeTransport, Workspace, Thread, Message, ToolCall, HookExecution, GitBranch, GitRemoteUrl, WorktreeInfo, PermissionMode, InteractionMode, AttachmentMeta, StoredAttachment, ProviderCatalogRequest, ProviderCatalogSnapshot, PrInfo, PrDetail, PullRequestCapabilities, PullRequestCapabilityLimitation, PullRequestError, PullRequestIdentity, PullRequestRelationship, PullRequestState, PullRequestSummary, PullRequestFile, PullRequestFileChangeType, PullRequestFilePatchStatus, PullRequestPatchResult, ToolCallRecord, ThoughtSegmentRecord, HookExecutionRecord, Settings, PartialSettings, PlanAnswer } from "./types";
+export type { McodeTransport, Workspace, Thread, Message, ToolCall, HookExecution, GitBranch, GitRemoteUrl, WorktreeInfo, PermissionMode, InteractionMode, AttachmentMeta, StoredAttachment, ProviderCatalogRequest, ProviderCatalogSnapshot, PrInfo, PrDetail, PullRequestCapabilities, PullRequestCapabilityLimitation, PullRequestError, PullRequestIdentity, PullRequestRelationship, PullRequestState, PullRequestSummary, PullRequestFile, PullRequestFileChangeType, PullRequestFilePatchStatus, PullRequestPatchResult, ToolCallRecord, ThoughtSegmentRecord, HookExecutionRecord, Settings, PartialSettings, PlanAnswer, TerminalProfileList, TerminalWorkspacePreference, TerminalPreferencesResult } from "./types";
 export { PERMISSION_MODES, INTERACTION_MODES } from "./types";
 export { pushEmitter } from "./ws-transport";
 

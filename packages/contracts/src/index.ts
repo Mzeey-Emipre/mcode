@@ -1021,6 +1021,7 @@ export {
   TerminalHydrationDescriptorSchema,
   TerminalErrorCodeSchema,
   TerminalRetryClassSchema,
+  TerminalProfileInUseDataSchema,
   TerminalErrorSchema,
   TerminalV1BackendCapabilitiesSchema,
 } from "./models/terminal.js";
@@ -1039,6 +1040,7 @@ export type {
   TerminalHydrationDescriptor,
   TerminalErrorCode,
   TerminalRetryClass,
+  TerminalProfileInUseData,
   TerminalError,
   TerminalV1BackendCapabilities,
 } from "./models/terminal.js";
@@ -1080,6 +1082,7 @@ export {
   TerminalSettingsSchema,
   TerminalSettingsDocumentSchema,
   WorkspaceTerminalPreferenceSchema,
+  TerminalProfileRecoverySchema,
   TerminalPreferencesUpdateSchema,
   migrateLegacyTerminalScrollback,
   getDefaultTerminalSettingsDocument,
@@ -1088,6 +1091,7 @@ export type {
   TerminalSettingsDocument,
   TerminalSettings,
   WorkspaceTerminalPreference,
+  TerminalProfileRecovery,
   TerminalPreferencesUpdate,
 } from "./models/terminal-settings.js";
 
