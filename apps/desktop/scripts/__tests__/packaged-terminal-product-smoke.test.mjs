@@ -103,6 +103,9 @@ describe("packaged Terminal product smoke contract", () => {
     expect(buildLoopbackIsolationPlan("darwin", executable).args.join(" ")).toContain(
       'localhost:*',
     );
+    expect(buildLoopbackIsolationPlan("darwin", executable).args.join(" ")).toContain(
+      "(allow default)",
+    );
     expect(buildLoopbackIsolationPlan("darwin", executable).args.join(" ")).not.toContain(
       "127.0.0.1:*",
     );
