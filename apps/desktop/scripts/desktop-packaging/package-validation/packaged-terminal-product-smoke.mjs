@@ -303,7 +303,8 @@ function findPackagedTarget(releaseDir, platform, arch) {
 /** Builds the isolated packaged Electron launch command for one target OS. */
 export function buildProductLaunch({ target, isolationReceipt, launchArgs }) {
   const executablePath = path.resolve(target.executablePath);
-  const isolatedLaunchArgs = ["--no-sandbox", ...launchArgs];
+  const cdpLaunchArgs = ["--remote-allow-origins=*", ...launchArgs];
+  const isolatedLaunchArgs = ["--no-sandbox", ...cdpLaunchArgs];
   if (isolationReceipt.mode === "linux-network-namespace") {
     return {
       command: "xvfb-run",
@@ -329,7 +330,7 @@ export function buildProductLaunch({ target, isolationReceipt, launchArgs }) {
       env: {},
     };
   }
-  return { command: executablePath, args: launchArgs, env: {} };
+  return { command: executablePath, args: cdpLaunchArgs, env: {} };
 }
 
 async function loadProcessCleanupWorkload() {
@@ -437,23 +438,6 @@ export function releaseProductProcess(child) {
   child.unref();
 }
 
-/** Bypasses inherited runner proxies only while opening a loopback CDP connection. */
-export async function connectToLoopbackCdp(env, connect) {
-  const previousNoProxy = env.NO_PROXY;
-  const previousLowercaseNoProxy = env.no_proxy;
-  const loopbackHosts = "127.0.0.1,localhost";
-  env.NO_PROXY = [previousNoProxy, loopbackHosts].filter(Boolean).join(",");
-  env.no_proxy = [previousLowercaseNoProxy, loopbackHosts].filter(Boolean).join(",");
-  try {
-    return await connect();
-  } finally {
-    if (previousNoProxy === undefined) delete env.NO_PROXY;
-    else env.NO_PROXY = previousNoProxy;
-    if (previousLowercaseNoProxy === undefined) delete env.no_proxy;
-    else env.no_proxy = previousLowercaseNoProxy;
-  }
-}
-
 async function runProductBoot({ target, env, bootFault, isolationReceipt, workload }) {
   const bootStartedAt = performance.now();
   const cdpPort = 39_000 + (parseInt(randomUUID().slice(0, 4), 16) % 500);
@@ -481,9 +465,9 @@ async function runProductBoot({ target, env, bootFault, isolationReceipt, worklo
     let connectionError = "";
     while (Date.now() < deadline) {
       try {
-        return await connectToLoopbackCdp(process.env, () =>
-          chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`, { timeout: 1_000 }),
-        );
+        return await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`, {
+          timeout: 1_000,
+        });
       } catch (error) {
         connectionError = error instanceof Error ? error.message : String(error);
         if (child.exitCode !== null) break;

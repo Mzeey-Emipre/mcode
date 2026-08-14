@@ -9,7 +9,6 @@ import {
   buildProductLaunch,
   cleanupLoopbackIsolation,
   classifyProductSmokeOutcome,
-  connectToLoopbackCdp,
   hashPackagedResources,
   parseProductSmokeArguments,
   pollProcessCleanup,
@@ -126,6 +125,7 @@ describe("packaged Terminal product smoke contract", () => {
     ]);
     expect(linuxLaunch.args.at(-1)).toBe("--remote-debugging-port=39000");
     expect(linuxLaunch.args).toContain("--no-sandbox");
+    expect(linuxLaunch.args).toContain("--remote-allow-origins=*");
     expect(linuxLaunch.env.MCODE_RELEASE_PROGRAM).toBe(path.resolve(executable));
     const macLaunch = buildProductLaunch({
       target: { executablePath: executable },
@@ -133,6 +133,7 @@ describe("packaged Terminal product smoke contract", () => {
       launchArgs: ["--remote-debugging-port=39000"],
     });
     expect(macLaunch.args).toContain("--no-sandbox");
+    expect(macLaunch.args).toContain("--remote-allow-origins=*");
     expect(() =>
       assertLoopbackIsolationReceipt({ mode: "none", loopbackAllowed: false }),
     ).toThrow("not installed");
@@ -165,18 +166,6 @@ describe("packaged Terminal product smoke contract", () => {
     ]);
   });
 
-  it("bypasses runner proxies only during loopback CDP connection", async () => {
-    const env = { NO_PROXY: "internal.example", no_proxy: "service.local" };
-    const observed = await connectToLoopbackCdp(env, () => ({
-      upper: env.NO_PROXY,
-      lower: env.no_proxy,
-    }));
-    expect(observed).toEqual({
-      upper: "internal.example,127.0.0.1,localhost",
-      lower: "service.local,127.0.0.1,localhost",
-    });
-    expect(env).toEqual({ NO_PROXY: "internal.example", no_proxy: "service.local" });
-  });
 
   it("hashes only Terminal and native artifacts", () => {
     const root = mkdtempSync(path.join(tmpdir(), "mcode-product-hash-"));
