@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { createHash, randomUUID } from "node:crypto";
 import { inject, injectable } from "tsyringe";
 import {
   AgentItemSchema,
@@ -50,6 +51,7 @@ export interface CanonicalAgentEventDraft {
   sourceProviderId: string;
   sourceIdentities: readonly ProviderIdentity[];
   sourceSequence?: number;
+  rosterRevision?: number;
   providerTimestamp?: string;
   /** Volatile drafts can be truncated so structural and terminal drafts always retain capacity. */
   ingestClass?: "volatile";
@@ -123,6 +125,59 @@ export interface CanonicalParentTurnFinishInput {
   finalizeCompatibility?: () => void;
 }
 
+/** Input used to provision one Codex provider-native child thread. */
+export interface CodexChildDelegationInput {
+  parentThreadId: string;
+  parentTurnId: string;
+  parentExecutionId: string;
+  parentItemId: string;
+  receiverThreadIds?: readonly string[];
+  description?: string;
+  prompt?: string;
+  providerIdentities: readonly ProviderIdentity[];
+}
+
+/** Durable canonical records created for one Codex child delegation. */
+export interface CodexChildDelegation {
+  childThread: AgentThread;
+  parentItem: AgentItem;
+  collaborationAction: CollaborationAction;
+}
+
+/** Input used to attach exact Codex receiver and child-native identities. */
+export interface CodexChildIdentityInput {
+  parentThreadId: string;
+  parentTurnId: string;
+  parentExecutionId: string;
+  parentItemId: string;
+  nativeThreadId: string;
+}
+
+/** Input used to persist one exact Codex child turn start. */
+export interface CodexChildTurnStartInput extends CodexChildIdentityInput {
+  nativeTurnId: string;
+  prompt?: string;
+}
+
+/** Input used to persist one child semantic item under its canonical turn. */
+export interface CodexChildItemInput {
+  childThreadId: string;
+  nativeTurnId: string;
+  nativeItemId: string;
+  eventKey: string;
+  kind: AgentItem["kind"];
+  payload: Record<string, unknown>;
+  parentItemId?: string;
+}
+
+/** Input used to persist one exact Codex child terminal outcome. */
+export interface CodexChildTurnFinishInput {
+  childThreadId: string;
+  nativeTurnId: string;
+  outcome: "completed" | "errored" | "cancelled";
+  error?: string;
+}
+
 /** Durable canonical context included with one bounded diagnostic export. */
 export interface CanonicalTurnDiagnosticContext {
   thread: AgentThread;
@@ -149,6 +204,48 @@ type EventApplication = {
   event: CanonicalAgentEventEnvelope;
   outcome: ReturnType<typeof reduceAgentEvent>["outcome"];
 };
+
+function hashCodexKey(value: string): string {
+  return createHash("sha256").update(value).digest("hex").slice(0, 32);
+}
+
+function isCodexSpawnRecord(record: unknown): boolean {
+  if (!record || typeof record !== "object") return false;
+  const value = record as Record<string, unknown>;
+  const input = value.tool_input;
+  if (!input || typeof input !== "object") return false;
+  const toolInput = input as Record<string, unknown>;
+  return toolInput.codexCollabKind === "spawnAgent";
+}
+
+function codexChildOwnedToolCallIds(
+  narrative: readonly NarrativeEntry[],
+): ReadonlySet<string> {
+  const childrenByParent = new Map<string, string[]>();
+  const owned = new Set<string>();
+  for (const entry of narrative) {
+    if (entry.kind !== "toolCall") continue;
+    const record = entry.record as Record<string, unknown>;
+    if (typeof record.id !== "string") continue;
+    if (isCodexSpawnRecord(record)) owned.add(record.id);
+    if (typeof record.parent_tool_call_id !== "string") continue;
+    const children = childrenByParent.get(record.parent_tool_call_id) ?? [];
+    children.push(record.id);
+    childrenByParent.set(record.parent_tool_call_id, children);
+  }
+
+  const queue = [...owned];
+  for (let index = 0; index < queue.length; index += 1) {
+    const children = childrenByParent.get(queue[index]!);
+    if (!children) continue;
+    for (const childId of children) {
+      if (owned.has(childId)) continue;
+      owned.add(childId);
+      queue.push(childId);
+    }
+  }
+  return owned;
+}
 
 class StructuralIngestOverflow extends Error {
   constructor(
@@ -281,6 +378,72 @@ export class CanonicalAgentEventSink {
     if (input.terminal) this.turnIdByExecution.delete(input.executionId);
   }
 
+  /** Record a bounded diagnostic when structurally attributed Codex child routing fails. */
+  recordCodexChildRoutingDiagnostic(input: {
+    threadId: string;
+    parentItemId?: string;
+    executionId?: string;
+    event: unknown;
+    reason: string;
+  }): boolean {
+    const turnByExecution = input.executionId
+      ? this.loadTurnByExecution(input.executionId)
+      : null;
+    const turnByItem = input.parentItemId
+      ? (() => {
+          const item = this.loadItem(input.parentItemId!);
+          return item ? this.loadTurn(item.turnId) : null;
+        })()
+      : null;
+    const turn = turnByExecution ?? turnByItem;
+    if (!turn || turn.threadId !== input.threadId) return false;
+    this.diagnostics.record({
+      turnId: turn.id,
+      executionId: input.executionId ?? this.executionIdForTurn(turn.id),
+      source: "provider",
+      event: {
+        type: "codex-child-routing-failure",
+        reason: input.reason,
+        event: input.event,
+      },
+    });
+    const executionId = turnByExecution && input.executionId
+      ? input.executionId
+      : this.executionIdForTurn(turn.id);
+    const thread = this.loadThread(turn.threadId);
+    if (!thread) return false;
+    const failureItemId = `item:codex-child-routing-failure:${hashCodexKey(
+      `${turn.id}:${input.parentItemId ?? ""}:${input.reason}`,
+    )}`;
+    if (this.loadItem(failureItemId)) return true;
+    const now = new Date().toISOString();
+    const failureItem: AgentItem = {
+      id: failureItemId,
+      threadId: thread.id,
+      turnId: turn.id,
+      ...(input.parentItemId ? { parentItemId: input.parentItemId } : {}),
+      kind: "error",
+      providerIdentities: thread.providerIdentities,
+      payload: {
+        projection: "codexChildRoutingFailure",
+        status: "action-required",
+        recovery: "retry-child-routing",
+        reason: input.reason,
+        ...(input.parentItemId ? { parentItemId: input.parentItemId } : {}),
+      },
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.commit({
+      threadId: thread.id,
+      turnId: turn.id,
+      executionId,
+      phase: "running",
+      events: [this.itemDraft(executionId, thread, turn, failureItem)],
+    });
+    return true;
+  }
+
   /** Export bounded diagnostics, with separate confirmation for raw content. */
   exportTurnDiagnostics(
     turnId: string,
@@ -400,9 +563,19 @@ export class CanonicalAgentEventSink {
       known.rosterRevision,
       through.rosterRevision,
     );
-    if (!conversationContiguous || !rosterContiguous) return snapshot();
+    if (!conversationContiguous || !rosterContiguous || this.hasInboundCollaboration(threadId)) return snapshot();
 
     return { mode: "delta", threadId, from: known, through, events };
+  }
+
+  private hasInboundCollaboration(threadId: string): boolean {
+    const row = this.db.prepare(`
+      SELECT 1 AS present
+      FROM canonical_collaboration_actions
+      WHERE target_thread_id = ?
+      LIMIT 1
+    `).get(threadId) as { present: number } | undefined;
+    return row?.present === 1;
   }
 
   /** Load one canonical turn record. */
@@ -533,6 +706,420 @@ export class CanonicalAgentEventSink {
     });
     this.cacheTurnExecution(input.executionId, input.turnId);
     return result;
+  }
+
+  /** Load one canonical semantic item. */
+  loadItem(itemId: string): AgentItem | null {
+    const row = this.db.prepare("SELECT * FROM canonical_agent_items WHERE id = ?").get(itemId);
+    return row ? this.itemFromRow(row as Record<string, unknown>) : null;
+  }
+
+  /** Load the one Codex child delegation sourced by a canonical parent item. */
+  loadCodexChildDelegation(
+    parentThreadId: string,
+    parentItemId: string,
+  ): CodexChildDelegation | null {
+    const actionRows = this.db.prepare(`
+      SELECT *
+      FROM canonical_collaboration_actions
+      WHERE source_thread_id = ?
+        AND source_item_id = ?
+        AND kind = 'delegate'
+      ORDER BY created_at ASC, id ASC
+      LIMIT 1
+    `).all(parentThreadId, parentItemId) as Record<string, unknown>[];
+    const actionRow = actionRows[0];
+    if (!actionRow) return null;
+    const collaborationAction = this.actionFromRow(actionRow);
+    const childThread = this.loadThread(collaborationAction.target.threadId);
+    const parentItem = this.loadItem(collaborationAction.source.itemId);
+    if (!childThread || !parentItem) {
+      throw new Error(`Codex child delegation is incomplete: ${parentItemId}`);
+    }
+    return { childThread, parentItem, collaborationAction };
+  }
+
+  /** Provision one Starting child and one directional Dispatched action exactly once. */
+  startCodexChildDelegation(input: CodexChildDelegationInput): CodexChildDelegation {
+    const existing = this.loadCodexChildDelegation(input.parentThreadId, input.parentItemId);
+    if (existing) return existing;
+    const parentThread = this.loadThread(input.parentThreadId);
+    const parentTurn = this.loadTurn(input.parentTurnId);
+    if (!parentThread || !parentTurn || parentTurn.threadId !== parentThread.id) {
+      throw new Error(`Codex parent turn is not canonical: ${input.parentTurnId}`);
+    }
+    const now = new Date().toISOString();
+    const childThread: AgentThread = {
+      id: `thread:codex-child:${randomUUID()}`,
+      workspaceId: parentThread.workspaceId,
+      parentThreadId: parentThread.id,
+      rootThreadId: parentThread.rootThreadId,
+      owningParentThreadId: parentThread.owningParentThreadId ?? parentThread.id,
+      providerId: "codex",
+      providerIdentities: [],
+      activityState: "Starting",
+      conversationRevision: 0,
+      rosterRevision: 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const receiverThreadIds = [...new Set(input.receiverThreadIds ?? [])].filter(Boolean);
+    const receiverIdentities = receiverThreadIds.map((value) => this.codexReceiverIdentity(value));
+    const parentItem: AgentItem = {
+      id: input.parentItemId,
+      threadId: parentThread.id,
+      turnId: parentTurn.id,
+      kind: "tool-call",
+      providerIdentities: [...input.providerIdentities],
+      payload: {
+        projection: "codexSubagent",
+        toolName: "Agent",
+        childThreadId: childThread.id,
+        receiverThreadIds,
+        ...(input.description ? { description: input.description } : {}),
+      },
+      createdAt: now,
+      updatedAt: now,
+    };
+    const collaborationAction: CollaborationAction = {
+      id: `collaboration:codex:${hashCodexKey(`${parentThread.id}:${input.parentItemId}`)}`,
+      kind: "delegate",
+      source: { threadId: parentThread.id, turnId: parentTurn.id, itemId: parentItem.id },
+      target: { threadId: childThread.id },
+      status: "Dispatched",
+      deliveryUnknown: false,
+      providerIdentities: this.uniqueProviderIdentities([
+        ...input.providerIdentities,
+        ...receiverIdentities,
+      ]),
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.commit({
+      threadId: parentThread.id,
+      turnId: parentTurn.id,
+      executionId: input.parentExecutionId,
+      phase: "running",
+      projectCompatibility: () => this.ensureCodexCompatibilityThread(childThread),
+      events: [
+        {
+          eventId: `${input.parentExecutionId}:codex-child:${hashCodexKey(input.parentItemId)}:thread`,
+          routing: { threadId: parentThread.id, executionId: input.parentExecutionId },
+          sourceProviderId: parentThread.providerId,
+          sourceIdentities: [...input.providerIdentities],
+          rosterRevision: parentThread.rosterRevision + 1,
+          payload: { type: "child-thread.recorded", parentThreadId: parentThread.id, childThread },
+        },
+        this.itemDraft(input.parentExecutionId, parentThread, parentTurn, parentItem),
+        this.actionDraft(input.parentExecutionId, parentThread, collaborationAction),
+      ],
+    });
+    return { childThread, parentItem, collaborationAction };
+  }
+
+  /** Add exact Codex receiver-thread identities to a provisional delegation. */
+  registerCodexReceiverThreadIds(
+    input: CodexChildIdentityInput & { receiverThreadIds: readonly string[] },
+  ): CodexChildDelegation {
+    const delegation = this.loadCodexChildDelegation(input.parentThreadId, input.parentItemId);
+    if (!delegation) throw new Error(`Codex child delegation not found: ${input.parentItemId}`);
+    const existingNativeThread = delegation.childThread.providerIdentities.find((identity) => (
+      identity.providerId === "codex" && identity.scope === "thread"
+    ));
+    if (existingNativeThread && existingNativeThread.value !== input.nativeThreadId) {
+      throw new Error(`Codex child native thread identity conflict: ${input.parentItemId}`);
+    }
+    const identities = this.uniqueProviderIdentities([
+      ...delegation.collaborationAction.providerIdentities,
+      ...input.receiverThreadIds.filter(Boolean).map((value) => this.codexReceiverIdentity(value)),
+    ]);
+    const updatedAction: CollaborationAction = {
+      ...delegation.collaborationAction,
+      providerIdentities: identities,
+      updatedAt: new Date().toISOString(),
+    };
+    if (JSON.stringify(updatedAction.providerIdentities)
+      === JSON.stringify(delegation.collaborationAction.providerIdentities)) return delegation;
+    const receiverKey = identities
+      .filter((identity) => identity.scope === "parentItem")
+      .map((identity) => identity.value)
+      .sort()
+      .join("|");
+    this.commitParentCodexAction(input, updatedAction, `receivers:${hashCodexKey(receiverKey)}`);
+    return { ...delegation, collaborationAction: updatedAction };
+  }
+
+  /** Bind a child only when its native thread identity is an exact registered receiver. */
+  bindCodexChildIdentity(input: CodexChildIdentityInput): CodexChildDelegation {
+    const delegation = this.loadCodexChildDelegation(input.parentThreadId, input.parentItemId);
+    if (!delegation) throw new Error(`Codex child delegation not found: ${input.parentItemId}`);
+    const receiver = this.codexReceiverIdentity(input.nativeThreadId);
+    const hasReceiver = delegation.collaborationAction.providerIdentities.some((identity) => (
+      identity.providerId === receiver.providerId
+      && identity.scope === receiver.scope
+      && identity.value === receiver.value
+    ));
+    if (!hasReceiver) {
+      throw new Error(`Codex child identity is not a registered receiver: ${input.nativeThreadId}`);
+    }
+    const existing = delegation.childThread.providerIdentities.find((identity) => (
+      identity.providerId === "codex" && identity.scope === "thread"
+    ));
+    if (existing && existing.value !== input.nativeThreadId) {
+      throw new Error(`Codex child native thread identity conflict: ${input.parentItemId}`);
+    }
+    if (existing) {
+      if (delegation.collaborationAction.status === "Acknowledged") return delegation;
+      const acknowledged: CollaborationAction = {
+        ...delegation.collaborationAction,
+        status: "Acknowledged",
+        updatedAt: new Date().toISOString(),
+      };
+      this.commitParentCodexAction(input, acknowledged, "acknowledge");
+      return { ...delegation, collaborationAction: acknowledged };
+    }
+    const boundThread: AgentThread = {
+      ...delegation.childThread,
+      providerIdentities: [...delegation.childThread.providerIdentities, {
+        providerId: "codex",
+        scope: "thread",
+        value: input.nativeThreadId,
+        provenance: "native",
+      }],
+      updatedAt: new Date().toISOString(),
+    };
+    const acknowledged: CollaborationAction = {
+      ...delegation.collaborationAction,
+      status: "Acknowledged",
+      updatedAt: boundThread.updatedAt,
+    };
+    this.commitParentCodexBinding(input, boundThread, acknowledged);
+    return {
+      childThread: boundThread,
+      parentItem: delegation.parentItem,
+      collaborationAction: acknowledged,
+    };
+  }
+
+  /** Create and start the canonical child turn after exact native turn evidence. */
+  startCodexChildTurn(input: CodexChildTurnStartInput): AgentTurn {
+    const delegation = this.bindCodexChildIdentity(input);
+    const childThread = delegation.childThread.providerIdentities.some((identity) => (
+      identity.providerId === "codex" && identity.scope === "thread" && identity.value === input.nativeThreadId
+    ))
+      ? delegation.childThread
+      : this.loadCodexChildDelegation(input.parentThreadId, input.parentItemId)?.childThread;
+    if (!childThread) throw new Error(`Codex child thread not found: ${input.parentItemId}`);
+    const existing = this.loadCodexChildTurn(childThread.id, input.nativeTurnId);
+    if (existing) return existing;
+    const now = new Date().toISOString();
+    const turnId = `turn:codex-child:${randomUUID()}`;
+    const executionId = randomUUID();
+    const sourceIdentities = [
+      ...childThread.providerIdentities,
+      {
+        providerId: "codex",
+        scope: "turn" as const,
+        value: input.nativeTurnId,
+        provenance: "native" as const,
+      },
+    ];
+    const updatedAction: CollaborationAction = {
+      ...delegation.collaborationAction,
+      target: { threadId: childThread.id, turnId },
+      status: "Acknowledged",
+      updatedAt: now,
+    };
+    const parentThread = this.loadThread(input.parentThreadId);
+    if (!parentThread) throw new Error(`Codex parent thread not found: ${input.parentThreadId}`);
+    const childTurn: AgentTurn = {
+      id: turnId,
+      threadId: childThread.id,
+      status: "Pending",
+      trigger: {
+        kind: "child",
+        sourceThreadId: input.parentThreadId,
+        sourceTurnId: input.parentTurnId,
+        sourceItemId: input.parentItemId,
+      },
+      permissionMode: "full",
+      providerIdentities: sourceIdentities,
+      startedAt: null,
+      endedAt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    const promptItem: AgentItem | undefined = input.prompt
+      ? {
+          id: `item:codex-child-prompt:${hashCodexKey(turnId)}`,
+          threadId: childThread.id,
+          turnId,
+          kind: "message",
+          providerIdentities: sourceIdentities,
+          payload: {
+            projection: "message",
+            message: {
+              id: `codex-child-prompt:${hashCodexKey(turnId)}`,
+              role: "user",
+              content: input.prompt,
+              timestamp: now,
+            },
+          },
+          createdAt: now,
+          updatedAt: now,
+        }
+      : undefined;
+    const childEvents: CanonicalAgentEventDraft[] = [
+      {
+        eventId: `${executionId}:thread-active`,
+        routing: { threadId: childThread.id, executionId },
+        sourceProviderId: "codex",
+        sourceIdentities,
+        payload: {
+          type: "thread.recorded",
+          thread: { ...childThread, activityState: "Active", updatedAt: now },
+        },
+      },
+      {
+        eventId: `${executionId}:turn-created`,
+        routing: { threadId: childThread.id, turnId, executionId },
+        sourceProviderId: "codex",
+        sourceIdentities,
+        payload: { type: "turn.created", turn: childTurn },
+      },
+      {
+        eventId: `${executionId}:turn-started`,
+        routing: { threadId: childThread.id, turnId, executionId },
+        sourceProviderId: "codex",
+        sourceIdentities,
+        payload: { type: "turn.started", startedAt: now },
+      },
+      ...(promptItem ? [this.itemDraft(executionId, childThread, childTurn, promptItem)] : []),
+    ];
+    const transaction = this.db.transaction(() => {
+      const childResult = this.commitInsideTransaction({
+        threadId: childThread.id,
+        turnId,
+        executionId,
+        phase: "running",
+        events: childEvents,
+      });
+      const parentResult = this.commitInsideTransaction({
+        threadId: parentThread.id,
+        turnId: input.parentTurnId,
+        executionId: input.parentExecutionId,
+        phase: "running",
+        events: [this.actionDraft(
+          input.parentExecutionId,
+          parentThread,
+          updatedAction,
+          `${input.parentExecutionId}:codex-child:${hashCodexKey(input.nativeTurnId)}:turn`,
+        )],
+      });
+      return { childResult, parentResult };
+    });
+    const committed = transaction();
+    const published = [...committed.childResult.events, ...committed.parentResult.events];
+    this.recordCanonicalDiagnostics(published);
+    this.publishEventGroups([committed.childResult.events, committed.parentResult.events]);
+    const turn = this.loadTurn(turnId);
+    if (!turn) throw new Error(`Codex child turn was not persisted: ${turnId}`);
+    this.cacheTurnExecution(executionId, turn.id);
+    return turn;
+  }
+
+  /** Persist one child message, reasoning item, tool call, or tool result exactly once. */
+  recordCodexChildItem(input: CodexChildItemInput): AgentItem {
+    const turn = this.loadCodexChildTurn(input.childThreadId, input.nativeTurnId);
+    if (!turn) throw new Error(`Codex child turn not found: ${input.nativeTurnId}`);
+    const itemId = `item:codex-child:${hashCodexKey(`${turn.id}:${input.nativeItemId}:${input.eventKey}:${input.kind}`)}`;
+    const existing = this.loadItem(itemId);
+    if (existing) {
+      if (JSON.stringify(existing.payload) !== JSON.stringify(input.payload)) {
+        throw new Error(`Codex child item identity conflict: ${itemId}`);
+      }
+      return existing;
+    }
+    const thread = this.loadThread(input.childThreadId);
+    if (!thread) throw new Error(`Codex child thread not found: ${input.childThreadId}`);
+    const now = new Date().toISOString();
+    const item: AgentItem = {
+      id: itemId,
+      threadId: thread.id,
+      turnId: turn.id,
+      ...(input.parentItemId ? { parentItemId: input.parentItemId } : {}),
+      kind: input.kind,
+      providerIdentities: turn.providerIdentities,
+      payload: input.payload,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.commit({
+      threadId: thread.id,
+      turnId: turn.id,
+      executionId: this.executionIdForTurn(turn.id),
+      phase: "running",
+      events: [this.itemDraft(this.executionIdForTurn(turn.id), thread, turn, item)],
+    });
+    return item;
+  }
+
+  /** Persist one child terminal outcome while preserving the first terminal state. */
+  finishCodexChildTurn(input: CodexChildTurnFinishInput): AgentTurn {
+    const turn = this.loadCodexChildTurn(input.childThreadId, input.nativeTurnId);
+    if (!turn) throw new Error(`Codex child turn not found: ${input.nativeTurnId}`);
+    if (turn.status === "Completed") {
+      if (input.outcome !== "completed") throw new Error(`Codex child terminal identity conflict: ${turn.id}`);
+      return turn;
+    }
+    if (turn.status === "Interrupted") {
+      if (input.outcome !== "cancelled") throw new Error(`Codex child terminal identity conflict: ${turn.id}`);
+      return turn;
+    }
+    if (turn.status === "Errored") {
+      if (input.outcome !== "errored") throw new Error(`Codex child terminal identity conflict: ${turn.id}`);
+      return turn;
+    }
+    const thread = this.loadThread(input.childThreadId);
+    if (!thread) throw new Error(`Codex child thread not found: ${input.childThreadId}`);
+    const executionId = this.executionIdForTurn(turn.id);
+    const endedAt = new Date().toISOString();
+    const payload: CanonicalAgentEvent = input.outcome === "completed"
+      ? { type: "turn.completed", endedAt }
+      : input.outcome === "cancelled"
+        ? { type: "turn.interrupted", endedAt, reason: input.error ?? "Child turn cancelled" }
+        : { type: "turn.errored", endedAt, error: input.error ?? "Child turn failed" };
+    this.commit({
+      threadId: thread.id,
+      turnId: turn.id,
+      executionId,
+      phase: input.outcome,
+      terminalOutcome: input.outcome,
+      error: input.error,
+      replayGuard: "terminal-confirmed",
+      events: [
+        {
+          eventId: `${executionId}:thread-idle`,
+          routing: { threadId: thread.id, executionId },
+          sourceProviderId: "codex",
+          sourceIdentities: thread.providerIdentities,
+          payload: {
+            type: "thread.recorded",
+            thread: { ...thread, activityState: "Idle", updatedAt: endedAt },
+          },
+        },
+        {
+          eventId: `${executionId}:turn-terminal`,
+          routing: { threadId: thread.id, turnId: turn.id, executionId },
+          sourceProviderId: "codex",
+          sourceIdentities: thread.providerIdentities,
+          payload,
+        },
+      ],
+    });
+    const finished = this.loadTurn(turn.id);
+    if (!finished) throw new Error(`Codex child terminal state was not persisted: ${turn.id}`);
+    return finished;
   }
 
   /** Commit the first terminal result and its message and narrative projection. */
@@ -1024,9 +1611,13 @@ export class CanonicalAgentEventSink {
         createdAt: projection.message.timestamp,
       }));
     }
+    const codexChildOwnedIds = codexChildOwnedToolCallIds(projection?.narrative ?? []);
     for (const entry of projection?.narrative ?? []) {
       if (entry.kind === "assistantMessage") continue;
       const record = entry.record;
+      if (entry.kind === "toolCall" && (
+        codexChildOwnedIds.has(record.id)
+      )) continue;
       const itemKind = entry.kind === "toolCall"
         ? "tool-call" as const
         : entry.kind === "narrationSegment"
@@ -1432,6 +2023,19 @@ export class CanonicalAgentEventSink {
     }
   }
 
+  private publishEventGroups(
+    groups: readonly (readonly CanonicalAgentEventEnvelope[])[],
+  ): void {
+    for (const group of groups) {
+      if (group.length === 0) continue;
+      const threadId = group[0]?.routing.threadId;
+      if (!threadId || group.some((event) => event.routing.threadId !== threadId)) {
+        throw new Error("Canonical publication group must contain one thread");
+      }
+      this.publish(group);
+    }
+  }
+
   private cacheTurnExecution(executionId: string, turnId: string): void {
     this.turnIdByExecution.delete(executionId);
     this.turnIdByExecution.set(executionId, turnId);
@@ -1460,6 +2064,13 @@ export class CanonicalAgentEventSink {
     const state = createAgentModelState();
     const thread = this.loadThread(threadId);
     if (thread) state.threads[thread.id] = thread;
+    const childThreads = this.db.prepare(
+      "SELECT * FROM canonical_agent_threads WHERE parent_thread_id = ?",
+    ).all(threadId) as Record<string, unknown>[];
+    for (const row of childThreads) {
+      const childThread = this.threadFromRow(row);
+      state.threads[childThread.id] = childThread;
+    }
 
     const turns = this.db
       .prepare("SELECT * FROM canonical_agent_turns WHERE thread_id = ?")
@@ -1478,8 +2089,12 @@ export class CanonicalAgentEventSink {
     }
 
     const actions = this.db
-      .prepare("SELECT * FROM canonical_collaboration_actions WHERE source_thread_id = ?")
-      .all(threadId) as Record<string, unknown>[];
+      .prepare(`
+        SELECT *
+        FROM canonical_collaboration_actions
+        WHERE source_thread_id = ? OR target_thread_id = ?
+      `)
+      .all(threadId, threadId) as Record<string, unknown>[];
     for (const row of actions) {
       const action = this.actionFromRow(row);
       state.collaborationActions[action.id] = action;
@@ -1549,6 +2164,190 @@ export class CanonicalAgentEventSink {
       const action = state.collaborationActions[actionId];
       if (action?.source.threadId === threadId) this.persistAction(action);
     }
+    const changedChildThreadIds = new Set(
+      events
+        .filter((event) => event.payload.type === "child-thread.recorded")
+        .map((event) => event.payload.type === "child-thread.recorded" ? event.payload.childThread.id : ""),
+    );
+    for (const childThreadId of changedChildThreadIds) {
+      const childThread = state.threads[childThreadId];
+      if (childThread?.parentThreadId === threadId) this.persistThread(childThread);
+    }
+    const boundChildThreadIds = new Set(
+      events
+        .filter((event) => event.payload.type === "child-thread.bound")
+        .map((event) => event.payload.type === "child-thread.bound" ? event.payload.childThreadId : ""),
+    );
+    for (const childThreadId of boundChildThreadIds) {
+      const childThread = state.threads[childThreadId];
+      if (childThread?.parentThreadId === threadId) this.persistThread(childThread);
+    }
+  }
+
+  private itemDraft(
+    executionId: string,
+    thread: AgentThread,
+    turn: AgentTurn,
+    item: AgentItem,
+  ): CanonicalAgentEventDraft {
+    return {
+      eventId: `${executionId}:item:${item.id}`,
+      routing: {
+        threadId: thread.id,
+        turnId: turn.id,
+        executionId,
+        itemId: item.id,
+      },
+      sourceProviderId: thread.providerId,
+      sourceIdentities: item.providerIdentities,
+      payload: { type: "item.recorded", item },
+    };
+  }
+
+  private actionDraft(
+    executionId: string,
+    thread: AgentThread,
+    action: CollaborationAction,
+    eventId = `${executionId}:action:${action.id}`,
+  ): CanonicalAgentEventDraft {
+    return {
+      eventId,
+      routing: {
+        threadId: thread.id,
+        turnId: action.source.turnId,
+        executionId,
+        collaborationActionId: action.id,
+      },
+      sourceProviderId: thread.providerId,
+      sourceIdentities: action.providerIdentities,
+      payload: { type: "collaboration-action.recorded", collaborationAction: action },
+    };
+  }
+
+  private commitParentCodexAction(
+    input: CodexChildIdentityInput,
+    action: CollaborationAction,
+    suffix: string,
+  ): void {
+    const thread = this.loadThread(input.parentThreadId);
+    if (!thread) throw new Error(`Codex parent thread not found: ${input.parentThreadId}`);
+    this.commit({
+      threadId: input.parentThreadId,
+      turnId: input.parentTurnId,
+      executionId: input.parentExecutionId,
+      phase: "running",
+      events: [this.actionDraft(
+        input.parentExecutionId,
+        thread,
+        action,
+        `${input.parentExecutionId}:codex-child:${hashCodexKey(input.parentItemId)}:${suffix}`,
+      )],
+    });
+  }
+
+  private commitParentCodexBinding(
+    input: CodexChildIdentityInput,
+    childThread: AgentThread,
+    action: CollaborationAction,
+  ): void {
+    const thread = this.loadThread(input.parentThreadId);
+    if (!thread) throw new Error(`Codex parent thread not found: ${input.parentThreadId}`);
+    const executionId = `${input.parentExecutionId}:codex-child:${hashCodexKey(input.nativeThreadId)}`;
+    this.commit({
+      threadId: thread.id,
+      turnId: input.parentTurnId,
+      executionId: input.parentExecutionId,
+      phase: "running",
+      events: [
+        {
+          eventId: `${executionId}:bound`,
+          routing: { threadId: thread.id, executionId: input.parentExecutionId },
+          sourceProviderId: thread.providerId,
+          sourceIdentities: action.providerIdentities,
+          payload: {
+            type: "child-thread.bound",
+            parentThreadId: thread.id,
+            childThreadId: childThread.id,
+            providerIdentity: {
+              providerId: "codex",
+              scope: "thread",
+              value: input.nativeThreadId,
+              provenance: "native",
+            },
+          },
+        },
+        this.actionDraft(
+          input.parentExecutionId,
+          thread,
+          action,
+          `${input.parentExecutionId}:codex-child:${hashCodexKey(input.nativeThreadId)}:action`,
+        ),
+      ],
+    });
+  }
+
+  private ensureCodexCompatibilityThread(thread: AgentThread): void {
+    this.db.prepare(`
+      INSERT OR IGNORE INTO threads (
+        id, workspace_id, title, status, mode, branch, created_at, updated_at,
+        deleted_at, provider, parent_thread_id
+      ) VALUES (?, ?, ?, 'active', 'direct', '', ?, ?, ?, 'codex', ?)
+    `).run(
+      thread.id,
+      thread.workspaceId,
+      "Sub-agent",
+      thread.createdAt,
+      thread.updatedAt,
+      null,
+      thread.parentThreadId ?? null,
+    );
+  }
+
+  private codexReceiverIdentity(nativeThreadId: string): ProviderIdentity {
+    return {
+      providerId: "codex",
+      scope: "parentItem",
+      value: `receiverThreadId:${nativeThreadId}`,
+      provenance: "native",
+    };
+  }
+
+  private uniqueProviderIdentities(identities: readonly ProviderIdentity[]): ProviderIdentity[] {
+    const result: ProviderIdentity[] = [];
+    for (const identity of identities) {
+      if (!result.some((candidate) => (
+        candidate.providerId === identity.providerId
+        && candidate.scope === identity.scope
+        && candidate.value === identity.value
+      ))) result.push(identity);
+    }
+    return result;
+  }
+
+  private loadCodexChildTurn(childThreadId: string, nativeTurnId: string): AgentTurn | null {
+    const rows = this.db.prepare(`
+      SELECT *
+      FROM canonical_agent_turns
+      WHERE thread_id = ?
+      ORDER BY created_at ASC, id ASC
+    `).all(childThreadId) as Record<string, unknown>[];
+    for (const row of rows) {
+      const turn = this.turnFromRow(row);
+      if (turn.providerIdentities.some((identity) => (
+        identity.providerId === "codex"
+        && identity.scope === "turn"
+        && identity.value === nativeTurnId
+      ))) return turn;
+    }
+    return null;
+  }
+
+  private executionIdForTurn(turnId: string): string {
+    const row = this.db.prepare(
+      "SELECT execution_id FROM canonical_agent_turns WHERE id = ?",
+    ).get(turnId) as { execution_id: string } | undefined;
+    if (!row) throw new Error(`Canonical turn execution not found: ${turnId}`);
+    return row.execution_id;
   }
 
   private persistThread(thread: AgentThread): void {
@@ -1609,6 +2408,8 @@ export class CanonicalAgentEventSink {
         target_turn_id, status, delivery_unknown, provider_identities_json, created_at, updated_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
+        target_thread_id = excluded.target_thread_id,
+        target_turn_id = excluded.target_turn_id,
         status = excluded.status,
         delivery_unknown = excluded.delivery_unknown,
         provider_identities_json = excluded.provider_identities_json,

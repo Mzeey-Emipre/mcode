@@ -1,16 +1,20 @@
 import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EventEmitter } from "events";
+import type Database from "better-sqlite3";
 import { AgentEventType } from "@mcode/contracts";
 import type { Thread, IProviderRegistry, Message } from "@mcode/contracts";
 import { AgentService } from "../agent-service.js";
 import { createCanonicalAgentEventSinkStub } from "../../test-utils/canonical-agent-event-sink-stub.js";
 import { NarrativeStore } from "../narrative-store.js";
 import { PlanQuestionService } from "../plan-question-service.js";
+import { CanonicalAgentEventSink } from "../canonical-agent-event-sink.js";
+import { openMemoryDatabase } from "../../store/database.js";
 import { isTurnScopedEvent } from "../turn-runtime.js";
 import type { ThreadRepo } from "../../repositories/thread-repo.js";
 import type { WorkspaceRepo } from "../../repositories/workspace-repo.js";
 import type { MessageRepo } from "../../repositories/message-repo.js";
+import { MessageRepo as SqliteMessageRepo } from "../../repositories/message-repo.js";
 import type { GitService } from "../git-service.js";
 import type { AttachmentService } from "../attachment-service.js";
 import type {
@@ -72,6 +76,8 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
 interface Built {
   service: AgentService;
   providerEmitter: EventEmitter;
+  canonicalSink: CanonicalAgentEventSink;
+  db: Database.Database;
   thoughtBulk: ReturnType<typeof vi.fn>;
   hookBulk: ReturnType<typeof vi.fn>;
   toolBulk: ReturnType<typeof vi.fn>;
@@ -79,9 +85,10 @@ interface Built {
   taskUpsertGroup: ReturnType<typeof vi.fn>;
   taskUpdate: ReturnType<typeof vi.fn>;
   taskRemove: ReturnType<typeof vi.fn>;
+  narrativeStore: NarrativeStore;
 }
 
-function build(): Built {
+function build(options: { db?: Database.Database; canonicalSink?: CanonicalAgentEventSink } = {}): Built {
   const thread = makeThread();
   const providerEmitter = new EventEmitter();
   (providerEmitter as any).sendTurn = vi.fn(() => Promise.resolve());
@@ -173,10 +180,11 @@ function build(): Built {
     isAnswered: vi.fn(() => false),
     listAnsweredForThread: vi.fn(() => []),
   } as unknown as PlanQuestionAnswersRepo;
-  const db = {
+  const db = options.db ?? ({
     transaction: vi.fn((fn: Function) => fn),
     prepare: vi.fn(() => ({ run: vi.fn() })),
-  } as unknown as import("better-sqlite3").Database;
+  } as unknown as Database.Database);
+  const canonicalSink = options.canonicalSink ?? createCanonicalAgentEventSinkStub(db);
 
   // The narrative write seam lives in NarrativeStore; build it from the same
   // repo mocks so the bulkCreate spies observe what AgentService delegates.
@@ -212,7 +220,7 @@ function build(): Built {
       undefined,
       undefined,
       undefined,
-      createCanonicalAgentEventSinkStub(db),
+      canonicalSink,
   );
   service.init();
   // Provider adapters always stamp turn-scoped events with the active execution
@@ -240,7 +248,20 @@ function build(): Built {
   // sendMessage uses (beginTurn + resetTurnCounters).
   narrativeStore.beginTurn(THREAD_ID);
   narrativeStore.resetTurnCounters(THREAD_ID);
-  return { service, providerEmitter, thoughtBulk, hookBulk, toolBulk, taskAppend, taskUpsertGroup, taskUpdate, taskRemove };
+  return {
+    service,
+    providerEmitter,
+    canonicalSink,
+    db,
+    thoughtBulk,
+    hookBulk,
+    toolBulk,
+    taskAppend,
+    taskUpsertGroup,
+    taskUpdate,
+    taskRemove,
+    narrativeStore,
+  };
 }
 
 describe("AgentService narrative persistence", () => {
@@ -871,5 +892,339 @@ describe("AgentService narrative persistence", () => {
     expect(thoughts).toHaveLength(1);
     expect(thoughts[0].text).toBe("Let me check that file.");
     expect(thoughts[0].isFinalResponse).toBeUndefined();
+  });
+
+  it("routes provider Codex child evidence through canonical recovery and keeps its payload out of the parent", () => {
+    const db = openMemoryDatabase();
+    const now = new Date().toISOString();
+    db.prepare(
+      "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    ).run("ws-1", "Workspace", "/workspace", now, now);
+    db.prepare(
+      "INSERT INTO threads (id, workspace_id, title, branch, provider, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run(THREAD_ID, "ws-1", "Parent", "main", "codex", now, now);
+    const published = vi.fn();
+    const canonicalSink = new CanonicalAgentEventSink(db, published);
+    const { providerEmitter, service, narrativeStore } = build({ db, canonicalSink });
+    const executionId = (service as unknown as {
+      turnRuntime: { snapshot: (threadId: string) => { turnExecutionId: string } | undefined };
+    }).turnRuntime.snapshot(THREAD_ID)!.turnExecutionId;
+    const messages = new SqliteMessageRepo(db);
+    const userMessage = messages.create(THREAD_ID, "user", "delegate", 1);
+    canonicalSink.startParentTurn({
+      thread: { id: THREAD_ID, workspaceId: "ws-1", providerId: "codex", createdAt: now },
+      turnId: "turn-provider-parent",
+      executionId,
+      permissionMode: "supervised",
+      providerIdentities: [],
+      projectUserMessage: () => userMessage,
+    });
+
+    providerEmitter.emit("event", {
+      type: AgentEventType.ToolUse,
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      toolCallId: "spawn-from-provider",
+      toolName: "Agent",
+      toolInput: { codexCollabKind: "spawnAgent", prompt: "secret child prompt" },
+    });
+    const provisional = canonicalSink.loadCodexChildDelegation(
+      THREAD_ID,
+      "toolCall:spawn-from-provider",
+    );
+    expect(provisional?.childThread.activityState).toBe("Starting");
+    expect(narrativeStore.getBufferedToolCalls(THREAD_ID).find(
+      (toolCall) => toolCall.toolCallId === "spawn-from-provider",
+    )?._rawToolInput).not.toHaveProperty("prompt");
+
+    const childEvidence = {
+      nativeThreadId: "provider-child-thread",
+      nativeTurnId: "provider-child-turn",
+      parentCollaborationItemId: "spawn-from-provider",
+      prompt: "secret child prompt",
+    };
+    providerEmitter.emit("event", {
+      type: AgentEventType.TurnStarted,
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      codexChild: childEvidence,
+    });
+    providerEmitter.emit("event", {
+      type: AgentEventType.ToolUse,
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      toolCallId: "provider-child-tool",
+      toolName: "Read",
+      toolInput: { path: "secret-child-input" },
+      codexChild: { ...childEvidence, nativeItemId: "provider-child-tool", itemEventKey: "started" },
+    });
+    providerEmitter.emit("event", {
+      type: AgentEventType.ToolResult,
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      toolCallId: "provider-child-tool",
+      output: "secret-child-output",
+      isError: false,
+      codexChild: { ...childEvidence, nativeItemId: "provider-child-tool", itemEventKey: "completed" },
+    });
+    providerEmitter.emit("event", {
+      type: AgentEventType.TextDelta,
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      delta: "secret-child-narration",
+      isFinalResponse: false,
+      codexChild: { ...childEvidence, nativeItemId: "provider-child-reasoning", itemEventKey: "completed" },
+    });
+    providerEmitter.emit("event", {
+      type: AgentEventType.Message,
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      content: "secret-child-message",
+      tokens: null,
+      codexChild: { ...childEvidence, nativeItemId: "provider-child-message", itemEventKey: "completed" },
+    });
+    providerEmitter.emit("event", {
+      type: AgentEventType.TurnComplete,
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      reason: "completed",
+      costUsd: null,
+      tokensIn: 0,
+      tokensOut: 0,
+      codexChild: { ...childEvidence, outcome: "completed" },
+    });
+
+    const child = canonicalSink.loadCodexChildDelegation(
+      THREAD_ID,
+      "toolCall:spawn-from-provider",
+    )!;
+    const parentMessage = messages.create(THREAD_ID, "assistant", "parent answer", 2);
+    canonicalSink.finishParentTurn({
+      threadId: THREAD_ID,
+      turnId: "turn-provider-parent",
+      executionId,
+      providerId: "codex",
+      providerIdentities: [],
+      outcome: "completed",
+      projectTurn: () => ({
+        message: parentMessage,
+        narrative: [
+          {
+            kind: "toolCall",
+            sequence: 2,
+            sortOrder: 0,
+            record: {
+              id: "spawn-from-provider",
+              message_id: parentMessage.id,
+              parent_tool_call_id: null,
+              tool_name: "Agent",
+              tool_input: { codexCollabKind: "spawnAgent" },
+              started_at: now,
+              completed_at: now,
+              status: "completed",
+            } as never,
+          },
+          {
+            kind: "toolCall",
+            sequence: 2,
+            sortOrder: 1,
+            record: {
+              id: "provider-child-tool",
+              message_id: parentMessage.id,
+              parent_tool_call_id: "spawn-from-provider",
+              tool_name: "Read",
+              input_summary: "secret-child-input",
+              output_summary: "secret-child-output",
+              started_at: now,
+              completed_at: now,
+              status: "completed",
+              sort_order: 1,
+            },
+          },
+        ],
+      }),
+    });
+
+    const childRows = db.prepare(
+      "SELECT payload_json FROM canonical_agent_items WHERE thread_id = ?",
+    ).all(child.childThread.id) as Array<{ payload_json: string }>;
+    const parentRows = db.prepare(
+      "SELECT payload_json FROM canonical_agent_items WHERE thread_id = ?",
+    ).all(THREAD_ID) as Array<{ payload_json: string }>;
+    expect(JSON.stringify(childRows)).toContain("secret-child-output");
+    expect(JSON.stringify(childRows)).toContain("secret-child-message");
+    expect(JSON.stringify(childRows)).toContain("secret-child-narration");
+    expect(JSON.stringify(childRows)).toContain("secret child prompt");
+    expect(JSON.stringify(parentRows)).not.toContain("secret-child-output");
+    expect(JSON.stringify(parentRows)).not.toContain("secret-child-message");
+    expect(JSON.stringify(parentRows)).not.toContain("secret-child-narration");
+    expect(JSON.stringify(parentRows)).not.toContain("secret child prompt");
+    expect(canonicalSink.loadTurn(child.collaborationAction.target.turnId!)?.status).toBe("Completed");
+  });
+
+  it("persists an actionable parent failure record when child persistence fails", () => {
+    const db = openMemoryDatabase();
+    const now = new Date().toISOString();
+    db.prepare(
+      "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    ).run("ws-failure", "Workspace", "/workspace", now, now);
+    db.prepare(
+      "INSERT INTO threads (id, workspace_id, title, branch, provider, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run(THREAD_ID, "ws-failure", "Parent", "main", "codex", now, now);
+    const canonicalSink = new CanonicalAgentEventSink(db, vi.fn());
+    const { providerEmitter, service } = build({ db, canonicalSink });
+    const executionId = (service as unknown as {
+      turnRuntime: { snapshot: (threadId: string) => { turnExecutionId: string } | undefined };
+    }).turnRuntime.snapshot(THREAD_ID)!.turnExecutionId;
+    const messages = new SqliteMessageRepo(db);
+    const userMessage = messages.create(THREAD_ID, "user", "delegate", 1);
+    canonicalSink.startParentTurn({
+      thread: { id: THREAD_ID, workspaceId: "ws-failure", providerId: "codex", createdAt: now },
+      turnId: "turn-provider-failure",
+      executionId,
+      permissionMode: "supervised",
+      providerIdentities: [],
+      projectUserMessage: () => userMessage,
+    });
+    providerEmitter.emit("event", {
+      type: AgentEventType.ToolUse,
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      toolCallId: "spawn-failure",
+      toolName: "Agent",
+      toolInput: { codexCollabKind: "spawnAgent" },
+    });
+    const provisional = canonicalSink.loadCodexChildDelegation(
+      THREAD_ID,
+      "toolCall:spawn-failure",
+    )!;
+    providerEmitter.emit("event", {
+      type: AgentEventType.TurnStarted,
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      codexChild: {
+        nativeThreadId: "native-failure-child",
+        nativeTurnId: "native-failure-turn",
+        parentCollaborationItemId: "spawn-failure",
+      },
+    });
+    (canonicalSink as unknown as {
+      recordCodexChildItem: (...args: unknown[]) => never;
+    }).recordCodexChildItem = vi.fn(() => {
+      throw new Error("injected child persistence failure");
+    });
+    providerEmitter.emit("event", {
+      type: AgentEventType.ToolUse,
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      toolCallId: "child-failure-tool",
+      toolName: "Read",
+      toolInput: { path: "child-secret" },
+      codexChild: {
+        nativeThreadId: "native-failure-child",
+        nativeTurnId: "native-failure-turn",
+        parentCollaborationItemId: "spawn-failure",
+        nativeItemId: "child-failure-tool",
+        itemEventKey: "started",
+      },
+    });
+
+    const parentFailure = db.prepare(`
+      SELECT payload_json
+      FROM canonical_agent_items
+      WHERE thread_id = ? AND kind = 'error'
+    `).get(THREAD_ID) as { payload_json: string } | undefined;
+    expect(parentFailure).toBeDefined();
+    expect(JSON.parse(parentFailure!.payload_json)).toMatchObject({
+      projection: "codexChildRoutingFailure",
+      status: "action-required",
+      recovery: "retry-child-routing",
+      reason: "injected child persistence failure",
+    });
+    expect(db.prepare(
+      "SELECT COUNT(*) AS count FROM canonical_agent_items WHERE thread_id = ? AND kind = 'tool-call'",
+    ).get(provisional.childThread.id)).toEqual({ count: 0 });
+  });
+
+  it("records a failure signal when attributed child routing lacks parent execution context", () => {
+    const { service, canonicalSink } = build();
+    const diagnostic = vi.fn(() => true);
+    (canonicalSink as unknown as {
+      recordCodexChildRoutingDiagnostic: typeof diagnostic;
+    }).recordCodexChildRoutingDiagnostic = diagnostic;
+
+    (service as unknown as {
+      handleCodexChildProviderEvent: (event: unknown) => boolean;
+    }).handleCodexChildProviderEvent({
+      type: AgentEventType.ToolUse,
+      threadId: THREAD_ID,
+      toolCallId: "child-failure",
+      toolName: "Read",
+      toolInput: {},
+      codexChild: {
+        nativeThreadId: "child-native",
+        nativeTurnId: "child-turn",
+        parentCollaborationItemId: "missing-parent-item",
+      },
+    });
+
+    expect(diagnostic).toHaveBeenCalledWith(expect.objectContaining({
+      reason: "missing-parent-execution",
+      threadId: THREAD_ID,
+    }));
+  });
+
+  it("consumes every child projection kind before parent narrative persistence", () => {
+    const { service, canonicalSink, thoughtBulk, hookBulk, toolBulk } = build();
+    (canonicalSink as unknown as {
+      recordCodexChildRoutingDiagnostic: () => boolean;
+    }).recordCodexChildRoutingDiagnostic = vi.fn(() => true);
+    const handle = (service as unknown as {
+      handleCodexChildProviderEvent: (event: unknown) => boolean;
+    }).handleCodexChildProviderEvent;
+    const evidence = {
+      nativeThreadId: "child-boundary-thread",
+      nativeTurnId: "child-boundary-turn",
+      parentCollaborationItemId: "boundary-parent-item",
+    };
+    const events = [
+      { type: AgentEventType.Message, content: "child message", tokens: null },
+      { type: AgentEventType.TextDelta, delta: "child reasoning", isFinalResponse: false },
+      { type: AgentEventType.ToolUse, toolCallId: "child-boundary-tool", toolName: "Read", toolInput: {} },
+      { type: AgentEventType.ToolResult, toolCallId: "child-boundary-tool", output: "child result", isError: false },
+      { type: AgentEventType.Error, error: "child error" },
+      { type: AgentEventType.TurnComplete, reason: "completed", costUsd: null, tokensIn: 0, tokensOut: 0 },
+    ];
+    for (const event of events) {
+      expect(handle.call(service, { threadId: THREAD_ID, ...event, codexChild: evidence })).toBe(true);
+    }
+    expect(toolBulk).not.toHaveBeenCalled();
+    expect(thoughtBulk).not.toHaveBeenCalled();
+    expect(hookBulk).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when an attributed child event has no canonical owner", () => {
+    const { service, canonicalSink } = build();
+    const diagnostic = vi.fn(() => false);
+    (canonicalSink as unknown as {
+      recordCodexChildRoutingDiagnostic: typeof diagnostic;
+    }).recordCodexChildRoutingDiagnostic = diagnostic;
+    const handle = (service as unknown as {
+      handleCodexChildProviderEvent: (event: unknown) => boolean;
+    }).handleCodexChildProviderEvent;
+
+    expect(() => handle.call(service, {
+      type: AgentEventType.ToolUse,
+      threadId: THREAD_ID,
+      toolCallId: "child-unowned",
+      toolName: "Read",
+      toolInput: {},
+      codexChild: {
+        nativeThreadId: "child-unowned-thread",
+        nativeTurnId: "child-unowned-turn",
+        parentCollaborationItemId: "missing-parent-item",
+      },
+    })).toThrow("Codex child routing invariant failed");
+    expect(diagnostic).toHaveBeenCalledTimes(1);
   });
 });

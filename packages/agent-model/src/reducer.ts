@@ -111,6 +111,78 @@ export function reduceAgentEvent(
         outcome: "applied",
       };
     }
+    case "child-thread.recorded": {
+      if (
+        event.routing.threadId !== payload.parentThreadId
+        || payload.childThread.parentThreadId !== payload.parentThreadId
+        || payload.childThread.id === payload.parentThreadId
+      ) {
+        return { state, outcome: "routing-conflict" };
+      }
+      const existing = state.threads[payload.childThread.id];
+      if (existing && JSON.stringify(existing) !== JSON.stringify(payload.childThread)) {
+        return { state, outcome: "routing-conflict" };
+      }
+      const parent = state.threads[payload.parentThreadId];
+      if (!parent) return { state, outcome: "routing-conflict" };
+      if (existing) {
+        return {
+          state: { ...state, ...acceptedInputState },
+          outcome: "duplicate",
+        };
+      }
+      return {
+        state: {
+          ...state,
+          threads: {
+            ...state.threads,
+            [payload.parentThreadId]: {
+              ...parent,
+              rosterRevision: parent.rosterRevision + 1,
+            },
+            [payload.childThread.id]: payload.childThread,
+          },
+          ...acceptedInputState,
+        },
+        outcome: "applied",
+      };
+    }
+    case "child-thread.bound": {
+      if (event.routing.threadId !== payload.parentThreadId) {
+        return { state, outcome: "routing-conflict" };
+      }
+      const child = state.threads[payload.childThreadId];
+      if (!child || child.parentThreadId !== payload.parentThreadId) {
+        return { state, outcome: "routing-conflict" };
+      }
+      const sameIdentity = child.providerIdentities.some((identity) => (
+        identity.providerId === payload.providerIdentity.providerId
+        && identity.scope === payload.providerIdentity.scope
+        && identity.value === payload.providerIdentity.value
+      ));
+      const conflictingIdentity = child.providerIdentities.some((identity) => (
+        identity.providerId === payload.providerIdentity.providerId
+        && identity.scope === payload.providerIdentity.scope
+        && identity.value !== payload.providerIdentity.value
+      ));
+      if (conflictingIdentity) return { state, outcome: "routing-conflict" };
+      return {
+        state: {
+          ...state,
+          threads: {
+            ...state.threads,
+            [child.id]: sameIdentity
+              ? child
+              : {
+                  ...child,
+                  providerIdentities: [...child.providerIdentities, payload.providerIdentity],
+                },
+          },
+          ...acceptedInputState,
+        },
+        outcome: sameIdentity ? "duplicate" : "applied",
+      };
+    }
     case "turn.created": {
       if (
         event.routing.threadId !== payload.turn.threadId ||

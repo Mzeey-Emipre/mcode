@@ -21,5 +21,6 @@ export function createCanonicalAgentEventSinkStub(
     },
     loadTurnByExecution: () => null,
     recordProviderDiagnostic: () => undefined,
+    recordCodexChildRoutingDiagnostic: () => false,
   } as unknown as CanonicalAgentEventSink;
 }

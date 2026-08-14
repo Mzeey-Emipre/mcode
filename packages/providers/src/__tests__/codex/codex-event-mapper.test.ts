@@ -206,6 +206,279 @@ describe("CodexEventMapper", () => {
     });
   });
 
+  it("carries receiver-thread and native child-turn evidence without name matching", () => {
+    mapper = new CodexEventMapper("test-thread", "parent-native");
+    const parent = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "parent-native",
+        item: {
+          type: "collabAgentToolCall",
+          id: "collab-structural",
+          tool: "spawnAgent",
+          prompt: "same prompt",
+          receiverThreadIds: ["child-native-a", "child-native-b"],
+        },
+      },
+    });
+    expect(parent[0]).toMatchObject({
+      type: "toolUse",
+      toolCallId: "collab-structural",
+      toolInput: {
+        codexCollabKind: "spawnAgent",
+      },
+    });
+
+    const childStarted = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/started",
+      params: { threadId: "child-native-b", turn: { id: "child-turn-9" } },
+    });
+    expect(childStarted).toEqual([expect.objectContaining({
+      type: "turnStarted",
+      threadId: "test-thread",
+      codexChild: {
+        nativeThreadId: "child-native-b",
+        nativeTurnId: "child-turn-9",
+        parentCollaborationItemId: "collab-structural",
+        prompt: "same prompt",
+        nativeEventId: expect.any(String),
+      },
+    })]);
+
+    const parallelChild = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/started",
+      params: { threadId: "child-native-a", turn: { id: "child-turn-10" } },
+    });
+    expect(parallelChild[0]).toMatchObject({
+      codexChild: {
+        nativeThreadId: "child-native-a",
+        nativeTurnId: "child-turn-10",
+        parentCollaborationItemId: "collab-structural",
+      },
+    });
+    expect(parallelChild[0]).toMatchObject({
+      codexChild: {
+        prompt: "same prompt",
+        nativeEventId: expect.any(String),
+      },
+    });
+  });
+
+  it("buffers receiver items before the exact child turn and replays them once", () => {
+    mapper = new CodexEventMapper("test-thread", "parent-native");
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "parent-native",
+        item: {
+          type: "collabAgentToolCall",
+          id: "collab-early",
+          tool: "spawnAgent",
+          receiverThreadIds: ["child-early", "child-bound"],
+        },
+      },
+    });
+
+    expect(mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "child-early",
+        item: {
+          type: "commandExecution",
+          id: "native-item-early",
+          command: "git status",
+        },
+      },
+    })).toEqual([]);
+
+    expect(mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "child-early",
+        item: {
+          type: "commandExecution",
+          id: "native-item-early",
+          command: "git status",
+          aggregatedOutput: "early output",
+          exitCode: 0,
+        },
+      },
+    })).toEqual([]);
+
+    for (let index = 0; index < 100; index += 1) {
+      expect(mapper.mapNotification({
+        jsonrpc: "2.0",
+        method: "item/completed",
+        params: {
+          threadId: "child-bound",
+          item: {
+            type: "commandExecution",
+            id: `native-item-bound-${index}`,
+            command: "echo bound",
+            aggregatedOutput: "bound",
+            exitCode: 0,
+          },
+        },
+      })).toEqual([]);
+    }
+
+    const replayed = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/started",
+      params: { threadId: "child-early", turn: { id: "native-turn-early" } },
+    });
+    expect(replayed[0]).toMatchObject({
+      type: "turnStarted",
+      codexChild: { nativeTurnId: "native-turn-early" },
+    });
+    expect(replayed.slice(1)).toEqual([
+      expect.objectContaining({
+        type: "toolUse",
+        toolCallId: "native-item-early",
+        codexChild: expect.objectContaining({
+          nativeTurnId: "native-turn-early",
+          nativeItemId: "native-item-early",
+          itemEventKey: "started",
+        }),
+      }),
+      expect.objectContaining({
+        type: "toolResult",
+        toolCallId: "native-item-early",
+        codexChild: expect.objectContaining({
+          nativeTurnId: "native-turn-early",
+          nativeItemId: "native-item-early",
+          itemEventKey: "completed",
+        }),
+      }),
+    ]);
+    const replayIds = replayed.map((event) => (
+      "codexChild" in event ? event.codexChild?.nativeEventId : undefined
+    ));
+    expect(replayIds).toHaveLength(3);
+    expect(replayIds.every((id): id is string => Boolean(id))).toBe(true);
+    expect(new Set(replayIds).size).toBe(3);
+
+    expect(mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "child-early",
+        item: {
+          type: "commandExecution",
+          id: "native-item-early",
+          command: "git status",
+          aggregatedOutput: "early output",
+          exitCode: 0,
+        },
+      },
+    })).toEqual([]);
+
+    expect(mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/started",
+      params: { threadId: "child-early", turn: { id: "native-turn-early" } },
+    })).toEqual([]);
+
+    const boundedReplay = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/started",
+      params: { threadId: "child-bound", turn: { id: "native-turn-bound" } },
+    });
+    expect(boundedReplay[0]).toMatchObject({ type: "turnStarted" });
+    expect(boundedReplay.length).toBeLessThanOrEqual(129);
+    expect(boundedReplay.length).toBeGreaterThan(1);
+  });
+
+  it("uses native item identity when equal-prefix child outputs differ", () => {
+    mapper = new CodexEventMapper("test-thread", "parent-native");
+    const prefix = "x".repeat(256);
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "parent-native",
+        item: {
+          type: "collabAgentToolCall",
+          id: "collab-prefix",
+          tool: "spawnAgent",
+          receiverThreadIds: ["child-prefix"],
+        },
+      },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/started",
+      params: { threadId: "child-prefix", turn: { id: "turn-prefix" } },
+    });
+    const first = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "child-prefix",
+        item: {
+          type: "commandExecution",
+          id: "native-item-prefix-a",
+          command: "echo a",
+          aggregatedOutput: `${prefix}a`,
+          exitCode: 0,
+        },
+      },
+    });
+    const second = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "child-prefix",
+        item: {
+          type: "commandExecution",
+          id: "native-item-prefix-b",
+          command: "echo b",
+          aggregatedOutput: `${prefix}b`,
+          exitCode: 0,
+        },
+      },
+    });
+    const firstId = first.find((event) => event.type === "toolResult");
+    const secondId = second.find((event) => event.type === "toolResult");
+    const firstNativeEventId = firstId && "codexChild" in firstId
+      ? firstId.codexChild?.nativeEventId
+      : undefined;
+    const secondNativeEventId = secondId && "codexChild" in secondId
+      ? secondId.codexChild?.nativeEventId
+      : undefined;
+    expect(firstId && "codexChild" in firstId ? firstId.codexChild?.nativeItemId : undefined)
+      .toBe("native-item-prefix-a");
+    expect(firstId && "codexChild" in firstId ? firstId.codexChild?.itemEventKey : undefined)
+      .toBe("completed");
+    expect(secondId && "codexChild" in secondId ? secondId.codexChild?.nativeItemId : undefined)
+      .toBe("native-item-prefix-b");
+    expect(secondId && "codexChild" in secondId ? secondId.codexChild?.itemEventKey : undefined)
+      .toBe("completed");
+    expect(typeof firstNativeEventId).toBe("string");
+    expect(typeof secondNativeEventId).toBe("string");
+    expect(firstNativeEventId).not.toBe(secondNativeEventId);
+    expect(mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "child-prefix",
+        item: {
+          type: "commandExecution",
+          id: "native-item-prefix-a",
+          command: "echo a",
+          aggregatedOutput: `${prefix}a`,
+          exitCode: 0,
+        },
+      },
+    })).toEqual([]);
+  });
+
   it("emits running toolUse for item/started commandExecution", () => {
     const events = mapper.mapNotification({
       jsonrpc: "2.0",

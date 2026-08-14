@@ -9,6 +9,7 @@ import {
 } from "@mcode/contracts";
 import { openMemoryDatabase } from "../../store/database.js";
 import { MessageRepo } from "../../repositories/message-repo.js";
+import { ThreadRepo } from "../../repositories/thread-repo.js";
 import { ACTIVE_TURN_WRITE_BATCH_LIMITS } from "../../store/bounded-write-batches.js";
 import {
   CANONICAL_AGENT_CONTROL_EVENT_RESERVE,
@@ -147,6 +148,23 @@ function terminalDraft(
       ? { type, endedAt: "2026-08-09T20:01:00.000Z" }
       : { type, endedAt: "2026-08-09T20:01:01.000Z", error: "late error" },
   };
+}
+
+function startCanonicalParent(sink: CanonicalAgentEventSink, db: Database.Database): void {
+  const messageRepo = new MessageRepo(db);
+  sink.startParentTurn({
+    thread: {
+      id: THREAD_ID,
+      workspaceId: "workspace-1",
+      providerId: "codex",
+      createdAt: NOW,
+    },
+    turnId: TURN_ID,
+    executionId: EXECUTION_ID,
+    permissionMode: "supervised",
+    providerIdentities: [],
+    projectUserMessage: () => messageRepo.create(THREAD_ID, "user", "delegate", 1),
+  });
 }
 
 describe("CanonicalAgentEventSink", () => {
@@ -1027,5 +1045,571 @@ describe("CanonicalAgentEventSink", () => {
     expect(sink.loadTurn(TURN_ID)).toBeNull();
     expect(db.prepare("SELECT COUNT(*) AS count FROM canonical_agent_events").get()).toEqual({ count: 0 });
     expect(published).not.toHaveBeenCalled();
+  });
+
+  it("provisions one Starting child without creating a synthetic child turn", () => {
+    startCanonicalParent(sink, db);
+    const delegation = sink.startCodexChildDelegation({
+      parentThreadId: THREAD_ID,
+      parentTurnId: TURN_ID,
+      parentExecutionId: EXECUTION_ID,
+      parentItemId: "toolCall:spawn-1",
+      receiverThreadIds: ["native-child-a", "native-child-b"],
+      description: "same name",
+      prompt: "same prompt",
+      providerIdentities: [],
+    });
+
+    expect(delegation.childThread).toMatchObject({
+      parentThreadId: THREAD_ID,
+      rootThreadId: THREAD_ID,
+      owningParentThreadId: THREAD_ID,
+      activityState: "Starting",
+      providerIdentities: [],
+    });
+    expect(delegation.collaborationAction).toMatchObject({
+      status: "Dispatched",
+      target: { threadId: delegation.childThread.id },
+    });
+    expect(sink.loadThread(THREAD_ID)?.rosterRevision).toBe(1);
+    expect(sink.loadTurnByExecution(delegation.childThread.id)).toBeNull();
+    expect(db.prepare("SELECT COUNT(*) AS count FROM canonical_agent_turns WHERE thread_id = ?")
+      .get(delegation.childThread.id)).toEqual({ count: 0 });
+  });
+
+  it("binds only registered receiver identity and rejects reassignment", () => {
+    startCanonicalParent(sink, db);
+    const input = {
+      parentThreadId: THREAD_ID,
+      parentTurnId: TURN_ID,
+      parentExecutionId: EXECUTION_ID,
+      parentItemId: "toolCall:spawn-structural",
+      receiverThreadIds: ["native-child-a", "native-child-b"],
+      providerIdentities: [] as ProviderIdentity[],
+    };
+    const provisional = sink.startCodexChildDelegation(input);
+    expect(() => sink.bindCodexChildIdentity({
+      ...input,
+      nativeThreadId: "native-child-c",
+    })).toThrow("not a registered receiver");
+    expect(sink.loadThread(provisional.childThread.id)?.providerIdentities).toEqual([]);
+
+    const bound = sink.bindCodexChildIdentity({ ...input, nativeThreadId: "native-child-a" });
+    expect(bound.collaborationAction.status).toBe("Acknowledged");
+    expect(bound.childThread.providerIdentities).toEqual([{
+      providerId: "codex",
+      scope: "thread",
+      value: "native-child-a",
+      provenance: "native",
+    }]);
+    expect(() => sink.bindCodexChildIdentity({
+      ...input,
+      nativeThreadId: "native-child-b",
+    })).toThrow("identity conflict");
+    expect(sink.loadThread(provisional.childThread.id)?.providerIdentities).toEqual(bound.childThread.providerIdentities);
+  });
+
+  it("retains a bounded diagnostic when attributed child routing cannot persist", () => {
+    startCanonicalParent(sink, db);
+    sink.startCodexChildDelegation({
+      parentThreadId: THREAD_ID,
+      parentTurnId: TURN_ID,
+      parentExecutionId: EXECUTION_ID,
+      parentItemId: "toolCall:spawn-diagnostic",
+      providerIdentities: [],
+    });
+
+    sink.recordCodexChildRoutingDiagnostic({
+      threadId: THREAD_ID,
+      parentItemId: "toolCall:spawn-diagnostic",
+      executionId: EXECUTION_ID,
+      event: { type: "toolUse", toolCallId: "child-tool" },
+      reason: "identity conflict",
+    });
+
+    expect(sink.exportTurnDiagnostics(TURN_ID).entries).toContainEqual(
+      expect.objectContaining({
+        source: "provider",
+        eventType: "codex-child-routing-failure",
+      }),
+    );
+    const failureRows = db.prepare(`
+      SELECT kind, payload_json
+      FROM canonical_agent_items
+      WHERE thread_id = ? AND kind = 'error'
+    `).all(THREAD_ID) as Array<{ kind: string; payload_json: string }>;
+    expect(failureRows).toHaveLength(1);
+    expect(JSON.parse(failureRows[0]!.payload_json)).toMatchObject({
+      projection: "codexChildRoutingFailure",
+      status: "action-required",
+      recovery: "retry-child-routing",
+      reason: "identity conflict",
+    });
+  });
+
+  it("keeps child content under one child turn and restores it in a fresh sink", () => {
+    startCanonicalParent(sink, db);
+    const input = {
+      parentThreadId: THREAD_ID,
+      parentTurnId: TURN_ID,
+      parentExecutionId: EXECUTION_ID,
+      parentItemId: "toolCall:spawn-content",
+      receiverThreadIds: ["native-child-content"],
+      prompt: "secret-child-prompt",
+      providerIdentities: [] as ProviderIdentity[],
+    };
+    const provisional = sink.startCodexChildDelegation(input);
+    const childTurn = sink.startCodexChildTurn({
+      ...input,
+      nativeThreadId: "native-child-content",
+      nativeTurnId: "native-turn-content",
+    });
+    expect(childTurn.status).toBe("Running");
+    expect(sink.loadCodexChildDelegation(THREAD_ID, input.parentItemId)?.collaborationAction).toMatchObject({
+      status: "Acknowledged",
+      target: { threadId: provisional.childThread.id, turnId: childTurn.id },
+    });
+
+    const childItem = sink.recordCodexChildItem({
+      childThreadId: provisional.childThread.id,
+      nativeTurnId: "native-turn-content",
+      nativeItemId: "native-message-1",
+      eventKey: "completed",
+      kind: "message",
+      payload: { projection: "message", content: "child-only output" },
+    });
+    expect(sink.loadItem(childItem.id)?.threadId).toBe(provisional.childThread.id);
+    expect(sink.recordCodexChildItem({
+      childThreadId: provisional.childThread.id,
+      nativeTurnId: "native-turn-content",
+      nativeItemId: "native-message-1",
+      eventKey: "completed",
+      kind: "message",
+      payload: { projection: "message", content: "child-only output" },
+    }).id).toBe(childItem.id);
+    expect(() => sink.recordCodexChildItem({
+      childThreadId: provisional.childThread.id,
+      nativeTurnId: "native-turn-content",
+      nativeItemId: "native-message-1",
+      eventKey: "completed",
+      kind: "message",
+      payload: { projection: "message", content: "conflicting output" },
+    })).toThrow("item identity conflict");
+    expect(db.prepare("SELECT COUNT(*) AS count FROM canonical_agent_items WHERE thread_id = ?")
+      .get(THREAD_ID)).toEqual({ count: 2 });
+    expect(db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM canonical_agent_items
+      WHERE thread_id = ? AND json_extract(payload_json, '$.projection') = 'codexSubagent'
+    `).get(THREAD_ID)).toEqual({ count: 1 });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM canonical_agent_items WHERE thread_id = ?")
+      .get(provisional.childThread.id)).toEqual({ count: 2 });
+
+    const finished = sink.finishCodexChildTurn({
+      childThreadId: provisional.childThread.id,
+      nativeTurnId: "native-turn-content",
+      outcome: "completed",
+    });
+    expect(finished.status).toBe("Completed");
+    expect(() => sink.finishCodexChildTurn({
+      childThreadId: provisional.childThread.id,
+      nativeTurnId: "native-turn-content",
+      outcome: "errored",
+    })).toThrow("terminal identity conflict");
+
+    const restored = new CanonicalAgentEventSink(db, vi.fn());
+    const recovered = restored.loadCodexChildDelegation(THREAD_ID, input.parentItemId);
+    expect(recovered).toMatchObject({
+      childThread: {
+        id: provisional.childThread.id,
+        parentThreadId: THREAD_ID,
+        providerIdentities: [{
+          providerId: "codex",
+          scope: "thread",
+          value: "native-child-content",
+          provenance: "native",
+        }],
+      },
+      collaborationAction: {
+        status: "Acknowledged",
+        target: { threadId: provisional.childThread.id, turnId: childTurn.id },
+      },
+    });
+    expect(restored.loadTurn(childTurn.id)).toMatchObject({ status: "Completed" });
+    expect(restored.loadItem(childItem.id)).toMatchObject({
+      threadId: provisional.childThread.id,
+      payload: { content: "child-only output" },
+    });
+    const restoredChildRows = db.prepare(
+      "SELECT payload_json FROM canonical_agent_items WHERE thread_id = ?",
+    ).all(provisional.childThread.id) as Array<{ payload_json: string }>;
+    expect(JSON.stringify(restoredChildRows)).toContain("secret-child-prompt");
+    expect(JSON.stringify(db.prepare(
+      "SELECT payload_json FROM canonical_agent_items WHERE thread_id = ?",
+    ).all(THREAD_ID))).not.toContain("secret-child-prompt");
+    const childRecovery = restored.recoverThread(provisional.childThread.id, {
+      conversationRevision: 0,
+      rosterRevision: 0,
+    });
+    expect(childRecovery.mode === "snapshot" ? childRecovery.snapshot.state.collaborationActions : {})
+      .toHaveProperty(recovered!.collaborationAction.id);
+  });
+
+  it("commits child start and parent action target atomically", () => {
+    startCanonicalParent(sink, db);
+    const input = {
+      parentThreadId: THREAD_ID,
+      parentTurnId: TURN_ID,
+      parentExecutionId: EXECUTION_ID,
+      parentItemId: "toolCall:spawn-atomic",
+      receiverThreadIds: ["native-child-atomic"],
+      providerIdentities: [] as ProviderIdentity[],
+    };
+    const provisional = sink.startCodexChildDelegation(input);
+    sink.bindCodexChildIdentity({ ...input, nativeThreadId: "native-child-atomic" });
+    published.mockClear();
+    db.exec(`
+      CREATE TRIGGER reject_child_action_target
+      BEFORE UPDATE ON canonical_collaboration_actions
+      WHEN NEW.target_turn_id IS NOT NULL AND OLD.target_turn_id IS NULL
+      BEGIN
+        SELECT RAISE(ABORT, 'forced child action failure');
+      END;
+    `);
+
+    expect(() => sink.startCodexChildTurn({
+      ...input,
+      nativeThreadId: "native-child-atomic",
+      nativeTurnId: "native-turn-atomic",
+    })).toThrow("forced child action failure");
+    expect(db.prepare("SELECT COUNT(*) AS count FROM canonical_agent_turns WHERE thread_id = ?")
+      .get(provisional.childThread.id)).toEqual({ count: 0 });
+    expect(db.prepare("SELECT target_turn_id FROM canonical_collaboration_actions WHERE id = ?")
+      .get(provisional.collaborationAction.id)).toEqual({ target_turn_id: null });
+    expect(published).not.toHaveBeenCalled();
+  });
+
+  it("publishes child and parent events on their own channels after atomic child start", () => {
+    startCanonicalParent(sink, db);
+    const input = {
+      parentThreadId: THREAD_ID,
+      parentTurnId: TURN_ID,
+      parentExecutionId: EXECUTION_ID,
+      parentItemId: "toolCall:spawn-publication",
+      receiverThreadIds: ["native-child-publication"],
+      providerIdentities: [] as ProviderIdentity[],
+    };
+    const provisional = sink.startCodexChildDelegation(input);
+    sink.bindCodexChildIdentity({ ...input, nativeThreadId: "native-child-publication" });
+    published.mockClear();
+
+    const childTurn = sink.startCodexChildTurn({
+      ...input,
+      nativeThreadId: "native-child-publication",
+      nativeTurnId: "native-turn-publication",
+    });
+
+    expect(childTurn.status).toBe("Running");
+    expect(published).toHaveBeenCalledTimes(2);
+    expect(published.mock.calls[0]![0].every((event) => (
+      event.routing.threadId === provisional.childThread.id
+    ))).toBe(true);
+    expect(published.mock.calls[1]![0].every((event) => (
+      event.routing.threadId === THREAD_ID
+    ))).toBe(true);
+    expect(published.mock.calls.flatMap(([events]) => events)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          routing: expect.objectContaining({ threadId: provisional.childThread.id }),
+          payload: expect.objectContaining({
+            type: "turn.created",
+            turn: expect.objectContaining({ id: childTurn.id }),
+          }),
+        }),
+        expect.objectContaining({
+          routing: expect.objectContaining({ threadId: THREAD_ID }),
+          payload: expect.objectContaining({ type: "collaboration-action.recorded" }),
+        }),
+      ]),
+    );
+  });
+
+  it("keeps child tool content out of the finalized parent projection", () => {
+    const messageRepo = new MessageRepo(db);
+    startCanonicalParent(sink, db);
+    const input = {
+      parentThreadId: THREAD_ID,
+      parentTurnId: TURN_ID,
+      parentExecutionId: EXECUTION_ID,
+      parentItemId: "toolCall:spawn-ownership",
+      receiverThreadIds: ["native-child-ownership"],
+      providerIdentities: [] as ProviderIdentity[],
+    };
+    const provisional = sink.startCodexChildDelegation(input);
+    const childTurn = sink.startCodexChildTurn({
+      ...input,
+      nativeThreadId: "native-child-ownership",
+      nativeTurnId: "native-turn-ownership",
+    });
+    sink.recordCodexChildItem({
+      childThreadId: provisional.childThread.id,
+      nativeTurnId: "native-turn-ownership",
+      nativeItemId: "native-tool-ownership",
+      eventKey: "started",
+      kind: "tool-call",
+      payload: { projection: "codexChildToolCall", toolName: "Read", input: "secret-child-input" },
+    });
+    sink.recordCodexChildItem({
+      childThreadId: provisional.childThread.id,
+      nativeTurnId: "native-turn-ownership",
+      nativeItemId: "native-tool-ownership",
+      eventKey: "completed",
+      kind: "tool-result",
+      payload: { projection: "codexChildToolResult", output: "secret-child-output", isError: false },
+    });
+    sink.recordCodexChildItem({
+      childThreadId: provisional.childThread.id,
+      nativeTurnId: "native-turn-ownership",
+      nativeItemId: "native-message-ownership",
+      eventKey: "completed",
+      kind: "message",
+      payload: { projection: "message", content: "secret-child-message" },
+    });
+    sink.finishCodexChildTurn({
+      childThreadId: provisional.childThread.id,
+      nativeTurnId: "native-turn-ownership",
+      outcome: "completed",
+    });
+    const parentMessage = messageRepo.create(THREAD_ID, "assistant", "parent answer", 2);
+    sink.finishParentTurn({
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      executionId: EXECUTION_ID,
+      providerId: "codex",
+      providerIdentities: [],
+      outcome: "completed",
+      projectTurn: () => ({
+        message: parentMessage,
+        narrative: [
+          {
+            kind: "toolCall",
+            sequence: 2,
+            sortOrder: 0,
+            record: ({
+              id: "spawn-ownership",
+              message_id: parentMessage.id,
+              parent_tool_call_id: null,
+              tool_name: "Agent",
+              tool_input: { codexCollabKind: "spawnAgent" },
+              started_at: NOW,
+              completed_at: NOW,
+              status: "completed",
+            } as never),
+          },
+          {
+            kind: "toolCall",
+            sequence: 2,
+            sortOrder: 1,
+            record: {
+              id: "native-tool-ownership",
+              message_id: parentMessage.id,
+              parent_tool_call_id: "spawn-ownership",
+              tool_name: "Read",
+              input_summary: "secret-child-input",
+              output_summary: "secret-child-output",
+              started_at: NOW,
+              completed_at: NOW,
+              status: "completed",
+              sort_order: 1,
+            },
+          },
+          {
+            kind: "toolCall",
+            sequence: 2,
+            sortOrder: 2,
+            record: {
+              id: "nested-tool-ownership",
+              message_id: parentMessage.id,
+              parent_tool_call_id: "native-tool-ownership",
+              tool_name: "Write",
+              input_summary: "nested-child-input",
+              output_summary: "nested-child-output",
+              started_at: NOW,
+              completed_at: NOW,
+              status: "completed",
+              sort_order: 2,
+            },
+          },
+          {
+            kind: "toolCall",
+            sequence: 2,
+            sortOrder: 3,
+            record: {
+              id: "parallel-coordinator",
+              message_id: parentMessage.id,
+              parent_tool_call_id: null,
+              tool_name: "Read",
+              input_summary: "parallel-input",
+              output_summary: "parallel-output",
+              started_at: NOW,
+              completed_at: NOW,
+              status: "completed",
+              sort_order: 3,
+            },
+          },
+          {
+            kind: "toolCall",
+            sequence: 2,
+            sortOrder: 4,
+            record: {
+              id: "parallel-coordinator-child",
+              message_id: parentMessage.id,
+              parent_tool_call_id: "parallel-coordinator",
+              tool_name: "Read",
+              input_summary: "parallel-child-input",
+              output_summary: "parallel-child-output",
+              started_at: NOW,
+              completed_at: NOW,
+              status: "completed",
+              sort_order: 4,
+            },
+          },
+          {
+            kind: "toolCall",
+            sequence: 2,
+            sortOrder: 5,
+            record: {
+              id: "cycle-spawn",
+              message_id: parentMessage.id,
+              parent_tool_call_id: "cycle-b",
+              tool_name: "Agent",
+              tool_input: { codexCollabKind: "spawnAgent" },
+              started_at: NOW,
+              completed_at: NOW,
+              status: "completed",
+              sort_order: 5,
+            } as never,
+          },
+          {
+            kind: "toolCall",
+            sequence: 2,
+            sortOrder: 6,
+            record: {
+              id: "cycle-a",
+              message_id: parentMessage.id,
+              parent_tool_call_id: "cycle-spawn",
+              tool_name: "Read",
+              input_summary: "cycle-a-input",
+              output_summary: "cycle-a-output",
+              started_at: NOW,
+              completed_at: NOW,
+              status: "completed",
+              sort_order: 6,
+            },
+          },
+          {
+            kind: "toolCall",
+            sequence: 2,
+            sortOrder: 7,
+            record: {
+              id: "cycle-b",
+              message_id: parentMessage.id,
+              parent_tool_call_id: "cycle-a",
+              tool_name: "Read",
+              input_summary: "cycle-b-input",
+              output_summary: "cycle-b-output",
+              started_at: NOW,
+              completed_at: NOW,
+              status: "completed",
+              sort_order: 7,
+            },
+          },
+          {
+            kind: "narrationSegment",
+            sequence: 2,
+            sortOrder: 8,
+            record: {
+              id: "parent-narration-ownership",
+              message_id: parentMessage.id,
+              text: "parent-only narration",
+              started_at: NOW,
+              ended_at: NOW,
+              sort_order: 8,
+            },
+          },
+          {
+            kind: "hook",
+            sequence: 2,
+            sortOrder: 9,
+            record: {
+              id: "parent-hook-ownership",
+              message_id: parentMessage.id,
+              hook_name: "PostToolUse",
+              tool_name: "Read",
+              phase: "post",
+              payload: "parent-only hook",
+              duration_ms: 1,
+              did_block: false,
+              started_at: NOW,
+              ended_at: NOW,
+              sort_order: 9,
+            },
+          },
+        ],
+      }),
+    });
+
+    const parentRows = db.prepare(
+      "SELECT payload_json FROM canonical_agent_items WHERE thread_id = ?",
+    ).all(THREAD_ID) as Array<{ payload_json: string }>;
+    expect(JSON.stringify(parentRows)).not.toContain("secret-child");
+    const parentItemIds = (db.prepare(
+      "SELECT id FROM canonical_agent_items WHERE thread_id = ? ORDER BY id",
+    ).all(THREAD_ID) as Array<{ id: string }>).map((row) => row.id);
+    expect(parentItemIds).toEqual(expect.arrayContaining([
+      "toolCall:parallel-coordinator",
+      "toolCall:parallel-coordinator-child",
+      "narrationSegment:parent-narration-ownership",
+      "hook:parent-hook-ownership",
+    ]));
+    expect(parentItemIds).not.toEqual(expect.arrayContaining([
+      "toolCall:native-tool-ownership",
+      "toolCall:nested-tool-ownership",
+      "toolCall:cycle-spawn",
+      "toolCall:cycle-a",
+      "toolCall:cycle-b",
+    ]));
+    expect(sink.loadItem(`message:${parentMessage.id}`)?.payload).toMatchObject({
+      projection: "message",
+    });
+    const childRows = db.prepare(
+      "SELECT payload_json FROM canonical_agent_items WHERE thread_id = ?",
+    ).all(provisional.childThread.id) as Array<{ payload_json: string }>;
+    expect(JSON.stringify(childRows)).toContain("secret-child-output");
+    expect(JSON.stringify(childRows)).toContain("secret-child-message");
+    expect(sink.loadTurn(childTurn.id)).toMatchObject({ status: "Completed" });
+  });
+
+  it("hides the compatibility child from normal thread listings", () => {
+    startCanonicalParent(sink, db);
+    const delegation = sink.startCodexChildDelegation({
+      parentThreadId: THREAD_ID,
+      parentTurnId: TURN_ID,
+      parentExecutionId: EXECUTION_ID,
+      parentItemId: "toolCall:spawn-hidden",
+      providerIdentities: [],
+    });
+    const threadRepo = new ThreadRepo(db);
+    expect(threadRepo.findById(delegation.childThread.id)?.id).toBe(delegation.childThread.id);
+    expect(threadRepo.listByWorkspace("workspace-1").map((thread) => thread.id))
+      .not.toContain(delegation.childThread.id);
+    expect(threadRepo.listRecent(100).map((thread) => thread.id))
+      .not.toContain(delegation.childThread.id);
+    expect(threadRepo.search({ query: "Sub-agent" }).threads.map((thread) => thread.id))
+      .not.toContain(delegation.childThread.id);
+    expect(threadRepo.countActiveByWorkspaceIds(["workspace-1"]).get("workspace-1"))
+      .toBe(1);
+    expect(db.prepare("SELECT deleted_at FROM threads WHERE id = ?")
+      .get(delegation.childThread.id)).toMatchObject({ deleted_at: null });
   });
 });
