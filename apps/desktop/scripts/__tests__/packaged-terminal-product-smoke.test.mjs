@@ -4,13 +4,16 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   PRODUCT_SMOKE_FAULTS,
+  appendBoundedOutputTail,
   assertLoopbackIsolationReceipt,
+  buildProductBootEnv,
   buildLoopbackIsolationPlan,
   buildProductLaunch,
   cleanupLoopbackIsolation,
   classifyProductSmokeOutcome,
   hashPackagedResources,
   loadProcessCleanupWorkload,
+  openTerminal,
   parseProductSmokeArguments,
   pollProcessCleanup,
   releaseProductProcess,
@@ -164,6 +167,68 @@ describe("packaged Terminal product smoke contract", () => {
       ["stderr"],
       ["unref"],
     ]);
+  });
+
+  it("seeds a fresh packaged workspace from the target fixture", () => {
+    const cleanEnv = buildProductBootEnv({
+      env: {
+        MCODE_AGENT_RUNTIME: "0",
+        MCODE_AGENT_FIXTURE_REPO: "stale-fixture",
+        MCODE_TERMINAL_RELEASE_FAULT: "stale-fault",
+      },
+      targetRoot: "C:\\packaged-target",
+      bootFault: undefined,
+    });
+    expect(cleanEnv).toMatchObject({
+      MCODE_AGENT_RUNTIME: "1",
+      MCODE_AGENT_FIXTURE_REPO: "C:\\packaged-target",
+      MCODE_TERMINAL_RELEASE_TEST: "1",
+      MCODE_TERMINAL_BACKEND: "modern",
+    });
+    expect(cleanEnv).not.toHaveProperty("MCODE_TERMINAL_RELEASE_FAULT");
+    expect(
+      buildProductBootEnv({
+        env: {},
+        targetRoot: "/tmp/packaged-target",
+        bootFault: "post-start-host-exit",
+      }).MCODE_TERMINAL_RELEASE_FAULT,
+    ).toBe("post-start-host-exit");
+  });
+
+  it("fails immediately when the packaged Terminal controls are missing", async () => {
+    const missingTerminalPage = {
+      getByRole: () => ({
+        first: () => ({ count: async () => 0 }),
+      }),
+      getByTestId: () => {
+        throw new Error("terminal content should not be queried");
+      },
+    };
+    await expect(openTerminal(missingTerminalPage)).rejects.toThrow(
+      "Terminal control is missing",
+    );
+
+    const missingNewTerminalPage = {
+      getByRole: (_role, { name }) => ({
+        first: () => ({
+          count: async () => (name === "Terminal" ? 1 : 0),
+          click: async () => undefined,
+        }),
+      }),
+      getByTestId: () => {
+        throw new Error("terminal content should not be queried");
+      },
+    };
+    await expect(openTerminal(missingNewTerminalPage)).rejects.toThrow(
+      "New terminal control is missing",
+    );
+  });
+
+  it("keeps exactly the last 8192 launch-output characters", () => {
+    const tail = appendBoundedOutputTail("old\n", "a".repeat(8_192));
+    const combined = appendBoundedOutputTail(tail, "b".repeat(10));
+    expect(combined).toHaveLength(8_192);
+    expect(combined).toBe("a".repeat(8_182) + "b".repeat(10));
   });
 
   it("waits for the packaged renderer page after CDP connects", async () => {

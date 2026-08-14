@@ -22,6 +22,7 @@ export const PRODUCT_SMOKE_FAULTS = [
 
 const MAX_TERMINAL_ARTIFACT_FILES = 64;
 const CLEANUP_BOUND_MS = 3_000;
+const LAUNCH_OUTPUT_TAIL_LIMIT = 8_192;
 const TARGET_PLATFORM = { win32: "windows", darwin: "macos", linux: "linux" };
 const LINUX_NAMESPACE_SCRIPT =
   'set -eu; ip_cmd="$(command -v ip || command -v /sbin/ip)"; "$ip_cmd" link set lo up; "$ip_cmd" -4 addr add 127.0.0.1/8 dev lo 2>/dev/null || true; "$ip_cmd" -6 addr add ::1/128 dev lo 2>/dev/null || true; "$ip_cmd" -4 addr show dev lo | grep -q "127.0.0.1"; "$ip_cmd" -6 addr show dev lo | grep -q "::1"';
@@ -381,11 +382,33 @@ async function waitForRuntime(page, predicate, timeoutMs = 10_000) {
   throw new Error("Timed out waiting for renderer runtime release observation");
 }
 
-async function openTerminal(page) {
+/** Appends launch output while retaining only the bounded diagnostic tail. */
+export function appendBoundedOutputTail(tail, chunk) {
+  return `${tail}${chunk}`.slice(-LAUNCH_OUTPUT_TAIL_LIMIT);
+}
+
+/** Builds the environment used to boot one packaged product target. */
+export function buildProductBootEnv({ env, targetRoot, bootFault }) {
+  const bootEnv = {
+    ...env,
+    MCODE_AGENT_RUNTIME: "1",
+    MCODE_AGENT_FIXTURE_REPO: targetRoot,
+    MCODE_TERMINAL_RELEASE_TEST: "1",
+    MCODE_TERMINAL_BACKEND: "modern",
+  };
+  if (bootFault) bootEnv.MCODE_TERMINAL_RELEASE_FAULT = bootFault;
+  else delete bootEnv.MCODE_TERMINAL_RELEASE_FAULT;
+  return bootEnv;
+}
+
+/** Opens a packaged Terminal session after requiring both visible controls. */
+export async function openTerminal(page) {
   const terminalToggle = page.getByRole("button", { name: "Terminal" }).first();
-  if (await terminalToggle.count()) await terminalToggle.click();
+  if (!(await terminalToggle.count())) throw new Error("Terminal control is missing");
+  await terminalToggle.click();
   const newTerminal = page.getByRole("button", { name: "New terminal" }).first();
-  if (await newTerminal.count()) await newTerminal.click();
+  if (!(await newTerminal.count())) throw new Error("New terminal control is missing");
+  await newTerminal.click();
   const terminal = page.getByTestId("terminal-render-content").last();
   await terminal.waitFor({ state: "visible", timeout: 15_000 });
   await terminal.click();
@@ -457,22 +480,24 @@ async function runProductBoot({ target, env, bootFault, isolationReceipt, worklo
   const cdpPort = 39_000 + (parseInt(randomUUID().slice(0, 4), 16) % 500);
   const launchArgs = [`--remote-debugging-port=${cdpPort}`];
   const launch = buildProductLaunch({ target, isolationReceipt, launchArgs });
-  const bootEnv = { ...env, MCODE_TERMINAL_RELEASE_TEST: "1", MCODE_TERMINAL_BACKEND: "modern" };
-  if (bootFault) bootEnv.MCODE_TERMINAL_RELEASE_FAULT = bootFault;
-  else delete bootEnv.MCODE_TERMINAL_RELEASE_FAULT;
+  const bootEnv = buildProductBootEnv({ env, targetRoot: target.root, bootFault });
   const child = spawn(launch.command, launch.args, {
     cwd: target.root,
     env: { ...bootEnv, ...launch.env },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
-  let launchError = "";
+  let launchOutputTail = "";
+  child.stdout?.setEncoding("utf8");
   child.stderr?.setEncoding("utf8");
+  child.stdout?.on("data", (chunk) => {
+    launchOutputTail = appendBoundedOutputTail(launchOutputTail, chunk);
+  });
   child.stderr?.on("data", (chunk) => {
-    launchError = `${launchError}${chunk}`.slice(-8_192);
+    launchOutputTail = appendBoundedOutputTail(launchOutputTail, chunk);
   });
   child.on("error", (error) => {
-    launchError = `${launchError}${error.message}`.slice(-8_192);
+    launchOutputTail = appendBoundedOutputTail(launchOutputTail, error.message);
   });
   const browser = await (async () => {
     const deadline = Date.now() + 15_000;
@@ -488,7 +513,7 @@ async function runProductBoot({ target, env, bootFault, isolationReceipt, worklo
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
     }
-    const detail = [connectionError, launchError.trim()].filter(Boolean).join("\n");
+    const detail = [connectionError, launchOutputTail.trim()].filter(Boolean).join("\n");
     releaseProductProcess(child);
     throw new Error(
       `Packaged Electron CDP did not become available (exit ${child.exitCode ?? "pending"}): ${detail || "no launch diagnostics"}`,
