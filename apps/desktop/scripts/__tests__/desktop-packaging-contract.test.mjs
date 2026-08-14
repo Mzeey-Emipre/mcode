@@ -74,6 +74,38 @@ describe("electron-builder transient failure classification", () => {
     ).toMatchObject({ retryable: true });
   });
 
+  it("does not retry lookalike Electron release hosts", () => {
+    expect(
+      classifyElectronBuilderFailure(
+        "https://github.com.evil.example/electron/releases/download/v35.7.5/electron.zip ETIMEDOUT",
+      ),
+    ).toMatchObject({ retryable: false });
+  });
+
+  it("retries official Electron header downloads that fail with ETIMEDOUT", () => {
+    expect(
+      classifyElectronBuilderFailure(
+        "GET https://www.electronjs.org/headers/v35.7.5/node-v35.7.5-headers.tar.gz failed: ETIMEDOUT",
+      ),
+    ).toMatchObject({ retryable: true });
+  });
+
+  it("does not retry official Electron header downloads for permanent failures", () => {
+    expect(
+      classifyElectronBuilderFailure(
+        "GET https://www.electronjs.org/headers/v35.7.5/node-v35.7.5-headers.tar.gz failed: invalid archive",
+      ),
+    ).toMatchObject({ retryable: false });
+  });
+
+  it("does not retry transient failures from unrelated download URLs", () => {
+    expect(
+      classifyElectronBuilderFailure(
+        "GET https://example.com/headers/v35.7.5/node-v35.7.5-headers.tar.gz failed: ETIMEDOUT",
+      ),
+    ).toMatchObject({ retryable: false });
+  });
+
   it("does not retry deterministic, attestation, or unknown failures", () => {
     for (const output of [
       "node-gyp rebuild failed for node-pty",

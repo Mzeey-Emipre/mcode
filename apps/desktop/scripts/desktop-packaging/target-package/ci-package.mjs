@@ -10,17 +10,17 @@ import { sanitizePackageManifest } from "./sanitize-package-manifest.mjs";
 
 const MAX_ATTEMPTS = 3;
 const DEFAULT_DIAGNOSTIC_LIMIT_BYTES = 64 * 1024;
-const ELECTRON_RELEASE_URL = /https?:\/\/[^\s"']*electron[^\s"']*\/releases\/download\//i;
+const ELECTRON_DOWNLOAD_URL = /(?:https:\/\/github\.com\/electron\/electron\/releases\/download\/|https:\/\/(?:www\.)?electronjs\.org\/headers\/v\d+(?:\.\d+){2}\/node-v\d+(?:\.\d+){2}-headers\.tar\.gz\b)/i;
 const TRANSIENT_DOWNLOAD_FAILURE = /\b(?:EOF|ECONNRESET|ETIMEDOUT|temporary connection failure)\b/i;
 
-/** Classifies only known transient Electron release download failures. */
+/** Classifies only known transient Electron download failures. */
 export function classifyElectronBuilderFailure(
   output,
-  { electronReleaseDownload, transientError } = {},
+  { electronDownload, transientError } = {},
 ) {
   const text = String(output ?? "");
-  if (!(electronReleaseDownload ?? ELECTRON_RELEASE_URL.test(text))) {
-    return { retryable: false, reason: "not-electron-release-download" };
+  if (!(electronDownload ?? ELECTRON_DOWNLOAD_URL.test(text))) {
+    return { retryable: false, reason: "not-electron-download" };
   }
   if (!(transientError ?? TRANSIENT_DOWNLOAD_FAILURE.test(text))) {
     return { retryable: false, reason: "not-transient-download-failure" };
@@ -122,7 +122,7 @@ function runElectronBuilderAttempt({
     });
     let diagnostics = "";
     let classificationWindow = "";
-    let sawElectronReleaseDownload = false;
+    let sawElectronDownload = false;
     let sawTransientError = false;
     let settled = false;
     const consume = (chunk) => {
@@ -130,7 +130,7 @@ function runElectronBuilderAttempt({
       process.stdout.write(text);
       diagnostics = boundedTail(`${diagnostics}${text}`, diagnosticLimitBytes);
       classificationWindow = boundedTail(`${classificationWindow}${text}`, 4096);
-      sawElectronReleaseDownload ||= ELECTRON_RELEASE_URL.test(classificationWindow);
+      sawElectronDownload ||= ELECTRON_DOWNLOAD_URL.test(classificationWindow);
       sawTransientError ||= TRANSIENT_DOWNLOAD_FAILURE.test(classificationWindow);
     };
     child.stdout.on("data", consume);
@@ -151,7 +151,7 @@ function runElectronBuilderAttempt({
         status: status ?? 1,
         output: diagnostics,
         classification: classifyElectronBuilderFailure("", {
-          electronReleaseDownload: sawElectronReleaseDownload,
+          electronDownload: sawElectronDownload,
           transientError: sawTransientError,
         }),
       });
