@@ -21,7 +21,7 @@ import {
 import { previewSessionAdapter } from "../security/electron-session-policy.js";
 import { PREVIEW_POPUP_REQUESTED_CHANNEL } from "../contracts/popup.js";
 import type { PreviewPopupSurfaceRef } from "../contracts/popup.js";
-import { isBrowserAutomationAgentOperationActive } from "../../../main/browser-automation/active-operation.js";
+import { isBrowserAutomationAgentOperationActive } from "../automation/active-operation.js";
 import { PREVIEW_SURFACE_DISCARD_REQUESTED_CHANNEL } from "../contracts/surface-lifecycle.js";
 import { bumpPerf } from "../observability/perf-counters.js";
 

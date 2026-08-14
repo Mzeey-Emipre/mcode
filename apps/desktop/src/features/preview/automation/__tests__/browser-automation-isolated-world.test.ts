@@ -1,14 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("electron", () => ({ BrowserWindow: {} }));
-vi.mock("../../features/preview/surfaces/registry.js", () => ({ findAdoptedWebContentsForWindow: vi.fn() }));
-vi.mock("../../features/preview/state/window-session.js", () => ({ getSession: vi.fn() }));
+vi.mock("../../surfaces/registry.js", () => ({ findAdoptedWebContentsForWindow: vi.fn() }));
+vi.mock("../../state/window-session.js", () => ({ getSession: vi.fn() }));
 
 import {
   evaluateIsolatedExpression,
   inspectPageTarget,
   snapshotPage,
-} from "../browser-automation/kernel.js";
+} from "../kernel.js";
 
 class FakeElement {
   isConnected = true;

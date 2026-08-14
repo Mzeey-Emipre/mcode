@@ -3,9 +3,9 @@ import {
   BrowserAutomationCancelledError,
   BrowserAutomationQueueFullError,
   BrowserAutomationScheduler,
-} from "../browser-automation/scheduler.js";
-import { OldestFirstRingBuffer } from "../browser-automation/ring-buffer.js";
-import { redactBrowserDiagnosticUrl, redactBrowserText, redactBrowserUrl, redactBrowserValue } from "../browser-automation/redaction.js";
+} from "../scheduler.js";
+import { OldestFirstRingBuffer } from "../ring-buffer.js";
+import { redactBrowserDiagnosticUrl, redactBrowserText, redactBrowserUrl, redactBrowserValue } from "../redaction.js";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;

@@ -86,10 +86,8 @@ vi.mock("../auto-updater.js", () => ({
 vi.mock("../spellcheck.js", () => ({ setupSpellcheck: vi.fn() }));
 vi.mock("../preview/index.js", () => ({
   registerPreviewBrowserHandlers: vi.fn(),
-  disposePreviewForWindow: vi.fn(),
-}));
-vi.mock("../browser-automation/index.js", () => ({
   disposeBrowserAutomationForWindow: vi.fn(),
+  disposePreviewForWindow: vi.fn(),
 }));
 vi.mock("../../features/preview/navigation/local-file.js", () => ({
   resolveMcodeWorkspacePreviewUrl: vi.fn(),
