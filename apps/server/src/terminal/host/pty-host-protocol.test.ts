@@ -43,6 +43,20 @@ describe("PTY host v1 protocol", () => {
     );
   });
 
+  it("passes one protected release fault through the private handshake only", () => {
+    const handshake = {
+      contractVersion: 1,
+      kind: "handshake",
+      requestedGeneration: "7",
+      platform: "windows",
+      releaseTestFault: "post-start-host-exit",
+    } as const;
+    expect(PtyHostServerMessageSchema().parse(handshake)).toEqual(handshake);
+    expect(() =>
+      PtyHostServerMessageSchema().parse({ ...handshake, releaseTestFault: "arbitrary" }),
+    ).toThrow();
+  });
+
   it("rejects oversized decoded payloads and environment messages", () => {
     expect(() =>
       PtyHostEventSchema().parse({

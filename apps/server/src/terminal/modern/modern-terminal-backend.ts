@@ -66,6 +66,7 @@ export class ModernTerminalBackend extends TerminalBackend {
   private readonly uploads = new Map<string, CheckpointUpload>();
   private readonly selectedAt = new Date().toISOString();
   private readonly diagnostics: TerminalDiagnosticsService;
+  private readonly releaseTestObservationsEnabled: boolean;
   private readonly startPromise: Promise<PtyHostHealth>;
   private readonly unsubscribeDelivery: () => void;
 
@@ -77,9 +78,18 @@ export class ModernTerminalBackend extends TerminalBackend {
       diagnostics(): PtyHostDiagnostics;
     },
     private readonly sessionLimit: () => number,
-    diagnostics?: TerminalDiagnosticsService,
+    diagnosticsOrReleaseTestObservations?: TerminalDiagnosticsService | boolean,
+    releaseTestObservationsEnabled = false,
   ) {
     super();
+    this.releaseTestObservationsEnabled =
+      typeof diagnosticsOrReleaseTestObservations === "boolean"
+        ? diagnosticsOrReleaseTestObservations
+        : releaseTestObservationsEnabled;
+    const diagnostics =
+      typeof diagnosticsOrReleaseTestObservations === "boolean"
+        ? undefined
+        : diagnosticsOrReleaseTestObservations;
     this.diagnostics = diagnostics ?? new TerminalDiagnosticsService({
       backend: () => "modern",
       health: () => this.healthSnapshot(),
@@ -99,7 +109,15 @@ export class ModernTerminalBackend extends TerminalBackend {
       recovery: { replay: true, checkpoint: true, gap: true },
       host: { state: health.state, generation: health.hostGeneration },
       sessionLimit: this.sessionLimit(),
+      ...(this.releaseTestObservationsEnabled && health.hostPid
+        ? { releaseTest: { hostPid: health.hostPid } }
+        : {}),
     };
+  }
+
+  /** Resolves when the supervised PTY host has completed its initial boot. */
+  whenStarted(): Promise<PtyHostHealth> {
+    return this.startPromise;
   }
 
   /** Installs the directed WebSocket frame sender. */

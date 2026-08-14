@@ -230,6 +230,24 @@ describe("TerminalSessionService", () => {
     expect(Object.isFrozen(created.launch.arguments)).toBe(true);
   });
 
+  it("does not forward protected release-test variables to a shell", async () => {
+    const { service, runtime } = setup(20, {
+      PATH: "bin",
+      MCODE_TERMINAL_RELEASE_TEST: "1",
+      MCODE_TERMINAL_BACKEND: "modern",
+      MCODE_TERMINAL_RELEASE_FAULT: "post-start-host-exit",
+    });
+
+    await service.createSession({ scope: WORKSPACE_SCOPE });
+
+    expect(runtime.createSession).toHaveBeenCalledWith(expect.objectContaining({
+      protectedEnv: [
+        { name: "MCODE_TERMINAL_BACKEND", value: "modern" },
+        { name: "PATH", value: "bin" },
+      ],
+    }));
+  });
+
   it("keeps exited tombstones at capacity until explicit close", async () => {
     const { service, sessions } = setup(1);
     const exited = await service.createSession({ scope: WORKSPACE_SCOPE });

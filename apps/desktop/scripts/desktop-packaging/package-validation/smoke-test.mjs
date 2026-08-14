@@ -206,60 +206,6 @@ if (!bundleOnly) {
   }
   console.log(`[smoke-test] Claude SDK CLI: ${claudeCli}`);
 
-  if (sdkTarget.platform === "win32") {
-    const marker = "MCODE_PACKAGED_PTY_OK";
-    const ptyScript = `
-      const { spawn } = require(process.env.MCODE_PACKAGED_NODE_PTY);
-      const marker = ${JSON.stringify(marker)};
-      let output = "";
-      const terminal = spawn(
-        "powershell.exe",
-        ["-NoProfile", "-NonInteractive", "-Command", "Write-Output " + marker],
-        {
-          name: "xterm-256color",
-          cols: 80,
-          rows: 24,
-          cwd: process.cwd(),
-          env: process.env,
-          useConptyDll: true,
-        },
-      );
-      const timeout = setTimeout(() => {
-        console.error("Packaged PTY timed out: " + JSON.stringify(output));
-        process.exit(1);
-      }, 8000);
-      terminal.onData((data) => { output += data; });
-      terminal.onExit(({ exitCode }) => {
-        clearTimeout(timeout);
-        if (exitCode !== 0 || !output.includes(marker)) {
-          console.error("Packaged PTY failed: " + JSON.stringify({ exitCode, output }));
-          process.exit(1);
-        }
-        process.stdout.write(marker, () => process.exit(0));
-      });
-    `;
-
-    try {
-      const output = execFileSync(found.electron, ["-e", ptyScript], {
-        cwd: dirname(found.server),
-        encoding: "utf8",
-        timeout: 10_000,
-        env: {
-          ...process.env,
-          ELECTRON_RUN_AS_NODE: "1",
-          MCODE_PACKAGED_NODE_PTY: found.nodePty,
-        },
-      });
-      if (!output.includes(marker)) {
-        throw new Error(`Packaged PTY marker missing from output: ${output}`);
-      }
-      console.log("[smoke-test] Packaged PTY: PASS");
-    } catch (error) {
-      const details = error.stderr?.toString() || error.stdout?.toString() || error.message;
-      console.error(`[smoke-test] ERROR: Packaged PTY failed to start: ${details}`);
-      process.exit(1);
-    }
-  }
 }
 
 // ---------------------------------------------------------------------------

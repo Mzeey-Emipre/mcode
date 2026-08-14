@@ -426,6 +426,8 @@ interface SpellcheckBridge {
  * (file dialogs, clipboard, editor launching, etc.).
  */
 interface DesktopBridge {
+  /** Exists only for a packaged release-test boot with explicit modern gates. */
+  terminalReleaseTest?: { readonly enabled: true };
   /** Platform facts and allowlisted native actions used by the Electron title bar. */
   window: {
     readonly platform:

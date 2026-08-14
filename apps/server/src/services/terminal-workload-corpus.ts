@@ -208,8 +208,9 @@ process.stdin.on("data", (chunk) => {
 
 const PROCESS_CLEANUP_PROGRAM = String.raw`
 const { spawn } = require("node:child_process");
-const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
-process.stdout.write("WF:cleanup:parent\n");
+const child = spawn(process.execPath, ["-e", "const { spawn } = require('node:child_process'); const grandchild = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' }); process.stdout.write('WF:cleanup:grandchild:' + grandchild.pid + '\\n'); setInterval(() => {}, 1000);"], { stdio: ["ignore", "pipe", "ignore"] });
+child.stdout.on("data", (data) => process.stdout.write(data));
+process.stdout.write("WF:cleanup:parent:" + process.pid + "\n");
 process.stdout.write("WF:cleanup:child:" + child.pid + "\n");
 setInterval(() => {}, 1000);
 `;
@@ -382,12 +383,16 @@ const CORPUS: readonly TerminalWorkloadSpec[] = [
     initialDimensions,
     program: { executable: "node", source: PROCESS_CLEANUP_PROGRAM },
     steps: [{ kind: "wait", durationMs: 120 }],
-    expectedMarkers: ["WF:cleanup:parent", "WF:cleanup:child:"],
+    expectedMarkers: [
+      "WF:cleanup:parent",
+      "WF:cleanup:child:",
+      "WF:cleanup:grandchild:",
+    ],
     expectedFacts: [
       "The child PID is reported by the real PTY process, not a mock.",
       "The process-tree check records whether the child remains alive after PTY termination.",
     ],
-    completion: { waitMs: 120, terminateAfter: true },
+    completion: { waitMs: 2_000, terminateAfter: true },
   },
 ] as const;
 

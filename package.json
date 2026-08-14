@@ -53,6 +53,7 @@
     "@types/node": "^22.19.17",
     "esbuild": "^0.27.7",
     "opensrc": "0.7.3",
+    "playwright-core": "^1.62.1",
     "turbo": "^2.5.0"
   },
   "packageManager": "bun@1.2.14",

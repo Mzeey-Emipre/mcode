@@ -77,6 +77,35 @@ function passedSignatures(platform) {
   ];
 }
 
+function writeProductEvidence(root) {
+  const directory = path.join(root, "product-evidence");
+  mkdirSync(directory, { recursive: true });
+  const base = {
+    contractVersion: 1,
+    kind: "packaged-terminal-product-smoke",
+    generatedAt: "2026-08-14T12:00:00.000Z",
+    status: "passed",
+    startupFallbackDurationMs: null,
+    isolation: { mode: "linux-network-namespace", loopbackAllowed: true },
+    renderer: { cols: 80, rows: 24, cursor: { x: 1, y: 1 }, lines: [{ text: "MCODE", wrapped: true }], normalizedLines: ["MCODE"] },
+    workload: { id: "process-cleanup", synchronizationMarker: "WF:cleanup:parent" },
+    cleanup: { pids: [1, 2, 3], hostPids: [3], aliveAfterCleanup: [], cleanupDurationMs: 1, passed: true },
+    packageHashesBefore: { "resources/app.asar": "a".repeat(64) },
+    packageHashesAfter: { "resources/app.asar": "a".repeat(64) },
+  };
+  const modern = { contractVersion: 1, backend: "modern", host: { state: "healthy", generation: "1" }, releaseTest: { hostPid: 3 } };
+  const write = (name, receipt) => writeFileSync(path.join(directory, name), JSON.stringify(receipt));
+  write("clean.json", { ...base, fault: null, observations: { capabilities: { initial: modern, history: [modern] }, sessions: [], retry: null, newSession: null, typedErrors: [] } });
+  for (const [fault, name] of [["startup-health-failure", "fault-startup-health-failure.json"], ["missing-native-artifact", "fault-missing-native-artifact.json"]]) {
+    write(name, { ...base, fault, startupFallbackDurationMs: 1200, observations: { capabilities: { initial: { contractVersion: 0, backend: "legacy" }, history: [{ contractVersion: 0, backend: "legacy" }] }, sessions: [], retry: modern, newSession: null, typedErrors: [] } });
+  }
+  for (const [fault, name] of [["post-start-host-exit", "fault-post-start-host-exit.json"], ["containment-failure", "fault-containment-failure.json"]]) {
+    const replacement = { ...modern, host: { state: "healthy", generation: "2" } };
+    write(name, { ...base, fault, observations: { capabilities: { initial: modern, history: [modern, replacement] }, sessions: [{ sessionId: "11111111-1111-4111-8111-111111111111", state: "failed", hostGeneration: "1", exitReason: "host-crash" }], retry: null, newSession: { sessionId: "22222222-2222-4222-8222-222222222222", state: "running", hostGeneration: "2", exitReason: null }, typedErrors: ["HOST_UNHEALTHY"] } });
+  }
+  return directory;
+}
+
 function createMacTargetFixture(root) {
   const releaseDir = path.join(root, "release");
   const appPath = path.join(
@@ -126,6 +155,7 @@ describe("Terminal release evidence", () => {
       targetArch: "x64",
       runner: "windows-2025",
       signingRequired: true,
+      productEvidenceDir: writeProductEvidence(fixtureRoot),
       generatedAt: "2026-08-12T12:00:00.000Z",
       signatureVerifier: ({ platform }) => passedSignatures(platform),
     });
@@ -171,6 +201,7 @@ describe("Terminal release evidence", () => {
       targetArch: "x64",
       runner: "windows-2025",
       signingRequired: true,
+      productEvidenceDir: writeProductEvidence(fixtureRoot),
       signatureVerifier: ({ platform }) => passedSignatures(platform),
     });
 
@@ -203,6 +234,7 @@ describe("Terminal release evidence", () => {
       targetArch: "x64",
       runner: "ubuntu-24.04",
       signingRequired: false,
+      productEvidenceDir: writeProductEvidence(fixtureRoot),
       signatureVerifier: () => [
         { kind: "release-key", status: "skipped", subject: "SHA256SUMS.sig" },
       ],
@@ -252,6 +284,7 @@ describe("Terminal release evidence", () => {
         targetArch: "arm64",
         runner: "macos-14",
         signingRequired,
+        productEvidenceDir: writeProductEvidence(fixtureRoot),
         signatureVerifier: () => passedSignatures("macos"),
         terminalAttester: (input) => {
           calls.push(input);
@@ -265,6 +298,7 @@ describe("Terminal release evidence", () => {
   it("requires a complete, consistent target matrix before aggregate publication", () => {
     fixtureRoot = mkdtempSync(path.join(tmpdir(), "terminal-release-matrix-"));
     const inputDir = path.join(fixtureRoot, "stage");
+    const productEvidenceDir = writeProductEvidence(fixtureRoot);
     for (const target of TARGETS) {
       const releaseDir = path.join(
         fixtureRoot,
@@ -297,6 +331,7 @@ describe("Terminal release evidence", () => {
         targetArch: target.arch,
         runner: `${target.platform}-runner`,
         signingRequired: true,
+        productEvidenceDir,
         generatedAt: "2026-08-12T12:00:00.000Z",
         signatureVerifier: ({ platform }) => passedSignatures(platform),
       });
@@ -347,6 +382,7 @@ describe("Terminal release evidence", () => {
         targetArch: TARGETS[3].arch,
         runner: "ubuntu-24.04",
         signingRequired: false,
+        productEvidenceDir: writeProductEvidence(fixtureRoot),
         signatureVerifier: () => [
           { kind: "release-key", status: "skipped", subject: "SHA256SUMS.sig" },
         ],
@@ -382,6 +418,7 @@ describe("Terminal release evidence", () => {
       targetArch: "x64",
       runner: "ubuntu-24.04",
       signingRequired: false,
+      productEvidenceDir: writeProductEvidence(fixtureRoot),
       signatureVerifier: () => [
         { kind: "release-key", status: "skipped", subject: "SHA256SUMS.sig" },
       ],

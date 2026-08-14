@@ -27,4 +27,11 @@ describe("Terminal backend capabilities", () => {
       threadId: "thread-1",
     });
   });
+
+  it("accepts the protected failed-host observation without changing legacy versioning", () => {
+    const capabilities = { ...LEGACY_CAPABILITIES, releaseTest: { hostPid: 77 } };
+
+    expect(TerminalBackendCapabilitiesSchema().parse(capabilities)).toEqual(capabilities);
+    expect(WS_METHODS()["terminal.capabilities"].result.parse(capabilities)).toEqual(capabilities);
+  });
 });

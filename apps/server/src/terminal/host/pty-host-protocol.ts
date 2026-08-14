@@ -12,6 +12,10 @@ import {
   TerminalU64Schema,
   TerminalUuidSchema,
 } from "@mcode/contracts";
+import {
+  TERMINAL_RELEASE_TEST_FAULTS,
+  type TerminalReleaseTestFault,
+} from "../release-test/terminal-release-test-input.js";
 
 /** Maximum private PTY host IPC message bytes. */
 export const PTY_HOST_MAX_MESSAGE_BYTES = 131_072;
@@ -53,12 +57,13 @@ const nativeAbi = z.string().regex(/^[A-Za-z0-9._-]{1,64}$/);
 const processGroupId = z.string().min(1).max(128);
 const closeReason = z.enum(["user", "scope-reset", "workspace-delete", "app-shutdown"]);
 const exitReason = z.enum(["natural", "user-close", "host-crash", "containment-failure", "protocol-failure"]);
+const releaseTestFault = z.enum(TERMINAL_RELEASE_TEST_FAULTS);
 const messageSize = <T extends z.ZodTypeAny>(schema: T): z.ZodEffects<T> =>
   schema.refine((value) => Buffer.byteLength(JSON.stringify(value), "utf8") <= PTY_HOST_MAX_MESSAGE_BYTES, "PTY host message exceeds 128 KiB");
 
 /** Strict server-to-PTY-host protocol schema. */
 export const PtyHostServerMessageSchema = lazySchema(() => messageSize(z.discriminatedUnion("kind", [
-  z.object({ contractVersion: z.literal(TERMINAL_CONTRACT_VERSION), kind: z.literal("handshake"), requestedGeneration: u64, platform: TerminalPlatformSchema() }).strict(),
+  z.object({ contractVersion: z.literal(TERMINAL_CONTRACT_VERSION), kind: z.literal("handshake"), requestedGeneration: u64, platform: TerminalPlatformSchema(), releaseTestFault: releaseTestFault.optional() }).strict(),
   z.object({ contractVersion: z.literal(TERMINAL_CONTRACT_VERSION), kind: z.literal("create"), ...sessionIdentity, scope: TerminalScopeSchema(), executable: TerminalExecutableSchema(), arguments: TerminalProfileArgumentsSchema(), cwd: absolutePath, cols: z.number().int().min(1).max(TERMINAL_MAX_COLS), rows: z.number().int().min(1).max(TERMINAL_MAX_ROWS), env: envSchema }).strict(),
   z.object({ contractVersion: z.literal(TERMINAL_CONTRACT_VERSION), kind: z.literal("command.input"), ...sessionIdentity, attachmentEpoch: u64, commandSeq: u64, dataBase64: dataBase64Schema }).strict(),
   z.object({ contractVersion: z.literal(TERMINAL_CONTRACT_VERSION), kind: z.literal("command.resize"), ...sessionIdentity, attachmentEpoch: u64, commandSeq: u64, cols: z.number().int().min(1).max(TERMINAL_MAX_COLS), rows: z.number().int().min(1).max(TERMINAL_MAX_ROWS) }).strict(),
@@ -94,6 +99,9 @@ export const PtyHostEventSchema = lazySchema(() => messageSize(z.discriminatedUn
 export type PtyHostServerMessage = z.infer<ReturnType<typeof PtyHostServerMessageSchema>>;
 /** PTY-host-to-server protocol event. */
 export type PtyHostEvent = z.infer<ReturnType<typeof PtyHostEventSchema>>;
+
+/** Fault selected by the protected release-test handshake. */
+export type { TerminalReleaseTestFault };
 
 const messageGeneration = (message: PtyHostServerMessage): string =>
   message.kind === "handshake" ? message.requestedGeneration : message.hostGeneration;

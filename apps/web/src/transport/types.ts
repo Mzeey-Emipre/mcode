@@ -89,6 +89,7 @@ import type {
   TerminalProfileReference,
   TerminalResolvedProfile,
   TerminalProfileRecovery,
+  TerminalSessionSnapshot,
   ThreadControlIdentity,
   ThreadControlReadResult,
   ThreadControlUserSendInput,
@@ -96,6 +97,15 @@ import type {
   ThreadSendResult,
   ThreadStopResult,
 } from "@mcode/contracts";
+
+/** Bounded runtime observations used only by the packaged Terminal release probe. */
+export interface TerminalReleaseTestRuntime {
+  readonly capabilities: TerminalBackendCapabilities;
+  readonly sessions: readonly Pick<
+    TerminalSessionSnapshot,
+    "sessionId" | "state" | "hostGeneration" | "exit"
+  >[];
+}
 
 // Re-export shared types from the contracts package (single source of truth).
 export type { PlanAction } from "@mcode/contracts";
@@ -558,6 +568,8 @@ export interface McodeTransport {
   terminalDiagnosticsGetBundle?: () => Promise<import("@mcode/contracts").TerminalDiagnosticsBundle>;
   /** Fetch the bounded, content-free diagnostics bundle through the selected client. */
   terminalDiagnostics(): Promise<import("@mcode/contracts").TerminalDiagnosticsBundle>;
+  /** Refresh existing Terminal RPC observations for the packaged release probe. */
+  terminalReleaseTestRefresh?(): Promise<TerminalReleaseTestRuntime>;
   /** Create a PTY, optionally atomically replacing an exited or failed session. */
   terminalCreate(threadId: string, replacesSessionId?: string): Promise<{ ptyId: string; shell: string }>;
   /** Write data (keystrokes) to a PTY. */

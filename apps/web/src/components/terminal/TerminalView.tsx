@@ -1,5 +1,11 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Terminal, IDisposable } from "@xterm/xterm";
+import {
+  readTerminalReleaseTestSnapshot,
+  recordTerminalReleaseTestRuntime,
+  type TerminalReleaseTestSnapshot,
+  type TerminalReleaseTestRuntimeSnapshot,
+} from "./terminal-release-test-probe";
 import type { SerializeAddon } from "@xterm/addon-serialize";
 import type { SearchAddon } from "@xterm/addon-search";
 import type {
@@ -463,6 +469,54 @@ export const TerminalView = memo(function TerminalView({
 
   const prevShownRef = useRef(shown);
   const [hydrated, setHydrated] = useState(false);
+  const releaseTestProbeEnabled =
+    typeof window !== "undefined" &&
+    window.desktopBridge?.terminalReleaseTest?.enabled === true;
+  const [releaseTestProbe, setReleaseTestProbe] =
+    useState<TerminalReleaseTestSnapshot | null>(null);
+  const [releaseTestRuntime, setReleaseTestRuntime] =
+    useState<TerminalReleaseTestRuntimeSnapshot | null>(null);
+  const publishReleaseTestProbe = useCallback((terminal: Terminal) => {
+    if (!releaseTestProbeEnabled) return;
+    setReleaseTestProbe(readTerminalReleaseTestSnapshot(terminal));
+  }, [releaseTestProbeEnabled]);
+
+  // The packaged lane polls existing capabilities/session RPCs so recovery
+  // evidence remains available after the failed Terminal view is unmounted.
+  useEffect(() => {
+    if (!releaseTestProbeEnabled) return;
+    const transport = getTransport();
+    let disposed = false;
+    let inFlight = false;
+    const refresh = async () => {
+      if (disposed || inFlight) return;
+      inFlight = true;
+      try {
+        const observation = await transport.terminalReleaseTestRefresh?.();
+        if (!observation || disposed) return;
+        const snapshot = recordTerminalReleaseTestRuntime(observation);
+        setReleaseTestRuntime(snapshot);
+        document.documentElement.setAttribute(
+          "data-terminal-release-test-runtime",
+          JSON.stringify(snapshot),
+        );
+        document.documentElement.removeAttribute("data-terminal-release-test-runtime-error");
+      } catch (error) {
+        if (!disposed) {
+          const message = String(error instanceof Error ? error.message : error).slice(0, 256);
+          document.documentElement.setAttribute("data-terminal-release-test-runtime-error", message);
+        }
+      } finally {
+        inFlight = false;
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 250);
+    return () => {
+      disposed = true;
+      window.clearInterval(timer);
+    };
+  }, [releaseTestProbeEnabled, ptyId]);
 
   const terminalSettings = useSettingsStore((s) => s.settings.terminal);
   const terminalSettingsRef = useRef(terminalSettings);
@@ -513,6 +567,7 @@ export const TerminalView = memo(function TerminalView({
       term.loadAddon(serializeAddon);
       term.open(el);
       applyTerminalSettings(term, terminalSettingsRef.current);
+      publishReleaseTestProbe(term);
       incrementLiveTerminalCount();
       let exited = sessionEndedRef.current;
       if (exited) term.options.disableStdin = true;
@@ -696,6 +751,7 @@ export const TerminalView = memo(function TerminalView({
           term.write(data, () => {
             try {
               callback?.();
+              publishReleaseTestProbe(term);
             } finally {
               pendingWrites.delete(completed);
               finishWrite();
@@ -821,6 +877,7 @@ export const TerminalView = memo(function TerminalView({
         captureScrollIntent: () => captureScrollAnchor(term),
         restoreScrollIntent: (intent) => {
           terminalScroll.restoreAfterResize(ptyId, term, intent);
+          publishReleaseTestProbe(term);
         },
         sendResize: ({ cols, rows }) =>
           transport.terminalResize(ptyId, cols, rows).catch(() => {}),
@@ -1227,7 +1284,7 @@ export const TerminalView = memo(function TerminalView({
       cancelled = true;
       rendererInitCancelledRef.current = true;
     };
-  }, [shown, threadActive, ptyId]);
+  }, [shown, threadActive, ptyId, publishReleaseTestProbe]);
 
   openSearchRef.current = () => {
     if (shownRef.current) {
@@ -1343,6 +1400,12 @@ export const TerminalView = memo(function TerminalView({
       ref={containerRef}
       className="flex h-full min-h-0 w-full flex-col overflow-hidden"
       data-terminal-hydrated={hydrated}
+      {...(releaseTestProbeEnabled && releaseTestProbe
+        ? { "data-terminal-release-test-probe": JSON.stringify(releaseTestProbe) }
+        : {})}
+      {...(releaseTestProbeEnabled && releaseTestRuntime
+        ? { "data-terminal-release-test-runtime": JSON.stringify(releaseTestRuntime) }
+        : {})}
       data-testid="terminal-render-content"
       role="region"
       aria-label="Terminal output"

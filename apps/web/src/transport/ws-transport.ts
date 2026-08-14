@@ -22,6 +22,7 @@ import type {
   TerminalPreferencesResult,
   TerminalProfileList,
   TerminalWorkspacePreference,
+  TerminalReleaseTestRuntime,
 } from "./types";
 import { TurnRuntimeSnapshotSchema } from "@mcode/contracts";
 import { TerminalErrorCodeSchema } from "@mcode/contracts";
@@ -64,6 +65,7 @@ import type {
   TerminalDiagnosticsBundle,
   TerminalCustomProfile,
   TerminalProfileReference,
+  TerminalSessionSnapshot,
 } from "@mcode/contracts";
 import type { PaginatedMessages, ConversationPage, ConversationNewerPage, ConversationNewerPageRequest, ConversationOlderPage, ConversationOlderPageRequest, ConversationTail, CanonicalSubagentRoster, CanonicalSubagentStopResult, SetThreadSubscriptionsInput, SetThreadSubscriptionsResult, TurnSnapshot, PrDraft, CreatePrResult, ProviderUsageInfo, ChecksStatus, ProviderAvailability, GoalLookupResult } from "@mcode/contracts";
 import {
@@ -555,6 +557,27 @@ export function createWsTransport(
     return terminalSelectionPromise;
   }
 
+  async function terminalReleaseTestRefresh(): Promise<TerminalReleaseTestRuntime> {
+    if (window.desktopBridge?.terminalReleaseTest?.enabled !== true) {
+      throw new Error("Terminal release-test observations are unavailable");
+    }
+    const capabilities = await rpc<TerminalBackendCapabilities>("terminal.capabilities", {});
+    if (capabilities.contractVersion === 1) {
+      const sessions = await rpc<TerminalSessionSnapshot[]>("terminal.session.list", {});
+      return { capabilities, sessions };
+    }
+    const legacySessions = await rpc<Array<{ ptyId: string; threadId: string }>>("terminal.listActive", {});
+    return {
+      capabilities,
+      sessions: legacySessions.map((session) => ({
+        sessionId: session.ptyId,
+        state: "running" as const,
+        hostGeneration: "0",
+        exit: null,
+      })),
+    };
+  }
+
   async function withTerminalClient<T>(
     operation: (client: TerminalClient) => Promise<T>,
   ): Promise<T> {
@@ -900,6 +923,7 @@ export function createWsTransport(
     terminalCapabilities,
     terminalDiagnosticsGetBundle: () =>
       rpc<TerminalDiagnosticsBundle>("terminal.diagnostics.getBundle", {}),
+    terminalReleaseTestRefresh,
     terminalCreate: (threadId, replacesSessionId) =>
       withTerminalClient((client) => client.create(threadId, replacesSessionId)),
     terminalWrite: (ptyId, data) => withTerminalClient((client) => client.write(ptyId, data)),

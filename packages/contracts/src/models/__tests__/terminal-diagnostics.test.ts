@@ -4,11 +4,208 @@ import {
   TerminalTargetEvidenceManifestSchema,
   TerminalDiagnosticEventSchema,
   TerminalDiagnosticsBundleSchema,
+  TerminalProductSmokeEvidenceSchema,
+  TerminalProductSmokeReceiptSchema,
 } from "../terminal-diagnostics.js";
 
 const UUID = "11111111-1111-4111-8111-111111111111";
 
+function productEvidenceFixture() {
+  const renderer = {
+    cols: 80,
+    rows: 24,
+    cursor: { x: 1, y: 1 },
+    lines: [{ text: "marker", wrapped: false }],
+    normalizedLines: ["marker"],
+  };
+  const base = {
+    contractVersion: 1,
+    kind: "packaged-terminal-product-smoke",
+    generatedAt: "2026-08-14T12:00:00.000Z",
+    status: "passed",
+    startupFallbackDurationMs: null,
+    isolation: { mode: "linux-network-namespace", loopbackAllowed: true },
+    renderer,
+    workload: { id: "process-cleanup", synchronizationMarker: "WF:cleanup:parent" },
+    cleanup: { pids: [1, 2, 3], hostPids: [3], aliveAfterCleanup: [], cleanupDurationMs: 10, passed: true },
+    packageHashesBefore: { "resources/app.asar": "a".repeat(64) },
+    packageHashesAfter: { "resources/app.asar": "a".repeat(64) },
+  } as const;
+  const modern = { contractVersion: 1, backend: "modern" as const, host: { state: "healthy", generation: "1" }, releaseTest: { hostPid: 3 } };
+  const clean = { ...base, fault: null, observations: { capabilities: { initial: modern, history: [modern] }, sessions: [], retry: null, newSession: null, typedErrors: [] } };
+    const startup = (fault: "startup-health-failure" | "missing-native-artifact") => ({
+    ...base,
+    fault,
+    startupFallbackDurationMs: 1200,
+    observations: {
+      capabilities: { initial: { contractVersion: 0, backend: "legacy" as const }, history: [{ contractVersion: 0, backend: "legacy" as const }] },
+      sessions: [],
+      retry: modern,
+      newSession: { sessionId: "22222222-2222-4222-8222-222222222222", state: "running", hostGeneration: "2", exitReason: null },
+      typedErrors: [],
+    },
+  });
+  const recovery = (fault: "post-start-host-exit" | "containment-failure") => ({
+    ...base,
+    fault,
+    startupFallbackDurationMs: null,
+    observations: {
+      capabilities: {
+        initial: modern,
+        history: [modern, { ...modern, host: { state: "healthy", generation: "2" } }],
+      },
+      sessions: [{ sessionId: UUID, state: "failed", hostGeneration: "1", exitReason: "host-crash" }],
+      retry: null,
+      newSession: { sessionId: "22222222-2222-4222-8222-222222222222", state: "running", hostGeneration: "2", exitReason: null },
+      typedErrors: ["HOST_UNHEALTHY"],
+    },
+  });
+  return { clean, faults: [startup("startup-health-failure"), recovery("post-start-host-exit"), recovery("containment-failure"), startup("missing-native-artifact")] };
+}
+
 describe("Terminal v1 diagnostics", () => {
+  it("requires complete bounded product smoke outcomes", () => {
+    const receipt = {
+      contractVersion: 1,
+      kind: "packaged-terminal-product-smoke",
+      generatedAt: "2026-08-14T12:00:00.000Z",
+      status: "passed",
+      fault: "post-start-host-exit",
+      startupFallbackDurationMs: null,
+      observations: {
+        capabilities: {
+          initial: { contractVersion: 1, backend: "modern", host: { state: "healthy", generation: "1" }, releaseTest: { hostPid: 3 } },
+          history: [
+            { contractVersion: 1, backend: "modern", host: { state: "unhealthy", generation: "1" }, releaseTest: { hostPid: 3 } },
+            { contractVersion: 1, backend: "modern", host: { state: "healthy", generation: "2" }, releaseTest: { hostPid: 4 } },
+          ],
+        },
+        sessions: [
+          { sessionId: UUID, state: "failed", hostGeneration: "1", exitReason: "host-crash" },
+          { sessionId: "22222222-2222-4222-8222-222222222222", state: "running", hostGeneration: "2", exitReason: null },
+        ],
+        retry: null,
+        newSession: { sessionId: "22222222-2222-4222-8222-222222222222", state: "running", hostGeneration: "2", exitReason: null },
+        typedErrors: ["HOST_UNHEALTHY"],
+      },
+      isolation: {
+        mode: "linux-network-namespace",
+        loopbackAllowed: true,
+      },
+      renderer: {
+        cols: 80,
+        rows: 24,
+        cursor: { x: 1, y: 1 },
+        lines: [{ text: "marker", wrapped: false }],
+        normalizedLines: ["marker"],
+      },
+      workload: {
+        id: "process-cleanup",
+        synchronizationMarker: "WF:cleanup:parent",
+      },
+      cleanup: {
+        pids: [1, 2, 3, 4],
+        hostPids: [3, 4],
+        aliveAfterCleanup: [],
+        cleanupDurationMs: 10,
+        passed: true,
+      },
+      packageHashesBefore: { "resources/app.asar": "a".repeat(64) },
+      packageHashesAfter: { "resources/app.asar": "a".repeat(64) },
+    } as const;
+    expect(TerminalProductSmokeReceiptSchema().parse(receipt)).toEqual(receipt);
+    expect(() =>
+      TerminalProductSmokeReceiptSchema().parse({
+        ...receipt,
+        observations: { ...receipt.observations, capabilities: { ...receipt.observations.capabilities, history: [receipt.observations.capabilities.history[0]] } },
+      }),
+    ).toThrow();
+    expect(() =>
+      TerminalProductSmokeReceiptSchema().parse({
+        ...receipt,
+        fault: "startup-health-failure",
+        startupFallbackDurationMs: 5_001,
+        observations: {
+          ...receipt.observations,
+          capabilities: {
+            initial: { contractVersion: 0, backend: "legacy" },
+            history: [{ contractVersion: 0, backend: "legacy" }],
+          },
+          sessions: [],
+          retry: { contractVersion: 1, backend: "modern", host: { state: "healthy", generation: "1" }, releaseTest: { hostPid: 3 } },
+          newSession: null,
+          typedErrors: [],
+        },
+      }),
+    ).toThrow();
+    expect(() =>
+      TerminalProductSmokeReceiptSchema().parse({
+        ...receipt,
+        cleanup: { ...receipt.cleanup, hostPids: [999] },
+      }),
+    ).toThrow();
+    expect(() =>
+      TerminalProductSmokeReceiptSchema().parse({
+        ...receipt,
+        cleanup: { ...receipt.cleanup, pids: [1, 2, 3], hostPids: [3] },
+      }),
+    ).toThrow();
+    expect(
+      TerminalProductSmokeEvidenceSchema().parse({
+        clean: { ...receipt, fault: null, cleanup: { ...receipt.cleanup, pids: [1, 2, 3], hostPids: [3] }, observations: {
+          ...receipt.observations,
+          capabilities: { initial: receipt.observations.capabilities.initial, history: [receipt.observations.capabilities.initial] },
+          sessions: [], retry: null, newSession: null, typedErrors: [],
+        } },
+        faults: [
+          receipt,
+          { ...receipt, fault: "startup-health-failure", startupFallbackDurationMs: 1200, cleanup: { ...receipt.cleanup, pids: [1, 2, 3], hostPids: [3] }, observations: {
+            ...receipt.observations,
+            capabilities: { initial: { contractVersion: 0, backend: "legacy" }, history: [{ contractVersion: 0, backend: "legacy" }] },
+            sessions: [], retry: { contractVersion: 1, backend: "modern", host: { state: "healthy", generation: "1" }, releaseTest: { hostPid: 3 } }, newSession: null, typedErrors: [],
+          } },
+          { ...receipt, fault: "containment-failure" },
+          { ...receipt, fault: "missing-native-artifact", startupFallbackDurationMs: 1200, cleanup: { ...receipt.cleanup, pids: [1, 2, 3], hostPids: [3] }, observations: {
+            ...receipt.observations,
+            capabilities: { initial: { contractVersion: 0, backend: "legacy" }, history: [{ contractVersion: 0, backend: "legacy" }] },
+            sessions: [], retry: { contractVersion: 1, backend: "modern", host: { state: "healthy", generation: "1" }, releaseTest: { hostPid: 3 } }, newSession: null, typedErrors: [],
+          } },
+        ],
+      }),
+    ).toBeTruthy();
+  });
+
+  it("requires both startup-fault host PIDs in cleanup evidence", () => {
+    const base = productEvidenceFixture().faults[0];
+    const receipt = {
+      ...base,
+      observations: {
+        capabilities: {
+          initial: { contractVersion: 0, backend: "legacy" as const, releaseTest: { hostPid: 7 } },
+          history: [{ contractVersion: 0, backend: "legacy" as const, releaseTest: { hostPid: 7 } }],
+        },
+        sessions: [],
+        retry: {
+          contractVersion: 1,
+          backend: "modern" as const,
+          host: { state: "healthy", generation: "1" },
+          releaseTest: { hostPid: 8 },
+        },
+        newSession: null,
+        typedErrors: [],
+      },
+      cleanup: { ...base.cleanup, pids: [1, 7, 8], hostPids: [7, 8] },
+    } as const;
+
+    expect(TerminalProductSmokeReceiptSchema().parse(receipt)).toEqual(receipt);
+    expect(() =>
+      TerminalProductSmokeReceiptSchema().parse({
+        ...receipt,
+        cleanup: { ...receipt.cleanup, pids: [1, 7], hostPids: [7] },
+      }),
+    ).toThrow();
+  });
+
   it("enforces metric units and metric-specific bounds", () => {
     const event = {
       eventId: UUID,
@@ -122,6 +319,7 @@ describe("Terminal v1 diagnostics", () => {
           sha256: String(index + 1).repeat(64),
         })),
       },
+      terminalProduct: productEvidenceFixture(),
     } as const;
 
     expect(TerminalTargetEvidenceManifestSchema().parse(target)).toEqual(
@@ -204,6 +402,7 @@ describe("Terminal v1 diagnostics", () => {
           sha256: String(index + 1).repeat(64),
         })),
       },
+      terminalProduct: productEvidenceFixture(),
     } as const;
 
     expect(() =>

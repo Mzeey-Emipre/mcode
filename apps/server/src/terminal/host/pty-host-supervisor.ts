@@ -1,4 +1,5 @@
 import type { TerminalPlatform } from "@mcode/contracts";
+import type { TerminalReleaseTestFault } from "../release-test/terminal-release-test-input.js";
 import { Buffer } from "node:buffer";
 import { randomUUID } from "node:crypto";
 import { killProcessTree } from "../../services/process-kill.js";
@@ -59,6 +60,10 @@ export interface PtyHostChild {
 /** Construction options for a supervised PTY host. */
 export interface PtyHostSupervisorOptions {
   readonly platform: TerminalPlatform;
+  /** Optional fault injected only by the protected packaged release lane. */
+  readonly releaseTestFault?: TerminalReleaseTestFault;
+  /** Enables the packaged-only host PID observation seam. */
+  readonly releaseTestObservationsEnabled?: boolean;
   readonly spawnHost: () => PtyHostChild;
   readonly startupTimeoutMs?: number;
   readonly replacementDelayMs?: number;
@@ -118,6 +123,7 @@ export class PtyHostSupervisor implements PtyHostAdapter {
   private readonly pendingCloses = new Map<string, PendingClose>();
   private readonly pendingInspections = new Map<string, PendingInspection>();
   private readonly cleanupLedger: PtyHostCleanupLedgerStore;
+  private releaseTestFault: TerminalReleaseTestFault | undefined;
 
   constructor(private readonly options: PtyHostSupervisorOptions) {
     const degradedMs = options.heartbeatDegradedMs ?? HEARTBEAT_DEGRADED_MS;
@@ -126,6 +132,7 @@ export class PtyHostSupervisor implements PtyHostAdapter {
       throw new Error("PTY host heartbeat bounds are invalid");
     }
     this.cleanupLedger = options.cleanupLedger;
+    this.releaseTestFault = options.releaseTestFault;
   }
 
   /** Starts the initial PTY host generation. */
@@ -143,6 +150,9 @@ export class PtyHostSupervisor implements PtyHostAdapter {
     return {
       hostGeneration: this.generation.toString(),
       state: this.state,
+      ...(this.options.releaseTestObservationsEnabled && this.child?.pid
+        ? { hostPid: this.child.pid }
+        : {}),
     };
   }
 
@@ -393,12 +403,17 @@ export class PtyHostSupervisor implements PtyHostAdapter {
         ),
       );
     }, this.options.startupTimeoutMs ?? STARTUP_TIMEOUT_MS);
+    const releaseTestFault = this.releaseTestFault;
+    this.releaseTestFault = undefined;
     try {
       this.sendMessage({
         contractVersion: 1,
         kind: "handshake",
         requestedGeneration: generation,
         platform: this.options.platform,
+        ...(releaseTestFault
+          ? { releaseTestFault }
+          : {}),
       });
     } catch (error) {
       this.handleHostFailure(
@@ -492,7 +507,13 @@ export class PtyHostSupervisor implements PtyHostAdapter {
         this.pendingInspections.delete(event.sessionId);
       }
     }
-    if (event.kind === "failure") this.rejectPending(new Error(event.code));
+    if (event.kind === "failure") {
+      this.rejectPending(new Error(event.code));
+      if (event.boundary === "startup") {
+        this.handleHostFailure(child, new Error(event.code));
+        return;
+      }
+    }
     this.publish(event);
     if (
       this.readyObserved &&
@@ -532,7 +553,7 @@ export class PtyHostSupervisor implements PtyHostAdapter {
       contractVersion: 1,
       kind: "failure",
       hostGeneration: this.generation.toString(),
-      boundary: "shutdown",
+      boundary: canReplace ? "shutdown" : "startup",
       recoverable: canReplace && !this.replacementUsed,
       code: "HOST_UNHEALTHY",
     });

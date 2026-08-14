@@ -16,6 +16,7 @@ import {
   type TerminalSessionSnapshot,
 } from "@mcode/contracts";
 import type { TerminalSessionRuntime } from "./runtime/terminal-session-runtime.js";
+import { isTerminalReleaseTestEnvironmentName } from "./release-test/terminal-release-test-input.js";
 
 /** Profile-resolution seam consumed by Terminal product policy. */
 export interface TerminalSessionProfileResolver {
@@ -296,7 +297,9 @@ function isExistingAbsoluteDirectory(path: string): boolean {
 
 function snapshotEnvironment(env: Record<string, string>): ReadonlyArray<Readonly<{ name: string; value: string }>> {
   const entries = Object.entries(env).filter(([name, value]) =>
-    SAFE_ENVIRONMENT_NAME.test(name) && typeof value === "string",
+    SAFE_ENVIRONMENT_NAME.test(name) &&
+    !isTerminalReleaseTestEnvironmentName(name) &&
+    typeof value === "string",
   );
   if (entries.length > MAX_ENVIRONMENT_ENTRIES) {
     throw new TerminalSessionPolicyError("CONTAINMENT_FAILED");

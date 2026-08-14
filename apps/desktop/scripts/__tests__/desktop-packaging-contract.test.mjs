@@ -146,6 +146,26 @@ describe("electron-builder transient failure classification", () => {
 });
 
 describe("desktop packaging workflow contract", () => {
+  it("runs one packaged Terminal product lane before staging evidence", () => {
+    const workflow = readFileSync(
+      path.join(repoRoot, ".github/workflows/desktop-package-target.yml"),
+      "utf8",
+    );
+    expect(workflow).toContain("packaged-terminal-product-smoke.mjs");
+    expect(workflow).toContain("MCODE_TERMINAL_RELEASE_TEST=1");
+    expect(workflow).toContain("terminal-product-evidence");
+    expect(workflow).toContain("--product-evidence-dir");
+    expect(workflow.indexOf("Run packaged Terminal product and fault lanes")).toBeLessThan(
+      workflow.indexOf("Stage target artifacts and evidence"),
+    );
+    expect(
+      readFileSync(
+        path.join(repoRoot, "apps/desktop/scripts/desktop-packaging/package-validation/smoke-test.mjs"),
+        "utf8",
+      ),
+    ).not.toContain("MCODE_PACKAGED_NODE_PTY");
+  });
+
   it("uses one reusable target path for Nightly, Stable, and PR", () => {
     for (const workflow of [
       ".github/workflows/nightly-desktop.yml",
@@ -242,10 +262,10 @@ describe("desktop packaging workflow contract", () => {
       "utf8",
     );
     const unsignedBlock = workflow.match(
-      /- name: Package unsigned target\n([\s\S]*?)(?=\n      - name:)/,
+      /- name: Package unsigned target\r?\n([\s\S]*?)(?=\r?\n      - name:)/,
     )?.[1];
     const signedBlock = workflow.match(
-      /- name: Package and sign target\n([\s\S]*?)(?=\n      - name:)/,
+      /- name: Package and sign target\r?\n([\s\S]*?)(?=\r?\n      - name:)/,
     )?.[1];
 
     expect(unsignedBlock).toBeDefined();

@@ -39,6 +39,7 @@ import { TerminalBackend, TERMINAL_BACKEND_TOKEN } from "./terminal/terminal-bac
 import { TerminalProfileService } from "./terminal/profiles/terminal-profile-service.js";
 import { WorkspaceTerminalPreferencesService } from "./terminal/preferences/workspace-terminal-preferences-service.js";
 import { TerminalDiagnosticsService } from "./terminal/diagnostics/terminal-diagnostics-service.js";
+import { TerminalBackendSelector } from "./terminal/terminal-backend-selector.js";
 import { MessageRepo } from "./repositories/message-repo";
 import { ThreadRepo } from "./repositories/thread-repo";
 import { ToolCallRecordRepo } from "./repositories/tool-call-record-repo";
@@ -275,6 +276,7 @@ const terminalService = container.resolve<TerminalBackend>(TERMINAL_BACKEND_TOKE
 const terminalProfileService = container.resolve(TerminalProfileService);
 const workspaceTerminalPreferencesService = container.resolve(WorkspaceTerminalPreferencesService);
 const terminalDiagnosticsService = container.resolve(TerminalDiagnosticsService);
+const terminalBackendSelector = container.resolve<TerminalBackendSelector>("TerminalBackendSelector");
 const messageRepo = container.resolve(MessageRepo);
 const threadRepo = container.resolve(ThreadRepo);
 const providerRegistry = container.resolve(ProviderRegistry);
@@ -845,6 +847,7 @@ const pidRegistry = container.resolve<PtyPidRegistry>("PtyPidRegistry");
 reapOrphanedPtys(pidRegistry, logger);
 
 async function bootstrapServer(): Promise<void> {
+  await terminalBackendSelector.waitForStartup();
   try {
     await threadControlService.recoverApprovals();
     externalThreadControlMcpRuntime.reconcileOnStartup();

@@ -5,6 +5,8 @@ import type { PtyHostEvent } from "./pty-host-protocol.js";
 export interface PtyHostHealth {
   readonly hostGeneration: string;
   readonly state: "starting" | "healthy" | "degraded" | "unhealthy" | "stopped";
+  /** Present only for the packaged release-test observation seam. */
+  readonly hostPid?: number;
 }
 
 /** Content-free measurements exposed by the supervised PTY host. */

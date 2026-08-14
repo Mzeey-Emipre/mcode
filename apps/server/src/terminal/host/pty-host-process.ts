@@ -113,6 +113,10 @@ export function runPtyHostProcess(): PtyHostProcessRuntime {
     publish,
     queueBytes: () =>
       Math.min(MAX_IPC_QUEUE_BYTES, (queue?.pendingBytes ?? 0) + outboundBytes),
+    onPostStartHostExit: () => {
+      process.exitCode = 1;
+      process.disconnect?.();
+    },
   });
   queue = new PtyHostMessageQueue(async (message) => {
     await runtime.receive(message);

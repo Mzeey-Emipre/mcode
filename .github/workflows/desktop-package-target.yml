@@ -232,6 +232,77 @@ jobs:
         if: inputs.target-platform == 'linux'
         run: bash apps/desktop/scripts/desktop-packaging/package-validation/verify-linux-artifacts-ubuntu22.sh
 
+      - name: Run packaged Terminal product and fault lanes
+        shell: bash
+        env:
+          MCODE_TARGET_PLATFORM: ${{ inputs.target-platform }}
+          MCODE_TARGET_ARCH: ${{ inputs.target-arch }}
+          MCODE_RELEASE_DIR: apps/desktop/release
+          MCODE_PRODUCT_EVIDENCE_DIR: ${{ runner.temp }}/terminal-product-evidence
+          MCODE_ISOLATION_RECEIPT: ${{ runner.temp }}/terminal-isolation.json
+        run: |
+          set -euo pipefail
+          cleanup_status=0
+          cleanup() {
+            status=$?
+            if [ -f "$MCODE_ISOLATION_RECEIPT" ]; then
+              set +e
+              bun apps/desktop/scripts/desktop-packaging/package-validation/packaged-terminal-product-smoke.mjs cleanup --receipt "$MCODE_ISOLATION_RECEIPT"
+              cleanup_status=$?
+              set -e
+            fi
+            if [ "$status" -eq 0 ] && [ "$cleanup_status" -ne 0 ]; then
+              status="$cleanup_status"
+            fi
+            exit "$status"
+          }
+          trap cleanup EXIT
+          case "$MCODE_TARGET_PLATFORM" in
+            windows) executable="$MCODE_RELEASE_DIR/win-unpacked/Mcode.exe" ;;
+            linux) executable="$MCODE_RELEASE_DIR/linux-unpacked/mcode-desktop" ;;
+            macos)
+              if [ "$MCODE_TARGET_ARCH" = "arm64" ]; then
+                executable="$MCODE_RELEASE_DIR/mac-arm64/Mcode.app/Contents/MacOS/Mcode"
+              else
+                executable="$MCODE_RELEASE_DIR/mac/Mcode.app/Contents/MacOS/Mcode"
+              fi
+              ;;
+            *) echo "Unsupported target platform: $MCODE_TARGET_PLATFORM" >&2; exit 1 ;;
+          esac
+          test -x "$executable" || test -f "$executable"
+          mkdir -p "$MCODE_PRODUCT_EVIDENCE_DIR"
+          bun apps/desktop/scripts/desktop-packaging/package-validation/packaged-terminal-product-smoke.mjs \
+            isolation \
+            --platform "$MCODE_TARGET_PLATFORM" \
+            --executable "$executable" \
+            --output "$MCODE_ISOLATION_RECEIPT"
+          for fault in "" startup-health-failure post-start-host-exit containment-failure missing-native-artifact; do
+            if [ -n "$fault" ]; then
+              MCODE_TERMINAL_RELEASE_TEST=1 \
+              MCODE_TERMINAL_BACKEND=modern \
+              MCODE_TERMINAL_RELEASE_FAULT="$fault" \
+              bun apps/desktop/scripts/desktop-packaging/package-validation/packaged-terminal-product-smoke.mjs \
+                product \
+                --release-dir "$MCODE_RELEASE_DIR" \
+                --receipt-dir "$MCODE_PRODUCT_EVIDENCE_DIR" \
+                --fault "$fault" \
+                --platform "$MCODE_TARGET_PLATFORM" \
+                --arch "$MCODE_TARGET_ARCH" \
+                --isolation-receipt "$MCODE_ISOLATION_RECEIPT"
+            else
+              env -u MCODE_TERMINAL_RELEASE_FAULT \
+                MCODE_TERMINAL_RELEASE_TEST=1 \
+                MCODE_TERMINAL_BACKEND=modern \
+                bun apps/desktop/scripts/desktop-packaging/package-validation/packaged-terminal-product-smoke.mjs \
+                  product \
+                  --release-dir "$MCODE_RELEASE_DIR" \
+                  --receipt-dir "$MCODE_PRODUCT_EVIDENCE_DIR" \
+                  --platform "$MCODE_TARGET_PLATFORM" \
+                  --arch "$MCODE_TARGET_ARCH" \
+                  --isolation-receipt "$MCODE_ISOLATION_RECEIPT"
+            fi
+          done
+
       - name: Stage target artifacts and evidence
         shell: bash
         env:
@@ -256,7 +327,8 @@ jobs:
             --platform "$MCODE_TARGET_PLATFORM" \
             --arch "$MCODE_TARGET_ARCH" \
             --runner "$MCODE_RUNNER" \
-            --signing-required "$MCODE_SIGNING_REQUIRED"
+            --signing-required "$MCODE_SIGNING_REQUIRED" \
+            --product-evidence-dir "$RUNNER_TEMP/terminal-product-evidence"
 
       - name: Upload staged target
         uses: actions/upload-artifact@v4

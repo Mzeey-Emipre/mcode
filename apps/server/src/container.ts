@@ -66,6 +66,7 @@ import { ModernTerminalBackend } from "./terminal/modern/modern-terminal-backend
 import { ModernTerminalSessionRuntime } from "./terminal/runtime/terminal-session-runtime.js";
 import { TerminalSessionService } from "./terminal/terminal-session-service.js";
 import { PtyHostSupervisor } from "./terminal/host/pty-host-supervisor.js";
+import { parseTerminalReleaseTestInput } from "./terminal/release-test/terminal-release-test-input.js";
 import { resolvePtyHostEntryPath, spawnPtyHostChild } from "./terminal/host/pty-host-child.js";
 import { TerminalProfileService } from "./terminal/profiles/terminal-profile-service.js";
 import { WorkspaceTerminalPreferencesService } from "./terminal/preferences/workspace-terminal-preferences-service.js";
@@ -122,6 +123,12 @@ import {
 
 /** Initialize the DI container with all server dependencies. */
 export function setupContainer(mcodeDir: string): typeof container {
+  const hasProtectedReleaseInput = Object.keys(process.env).some((key) =>
+    key.startsWith("MCODE_TERMINAL_RELEASE_"),
+  );
+  const releaseTestInput = hasProtectedReleaseInput
+    ? parseTerminalReleaseTestInput()
+    : null;
   const browserAutomationCredentials = new BrowserAutomationCredentialRegistry();
   container.registerInstance(BrowserAutomationCredentialRegistry, browserAutomationCredentials);
   container.registerInstance(
@@ -495,6 +502,8 @@ export function setupContainer(mcodeDir: string): typeof container {
       const platform = process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : "linux";
       const host = new PtyHostSupervisor({
         platform,
+        releaseTestFault: releaseTestInput?.fault,
+        releaseTestObservationsEnabled: releaseTestInput?.enabled === true,
         cleanupLedger: c.resolve(PtyHostCleanupLedger),
         spawnHost: () => spawnPtyHostChild({
           entryPath: resolvePtyHostEntryPath(process.argv[1] ?? process.cwd()),
@@ -520,6 +529,7 @@ export function setupContainer(mcodeDir: string): typeof container {
         runtime,
         host,
         () => settings.get().terminal.behavior.sessionLimit,
+        releaseTestInput?.enabled === true,
       );
       return modernTerminalBackend;
     },
@@ -538,7 +548,7 @@ export function setupContainer(mcodeDir: string): typeof container {
     } } as never,
   );
   container.register<TerminalBackend>(TERMINAL_BACKEND_TOKEN, {
-    useFactory: (c) => c.resolve<TerminalBackendSelector>("TerminalBackendSelector").getSelectedBackend(),
+    useFactory: (c) => c.resolve<TerminalBackendSelector>("TerminalBackendSelector"),
   });
   container.register(
     TerminalDiagnosticsService,

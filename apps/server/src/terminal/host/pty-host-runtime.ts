@@ -11,9 +11,20 @@ import {
   type PtyHostServerMessage,
 } from "./pty-host-protocol.js";
 import { createPtyProcessScope } from "./pty-process-scope.js";
+import type { TerminalReleaseTestFault } from "../release-test/terminal-release-test-input.js";
 
 const nativeRequire = createRequire(import.meta.url);
 const MAX_SESSIONS = 20;
+
+/** Typed failure raised when the native PTY artifact cannot be loaded. */
+export class PtyHostNativeLoadError extends Error {
+  readonly code = "NATIVE_LOAD_FAILED" as const;
+
+  constructor(message: string, options?: { readonly cause?: unknown }) {
+    super(message, options);
+    this.name = "PtyHostNativeLoadError";
+  }
+}
 
 /** Containment operations owned by one PTY host session. */
 export interface PtyProcessScope {
@@ -33,6 +44,8 @@ export interface PtyHostProcessRuntimeOptions {
   readonly queueBytes?: () => number;
   readonly spawnPty?: typeof import("node-pty").spawn;
   readonly createScope?: (rootPid: number) => PtyProcessScope;
+  /** Invoked by the protected post-start fault after the first session runs. */
+  readonly onPostStartHostExit?: () => void;
 }
 
 interface HostSession {
@@ -58,6 +71,8 @@ export class PtyHostProcessRuntime {
   private generation: string | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private disposed = false;
+  private releaseTestFault: TerminalReleaseTestFault | undefined;
+  private postStartFaultTriggered = false;
 
   constructor(private readonly options: PtyHostProcessRuntimeOptions) {}
 
@@ -135,7 +150,26 @@ export class PtyHostProcessRuntime {
   ): void {
     if (message.platform !== this.options.platform)
       throw new Error("PTY host platform mismatch");
+    if (message.releaseTestFault === "startup-health-failure") {
+      throw new Error(`Protected PTY host fault: ${message.releaseTestFault}`);
+    }
+    this.releaseTestFault = message.releaseTestFault;
     this.generation = message.requestedGeneration;
+    if (this.releaseTestFault === "missing-native-artifact") {
+      try {
+        this.loadNativeSpawn();
+      } catch (error) {
+        this.options.publish({
+          contractVersion: 1,
+          kind: "failure",
+          hostGeneration: message.requestedGeneration,
+          boundary: "startup",
+          recoverable: false,
+          code: "HOST_UNHEALTHY",
+        });
+        throw error;
+      }
+    }
     this.options.publish({
       contractVersion: 1,
       kind: "ready",
@@ -203,7 +237,10 @@ export class PtyHostProcessRuntime {
     Object.assign(session, { dataDisposable, exitDisposable });
 
     try {
-      const established = await scope.establish();
+      const established =
+        this.releaseTestFault === "containment-failure"
+          ? false
+          : await scope.establish();
       this.options.publish({
         contractVersion: 1,
         kind: "containment",
@@ -226,6 +263,7 @@ export class PtyHostProcessRuntime {
           recoverable: false,
           code: "CONTAINMENT_FAILED",
         });
+        this.options.onPostStartHostExit?.();
         return;
       }
       this.sessions.set(message.sessionId, session);
@@ -239,6 +277,13 @@ export class PtyHostProcessRuntime {
         containment: scope.mechanism,
       });
       pty.resume();
+      if (
+        this.releaseTestFault === "post-start-host-exit" &&
+        !this.postStartFaultTriggered
+      ) {
+        this.postStartFaultTriggered = true;
+        queueMicrotask(() => this.options.onPostStartHostExit?.());
+      }
     } catch (error) {
       this.sessions.delete(message.sessionId);
       dataDisposable.dispose();
@@ -377,6 +422,14 @@ export class PtyHostProcessRuntime {
   }
 
   private loadNativeSpawn(): typeof import("node-pty").spawn {
-    return (nativeRequire("node-pty") as typeof import("node-pty")).spawn;
+    const moduleName =
+      this.releaseTestFault === "missing-native-artifact"
+        ? "node-pty/__mcode_missing_release_native_artifact__"
+        : "node-pty";
+    try {
+      return (nativeRequire(moduleName) as typeof import("node-pty")).spawn;
+    } catch (error) {
+      throw new PtyHostNativeLoadError("The native PTY artifact could not be loaded", { cause: error });
+    }
   }
 }

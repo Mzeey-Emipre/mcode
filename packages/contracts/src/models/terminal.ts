@@ -380,6 +380,10 @@ export const TerminalV1BackendCapabilitiesSchema = lazySchema(() =>
         })
         .strict(),
       sessionLimit: z.number().int().min(1).max(TERMINAL_MAX_SESSIONS),
+      releaseTest: z
+        .object({ hostPid: z.number().int().min(1).max(4_294_967_295) })
+        .strict()
+        .optional(),
     })
     .strict(),
 );

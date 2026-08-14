@@ -17,6 +17,8 @@ import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 import {
   TerminalArtifactAttestationSchema,
+  TerminalProductSmokeEvidenceSchema,
+  TerminalProductSmokeReceiptSchema,
   TerminalReleaseEvidenceManifestSchema,
   TerminalTargetEvidenceManifestSchema,
 } from "../../../../../packages/contracts/src/models/terminal-diagnostics.ts";
@@ -291,6 +293,28 @@ function stageArtifacts(releaseDir, stagingDir) {
   });
 }
 
+function readProductSmokeEvidence(productEvidenceDir) {
+  if (!productEvidenceDir) throw new Error("Product smoke evidence directory is required");
+  const receiptNames = [
+    "clean.json",
+    "fault-startup-health-failure.json",
+    "fault-post-start-host-exit.json",
+    "fault-containment-failure.json",
+    "fault-missing-native-artifact.json",
+  ];
+  const receipts = receiptNames.map((name) => {
+    const receiptPath = path.join(productEvidenceDir, name);
+    if (!existsSync(receiptPath)) throw new Error(`Missing product smoke receipt: ${receiptPath}`);
+    return TerminalProductSmokeReceiptSchema().parse(
+      JSON.parse(readFileSync(receiptPath, "utf8")),
+    );
+  });
+  return TerminalProductSmokeEvidenceSchema().parse({
+    clean: receipts[0],
+    faults: receipts.slice(1),
+  });
+}
+
 /** Builds and writes one target evidence manifest from exact staged artifacts. */
 export function createTargetEvidenceManifest({
   releaseDir,
@@ -307,6 +331,7 @@ export function createTargetEvidenceManifest({
   generatedAt = new Date().toISOString(),
   signatureVerifier = verifyTargetSignatures,
   terminalAttester = attestPackagedTerminalArtifacts,
+  productEvidenceDir,
 }) {
   const platform = TARGET_PLATFORM[targetPlatform] ?? targetPlatform;
   if (!REQUIRED_KINDS[platform])
@@ -343,6 +368,7 @@ export function createTargetEvidenceManifest({
   });
   const artifacts = stageArtifacts(releaseDir, stagingDir);
   assertRequiredKinds(platform, artifacts);
+  const terminalProduct = readProductSmokeEvidence(productEvidenceDir);
   const manifest = TerminalTargetEvidenceManifestSchema().parse({
     contractVersion: 1,
     kind: "terminal-target-evidence",
@@ -374,6 +400,7 @@ export function createTargetEvidenceManifest({
     signatures,
     artifacts,
     terminal,
+    terminalProduct,
   });
   writeJsonAtomic(path.join(stagingDir, MANIFEST_NAME), manifest);
   return manifest;
@@ -537,6 +564,7 @@ if (
       targetArch: required(values, "arch"),
       runner: required(values, "runner"),
       signingRequired: requiredBoolean(values, "signing-required"),
+      productEvidenceDir: required(values, "product-evidence-dir"),
     });
   } else if (command === "aggregate") {
     createReleaseEvidenceManifest({

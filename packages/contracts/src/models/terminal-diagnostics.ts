@@ -300,6 +300,218 @@ export const TerminalReleaseSignatureCheckSchema = lazySchema(() =>
     .strict(),
 );
 
+const TerminalProductSmokeFaultSchema = z.enum([
+  "startup-health-failure",
+  "post-start-host-exit",
+  "containment-failure",
+  "missing-native-artifact",
+]);
+const TerminalProductSmokeHashSchema = z.record(Sha256Schema()).refine(
+  (value) => Object.keys(value).length <= 512,
+  "Product smoke hash inventory is oversized",
+);
+
+/** Receipt emitted by one exact staged packaged Electron product lane. */
+export const TerminalProductSmokeReceiptSchema = lazySchema(() =>
+  z
+    .object({
+      contractVersion: z.literal(TERMINAL_CONTRACT_VERSION),
+      kind: z.literal("packaged-terminal-product-smoke"),
+      generatedAt: TerminalTimestampSchema(),
+      status: z.literal("passed"),
+      fault: TerminalProductSmokeFaultSchema.nullable(),
+      startupFallbackDurationMs: z.number().int().min(0).max(5_000).nullable(),
+      observations: z
+        .object({
+          capabilities: z
+            .object({
+              initial: z.object({
+                contractVersion: z.number().int().min(0).max(1),
+                backend: z.enum(["legacy", "modern"]),
+                host: z.object({ state: z.string().min(1).max(32), generation: z.string().regex(/^\d+$/) }).optional(),
+                releaseTest: z.object({ hostPid: z.number().int().min(1).max(4_294_967_295) }).optional(),
+              }).strict(),
+              history: z.array(z.object({
+                contractVersion: z.number().int().min(0).max(1),
+                backend: z.enum(["legacy", "modern"]),
+                host: z.object({ state: z.string().min(1).max(32), generation: z.string().regex(/^\d+$/) }).optional(),
+                releaseTest: z.object({ hostPid: z.number().int().min(1).max(4_294_967_295) }).optional(),
+              }).strict()).min(1).max(64),
+            })
+            .strict(),
+          sessions: z.array(z.object({
+            sessionId: z.string().min(1).max(128),
+            state: z.string().min(1).max(32),
+            hostGeneration: z.string().regex(/^\d+$/),
+            exitReason: z.string().max(64).nullable(),
+          }).strict()).max(128),
+          retry: z.object({
+            contractVersion: z.number().int().min(0).max(1),
+            backend: z.enum(["legacy", "modern"]),
+            host: z.object({ state: z.string().min(1).max(32), generation: z.string().regex(/^\d+$/) }).optional(),
+            releaseTest: z.object({ hostPid: z.number().int().min(1).max(4_294_967_295) }).optional(),
+          }).strict().nullable(),
+          newSession: z.object({
+            sessionId: z.string().min(1).max(128),
+            state: z.string().min(1).max(32),
+            hostGeneration: z.string().regex(/^\d+$/),
+            exitReason: z.string().max(64).nullable(),
+          }).strict().nullable(),
+          typedErrors: z.array(z.string().min(1).max(128)).max(32),
+        })
+        .strict(),
+      isolation: z
+        .object({
+          mode: z.enum(["windows-firewall", "linux-network-namespace", "macos-network-sandbox"]),
+          loopbackAllowed: z.literal(true),
+          group: z.string().regex(/^McodeTerminalRelease-\d+-[a-f0-9]{12}$/).optional(),
+          cleanupRequired: z.boolean().optional(),
+        })
+        .strict(),
+      renderer: z
+        .object({
+          cols: z.number().int().min(1).max(1_000),
+          rows: z.number().int().min(1).max(1_000),
+          cursor: z.object({ x: z.number().int().min(0), y: z.number().int().min(0) }).strict(),
+          lines: z.array(z.object({ text: z.string().max(16_384), wrapped: z.boolean() }).strict()).max(1_024),
+          normalizedLines: z.array(z.string().max(16_384)).max(1_024),
+        })
+        .strict(),
+      workload: z
+        .object({
+          id: z.literal("process-cleanup"),
+          synchronizationMarker: z.literal("WF:cleanup:parent"),
+        })
+        .strict(),
+      cleanup: z
+        .object({
+          pids: z.array(z.number().int().min(1).max(4_294_967_295)).max(8),
+          hostPids: z.array(z.number().int().min(1).max(4_294_967_295)).min(1).max(2),
+          aliveAfterCleanup: z.array(z.number().int().min(1).max(4_294_967_295)).max(8),
+          cleanupDurationMs: z.number().int().min(0).max(3_000),
+          passed: z.literal(true),
+        })
+        .strict(),
+      packageHashesBefore: TerminalProductSmokeHashSchema,
+      packageHashesAfter: TerminalProductSmokeHashSchema,
+    })
+    .strict()
+    .superRefine((value, context) => {
+      const initial = value.observations.capabilities.initial;
+      const history = value.observations.capabilities.history;
+      const generations = new Set(history.map((capability) => capability.host?.generation).filter(Boolean));
+      const failedSession = value.observations.sessions.some(
+        (session) => session.state === "failed" || session.exitReason !== null,
+      );
+      const current = history.at(-1);
+      if (value.fault === null && initial.backend !== "modern") {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: "Clean product smoke must select modern" });
+      }
+      if (value.fault === null && value.observations.retry !== null) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Clean product smoke must not report a retry backend",
+        });
+      }
+      const startupFault = value.fault === "startup-health-failure" || value.fault === "missing-native-artifact";
+      if (startupFault && value.startupFallbackDurationMs === null) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: "Startup fallback timing is missing" });
+      }
+      if (!startupFault && value.startupFallbackDurationMs !== null) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: "Non-startup product smoke must not report startup timing" });
+      }
+      if (value.fault === null && (failedSession || generations.size !== 1)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Clean product smoke reported a fault outcome",
+        });
+      }
+      if (value.fault !== null && value.fault !== "startup-health-failure" && value.fault !== "missing-native-artifact" && initial.backend !== "modern") {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: "Post-start product smoke must retain modern" });
+      }
+      if (
+        (value.fault === "startup-health-failure" ||
+          value.fault === "missing-native-artifact") &&
+        (initial.backend !== "legacy" ||
+          value.observations.retry?.backend !== "modern")
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Startup fault did not select legacy for the boot",
+        });
+      }
+      if (
+        (value.fault === "post-start-host-exit" ||
+          value.fault === "containment-failure") &&
+        (initial.backend !== "modern" ||
+          value.observations.retry !== null ||
+          generations.size !== 2 ||
+          current?.host?.state !== "healthy" ||
+          !failedSession ||
+          value.observations.newSession?.state !== "running" ||
+          value.observations.typedErrors.length === 0 && !value.observations.sessions.some((session) => session.exitReason !== null))
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Post-start fault did not prove bounded modern recovery",
+        });
+      }
+      if (value.renderer.lines.length !== value.renderer.normalizedLines.length) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: "Renderer probe lines are not normalized" });
+      }
+      if (value.isolation.mode === "windows-firewall" && (!value.isolation.group || value.isolation.cleanupRequired !== true)) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: "Windows isolation must include a cleanup receipt" });
+      }
+      if (value.cleanup.hostPids.some((pid) => !value.cleanup.pids.includes(pid))) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: "PTY host PIDs are missing from cleanup polling" });
+      }
+      if (new Set(value.cleanup.pids).size !== value.cleanup.pids.length) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: "Cleanup PIDs must be unique" });
+      }
+      if (new Set(value.cleanup.hostPids).size !== value.cleanup.hostPids.length) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: "PTY host PIDs must be unique" });
+      }
+      const observedHostPids = new Set([
+        ...history
+          .map((capability) => capability.releaseTest?.hostPid)
+          .filter((pid): pid is number => pid !== undefined),
+        ...(value.observations.retry?.releaseTest?.hostPid ? [value.observations.retry.releaseTest.hostPid] : []),
+      ]);
+      if (value.cleanup.hostPids.some((pid) => !observedHostPids.has(pid))) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: "Cleanup contains an unobserved PTY host PID" });
+      }
+      if ([...observedHostPids].some((pid) => !value.cleanup.hostPids.includes(pid) || !value.cleanup.pids.includes(pid))) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: "Observed PTY host PIDs are missing from cleanup evidence" });
+      }
+      if (JSON.stringify(value.packageHashesBefore) !== JSON.stringify(value.packageHashesAfter)) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: "Packaged resources changed during product smoke" });
+      }
+    }),
+);
+
+/** Complete clean plus four-fault product evidence for one release target. */
+export const TerminalProductSmokeEvidenceSchema = lazySchema(() =>
+  z
+    .object({
+      clean: TerminalProductSmokeReceiptSchema(),
+      faults: z.array(TerminalProductSmokeReceiptSchema()).length(4),
+    })
+    .strict()
+    .superRefine((value, context) => {
+      if (value.clean.fault !== null) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: "Product smoke clean receipt is faulted" });
+      }
+      const expected = new Set(TerminalProductSmokeFaultSchema.options);
+      const faultValues = value.faults.map((receipt) => receipt.fault);
+      const faults = faultValues.filter(
+        (fault): fault is NonNullable<(typeof faultValues)[number]> => fault !== null,
+      );
+      if (faults.length !== faultValues.length || new Set(faults).size !== 4 || faults.some((fault) => !expected.has(fault))) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: "Product smoke must contain each bounded fault exactly once" });
+      }
+    }),
+);
+
 /** Target evidence emitted after one desktop artifact set is built and staged. */
 export const TerminalTargetEvidenceManifestSchema = lazySchema(() =>
   z
@@ -333,6 +545,7 @@ export const TerminalTargetEvidenceManifestSchema = lazySchema(() =>
       signatures: z.array(TerminalReleaseSignatureCheckSchema()).max(16),
       artifacts: z.array(TerminalReleaseArtifactSchema()).min(2).max(64),
       terminal: TerminalArtifactAttestationSchema(),
+      terminalProduct: TerminalProductSmokeEvidenceSchema(),
     })
     .strict()
     .superRefine((value, context) => {
@@ -523,6 +736,14 @@ export type TerminalDiagnosticEvent = z.infer<
 /** Terminal diagnostics bundle. */
 export type TerminalDiagnosticsBundle = z.infer<
   ReturnType<typeof TerminalDiagnosticsBundleSchema>
+>;
+/** One packaged Terminal product smoke receipt. */
+export type TerminalProductSmokeReceipt = z.infer<
+  ReturnType<typeof TerminalProductSmokeReceiptSchema>
+>;
+/** Complete packaged Terminal product smoke evidence. */
+export type TerminalProductSmokeEvidence = z.infer<
+  ReturnType<typeof TerminalProductSmokeEvidenceSchema>
 >;
 /** Target release evidence manifest. */
 export type TerminalTargetEvidenceManifest = z.infer<

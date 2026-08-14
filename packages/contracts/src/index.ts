@@ -1110,6 +1110,8 @@ export {
   TerminalArtifactAttestationSchema,
   TerminalReleaseArtifactSchema,
   TerminalReleaseSignatureCheckSchema,
+  TerminalProductSmokeReceiptSchema,
+  TerminalProductSmokeEvidenceSchema,
   TerminalTargetEvidenceManifestSchema,
   TerminalTargetEvidenceReferenceSchema,
   TerminalReleaseEvidenceManifestSchema,
@@ -1119,6 +1121,8 @@ export type {
   TerminalHealthSnapshot,
   TerminalDiagnosticEvent,
   TerminalDiagnosticsBundle,
+  TerminalProductSmokeReceipt,
+  TerminalProductSmokeEvidence,
   TerminalTargetEvidenceManifest,
   TerminalReleaseEvidenceManifest,
 } from "./models/terminal-diagnostics.js";

@@ -16,6 +16,10 @@ export const TerminalBackendCapabilitiesSchema = lazySchema(() =>
           gap: z.literal(true),
         })
         .strict(),
+      releaseTest: z
+        .object({ hostPid: z.number().int().min(1).max(4_294_967_295) })
+        .strict()
+        .optional(),
     })
     .strict(),
     TerminalV1BackendCapabilitiesSchema(),

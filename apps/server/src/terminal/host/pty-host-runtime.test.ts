@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { IDisposable, IPty } from "node-pty";
 import type { PtyHostEvent } from "./pty-host-protocol.js";
 import {
+  PtyHostNativeLoadError,
   PtyHostProcessRuntime,
   type PtyProcessScope,
 } from "./pty-host-runtime.js";
@@ -65,6 +66,129 @@ function createScope(established = true): PtyProcessScope {
 }
 
 describe("PtyHostProcessRuntime", () => {
+  it("fails before ready for the protected startup faults", async () => {
+    const events: PtyHostEvent[] = [];
+    const runtime = new PtyHostProcessRuntime({
+      platform: "windows",
+      nativeAbi: "fake-v1",
+      publish: (event) => events.push(event),
+    });
+
+    await expect(
+      runtime.receive({
+        contractVersion: 1,
+        kind: "handshake",
+        requestedGeneration: "7",
+        platform: "windows",
+        releaseTestFault: "startup-health-failure",
+      }),
+    ).rejects.toThrow("startup-health-failure");
+    expect(events).toEqual([]);
+    await runtime.dispose();
+  });
+
+  it("reports missing native artifacts through the native-load failure seam", async () => {
+    const events: PtyHostEvent[] = [];
+    const runtime = new PtyHostProcessRuntime({
+      platform: "windows",
+      nativeAbi: "fake-v1",
+      publish: (event) => events.push(event),
+    });
+
+    await expect(
+      runtime.receive({
+        contractVersion: 1,
+        kind: "handshake",
+        requestedGeneration: "7",
+        platform: "windows",
+        releaseTestFault: "missing-native-artifact",
+      }),
+    ).rejects.toBeInstanceOf(PtyHostNativeLoadError);
+    expect(events).toContainEqual(expect.objectContaining({
+      kind: "failure",
+      boundary: "startup",
+      code: "HOST_UNHEALTHY",
+    }));
+    await runtime.dispose();
+  });
+
+  it("forces containment failure through the typed host seam", async () => {
+    const pty = new FakePty();
+    const scope = createScope(true);
+    const events: PtyHostEvent[] = [];
+    const onPostStartHostExit = vi.fn();
+    const runtime = new PtyHostProcessRuntime({
+      platform: "windows",
+      nativeAbi: "fake-v1",
+      publish: (event) => events.push(event),
+      spawnPty: () => pty,
+      createScope: () => scope,
+      onPostStartHostExit,
+    });
+    await runtime.receive({
+      contractVersion: 1,
+      kind: "handshake",
+      requestedGeneration: "7",
+      platform: "windows",
+      releaseTestFault: "containment-failure",
+    });
+    await runtime.receive({
+      contractVersion: 1,
+      kind: "create",
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      scope: { kind: "workspace", workspaceId: SESSION_ID },
+      executable: "pwsh.exe",
+      arguments: [],
+      cwd: "C:\\repo",
+      cols: 80,
+      rows: 24,
+      env: [],
+    });
+    expect(events).toContainEqual(expect.objectContaining({ kind: "failure", boundary: "containment" }));
+    expect(onPostStartHostExit).toHaveBeenCalledOnce();
+    await runtime.dispose();
+  });
+
+  it("requests host exit once after the first post-start session", async () => {
+    vi.useFakeTimers();
+    const pty = new FakePty();
+    const scope = createScope(true);
+    const onPostStartHostExit = vi.fn();
+    const runtime = new PtyHostProcessRuntime({
+      platform: "windows",
+      nativeAbi: "fake-v1",
+      publish: () => undefined,
+      spawnPty: () => pty,
+      createScope: () => scope,
+      onPostStartHostExit,
+    });
+    await runtime.receive({
+      contractVersion: 1,
+      kind: "handshake",
+      requestedGeneration: "7",
+      platform: "windows",
+      releaseTestFault: "post-start-host-exit",
+    });
+    await runtime.receive({
+      contractVersion: 1,
+      kind: "create",
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      scope: { kind: "workspace", workspaceId: SESSION_ID },
+      executable: "pwsh.exe",
+      arguments: [],
+      cwd: "C:\\repo",
+      cols: 80,
+      rows: 24,
+      env: [],
+    });
+    await vi.runOnlyPendingTimersAsync();
+    expect(onPostStartHostExit).toHaveBeenCalledOnce();
+    await runtime.dispose();
+    vi.useRealTimers();
+  });
+
   it("runs a contained PTY through create, I/O, resize, inspection, and close", async () => {
     vi.useFakeTimers();
     const pty = new FakePty();

@@ -103,6 +103,7 @@ describe("PtyHostSupervisor", () => {
     const children: FakeHostChild[] = [];
     const supervisor = new PtyHostSupervisor({
       platform: "windows",
+      releaseTestFault: "post-start-host-exit",
       cleanupLedger: new InMemoryPtyHostCleanupLedger(),
       spawnHost: () => {
         const child = new FakeHostChild();
@@ -124,6 +125,13 @@ describe("PtyHostSupervisor", () => {
       hostRssBytes: "1",
     });
     expect(children).toHaveLength(1);
+    expect(children[0]!.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "handshake",
+        releaseTestFault: "post-start-host-exit",
+      }),
+      expect.any(Function),
+    );
 
     children[0]!.crash();
     expect(events).toContainEqual(
@@ -141,6 +149,11 @@ describe("PtyHostSupervisor", () => {
       state: "healthy",
     });
     expect(children).toHaveLength(2);
+    expect(children[1]!.send).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "handshake", requestedGeneration: "2" }),
+      expect.any(Function),
+    );
+    expect(children[1]!.send.mock.calls[0]?.[0]).not.toHaveProperty("releaseTestFault");
 
     children[1]!.crash();
     await vi.advanceTimersByTimeAsync(250);
