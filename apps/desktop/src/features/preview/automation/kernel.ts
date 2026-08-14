@@ -24,9 +24,9 @@ import {
   type BrowserAutomationHostDispatch,
   type BrowserAutomationControllerState,
 } from "@mcode/contracts";
-import { findAdoptedWebContentsForWindow } from "../../features/preview/surfaces/registry.js";
-import { PREVIEW_GUEST_AGENT_INPUT_CHANNEL } from "../../features/preview/contracts/guest-input.js";
-import { getSession, getThreadTabSet } from "../../features/preview/state/window-session.js";
+import { findAdoptedWebContentsForWindow } from "../surfaces/registry.js";
+import { PREVIEW_GUEST_AGENT_INPUT_CHANNEL } from "../contracts/guest-input.js";
+import { getSession, getThreadTabSet } from "../state/window-session.js";
 import {
   BrowserAutomationCancelledError,
   BrowserAutomationQueueFullError,

@@ -174,18 +174,18 @@ vi.mock("electron", () => ({
   },
 }));
 
-vi.mock("../../features/preview/surfaces/registry.js", () => ({
+vi.mock("../../surfaces/registry.js", () => ({
   findAdoptedWebContentsForWindow: vi.fn(() => currentWebContents),
 }));
 
-vi.mock("../../features/preview/state/window-session.js", () => ({
+vi.mock("../../state/window-session.js", () => ({
   getSession: vi.fn(() => ({ workspaceId: "workspace", lastPreviewThreadId: "thread", tabsByThread })),
   getThreadTabSet: vi.fn((session, threadId, workspaceId = session.workspaceId ?? threadId) =>
     session.tabsByThread.get(JSON.stringify([workspaceId, threadId])) ?? session.tabsByThread.get(threadId)),
 }));
 
-import { BrowserAutomationKernel } from "../browser-automation/kernel.js";
-import { BrowserSessionDriver, ElectronBrowserSessionAdapter } from "../../../../web/src/services/browser-automation/browserSessionDriver";
+import { BrowserAutomationKernel } from "../kernel.js";
+import { BrowserSessionDriver, ElectronBrowserSessionAdapter } from "../../../../../../web/src/services/browser-automation/browserSessionDriver";
 
 function seedTab(tabId = "tab", threadId = "thread"): void {
   tabsByThread.set(JSON.stringify(["workspace", threadId]), {

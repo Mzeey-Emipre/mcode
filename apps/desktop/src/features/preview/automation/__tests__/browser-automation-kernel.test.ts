@@ -4,7 +4,7 @@ import { BROWSER_AUTOMATION_CONTRACT_VERSION, type BrowserAutomationRequest } fr
 import {
   PREVIEW_GUEST_AGENT_INPUT_CHANNEL,
   PreviewGuestInputSuppressor,
-} from "../../features/preview/contracts/guest-input.js";
+} from "../../contracts/guest-input.js";
 
 let currentWebContents: FakeWebContents | null = null;
 const adoptedWebContents = new Map<string, FakeWebContents | null>();
@@ -195,20 +195,20 @@ vi.mock("electron", () => ({
   },
 }));
 
-vi.mock("../../features/preview/surfaces/registry.js", () => ({
+vi.mock("../../surfaces/registry.js", () => ({
   findAdoptedWebContentsForWindow: vi.fn((_windowId: number, threadId: string, tabId: string) => {
     const key = JSON.stringify([threadId, tabId]);
     return adoptedWebContents.has(key) ? adoptedWebContents.get(key) : currentWebContents;
   }),
 }));
 
-vi.mock("../../features/preview/state/window-session.js", () => ({
+vi.mock("../../state/window-session.js", () => ({
   getSession: vi.fn(() => fakePreviewSession),
   getThreadTabSet: vi.fn((session, threadId) => session.tabsByThread.get(threadId)),
 }));
 
-import { BrowserAutomationKernel, selectAllModifierMask } from "../browser-automation/kernel.js";
-import { isBrowserAutomationAgentOperationActive } from "../browser-automation/active-operation.js";
+import { BrowserAutomationKernel, selectAllModifierMask } from "../kernel.js";
+import { isBrowserAutomationAgentOperationActive } from "../active-operation.js";
 
 function request(
   operation: BrowserAutomationRequest["operation"],

@@ -17,7 +17,10 @@ import { registerTabHandlers } from "./preview-tabs.js";
 import { getPerfCounters } from "../../features/preview/observability/perf-counters.js";
 import { registerPreviewSurfaceHandlers } from "../../features/preview/surfaces/registry.js";
 import { registerDesignModeHandlers } from "./preview-design-mode.js";
-import { registerBrowserAutomationHandlers } from "../browser-automation/index.js";
+import {
+  disposeBrowserAutomationForWindow,
+  registerBrowserAutomationHandlers,
+} from "../../features/preview/automation/index.js";
 import { registerPreviewSessionPolicy } from "../../features/preview/security/electron-session-policy.js";
 import { abortOverlayCapture } from "./preview-overlay.js";
 import { clearDiscardTimers, sessions } from "../../features/preview/state/window-session.js";
@@ -59,3 +62,4 @@ export {
 } from "../../features/preview/security/electron-session-policy.js";
 export { PREVIEW_POPUP_REQUESTED_CHANNEL } from "../../features/preview/contracts/popup.js";
 export type { PreviewPopupRequest } from "../../features/preview/contracts/popup.js";
+export { disposeBrowserAutomationForWindow };

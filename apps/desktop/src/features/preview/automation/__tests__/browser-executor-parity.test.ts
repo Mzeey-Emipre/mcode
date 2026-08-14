@@ -20,12 +20,12 @@ import {
   BrowserSessionDriver,
   ElectronBrowserSessionAdapter,
   getBrowserAutomationRuntimeOperations,
-} from "../../../../web/src/services/browser-automation/browserSessionDriver";
-import { WebBrowserSessionAdapter } from "../../../../web/src/services/browser-automation/webBrowserSessionAdapter";
-import { executeWebBrowserDispatch } from "../../../../web/src/components/panels/browserAutomationWebExecutor";
-import { BrowserAutomationKernel } from "../browser-automation/kernel.js";
+} from "../../../../../../web/src/services/browser-automation/browserSessionDriver";
+import { WebBrowserSessionAdapter } from "../../../../../../web/src/services/browser-automation/webBrowserSessionAdapter";
+import { executeWebBrowserDispatch } from "../../../../../../web/src/components/panels/browserAutomationWebExecutor";
+import { BrowserAutomationKernel } from "../kernel.js";
 
-vi.mock("../../../../web/src/components/panels/web-browser-automation/capture", () => ({
+vi.mock("../../../../../../web/src/components/panels/web-browser-automation/capture", () => ({
   captureVisibleWebScreenshot: vi.fn(async () => ({
     ok: true,
     value: {
@@ -38,7 +38,7 @@ vi.mock("../../../../web/src/components/panels/web-browser-automation/capture", 
   })),
 }));
 
-const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../../");
+const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../../../../");
 
 let currentWebContents: FakeWebContents;
 const rendererSender = new EventEmitter() as EventEmitter & { isDestroyed: () => boolean; send: ReturnType<typeof vi.fn> };
@@ -121,9 +121,9 @@ vi.mock("electron", () => ({
   },
   nativeImage: { createFromBuffer: vi.fn(() => ({ getSize: () => ({ width: 1, height: 1 }), resize: () => ({ getSize: () => ({ width: 1, height: 1 }), toPNG: () => Buffer.from("png") }), toPNG: () => Buffer.from("png") })) },
 }));
-vi.mock("../../features/preview/surfaces/registry.js", () => ({ findAdoptedWebContentsForWindow: vi.fn(() => currentWebContents) }));
-vi.mock("../../features/preview/contracts/guest-input.js", () => ({ PREVIEW_GUEST_AGENT_INPUT_CHANNEL: "mcode:browser-agent-input" }));
-vi.mock("../../features/preview/state/window-session.js", () => ({
+vi.mock("../../surfaces/registry.js", () => ({ findAdoptedWebContentsForWindow: vi.fn(() => currentWebContents) }));
+vi.mock("../../contracts/guest-input.js", () => ({ PREVIEW_GUEST_AGENT_INPUT_CHANNEL: "mcode:browser-agent-input" }));
+vi.mock("../../state/window-session.js", () => ({
   getSession: vi.fn(() => fakePreviewSession),
   getThreadTabSet: vi.fn((session, threadId) => session.tabsByThread.get(threadId)),
 }));
