@@ -293,6 +293,48 @@ describe("CodexEventMapper", () => {
     });
   });
 
+  it("bounds child identity retention across a parent turn reset", () => {
+    mapper = new CodexEventMapper("test-thread", "parent-native");
+    for (let index = 0; index < 33; index += 1) {
+      mapper.mapNotification({
+        jsonrpc: "2.0",
+        method: "item/started",
+        params: {
+          threadId: "parent-native",
+          item: {
+            type: "collabAgentToolCall",
+            id: `collab-bound-${index}`,
+            tool: "spawnAgent",
+            receiverThreadIds: [`child-bound-${index}`],
+          },
+        },
+      });
+    }
+
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/completed",
+      params: { threadId: "parent-native", turn: { status: "completed" } },
+    });
+
+    expect(mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/started",
+      params: { threadId: "child-bound-0", turn: { id: "child-turn-0" } },
+    })).toEqual([]);
+    expect(mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/started",
+      params: { threadId: "child-bound-32", turn: { id: "child-turn-32" } },
+    })).toEqual([expect.objectContaining({
+      type: "turnStarted",
+      codexChild: expect.objectContaining({
+        nativeThreadId: "child-bound-32",
+        nativeTurnId: "child-turn-32",
+      }),
+    })]);
+  });
+
   it("buffers receiver items before the exact child turn and replays them once", () => {
     mapper = new CodexEventMapper("test-thread", "parent-native");
     mapper.mapNotification({
@@ -2044,6 +2086,151 @@ describe("CodexEventMapper", () => {
         },
       },
     ]);
+  });
+
+  it("keeps exact sender and receiver identity on directional child messages", () => {
+    mapper = new CodexEventMapper("test-thread", "native-parent");
+
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "native-parent",
+        turnId: "native-parent-turn",
+        item: {
+          type: "collabAgentToolCall",
+          id: "message-child-1",
+          tool: "sendInput",
+          senderThreadId: "native-parent",
+          receiverThreadIds: ["native-child"],
+          prompt: "Continue the audit.",
+        },
+      },
+    });
+
+    expect(events).toEqual([expect.objectContaining({
+      type: "toolUse",
+      toolCallId: "message-child-1",
+      toolInput: {
+        codexCollabKind: "sendInput",
+        description: "Continue the audit.",
+        prompt: "Continue the audit.",
+        senderThreadId: "native-parent",
+        receiverThreadIds: ["native-child"],
+      },
+    })]);
+  });
+
+  it("does not infer parent continuation from child evidence and a later main turn", () => {
+    mapper = new CodexEventMapper("test-thread", "native-parent");
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "native-parent",
+        item: {
+          type: "collabAgentToolCall",
+          id: "spawn-continue",
+          tool: "spawnAgent",
+          receiverThreadIds: ["native-child"],
+        },
+      },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/started",
+      params: { threadId: "native-child", turnId: "child-turn-1" },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/completed",
+      params: {
+        threadId: "native-parent",
+        turn: { id: "parent-turn-1", status: "completed" },
+      },
+    });
+    const childAction = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "native-child",
+        item: {
+          type: "collabAgentToolCall",
+          id: "send-parent-1",
+          tool: "sendInput",
+          senderThreadId: "native-child",
+          receiverThreadIds: ["native-parent"],
+          prompt: "Parent, continue.",
+        },
+      },
+    });
+    expect(childAction[0]).toEqual(expect.objectContaining({
+      type: "toolUse",
+      toolCallId: "send-parent-1",
+      codexChild: expect.objectContaining({
+        nativeThreadId: "native-child",
+        nativeTurnId: "child-turn-1",
+      }),
+    }));
+
+    const continuation = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/started",
+      params: { threadId: "native-parent", turnId: "parent-turn-2" },
+    });
+    expect(continuation).toEqual([]);
+  });
+
+  it("does not classify an unrelated child collaboration item as parent continuation", () => {
+    mapper = new CodexEventMapper("test-thread", "native-parent");
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "native-parent",
+        item: {
+          type: "collabAgentToolCall",
+          id: "spawn-unrelated",
+          tool: "spawnAgent",
+          receiverThreadIds: ["native-child"],
+        },
+      },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/started",
+      params: { threadId: "native-child", turnId: "child-turn-1" },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/completed",
+      params: {
+        threadId: "native-parent",
+        turn: { id: "parent-turn-1", status: "completed" },
+      },
+    });
+
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "native-child",
+        item: {
+          type: "collabAgentToolCall",
+          id: "send-other-thread",
+          tool: "sendInput",
+          senderThreadId: "native-child",
+          receiverThreadIds: ["native-other"],
+          prompt: "Continue elsewhere.",
+        },
+      },
+    });
+
+    expect(mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/started",
+      params: { threadId: "native-parent", turnId: "parent-turn-2" },
+    })).toEqual([]);
   });
 
   it("completes spawnAgent from child turn completion before wait", () => {

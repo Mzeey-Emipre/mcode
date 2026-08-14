@@ -19,6 +19,15 @@ const CodexChildEvidenceSchema = z
   })
   .strict();
 
+const CodexContinuationEvidenceSchema = z
+  .object({
+    sourceNativeThreadId: z.string().trim().min(1).max(512),
+    sourceNativeTurnId: z.string().trim().min(1).max(512),
+    sourceNativeItemId: z.string().trim().min(1).max(512),
+    targetNativeThreadId: z.string().trim().min(1).max(512),
+  })
+  .strict();
+
 
 /**
  * All valid `type` discriminants for `AgentEvent`.
@@ -69,6 +78,7 @@ const AgentEventPayloadSchema = z.discriminatedUnion("type", [
       type: z.literal(AgentEventType.TurnStarted),
       threadId: z.string(),
       codexChild: CodexChildEvidenceSchema.optional(),
+      codexContinuation: CodexContinuationEvidenceSchema.optional(),
       /** Server tracker generation that owns live file effects for this turn. */
       fileEffectTurnId: z.string().optional(),
     }),

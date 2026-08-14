@@ -1151,6 +1151,144 @@ describe("AgentService narrative persistence", () => {
     ).get(provisional.childThread.id)).toEqual({ count: 0 });
   });
 
+  it("persists a parent collaboration ToolUse and acknowledges its matching ToolResult", () => {
+    const db = openMemoryDatabase();
+    const now = new Date().toISOString();
+    db.prepare(
+      "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    ).run("ws-action", "Workspace", "/workspace", now, now);
+    db.prepare(
+      "INSERT INTO threads (id, workspace_id, title, branch, provider, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run(THREAD_ID, "ws-action", "Parent", "main", "codex", now, now);
+    const canonicalSink = new CanonicalAgentEventSink(db, vi.fn());
+    const { providerEmitter, service } = build({ db, canonicalSink });
+    const executionId = (service as unknown as {
+      turnRuntime: { snapshot: (threadId: string) => { turnExecutionId: string } | undefined };
+    }).turnRuntime.snapshot(THREAD_ID)!.turnExecutionId;
+    const messages = new SqliteMessageRepo(db);
+    const userMessage = messages.create(THREAD_ID, "user", "delegate", 1);
+    canonicalSink.startParentTurn({
+      thread: { id: THREAD_ID, workspaceId: "ws-action", providerId: "codex", createdAt: now },
+      turnId: "turn-provider-action",
+      executionId,
+      permissionMode: "supervised",
+      providerIdentities: [],
+      projectUserMessage: () => userMessage,
+    });
+
+    providerEmitter.emit("event", {
+      type: AgentEventType.ToolUse,
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      toolCallId: "spawn-action-child",
+      toolName: "Agent",
+      toolInput: {
+        codexCollabKind: "spawnAgent",
+        receiverThreadIds: ["native-action-child"],
+      },
+    });
+    providerEmitter.emit("event", {
+      type: AgentEventType.TurnStarted,
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      codexChild: {
+        nativeThreadId: "native-action-child",
+        nativeTurnId: "native-action-turn",
+        parentCollaborationItemId: "spawn-action-child",
+      },
+    });
+    providerEmitter.emit("event", {
+      type: AgentEventType.ToolUse,
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      toolCallId: "parent-message-child",
+      toolName: "sendInput",
+      toolInput: {
+        codexCollabKind: "sendInput",
+        receiverThreadIds: ["native-action-child"],
+        prompt: "Inspect this case.",
+      },
+    });
+
+    const dispatched = db.prepare(`
+      SELECT id, source_item_id, status, target_turn_id
+      FROM canonical_collaboration_actions
+      WHERE source_item_id = ?
+    `).get("toolCall:parent-message-child") as {
+      id: string;
+      source_item_id: string;
+      status: string;
+      target_turn_id: string | null;
+    } | undefined;
+    expect(dispatched).toMatchObject({
+      source_item_id: "toolCall:parent-message-child",
+      status: "Dispatched",
+    });
+    expect(dispatched?.target_turn_id).toBeTruthy();
+    expect(db.prepare("SELECT thread_id, turn_id FROM canonical_agent_items WHERE id = ?")
+      .get("toolCall:parent-message-child")).toMatchObject({ thread_id: THREAD_ID });
+
+    providerEmitter.emit("event", {
+      type: AgentEventType.ToolResult,
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      toolCallId: "parent-message-child",
+      toolName: "sendInput",
+      toolInput: {
+        codexCollabKind: "sendInput",
+        receiverThreadIds: ["native-action-child"],
+      },
+      output: "delivered",
+      isError: false,
+    });
+
+    expect(db.prepare("SELECT status FROM canonical_collaboration_actions WHERE id = ?")
+      .get(dispatched!.id)).toEqual({ status: "Acknowledged" });
+    expect(db.prepare("SELECT target_turn_id FROM canonical_collaboration_actions WHERE id = ?")
+      .get(dispatched!.id)).toEqual({ target_turn_id: dispatched!.target_turn_id });
+  });
+
+  it("rejects provider continuation evidence targeting another canonical thread", () => {
+    const { service, canonicalSink } = build();
+    const sink = canonicalSink as unknown as {
+      loadThreadByProviderIdentity: ReturnType<typeof vi.fn>;
+      loadTurnByProviderIdentity: ReturnType<typeof vi.fn>;
+      loadCollaborationActionBySourceProviderIdentity: ReturnType<typeof vi.fn>;
+      loadThread: ReturnType<typeof vi.fn>;
+      startProviderContinuation: ReturnType<typeof vi.fn>;
+    };
+    sink.loadThreadByProviderIdentity = vi.fn((identity: { value: string }) => (
+      identity.value === "native-source-child"
+        ? { id: "source-child" }
+        : { id: "another-parent" }
+    ));
+    sink.loadTurnByProviderIdentity = vi.fn(() => ({
+      id: "source-child-turn",
+      threadId: "source-child",
+    }));
+    sink.loadCollaborationActionBySourceProviderIdentity = vi.fn();
+    sink.loadThread = vi.fn(() => ({ id: THREAD_ID }));
+    sink.startProviderContinuation = vi.fn();
+
+    const started = (service as unknown as {
+      startCodexProviderContinuationFromEvent: (event: unknown) => boolean;
+    }).startCodexProviderContinuationFromEvent({
+      type: AgentEventType.TurnStarted,
+      threadId: THREAD_ID,
+      turnExecutionId: "00000000-0000-4000-8000-000000000099",
+      codexContinuation: {
+        sourceNativeThreadId: "native-source-child",
+        sourceNativeTurnId: "native-source-turn",
+        sourceNativeItemId: "native-return-parent",
+        targetNativeThreadId: "native-wrong-parent",
+      },
+    });
+
+    expect(started).toBe(false);
+    expect(sink.loadCollaborationActionBySourceProviderIdentity).not.toHaveBeenCalled();
+    expect(sink.startProviderContinuation).not.toHaveBeenCalled();
+  });
+
   it("records a failure signal when attributed child routing lacks parent execution context", () => {
     const { service, canonicalSink } = build();
     const diagnostic = vi.fn(() => true);

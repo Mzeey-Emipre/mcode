@@ -131,6 +131,8 @@ export const CollaborationActionKindSchema = z.enum([
   "resume",
   "message",
   "return-result",
+  "permission",
+  "clarification",
 ]);
 /** Direction of one cross-thread collaboration request or response. */
 export type CollaborationActionKind = z.infer<typeof CollaborationActionKindSchema>;
