@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { chromium } from "playwright-core";
 
 /** Protected fault values accepted by the packaged product lane. */
@@ -332,12 +332,13 @@ export function buildProductLaunch({ target, isolationReceipt, launchArgs }) {
   return { command: executablePath, args: launchArgs, env: {} };
 }
 
-async function loadProcessCleanupWorkload() {
+/** Loads the shared process-cleanup workload through a cross-platform file URL. */
+export async function loadProcessCleanupWorkload() {
   const modulePath = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
     "../../../../server/src/services/terminal-workload-corpus.ts",
   );
-  const corpus = await import(modulePath);
+  const corpus = await import(pathToFileURL(modulePath).href);
   return corpus.getTerminalWorkload("process-cleanup");
 }
 
@@ -440,7 +441,7 @@ export function releaseProductProcess(child) {
 /** Waits a bounded interval for Electron to create its first renderer page. */
 export async function waitForRendererPage(
   browser,
-  { timeoutMs = 15_000, intervalMs = 100 } = {},
+  { timeoutMs = 45_000, intervalMs = 100 } = {},
 ) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {

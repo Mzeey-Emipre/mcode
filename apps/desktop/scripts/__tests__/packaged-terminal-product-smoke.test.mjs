@@ -10,6 +10,7 @@ import {
   cleanupLoopbackIsolation,
   classifyProductSmokeOutcome,
   hashPackagedResources,
+  loadProcessCleanupWorkload,
   parseProductSmokeArguments,
   pollProcessCleanup,
   releaseProductProcess,
@@ -175,6 +176,13 @@ describe("packaged Terminal product smoke contract", () => {
         { timeoutMs: 50, intervalMs: 1 },
       ),
     ).resolves.toBe(rendererPage);
+  });
+
+  it("loads the shared process-cleanup workload", async () => {
+    await expect(loadProcessCleanupWorkload()).resolves.toMatchObject({
+      id: "process-cleanup",
+      synchronizationMarker: "WF:cleanup:parent",
+    });
   });
 
 
