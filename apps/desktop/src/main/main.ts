@@ -63,6 +63,10 @@ import {
 import { isDesktopDev } from "./is-desktop-dev.js";
 import { shouldSetDockIcon } from "./dock-icon.js";
 import { shouldPrintVersion } from "./cli-args.js";
+import {
+  buildTerminalReleaseTestRendererArguments,
+  isTerminalReleaseTestEnabled,
+} from "../features/terminal/release-test-capability.js";
 
 // Isolate dev's Electron userData (cache, cookies, localStorage, IndexedDB)
 // from the installed prod build. Without this, both share %APPDATA%/Mcode/
@@ -446,6 +450,13 @@ function updatePowerSaveBlocker(): void {
 
 /** Create the main BrowserWindow and load the web app. */
 function createWindow(): void {
+  const terminalReleaseTestEnabled = isTerminalReleaseTestEnabled(
+    app.isPackaged,
+    process.env.MCODE_TERMINAL_RELEASE_TEST,
+  );
+  const terminalReleaseTestArguments =
+    buildTerminalReleaseTestRendererArguments(terminalReleaseTestEnabled);
+
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -469,6 +480,9 @@ function createWindow(): void {
         }),
     webPreferences: {
       preload: join(__dirname, "../preload/preload.cjs"),
+      ...(terminalReleaseTestArguments.length > 0
+        ? { additionalArguments: terminalReleaseTestArguments }
+        : {}),
       contextIsolation: true,
       nodeIntegration: false,
       // Documented explicitly; defaults to true in Electron but we set it

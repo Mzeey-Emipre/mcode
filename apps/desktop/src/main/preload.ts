@@ -6,8 +6,6 @@
  */
 
 import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
-import { existsSync } from "node:fs";
-import { resolve } from "node:path";
 import {
   PREVIEW_POPUP_REQUESTED_CHANNEL,
   type PreviewPopupRequest,
@@ -16,11 +14,10 @@ import {
   PREVIEW_SURFACE_DISCARD_REQUESTED_CHANNEL,
   type PreviewSurfaceDiscardRequest,
 } from "../features/preview/contracts/surface-lifecycle.js";
+import { hasTerminalReleaseTestArgument } from "../features/terminal/release-test-capability.js";
 
 contextBridge.exposeInMainWorld("desktopBridge", {
-  ...(process.env.MCODE_TERMINAL_RELEASE_TEST === "1" &&
-  !process.env.ELECTRON_RENDERER_URL &&
-  existsSync(resolve(process.resourcesPath, "app.asar"))
+  ...(hasTerminalReleaseTestArgument(process.argv)
     ? { terminalReleaseTest: { enabled: true as const } }
     : {}),
   /** Platform facts and allowlisted native window actions for the custom title bar. */
