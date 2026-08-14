@@ -1027,6 +1027,74 @@ function beginOverlaySession(s: PreviewSession, webContents: WebContents): void 
   s.navigationAbortDisposable = attachMainFrameNavigationAbort(s, webContents);
 }
 
+/** Returns whether the pending capture still owns the currently adopted guest. */
+function pendingCaptureStillOwnsSurface(
+  s: PreviewSession,
+  webContents: WebContents,
+): boolean {
+  return resolveActiveCaptureWebContents(s) === webContents;
+}
+
+/** Returns whether the pending operation still matches the adopted guest. */
+function overlaySessionMatches(
+  s: PreviewSession,
+  pending: NonNullable<PreviewSession["overlayPending"]>,
+): boolean {
+  return s.overlayPending === pending &&
+    !pending.webContents.isDestroyed() &&
+    pendingCaptureStillOwnsSurface(s, pending.webContents);
+}
+
+/** Returns whether the exact pending operation still owns its adopted guest. */
+function overlaySessionStillCurrent(
+  s: PreviewSession,
+  pending: NonNullable<PreviewSession["overlayPending"]>,
+): boolean {
+  if (!overlaySessionMatches(s, pending)) {
+    if (s.overlayPending === pending) {
+      abortOverlayCapture(s, "no-preview");
+    }
+    return false;
+  }
+  return true;
+}
+
+/** Cleans a late injection after its operation no longer owns the guest. */
+async function cleanupLateInjection(
+  s: PreviewSession,
+  pending: NonNullable<PreviewSession["overlayPending"]>,
+  remove: (webContents: WebContents) => Promise<void>,
+): Promise<void> {
+  if (overlaySessionMatches(s, pending)) return;
+  if (s.overlayPending === pending) {
+    abortOverlayCapture(s, "no-preview");
+    return;
+  }
+  if (!pending.webContents.isDestroyed()) {
+    await remove(pending.webContents);
+  }
+}
+
+/** Completes one overlay operation and releases its navigation and poll ownership. */
+function finishOverlaySession(
+  s: PreviewSession,
+  pending: NonNullable<PreviewSession["overlayPending"]>,
+  result: PreviewPictureReferenceResult,
+): void {
+  if (s.overlayPending === pending) {
+    s.overlayPending = null;
+    endOverlaySession(s);
+    if (pending.mode === "region") {
+      if (s.regionPollTimer) clearTimeout(s.regionPollTimer);
+      s.regionPollTimer = null;
+    } else {
+      if (s.elementPickPollTimer) clearTimeout(s.elementPickPollTimer);
+      s.elementPickPollTimer = null;
+    }
+  }
+  pending.finish(result);
+}
+
 /**
  * Registers all overlay-related IPC handlers:
  * region-overlay-submit, region-overlay-cancel, cancel-capture,
@@ -1072,11 +1140,16 @@ export function registerOverlayHandlers(): void {
           resolve(r);
         };
 
-        s.overlayPending = { mode: "region", finish: finishOnce, hostWin: win, webContents };
+        const pending = { mode: "region" as const, finish: finishOnce, hostWin: win, webContents };
+        s.overlayPending = pending;
         beginOverlaySession(s, webContents);
 
         void (async (): Promise<void> => {
           await injectRgMarqueeHighlighter(webContents);
+          if (!overlaySessionMatches(s, pending)) {
+            await cleanupLateInjection(s, pending, removeRgMarqueeHighlighter);
+            return;
+          }
           schedulePollRegion(s, win);
         })();
       });
@@ -1109,11 +1182,16 @@ export function registerOverlayHandlers(): void {
           resolve(r);
         };
 
-        s.overlayPending = { mode: "element", finish: finishOnce, hostWin: win, webContents };
+        const pending = { mode: "element" as const, finish: finishOnce, hostWin: win, webContents };
+        s.overlayPending = pending;
         beginOverlaySession(s, webContents);
 
         void (async (): Promise<void> => {
           await injectEpPickHighlighter(webContents);
+          if (!overlaySessionMatches(s, pending)) {
+            await cleanupLateInjection(s, pending, removeEpPickHighlighter);
+            return;
+          }
           schedulePoll(s, win);
         })();
       });
@@ -1165,6 +1243,10 @@ async function runRegionPollTick(s: PreviewSession, hostWin: BrowserWindow): Pro
     abortOverlayCapture(s, "no-preview");
     return;
   }
+  if (!pendingCaptureStillOwnsSurface(s, webContents)) {
+    abortOverlayCapture(s, "no-preview");
+    return;
+  }
 
   let payload: RgPollPayload | null = null;
   try {
@@ -1177,6 +1259,11 @@ async function runRegionPollTick(s: PreviewSession, hostWin: BrowserWindow): Pro
 
   // Re-read pending after the await: an earlier tick (or external abort) may have settled it.
   if (!s.overlayPending || s.overlayPending.mode !== "region") return;
+  if (s.overlayPending.webContents !== webContents) return;
+  if (!pendingCaptureStillOwnsSurface(s, webContents)) {
+    abortOverlayCapture(s, "no-preview");
+    return;
+  }
 
   if (!payload || payload.state === "gone") {
     // Guest reloaded / navigated. Re-inject so the next tick can resume.
@@ -1218,39 +1305,40 @@ async function finishRegionCapture(s: PreviewSession, rect: Bounds): Promise<voi
   const pending = s.overlayPending;
   if (!pending || pending.mode !== "region") return;
 
-  s.overlayPending = null;
-  endOverlaySession(s);
   if (s.regionPollTimer) {
     clearTimeout(s.regionPollTimer);
     s.regionPollTimer = null;
   }
 
   const webContents = pending.webContents;
-  if (webContents.isDestroyed()) {
-    pending.finish({ ok: false, error: "no-preview" });
-    return;
-  }
+  if (!overlaySessionStillCurrent(s, pending)) return;
 
   const lb = s.lastBounds;
   if (!lb) {
     await removeRgMarqueeHighlighter(webContents);
-    pending.finish({ ok: false, error: "no-bounds" });
+    if (overlaySessionStillCurrent(s, pending)) {
+      finishOverlaySession(s, pending, { ok: false, error: "no-bounds" });
+    }
     return;
   }
 
   const r = clampRectInPlace(rect, lb.width, lb.height);
   if (r.width < 4 || r.height < 4) {
     await removeRgMarqueeHighlighter(webContents);
-    pending.finish({ ok: false, error: "region-too-small" });
+    if (overlaySessionStillCurrent(s, pending)) {
+      finishOverlaySession(s, pending, { ok: false, error: "region-too-small" });
+    }
     return;
   }
 
   try {
     await removeRgMarqueeHighlighter(webContents);
+    if (!overlaySessionStillCurrent(s, pending)) return;
     const image = await webContents.capturePage(r);
+    if (!overlaySessionStillCurrent(s, pending)) return;
     const buffer = image.toPNG();
     if (buffer.length === 0) {
-      pending.finish({ ok: false, error: "empty-capture" });
+      finishOverlaySession(s, pending, { ok: false, error: "empty-capture" });
       return;
     }
 
@@ -1258,9 +1346,12 @@ async function finishRegionCapture(s: PreviewSession, rect: Bounds): Promise<voi
     const stem = previewCaptureFileStem(webContents.getURL());
     const name = `preview-region-${stem}-${Date.now()}.png`;
     const tempDir = join(app.getPath("temp"), "mcode-attachments");
+    if (!overlaySessionStillCurrent(s, pending)) return;
     await mkdir(tempDir, { recursive: true });
+    if (!overlaySessionStillCurrent(s, pending)) return;
     const tempPath = join(tempDir, `${id}.png`);
     await writeFile(tempPath, buffer);
+    if (!overlaySessionStillCurrent(s, pending)) return;
 
     const meta: AttachmentMeta = {
       id,
@@ -1281,9 +1372,12 @@ async function finishRegionCapture(s: PreviewSession, rect: Bounds): Promise<voi
       },
     );
 
-    pending.finish({ ok: true, meta, previewBytes: Uint8Array.from(buffer), capture });
+    if (!overlaySessionStillCurrent(s, pending)) return;
+    finishOverlaySession(s, pending, { ok: true, meta, previewBytes: Uint8Array.from(buffer), capture });
   } catch {
-    pending.finish({ ok: false, error: "capture-failed" });
+    if (s.overlayPending === pending) {
+      finishOverlaySession(s, pending, { ok: false, error: "capture-failed" });
+    }
   }
 }
 
@@ -1318,6 +1412,10 @@ async function runElementPickPollTick(s: PreviewSession, hostWin: BrowserWindow)
     abortOverlayCapture(s, "no-preview");
     return;
   }
+  if (!pendingCaptureStillOwnsSurface(s, webContents)) {
+    abortOverlayCapture(s, "no-preview");
+    return;
+  }
 
   let payload: EpPollPayload | null = null;
   try {
@@ -1330,6 +1428,11 @@ async function runElementPickPollTick(s: PreviewSession, hostWin: BrowserWindow)
 
   // Re-read pending after the await: an earlier tick (or external abort) may have settled it.
   if (!s.overlayPending || s.overlayPending.mode !== "element") return;
+  if (s.overlayPending.webContents !== webContents) return;
+  if (!pendingCaptureStillOwnsSurface(s, webContents)) {
+    abortOverlayCapture(s, "no-preview");
+    return;
+  }
 
   if (!payload || payload.state === "gone") {
     // Guest reloaded / navigated. Re-inject so the next tick can resume.
@@ -1374,46 +1477,50 @@ async function finishElementPickCapture(
     return;
   }
 
-  s.overlayPending = null;
-  endOverlaySession(s);
   if (s.elementPickPollTimer) {
     clearTimeout(s.elementPickPollTimer);
     s.elementPickPollTimer = null;
   }
 
   const webContents = pending.webContents;
-  if (webContents.isDestroyed()) {
-    pending.finish({ ok: false, error: "no-preview" });
-    return;
-  }
+  if (!overlaySessionStillCurrent(s, pending)) return;
 
   const lb = s.lastBounds;
   if (!lb) {
     await removeEpPickHighlighter(webContents);
-    pending.finish({ ok: false, error: "no-bounds" });
+    if (overlaySessionStillCurrent(s, pending)) {
+      finishOverlaySession(s, pending, { ok: false, error: "no-bounds" });
+    }
     return;
   }
 
   const hit = await runElementHitTest(webContents, x, y, hostBoundsForHitTest(s, webContents));
+  if (!overlaySessionStillCurrent(s, pending)) return;
   if (!hit || !hit.ok) {
     await removeEpPickHighlighter(webContents);
-    pending.finish({ ok: false, error: "no-hit" });
+    if (overlaySessionStillCurrent(s, pending)) {
+      finishOverlaySession(s, pending, { ok: false, error: "no-hit" });
+    }
     return;
   }
 
   const r = clampRectInPlace(hit.bounds, lb.width, lb.height);
   if (r.width < 4 || r.height < 4) {
     await removeEpPickHighlighter(webContents);
-    pending.finish({ ok: false, error: "region-too-small" });
+    if (overlaySessionStillCurrent(s, pending)) {
+      finishOverlaySession(s, pending, { ok: false, error: "region-too-small" });
+    }
     return;
   }
 
   try {
     await removeEpPickHighlighter(webContents);
+    if (!overlaySessionStillCurrent(s, pending)) return;
     const image = await webContents.capturePage(r);
+    if (!overlaySessionStillCurrent(s, pending)) return;
     const buffer = image.toPNG();
     if (buffer.length === 0) {
-      pending.finish({ ok: false, error: "empty-capture" });
+      finishOverlaySession(s, pending, { ok: false, error: "empty-capture" });
       return;
     }
 
@@ -1421,9 +1528,12 @@ async function finishElementPickCapture(
     const stem = previewCaptureFileStem(webContents.getURL());
     const name = `preview-element-${stem}-${Date.now()}.png`;
     const tempDir = join(app.getPath("temp"), "mcode-attachments");
+    if (!overlaySessionStillCurrent(s, pending)) return;
     await mkdir(tempDir, { recursive: true });
+    if (!overlaySessionStillCurrent(s, pending)) return;
     const tempPath = join(tempDir, `${id}.png`);
     await writeFile(tempPath, buffer);
+    if (!overlaySessionStillCurrent(s, pending)) return;
 
     const meta: AttachmentMeta = {
       id,
@@ -1447,8 +1557,11 @@ async function finishElementPickCapture(
       },
     );
 
-    pending.finish({ ok: true, meta, previewBytes: Uint8Array.from(buffer), capture });
+    if (!overlaySessionStillCurrent(s, pending)) return;
+    finishOverlaySession(s, pending, { ok: true, meta, previewBytes: Uint8Array.from(buffer), capture });
   } catch {
-    pending.finish({ ok: false, error: "capture-failed" });
+    if (s.overlayPending === pending) {
+      finishOverlaySession(s, pending, { ok: false, error: "capture-failed" });
+    }
   }
 }
