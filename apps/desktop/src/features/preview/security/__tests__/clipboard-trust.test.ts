@@ -4,7 +4,7 @@ import {
   recordTrustedPreviewClipboardClick,
   registerPreviewClipboardGuest,
   registerPreviewClipboardPermissionHandlers,
-} from "../preview/preview-clipboard-trust.js";
+} from "../clipboard-trust.js";
 
 type PermissionCheckHandler = (
   webContents: FakeWebContents | null,

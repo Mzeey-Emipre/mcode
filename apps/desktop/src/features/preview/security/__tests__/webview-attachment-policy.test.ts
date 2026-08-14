@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   hardenPreviewWebviewAttachment,
   resolvePreviewGuestPreloadPath,
-} from "../preview/preview-webview-security.js";
+} from "../webview-attachment-policy.js";
 
 describe("preview webview security", () => {
   it("replaces hostile attachment settings with the fixed sandboxed guest preload", () => {

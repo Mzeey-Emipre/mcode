@@ -96,7 +96,7 @@ vi.mock("../../features/preview/navigation/local-file.js", () => ({
 }));
 vi.mock("../is-desktop-dev.js", () => ({ isDesktopDev: vi.fn().mockReturnValue(false) }));
 vi.mock("../cli-args.js", () => ({ shouldPrintVersion: vi.fn().mockReturnValue(false) }));
-vi.mock("../preview/preview-webview-security.js", () => ({
+vi.mock("../../features/preview/security/webview-attachment-policy.js", () => ({
   hardenPreviewWebviewAttachment: vi.fn(),
   resolvePreviewGuestPreloadPath: vi.fn(),
 }));

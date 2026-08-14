@@ -15,13 +15,13 @@ import { registerOverlayHandlers } from "./preview-overlay.js";
 import { registerSpillHandlers } from "./preview-spill.js";
 import { registerTabHandlers } from "./preview-tabs.js";
 import { getPerfCounters } from "../../features/preview/observability/perf-counters.js";
-import { registerPreviewSurfaceHandlers } from "./preview-webview-adopt.js";
+import { registerPreviewSurfaceHandlers } from "../../features/preview/surfaces/registry.js";
 import { registerDesignModeHandlers } from "./preview-design-mode.js";
 import { registerBrowserAutomationHandlers } from "../browser-automation/index.js";
-import { registerPreviewSessionPolicy } from "./preview-session-adapter.js";
+import { registerPreviewSessionPolicy } from "../../features/preview/security/electron-session-policy.js";
 import { abortOverlayCapture } from "./preview-overlay.js";
 import { clearDiscardTimers, sessions } from "../../features/preview/state/window-session.js";
-import { disposePreviewSurfacesForWindow } from "./preview-webview-adopt.js";
+import { disposePreviewSurfacesForWindow } from "../../features/preview/surfaces/registry.js";
 
 /** Releases Preview resources owned by one closing renderer window. */
 export function disposePreviewForWindow(win: import("electron").BrowserWindow): void {
@@ -56,6 +56,6 @@ export {
   PREVIEW_PARTITION,
   PreviewSessionAdapter,
   previewSessionAdapter,
-} from "./preview-session-adapter.js";
+} from "../../features/preview/security/electron-session-policy.js";
 export { PREVIEW_POPUP_REQUESTED_CHANNEL } from "../../features/preview/contracts/popup.js";
 export type { PreviewPopupRequest } from "../../features/preview/contracts/popup.js";

@@ -121,7 +121,7 @@ vi.mock("electron", () => ({
   },
   nativeImage: { createFromBuffer: vi.fn(() => ({ getSize: () => ({ width: 1, height: 1 }), resize: () => ({ getSize: () => ({ width: 1, height: 1 }), toPNG: () => Buffer.from("png") }), toPNG: () => Buffer.from("png") })) },
 }));
-vi.mock("../preview/preview-webview-adopt.js", () => ({ findAdoptedWebContentsForWindow: vi.fn(() => currentWebContents) }));
+vi.mock("../../features/preview/surfaces/registry.js", () => ({ findAdoptedWebContentsForWindow: vi.fn(() => currentWebContents) }));
 vi.mock("../../features/preview/contracts/guest-input.js", () => ({ PREVIEW_GUEST_AGENT_INPUT_CHANNEL: "mcode:browser-agent-input" }));
 vi.mock("../../features/preview/state/window-session.js", () => ({
   getSession: vi.fn(() => fakePreviewSession),

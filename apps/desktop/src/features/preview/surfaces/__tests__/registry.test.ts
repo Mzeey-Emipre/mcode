@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { resolvePreviewGuestPreloadPath } from "../preview/preview-webview-security.js";
+import { resolvePreviewGuestPreloadPath } from "../../security/webview-attachment-policy.js";
 
 const ipcHandlers: Record<string, (...args: unknown[]) => unknown> = {};
 const fakeGuests: FakeWebContents[] = [];
@@ -101,7 +101,7 @@ vi.mock("electron", () => ({
 }));
 
 vi.mock("@mcode/shared", () => ({ logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() } }));
-vi.mock("../preview/preview-clipboard-trust.js", () => ({
+vi.mock("../../security/clipboard-trust.js", () => ({
   registerPreviewClipboardGuest: vi.fn(),
   unregisterPreviewClipboardGuest: vi.fn(),
 }));
@@ -111,8 +111,8 @@ import {
   findAdoptedWebContentsForWindow,
   registerPreviewSurfaceHandlers,
   requestRendererSurfaceDiscard,
-} from "../preview/preview-webview-adopt.js";
-import { getSession, previewTabScopeKey, sessions, toBrowserTabSet } from "../../features/preview/state/window-session.js";
+} from "../registry.js";
+import { getSession, previewTabScopeKey, sessions, toBrowserTabSet } from "../../state/window-session.js";
 
 const surface = (generation = 1) => ({
   identity: {

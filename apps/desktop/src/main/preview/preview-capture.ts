@@ -16,7 +16,7 @@ import {
 import { redactMcodeBrowserCaptureV2 } from "@mcode/shared";
 import { type Bounds, type PreviewSession, type CaptureFinishResult, sessions, getSession } from "../../features/preview/state/window-session.js";
 import { persistBrowserCaptureSpill } from "./preview-spill.js";
-import { resolveActivePreviewWebContents } from "./preview-active-webcontents.js";
+import { resolveActivePreviewWebContents } from "../../features/preview/surfaces/active-web-contents.js";
 
 /**
  * Outcome of capturing the visible preview viewport as a PNG attachment.

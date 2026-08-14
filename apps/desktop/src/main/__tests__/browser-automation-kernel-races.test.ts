@@ -174,7 +174,7 @@ vi.mock("electron", () => ({
   },
 }));
 
-vi.mock("../preview/preview-webview-adopt.js", () => ({
+vi.mock("../../features/preview/surfaces/registry.js", () => ({
   findAdoptedWebContentsForWindow: vi.fn(() => currentWebContents),
 }));
 

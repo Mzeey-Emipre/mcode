@@ -11,19 +11,19 @@ import {
   getSession,
   getThreadTabSet,
   type TabState,
-} from "../../features/preview/state/window-session.js";
-import { resolvePreviewNavigationTarget } from "../../features/preview/navigation/resolve-target.js";
-import { trustMainProcessFileNavigation } from "../../features/preview/navigation/local-file.js";
+} from "../state/window-session.js";
+import { resolvePreviewNavigationTarget } from "../navigation/resolve-target.js";
+import { trustMainProcessFileNavigation } from "../navigation/local-file.js";
 import {
   registerPreviewClipboardGuest,
   unregisterPreviewClipboardGuest,
-} from "./preview-clipboard-trust.js";
-import { previewSessionAdapter } from "./preview-session-adapter.js";
-import { PREVIEW_POPUP_REQUESTED_CHANNEL } from "../../features/preview/contracts/popup.js";
-import type { PreviewPopupSurfaceRef } from "../../features/preview/contracts/popup.js";
-import { isBrowserAutomationAgentOperationActive } from "../browser-automation/active-operation.js";
-import { PREVIEW_SURFACE_DISCARD_REQUESTED_CHANNEL } from "../../features/preview/contracts/surface-lifecycle.js";
-import { bumpPerf } from "../../features/preview/observability/perf-counters.js";
+} from "../security/clipboard-trust.js";
+import { previewSessionAdapter } from "../security/electron-session-policy.js";
+import { PREVIEW_POPUP_REQUESTED_CHANNEL } from "../contracts/popup.js";
+import type { PreviewPopupSurfaceRef } from "../contracts/popup.js";
+import { isBrowserAutomationAgentOperationActive } from "../../../main/browser-automation/active-operation.js";
+import { PREVIEW_SURFACE_DISCARD_REQUESTED_CHANNEL } from "../contracts/surface-lifecycle.js";
+import { bumpPerf } from "../observability/perf-counters.js";
 
 const MAX_SURFACE_ID_LENGTH = 256;
 const MAX_ADOPTION_TOKEN_LENGTH = 128;

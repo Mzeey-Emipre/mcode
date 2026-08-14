@@ -16,12 +16,12 @@ vi.mock("electron", () => ({
   },
 }));
 
-vi.mock("../preview/preview-clipboard-trust.js", () => ({
+vi.mock("../clipboard-trust.js", () => ({
   registerPreviewClipboardPermissionHandlers: vi.fn(),
 }));
 
 import { session } from "electron";
-import { PreviewSessionAdapter } from "../preview/preview-session-adapter.js";
+import { PreviewSessionAdapter } from "../electron-session-policy.js";
 
 describe("PreviewSessionAdapter", () => {
   const surface = {
