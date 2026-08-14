@@ -87,6 +87,7 @@ export function App() {
   const contentRowRef = useRef<HTMLDivElement>(null);
   const floatingBackdropRef = useRef<HTMLButtonElement>(null);
   const floatingSidebarRef = useRef<HTMLDivElement>(null);
+  const terminalReleaseTestStartedRef = useRef(false);
   const showNewThreadCanvas = activeThreadId === null;
   const showProjectlessCanvas =
     showNewThreadCanvas && activeWorkspaceId === null;
@@ -289,11 +290,16 @@ export function App() {
 
   useEffect(() => {
     if (window.desktopBridge?.terminalReleaseTest?.enabled !== true) return;
+    if (terminalReleaseTestStartedRef.current) return;
+    terminalReleaseTestStartedRef.current = true;
     const root = document.documentElement;
     const errorAttribute = "data-terminal-release-test-bootstrap-error";
     root.removeAttribute(errorAttribute);
     void bootstrapTerminalReleaseTestWorkspace(useWorkspaceStore.getState)
-      .then(() => root.removeAttribute(errorAttribute))
+      .then(() => {
+        summonTab("terminal");
+        root.removeAttribute(errorAttribute);
+      })
       .catch((error: unknown) => {
         root.setAttribute(
           errorAttribute,

@@ -6,6 +6,7 @@ import {
   waitFor,
   within,
 } from "@testing-library/react";
+import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { App } from "../app/App";
 import { useConnectionStore } from "@/stores/connectionStore";
@@ -28,6 +29,10 @@ const terminalReleaseWorkspace: Workspace = {
   sort_order: 0,
   deleted_at: null,
 };
+
+const { summonTabMock } = vi.hoisted(() => ({ summonTabMock: vi.fn() }));
+
+vi.mock("@/lib/summon-tab", () => ({ summonTab: summonTabMock }));
 
 if (typeof globalThis.ResizeObserver === "undefined") {
   globalThis.ResizeObserver = class ResizeObserverMock {
@@ -120,6 +125,7 @@ describe("App", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+    summonTabMock.mockReset();
     useConnectionStore.setState({ status: "connecting" });
     useWorkspaceStore.setState({
       workspaces: [],
@@ -364,6 +370,13 @@ describe("App", () => {
     unmount();
   });
 
+  it("does not summon a Terminal during normal startup", async () => {
+    render(<App />);
+
+    await screen.findByText("What should we work on?");
+    expect(summonTabMock).not.toHaveBeenCalled();
+  });
+
   it("activates the first workspace only for the packaged Terminal release test", async () => {
     const loadWorkspaces = vi.fn().mockResolvedValue(undefined);
     useWorkspaceStore.setState({
@@ -379,12 +392,21 @@ describe("App", () => {
         perform: vi.fn(),
       },
     };
+    summonTabMock.mockImplementation(() => {
+      expect(useWorkspaceStore.getState().activeWorkspaceId).toBe("ws-release");
+    });
 
-    render(<App />);
+    render(
+      <StrictMode>
+        <App />
+      </StrictMode>,
+    );
 
     await waitFor(() => {
       expect(loadWorkspaces).toHaveBeenCalled();
       expect(useWorkspaceStore.getState().activeWorkspaceId).toBe("ws-release");
+      expect(summonTabMock).toHaveBeenCalledTimes(1);
+      expect(summonTabMock).toHaveBeenCalledWith("terminal");
     });
     expect(document.documentElement).not.toHaveAttribute(
       "data-terminal-release-test-bootstrap-error",
@@ -414,5 +436,6 @@ describe("App", () => {
         "Terminal release-test workspace is missing",
       );
     });
+    expect(summonTabMock).not.toHaveBeenCalled();
   });
 });
