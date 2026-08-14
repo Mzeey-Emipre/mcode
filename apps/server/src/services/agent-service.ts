@@ -461,16 +461,6 @@ export class AgentService {
       this.db,
       this.turnFileTracker,
       this.canonicalSink,
-      (threadId, executionId) => {
-        if (this.turnRuntime.snapshot(threadId)?.turnExecutionId !== executionId) return;
-        void this.stopSession(threadId).catch((error) => {
-          logger.warn("Failed to stop canonical execution after ingest overflow", {
-            threadId,
-            executionId,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        });
-      },
     );
     this.goalCommand = new GoalCommand(
       { messageRepo: this.messageRepo, db: this.db },

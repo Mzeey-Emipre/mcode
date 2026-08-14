@@ -323,7 +323,7 @@ describe("TurnFinalizer canonical commit recovery", () => {
   const executionId = "00000000-0000-4000-8000-000000000010";
   const turnId = "canonical-turn-1";
 
-  function buildCanonicalHarness(toolCallCount = 1, stopExecution = vi.fn()) {
+  function buildCanonicalHarness(toolCallCount = 1) {
     const db = openMemoryDatabase();
     seedThread(db);
     const messageRepo = new MessageRepo(db);
@@ -358,7 +358,6 @@ describe("TurnFinalizer canonical commit recovery", () => {
       db,
       undefined,
       sink,
-      stopExecution,
     );
     finalizer.bufferAssistantBody(THREAD, "answer", "claude-sonnet-4-6");
     narrativeStore.beginTurn(THREAD);
@@ -370,7 +369,7 @@ describe("TurnFinalizer canonical commit recovery", () => {
         toolInput: { path: `file-${index}.md` },
       });
     }
-    return { db, finalizer, messageRepo, sink, stopExecution };
+    return { db, finalizer, messageRepo, sink };
   }
 
   it("retains volatile buffers when the canonical transaction rolls back", async () => {
@@ -420,23 +419,30 @@ describe("TurnFinalizer canonical commit recovery", () => {
     expect(messageRepo.listByThread(THREAD, 10).messages).toHaveLength(2);
   });
 
-  it("stops the exact execution and keeps compatibility output hidden after ingest overflow", async () => {
-    const { finalizer, messageRepo, sink, stopExecution } = buildCanonicalHarness(
+  it("publishes a terminal turn with more than 256 canonical events", async () => {
+    const { finalizer, messageRepo, sink } = buildCanonicalHarness(
       CANONICAL_AGENT_EVENT_BATCH_MAX,
     );
     vi.mocked(broadcast).mockClear();
 
     await finalizer.finalize(THREAD, "completed", Promise.resolve(), executionId);
 
-    expect(stopExecution).toHaveBeenCalledWith(THREAD, executionId);
     expect(sink.loadCheckpoint(executionId)).toMatchObject({
-      phase: "ingest_overflow",
-      terminalOutcome: "errored",
+      phase: "completed",
+      terminalOutcome: "completed",
     });
     expect(messageRepo.listByThread(THREAD, 10).messages.map((message) => message.content)).toEqual([
       "question",
+      "answer",
     ]);
-    expect(broadcast).not.toHaveBeenCalledWith("turn.persisted", expect.anything());
+    const assistantMessage = messageRepo.listByThread(THREAD, 10).messages[1];
+    expect(assistantMessage).toBeDefined();
+    expect(broadcast).toHaveBeenCalledWith("turn.persisted", expect.objectContaining({
+      threadId: THREAD,
+      turnId,
+      messageId: assistantMessage!.id,
+      toolCallCount: CANONICAL_AGENT_EVENT_BATCH_MAX,
+    }));
   });
 });
 
