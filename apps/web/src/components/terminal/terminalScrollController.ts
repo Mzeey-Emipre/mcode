@@ -12,6 +12,7 @@ import {
   persistScrollAnchor,
   pinScrollAnchor,
   restoreScrollAnchor,
+  restoreScrollIntent,
   saveScrollAnchorOnHide,
   touchScrollAnchor,
   unpinScrollAnchor,
@@ -104,6 +105,17 @@ export const terminalScroll = {
     if (!anchor) return;
     terminalScroll.runProgrammatic(ptyId, () => {
       restoreScrollAnchor(term, anchor);
+    });
+  },
+
+  /** Restores tail-follow or reading intent after a terminal reflow. */
+  restoreAfterResize(
+    ptyId: string,
+    term: Terminal,
+    anchor: TerminalScrollAnchor,
+  ): void {
+    terminalScroll.runProgrammatic(ptyId, () => {
+      restoreScrollIntent(term, anchor);
     });
   },
 
