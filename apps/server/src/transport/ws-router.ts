@@ -991,6 +991,8 @@ async function dispatch(
         limit: params.limit,
         before: params.before,
       });
+    case "canonicalAgent.roster":
+      return deps.canonicalSink.loadSubagentRoster(params);
     case "conversation.olderPage":
       return loadOlderConversationPage(deps, params);
     case "conversation.newerPage":

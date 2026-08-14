@@ -43,6 +43,7 @@ import type {
   ConversationOlderPage,
   ConversationOlderPageRequest,
   ConversationTail,
+  CanonicalSubagentRoster,
   SetThreadSubscriptionsInput,
   SetThreadSubscriptionsResult,
   GoalLookupResult,
@@ -395,6 +396,11 @@ export interface McodeTransport {
   getMessages(threadId: string, limit: number, before?: number): Promise<PaginatedMessages>;
   /** Fetch persisted messages and grouped narrative for one thread page. */
   loadConversationPage(threadId: string, limit: number, before?: number): Promise<ConversationPage>;
+  /** Fetch the canonical descendant roster rooted at one owning parent thread. */
+  loadCanonicalSubagentRoster(
+    owningParentThreadId: string,
+    limit?: number,
+  ): Promise<CanonicalSubagentRoster>;
   /** Fetch one identity-bound and byte-bounded page of older conversation history. */
   loadOlderConversationPage(request: ConversationOlderPageRequest): Promise<ConversationOlderPage>;
   /** Fetch one identity-bound and byte-bounded page of newer conversation history. */

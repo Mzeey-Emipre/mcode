@@ -187,8 +187,16 @@ export {
 } from "./models/turn-recovery.js";
 export type { TurnRecoveryAction, TurnRecovery } from "./models/turn-recovery.js";
 
-export { MessageSchema, PaginatedMessagesSchema } from "./models/message.js";
-export type { Message, PaginatedMessages } from "./models/message.js";
+export {
+  MessageSchema,
+  PaginatedMessagesSchema,
+  ParentAgentMessageProvenanceSchema,
+} from "./models/message.js";
+export type {
+  Message,
+  PaginatedMessages,
+  ParentAgentMessageProvenance,
+} from "./models/message.js";
 
 export {
   MessageMentionSchema,
@@ -226,6 +234,22 @@ export type {
   ConversationPage,
   ConversationNarrativeBatch,
 } from "./models/conversation-page.js";
+export {
+  CANONICAL_SUBAGENT_LINEAGE_MAX_DEPTH,
+  CANONICAL_SUBAGENT_ROSTER_MAX_CHILDREN,
+  CANONICAL_SUBAGENT_TASK_MAX_LENGTH,
+  CanonicalSubagentRosterRequestSchema,
+  CanonicalSubagentTerminalOutcomeSchema,
+  CanonicalSubagentRosterRowSchema,
+  CanonicalSubagentRosterSchema,
+  canonicalSubagentTerminalOutcome,
+} from "./models/canonical-subagent-roster.js";
+export type {
+  CanonicalSubagentRosterRequest,
+  CanonicalSubagentTerminalOutcome,
+  CanonicalSubagentRosterRow,
+  CanonicalSubagentRoster,
+} from "./models/canonical-subagent-roster.js";
 export {
   CONVERSATION_OLDER_PAGE_MAX_BYTES,
   CONVERSATION_OLDER_PAGE_MAX_MESSAGES,

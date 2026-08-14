@@ -1,313 +1,315 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { TurnFileEffectSummary } from "@mcode/contracts";
-import type { ToolCall, ToolCallRecord } from "@/transport/types";
+import type { CanonicalSubagentRoster, CanonicalSubagentRosterRow } from "@mcode/contracts";
 import { useDiffStore } from "@/stores/diffStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useThreadStore } from "@/stores/threadStore";
 
-const state = vi.hoisted(() => ({
-  records: {} as Record<string, {
-    toolCalls: ToolCall[];
-    narrativeByMessage: Record<string, { tools: ToolCallRecord[] } | undefined>;
-    fileEffectSummary?: TurnFileEffectSummary;
-  }>,
+const harness = vi.hoisted(() => ({
+  loadCanonicalSubagentRoster: vi.fn(),
+  residency: {
+    mountDisplayConversation: vi.fn(),
+    unmountDisplayConversation: vi.fn(),
+  },
 }));
 
-vi.mock("@/stores/thread-selectors", () => ({
-  useThreadRecord: (threadId: string, selector: (record: unknown) => unknown) => selector({
-    answeredPlanMessageIds: new Set(),
-    ...(state.records[threadId] ?? { toolCalls: [], narrativeByMessage: {} }),
+vi.mock("@/transport", async () => ({
+  ...(await vi.importActual("@/transport")),
+  getTransport: () => ({
+    loadCanonicalSubagentRoster: harness.loadCanonicalSubagentRoster,
   }),
 }));
 
-vi.mock("../../chat/MarkdownContent", () => ({
-  default: ({ content }: { content: string }) => <span>{content}</span>,
+vi.mock("@/stores/conversation-residency", async () => ({
+  ...(await vi.importActual("@/stores/conversation-residency")),
+  getConversationResidency: () => harness.residency,
+}));
+
+vi.mock("@/components/chat/MessageList", () => ({
+  MessageList: ({ displayThreadId }: { displayThreadId?: string }) => (
+    <div data-testid="shared-message-list" data-display-thread-id={displayThreadId} />
+  ),
 }));
 
 import { SubagentsPanel } from "../SubagentsPanel";
 
-function agent(overrides: Partial<ToolCall> = {}): ToolCall {
+function canonicalRow(
+  overrides: Partial<CanonicalSubagentRosterRow> = {},
+): CanonicalSubagentRosterRow {
   return {
-    id: "agent-1",
-    toolName: "Agent",
-    toolInput: { agentName: "Implementation worker", description: "Build the roster" },
-    output: null,
-    isError: false,
-    isComplete: false,
-    startedAt: Date.now() - 5_000,
-    lastActivityAt: Date.now(),
+    id: "canonical-child",
+    parentThreadId: "thread-1",
+    rootThreadId: "thread-1",
+    owningParentThreadId: "thread-1",
+    lineage: ["thread-1", "canonical-child"],
+    activityState: "Idle",
+    latestTurnStatus: "Completed",
+    startedAt: "2026-08-14T10:00:00.000Z",
+    updatedAt: "2026-08-14T10:01:00.000Z",
+    endedAt: "2026-08-14T10:01:00.000Z",
+    terminalOutcome: "Completed",
+    task: "Canonical task",
+    identity: "Canonical worker",
+    model: "gpt-5.6-sol",
+    reasoning: "high",
+    providerIdentities: [],
+    sourceProviderIdentities: [],
+    hasActiveDescendant: false,
     ...overrides,
   };
 }
 
-function record(overrides: Partial<ToolCallRecord> = {}): ToolCallRecord {
+function canonicalRoster(
+  active: CanonicalSubagentRosterRow[] = [],
+  done: CanonicalSubagentRosterRow[] = active,
+  rosterRevision = 1,
+): CanonicalSubagentRoster {
   return {
-    id: "agent-1",
-    message_id: "message-1",
-    parent_tool_call_id: null,
-    tool_name: "Agent",
-    display_name: "Implementation worker",
-    input_summary: "Build the roster",
-    output_summary: "Roster implementation complete",
-    status: "completed",
-    started_at: "2026-07-22T10:00:00.000Z",
-    completed_at: "2026-07-22T10:01:00.000Z",
-    sort_order: 0,
-    ...overrides,
+    owningParentThreadId: "thread-1",
+    rosterRevision,
+    active,
+    done,
   };
 }
 
-function setThread(
-  toolCalls: ToolCall[] = [],
-  tools: ToolCallRecord[] = [],
-  fileEffectSummary?: TurnFileEffectSummary,
-): void {
-  state.records["thread-1"] = {
-    toolCalls,
-    narrativeByMessage: tools.length > 0 ? { "message-1": { tools } } : {},
-    fileEffectSummary,
-  };
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
 }
 
 describe("SubagentsPanel", () => {
   beforeEach(() => {
-    state.records = {};
+    harness.loadCanonicalSubagentRoster.mockReset().mockRejectedValue(new Error("transport unavailable"));
+    harness.residency.mountDisplayConversation.mockReset();
+    harness.residency.unmountDisplayConversation.mockReset();
     useWorkspaceStore.setState({ activeWorkspaceId: "workspace-1", activeThreadId: "thread-1" });
+    useThreadStore.setState({ currentThreadId: "thread-1", records: new Map() });
     useDiffStore.setState({ subagentDetailByThread: {}, subagentReviewScopeByThread: {} });
   });
 
-  it("renders Active and Done on one continuous page without tabs", () => {
-    setThread([agent()], [record({ id: "finished-agent" })]);
+  it("does not render narrative-derived rows while the canonical roster is loading", () => {
+    harness.loadCanonicalSubagentRoster.mockReturnValue(new Promise(() => undefined));
+
     render(<SubagentsPanel threadId="thread-1" />);
 
-    expect(screen.getByRole("heading", { name: "Active" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Done" })).toBeInTheDocument();
-    expect(screen.getByTestId("subagent-roster-row")).toHaveTextContent("Implementation worker");
-    expect(screen.getByTestId("subagent-roster-row")).toHaveTextContent("Running");
-    expect(screen.getByTestId("subagent-finished-row")).toHaveTextContent("Roster implementation complete");
-    expect(screen.getByTestId("subagent-finished-row")).not.toHaveTextContent("Finished");
-    expect(screen.getByTestId("subagent-finished-row").querySelector("[data-testid='subagent-lifecycle-dot']")).not.toBeInTheDocument();
-    expect(screen.getByTestId("subagent-finished-row")).not.toHaveTextContent("Build the roster");
-    expect(screen.getByRole("button", { name: /Open Implementation worker details, Finished/ })).toBeInTheDocument();
-    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Subagents" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("subagents-loading")).toBeInTheDocument();
+    expect(screen.queryByText("Legacy narrative task")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("subagent-roster-row")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("subagent-finished-row")).not.toBeInTheDocument();
   });
 
-  it("omits empty sections and shows one whole-panel empty state only when both are empty", () => {
-    setThread([agent()]);
-    const { rerender } = render(<SubagentsPanel threadId="thread-1" />);
-    expect(screen.getByRole("heading", { name: "Active" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: /Done/ })).not.toBeInTheDocument();
-    expect(screen.queryByTestId("subagents-empty")).not.toBeInTheDocument();
+  it("uses a successful empty canonical roster instead of legacy rows", async () => {
+    harness.loadCanonicalSubagentRoster.mockResolvedValue(canonicalRoster([], []));
 
-    setThread();
-    rerender(<SubagentsPanel threadId="thread-1" />);
-    expect(screen.getByTestId("subagents-empty")).toHaveTextContent("Sub-agents will appear");
-    expect(screen.queryByRole("heading", { name: /Active/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: /Done/ })).not.toBeInTheDocument();
-  });
-
-  it("keeps exceptional Done statuses visible while completed rows rely on their section", () => {
-    setThread([], [
-      record({ id: "completed" }),
-      record({ id: "failed", status: "failed", output_summary: "Command failed", sort_order: 1 }),
-      record({ id: "cancelled", status: "cancelled", sort_order: 2 }),
-    ]);
     render(<SubagentsPanel threadId="thread-1" />);
 
-    expect(screen.getAllByTestId("subagent-finished-row")).toHaveLength(3);
-    expect(screen.queryByText("Finished")).not.toBeInTheDocument();
-    expect(screen.getByText("Errored")).toBeInTheDocument();
-    expect(screen.getByText("Cancelled")).toBeInTheDocument();
-    const completedRow = screen.getByRole("button", { name: /Open Implementation worker details, Finished/ });
-    const erroredRow = screen.getByRole("button", { name: /Open Implementation worker details, Errored/ });
-    const cancelledRow = screen.getByRole("button", { name: /Open Implementation worker details, Cancelled/ });
-    expect(completedRow.querySelector("[data-testid='subagent-lifecycle-dot']")).not.toBeInTheDocument();
-    expect(erroredRow.querySelector("[data-testid='subagent-lifecycle-dot']")).toBeInTheDocument();
-    expect(cancelledRow.querySelector("[data-testid='subagent-lifecycle-dot']")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId("subagents-empty")).toBeInTheDocument());
+    expect(screen.queryByText("Legacy narrative task")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("subagent-finished-row")).not.toBeInTheDocument();
   });
 
-  it("keeps legacy nameless glyphs neutral and explicit Subagent identities colored", () => {
-    setThread([], [
-      record({ id: "legacy", display_name: null }),
-      record({ id: "explicit", display_name: "Subagent", sort_order: 1 }),
-    ]);
+  it("shows an unavailable state instead of legacy rows when the canonical RPC fails", async () => {
     render(<SubagentsPanel threadId="thread-1" />);
 
-    const rows = screen.getAllByTestId("subagent-finished-row");
-    const legacyGlyph = rows[0]?.querySelector("[data-subagent-identity-glyph]");
-    const explicitGlyph = rows[1]?.querySelector("[data-subagent-identity-glyph]");
-    expect(legacyGlyph).not.toHaveAttribute("data-subagent-palette");
-    expect(legacyGlyph).not.toHaveAttribute("style");
-    expect(explicitGlyph).toHaveAttribute("data-subagent-palette");
-    expect(explicitGlyph?.getAttribute("style")).toContain("--subagent-identity-color");
+    await waitFor(() => expect(screen.getByTestId("subagents-error")).toBeInTheDocument());
+    expect(screen.getByText("Could not load subagents")).toBeInTheDocument();
+    expect(screen.queryByText("Legacy narrative task")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("subagent-roster-row")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("subagent-finished-row")).not.toBeInTheDocument();
   });
 
-  it("opens detail with the shared narrative and response primitives, then restores row focus", async () => {
-    setThread([agent({ output: "**Done**", isComplete: true })], [
-      record({ id: "child-read", parent_tool_call_id: "agent-1", tool_name: "Read", input_summary: "src/index.ts", output_summary: "read", sort_order: 1 }),
-    ]);
+  it("keeps canonical roster polling live after an empty response", async () => {
+    const child = canonicalRow({
+      id: "canonical-active",
+      identity: "Active canonical",
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+    });
+    harness.loadCanonicalSubagentRoster
+      .mockResolvedValueOnce(canonicalRoster([], []))
+      .mockResolvedValue(canonicalRoster([child], []));
+    const intervalSpy = vi.spyOn(window, "setInterval").mockImplementation((callback) => {
+      queueMicrotask(() => callback());
+      return 1 as unknown as ReturnType<typeof window.setInterval>;
+    });
+
+    render(<SubagentsPanel threadId="thread-1" />);
+    try {
+      await waitFor(() => {
+        expect(harness.loadCanonicalSubagentRoster).toHaveBeenCalledTimes(2);
+        expect(screen.getByTestId("subagent-roster-row")).toHaveTextContent("Active canonical");
+      });
+    } finally {
+      intervalSpy.mockRestore();
+    }
+  });
+
+  it("retains the last good roster and child lease after a polling failure", async () => {
+    const child = canonicalRow({
+      id: "canonical-refresh-failure",
+      identity: "Refresh failure child",
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+    });
+    harness.loadCanonicalSubagentRoster
+      .mockResolvedValueOnce(canonicalRoster([child], []))
+      .mockRejectedValueOnce(new Error("temporary transport failure"));
+    let poll: (() => void) | undefined;
+    const intervalSpy = vi.spyOn(window, "setInterval").mockImplementation((callback) => {
+      poll = () => callback();
+      return 1 as unknown as ReturnType<typeof window.setInterval>;
+    });
+
+    render(<SubagentsPanel threadId="thread-1" />);
+    try {
+      const row = await screen.findByRole("button", { name: /Open Refresh failure child details, Active/ });
+      fireEvent.click(row);
+      expect(await screen.findByTestId("shared-message-list")).toHaveAttribute(
+        "data-display-thread-id",
+        "canonical-refresh-failure",
+      );
+      poll?.();
+      await waitFor(() => expect(screen.getByTestId("shared-message-list")).toBeInTheDocument());
+      expect(screen.queryByTestId("subagents-error")).not.toBeInTheDocument();
+      expect(harness.residency.unmountDisplayConversation).not.toHaveBeenCalled();
+    } finally {
+      intervalSpy.mockRestore();
+    }
+  });
+
+  it("rejects an older overlapping roster response after a newer response wins", async () => {
+    const staleChild = canonicalRow({ id: "stale-child", identity: "Stale child" });
+    const newerChild = canonicalRow({ id: "newer-child", identity: "Newer child" });
+    const first = deferred<CanonicalSubagentRoster>();
+    const second = deferred<CanonicalSubagentRoster>();
+    harness.loadCanonicalSubagentRoster
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    let poll: (() => void) | undefined;
+    const intervalSpy = vi.spyOn(window, "setInterval").mockImplementation((callback) => {
+      poll = () => callback();
+      return 1 as unknown as ReturnType<typeof window.setInterval>;
+    });
+
+    render(<SubagentsPanel threadId="thread-1" />);
+    try {
+      poll?.();
+      second.resolve(canonicalRoster([newerChild], [], 2));
+      await screen.findByRole("button", { name: /Open Newer child details, Completed/ });
+      first.resolve(canonicalRoster([staleChild], [], 1));
+      await waitFor(() => expect(screen.getByRole("button", { name: /Open Newer child details, Completed/ })).toBeInTheDocument());
+      expect(screen.queryByRole("button", { name: /Open Stale child details/ })).not.toBeInTheDocument();
+    } finally {
+      intervalSpy.mockRestore();
+    }
+  });
+
+  it("renders canonical rows in server order with lineage and exact outcomes", async () => {
+    const active = canonicalRow({
+      id: "active-child",
+      identity: "Active child",
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+    });
+    const completed = canonicalRow({ id: "completed-child", identity: "Completed child" });
+    const interrupted = canonicalRow({
+      id: "interrupted-child",
+      identity: "Interrupted child",
+      latestTurnStatus: "Interrupted",
+      terminalOutcome: "Interrupted",
+    });
+    const errored = canonicalRow({
+      id: "errored-child",
+      identity: "Errored child",
+      latestTurnStatus: "Errored",
+      terminalOutcome: "Errored",
+    });
+    const unknown = canonicalRow({
+      id: "unknown-child",
+      identity: "Unknown child",
+      latestTurnStatus: null,
+      terminalOutcome: null,
+    });
+    const ancestor = canonicalRow({
+      id: "ancestor-child",
+      identity: "Ancestor child",
+      lineage: ["thread-1", "ancestor-child"],
+      activityState: "Idle",
+      terminalOutcome: "Completed",
+      hasActiveDescendant: true,
+    });
+    const nested = canonicalRow({
+      id: "nested-child",
+      identity: "Nested child",
+      lineage: ["thread-1", "ancestor-child", "nested-child"],
+    });
+    harness.loadCanonicalSubagentRoster.mockResolvedValue(
+      canonicalRoster([active, nested], [completed, interrupted, errored, unknown, ancestor]),
+    );
+
     render(<SubagentsPanel threadId="thread-1" />);
 
-    const row = screen.getByRole("button", { name: /Open Implementation worker details/ });
+    await waitFor(() => expect(screen.getByRole("button", { name: /Open Active child details, Active/ })).toBeInTheDocument());
+    const activeRow = screen.getAllByTestId("subagent-roster-row");
+    expect(activeRow[0]).toHaveTextContent("Active child");
+    expect(activeRow[1]).toHaveTextContent("Parent / Ancestor child");
+    expect(screen.getByText("Active descendant")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Open Completed child details, Completed/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Open Interrupted child details, Interrupted/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Open Errored child details, Errored/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Open Unknown child details, Idle/ })).not.toHaveTextContent("Completed");
+  });
+
+  it("opens canonical detail through the shared MessageList without changing the parent", async () => {
+    const child = canonicalRow({
+      id: "canonical-detail",
+      identity: "Detail child",
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+    });
+    harness.loadCanonicalSubagentRoster.mockResolvedValue(canonicalRoster([child], []));
+
+    render(<SubagentsPanel threadId="thread-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: /Open Detail child details, Active/ }));
+
+    expect(await screen.findByTestId("shared-message-list")).toHaveAttribute(
+      "data-display-thread-id",
+      "canonical-detail",
+    );
+    expect(harness.residency.mountDisplayConversation).toHaveBeenCalledWith("canonical-detail");
+    expect(useThreadStore.getState().currentThreadId).toBe("thread-1");
+    expect(useWorkspaceStore.getState().activeThreadId).toBe("thread-1");
+  });
+
+  it("restores canonical roster focus and scroll position on Back", async () => {
+    const child = canonicalRow({
+      id: "canonical-back",
+      identity: "Back child",
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+    });
+    harness.loadCanonicalSubagentRoster.mockResolvedValue(canonicalRoster([child], []));
+
+    render(<SubagentsPanel threadId="thread-1" />);
+    const row = await screen.findByRole("button", { name: /Open Back child details, Active/ });
+    const viewport = screen.getByRole("region", { name: "Subagents" }).querySelector("[data-slot='scroll-area-viewport']") as HTMLDivElement;
+    expect(viewport).toBeTruthy();
+    Object.defineProperty(viewport, "scrollTop", { configurable: true, writable: true, value: 88 });
     fireEvent.click(row);
-    expect(screen.getByRole("region", { name: /Implementation worker subagent details/ })).toBeInTheDocument();
-    const callerTask = await screen.findByText("Build the roster");
-    expect(callerTask.closest("[data-message-role='user']")).toBeInTheDocument();
-    expect(screen.queryByText("Delegated task")).not.toBeInTheDocument();
-    expect(screen.queryByText("Activity")).not.toBeInTheDocument();
-    expect(screen.queryByText("Result")).not.toBeInTheDocument();
-    expect(screen.queryByText("Finished")).not.toBeInTheDocument();
-    expect(screen.getByRole("group", { name: /Finished, ran for \d+s/ })).toBeInTheDocument();
-    expect(screen.queryByTestId("subagent-lifecycle-dot")).not.toBeInTheDocument();
-    expect(screen.getByText("**Done**")).toBeInTheDocument();
-    expect(screen.getByTestId("subagent-response-text")).toHaveClass("text-sm", "text-foreground");
-    expect(screen.queryByRole("button", { name: "Reply to this message" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Fork from this message" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Copy message" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole("button", { name: "Back to subagents" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "Back to subagents" }));
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: /Open Implementation worker details/ })).toHaveFocus();
-    });
-  });
-
-  it("shows running detail state through the canonical dot and accessible time group", () => {
-    setThread([agent()]);
-    render(<SubagentsPanel threadId="thread-1" />);
-
-    fireEvent.click(screen.getByRole("button", { name: /Open Implementation worker details/ }));
-
-    expect(screen.queryByText("Running")).not.toBeInTheDocument();
-    expect(screen.getByRole("group", { name: /Running, \d+s elapsed/ })).toBeInTheDocument();
-    expect(screen.getByTestId("subagent-lifecycle-dot")).toHaveClass("status-pulse");
-  });
-
-  it("shows model and reasoning metadata in running detail before output or completion", () => {
-    setThread([agent({
-      isComplete: false,
-      output: null,
-      toolInput: {
-        agentName: "Implementation worker",
-        model: "gpt-5.6-sol",
-        reasoningEffort: "high",
-      },
-    })]);
-    render(<SubagentsPanel threadId="thread-1" />);
-
-    fireEvent.click(screen.getByRole("button", { name: /Open Implementation worker details/ }));
-
-    expect(screen.getByRole("group", { name: /Running, \d+s elapsed/ })).toBeInTheDocument();
-    expect(screen.getByTestId("subagent-header-metadata")).toHaveTextContent("GPT-5.6 Sol · High");
-    expect(screen.queryByTestId("subagent-response-text")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("subagent-response-byline")).not.toBeInTheDocument();
-  });
-
-  it("shows explicit metadata, exact footer counts, and opens attributed workspace diffs", () => {
-    setThread([
-      agent({
-        isComplete: true,
-        elapsedSeconds: 7,
-        output: "Implemented the worker.",
-        toolInput: {
-          agentName: "Implementation worker",
-          model: "gpt-5.6-sol",
-          reasoningEffort: "high",
-        },
-      }),
-      {
-        ...agent({ id: "write-1", toolName: "Write" }),
-        parentToolCallId: "agent-1",
-      },
-    ], [], {
-      revision: 1,
-      fileCount: 1,
-      additions: 4,
-      deletions: 1,
-      effects: [{
-        path: "src/worker.ts",
-        kind: "edited",
-        scope: "workspace",
-        additions: 4,
-        deletions: 1,
-        binary: false,
-        toolCallIds: ["write-1"],
-      }],
-    });
-    render(<SubagentsPanel threadId="thread-1" />);
-
-    fireEvent.click(screen.getByRole("button", { name: /Open Implementation worker details/ }));
-
-    const response = screen.getByTestId("subagent-response-text");
-    const headerMetadata = screen.getByTestId("subagent-header-metadata");
-    const footer = screen.getByText("1 step").closest("div")!;
-    expect(headerMetadata).toHaveTextContent("GPT-5.6 Sol · High");
-    expect(headerMetadata.compareDocumentPosition(response) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.queryByTestId("subagent-response-byline")).not.toBeInTheDocument();
-    expect(screen.getByText("7.0s")).toBeInTheDocument();
-    expect(footer).toContainElement(screen.getByText("7.0s"));
-    expect(screen.getByText("1 step")).toBeInTheDocument();
-    expect(screen.getByText("1 file changed")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "View all diffs" }));
-
-    expect(useDiffStore.getState().viewMode).toBe("cumulative");
-    expect(useDiffStore.getState().subagentReviewScopeByThread["thread-1"]).toEqual({
-      label: "Implementation worker",
-      paths: ["src/worker.ts"],
-      additions: 4,
-      deletions: 1,
-    });
-  });
-
-  it("opens grouped detail from a historical member call id, then restores focus to the visible grouped row", async () => {
-    setThread([], [
-      record({
-        id: "explorer-first",
-        provider_agent_key: "/root/explorer",
-        output_summary: "Earlier result",
-      }),
-      record({
-        id: "explorer-latest",
-        provider_agent_key: "/root/explorer",
-        output_summary: "Latest result",
-        completed_at: "2026-07-22T10:02:00.000Z",
-        sort_order: 1,
-      }),
-    ]);
-    useDiffStore.getState().selectSubagentDetail("thread-1", {
-      id: "explorer-first",
-      originTab: "finished",
-      scrollTop: 0,
-    });
-
-    render(<SubagentsPanel threadId="thread-1" />);
-
-    expect(screen.getByRole("region", { name: /Implementation worker subagent details/ })).toBeInTheDocument();
-    expect(screen.getByText("Latest result")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Back to subagents" }));
-    await waitFor(() => {
-      const groupedRow = screen.getByRole("button", { name: /Open Implementation worker details/ });
-      expect(groupedRow).toHaveAttribute("data-subagent-id", "explorer-latest");
-      expect(groupedRow).toHaveFocus();
-    });
-  });
-
-  it("shows hydrated truncation and bounded transcript notices", () => {
-    const children = Array.from({ length: 40 }, (_, index) => record({
-      id: `child-${index}`,
-      parent_tool_call_id: "agent-1",
-      tool_name: "Read",
-      input_summary: `file-${index}.ts`,
-      output_summary: "",
-      sort_order: index + 1,
-    }));
-    setThread([], [record({ output_truncated: 1, output_total_bytes: 524_288, output_artifact_path: "C:\\artifacts\\agent-1.txt" }), ...children]);
-    render(<SubagentsPanel threadId="thread-1" />);
-    fireEvent.click(screen.getByRole("button", { name: /Open Implementation worker details/ }));
-
-    expect(screen.getByLabelText(/Output truncated · 512 KB total · full output saved/)).toHaveAttribute("title", "C:\\artifacts\\agent-1.txt");
-    expect(screen.getByRole("note")).toHaveTextContent("Additional child activity was omitted");
+    await waitFor(() => expect(screen.getByRole("button", { name: /Open Back child details, Active/ })).toHaveFocus());
+    expect(viewport.scrollTop).toBe(88);
+    expect(harness.residency.unmountDisplayConversation).toHaveBeenCalledWith("canonical-back");
   });
 });

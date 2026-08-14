@@ -25,6 +25,7 @@ import type {
   ThreadHydratorOptions,
   ThreadHydratorTransport,
   ThreadHydratorWriteState,
+  DisplayHydrationOptions,
 } from "./types";
 import { SnapshotBuilder, snapshotBuilder } from "./snapshot-builder";
 import { AuxiliaryHydrator } from "./auxiliary-hydrator";
@@ -221,6 +222,8 @@ export class ThreadHydrator {
   private readonly auxiliaryHydrator: AuxiliaryHydrator;
   private readonly activeHydrates = new Map<string, Promise<void>>();
   private readonly backgroundHydrates = new Map<string, Promise<void>>();
+  private readonly residentHydrates = new Map<string, Promise<void>>();
+  private readonly residentHydrateGenerations = new Map<string, number>();
   private readonly pendingHistoryPrefetches = new Map<string, PendingHistoryPrefetch>();
   private readonly deferredWork = new Map<string, DeferredWorkHandle>();
   private readonly invalidationGenerations = new Map<string, number>();
@@ -258,6 +261,151 @@ export class ThreadHydrator {
       return;
     }
     await this.hydrateActive(threadId, opts);
+  }
+
+  /** Hydrate a leased transcript without changing selected workspace state. */
+  async hydrateResident(threadId: string, opts: DisplayHydrationOptions): Promise<void> {
+    if (!opts.isCurrent()) return;
+    const existing = this.residentHydrates.get(threadId);
+    if (existing) {
+      await existing;
+      if (this.residentHydrateGenerations.get(threadId) !== opts.generation && opts.isCurrent()) {
+        await this.hydrateResident(threadId, opts);
+      }
+      return;
+    }
+    const resident = this.deps.getState().records.get(threadId);
+    if (resident && hasResidentContent(resident) && !opts.force) {
+      this.synchronizeConversation(threadId);
+      return;
+    }
+    const cached = getCachedRecord(threadId);
+    if (cached && !opts.force) {
+      if (!opts.isCurrent()) return;
+      this.restoreFromCache(threadId, this.compactCachedRecordForRestore(threadId, cached), {
+        bumpLoadEpoch: true,
+        select: false,
+      });
+      this.synchronizeConversation(threadId);
+      return;
+    }
+
+    const hydration = this.fetchResidentAndCommit(threadId, opts).finally(() => {
+      if (this.residentHydrates.get(threadId) === hydration) {
+        this.residentHydrates.delete(threadId);
+        this.residentHydrateGenerations.delete(threadId);
+      }
+      this.pruneInvalidationGeneration(threadId);
+    });
+    this.residentHydrates.set(threadId, hydration);
+    this.residentHydrateGenerations.set(threadId, opts.generation);
+    await hydration;
+  }
+
+  /** Finalize a released display transcript and prevent late responses from restoring it. */
+  releaseResident(threadId: string, generation: number, isCurrent: () => boolean): void {
+    if (isCurrent()) return;
+    const activeGeneration = this.residentHydrateGenerations.get(threadId);
+    if (activeGeneration !== undefined && activeGeneration !== generation) return;
+    this.cancelDeferredForThread(threadId);
+    this.invalidationGenerations.set(
+      threadId,
+      (this.invalidationGenerations.get(threadId) ?? 0) + 1,
+    );
+    const state = this.deps.getState();
+    const record = state.records.get(threadId);
+    if (record) cacheRecord(threadId, projectConversationCacheState(record));
+    this.deps.setState((latest: ThreadHydratorWriteState) => {
+      if (latest.currentThreadId === threadId || this.deps.isDisplayConversationVisible?.(threadId)) {
+        return {};
+      }
+      return { records: deleteThreadRecord(latest.records, threadId) };
+    });
+    void generation;
+  }
+
+  /** Fetch and commit one leased transcript while preserving the selected parent. */
+  private async fetchResidentAndCommit(
+    threadId: string,
+    opts: DisplayHydrationOptions,
+  ): Promise<void> {
+    const stateBeforeLoad = this.deps.getState();
+    const currentBeforeLoad = getThreadRecord(stateBeforeLoad.records, threadId);
+    const expectedEpoch = currentBeforeLoad.loadEpoch + 1;
+    const expectedInvalidationGeneration = this.invalidationGenerations.get(threadId) ?? 0;
+    const hasContent = hasResidentContent(currentBeforeLoad);
+    this.deps.setState((state: ThreadHydratorWriteState) => {
+      if (!opts.isCurrent()) return {};
+      return {
+        records: patchThreadRecord(state.records, threadId, {
+          ...(hasContent ? {} : { loading: true }),
+          error: null,
+          loadEpoch: expectedEpoch,
+          settings: this.deps.getWorkspaceThreadSettings(threadId),
+        }),
+      };
+    });
+
+    try {
+      const page = await this.transport().loadConversationPage(threadId, MESSAGE_FETCH_SIZE);
+      const stateAtCommit = this.deps.getState();
+      const currentAtCommit = getThreadRecord(stateAtCommit.records, threadId);
+      if (
+        !opts.isCurrent()
+        || currentAtCommit.loadEpoch !== expectedEpoch
+        || (this.invalidationGenerations.get(threadId) ?? 0) !== expectedInvalidationGeneration
+      ) return;
+
+      const patch = snapshotBuilder.build({
+        messages: page.messages,
+        hasMore: page.hasMore,
+        answeredPlanMessageIds: page.answeredPlanMessageIds,
+      });
+      this.deps.setState((state: ThreadHydratorWriteState) => {
+        if (!opts.isCurrent()) return {};
+        const current = getThreadRecord(state.records, threadId);
+        if (
+          current.loadEpoch !== expectedEpoch
+          || (this.invalidationGenerations.get(threadId) ?? 0) !== expectedInvalidationGeneration
+        ) return {};
+        const fetchedConversation = projectConversationCacheState({
+          ...createEmptyThreadRecord(),
+          ...patch,
+          narrativeByMessage: page.narrativeByMessage,
+        });
+        const conversation = hasResidentContent(current)
+          ? mergeResidentConversationCacheState(current, fetchedConversation, false)
+          : fetchedConversation;
+        const { settledFileEffectSummary, ...conversationFields } = conversation;
+        return {
+          records: patchThreadRecord(state.records, threadId, {
+            ...conversationFields,
+            ...(!current.fileEffectTurnId && settledFileEffectSummary
+              ? { fileEffectSummary: settledFileEffectSummary }
+              : {}),
+            loading: false,
+            isLoadingMore: false,
+            isLoadingNewer: false,
+            lastHydratedAt: Date.now(),
+            settings: this.deps.getWorkspaceThreadSettings(threadId),
+          }),
+        };
+      });
+      const committed = this.deps.getState().records.get(threadId);
+      if (committed && opts.isCurrent()) this.synchronizeConversation(threadId);
+    } catch (error) {
+      if (!opts.isCurrent()) return;
+      this.deps.setState((state: ThreadHydratorWriteState) => {
+        const current = getThreadRecord(state.records, threadId);
+        if (current.loadEpoch !== expectedEpoch) return {};
+        return {
+          records: patchThreadRecord(state.records, threadId, {
+            error: String(error),
+            loading: false,
+          }),
+        };
+      });
+    }
   }
 
   /** Return whether any active transcript hydration is currently in flight. */
@@ -321,7 +469,11 @@ export class ThreadHydrator {
   invalidateConversation(threadId: string): void {
     this.auxiliaryHydrator.invalidatePermissions(threadId);
     this.cancelDeferredForThread(threadId);
-    if (this.activeHydrates.has(threadId) || this.backgroundHydrates.has(threadId)) {
+    if (
+      this.activeHydrates.has(threadId)
+      || this.backgroundHydrates.has(threadId)
+      || this.residentHydrates.has(threadId)
+    ) {
       this.invalidationGenerations.set(
         threadId,
         (this.invalidationGenerations.get(threadId) ?? 0) + 1,
@@ -352,7 +504,11 @@ export class ThreadHydrator {
   }
 
   private pruneInvalidationGeneration(threadId: string): void {
-    if (!this.activeHydrates.has(threadId) && !this.backgroundHydrates.has(threadId)) {
+    if (
+      !this.activeHydrates.has(threadId)
+      && !this.backgroundHydrates.has(threadId)
+      && !this.residentHydrates.has(threadId)
+    ) {
       this.invalidationGenerations.delete(threadId);
     }
   }
@@ -579,6 +735,7 @@ export class ThreadHydrator {
   private retireInactiveRecord(threadId: string, hadActiveHydrate: boolean): void {
     const state = this.deps.getState();
     if (state.currentThreadId === threadId) return;
+    if (this.deps.isDisplayConversationVisible?.(threadId)) return;
     const resident = state.records.get(threadId);
     if (!resident) return;
     if (
@@ -824,7 +981,7 @@ export class ThreadHydrator {
   private restoreFromCache(
     threadId: string,
     cached: ConversationCacheState,
-    opts?: { bumpLoadEpoch?: boolean },
+    opts?: { bumpLoadEpoch?: boolean; select?: boolean },
   ): void {
     this.deps.setState((state: ThreadHydratorWriteState) => {
       const current = getThreadRecord(state.records, threadId);
@@ -844,7 +1001,7 @@ export class ThreadHydrator {
           isLoadingNewer: false,
           settings: this.deps.getWorkspaceThreadSettings(threadId),
         }),
-        currentThreadId: threadId,
+        ...(opts?.select === false ? {} : { currentThreadId: threadId }),
       };
     });
   }

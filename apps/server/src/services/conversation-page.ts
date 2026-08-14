@@ -209,15 +209,31 @@ export function loadNewerConversationPage(
     request.limit,
     request.cursor.afterSequence,
   );
-  const messages = persistedPage.messages;
+  const canonicalPage = deps.canonicalSink?.loadConversationProjection(
+    request.threadId,
+    request.limit,
+    undefined,
+    request.cursor.afterSequence,
+  );
+  const messagesById = new Map(
+    persistedPage.messages.map((message) => [message.id, message]),
+  );
+  for (const message of canonicalPage?.messages ?? []) messagesById.set(message.id, message);
+  const mergedMessages = [...messagesById.values()].sort((left, right) => left.sequence - right.sequence);
+  const exceededLimit = mergedMessages.length > request.limit;
+  const messages = exceededLimit ? mergedMessages.slice(0, request.limit) : mergedMessages;
   const page: ConversationPage = {
     messages,
-    hasMore: persistedPage.hasMore,
+    hasMore: persistedPage.hasMore || canonicalPage?.hasMore === true || exceededLimit,
     answeredPlanMessageIds: deps.planQuestionAnswersRepo.listAnsweredForThread(request.threadId),
-    narrativeByMessage: groupNarrativeEntriesByMessage(
-      deps.narrativeStore.loadForMessages(messages),
-    ),
+    narrativeByMessage: groupNarrativeEntriesByMessage(deps.narrativeStore.loadForMessages(messages)),
   };
+  for (const message of canonicalPage?.messages ?? []) {
+    const canonicalNarrative = canonicalPage?.narrativeByMessage[message.id];
+    if (canonicalNarrative && messages.some((candidate) => candidate.id === message.id)) {
+      page.narrativeByMessage[message.id] = canonicalNarrative;
+    }
+  }
   let retainedMessages = messages;
   let droppedMessages = false;
 

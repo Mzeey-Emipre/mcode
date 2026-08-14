@@ -3425,6 +3425,13 @@ export class AgentService {
       ? event.toolInput.description
       : undefined;
     const prompt = typeof event.toolInput.prompt === "string" ? event.toolInput.prompt : undefined;
+    const identity = typeof event.toolInput.agentName === "string"
+      ? event.toolInput.agentName
+      : undefined;
+    const model = typeof event.toolInput.model === "string" ? event.toolInput.model : undefined;
+    const reasoningEffort = typeof event.toolInput.reasoningEffort === "string"
+      ? event.toolInput.reasoningEffort
+      : undefined;
     try {
       this.canonicalSink.startCodexChildDelegation({
         parentThreadId: parentThread.id,
@@ -3434,6 +3441,9 @@ export class AgentService {
         receiverThreadIds: [],
         description,
         prompt,
+        identity,
+        model,
+        reasoningEffort,
         providerIdentities: parentThread.providerIdentities,
       });
     } catch (error) {

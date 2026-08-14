@@ -7,8 +7,19 @@ import {
   AgentTurnSchema,
   CanonicalAgentEventEnvelopeSchema,
   CollaborationActionSchema,
+  canonicalSubagentTerminalOutcome,
+  CanonicalSubagentRosterRequestSchema,
+  CanonicalSubagentRosterSchema,
+  type CanonicalSubagentRoster,
+  type CanonicalSubagentRosterRequest,
+  type CanonicalSubagentRosterRow,
+  CANONICAL_SUBAGENT_LINEAGE_MAX_DEPTH,
+  CANONICAL_SUBAGENT_TASK_MAX_LENGTH,
+  CONVERSATION_HISTORY_PAGE_MAX_MESSAGES,
   MAX_TURN_RECOVERIES,
   ProviderIdentitySchema,
+  resolveSubagentDisplayName,
+  resolveSubagentMetadata,
   CANONICAL_AGENT_EVENT_BATCH_MAX,
   CANONICAL_AGENT_RECONNECT_DELTA_MAX_EVENTS,
   createAgentModelState,
@@ -27,6 +38,8 @@ import {
   type Message,
   type NarrativeEntry,
   type ProviderIdentity,
+  ToolCallRecordSchema,
+  ThoughtSegmentRecordSchema,
 } from "@mcode/contracts";
 import { broadcast } from "../transport/push.js";
 import {
@@ -134,6 +147,9 @@ export interface CodexChildDelegationInput {
   receiverThreadIds?: readonly string[];
   description?: string;
   prompt?: string;
+  identity?: string;
+  model?: string;
+  reasoningEffort?: string;
   providerIdentities: readonly ProviderIdentity[];
 }
 
@@ -739,6 +755,267 @@ export class CanonicalAgentEventSink {
     return { childThread, parentItem, collaborationAction };
   }
 
+  /** Read one owning parent's unique canonical descendant roster. */
+  loadSubagentRoster(request: CanonicalSubagentRosterRequest): CanonicalSubagentRoster {
+    const parsedRequest = CanonicalSubagentRosterRequestSchema().parse(request);
+    const parent = this.loadThread(parsedRequest.owningParentThreadId);
+    if (!parent) {
+      return CanonicalSubagentRosterSchema().parse({
+        owningParentThreadId: parsedRequest.owningParentThreadId,
+        rosterRevision: 0,
+        active: [],
+        done: [],
+      });
+    }
+    const rows = this.db.prepare(`
+      WITH RECURSIVE descendants AS (
+        SELECT child.*, 1 AS depth
+        FROM canonical_agent_threads child
+        WHERE child.parent_thread_id = ?
+        UNION ALL
+        SELECT child.*, descendants.depth + 1 AS depth
+        FROM canonical_agent_threads child
+        JOIN descendants ON descendants.id = child.parent_thread_id
+        WHERE descendants.depth < ?
+      ),
+      unique_descendants AS (
+        SELECT DISTINCT *
+        FROM descendants
+      ),
+      latest_turns AS (
+        SELECT turn.thread_id, turn.status, turn.ended_at, turn.updated_at
+        FROM canonical_agent_turns turn
+        JOIN unique_descendants descendant ON descendant.id = turn.thread_id
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM canonical_agent_turns newer
+          WHERE newer.thread_id = turn.thread_id
+            AND (
+              newer.updated_at > turn.updated_at
+              OR (newer.updated_at = turn.updated_at AND newer.id > turn.id)
+            )
+        )
+      ),
+      first_started_turns AS (
+        SELECT thread_id, MIN(started_at) AS started_at
+        FROM canonical_agent_turns
+        WHERE started_at IS NOT NULL
+          AND thread_id IN (SELECT id FROM unique_descendants)
+        GROUP BY thread_id
+      ),
+      classified AS (
+        SELECT descendant.*,
+          CASE WHEN descendant.activity_state IN ('Starting', 'Active')
+            OR latest.status IN ('Pending', 'Running')
+            THEN 1 ELSE 0 END AS is_active,
+          first_started.started_at AS first_started_at,
+          latest.ended_at AS latest_ended_at,
+          latest.updated_at AS latest_turn_updated_at
+        FROM unique_descendants descendant
+        LEFT JOIN latest_turns latest ON latest.thread_id = descendant.id
+        LEFT JOIN first_started_turns first_started ON first_started.thread_id = descendant.id
+      ),
+      active_rows AS (
+        SELECT *
+        FROM classified
+        WHERE is_active = 1
+        ORDER BY COALESCE(first_started_at, created_at) ASC, id ASC
+        LIMIT ?
+      ),
+      done_rows AS (
+        SELECT *
+        FROM classified
+        WHERE is_active = 0
+        ORDER BY COALESCE(latest_ended_at, latest_turn_updated_at, updated_at) DESC,
+          COALESCE(latest_turn_updated_at, updated_at) DESC,
+          updated_at DESC,
+          id DESC
+        LIMIT MAX(0, ? - (SELECT COUNT(*) FROM active_rows))
+      )
+      SELECT * FROM active_rows
+      UNION ALL
+      SELECT * FROM done_rows
+    `).all(
+      parsedRequest.owningParentThreadId,
+      CANONICAL_SUBAGENT_LINEAGE_MAX_DEPTH - 1,
+      parsedRequest.limit,
+      parsedRequest.limit,
+    ) as Array<Record<string, unknown>>;
+    if (rows.length === 0) {
+      return CanonicalSubagentRosterSchema().parse({
+        owningParentThreadId: parsedRequest.owningParentThreadId,
+        rosterRevision: parent.rosterRevision,
+        active: [],
+        done: [],
+      });
+    }
+
+    const threads = rows.map((row) => this.threadFromRow(row));
+    const threadIds = threads.map((thread) => thread.id);
+    const placeholders = threadIds.map(() => "?").join(", ");
+    const turnsByThread = new Map<string, AgentTurn[]>();
+    const turnRows = this.db.prepare(`
+      SELECT *
+      FROM canonical_agent_turns
+      WHERE thread_id IN (${placeholders})
+      ORDER BY created_at ASC, id ASC
+    `).all(...threadIds) as Array<Record<string, unknown>>;
+    for (const row of turnRows) {
+      const turn = this.turnFromRow(row);
+      const turns = turnsByThread.get(turn.threadId) ?? [];
+      turns.push(turn);
+      turnsByThread.set(turn.threadId, turns);
+    }
+    const itemRows = this.db.prepare(`
+      SELECT *
+      FROM canonical_agent_items
+      WHERE thread_id IN (${placeholders})
+    `).all(...threadIds) as Array<Record<string, unknown>>;
+    const actionsByThread = new Map<string, CollaborationAction>();
+    const actionRows = this.db.prepare(`
+      SELECT *
+      FROM canonical_collaboration_actions
+      WHERE target_thread_id IN (${placeholders})
+      ORDER BY created_at ASC, id ASC
+    `).all(...threadIds) as Array<Record<string, unknown>>;
+    for (const row of actionRows) {
+      const action = this.actionFromRow(row);
+      actionsByThread.set(action.target.threadId, action);
+    }
+    const sourceItemIds = [...new Set(actionRows
+      .map((row) => row.source_item_id)
+      .filter((value): value is string => typeof value === "string" && value.length > 0))];
+    const sourceItemsById = new Map<string, AgentItem>();
+    if (sourceItemIds.length > 0) {
+      const sourcePlaceholders = sourceItemIds.map(() => "?").join(", ");
+      const sourceRows = this.db.prepare(`
+        SELECT *
+        FROM canonical_agent_items
+        WHERE id IN (${sourcePlaceholders})
+      `).all(...sourceItemIds) as Array<Record<string, unknown>>;
+      for (const row of sourceRows) {
+        const item = this.itemFromRow(row);
+        sourceItemsById.set(item.id, item);
+      }
+    }
+
+    const activeIds = new Set<string>();
+    const latestTurns = new Map<string, AgentTurn | null>();
+    for (const thread of threads) {
+      const latest = [...(turnsByThread.get(thread.id) ?? [])]
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || right.id.localeCompare(left.id))[0]
+        ?? null;
+      latestTurns.set(thread.id, latest);
+      if (
+        thread.activityState === "Starting"
+        || thread.activityState === "Active"
+        || latest?.status === "Pending"
+        || latest?.status === "Running"
+      ) activeIds.add(thread.id);
+    }
+
+    const ancestorChain = (thread: AgentThread): string[] => {
+      const chain = [thread.id];
+      const seen = new Set(chain);
+      let current = thread.parentThreadId;
+      while (current && !seen.has(current) && chain.length < CANONICAL_SUBAGENT_LINEAGE_MAX_DEPTH) {
+        chain.push(current);
+        seen.add(current);
+        current = threads.find((candidate) => candidate.id === current)?.parentThreadId
+          ?? (current === parsedRequest.owningParentThreadId ? undefined : undefined);
+      }
+      if (!chain.includes(parsedRequest.owningParentThreadId)) chain.push(parsedRequest.owningParentThreadId);
+      const lineage = chain.reverse();
+      return lineage.length <= CANONICAL_SUBAGENT_LINEAGE_MAX_DEPTH
+        ? lineage
+        : [lineage[0]!, ...lineage.slice(-(CANONICAL_SUBAGENT_LINEAGE_MAX_DEPTH - 1))];
+    };
+    const descendantHasActiveChild = (threadId: string): boolean => threads.some((candidate) => {
+      if (!activeIds.has(candidate.id) || candidate.id === threadId) return false;
+      let current = candidate.parentThreadId;
+      const seen = new Set<string>();
+      while (current && !seen.has(current)) {
+        if (current === threadId) return true;
+        seen.add(current);
+        current = threads.find((thread) => thread.id === current)?.parentThreadId;
+      }
+      return false;
+    });
+    const maxTimestamp = (values: readonly (string | null | undefined)[], fallback: string): string =>
+      values.filter((value): value is string => typeof value === "string")
+        .sort((left, right) => right.localeCompare(left))[0] ?? fallback;
+
+    const rosterRows: CanonicalSubagentRosterRow[] = threads.map((thread) => {
+      const turns = turnsByThread.get(thread.id) ?? [];
+      const latestTurn = latestTurns.get(thread.id) ?? null;
+      const action = actionsByThread.get(thread.id);
+      const sourceItem = action ? sourceItemsById.get(action.source.itemId) : undefined;
+      const sourcePayload = sourceItem?.payload ?? {};
+      const itemTimes = itemRows
+        .filter((row) => row.thread_id === thread.id)
+        .flatMap((row) => [String(row.created_at), String(row.updated_at)]);
+      const startedAt = turns
+        .map((turn) => turn.startedAt)
+        .filter((value): value is string => value !== null)
+        .sort()[0] ?? thread.createdAt;
+      const updatedAt = maxTimestamp([
+        thread.updatedAt,
+        ...turns.map((turn) => turn.updatedAt),
+        ...itemTimes,
+        action?.updatedAt,
+      ], thread.updatedAt);
+      const endedAt = latestTurn?.endedAt ?? null;
+      const providerIdentities = this.uniqueProviderIdentities([
+        ...thread.providerIdentities,
+        ...(action?.providerIdentities ?? []),
+        ...(sourceItem?.providerIdentities ?? []),
+      ]);
+      const sourceProviderIdentities = this.uniqueProviderIdentities(sourceItem?.providerIdentities ?? []);
+      const optionalText = (value: unknown): string | undefined =>
+        typeof value === "string" && value.trim().length > 0 ? value : undefined;
+      const active = activeIds.has(thread.id);
+      return {
+        id: thread.id,
+        parentThreadId: thread.parentThreadId ?? parsedRequest.owningParentThreadId,
+        rootThreadId: thread.rootThreadId,
+        owningParentThreadId: thread.owningParentThreadId ?? parsedRequest.owningParentThreadId,
+        lineage: ancestorChain(thread),
+        activityState: thread.activityState,
+        latestTurnStatus: latestTurn?.status ?? null,
+        startedAt,
+        updatedAt,
+        endedAt,
+        terminalOutcome: canonicalSubagentTerminalOutcome(latestTurn?.status ?? null),
+        ...(optionalText(sourcePayload.description) ? { task: sourcePayload.description as string } : {}),
+        ...(optionalText(sourcePayload.identity) ? { identity: sourcePayload.identity as string } : {}),
+        ...(optionalText(sourcePayload.model) ? { model: sourcePayload.model as string } : {}),
+        ...(optionalText(sourcePayload.reasoningEffort)
+          ? { reasoning: sourcePayload.reasoningEffort as string }
+          : {}),
+        providerIdentities,
+        sourceProviderIdentities,
+        hasActiveDescendant: !active && descendantHasActiveChild(thread.id),
+      };
+    });
+    const active = rosterRows
+      .filter((row) => activeIds.has(row.id))
+      .sort((left, right) => left.startedAt.localeCompare(right.startedAt) || left.id.localeCompare(right.id));
+    const done = rosterRows
+      .filter((row) => !activeIds.has(row.id))
+      .sort((left, right) => (
+        (right.endedAt ?? right.updatedAt).localeCompare(left.endedAt ?? left.updatedAt)
+        || right.id.localeCompare(left.id)
+      ));
+    const retainedActive = active.slice(0, parsedRequest.limit);
+    const retainedDone = done.slice(0, Math.max(0, parsedRequest.limit - retainedActive.length));
+    return CanonicalSubagentRosterSchema().parse({
+      owningParentThreadId: parsedRequest.owningParentThreadId,
+      rosterRevision: parent.rosterRevision,
+      active: retainedActive,
+      done: retainedDone,
+    });
+  }
+
   /** Provision one Starting child and one directional Dispatched action exactly once. */
   startCodexChildDelegation(input: CodexChildDelegationInput): CodexChildDelegation {
     const existing = this.loadCodexChildDelegation(input.parentThreadId, input.parentItemId);
@@ -749,6 +1026,12 @@ export class CanonicalAgentEventSink {
       throw new Error(`Codex parent turn is not canonical: ${input.parentTurnId}`);
     }
     const now = new Date().toISOString();
+    const normalizedDescription = typeof input.description === "string"
+      ? input.description.trim().slice(0, CANONICAL_SUBAGENT_TASK_MAX_LENGTH) || undefined
+      : undefined;
+    const normalizedIdentity = resolveSubagentDisplayName({ agentName: input.identity });
+    const normalizedModel = resolveSubagentMetadata(input.model);
+    const normalizedReasoningEffort = resolveSubagentMetadata(input.reasoningEffort);
     const childThread: AgentThread = {
       id: `thread:codex-child:${randomUUID()}`,
       workspaceId: parentThread.workspaceId,
@@ -776,7 +1059,12 @@ export class CanonicalAgentEventSink {
         toolName: "Agent",
         childThreadId: childThread.id,
         receiverThreadIds,
-        ...(input.description ? { description: input.description } : {}),
+        ...(normalizedDescription !== undefined ? { description: normalizedDescription } : {}),
+        ...(normalizedIdentity !== undefined ? { identity: normalizedIdentity } : {}),
+        ...(normalizedModel !== undefined ? { model: normalizedModel } : {}),
+        ...(normalizedReasoningEffort !== undefined
+          ? { reasoningEffort: normalizedReasoningEffort }
+          : {}),
       },
       createdAt: now,
       updatedAt: now,
@@ -949,7 +1237,7 @@ export class CanonicalAgentEventSink {
       createdAt: now,
       updatedAt: now,
     };
-    const promptItem: AgentItem | undefined = input.prompt
+    const promptItem: AgentItem | undefined = input.prompt !== undefined
       ? {
           id: `item:codex-child-prompt:${hashCodexKey(turnId)}`,
           threadId: childThread.id,
@@ -962,7 +1250,20 @@ export class CanonicalAgentEventSink {
               id: `codex-child-prompt:${hashCodexKey(turnId)}`,
               role: "user",
               content: input.prompt,
+              thread_id: childThread.id,
+              tool_calls: null,
+              files_changed: null,
+              cost_usd: null,
+              tokens_used: null,
               timestamp: now,
+              sequence: this.nextChildMessageSequence(childThread.id),
+              attachments: null,
+              parentAgentProvenance: {
+                parentThreadId: input.parentThreadId,
+                parentTurnId: input.parentTurnId,
+                parentItemId: input.parentItemId,
+                providerIdentities: delegation.parentItem.providerIdentities,
+              },
             },
           },
           createdAt: now,
@@ -1035,7 +1336,24 @@ export class CanonicalAgentEventSink {
     const itemId = `item:codex-child:${hashCodexKey(`${turn.id}:${input.nativeItemId}:${input.eventKey}:${input.kind}`)}`;
     const existing = this.loadItem(itemId);
     if (existing) {
-      if (JSON.stringify(existing.payload) !== JSON.stringify(input.payload)) {
+      const existingMessage = existing.payload.message;
+      const inputMessage = input.payload.message;
+      const inputMessageSource = inputMessage && typeof inputMessage === "object"
+        ? inputMessage as Record<string, unknown>
+        : input.payload;
+      const sameMessage = input.kind === "message"
+        && existing.payload.projection === "message"
+        && input.payload.projection === "message"
+        && existingMessage && typeof existingMessage === "object"
+        && (existingMessage as Record<string, unknown>).content
+          === inputMessageSource.content
+        && (inputMessageSource.role ?? "assistant")
+          === ((existingMessage as Record<string, unknown>).role ?? "assistant");
+      if (input.kind !== "message" && JSON.stringify(existing.payload)
+        !== JSON.stringify({ ...input.payload, nativeItemId: input.nativeItemId, eventKey: input.eventKey })) {
+        throw new Error(`Codex child item identity conflict: ${itemId}`);
+      }
+      if (input.kind === "message" && !sameMessage) {
         throw new Error(`Codex child item identity conflict: ${itemId}`);
       }
       return existing;
@@ -1043,6 +1361,9 @@ export class CanonicalAgentEventSink {
     const thread = this.loadThread(input.childThreadId);
     if (!thread) throw new Error(`Codex child thread not found: ${input.childThreadId}`);
     const now = new Date().toISOString();
+    const payload = input.kind === "message"
+      ? this.normalizeCodexChildMessagePayload(thread, input.payload)
+      : input.payload;
     const item: AgentItem = {
       id: itemId,
       threadId: thread.id,
@@ -1050,7 +1371,11 @@ export class CanonicalAgentEventSink {
       ...(input.parentItemId ? { parentItemId: input.parentItemId } : {}),
       kind: input.kind,
       providerIdentities: turn.providerIdentities,
-      payload: input.payload,
+      payload: {
+        ...payload,
+        nativeItemId: input.nativeItemId,
+        eventKey: input.eventKey,
+      },
       createdAt: now,
       updatedAt: now,
     };
@@ -1417,15 +1742,19 @@ export class CanonicalAgentEventSink {
     threadId: string,
     limit: number,
     before?: number,
+    after?: number,
   ): CanonicalConversationProjection {
     const clampedLimit = Math.max(1, Math.min(100, Math.floor(limit)));
+    const direction = after === undefined ? "DESC" : "ASC";
+    const cursor = after ?? before ?? Number.MAX_SAFE_INTEGER;
+    const cursorOperator = after === undefined ? "<" : ">";
     const rows = this.db.prepare(`
-      SELECT payload_json
+      SELECT turn_id, payload_json
       FROM canonical_agent_items
       WHERE thread_id = ?
         AND kind = 'message'
         AND json_extract(payload_json, '$.projection') = 'message'
-        AND json_extract(payload_json, '$.message.sequence') < ?
+        AND json_extract(payload_json, '$.message.sequence') ${cursorOperator} ?
         AND COALESCE(json_extract(payload_json, '$.message.is_internal'), 0) = 0
         AND (
           json_extract(payload_json, '$.message.role') <> 'assistant'
@@ -1436,35 +1765,198 @@ export class CanonicalAgentEventSink {
               AND checkpoint.terminal_outcome IS NOT NULL
           )
         )
-      ORDER BY json_extract(payload_json, '$.message.sequence') DESC
+      ORDER BY json_extract(payload_json, '$.message.sequence') ${direction},
+        json_extract(payload_json, '$.message.id') ${direction}
       LIMIT ?
-    `).all(threadId, before ?? Number.MAX_SAFE_INTEGER, clampedLimit + 1) as Array<{ payload_json: string }>;
+    `).all(threadId, cursor, clampedLimit + 1) as Array<{
+      turn_id: string;
+      payload_json: string;
+    }>;
     const hasMore = rows.length > clampedLimit;
-    const messages = rows
+    const messageRows = rows
       .slice(0, clampedLimit)
-      .map((row) => (JSON.parse(row.payload_json) as { message: Message }).message)
-      .sort((left, right) => left.sequence - right.sequence);
+      .map((row) => ({
+        turnId: row.turn_id,
+        message: (JSON.parse(row.payload_json) as { message: Message }).message,
+      }))
+      .sort((left, right) => left.message.sequence - right.message.sequence
+        || left.message.id.localeCompare(right.message.id));
+    const messages = messageRows.map(({ message }) => message);
     const narrativeByMessage: Record<string, ConversationNarrativeBatch> = {};
     for (const message of messages) {
       narrativeByMessage[message.id] = { tools: [], thoughts: [], hooks: [] };
     }
     if (messages.length === 0) return { messages, narrativeByMessage, hasMore };
 
-    const placeholders = messages.map(() => "?").join(", ");
+    const pageTurnIds = [...new Set(messageRows.map(({ turnId }) => turnId))];
     const narrativeRows = this.db.prepare(`
-      SELECT kind, payload_json
+      SELECT id, kind, payload_json, created_at, updated_at, turn_id
       FROM canonical_agent_items
       WHERE thread_id = ?
         AND kind <> 'message'
-        AND json_extract(payload_json, '$.record.message_id') IN (${placeholders})
+        AND turn_id IN (${pageTurnIds.map(() => "?").join(", ")})
       ORDER BY created_at ASC, id ASC
-    `).all(threadId, ...messages.map((message) => message.id)) as Array<{
+      LIMIT ?
+    `).all(
+      threadId,
+      ...pageTurnIds,
+      CONVERSATION_HISTORY_PAGE_MAX_MESSAGES,
+    ) as Array<{
+      id: string;
       kind: string;
       payload_json: string;
+      created_at: string;
+      updated_at: string;
+      turn_id: string;
     }>;
+    const childTurnIds = [...new Set(narrativeRows.flatMap((row) => {
+      const payload = JSON.parse(row.payload_json) as { projection?: string };
+      return payload.projection === "codexChildReasoning"
+        || payload.projection === "codexChildToolCall"
+        || payload.projection === "codexChildToolResult"
+        ? [row.turn_id]
+        : [];
+    }))];
+    const allChildMessageRows = childTurnIds.length === 0
+      ? []
+      : this.db.prepare(`
+        WITH candidate_messages AS (
+          SELECT turn_id, payload_json,
+            ROW_NUMBER() OVER (
+              PARTITION BY turn_id
+              ORDER BY CASE
+                WHEN json_extract(payload_json, '$.message.role') = 'assistant' THEN 0
+                ELSE 1
+              END,
+              json_extract(payload_json, '$.message.sequence') ASC,
+              json_extract(payload_json, '$.message.id') ASC
+            ) AS candidate_rank
+          FROM canonical_agent_items
+          WHERE thread_id = ?
+            AND kind = 'message'
+            AND json_extract(payload_json, '$.projection') = 'message'
+            AND COALESCE(json_extract(payload_json, '$.message.is_internal'), 0) = 0
+            AND (
+              json_extract(payload_json, '$.message.role') <> 'assistant'
+              OR EXISTS (
+                SELECT 1
+                FROM canonical_agent_ingest_checkpoints checkpoint
+                WHERE checkpoint.turn_id = canonical_agent_items.turn_id
+                  AND checkpoint.terminal_outcome IS NOT NULL
+              )
+            )
+            AND turn_id IN (${childTurnIds.map(() => "?").join(", ")})
+        )
+        SELECT turn_id, payload_json
+        FROM candidate_messages
+        WHERE candidate_rank <= 2
+        ORDER BY turn_id ASC, candidate_rank ASC
+        LIMIT ?
+      `).all(
+        threadId,
+        ...childTurnIds,
+        childTurnIds.length * 2,
+      ) as Array<{
+        turn_id: string;
+        payload_json: string;
+      }>;
+    const childMessageByTurn = new Map<string, string>();
+    const candidateMessageRows = [
+      ...messageRows,
+      ...allChildMessageRows.map((row) => ({
+        turnId: row.turn_id,
+        message: (JSON.parse(row.payload_json) as { message: Message }).message,
+      })),
+    ];
+    const candidateMessageById = new Map(
+      candidateMessageRows.map(({ message }) => [message.id, message]),
+    );
+    for (const { turnId, message } of candidateMessageRows) {
+      const current = childMessageByTurn.get(turnId);
+      if (!current || (message.role === "assistant"
+        && candidateMessageById.get(current)?.role !== "assistant")) {
+        childMessageByTurn.set(turnId, message.id);
+      }
+    }
+    const childToolsByMessage = new Map<
+      string,
+      Map<string, ConversationNarrativeBatch["tools"][number]>
+    >();
+    const childThoughtOrderByMessage = new Map<string, number>();
     for (const row of narrativeRows) {
-      const payload = JSON.parse(row.payload_json) as { projection: string; record: Record<string, unknown> };
-      const messageId = String(payload.record.message_id);
+      const payload = JSON.parse(row.payload_json) as {
+        projection?: string;
+        record?: Record<string, unknown>;
+        nativeItemId?: string;
+        toolName?: string;
+        toolInput?: unknown;
+        output?: string;
+        isError?: boolean;
+        content?: string;
+      };
+      const childAnchor = childMessageByTurn.get(row.turn_id);
+      if (
+        childAnchor
+        && narrativeByMessage[childAnchor]
+        && (payload.projection === "codexChildReasoning"
+          || payload.projection === "codexChildToolCall"
+          || payload.projection === "codexChildToolResult")
+      ) {
+        const nativeItemId = payload.nativeItemId ?? row.payload_json;
+        if (payload.projection === "codexChildReasoning") {
+          const sortOrder = childThoughtOrderByMessage.get(childAnchor) ?? 0;
+          narrativeByMessage[childAnchor]!.thoughts.push(ThoughtSegmentRecordSchema.parse({
+            id: `codex-child-reasoning:${hashCodexKey(`${nativeItemId}:${row.id}`)}`,
+            message_id: childAnchor,
+            text: typeof payload.content === "string" ? payload.content : "",
+            started_at: row.created_at,
+            ended_at: row.updated_at,
+            sort_order: sortOrder,
+          }));
+          childThoughtOrderByMessage.set(childAnchor, sortOrder + 1);
+        } else if (payload.projection === "codexChildToolCall") {
+          const childTools = childToolsByMessage.get(childAnchor) ?? new Map();
+          const existing = childTools.get(nativeItemId);
+          childTools.set(nativeItemId, ToolCallRecordSchema.parse({
+            id: existing?.id ?? `codex-child-tool:${hashCodexKey(nativeItemId)}`,
+            message_id: childAnchor,
+            parent_tool_call_id: null,
+            tool_name: typeof payload.toolName === "string" ? payload.toolName : "Tool",
+            input_summary: payload.toolInput == null
+              ? ""
+              : typeof payload.toolInput === "string"
+                ? payload.toolInput
+                : JSON.stringify(payload.toolInput),
+            output_summary: existing?.output_summary ?? "",
+            status: existing?.status ?? "running",
+            started_at: existing?.started_at ?? row.created_at,
+            completed_at: existing?.completed_at ?? null,
+            sort_order: existing?.sort_order ?? childTools.size,
+          }));
+          childToolsByMessage.set(childAnchor, childTools);
+        } else {
+          const childTools = childToolsByMessage.get(childAnchor) ?? new Map();
+          const existing = childTools.get(nativeItemId);
+          const isError = payload.isError === true;
+          childTools.set(nativeItemId, ToolCallRecordSchema.parse({
+            id: existing?.id ?? `codex-child-tool:${hashCodexKey(nativeItemId)}`,
+            message_id: childAnchor,
+            parent_tool_call_id: null,
+            tool_name: existing?.tool_name ?? "Tool",
+            input_summary: existing?.input_summary ?? "",
+            output_summary: typeof payload.output === "string" ? payload.output : "",
+            status: isError ? "failed" : "completed",
+            started_at: existing?.started_at ?? row.created_at,
+            completed_at: row.updated_at,
+            sort_order: existing?.sort_order ?? childTools.size,
+          }));
+          childToolsByMessage.set(childAnchor, childTools);
+        }
+        continue;
+      }
+      const record = payload.record;
+      if (!record || typeof record.message_id !== "string") continue;
+      const messageId = record.message_id;
       const bucket = narrativeByMessage[messageId];
       if (!bucket) continue;
       if (payload.projection === "toolCall") {
@@ -1474,6 +1966,9 @@ export class CanonicalAgentEventSink {
       } else if (payload.projection === "hook") {
         bucket.hooks.push(payload.record as unknown as ConversationNarrativeBatch["hooks"][number]);
       }
+    }
+    for (const [messageId, childTools] of childToolsByMessage) {
+      narrativeByMessage[messageId]!.tools.push(...childTools.values());
     }
     return { messages, narrativeByMessage, hasMore };
   }
@@ -2340,6 +2835,52 @@ export class CanonicalAgentEventSink {
       ))) return turn;
     }
     return null;
+  }
+
+  /** Return the next stable sequence for a canonical child message. */
+  private nextChildMessageSequence(childThreadId: string): number {
+    const row = this.db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM canonical_agent_items
+      WHERE thread_id = ?
+        AND kind = 'message'
+        AND json_extract(payload_json, '$.projection') = 'message'
+    `).get(childThreadId) as { count: number };
+    return Number(row.count);
+  }
+
+  /** Complete a child message at the canonical boundary without inventing source metadata. */
+  private normalizeCodexChildMessagePayload(
+    thread: AgentThread,
+    payload: Record<string, unknown>,
+  ): Record<string, unknown> {
+    const source = payload.message && typeof payload.message === "object" && !Array.isArray(payload.message)
+      ? payload.message as Record<string, unknown>
+      : payload;
+    const role = source.role === "user" || source.role === "assistant" || source.role === "system"
+      ? source.role
+      : "assistant";
+    const content = typeof source.content === "string" ? source.content : "";
+    const sequence = typeof source.sequence === "number" && Number.isInteger(source.sequence)
+      && source.sequence >= 0 && source.sequence >= this.nextChildMessageSequence(thread.id)
+      ? source.sequence
+      : this.nextChildMessageSequence(thread.id);
+    const message = {
+      id: typeof source.id === "string" && source.id.length > 0
+        ? source.id
+        : `codex-child-message:${hashCodexKey(`${thread.id}:${sequence}:${content}`)}`,
+      thread_id: thread.id,
+      role,
+      content,
+      tool_calls: source.tool_calls ?? null,
+      files_changed: source.files_changed ?? null,
+      cost_usd: typeof source.cost_usd === "number" ? source.cost_usd : null,
+      tokens_used: typeof source.tokens_used === "number" ? source.tokens_used : null,
+      timestamp: typeof source.timestamp === "string" ? source.timestamp : new Date().toISOString(),
+      sequence,
+      attachments: source.attachments ?? null,
+    };
+    return { ...payload, projection: "message", message };
   }
 
   private executionIdForTurn(turnId: string): string {

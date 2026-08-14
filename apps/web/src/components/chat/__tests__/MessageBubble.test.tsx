@@ -1,4 +1,4 @@
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import type { Message } from "@/transport";
 import { describe, expect, it, vi } from "vitest";
 import { MessageBubble } from "../MessageBubble";
@@ -107,5 +107,28 @@ describe("MessageBubble", () => {
     }));
     expect(mockDeltaBlock.mock.calls[0]?.[0]).not.toHaveProperty("chatHighlighting");
     expect(mockDeltaBlock.mock.calls[0]?.[0]).not.toHaveProperty("threadId");
+  });
+
+  it("labels parent-agent messages without changing ordinary user messages", () => {
+    const parentMessage = {
+      ...createUserMessage(),
+      parentAgentProvenance: {
+        parentThreadId: "parent-thread",
+        parentTurnId: "parent-turn",
+        parentItemId: "parent-item",
+        providerIdentities: [{
+          providerId: "codex",
+          scope: "parentItem",
+          value: "receiver-thread",
+          provenance: "native",
+        }],
+      },
+    } as Message;
+    const { rerender } = render(<MessageBubble message={parentMessage} />);
+    expect(screen.getByTestId("parent-agent-provenance")).toHaveTextContent("Parent agent");
+    expect(screen.getByRole("note", { name: /parent-thread.*parent-turn.*receiver-thread/i })).toBeInTheDocument();
+
+    rerender(<MessageBubble message={createUserMessage()} />);
+    expect(screen.queryByTestId("parent-agent-provenance")).not.toBeInTheDocument();
   });
 });

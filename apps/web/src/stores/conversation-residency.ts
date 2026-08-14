@@ -15,6 +15,14 @@ export type ConversationResidencyThread = AdjacentPrefetchThread;
 export interface ConversationResidencyDeps {
   restoreConversation: (threadId: string) => Promise<void>;
   refreshConversation: (threadId: string) => Promise<void>;
+  /** Hydrate an explicitly displayed non-selected conversation. */
+  hydrateDisplayConversation?: (threadId: string, generation: number) => Promise<void>;
+  /** Refresh an explicitly displayed non-selected conversation. */
+  refreshDisplayConversation?: (threadId: string, generation: number) => Promise<void>;
+  /** Finalize an explicitly displayed conversation after its last lease ends. */
+  releaseDisplayConversation?: (threadId: string, generation: number) => void;
+  /** Read the selected transcript without making residency own selection. */
+  getSelectedConversationId?: () => string | null;
   deactivateConversation: () => void;
   retainInactiveConversation: (threadId: string) => void;
   invalidateConversation: (threadId: string) => void;
@@ -71,6 +79,9 @@ export class ConversationResidency {
   private activationGeneration = 0;
   private historyPageRequestId = 0;
   private readonly historyPageRequests = new Map<string, ConversationHistoryPageRequestHandle>();
+  private readonly displayLeases = new Map<string, { count: number; generation: number }>();
+  private readonly displayLeaseGenerations = new Map<string, number>();
+  private readonly displayRefreshes = new Map<string, Promise<void>>();
   private readonly adjacentPrefetch;
 
   constructor(private readonly deps: ConversationResidencyDeps) {
@@ -104,6 +115,64 @@ export class ConversationResidency {
     const thread = selectedThreadId ? threads.find((candidate) => candidate.id === selectedThreadId) : undefined;
     if (!thread || thread.clientPreparing || thread.clientError) return Promise.resolve();
     return this.deps.refreshConversation(thread.id);
+  }
+
+  /** Acquire one reference-counted lease for a non-selected displayed conversation. */
+  mountDisplayConversation(threadId: string): Promise<void> {
+    const existing = this.displayLeases.get(threadId);
+    const lease = existing ?? {
+      count: 0,
+      generation: (this.displayLeaseGenerations.get(threadId) ?? 0) + 1,
+    };
+    lease.count += 1;
+    this.displayLeaseGenerations.set(threadId, lease.generation);
+    this.displayLeases.set(threadId, lease);
+    if (lease.count === 1) {
+      return this.deps.hydrateDisplayConversation?.(threadId, lease.generation) ?? Promise.resolve();
+    }
+    return Promise.resolve();
+  }
+
+  /** Release one display lease and retire the resident child after the final release. */
+  unmountDisplayConversation(threadId: string): void {
+    const lease = this.displayLeases.get(threadId);
+    if (!lease) return;
+    lease.count -= 1;
+    if (lease.count > 0) return;
+    this.displayLeases.delete(threadId);
+    this.displayRefreshes.delete(threadId);
+    this.deps.releaseDisplayConversation?.(threadId, lease.generation);
+  }
+
+  /** Return true when a transcript is selected or held by an explicit display lease. */
+  isConversationVisible(threadId: string): boolean {
+    return this.deps.getSelectedConversationId?.() === threadId || this.displayLeases.has(threadId);
+  }
+
+  /** Return true when a transcript has an explicit display lease. */
+  isDisplayConversationLeased(threadId: string): boolean {
+    return this.displayLeases.has(threadId);
+  }
+
+  /** Return true when the supplied display lease still owns the child. */
+  isDisplayLeaseCurrent(threadId: string, generation: number): boolean {
+    return this.displayLeases.get(threadId)?.generation === generation;
+  }
+
+  /** Refresh one visible transcript through the same resident hydrator path. */
+  refreshVisibleConversation(threadId: string): Promise<void> {
+    if (!this.isConversationVisible(threadId)) return Promise.resolve();
+    const lease = this.displayLeases.get(threadId);
+    if (!lease || !this.deps.refreshDisplayConversation) {
+      return this.deps.refreshConversation(threadId);
+    }
+    const existing = this.displayRefreshes.get(threadId);
+    if (existing) return existing;
+    const refresh = this.deps.refreshDisplayConversation(threadId, lease.generation).finally(() => {
+      if (this.displayRefreshes.get(threadId) === refresh) this.displayRefreshes.delete(threadId);
+    });
+    this.displayRefreshes.set(threadId, refresh);
+    return refresh;
   }
 
   /** Retain a completed background conversation through the bounded cache. */
@@ -189,4 +258,9 @@ export function getConversationResidency(): ConversationResidency {
     throw new Error("Conversation residency has not been initialized");
   }
   return registeredConversationResidency;
+}
+
+/** Read display visibility for render-only callers before store registration completes. */
+export function isConversationVisible(threadId: string): boolean {
+  return registeredConversationResidency?.isConversationVisible(threadId) ?? true;
 }
