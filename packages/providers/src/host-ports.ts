@@ -3,6 +3,7 @@ import type {
   CanonicalAgentEvent,
   ProviderIdentity,
 } from "@mcode/agent-model";
+import type { InteractionMode } from "@mcode/contracts";
 
 /** Provider event input submitted to the server-owned canonical event sink. */
 export interface ProviderEventDraft {
@@ -27,6 +28,12 @@ export interface ProviderProcessPort {
   terminateTree(pid: number): Promise<void>;
 }
 
+/** Non-secret metadata retained for one browser credential. */
+export interface ProviderBrowserCredentialMetadata {
+  credentialId: string;
+  expiresAt: number;
+}
+
 /** Minimal browser lease request passed to the server-owned browser authority. */
 export interface ProviderBrowserLeaseRequest {
   providerId: string;
@@ -40,12 +47,26 @@ export interface ProviderBrowserLeaseRequest {
 /** Opaque browser lease handle returned by the server. */
 export interface ProviderBrowserLeaseHandle {
   leaseId: string;
+  expiresAt: number;
+}
+
+/** Browser credential issued for one staged Provider lease. */
+export interface ProviderBrowserLeaseGrant extends ProviderBrowserCredentialMetadata {
+  leaseId: string;
+  mcpUrl: string;
+  token: string;
+  allowedOperations: readonly string[];
+  rolloutMode: "legacy" | "browser-v2";
 }
 
 /** Gives a Provider scoped access to server-owned browser leases. */
 export interface ProviderBrowserPort {
   stage(request: ProviderBrowserLeaseRequest): ProviderBrowserLeaseHandle;
   releaseSession(providerId: string, mcodeSessionId: string): number;
+  isConfigured(): boolean;
+  issue(stage: ProviderBrowserLeaseHandle): ProviderBrowserLeaseGrant | null;
+  release(leaseId: string): { leaseId: string; released: boolean; credentialId?: string };
+  revokeCredential(credentialId: string): boolean;
 }
 
 /** Input for one server-owned thread-control bootstrap. */
@@ -61,6 +82,15 @@ export interface ProviderThreadControlRequest {
 export interface ProviderThreadControlPort {
   bootstrap(request: ProviderThreadControlRequest): Promise<unknown | null>;
   close(sessionId: string): Promise<void>;
+}
+
+/** Maps Mcode turn controls to the browser gateway capability. */
+export function providerBrowserPermissionCapability(
+  permissionMode: string,
+  interactionMode: InteractionMode,
+): "observe" | "interact" | "privileged" {
+  if (interactionMode === "plan") return "observe";
+  return permissionMode === "full" ? "privileged" : "interact";
 }
 
 /** Consumes a server-authorized, path-scoped grant. */

@@ -8,7 +8,7 @@ import {
   mapDecisionToCodexResponse,
   synthesizeCodexPermissionRequest,
   CODEX_APPROVAL_METHODS,
-} from "../codex-permission-mapper.js";
+} from "../../private/codex/codex-permission-mapper.js";
 
 describe("mapDecisionToCodexResponse", () => {
   describe("commandExecution / fileChange (v2)", () => {

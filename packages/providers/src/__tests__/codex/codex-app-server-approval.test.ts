@@ -10,7 +10,7 @@ vi.mock("@mcode/shared", () => ({
  * helper exported from codex-app-server.ts. Spawning the real subprocess
  * is overkill for this unit; the integration is covered by manual UI testing.
  */
-import { routeCodexServerRequest } from "../codex-app-server.js";
+import { routeCodexServerRequest } from "../../private/codex/codex-app-server.js";
 
 describe("routeCodexServerRequest", () => {
   let sendResponse: Mock<(id: number, result: unknown) => void>;

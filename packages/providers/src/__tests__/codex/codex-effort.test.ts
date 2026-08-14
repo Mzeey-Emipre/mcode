@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { toCodexEffort } from "../codex-types.js";
+import { toCodexEffort } from "../../private/codex/codex-types.js";
 
 describe("toCodexEffort", () => {
   it("passes GPT-5.6 max effort to the app-server", () => {

@@ -6,7 +6,7 @@ vi.mock("@mcode/shared", () => ({
   logger: { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn() },
 }));
 
-import { CodexEventMapper } from "../codex-event-mapper.js";
+import { CodexEventMapper } from "../../private/codex/codex-event-mapper.js";
 
 describe("CodexEventMapper", () => {
   let mapper: CodexEventMapper;

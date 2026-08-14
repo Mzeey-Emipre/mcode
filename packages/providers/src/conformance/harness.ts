@@ -58,6 +58,7 @@ export async function runFactoryCoreProfile(
   const factoryInput: ProviderFactoryInput = {
     configuration: { cliPath: "conformance-provider", idleSessionTtlMs: 600_000 },
     host,
+    ...(registration.providerId === "codex" ? { codex: createFakeCodexPorts() } : {}),
   };
   const boundary = registration.factory(factoryInput);
   if (boundary.id !== registration.providerId || boundary.descriptor.id !== registration.providerId) {
@@ -165,6 +166,7 @@ export function validateProviderConformanceRegistry(
     const boundary = registration.factory({
       configuration: { cliPath: "conformance-provider", idleSessionTtlMs: 600_000 },
       host: createFakeHost(new DeterministicCanonicalSink(), []),
+      ...(registration.providerId === "codex" ? { codex: createFakeCodexPorts() } : {}),
     });
     const declaredProfiles = boundary.descriptor.capabilities
       .filter((capability) => capability.support === "supported")
@@ -178,6 +180,19 @@ export function validateProviderConformanceRegistry(
   return fixtures;
 }
 
+function createFakeCodexPorts(): NonNullable<ProviderFactoryInput["codex"]> {
+  return {
+    settings: { get: async () => ({ cliPath: "codex", fastMode: false }) },
+    attachments: { persistGeneratedImageFromPath: () => { throw new Error("unused"); } },
+    catalog: {
+      currentSkills: () => [],
+      currentPrompts: () => [],
+      refreshCustomPrompts: async () => ({ prompts: [] }),
+      shutdown: async () => undefined,
+    },
+  };
+}
+
 function createFakeHost(sink: DeterministicCanonicalSink, calls: string[]): ProviderHostPorts {
   return {
     environment: { snapshot: () => ({}) },
@@ -186,8 +201,12 @@ function createFakeHost(sink: DeterministicCanonicalSink, calls: string[]): Prov
       terminateTree: async () => { calls.push("processes.terminateTree"); },
     },
     browser: {
-      stage: () => { calls.push("browser.stage"); return { leaseId: "LEASE_1" }; },
+      stage: () => { calls.push("browser.stage"); return { leaseId: "LEASE_1", expiresAt: Date.now() + 1_000 }; },
       releaseSession: () => { calls.push("browser.releaseSession"); return 0; },
+      isConfigured: () => false,
+      issue: () => null,
+      release: (leaseId) => ({ leaseId, released: false }),
+      revokeCredential: () => false,
     },
     threadControl: {
       bootstrap: async () => { calls.push("threadControl.bootstrap"); return null; },

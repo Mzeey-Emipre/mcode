@@ -1,6 +1,5 @@
-import "reflect-metadata";
 import { describe, expect, it } from "vitest";
-import { generatedImagePathFromCodexItem } from "../codex-provider.js";
+import { generatedImagePathFromCodexItem } from "../../private/codex/codex-provider.js";
 
 describe("generatedImagePathFromCodexItem", () => {
   it("reads savedPath from completed imageGeneration items", () => {

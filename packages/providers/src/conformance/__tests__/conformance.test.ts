@@ -20,6 +20,20 @@ import {
 describe("Provider conformance registry", () => {
   it("covers every enabled factory with core fixtures and supported versions", async () => {
     const fixtures = validateProviderConformanceRegistry(ENABLED_PROVIDER_CONFORMANCE);
+    const codex = ENABLED_PROVIDER_CONFORMANCE.find(({ providerId }) => providerId === "codex")!;
+    expect(codex.requiredProfiles).toEqual([
+      "core",
+      "build",
+      "plan",
+      "goals",
+      "permissions",
+      "usage",
+      "session-eviction",
+      "clean-fork",
+      "orchestration",
+      "browser-access",
+      "thread-control",
+    ]);
 
     expect([...new Set(fixtures.map((fixture) => fixture.providerId))].sort()).toEqual([
       "claude",
@@ -47,6 +61,19 @@ describe("Provider conformance registry", () => {
     expect(() => validateProviderConformanceRegistry([
       { ...registration, supportedVersions: [] },
     ])).toThrow("lacks supported-version evidence");
+  });
+
+  it("registers a sanitized Codex adversarial fixture without private content", () => {
+    const registration = ENABLED_PROVIDER_CONFORMANCE.find(({ providerId }) => providerId === "codex")!;
+    const fixture = registration.fixtureFiles
+      .map(loadProviderFixtureManifest)
+      .find(({ scenario }) => scenario.includes("adversarial"));
+
+    expect(fixture?.provenance).toBe("synthetic");
+    expect(JSON.stringify(fixture?.input)).not.toMatch(
+      /prompt|response|secret|token|password|environment|absolute path|raw|output|[A-Z]:[\\/]|\\\\/i,
+    );
+    expect(fixture?.expected.terminal).toBe("errored");
   });
 });
 

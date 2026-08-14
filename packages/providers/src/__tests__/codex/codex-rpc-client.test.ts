@@ -10,7 +10,7 @@ vi.mock("@mcode/shared", () => ({
   },
 }));
 
-import { CodexRpcClient } from "../codex-rpc-client.js";
+import { CodexRpcClient } from "../../private/codex/codex-rpc-client.js";
 
 /** Creates a fresh pair of PassThrough streams and a CodexRpcClient for each test. */
 function makeClient() {

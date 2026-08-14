@@ -47,7 +47,7 @@ import { PlanQuestionAnswersRepo } from "./repositories/plan-question-answers-re
 import { PlanRepo } from "./repositories/plan-repo";
 import { SnapshotService } from "./services/snapshot-service";
 import { SettingsService } from "./services/settings-service";
-import { warmCodexVersionCache } from "./providers/codex/codex-version";
+import { warmCodexProviderVersion } from "@mcode/providers";
 import { GitWatcherService } from "./services/git-watcher-service";
 import { SkillWatcherService } from "./services/skill-watcher-service";
 import { MemoryPressureService } from "./services/memory-pressure-service";
@@ -335,7 +335,7 @@ function warmCodexVersionGate(s = settingsService.get()): void {
   const cliPath = s.provider.cli.codex || "codex";
   if (!warmedCodexPaths.has(cliPath)) {
     warmedCodexPaths.add(cliPath);
-    void warmCodexVersionCache(cliPath);
+    void warmCodexProviderVersion(cliPath);
   }
 }
 

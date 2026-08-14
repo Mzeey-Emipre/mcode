@@ -5,7 +5,7 @@ vi.mock("child_process", () => ({
 }));
 
 import { spawnSync } from "child_process";
-import { meetsMinVersion, checkCodexVersion, clearVersionCache } from "../codex-version.js";
+import { meetsMinVersion, checkCodexVersion, clearVersionCache } from "../../private/codex/codex-version.js";
 
 const mockSpawnSync = vi.mocked(spawnSync);
 

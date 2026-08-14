@@ -27,11 +27,11 @@ import { ProviderCatalogSnapshotRepo } from "./repositories/provider-catalog-sna
 
 // Providers
 import { ClaudeProvider } from "./providers/claude/claude-provider";
-import { CodexProvider } from "./providers/codex/codex-provider";
 import { CopilotProvider } from "./providers/copilot/copilot-provider";
 import { CursorProvider } from "./providers/cursor/cursor-provider";
 import { ProviderRegistry } from "./providers/provider-registry";
 import { createProviderHostPorts } from "./providers/provider-host-ports";
+import { registerCodexProvider } from "./providers/codex-provider-registration";
 
 // Services
 import { WorkspaceService } from "./services/workspace-service";
@@ -282,14 +282,6 @@ export function setupContainer(mcodeDir: string): typeof container {
     useFactory: (c) => c.resolve(ClaudeProvider),
   });
   container.register(
-    CodexProvider,
-    { useClass: CodexProvider },
-    { lifecycle: Lifecycle.Singleton },
-  );
-  container.register("IAgentProvider", {
-    useFactory: (c) => c.resolve(CodexProvider),
-  });
-  container.register(
     CopilotProvider,
     { useClass: CopilotProvider },
     { lifecycle: Lifecycle.Singleton },
@@ -326,7 +318,6 @@ export function setupContainer(mcodeDir: string): typeof container {
       events: c.resolve(CanonicalAgentEventSink),
     }),
   });
-
   // GitExecutor — registered before services that depend on it
   container.register(
     RealGitExecutor,
@@ -670,6 +661,28 @@ export function setupContainer(mcodeDir: string): typeof container {
     { useClass: RecapService },
     { lifecycle: Lifecycle.Singleton },
   );
+
+  const codexProvider = registerCodexProvider(container, {
+    configuration: {
+      cliPath: "codex",
+      idleSessionTtlMs: 10 * 60 * 1_000,
+    },
+    host: container.resolve("ProviderHostPorts"),
+    codex: {
+      settings: {
+        get: () => {
+          const settings = container.resolve(SettingsService).get();
+          return {
+            cliPath: settings.provider.cli.codex || "codex",
+            fastMode: settings.provider.codex?.fastMode === true,
+          };
+        },
+      },
+      attachments: container.resolve(AttachmentService),
+      catalog: container.resolve(CodexCatalogService),
+    },
+  });
+  container.registerInstance("CodexProvider", codexProvider);
 
   return container;
 }

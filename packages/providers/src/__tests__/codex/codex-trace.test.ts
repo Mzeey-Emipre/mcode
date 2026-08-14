@@ -5,7 +5,7 @@ import {
   isCodexTraceEnabled,
   summarizeAgentEventsForTrace,
   summarizeCodexNotificationParams,
-} from "../codex-trace.js";
+} from "../../private/codex/codex-trace.js";
 
 describe("codex-trace", () => {
   afterEach(() => {

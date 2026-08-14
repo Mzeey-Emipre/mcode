@@ -1,10 +1,9 @@
-import "reflect-metadata";
 import { describe, expect, it } from "vitest";
 import {
   isSameProviderUsageInfo,
   mapCodexRateLimitsToUsage,
   mergeCodexUsageInfo,
-} from "../codex-provider.js";
+} from "../../private/codex/codex-provider.js";
 
 describe("mapCodexRateLimitsToUsage", () => {
   it("maps primary and secondary account windows to quota categories", () => {

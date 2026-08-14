@@ -2,6 +2,37 @@ import { describe, expect, it, vi } from "vitest";
 import { createProviderHostPorts } from "../provider-host-ports.js";
 
 describe("createProviderHostPorts", () => {
+  it("adapts the server browser grant to the Provider contract", () => {
+    const ports = createProviderHostPorts({
+      envService: { getEnv: () => ({}) },
+      jobObject: { isWindowsJob: false },
+      browser: {
+        issue: vi.fn(() => ({
+          leaseId: "lease-1",
+          mcpUrl: "http://127.0.0.1:1234/mcp",
+          token: "opaque-token",
+          credentialId: "credential-1",
+          expiresAt: 123,
+          allowedOperations: ["inspect"],
+          rolloutMode: "browser-v2",
+        })),
+      },
+      threadControl: {},
+      grants: {},
+      events: {},
+    } as never);
+
+    expect(ports.browser.issue({ leaseId: "lease-1", expiresAt: 123 })).toEqual({
+      leaseId: "lease-1",
+      mcpUrl: "http://127.0.0.1:1234/mcp",
+      token: "opaque-token",
+      credentialId: "credential-1",
+      expiresAt: 123,
+      allowedOperations: ["inspect"],
+      rolloutMode: "browser-v2",
+    });
+  });
+
   it("routes canonical drafts through the server-owned sink", async () => {
     const commit = vi.fn();
     const ports = createProviderHostPorts({

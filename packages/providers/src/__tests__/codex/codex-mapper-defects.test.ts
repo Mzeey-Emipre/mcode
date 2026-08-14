@@ -5,9 +5,9 @@ vi.mock("@mcode/shared", () => ({
   logger: { warn: vi.fn(), info: vi.fn(), debug: vi.fn(), error: vi.fn() },
 }));
 
-import { CodexEventMapper } from "../codex-event-mapper.js";
+import { CodexEventMapper } from "../../private/codex/codex-event-mapper.js";
 import { AgentEventType } from "@mcode/contracts";
-import type { CompletedItem } from "../codex-types.js";
+import type { CompletedItem } from "../../private/codex/codex-types.js";
 
 /**
  * Regression suite for three defects the user reported against the Codex

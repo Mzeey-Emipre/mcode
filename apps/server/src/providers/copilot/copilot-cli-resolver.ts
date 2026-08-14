@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
-import { meetsMinVersion } from "../codex/codex-version.js";
+import { isProviderVersionAtLeast } from "@mcode/providers";
 
 /** Which discovery strategy produced a resolution (for diagnostics + banner copy). */
 export type CopilotCliSource = "configured" | "npm-global" | "path-shim";
@@ -89,8 +89,8 @@ function supportsSdkCompatibleCli(
   io: CopilotCliResolverIO,
 ): boolean {
   if (version) {
-    if (meetsMinVersion(version, MIN_COPILOT_CLI_1X)) return true;
-    if (meetsMinVersion(version, MIN_COPILOT_CLI_0X)) return true;
+    if (isProviderVersionAtLeast(version, MIN_COPILOT_CLI_1X)) return true;
+    if (isProviderVersionAtLeast(version, MIN_COPILOT_CLI_0X)) return true;
   }
   const help = io.exec(entry, ["--help"]);
   if (help != null && (/--headless\b/.test(help) || /--acp\b/.test(help))) return true;

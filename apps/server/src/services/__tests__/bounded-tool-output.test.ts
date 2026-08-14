@@ -8,7 +8,7 @@ import {
   boundToolOutput,
   pruneStaleToolOutputArtifacts,
   resolveToolOutputArtifactPath,
-} from "../bounded-tool-output.js";
+} from "@mcode/providers";
 
 describe("bounded tool output", () => {
   let originalDataDir: string | undefined;

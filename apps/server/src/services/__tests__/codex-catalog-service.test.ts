@@ -8,10 +8,10 @@ import type { SkillInfo } from "@mcode/contracts";
 import { CodexCatalogService } from "../codex-catalog-service.js";
 import type { CodexCustomPromptDiscoveryResult } from "../codex-custom-prompt-service.js";
 import type {
-  PluginListResult,
-  PluginReadResult,
-  SkillsListResult,
-} from "../../providers/codex/codex-types.js";
+  CodexCatalogPluginsResult,
+  CodexCatalogPluginReadResult,
+  CodexCatalogSkillsResult,
+} from "@mcode/providers";
 
 class ControlledCatalogClient extends EventEmitter {
   isAlive = true;
@@ -34,7 +34,7 @@ class ControlledCatalogClient extends EventEmitter {
       },
     },
   }));
-  readonly listSkills = vi.fn(async (cwds?: string[]): Promise<SkillsListResult> => {
+  readonly listSkills = vi.fn(async (cwds?: string[]): Promise<CodexCatalogSkillsResult> => {
     const cwd = cwds?.[0] ?? "";
     return {
       data: [{
@@ -59,7 +59,7 @@ class ControlledCatalogClient extends EventEmitter {
       }],
     };
   });
-  readonly listPlugins = vi.fn(async (cwds?: string[]): Promise<PluginListResult> => ({
+  readonly listPlugins = vi.fn(async (cwds?: string[]): Promise<CodexCatalogPluginsResult> => ({
     marketplaces: [{
       name: "openai-bundled",
       path: "C:/marketplaces/openai-bundled",
@@ -98,7 +98,7 @@ class ControlledCatalogClient extends EventEmitter {
     marketplaceLoadErrors: [],
     featuredPluginIds: [],
   }));
-  readonly readPlugin = vi.fn(async (): Promise<PluginReadResult> => ({
+  readonly readPlugin = vi.fn(async (): Promise<CodexCatalogPluginReadResult> => ({
     plugin: { description: "Detailed plugin description" },
   }));
 }

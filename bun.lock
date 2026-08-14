@@ -195,9 +195,15 @@
       "version": "0.0.1",
       "dependencies": {
         "@mcode/agent-model": "workspace:*",
+        "@mcode/contracts": "workspace:*",
+        "@mcode/shared": "workspace:*",
+        "@mcode/thread-orchestration": "workspace:*",
+        "smol-toml": "^1.7.0",
+        "which": "^5.0.0",
       },
       "devDependencies": {
         "@types/node": "^22.19.17",
+        "@types/which": "^3.0.4",
         "typescript": "^5.8.0",
         "vitest": "^4.1.0",
       },

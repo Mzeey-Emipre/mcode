@@ -2,14 +2,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdtemp, mkdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { TurnFileEffectSummary } from "@mcode/contracts";
+import { AgentEventType, type TurnFileEffectSummary } from "@mcode/contracts";
 import { TurnFileTracker } from "../turn-file-tracker.js";
 import {
   createCursorAcpTurnState,
   mapCursorAcpSessionNotification,
 } from "../../providers/cursor/cursor-acp-event-mapper.js";
-import { CodexEventMapper } from "../../providers/codex/codex-event-mapper.js";
-import { AgentEventType } from "@mcode/contracts";
 
 const dirs: string[] = [];
 
@@ -47,67 +45,15 @@ describe("TurnFileTracker", () => {
       (_threadId, _turnId, summary) => updates.push(summary),
     );
     tracker.beginTurn("t", root, "unavailable-ref");
-    const pendingStarts: Promise<void>[] = [];
-    const mapper = new CodexEventMapper("t", "parent-thread", (event) => {
-      pendingStarts.push(tracker.observeToolUse(
-        event.threadId,
-        event.toolCallId,
-        event.toolName,
-        event.toolInput,
-      ));
-    });
-
-    const earlyStart = mapper.mapNotification({
-      jsonrpc: "2.0",
-      method: "item/started",
-      params: {
-        threadId: "child-thread-early",
-        item: {
-          type: "fileChange",
-          id: "file-child",
-          changes: [{ path: "tracked.txt", kind: "edit" }],
-        },
-      },
-    });
+    const pendingStarts = [tracker.observeToolUse(
+      "t",
+      "file-child",
+      "file_change",
+      { changes: [{ path: "tracked.txt", kind: "edit" }] },
+    )];
     await writeFile(trackedPath, "after\nextra\n");
-    const earlyCompletion = mapper.mapNotification({
-      jsonrpc: "2.0",
-      method: "item/completed",
-      params: {
-        threadId: "child-thread-early",
-        item: {
-          type: "fileChange",
-          id: "file-child",
-          changes: [{ path: "tracked.txt", kind: "edit" }],
-        },
-      },
-    });
-    const registered = mapper.mapNotification({
-      jsonrpc: "2.0",
-      method: "item/completed",
-      params: {
-        threadId: "parent-thread",
-        item: {
-          type: "collabAgentToolCall",
-          id: "collab-early",
-          tool: "spawnAgent",
-          receiverThreadIds: ["child-thread-early"],
-          result: "spawned",
-        },
-      },
-    });
-
-    expect(earlyStart).toEqual([]);
-    expect(earlyCompletion).toEqual([]);
     expect(pendingStarts).toHaveLength(1);
-    for (const event of registered) {
-      if (event.type === AgentEventType.ToolUse && event.toolName !== "Agent") {
-        await tracker.observeToolUse("t", event.toolCallId, event.toolName, event.toolInput);
-      }
-      if (event.type === AgentEventType.ToolResult) {
-        await tracker.observeToolResult("t", event.toolCallId, event.toolInput);
-      }
-    }
+    await tracker.observeToolResult("t", "file-child");
     await Promise.all(pendingStarts);
 
     const summary = await tracker.finalizeTurn("t");
