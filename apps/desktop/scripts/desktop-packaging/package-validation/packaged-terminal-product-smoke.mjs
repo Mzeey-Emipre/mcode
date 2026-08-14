@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
+  readlinkSync,
   readFileSync,
   writeFileSync,
 } from "node:fs";
@@ -28,6 +29,42 @@ const LINUX_NAMESPACE_SCRIPT =
   'set -eu; ip_cmd="$(command -v ip || command -v /sbin/ip)"; "$ip_cmd" link set lo up; "$ip_cmd" -4 addr add 127.0.0.1/8 dev lo 2>/dev/null || true; "$ip_cmd" -6 addr add ::1/128 dev lo 2>/dev/null || true; "$ip_cmd" -4 addr show dev lo | grep -q "127.0.0.1"; "$ip_cmd" -6 addr show dev lo | grep -q "::1"';
 const MACOS_LOOPBACK_PROFILE =
   '(version 1) (allow default) (deny network*) (allow network-outbound (remote ip "localhost:*")) (allow network-inbound (local ip "localhost:*"))';
+
+/** Marks the verifier process that was re-executed inside the Linux namespace. */
+export const LINUX_PRODUCT_NAMESPACE_MARKER = "MCODE_TERMINAL_PRODUCT_NAMESPACE";
+
+/** Proves that the marked verifier runs in a network namespace distinct from PID 1. */
+export function hasLinuxProductNamespaceProof({
+  env = process.env,
+  readlink = readlinkSync,
+} = {}) {
+  if (env[LINUX_PRODUCT_NAMESPACE_MARKER] !== "1") return false;
+  try {
+    const selfNamespace = readlink("/proc/self/ns/net");
+    const initNamespace = readlink("/proc/1/ns/net");
+    return (
+      typeof selfNamespace === "string" &&
+      typeof initNamespace === "string" &&
+      selfNamespace !== initNamespace
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Returns whether the Linux product command still needs its namespace re-exec. */
+export function shouldReexecLinuxProductVerifier({
+  command,
+  platform,
+  env = process.env,
+  readlink = readlinkSync,
+}) {
+  return (
+    command === "product" &&
+    platform === "linux" &&
+    !hasLinuxProductNamespaceProof({ env, readlink })
+  );
+}
 
 /** Validates the explicit packaged release-test launch boundary. */
 export function validateProductSmokeLaunchInput({
@@ -219,6 +256,34 @@ export function cleanupLoopbackIsolation(receipt) {
   return { ...receipt, cleanupRequired: false };
 }
 
+/** Builds the one-time Linux namespace re-exec for the packaged product verifier. */
+export function buildLinuxProductVerifierLaunch({
+  nodePath = process.execPath,
+  scriptPath = fileURLToPath(import.meta.url),
+  args = [],
+}) {
+  return {
+    command: "xvfb-run",
+    args: [
+      "-a",
+      "unshare",
+      "--user",
+      "--map-root-user",
+      "--net",
+      "/bin/sh",
+      "-c",
+      `${LINUX_NAMESPACE_SCRIPT}; exec "$MCODE_RELEASE_NODE" "$MCODE_RELEASE_SCRIPT" "$@"`,
+      "--",
+      ...args,
+    ],
+    env: {
+      MCODE_RELEASE_NODE: path.resolve(nodePath),
+      MCODE_RELEASE_SCRIPT: path.resolve(scriptPath),
+      [LINUX_PRODUCT_NAMESPACE_MARKER]: "1",
+    },
+  };
+}
+
 /** Polls a bounded PID set until all descendants are gone. */
 export async function pollProcessCleanup(
   pids,
@@ -302,25 +367,27 @@ function findPackagedTarget(releaseDir, platform, arch) {
 }
 
 /** Builds the isolated packaged Electron launch command for one target OS. */
-export function buildProductLaunch({ target, isolationReceipt, launchArgs }) {
+export function buildProductLaunch({
+  target,
+  isolationReceipt,
+  launchArgs,
+  platform,
+  env = process.env,
+  readlink = readlinkSync,
+}) {
   const executablePath = path.resolve(target.executablePath);
   const isolatedLaunchArgs = ["--no-sandbox", ...launchArgs];
+  if (platform === "linux" && isolationReceipt.mode !== "linux-network-namespace") {
+    throw new Error("Linux product launch requires Linux network namespace isolation");
+  }
   if (isolationReceipt.mode === "linux-network-namespace") {
+    if (!hasLinuxProductNamespaceProof({ env, readlink })) {
+      throw new Error("Linux Electron launch requires the isolated product verifier");
+    }
     return {
-      command: "xvfb-run",
-      args: [
-        "-a",
-        "unshare",
-        "--user",
-        "--map-root-user",
-        "--net",
-        "/bin/sh",
-        "-c",
-        `${LINUX_NAMESPACE_SCRIPT}; exec "$MCODE_RELEASE_PROGRAM" "$@"`,
-        "--",
-        ...isolatedLaunchArgs,
-      ],
-      env: { MCODE_RELEASE_PROGRAM: executablePath },
+      command: executablePath,
+      args: isolatedLaunchArgs,
+      env: {},
     };
   }
   if (isolationReceipt.mode === "macos-network-sandbox") {
@@ -415,6 +482,26 @@ export async function openTerminal(page) {
   return terminal;
 }
 
+/** Activates the first seeded workspace before requiring its Terminal control. */
+export async function activateSeededWorkspace(
+  page,
+  { timeoutMs = 10_000, intervalMs = 100 } = {},
+) {
+  const terminalToggle = page.getByRole("button", { name: "Terminal" }).first();
+  if (await terminalToggle.count()) return;
+  const projectButton = page.getByRole("button", { name: /^Open project / }).first();
+  if (!(await projectButton.count())) {
+    throw new Error("Seeded workspace project control is missing");
+  }
+  await projectButton.click();
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if ((await terminalToggle.count()) > 0 && await terminalToggle.isVisible()) return;
+    await page.waitForTimeout(intervalMs);
+  }
+  throw new Error("Timed out waiting for Terminal control after opening seeded workspace");
+}
+
 async function runTerminalWorkload(page, terminal, workload) {
   await page.keyboard.type(commandForWorkload(workload));
   await page.keyboard.press("Enter");
@@ -464,7 +551,7 @@ export function releaseProductProcess(child) {
 /** Waits a bounded interval for Electron to create its first renderer page. */
 export async function waitForRendererPage(
   browser,
-  { timeoutMs = 45_000, intervalMs = 100 } = {},
+  { timeoutMs = 45_000, intervalMs = 100, getDiagnostics = () => ({}) } = {},
 ) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -472,14 +559,24 @@ export async function waitForRendererPage(
     if (page) return page;
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
-  throw new Error("Packaged Electron renderer page is missing");
+  const { exitCode, launchOutputTail } = getDiagnostics();
+  const details = [`outer child exit code: ${exitCode ?? "pending"}`];
+  if (launchOutputTail?.trim()) {
+    details.push(`launch output tail:\n${launchOutputTail.trim()}`);
+  }
+  throw new Error(`Packaged Electron renderer page is missing\n${details.join("\n")}`);
 }
 
-async function runProductBoot({ target, env, bootFault, isolationReceipt, workload }) {
+async function runProductBoot({ target, env, bootFault, isolationReceipt, workload, platform }) {
   const bootStartedAt = performance.now();
   const cdpPort = 39_000 + (parseInt(randomUUID().slice(0, 4), 16) % 500);
   const launchArgs = [`--remote-debugging-port=${cdpPort}`];
-  const launch = buildProductLaunch({ target, isolationReceipt, launchArgs });
+  const launch = buildProductLaunch({
+    target,
+    isolationReceipt,
+    launchArgs,
+    platform,
+  });
   const bootEnv = buildProductBootEnv({ env, targetRoot: target.root, bootFault });
   const child = spawn(launch.command, launch.args, {
     cwd: target.root,
@@ -520,7 +617,9 @@ async function runProductBoot({ target, env, bootFault, isolationReceipt, worklo
     );
   })();
   try {
-    const page = await waitForRendererPage(browser);
+    const page = await waitForRendererPage(browser, {
+      getDiagnostics: () => ({ exitCode: child.exitCode, launchOutputTail }),
+    });
     await page.waitForLoadState("domcontentloaded");
     const typedErrors = [];
     page.on("websocket", (socket) => {
@@ -535,6 +634,7 @@ async function runProductBoot({ target, env, bootFault, isolationReceipt, worklo
         }
       });
     });
+    await activateSeededWorkspace(page);
     const initialTerminal = await openTerminal(page);
     const initialRuntime = await waitForRuntime(page, (runtime) => runtime.capabilities !== undefined);
     const initialCapabilities = initialRuntime.capabilities;
@@ -604,11 +704,11 @@ async function runProductBoot({ target, env, bootFault, isolationReceipt, worklo
   }
 }
 
-async function runProductPath({ target, env, fault, isolationReceipt }) {
+async function runProductPath({ target, env, fault, isolationReceipt, platform }) {
   const workload = await loadProcessCleanupWorkload();
-  const firstBoot = await runProductBoot({ target, env, bootFault: fault, isolationReceipt, workload });
+  const firstBoot = await runProductBoot({ target, env, bootFault: fault, isolationReceipt, workload, platform });
   if (fault === "startup-health-failure" || fault === "missing-native-artifact") {
-    const retry = await runProductBoot({ target, env, bootFault: undefined, isolationReceipt, workload });
+    const retry = await runProductBoot({ target, env, bootFault: undefined, isolationReceipt, workload, platform });
     return {
       workload,
       renderer: retry.renderer,
@@ -668,12 +768,16 @@ export async function runPackagedTerminalProductSmoke({
     fault,
   });
   assertLoopbackIsolationReceipt(isolationReceipt);
+  if (platform === "linux" && isolationReceipt.mode !== "linux-network-namespace") {
+    throw new Error("Linux product smoke requires Linux network namespace isolation");
+  }
   const hashesBefore = hashPackagedResources(target.resourcesRoot);
   const product = await runProductPath({
     target,
     fault,
     isolationReceipt,
     env: process.env,
+    platform,
   });
   if (product.startupFallbackDurationMs !== null && product.startupFallbackDurationMs > 5_000) {
     throw new Error("Observed Terminal startup fallback exceeded five seconds");
@@ -711,6 +815,9 @@ export async function runPackagedTerminalProductSmoke({
 async function main(argv) {
   const command = argv[2];
   const values = parseProductSmokeArguments(argv.slice(3));
+  const platform = { windows: "windows", macos: "macos", linux: "linux" }[values.platform]
+    ?? values.platform
+    ?? TARGET_PLATFORM[process.platform];
   if (command === "isolation") {
     const receipt = installLoopbackIsolation({
       platform: { windows: "win32", macos: "darwin", linux: "linux" }[values.platform] ?? values.platform,
@@ -730,12 +837,29 @@ async function main(argv) {
   if (!releaseDir || !receiptDir) throw new Error("--release-dir and --receipt-dir are required");
   const fault = values.fault === undefined || values.fault === "" ? undefined : values.fault;
   const isolationReceipt = JSON.parse(readFileSync(values["isolation-receipt"], "utf8"));
+  assertLoopbackIsolationReceipt(isolationReceipt);
+  if (platform === "linux" && isolationReceipt.mode !== "linux-network-namespace") {
+    throw new Error("Linux product smoke requires Linux network namespace isolation");
+  }
+  if (shouldReexecLinuxProductVerifier({ command, platform })) {
+    if (process.env[LINUX_PRODUCT_NAMESPACE_MARKER] === "1") {
+      throw new Error("Linux product namespace proof is missing");
+    }
+    const launch = buildLinuxProductVerifierLaunch({
+      args: argv.slice(2),
+    });
+    execFileSync(launch.command, launch.args, {
+      env: { ...process.env, ...launch.env },
+      stdio: "inherit",
+    });
+    return;
+  }
   const receipt = await runPackagedTerminalProductSmoke({
     releaseDir,
     receiptDir,
     fault,
     isolationReceipt,
-    platform: { windows: "windows", macos: "macos", linux: "linux" }[values.platform] ?? values.platform,
+    platform,
     arch: values.arch ?? process.arch,
   });
   console.log(

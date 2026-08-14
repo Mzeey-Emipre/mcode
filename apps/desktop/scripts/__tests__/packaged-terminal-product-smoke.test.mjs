@@ -5,18 +5,22 @@ import path from "node:path";
 import {
   PRODUCT_SMOKE_FAULTS,
   appendBoundedOutputTail,
+  activateSeededWorkspace,
   assertLoopbackIsolationReceipt,
   buildProductBootEnv,
+  buildLinuxProductVerifierLaunch,
   buildLoopbackIsolationPlan,
   buildProductLaunch,
   cleanupLoopbackIsolation,
   classifyProductSmokeOutcome,
   hashPackagedResources,
+  hasLinuxProductNamespaceProof,
   loadProcessCleanupWorkload,
   openTerminal,
   parseProductSmokeArguments,
   pollProcessCleanup,
   releaseProductProcess,
+  shouldReexecLinuxProductVerifier,
   validateProductSmokeLaunchInput,
   waitForRendererPage,
 } from "../desktop-packaging/package-validation/packaged-terminal-product-smoke.mjs";
@@ -115,22 +119,97 @@ describe("packaged Terminal product smoke contract", () => {
     expect(buildLoopbackIsolationPlan("darwin", executable).args.join(" ")).not.toContain(
       "127.0.0.1:*",
     );
-    const linuxLaunch = buildProductLaunch({
-      target: { executablePath: executable },
-      isolationReceipt: { mode: "linux-network-namespace" },
-      launchArgs: ["--remote-debugging-port=39000"],
+    const outerLinuxLaunch = buildLinuxProductVerifierLaunch({
+      nodePath: "/usr/bin/node",
+      scriptPath: "/tmp/packaged-terminal-product-smoke.mjs",
+      args: ["product", "--release-dir", "/tmp/release"],
     });
-    expect(linuxLaunch.command).toBe("xvfb-run");
-    expect(linuxLaunch.args.slice(0, 5)).toEqual([
+    expect(outerLinuxLaunch.command).toBe("xvfb-run");
+    expect(outerLinuxLaunch.args.slice(0, 5)).toEqual([
       "-a",
       "unshare",
       "--user",
       "--map-root-user",
       "--net",
     ]);
+    expect(outerLinuxLaunch.args.join(" ")).toContain("ip_cmd");
+    expect(outerLinuxLaunch.args.join(" ")).toContain(
+      'exec "$MCODE_RELEASE_NODE" "$MCODE_RELEASE_SCRIPT" "$@"',
+    );
+    expect(outerLinuxLaunch.env.MCODE_TERMINAL_PRODUCT_NAMESPACE).toBe("1");
+    const hostileVerifierArgs = [
+      "product",
+      "--release-dir",
+      "release dir/'\" $;*?",
+      "--receipt-dir",
+      "receipt;$(touch should-not-run)",
+      "--fault",
+      "fault ' \" $;*?",
+    ];
+    const hostileLaunch = buildLinuxProductVerifierLaunch({ args: hostileVerifierArgs });
+    const shellArgumentDelimiter = hostileLaunch.args.indexOf(
+      "--",
+      hostileLaunch.args.indexOf("-c") + 1,
+    );
+    expect(hostileLaunch.args.slice(shellArgumentDelimiter + 1)).toEqual(hostileVerifierArgs);
+
+    const distinctNamespaceReadlink = (subject) =>
+      subject.includes("/proc/self") ? "net:[self]" : "net:[init]";
+    const sameNamespaceReadlink = () => "net:[same]";
+    expect(
+      hasLinuxProductNamespaceProof({
+        env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
+        readlink: sameNamespaceReadlink,
+      }),
+    ).toBe(false);
+    expect(
+      hasLinuxProductNamespaceProof({
+        env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
+        readlink: distinctNamespaceReadlink,
+      }),
+    ).toBe(true);
+    expect(
+      shouldReexecLinuxProductVerifier({ command: "product", platform: "linux", env: {} }),
+    ).toBe(true);
+    expect(
+      shouldReexecLinuxProductVerifier({
+        command: "product",
+        platform: "linux",
+        env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
+        readlink: sameNamespaceReadlink,
+      }),
+    ).toBe(true);
+    expect(
+      shouldReexecLinuxProductVerifier({
+        command: "product",
+        platform: "linux",
+        env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
+        readlink: distinctNamespaceReadlink,
+      }),
+    ).toBe(false);
+
+    const linuxLaunch = buildProductLaunch({
+      target: { executablePath: executable },
+      isolationReceipt: { mode: "linux-network-namespace" },
+      launchArgs: ["--remote-debugging-port=39000"],
+      platform: "linux",
+      env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
+      readlink: distinctNamespaceReadlink,
+    });
+    expect(linuxLaunch.command).toBe(path.resolve(executable));
     expect(linuxLaunch.args.at(-1)).toBe("--remote-debugging-port=39000");
     expect(linuxLaunch.args).toContain("--no-sandbox");
-    expect(linuxLaunch.env.MCODE_RELEASE_PROGRAM).toBe(path.resolve(executable));
+    expect(linuxLaunch.args).not.toContain("unshare");
+    expect(() =>
+      buildProductLaunch({
+        target: { executablePath: executable },
+        isolationReceipt: { mode: "linux-network-namespace" },
+        launchArgs: [],
+        platform: "linux",
+        env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
+        readlink: sameNamespaceReadlink,
+      }),
+    ).toThrow("isolated product verifier");
     const macLaunch = buildProductLaunch({
       target: { executablePath: executable },
       isolationReceipt: { mode: "macos-network-sandbox" },
@@ -224,6 +303,57 @@ describe("packaged Terminal product smoke contract", () => {
     );
   });
 
+  it("keeps a seeded workspace activation a no-op when Terminal is present", async () => {
+    let projectLookups = 0;
+    await activateSeededWorkspace({
+      getByRole: (_role, { name }) => {
+        if (name === "Terminal") {
+          return { first: () => ({ count: async () => 1 }) };
+        }
+        projectLookups += 1;
+        throw new Error("Project control should not be queried");
+      },
+    });
+    expect(projectLookups).toBe(0);
+  });
+
+  it("opens the first seeded workspace and waits for Terminal", async () => {
+    let terminalVisible = false;
+    let clicks = 0;
+    const terminal = {
+      count: async () => (terminalVisible ? 1 : 0),
+      isVisible: async () => terminalVisible,
+    };
+    await activateSeededWorkspace({
+      getByRole: (_role, { name }) => ({
+        first: () => name === "Terminal"
+          ? terminal
+          : {
+              count: async () => 1,
+              click: async () => {
+                clicks += 1;
+                terminalVisible = true;
+              },
+            },
+      }),
+      waitForTimeout: async () => undefined,
+    });
+    expect(clicks).toBe(1);
+    expect(terminalVisible).toBe(true);
+  });
+
+  it("fails clearly when the seeded workspace project control is missing", async () => {
+    await expect(
+      activateSeededWorkspace({
+        getByRole: (_role, { name }) => ({
+          first: () => name === "Terminal"
+            ? { count: async () => 0 }
+            : { count: async () => 0 },
+        }),
+      }),
+    ).rejects.toThrow("Seeded workspace project control is missing");
+  });
+
   it("keeps exactly the last 8192 launch-output characters", () => {
     const tail = appendBoundedOutputTail("old\n", "a".repeat(8_192));
     const combined = appendBoundedOutputTail(tail, "b".repeat(10));
@@ -241,6 +371,19 @@ describe("packaged Terminal product smoke contract", () => {
         { timeoutMs: 50, intervalMs: 1 },
       ),
     ).resolves.toBe(rendererPage);
+  });
+
+  it("reports launch diagnostics when the packaged renderer page is missing", async () => {
+    const wait = waitForRendererPage(
+      { contexts: () => [{ pages: () => [] }] },
+      {
+        timeoutMs: 5,
+        intervalMs: 1,
+        getDiagnostics: () => ({ exitCode: 23, launchOutputTail: "renderer launch failed" }),
+      },
+    );
+    await expect(wait).rejects.toThrow("outer child exit code: 23");
+    await expect(wait).rejects.toThrow("launch output tail:\nrenderer launch failed");
   });
 
   it("loads the shared process-cleanup workload", async () => {
