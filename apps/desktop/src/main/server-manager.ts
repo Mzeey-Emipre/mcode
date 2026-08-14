@@ -616,6 +616,12 @@ export class ServerManager {
         execPath: process.execPath,
         resourcesPath: process.resourcesPath,
         platform: process.platform,
+        // Unsigned macOS packages cannot run the renamed copy through library validation.
+        ...(app.isPackaged &&
+        process.platform === "darwin" &&
+        process.env.MCODE_TERMINAL_RELEASE_TEST === "1"
+          ? { preferMainBinary: true }
+          : {}),
       });
 
       let child;

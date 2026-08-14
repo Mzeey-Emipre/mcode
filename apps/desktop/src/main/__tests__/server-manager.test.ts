@@ -576,6 +576,39 @@ describe("ServerManager", () => {
     expect(opts.env.ELECTRON_RUN_AS_NODE).toBe("1");
   });
 
+  it("uses the main Electron binary for the unsigned macOS release lane", async () => {
+    const originalPlatform = process.platform;
+    Object.defineProperty(process, "platform", {
+      value: "darwin",
+      configurable: true,
+    });
+    refs.setIsPackaged(true);
+    process.env.MCODE_TERMINAL_RELEASE_TEST = "1";
+    Object.defineProperty(process, "resourcesPath", {
+      value: "/test/resources",
+      configurable: true,
+      writable: true,
+    });
+
+    try {
+      await manager.start();
+
+      expect(refs.resolveServerBinarySpy).toHaveBeenCalledWith({
+        isPackaged: true,
+        execPath: process.execPath,
+        resourcesPath: "/test/resources",
+        platform: "darwin",
+        preferMainBinary: true,
+      });
+    } finally {
+      Object.defineProperty(process, "platform", {
+        value: originalPlatform,
+        configurable: true,
+      });
+      delete process.env.MCODE_TERMINAL_RELEASE_TEST;
+    }
+  });
+
   it("passes BETTER_SQLITE3_BINDING env var when packaged and binding exists", async () => {
     refs.setIsPackaged(true);
     Object.defineProperty(process, "resourcesPath", {

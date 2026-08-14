@@ -43,6 +43,18 @@ describe("resolveServerBinary", () => {
     expect(result).toBe(path.join("/Apps/MCode.app/Contents/Resources", "bin", "mcode-server"));
   });
 
+  it("uses the main Electron binary for unsigned packaged tests", () => {
+    vi.mocked(existsSync).mockReturnValue(true);
+    const result = resolveServerBinary({
+      isPackaged: true,
+      execPath: "/Apps/MCode.app/Contents/MacOS/MCode",
+      resourcesPath: "/Apps/MCode.app/Contents/Resources",
+      platform: "darwin",
+      preferMainBinary: true,
+    });
+    expect(result).toBe("/Apps/MCode.app/Contents/MacOS/MCode");
+  });
+
   it("returns renamed binary on Linux when present", () => {
     vi.mocked(existsSync).mockReturnValue(true);
     const result = resolveServerBinary({

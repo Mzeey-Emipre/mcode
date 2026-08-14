@@ -11,6 +11,8 @@ export interface ResolveServerBinaryInput {
   resourcesPath: string;
   /** `process.platform` — controls extension and image-name expectations. */
   platform: NodeJS.Platform;
+  /** Use the main Electron binary when an unsigned packaged test cannot run the renamed copy. */
+  preferMainBinary?: boolean;
 }
 
 /** Filename of the renamed binary; `.exe` on Windows. */
@@ -29,7 +31,12 @@ function renamedBinaryName(platform: NodeJS.Platform): string {
  * if it's missing for any reason fall back to `execPath` so the app still works.
  */
 export function resolveServerBinary(input: ResolveServerBinaryInput): string {
-  if (!input.isPackaged) return input.execPath;
+  if (
+    !input.isPackaged ||
+    (input.platform === "darwin" && input.preferMainBinary)
+  ) {
+    return input.execPath;
+  }
 
   const renamed = path.join(input.resourcesPath, "bin", renamedBinaryName(input.platform));
   if (existsSync(renamed)) return renamed;
