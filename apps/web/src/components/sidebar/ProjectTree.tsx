@@ -1112,6 +1112,8 @@ const ThreadRow = memo(function ThreadRow({
                 onClick={handleLifecycleClick}
                 className={cn(
                   "size-5 shrink-0 rounded-full p-0 text-muted-foreground/65 opacity-0 transition-opacity shadow-none hover:bg-transparent hover:text-foreground group-hover/row:opacity-100 group-focus-visible/row:opacity-100 focus-visible:opacity-100 disabled:cursor-not-allowed",
+                  isRunning &&
+                    "disabled:opacity-0 group-hover/row:disabled:opacity-100 group-focus-visible/row:disabled:opacity-100",
                 )}
               >
                 {isLifecyclePending ? (
