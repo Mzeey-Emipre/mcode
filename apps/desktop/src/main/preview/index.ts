@@ -57,5 +57,5 @@ export {
   PreviewSessionAdapter,
   previewSessionAdapter,
 } from "./preview-session-adapter.js";
-export { PREVIEW_POPUP_REQUESTED_CHANNEL } from "./preview-popup-contract.js";
-export type { PreviewPopupRequest } from "./preview-popup-contract.js";
+export { PREVIEW_POPUP_REQUESTED_CHANNEL } from "../../features/preview/contracts/popup.js";
+export type { PreviewPopupRequest } from "../../features/preview/contracts/popup.js";

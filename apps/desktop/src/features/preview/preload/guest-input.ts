@@ -5,7 +5,7 @@ import {
   PREVIEW_GUEST_HUMAN_INPUT_CHANNEL,
   PreviewGuestInputSuppressor,
   toPreviewGuestHumanInputMessage,
-} from "./preview-guest-input-contract.js";
+} from "../contracts/guest-input.js";
 
 const suppressor = new PreviewGuestInputSuppressor();
 

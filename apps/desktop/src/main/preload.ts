@@ -9,11 +9,11 @@ import { contextBridge, ipcRenderer, webFrame, webUtils } from "electron";
 import {
   PREVIEW_POPUP_REQUESTED_CHANNEL,
   type PreviewPopupRequest,
-} from "./preview/preview-popup-contract.js";
+} from "../features/preview/contracts/popup.js";
 import {
   PREVIEW_SURFACE_DISCARD_REQUESTED_CHANNEL,
   type PreviewSurfaceDiscardRequest,
-} from "./preview/preview-surface-lifecycle-contract.js";
+} from "../features/preview/contracts/surface-lifecycle.js";
 
 contextBridge.exposeInMainWorld("desktopBridge", {
   /** Platform facts and allowlisted native window actions for the custom title bar. */

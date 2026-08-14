@@ -21,6 +21,6 @@
     "incremental": true,
     "tsBuildInfoFile": "./node_modules/.cache/tsbuildinfo"
   },
-  "include": ["src/main/**/*"],
-  "exclude": ["node_modules", "dist", "src/main/__tests__"]
+  "include": ["src/main/**/*", "src/features/**/*"],
+  "exclude": ["node_modules", "dist", "src/main/__tests__", "src/features/**/__tests__"]
 }

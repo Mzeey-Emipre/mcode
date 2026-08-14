@@ -4,7 +4,7 @@
  * 1. Builds main + renderer preload + fixed guest preload with esbuild:
  *    - Main:    src/main/main.ts    -> dist/main/main.cjs
  *    - Preload: src/main/preload.ts -> dist/preload/preload.cjs
- *    - Guest:   src/main/preview/preview-guest-preload.ts -> dist/preload/preview-guest-preload.cjs
+ *    - Guest:   src/features/preview/preload/guest-input.ts -> dist/preload/preview-guest-preload.cjs
  * 2. Builds the web renderer with Vite into dist/renderer.
  *
  * Both esbuild targets use CJS output (.cjs) because package.json has "type": "module".
@@ -58,7 +58,7 @@ await Promise.all([
   }),
   build({
     ...shared,
-    entryPoints: ["src/main/preview/preview-guest-preload.ts"],
+    entryPoints: ["src/features/preview/preload/guest-input.ts"],
     outfile: "dist/preload/preview-guest-preload.cjs",
     external: ["electron"],
   }),

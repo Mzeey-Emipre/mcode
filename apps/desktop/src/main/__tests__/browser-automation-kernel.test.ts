@@ -4,7 +4,7 @@ import { BROWSER_AUTOMATION_CONTRACT_VERSION, type BrowserAutomationRequest } fr
 import {
   PREVIEW_GUEST_AGENT_INPUT_CHANNEL,
   PreviewGuestInputSuppressor,
-} from "../preview/preview-guest-input-contract.js";
+} from "../../features/preview/contracts/guest-input.js";
 
 let currentWebContents: FakeWebContents | null = null;
 const adoptedWebContents = new Map<string, FakeWebContents | null>();
