@@ -62,11 +62,11 @@ function registration(hostId: string, workspaceId: string): BrowserAutomationHos
     workspaceIds: [workspaceId],
     executorDescriptor: {
       runtime: "electron",
-      operations: ["inspect", ...BROWSER_AUTOMATION_OPERATIONS],
+      operations: [...BROWSER_AUTOMATION_OPERATIONS],
       constraints: { maxTabs: 32, maxSnapshotChars: 20_000, maxDiagnostics: 200 },
       capabilityRevision: 1,
     },
-    capabilities: [{ operation: "status", available: true }],
+    capabilities: BROWSER_AUTOMATION_OPERATIONS.map((operation) => ({ operation, available: true })),
     maxPendingRequests: 2,
     connectedAt: 1,
   };
@@ -82,7 +82,7 @@ function claims(threadId: string, workspaceId: string): BrowserAutomationCredent
     workspaceId,
     worktreeIdentity: "worktree-a",
     permissionCapability: "observe",
-    allowedOperations: ["status"],
+    allowedOperations: ["inspect"],
     issuedAt: 1,
     expiresAt: 100_000,
   };
@@ -99,25 +99,20 @@ function request(scope: BrowserAutomationCredentialClaims, sequence = 1): Browse
     sequence,
     deadline: 50_000,
     expectedControlEpoch: 0,
-    operation: "status",
+    operation: "inspect",
     args: {},
   };
 }
 
-function statusResult() {
+function inspectResult() {
   return {
-    operation: "status" as const,
-    available: true,
-    active: true,
-    url: "https://example.test/",
-    loading: false,
-    focused: true,
-    viewport: { width: 1280, height: 720 },
-    capabilities: ["status" as const],
+    operation: "inspect" as const,
+    tabs: [],
+    capabilities: ["inspect" as const],
   };
 }
 
-function statusTarget(hostId: string, generation: number, targetGeneration = 0, controller?: { tabId: string; controller: "none" | "human" | "agent"; controlEpoch: number }) {
+function browserTarget(hostId: string, generation: number, targetGeneration = 0, controller?: { tabId: string; controller: "none" | "human" | "agent"; controlEpoch: number }) {
   return {
     desktopInstanceId: `desktop-${hostId}`,
     windowId: 1,
@@ -154,7 +149,7 @@ function pendingStatusWithMutation(mutation: (broker: BrowserAutomationBroker, s
   });
   broker = new BrowserAutomationBroker(optionsWithMutation);
   const generation = broker.registerHost(hostSocket, registration("drift-host", "workspace-a"), authorization("drift-host")).generation;
-  broker.updateTargets(hostSocket, "drift-host", generation, [statusTarget("drift-host", generation)]);
+  broker.updateTargets(hostSocket, "drift-host", generation, [browserTarget("drift-host", generation)]);
   const scope = claims("thread-a", "workspace-a");
   armed = true;
   const pending = broker.execute(scope, request(scope));
@@ -263,11 +258,10 @@ describe("BrowserAutomationBroker", () => {
       },
       capabilities: [
         { operation: "inspect", available: true },
-        { operation: "status", available: true },
       ],
     }, authorization("inspect-authority")).generation;
     updateTargets(broker, hostSocket, "inspect-authority", generation, ["thread-a"]);
-    const scope = { ...claims("thread-a", "workspace-a"), allowedOperations: ["inspect", "status"] as const };
+    const scope = { ...claims("thread-a", "workspace-a"), allowedOperations: ["inspect"] as const };
     const pending = broker.execute(scope, { ...request(scope), operation: "inspect", args: { includeScreenshot: false, includeDiagnostics: true } });
     await new Promise((resolve) => setTimeout(resolve, 0));
     const dispatch = deliveries.find((delivery) => delivery.channel === "browserAutomation.request")!.data.dispatch;
@@ -303,7 +297,7 @@ describe("BrowserAutomationBroker", () => {
         tabs: [{ tabId: "tab-thread-a" }],
         snapshot: { visibleText: "1234", visibleTextTruncation: { truncated: true, originalCount: 6, reason: "character-limit" } },
         diagnostics: ["one"],
-        capabilities: ["inspect", "status"],
+        capabilities: ["inspect"],
         capabilityRevision: 1,
         guidance: expect.stringContaining("electron"),
         observationRef: "driver-issued",
@@ -347,43 +341,6 @@ describe("BrowserAutomationBroker", () => {
     await expect(pending).resolves.not.toHaveProperty("result.observationRef");
   });
 
-  it("restricts browser_status to descriptor, credential, host, and controller state", async () => {
-    const deliveries: Array<{ channel: string; data: any }> = [];
-    const broker = new BrowserAutomationBroker(options({ now: () => 10, send: (_socket, channel, data) => {
-      deliveries.push({ channel, data });
-      return true;
-    } }));
-    const hostSocket = socket("restricted-status");
-    const generation = broker.registerHost(hostSocket, {
-      ...registration("restricted-status", "workspace-a"),
-      capabilities: [
-        { operation: "status", available: true },
-        { operation: "snapshot", available: true },
-      ],
-    }, authorization("restricted-status")).generation;
-    broker.updateTargets(hostSocket, "restricted-status", generation, [statusTarget("restricted-status", generation, 0, { tabId: "tab-thread-a", controller: "human", controlEpoch: 4 })]);
-    const scope = claims("thread-a", "workspace-a");
-    const pending = broker.execute(scope, request(scope));
-    expect(broker.status().pending).toBe(1);
-    const delivery = deliveries.find((entry) => entry.channel === "browserAutomation.request")!;
-    broker.respond(hostSocket, "restricted-status", generation, {
-      contractVersion: 1,
-      requestId: delivery.data.dispatch.request.requestId,
-      sequence: delivery.data.dispatch.request.sequence,
-      ok: true,
-      result: { ...statusResult(), capabilities: ["status", "snapshot", "inspect"] },
-    });
-    await expect(pending).resolves.toMatchObject({
-      ok: true,
-      result: {
-        operation: "status",
-        capabilities: ["status"],
-        capabilityRevision: 1,
-        controller: { controller: "human", controlEpoch: 4 },
-      },
-    });
-  });
-
   it("rejects descriptor revision drift before transport send", async () => {
     const replacement = socket("drift-revision-replacement");
     const scenario = pendingStatusWithMutation((broker, _socket, _generation) => {
@@ -392,7 +349,7 @@ describe("BrowserAutomationBroker", () => {
         executorDescriptor: { ...registration("drift-host", "workspace-a").executorDescriptor, capabilityRevision: 2 },
       }, authorization("drift-host"));
     });
-    await expect(scenario.pending).resolves.toMatchObject({ ok: false, error: { code: "HOST_UNAVAILABLE", effect: "none", recovery: "retry" } });
+    await expect(scenario.pending).resolves.toMatchObject({ ok: false, error: { code: "HOST_UNAVAILABLE", effect: "none", recovery: "wait" } });
     expect(scenario.deliveries).toHaveLength(0);
   });
 
@@ -400,7 +357,7 @@ describe("BrowserAutomationBroker", () => {
     const scenario = pendingStatusWithMutation((_broker, _socket, _generation, scope) => {
       Reflect.set(scope.allowedOperations, "length", 0);
     });
-    await expect(scenario.pending).resolves.toMatchObject({ ok: false, error: { code: "FORBIDDEN", effect: "none", recovery: "manual" } });
+    await expect(scenario.pending).resolves.toMatchObject({ ok: false, error: { code: "FORBIDDEN", effect: "none", recovery: "do_not_retry" } });
     expect(scenario.deliveries).toHaveLength(0);
   });
 
@@ -409,23 +366,23 @@ describe("BrowserAutomationBroker", () => {
     const scenario = pendingStatusWithMutation((broker, _socket, _generation) => {
       broker.registerHost(replacement, registration("drift-host", "workspace-a"), authorization("drift-host"));
     });
-    await expect(scenario.pending).resolves.toMatchObject({ ok: false, error: { code: "HOST_UNAVAILABLE", effect: "none", recovery: "retry" } });
+    await expect(scenario.pending).resolves.toMatchObject({ ok: false, error: { code: "HOST_UNAVAILABLE", effect: "none", recovery: "wait" } });
     expect(scenario.deliveries).toHaveLength(0);
   });
 
   it("rejects target generation drift before transport send", async () => {
     const scenario = pendingStatusWithMutation((broker, socket, generation) => {
-      broker.updateTargets(socket, "drift-host", generation, [statusTarget("drift-host", generation, 1)]);
+      broker.updateTargets(socket, "drift-host", generation, [browserTarget("drift-host", generation, 1)]);
     });
-    await expect(scenario.pending).resolves.toMatchObject({ ok: false, error: { code: "STALE_TARGET_GENERATION", effect: "none", recovery: "retry" } });
+    await expect(scenario.pending).resolves.toMatchObject({ ok: false, error: { code: "STALE_TARGET_GENERATION", effect: "none", recovery: "inspect" } });
     expect(scenario.deliveries).toHaveLength(0);
   });
 
   it("rejects controller drift before transport send", async () => {
     const scenario = pendingStatusWithMutation((broker, socket, generation) => {
-      broker.updateTargets(socket, "drift-host", generation, [statusTarget("drift-host", generation, 0, { tabId: "tab-thread-a", controller: "human", controlEpoch: 2 })]);
+      broker.updateTargets(socket, "drift-host", generation, [browserTarget("drift-host", generation, 0, { tabId: "tab-thread-a", controller: "human", controlEpoch: 2 })]);
     });
-    await expect(scenario.pending).resolves.toMatchObject({ ok: false, error: { code: "HUMAN_INTERRUPTED", effect: "none", recovery: "retry" } });
+    await expect(scenario.pending).resolves.toMatchObject({ ok: false, error: { code: "HUMAN_INTERRUPTED", effect: "none", recovery: "yield_to_user" } });
     expect(scenario.deliveries).toHaveLength(0);
   });
 
@@ -455,7 +412,7 @@ describe("BrowserAutomationBroker", () => {
         requestId: delivery.data.dispatch.request.requestId,
         sequence: delivery.data.dispatch.request.sequence,
         ok: true,
-        result: statusResult(),
+        result: inspectResult(),
       });
     }
     await expect(firstPending).resolves.toMatchObject({ ok: true });
@@ -487,7 +444,7 @@ describe("BrowserAutomationBroker", () => {
         tabId: "tab-thread-a",
         generation: 1,
       },
-      capabilities: [{ operation: "snapshot", available: true }],
+      capabilities: [{ operation: "inspect", available: true }],
     }, {
       ...authorization("web"),
       allowWebRuntime: true,
@@ -495,12 +452,12 @@ describe("BrowserAutomationBroker", () => {
     updateTargets(broker, hostSocket, "web", generation, ["thread-a"]);
     const scope = {
       ...claims("thread-a", "workspace-a"),
-      allowedOperations: ["snapshot" as const],
+      allowedOperations: ["inspect" as const],
     };
     const pending = broker.execute(scope, {
       ...request(scope),
-      operation: "snapshot",
-      args: { includeScreenshot: false, timeoutMs: 1_000 },
+      operation: "inspect",
+      args: { includeScreenshot: false, includeDiagnostics: false },
     });
     const delivery = deliveries[0]!;
     const crossOrigin = {
@@ -574,7 +531,7 @@ describe("BrowserAutomationBroker", () => {
       requestId: request(scope).requestId,
       sequence: 1,
       ok: true,
-      result: statusResult(),
+      result: inspectResult(),
     });
     expect(broker.status().pending).toBe(0);
     const secondPending = broker.execute(scope, { ...request(scope, 2), deadline: 100 });
@@ -726,7 +683,7 @@ describe("BrowserAutomationBroker", () => {
       ...registration("first", "workspace-a"),
       capabilities: [
         { operation: "open", available: true },
-        { operation: "status", available: true },
+        { operation: "inspect", available: true },
       ],
     }, authorization("first")).generation;
     const target = {
@@ -743,7 +700,7 @@ describe("BrowserAutomationBroker", () => {
     broker.updateTargets(hostSocket, "first", generation, [target]);
     const scope = {
       ...claims("thread-a", "workspace-a"),
-      allowedOperations: ["open" as const, "status" as const],
+      allowedOperations: ["open", "inspect"] as const,
     };
     const opened = broker.execute(scope, {
       ...request(scope),
@@ -770,224 +727,9 @@ describe("BrowserAutomationBroker", () => {
       requestId: deliveries[1].dispatch.request.requestId,
       sequence: deliveries[1].dispatch.request.sequence,
       ok: true,
-      result: statusResult(),
+      result: inspectResult(),
     });
     await expect(status).resolves.toMatchObject({ ok: true });
-  });
-
-  it("preserves an assigned navigate across an exact target generation transition", async () => {
-    let delivery: any;
-    const broker = new BrowserAutomationBroker(options({
-      now: () => 10,
-      send: (_socket, channel, data) => {
-        if (channel === "browserAutomation.request") delivery = data;
-        return true;
-      },
-    }));
-    const hostSocket = socket("first");
-    const generation = broker.registerHost(hostSocket, {
-      ...registration("first", "workspace-a"),
-      capabilities: [
-        { operation: "navigate", available: true },
-        { operation: "status", available: true },
-      ],
-    }, authorization("first")).generation;
-    const target = {
-      desktopInstanceId: "desktop-first",
-      windowId: 1,
-      connectionGeneration: generation,
-      threadId: "thread-a",
-      tabId: "tab-thread-a",
-      targetGeneration: 0,
-      active: true,
-      focused: true,
-      lastUsedAt: 10,
-    };
-    broker.updateTargets(hostSocket, "first", generation, [target]);
-    const scope = {
-      ...claims("thread-a", "workspace-a"),
-      allowedOperations: ["navigate" as const, "status" as const],
-    };
-    const navigated = broker.execute(scope, {
-      ...request(scope),
-      operation: "navigate",
-      args: { url: "https://example.test/destination" },
-    });
-    broker.updateTargets(hostSocket, "first", generation, [{ ...target, targetGeneration: 1 }]);
-    expect(broker.status().pending).toBe(1);
-
-    broker.respond(hostSocket, "first", generation, {
-      contractVersion: 1,
-      requestId: delivery.dispatch.request.requestId,
-      sequence: delivery.dispatch.request.sequence,
-      ok: true,
-      result: {
-        operation: "navigate",
-        url: "https://example.test/destination",
-        title: "Destination",
-        controlEpoch: 1,
-      },
-    });
-    await expect(navigated).resolves.toMatchObject({ ok: true });
-  });
-
-  it("allows one retry for a failed navigation and rejects further attempts", async () => {
-    const deliveries: Array<{ dispatch: any }> = [];
-    const broker = new BrowserAutomationBroker(options({
-      now: () => 10,
-      send: (_socket, channel, data) => {
-        if (channel === "browserAutomation.request") deliveries.push(data as { dispatch: any });
-        return true;
-      },
-    }));
-    const hostSocket = socket("navigation-retry-budget");
-    const generation = broker.registerHost(hostSocket, {
-      ...registration("navigation-retry-budget", "workspace-a"),
-      capabilities: [{ operation: "navigate", available: true }],
-    }, authorization("navigation-retry-budget")).generation;
-    updateTargets(broker, hostSocket, "navigation-retry-budget", generation, ["thread-a"]);
-    const scope = {
-      ...claims("thread-a", "workspace-a"),
-      allowedOperations: ["navigate" as const],
-    };
-    const navigate = (sequence: number) => broker.execute(scope, {
-      ...request(scope, sequence),
-      operation: "navigate",
-      args: { url: "https://example.test/challenge" },
-    });
-    const failLatest = (): void => {
-      const delivery = deliveries.at(-1)!.dispatch;
-      broker.respond(hostSocket, "navigation-retry-budget", generation, {
-        contractVersion: 1,
-        requestId: delivery.request.requestId,
-        sequence: delivery.request.sequence,
-        ok: false,
-        error: {
-          code: "NAVIGATION_FAILED",
-          message: "Browser navigation failed",
-          retryable: true,
-          stage: "effect",
-          effect: "none",
-          recovery: "retry",
-        },
-      });
-    };
-
-    const first = navigate(1);
-    failLatest();
-    await expect(first).resolves.toMatchObject({
-      ok: false,
-      error: { code: "NAVIGATION_FAILED", retryable: true, recovery: "retry" },
-    });
-
-    const retry = navigate(2);
-    failLatest();
-    await expect(retry).resolves.toMatchObject({
-      ok: false,
-      error: { code: "NAVIGATION_FAILED", retryable: false, recovery: "do_not_retry" },
-    });
-
-    await expect(navigate(3)).resolves.toMatchObject({
-      ok: false,
-      error: { code: "NAVIGATION_FAILED", retryable: false, recovery: "do_not_retry" },
-    });
-    expect(deliveries).toHaveLength(2);
-  });
-
-  it("does not direct navigation retries after the browser host disconnects", async () => {
-    const broker = new BrowserAutomationBroker(options({ now: () => 10 }));
-    const hostSocket = socket("navigation-host-loss");
-    const generation = broker.registerHost(hostSocket, {
-      ...registration("navigation-host-loss", "workspace-a"),
-      capabilities: [{ operation: "navigate", available: true }],
-    }, authorization("navigation-host-loss")).generation;
-    updateTargets(broker, hostSocket, "navigation-host-loss", generation, ["thread-a"]);
-    const scope = {
-      ...claims("thread-a", "workspace-a"),
-      allowedOperations: ["navigate" as const],
-    };
-    const pending = broker.execute(scope, {
-      ...request(scope),
-      operation: "navigate",
-      args: { url: "https://example.test/challenge" },
-    });
-
-    broker.disconnect(hostSocket);
-
-    await expect(pending).resolves.toMatchObject({
-      ok: false,
-      error: { code: "HOST_UNAVAILABLE", recovery: "wait" },
-    });
-  });
-
-  it("resets the navigation retry budget after a successful load", async () => {
-    const deliveries: Array<{ dispatch: any }> = [];
-    const broker = new BrowserAutomationBroker(options({
-      now: () => 10,
-      send: (_socket, channel, data) => {
-        if (channel === "browserAutomation.request") deliveries.push(data as { dispatch: any });
-        return true;
-      },
-    }));
-    const hostSocket = socket("navigation-retry-reset");
-    const generation = broker.registerHost(hostSocket, {
-      ...registration("navigation-retry-reset", "workspace-a"),
-      capabilities: [{ operation: "navigate", available: true }],
-    }, authorization("navigation-retry-reset")).generation;
-    updateTargets(broker, hostSocket, "navigation-retry-reset", generation, ["thread-a"]);
-    const scope = {
-      ...claims("thread-a", "workspace-a"),
-      allowedOperations: ["navigate" as const],
-    };
-    const navigate = (sequence: number) => broker.execute(scope, {
-      ...request(scope, sequence),
-      operation: "navigate",
-      args: { url: "https://example.test/recovered" },
-    });
-
-    const first = navigate(1);
-    const firstDelivery = deliveries.at(-1)!.dispatch;
-    broker.respond(hostSocket, "navigation-retry-reset", generation, {
-      contractVersion: 1,
-      requestId: firstDelivery.request.requestId,
-      sequence: firstDelivery.request.sequence,
-      ok: false,
-      error: { code: "NAVIGATION_FAILED", message: "failed", retryable: true },
-    });
-    await expect(first).resolves.toMatchObject({ ok: false });
-
-    const recovered = navigate(2);
-    const recoveredDelivery = deliveries.at(-1)!.dispatch;
-    broker.respond(hostSocket, "navigation-retry-reset", generation, {
-      contractVersion: 1,
-      requestId: recoveredDelivery.request.requestId,
-      sequence: recoveredDelivery.request.sequence,
-      ok: true,
-      result: {
-        operation: "navigate",
-        url: "https://example.test/recovered",
-        title: "Recovered",
-        controlEpoch: 0,
-      },
-    });
-    await expect(recovered).resolves.toMatchObject({ ok: true });
-
-    const afterSuccess = navigate(3);
-    expect(deliveries).toHaveLength(3);
-    const finalDelivery = deliveries.at(-1)!.dispatch;
-    broker.respond(hostSocket, "navigation-retry-reset", generation, {
-      contractVersion: 1,
-      requestId: finalDelivery.request.requestId,
-      sequence: finalDelivery.request.sequence,
-      ok: true,
-      result: {
-        operation: "navigate",
-        url: "https://example.test/recovered",
-        title: "Recovered again",
-        controlEpoch: 0,
-      },
-    });
-    await expect(afterSuccess).resolves.toMatchObject({ ok: true });
   });
 
   it("settles non-open work when an assigned target advances generations", async () => {
@@ -1020,7 +762,10 @@ describe("BrowserAutomationBroker", () => {
       const hostSocket = socket("first");
       const generation = broker.registerHost(hostSocket, {
         ...registration("first", "workspace-a"),
-        capabilities: [{ operation: "open", available: true }],
+       capabilities: [
+         { operation: "open", available: true },
+         { operation: "inspect", available: true },
+       ],
       }, authorization("first")).generation;
       const target = {
         desktopInstanceId: "desktop-first",
@@ -1110,7 +855,7 @@ describe("BrowserAutomationBroker", () => {
         requestId: delivery.dispatch.request.requestId,
         sequence: delivery.dispatch.request.sequence,
         ok: true,
-        result: statusResult(),
+        result: inspectResult(),
       });
       await pending;
     }
@@ -1235,7 +980,7 @@ describe("BrowserAutomationBroker", () => {
       requestId: delivery.dispatch.request.requestId,
       sequence: delivery.dispatch.request.sequence,
       ok: true,
-      result: statusResult(),
+      result: inspectResult(),
     });
     await completed;
 
@@ -1278,7 +1023,7 @@ describe("BrowserAutomationBroker", () => {
         requestId: delivery.dispatch.request.requestId,
         sequence: delivery.dispatch.request.sequence,
         ok: true,
-        result: statusResult(),
+        result: inspectResult(),
       });
       await pending;
     }
@@ -1290,89 +1035,6 @@ describe("BrowserAutomationBroker", () => {
       p99Ms: 30,
     });
     expect(JSON.stringify(broker.reliabilityStatus())).not.toMatch(/thread-a|example\.test/i);
-  });
-
-  it("counts truncation nested inside screenshot and snapshot results", async () => {
-    const deliveries: any[] = [];
-    const broker = new BrowserAutomationBroker(options({
-      now: () => 10,
-      send: (_socket, channel, data) => {
-        if (channel === "browserAutomation.request") deliveries.push(data);
-        return true;
-      },
-    }));
-    const hostSocket = socket("diagnostics");
-    const generation = broker.registerHost(hostSocket, {
-      ...registration("diagnostics", "workspace-a"),
-      capabilities: [
-        { operation: "screenshot", available: true },
-        { operation: "snapshot", available: true },
-      ],
-    }, authorization("diagnostics")).generation;
-    updateTargets(broker, hostSocket, "diagnostics", generation, ["thread-a"]);
-    const scope = {
-      ...claims("thread-a", "workspace-a"),
-      allowedOperations: ["screenshot" as const, "snapshot" as const],
-    };
-    const screenshotPending = broker.execute(scope, {
-      ...request(scope),
-      operation: "screenshot",
-      args: { maxWidth: 100, fullPage: false },
-    });
-    broker.respond(hostSocket, "diagnostics", generation, {
-      contractVersion: 1,
-      requestId: deliveries[0].dispatch.request.requestId,
-      sequence: 1,
-      ok: true,
-      result: {
-        operation: "screenshot",
-        screenshot: {
-          mediaType: "image/png",
-          dataBase64: "",
-          width: 100,
-          height: 50,
-          truncation: { truncated: true, originalCount: 200, reason: "byte-limit" },
-        },
-        controlEpoch: 0,
-      },
-    });
-    await screenshotPending;
-
-    const snapshotPending = broker.execute(scope, {
-      ...request(scope, 2),
-      operation: "snapshot",
-      args: { includeScreenshot: false, timeoutMs: 1_000 },
-    });
-    broker.respond(hostSocket, "diagnostics", generation, {
-      contractVersion: 1,
-      requestId: deliveries[1].dispatch.request.requestId,
-      sequence: 2,
-      ok: true,
-      result: {
-        operation: "snapshot",
-        snapshot: {
-          url: "https://example.test/",
-          title: "Example",
-          loading: false,
-          visibleText: "x",
-          visibleTextTruncation: { truncated: true, originalCount: 2, reason: "character-limit" },
-          elements: [],
-          elementsTruncation: { truncated: false, originalCount: 0 },
-          accessibility: [],
-          accessibilityTruncation: { truncated: false, originalCount: 0 },
-          console: [],
-          consoleTruncation: { truncated: false, originalCount: 0 },
-          network: [],
-          networkTruncation: { truncated: false, originalCount: 0 },
-          actions: [],
-          actionsTruncation: { truncated: false, originalCount: 0 },
-        },
-        controlEpoch: 0,
-      },
-    });
-    await snapshotPending;
-
-    expect(broker.reliabilityStatus()).toMatchObject({ succeeded: 2, truncated: 2 });
   });
 
   it("cancels targetless bootstrap work on deadline", async () => {
@@ -1393,7 +1055,7 @@ describe("BrowserAutomationBroker", () => {
     }, authorization("bootstrap"));
     const scope = {
       ...claims("thread-a", "workspace-a"),
-      allowedOperations: ["open" as const],
+      allowedOperations: ["open"] as const,
     };
     const pending = broker.execute(scope, {
       ...request(scope),
@@ -1466,14 +1128,21 @@ describe("BrowserAutomationBroker", () => {
       ...registration("bootstrap", "workspace-a"),
       capabilities: [
         { operation: "open", available: true },
-        { operation: "status", available: true },
+        { operation: "inspect", available: true },
       ],
     }, authorization("bootstrap")).generation;
-    const olderGeneration = register(broker, olderSocket, "older", "workspace-a");
+    const olderGeneration = broker.registerHost(olderSocket, {
+      ...registration("older", "workspace-a"),
+      executorDescriptor: {
+        ...registration("older", "workspace-a").executorDescriptor,
+        operations: ["inspect"],
+      },
+      capabilities: [{ operation: "inspect", available: true }],
+    }, authorization("older")).generation;
     updateTargets(broker, olderSocket, "older", olderGeneration, ["thread-a"]);
     const scope = {
       ...claims("thread-a", "workspace-a"),
-      allowedOperations: ["open" as const, "status" as const],
+      allowedOperations: ["open", "inspect"] as const,
     };
     const opened = broker.execute(scope, {
       ...request(scope),
@@ -1517,7 +1186,7 @@ describe("BrowserAutomationBroker", () => {
       requestId: statusDelivery.data.dispatch.request.requestId,
       sequence: 2,
       ok: true,
-      result: statusResult(),
+      result: inspectResult(),
     });
     await expect(status).resolves.toMatchObject({ ok: true });
   });
@@ -1620,7 +1289,7 @@ describe("BrowserAutomationBroker", () => {
       executorDescriptor: { ...registration("open-lock", "workspace-a").executorDescriptor, operations: ["open", "tabs"] },
       capabilities: [{ operation: "open", available: true }, { operation: "tabs", available: true }],
     }, authorization("open-lock")).generation;
-    broker.updateTargets(hostSocket, "open-lock", generation, [statusTarget("open-lock", generation)]);
+    broker.updateTargets(hostSocket, "open-lock", generation, [browserTarget("open-lock", generation)]);
     const scope = { ...claims("thread-a", "workspace-a"), permissionCapability: "interact" as const, allowedOperations: ["open", "tabs"] as const };
     const opened = broker.execute(scope, {
       ...request(scope), requestId: "locked-open", operation: "open" as const,
@@ -1632,7 +1301,7 @@ describe("BrowserAutomationBroker", () => {
     });
     await expect(busy).resolves.toMatchObject({ ok: false, error: { code: "BROWSER_BUSY" } });
     const bootstrap = deliveries.find(({ channel }) => channel === "browserAutomation.bootstrap")!;
-    const target = { ...statusTarget("open-lock", generation), tabId: "agent-tab" };
+    const target = { ...browserTarget("open-lock", generation), tabId: "agent-tab" };
     broker.respond(hostSocket, "open-lock", generation, {
       contractVersion: 1,
       requestId: bootstrap.data.request.requestId,
@@ -1652,7 +1321,7 @@ describe("BrowserAutomationBroker", () => {
       executorDescriptor: { ...registration("act-lock", "workspace-a").executorDescriptor, operations: ["inspect", "act"] },
       capabilities: [{ operation: "act", available: true }],
     }, authorization("act-lock")).generation;
-    broker.updateTargets(hostSocket, "act-lock", generation, [statusTarget("act-lock", generation)]);
+    broker.updateTargets(hostSocket, "act-lock", generation, [browserTarget("act-lock", generation)]);
     const scope = { ...claims("thread-a", "workspace-a"), permissionCapability: "interact" as const, allowedOperations: ["act" as const] };
     const makeAct = (requestId: string, key: string, sequence: number) => broker.execute(scope, {
       ...request(scope, sequence), requestId, operation: "act", args: { idempotencyKey: key, observationRef: "obs", deadlineMs: 10_000, steps: [{ operation: "click", target: { role: "button", accessibleName: "Save" } }] },
@@ -1673,10 +1342,7 @@ describe("BrowserAutomationBroker", () => {
 
   it("uses one correlation identity through queue, execution, page wait, settlement, and cleanup", async () => {
     const events: BrowserAutomationTelemetryEvent[] = [];
-    const telemetry = new BrowserAutomationTelemetry(
-      { mode: "browser-v2", reason: "nightly", rollbackActive: false },
-      { sink: (event) => events.push(event) },
-    );
+    const telemetry = new BrowserAutomationTelemetry({ sink: (event) => events.push(event) });
     const deliveries: Array<{ channel: string; data: any }> = [];
     const broker = new BrowserAutomationBroker(options({
       now: () => 10,
@@ -1690,7 +1356,7 @@ describe("BrowserAutomationBroker", () => {
       executorDescriptor: { ...base.executorDescriptor, operations: ["inspect", "act"] },
       capabilities: [{ operation: "act", available: true }],
     }, authorization("correlated-act")).generation;
-    broker.updateTargets(hostSocket, "correlated-act", generation, [statusTarget("correlated-act", generation)]);
+    broker.updateTargets(hostSocket, "correlated-act", generation, [browserTarget("correlated-act", generation)]);
     const scope = {
       ...claims("thread-a", "workspace-a"),
       permissionCapability: "interact" as const,
@@ -1755,7 +1421,7 @@ describe("BrowserAutomationBroker", () => {
       executorDescriptor: { ...registration("evaluate-lock", "workspace-a").executorDescriptor, operations: ["inspect", "evaluate"] },
       capabilities: [{ operation: "evaluate", available: true }],
     }, authorization("evaluate-lock")).generation;
-    broker.updateTargets(hostSocket, "evaluate-lock", generation, [statusTarget("evaluate-lock", generation)]);
+    broker.updateTargets(hostSocket, "evaluate-lock", generation, [browserTarget("evaluate-lock", generation)]);
     const scope = { ...claims("thread-a", "workspace-a"), permissionCapability: "privileged" as const, allowedOperations: ["evaluate" as const] };
     const makeEvaluate = (requestId: string, key: string, expression: string, sequence: number) => broker.execute(scope, {
       ...request(scope, sequence), requestId, operation: "evaluate", args: {
@@ -1814,7 +1480,7 @@ describe("BrowserAutomationBroker", () => {
       executorDescriptor: { ...registration("raw-evaluate", "workspace-a").executorDescriptor, operations: ["inspect", "evaluate"] },
       capabilities: [{ operation: "evaluate", available: true }],
     }, authorization("raw-evaluate")).generation;
-    broker.updateTargets(hostSocket, "raw-evaluate", generation, [statusTarget("raw-evaluate", generation)]);
+    broker.updateTargets(hostSocket, "raw-evaluate", generation, [browserTarget("raw-evaluate", generation)]);
     const scope = { ...claims("thread-a", "workspace-a"), permissionCapability: "privileged" as const, allowedOperations: ["evaluate" as const] };
     const pending = broker.execute(scope, {
       ...request(scope),
@@ -1858,8 +1524,8 @@ describe("BrowserAutomationBroker", () => {
       capabilities: [{ operation: "tabs", available: true }],
     }, authorization("tabs-routing")).generation;
     broker.updateTargets(hostSocket, "tabs-routing", generation, [
-      { ...statusTarget("tabs-routing", generation), tabId: "tab-a", focused: true },
-      { ...statusTarget("tabs-routing", generation), tabId: "tab-b", focused: false, lastUsedAt: 2 },
+      { ...browserTarget("tabs-routing", generation), tabId: "tab-a", focused: true },
+      { ...browserTarget("tabs-routing", generation), tabId: "tab-b", focused: false, lastUsedAt: 2 },
     ]);
     const scope = { ...claims("thread-a", "workspace-a"), permissionCapability: "interact" as const, allowedOperations: ["tabs" as const] };
     const tabsRequest = (requestId: string, sequence: number, args: any) => ({
@@ -1914,7 +1580,7 @@ describe("BrowserAutomationBroker", () => {
       executorDescriptor: { ...registration("tabs-finalize", "workspace-a").executorDescriptor, operations: ["inspect", "tabs"] },
       capabilities: [{ operation: "tabs", available: true }],
     }, authorization("tabs-finalize")).generation;
-    broker.updateTargets(hostSocket, "tabs-finalize", generation, [statusTarget("tabs-finalize", generation)]);
+    broker.updateTargets(hostSocket, "tabs-finalize", generation, [browserTarget("tabs-finalize", generation)]);
     const scope = { ...claims("thread-a", "workspace-a"), permissionCapability: "interact" as const, allowedOperations: ["tabs" as const] };
     const pending = broker.execute(scope, {
       ...request(scope),
@@ -1962,7 +1628,7 @@ describe("BrowserAutomationBroker", () => {
       executorDescriptor: { ...registration("tabs-lock", "workspace-a").executorDescriptor, operations: ["inspect", "tabs", "act"] },
       capabilities: [{ operation: "tabs", available: true }, { operation: "act", available: true }],
     }, authorization("tabs-lock")).generation;
-    broker.updateTargets(hostSocket, "tabs-lock", generation, [statusTarget("tabs-lock", generation)]);
+    broker.updateTargets(hostSocket, "tabs-lock", generation, [browserTarget("tabs-lock", generation)]);
     const scope = { ...claims("thread-a", "workspace-a"), permissionCapability: "interact" as const, allowedOperations: ["tabs", "act"] as const };
     const tabs = (requestId: string, sequence: number, idempotencyKey: string) => broker.execute(scope, {
       ...request(scope, sequence),
@@ -2002,7 +1668,7 @@ describe("BrowserAutomationBroker", () => {
       executorDescriptor: { ...registration("tabs-release-notify", "workspace-a").executorDescriptor, operations: ["inspect", "tabs"] },
       capabilities: [{ operation: "tabs", available: true }],
     }, authorization("tabs-release-notify")).generation;
-    broker.updateTargets(hostSocket, "tabs-release-notify", generation, [statusTarget("tabs-release-notify", generation)]);
+    broker.updateTargets(hostSocket, "tabs-release-notify", generation, [browserTarget("tabs-release-notify", generation)]);
     const scope = { ...claims("thread-a", "workspace-a"), permissionCapability: "interact" as const, allowedOperations: ["tabs" as const] };
     const pending = broker.execute(scope, {
       ...request(scope),
@@ -2231,7 +1897,7 @@ describe("BrowserAutomationBroker", () => {
         requestId: delivery.data.dispatch.request.requestId,
         sequence: delivery.data.dispatch.request.sequence,
         ok: true,
-        result: statusResult(),
+        result: inspectResult(),
       });
       await pending;
       return delivery.socket;
@@ -2248,91 +1914,6 @@ describe("BrowserAutomationBroker", () => {
     advertise(firstSocket, "first", firstGeneration, { focused: false, active: false, lastUsedAt: 200 });
     advertise(secondSocket, "second", secondGeneration, { focused: false, active: false, lastUsedAt: 100 });
     await expect(executeAndSettle("recent-session")).resolves.toBe(firstSocket);
-  });
-
-  it("never reroutes a sticky session for capability mismatch or temporary capacity", async () => {
-    const deliveries: Array<{ socket: WebSocket; data: any }> = [];
-    const broker = new BrowserAutomationBroker(options({
-      now: () => 10,
-      send: (targetSocket, channel, data) => {
-        if (channel === "browserAutomation.request") deliveries.push({ socket: targetSocket, data });
-        return true;
-      },
-    }));
-    const assignedSocket = socket("assigned");
-    const alternateSocket = socket("alternate");
-    const assignedGeneration = broker.registerHost(assignedSocket, {
-      ...registration("assigned", "workspace-a"),
-      capabilities: [{ operation: "status", available: true }],
-      maxPendingRequests: 1,
-    }, authorization("assigned")).generation;
-    const alternateGeneration = broker.registerHost(alternateSocket, {
-      ...registration("alternate", "workspace-a"),
-      capabilities: [
-        { operation: "status", available: true },
-        { operation: "recordingStart", available: true },
-      ],
-      maxPendingRequests: 1,
-    }, authorization("alternate")).generation;
-    broker.updateTargets(assignedSocket, "assigned", assignedGeneration, [{
-      desktopInstanceId: "desktop-assigned",
-      windowId: 1,
-      connectionGeneration: assignedGeneration,
-      threadId: "thread-a",
-      tabId: "assigned-tab",
-      targetGeneration: 0,
-      active: true,
-      focused: true,
-      lastUsedAt: 100,
-    }]);
-    broker.updateTargets(alternateSocket, "alternate", alternateGeneration, [{
-      desktopInstanceId: "desktop-alternate",
-      windowId: 2,
-      connectionGeneration: alternateGeneration,
-      threadId: "thread-a",
-      tabId: "alternate-tab",
-      targetGeneration: 0,
-      active: false,
-      focused: false,
-      lastUsedAt: 200,
-    }]);
-    const scope = {
-      ...claims("thread-a", "workspace-a"),
-      permissionCapability: "interact" as const,
-      allowedOperations: ["status" as const, "recordingStart" as const],
-    };
-    const first = broker.execute(scope, request(scope));
-    expect(deliveries[0]?.socket).toBe(assignedSocket);
-    broker.respond(assignedSocket, "assigned", assignedGeneration, {
-      contractVersion: 1,
-      requestId: deliveries[0]!.data.dispatch.request.requestId,
-      sequence: 1,
-      ok: true,
-      result: statusResult(),
-    });
-    await first;
-
-    await expect(broker.execute(scope, {
-      ...request(scope, 2),
-      operation: "recordingStart",
-      args: { maxDurationMs: 1_000 },
-    })).resolves.toMatchObject({ ok: false, error: { code: "UNSUPPORTED_OPERATION" } });
-    expect(deliveries).toHaveLength(1);
-
-    const otherScope = {
-      ...scope,
-      providerSessionId: "other-provider-session",
-      mcodeSessionId: "other-mcode-session",
-    };
-    const occupying = broker.execute(otherScope, request(otherScope, 99));
-    expect(deliveries[1]?.socket).toBe(assignedSocket);
-    await expect(broker.execute(scope, request(scope, 3))).resolves.toMatchObject({
-      ok: false,
-      error: { code: "HOST_UNAVAILABLE" },
-    });
-    expect(deliveries).toHaveLength(2);
-    broker.disconnect(assignedSocket);
-    await occupying;
   });
 
   it("rejects successful bootstrap responses without an exact target", async () => {

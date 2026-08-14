@@ -1,22 +1,14 @@
 import { createHash, randomBytes, timingSafeEqual } from "crypto";
 import {
   BROWSER_AUTOMATION_OPERATIONS,
-  type BrowserAutomationOperation,
+  type BrowserAutomationPublicOperation,
 } from "@mcode/contracts";
 
 const DEFAULT_IDLE_TTL_MS = 30 * 60_000;
 const DEFAULT_ABSOLUTE_TTL_MS = 8 * 60 * 60_000;
 const DEFAULT_MAX_CREDENTIALS = 256;
-const OBSERVE_OPERATIONS = new Set<BrowserAutomationOperation>([
+const OBSERVE_OPERATIONS = new Set<BrowserAutomationPublicOperation>([
   "inspect",
-  "status",
-  "snapshot",
-  "screenshot",
-  "waitFor",
-  "console",
-  "network",
-  "accessibility",
-  "performance",
 ]);
 
 /** Permission boundary attached to a browser automation credential. */
@@ -31,7 +23,7 @@ export interface BrowserAutomationCredentialScope {
   workspaceId: string;
   worktreeIdentity: string;
   permissionCapability: BrowserAutomationPermissionCapability;
-  allowedOperations: readonly BrowserAutomationOperation[];
+  allowedOperations: readonly BrowserAutomationPublicOperation[];
 }
 
 /** Validated credential claims safe to use for authorization and routing. */
@@ -84,10 +76,10 @@ function validateScope(scope: BrowserAutomationCredentialScope): void {
   if (ids.some((value) => value.length < 1 || value.length > 256)) {
     throw new Error("Browser automation credential scope contains an invalid identifier");
   }
-  const supported = new Set<BrowserAutomationOperation>([...BROWSER_AUTOMATION_OPERATIONS, "inspect", "act", "tabs"]);
+  const supported = new Set<BrowserAutomationPublicOperation>(BROWSER_AUTOMATION_OPERATIONS);
   if (
     scope.allowedOperations.length < 1 ||
-    scope.allowedOperations.length > BROWSER_AUTOMATION_OPERATIONS.length + 3 ||
+    scope.allowedOperations.length > BROWSER_AUTOMATION_OPERATIONS.length ||
     new Set(scope.allowedOperations).size !== scope.allowedOperations.length ||
     scope.allowedOperations.some((operation) => !supported.has(operation))
   ) {

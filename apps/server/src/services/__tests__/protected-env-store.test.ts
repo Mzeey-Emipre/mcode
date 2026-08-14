@@ -34,22 +34,6 @@ describe("ProtectedEnvStore", () => {
     }
   });
 
-  it("auto-protects MCODE_BROWSER_USE_PIPE_PATH (in-app browser bridge)", () => {
-    const prev = process.env.MCODE_BROWSER_USE_PIPE_PATH;
-    process.env.MCODE_BROWSER_USE_PIPE_PATH = "\\\\.\\pipe\\codex-browser-use-mcode-iab-1234";
-    try {
-      const store = new ProtectedEnvStore();
-      expect(store.isProtected("MCODE_BROWSER_USE_PIPE_PATH")).toBe(true);
-      const merged = store.applyTo({ MCODE_BROWSER_USE_PIPE_PATH: "from-shell" });
-      expect(merged.MCODE_BROWSER_USE_PIPE_PATH).toBe(
-        "\\\\.\\pipe\\codex-browser-use-mcode-iab-1234",
-      );
-    } finally {
-      if (prev === undefined) delete process.env.MCODE_BROWSER_USE_PIPE_PATH;
-      else process.env.MCODE_BROWSER_USE_PIPE_PATH = prev;
-    }
-  });
-
   it("auto-protects BETTER_SQLITE3_ prefixed keys", () => {
     const prev = process.env.BETTER_SQLITE3_BINDING;
     process.env.BETTER_SQLITE3_BINDING = "/native/path";

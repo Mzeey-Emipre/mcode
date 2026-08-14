@@ -21,11 +21,6 @@ import { BrowserConformanceFaultController } from "./faults.js";
 export const BROWSER_CONFORMANCE_SHARED_EXECUTOR_OPERATIONS = [
   "inspect",
   "open",
-  "navigate",
-  "snapshot",
-  "screenshot",
-  "click",
-  "type",
   "act",
   "tabs",
 ] as const;
@@ -211,29 +206,29 @@ export function createBrowserExecutorParityScenario(): BrowserConformanceExecuto
   const commands: readonly BrowserConformanceCommand[] = [
     { id: "inspect", operation: "inspect", args: { includeScreenshot: false, includeDiagnostics: false } },
     { id: "open", operation: "open", args: { url: "http://localhost:3000/next", idempotencyKey: "open-parity" } },
-    { id: "navigate", operation: "navigate", args: { url: "http://localhost:3000/final" } },
-    { id: "snapshot", operation: "snapshot", args: { includeScreenshot: false } },
-    { id: "screenshot", operation: "screenshot", args: { fullPage: false, maxWidth: 320 } },
     {
-      id: "click",
-      operation: "click",
-      args: { target: { cssSelector: "#save" }, button: "left", clickCount: 1 },
-    },
-    {
-      id: "type",
-      operation: "type",
-      args: { target: { cssSelector: "#name" }, text: "Mcode", clear: true, submit: false },
-    },
-    { id: "inspect-after-input", operation: "inspect", args: { includeScreenshot: false, includeDiagnostics: false } },
-    {
-      id: "act",
+      id: "act-navigate",
       operation: "act",
       args: {
         observationRef: "$lastObservationRef",
         deadlineMs: 10_000,
-        steps: [{ operation: "click", target: { cssSelector: "#save" }, button: "left", clickCount: 1 }],
+        steps: [{ operation: "navigate", url: "http://localhost:3000/final" }],
       },
     },
+    { id: "inspect-after-navigation", operation: "inspect", args: { includeScreenshot: false, includeDiagnostics: false } },
+    {
+      id: "act-input",
+      operation: "act",
+      args: {
+        observationRef: "$lastObservationRef",
+        deadlineMs: 10_000,
+        steps: [
+          { operation: "click", target: { cssSelector: "#save" }, button: "left", clickCount: 2 },
+          { operation: "type", target: { cssSelector: "#name" }, text: "Mcode", clear: true, submit: false },
+        ],
+      },
+    },
+    { id: "inspect-after-input", operation: "inspect", args: { includeScreenshot: false, includeDiagnostics: false } },
     {
       id: "tabs-claim",
       operation: "tabs",
@@ -256,7 +251,7 @@ export function createBrowserExecutorParityScenario(): BrowserConformanceExecuto
     cleanup: { baseline: createBrowserConformanceResourceSnapshot() },
   });
   const operations = BROWSER_CONFORMANCE_SHARED_EXECUTOR_OPERATIONS;
-  const mutations = new Set(["open", "navigate", "click", "type", "act", "tabs"]);
+  const mutations = new Set(["open", "act", "tabs"]);
   const receipts = commands.map((command, index) => ({
     order: { tick: index, ordinal: index },
     commandId: command.id,
@@ -267,7 +262,7 @@ export function createBrowserExecutorParityScenario(): BrowserConformanceExecuto
     truncated: false,
     revisions: { host: 0, document: 0, control: 0, capability: 1, observation: index },
     errorCode: null,
-    errorStage: command.operation === "inspect" || command.operation === "snapshot" || command.operation === "screenshot" ? "observation" : "effect",
+    errorStage: command.operation === "inspect" ? "observation" : "effect",
     ownership: index === 0 ? "none" : "agent",
   }));
   const expected = normalizeBrowserConformanceRun({

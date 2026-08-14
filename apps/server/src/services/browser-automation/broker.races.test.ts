@@ -6,6 +6,7 @@ import {
   BrowserAutomationResponseSchema,
   type BrowserAutomationHostRegistration,
   type BrowserAutomationOperation,
+  type BrowserAutomationPublicOperation,
   type BrowserAutomationRequest,
   type BrowserAutomationResponse,
 } from "@mcode/contracts";
@@ -154,7 +155,7 @@ function target(
 }
 
 function claims(
-  allowedOperations: readonly BrowserAutomationOperation[],
+  allowedOperations: readonly BrowserAutomationPublicOperation[],
 ): BrowserAutomationCredentialClaims {
   return {
     credentialId: "credential-thread-a",
@@ -175,7 +176,7 @@ function request(
   scope: BrowserAutomationCredentialClaims,
   requestId: string,
   sequence: number,
-  operation: BrowserAutomationOperation,
+  operation: BrowserAutomationPublicOperation,
   args: unknown,
   deadline = 10_000,
 ): BrowserAutomationRequest {

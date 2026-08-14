@@ -659,7 +659,7 @@
           </article>
           <article class="milestone">
             <div class="slice">Slice 6</div><div class="rail"><span class="dot"></span><span class="line"></span></div>
-            <div class="milestone-body"><h3>Rollout and legacy retirement</h3><p>The typed gateway is the default path. The raw pipe is disabled unless <code>MCODE_ENABLE_LEGACY_BROWSER_USE_PIPE=1</code> is present before desktop startup, and remains only as a temporary rollback path.</p><div class="chips"><span class="chip">typed gateway</span><span class="chip">hidden rollback</span><span class="chip">raw pipe parity audit</span></div></div>
+            <div class="milestone-body"><h3>Stable Browser v2 operations</h3><p>The typed Browser v2 gateway is the only supported provider path. Every provider receives the same scoped MCP contract and bounded diagnostics.</p><div class="chips"><span class="chip">Browser v2</span><span class="chip">scoped gateway</span><span class="chip">content-free diagnostics</span></div></div>
           </article>
         </div>
       </section>
@@ -669,24 +669,11 @@
         <p class="section-intro">Use Mcode's Browser language and expose semantic operations. Raw CDP remains inside Electron.</p>
 
         <div class="tool-grid">
-          <div class="tool"><code>browser_status</code><span>Current host, thread, tab, URL, loading, focus, and controller.</span><b class="risk-badge read">READ</b></div>
           <div class="tool"><code>browser_open</code><span>Reveal the current thread's Browser and create a tab only when needed.</span><b class="risk-badge write">UI</b></div>
-          <div class="tool"><code>browser_navigate</code><span>Load an allowed HTTP or HTTPS URL in the assigned tab.</span><b class="risk-badge write">WRITE</b></div>
-          <div class="tool"><code>browser_resize</code><span>Set a bounded design-mode viewport.</span><b class="risk-badge write">UI</b></div>
-          <div class="tool"><code>browser_snapshot</code><span>Return redacted page context, semantic targets, diagnostics, and optional PNG.</span><b class="risk-badge read">READ</b></div>
-          <div class="tool"><code>browser_screenshot</code><span>Return a bounded PNG of the current viewport.</span><b class="risk-badge read">READ</b></div>
-          <div class="tool"><code>browser_click</code><span>Click one semantic locator, CSS selector, or coordinate pair.</span><b class="risk-badge write">WRITE</b></div>
-          <div class="tool"><code>browser_type</code><span>Insert bounded text into one editable target.</span><b class="risk-badge write">SENSITIVE</b></div>
-          <div class="tool"><code>browser_press</code><span>Dispatch an allowed key or key chord.</span><b class="risk-badge write">WRITE</b></div>
-          <div class="tool"><code>browser_scroll</code><span>Scroll a target or viewport by bounded deltas.</span><b class="risk-badge write">WRITE</b></div>
-          <div class="tool"><code>browser_wait_for</code><span>Wait for URL, text, locator, load state, or bounded time.</span><b class="risk-badge read">READ</b></div>
-          <div class="tool"><code>browser_console</code><span>Return bounded, redacted console diagnostics.</span><b class="risk-badge read">READ</b></div>
-          <div class="tool"><code>browser_network</code><span>Return bounded, redacted request diagnostics.</span><b class="risk-badge read">READ</b></div>
-          <div class="tool"><code>browser_accessibility</code><span>Return a bounded accessibility subtree.</span><b class="risk-badge read">READ</b></div>
-          <div class="tool"><code>browser_performance</code><span>Return bounded navigation, resource, responsiveness, and optional memory metrics.</span><b class="risk-badge read">READ</b></div>
+          <div class="tool"><code>browser_inspect</code><span>Return the current tab observation, readiness, capabilities, diagnostics, and optional PNG.</span><b class="risk-badge read">READ</b></div>
+          <div class="tool"><code>browser_act</code><span>Execute a bounded, observation-bound batch of Browser steps.</span><b class="risk-badge write">WRITE</b></div>
+          <div class="tool"><code>browser_tabs</code><span>Select, claim, release, close, or finalize assigned Browser tabs.</span><b class="risk-badge write">LIFECYCLE</b></div>
           <div class="tool"><code>browser_evaluate</code><span>Evaluate bounded JavaScript in an isolated world for Full Build sessions.</span><b class="risk-badge write">PRIVILEGED</b></div>
-          <div class="tool"><code>browser_recording_start</code><span>Start a bounded recording of the visible tab.</span><b class="risk-badge capture">CAPTURE</b></div>
-          <div class="tool"><code>browser_recording_stop</code><span>Stop recording and return bounded artifact metadata.</span><b class="risk-badge capture">CAPTURE</b></div>
         </div>
 
         <div class="contract-note"><strong>Privileged operation:</strong> <code>browser_evaluate</code> is available only to Full Build sessions. It runs in an isolated world with bounded input, output, and runtime. Resize and recording remain capability-gated when the current Electron surface cannot support them.</div>
@@ -727,9 +714,9 @@
 
       <section id="rollout">
         <div class="section-head"><span class="section-num">06</span><h2>Rollout and decisions</h2></div>
-        <p class="section-intro">The migration keeps a rollback path and separates protocol changes from unrelated Browser redesign.</p>
+        <p class="section-intro">The Browser v2 contract stays focused on protocol retirement and remains separate from unrelated Browser redesign.</p>
 
-        <details open><summary>Rollout sequence</summary><div class="detail-body"><p>The typed gateway now serves supported normal provider sessions. The raw pipe is disabled by default, can be restored only through the hidden startup variable <code>MCODE_ENABLE_LEGACY_BROWSER_USE_PIPE=1</code>, and should be removed in a separate change after one stable release window.</p></div></details>
+        <details open><summary>Provider contract</summary><div class="detail-body"><p>The typed Browser v2 gateway serves every supported provider session through one scoped MCP contract.</p></div></details>
         <details><summary>What Mcode keeps</summary><div class="detail-body"><p>The renderer-hosted Browser webview, tab store, memory saver, active-preview webContents resolver, capture redaction and spill behavior, diagnostics buffers, right panel, provider session runtimes, and permission UI.</p></div></details>
         <details><summary>What Mcode replaces</summary><div class="detail-body"><p>The raw provider-facing CDP boundary becomes typed MCP tools with scoped credentials, sticky ownership, bounded operations, human interruption, and provider capability discovery.</p></div></details>
         <details><summary>Known upstream traps added to acceptance tests</summary><div class="detail-body"><p>Resize timeouts, poisoned sessions after snapshot failure, missing-target errors, unreliable keyboard input, invisible background tabs, clipboard permission mismatches, recording start and stop races, and WSL loopback rewriting.</p></div></details>

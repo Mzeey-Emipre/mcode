@@ -9,9 +9,9 @@
 
 Mcode should let an agent control the same Browser tab the user sees. The agent must share the page's cookies, navigation state, active tab, and rendered DOM. Human input must take control immediately, and every provider must receive the feature through one secure, typed interface.
 
-T3 Code proves this model works without launching a second headless browser. Its server exposes high-level browser tools over Model Context Protocol (MCP), routes each call to the live desktop that owns the page, and executes the action through Electron and Chrome DevTools Protocol (CDP). Mcode already owns most of the difficult browser substrate: renderer-hosted webviews, tab persistence, warm and cold tabs, CDP access, capture redaction, console and failed-request diagnostics, and a raw browser-use bridge.
+T3 Code proves this model works without launching a second headless browser. Its server exposes high-level browser tools over Model Context Protocol (MCP), routes each call to the live desktop that owns the page, and executes the action through Electron and Chrome DevTools Protocol (CDP). Mcode already owns most of the difficult browser substrate: renderer-hosted webviews, tab persistence, warm and cold tabs, CDP access, capture redaction, console and failed-request diagnostics, and a typed Browser v2 gateway.
 
-The recommended change is therefore an integration project, not a browser rewrite. Add a provider-neutral Browser Automation Gateway in the server, a sticky request broker, and a serialized Electron control kernel. Reuse the existing Browser UI and capture pipeline. Retire the raw provider pipe only after the new path reaches parity.
+The recommended change is therefore an integration project, not a browser rewrite. Add a provider-neutral Browser Automation Gateway in the server, a sticky request broker, and a serialized Electron control kernel. Reuse the existing Browser UI and capture pipeline. Browser v2 is now the only provider path.
 
 This document interprets the requested HMM plan as a holistic Mcode migration plan.
 
@@ -19,9 +19,9 @@ This document interprets the requested HMM plan as a holistic Mcode migration pl
 
 Build one loopback-only MCP server named `mcode-browser`. Give each active provider session a short-lived, capability-scoped bearer credential. Route authenticated operations through the Mcode server to the connected Electron instance that owns the thread's Browser tabs. Execute operations against the existing adopted webview `webContents`.
 
-Use high-level tools such as `browser_snapshot` and `browser_click`. Do not expose raw CDP over MCP. Restrict arbitrary page evaluation to Full Build sessions, execute it in an isolated world, and bound its input, output, and runtime.
+Use the Browser v2 tools `browser_open`, `browser_inspect`, `browser_act`, and `browser_tabs`. Do not expose raw CDP over MCP. Restrict arbitrary page evaluation to Full Build sessions, execute it in an isolated world, and bound its input, output, and runtime.
 
-Connect Codex, Claude, Cursor, and GitHub Copilot to the same contract through each provider's supported MCP configuration. Keep the existing raw browser-use pipe as a hidden compatibility path during migration.
+Connect Codex, Claude, Cursor, and GitHub Copilot to the same Browser v2 contract through each provider's supported MCP configuration.
 
 ## Evidence from T3 Code
 
@@ -43,7 +43,7 @@ Three design choices matter most for Mcode:
 2. A provider session stays assigned to one live owner and tab for a sequence of actions. That prevents `snapshot`, `click`, and `type` from landing on different pages.
 3. Real user input advances a control epoch and interrupts the active agent action. Synthetic events are tagged briefly so the executor does not interrupt itself.
 
-T3 Code's current tool set covers status, open, navigation, resize, snapshot, click, type, key press, scroll, wait, evaluation, and recording. Its snapshot combines visible text, semantic interactive elements, accessibility data, console messages, failed requests, action history, and a PNG image. Inputs and outputs have explicit limits.
+The Browser v2 tool set covers open, inspect, ordered actions, tab lifecycle, privileged evaluation, and typed recovery. Its inspection combines visible text, semantic interactive elements, accessibility data, console messages, failed requests, action history, and a PNG image. Inputs and outputs have explicit limits.
 
 The implementation is strong, but Mcode should not copy two policies unchanged. T3 Code's guest permission handler is broader than Mcode needs, and raw page evaluation or unredacted accessibility output can expose sensitive page content. Mcode should deny guest permissions by default, preserve its capture redaction, and treat evaluation as a privileged operation.
 
@@ -53,20 +53,18 @@ Mcode already has these foundations:
 
 - A renderer-hosted `<webview>` Browser surface in `PreviewWebview.tsx`.
 - Main-process tab ownership and warm or cold tab lifecycle in the preview session.
-- Adopted webview lookup and CDP execution in `apps/desktop/src/main/preview/` and `apps/desktop/src/main/browser-use/`.
-- A length-prefixed, dpcode-compatible local browser-use pipe.
-- Browser tab and browser-use contracts in `packages/contracts`.
+- Adopted webview lookup and CDP execution in `apps/desktop/src/main/preview/` and `apps/desktop/src/main/browser-automation/`.
+- Browser tab and Browser v2 contracts in `packages/contracts`.
 - Screenshot and page-context capture with redaction and bounded spill storage.
 - Console and failed-request diagnostics.
 - Provider session runtimes for Codex, Claude, and Cursor.
 - A shared permission request and decision model.
 
-The raw pipe is useful as a proof of connectivity, but it is not the final product boundary:
+The typed Browser v2 gateway is the product boundary:
 
 | Current behavior | Gap |
 |---|---|
-| A local pipe exposes raw `executeCdp`. | Providers need typed, semantic operations with stable validation and bounded results. |
-| Pipe discovery relies on `MCODE_BROWSER_USE_PIPE_PATH`. | Every provider needs a standard MCP configuration and scoped credential. |
+| Browser v2 exposes typed, semantic operations. | Every provider uses a standard MCP configuration and scoped credential. |
 | Session state is process-wide. | Calls need provider, workspace, thread, desktop owner, and tab scope. |
 | CDP events can be broadcast to connected sockets. | Results and events must return only to the authorized session. |
 | `createTab` can return the current tab. | Open and tab targeting need explicit behavior and errors. |
@@ -157,7 +155,7 @@ Host selection uses this order:
 
 The broker owns a bounded pending-request map. Each request has an ID, sequence number, deadline, cancellation signal, and one terminal response. Host disconnect, tab close, timeout, provider interruption, and server shutdown must reject pending work with typed errors.
 
-Do not silently move a multi-step sequence to another tab. Return `browser_target_lost` and require the agent to call `browser_status` or `browser_snapshot` again.
+Do not silently move a multi-step sequence to another tab. Return `browser_target_lost` and require the agent to call `browser_inspect` again.
 
 ### 4. Desktop automation host
 
@@ -208,24 +206,11 @@ Use `browser_*` names because Browser is Mcode's product term. The MCP server na
 
 | Tool | Purpose | Default classification |
 |---|---|---|
-| `browser_status` | Report host, thread, tab, URL, loading, focus, and controller state. | Read-only, idempotent |
 | `browser_open` | Reveal the current thread's Browser panel and create a tab only when none exists. | UI mutation, idempotent |
-| `browser_navigate` | Load an allowed HTTP or HTTPS URL in the assigned tab. | Destructive, open-world |
-| `browser_resize` | Set the existing design-mode viewport within bounded dimensions. | UI mutation, idempotent |
-| `browser_snapshot` | Return redacted page context, semantic elements, diagnostics, and optional PNG. | Read-only |
-| `browser_screenshot` | Return a bounded PNG of the current viewport. | Read-only |
-| `browser_click` | Click one semantic locator or coordinate pair. | Destructive |
-| `browser_type` | Insert bounded text into one editable target. | Destructive, sensitive input |
-| `browser_press` | Dispatch a bounded allowlist of key chords. | Destructive |
-| `browser_scroll` | Scroll a target or viewport by bounded deltas. | Destructive, idempotent only for zero delta |
-| `browser_wait_for` | Wait for URL, text, locator, load state, or bounded time. | Read-only |
-| `browser_console` | Return bounded, redacted console diagnostics. | Read-only |
-| `browser_network` | Return bounded, redacted request diagnostics. | Read-only |
-| `browser_accessibility` | Return a bounded accessibility subtree. | Read-only |
-| `browser_performance` | Return bounded navigation, resource, responsiveness, and optional memory metrics. | Read-only |
+| `browser_inspect` | Return the current tab observation, readiness, capabilities, bounded diagnostics, and optional PNG. | Read-only |
+| `browser_act` | Execute a bounded, observation-bound batch of Browser steps. | Destructive, observation-bound |
+| `browser_tabs` | Select, claim, release, close, or finalize assigned Browser tabs. | Destructive, lifecycle-bound |
 | `browser_evaluate` | Evaluate bounded JavaScript in the automation isolated world. | Privileged |
-| `browser_recording_start` | Start a bounded visible-tab recording when supported. | Read-only capture |
-| `browser_recording_stop` | Stop recording and return bounded artifact metadata. | Read-only capture |
 
 `browser_evaluate` requires a privileged credential, which maps to a Full Build session. It uses strict result serialization, a 64 KB expression limit, a bounded result, and a hard timeout. Evaluation is not read-only because JavaScript can mutate or expose page state.
 
@@ -240,7 +225,7 @@ Reject ambiguous targets. Semantic locators are preferred because they survive l
 
 ## Snapshot Contract
 
-`browser_snapshot` returns a coherent observation from one tab and one control epoch:
+`browser_inspect` returns a coherent observation from one tab and one control epoch:
 
 ```text
 url, title, loading, viewport
@@ -286,11 +271,11 @@ Provider adapters receive an MCP endpoint and per-session credential from one se
 
 Tool availability follows provider capability detection. If a provider version cannot accept HTTP MCP, hide the tools and report the missing capability in startup status. Do not advertise tools that will fail later.
 
-The legacy raw pipe is disabled by default. Set the hidden process variable `MCODE_ENABLE_LEGACY_BROWSER_USE_PIPE=1` to restore it during rollback. New providers use the gateway.
+Browser v2 is the only supported provider path, with one scoped MCP surface for every provider.
 
 ## Security and Privacy
 
-Browser automation crosses provider, HTTP, WebSocket, IPC, guest-content, and filesystem trust boundaries. Apply these rules before provider rollout:
+Browser automation crosses provider, HTTP, WebSocket, IPC, guest-content, and filesystem trust boundaries. Apply these rules before granting Browser v2 access:
 
 - Bind MCP to loopback and a random worktree-local port.
 - Authenticate every MCP request and live-host registration.
@@ -420,19 +405,17 @@ Acceptance:
 - Redaction tests cover sensitive fields and truncation.
 - Recording start and stop races cannot leak a recorder, stream, or pending request.
 
-### Slice 6: Rollout and legacy retirement
+### Slice 6: Stable Browser v2 operations
 
 Deliverables:
 
-- Opt-in setting, internal dogfood period, staged default, and documented rollback.
+- One stable Browser v2 contract for every supported provider.
 - Content-free counters for tool latency, timeout, interruption, host loss, and result truncation.
-- Raw-pipe parity audit and removal plan.
 
 Acceptance:
 
 - Error and latency budgets remain within the agreed release thresholds.
-- The new gateway covers every supported browser-use workflow.
-- The legacy pipe can be disabled without provider regressions before its code is removed.
+- Browser v2 covers every supported Browser automation workflow.
 
 ## Verification Matrix
 
@@ -451,7 +434,7 @@ Acceptance:
 - Server-to-desktop live request and response over the authenticated stream.
 - Provider configuration injection and secret removal for Codex, Claude, and Cursor.
 - Tab close, thread switch, memory-saver discard, server restart, desktop reconnect, and provider resume.
-- Compatibility behavior while the raw pipe remains enabled.
+- Browser v2 behavior across provider configuration and live host routing.
 
 ### Live desktop checks
 
@@ -469,16 +452,8 @@ Run this suite on Windows, macOS, and Linux. Keyboard modifiers, hidden guest be
 
 ## Rollout and Compatibility
 
-The typed gateway is the default path for supported normal provider sessions. The old raw pipe stays disabled unless `MCODE_ENABLE_LEGACY_BROWSER_USE_PIPE=1` is present before desktop startup. This switch is a temporary rollback path, not a provider integration surface.
-
-The original rollout sequence was:
-
-1. Developer harness only.
-2. Opt-in Codex dogfood with raw-pipe rollback.
-3. Codex default on after cross-platform live verification.
-4. Claude and Cursor opt-in, then default on after parity.
-5. Disable the raw pipe by default.
-6. Remove the raw pipe in a separate change after one stable release window.
+Browser v2 is the only supported Browser automation path. Provider sessions
+receive the same scoped MCP contract.
 
 Do not combine protocol migration with Browser UI redesign. A small controller indicator, pointer, and stop action are part of the safety model; other visual changes are separate work.
 
@@ -486,7 +461,7 @@ Do not combine protocol migration with Browser UI redesign. A small controller i
 
 ### Extend the raw pipe
 
-Rejected as the product boundary. It lacks provider-neutral discovery, scoped authentication, high-level schemas, browser-owner routing, and tool annotations. Keeping it during migration is useful, but extending it would duplicate MCP features.
+Rejected as the product boundary. It lacks provider-neutral discovery, scoped authentication, high-level schemas, browser-owner routing, and tool annotations.
 
 ### Launch a separate Playwright browser
 
@@ -508,8 +483,8 @@ Rejected. High-level tools cover the core workflow, while evaluation can mutate 
 
 The change crosses package and process boundaries. Review these areas together:
 
-- `packages/contracts/src/models/browser-use.ts`, browser tab contracts, contract exports, and generated client types.
-- Desktop browser-use framing, router, host bridge, preview session, webview adoption, tab lifecycle, preload bridge, and IPC tests.
+- Browser v2 tab contracts, contract exports, and generated client types.
+- Desktop Browser automation host, preview session, webview adoption, tab lifecycle, preload bridge, and IPC tests.
 - Server startup, HTTP routing, WebSocket subscriptions, protected environment handling, session runtime, provider adapters, permission flow, and shutdown cleanup.
 - Codex app-server configuration, Claude SDK session options, Cursor ACP session configuration, provider startup status, and provider tests.
 - Web Browser panel, `PreviewWebview`, tab store, panel visibility, controller UI, cancellation, and accessibility tests.
@@ -527,7 +502,7 @@ The feature is done only when:
 - Authentication, routing, URL validation, redaction, permissions, limits, cleanup, and typed failures have focused tests.
 - Live desktop scenarios pass on Windows, macOS, and Linux.
 - `bun run verify` passes from the monorepo root.
-- The legacy raw pipe has a measured and documented retirement path.
+- Browser v2 diagnostics remain bounded and content-free.
 - Architecture, provider, settings, and runtime documentation match the shipped behavior.
 
 ## Source Notes

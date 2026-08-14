@@ -91,13 +91,6 @@ vi.mock("../preview/index.js", () => ({
 vi.mock("../browser-automation/index.js", () => ({
   disposeBrowserAutomationForWindow: vi.fn(),
 }));
-vi.mock("../browser-use/index.js", () => ({
-  startBrowserUseBridge: vi.fn(),
-  disposeBrowserUseBridge: vi.fn(),
-}));
-vi.mock("../browser-use/rollout.js", () => ({
-  shouldStartLegacyBrowserUseBridge: vi.fn().mockReturnValue(false),
-}));
 vi.mock("../preview/preview-local-file.js", () => ({
   resolveMcodeWorkspacePreviewUrl: vi.fn(),
 }));

@@ -35,7 +35,7 @@ function failureResponse(
   };
 }
 
-/** Web runtime adapter for every Browser v1 command, including DOM interaction. */
+/** Web runtime adapter for every Browser v2 command, including DOM interaction. */
 export class WebBrowserSessionAdapter implements BrowserSessionRuntimeAdapter {
   constructor(private readonly options: WebBrowserSessionAdapterOptions) {}
 

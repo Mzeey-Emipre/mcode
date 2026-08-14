@@ -106,10 +106,18 @@ function decodedBase64Size(value: string): number | null {
   return (value.length / 4) * 3 - padding;
 }
 
-/** Browser operations exposed to provider-neutral automation clients. */
+/** Browser v2 operations exposed to provider-neutral automation clients. */
 export const BROWSER_AUTOMATION_OPERATIONS = [
-  "status",
   "open",
+  "inspect",
+  "act",
+  "tabs",
+  "evaluate",
+] as const;
+
+/** Internal Browser host operations retained for visible-surface execution. */
+export const BROWSER_AUTOMATION_HOST_OPERATIONS = [
+  "status",
   "navigate",
   "resize",
   "snapshot",
@@ -123,7 +131,6 @@ export const BROWSER_AUTOMATION_OPERATIONS = [
   "network",
   "accessibility",
   "performance",
-  "evaluate",
   "recordingStart",
   "recordingStop",
 ] as const;
@@ -139,22 +146,25 @@ export const BROWSER_AUTOMATION_INTERNAL_OPERATIONS = [
 /** Stable Browser v2 operations discoverable during transient unavailability. */
 export const BROWSER_V2_CORE_OPERATIONS = ["open", "inspect", "act", "tabs"] as const;
 
-/** One browser automation operation identifier. */
+/** One provider-visible Browser v2 operation identifier. */
+export type BrowserAutomationPublicOperation = (typeof BROWSER_AUTOMATION_OPERATIONS)[number];
+/** One Browser operation used by the host transport and visible-surface executor. */
 export type BrowserAutomationOperation =
-  | (typeof BROWSER_AUTOMATION_OPERATIONS)[number]
-  | (typeof BROWSER_V2_CORE_OPERATIONS)[number];
+  | BrowserAutomationPublicOperation
+  | (typeof BROWSER_AUTOMATION_HOST_OPERATIONS)[number];
 /** Browser operation accepted by the host dispatch boundary, including act-step mechanics. */
 export type BrowserAutomationRequestOperation =
   | BrowserAutomationOperation
   | (typeof BROWSER_AUTOMATION_INTERNAL_OPERATIONS)[number];
 const browserRequestOperationSchema = z.union([
   z.enum(BROWSER_AUTOMATION_OPERATIONS),
-  z.enum(BROWSER_V2_CORE_OPERATIONS),
+  z.enum(BROWSER_AUTOMATION_HOST_OPERATIONS),
   z.enum(BROWSER_AUTOMATION_INTERNAL_OPERATIONS),
 ]);
-const browserOperationSchema = z.union([
+const browserPublicOperationSchema = z.enum(BROWSER_AUTOMATION_OPERATIONS);
+const browserHostOperationSchema = z.union([
   z.enum(BROWSER_AUTOMATION_OPERATIONS),
-  z.enum(BROWSER_V2_CORE_OPERATIONS),
+  z.enum(BROWSER_AUTOMATION_HOST_OPERATIONS),
 ]);
 
 /** Provider-facing MCP tool annotations for one operation. */
@@ -168,7 +178,7 @@ export interface BrowserAutomationOperationAnnotations {
 
 /** Provider-facing metadata for one browser automation operation. */
 export interface BrowserAutomationOperationMetadata {
-  readonly operation: BrowserAutomationOperation;
+  readonly operation: BrowserAutomationPublicOperation;
   readonly mcpName: `browser_${string}`;
   readonly annotations: BrowserAutomationOperationAnnotations;
 }
@@ -187,48 +197,16 @@ const input = {
   openWorld: false,
   privileged: false,
 } satisfies BrowserAutomationOperationAnnotations;
-const externalInput = {
-  ...input,
-  openWorld: true,
-} satisfies BrowserAutomationOperationAnnotations;
-
-/** Exhaustive MCP names and safety annotations for browser operations. */
+/** Exhaustive MCP names and safety annotations for Browser v2 operations. */
 export const BROWSER_AUTOMATION_OPERATION_METADATA = {
-  status: { operation: "status", mcpName: "browser_status", annotations: readOnly },
   open: {
     operation: "open",
     mcpName: "browser_open",
     annotations: { ...input, openWorld: true },
   },
-  navigate: {
-    operation: "navigate",
-    mcpName: "browser_navigate",
-    annotations: { ...input, openWorld: true },
-  },
-  resize: { operation: "resize", mcpName: "browser_resize", annotations: externalInput },
-  snapshot: { operation: "snapshot", mcpName: "browser_snapshot", annotations: readOnly },
-  screenshot: {
-    operation: "screenshot",
-    mcpName: "browser_screenshot",
-    annotations: readOnly,
-  },
-  click: { operation: "click", mcpName: "browser_click", annotations: externalInput },
-  type: { operation: "type", mcpName: "browser_type", annotations: externalInput },
-  press: { operation: "press", mcpName: "browser_press", annotations: externalInput },
-  scroll: { operation: "scroll", mcpName: "browser_scroll", annotations: externalInput },
-  waitFor: { operation: "waitFor", mcpName: "browser_wait_for", annotations: readOnly },
-  console: { operation: "console", mcpName: "browser_console", annotations: readOnly },
-  network: { operation: "network", mcpName: "browser_network", annotations: readOnly },
-  accessibility: {
-    operation: "accessibility",
-    mcpName: "browser_accessibility",
-    annotations: readOnly,
-  },
-  performance: {
-    operation: "performance",
-    mcpName: "browser_performance",
-    annotations: readOnly,
-  },
+  inspect: { operation: "inspect", mcpName: "browser_inspect", annotations: readOnly },
+  act: { operation: "act", mcpName: "browser_act", annotations: input },
+  tabs: { operation: "tabs", mcpName: "browser_tabs", annotations: { ...input, idempotent: true } },
   evaluate: {
     operation: "evaluate",
     mcpName: "browser_evaluate",
@@ -240,44 +218,7 @@ export const BROWSER_AUTOMATION_OPERATION_METADATA = {
       privileged: true,
     },
   },
-  recordingStart: {
-    operation: "recordingStart",
-    mcpName: "browser_recording_start",
-    annotations: input,
-  },
-  recordingStop: {
-    operation: "recordingStop",
-    mcpName: "browser_recording_stop",
-    annotations: input,
-  },
-} as unknown as Record<BrowserAutomationOperation, BrowserAutomationOperationMetadata>;
-
-// Browser v2 inspect stays separate from legacy operation iteration so older
-// clients continue receiving the v1 operation list unchanged.
-Object.defineProperty(BROWSER_AUTOMATION_OPERATION_METADATA, "inspect", {
-  enumerable: false,
-  value: {
-    operation: "inspect",
-    mcpName: "browser_inspect",
-    annotations: readOnly,
-  } satisfies BrowserAutomationOperationMetadata,
-});
-Object.defineProperty(BROWSER_AUTOMATION_OPERATION_METADATA, "act", {
-  enumerable: false,
-  value: {
-    operation: "act",
-    mcpName: "browser_act",
-    annotations: input,
-  } satisfies BrowserAutomationOperationMetadata,
-});
-Object.defineProperty(BROWSER_AUTOMATION_OPERATION_METADATA, "tabs", {
-  enumerable: false,
-  value: {
-    operation: "tabs",
-    mcpName: "browser_tabs",
-    annotations: { ...input, idempotent: true },
-  } satisfies BrowserAutomationOperationMetadata,
-});
+} satisfies Record<BrowserAutomationPublicOperation, BrowserAutomationOperationMetadata>;
 
 /** Maximum tabs returned by one browser_inspect response. */
 export const BROWSER_AUTOMATION_MAX_INSPECT_TABS = 32;
@@ -288,7 +229,7 @@ export const BROWSER_AUTOMATION_MAX_GUIDANCE_CHARS = 4_000;
 export const BrowserAutomationExecutorDescriptorSchema = lazySchema(() =>
   z.object({
     runtime: BrowserAutomationHostRuntimeSchema,
-    operations: z.array(browserOperationSchema).max(BROWSER_AUTOMATION_OPERATIONS.length + 3),
+    operations: z.array(browserHostOperationSchema).max(BROWSER_AUTOMATION_OPERATIONS.length + BROWSER_AUTOMATION_HOST_OPERATIONS.length),
     constraints: z.object({
       maxTabs: z.number().int().positive().max(BROWSER_AUTOMATION_MAX_INSPECT_TABS),
       maxSnapshotChars: z.number().int().positive().max(BROWSER_AUTOMATION_MAX_VISIBLE_TEXT_CHARS),
@@ -722,7 +663,7 @@ export type BrowserAutomationTargetIdentity = z.infer<
 export const BrowserAutomationHostCapabilitySchema = lazySchema(() =>
   z
     .object({
-      operation: browserOperationSchema,
+      operation: browserHostOperationSchema,
       available: z.boolean(),
       unavailableReason: z.string().max(SHORT_TEXT_MAX).optional(),
     })
@@ -758,7 +699,7 @@ export const BrowserAutomationHostRegistrationSchema = lazySchema(() =>
       capabilities: z
         .array(BrowserAutomationHostCapabilitySchema())
         .min(1)
-        .max(BROWSER_AUTOMATION_OPERATIONS.length + 3),
+        .max(BROWSER_AUTOMATION_OPERATIONS.length + BROWSER_AUTOMATION_HOST_OPERATIONS.length),
       maxPendingRequests: z
         .number()
         .int()
@@ -891,9 +832,9 @@ export const BrowserAutomationCredentialClaimsSchema = lazySchema(() =>
       providerSessionId: idSchema,
       providerInstanceId: idSchema,
       operations: z
-        .array(browserOperationSchema)
+        .array(browserPublicOperationSchema)
         .min(1)
-        .max(BROWSER_AUTOMATION_OPERATIONS.length + 3),
+        .max(BROWSER_AUTOMATION_OPERATIONS.length),
       issuedAt: z.number().int().nonnegative(),
       expiresAt: z.number().int().nonnegative(),
     })
@@ -1213,7 +1154,7 @@ export const BrowserAutomationResultSchema = lazySchema(() =>
       diagnostics: z.array(z.string().max(SHORT_TEXT_MAX)).max(BROWSER_AUTOMATION_MAX_DIAGNOSTIC_ENTRIES).optional(),
       observationRef: idSchema.optional(),
       capabilityRevision: z.number().int().positive().optional(),
-      capabilities: z.array(browserOperationSchema).max(BROWSER_AUTOMATION_OPERATIONS.length + 3).optional(),
+      capabilities: z.array(browserPublicOperationSchema).max(BROWSER_AUTOMATION_OPERATIONS.length).optional(),
       guidance: z.string().max(BROWSER_AUTOMATION_MAX_GUIDANCE_CHARS).optional(),
     }).strict(),
     z.object({
@@ -1226,7 +1167,7 @@ export const BrowserAutomationResultSchema = lazySchema(() =>
       focused: z.boolean(),
       viewport: z.object({ width: z.number().int().min(1).max(10_000), height: z.number().int().min(1).max(10_000) }).strict(),
       controller: BrowserAutomationControllerStateSchema().optional(),
-      capabilities: z.array(browserOperationSchema).max(BROWSER_AUTOMATION_OPERATIONS.length + 3).optional(),
+      capabilities: z.array(browserHostOperationSchema).max(BROWSER_AUTOMATION_OPERATIONS.length + BROWSER_AUTOMATION_HOST_OPERATIONS.length).optional(),
       capabilityRevision: z.number().int().positive().optional(),
     }).strict(),
     z.object({

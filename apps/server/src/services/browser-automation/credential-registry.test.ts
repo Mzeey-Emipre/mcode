@@ -101,9 +101,9 @@ describe("BrowserAutomationCredentialRegistry", () => {
 
   it("rejects duplicate operations and evaluate without privileged permission", () => {
     const registry = new BrowserAutomationCredentialRegistry();
-    expect(() => registry.issue({ ...scope(), allowedOperations: ["status", "status"] })).toThrow();
+    expect(() => registry.issue({ ...scope(), allowedOperations: ["inspect", "inspect"] })).toThrow();
     expect(() => registry.issue({ ...scope(), permissionCapability: "interact", allowedOperations: ["evaluate"] })).toThrow();
-    expect(() => registry.issue({ ...scope(), permissionCapability: "observe", allowedOperations: ["click"] })).toThrow();
+    expect(() => registry.issue({ ...scope(), permissionCapability: "observe", allowedOperations: ["evaluate"] })).toThrow();
   });
 
   it("allows browser_tabs only for mutation-capable credentials", () => {

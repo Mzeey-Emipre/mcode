@@ -443,24 +443,6 @@ export type {
 } from "./models/preview-page-status.js";
 
 export {
-  BROWSER_USE_FRAME_HEADER_BYTES,
-  BROWSER_USE_MAX_MESSAGE_BYTES,
-  BROWSER_USE_METHODS,
-  MCODE_BROWSER_USE_PIPE_ENV,
-  DPCODE_BROWSER_USE_PIPE_ENV,
-  T3CODE_BROWSER_USE_PIPE_ENV,
-  BrowserUseTabRowSchema,
-  BrowserExecuteCdpInputSchema,
-  BrowserUseCdpNotificationParamsSchema,
-} from "./models/browser-use.js";
-export type {
-  BrowserUseMethod,
-  BrowserUseTabRow,
-  BrowserExecuteCdpInput,
-  BrowserUseCdpNotificationParams,
-} from "./models/browser-use.js";
-
-export {
   BROWSER_AUTOMATION_CONTRACT_VERSION,
   BROWSER_AUTOMATION_MAX_URL_CHARS,
   BROWSER_AUTOMATION_DEFAULT_TIMEOUT_MS,
@@ -484,6 +466,7 @@ export {
   BROWSER_AUTOMATION_VIEWPORT_PRESENTATIONS,
   resolveBrowserAutomationViewportPresentationScale,
   BROWSER_AUTOMATION_OPERATIONS,
+  BROWSER_AUTOMATION_HOST_OPERATIONS,
   BROWSER_V2_CORE_OPERATIONS,
   BROWSER_AUTOMATION_OPERATION_METADATA,
   BROWSER_AUTOMATION_ERROR_CODES,
@@ -524,6 +507,7 @@ export {
   BrowserAutomationTabsResultSchema,
 } from "./models/browser-automation.js";
 export type {
+  BrowserAutomationPublicOperation,
   BrowserAutomationOperation,
   BrowserAutomationRequestOperation,
   BrowserAutomationOperationAnnotations,

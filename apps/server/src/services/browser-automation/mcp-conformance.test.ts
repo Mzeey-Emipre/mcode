@@ -62,12 +62,12 @@ function registration(): BrowserAutomationHostRegistration {
     workspaceIds: ["workspace-conformance"],
     executorDescriptor: {
       runtime: "electron",
-      operations: ["status", "act"],
+      operations: ["inspect", "act"],
       constraints: { maxTabs: 4, maxSnapshotChars: 4_000, maxDiagnostics: 4 },
       capabilityRevision: 1,
     },
     capabilities: [
-      { operation: "status", available: true },
+      { operation: "inspect", available: true },
       { operation: "act", available: true },
     ],
     maxPendingRequests: 2,
@@ -148,14 +148,14 @@ describe("authenticated Browser MCP conformance", () => {
       workspaceId: "workspace-conformance",
       worktreeIdentity: "worktree-conformance",
       permissionCapability: "interact",
-      allowedOperations: ["status", "act"],
+      allowedOperations: ["inspect", "act"],
     });
     const handler = new BrowserAutomationMcpHandler({ credentials, broker, now: () => 1_000 });
     const scenario = createBrowserConformanceScenario({
-      id: "authenticated-mcp-status-act",
+      id: "authenticated-mcp-inspect-act",
       seed: "mcp-oracle-1034",
       commands: [
-        { id: "status", operation: "status" },
+        { id: "inspect", operation: "inspect" },
         {
           id: "act",
           operation: "act",
@@ -196,19 +196,16 @@ describe("authenticated Browser MCP conformance", () => {
       sequence: dispatch!.request.sequence,
       ok: true,
       result: {
-        operation: "status", available: true, active: true, url: "https://fixture.test/", loading: false,
-        focused: true, viewport: { width: 800, height: 600 }, capabilities: ["status"],
+        operation: "inspect", tabs: [], capabilities: ["inspect", "act"], observationRef: "observation-conformance-1",
       },
     });
     expect(response.ok).toBe(true);
     receiptFaults.hit("receipt-delivery");
     broker.respond(socket, "host-conformance", generation, response, dispatch!.target);
     const payload = await (await call).json() as { result: { content: [{ text: string }] } };
-    const observed = JSON.parse(payload.result.content[0].text) as { operation: string; available: boolean };
+    const observed = JSON.parse(payload.result.content[0].text) as { operation: string; capabilities: string[] };
     const responseOperation = response.ok && "operation" in response.result ? response.result.operation : "unknown";
     expect(observed.operation).toBe(responseOperation);
-    const responseAvailable = response.ok && "available" in response.result ? response.result.available : false;
-    expect(observed.available).toBe(responseAvailable);
     const terminalStatus = response.ok ? "satisfied" : "failed";
     const terminalOutcome = response.ok ? "completed" : "failed";
     const terminalEffect = response.ok ? "none" : response.error.effect;
@@ -233,7 +230,7 @@ describe("authenticated Browser MCP conformance", () => {
     expect(normalized.outcome.effect).toBe(terminalEffect);
     expect(normalized.outcome.recovery).toBe(terminalRecovery);
     expect(normalized.receipts.some((receipt) => receipt.status === "unknown" || receipt.operation === "unknown")).toBe(false);
-    expect(JSON.parse(payload.result.content[0].text)).toMatchObject({ operation: "status", available: true });
+    expect(JSON.parse(payload.result.content[0].text)).toMatchObject({ operation: "inspect", capabilities: ["inspect", "act"] });
 
     const actDispatchReady = nextDispatch();
     const actCall = fetch(endpoint, {

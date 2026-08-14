@@ -47,29 +47,26 @@ const requestBase = {
 const target = { role: "button", accessibleName: "Submit" };
 
 const argsByOperation = {
-  status: {},
-  open: {},
-  navigate: { url: "https://example.test/path" },
-  resize: { width: 1_280, height: 720 },
-  snapshot: {},
-  screenshot: {},
-  click: { target },
-  type: { target, text: "hello" },
-  press: { key: "Enter" },
-  scroll: { deltaY: 500 },
-  waitFor: { target },
-  console: {},
-  network: {},
-  accessibility: {},
-  performance: {},
+  open: { idempotencyKey: "open-key" },
+  inspect: {},
+  act: {
+    idempotencyKey: "act-key",
+    observationRef: "observation-1",
+    deadlineMs: 10_000,
+    steps: [{ operation: "click", target }],
+  },
+  tabs: {
+    action: "select",
+    tabId: "tab-1",
+    idempotencyKey: "tabs-key",
+    observationRef: "observation-1",
+  },
   evaluate: {
     expression: "document.title",
     idempotencyKey: "evaluate-key",
     observationRef: "observation-1",
     deadlineMs: 10_000,
   },
-  recordingStart: {},
-  recordingStop: {},
 } satisfies Record<(typeof BROWSER_AUTOMATION_OPERATIONS)[number], object>;
 
 const noTruncation = { truncated: false };
@@ -99,50 +96,35 @@ const actionResult = (operation: string) => ({
 });
 
 const resultByOperation = {
-  status: {
-    operation: "status",
-    available: true,
-    active: true,
-    tabId: "tab-1",
-    url: "about:blank",
-    loading: false,
-    focused: true,
-    viewport: { width: 1_280, height: 720 },
+  open: actionResult("open"),
+  inspect: {
+    operation: "inspect",
+    tabs: [],
+    readiness: { ready: true, state: "ready" },
     capabilities: [...BROWSER_AUTOMATION_OPERATIONS],
   },
-  open: actionResult("open"),
-  navigate: actionResult("navigate"),
-  resize: { operation: "resize", width: 1_280, height: 720, controlEpoch: 1 },
-  snapshot: { operation: "snapshot", snapshot, controlEpoch: 1 },
-  screenshot: {
-    operation: "screenshot",
-    screenshot: {
-      mediaType: "image/png",
-      dataBase64: "cG5n",
-      width: 1,
-      height: 1,
-      truncation: noTruncation,
+  act: {
+    operation: "act",
+    outcome: "completed",
+    stoppingPosition: 1,
+    effect: "complete",
+    recovery: "inspect",
+    receipts: [{ index: 0, operation: "click", status: "applied" }],
+    finalObservation: {
+      observationRef: "observation-2",
+      hostRevision: 1,
+      documentRevision: 1,
+      controlRevision: 0,
+      capabilityRevision: 1,
+      observationRevision: 1,
     },
-    controlEpoch: 1,
   },
-  click: actionResult("click"),
-  type: actionResult("type"),
-  press: actionResult("press"),
-  scroll: actionResult("scroll"),
-  waitFor: actionResult("waitFor"),
-  console: { operation: "console", entries: [], truncation: noTruncation },
-  network: { operation: "network", entries: [], truncation: noTruncation },
-  accessibility: { operation: "accessibility", nodes: [], truncation: noTruncation },
-  performance: {
-    operation: "performance",
-    metrics: {
-      capturedAt: 1,
-      navigation: { timeToFirstByteMs: 10, domContentLoadedMs: 20, loadMs: 30 },
-      resources: { count: 1, transferBytes: 100, decodedBodyBytes: 200 },
-      responsiveness: { longTaskCount: 0, totalBlockingTimeMs: 0 },
-      memory: { usedJsHeapBytes: 1, totalJsHeapBytes: 2, jsHeapLimitBytes: 3 },
-    },
-    controlEpoch: 1,
+  tabs: {
+    operation: "tabs",
+    action: "select",
+    currentTabId: "tab-1",
+    observationRef: "observation-1",
+    tabs: [],
   },
   evaluate: {
     operation: "evaluate",
@@ -162,26 +144,11 @@ const resultByOperation = {
     nextObservationRef: "observation-2",
     valueJson: "null",
   },
-  recordingStart: {
-    operation: "recordingStart",
-    recordingId: "recording-1",
-    startedAt: 1,
-    controlEpoch: 1,
-  },
-  recordingStop: {
-    operation: "recordingStop",
-    recordingId: "recording-1",
-    mediaType: "video/webm",
-    dataBase64: "dmlkZW8=",
-    durationMs: 1,
-    truncation: noTruncation,
-    controlEpoch: 1,
-  },
 } satisfies Record<(typeof BROWSER_AUTOMATION_OPERATIONS)[number], object>;
 
 describe("browser automation operation contract", () => {
-  it("defines exactly the 18 specified operations and MCP names", () => {
-    expect(BROWSER_AUTOMATION_OPERATIONS).toHaveLength(18);
+  it("defines only the Browser v2 operations and MCP names", () => {
+    expect(BROWSER_AUTOMATION_OPERATIONS).toEqual(["open", "inspect", "act", "tabs", "evaluate"]);
     expect(Object.keys(BROWSER_AUTOMATION_OPERATION_METADATA)).toEqual([
       ...BROWSER_AUTOMATION_OPERATIONS,
     ]);
@@ -199,23 +166,8 @@ describe("browser automation operation contract", () => {
       openWorld: true,
       privileged: true,
     });
-    for (const operation of ["click", "type", "press", "scroll"] as const) {
-      expect(BROWSER_AUTOMATION_OPERATION_METADATA[operation].annotations.destructive).toBe(true);
-      expect(BROWSER_AUTOMATION_OPERATION_METADATA[operation].annotations.openWorld).toBe(true);
-    }
-    expect(BROWSER_AUTOMATION_OPERATION_METADATA.resize.annotations.openWorld).toBe(true);
-    for (const operation of [
-      "status",
-      "snapshot",
-      "screenshot",
-      "waitFor",
-      "console",
-      "network",
-      "accessibility",
-      "performance",
-    ] as const) {
-      expect(BROWSER_AUTOMATION_OPERATION_METADATA[operation].annotations.readOnly).toBe(true);
-    }
+    expect(BROWSER_AUTOMATION_OPERATION_METADATA.inspect.annotations.readOnly).toBe(true);
+    expect(BROWSER_AUTOMATION_OPERATION_METADATA.act.annotations.destructive).toBe(true);
   });
 
   it("defines browser_tabs as the idempotent Browser v2 lifecycle surface", () => {
@@ -230,7 +182,7 @@ describe("browser automation operation contract", () => {
         privileged: false,
       },
     });
-    expect(Object.keys(BROWSER_AUTOMATION_OPERATION_METADATA)).not.toContain("tabs");
+    expect(Object.keys(BROWSER_AUTOMATION_OPERATION_METADATA)).toContain("tabs");
 
     for (const args of [
       { action: "select", tabId: "tab-2" },
@@ -323,22 +275,20 @@ describe("browser automation operation contract", () => {
     expect(
       BrowserAutomationRequestSchema().safeParse({
         ...requestBase,
-        operation: "navigate",
+        operation: "inspect",
         args: { target },
       }).success,
     ).toBe(false);
   });
 
   it("keeps diagnostic inspection requests read-only", () => {
-    for (const operation of ["console", "network"] as const) {
-      expect(
-        BrowserAutomationRequestSchema().safeParse({
-          ...requestBase,
-          operation,
-          args: { clear: true },
-        }).success,
-      ).toBe(false);
-    }
+    expect(
+      BrowserAutomationRequestSchema().safeParse({
+        ...requestBase,
+        operation: "inspect",
+        args: { clear: true },
+      }).success,
+    ).toBe(false);
   });
 
   it("accepts bounded browser_open idempotency and opaque observation references", () => {
@@ -377,7 +327,7 @@ describe("browser automation operation contract", () => {
         snapshot,
         observationRef: "observation-inspect",
         capabilityRevision: 1,
-        capabilities: ["inspect", "status"],
+        capabilities: ["inspect"],
         guidance: "Use browser_inspect on visible Preview.",
       },
     });
@@ -747,7 +697,7 @@ describe("browser automation boundaries", () => {
       threadId: "thread-1",
       providerSessionId: "session-1",
       providerInstanceId: "instance-1",
-      operations: ["status", "snapshot"],
+      operations: ["inspect", "act"],
       issuedAt: 10,
       expiresAt: 20,
     };
@@ -758,7 +708,7 @@ describe("browser automation boundaries", () => {
     expect(
       BrowserAutomationCredentialClaimsSchema().safeParse({
         ...claims,
-        operations: ["status", "status"],
+        operations: ["inspect", "inspect"],
       }).success,
     ).toBe(false);
   });

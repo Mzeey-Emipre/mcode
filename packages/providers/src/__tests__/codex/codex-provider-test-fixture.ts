@@ -96,7 +96,6 @@ export class BrowserAutomationSessionLease {
       allowedOperations: pending.scope.permissionCapability === "observe"
         ? ["inspect"]
         : ["inspect", "click", "type", "evaluate"],
-      rolloutMode: "browser-v2",
     };
   }
 

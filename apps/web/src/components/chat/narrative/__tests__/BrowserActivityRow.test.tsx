@@ -44,22 +44,6 @@ function editCall(): ToolCall {
   };
 }
 
-function granularBrowserCall(
-  id: string,
-  toolName: string,
-  toolInput: Record<string, unknown>,
-  output: Record<string, unknown>,
-): ToolCall {
-  return {
-    id,
-    toolName: `mcp__mcode-browser__${toolName}`,
-    toolInput,
-    output: JSON.stringify(output),
-    isError: false,
-    isComplete: true,
-  };
-}
-
 describe("BrowserActivityRow", () => {
   it("renders the accepted grouped summary and chronological safe details", () => {
     const { container } = render(
@@ -102,48 +86,6 @@ describe("BrowserActivityRow", () => {
     expect(screen.getByText("Clicking the page")).toBeTruthy();
     expect(screen.getByText("Entering text")).toBeTruthy();
     expect(container.textContent).not.toContain("SECRET");
-  });
-
-  it("groups granular Browser tools without exposing queries, URLs, or MCP identity", () => {
-    const calls = [
-      granularBrowserCall(
-        "type-1",
-        "browser_type",
-        { text: "SECRET_QUERY", target: { accessibleName: "SECRET_FIELD" } },
-        { operation: "type", url: "https://example.test/?q=SECRET_QUERY" },
-      ),
-      granularBrowserCall(
-        "wait-1",
-        "browser_wait_for",
-        { url: "https://example.test/?q=SECRET_QUERY" },
-        { operation: "waitFor", url: "https://example.test/?q=SECRET_QUERY" },
-      ),
-      granularBrowserCall(
-        "navigate-1",
-        "browser_navigate",
-        { url: "https://example.test/?token=SECRET_TOKEN" },
-        { operation: "navigate", url: "https://example.test/?token=SECRET_TOKEN" },
-      ),
-      granularBrowserCall(
-        "snapshot-1",
-        "browser_snapshot",
-        {},
-        { operation: "snapshot", snapshot: { visibleText: "SECRET_PAGE_BODY" } },
-      ),
-    ];
-    const { container } = render(
-      <ToolSummaryLine group={{ calls }} hasError={false} hasCancelled={false} />,
-    );
-
-    const summary = screen.getByRole("button", { name: "Used the browser" });
-    fireEvent.click(summary);
-
-    expect(screen.getByText("Entered text")).toBeTruthy();
-    expect(screen.getByText("Waited for the page")).toBeTruthy();
-    expect(screen.getByText("Navigated the page")).toBeTruthy();
-    expect(screen.getByText("Inspected the page")).toBeTruthy();
-    expect(container.textContent).not.toContain("SECRET");
-    expect(container.textContent).not.toContain("mcp__mcode-browser");
   });
 
   it("renders user takeover as a Browser outcome instead of a generic error", () => {

@@ -20,7 +20,7 @@ The Browser preview originally rendered live pages through Electron
 menus, dialogs, and other overlays cannot reliably sit above it with `z-index`.
 
 The product still needs Chromium preview tooling: navigation, captures, page
-context, local file validation, design mode, browser-use CDP, cookies, cache,
+context, local file validation, design mode, Browser automation CDP, cookies, cache,
 zoom, tabs, and memory-saver behavior. Replacing the host surface must not turn
 into a second browser engine effort. ADR-0003 still stands: the in-app preview
 is Chromium-only.
@@ -38,7 +38,7 @@ keeping the native host available for rollback.
 
 Main-process trust boundaries stay in place. The renderer may mount a
 `<webview>`, but main still validates navigation targets, local file paths,
-preview partition policy, capture access, browser-use CDP adoption, cookies,
+preview partition policy, capture access, Browser automation CDP adoption, cookies,
 cache, zoom, permission denial, and popup routing.
 
 ## Consequences

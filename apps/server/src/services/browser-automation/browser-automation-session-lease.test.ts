@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BROWSER_AUTOMATION_OPERATIONS, BROWSER_V2_CORE_OPERATIONS } from "@mcode/contracts";
+import { BROWSER_V2_CORE_OPERATIONS } from "@mcode/contracts";
 import {
   BrowserAutomationSessionLease,
   type BrowserAutomationSessionLeaseScope,
@@ -74,30 +74,7 @@ describe("BrowserAutomationSessionLease", () => {
     expect(privileged.allowedOperations.slice(0, 4)).toEqual(BROWSER_V2_CORE_OPERATIONS);
     expect(privileged.allowedOperations).toContain("evaluate");
     expect(privileged.allowedOperations).toEqual([...BROWSER_V2_CORE_OPERATIONS, "evaluate"]);
-    expect(privileged.rolloutMode).toBe("browser-v2");
     expect(new Set(privileged.allowedOperations).size).toBe(privileged.allowedOperations.length);
-  });
-
-  it("applies the same nightly surface and global rollback to every provider", () => {
-    const providers = ["claude", "codex", "copilot", "cursor", "opencode"];
-    const nightly = configuredLease({
-      rollout: { mode: "browser-v2", reason: "nightly", rollbackActive: false },
-    });
-    const legacy = configuredLease({
-      rollout: { mode: "legacy", reason: "legacy-rollback", rollbackActive: true },
-    });
-
-    for (const [index, providerId] of providers.entries()) {
-      const overrides = {
-        providerId,
-        providerSessionId: `${providerId}-provider`,
-        mcodeSessionId: `${providerId}-mcode-${index}`,
-      };
-      expect(nightly.issue(scope(overrides))?.allowedOperations)
-        .toEqual(BROWSER_V2_CORE_OPERATIONS);
-      expect(legacy.issue(scope(overrides))?.allowedOperations)
-        .toEqual(BROWSER_AUTOMATION_OPERATIONS.filter((operation) => operation !== "evaluate"));
-    }
   });
 
   it("advertises browser_tabs for interact and privileged leases, but not observe", () => {

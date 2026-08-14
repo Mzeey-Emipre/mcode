@@ -977,9 +977,8 @@ Distinct from opening the page in the user's external browser.
 Provider-neutral agent control of a live Preview tab. Browser automation uses
 the same page the user can see, so agent actions, page state, and debugging
 evidence stay attached to one shared browser session.
-Providers use the typed, scoped Browser gateway. The former raw browser-use
-pipe is disabled unless desktop startup receives the hidden rollback variable
-`MCODE_ENABLE_LEGACY_BROWSER_USE_PIPE=1`.
+Providers use the typed, scoped Browser v2 gateway. It is the only supported
+automation path.
 _Avoid_: a hidden agent-only browser
 
 ### Browser automation host
@@ -988,7 +987,7 @@ automation. A host advertises only tabs that it currently owns and can stop
 advertising a tab when that page is replaced, discarded, or closed.
 _Avoid_: treating a saved Preview tab record as a live automation target
 
-The host routes every Browser v1 command through one client-side
+The host routes every Browser v2 command through one client-side
 `BrowserSessionDriver`. The driver selects the web or Electron runtime adapter;
 the adapter owns runtime execution while the Electron kernel retains Chromium
 and CDP mechanics. `BrowserTargetRegistry` owns logical target identity outside

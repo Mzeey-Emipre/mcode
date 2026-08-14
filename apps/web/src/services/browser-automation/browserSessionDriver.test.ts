@@ -770,7 +770,7 @@ describe("BrowserSessionDriver", () => {
     expect(electron).toHaveBeenCalledWith(dispatch, signal);
   });
 
-  it("runs one Browser v1 click case through web and Electron adapter contracts", async () => {
+  it("runs one Browser v2 click case through web and Electron adapter contracts", async () => {
     const webButton = document.createElement("button");
     webButton.id = "save";
     webButton.textContent = "Save";
@@ -1351,7 +1351,7 @@ describe("BrowserSessionDriver", () => {
     expect(close).not.toHaveBeenCalled();
   });
 
-  it("implicitly claims a user tab after browser_navigate and leaves it open during release", async () => {
+  it("implicitly claims a user tab after internal navigation and leaves it open during release", async () => {
     const agent = { threadId: "thread", tabId: "agent-tab", windowId: 1, connectionGeneration: 1, targetGeneration: 1 };
     const user = { threadId: "thread", tabId: "user-tab", windowId: 1, connectionGeneration: 1, targetGeneration: 4 };
     const liveTargets = new Map([[agent.tabId, agent], [user.tabId, user]]);
