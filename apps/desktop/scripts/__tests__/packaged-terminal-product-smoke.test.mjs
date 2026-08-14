@@ -9,6 +9,7 @@ import {
   buildProductLaunch,
   cleanupLoopbackIsolation,
   classifyProductSmokeOutcome,
+  connectToLoopbackCdp,
   hashPackagedResources,
   parseProductSmokeArguments,
   pollProcessCleanup,
@@ -162,6 +163,19 @@ describe("packaged Terminal product smoke contract", () => {
       ["stderr"],
       ["unref"],
     ]);
+  });
+
+  it("bypasses runner proxies only during loopback CDP connection", async () => {
+    const env = { NO_PROXY: "internal.example", no_proxy: "service.local" };
+    const observed = await connectToLoopbackCdp(env, () => ({
+      upper: env.NO_PROXY,
+      lower: env.no_proxy,
+    }));
+    expect(observed).toEqual({
+      upper: "internal.example,127.0.0.1,localhost",
+      lower: "service.local,127.0.0.1,localhost",
+    });
+    expect(env).toEqual({ NO_PROXY: "internal.example", no_proxy: "service.local" });
   });
 
   it("hashes only Terminal and native artifacts", () => {
