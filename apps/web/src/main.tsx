@@ -81,10 +81,16 @@ initTransport()
     // process so it can hold a power save blocker while the server is busy.
     initDesktopPowerReporting();
     root.innerHTML = "";
+    const showProjectEnvironmentPrototype =
+      import.meta.env.DEV &&
+      new URLSearchParams(window.location.search).has("projectEnvironmentPrototype");
+    const RootComponent = showProjectEnvironmentPrototype
+      ? (await import("./components/prototypes/ProjectEnvironmentPrototype")).ProjectEnvironmentPrototype
+      : App;
     createRoot(root).render(
       <StrictMode>
         <AppErrorBoundary>
-          <App />
+          <RootComponent />
         </AppErrorBoundary>
       </StrictMode>
     );
