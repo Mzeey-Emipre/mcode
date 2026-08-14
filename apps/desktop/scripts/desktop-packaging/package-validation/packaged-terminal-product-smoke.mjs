@@ -429,6 +429,13 @@ function extractHostPids(runtime) {
   ];
 }
 
+function releaseProductProcess(child) {
+  child.kill("SIGTERM");
+  child.stdout?.destroy();
+  child.stderr?.destroy();
+  child.unref();
+}
+
 async function runProductBoot({ target, env, bootFault, isolationReceipt, workload }) {
   const bootStartedAt = performance.now();
   const cdpPort = 39_000 + (parseInt(randomUUID().slice(0, 4), 16) % 500);
@@ -463,8 +470,8 @@ async function runProductBoot({ target, env, bootFault, isolationReceipt, worklo
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
     }
-    child.kill("SIGTERM");
     const detail = [connectionError, launchError.trim()].filter(Boolean).join("\n");
+    releaseProductProcess(child);
     throw new Error(
       `Packaged Electron CDP did not become available (exit ${child.exitCode ?? "pending"}): ${detail || "no launch diagnostics"}`,
     );
@@ -551,7 +558,7 @@ async function runProductBoot({ target, env, bootFault, isolationReceipt, worklo
     const page = browser.contexts()[0]?.pages()[0];
     await page?.evaluate(() => window.desktopBridge?.window.perform("close")).catch(() => undefined);
     await browser.close().catch(() => undefined);
-    child.kill("SIGTERM");
+    releaseProductProcess(child);
   }
 }
 
@@ -681,7 +688,7 @@ async function main(argv) {
   if (!releaseDir || !receiptDir) throw new Error("--release-dir and --receipt-dir are required");
   const fault = values.fault === undefined || values.fault === "" ? undefined : values.fault;
   const isolationReceipt = JSON.parse(readFileSync(values["isolation-receipt"], "utf8"));
-  await runPackagedTerminalProductSmoke({
+  const receipt = await runPackagedTerminalProductSmoke({
     releaseDir,
     receiptDir,
     fault,
@@ -689,6 +696,9 @@ async function main(argv) {
     platform: { windows: "windows", macos: "macos", linux: "linux" }[values.platform] ?? values.platform,
     arch: values.arch ?? process.arch,
   });
+  console.log(
+    `[packaged-terminal-product-smoke] Passed ${receipt.fault ?? "clean"} product lane`,
+  );
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
