@@ -2,7 +2,7 @@ import { ipcMain, session as electronSession } from "electron";
 import type { IpcMain, Session, WebContents } from "electron";
 import { BROWSER_TAB_INFO_STRING_MAX } from "@mcode/contracts";
 import { registerPreviewClipboardPermissionHandlers } from "./preview-clipboard-trust.js";
-import type { PreviewPopupRequest, PreviewPopupSurfaceRef } from "./preview-popup-contract.js";
+import type { PreviewPopupRequest, PreviewPopupSurfaceRef } from "../../features/preview/contracts/popup.js";
 
 /** The single persistent Electron partition shared by every Browser guest. */
 export const PREVIEW_PARTITION = "persist:mcode-preview" as const;

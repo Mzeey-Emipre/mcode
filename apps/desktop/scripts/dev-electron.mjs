@@ -140,7 +140,7 @@ const entries = [
   },
   {
     ...shared,
-    entryPoints: [resolve(projectRoot, "src/main/preview/preview-guest-preload.ts")],
+    entryPoints: [resolve(projectRoot, "src/features/preview/preload/guest-input.ts")],
     outfile: guestPreloadOutFile,
     external: ["electron"],
   },

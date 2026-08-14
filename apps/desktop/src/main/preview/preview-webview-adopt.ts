@@ -19,10 +19,10 @@ import {
   unregisterPreviewClipboardGuest,
 } from "./preview-clipboard-trust.js";
 import { previewSessionAdapter } from "./preview-session-adapter.js";
-import { PREVIEW_POPUP_REQUESTED_CHANNEL } from "./preview-popup-contract.js";
-import type { PreviewPopupSurfaceRef } from "./preview-popup-contract.js";
+import { PREVIEW_POPUP_REQUESTED_CHANNEL } from "../../features/preview/contracts/popup.js";
+import type { PreviewPopupSurfaceRef } from "../../features/preview/contracts/popup.js";
 import { isBrowserAutomationAgentOperationActive } from "../browser-automation/active-operation.js";
-import { PREVIEW_SURFACE_DISCARD_REQUESTED_CHANNEL } from "./preview-surface-lifecycle-contract.js";
+import { PREVIEW_SURFACE_DISCARD_REQUESTED_CHANNEL } from "../../features/preview/contracts/surface-lifecycle.js";
 import { bumpPerf } from "./preview-perf.js";
 
 const MAX_SURFACE_ID_LENGTH = 256;

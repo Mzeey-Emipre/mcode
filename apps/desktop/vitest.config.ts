@@ -13,6 +13,7 @@ export default defineConfig({
     environment: "node",
     include: [
       "src/main/__tests__/**/*.test.ts",
+      "src/features/preview/**/__tests__/**/*.test.ts",
       "scripts/__tests__/**/*.test.{ts,mjs,js}",
     ],
     env: {
@@ -22,8 +23,8 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       reporter: ["text", "json-summary"],
-      include: ["src/main/**/*.ts"],
-      exclude: ["src/main/__tests__/**", "src/preload/**"],
+      include: ["src/main/**/*.ts", "src/features/**/*.ts"],
+      exclude: ["src/main/__tests__/**", "src/features/**/__tests__/**", "src/preload/**"],
     },
   },
 });
