@@ -93,7 +93,6 @@ export class TurnFinalizer {
     private readonly db: Database.Database,
     private readonly turnFileTracker?: TurnFileTracker,
     private readonly canonicalSink?: CanonicalAgentEventSink,
-    private readonly stopCanonicalExecution?: (threadId: string, executionId: string) => void,
   ) {}
 
   /** Append a streaming assistant-text delta for the current turn. */
@@ -384,14 +383,7 @@ export class TurnFinalizer {
       finalizeCompatibility: () => {
         if (projection.materialized) this.messageRepo.publishAssistant(projection.materialized.id);
       },
-      onOverflow: () => this.stopCanonicalExecution?.(threadId, executionId),
     });
-
-    if (commitResult.outcome === "ingest-overflow") {
-      this.lastPersistedMessageIdByThread.delete(threadId);
-      this.clearTurn(threadId, turnRef);
-      return;
-    }
 
     let materialized = projection.materialized;
     const replayedTerminal = !materialized

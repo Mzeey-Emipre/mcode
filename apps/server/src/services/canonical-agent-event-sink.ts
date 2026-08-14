@@ -104,10 +104,11 @@ export interface CanonicalParentTurnProjection {
   narrative: readonly NarrativeEntry[];
 }
 
-/** Canonical result plus the physical transaction work used to commit it. */
-export interface CanonicalAgentBatchedCommitResult extends CanonicalAgentCommitResult {
+/** Canonical terminal result plus the physical transaction work used to commit it. */
+export type CanonicalAgentBatchedCommitResult = Omit<CanonicalAgentCommitResult, "outcome"> & {
+  outcome: Exclude<CanonicalAgentCommitResult["outcome"], "ingest-overflow">;
   writeBatches: WriteBatchResult;
-}
+};
 
 /** Inputs for terminal parent-turn projection and canonical persistence. */
 export interface CanonicalParentTurnFinishInput {
@@ -120,8 +121,6 @@ export interface CanonicalParentTurnFinishInput {
   error?: string;
   projectTurn: () => CanonicalParentTurnProjection;
   finalizeCompatibility?: () => void;
-  /** Stops the exact provider execution after a durable overflow record commits. */
-  onOverflow?: () => void;
 }
 
 /** Durable canonical context included with one bounded diagnostic export. */
@@ -656,29 +655,7 @@ export class CanonicalAgentEventSink {
 
     const projection = input.projectTurn();
     const endedAt = new Date().toISOString();
-    const commitInput: CanonicalAgentCommitInput = {
-      threadId: input.threadId,
-      turnId: input.turnId,
-      executionId: input.executionId,
-      phase: input.outcome,
-      terminalOutcome: input.outcome,
-      error: input.error,
-      nativeCursor: input.providerIdentities.find((identity) => identity.provenance === "native"),
-      events: [],
-      onOverflow: input.onOverflow,
-    };
-    const candidateDrafts = this.parentTurnTerminalEvents(input, projection, endedAt);
-    let drafts: readonly CanonicalAgentEventDraft[];
-    try {
-      drafts = this.boundIngestBatch(commitInput, candidateDrafts, checkpoint);
-    } catch (error) {
-      if (!(error instanceof StructuralIngestOverflow)) throw error;
-      const overflow = this.commitStructuralOverflow(error);
-      return {
-        ...overflow,
-        writeBatches: { batches: 0, rows: 0, bytes: 0 },
-      };
-    }
+    const drafts = this.parentTurnTerminalEvents(input, projection, endedAt);
     const partialRevision = this.db
       .prepare("SELECT durable_revision FROM canonical_agent_events WHERE event_id = ?")
       .get(drafts[0]!.eventId) as { durable_revision: number } | undefined;
@@ -690,7 +667,7 @@ export class CanonicalAgentEventSink {
       checkpoint,
     }), "utf8");
     const terminalEventId = `${input.executionId}:turn.${input.outcome === "cancelled" ? "interrupted" : input.outcome}`;
-    let latest: CanonicalAgentCommitResult | null = null;
+    let latest: Omit<CanonicalAgentBatchedCommitResult, "writeBatches"> | null = null;
     const published: CanonicalAgentEventEnvelope[] = [];
     const pendingPublication: CanonicalAgentEventEnvelope[] = [];
     let batchState: AgentModelState | null = null;
@@ -835,9 +812,17 @@ export class CanonicalAgentEventSink {
       },
     });
 
-    const committed = latest as CanonicalAgentCommitResult | null;
+    const committed = latest as Omit<CanonicalAgentBatchedCommitResult, "writeBatches"> | null;
     if (!committed) throw new Error("Canonical terminal batch did not contain an event");
-    return { ...committed, events: published, writeBatches };
+    return {
+      outcome: committed.outcome,
+      conversationRevision: committed.conversationRevision,
+      rosterRevision: committed.rosterRevision,
+      acceptedThrough: committed.acceptedThrough,
+      durableThrough: committed.durableThrough,
+      events: published,
+      writeBatches,
+    };
   }
 
   /** Load canonical message and narrative items for one paginated conversation page. */

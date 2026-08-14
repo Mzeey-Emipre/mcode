@@ -597,7 +597,7 @@ describe("CanonicalAgentEventSink", () => {
     expect(sink.loadThread(THREAD_ID)?.conversationRevision).toBe(2);
   });
 
-  it("fails closed when the production terminal projection saturates structural capacity", async () => {
+  it("commits terminal projections above the semantic event limit in bounded batches", async () => {
     const messageRepo = new MessageRepo(db);
     sink.startParentTurn({
       thread: {
@@ -640,8 +640,6 @@ describe("CanonicalAgentEventSink", () => {
         sort_order: index,
       },
     }));
-    const stopExecution = vi.fn();
-
     const result = await sink.finishParentTurnBatched({
       threadId: THREAD_ID,
       turnId: TURN_ID,
@@ -650,21 +648,38 @@ describe("CanonicalAgentEventSink", () => {
       providerIdentities: [],
       outcome: "completed",
       projectTurn: () => ({ message: { ...message, is_internal: false }, narrative }),
-      onOverflow: stopExecution,
+      finalizeCompatibility: () => messageRepo.publishAssistant(message.id),
     });
 
-    expect(result.outcome).toBe("ingest-overflow");
-    expect(stopExecution).toHaveBeenCalledOnce();
-    expect(sink.loadTurn(TURN_ID)).toMatchObject({ status: "Interrupted" });
+    expect(result.outcome).toBe("committed");
+    expect(result.writeBatches.batches).toBeGreaterThan(1);
+    expect(sink.loadTurn(TURN_ID)).toMatchObject({ status: "Completed" });
     expect(sink.loadCheckpoint(EXECUTION_ID)).toMatchObject({
-      phase: "ingest_overflow",
-      terminalOutcome: "errored",
-      lastAcceptedSequence: 5,
-      lastDurableSequence: 5,
+      phase: "completed",
+      terminalOutcome: "completed",
+      lastAcceptedSequence: 262,
+      lastDurableSequence: 262,
     });
     expect(db.prepare("SELECT COUNT(*) AS count FROM canonical_agent_events").get()).toEqual({
-      count: 5,
+      count: 262,
     });
+    expect(sink.loadTerminalProjection(TURN_ID)).toMatchObject({
+      message: expect.objectContaining({ content: "answer" }),
+      toolCallCount: CANONICAL_AGENT_EVENT_BATCH_MAX,
+    });
+    expect(messageRepo.listByThread(THREAD_ID, 10).messages.map((message) => ({
+      content: message.content,
+      is_internal: message.is_internal,
+    }))).toEqual([
+      { content: "question", is_internal: false },
+      { content: "answer", is_internal: false },
+    ]);
+    expect(published.mock.calls.length).toBeGreaterThan(1);
+    const publishedEvents = published.mock.calls.flatMap(([events]) => events);
+    expect(publishedEvents).toHaveLength(262);
+    expect(published.mock.calls.every(([events]) =>
+      events.length <= CANONICAL_AGENT_EVENT_BATCH_MAX,
+    )).toBe(true);
   });
 
   it("keeps the first confirmed terminal outcome", () => {
