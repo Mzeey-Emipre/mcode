@@ -1580,6 +1580,7 @@ function VirtualizedThreadList({
 
   const virtualizer = useVirtualizer({
     count: treeItems.length,
+    getItemKey: (index) => treeItems[index].thread.id,
     getScrollElement: () => scrollElementRef.current,
     estimateSize: () => 32,
     overscan: 5,

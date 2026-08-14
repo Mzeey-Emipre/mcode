@@ -95,17 +95,30 @@ vi.mock("@/stores/sidebarSearchStore", () => ({
 
 // The virtualizer requires a real scrollable element with measured sizes.
 // In jsdom none of that works, so we replace it with a pass-through that
-// renders every item directly.
+// renders every item directly while preserving the identity callback output.
+const virtualizerKeyHistory: Array<Array<string | number>> = [];
+
 vi.mock("@tanstack/react-virtual", () => ({
-  useVirtualizer: ({ count }: { count: number }) => ({
+  useVirtualizer: ({
+    count,
+    getItemKey,
+  }: {
+    count: number;
+    getItemKey?: (index: number) => string | number;
+  }) => ({
     getTotalSize: () => count * 32,
-    getVirtualItems: () =>
-      Array.from({ length: count }, (_, i) => ({
+    getVirtualItems: () => {
+      const keys = Array.from({ length: count }, (_, i) =>
+        getItemKey ? getItemKey(i) : i,
+      );
+      virtualizerKeyHistory.push(keys);
+      return keys.map((key, i) => ({
         index: i,
         start: i * 32,
         size: 32,
-        key: i,
-      })),
+        key,
+      }));
+    },
   }),
 }));
 
@@ -116,7 +129,11 @@ import { prefetchOnPointerDown } from "@/lib/thread-hydrator/prefetch-scheduler"
 import { ProjectTree } from "./ProjectTree";
 
 /** Build a minimal Thread fixture. */
-function makeThread(overrides: Partial<Thread> = {}): Thread {
+type TestWorkspaceThread = Thread & { clientPreparing?: boolean };
+
+function makeThread(
+  overrides: Partial<TestWorkspaceThread> = {},
+): TestWorkspaceThread {
   return {
     id: "thread-1",
     workspace_id: "ws-1",
@@ -234,6 +251,7 @@ describe("ProjectTree thread interactions", () => {
       JSON.stringify({ "ws-1": true }),
     );
     useUiStore.setState({ projectThreadViews: {} });
+    virtualizerKeyHistory.length = 0;
     vi.useFakeTimers();
   });
 
@@ -295,6 +313,47 @@ describe("ProjectTree thread interactions", () => {
 
     expect(beginNewThread).not.toHaveBeenCalled();
     expect(state.loadThreads).toHaveBeenCalledWith("ws-1");
+  });
+
+  it("keeps virtual item identity tied to thread IDs as a new thread is replaced", () => {
+    const oldThreads = [
+      makeThread({ id: "old-thread-1", title: "Old thread 1" }),
+      makeThread({ id: "old-thread-2", title: "Old thread 2" }),
+    ];
+    const state = setupStoreMocks({ threads: oldThreads });
+    const view = render(<ProjectTree />);
+    expect(virtualizerKeyHistory.at(-1)).toEqual([
+      "old-thread-1",
+      "old-thread-2",
+    ]);
+    virtualizerKeyHistory.length = 0;
+
+    state.threads = [
+      makeThread({
+        id: "placeholder-thread",
+        title: "New thread",
+        clientPreparing: true,
+      }),
+      ...oldThreads,
+    ];
+    act(() => view.rerender(<ProjectTree />));
+    expect(virtualizerKeyHistory.at(-1)).toEqual([
+      "placeholder-thread",
+      "old-thread-1",
+      "old-thread-2",
+    ]);
+    virtualizerKeyHistory.length = 0;
+
+    state.threads = [
+      makeThread({ id: "server-thread", title: "New thread" }),
+      ...oldThreads,
+    ];
+    act(() => view.rerender(<ProjectTree />));
+    expect(virtualizerKeyHistory.at(-1)).toEqual([
+      "server-thread",
+      "old-thread-1",
+      "old-thread-2",
+    ]);
   });
 
   it("completes an idle thread from its hover action", async () => {
