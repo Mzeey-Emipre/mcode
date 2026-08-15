@@ -56,9 +56,8 @@ import {
   resolvePreviewGuestPreloadPath,
 } from "../features/preview/index.js";
 import {
-  configureApplicationMenu,
-  installMainWindowNavigationPolicy,
-  registerDesktopWindowActionHandler,
+  createDesktopWindowFeature,
+  getWindowIconPath,
   registerExternalUrlHandler,
 } from "../features/desktop-window/index.js";
 import { isDesktopDev } from "./is-desktop-dev.js";
@@ -309,116 +308,6 @@ const serverRuntime = new ServerRuntime({
   getCookieStore: () => session.defaultSession.cookies,
 });
 
-/** Returns the app icon path used for dev windows and packaged resources. */
-function getWindowIconPath(): string {
-  const iconFile =
-    process.platform === "win32"
-      ? "icon.ico"
-      : process.platform === "darwin"
-        ? "icon.icns"
-        : "icon.png";
-  if (app.isPackaged) {
-    return join(process.resourcesPath, iconFile);
-  }
-  return join(app.getAppPath(), "build", iconFile);
-}
-
-// ---------------------------------------------------------------------------
-// Window creation
-// ---------------------------------------------------------------------------
-
-/** Create the main BrowserWindow and load the web app. */
-function createWindow(): void {
-  mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
-    icon: getWindowIconPath(),
-    // Keep window hidden until first paint to eliminate the blank white flash.
-    show: false,
-    backgroundColor: "#0a0a0f",
-    autoHideMenuBar: true,
-    ...(process.platform === "darwin"
-      ? {
-          titleBarStyle: "hiddenInset" as const,
-          trafficLightPosition: { x: 14, y: 12 },
-        }
-      : {
-          titleBarStyle: "hidden" as const,
-          titleBarOverlay: {
-            color: "#00000000",
-            symbolColor: "#8a8a92",
-            height: 40,
-          },
-        }),
-    webPreferences: {
-      preload: join(__dirname, "../preload/preload.cjs"),
-      contextIsolation: true,
-      nodeIntegration: false,
-      // Documented explicitly; defaults to true in Electron but we set it
-      // here for clarity. The load-bearing call is setSpellCheckerLanguages().
-      spellcheck: true,
-      // Phase D of the in-app browser rewrite: enable <webview> so the
-      // renderer can host a guest WebContents whose id is later adopted by
-      // the Browser automation host. webview-tag carries Chromium guest
-      // process risks; the will-attach-webview hook below clamps webPreferences
-      // and we never expose nodeIntegrationInSubFrames.
-      webviewTag: true,
-      // Chromium DevTools only in `bun run dev:desktop` (ELECTRON_RENDERER_URL).
-      // Packaged releases and local `bun run prod` keep DevTools disabled.
-      devTools: isDesktopDev(),
-    },
-  });
-
-  mainWindow.once("ready-to-show", () => {
-    mainWindow?.show();
-  });
-
-  mainWindow.setMenuBarVisibility(false);
-
-  mainWindow.on("close", () => {
-    disposePreviewForWindow(mainWindow!);
-    disposeBrowserAutomationForWindow(mainWindow!.id);
-  });
-
-  installMainWindowNavigationPolicy(mainWindow);
-
-  // Harden every <webview> and replace any renderer-supplied preload with the
-  // fixed takeover bridge bundled with the desktop application.
-  mainWindow.webContents.on("will-attach-webview", (_event, webPreferences, params) => {
-    hardenPreviewWebviewAttachment(
-      webPreferences,
-      params,
-      resolvePreviewGuestPreloadPath(__dirname),
-    );
-  });
-
-  // Show the window as soon as the first frame is painted.
-  // Fallback timeout ensures the window becomes visible even if the
-  // ready-to-show event never fires (e.g. renderer crash before first paint).
-  const showFallback = setTimeout(() => {
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show();
-  }, 3000);
-  mainWindow.once("ready-to-show", () => {
-    clearTimeout(showFallback);
-    mainWindow?.show();
-  });
-  mainWindow.once("closed", () => clearTimeout(showFallback));
-
-  if (process.env.ELECTRON_RENDERER_URL) {
-    mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
-  } else {
-    mainWindow.loadFile(join(__dirname, "../renderer/index.html"));
-  }
-
-  if (isDesktopDev()) {
-    mainWindow.webContents.once("did-finish-load", () => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.openDevTools({ mode: "right" });
-      }
-    });
-  }
-}
-
 // ---------------------------------------------------------------------------
 // IPC handler registration
 // ---------------------------------------------------------------------------
@@ -599,8 +488,6 @@ function registerIpcHandlers(): void {
     return supported;
   });
 
-  registerDesktopWindowActionHandler();
-
   registerPreviewBrowserHandlers();
 }
 
@@ -638,50 +525,6 @@ function registerAttachmentProtocol(): void {
         "Content-Security-Policy": "default-src 'none'",
       },
     });
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Close handler
-// ---------------------------------------------------------------------------
-
-/** Confirm close when agents are running, then shut down the server. */
-function setupCloseHandler(): void {
-  if (!mainWindow) return;
-
-  mainWindow.on("close", async (event) => {
-    // Check active agent count via the server's HTTP API
-    let count = 0;
-    try {
-      const res = await fetch(`http://localhost:${serverRuntime.port}/health`);
-      if (res.ok) {
-        const data = (await res.json()) as { activeAgents?: number };
-        count = data.activeAgents ?? 0;
-      }
-    } catch {
-      // Server unreachable, allow close
-    }
-
-    if (count > 0) {
-      event.preventDefault();
-      const plural = count === 1 ? " is" : "s are";
-      const message =
-        `${count} agent${plural} still working. ` +
-        "They'll resume when you reopen Mcode.";
-
-      const { response } = await dialog.showMessageBox(mainWindow!, {
-        type: "question",
-        title: "Agents Running",
-        message,
-        buttons: ["Continue", "Cancel"],
-        defaultId: 0,
-        cancelId: 1,
-      });
-
-      if (response === 0) {
-        app.quit();
-      }
-    }
   });
 }
 
@@ -735,7 +578,26 @@ app.whenReady().then(async () => {
     if (process.platform === "darwin") {
       app.dock?.setIcon(getWindowIconPath());
     }
-    configureApplicationMenu({ getMainWindow: () => mainWindow });
+    const desktopWindow = createDesktopWindowFeature({
+      isDesktopDev,
+      lifecycleHooks: {
+        disposePreviewForWindow,
+        disposeBrowserAutomationForWindow,
+        hardenPreviewWebviewAttachment,
+        resolvePreviewGuestPreloadPath,
+        setupSpellcheck,
+        attachServerWindow: (window) => serverRuntime.attachWindow(window),
+      },
+      closeGuard: {
+        getActiveAgentCount: () => serverRuntime.getActiveAgentCount(),
+        showMessageBox: (window, options) =>
+          dialog.showMessageBox(window, {
+            ...options,
+            buttons: [...options.buttons],
+          }),
+        quit: () => app.quit(),
+      },
+    });
 
     // Start the server child process
     const port = await serverRuntime.start();
@@ -757,27 +619,15 @@ app.whenReady().then(async () => {
     await serverRuntime.installAuthCookie();
 
     // Create window
-    createWindow();
+    mainWindow = desktopWindow.createWindow();
     console.log(
       `[perf] Window created: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`,
     );
 
-    // Enable spellchecker and attach per-window context-menu handler.
-    setupSpellcheck(mainWindow!);
-
-    serverRuntime.attachWindow(mainWindow!);
-
-    // Set up close handler
-    setupCloseHandler();
-
     // macOS: re-create window when dock icon is clicked
     app.on("activate", () => {
-      if (BrowserWindow.getAllWindows().length === 0) {
-        createWindow();
-        setupSpellcheck(mainWindow!);
-        setupCloseHandler();
-        serverRuntime.attachWindow(mainWindow!);
-      }
+      const recreatedWindow = desktopWindow.recreateWindowIfNeeded();
+      if (recreatedWindow) mainWindow = recreatedWindow;
     });
 
     // Initialize updates after the server and main window dependencies exist.
