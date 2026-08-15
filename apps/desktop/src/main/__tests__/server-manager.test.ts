@@ -12,6 +12,10 @@ const refs = vi.hoisted(() => {
     on: vi.fn((event: string, cb: (code: number | null) => void) => {
       if (event === "exit") exitCallback = cb;
     }),
+    stderr: {
+      on: vi.fn(),
+      pipe: vi.fn(),
+    },
     unref: vi.fn(),
     pid: 12345,
   };
@@ -148,7 +152,11 @@ function setupDefaultReadFileMock() {
 // Mock fetch for health check
 const originalFetch = globalThis.fetch;
 
-import { ServerManager } from "../server-manager.js";
+import {
+  forwardReleaseTestServerStderr,
+  PACKAGED_SERVER_STDERR_FORWARD_MAX_BYTES,
+  ServerManager,
+} from "../server-manager.js";
 import { execFileSync, spawn } from "child_process";
 import {
   existsSync,
@@ -239,6 +247,67 @@ describe("ServerManager", () => {
       19600,
       "127.0.0.1",
       expect.any(Function),
+    );
+  });
+
+  it("forwards packaged release-test stderr and keeps the file pipe", async () => {
+    refs.setIsPackaged(true);
+    process.env.MCODE_TERMINAL_RELEASE_TEST = "1";
+    Object.defineProperty(process, "resourcesPath", {
+      value: "/test/resources",
+      configurable: true,
+      writable: true,
+    });
+
+    try {
+      await manager.start();
+
+      expect(refs.mockChildProcess.stderr.pipe).toHaveBeenCalledOnce();
+      expect(refs.mockChildProcess.stderr.on).toHaveBeenCalledWith(
+        "data",
+        expect.any(Function),
+      );
+    } finally {
+      delete process.env.MCODE_TERMINAL_RELEASE_TEST;
+    }
+  });
+
+  it.each([undefined, "0", "true"])(
+    "does not attach server stderr forwarding for non-exact release gate %s",
+    async (releaseTest) => {
+      refs.setIsPackaged(true);
+      if (releaseTest === undefined) delete process.env.MCODE_TERMINAL_RELEASE_TEST;
+      else process.env.MCODE_TERMINAL_RELEASE_TEST = releaseTest;
+      Object.defineProperty(process, "resourcesPath", {
+        value: "/test/resources",
+        configurable: true,
+        writable: true,
+      });
+
+      try {
+        await manager.start();
+
+        expect(refs.mockChildProcess.stderr.pipe).toHaveBeenCalledOnce();
+        expect(refs.mockChildProcess.stderr.on).not.toHaveBeenCalledWith(
+          "data",
+          expect.any(Function),
+        );
+      } finally {
+        delete process.env.MCODE_TERMINAL_RELEASE_TEST;
+      }
+    },
+  );
+
+  it("bounds each forwarded server stderr chunk", () => {
+    const write = vi.fn();
+    forwardReleaseTestServerStderr(
+      "x".repeat(PACKAGED_SERVER_STDERR_FORWARD_MAX_BYTES + 1),
+      write,
+    );
+
+    expect(write).toHaveBeenCalledOnce();
+    expect(Buffer.byteLength(write.mock.calls[0]![0])).toBeLessThanOrEqual(
+      PACKAGED_SERVER_STDERR_FORWARD_MAX_BYTES,
     );
   });
 

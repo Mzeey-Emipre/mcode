@@ -25,6 +25,7 @@ import {
 } from "fs";
 import { readFile } from "fs/promises";
 import { createServer, type AddressInfo } from "net";
+import { Buffer } from "node:buffer";
 import { resolve, join, dirname } from "path";
 import { getMcodeDir } from "@mcode/shared";
 import {
@@ -134,6 +135,25 @@ const STARTUP_TIMEOUT_MS = 30_000;
 const SERVER_LOG_PATH = join(getMcodeDir(), "server-stderr.log");
 /** Previous server stderr log retained across one respawn for crash diagnostics. */
 const SERVER_ROTATED_LOG_PATH = join(getMcodeDir(), "server-stderr.1.log");
+
+/** Maximum UTF-8 bytes forwarded from one packaged server stderr chunk. */
+export const PACKAGED_SERVER_STDERR_FORWARD_MAX_BYTES = 8_192;
+
+/** Forwards one bounded release-test server stderr chunk to the parent writer. */
+export function forwardReleaseTestServerStderr(
+  chunk: string | Uint8Array,
+  write: (text: string) => void = (text) => {
+    process.stderr.write(text);
+  },
+): void {
+  const text = typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+  const bytes = Buffer.from(text, "utf8");
+  write(
+    bytes.byteLength <= PACKAGED_SERVER_STDERR_FORWARD_MAX_BYTES
+      ? text
+      : bytes.subarray(0, PACKAGED_SERVER_STDERR_FORWARD_MAX_BYTES).toString("utf8"),
+  );
+}
 
 /** Rotate the previous packaged-server stderr log before opening a fresh one. */
 function rotateServerLog(): void {
@@ -609,6 +629,8 @@ export class ServerManager {
       const stderrStream = isDesktopDev()
         ? undefined
         : createWriteStream(SERVER_LOG_PATH, { flags: "w" });
+      const releaseTestStderrForwardingEnabled =
+        app.isPackaged && process.env.MCODE_TERMINAL_RELEASE_TEST === "1";
 
       // The renamed binary is a copy of the Electron binary, so ELECTRON_RUN_AS_NODE=1 is still required.
       const serverBinary = resolveServerBinary({
@@ -644,6 +666,11 @@ export class ServerManager {
       // Pipe stderr to the log file when running packaged
       if (!isDesktopDev() && stderrStream && child.stderr) {
         child.stderr.pipe(stderrStream);
+        if (releaseTestStderrForwardingEnabled) {
+          child.stderr.on("data", (chunk: string | Uint8Array) =>
+            forwardReleaseTestServerStderr(chunk),
+          );
+        }
       }
 
       child.on("exit", (code) => {
