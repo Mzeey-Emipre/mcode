@@ -61,7 +61,7 @@ vi.mock("@mcode/contracts", () => ({
 }));
 
 vi.mock("../open-in/index.js", () => ({ openInRegistry: vi.fn() }));
-vi.mock("../server-manager.js", () => ({
+vi.mock("../../features/server-runtime/index.js", () => ({
   ServerManager: class {
     start = vi.fn();
     restart = vi.fn();

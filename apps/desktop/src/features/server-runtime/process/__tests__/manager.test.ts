@@ -44,7 +44,7 @@ const refs = vi.hoisted(() => {
 
 // Mock the binary resolver so tests can control the spawn target directly
 // without depending on node:fs aliasing in the test environment.
-vi.mock("../server-binary-resolver.js", () => ({
+vi.mock("../binary-resolver.js", () => ({
   resolveServerBinary: refs.resolveServerBinarySpy,
 }));
 
@@ -78,8 +78,8 @@ vi.mock("net", () => ({
 }));
 
 // Single mock for both "fs" and "node:fs" (Vitest normalises them to the same
-// module). server-binary-resolver imports existsSync from "node:fs", while
-// server-manager imports from "fs" — the shared existsSyncSpy covers both.
+// module). binary-resolver imports existsSync from "node:fs", while manager
+// imports from "fs"; the shared existsSyncSpy covers both.
 vi.mock("node:fs", () => ({
   existsSync: refs.existsSyncSpy,
   readFileSync: vi.fn(() => {
@@ -148,7 +148,7 @@ function setupDefaultReadFileMock() {
 // Mock fetch for health check
 const originalFetch = globalThis.fetch;
 
-import { ServerManager } from "../server-manager.js";
+import { ServerManager } from "../manager.js";
 import { execFileSync, spawn } from "child_process";
 import {
   existsSync,
