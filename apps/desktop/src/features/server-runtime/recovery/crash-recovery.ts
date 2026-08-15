@@ -1,20 +1,12 @@
-/** Backoff delays for backend crash recovery attempts. */
-export const SERVER_CRASH_BACKOFF_MS = [1_000, 5_000, 15_000] as const;
+const SERVER_CRASH_BACKOFF_MS = [1_000, 5_000, 15_000] as const;
 
-/** Time window used to decide whether crashes are part of one crash loop. */
-export const SERVER_CRASH_WINDOW_MS = 5 * 60_000;
+const SERVER_CRASH_WINDOW_MS = 5 * 60_000;
 
-/** Dependencies required by {@link ServerCrashRecovery}. */
-export interface ServerCrashRecoveryDeps {
-  /** Restart the backend server. */
+interface ServerCrashRecoveryDeps {
   restart: () => Promise<void>;
-  /** Surface that the backend crashed and was recovered. */
   notifyRecovered: (code: number | null) => void;
-  /** Surface the terminal crash-loop state to the user. */
   showError: (code: number | null) => Promise<void> | void;
-  /** Clock injection for deterministic tests. */
   now?: () => number;
-  /** Timer injection for deterministic tests. */
   sleep?: (ms: number) => Promise<void>;
 }
 
@@ -41,7 +33,6 @@ export class ServerCrashRecovery {
         }));
   }
 
-  /** Restart after an unexpected backend exit, or surface a crash loop. */
   handleUnexpectedExit(code: number | null): Promise<void> {
     if (this.inFlight) return this.inFlight;
 
