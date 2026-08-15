@@ -7,6 +7,7 @@ import { useTerminalStore } from "@/stores/terminalStore";
 import {
   emitPtyData,
   emitPtyExit,
+  emitPtyReconnectGap,
   onPtyData,
   onPtyExit,
   onPtyReconnectGap,
