@@ -24,6 +24,8 @@ import type {
   CodexTurnOptions,
   TurnStartParams,
   TurnStartResult,
+  TurnInterruptParams,
+  TurnInterruptResult,
   ThreadGoal,
   ThreadGoalSetParams,
   ThreadGoalSetResult,
@@ -254,6 +256,11 @@ const LIFECYCLE_NOTIFICATION_PREFIXES = [
   "fs/",               // fs/changed
   "thread/realtime/",  // realtime audio/SDP (EXPERIMENTAL)
 ] as const;
+
+  /** Maximum time to drain an exact child turn's terminal notification after interrupt acknowledgement. */
+const CHILD_INTERRUPT_DRAIN_TIMEOUT_MS = 5_000;
+/** Stable failure returned when an acknowledged child interrupt has no terminal notification. */
+const CHILD_INTERRUPT_DRAIN_TIMEOUT_ERROR = "Child interruption timed out waiting for terminal completion.";
 
 /** Benign substrings found in stderr that are safe to ignore at debug level. */
 const BENIGN_PATTERNS = [
@@ -1193,6 +1200,44 @@ export class CodexAppServer extends EventEmitter {
       await this.rpc.sendRequest("turn/interrupt", { threadId: this.threadId }, 5000);
     } catch {
       // Non-fatal: first turn or idle session may have nothing to interrupt.
+    }
+  }
+
+  /** Interrupt one exact native child turn without changing this app-server session. */
+  async interruptChildTurn(nativeThreadId: string, nativeTurnId: string): Promise<void> {
+    if (!this.rpc) throw new Error("Child interruption requested before codex app-server was ready");
+    let finishDrain!: () => void;
+    let failDrain!: (error: Error) => void;
+    let drainTimer: ReturnType<typeof setTimeout> | undefined;
+    const drain = new Promise<void>((resolve, reject) => {
+      finishDrain = resolve;
+      failDrain = reject;
+    });
+    const onNotification = (notification: unknown): void => {
+      const message = notification as {
+        method?: unknown;
+        params?: { threadId?: unknown; turnId?: unknown; turn?: { id?: unknown } };
+      };
+      if (message.method !== "turn/completed"
+        || message.params?.threadId !== nativeThreadId
+        || (message.params.turn?.id ?? message.params.turnId) !== nativeTurnId) return;
+      finishDrain();
+    };
+    this.on("notification", onNotification);
+    drainTimer = setTimeout(
+      () => failDrain(new Error(CHILD_INTERRUPT_DRAIN_TIMEOUT_ERROR)),
+      CHILD_INTERRUPT_DRAIN_TIMEOUT_MS,
+    );
+    try {
+      await this.rpc.sendRequest<TurnInterruptParams, TurnInterruptResult>(
+        "turn/interrupt",
+        { threadId: nativeThreadId, turnId: nativeTurnId },
+        5_000,
+      );
+      await drain;
+    } finally {
+      this.off("notification", onNotification);
+      if (drainTimer) clearTimeout(drainTimer);
     }
   }
 

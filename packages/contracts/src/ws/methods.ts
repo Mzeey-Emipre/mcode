@@ -37,6 +37,7 @@ import { GitCommitSchema } from "../models/git-commit.js";
 import { PrInfoSchema, PrDetailSchema, PrDraftSchema, CreatePrResultSchema, ChecksStatusSchema } from "../github.js";
 import { TurnSnapshotSchema } from "../models/turn-snapshot.js";
 import { AgentStopResultSchema, TurnRuntimeSnapshotSchema } from "../models/turn-runtime.js";
+import { CanonicalSubagentStopRequestSchema, CanonicalSubagentStopResultSchema } from "../models/canonical-subagent-roster.js";
 import { MAX_TURN_RECOVERIES, TurnRecoverySchema } from "../models/turn-recovery.js";
 import { PlanAnswerSchema } from "../models/plan-questions.js";
 import { PlanStatusSchema, PlanRecordSchema, PlanActionSchema } from "../models/plan-output.js";
@@ -943,6 +944,11 @@ export const WS_METHODS = lazySchema(() => ({
   "canonicalAgent.roster": {
     params: CanonicalSubagentRosterRequestSchema() as z.ZodTypeAny,
     result: CanonicalSubagentRosterSchema() as z.ZodTypeAny,
+  },
+  /** Stop one active canonical child without closing its provider session. */
+  "agent.child.stop": {
+    params: CanonicalSubagentStopRequestSchema() as z.ZodTypeAny,
+    result: CanonicalSubagentStopResultSchema() as z.ZodTypeAny,
   },
   "conversation.olderPage": {
     ...ConversationOlderPageMethod,

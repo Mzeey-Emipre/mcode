@@ -1,4 +1,5 @@
 import type {
+  TerminalDiagnosticsBundle,
   TerminalExitMetadata,
   TerminalGap,
   TerminalSessionState,
@@ -100,5 +101,7 @@ export interface TerminalClient {
   checkpoint(ptyId: string, seq: number, data: string): Promise<{ accepted: boolean }>;
   listActive(): Promise<TerminalActiveSession[]>;
   hasChildren(ptyId: string): Promise<{ hasChildren: boolean }>;
+  /** Returns the typed, bounded, already-redacted diagnostics bundle. */
+  diagnostics(): Promise<TerminalDiagnosticsBundle>;
   acknowledgeOutput?(ptyId: string, seq: number): void;
 }

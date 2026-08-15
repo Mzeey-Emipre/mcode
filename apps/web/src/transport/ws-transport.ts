@@ -24,6 +24,7 @@ import type {
   TerminalWorkspacePreference,
 } from "./types";
 import { TurnRuntimeSnapshotSchema } from "@mcode/contracts";
+import { TerminalErrorCodeSchema } from "@mcode/contracts";
 import type {
   CreateAndSendResult,
   PullRequestCapabilitiesRequest,
@@ -64,7 +65,7 @@ import type {
   TerminalCustomProfile,
   TerminalProfileReference,
 } from "@mcode/contracts";
-import type { PaginatedMessages, ConversationPage, ConversationNewerPage, ConversationNewerPageRequest, ConversationOlderPage, ConversationOlderPageRequest, ConversationTail, CanonicalSubagentRoster, SetThreadSubscriptionsInput, SetThreadSubscriptionsResult, TurnSnapshot, PrDraft, CreatePrResult, ProviderUsageInfo, ChecksStatus, ProviderAvailability, GoalLookupResult } from "@mcode/contracts";
+import type { PaginatedMessages, ConversationPage, ConversationNewerPage, ConversationNewerPageRequest, ConversationOlderPage, ConversationOlderPageRequest, ConversationTail, CanonicalSubagentRoster, CanonicalSubagentStopResult, SetThreadSubscriptionsInput, SetThreadSubscriptionsResult, TurnSnapshot, PrDraft, CreatePrResult, ProviderUsageInfo, ChecksStatus, ProviderAvailability, GoalLookupResult } from "@mcode/contracts";
 import {
   TERMINAL_DATA_TAG,
   TERMINAL_BINARY_MAGIC,
@@ -80,6 +81,7 @@ import type {
   TerminalClient,
   TerminalClientSubscription,
 } from "@/terminal/terminal-client";
+import { TerminalRpcError } from "./terminal-rpc-error";
 
 /** Minimum reconnect delay in milliseconds. */
 const MIN_RECONNECT_MS = 1000;
@@ -430,7 +432,11 @@ export function createWsTransport(
         pending.delete(msg.id as string);
         if (msg.error) {
           const err = msg.error as { code?: string; message?: string; data?: Record<string, unknown>; retry?: string };
-          reject(new RpcError(err.message ?? "RPC error", err.code ?? "RPC_ERROR", err.data, err.retry));
+          if (TerminalErrorCodeSchema().safeParse(err.code).success) {
+            reject(new TerminalRpcError(err));
+          } else {
+            reject(new RpcError(err.message ?? "RPC error", err.code ?? "RPC_ERROR", err.data, err.retry));
+          }
         } else {
           resolve(msg.result);
         }
@@ -793,6 +799,11 @@ export function createWsTransport(
         owningParentThreadId,
         ...(limit !== undefined ? { limit } : {}),
       }),
+    stopCanonicalSubagent: (owningParentThreadId, childThreadId) =>
+      rpc<CanonicalSubagentStopResult>("agent.child.stop", {
+        owningParentThreadId,
+        childThreadId,
+      }),
     loadOlderConversationPage: (request: ConversationOlderPageRequest) =>
       rpc<ConversationOlderPage>("conversation.olderPage", request),
     loadNewerConversationPage: (request: ConversationNewerPageRequest) =>
@@ -914,6 +925,8 @@ export function createWsTransport(
       withTerminalClient((client) => client.listActive()),
     terminalHasChildren: (ptyId) =>
       withTerminalClient((client) => client.hasChildren(ptyId)),
+    terminalDiagnostics: () =>
+      withTerminalClient((client) => client.diagnostics()),
     ptySetLastSeq: (ptyId, seq) => {
       ptyLastSeqMap.set(ptyId, seq);
       terminalClientSelector.getSelected().acknowledgeOutput?.(ptyId, seq);

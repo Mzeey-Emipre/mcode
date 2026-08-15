@@ -2077,11 +2077,11 @@ describe("CanonicalAgentEventSink", () => {
       outcome: "completed",
     });
     expect(finished.status).toBe("Completed");
-    expect(() => sink.finishCodexChildTurn({
+    expect(sink.finishCodexChildTurn({
       childThreadId: provisional.childThread.id,
       nativeTurnId: "native-turn-content",
       outcome: "errored",
-    })).toThrow("terminal identity conflict");
+    })).toMatchObject({ status: "Completed" });
 
     const restored = new CanonicalAgentEventSink(db, vi.fn());
     const recovered = restored.loadCodexChildDelegation(THREAD_ID, input.parentItemId);

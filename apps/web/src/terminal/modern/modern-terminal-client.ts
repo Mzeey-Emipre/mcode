@@ -10,6 +10,7 @@ import {
   type TerminalGap,
   type TerminalScope,
   type TerminalSessionSnapshot,
+  TerminalDiagnosticsBundleSchema,
 } from "@mcode/contracts";
 import { withTerminalTimeout } from "../terminal-client";
 import type {
@@ -272,6 +273,13 @@ export class ModernTerminalClient implements TerminalClient {
   /** Reports whether one modern session owns child processes. */
   hasChildren(ptyId: string): Promise<{ hasChildren: boolean }> {
     return this.rpc("terminal.session.hasChildren", { sessionId: ptyId });
+  }
+
+  /** Fetches and validates the content-free diagnostics bundle at the v1 boundary. */
+  async diagnostics(): Promise<import("@mcode/contracts").TerminalDiagnosticsBundle> {
+    return TerminalDiagnosticsBundleSchema().parse(
+      await this.rpc("terminal.diagnostics.getBundle", {}),
+    );
   }
 
   /** Applies a server v1 frame to the exact client-owned attachment. */

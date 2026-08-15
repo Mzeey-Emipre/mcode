@@ -45,6 +45,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   setServerBusy: (busy: boolean): Promise<void> =>
     ipcRenderer.invoke("set-server-busy", busy),
 
+  /** Query the main process for Electron's assistive-technology support signal. */
+  getAccessibilitySupport: (): Promise<boolean> =>
+    ipcRenderer.invoke("accessibility:get-support"),
+
   /** Electron process data exposed only when the performance runner starts the app. */
   performance: {
     getMetrics: (): Promise<unknown> =>

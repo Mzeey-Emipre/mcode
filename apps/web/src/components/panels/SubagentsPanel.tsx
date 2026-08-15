@@ -5,11 +5,16 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { SubagentIdentityGlyph } from "@/components/subagents/SubagentIdentityGlyph";
+import { SubagentStopControl } from "@/components/subagents/SubagentStopControl";
 import { useDiffStore, type SubagentRosterTab } from "@/stores/diffStore";
 import { getTransport } from "@/transport";
 import { resolveModelDisplayLabel } from "@/lib/format-model-label";
 import { MessageList } from "@/components/chat/MessageList";
-import type { CanonicalSubagentRoster, CanonicalSubagentRosterRow } from "@mcode/contracts";
+import type {
+  CanonicalSubagentRoster,
+  CanonicalSubagentRosterRow,
+  CanonicalSubagentStopResult,
+} from "@mcode/contracts";
 import { getConversationResidency } from "@/stores/conversation-residency";
 
 function formatReasoningLevel(value: string): string {
@@ -23,6 +28,14 @@ function formatReasoningLevel(value: string): string {
 
 function canonicalIdentity(row: CanonicalSubagentRosterRow): string {
   return row.identity ?? "Subagent";
+}
+
+function canonicalIsActive(row: CanonicalSubagentRosterRow): boolean {
+  return row.activityState === "Active" || row.activityState === "Starting";
+}
+
+function canonicalStatus(row: CanonicalSubagentRosterRow): string {
+  return canonicalIsActive(row) ? "Active" : row.terminalOutcome ?? row.activityState;
 }
 
 function canonicalLineage(row: CanonicalSubagentRosterRow, rows: readonly CanonicalSubagentRosterRow[]): string {
@@ -45,47 +58,58 @@ function CanonicalRosterRow({
   row,
   rows,
   onSelect,
+  onStop,
+  onTerminal,
   testId,
 }: {
   readonly row: CanonicalSubagentRosterRow;
   readonly rows: readonly CanonicalSubagentRosterRow[];
   readonly onSelect: () => void;
+  readonly onStop: () => Promise<CanonicalSubagentStopResult>;
+  readonly onTerminal: () => Promise<void> | void;
   readonly testId: string;
 }) {
-  const active = row.activityState === "Active" || row.activityState === "Starting";
-  const status = active ? "Active" : row.terminalOutcome ?? row.activityState;
+  const active = canonicalIsActive(row);
+  const status = canonicalStatus(row);
   const lineage = canonicalLineage(row, rows);
   return (
-    <Button
-      type="button"
-      variant="ghost"
-      onClick={onSelect}
-      aria-label={`Open ${canonicalIdentity(row)} details, ${status}`}
-      data-subagent-id={row.id}
-      data-testid={testId}
-      className="h-auto w-full min-w-0 justify-start gap-3 rounded-none px-6 py-2.5 text-left transition-colors duration-150 motion-reduce:transition-none hover:bg-muted/30 focus-visible:ring-inset"
-    >
-      <SubagentIdentityGlyph
-        identity={canonicalIdentity(row)}
-        hasExplicitIdentity={row.identity !== undefined}
-        animated={active}
-        className="size-6"
-        size={15}
-      />
-      <span className="min-w-0 flex-1">
-        <span className="flex min-w-0 items-center gap-2">
-          <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{canonicalIdentity(row)}</span>
-          <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
-            {active ? "Active" : status}
+    <div data-testid={testId} className="flex w-full min-w-0 items-center rounded-none transition-colors duration-150 motion-reduce:transition-none hover:bg-muted/30">
+      <Button
+        type="button"
+        variant="ghost"
+        onClick={onSelect}
+        aria-label={`Open ${canonicalIdentity(row)} details, ${status}`}
+        data-subagent-id={row.id}
+        className="h-auto min-w-0 flex-1 justify-start gap-3 rounded-none px-6 py-2.5 text-left focus-visible:ring-inset"
+      >
+        <SubagentIdentityGlyph
+          identity={canonicalIdentity(row)}
+          hasExplicitIdentity={row.identity !== undefined}
+          animated={active}
+          className="size-6"
+          size={15}
+        />
+        <span className="min-w-0 flex-1">
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{canonicalIdentity(row)}</span>
+            <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">{status}</span>
           </span>
+          {lineage && <span className="mt-0.5 block truncate text-xs text-muted-foreground" aria-label={`Lineage: ${lineage}`}>{lineage}</span>}
+          {row.task && <span className="mt-0.5 block truncate text-xs text-muted-foreground">{row.task}</span>}
+          {!active && row.hasActiveDescendant && (
+            <span className="mt-0.5 block text-xs text-primary">Active descendant</span>
+          )}
         </span>
-        {lineage && <span className="mt-0.5 block truncate text-xs text-muted-foreground" aria-label={`Lineage: ${lineage}`}>{lineage}</span>}
-        {row.task && <span className="mt-0.5 block truncate text-xs text-muted-foreground">{row.task}</span>}
-        {!active && row.hasActiveDescendant && (
-          <span className="mt-0.5 block text-xs text-primary">Active descendant</span>
-        )}
-      </span>
-    </Button>
+      </Button>
+      <SubagentStopControl
+        active={active}
+        canStop={row.canStop}
+        label={canonicalIdentity(row)}
+        onStop={onStop}
+        onTerminal={onTerminal}
+        className="mr-3"
+      />
+    </div>
   );
 }
 
@@ -93,13 +117,18 @@ function CanonicalDetailView({
   row,
   rows,
   onBack,
+  onStop,
+  onTerminal,
 }: {
   readonly row: CanonicalSubagentRosterRow;
   readonly rows: readonly CanonicalSubagentRosterRow[];
   readonly onBack: () => void;
+  readonly onStop: () => Promise<CanonicalSubagentStopResult>;
+  readonly onTerminal: () => Promise<void> | void;
 }) {
   const identity = canonicalIdentity(row);
   const lineage = canonicalLineage(row, rows);
+  const active = canonicalIsActive(row);
   const [technicalOpen, setTechnicalOpen] = useState(false);
   const [displayLeaseAcquired, setDisplayLeaseAcquired] = useState(false);
   useEffect(() => {
@@ -121,10 +150,18 @@ function CanonicalDetailView({
             {lineage && <p className="truncate text-xs text-muted-foreground">{lineage}</p>}
           </div>
           <div className="flex shrink-0 items-center gap-2 font-mono text-xs text-muted-foreground">
+            <span data-testid="subagent-detail-status" aria-live="polite">{canonicalStatus(row)}</span>
             {row.model && <span>{resolveModelDisplayLabel(row.model)}</span>}
             {row.reasoning && <span>{formatReasoningLevel(row.reasoning)}</span>}
           </div>
         </div>
+        <SubagentStopControl
+          active={active}
+          canStop={row.canStop}
+          label={identity}
+          onStop={onStop}
+          onTerminal={onTerminal}
+        />
       </header>
       <Collapsible open={technicalOpen} onOpenChange={setTechnicalOpen} className="shrink-0 border-b border-border/40 px-4 py-2 text-xs text-muted-foreground" data-testid="subagent-technical-details">
         <CollapsibleTrigger asChild>
@@ -155,6 +192,7 @@ export function SubagentsPanel({ threadId }: { readonly threadId: string }) {
   const selectDetail = useDiffStore((state) => state.selectSubagentDetail);
   const clearDetail = useDiffStore((state) => state.clearSubagentDetail);
   const viewportRef = useRef<HTMLDivElement | null>(null);
+  const rosterLoadRef = useRef<(() => Promise<void>) | null>(null);
   const requestGenerationRef = useRef(0);
   const acceptedGenerationRef = useRef(0);
   useEffect(() => {
@@ -184,10 +222,12 @@ export function SubagentsPanel({ threadId }: { readonly threadId: string }) {
         });
       }
     };
+    rosterLoadRef.current = load;
     void load();
     const timer = window.setInterval(() => void load(), 1_500);
     return () => {
       cancelled = true;
+      if (rosterLoadRef.current === load) rosterLoadRef.current = null;
       window.clearInterval(timer);
     };
   }, [threadId]);
@@ -208,6 +248,8 @@ export function SubagentsPanel({ threadId }: { readonly threadId: string }) {
   const selectRow = (id: string, originTab: SubagentRosterTab) => {
     selectDetail(threadId, { id, originTab, scrollTop: viewportRef.current?.scrollTop ?? 0 });
   };
+
+  const refreshRoster = () => rosterLoadRef.current?.();
 
   if (isLoading) {
     return (
@@ -235,6 +277,8 @@ export function SubagentsPanel({ threadId }: { readonly threadId: string }) {
       key={selectedCanonicalRow.id}
       row={selectedCanonicalRow}
       rows={canonicalRows}
+      onStop={() => getTransport().stopCanonicalSubagent(selectedCanonicalRow.owningParentThreadId, selectedCanonicalRow.id)}
+      onTerminal={refreshRoster}
       onBack={() => {
         clearDetail(threadId);
         window.requestAnimationFrame(() => {
@@ -272,6 +316,8 @@ export function SubagentsPanel({ threadId }: { readonly threadId: string }) {
                       rows={canonicalRows}
                       testId="subagent-roster-row"
                       onSelect={() => selectRow(row.id, "active")}
+                      onStop={() => getTransport().stopCanonicalSubagent(row.owningParentThreadId, row.id)}
+                      onTerminal={refreshRoster}
                     />
                   ))}
               </section>
@@ -291,6 +337,8 @@ export function SubagentsPanel({ threadId }: { readonly threadId: string }) {
                       rows={canonicalRows}
                       testId="subagent-finished-row"
                       onSelect={() => selectRow(row.id, "finished")}
+                      onStop={() => getTransport().stopCanonicalSubagent(row.owningParentThreadId, row.id)}
+                      onTerminal={refreshRoster}
                     />
                   ))}
               </section>

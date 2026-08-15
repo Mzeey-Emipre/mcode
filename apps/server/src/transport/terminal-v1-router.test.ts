@@ -1,10 +1,40 @@
 import { describe, expect, it, vi } from "vitest";
-import { getDefaultSettings, TerminalRpcResponseSchema } from "@mcode/contracts";
+import {
+  TERMINAL_V1_METHODS,
+  getDefaultSettings,
+  TerminalRpcResponseSchema,
+  type TerminalDiagnosticEvent,
+  type TerminalHealthSnapshot,
+} from "@mcode/contracts";
 import { ZodError } from "zod";
 import { TerminalBackendError } from "../terminal/terminal-backend.js";
+import { TerminalDiagnosticsService } from "../terminal/diagnostics/terminal-diagnostics-service.js";
 import { routeMessage, type RouterDeps } from "./ws-router.js";
 
 const sessionId = "00000000-0000-4000-8000-000000000001";
+
+const HEALTH: TerminalHealthSnapshot = {
+  contractVersion: 1,
+  state: "healthy",
+  hostGeneration: "7",
+  activeSessions: 1,
+  lastHeartbeatMsAgo: 10,
+  queueBytes: 0,
+  eventLoopLagMs: 1,
+  hostRssBytes: "1024",
+};
+
+function diagnosticEvent(): TerminalDiagnosticEvent {
+  return {
+    eventId: "00000000-0000-4000-8000-000000000002",
+    at: "2026-08-11T12:00:00.000Z",
+    metric: "session.create.ms",
+    unit: "ms",
+    value: 25,
+    outcome: "ok",
+    correlationId: "shell-command-secret",
+  };
+}
 
 function customProfile(index: number, oversized = false) {
   const suffix = index.toString(16).padStart(12, "0");
@@ -208,6 +238,70 @@ describe("Terminal v1 RPC routing", () => {
     expect(response).toMatchObject({
       id: sessionId,
       error: { code: "SETTINGS_INVALID", retry: "NEW_SESSION" },
+    });
+  });
+
+  it("routes diagnostics report and bundle through the public RPC boundary", async () => {
+    const diagnostics = new TerminalDiagnosticsService({
+      backend: () => "modern",
+      health: () => HEALTH,
+      now: () => new Date("2026-08-11T12:01:00.000Z"),
+      createCorrelationId: () => "corr-generated",
+    });
+    const deps = { terminalDiagnosticsService: diagnostics } as unknown as RouterDeps;
+
+    const report = await routeMessage(JSON.stringify({
+      id: "req_report",
+      method: "terminal.diagnostics.report",
+      params: { events: [diagnosticEvent()] },
+    }), deps);
+    expect(report).toEqual({ id: "req_report", result: { accepted: 1 } });
+    expect(TERMINAL_V1_METHODS["terminal.diagnostics.report"].result.parse(report.result)).toEqual({ accepted: 1 });
+
+    const bundle = await routeMessage(JSON.stringify({
+      id: "req_bundle",
+      method: "terminal.diagnostics.getBundle",
+      params: {},
+    }), deps);
+    expect(bundle).toMatchObject({
+      id: "req_bundle",
+      result: {
+        backend: "modern",
+        events: [{ correlationId: "corr-generated" }],
+      },
+    });
+    expect(TERMINAL_V1_METHODS["terminal.diagnostics.getBundle"].result.parse(bundle.result)).toEqual(bundle.result);
+    expect(JSON.stringify(bundle)).not.toContain("shell-command-secret");
+  });
+
+  it("rejects malformed diagnostics input without exposing payload data", async () => {
+    const response = await routeMessage(JSON.stringify({
+      id: "req_invalid",
+      method: "terminal.diagnostics.report",
+      params: { events: [{ correlationId: "raw-shell-secret" }] },
+    }), { terminalDiagnosticsService: {} } as unknown as RouterDeps);
+
+    expect(response).toEqual({
+      id: "req_invalid",
+      error: {
+        code: "INVALID_PARAMS",
+        message: "Invalid Terminal diagnostics parameters",
+      },
+    });
+    expect(JSON.stringify(response)).not.toContain("raw-shell-secret");
+  });
+
+  it("keeps unknown methods on the existing method-not-found path", async () => {
+    await expect(routeMessage(JSON.stringify({
+      id: "req_unknown",
+      method: "terminal.diagnostics.unknown",
+      params: {},
+    }), {} as RouterDeps)).resolves.toEqual({
+      id: "req_unknown",
+      error: {
+        code: "METHOD_NOT_FOUND",
+        message: "Unknown method: terminal.diagnostics.unknown",
+      },
     });
   });
 });

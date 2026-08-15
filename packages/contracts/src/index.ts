@@ -239,14 +239,18 @@ export {
   CANONICAL_SUBAGENT_ROSTER_MAX_CHILDREN,
   CANONICAL_SUBAGENT_TASK_MAX_LENGTH,
   CanonicalSubagentRosterRequestSchema,
+  CanonicalSubagentStopRequestSchema,
   CanonicalSubagentTerminalOutcomeSchema,
+  CanonicalSubagentStopResultSchema,
   CanonicalSubagentRosterRowSchema,
   CanonicalSubagentRosterSchema,
   canonicalSubagentTerminalOutcome,
 } from "./models/canonical-subagent-roster.js";
 export type {
   CanonicalSubagentRosterRequest,
+  CanonicalSubagentStopRequest,
   CanonicalSubagentTerminalOutcome,
+  CanonicalSubagentStopResult,
   CanonicalSubagentRosterRow,
   CanonicalSubagentRoster,
 } from "./models/canonical-subagent-roster.js";
@@ -1163,6 +1167,7 @@ export type {
   ProviderId,
   SessionForkBehavior,
   IAgentProvider,
+  IChildTurnCancellable,
   ICompletionCapable,
   IGoalCapable,
   ISessionEvictable,
@@ -1185,7 +1190,12 @@ export {
   ModelPolicyStateSchema,
 } from "./providers/models.js";
 export type { ProviderModelInfo } from "./providers/models.js";
-export { isCompletionCapable, isGoalCapable, isSessionEvictable } from "./providers/interfaces.js";
+export {
+  isChildTurnCancellable,
+  isCompletionCapable,
+  isGoalCapable,
+  isSessionEvictable,
+} from "./providers/interfaces.js";
 
 export type {
   SessionForker,

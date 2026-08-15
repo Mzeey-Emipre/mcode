@@ -56,14 +56,12 @@ import {
   registerPreviewBrowserHandlers,
   disposeBrowserAutomationForWindow,
   disposePreviewForWindow,
-} from "./preview/index.js";
-import { resolveMcodeWorkspacePreviewUrl } from "../features/preview/navigation/local-file.js";
-import { isDesktopDev } from "./is-desktop-dev.js";
-import { shouldPrintVersion } from "./cli-args.js";
-import {
+  resolveMcodeWorkspacePreviewUrl,
   hardenPreviewWebviewAttachment,
   resolvePreviewGuestPreloadPath,
-} from "../features/preview/security/webview-attachment-policy.js";
+} from "../features/preview/index.js";
+import { isDesktopDev } from "./is-desktop-dev.js";
+import { shouldPrintVersion } from "./cli-args.js";
 
 // Isolate dev's Electron userData (cache, cookies, localStorage, IndexedDB)
 // from the installed prod build. Without this, both share %APPDATA%/Mcode/
@@ -777,6 +775,17 @@ function registerIpcHandlers(): void {
       busySenders.delete(id);
     }
     updatePowerSaveBlocker();
+  });
+
+  ipcMain.handle("accessibility:get-support", (event): boolean => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) {
+      throw new Error("Accessibility support requires the main renderer");
+    }
+    const supported = app.isAccessibilitySupportEnabled();
+    if (typeof supported !== "boolean") {
+      throw new Error("Electron returned an invalid accessibility support value");
+    }
+    return supported;
   });
 
   ipcMain.handle("window:perform", (event, action: unknown) => {

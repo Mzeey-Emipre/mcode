@@ -12,7 +12,14 @@ import { Button } from "@/components/ui/button";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { resolveDefaultOpenInApp } from "@/lib/resolveDefaultOpenInApp";
 import { useTerminalStore, type TerminalSearchOptions } from "@/stores/terminalStore";
-import { isTerminalSearchShortcut, shouldInterceptKeyEvent } from "./terminalKeyHandler";
+import {
+  detectTerminalShortcutPlatform,
+  isTerminalMiddleClickPaste,
+  isTerminalPasteShortcut,
+  isTerminalSearchShortcut,
+  shouldInterceptKeyEvent,
+} from "./terminalKeyHandler";
+import { resolveTerminalScreenReaderMode } from "./terminalAccessibility";
 import { ClientTerminalFlowControl } from "./terminalFlowControl";
 import {
   TERMINAL_CLEANUP_TIMEOUT_MS,
@@ -509,6 +516,7 @@ export const TerminalView = memo(function TerminalView({
       incrementLiveTerminalCount();
       let exited = sessionEndedRef.current;
       if (exited) term.options.disableStdin = true;
+      const shortcutPlatform = detectTerminalShortcutPlatform();
 
       const linkDisposable = term.registerLinkProvider({
         provideLinks: (bufferLineNumber, callback) => {
@@ -573,7 +581,14 @@ export const TerminalView = memo(function TerminalView({
           openSearchRef.current();
           return false;
         }
-        if (shouldInterceptKeyEvent(event, term.hasSelection())) {
+        if (isTerminalPasteShortcut(event, shortcutPlatform)) {
+          event.preventDefault();
+          if (!exited && !sessionEndedRef.current) {
+            navigator.clipboard.readText().then(pasteText).catch(() => {});
+          }
+          return false;
+        }
+        if (shouldInterceptKeyEvent(event, term.hasSelection(), shortcutPlatform)) {
           const selection = term.getSelection();
           if (selection) {
             navigator.clipboard.writeText(selection).catch(() => {});
@@ -615,6 +630,13 @@ export const TerminalView = memo(function TerminalView({
           .catch(() => {});
       };
       el.addEventListener("contextmenu", handleContextMenu);
+      const handleAuxClick = (e: MouseEvent) => {
+        if (!isTerminalMiddleClickPaste(e, shortcutPlatform)) return;
+        e.preventDefault();
+        if (exited || sessionEndedRef.current) return;
+        navigator.clipboard.readText().then(pasteText).catch(() => {});
+      };
+      el.addEventListener("auxclick", handleAuxClick);
 
       const handlePaste = (event: ClipboardEvent) => {
         if (!confirmMultilinePasteRef.current) return;
@@ -826,6 +848,7 @@ export const TerminalView = memo(function TerminalView({
         linkDisposable.dispose();
         el.removeEventListener("wheel", onWheel);
         el.removeEventListener("contextmenu", handleContextMenu);
+        el.removeEventListener("auxclick", handleAuxClick);
         el.removeEventListener("paste", handlePaste, true);
         unsubPtyData();
         unsubReconnectGap();
@@ -1147,6 +1170,19 @@ export const TerminalView = memo(function TerminalView({
     if (term) term.options.disableStdin = true;
   }, [sessionState]);
 
+  useEffect(() => {
+    if (!termReady) return;
+    let cancelled = false;
+    void resolveTerminalScreenReaderMode(terminalSettings.accessibility.screenReaderMode).then((enabled) => {
+      if (!cancelled && termRef.current) {
+        termRef.current.options.screenReaderMode = enabled;
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [terminalSettings.accessibility.screenReaderMode, termReady]);
+
   // Attach WebGL only while shown and after scroll restore; one GL context pool-wide.
   useEffect(() => {
     if (!shown || !threadActive) {
@@ -1289,9 +1325,8 @@ export const TerminalView = memo(function TerminalView({
   }, [ownerScopeId, ptyId, sessionState]);
 
   const copyDiagnostics = useCallback(() => {
-    const getBundle = getTransport().terminalDiagnosticsGetBundle;
-    if (!getBundle) return;
-    void getBundle()
+    void getTransport()
+      .terminalDiagnostics()
       .then((bundle) => navigator.clipboard.writeText(JSON.stringify(bundle)))
       .catch(() => {
         setRecoveryAction(null);

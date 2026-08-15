@@ -12,6 +12,7 @@ import type { WebSocket } from "ws";
 import type { IncomingMessage } from "http";
 
 import {
+  TERMINAL_V1_METHODS,
   WS_METHODS,
   TERMINAL_RPC_MAX_BYTES,
   WebSocketRequestSchema,
@@ -44,6 +45,7 @@ import type {
 import type { ProviderCatalogService } from "../services/provider-catalog-service";
 import type { TerminalBackend } from "../terminal/terminal-backend.js";
 import { TerminalBackendError } from "../terminal/terminal-backend.js";
+import type { TerminalDiagnosticsService } from "../terminal/diagnostics/terminal-diagnostics-service.js";
 import { TerminalSessionPolicyError } from "../terminal/terminal-session-service.js";
 import { TerminalSessionRuntimeError } from "../terminal/runtime/terminal-session-runtime.js";
 import type { TerminalProfileService } from "../terminal/profiles/terminal-profile-service.js";
@@ -150,6 +152,60 @@ function teardownFailureMessage(result: PromiseRejectedResult): string {
   return result.reason instanceof Error ? result.reason.message : String(result.reason);
 }
 
+type TerminalDiagnosticsMethod =
+  | "terminal.diagnostics.report"
+  | "terminal.diagnostics.getBundle";
+
+function isTerminalDiagnosticsMethod(method: string): method is TerminalDiagnosticsMethod {
+  return method === "terminal.diagnostics.report" || method === "terminal.diagnostics.getBundle";
+}
+
+function routeTerminalDiagnostics(
+  id: string,
+  method: TerminalDiagnosticsMethod,
+  params: Record<string, unknown>,
+  diagnostics: TerminalDiagnosticsService,
+): WebSocketResponse {
+  const contract = TERMINAL_V1_METHODS[method];
+  const paramsResult = contract.params.safeParse(params);
+  if (!paramsResult.success) {
+    return {
+      id,
+      error: {
+        code: "INVALID_PARAMS",
+        message: "Invalid Terminal diagnostics parameters",
+      },
+    };
+  }
+
+  try {
+    const result = method === "terminal.diagnostics.report"
+      ? diagnostics.report(paramsResult.data)
+      : diagnostics.getBundle();
+    const resultValidation = contract.result.safeParse(result);
+    if (!resultValidation.success) {
+      logger.error("Terminal diagnostics result failed contract", { method });
+      return {
+        id,
+        error: {
+          code: "INTERNAL_ERROR",
+          message: "Terminal diagnostics result violated its contract",
+        },
+      };
+    }
+    return { id, result: resultValidation.data };
+  } catch {
+    logger.error("Terminal diagnostics RPC failed", { method });
+    return {
+      id,
+      error: {
+        code: "INTERNAL_ERROR",
+        message: "Terminal diagnostics unavailable",
+      },
+    };
+  }
+}
+
 function resolveProviderCatalogContext(
   deps: RouterDeps,
   params: { workspaceId?: string; threadId?: string; cwd?: string },
@@ -199,6 +255,8 @@ export interface RouterDeps {
   terminalProfileService: TerminalProfileService;
   /** Reads explicit workspace Terminal profile overrides. */
   workspaceTerminalPreferencesService: WorkspaceTerminalPreferencesService;
+  /** Collects bounded, redacted renderer diagnostics for the Terminal RPC boundary. */
+  terminalDiagnosticsService: TerminalDiagnosticsService;
   messageRepo: MessageRepo;
   toolCallRecordRepo: ToolCallRecordRepo;
   thoughtSegmentRepo: ThoughtSegmentRepo;
@@ -287,6 +345,15 @@ export async function routeMessage(
       id: "unknown",
       error: { code: "PARSE_ERROR", message: "Invalid JSON" },
     };
+  }
+
+  if (isTerminalDiagnosticsMethod(request.method)) {
+    return routeTerminalDiagnostics(
+      request.id,
+      request.method,
+      request.params,
+      deps.terminalDiagnosticsService,
+    );
   }
 
   const methodDef = WS_METHODS()[request.method as WsMethodName];
@@ -1164,7 +1231,12 @@ async function dispatch(
         before: params.before,
       });
     case "canonicalAgent.roster":
-      return deps.canonicalSink.loadSubagentRoster(params);
+      return deps.agentService.loadCanonicalSubagentRoster(params);
+    case "agent.child.stop":
+      return deps.agentService.stopChildTurn(
+        params.owningParentThreadId,
+        params.childThreadId,
+      );
     case "conversation.olderPage":
       return loadOlderConversationPage(deps, params);
     case "conversation.newerPage":

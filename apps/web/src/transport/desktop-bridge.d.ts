@@ -452,6 +452,8 @@ interface DesktopBridge {
    * builds may not expose it.
    */
   setServerBusy?(busy: boolean): Promise<void>;
+  /** Query Electron's trusted assistive-technology support signal. */
+  getAccessibilitySupport?(): Promise<boolean>;
   /** Process metrics exposed only in a maintained frontend performance run. */
   performance?: {
     getMetrics(): Promise<{
