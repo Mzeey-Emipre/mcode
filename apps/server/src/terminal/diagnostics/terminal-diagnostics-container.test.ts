@@ -7,7 +7,6 @@ import { container } from "tsyringe";
 import type Database from "better-sqlite3";
 import { routeMessage, type RouterDeps } from "../../transport/ws-router.js";
 import { setupContainer } from "../../container.js";
-import { LegacyTerminalBackend } from "../legacy/legacy-terminal-backend.js";
 import { TERMINAL_BACKEND_TOKEN, type TerminalBackend } from "../terminal-backend.js";
 import { TerminalDiagnosticsService } from "./terminal-diagnostics-service.js";
 
@@ -102,7 +101,7 @@ describe("Terminal diagnostics container wiring", () => {
 
   it("caps legacy active sessions at the diagnostics schema limit", async () => {
     process.env.MCODE_TERMINAL_BACKEND = "legacy";
-    container.register(LegacyTerminalBackend, {
+    container.register<TerminalBackend>(TERMINAL_BACKEND_TOKEN, {
       useValue: {
         capabilities: () => ({
           contractVersion: 0,
