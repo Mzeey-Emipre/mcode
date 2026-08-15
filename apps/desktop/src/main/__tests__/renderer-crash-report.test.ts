@@ -62,27 +62,18 @@ vi.mock("@mcode/contracts", () => ({
 
 vi.mock("../open-in/index.js", () => ({ openInRegistry: vi.fn() }));
 vi.mock("../../features/server-runtime/index.js", () => ({
-  ServerManager: class {
+  ServerRuntime: class {
     start = vi.fn();
-    restart = vi.fn();
-    isHealthy = vi.fn();
+    registerLifecycle = vi.fn();
+    registerConnectionHandlers = vi.fn();
+    installAuthCookie = vi.fn();
+    attachWindow = vi.fn();
     forceReplace = vi.fn();
-  },
-  ServerCrashRecovery: class {
-    handleUnexpectedExit = vi.fn();
-  },
-  ServerHealthRecovery: class {
-    ensureServerRunning = vi.fn();
-  },
-  ServerNotifications: class {
-    showCrashDialog = vi.fn();
-    showRecoveredNotification = vi.fn();
-  },
-  BusyBlocker: class {
-    report = vi.fn();
+    get port() {
+      return 0;
+    }
   },
 }));
-vi.mock("../ipc-relay.js", () => ({ startIpcRelay: vi.fn() }));
 vi.mock("../auto-updater.js", () => ({
   applyReleaseLineSwitch: vi.fn(),
   checkForUpdatesNow: vi.fn(),
