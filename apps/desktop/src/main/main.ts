@@ -56,14 +56,12 @@ import {
   registerPreviewBrowserHandlers,
   disposeBrowserAutomationForWindow,
   disposePreviewForWindow,
-} from "./preview/index.js";
-import { resolveMcodeWorkspacePreviewUrl } from "../features/preview/navigation/local-file.js";
-import { isDesktopDev } from "./is-desktop-dev.js";
-import { shouldPrintVersion } from "./cli-args.js";
-import {
+  resolveMcodeWorkspacePreviewUrl,
   hardenPreviewWebviewAttachment,
   resolvePreviewGuestPreloadPath,
-} from "../features/preview/security/webview-attachment-policy.js";
+} from "../features/preview/index.js";
+import { isDesktopDev } from "./is-desktop-dev.js";
+import { shouldPrintVersion } from "./cli-args.js";
 
 // Isolate dev's Electron userData (cache, cookies, localStorage, IndexedDB)
 // from the installed prod build. Without this, both share %APPDATA%/Mcode/
