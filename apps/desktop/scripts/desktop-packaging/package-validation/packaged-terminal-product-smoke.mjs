@@ -452,6 +452,19 @@ export function appendBoundedOutputTail(tail, chunk) {
   return `${tail}${chunk}`.slice(-LAUNCH_OUTPUT_TAIL_LIMIT);
 }
 
+/** Attaches a non-empty bounded launch tail while preserving the original error. */
+export function attachLaunchOutputTail(error, launchOutputTail) {
+  const tail = launchOutputTail.trim();
+  if (!tail) return error;
+  const detail = `\nLaunch output tail:\n${tail}`;
+  if (error instanceof Error) {
+    if (error.message.toLowerCase().includes(detail.toLowerCase())) return error;
+    error.message += detail;
+    return error;
+  }
+  return new Error(`${String(error)}${detail}`, { cause: error });
+}
+
 /** Builds the environment used to boot one packaged product target. */
 export function buildProductBootEnv({ env, targetRoot, bootFault }) {
   const bootEnv = {
@@ -701,6 +714,8 @@ async function runProductBoot({ target, env, bootFault, isolationReceipt, worklo
       newSession,
       startupFallbackDurationMs: null,
     };
+  } catch (error) {
+    throw attachLaunchOutputTail(error, launchOutputTail);
   } finally {
     const page = browser.contexts()[0]?.pages()[0];
     await page?.evaluate(() => window.desktopBridge?.window.perform("close")).catch(() => undefined);

@@ -7,6 +7,7 @@ import {
   type PtyHostEvent,
 } from "./pty-host-protocol.js";
 import { PtyHostProcessRuntime } from "./pty-host-runtime.js";
+import { writePtyHostDiagnostic } from "./pty-host-diagnostics.js";
 
 const MAX_IPC_QUEUE_BYTES = 1_048_576;
 
@@ -82,6 +83,9 @@ export function runPtyHostProcess(): PtyHostProcessRuntime {
   let queue: PtyHostMessageQueue | undefined;
   let runtime: PtyHostProcessRuntime;
   let failing = false;
+  const releaseTestObservationsEnabled =
+    process.env.MCODE_TERMINAL_RELEASE_TEST === "1" &&
+    process.env.MCODE_TERMINAL_BACKEND === "modern";
   const failHost = async (error: unknown): Promise<void> => {
     if (failing) return;
     failing = true;
@@ -111,6 +115,10 @@ export function runPtyHostProcess(): PtyHostProcessRuntime {
     platform: terminalPlatform(process.platform),
     nativeAbi: `${process.platform}-${process.arch}-${process.versions.modules}`,
     publish,
+    releaseTestObservationsEnabled,
+    releaseTestDiagnostic: releaseTestObservationsEnabled
+      ? writePtyHostDiagnostic
+      : undefined,
     queueBytes: () =>
       Math.min(MAX_IPC_QUEUE_BYTES, (queue?.pendingBytes ?? 0) + outboundBytes),
     onPostStartHostExit: () => {

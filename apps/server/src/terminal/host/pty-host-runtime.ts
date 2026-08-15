@@ -12,6 +12,12 @@ import {
 } from "./pty-host-protocol.js";
 import { createPtyProcessScope } from "./pty-process-scope.js";
 import type { TerminalReleaseTestFault } from "../release-test/terminal-release-test-input.js";
+import {
+  emitPtyHostDiagnostic,
+  type PtyHostDiagnosticDetails,
+  type PtyHostDiagnosticPhase,
+  type PtyHostDiagnosticSink,
+} from "./pty-host-diagnostics.js";
 
 const nativeRequire = createRequire(import.meta.url);
 const MAX_SESSIONS = 20;
@@ -44,6 +50,10 @@ export interface PtyHostProcessRuntimeOptions {
   readonly queueBytes?: () => number;
   readonly spawnPty?: typeof import("node-pty").spawn;
   readonly createScope?: (rootPid: number) => PtyProcessScope;
+  /** Enables packaged-only host lifecycle observations. */
+  readonly releaseTestObservationsEnabled?: boolean;
+  /** Receives packaged-only, bounded host lifecycle observations. */
+  readonly releaseTestDiagnostic?: PtyHostDiagnosticSink;
   /** Invoked by the protected post-start fault after the first session runs. */
   readonly onPostStartHostExit?: () => void;
 }
@@ -73,6 +83,7 @@ export class PtyHostProcessRuntime {
   private disposed = false;
   private releaseTestFault: TerminalReleaseTestFault | undefined;
   private postStartFaultTriggered = false;
+  private heartbeatPublished = false;
 
   constructor(private readonly options: PtyHostProcessRuntimeOptions) {}
 
@@ -148,6 +159,9 @@ export class PtyHostProcessRuntime {
   private acceptHandshake(
     message: Extract<PtyHostServerMessage, { kind: "handshake" }>,
   ): void {
+    this.diagnostic("runtime.handshake.received", {
+      requestedGeneration: message.requestedGeneration,
+    });
     if (message.platform !== this.options.platform)
       throw new Error("PTY host platform mismatch");
     if (message.releaseTestFault === "startup-health-failure") {
@@ -187,6 +201,9 @@ export class PtyHostProcessRuntime {
         protocolVersion: 1,
       },
     });
+    this.diagnostic("runtime.ready.published", {
+      generation: message.requestedGeneration,
+    });
     this.heartbeatTimer = setInterval(
       () => this.publishHeartbeat(),
       PTY_HOST_HEARTBEAT_INTERVAL_MS,
@@ -200,19 +217,38 @@ export class PtyHostProcessRuntime {
       throw new Error("PTY host session limit reached");
     if (this.sessions.has(message.sessionId))
       throw new Error(`PTY session already exists: ${message.sessionId}`);
-    const spawnPty = this.options.spawnPty ?? this.loadNativeSpawn();
-    const pty = spawnPty(message.executable, [...message.arguments], {
-      name: "xterm-256color",
-      cols: message.cols,
-      rows: message.rows,
-      cwd: message.cwd,
-      env: Object.fromEntries(
-        message.env.map(({ name, value }) => [name, value]),
-      ),
-      encoding: null,
-      ...(this.options.platform === "windows"
-        ? { useConpty: true, useConptyDll: true }
-        : {}),
+    this.diagnostic("runtime.native-spawn.start", {
+      generation: message.hostGeneration,
+      sessionId: message.sessionId,
+    });
+    let pty: IPty;
+    try {
+      const spawnPty = this.options.spawnPty ?? this.loadNativeSpawn();
+      pty = spawnPty(message.executable, [...message.arguments], {
+        name: "xterm-256color",
+        cols: message.cols,
+        rows: message.rows,
+        cwd: message.cwd,
+        env: Object.fromEntries(
+          message.env.map(({ name, value }) => [name, value]),
+        ),
+        encoding: null,
+        ...(this.options.platform === "windows"
+          ? { useConpty: true, useConptyDll: true }
+          : {}),
+      });
+    } catch (error) {
+      this.diagnostic("runtime.native-spawn.error", {
+        error: error instanceof Error ? error.message : String(error),
+        generation: message.hostGeneration,
+        sessionId: message.sessionId,
+      });
+      throw error;
+    }
+    this.diagnostic("runtime.native-spawn.end", {
+      generation: message.hostGeneration,
+      pid: pty.pid,
+      sessionId: message.sessionId,
     });
     pty.pause();
     const scope = (this.options.createScope ?? createPtyProcessScope)(pty.pid);
@@ -240,10 +276,19 @@ export class PtyHostProcessRuntime {
     Object.assign(session, { dataDisposable, exitDisposable });
 
     try {
+      this.diagnostic("runtime.containment.establish.start", {
+        generation: message.hostGeneration,
+        sessionId: message.sessionId,
+      });
       const established =
         this.releaseTestFault === "containment-failure"
           ? false
           : await scope.establish();
+      this.diagnostic("runtime.containment.establish.end", {
+        established,
+        generation: message.hostGeneration,
+        sessionId: message.sessionId,
+      });
       this.options.publish({
         contractVersion: 1,
         kind: "containment",
@@ -278,6 +323,11 @@ export class PtyHostProcessRuntime {
         rootPid: pty.pid,
         processGroupId: scope.processGroupId,
         containment: scope.mechanism,
+      });
+      this.diagnostic("runtime.running.published", {
+        generation: message.hostGeneration,
+        pid: pty.pid,
+        sessionId: message.sessionId,
       });
       pty.resume();
       if (
@@ -397,6 +447,12 @@ export class PtyHostProcessRuntime {
       queueBytes: this.options.queueBytes?.() ?? 0,
       rssBytes: process.memoryUsage().rss.toString(),
     });
+    if (!this.heartbeatPublished) {
+      this.heartbeatPublished = true;
+      this.diagnostic("runtime.heartbeat.first", {
+        generation: this.requireGeneration(),
+      });
+    }
   }
 
   private requireSession(sessionId: string): HostSession {
@@ -429,10 +485,33 @@ export class PtyHostProcessRuntime {
       this.releaseTestFault === "missing-native-artifact"
         ? "node-pty/__mcode_missing_release_native_artifact__"
         : "node-pty";
+    this.diagnostic("runtime.native-load.start", {
+      generation: this.generation ?? undefined,
+    });
     try {
-      return (nativeRequire(moduleName) as typeof import("node-pty")).spawn;
+      const spawn = (nativeRequire(moduleName) as typeof import("node-pty")).spawn;
+      this.diagnostic("runtime.native-load.end", {
+        generation: this.generation ?? undefined,
+      });
+      return spawn;
     } catch (error) {
+      this.diagnostic("runtime.native-load.error", {
+        error: error instanceof Error ? error.message : String(error),
+        generation: this.generation ?? undefined,
+      });
       throw new PtyHostNativeLoadError("The native PTY artifact could not be loaded", { cause: error });
     }
+  }
+
+  private diagnostic(
+    phase: PtyHostDiagnosticPhase,
+    details: PtyHostDiagnosticDetails = {},
+  ): void {
+    emitPtyHostDiagnostic(
+      this.options.releaseTestObservationsEnabled === true,
+      this.options.releaseTestDiagnostic,
+      phase,
+      details,
+    );
   }
 }

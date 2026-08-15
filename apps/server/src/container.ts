@@ -68,6 +68,10 @@ import { TerminalSessionService } from "./terminal/terminal-session-service.js";
 import { PtyHostSupervisor } from "./terminal/host/pty-host-supervisor.js";
 import { parseTerminalReleaseTestInput } from "./terminal/release-test/terminal-release-test-input.js";
 import { resolvePtyHostEntryPath, spawnPtyHostChild } from "./terminal/host/pty-host-child.js";
+import {
+  forwardPtyHostStderr,
+  writePtyHostDiagnostic,
+} from "./terminal/host/pty-host-diagnostics.js";
 import { TerminalProfileService } from "./terminal/profiles/terminal-profile-service.js";
 import { WorkspaceTerminalPreferencesService } from "./terminal/preferences/workspace-terminal-preferences-service.js";
 import { TerminalDiagnosticsService } from "./terminal/diagnostics/terminal-diagnostics-service.js";
@@ -129,6 +133,7 @@ export function setupContainer(mcodeDir: string): typeof container {
   const releaseTestInput = hasProtectedReleaseInput
     ? parseTerminalReleaseTestInput()
     : null;
+  const releaseTestObservationsEnabled = releaseTestInput?.enabled === true;
   const browserAutomationCredentials = new BrowserAutomationCredentialRegistry();
   container.registerInstance(BrowserAutomationCredentialRegistry, browserAutomationCredentials);
   container.registerInstance(
@@ -503,11 +508,17 @@ export function setupContainer(mcodeDir: string): typeof container {
       const host = new PtyHostSupervisor({
         platform,
         releaseTestFault: releaseTestInput?.fault,
-        releaseTestObservationsEnabled: releaseTestInput?.enabled === true,
+        releaseTestObservationsEnabled,
+        releaseTestDiagnostic: releaseTestObservationsEnabled
+          ? writePtyHostDiagnostic
+          : undefined,
         cleanupLedger: c.resolve(PtyHostCleanupLedger),
         spawnHost: () => spawnPtyHostChild({
           entryPath: resolvePtyHostEntryPath(process.argv[1] ?? process.cwd()),
           env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+          onStderr: releaseTestObservationsEnabled
+            ? forwardPtyHostStderr
+            : undefined,
         }),
       });
       const runtime = new ModernTerminalSessionRuntime({ host });
@@ -529,7 +540,7 @@ export function setupContainer(mcodeDir: string): typeof container {
         runtime,
         host,
         () => settings.get().terminal.behavior.sessionLimit,
-        releaseTestInput?.enabled === true,
+        releaseTestObservationsEnabled,
       );
       return modernTerminalBackend;
     },

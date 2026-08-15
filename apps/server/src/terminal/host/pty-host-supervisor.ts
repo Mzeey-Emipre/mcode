@@ -24,6 +24,12 @@ import {
   type PtyHostEvent,
   type PtyHostServerMessage,
 } from "./pty-host-protocol.js";
+import {
+  emitPtyHostDiagnostic,
+  type PtyHostDiagnosticDetails,
+  type PtyHostDiagnosticPhase,
+  type PtyHostDiagnosticSink,
+} from "./pty-host-diagnostics.js";
 import { reapPosixProcessSession } from "./posix-process-scope.js";
 
 const STARTUP_TIMEOUT_MS = 5_000;
@@ -64,6 +70,8 @@ export interface PtyHostSupervisorOptions {
   readonly releaseTestFault?: TerminalReleaseTestFault;
   /** Enables the packaged-only host PID observation seam. */
   readonly releaseTestObservationsEnabled?: boolean;
+  /** Receives packaged-only, bounded host lifecycle observations. */
+  readonly releaseTestDiagnostic?: PtyHostDiagnosticSink;
   readonly spawnHost: () => PtyHostChild;
   readonly startupTimeoutMs?: number;
   readonly replacementDelayMs?: number;
@@ -177,6 +185,12 @@ export class PtyHostSupervisor implements PtyHostAdapter {
 
   /** Creates one PTY after host health is established. */
   async create(input: PtyHostCreate): Promise<PtyHostRunning> {
+    this.diagnostic("supervisor.create", {
+      generation: this.generation.toString(),
+      requestedGeneration: input.hostGeneration,
+      sessionId: input.sessionId,
+      state: this.state,
+    });
     this.requireHealthyGeneration(input.hostGeneration);
     if (this.pendingCreates.has(input.sessionId)) {
       throw new Error(
@@ -383,13 +397,34 @@ export class PtyHostSupervisor implements PtyHostAdapter {
     const generation = this.generation.toString();
     const child = this.options.spawnHost();
     this.child = child;
+    this.diagnostic("supervisor.spawn", {
+      generation,
+      pid: child.pid,
+      state: this.state,
+    });
     child.on("message", (message) =>
       this.handleMessage(child, generation, message),
     );
-    child.on("error", (error) => this.handleHostFailure(child, error));
-    child.on("exit", () =>
-      this.handleHostFailure(child, new Error("PTY host process exited")),
-    );
+    child.on("error", (error) => {
+      const childError = error as NodeJS.ErrnoException;
+      this.diagnostic("supervisor.child.error", {
+        code: childError.code ?? null,
+        error: error.message,
+        generation,
+        pid: child.pid,
+        signal: null,
+      });
+      this.handleHostFailure(child, error);
+    });
+    child.on("exit", (code, signal) => {
+      this.diagnostic("supervisor.child.exit", {
+        code,
+        generation,
+        pid: child.pid,
+        signal,
+      });
+      this.handleHostFailure(child, new Error("PTY host process exited"));
+    });
 
     const promise = new Promise<PtyHostHealth>((resolve, reject) => {
       this.resolveStart = resolve;
@@ -440,8 +475,15 @@ export class PtyHostSupervisor implements PtyHostAdapter {
       );
       return;
     }
-    if (event.kind === "ready") this.readyObserved = true;
+    if (event.kind === "ready") {
+      this.readyObserved = true;
+      this.diagnostic("supervisor.ready", {
+        generation,
+        state: this.state,
+      });
+    }
     if (event.kind === "heartbeat") {
+      const firstHeartbeat = !this.heartbeatObserved;
       this.heartbeatObserved = true;
       const receivedAtMs = Date.now();
       this.heartbeatEventLoopLagMs = this.lastHeartbeatReceivedAtMs === null
@@ -451,6 +493,12 @@ export class PtyHostSupervisor implements PtyHostAdapter {
       this.lastHeartbeatAtMs = receivedAtMs;
       this.heartbeatQueueBytes = event.queueBytes;
       this.heartbeatRssBytes = event.rssBytes;
+      if (firstHeartbeat) {
+        this.diagnostic("supervisor.heartbeat.first", {
+          generation,
+          state: this.state,
+        });
+      }
       if (this.state === "degraded") this.state = "healthy";
       this.armHeartbeatWatchdog(child, generation);
     }
@@ -532,6 +580,12 @@ export class PtyHostSupervisor implements PtyHostAdapter {
   private handleHostFailure(child: PtyHostChild, error: Error): void {
     if (child !== this.child || this.stopping) return;
     const canReplace = this.state === "healthy" || this.state === "degraded";
+    this.diagnostic("supervisor.unhealthy", {
+      error: error.message,
+      generation: this.generation.toString(),
+      pid: child.pid,
+      state: this.state,
+    });
     child.removeAllListeners();
     child.kill("SIGKILL");
     child.disposeContainment?.();
@@ -713,6 +767,14 @@ export class PtyHostSupervisor implements PtyHostAdapter {
     this.heartbeatTimer = setTimeout(() => {
       if (child !== this.child || this.state !== "healthy") return;
       this.state = "degraded";
+      this.diagnostic("supervisor.degraded", {
+        generation,
+        state: this.state,
+      });
+      this.diagnostic("supervisor.probe", {
+        generation,
+        state: this.state,
+      });
       try {
         this.sendMessage({
           contractVersion: 1,
@@ -745,5 +807,17 @@ export class PtyHostSupervisor implements PtyHostAdapter {
 
   private publish(event: PtyHostEvent): void {
     for (const listener of this.listeners) listener(event);
+  }
+
+  private diagnostic(
+    phase: PtyHostDiagnosticPhase,
+    details: PtyHostDiagnosticDetails = {},
+  ): void {
+    emitPtyHostDiagnostic(
+      this.options.releaseTestObservationsEnabled === true,
+      this.options.releaseTestDiagnostic,
+      phase,
+      details,
+    );
   }
 }

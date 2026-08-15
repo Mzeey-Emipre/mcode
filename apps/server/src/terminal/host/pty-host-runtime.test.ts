@@ -87,10 +87,13 @@ describe("PtyHostProcessRuntime", () => {
 
   it("validates native spawn before publishing ready when spawn is not injected", async () => {
     const events: PtyHostEvent[] = [];
+    const diagnostics: string[] = [];
     const runtime = new PtyHostProcessRuntime({
       platform: "windows",
       nativeAbi: "fake-v1",
       publish: (event) => events.push(event),
+      releaseTestObservationsEnabled: true,
+      releaseTestDiagnostic: (diagnostic) => diagnostics.push(diagnostic.phase),
     });
 
     await runtime.receive({
@@ -102,6 +105,38 @@ describe("PtyHostProcessRuntime", () => {
 
     expect(nativeRequire).toHaveBeenCalledWith("node-pty");
     expect(events[0]).toMatchObject({ kind: "ready" });
+    expect(diagnostics).toEqual([
+      "runtime.handshake.received",
+      "runtime.native-load.start",
+      "runtime.native-load.end",
+      "runtime.ready.published",
+    ]);
+    await runtime.dispose();
+  });
+
+  it("does not emit release-test diagnostics without the release gate", async () => {
+    const diagnostics: string[] = [];
+    const runtime = new PtyHostProcessRuntime({
+      platform: "windows",
+      nativeAbi: "fake-v1",
+      publish: () => undefined,
+      releaseTestDiagnostic: (diagnostic) => diagnostics.push(diagnostic.phase),
+    });
+
+    await runtime.receive({
+      contractVersion: 1,
+      kind: "handshake",
+      requestedGeneration: "7",
+      platform: "windows",
+    });
+    await runtime.receive({
+      contractVersion: 1,
+      kind: "probe",
+      hostGeneration: "7",
+      nonce: SESSION_ID,
+    });
+
+    expect(diagnostics).toEqual([]);
     await runtime.dispose();
   });
 
@@ -237,10 +272,13 @@ describe("PtyHostProcessRuntime", () => {
     const pty = new FakePty();
     const scope = createScope();
     const events: PtyHostEvent[] = [];
+    const diagnostics: string[] = [];
     const runtime = new PtyHostProcessRuntime({
       platform: "windows",
       nativeAbi: "fake-v1",
       publish: (event) => events.push(event),
+      releaseTestObservationsEnabled: true,
+      releaseTestDiagnostic: (diagnostic) => diagnostics.push(diagnostic.phase),
       spawnPty: vi.fn(() => pty),
       createScope: vi.fn(() => scope),
     });
@@ -250,6 +288,12 @@ describe("PtyHostProcessRuntime", () => {
       kind: "handshake",
       requestedGeneration: "7",
       platform: "windows",
+    });
+    await runtime.receive({
+      contractVersion: 1,
+      kind: "probe",
+      hostGeneration: "7",
+      nonce: SESSION_ID,
     });
     await runtime.receive({
       contractVersion: 1,
@@ -264,10 +308,21 @@ describe("PtyHostProcessRuntime", () => {
       rows: 24,
       env: [],
     });
-    expect(events.map((event) => event.kind).slice(0, 3)).toEqual([
+    expect(events.map((event) => event.kind).slice(0, 4)).toEqual([
       "ready",
+      "heartbeat",
       "containment",
       "running",
+    ]);
+    expect(diagnostics).toEqual([
+      "runtime.handshake.received",
+      "runtime.ready.published",
+      "runtime.heartbeat.first",
+      "runtime.native-spawn.start",
+      "runtime.native-spawn.end",
+      "runtime.containment.establish.start",
+      "runtime.containment.establish.end",
+      "runtime.running.published",
     ]);
 
     await runtime.receive({

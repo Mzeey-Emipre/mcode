@@ -5,6 +5,7 @@ import path from "node:path";
 import {
   PRODUCT_SMOKE_FAULTS,
   appendBoundedOutputTail,
+  attachLaunchOutputTail,
   assertLoopbackIsolationReceipt,
   buildProductBootEnv,
   buildLinuxProductVerifierLaunch,
@@ -483,6 +484,21 @@ describe("packaged Terminal product smoke contract", () => {
     const combined = appendBoundedOutputTail(tail, "b".repeat(10));
     expect(combined).toHaveLength(8_192);
     expect(combined).toBe("a".repeat(8_182) + "b".repeat(10));
+  });
+
+  it("attaches a non-empty launch tail without replacing the original error", () => {
+    const error = new Error("renderer create failed");
+    const boundedTail = appendBoundedOutputTail("old\n", "x".repeat(8_192));
+    expect(attachLaunchOutputTail(error, boundedTail)).toBe(error);
+    expect(error.message).toContain("renderer create failed");
+    expect(error.message).toContain("Launch output tail:");
+    expect(error.message.endsWith("x".repeat(8_192))).toBe(true);
+    expect(error.message).not.toContain("old");
+    expect(attachLaunchOutputTail(error, "")).toBe(error);
+    expect(error.message.match(/Launch output tail:/g)).toHaveLength(1);
+    const existingError = new Error("renderer create failed\nlaunch output tail:\nlaunch diagnostics");
+    expect(attachLaunchOutputTail(existingError, "launch diagnostics")).toBe(existingError);
+    expect(existingError.message.match(/launch output tail:/gi)).toHaveLength(1);
   });
 
   it("waits for the packaged renderer page after CDP connects", async () => {

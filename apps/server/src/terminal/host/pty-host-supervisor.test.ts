@@ -5,6 +5,7 @@ import type {
   PtyHostEvent,
   PtyHostServerMessage,
 } from "./pty-host-protocol.js";
+import type { PtyHostDiagnostic } from "./pty-host-diagnostics.js";
 import { PtyHostSupervisor, type PtyHostChild } from "./pty-host-supervisor.js";
 
 const UUID = "abcdef12-abcd-4abc-8abc-abcdefabcdef";
@@ -113,6 +114,75 @@ class FakeHostChild extends EventEmitter implements PtyHostChild {
 }
 
 describe("PtyHostSupervisor", () => {
+  it("gates lifecycle diagnostics behind the release-test observation flag", async () => {
+    const diagnostics: string[] = [];
+    const supervisor = new PtyHostSupervisor({
+      platform: "windows",
+      cleanupLedger: new InMemoryPtyHostCleanupLedger(),
+      releaseTestDiagnostic: (diagnostic) => diagnostics.push(diagnostic.phase),
+      spawnHost: () => new FakeHostChild(),
+    });
+
+    await supervisor.start();
+
+    expect(diagnostics).toEqual([]);
+    await supervisor.shutdown();
+  });
+
+  it("records ordered release lifecycle phases and original child failure facts", async () => {
+    vi.useFakeTimers();
+    try {
+      const child = new FakeHostChild();
+      const diagnostics: PtyHostDiagnostic[] = [];
+      const supervisor = new PtyHostSupervisor({
+        platform: "windows",
+        cleanupLedger: new InMemoryPtyHostCleanupLedger(),
+        releaseTestObservationsEnabled: true,
+        releaseTestDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+        spawnHost: () => child,
+      });
+
+      await supervisor.start();
+      const creating = supervisor.create(createRequest);
+      child.emitMessage({
+        contractVersion: 1,
+        kind: "running",
+        sessionId: UUID,
+        hostGeneration: "1",
+        rootPid: 123,
+        processGroupId: "job-123",
+        containment: "job-object",
+      });
+      await creating;
+      await vi.advanceTimersByTimeAsync(2_000);
+      child.crash();
+
+      expect(diagnostics.map(({ phase }) => phase)).toEqual([
+        "supervisor.spawn",
+        "supervisor.ready",
+        "supervisor.heartbeat.first",
+        "supervisor.create",
+        "supervisor.degraded",
+        "supervisor.probe",
+        "supervisor.child.exit",
+        "supervisor.unhealthy",
+      ]);
+      expect(diagnostics.find(({ phase }) => phase === "supervisor.child.exit")).toMatchObject({
+        code: 1,
+        pid: 42,
+        signal: null,
+      });
+      expect(diagnostics.find(({ phase }) => phase === "supervisor.unhealthy")).toMatchObject({
+        error: "PTY host process exited",
+        generation: "1",
+        state: "degraded",
+      });
+      await supervisor.shutdown();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("starts one healthy generation and replaces one crashed host", async () => {
     vi.useFakeTimers();
     const children: FakeHostChild[] = [];
