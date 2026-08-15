@@ -2,6 +2,7 @@ import type { AgentEvent } from "@mcode/contracts";
 import {
   resetThreadStoreForTests,
   getTestActiveMessages,
+  getTestThreadMessages,
   getTestThreadStreaming,
   getTestThreadToolCalls,
   getTestThreadLoadEpoch,
@@ -213,6 +214,61 @@ describe("ThreadHydrator", () => {
     expect(getTestActiveMessages()).toEqual([msgA]);
     expect(useThreadStore.getState().currentThreadId).toBe(THREAD_A);
     expect(getTestThreadLoadEpoch(THREAD_A)).toBe(beforeEpoch + 1);
+  });
+
+  it("refetches an empty cache after a released resident hydration remounts", async () => {
+    const childMessage = createMockMessage({
+      id: "child-detail-message",
+      thread_id: THREAD_A,
+      content: "child detail content",
+    });
+    let resolveFirst!: (value: {
+      messages: typeof msgA[];
+      hasMore: boolean;
+      narrativeByMessage: Record<string, never>;
+    }) => void;
+    (mockTransport.loadConversationPage as ReturnType<typeof vi.fn>)
+      .mockImplementationOnce(() => new Promise((resolve) => {
+        resolveFirst = resolve;
+      }))
+      .mockResolvedValueOnce({
+        messages: [childMessage],
+        hasMore: false,
+        narrativeByMessage: {},
+      });
+    resetThreadStoreForTests({
+      currentThreadId: THREAD_B,
+      records: new Map([
+        [THREAD_A, createEmptyThreadRecord()],
+        [THREAD_B, createEmptyThreadRecord()],
+      ]),
+    });
+
+    let current = true;
+    const isCurrent = () => current;
+    const firstHydration = hydrator.hydrateResident(THREAD_A, {
+      generation: 1,
+      isCurrent,
+    });
+    await vi.waitFor(() => {
+      expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(1);
+    });
+
+    current = false;
+    hydrator.releaseResident(THREAD_A, 1, isCurrent);
+    expect(getCachedRecord(THREAD_A)?.messages).toEqual([]);
+    expect(getCachedRecord(THREAD_A)?.lastHydratedAt).toBeUndefined();
+
+    current = true;
+    const remountedHydration = hydrator.hydrateResident(THREAD_A, {
+      generation: 2,
+      isCurrent,
+    });
+    resolveFirst({ messages: [], hasMore: false, narrativeByMessage: {} });
+    await Promise.all([firstHydration, remountedHydration]);
+
+    expect(mockTransport.loadConversationPage).toHaveBeenCalledTimes(2);
+    expect(getTestThreadMessages(THREAD_A)).toEqual([childMessage]);
   });
 
   it("preserves resident auxiliary state on an idle cache hit", async () => {
