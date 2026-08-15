@@ -20,13 +20,12 @@ import { sanitizePublicToolInput } from "./services/public-tool-input";
 // Services
 import { WorkspaceService } from "./services/workspace-service";
 import { ThreadService } from "./services/thread-service";
-import { AgentService } from "./services/agent-service";
+import { AgentService, CanonicalAgentEventSink } from "./features/agents";
 import { TurnRecoveryService } from "./services/turn-recovery-service";
 import { ThreadControlService } from "./services/thread-control-service";
 import { ExternalThreadControlPairingService } from "./services/external-thread-control-pairing-service";
 import { ExternalThreadControlMcpRuntime } from "./services/external-thread-control-mcp-runtime";
 import { NarrativeStore } from "./services/narrative-store";
-import { CanonicalAgentEventSink } from "./services/canonical-agent-event-sink";
 import { LegacyConversationMigration } from "./services/legacy-conversation-migration";
 import { GitService } from "./services/git-service";
 import { GithubService } from "./services/github-service";
