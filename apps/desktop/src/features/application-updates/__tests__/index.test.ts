@@ -74,6 +74,15 @@ function createDependencies() {
     checkInterval: "1hour",
   }));
   const forceReplace = vi.fn().mockResolvedValue(undefined);
+  const handlers = new Map<string, (event: unknown, payload?: unknown) => unknown>();
+  const ipc = {
+    handle: vi.fn((channel: string, listener: (event: unknown, payload?: unknown) => unknown) => {
+      handlers.set(channel, listener);
+    }),
+    removeHandler: vi.fn((channel: string) => {
+      handlers.delete(channel);
+    }),
+  };
   return {
     dependencies: {
       updater,
@@ -81,6 +90,7 @@ function createDependencies() {
       windows,
       timer,
       settings,
+      ipc,
       forceReplace,
     },
     listeners,
@@ -91,6 +101,8 @@ function createDependencies() {
     timer,
     settings,
     forceReplace,
+    ipc,
+    handlers,
   };
 }
 
@@ -145,6 +157,7 @@ describe("Application Updates feature seam", () => {
     expect(current.timer.clearTimeout).toHaveBeenCalledOnce();
     expect(current.timer.clearInterval).toHaveBeenCalledOnce();
     expect(current.application.removeListener).toHaveBeenCalledOnce();
+    expect(current.ipc.removeHandler).toHaveBeenCalledTimes(6);
     expect(feature.getUpdateStatus()).toEqual({
       state: "checking",
     });
@@ -159,8 +172,10 @@ describe("Application Updates feature seam", () => {
 
     expect(first.updater.removeAllListeners).toHaveBeenCalledOnce();
     expect(first.application.removeListener).toHaveBeenCalledOnce();
+    expect(first.ipc.removeHandler).toHaveBeenCalledTimes(6);
     expect(second.updater.on).toHaveBeenCalledTimes(6);
     expect(second.application.on).toHaveBeenCalledOnce();
+    expect(second.ipc.handle).toHaveBeenCalledTimes(6);
   });
 
   it("reinitializes the same public feature with fresh checks and status", async () => {

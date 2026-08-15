@@ -1,7 +1,9 @@
 import type { UpdaterSettingsReader } from "./configuration/settings.js";
 import {
-  createInstallationLifecycle,
-} from "./lifecycle/installation.js";
+  registerApplicationUpdateHandlers,
+  type ApplicationUpdateIpc,
+} from "./ipc/handlers.js";
+import { createInstallationLifecycle } from "./lifecycle/installation.js";
 import {
   createUpdaterLifecycle,
   type ApplicationLifecycle,
@@ -26,6 +28,8 @@ export interface ApplicationUpdatesDependencies {
   timer: UpdateTimer;
   /** Settings reader used by initialization and every manual check. */
   settings: UpdaterSettingsReader;
+  /** IPC registry owned by the desktop process. */
+  ipc: ApplicationUpdateIpc;
   /** Stop and replace the Server Runtime before installation. */
   forceReplace: () => Promise<void>;
 }
@@ -34,6 +38,7 @@ export interface ApplicationUpdatesDependencies {
 export interface ApplicationUpdates {
   initialize(): void;
   cleanup(): void;
+  getVersion(): string;
   getUpdateStatus(): UpdateStatus;
   checkForUpdatesNow(): Promise<UpdateStatus>;
   downloadUpdate(): Promise<void>;
@@ -66,21 +71,29 @@ export function createApplicationUpdates(
     installation,
   });
   let initialized = false;
+  let removeIpcHandlers: (() => void) | null = null;
 
-  return {
+  const api: ApplicationUpdates = {
     initialize: () => {
       if (initialized) return;
       initialized = true;
       installation.setBeforeInstallHook(
         installation.createBeforeInstallHook(dependencies.forceReplace),
       );
+      removeIpcHandlers = registerApplicationUpdateHandlers(
+        dependencies.ipc,
+        api,
+      );
       updater.initialize();
     },
     cleanup: () => {
       if (!initialized) return;
       initialized = false;
+      removeIpcHandlers?.();
+      removeIpcHandlers = null;
       updater.cleanup();
     },
+    getVersion: () => dependencies.application.getVersion(),
     getUpdateStatus: () => status.get(),
     checkForUpdatesNow: () => updater.checkForUpdatesNow(),
     downloadUpdate: () => updater.downloadUpdate(),
@@ -88,6 +101,8 @@ export function createApplicationUpdates(
     applyReleaseLineSwitch: (releaseLine, options) =>
       updater.applyReleaseLineSwitch(releaseLine, options),
   };
+
+  return api;
 }
 
 let activeApplicationUpdates: ApplicationUpdates | null = null;
@@ -115,10 +130,11 @@ export {
   type UpdateStatus,
 } from "./state/update-status.js";
 
-/** Public configuration and policy types used by composition and tests. */
+/** Public dependency types used by the desktop composition root. */
 export type { UpdaterSettingsReader } from "./configuration/settings.js";
 export type {
   ApplicationLifecycle,
   UpdateTimer,
   UpdaterClient,
 } from "./lifecycle/updater.js";
+export type { ApplicationUpdateIpc } from "./ipc/handlers.js";
