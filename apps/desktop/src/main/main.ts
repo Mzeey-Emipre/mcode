@@ -779,6 +779,17 @@ function registerIpcHandlers(): void {
     updatePowerSaveBlocker();
   });
 
+  ipcMain.handle("accessibility:get-support", (event): boolean => {
+    if (!mainWindow || event.sender !== mainWindow.webContents) {
+      throw new Error("Accessibility support requires the main renderer");
+    }
+    const supported = app.isAccessibilitySupportEnabled();
+    if (typeof supported !== "boolean") {
+      throw new Error("Electron returned an invalid accessibility support value");
+    }
+    return supported;
+  });
+
   ipcMain.handle("window:perform", (event, action: unknown) => {
     if (
       typeof action !== "string" ||

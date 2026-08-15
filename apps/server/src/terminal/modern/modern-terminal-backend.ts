@@ -107,6 +107,11 @@ export class ModernTerminalBackend extends TerminalBackend {
     this.sender = sender;
   }
 
+  /** Returns the diagnostics service that owns live PTY host measurements. */
+  getDiagnosticsService(): TerminalDiagnosticsService {
+    return this.diagnostics;
+  }
+
   /** Routes a strict Terminal v1 management request. */
   async routeV1(method: string, params: unknown, client: WebSocket): Promise<unknown> {
     const contract = TERMINAL_V1_METHODS[method as keyof typeof TERMINAL_V1_METHODS];

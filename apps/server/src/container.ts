@@ -5,6 +5,7 @@
 
 import "reflect-metadata";
 import { container, Lifecycle } from "tsyringe";
+import { TERMINAL_MAX_SESSIONS } from "@mcode/contracts";
 
 import { openDatabase } from "./store/database";
 
@@ -68,6 +69,7 @@ import { PtyHostSupervisor } from "./terminal/host/pty-host-supervisor.js";
 import { resolvePtyHostEntryPath, spawnPtyHostChild } from "./terminal/host/pty-host-child.js";
 import { TerminalProfileService } from "./terminal/profiles/terminal-profile-service.js";
 import { WorkspaceTerminalPreferencesService } from "./terminal/preferences/workspace-terminal-preferences-service.js";
+import { TerminalDiagnosticsService } from "./terminal/diagnostics/terminal-diagnostics-service.js";
 import { PtyHostCleanupLedger } from "./terminal/cleanup/terminal-cleanup-ledger.js";
 import { AttachmentService } from "./services/attachment-service";
 import { HandoffStorage } from "./services/handoff/handoff-storage.js";
@@ -538,6 +540,32 @@ export function setupContainer(mcodeDir: string): typeof container {
   container.register<TerminalBackend>(TERMINAL_BACKEND_TOKEN, {
     useFactory: (c) => c.resolve<TerminalBackendSelector>("TerminalBackendSelector").getSelectedBackend(),
   });
+  container.register(
+    TerminalDiagnosticsService,
+    {
+      useFactory: (c: typeof container) => {
+        const terminalService = c.resolve<TerminalBackend>(TERMINAL_BACKEND_TOKEN);
+        if (terminalService.capabilities().backend === "modern") {
+          return c.resolve<ModernTerminalBackend>("ModernTerminalBackend").getDiagnosticsService();
+        }
+        return new TerminalDiagnosticsService({
+          backend: () => terminalService.capabilities().backend,
+          health: () => {
+            return {
+              contractVersion: 1,
+              state: "healthy",
+              hostGeneration: "0",
+              activeSessions: Math.min(terminalService.listActiveSessions().length, TERMINAL_MAX_SESSIONS),
+              lastHeartbeatMsAgo: null,
+              queueBytes: 0,
+              eventLoopLagMs: 0,
+              hostRssBytes: "0",
+            };
+          },
+        });
+      },
+    } as never,
+  );
   container.register(
     SnapshotService,
     { useClass: SnapshotService },

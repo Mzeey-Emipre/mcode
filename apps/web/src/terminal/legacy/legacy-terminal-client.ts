@@ -1,3 +1,7 @@
+import {
+  TerminalDiagnosticsBundleSchema,
+  type TerminalDiagnosticsBundle,
+} from "@mcode/contracts";
 import { withTerminalTimeout } from "../terminal-client";
 import type {
   TerminalClient,
@@ -115,5 +119,12 @@ export class LegacyTerminalClient implements TerminalClient {
   /** Reports whether one legacy PTY owns child processes. */
   hasChildren(ptyId: string): Promise<{ hasChildren: boolean }> {
     return this.rpc("terminal.hasChildren", { ptyId });
+  }
+
+  /** Fetches and validates the content-free diagnostics bundle at the legacy boundary. */
+  async diagnostics(): Promise<TerminalDiagnosticsBundle> {
+    return TerminalDiagnosticsBundleSchema().parse(
+      await this.rpc("terminal.diagnostics.getBundle", {}),
+    );
   }
 }

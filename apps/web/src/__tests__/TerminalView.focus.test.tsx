@@ -165,7 +165,7 @@ const transport = {
     detected: true,
   }])),
   openIn: vi.fn(() => Promise.resolve()),
-  terminalDiagnosticsGetBundle: vi.fn(() => Promise.resolve({
+  terminalDiagnostics: vi.fn(() => Promise.resolve({
     contractVersion: 1,
     backend: "modern",
     redacted: true,
@@ -920,7 +920,7 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
     const originalClipboard = navigator.clipboard;
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: clipboard });
     const safeBundle = { contractVersion: 1, backend: "modern", redacted: true };
-    transport.terminalDiagnosticsGetBundle.mockResolvedValueOnce(safeBundle);
+    transport.terminalDiagnostics.mockResolvedValueOnce(safeBundle);
 
     render(
       <TerminalView
