@@ -81,7 +81,7 @@ export function reconcileWarmPreviewScopes(
     ? previous
     : result;
 }
-import { SubagentsPanel } from "./SubagentsPanel";
+import { SubagentsPanel } from "@/features/subagents";
 import { CoordinationPanel } from "./CoordinationPanel";
 
 const EMPTY_SCOPE_TERMINALS: readonly TerminalInstance[] = [];

@@ -74,7 +74,7 @@ import {
   schedulePrefetch,
   cancelPrefetch,
   prefetchOnPointerDown,
-} from "@/lib/thread-hydrator/prefetch-scheduler";
+} from "@/features/conversation";
 import { isPrable } from "@/lib/is-prable";
 import { getCiVisual, CI_ICON_STROKE } from "@/lib/ci-status";
 import { resolveThreadCheckoutLabel } from "@/lib/checkout-label";

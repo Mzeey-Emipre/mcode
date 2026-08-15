@@ -16,8 +16,8 @@ import {
 } from "@mcode/browser-conformance";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { buildPersistedNarrativeItems } from "@/components/chat/narrative/build-persisted-narrative";
-import { ToolSummaryLine } from "@/components/chat/narrative/ToolSummaryLine";
+import { buildPersistedNarrativeItems } from "@/features/conversation/narrative/build-persisted-narrative";
+import { ToolSummaryLine } from "@/features/conversation/narrative/ToolSummaryLine";
 import type { ToolCall, ToolCallRecord } from "@/transport/types";
 import { BrowserHeader, type BrowserHeaderProps } from "../BrowserHeader";
 import { BrowserViewportToolbar } from "../BrowserViewportToolbar";
@@ -93,7 +93,10 @@ vi.mock("@/hooks/useThreadGitActions", () => ({
     handleOpenPr: vi.fn(),
   }),
 }));
-vi.mock("@/lib/open-subagent-detail", () => ({ openSubagentsPanel: vi.fn() }));
+vi.mock("@/features/subagents", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/features/subagents")>()),
+  openSubagentsPanel: vi.fn(),
+}));
 vi.mock("@/stores/composerDraftStore", () => ({
   useComposerDraftStore: vi.fn((selector: (state: { setPendingPrefill: () => void }) => unknown) =>
     selector({ setPendingPrefill: vi.fn() })),

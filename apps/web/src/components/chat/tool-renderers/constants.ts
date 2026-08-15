@@ -4,7 +4,7 @@ import {
   FileText, FilePen, FolderSearch, Globe,
   Pencil, Search, Terminal, Wrench,
 } from "lucide-react";
-import { StackedLayersIcon } from "../narrative/StackedLayersIcon";
+import { StackedLayersIcon } from "@/components/ui/StackedLayersIcon";
 
 /** Accepts both Lucide icons and plain SVG function components. */
 export type IconComponent = LucideIcon | ComponentType<SVGProps<SVGSVGElement> & { size?: number }>;

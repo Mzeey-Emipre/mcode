@@ -1,6 +1,6 @@
 import type { CanonicalAgentEventEnvelope } from "@mcode/contracts";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getConversationResidency } from "./conversation-residency";
+import { getConversationResidency } from "@/features/conversation/residency/conversation-residency";
 import { resetThreadStoreForTests } from "./thread-store-test-utils";
 import { useThreadStore } from "./threadStore";
 

@@ -35,7 +35,8 @@ vi.mock("@/stores/workspaceStore", () => ({
   ),
 }));
 
-vi.mock("@/lib/thread-hydrator/prefetch-scheduler", () => ({
+vi.mock("@/features/conversation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/features/conversation")>()),
   schedulePrefetch: vi.fn(),
   cancelPrefetch: vi.fn(),
   prefetchOnPointerDown: vi.fn(),
@@ -125,7 +126,7 @@ vi.mock("@tanstack/react-virtual", () => ({
 // Import after mocks are registered.
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useUiStore } from "@/stores/uiStore";
-import { prefetchOnPointerDown } from "@/lib/thread-hydrator/prefetch-scheduler";
+import { prefetchOnPointerDown } from "@/features/conversation";
 import { ProjectTree } from "./ProjectTree";
 
 /** Build a minimal Thread fixture. */

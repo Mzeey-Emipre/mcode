@@ -4,7 +4,7 @@ import {
   cacheRecord as cacheConversationRecord,
   clearRecordCache,
   projectConversationCacheState,
-} from "@/lib/thread-hydrator/record-cache";
+} from "@/features/conversation/hydration/record-cache";
 import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-record";
 import { mockTransport, createMockMessage } from "./mocks/transport";
 
@@ -31,11 +31,11 @@ function cacheRecord(threadId: string, record: ThreadRecord): void {
 }
 
 describe("prefetch", () => {
-  let schedulePrefetch: typeof import("@/lib/thread-hydrator/prefetch-scheduler").schedulePrefetch;
-  let cancelPrefetch: typeof import("@/lib/thread-hydrator/prefetch-scheduler").cancelPrefetch;
-  let prefetchOnPointerDown: typeof import("@/lib/thread-hydrator/prefetch-scheduler").prefetchOnPointerDown;
-  let isPrefetchPending: typeof import("@/lib/thread-hydrator/prefetch-scheduler").isPrefetchPending;
-  let resetPrefetch: typeof import("@/lib/thread-hydrator/prefetch-scheduler").__resetPrefetchForTests;
+  let schedulePrefetch: typeof import("@/features/conversation/hydration/prefetch-scheduler").schedulePrefetch;
+  let cancelPrefetch: typeof import("@/features/conversation/hydration/prefetch-scheduler").cancelPrefetch;
+  let prefetchOnPointerDown: typeof import("@/features/conversation/hydration/prefetch-scheduler").prefetchOnPointerDown;
+  let isPrefetchPending: typeof import("@/features/conversation/hydration/prefetch-scheduler").isPrefetchPending;
+  let resetPrefetch: typeof import("@/features/conversation/hydration/prefetch-scheduler").__resetPrefetchForTests;
 
   beforeEach(async () => {
     vi.useFakeTimers();
@@ -54,7 +54,7 @@ describe("prefetch", () => {
     await import("@/stores/threadStore");
 
     // Dynamic import to get fresh module state after mocks are set up
-    const mod = await import("@/lib/thread-hydrator/prefetch-scheduler");
+    const mod = await import("@/features/conversation/hydration/prefetch-scheduler");
     schedulePrefetch = mod.schedulePrefetch;
     cancelPrefetch = mod.cancelPrefetch;
     prefetchOnPointerDown = mod.prefetchOnPointerDown;

@@ -16,7 +16,7 @@ import {
   projectConversationCacheState,
   setActiveConversation,
   setConversationTransientTextBytes,
-} from "@/lib/thread-hydrator/record-cache";
+} from "@/features/conversation/hydration/record-cache";
 import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-record";
 import {
   rememberScrollTop,

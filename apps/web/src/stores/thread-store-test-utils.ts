@@ -1,9 +1,9 @@
 import type { Message, ToolCall } from "@/transport";
-import type { ThoughtSegment } from "@/components/chat/narrative/types";
+import type { ThoughtSegment } from "@/features/conversation/narrative/types";
 import type { PlanQuestion } from "@mcode/contracts";
 import { LruCache } from "@/lib/lru-cache";
 import { useThreadStore, TOOL_CALL_CACHE_SIZE } from "./threadStore";
-import { getConversationResidency } from "./conversation-residency";
+import { getConversationResidency } from "@/features/conversation/residency/conversation-residency";
 import {
   createEmptyThreadRecord,
   patchThreadRecord,

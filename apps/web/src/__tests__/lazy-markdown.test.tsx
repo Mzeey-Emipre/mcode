@@ -15,7 +15,7 @@ vi.mock("../../hooks/useTheme", () => ({
   useShikiTheme: vi.fn(() => "github-dark"),
 }));
 
-import { MessageBubble } from "../components/chat/MessageBubble";
+import { MessageBubble } from "@/features/conversation";
 
 const assistantMsg = {
   id: "msg-1",

@@ -11,7 +11,7 @@ import {
   clearRecordCache,
   getCachedRecord,
   projectConversationCacheState,
-} from "@/lib/thread-hydrator/record-cache";
+} from "@/features/conversation/hydration/record-cache";
 import { mockTransport } from "./mocks/transport";
 
 vi.mock("@/transport", async () => ({

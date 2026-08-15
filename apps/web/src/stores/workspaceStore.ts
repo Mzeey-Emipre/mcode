@@ -15,7 +15,7 @@ import {
 import { getTransport } from "@/transport";
 import { useThreadStore } from "./threadStore";
 import { deleteThreadRecord, patchThreadRecord } from "./thread-record";
-import { getConversationResidency } from "./conversation-residency";
+import { getConversationResidency } from "@/features/conversation/residency/conversation-residency";
 import { useTerminalStore } from "./terminalStore";
 import { useQueueStore } from "./queueStore";
 import { useTaskStore } from "./taskStore";

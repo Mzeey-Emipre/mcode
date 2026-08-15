@@ -9,9 +9,9 @@ import {
   STREAMING_CARD_COLLAPSED_HEIGHT,
   assistantMessageItemKey,
   liveFinalResponseItemKey,
-} from "@/components/chat/virtual-items";
-import type { ChatVirtualItem } from "@/components/chat/virtual-items";
-import type { ThoughtSegment } from "@/components/chat/narrative/types";
+} from "@/features/conversation/messages/virtual-items";
+import type { ChatVirtualItem } from "@/features/conversation/messages/virtual-items";
+import type { ThoughtSegment } from "@/features/conversation/narrative/types";
 import type { Message, ToolCall, HookExecution, ToolCallRecord, HookExecutionRecord } from "@/transport/types";
 
 function makeMessage(overrides: Partial<Message> = {}): Message {

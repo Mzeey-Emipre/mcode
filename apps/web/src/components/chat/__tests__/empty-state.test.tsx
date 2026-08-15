@@ -35,15 +35,21 @@ vi.mock("@/stores/composerDraftStore", () => ({
   ),
 }));
 
-vi.mock("../Composer", () => ({
+vi.mock("@/features/conversation", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/features/conversation")>()),
   Composer: () => <div data-testid="composer" />,
-}));
-
-vi.mock("../MessageList", () => ({
   MessageList: () => <div data-testid="message-list" />,
 }));
 
-vi.mock("../HeaderActions", () => ({
+vi.mock("@/features/conversation/composer/Composer", () => ({
+  Composer: () => <div data-testid="composer" />,
+}));
+
+vi.mock("@/features/conversation/messages/MessageList", () => ({
+  MessageList: () => <div data-testid="message-list" />,
+}));
+
+vi.mock("@/components/chat/HeaderActions", () => ({
   HeaderActions: () => <div data-testid="header-actions" />,
 }));
 
@@ -51,13 +57,13 @@ vi.mock("@/components/chat/PlanQuestionWizard", () => ({
   PlanQuestionWizard: () => null,
 }));
 
-vi.mock("../CliErrorBanner", () => ({
+vi.mock("@/components/chat/CliErrorBanner", () => ({
   CliErrorBanner: () => null,
   isCliError: () => false,
 }));
 
 import { useWorkspaceStore } from "@/stores/workspaceStore";
-import { ChatView } from "../ChatView";
+import { ChatView } from "@/features/conversation";
 
 /** Produces a workspace state that shows the new-thread empty state. */
 function defaultWorkspaceState() {

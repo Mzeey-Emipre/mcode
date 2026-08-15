@@ -7,15 +7,15 @@ import {
   getConversationCacheUsage,
   projectConversationCacheState,
   setActiveConversation,
-} from "@/lib/thread-hydrator/record-cache";
+} from "@/features/conversation/hydration/record-cache";
 import {
   measureConversationMessages,
-} from "@/lib/thread-hydrator/conversation-memory-policy";
+} from "@/features/conversation/hydration/conversation-memory-policy";
 import {
   CONVERSATION_REVISION_GUARD,
   readConversationRevision,
   serializeConversationRevisionSnapshot,
-} from "@/lib/thread-hydrator/conversation-revision";
+} from "@/features/conversation/hydration/conversation-revision";
 import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-record";
 
 /** Minimum serialized allocation that makes the former revision guard material. */
