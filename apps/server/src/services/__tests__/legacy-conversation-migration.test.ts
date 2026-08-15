@@ -79,6 +79,117 @@ describe("LegacyConversationMigration", () => {
     ]);
   });
 
+  it("migrates a structurally linked legacy child turn into the canonical child thread", async () => {
+    // Regression: legacy migration previously filtered out every thread with a parent_thread_id,
+    // losing child messages and narrative items during canonical cutover.
+    applyFixture(db, "v1-child-pair.sql");
+    const migration = new LegacyConversationMigration(db);
+
+    const result = await migration.runToCompletion();
+
+    expect(result).toMatchObject({ migratedMessages: 6, ambiguousMessages: 0, completed: true });
+    expect(db.prepare(`
+      SELECT parent_thread_id, root_thread_id, owning_parent_thread_id,
+        provider_identities_json, activity_state
+      FROM canonical_agent_threads
+      WHERE id = 'thread-child-v1'
+    `).get()).toEqual({
+      parent_thread_id: "thread-child-parent-v1",
+      root_thread_id: "thread-child-parent-v1",
+      owning_parent_thread_id: "thread-child-parent-v1",
+      provider_identities_json: JSON.stringify([{
+        providerId: "codex",
+        scope: "thread",
+        value: "native-child-v1",
+        provenance: "native",
+      }]),
+      activity_state: "Idle",
+    });
+    expect(db.prepare(`
+      SELECT status, provider_identities_json
+      FROM canonical_agent_turns
+      WHERE thread_id = 'thread-child-v1'
+    `).get()).toEqual({
+      status: "Completed",
+      provider_identities_json: JSON.stringify([{
+        providerId: "codex",
+        scope: "thread",
+        value: "native-child-v1",
+        provenance: "native",
+      }]),
+    });
+    expect(db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM canonical_agent_items
+      WHERE thread_id = 'thread-child-v1'
+    `).get()).toEqual({ count: 5 });
+    expect(db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM canonical_agent_turns
+      WHERE thread_id = 'thread-child-v1'
+    `).get()).toEqual({ count: 2 });
+    expect(db.prepare(`
+      SELECT conversation_revision
+      FROM canonical_agent_threads
+      WHERE id = 'thread-child-v1'
+    `).get()).toEqual({ conversation_revision: 2 });
+    expect(db.prepare(`
+      SELECT roster_revision
+      FROM canonical_agent_threads
+      WHERE id = 'thread-child-parent-v1'
+    `).get()).toEqual({ roster_revision: 1 });
+    expect(db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM canonical_agent_items
+      WHERE thread_id = 'thread-child-v1'
+        AND json_extract(payload_json, '$.projection') = 'toolCall'
+    `).get()).toEqual({ count: 1 });
+    const restoredSink = new CanonicalAgentEventSink(db, vi.fn());
+    expect(restoredSink.loadThread("thread-child-v1")).toMatchObject({
+      parentThreadId: "thread-child-parent-v1",
+      rootThreadId: "thread-child-parent-v1",
+      providerIdentities: [{
+        providerId: "codex",
+        scope: "thread",
+        value: "native-child-v1",
+        provenance: "native",
+      }],
+    });
+    expect(restoredSink.loadSubagentRoster({
+      owningParentThreadId: "thread-child-parent-v1",
+      limit: 10,
+    })).toMatchObject({
+      rosterRevision: 1,
+      active: [],
+      done: [expect.objectContaining({
+        id: "thread-child-v1",
+        providerIdentities: expect.arrayContaining([expect.objectContaining({
+          value: "native-child-v1",
+        })]),
+      })],
+    });
+  });
+
+  it("migrates nested children by structural depth before lexical child order", async () => {
+    // Regression: lexical ordering can process a grandchild before its canonical parent.
+    applyFixture(db, "v1-nested-child-pair.sql");
+    const migration = new LegacyConversationMigration(db);
+
+    const result = await migration.runToCompletion();
+
+    expect(result).toMatchObject({ migratedMessages: 6, ambiguousMessages: 0, completed: true });
+    expect(db.prepare(`
+      SELECT parent_thread_id, root_thread_id, owning_parent_thread_id, conversation_revision
+      FROM canonical_agent_threads
+      WHERE id = 'thread-a-grandchild'
+    `).get()).toEqual({
+      parent_thread_id: "thread-z-child",
+      root_thread_id: "thread-nested-parent",
+      owning_parent_thread_id: "thread-nested-parent",
+      conversation_revision: 1,
+    });
+  });
+
   it("keeps an ambiguous fixture on the legacy projection with explicit provenance", async () => {
     applyFixture(db, "v1-ambiguous.sql");
     const migration = new LegacyConversationMigration(db);
@@ -138,6 +249,45 @@ describe("LegacyConversationMigration", () => {
     const result = await migration.runToCompletion();
     expect(result).toMatchObject({ migratedMessages: 4, ambiguousMessages: 0, completed: true });
     expect(db.prepare("SELECT COUNT(*) AS count FROM canonical_agent_turns").get()).toEqual({ count: 2 });
+  });
+
+  it("resumes child checkpoints before and after commit without duplicate history", async () => {
+    // Regression: a crash at either side of a child checkpoint must preserve all
+    // child turns and leave the repeat-safe migration cursor at one outcome.
+    applyFixture(db, "v1-child-pair.sql");
+    const migration = new LegacyConversationMigration(db);
+
+    expect(() => migration.runBatch({
+      beforeCheckpoint: () => {
+        throw new Error("child checkpoint crash");
+      },
+    })).toThrow("child checkpoint crash");
+    expect(db.prepare("SELECT COUNT(*) AS count FROM canonical_agent_items").get()).toEqual({ count: 0 });
+
+    expect(() => migration.runBatch({
+      afterCheckpoint: () => {
+        throw new Error("child post-checkpoint crash");
+      },
+    })).toThrow("child post-checkpoint crash");
+
+    await migration.runToCompletion();
+    await migration.runToCompletion();
+
+    expect(db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM canonical_agent_turns
+      WHERE thread_id = 'thread-child-v1'
+    `).get()).toEqual({ count: 2 });
+    expect(db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM canonical_legacy_message_provenance
+      WHERE mapping_status = 'migrated'
+    `).get()).toEqual({ count: 6 });
+    expect(db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM canonical_agent_items
+      WHERE thread_id = 'thread-child-v1'
+    `).get()).toEqual({ count: 5 });
   });
 
   it("leaves an oversized legacy pair readable instead of exceeding the byte bound", async () => {
