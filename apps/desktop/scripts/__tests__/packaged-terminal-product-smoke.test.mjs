@@ -445,6 +445,39 @@ describe("packaged Terminal product smoke contract", () => {
     ).rejects.toThrow("Timed out waiting for visible Terminal control");
   });
 
+  it("uses a 30 second default Terminal readiness bound", async () => {
+    const terminal = {
+      count: async () => 1,
+      isVisible: async () => false,
+    };
+    let now = 0;
+    let reachedTenSeconds = false;
+    let waitCalls = 0;
+    const originalDateNow = Date.now;
+    Date.now = () => now;
+    try {
+      await expect(
+        waitForTerminalControl({
+          evaluate: async () => true,
+          locator: (selector) =>
+            selector === "html"
+              ? { getAttribute: async () => null }
+              : { first: () => terminal },
+          waitForTimeout: async (durationMs) => {
+            now += durationMs;
+            waitCalls += 1;
+            if (now >= 10_000) reachedTenSeconds = true;
+          },
+        }),
+      ).rejects.toThrow("Timed out waiting for visible Terminal control");
+    } finally {
+      Date.now = originalDateNow;
+    }
+    expect(reachedTenSeconds).toBe(true);
+    expect(waitCalls).toBe(300);
+    expect(now).toBe(30_000);
+  });
+
   it("keeps exactly the last 8192 launch-output characters", () => {
     const tail = appendBoundedOutputTail("old\n", "a".repeat(8_192));
     const combined = appendBoundedOutputTail(tail, "b".repeat(10));

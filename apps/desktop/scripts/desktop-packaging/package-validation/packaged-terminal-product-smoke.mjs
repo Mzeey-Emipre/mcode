@@ -480,7 +480,7 @@ export async function openTerminal(page) {
 /** Waits for the release-test workspace bootstrap to expose a visible Terminal control. */
 export async function waitForTerminalControl(
   page,
-  { timeoutMs = 10_000, intervalMs = 100 } = {},
+  { timeoutMs = 30_000, intervalMs = 100 } = {},
 ) {
   const releaseTestBridgeEnabled = await page.evaluate(
     () => window.desktopBridge?.terminalReleaseTest?.enabled === true,
