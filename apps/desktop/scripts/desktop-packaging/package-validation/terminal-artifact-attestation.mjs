@@ -327,22 +327,20 @@ function removeNodeGypToolArtifacts(nodePtyRoot) {
   rmSync(toolDirectory, { recursive: true, force: true });
 }
 
-/** Removes non-target native files from one unpacked Terminal package. */
-export function retainTargetTerminalNativeArtifacts({
-  resourcesRoot,
-  targetPlatform,
-  targetArch,
-}) {
+function validateTargetTerminal(targetPlatform, targetArch) {
   if (!TARGET_PLATFORMS.has(targetPlatform) || !TARGET_ARCHES.has(targetArch)) {
     throw new Error(
       `Unsupported Terminal package target: ${targetPlatform}-${targetArch}`,
     );
   }
+}
+
+function resolveTargetTerminalPackageRoots(resourcesRoot) {
   const unpackedRoot = path.join(
     requireDirectory(resourcesRoot, "Packaged resources root"),
     "app.asar.unpacked",
   );
-  const packageRoots = {
+  return {
     "node-pty": requireDirectory(
       path.join(unpackedRoot, "node_modules/node-pty"),
       "Packaged node-pty",
@@ -352,6 +350,30 @@ export function retainTargetTerminalNativeArtifacts({
       "Packaged koffi",
     ),
   };
+}
+
+/** Resolves the exact target native artifacts retained in a packaged target. */
+export function resolveTargetTerminalNativeArtifacts({
+  resourcesRoot,
+  targetPlatform,
+  targetArch,
+}) {
+  validateTargetTerminal(targetPlatform, targetArch);
+  return expectedNativePaths(
+    resolveTargetTerminalPackageRoots(resourcesRoot),
+    targetPlatform,
+    targetArch,
+  );
+}
+
+/** Removes non-target native files from one unpacked Terminal package. */
+export function retainTargetTerminalNativeArtifacts({
+  resourcesRoot,
+  targetPlatform,
+  targetArch,
+}) {
+  validateTargetTerminal(targetPlatform, targetArch);
+  const packageRoots = resolveTargetTerminalPackageRoots(resourcesRoot);
   removeNodeGypToolArtifacts(packageRoots["node-pty"]);
   const expected = expectedNativePaths(
     packageRoots,

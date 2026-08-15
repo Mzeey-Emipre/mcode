@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -7,10 +7,10 @@ import {
   readFileSync,
   writeFileSync,
 } from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { chromium } from "playwright-core";
+import { resolveTargetTerminalNativeArtifacts } from "./terminal-artifact-attestation.mjs";
 
 /** Protected fault values accepted by the packaged product lane. */
 export const PRODUCT_SMOKE_FAULTS = [
@@ -26,8 +26,28 @@ const LAUNCH_OUTPUT_TAIL_LIMIT = 8_192;
 const TARGET_PLATFORM = { win32: "windows", darwin: "macos", linux: "linux" };
 const LINUX_NAMESPACE_SCRIPT =
   'set -eu; ip_cmd="$(command -v ip || command -v /sbin/ip)"; "$ip_cmd" link set lo up; "$ip_cmd" -4 addr add 127.0.0.1/8 dev lo 2>/dev/null || true; "$ip_cmd" -6 addr add ::1/128 dev lo 2>/dev/null || true; "$ip_cmd" -4 addr show dev lo | grep -q "127.0.0.1"; "$ip_cmd" -6 addr show dev lo | grep -q "::1"';
-const MACOS_LOOPBACK_PROFILE =
+/** Restricts Darwin product launches and helper probes to loopback networking. */
+export const MACOS_LOOPBACK_PROFILE =
   '(version 1) (allow default) (deny network*) (allow network-outbound (remote ip "localhost:*")) (allow network-inbound (local ip "localhost:*"))';
+const MACOS_HELPER_DIAGNOSTIC_TIMEOUT_MS = 5_000;
+const MACOS_HELPER_DIAGNOSTIC_OUTPUT_LIMIT = 8_192;
+const MACOS_CODESIGN_PATH = "/usr/bin/codesign";
+const MACOS_SANDBOX_EXEC_PATH = "/usr/bin/sandbox-exec";
+const MACOS_XATTR_PATH = "/usr/bin/xattr";
+const MACOS_OTOOL_PATH = "/usr/bin/otool";
+/** Environment needed by the runner-user verifier after sudo creates the network namespace. */
+export const LINUX_SUDO_PRESERVE_ENV = [
+  "DISPLAY",
+  "XAUTHORITY",
+  "HOME",
+  "PATH",
+  "MCODE_TERMINAL_RELEASE_TEST",
+  "MCODE_TERMINAL_BACKEND",
+  "MCODE_TERMINAL_RELEASE_FAULT",
+  "MCODE_RELEASE_NODE",
+  "MCODE_RELEASE_SCRIPT",
+  "MCODE_TERMINAL_PRODUCT_NAMESPACE",
+].join(",");
 
 /** Marks the verifier process that was re-executed inside the Linux namespace. */
 export const LINUX_PRODUCT_NAMESPACE_MARKER = "MCODE_TERMINAL_PRODUCT_NAMESPACE";
@@ -35,16 +55,12 @@ export const LINUX_PRODUCT_NAMESPACE_MARKER = "MCODE_TERMINAL_PRODUCT_NAMESPACE"
 /** Proves that the marked verifier exposes only the configured loopback interface. */
 export function hasLinuxProductNamespaceProof({
   env = process.env,
-  networkInterfaces = os.networkInterfaces,
+  readdir = (directory) => readdirSync(directory),
 } = {}) {
   if (env[LINUX_PRODUCT_NAMESPACE_MARKER] !== "1") return false;
   try {
-    const interfaces = networkInterfaces();
-    return (
-      interfaces !== null &&
-      typeof interfaces === "object" &&
-      Object.keys(interfaces).sort().join("\0") === "lo"
-    );
+    const interfaces = readdir("/sys/class/net");
+    return Array.isArray(interfaces) && interfaces.slice().sort().join("\0") === "lo";
   } catch {
     return false;
   }
@@ -55,12 +71,12 @@ export function shouldReexecLinuxProductVerifier({
   command,
   platform,
   env = process.env,
-  networkInterfaces = os.networkInterfaces,
+  readdir = (directory) => readdirSync(directory),
 }) {
   return (
     command === "product" &&
     platform === "linux" &&
-    !hasLinuxProductNamespaceProof({ env, networkInterfaces })
+    !hasLinuxProductNamespaceProof({ env, readdir })
   );
 }
 
@@ -178,8 +194,16 @@ export function buildLoopbackIsolationPlan(platform, executablePath) {
   if (platform === "linux") {
     return {
       mode: "linux-network-namespace",
-      command: "unshare",
-      args: ["--user", "--map-root-user", "--net", "/bin/sh", "-c", LINUX_NAMESPACE_SCRIPT],
+      command: "sudo",
+      args: [
+        "-n",
+        `--preserve-env=${LINUX_SUDO_PRESERVE_ENV}`,
+        "unshare",
+        "--net",
+        "/bin/sh",
+        "-c",
+        LINUX_NAMESPACE_SCRIPT,
+      ],
       executablePath: resolvedExecutablePath,
     };
   }
@@ -192,6 +216,113 @@ export function buildLoopbackIsolationPlan(platform, executablePath) {
     };
   }
   throw new Error(`Unsupported isolation platform: ${platform}`);
+}
+
+function boundedDiagnosticText(value) {
+  const text = value == null ? "" : String(value);
+  return text.length > MACOS_HELPER_DIAGNOSTIC_OUTPUT_LIMIT
+    ? `${text.slice(0, MACOS_HELPER_DIAGNOSTIC_OUTPUT_LIMIT)}...`
+    : text;
+}
+
+function runBoundedDiagnosticCommand(command, args, cwd, runCommand) {
+  try {
+    const result = runCommand(command, args, {
+      cwd,
+      encoding: "utf8",
+      maxBuffer: MACOS_HELPER_DIAGNOSTIC_OUTPUT_LIMIT,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: MACOS_HELPER_DIAGNOSTIC_TIMEOUT_MS,
+    });
+    return {
+      command,
+      args,
+      cwd,
+      ok: result?.status === 0 && !result.error && !result.signal,
+      status: result?.status ?? null,
+      signal: result?.signal ?? null,
+      error: boundedDiagnosticText(result?.error?.message ?? result?.error),
+      stdout: boundedDiagnosticText(result?.stdout),
+      stderr: boundedDiagnosticText(result?.stderr),
+    };
+  } catch (error) {
+    return {
+      command,
+      args,
+      cwd,
+      ok: false,
+      status: null,
+      signal: null,
+      error: boundedDiagnosticText(error instanceof Error ? error.message : error),
+      stdout: "",
+      stderr: "",
+    };
+  }
+}
+
+function formatHelperDiagnosticFailure(report) {
+  const failed = ["codesignDetail", "codesignVerify", "direct", "sandboxed"]
+    .filter((key) => !report[key].ok)
+    .map((key) => ({ key, result: report[key] }));
+  return boundedDiagnosticText(JSON.stringify({ ...report, failed }));
+}
+
+/** Probes exact Darwin helper launchability directly and under the product sandbox. */
+export function diagnoseDarwinSpawnHelper({
+  targetPlatform,
+  helperPath,
+  hostPlatform = process.platform,
+  runCommand = spawnSync,
+}) {
+  if (targetPlatform !== "darwin" || hostPlatform !== "darwin") return null;
+  const resolvedHelperPath = path.resolve(helperPath);
+  const cwd = path.dirname(resolvedHelperPath);
+  const report = {
+    helperPath: resolvedHelperPath,
+    cwd,
+    codesignDetail: runBoundedDiagnosticCommand(
+      MACOS_CODESIGN_PATH,
+      ["-dvv", resolvedHelperPath],
+      cwd,
+      runCommand,
+    ),
+    codesignVerify: runBoundedDiagnosticCommand(
+      MACOS_CODESIGN_PATH,
+      ["--verify", "--strict", resolvedHelperPath],
+      cwd,
+      runCommand,
+    ),
+    direct: runBoundedDiagnosticCommand(
+      resolvedHelperPath,
+      [cwd, "/usr/bin/true"],
+      cwd,
+      runCommand,
+    ),
+    sandboxed: runBoundedDiagnosticCommand(
+      MACOS_SANDBOX_EXEC_PATH,
+      ["-p", MACOS_LOOPBACK_PROFILE, resolvedHelperPath, cwd, "/usr/bin/true"],
+      cwd,
+      runCommand,
+    ),
+  };
+  if (Object.values(report).some((value) => value && value.ok === false)) {
+    report.xattrs = runBoundedDiagnosticCommand(
+      MACOS_XATTR_PATH,
+      ["-l", resolvedHelperPath],
+      cwd,
+      runCommand,
+    );
+    report.dependencies = runBoundedDiagnosticCommand(
+      MACOS_OTOOL_PATH,
+      ["-L", resolvedHelperPath],
+      cwd,
+      runCommand,
+    );
+    throw new Error(
+      `Darwin spawn-helper launchability diagnostic failed: ${formatHelperDiagnosticFailure(report)}`,
+    );
+  }
+  return report;
 }
 
 /** Rejects an isolation receipt that silently allowed fallback or egress. */
@@ -264,13 +395,14 @@ export function buildLinuxProductVerifierLaunch({
     command: "xvfb-run",
     args: [
       "-a",
+      "sudo",
+      "-n",
+      `--preserve-env=${LINUX_SUDO_PRESERVE_ENV}`,
       "unshare",
-      "--user",
-      "--map-root-user",
       "--net",
       "/bin/sh",
       "-c",
-      `${LINUX_NAMESPACE_SCRIPT}; exec "$MCODE_RELEASE_NODE" "$MCODE_RELEASE_SCRIPT" "$@"`,
+      `${LINUX_NAMESPACE_SCRIPT}; test -n "\${SUDO_UID:-}"; test -n "\${SUDO_GID:-}"; exec /usr/bin/setpriv --reuid="$SUDO_UID" --regid="$SUDO_GID" --init-groups -- "$MCODE_RELEASE_NODE" "$MCODE_RELEASE_SCRIPT" "$@"`,
       "--",
       ...args,
     ],
@@ -371,7 +503,7 @@ export function buildProductLaunch({
   launchArgs,
   platform,
   env = process.env,
-  networkInterfaces = os.networkInterfaces,
+  readdir = (directory) => readdirSync(directory),
 }) {
   const executablePath = path.resolve(target.executablePath);
   const isolatedLaunchArgs = ["--no-sandbox", ...launchArgs];
@@ -379,7 +511,7 @@ export function buildProductLaunch({
     throw new Error("Linux product launch requires Linux network namespace isolation");
   }
   if (isolationReceipt.mode === "linux-network-namespace") {
-    if (!hasLinuxProductNamespaceProof({ env, networkInterfaces })) {
+    if (!hasLinuxProductNamespaceProof({ env, readdir })) {
       throw new Error("Linux Electron launch requires the isolated product verifier");
     }
     return {
@@ -411,6 +543,12 @@ export async function loadProcessCleanupWorkload() {
 function commandForWorkload(workload) {
   const source = Buffer.from(workload.program.source, "utf8").toString("base64");
   return `node -e "eval(Buffer.from('${source}','base64').toString())"`;
+}
+
+/** Sends one literal workload command through the packaged Terminal input. */
+export async function sendTerminalCommand(page, command) {
+  await page.keyboard.insertText(command);
+  await page.keyboard.press("Enter");
 }
 
 async function waitForProbe(page, predicate, timeoutMs = 10_000) {
@@ -519,8 +657,7 @@ export async function waitForTerminalControl(
 }
 
 async function runTerminalWorkload(page, terminal, workload) {
-  await page.keyboard.type(commandForWorkload(workload));
-  await page.keyboard.press("Enter");
+  await sendTerminalCommand(page, commandForWorkload(workload));
   await waitForProbe(page, (snapshot) => snapshot.normalizedLines.some((line) => line.includes(workload.synchronizationMarker)));
   const initialProbe = JSON.parse(await terminal.getAttribute("data-terminal-release-test-probe"));
   await page.setViewportSize({ width: 1_040, height: 620 });
@@ -530,8 +667,7 @@ async function runTerminalWorkload(page, terminal, workload) {
     throw new Error("Product resize did not change xterm dimensions");
   }
   const longLine = "MCODE_RELEASE_WRAP_" + "x".repeat(Math.max(80, resizedProbe.cols + 20));
-  await page.keyboard.type(`printf '${longLine}\\n'`);
-  await page.keyboard.press("Enter");
+  await sendTerminalCommand(page, `printf '${longLine}\\n'`);
   await waitForProbe(page, (snapshot) => snapshot.normalizedLines.some((line) => line.includes("MCODE_RELEASE_WRAP_")));
   const finalProbe = JSON.parse(await terminal.getAttribute("data-terminal-release-test-probe"));
   if (!finalProbe.lines.some((line) => line.wrapped)) throw new Error("Final xterm state has no wrapped cell evidence");
@@ -791,6 +927,17 @@ export async function runPackagedTerminalProductSmoke({
   if (platform === "linux" && isolationReceipt.mode !== "linux-network-namespace") {
     throw new Error("Linux product smoke requires Linux network namespace isolation");
   }
+  const darwinSpawnHelperDiagnostic =
+    platform === "macos"
+      ? diagnoseDarwinSpawnHelper({
+          targetPlatform: "darwin",
+          helperPath: resolveTargetTerminalNativeArtifacts({
+            resourcesRoot: target.resourcesRoot,
+            targetPlatform: "darwin",
+            targetArch: arch,
+          }).nodePtyRuntime[0],
+        })
+      : null;
   const hashesBefore = hashPackagedResources(target.resourcesRoot);
   const product = await runProductPath({
     target,
@@ -814,6 +961,7 @@ export async function runPackagedTerminalProductSmoke({
     generatedAt: new Date().toISOString(),
     status: "passed",
     fault: fault ?? null,
+    darwinSpawnHelper: darwinSpawnHelperDiagnostic,
     startupFallbackDurationMs: product.startupFallbackDurationMs,
     observations: product.observation,
     isolation: isolationReceipt,

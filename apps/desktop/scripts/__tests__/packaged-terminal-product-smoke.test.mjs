@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import {
   PRODUCT_SMOKE_FAULTS,
+  MACOS_LOOPBACK_PROFILE,
   appendBoundedOutputTail,
   attachLaunchOutputTail,
   assertLoopbackIsolationReceipt,
@@ -13,13 +14,16 @@ import {
   buildProductLaunch,
   cleanupLoopbackIsolation,
   classifyProductSmokeOutcome,
+  diagnoseDarwinSpawnHelper,
   hashPackagedResources,
   hasLinuxProductNamespaceProof,
+  LINUX_SUDO_PRESERVE_ENV,
   loadProcessCleanupWorkload,
   openTerminal,
   parseProductSmokeArguments,
   pollProcessCleanup,
   releaseProductProcess,
+  sendTerminalCommand,
   shouldReexecLinuxProductVerifier,
   validateProductSmokeLaunchInput,
   waitForTerminalControl,
@@ -105,8 +109,17 @@ describe("packaged Terminal product smoke contract", () => {
     writeFileSync(executable, "placeholder");
     expect(buildLoopbackIsolationPlan("linux", executable)).toMatchObject({
       mode: "linux-network-namespace",
-      command: "unshare",
+      command: "sudo",
     });
+    expect(buildLoopbackIsolationPlan("linux", executable).args).toEqual([
+      "-n",
+      `--preserve-env=${LINUX_SUDO_PRESERVE_ENV}`,
+      "unshare",
+      "--net",
+      "/bin/sh",
+      "-c",
+      expect.any(String),
+    ]);
     const relativeExecutable = path.relative(process.cwd(), executable);
     expect(buildLoopbackIsolationPlan("win32", relativeExecutable).executablePath).toBe(
       path.resolve(executable),
@@ -126,17 +139,19 @@ describe("packaged Terminal product smoke contract", () => {
       args: ["product", "--release-dir", "/tmp/release"],
     });
     expect(outerLinuxLaunch.command).toBe("xvfb-run");
-    expect(outerLinuxLaunch.args.slice(0, 5)).toEqual([
+    expect(outerLinuxLaunch.args.slice(0, 6)).toEqual([
       "-a",
+      "sudo",
+      "-n",
+      `--preserve-env=${LINUX_SUDO_PRESERVE_ENV}`,
       "unshare",
-      "--user",
-      "--map-root-user",
       "--net",
     ]);
     expect(outerLinuxLaunch.args.join(" ")).toContain("ip_cmd");
     expect(outerLinuxLaunch.args.join(" ")).toContain(
-      'exec "$MCODE_RELEASE_NODE" "$MCODE_RELEASE_SCRIPT" "$@"',
+      'exec /usr/bin/setpriv --reuid="$SUDO_UID" --regid="$SUDO_GID" --init-groups -- "$MCODE_RELEASE_NODE" "$MCODE_RELEASE_SCRIPT" "$@"',
     );
+    expect(outerLinuxLaunch.args).not.toContain("--user");
     expect(outerLinuxLaunch.env.MCODE_TERMINAL_PRODUCT_NAMESPACE).toBe("1");
     const hostileVerifierArgs = [
       "product",
@@ -154,44 +169,46 @@ describe("packaged Terminal product smoke contract", () => {
     );
     expect(hostileLaunch.args.slice(shellArgumentDelimiter + 1)).toEqual(hostileVerifierArgs);
 
-    const onlyLoopbackInterfaces = () => ({
-      lo: [{ address: "127.0.0.1" }],
-    });
-    const extraNetworkInterfaces = () => ({
-      eth0: [{ address: "192.0.2.10" }],
-      lo: [{ address: "127.0.0.1" }],
-    });
+    const onlyLoopbackInterfaces = () => ["lo"];
+    const missingLoopbackInterfaces = () => ["eth0"];
+    const extraNetworkInterfaces = () => ["eth0", "lo"];
     const unreadableInterfaces = () => {
-      throw new Error("network interfaces unavailable");
+      throw new Error("network interface directory unavailable");
     };
     expect(
       hasLinuxProductNamespaceProof({
         env: {},
-        networkInterfaces: onlyLoopbackInterfaces,
+        readdir: onlyLoopbackInterfaces,
       }),
     ).toBe(false);
     expect(
       hasLinuxProductNamespaceProof({
         env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
-        networkInterfaces: onlyLoopbackInterfaces,
+        readdir: onlyLoopbackInterfaces,
       }),
     ).toBe(true);
     expect(
       hasLinuxProductNamespaceProof({
         env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
-        networkInterfaces: extraNetworkInterfaces,
+        readdir: extraNetworkInterfaces,
       }),
     ).toBe(false);
     expect(
       hasLinuxProductNamespaceProof({
         env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
-        networkInterfaces: unreadableInterfaces,
+        readdir: missingLoopbackInterfaces,
       }),
     ).toBe(false);
     expect(
       hasLinuxProductNamespaceProof({
         env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
-        networkInterfaces: () => null,
+        readdir: unreadableInterfaces,
+      }),
+    ).toBe(false);
+    expect(
+      hasLinuxProductNamespaceProof({
+        env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
+        readdir: () => null,
       }),
     ).toBe(false);
     expect(
@@ -199,7 +216,7 @@ describe("packaged Terminal product smoke contract", () => {
         command: "product",
         platform: "linux",
         env: {},
-        networkInterfaces: onlyLoopbackInterfaces,
+        readdir: onlyLoopbackInterfaces,
       }),
     ).toBe(true);
     expect(
@@ -207,7 +224,7 @@ describe("packaged Terminal product smoke contract", () => {
         command: "product",
         platform: "linux",
         env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
-        networkInterfaces: extraNetworkInterfaces,
+        readdir: extraNetworkInterfaces,
       }),
     ).toBe(true);
     expect(
@@ -215,7 +232,7 @@ describe("packaged Terminal product smoke contract", () => {
         command: "product",
         platform: "linux",
         env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
-        networkInterfaces: onlyLoopbackInterfaces,
+        readdir: onlyLoopbackInterfaces,
       }),
     ).toBe(false);
 
@@ -225,11 +242,12 @@ describe("packaged Terminal product smoke contract", () => {
       launchArgs: ["--remote-debugging-port=39000"],
       platform: "linux",
       env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
-      networkInterfaces: onlyLoopbackInterfaces,
+      readdir: onlyLoopbackInterfaces,
     });
     expect(linuxLaunch.command).toBe(path.resolve(executable));
     expect(linuxLaunch.args.at(-1)).toBe("--remote-debugging-port=39000");
     expect(linuxLaunch.args).toContain("--no-sandbox");
+    expect(linuxLaunch.args).not.toContain("sudo");
     expect(linuxLaunch.args).not.toContain("unshare");
     expect(() =>
       buildProductLaunch({
@@ -238,7 +256,7 @@ describe("packaged Terminal product smoke contract", () => {
         launchArgs: [],
         platform: "linux",
         env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
-        networkInterfaces: extraNetworkInterfaces,
+        readdir: extraNetworkInterfaces,
       }),
     ).toThrow("isolated product verifier");
     expect(() =>
@@ -248,7 +266,7 @@ describe("packaged Terminal product smoke contract", () => {
         launchArgs: [],
         platform: "linux",
         env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
-        networkInterfaces: true,
+        readdir: true,
       }),
     ).toThrow("isolated product verifier");
     const macLaunch = buildProductLaunch({
@@ -260,6 +278,99 @@ describe("packaged Terminal product smoke contract", () => {
     expect(() =>
       assertLoopbackIsolationReceipt({ mode: "none", loopbackAllowed: false }),
     ).toThrow("not installed");
+  });
+
+  it("probes the packaged Darwin helper with its cwd and command arguments", () => {
+    const helperPath = path.join(
+      mkdtempSync(path.join(tmpdir(), "mcode-helper-")),
+      "spawn-helper",
+    );
+    const resolvedHelperPath = path.resolve(helperPath);
+    const cwd = path.dirname(resolvedHelperPath);
+    const calls = [];
+    const report = diagnoseDarwinSpawnHelper({
+      targetPlatform: "darwin",
+      hostPlatform: "darwin",
+      helperPath,
+      runCommand: (command, args, options) => {
+        calls.push({ command, args, options });
+        return { status: 0, signal: null, stdout: "", stderr: "" };
+      },
+    });
+
+    expect(calls.map(({ command, args }) => [command, args])).toEqual([
+      ["/usr/bin/codesign", ["-dvv", resolvedHelperPath]],
+      ["/usr/bin/codesign", ["--verify", "--strict", resolvedHelperPath]],
+      [resolvedHelperPath, [cwd, "/usr/bin/true"]],
+      [
+        "/usr/bin/sandbox-exec",
+        ["-p", MACOS_LOOPBACK_PROFILE, resolvedHelperPath, cwd, "/usr/bin/true"],
+      ],
+    ]);
+    expect(calls.every(({ options }) => options.cwd === cwd)).toBe(true);
+    expect(report).toMatchObject({
+      helperPath: resolvedHelperPath,
+      cwd,
+      direct: { ok: true },
+      sandboxed: { ok: true },
+    });
+  });
+
+  it("fails closed and records helper metadata when the launch probe fails", () => {
+    const helperPath = path.join(
+      mkdtempSync(path.join(tmpdir(), "mcode-helper-")),
+      "spawn-helper",
+    );
+    const resolvedHelperPath = path.resolve(helperPath);
+    const calls = [];
+    expect(() =>
+      diagnoseDarwinSpawnHelper({
+        targetPlatform: "darwin",
+        hostPlatform: "darwin",
+        helperPath,
+        runCommand: (command, args, options) => {
+          calls.push({ command, args, options });
+          return command === resolvedHelperPath
+            ? { status: 23, signal: null, stdout: "", stderr: "posix_spawnp failed" }
+            : { status: 0, signal: null, stdout: "", stderr: "" };
+        },
+      }),
+    ).toThrow("Darwin spawn-helper launchability diagnostic failed");
+
+    expect(calls.at(-2)).toMatchObject({
+      command: "/usr/bin/xattr",
+      args: ["-l", resolvedHelperPath],
+    });
+    expect(calls.at(-1)).toMatchObject({
+      command: "/usr/bin/otool",
+      args: ["-L", resolvedHelperPath],
+    });
+  });
+
+  it("does not run Darwin helper diagnostics for non-Darwin targets or hosts", () => {
+    let calls = 0;
+    expect(
+      diagnoseDarwinSpawnHelper({
+        targetPlatform: "linux",
+        helperPath: "/tmp/target/node-pty/spawn-helper",
+        runCommand: () => {
+          calls += 1;
+          return { status: 0 };
+        },
+      }),
+    ).toBeNull();
+    expect(
+      diagnoseDarwinSpawnHelper({
+        targetPlatform: "darwin",
+        hostPlatform: "linux",
+        helperPath: "/tmp/target/node-pty/spawn-helper",
+        runCommand: () => {
+          calls += 1;
+          return { status: 0 };
+        },
+      }),
+    ).toBeNull();
+    expect(calls).toBe(0);
   });
 
   it("keeps process cleanup polling bounded", async () => {
@@ -313,6 +424,23 @@ describe("packaged Terminal product smoke contract", () => {
         bootFault: "post-start-host-exit",
       }).MCODE_TERMINAL_RELEASE_FAULT,
     ).toBe("post-start-host-exit");
+  });
+
+  it("sends packaged workload commands as literal text before Enter", async () => {
+    const calls = [];
+    await sendTerminalCommand(
+      {
+        keyboard: {
+          insertText: async (text) => calls.push(["insertText", text]),
+          press: async (key) => calls.push(["press", key]),
+        },
+      },
+      "node -e \"console.log('WF:cleanup:parent')\"",
+    );
+    expect(calls).toEqual([
+      ["insertText", "node -e \"console.log('WF:cleanup:parent')\""],
+      ["press", "Enter"],
+    ]);
   });
 
   it("fails immediately when the packaged Terminal controls are missing", async () => {
