@@ -41,6 +41,13 @@ const HANDLE_RELEASE_DELAY_MS = 1_500;
  */
 const SESSION_EXIT_TIMEOUT_MS = 5_000;
 
+type RetentionBlockCode =
+  | "unmanaged-worktree"
+  | "named-branch"
+  | "missing-base-branch"
+  | "workspace-repository-inaccessible"
+  | "worktree-safety";
+
 /**
  * Drains the cleanup_jobs table with retry logic.
  * Must be started via start() after DI is fully resolved.
@@ -139,8 +146,21 @@ export class CleanupWorker {
     // that arrives during the async job execution sees running=true.
     this.running = true;
     try {
-      this.cleanupJobRepo.enqueueExpiredCompleted(new Date().toISOString());
-      const jobs = this.cleanupJobRepo.findDue(Date.now());
+      const retentionJobsEnqueued = this.cleanupJobRepo.enqueueExpiredCompleted(new Date().toISOString());
+      const nowMs = Date.now();
+      const jobs = this.cleanupJobRepo.findDue(nowMs);
+      if (jobs.length > 0 || retentionJobsEnqueued > 0) {
+        const dueCounts = this.cleanupJobRepo.getDueCounts(nowMs);
+        const selectedExplicitJobs = jobs.filter((job) => job.kind === "explicit").length;
+        const selectedRetentionJobs = jobs.length - selectedExplicitJobs;
+        logger.info("CleanupWorker batch selected", {
+          retentionJobsEnqueued,
+          selectedExplicitJobs,
+          selectedRetentionJobs,
+          backlogExplicitJobs: Math.max(0, dueCounts.explicit - selectedExplicitJobs),
+          backlogRetentionJobs: Math.max(0, dueCounts.retention - selectedRetentionJobs),
+        });
+      }
       for (const job of jobs) {
         if (this.stopped) break;
         await this.executeJob(job);
@@ -154,6 +174,7 @@ export class CleanupWorker {
     logger.info("CleanupWorker job started", {
       jobId: job.id,
       threadId: job.thread_id,
+      kind: job.kind,
       worktreePath: job.worktree_path,
       attempt: job.attempts + 1,
     });
@@ -161,7 +182,15 @@ export class CleanupWorker {
     const mutationToken = job.kind === "retention"
       ? this.mutationReservations.reserve(job.thread_id, "cleaning")
       : null;
-    if (job.kind === "retention" && !mutationToken) return;
+    if (job.kind === "retention" && !mutationToken) {
+      logger.info("CleanupWorker job deferred", {
+        jobId: job.id,
+        threadId: job.thread_id,
+        kind: job.kind,
+        reason: "mutation-reservation-unavailable",
+      });
+      return;
+    }
 
     try {
       const retentionThread = job.kind === "retention"
@@ -172,6 +201,12 @@ export class CleanupWorker {
           this.cleanupJobRepo.delete(job.id);
           this.threadRepo.releaseRetentionCleanup(job.thread_id);
         })();
+        logger.info("CleanupWorker job cancelled", {
+          jobId: job.id,
+          threadId: job.thread_id,
+          kind: job.kind,
+          reason: "no-longer-eligible",
+        });
         return;
       }
       if (job.kind === "retention" && !job.worktree_path) {
@@ -182,15 +217,15 @@ export class CleanupWorker {
         throw new Error("Explicit worktree cleanup job has no worktree path");
       }
       if (retentionThread && !retentionThread.worktree_managed) {
-        this.blockRetentionCleanup(job, "Mcode does not manage this worktree.");
+        this.blockRetentionCleanup(job, "Mcode does not manage this worktree.", "unmanaged-worktree");
         return;
       }
       if (retentionThread?.checkout_state === "named") {
-        this.blockRetentionCleanup(job, "The worktree uses a named branch.");
+        this.blockRetentionCleanup(job, "The worktree uses a named branch.", "named-branch");
         return;
       }
       if (retentionThread && !retentionThread.base_branch) {
-        this.blockRetentionCleanup(job, "Mcode cannot verify the branchless worktree base.");
+        this.blockRetentionCleanup(job, "Mcode cannot verify the branchless worktree base.", "missing-base-branch");
         return;
       }
 
@@ -208,7 +243,11 @@ export class CleanupWorker {
           workspacePath: resolvedWs,
         });
         if (job.kind === "retention" && existsSync(resolvedWt)) {
-          this.blockRetentionCleanup(job, "Mcode cannot access the Project repository.");
+          this.blockRetentionCleanup(
+            job,
+            "Mcode cannot access the Project repository.",
+            "workspace-repository-inaccessible",
+          );
           return;
         }
         await this.completeCleanupWithoutWorktree(job);
@@ -315,7 +354,11 @@ export class CleanupWorker {
           reason: preserveWorktreeReason,
         });
         if (job.kind === "retention" && preserveWorktreeReason !== "shared") {
-          this.blockRetentionCleanup(job, this.userSafeBlockReason(preserveWorktreeReason));
+          this.blockRetentionCleanup(
+            job,
+            this.userSafeBlockReason(preserveWorktreeReason),
+            "worktree-safety",
+          );
           return;
         }
         await this.completeCleanupWithoutWorktree(job);
@@ -345,19 +388,22 @@ export class CleanupWorker {
       logger.info("CleanupWorker job completed", {
         jobId: job.id,
         threadId: job.thread_id,
+        kind: job.kind,
       });
 
       // 7. If this was the last cleanup job for a soft-deleted workspace, hard-delete it.
       this.finalizeWorkspaceIfDone(job.workspace_path);
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
+      const failed = this.cleanupJobRepo.recordFailure(job.id, error);
       logger.warn("CleanupWorker job failed, scheduled for retry", {
         jobId: job.id,
         threadId: job.thread_id,
-        attempt: job.attempts + 1,
+        kind: job.kind,
+        attempt: failed?.attempts ?? job.attempts + 1,
+        nextRetryAt: failed?.next_retry_at ?? null,
         error,
       });
-      const failed = this.cleanupJobRepo.recordFailure(job.id, error);
       if (job.kind === "retention" && failed) {
         const reason = failed.attempts >= MAX_CLEANUP_ATTEMPTS
           ? `Cleanup failed after ${MAX_CLEANUP_ATTEMPTS} attempts.`
@@ -382,14 +428,27 @@ export class CleanupWorker {
     if (job.kind === "retention") {
       broadcast("thread.deleted", { threadId: job.thread_id });
     }
+    logger.info("CleanupWorker job completed", {
+      jobId: job.id,
+      threadId: job.thread_id,
+      kind: job.kind,
+    });
   }
 
-  private blockRetentionCleanup(job: CleanupJob, reason: string): void {
+  private blockRetentionCleanup(job: CleanupJob, reason: string, code: RetentionBlockCode): void {
     const thread = this.db.transaction(() => {
       this.cleanupJobRepo.delete(job.id);
       return this.threadRepo.blockRetentionCleanup(job.thread_id, reason);
     })();
-    if (thread) broadcast("thread.lifecycleChanged", { thread });
+    if (thread) {
+      broadcast("thread.lifecycleChanged", { thread });
+      logger.info("CleanupWorker job blocked", {
+        jobId: job.id,
+        threadId: job.thread_id,
+        kind: job.kind,
+        reason: code,
+      });
+    }
   }
 
   private userSafeBlockReason(reason: string): string {

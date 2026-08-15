@@ -14,7 +14,7 @@ import type { TerminalBackend as TerminalService } from "../terminal/terminal-ba
 import type { GitService } from "../services/git-service";
 import { AttachmentService } from "../services/attachment-service";
 import { killDescendantsByName } from "../services/process-kill";
-import { getMcodeDir } from "@mcode/shared";
+import { getMcodeDir, logger } from "@mcode/shared";
 import { ThreadControlMutationReservationService } from "../services/thread-control-mutation-reservation-service";
 
 vi.mock("../services/process-kill.js", () => ({
@@ -111,6 +111,44 @@ describe("CleanupWorker", () => {
   }
 
   describe("poll", () => {
+    it("logs retention admission, selected kinds, and remaining due backlog", async () => {
+      const info = vi.spyOn(logger, "info").mockImplementation(() => logger);
+      const executeJob = vi.spyOn(worker as any, "executeJob").mockResolvedValue(undefined);
+      try {
+        const workspace = workspaceRepo.create("Retention log", "/retention-log-repo");
+        const completedAt = "2026-08-01T00:00:00.000Z";
+        db.prepare(
+          `INSERT INTO threads
+            (id, workspace_id, title, branch, mode, status, worktree_managed,
+             user_completed_at, scheduled_deletion_at, created_at, updated_at)
+           VALUES ('retention-log', ?, 'Direct', 'main', 'direct', 'paused', 0, ?, ?, ?, ?)`,
+        ).run(workspace.id, completedAt, completedAt, completedAt, completedAt);
+        for (let index = 0; index < 20; index += 1) {
+          cleanupJobRepo.insert({
+            thread_id: `explicit-log-${index}`,
+            workspace_path: workspace.path,
+            worktree_path: wt(`explicit-log-${index}`),
+            branch: null,
+          });
+        }
+
+        await worker.poll();
+
+        const batchLog = info.mock.calls.find(([message]) => message === "CleanupWorker batch selected");
+        expect(batchLog?.[1]).toMatchObject({
+          retentionJobsEnqueued: 1,
+          selectedExplicitJobs: 19,
+          selectedRetentionJobs: 1,
+          backlogExplicitJobs: 1,
+          backlogRetentionJobs: 0,
+        });
+        expect(executeJob).toHaveBeenCalledTimes(20);
+      } finally {
+        executeJob.mockRestore();
+        info.mockRestore();
+      }
+    });
+
     it("leaves cleanup queued while an active turn owns the thread mutation", async () => {
       const workspace = workspaceRepo.create("Direct", "/direct-repo");
       const completedAt = "2026-08-01T00:00:00.000Z";
@@ -130,6 +168,59 @@ describe("CleanupWorker", () => {
 
       await worker.poll();
       expect(threadRepo.findById("retention-send-race")).toBeNull();
+    });
+
+    it("logs deferred and blocked retention outcomes with bounded reasons", async () => {
+      const info = vi.spyOn(logger, "info").mockImplementation(() => logger);
+      const workspace = workspaceRepo.create("Retention outcomes", "/retention-outcomes-repo");
+      const completedAt = "2026-08-01T00:00:00.000Z";
+      try {
+        db.prepare(
+          `INSERT INTO threads
+            (id, workspace_id, title, branch, mode, status, worktree_managed,
+             user_completed_at, scheduled_deletion_at, created_at, updated_at)
+           VALUES ('retention-deferred-log', ?, 'Direct', 'main', 'direct', 'paused', 0, ?, ?, ?, ?)`,
+        ).run(workspace.id, completedAt, completedAt, completedAt, completedAt);
+        const token = mutationReservations.reserve("retention-deferred-log", "activeTurn");
+
+        await worker.poll();
+
+        const deferred = info.mock.calls.find(([message]) => message === "CleanupWorker job deferred");
+        expect(deferred?.[1]).toMatchObject({
+          jobId: expect.any(String),
+          threadId: "retention-deferred-log",
+          kind: "retention",
+          reason: "mutation-reservation-unavailable",
+        });
+        mutationReservations.release("retention-deferred-log", token!);
+
+        db.prepare(
+          `INSERT INTO threads
+            (id, workspace_id, title, branch, checkout_state, mode, status, worktree_path,
+             worktree_managed, user_completed_at, scheduled_deletion_at, created_at, updated_at)
+           VALUES ('retention-blocked-log', ?, 'Named', 'feature/keep', 'named', 'worktree', 'active', ?,
+                   1, ?, ?, ?, ?)`,
+        ).run(
+          workspace.id,
+          wt("blocked-log"),
+          completedAt,
+          completedAt,
+          completedAt,
+          completedAt,
+        );
+
+        await worker.poll();
+
+        const blocked = info.mock.calls.find(([message]) => message === "CleanupWorker job blocked");
+        expect(blocked?.[1]).toMatchObject({
+          jobId: expect.any(String),
+          threadId: "retention-blocked-log",
+          kind: "retention",
+          reason: "named-branch",
+        });
+      } finally {
+        info.mockRestore();
+      }
     });
 
     it("resumes a persisted running cleanup after a worker restart", async () => {
@@ -541,6 +632,50 @@ describe("CleanupWorker", () => {
 
       expect(cleanupJobRepo.findById(job.id)).toBeNull();
       expect(cleanupJobRepo.count()).toBe(0);
+    });
+
+    it("includes job kind and retry state in lifecycle logs", async () => {
+      const info = vi.spyOn(logger, "info").mockImplementation(() => logger);
+      const warn = vi.spyOn(logger, "warn").mockImplementation(() => logger);
+      try {
+        const ws = workspaceRepo.create("test", "/repo");
+        insertThread("t-log-success", ws.id, "mcode/log-success", wt("feat-log-success"));
+        cleanupJobRepo.insert({
+          thread_id: "t-log-success",
+          workspace_path: "/repo",
+          worktree_path: wt("feat-log-success"),
+          branch: "mcode/log-success",
+        });
+
+        await worker.processOneJob();
+
+        const started = info.mock.calls.find(([message]) => message === "CleanupWorker job started");
+        const completed = info.mock.calls.find(([message]) => message === "CleanupWorker job completed");
+        expect(started?.[1]).toMatchObject({ kind: "explicit" });
+        expect(completed?.[1]).toMatchObject({ kind: "explicit" });
+
+        insertThread("t-log-failure", ws.id, "mcode/log-failure", wt("feat-log-failure"));
+        cleanupJobRepo.insert({
+          thread_id: "t-log-failure",
+          workspace_path: "/repo",
+          worktree_path: wt("feat-log-failure"),
+          branch: "mcode/log-failure",
+        });
+        (mockGitService.removeWorktree as ReturnType<typeof vi.fn>)
+          .mockRejectedValueOnce(new Error("log failure"));
+
+        await worker.processOneJob();
+
+        const failed = warn.mock.calls.find(([message]) => message === "CleanupWorker job failed, scheduled for retry");
+        expect(failed?.[1]).toMatchObject({
+          kind: "explicit",
+          attempt: 1,
+          nextRetryAt: expect.any(Number),
+        });
+      } finally {
+        info.mockRestore();
+        warn.mockRestore();
+      }
     });
 
     it("records failure and schedules retry when removeWorktree returns false", async () => {
