@@ -241,6 +241,8 @@ export const SendMessageSchema = lazySchema(() =>
   z.object({
     threadId: z.string(),
     content: z.string(),
+    /** Client identity for the optimistic user row, when the sender has one. */
+    messageId: z.string().uuid().optional(),
     /**
      * When set, persisted user row uses this transcript while {@link content}
      * flows to providers (injections and hidden metadata fences).
