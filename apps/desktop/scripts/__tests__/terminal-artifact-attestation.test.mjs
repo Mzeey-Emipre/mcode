@@ -17,6 +17,8 @@ import {
   attestPackagedTerminalArtifacts,
   parseLoadProbeProcessResult,
   retainTargetTerminalNativeArtifacts,
+  signDarwinSpawnHelper,
+  verifyDarwinSpawnHelperSignature,
 } from "../desktop-packaging/package-validation/terminal-artifact-attestation.mjs";
 
 function writeFile(filePath, value) {
@@ -50,6 +52,103 @@ function machOBinary(cpuType) {
 }
 
 describe("attestPackagedTerminalArtifacts", () => {
+  it("ad-hoc signs a Darwin spawn helper with the exact codesign command", () => {
+    let invocation;
+    const helperPath = "/tmp/target/node-pty/spawn-helper";
+    signDarwinSpawnHelper({
+      targetPlatform: "darwin",
+      hostPlatform: "darwin",
+      helperPath,
+      runCodesign: (command, args, options) => {
+        invocation = { command, args, options };
+        return { status: 0, signal: null };
+      },
+    });
+
+    expect(invocation.command).toBe("/usr/bin/codesign");
+    expect(invocation.args).toEqual(["--force", "--sign", "-", helperPath]);
+  });
+
+  it("fails closed when Darwin spawn-helper signing returns a nonzero status", () => {
+    expect(() =>
+      signDarwinSpawnHelper({
+        targetPlatform: "darwin",
+        hostPlatform: "darwin",
+        helperPath: "/tmp/target/node-pty/spawn-helper",
+        runCodesign: () => ({
+          status: 1,
+          signal: null,
+          stderr: "codesign failed",
+        }),
+      }),
+    ).toThrow("status 1");
+  });
+
+  it("fails closed when Darwin spawn-helper signing reports an error", () => {
+    expect(() =>
+      signDarwinSpawnHelper({
+        targetPlatform: "darwin",
+        hostPlatform: "darwin",
+        helperPath: "/tmp/target/node-pty/spawn-helper",
+        runCodesign: () => ({
+          status: null,
+          signal: null,
+          error: new Error("codesign unavailable"),
+        }),
+      }),
+    ).toThrow("codesign unavailable");
+  });
+
+  it("does not invoke codesign for non-Darwin targets", () => {
+    let calls = 0;
+    signDarwinSpawnHelper({
+      targetPlatform: "linux",
+      helperPath: "/tmp/target/node-pty/spawn-helper",
+      runCodesign: () => {
+        calls += 1;
+        return { status: 0, signal: null };
+      },
+    });
+    signDarwinSpawnHelper({
+      targetPlatform: "darwin",
+      hostPlatform: "linux",
+      helperPath: "/tmp/target/node-pty/spawn-helper",
+      runCodesign: () => {
+        calls += 1;
+        return { status: 0, signal: null };
+      },
+    });
+    verifyDarwinSpawnHelperSignature({
+      targetPlatform: "win32",
+      helperPath: "/tmp/target/node-pty/spawn-helper",
+      runCodesign: () => {
+        calls += 1;
+        return { status: 0, signal: null };
+      },
+    });
+
+    expect(calls).toBe(0);
+  });
+
+  it("verifies a Darwin spawn-helper signature with codesign", () => {
+    let invocation;
+    const helperPath = "/tmp/target/node-pty/spawn-helper";
+    verifyDarwinSpawnHelperSignature({
+      targetPlatform: "darwin",
+      hostPlatform: "darwin",
+      helperPath,
+      runCodesign: (command, args) => {
+        invocation = { command, args };
+        return { status: 0, signal: null };
+      },
+    });
+
+    expect(invocation).toEqual({
+      command: "/usr/bin/codesign",
+      args: ["--verify", "--strict", helperPath],
+    });
+  });
+
   it("accepts valid probe evidence independently of the child shutdown status", () => {
     expect(
       parseLoadProbeProcessResult({

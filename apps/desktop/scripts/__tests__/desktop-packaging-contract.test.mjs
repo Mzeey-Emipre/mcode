@@ -352,5 +352,9 @@ describe("desktop packaging workflow contract", () => {
     expect(afterPack).not.toContain("MCODE" + "_SKIP_TERMINAL_ATTESTATION");
     expect(afterPack).not.toContain("attestPackagedTerminalArtifacts");
     expect(afterPack).toContain("retainTargetTerminalNativeArtifacts");
+    expect(afterPack).toContain("signDarwinSpawnHelper");
+    expect(afterPack.indexOf("const retainedTerminalArtifacts")).toBeLessThan(
+      afterPack.lastIndexOf("signDarwinSpawnHelper({"),
+    );
   });
 });

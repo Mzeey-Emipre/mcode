@@ -26,7 +26,10 @@ import {
   resolvePackagedServerDir,
 } from "../../../../../scripts/build-server-dev-bundle.mjs";
 import { ensurePackagedConptyRuntime } from "./packaged-node-pty.mjs";
-import { retainTargetTerminalNativeArtifacts } from "../package-validation/terminal-artifact-attestation.mjs";
+import {
+  retainTargetTerminalNativeArtifacts,
+  signDarwinSpawnHelper,
+} from "../package-validation/terminal-artifact-attestation.mjs";
 
 /**
  * @param {import("electron-builder").AfterPackContext} context
@@ -137,10 +140,14 @@ export default async function afterPack(context) {
     console.log(`[after-pack] Restored packaged ConPTY runtime at ${dllPath}`);
   }
 
-  retainTargetTerminalNativeArtifacts({
+  const retainedTerminalArtifacts = retainTargetTerminalNativeArtifacts({
     resourcesRoot: resolve(packagedServerDir, "../../.."),
     targetPlatform: npmPlatform,
     targetArch: npmArch,
+  });
+  signDarwinSpawnHelper({
+    targetPlatform: npmPlatform,
+    helperPath: retainedTerminalArtifacts.nodePtyRuntime[0],
   });
 
   // -------------------------------------------------------------------------

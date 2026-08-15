@@ -24,6 +24,9 @@ const MAX_TERMINAL_PACKAGE_FILES = 10_000;
 const MAX_TERMINAL_PACKAGE_DIRECTORIES = 512;
 const MAX_TERMINAL_PACKAGE_FILE_BYTES = 16 * 1024 * 1024;
 const MAX_TERMINAL_PACKAGE_BYTES = 128 * 1024 * 1024;
+const CODESIGN_PATH = "/usr/bin/codesign";
+const MAX_CODESIGN_OUTPUT_BYTES = 8 * 1024;
+const MAX_CODESIGN_DIAGNOSTIC_CHARS = 2 * 1024;
 const NATIVE_RUNTIME_EXTENSIONS = new Set([".dll", ".exe", ".node"]);
 const PRUNABLE_NATIVE_EXTENSIONS = new Set([
   ...NATIVE_RUNTIME_EXTENSIONS,
@@ -61,6 +64,90 @@ function ensureExecutableFile(filePath, label) {
   }
   chmodSync(filePath, 0o755);
   assertExecutableFile(filePath, label);
+}
+
+function defaultCodesignRunner(command, args, options) {
+  return spawnSync(command, args, options);
+}
+
+function boundCodesignDiagnostic(value) {
+  const text = value == null ? "" : String(value);
+  return text.length > MAX_CODESIGN_DIAGNOSTIC_CHARS
+    ? `${text.slice(0, MAX_CODESIGN_DIAGNOSTIC_CHARS)}...`
+    : text;
+}
+
+function codesignFailureDiagnostic(result) {
+  const details = [];
+  if (result?.error) {
+    details.push(
+      result.error instanceof Error ? result.error.message : String(result.error),
+    );
+  }
+  if (result?.signal) details.push(`signal ${result.signal}`);
+  if (!result || result.status !== 0) {
+    details.push(`status ${result?.status ?? "unknown"}`);
+  }
+  if (result?.stderr) details.push(String(result.stderr));
+  if (result?.stdout) details.push(String(result.stdout));
+  return boundCodesignDiagnostic(details.join("; "));
+}
+
+function runCodesignCommand({ operation, helperPath, args, runCodesign }) {
+  let result;
+  try {
+    result = runCodesign(CODESIGN_PATH, args, {
+      encoding: "utf8",
+      maxBuffer: MAX_CODESIGN_OUTPUT_BYTES,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch (error) {
+    const diagnostic = boundCodesignDiagnostic(
+      error instanceof Error ? error.message : String(error),
+    );
+    throw new Error(
+      `Failed to ${operation} macOS node-pty spawn helper at ${helperPath}${diagnostic ? `: ${diagnostic}` : ""}`,
+      { cause: error },
+    );
+  }
+  if (!result || result.error || result.signal || result.status !== 0) {
+    const diagnostic = codesignFailureDiagnostic(result);
+    throw new Error(
+      `Failed to ${operation} macOS node-pty spawn helper at ${helperPath}${diagnostic ? `: ${diagnostic}` : ""}`,
+    );
+  }
+}
+
+/** Ad-hoc signs the retained Darwin node-pty spawn helper before packaging signs the app. */
+export function signDarwinSpawnHelper({
+  targetPlatform,
+  hostPlatform = process.platform,
+  helperPath,
+  runCodesign = defaultCodesignRunner,
+}) {
+  if (targetPlatform !== "darwin" || hostPlatform !== "darwin") return;
+  runCodesignCommand({
+    operation: "ad-hoc sign",
+    helperPath,
+    args: ["--force", "--sign", "-", helperPath],
+    runCodesign,
+  });
+}
+
+/** Verifies the retained Darwin node-pty spawn helper has a valid code signature. */
+export function verifyDarwinSpawnHelperSignature({
+  targetPlatform,
+  hostPlatform = process.platform,
+  helperPath,
+  runCodesign = defaultCodesignRunner,
+}) {
+  if (targetPlatform !== "darwin" || hostPlatform !== "darwin") return;
+  runCodesignCommand({
+    operation: "verify the code signature for",
+    helperPath,
+    args: ["--verify", "--strict", helperPath],
+    runCodesign,
+  });
 }
 
 function relativeArtifactPath(resourcesRoot, artifactPath) {
@@ -627,6 +714,7 @@ export function attestPackagedTerminalArtifacts({
   targetArch,
   maxCompressedBytes = TERMINAL_ARTIFACT_MAX_COMPRESSED_BYTES,
   runLoadProbe = defaultLoadProbe,
+  runCodesign = defaultCodesignRunner,
 }) {
   if (!TARGET_PLATFORMS.has(targetPlatform) || !TARGET_ARCHES.has(targetArch)) {
     throw new Error(
@@ -685,6 +773,14 @@ export function attestPackagedTerminalArtifacts({
   if (targetPlatform === "darwin") {
     for (const runtimePath of nodePtyRuntime) {
       assertExecutableFile(runtimePath, "macOS node-pty spawn helper");
+    }
+    if (process.platform === "darwin") {
+      verifyDarwinSpawnHelperSignature({
+        targetPlatform,
+        hostPlatform: process.platform,
+        helperPath: nodePtyRuntime[0],
+        runCodesign,
+      });
     }
   }
   const expectedNativePaths = [
