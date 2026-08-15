@@ -197,4 +197,24 @@ export class ServerRuntime {
   get port(): number {
     return this.serverManager.port;
   }
+
+  /** Return the active-agent count used by Desktop Window close confirmation. */
+  async getActiveAgentCount(): Promise<number> {
+    if (!this.serverManager.port) return 0;
+    try {
+      const response = await fetch(
+        `http://localhost:${this.serverManager.port}/health`,
+        { signal: AbortSignal.timeout(3_000) },
+      );
+      if (!response.ok) return 0;
+      const payload = (await response.json()) as { activeAgents?: unknown };
+      return typeof payload.activeAgents === "number" &&
+        Number.isSafeInteger(payload.activeAgents) &&
+        payload.activeAgents >= 0
+        ? payload.activeAgents
+        : 0;
+    } catch {
+      return 0;
+    }
+  }
 }
