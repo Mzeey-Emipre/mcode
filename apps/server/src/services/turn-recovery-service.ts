@@ -21,6 +21,7 @@ export class TurnRecoveryService {
   reconcileOnStartup(): { interrupted: string[] } {
     const interrupted: string[] = [];
     for (const checkpoint of this.canonicalSink.listUnfinishedCheckpoints()) {
+      this.canonicalSink.markUnresolvedCodexChildDeliveriesUnknown(checkpoint.executionId);
       this.canonicalSink.interruptUnfinishedExecution(
         checkpoint.executionId,
         UNPROVED_EXECUTION_REASON,

@@ -15,6 +15,8 @@ export const LEGACY_CONVERSATION_MIGRATION_VERSION = 1;
 export const LEGACY_CONVERSATION_MIGRATION_MAX_NARRATIVE_ITEMS = 64;
 /** One checkpoint never copies more than this many UTF-8 bytes. */
 export const LEGACY_CONVERSATION_MIGRATION_MAX_BYTES = 262_144;
+/** Legacy lineage deeper than this bound remains readable but cannot become canonical. */
+export const LEGACY_CONVERSATION_MIGRATION_MAX_LINEAGE_DEPTH = 32;
 
 type LegacyMessageRow = {
   id: string;
@@ -39,6 +41,7 @@ type LegacyMessageRow = {
   workspace_id: string;
   thread_provider: string;
   sdk_session_id: string | null;
+  parent_thread_id: string | null;
   permission_mode: string | null;
   thread_created_at: string;
   thread_updated_at: string;
@@ -50,6 +53,8 @@ type LegacyMessageCandidate = {
   role: string;
   sequence: number;
   source_bytes: number;
+  lineage_depth: number | null;
+  lineage_provable: number;
 };
 
 type MigrationPair = {
@@ -149,6 +154,20 @@ export class LegacyConversationMigration {
       return this.currentResult(1, false);
     }
 
+    if (row.lineage_provable !== 1) {
+      const reason = `The legacy thread lineage is orphaned, cyclic, or exceeds depth ${LEGACY_CONVERSATION_MIGRATION_MAX_LINEAGE_DEPTH}.`;
+      const transaction = this.db.transaction(() => {
+        for (const message of [candidatePair.user, candidatePair.assistant]) {
+          this.recordProvenance(message.id, "ambiguous", null, null, null, reason);
+        }
+        this.incrementCheckpoint(0, 2);
+        hooks.beforeCheckpoint?.();
+      });
+      transaction();
+      hooks.afterCheckpoint?.();
+      return this.currentResult(2, false);
+    }
+
     if (
       candidatePair.user.source_bytes + candidatePair.assistant.source_bytes
       > LEGACY_CONVERSATION_MIGRATION_MAX_BYTES
@@ -208,6 +227,16 @@ export class LegacyConversationMigration {
 
   private nextUnclassifiedMessage(): LegacyMessageCandidate | null {
     return this.db.prepare(`
+      WITH RECURSIVE lineage(thread_id, depth) AS (
+        SELECT id, 0
+        FROM threads
+        WHERE parent_thread_id IS NULL
+        UNION ALL
+        SELECT child.id, parent.depth + 1
+        FROM threads child
+        JOIN lineage parent ON parent.thread_id = child.parent_thread_id
+        WHERE parent.depth < ${LEGACY_CONVERSATION_MIGRATION_MAX_LINEAGE_DEPTH}
+      )
       SELECT
         m.id, m.thread_id, m.role, m.sequence,
         length(CAST(m.content AS BLOB))
@@ -216,13 +245,17 @@ export class LegacyConversationMigration {
           + length(CAST(COALESCE(m.attachments, '') AS BLOB))
           + length(CAST(COALESCE(m.preview_annotations, '') AS BLOB))
           + length(CAST(COALESCE(m.mentions, '') AS BLOB))
-          + length(CAST(COALESCE(m.quoted_text, '') AS BLOB)) AS source_bytes
+          + length(CAST(COALESCE(m.quoted_text, '') AS BLOB)) AS source_bytes,
+        lineage.depth AS lineage_depth,
+        CASE WHEN lineage.depth IS NULL THEN 0 ELSE 1 END AS lineage_provable
       FROM messages m
       JOIN threads t ON t.id = m.thread_id
+      LEFT JOIN lineage ON lineage.thread_id = t.id
       LEFT JOIN canonical_legacy_message_provenance p ON p.message_id = m.id
       WHERE p.message_id IS NULL
-        AND t.parent_thread_id IS NULL
-      ORDER BY m.thread_id ASC, m.sequence ASC, m.id ASC
+      ORDER BY CASE WHEN lineage.depth IS NULL THEN ${LEGACY_CONVERSATION_MIGRATION_MAX_LINEAGE_DEPTH + 1}
+        ELSE lineage.depth END,
+        m.thread_id ASC, m.sequence ASC, m.id ASC
       LIMIT 1
     `).get() as LegacyMessageCandidate | undefined ?? null;
   }
@@ -275,6 +308,7 @@ export class LegacyConversationMigration {
         m.preview_annotations, m.mentions, m.reply_to_message_id, m.quoted_text,
         m.model, m.provider, m.origin_type, m.is_internal,
         t.workspace_id, t.provider AS thread_provider, t.sdk_session_id,
+        t.parent_thread_id,
         t.permission_mode, t.created_at AS thread_created_at,
         t.updated_at AS thread_updated_at
       FROM messages m
@@ -300,6 +334,9 @@ export class LegacyConversationMigration {
       record: ToolCallRecord | ThoughtSegmentRecord | HookExecutionRecord;
       createdAt: string;
     }>;
+    parentThreadId: string | null;
+    rootThreadId: string;
+    owningParentThreadId: string | null;
   } {
     const userMessage = messageFromLegacyRow(pair.user);
     const assistantMessage = messageFromLegacyRow(pair.assistant);
@@ -313,6 +350,10 @@ export class LegacyConversationMigration {
           provenance: "native",
         }]
       : [];
+    const lineage = this.resolveCanonicalLineage(
+      pair.user.thread_id,
+      pair.user.parent_thread_id,
+    );
     const narrativeSize = this.measureNarratives(pair.assistant.id);
     if (narrativeSize.count > LEGACY_CONVERSATION_MIGRATION_MAX_NARRATIVE_ITEMS) {
       throw new Error(
@@ -346,6 +387,40 @@ export class LegacyConversationMigration {
       turnId,
       executionId,
       narratives,
+      ...lineage,
+    };
+  }
+
+  private resolveCanonicalLineage(
+    threadId: string,
+    parentThreadId: string | null,
+  ): {
+    parentThreadId: string | null;
+    rootThreadId: string;
+    owningParentThreadId: string | null;
+  } {
+    if (parentThreadId === null) {
+      return {
+        parentThreadId: null,
+        rootThreadId: threadId,
+        owningParentThreadId: null,
+      };
+    }
+    const parent = this.db.prepare(`
+      SELECT root_thread_id, owning_parent_thread_id
+      FROM canonical_agent_threads
+      WHERE id = ?
+    `).get(parentThreadId) as {
+      root_thread_id: string;
+      owning_parent_thread_id: string | null;
+    } | undefined;
+    if (!parent) {
+      throw new Error(`The legacy parent thread has no canonical mapping: ${parentThreadId}`);
+    }
+    return {
+      parentThreadId,
+      rootThreadId: parent.root_thread_id,
+      owningParentThreadId: parent.owning_parent_thread_id ?? parentThreadId,
     };
   }
 
@@ -431,24 +506,49 @@ export class LegacyConversationMigration {
   }
 
   private persistPair(prepared: ReturnType<LegacyConversationMigration["preparePair"]>): void {
-    const { pair, providerIdentities, turnId, executionId } = prepared;
+    const {
+      pair,
+      providerIdentities,
+      turnId,
+      executionId,
+      parentThreadId,
+      rootThreadId,
+      owningParentThreadId,
+    } = prepared;
     const identitiesJson = JSON.stringify(providerIdentities);
-    this.db.prepare(`
+    const threadInsert = this.db.prepare(`
       INSERT INTO canonical_agent_threads (
         id, workspace_id, parent_thread_id, root_thread_id, owning_parent_thread_id,
         provider_id, provider_identities_json, activity_state, conversation_revision,
         roster_revision, created_at, updated_at
-      ) VALUES (?, ?, NULL, ?, NULL, ?, ?, 'Idle', 1, 0, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, 'Idle', 1, 0, ?, ?)
       ON CONFLICT(id) DO NOTHING
     `).run(
       pair.user.thread_id,
       pair.user.workspace_id,
-      pair.user.thread_id,
+      parentThreadId,
+      rootThreadId,
+      owningParentThreadId,
       pair.user.thread_provider,
       identitiesJson,
       pair.user.thread_created_at,
       pair.user.thread_updated_at,
     );
+    if (parentThreadId !== null && threadInsert.changes === 1) {
+      this.db.prepare(`
+        UPDATE canonical_agent_threads
+        SET roster_revision = roster_revision + 1,
+            updated_at = ?
+        WHERE id = ?
+      `).run(pair.user.thread_updated_at, parentThreadId);
+    } else if (threadInsert.changes === 0) {
+      this.db.prepare(`
+        UPDATE canonical_agent_threads
+        SET conversation_revision = conversation_revision + 1,
+            updated_at = ?
+        WHERE id = ?
+      `).run(pair.user.thread_updated_at, pair.user.thread_id);
+    }
     this.db.prepare(`
       INSERT INTO canonical_agent_turns (
         id, thread_id, execution_id, status, trigger_json, permission_mode,

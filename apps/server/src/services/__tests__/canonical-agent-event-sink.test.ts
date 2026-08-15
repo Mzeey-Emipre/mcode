@@ -1091,6 +1091,156 @@ describe("CanonicalAgentEventSink", () => {
       .get(delegation.childThread.id)).toEqual({ count: 0 });
   });
 
+  it("keeps rejection, unknown delivery, late proof, and replacement retry distinct", () => {
+    // Regression: a timeout or crash must not be persisted as confirmed rejection,
+    // and retry must never reuse a child whose provider side effect is uncertain.
+    startCanonicalParent(sink, db);
+    const input = {
+      parentThreadId: THREAD_ID,
+      parentTurnId: TURN_ID,
+      parentExecutionId: EXECUTION_ID,
+      parentItemId: "toolCall:spawn-delivery-states",
+      receiverThreadIds: ["native-delivery-states"],
+      providerIdentities: [] as ProviderIdentity[],
+    };
+    const uncertain = sink.startCodexChildDelegation(input);
+    const unknown = sink.markCodexChildDeliveryUnknown({
+      ...input,
+      nativeThreadId: "native-delivery-states",
+    });
+    expect(unknown.collaborationAction).toMatchObject({
+      status: "Dispatched",
+      deliveryUnknown: true,
+    });
+    expect(sink.loadThread(uncertain.childThread.id)?.activityState).toBe("Unavailable");
+
+    const replacement = sink.retryCodexChildDelegation({
+      ...input,
+      parentItemId: "toolCall:spawn-delivery-retry",
+      receiverThreadIds: ["native-delivery-retry"],
+      previousActionId: uncertain.collaborationAction.id,
+    });
+    expect(replacement.childThread.id).not.toBe(uncertain.childThread.id);
+    expect(replacement.parentItem.payload).toMatchObject({
+      replacementForActionId: uncertain.collaborationAction.id,
+    });
+
+    const lateTurn = sink.startCodexChildTurn({
+      ...input,
+      nativeThreadId: "native-delivery-states",
+      nativeTurnId: "native-turn-late-proof",
+    });
+    expect(lateTurn.status).toBe("Running");
+    expect(sink.loadCollaborationAction(uncertain.collaborationAction.id)).toMatchObject({
+      status: "Acknowledged",
+      deliveryUnknown: false,
+      target: { threadId: uncertain.childThread.id, turnId: lateTurn.id },
+    });
+
+    const rejectedInput = {
+      ...input,
+      parentItemId: "toolCall:spawn-confirmed-rejection",
+      receiverThreadIds: ["native-confirmed-rejection"],
+    };
+    const rejected = sink.startCodexChildDelegation(rejectedInput);
+    const failed = sink.markCodexChildDeliveryRejected({
+      ...rejectedInput,
+      nativeThreadId: "native-confirmed-rejection",
+    });
+    expect(failed.collaborationAction).toMatchObject({
+      status: "Failed",
+      deliveryUnknown: false,
+    });
+    expect(sink.loadThread(rejected.childThread.id)?.activityState).toBe("Unavailable");
+    expect(() => sink.startCodexChildTurn({
+      ...rejectedInput,
+      nativeThreadId: "native-confirmed-rejection",
+      nativeTurnId: "native-turn-after-rejection",
+    })).toThrow("confirmed Codex child rejection");
+    expect(() => sink.markCodexChildDeliveryUnknown({
+      ...rejectedInput,
+      nativeThreadId: "native-confirmed-rejection",
+    })).toThrow("confirmed Codex child rejection");
+
+  });
+
+  it("rejects retry for still-live pending and dispatched child actions", () => {
+    // Regression: retrying a live action can create duplicate provider work.
+    startCanonicalParent(sink, db);
+    const input = {
+      parentThreadId: THREAD_ID,
+      parentTurnId: TURN_ID,
+      parentExecutionId: EXECUTION_ID,
+      parentItemId: "toolCall:retry-live-dispatched",
+      receiverThreadIds: ["native-retry-live-dispatched"],
+      providerIdentities: [] as ProviderIdentity[],
+    };
+    const dispatched = sink.startCodexChildDelegation(input);
+    expect(() => sink.retryCodexChildDelegation({
+      ...input,
+      parentItemId: "toolCall:retry-live-dispatched-replacement",
+      previousActionId: dispatched.collaborationAction.id,
+    })).toThrow("not retryable");
+
+    db.prepare("UPDATE canonical_collaboration_actions SET status = 'Pending' WHERE id = ?")
+      .run(dispatched.collaborationAction.id);
+    expect(() => sink.retryCodexChildDelegation({
+      ...input,
+      parentItemId: "toolCall:retry-live-pending-replacement",
+      previousActionId: dispatched.collaborationAction.id,
+    })).toThrow("not retryable");
+  });
+
+  it("publishes and reloads an unavailable child state with revisions", () => {
+    // Regression: raw child SQL updates bypass canonical state, reconnect revisions, and child publication.
+    startCanonicalParent(sink, db);
+    const input = {
+      parentThreadId: THREAD_ID,
+      parentTurnId: TURN_ID,
+      parentExecutionId: EXECUTION_ID,
+      parentItemId: "toolCall:rejection-publication",
+      receiverThreadIds: ["native-rejection-publication"],
+      providerIdentities: [] as ProviderIdentity[],
+    };
+    const delegation = sink.startCodexChildDelegation(input);
+    const parentBeforeRejection = sink.loadThread(THREAD_ID)!;
+    published.mockClear();
+
+    sink.markCodexChildDeliveryRejected({
+      ...input,
+      nativeThreadId: "native-rejection-publication",
+    });
+
+    expect(published).toHaveBeenCalledTimes(2);
+    expect(published.mock.calls[0]![0].every((event) => event.routing.threadId === THREAD_ID)).toBe(true);
+    expect(published.mock.calls[1]![0].every((event) => (
+      event.routing.threadId === delegation.childThread.id
+    ))).toBe(true);
+    expect(published.mock.calls[1]![0]).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          type: "thread.recorded",
+          thread: expect.objectContaining({
+            id: delegation.childThread.id,
+            activityState: "Unavailable",
+          }),
+        }),
+      }),
+    ]));
+    expect(sink.loadThread(delegation.childThread.id)).toMatchObject({
+      activityState: "Unavailable",
+      conversationRevision: 1,
+    });
+    expect(sink.loadThread(THREAD_ID)).toMatchObject({
+      rosterRevision: parentBeforeRejection.rosterRevision + 1,
+      conversationRevision: parentBeforeRejection.conversationRevision + 1,
+    });
+    expect(sink.recoverThread(delegation.childThread.id, {
+      conversationRevision: 0,
+      rosterRevision: 0,
+    }).mode).toBe("snapshot");
+  });
+
   it("loads roster metadata from the exact parent source item", () => {
     startCanonicalParent(sink, db);
     const delegation = sink.startCodexChildDelegation({

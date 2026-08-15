@@ -59,6 +59,8 @@ function canonicalChildVisibilityClause(alias: string): string {
   )`;
 }
 
+const CANONICAL_CHILD_DELETE_BATCH_SIZE = 64;
+
 /** Persisted delegation provenance attached to a destination thread. */
 export interface ThreadDelegationLineageRecord {
   coordinatorThreadId: string | null;
@@ -676,11 +678,68 @@ export class ThreadRepo {
 
   /** Permanently remove a thread record from the database. */
   hardDelete(id: string): boolean {
-    const result = this.db
-      .prepare("DELETE FROM threads WHERE id = ?")
-      .run(id);
-
-    return result.changes > 0;
+    return this.db.transaction(() => {
+      this.db.exec(`
+        DROP TABLE IF EXISTS canonical_thread_delete_queue;
+        CREATE TEMP TABLE canonical_thread_delete_queue (
+          id TEXT PRIMARY KEY NOT NULL,
+          child_cursor TEXT
+        )
+      `);
+      const enqueue = this.db.prepare(
+        "INSERT OR IGNORE INTO canonical_thread_delete_queue (id, child_cursor) VALUES (?, NULL)",
+      );
+      enqueue.run(id);
+      const selectBatch = this.db.prepare(`
+        SELECT id, child_cursor
+        FROM canonical_thread_delete_queue
+        ORDER BY id
+        LIMIT ?
+      `);
+      const selectChildren = this.db.prepare(`
+        SELECT id
+        FROM threads
+        WHERE parent_thread_id = ?
+          AND (? IS NULL OR id > ?)
+        ORDER BY id
+        LIMIT ?
+      `);
+      const deleteActions = this.db.prepare(`
+        DELETE FROM canonical_collaboration_actions
+        WHERE source_thread_id = ? OR target_thread_id = ?
+      `);
+      const deleteThread = this.db.prepare("DELETE FROM threads WHERE id = ?");
+      const dequeue = this.db.prepare("DELETE FROM canonical_thread_delete_queue WHERE id = ?");
+      const updateCursor = this.db.prepare(
+        "UPDATE canonical_thread_delete_queue SET child_cursor = ? WHERE id = ?",
+      );
+      let deletedRoot = false;
+      while (true) {
+        const batch = selectBatch.all(CANONICAL_CHILD_DELETE_BATCH_SIZE) as Array<{
+          id: string;
+          child_cursor: string | null;
+        }>;
+        if (batch.length === 0) break;
+        for (const row of batch) {
+          const children = selectChildren.all(
+            row.id,
+            row.child_cursor,
+            row.child_cursor,
+            CANONICAL_CHILD_DELETE_BATCH_SIZE,
+          ) as Array<{ id: string }>;
+          for (const child of children) enqueue.run(child.id);
+          if (children.length === CANONICAL_CHILD_DELETE_BATCH_SIZE) {
+            updateCursor.run(children[children.length - 1]!.id, row.id);
+            continue;
+          }
+          deleteActions.run(row.id, row.id);
+          const result = deleteThread.run(row.id);
+          deletedRoot ||= row.id === id && result.changes > 0;
+          dequeue.run(row.id);
+        }
+      }
+      return deletedRoot;
+    })();
   }
 
   /** Update the provider associated with a thread. Returns true if a row was changed. */

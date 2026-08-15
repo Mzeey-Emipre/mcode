@@ -3720,21 +3720,49 @@ export class AgentService {
   private handleCodexChildProviderEvent(event: AgentEvent): boolean {
     if (!("codexChild" in event)) return false;
     const evidence = event.codexChild;
+    const parentExecutionId = event.turnExecutionId;
+    const parentTurn = parentExecutionId
+      ? this.canonicalSink.loadTurnByExecution(parentExecutionId)
+      : null;
+    const parentItemId = evidence ? `toolCall:${evidence.parentCollaborationItemId}` : "";
+    const provisionalDelegation = parentTurn && parentItemId
+      ? this.canonicalSink.loadCodexChildDelegation(event.threadId, parentItemId)
+      : null;
+    if (event.type === AgentEventType.ToolResult
+      && event.isError
+      && evidence
+      && parentExecutionId
+      && parentTurn
+      && provisionalDelegation
+      && !provisionalDelegation.collaborationAction.target.turnId) {
+      try {
+        this.canonicalSink.markCodexChildDeliveryRejected({
+          parentThreadId: event.threadId,
+          parentTurnId: parentTurn.id,
+          parentExecutionId,
+          parentItemId,
+          nativeThreadId: evidence.nativeThreadId,
+        });
+        return true;
+      } catch (error) {
+        this.recordCodexChildRoutingFailure(
+          event,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
     if (!evidence || !evidence.nativeTurnId) {
       this.recordCodexChildRoutingFailure(event, "missing-native-turn");
       return true;
     }
-    const parentExecutionId = event.turnExecutionId;
     if (!parentExecutionId) {
       this.recordCodexChildRoutingFailure(event, "missing-parent-execution");
       return true;
     }
-    const parentTurn = this.canonicalSink.loadTurnByExecution(parentExecutionId);
     if (!parentTurn) {
       this.recordCodexChildRoutingFailure(event, "parent-turn-not-found");
       return true;
     }
-    const parentItemId = `toolCall:${evidence.parentCollaborationItemId}`;
     const delegation = this.canonicalSink.loadCodexChildDelegation(event.threadId, parentItemId);
     if (!delegation) {
       this.recordCodexChildRoutingFailure(event, "delegation-not-found");

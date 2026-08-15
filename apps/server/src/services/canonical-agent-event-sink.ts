@@ -101,6 +101,8 @@ export interface CanonicalAgentCommitInput {
   replayGuard?: "execution-started" | "terminal-confirmed";
   /** Stops the exact provider execution after a durable overflow record commits. */
   onOverflow?: () => void;
+  /** Skips a checkpoint when a state-only event uses an existing source turn. */
+  persistCheckpoint?: boolean;
 }
 
 /** Observable result after one canonical batch commits. */
@@ -150,6 +152,7 @@ export interface CodexChildDelegationInput {
   identity?: string;
   model?: string;
   reasoningEffort?: string;
+  replacementForActionId?: string;
   providerIdentities: readonly ProviderIdentity[];
 }
 
@@ -220,6 +223,15 @@ export interface CodexChildTurnFinishInput {
   error?: string;
 }
 
+/** Input used to classify a child delegation whose delivery was rejected or uncertain. */
+export interface CodexChildDeliveryInput extends CodexChildIdentityInput {
+}
+
+/** Input used to create a linked replacement for a failed or uncertain child delivery. */
+export interface CodexChildRetryInput extends Omit<CodexChildDelegationInput, "replacementForActionId"> {
+  previousActionId: string;
+}
+
 /** Durable canonical context included with one bounded diagnostic export. */
 export interface CanonicalTurnDiagnosticContext {
   thread: AgentThread;
@@ -249,6 +261,11 @@ type EventApplication = {
 
 function hashCodexKey(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 32);
+}
+
+function deterministicUuid(value: string): string {
+  const hash = createHash("sha256").update(value).digest("hex");
+  return `${hash.slice(0, 8)}-${hash.slice(8, 12)}-${hash.slice(12, 16)}-${hash.slice(16, 20)}-${hash.slice(20, 32)}`;
 }
 
 function isCodexSpawnRecord(record: unknown): boolean {
@@ -1379,6 +1396,9 @@ export class CanonicalAgentEventSink {
         toolName: "Agent",
         childThreadId: childThread.id,
         receiverThreadIds,
+        ...(input.replacementForActionId
+          ? { replacementForActionId: input.replacementForActionId }
+          : {}),
         ...(normalizedDescription !== undefined ? { description: normalizedDescription } : {}),
         ...(normalizedIdentity !== undefined ? { identity: normalizedIdentity } : {}),
         ...(normalizedModel !== undefined ? { model: normalizedModel } : {}),
@@ -1425,12 +1445,203 @@ export class CanonicalAgentEventSink {
     return { childThread, parentItem, collaborationAction };
   }
 
+  /** Mark a child delivery as unknown without making the uncertain child reusable. */
+  markCodexChildDeliveryUnknown(input: CodexChildDeliveryInput): CodexChildDelegation {
+    return this.updateCodexChildDelivery(input, "unknown");
+  }
+
+  /** Mark a provider-confirmed child rejection as failed and unavailable. */
+  markCodexChildDeliveryRejected(input: CodexChildDeliveryInput): CodexChildDelegation {
+    return this.updateCodexChildDelivery(input, "rejected");
+  }
+
+  /** Mark dispatched child deliveries as uncertain when their owning execution cannot be resumed. */
+  markUnresolvedCodexChildDeliveriesUnknown(executionId: string): string[] {
+    const rows = this.db.prepare(`
+      SELECT action.*
+      FROM canonical_collaboration_actions action
+      JOIN canonical_agent_turns source_turn ON source_turn.id = action.source_turn_id
+      WHERE source_turn.execution_id = ?
+        AND action.status IN ('Pending', 'Dispatched')
+        AND action.target_turn_id IS NULL
+        AND action.delivery_unknown = 0
+      ORDER BY action.created_at ASC, action.id ASC
+      LIMIT ?
+    `).all(executionId, MAX_TURN_RECOVERIES + 1) as Record<string, unknown>[];
+    if (rows.length > MAX_TURN_RECOVERIES) {
+      throw new Error(`Canonical unresolved child delivery count exceeds ${MAX_TURN_RECOVERIES}`);
+    }
+    if (rows.length === 0) return [];
+    const now = new Date().toISOString();
+    const actionIds: string[] = [];
+    for (const row of rows) {
+      const action = this.actionFromRow(row);
+      const sourceThread = this.loadThread(action.source.threadId);
+      const childThread = this.loadThread(action.target.threadId);
+      if (!sourceThread || !childThread) {
+        throw new Error(`Canonical unresolved child delivery is incomplete: ${action.id}`);
+      }
+      const updatedAction: CollaborationAction = {
+        ...action,
+        status: "Dispatched",
+        deliveryUnknown: true,
+        updatedAt: now,
+      };
+      this.commitCodexChildDeliveryState({
+        parentThread: sourceThread,
+        childThread,
+        action: updatedAction,
+        sourceExecutionId: executionId,
+        now,
+        outcome: "unknown",
+      });
+      actionIds.push(action.id);
+    }
+    return actionIds;
+  }
+
+  /** Create a linked replacement child for a failed or uncertain delivery. */
+  retryCodexChildDelegation(input: CodexChildRetryInput): CodexChildDelegation {
+    const previous = this.loadCollaborationAction(input.previousActionId);
+    if (!previous) throw new Error(`Codex child action not found: ${input.previousActionId}`);
+    if (previous.source.threadId !== input.parentThreadId) {
+      throw new Error(`Codex child retry source thread conflict: ${input.previousActionId}`);
+    }
+    if (previous.status !== "Failed" && !previous.deliveryUnknown) {
+      throw new Error(`Codex child action is not retryable: ${input.previousActionId}`);
+    }
+    return this.startCodexChildDelegation({
+      ...input,
+      replacementForActionId: input.previousActionId,
+    });
+  }
+
+  private updateCodexChildDelivery(
+    input: CodexChildDeliveryInput,
+    outcome: "unknown" | "rejected",
+  ): CodexChildDelegation {
+    const delegation = this.loadCodexChildDelegation(input.parentThreadId, input.parentItemId);
+    if (!delegation) throw new Error(`Codex child delegation not found: ${input.parentItemId}`);
+    const action = delegation.collaborationAction;
+    if (outcome === "unknown" && action.status === "Failed" && !action.deliveryUnknown) {
+      throw new Error(`Cannot replace confirmed Codex child rejection: ${action.id}`);
+    }
+    if (outcome === "rejected" && action.status === "Acknowledged" && !action.deliveryUnknown) {
+      throw new Error(`Cannot reject acknowledged Codex child delivery: ${action.id}`);
+    }
+    if ((outcome === "unknown" && action.deliveryUnknown)
+      || (outcome === "rejected" && action.status === "Failed" && !action.deliveryUnknown)) {
+      return delegation;
+    }
+    const now = new Date().toISOString();
+    const updatedAction: CollaborationAction = {
+      ...action,
+      status: outcome === "rejected" ? "Failed" : "Dispatched",
+      deliveryUnknown: outcome === "unknown",
+      updatedAt: now,
+    };
+    const parentThread = this.loadThread(input.parentThreadId);
+    if (!parentThread) throw new Error(`Codex parent thread not found: ${input.parentThreadId}`);
+    if (action.source.turnId !== input.parentTurnId) {
+      throw new Error(`Codex child delivery source turn conflict: ${input.parentItemId}`);
+    }
+    const sourceExecutionId = this.executionIdForTurn(action.source.turnId);
+    this.commitCodexChildDeliveryState({
+      parentThread,
+      childThread: delegation.childThread,
+      action: updatedAction,
+      sourceExecutionId,
+      now,
+      outcome,
+    });
+    return {
+      ...delegation,
+      childThread: {
+        ...delegation.childThread,
+        activityState: "Unavailable",
+        updatedAt: now,
+      },
+      collaborationAction: updatedAction,
+    };
+  }
+
+  private commitCodexChildDeliveryState(input: {
+    parentThread: AgentThread;
+    childThread: AgentThread;
+    action: CollaborationAction;
+    sourceExecutionId: string;
+    now: string;
+    outcome: "unknown" | "rejected";
+  }): { parent: CanonicalAgentCommitResult; child: CanonicalAgentCommitResult } {
+    const updatedParent: AgentThread = {
+      ...input.parentThread,
+      rosterRevision: input.parentThread.rosterRevision + 1,
+      updatedAt: input.now,
+    };
+    const updatedChild: AgentThread = {
+      ...input.childThread,
+      activityState: "Unavailable",
+      updatedAt: input.now,
+    };
+    const childExecutionId = deterministicUuid(
+      `${input.sourceExecutionId}:codex-child:${input.action.id}:${input.outcome}`,
+    );
+    const committed = this.db.transaction(() => {
+      const parent = this.commitInsideTransaction({
+        threadId: input.parentThread.id,
+        turnId: input.action.source.turnId,
+        executionId: input.sourceExecutionId,
+        phase: "running",
+        events: [
+          {
+            eventId: `${childExecutionId}:parent-thread`,
+            routing: { threadId: input.parentThread.id, executionId: input.sourceExecutionId },
+            sourceProviderId: input.parentThread.providerId,
+            sourceIdentities: input.parentThread.providerIdentities,
+            payload: { type: "thread.recorded", thread: updatedParent },
+          },
+          this.actionDraft(
+            input.sourceExecutionId,
+            input.parentThread,
+            input.action,
+            `${childExecutionId}:action`,
+          ),
+        ],
+      });
+      const child = this.commitInsideTransaction({
+        threadId: input.childThread.id,
+        turnId: input.action.source.turnId,
+        executionId: childExecutionId,
+        phase: "delivery",
+        persistCheckpoint: false,
+        events: [{
+          eventId: `${childExecutionId}:child-thread`,
+          routing: { threadId: input.childThread.id, executionId: childExecutionId },
+          sourceProviderId: input.childThread.providerId,
+          sourceIdentities: input.childThread.providerIdentities,
+          payload: { type: "thread.recorded", thread: updatedChild },
+        }],
+      });
+      return { parent, child };
+    })();
+    this.recordCanonicalDiagnostics([...committed.parent.events, ...committed.child.events]);
+    this.publishEventGroups([committed.parent.events, committed.child.events]);
+    return committed;
+  }
+
+  private assertCodexChildDeliveryCanBeAcknowledged(action: CollaborationAction): void {
+    if (action.status === "Failed" && !action.deliveryUnknown) {
+      throw new Error(`Cannot acknowledge confirmed Codex child rejection: ${action.id}`);
+    }
+  }
+
   /** Add exact Codex receiver-thread identities to a provisional delegation. */
   registerCodexReceiverThreadIds(
     input: CodexChildIdentityInput & { receiverThreadIds: readonly string[] },
   ): CodexChildDelegation {
     const delegation = this.loadCodexChildDelegation(input.parentThreadId, input.parentItemId);
     if (!delegation) throw new Error(`Codex child delegation not found: ${input.parentItemId}`);
+    this.assertCodexChildDeliveryCanBeAcknowledged(delegation.collaborationAction);
     const existingNativeThread = delegation.childThread.providerIdentities.find((identity) => (
       identity.providerId === "codex" && identity.scope === "thread"
     ));
@@ -1461,6 +1672,7 @@ export class CanonicalAgentEventSink {
   bindCodexChildIdentity(input: CodexChildIdentityInput): CodexChildDelegation {
     const delegation = this.loadCodexChildDelegation(input.parentThreadId, input.parentItemId);
     if (!delegation) throw new Error(`Codex child delegation not found: ${input.parentItemId}`);
+    this.assertCodexChildDeliveryCanBeAcknowledged(delegation.collaborationAction);
     const receiver = this.codexReceiverIdentity(input.nativeThreadId);
     const hasReceiver = delegation.collaborationAction.providerIdentities.some((identity) => (
       identity.providerId === receiver.providerId
@@ -1481,6 +1693,7 @@ export class CanonicalAgentEventSink {
       const acknowledged: CollaborationAction = {
         ...delegation.collaborationAction,
         status: "Acknowledged",
+        deliveryUnknown: false,
         updatedAt: new Date().toISOString(),
       };
       this.commitParentCodexAction(input, acknowledged, "acknowledge");
@@ -1499,6 +1712,7 @@ export class CanonicalAgentEventSink {
     const acknowledged: CollaborationAction = {
       ...delegation.collaborationAction,
       status: "Acknowledged",
+      deliveryUnknown: false,
       updatedAt: boundThread.updatedAt,
     };
     this.commitParentCodexBinding(input, boundThread, acknowledged);
@@ -1538,10 +1752,12 @@ export class CanonicalAgentEventSink {
     if (!triggerAction || triggerAction.target.threadId !== childThread.id) {
       throw new Error(`Codex child trigger action does not target child: ${input.triggerActionId}`);
     }
+    this.assertCodexChildDeliveryCanBeAcknowledged(triggerAction);
     const updatedAction: CollaborationAction = {
       ...triggerAction,
       target: { threadId: childThread.id, turnId },
       status: "Acknowledged",
+      deliveryUnknown: false,
       updatedAt: now,
     };
     const parentThread = this.loadThread(input.parentThreadId);
@@ -2631,18 +2847,20 @@ export class CanonicalAgentEventSink {
     for (const event of candidateEvents) this.insertEvent(event);
 
     const durableThrough = acceptedSequence;
-    this.persistCheckpoint({
-      executionId: input.executionId,
-      threadId: input.threadId,
-      turnId: input.turnId,
-      lastAcceptedSequence: acceptedSequence,
-      lastDurableSequence: durableThrough,
-      nativeCursor: input.nativeCursor ?? currentCheckpoint?.nativeCursor ?? null,
-      phase: currentCheckpoint?.terminalOutcome ? currentCheckpoint.phase : input.phase,
-      terminalOutcome: currentCheckpoint?.terminalOutcome ?? input.terminalOutcome ?? null,
-      error: currentCheckpoint?.terminalOutcome ? currentCheckpoint.error : input.error ?? null,
-      updatedAt: acceptedAt,
-    });
+    if (input.persistCheckpoint !== false) {
+      this.persistCheckpoint({
+        executionId: input.executionId,
+        threadId: input.threadId,
+        turnId: input.turnId,
+        lastAcceptedSequence: acceptedSequence,
+        lastDurableSequence: durableThrough,
+        nativeCursor: input.nativeCursor ?? currentCheckpoint?.nativeCursor ?? null,
+        phase: currentCheckpoint?.terminalOutcome ? currentCheckpoint.phase : input.phase,
+        terminalOutcome: currentCheckpoint?.terminalOutcome ?? input.terminalOutcome ?? null,
+        error: currentCheckpoint?.terminalOutcome ? currentCheckpoint.error : input.error ?? null,
+        updatedAt: acceptedAt,
+      });
+    }
 
     const publishedEvents = applications
       .filter((entry) => entry.outcome === "applied")

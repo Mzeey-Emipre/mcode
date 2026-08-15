@@ -183,6 +183,159 @@ describe("ThreadRepo.updateCheckoutFromHead", () => {
   });
 });
 
+describe("ThreadRepo canonical child retention", () => {
+  it("hard-deletes canonical descendants and their collaboration records with the parent", () => {
+    const db = openMemoryDatabase();
+    const workspaceRepo = new WorkspaceRepo(db);
+    const threadRepo = new ThreadRepo(db);
+    const workspace = workspaceRepo.create("child-retention", "/tmp/child-retention", false);
+    const parent = threadRepo.create(workspace.id, "parent", "direct", "main");
+    const child = threadRepo.create(workspace.id, "child", "direct", "main");
+    db.prepare("UPDATE threads SET parent_thread_id = ? WHERE id = ?").run(parent.id, child.id);
+    const now = new Date().toISOString();
+    const insertCanonicalThread = db.prepare(`
+      INSERT INTO canonical_agent_threads (
+        id, workspace_id, parent_thread_id, root_thread_id, owning_parent_thread_id,
+        provider_id, provider_identities_json, activity_state, conversation_revision,
+        roster_revision, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, 'codex', '[]', 'Idle', 1, 1, ?, ?)
+    `);
+    insertCanonicalThread.run(parent.id, workspace.id, null, parent.id, null, now, now);
+    insertCanonicalThread.run(child.id, workspace.id, parent.id, parent.id, parent.id, now, now);
+    db.prepare(`
+      INSERT INTO canonical_agent_turns (
+        id, thread_id, execution_id, status, trigger_json, permission_mode,
+        provider_identities_json, started_at, ended_at, created_at, updated_at
+      ) VALUES ('child-turn', ?, 'child-execution', 'Completed', '{"kind":"child"}', 'full', '[]', ?, ?, ?, ?)
+    `).run(child.id, now, now, now, now);
+    db.prepare(`
+      INSERT INTO canonical_agent_items (
+        id, thread_id, turn_id, kind, provider_identities_json, payload_json, created_at, updated_at
+      ) VALUES ('child-item', ?, 'child-turn', 'message', '[]', '{"projection":"message"}', ?, ?)
+    `).run(child.id, now, now);
+    db.prepare(`
+      INSERT INTO canonical_collaboration_actions (
+        id, kind, source_thread_id, source_turn_id, source_item_id, target_thread_id,
+        status, delivery_unknown, provider_identities_json, created_at, updated_at
+      ) VALUES ('child-action', 'delegate', ?, 'child-turn', 'child-item', ?, 'Acknowledged', 0, '[]', ?, ?)
+    `).run(parent.id, child.id, now, now);
+
+    expect(threadRepo.hardDelete(parent.id)).toBe(true);
+    expect(db.prepare("SELECT COUNT(*) AS count FROM canonical_agent_threads WHERE id = ?").get(child.id))
+      .toEqual({ count: 0 });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM canonical_agent_turns WHERE id = 'child-turn'").get())
+      .toEqual({ count: 0 });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM canonical_agent_items WHERE id = 'child-item'").get())
+      .toEqual({ count: 0 });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM canonical_collaboration_actions WHERE id = 'child-action'").get())
+      .toEqual({ count: 0 });
+    expect(threadRepo.findById(child.id)).toBeNull();
+    db.close();
+  });
+
+  it("hard-deletes retained legacy descendants and their message history with the parent", () => {
+    // Regression: retained legacy children have no canonical row, but remain owned by the parent.
+    const db = openMemoryDatabase();
+    const workspaceRepo = new WorkspaceRepo(db);
+    const threadRepo = new ThreadRepo(db);
+    const workspace = workspaceRepo.create("legacy-child-delete", "/tmp/legacy-child-delete", false);
+    const parent = threadRepo.create(workspace.id, "parent", "direct", "main");
+    const child = threadRepo.create(workspace.id, "legacy child", "direct", "main");
+    db.prepare("UPDATE threads SET parent_thread_id = ? WHERE id = ?").run(parent.id, child.id);
+    const now = new Date().toISOString();
+    db.prepare(
+      "INSERT INTO messages (id, thread_id, role, content, timestamp, sequence) VALUES (?, ?, ?, ?, ?, ?)",
+    ).run("legacy-child-message", child.id, "assistant", "retained legacy history", now, 1);
+    db.prepare(
+      "INSERT INTO turn_snapshots (id, message_id, thread_id, ref_before, ref_after, files_changed, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run("legacy-child-snapshot", "legacy-child-message", child.id, "before", "after", "[]", now);
+
+    expect(threadRepo.hardDelete(parent.id)).toBe(true);
+    expect(threadRepo.findById(child.id)).toBeNull();
+    expect(db.prepare("SELECT COUNT(*) AS count FROM messages WHERE id = ?").get("legacy-child-message"))
+      .toEqual({ count: 0 });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM turn_snapshots WHERE id = ?").get("legacy-child-snapshot"))
+      .toEqual({ count: 0 });
+    db.close();
+  });
+
+  it("soft-deletes a parent without removing normal or canonical child history", () => {
+    const db = openMemoryDatabase();
+    const workspaceRepo = new WorkspaceRepo(db);
+    const threadRepo = new ThreadRepo(db);
+    const workspace = workspaceRepo.create("child-archive", "/tmp/child-archive", false);
+    const parent = threadRepo.create(workspace.id, "parent", "direct", "main");
+    const child = threadRepo.create(workspace.id, "child", "direct", "main");
+    db.prepare("UPDATE threads SET parent_thread_id = ? WHERE id = ?").run(parent.id, child.id);
+    const now = new Date().toISOString();
+    const insertCanonicalThread = db.prepare(`
+      INSERT INTO canonical_agent_threads (
+        id, workspace_id, parent_thread_id, root_thread_id, owning_parent_thread_id,
+        provider_id, provider_identities_json, activity_state, conversation_revision,
+        roster_revision, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, 'codex', '[]', 'Idle', 1, 0, ?, ?)
+    `);
+    insertCanonicalThread.run(parent.id, workspace.id, null, parent.id, null, now, now);
+    insertCanonicalThread.run(child.id, workspace.id, parent.id, parent.id, parent.id, now, now);
+    db.prepare(`
+      INSERT INTO canonical_agent_turns (
+        id, thread_id, execution_id, status, trigger_json, permission_mode,
+        provider_identities_json, started_at, ended_at, created_at, updated_at
+      ) VALUES ('archived-child-turn', ?, 'archived-child-execution', 'Completed', '{"kind":"child"}', 'full', '[]', ?, ?, ?, ?)
+    `).run(child.id, now, now, now, now);
+    db.prepare(`
+      INSERT INTO canonical_agent_items (
+        id, thread_id, turn_id, kind, provider_identities_json, payload_json, created_at, updated_at
+      ) VALUES ('archived-child-item', ?, 'archived-child-turn', 'message', '[]', '{"projection":"message"}', ?, ?)
+    `).run(child.id, now, now);
+
+    expect(threadRepo.softDelete(parent.id)).toBe(true);
+    expect(threadRepo.findById(child.id)).not.toBeNull();
+    expect(db.prepare("SELECT status, deleted_at FROM threads WHERE id = ?").get(parent.id))
+      .toMatchObject({ status: "deleted" });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM canonical_agent_items WHERE thread_id = ?")
+      .get(child.id)).toEqual({ count: 1 });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM canonical_agent_threads WHERE id = ?")
+      .get(child.id)).toEqual({ count: 1 });
+    db.close();
+  });
+
+  it("hard-deletes every nested descendant across bounded child batches", () => {
+    // Regression: a bounded delete must not leave descendants beyond its batch or at a nested depth.
+    const db = openMemoryDatabase();
+    const workspaceRepo = new WorkspaceRepo(db);
+    const threadRepo = new ThreadRepo(db);
+    const workspace = workspaceRepo.create("child-delete-batches", "/tmp/child-delete-batches", false);
+    const parent = threadRepo.create(workspace.id, "parent", "direct", "main");
+    const now = new Date().toISOString();
+    const insertCanonicalThread = db.prepare(`
+      INSERT INTO canonical_agent_threads (
+        id, workspace_id, parent_thread_id, root_thread_id, owning_parent_thread_id,
+        provider_id, provider_identities_json, activity_state, conversation_revision,
+        roster_revision, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, 'codex', '[]', 'Idle', 1, 0, ?, ?)
+    `);
+    insertCanonicalThread.run(parent.id, workspace.id, null, parent.id, null, now, now);
+    for (let index = 0; index < 70; index += 1) {
+      const child = threadRepo.create(workspace.id, `child-${index}`, "direct", "main");
+      db.prepare("UPDATE threads SET parent_thread_id = ? WHERE id = ?").run(parent.id, child.id);
+      insertCanonicalThread.run(child.id, workspace.id, parent.id, parent.id, parent.id, now, now);
+      if (index < 3) {
+        const grandchild = threadRepo.create(workspace.id, `grandchild-${index}`, "direct", "main");
+        db.prepare("UPDATE threads SET parent_thread_id = ? WHERE id = ?").run(child.id, grandchild.id);
+        insertCanonicalThread.run(grandchild.id, workspace.id, child.id, parent.id, parent.id, now, now);
+      }
+    }
+
+    expect(threadRepo.hardDelete(parent.id)).toBe(true);
+    expect(db.prepare("SELECT COUNT(*) AS count FROM threads WHERE workspace_id = ?").get(workspace.id))
+      .toEqual({ count: 0 });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM canonical_agent_threads WHERE workspace_id = ?")
+      .get(workspace.id)).toEqual({ count: 0 });
+    db.close();
+  });
+});
+
 describe("ThreadRepo.search", () => {
   let db: Database.Database;
   let threadRepo: ThreadRepo;
