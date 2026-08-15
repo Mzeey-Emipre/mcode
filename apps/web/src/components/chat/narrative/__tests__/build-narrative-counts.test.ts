@@ -144,7 +144,7 @@ describe("buildNarrativeItems counts", () => {
     expect(counts.subagents).toBe(1);
   });
 
-  it("renders start, repeated updates, and finish in order without counting lifecycle markers", () => {
+  it("renders one finished row at the Agent start position after lifecycle updates", () => {
     const tools: ToolCall[] = [
       mkTool({
         id: "agent-1",
@@ -184,17 +184,36 @@ describe("buildNarrativeItems counts", () => {
       isAgentRunning: false,
     });
 
-    expect(items.map((item) => item.type === "subagent" ? item.lifecycle : item.type)).toEqual([
-      "started",
-      "updated",
-      "updated",
-      "finished",
-    ]);
+    expect(items.map((item) => item.type === "subagent" ? item.lifecycle : item.type)).toEqual(["finished"]);
     expect(items.every((item) => item.type === "subagent")).toBe(true);
     expect(items[0]?.type === "subagent"
       ? items[0].participants.map((participant) => participant.id)
       : []).toEqual(["agent-1"]);
     expect(counts).toEqual({ steps: 1, thoughts: 0, subagents: 1 });
+  });
+
+  it("uses the latest lifecycle marker while an Agent is still active", () => {
+    const tools: ToolCall[] = [
+      mkTool({ id: "agent-active", toolName: "Agent", isComplete: false, startedAt: 1_000 }),
+      mkTool({
+        id: "update-active",
+        toolName: "__McodeSubagentLifecycle",
+        toolInput: { lifecycle: "updated" },
+        parentToolCallId: "agent-active",
+        startedAt: 2_000,
+      }),
+    ];
+
+    const { items } = buildNarrativeItems({
+      toolCalls: tools,
+      hooks: [],
+      thoughtSegments: [],
+      streamingText: "",
+      isAgentRunning: true,
+    });
+
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ type: "subagent", lifecycle: "updated" });
   });
 
   it("builds authoritative source-then-target participants for nested handoffs", () => {
@@ -236,11 +255,7 @@ describe("buildNarrativeItems counts", () => {
       (item) => item.type === "subagent" && item.toolCall.id === "agent-target",
     );
 
-    expect(targetRows.map((item) => item.type === "subagent" ? item.lifecycle : "")).toEqual([
-      "started",
-      "updated",
-      "finished",
-    ]);
+    expect(targetRows.map((item) => item.type === "subagent" ? item.lifecycle : "")).toEqual(["finished"]);
     for (const row of targetRows) {
       if (row.type === "subagent") {
         expect(row.participants.map((participant) => participant.id)).toEqual([

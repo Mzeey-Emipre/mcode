@@ -260,28 +260,17 @@ export function buildPersistedNarrativeItems(
 
     const lifecycleMarkers = (childrenByParent.get(t.id) ?? [])
       .filter(isSubagentLifecycleRecord);
-    timeline.push({ kind: "subagent", call, lifecycle: "started", sortOrder: t.sort_order });
-    for (const marker of lifecycleMarkers) {
-      timeline.push({
-        kind: "subagent",
-        call,
-        marker: recordToToolCall(marker),
-        lifecycle: "updated",
-        sortOrder: marker.sort_order,
-      });
-    }
-    if (t.status !== "running") {
-      const terminalSortOrder = lifecycleMarkers.reduce(
-        (latest, marker) => Math.max(latest, marker.sort_order),
-        t.sort_order,
-      ) + 0.5;
-      timeline.push({
-        kind: "subagent",
-        call,
-        lifecycle: "finished",
-        sortOrder: terminalSortOrder,
-      });
-    }
+    const latestMarker = lifecycleMarkers.reduce<ToolCallRecord | undefined>(
+      (latest, marker) => (!latest || marker.sort_order >= latest.sort_order ? marker : latest),
+      undefined,
+    );
+    timeline.push({
+      kind: "subagent",
+      call,
+      ...(latestMarker ? { marker: recordToToolCall(latestMarker) } : {}),
+      lifecycle: t.status !== "running" ? "finished" : latestMarker ? "updated" : "started",
+      sortOrder: t.sort_order,
+    });
   }
   for (const h of hooks) {
     if (h.phase === "stop") continue;

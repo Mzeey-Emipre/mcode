@@ -1,5 +1,6 @@
 import { z } from "zod";
 import {
+  AgentItemIdSchema,
   AgentThreadActivityStateSchema,
   AgentThreadIdSchema,
   AgentTurnStatusSchema,
@@ -65,6 +66,8 @@ export const CanonicalSubagentRosterRowSchema = lazySchema(() =>
     updatedAt: CanonicalTimestampSchema,
     endedAt: CanonicalTimestampSchema.nullable(),
     terminalOutcome: CanonicalSubagentTerminalOutcomeSchema.nullable(),
+    /** Exact canonical source item that initiated this child, when available. */
+    sourceItemId: AgentItemIdSchema.optional(),
     task: z.string().trim().min(1).max(CANONICAL_SUBAGENT_TASK_MAX_LENGTH).optional(),
     identity: z.string().trim().min(1).max(96).optional(),
     model: z.string().trim().min(1).max(128).optional(),

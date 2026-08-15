@@ -54,6 +54,15 @@ function providerIdentityProvenance(row: CanonicalSubagentRosterRow): string {
     .join("; ");
 }
 
+/** Resolve a panel selection by canonical child ID or exact provider source item ID. */
+export function resolveCanonicalSubagentSelection(
+  selectionId: string,
+  rows: readonly CanonicalSubagentRosterRow[],
+): CanonicalSubagentRosterRow | undefined {
+  const sourceItemId = `toolCall:${selectionId}`;
+  return rows.find((row) => row.id === selectionId || row.sourceItemId === sourceItemId);
+}
+
 function CanonicalRosterRow({
   row,
   rows,
@@ -240,7 +249,7 @@ export function SubagentsPanel({ threadId }: { readonly threadId: string }) {
     ? [...canonicalState.roster.active, ...canonicalState.roster.done]
     : [];
   const selectedCanonicalRow = detailSelection
-    ? canonicalRows.find((row) => row.id === detailSelection.id)
+    ? resolveCanonicalSubagentSelection(detailSelection.id, canonicalRows)
     : undefined;
 
   useEffect(() => {
