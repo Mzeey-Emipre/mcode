@@ -1882,6 +1882,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
       await getTransport().sendMessage({
         threadId,
         content,
+        messageId: userMessage.id,
         model,
         permissionMode,
         attachments,

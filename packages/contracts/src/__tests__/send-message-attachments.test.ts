@@ -40,6 +40,24 @@ describe("SendMessageSchema attachments", () => {
   });
 });
 
+describe("SendMessageSchema client message identity", () => {
+  const base = {
+    threadId: "550e8400-e29b-41d4-a716-446655440000",
+    content: "follow-up",
+  };
+
+  it("accepts a UUID and rejects a malformed client message ID", () => {
+    expect(SendMessageSchema().safeParse({
+      ...base,
+      messageId: "550e8400-e29b-41d4-a716-446655440001",
+    }).success).toBe(true);
+    expect(SendMessageSchema().safeParse({
+      ...base,
+      messageId: "optimistic-message",
+    }).success).toBe(false);
+  });
+});
+
 describe("typed goal objectives", () => {
   it("accepts bounded objectives on send and create-and-send", () => {
     const goalObjective = "Ship the composer capability";

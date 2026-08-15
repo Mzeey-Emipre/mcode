@@ -34,6 +34,7 @@ import type {
   PermissionDecision,
   PermissionRequest,
   PlanOutput,
+  Message,
   MessageMention,
   PreviewAnnotationBundle,
   GoalState,
@@ -555,6 +556,7 @@ export class AgentService {
   async sendMessage({
     threadId,
     content,
+    messageId,
     permissionMode = "default",
     model = "claude-sonnet-4-6",
     attachments = [],
@@ -834,9 +836,16 @@ export class AgentService {
           validatedMentions.length > 0 ? validatedMentions : undefined,
           previewAnnotations,
         ] as const;
-        const message = origin
-          ? this.messageRepo.create(...args, origin)
-          : this.messageRepo.create(...args);
+        let message: Message;
+        if (messageId === undefined && origin === undefined) {
+          message = this.messageRepo.create(...args);
+        } else if (messageId === undefined && origin !== undefined) {
+          message = this.messageRepo.create(...args, origin);
+        } else if (origin === undefined) {
+          message = this.messageRepo.create(...args, undefined, messageId);
+        } else {
+          message = this.messageRepo.create(...args, origin, messageId);
+        }
         if (markPlanAnswerForMessageId) {
           // INSERT OR IGNORE inside the repo skips PK collisions (idempotent
           // re-marking) but FK violations still abort the transaction, which
