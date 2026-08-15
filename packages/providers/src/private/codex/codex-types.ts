@@ -131,9 +131,9 @@ export interface TurnStartResult {
   turn?: { id: string; [key: string]: unknown };
 }
 /** Parameters for the `turn/interrupt` RPC method. */
-export interface TurnInterruptParams { threadId: string }
+export interface TurnInterruptParams { threadId: string; turnId: string }
 /** Result returned by the `turn/interrupt` RPC method. */
-export interface TurnInterruptResult { success: boolean }
+export type TurnInterruptResult = Record<string, never>;
 
 /** Native lifecycle state for a Codex thread goal. */
 export type ThreadGoalStatus = "active" | "paused" | "blocked" | "usageLimited" | "budgetLimited" | "complete";

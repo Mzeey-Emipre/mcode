@@ -7,6 +7,7 @@ import { useThreadStore } from "@/stores/threadStore";
 
 const harness = vi.hoisted(() => ({
   loadCanonicalSubagentRoster: vi.fn(),
+  stopCanonicalSubagent: vi.fn(),
   residency: {
     mountDisplayConversation: vi.fn(),
     unmountDisplayConversation: vi.fn(),
@@ -17,6 +18,7 @@ vi.mock("@/transport", async () => ({
   ...(await vi.importActual("@/transport")),
   getTransport: () => ({
     loadCanonicalSubagentRoster: harness.loadCanonicalSubagentRoster,
+    stopCanonicalSubagent: harness.stopCanonicalSubagent,
   }),
 }));
 
@@ -55,6 +57,7 @@ function canonicalRow(
     providerIdentities: [],
     sourceProviderIdentities: [],
     hasActiveDescendant: false,
+    canStop: false,
     ...overrides,
   };
 }
@@ -85,6 +88,7 @@ function deferred<T>() {
 describe("SubagentsPanel", () => {
   beforeEach(() => {
     harness.loadCanonicalSubagentRoster.mockReset().mockRejectedValue(new Error("transport unavailable"));
+    harness.stopCanonicalSubagent.mockReset().mockResolvedValue({ childThreadId: "canonical-child", status: "interrupted" });
     harness.residency.mountDisplayConversation.mockReset();
     harness.residency.unmountDisplayConversation.mockReset();
     useWorkspaceStore.setState({ activeWorkspaceId: "workspace-1", activeThreadId: "thread-1" });
@@ -266,6 +270,184 @@ describe("SubagentsPanel", () => {
     expect(screen.getByRole("button", { name: /Open Interrupted child details, Interrupted/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Open Errored child details, Errored/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Open Unknown child details, Idle/ })).not.toHaveTextContent("Completed");
+  });
+
+  it("hides Stop when a child is not active or cannot stop", async () => {
+    const activeButUnsupported = canonicalRow({
+      id: "active-unsupported",
+      identity: "Active unsupported",
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+      canStop: false,
+    });
+    const doneButEligible = canonicalRow({
+      id: "done-eligible",
+      identity: "Done eligible",
+      canStop: true,
+    });
+    harness.loadCanonicalSubagentRoster.mockResolvedValue(canonicalRoster([activeButUnsupported], [doneButEligible]));
+
+    render(<SubagentsPanel threadId="thread-1" />);
+
+    await screen.findByRole("button", { name: /Open Active unsupported details, Active/ });
+    expect(screen.queryByTestId("subagent-stop-control")).not.toBeInTheDocument();
+  });
+
+  it("uses the same shared Stop control in the roster and detail", async () => {
+    const child = canonicalRow({
+      id: "shared-control-child",
+      identity: "Shared control child",
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+      canStop: true,
+    });
+    harness.loadCanonicalSubagentRoster.mockResolvedValue(canonicalRoster([child], []));
+
+    render(<SubagentsPanel threadId="thread-1" />);
+
+    expect(await screen.findByTestId("subagent-stop-control")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Open Shared control child details, Active/ }));
+    expect(await screen.findByTestId("subagent-stop-control")).toBeInTheDocument();
+  });
+
+  it("passes exact parent and child IDs without selecting the child", async () => {
+    const child = canonicalRow({
+      id: "exact-child",
+      parentThreadId: "owner-parent",
+      rootThreadId: "owner-parent",
+      owningParentThreadId: "owner-parent",
+      identity: "Exact child",
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+      canStop: true,
+    });
+    const interrupted = canonicalRow({
+      ...child,
+      activityState: "Idle",
+      latestTurnStatus: "Interrupted",
+      terminalOutcome: "Interrupted",
+      canStop: false,
+    });
+    harness.loadCanonicalSubagentRoster
+      .mockResolvedValueOnce(canonicalRoster([child], []))
+      .mockResolvedValueOnce(canonicalRoster([], [interrupted], 2));
+    harness.stopCanonicalSubagent.mockResolvedValue({ childThreadId: "exact-child", status: "interrupted" });
+
+    render(<SubagentsPanel threadId="thread-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Stop Exact child" }));
+
+    await waitFor(() => expect(harness.stopCanonicalSubagent).toHaveBeenCalledWith("owner-parent", "exact-child"));
+    expect(useDiffStore.getState().subagentDetailByThread["thread-1"]).toBeUndefined();
+    await waitFor(() => expect(screen.getByRole("button", { name: /Open Exact child details, Interrupted/ })).toBeInTheDocument());
+  });
+
+  it("prevents duplicate stop commands while the request is pending", async () => {
+    const child = canonicalRow({
+      id: "pending-child",
+      identity: "Pending child",
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+      canStop: true,
+    });
+    const result = deferred<{ childThreadId: string; status: "interrupted" }>();
+    harness.loadCanonicalSubagentRoster.mockResolvedValue(canonicalRoster([child], []));
+    harness.stopCanonicalSubagent.mockReturnValue(result.promise);
+
+    render(<SubagentsPanel threadId="thread-1" />);
+    const stop = await screen.findByRole("button", { name: "Stop Pending child" });
+    fireEvent.click(stop);
+    fireEvent.click(stop);
+
+    expect(harness.stopCanonicalSubagent).toHaveBeenCalledTimes(1);
+    expect(stop).toBeDisabled();
+    expect(screen.getByText("Stopping…")).toBeInTheDocument();
+    result.resolve({ childThreadId: "pending-child", status: "interrupted" });
+    await waitFor(() => expect(stop).toBeEnabled());
+  });
+
+  it.each([
+    ["failed", "Stop failed: Provider rejected stop"],
+    ["unsupported", "Stop unavailable: Child stopping is not supported"],
+  ] as const)("keeps a %s result explicit", async (status, message) => {
+    const child = canonicalRow({
+      id: `${status}-child`,
+      identity: `${status} child`,
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+      canStop: true,
+    });
+    harness.loadCanonicalSubagentRoster.mockResolvedValue(canonicalRoster([child], []));
+    harness.stopCanonicalSubagent.mockResolvedValue({ childThreadId: child.id, status, message: message.split(": ")[1] });
+
+    render(<SubagentsPanel threadId="thread-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: `Stop ${status} child` }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    expect(screen.queryByText(/Stopped successfully/)).not.toBeInTheDocument();
+  });
+
+  it("does not render internal details from a rejected stop request", async () => {
+    const child = canonicalRow({
+      id: "rejected-child",
+      identity: "Rejected child",
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+      canStop: true,
+    });
+    const secret = String.raw`provider-token=secret-shaped-value path=C:\private\workspace\token.txt`;
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    harness.loadCanonicalSubagentRoster.mockResolvedValue(canonicalRoster([child], []));
+    harness.stopCanonicalSubagent.mockRejectedValue(new Error(secret));
+
+    try {
+      render(<SubagentsPanel threadId="thread-1" />);
+      fireEvent.click(await screen.findByRole("button", { name: "Stop Rejected child" }));
+
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent("Stop failed: The child did not stop.");
+      expect(alert).not.toHaveTextContent(secret);
+      expect(consoleError).toHaveBeenCalledWith("Canonical subagent stop failed");
+      expect(consoleError.mock.calls.flat().join(" ")).not.toContain(secret);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it.each(["interrupted", "already-terminal"] as const)("refreshes the roster after %s and preserves selected detail", async (stopStatus) => {
+    const child = canonicalRow({
+      id: "detail-stop-child",
+      identity: "Detail stop child",
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+      canStop: true,
+    });
+    const terminal = canonicalRow({
+      ...child,
+      activityState: "Idle",
+      latestTurnStatus: stopStatus === "already-terminal" ? "Completed" : "Interrupted",
+      terminalOutcome: stopStatus === "already-terminal" ? "Completed" : "Interrupted",
+      canStop: false,
+    });
+    harness.loadCanonicalSubagentRoster
+      .mockResolvedValueOnce(canonicalRoster([child], []))
+      .mockResolvedValueOnce(canonicalRoster([], [terminal], 2));
+    harness.stopCanonicalSubagent.mockResolvedValue({ childThreadId: child.id, status: stopStatus });
+
+    render(<SubagentsPanel threadId="thread-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: /Open Detail stop child details, Active/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Stop Detail stop child" }));
+
+    await waitFor(() => expect(screen.getByTestId("subagent-detail-status")).toHaveTextContent(terminal.terminalOutcome!));
+    expect(screen.queryByTestId("subagent-stop-control")).not.toBeInTheDocument();
+    expect(screen.getByTestId("shared-message-list")).toHaveAttribute("data-display-thread-id", "detail-stop-child");
+    expect(useDiffStore.getState().subagentDetailByThread["thread-1"]?.id).toBe("detail-stop-child");
   });
 
   it("opens canonical detail through the shared MessageList without changing the parent", async () => {

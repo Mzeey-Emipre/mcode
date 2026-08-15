@@ -106,6 +106,7 @@ const CODEX_SUPPORTED_CAPABILITIES = [
   "orchestration",
   "browser-access",
   "thread-control",
+  "child-cancellation",
 ] as const satisfies readonly ProviderCapabilityName[];
 
 const TURN_SCOPED_EVENT_TYPES = new Set<AgentEvent["type"]>([
@@ -2468,6 +2469,17 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       if (stagedBrowser) this.host.browser.release(stagedBrowser.stage.leaseId);
       setTimeout(() => this.pendingStops.delete(sessionId), 10_000);
     }
+  }
+
+  /** Interrupt one exact native child turn while retaining the parent session. */
+  async interruptChildTurn(
+    sessionId: string,
+    nativeThreadId: string,
+    nativeTurnId: string,
+  ): Promise<void> {
+    const state = this.runtime.get(sessionId);
+    if (!state) throw new Error(`Codex session is not active: ${sessionId}`);
+    await state.server.interruptChildTurn(nativeThreadId, nativeTurnId);
   }
 
   /**

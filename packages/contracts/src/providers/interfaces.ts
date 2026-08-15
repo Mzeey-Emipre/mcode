@@ -178,6 +178,28 @@ export interface IAgentProvider {
   on(event: "exit_plan_mode", handler: (payload: { threadId: string; planMarkdown: string }) => void): void;
 }
 
+/** Narrowed view of a provider that can interrupt one exact child turn. */
+export interface IChildTurnCancellable extends IAgentProvider {
+  /** Declares exact child-turn cancellation support. */
+  readonly descriptor: {
+    readonly capabilities: ReadonlyArray<{
+      readonly name: string;
+      readonly support: "supported" | "unsupported";
+    }>;
+  };
+  /** Interrupt one native child turn while keeping the provider session alive. */
+  interruptChildTurn(sessionId: string, nativeThreadId: string, nativeTurnId: string): Promise<void>;
+}
+
+/** Type guard for providers that expose exact child-turn interruption. */
+export function isChildTurnCancellable(provider: IAgentProvider): provider is IChildTurnCancellable {
+  const candidate = provider as Partial<IChildTurnCancellable>;
+  return typeof candidate.interruptChildTurn === "function"
+    && candidate.descriptor?.capabilities.some((capability) => (
+      capability.name === "child-cancellation" && capability.support === "supported"
+    )) === true;
+}
+
 /**
  * Narrowed view of an agent provider that supports one-shot text completion.
  * Use `isCompletionCapable()` to narrow an `IAgentProvider` to this type.

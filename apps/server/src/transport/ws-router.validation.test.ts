@@ -66,6 +66,32 @@ describe("routeMessage result validation seam", () => {
   });
 });
 
+describe("routeMessage agent.child.stop", () => {
+  it("routes the distinct child-stop action to AgentService", async () => {
+    const stopChildTurn = vi.fn().mockResolvedValue({
+      childThreadId: "child-thread",
+      status: "interrupted",
+    });
+
+    const response = await routeMessage(JSON.stringify({
+      id: "child-stop-1",
+      method: "agent.child.stop",
+      params: {
+        owningParentThreadId: "parent-thread",
+        childThreadId: "child-thread",
+      },
+    }), {
+      agentService: { stopChildTurn },
+    } as unknown as RouterDeps);
+
+    expect(response).toEqual({
+      id: "child-stop-1",
+      result: { childThreadId: "child-thread", status: "interrupted" },
+    });
+    expect(stopChildTurn).toHaveBeenCalledWith("parent-thread", "child-thread");
+  });
+});
+
 describe("routeMessage snapshot.getCumulativeDiffStats", () => {
   it("rejects results above the Review comparison file bound before returning them", async () => {
     const getDiffStats = vi.fn().mockResolvedValue(

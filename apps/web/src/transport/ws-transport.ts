@@ -64,7 +64,7 @@ import type {
   TerminalCustomProfile,
   TerminalProfileReference,
 } from "@mcode/contracts";
-import type { PaginatedMessages, ConversationPage, ConversationNewerPage, ConversationNewerPageRequest, ConversationOlderPage, ConversationOlderPageRequest, ConversationTail, CanonicalSubagentRoster, SetThreadSubscriptionsInput, SetThreadSubscriptionsResult, TurnSnapshot, PrDraft, CreatePrResult, ProviderUsageInfo, ChecksStatus, ProviderAvailability, GoalLookupResult } from "@mcode/contracts";
+import type { PaginatedMessages, ConversationPage, ConversationNewerPage, ConversationNewerPageRequest, ConversationOlderPage, ConversationOlderPageRequest, ConversationTail, CanonicalSubagentRoster, CanonicalSubagentStopResult, SetThreadSubscriptionsInput, SetThreadSubscriptionsResult, TurnSnapshot, PrDraft, CreatePrResult, ProviderUsageInfo, ChecksStatus, ProviderAvailability, GoalLookupResult } from "@mcode/contracts";
 import {
   TERMINAL_DATA_TAG,
   TERMINAL_BINARY_MAGIC,
@@ -792,6 +792,11 @@ export function createWsTransport(
       rpc<CanonicalSubagentRoster>("canonicalAgent.roster", {
         owningParentThreadId,
         ...(limit !== undefined ? { limit } : {}),
+      }),
+    stopCanonicalSubagent: (owningParentThreadId, childThreadId) =>
+      rpc<CanonicalSubagentStopResult>("agent.child.stop", {
+        owningParentThreadId,
+        childThreadId,
       }),
     loadOlderConversationPage: (request: ConversationOlderPageRequest) =>
       rpc<ConversationOlderPage>("conversation.olderPage", request),

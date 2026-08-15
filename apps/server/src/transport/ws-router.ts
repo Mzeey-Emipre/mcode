@@ -1164,7 +1164,12 @@ async function dispatch(
         before: params.before,
       });
     case "canonicalAgent.roster":
-      return deps.canonicalSink.loadSubagentRoster(params);
+      return deps.agentService.loadCanonicalSubagentRoster(params);
+    case "agent.child.stop":
+      return deps.agentService.stopChildTurn(
+        params.owningParentThreadId,
+        params.childThreadId,
+      );
     case "conversation.olderPage":
       return loadOlderConversationPage(deps, params);
     case "conversation.newerPage":

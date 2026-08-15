@@ -12,6 +12,7 @@ import {
   CanonicalSubagentRosterSchema,
   type CanonicalSubagentRoster,
   type CanonicalSubagentRosterRequest,
+  type CanonicalSubagentStopRequest,
   type CanonicalSubagentRosterRow,
   CANONICAL_SUBAGENT_LINEAGE_MAX_DEPTH,
   CANONICAL_SUBAGENT_TASK_MAX_LENGTH,
@@ -161,6 +162,14 @@ export interface CodexChildDelegation {
   childThread: AgentThread;
   parentItem: AgentItem;
   collaborationAction: CollaborationAction;
+}
+
+/** Canonical identity resolution used by the child interruption action. */
+export interface CanonicalChildStopTarget {
+  childThread: AgentThread;
+  latestTurn: AgentTurn | null;
+  nativeThreadId: string | null;
+  nativeTurnId: string | null;
 }
 
 /** Input used to attach exact Codex receiver and child-native identities. */
@@ -1332,6 +1341,7 @@ export class CanonicalAgentEventSink {
         providerIdentities,
         sourceProviderIdentities,
         hasActiveDescendant: !active && descendantHasActiveChild(thread.id),
+        canStop: false,
       };
     });
     const active = rosterRows
@@ -1351,6 +1361,54 @@ export class CanonicalAgentEventSink {
       active: retainedActive,
       done: retainedDone,
     });
+  }
+
+  /** Resolve one owned child and its latest native identities without mutating canonical state. */
+  loadCanonicalChildStopTarget(request: CanonicalSubagentStopRequest): CanonicalChildStopTarget | null {
+    const rows = this.db.prepare(`
+      WITH RECURSIVE descendants(id) AS (
+        SELECT id
+        FROM canonical_agent_threads
+        WHERE id = ?
+        UNION ALL
+        SELECT child.id
+        FROM canonical_agent_threads child
+        JOIN descendants parent ON parent.id = child.parent_thread_id
+      )
+      SELECT child.*
+      FROM canonical_agent_threads child
+      WHERE child.id = ?
+        AND child.id IN (SELECT id FROM descendants)
+        AND child.id <> ?
+        AND child.owning_parent_thread_id = ?
+      LIMIT 1
+    `).all(
+      request.owningParentThreadId,
+      request.childThreadId,
+      request.owningParentThreadId,
+      request.owningParentThreadId,
+    ) as Array<Record<string, unknown>>;
+    const row = rows[0];
+    if (!row) return null;
+    const childThread = this.threadFromRow(row);
+    const turnRows = this.db.prepare(`
+      SELECT *
+      FROM canonical_agent_turns
+      WHERE thread_id = ?
+      ORDER BY updated_at DESC, id DESC
+    `).all(childThread.id) as Array<Record<string, unknown>>;
+    const latestTurn = turnRows[0] ? this.turnFromRow(turnRows[0]) : null;
+    const nativeThreadId = childThread.providerIdentities.find((identity) => (
+      identity.providerId === childThread.providerId
+      && identity.scope === "thread"
+      && identity.provenance === "native"
+    ))?.value ?? null;
+    const nativeTurnId = latestTurn?.providerIdentities.find((identity) => (
+      identity.providerId === childThread.providerId
+      && identity.scope === "turn"
+      && identity.provenance === "native"
+    ))?.value ?? null;
+    return { childThread, latestTurn, nativeThreadId, nativeTurnId };
   }
 
   /** Provision one Starting child and one directional Dispatched action exactly once. */
@@ -1940,18 +1998,7 @@ export class CanonicalAgentEventSink {
   finishCodexChildTurn(input: CodexChildTurnFinishInput): AgentTurn {
     const turn = this.loadCodexChildTurn(input.childThreadId, input.nativeTurnId);
     if (!turn) throw new Error(`Codex child turn not found: ${input.nativeTurnId}`);
-    if (turn.status === "Completed") {
-      if (input.outcome !== "completed") throw new Error(`Codex child terminal identity conflict: ${turn.id}`);
-      return turn;
-    }
-    if (turn.status === "Interrupted") {
-      if (input.outcome !== "cancelled") throw new Error(`Codex child terminal identity conflict: ${turn.id}`);
-      return turn;
-    }
-    if (turn.status === "Errored") {
-      if (input.outcome !== "errored") throw new Error(`Codex child terminal identity conflict: ${turn.id}`);
-      return turn;
-    }
+    if (["Completed", "Interrupted", "Errored"].includes(turn.status)) return turn;
     const thread = this.loadThread(input.childThreadId);
     if (!thread) throw new Error(`Codex child thread not found: ${input.childThreadId}`);
     const executionId = this.executionIdForTurn(turn.id);

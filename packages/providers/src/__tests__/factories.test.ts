@@ -79,12 +79,10 @@ describe("Provider factories", () => {
         { name: "orchestration", support: "supported" },
         { name: "browser-access", support: "supported" },
         { name: "thread-control", support: "supported" },
+        { name: "child-cancellation", support: "supported" },
       ]);
       expect(provider.descriptor.capabilities).not.toContainEqual(
         { name: "provider-continuation", support: "supported" },
-      );
-      expect(provider.descriptor.capabilities).not.toContainEqual(
-        { name: "child-cancellation", support: "supported" },
       );
     }
     expect(Object.values(input.host).flatMap((port) => Object.values(port))).toSatisfy(
