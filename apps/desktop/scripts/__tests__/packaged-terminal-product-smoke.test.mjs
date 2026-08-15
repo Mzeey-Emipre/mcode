@@ -15,6 +15,7 @@ import {
   cleanupLoopbackIsolation,
   classifyProductSmokeOutcome,
   diagnoseDarwinSpawnHelper,
+  describeLinuxProductNamespaceProof,
   hashPackagedResources,
   hasLinuxProductNamespaceProof,
   LINUX_SUDO_PRESERVE_ENV,
@@ -24,6 +25,8 @@ import {
   pollProcessCleanup,
   releaseProductProcess,
   sendTerminalCommand,
+  formatProbeTimeoutDiagnostics,
+  summarizeReleaseProbe,
   shouldReexecLinuxProductVerifier,
   validateProductSmokeLaunchInput,
   waitForTerminalControl,
@@ -149,7 +152,7 @@ describe("packaged Terminal product smoke contract", () => {
     ]);
     expect(outerLinuxLaunch.args.join(" ")).toContain("ip_cmd");
     expect(outerLinuxLaunch.args.join(" ")).toContain(
-      'exec /usr/bin/setpriv --reuid="$SUDO_UID" --regid="$SUDO_GID" --init-groups -- "$MCODE_RELEASE_NODE" "$MCODE_RELEASE_SCRIPT" "$@"',
+      'MCODE_TERMINAL_PRODUCT_NAMESPACE=1 exec /usr/bin/setpriv --reuid="$SUDO_UID" --regid="$SUDO_GID" --init-groups -- "$MCODE_RELEASE_NODE" "$MCODE_RELEASE_SCRIPT" "$@"',
     );
     expect(outerLinuxLaunch.args).not.toContain("--user");
     expect(outerLinuxLaunch.env.MCODE_TERMINAL_PRODUCT_NAMESPACE).toBe("1");
@@ -212,6 +215,28 @@ describe("packaged Terminal product smoke contract", () => {
       }),
     ).toBe(false);
     expect(
+      describeLinuxProductNamespaceProof({
+        env: {},
+        readdir: onlyLoopbackInterfaces,
+      }),
+    ).toEqual({
+      markerPresent: false,
+      interfaces: ["lo"],
+      interfaceCount: 1,
+      interfacesTruncated: false,
+    });
+    expect(
+      describeLinuxProductNamespaceProof({
+        env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
+        readdir: unreadableInterfaces,
+      }),
+    ).toEqual({
+      markerPresent: true,
+      interfaces: null,
+      interfaceCount: null,
+      interfacesTruncated: false,
+    });
+    expect(
       shouldReexecLinuxProductVerifier({
         command: "product",
         platform: "linux",
@@ -258,7 +283,7 @@ describe("packaged Terminal product smoke contract", () => {
         env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
         readdir: extraNetworkInterfaces,
       }),
-    ).toThrow("isolated product verifier");
+    ).toThrow(/isolated product verifier.*interfaces=\["eth0","lo"\]/);
     expect(() =>
       buildProductLaunch({
         target: { executablePath: executable },
@@ -441,6 +466,38 @@ describe("packaged Terminal product smoke contract", () => {
       ["insertText", "node -e \"console.log('WF:cleanup:parent')\""],
       ["press", "Enter"],
     ]);
+  });
+
+  it("bounds renderer probe timeout evidence to the last terminal lines", () => {
+    const probe = {
+      cols: 80,
+      rows: 24,
+      cursor: { x: 4, y: 5 },
+      normalizedLines: Array.from({ length: 20 }, (_, index) =>
+        `line-${index}-${"x".repeat(170)}`,
+      ),
+    };
+    const summary = summarizeReleaseProbe(probe);
+    const diagnostics = formatProbeTimeoutDiagnostics({
+      probe,
+      focus: {
+        hasFocus: true,
+        tagName: "TEXTAREA",
+        className: "xterm-helper-textarea",
+        testId: null,
+      },
+    });
+    expect(summary).toMatchObject({
+      cols: 80,
+      rows: 24,
+      cursor: { x: 4, y: 5 },
+    });
+    expect(summary.normalizedLines).toHaveLength(16);
+    expect(summary.normalizedLines[0]).toContain("line-4-");
+    expect(summary.normalizedLines.at(-1)).toContain("line-19-");
+    expect(diagnostics).toContain('"cols":80');
+    expect(diagnostics).toContain('"tagName":"TEXTAREA"');
+    expect(diagnostics.length).toBeLessThanOrEqual(4_096);
   });
 
   it("fails immediately when the packaged Terminal controls are missing", async () => {

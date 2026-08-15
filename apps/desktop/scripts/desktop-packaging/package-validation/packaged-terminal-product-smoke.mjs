@@ -23,6 +23,9 @@ export const PRODUCT_SMOKE_FAULTS = [
 const MAX_TERMINAL_ARTIFACT_FILES = 64;
 const CLEANUP_BOUND_MS = 3_000;
 const LAUNCH_OUTPUT_TAIL_LIMIT = 8_192;
+const PROBE_DIAGNOSTIC_LINE_LIMIT = 16;
+const PROBE_DIAGNOSTIC_LINE_LENGTH = 192;
+const PROBE_DIAGNOSTIC_MAX_LENGTH = 4_096;
 const TARGET_PLATFORM = { win32: "windows", darwin: "macos", linux: "linux" };
 const LINUX_NAMESPACE_SCRIPT =
   'set -eu; ip_cmd="$(command -v ip || command -v /sbin/ip)"; "$ip_cmd" link set lo up; "$ip_cmd" -4 addr add 127.0.0.1/8 dev lo 2>/dev/null || true; "$ip_cmd" -6 addr add ::1/128 dev lo 2>/dev/null || true; "$ip_cmd" -4 addr show dev lo | grep -q "127.0.0.1"; "$ip_cmd" -6 addr show dev lo | grep -q "::1"';
@@ -35,6 +38,7 @@ const MACOS_CODESIGN_PATH = "/usr/bin/codesign";
 const MACOS_SANDBOX_EXEC_PATH = "/usr/bin/sandbox-exec";
 const MACOS_XATTR_PATH = "/usr/bin/xattr";
 const MACOS_OTOOL_PATH = "/usr/bin/otool";
+const LINUX_INTERFACE_DIAGNOSTIC_LIMIT = 32;
 /** Environment needed by the runner-user verifier after sudo creates the network namespace. */
 export const LINUX_SUDO_PRESERVE_ENV = [
   "DISPLAY",
@@ -52,18 +56,49 @@ export const LINUX_SUDO_PRESERVE_ENV = [
 /** Marks the verifier process that was re-executed inside the Linux namespace. */
 export const LINUX_PRODUCT_NAMESPACE_MARKER = "MCODE_TERMINAL_PRODUCT_NAMESPACE";
 
+function readLinuxProductNetworkInterfaces(readdir) {
+  try {
+    const interfaces = readdir("/sys/class/net");
+    return Array.isArray(interfaces) && interfaces.every((name) => typeof name === "string")
+      ? interfaces.slice().sort()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Returns bounded Linux namespace proof diagnostics without exposing environment values. */
+export function describeLinuxProductNamespaceProof({
+  env = process.env,
+  readdir = (directory) => readdirSync(directory),
+} = {}) {
+  const interfaces = readLinuxProductNetworkInterfaces(readdir);
+  return {
+    markerPresent: env[LINUX_PRODUCT_NAMESPACE_MARKER] === "1",
+    interfaces: interfaces?.slice(0, LINUX_INTERFACE_DIAGNOSTIC_LIMIT) ?? null,
+    interfaceCount: interfaces?.length ?? null,
+    interfacesTruncated: interfaces !== null && interfaces.length > LINUX_INTERFACE_DIAGNOSTIC_LIMIT,
+  };
+}
+
+function formatLinuxProductNamespaceProofDiagnostics(diagnostics) {
+  const interfaces = diagnostics.interfaces === null
+    ? "unreadable"
+    : JSON.stringify(diagnostics.interfaces);
+  const suffix = diagnostics.interfacesTruncated ? "; interfacesTruncated=true" : "";
+  return `marker=${diagnostics.markerPresent ? "present" : "absent"}; interfaces=${interfaces}; interfaceCount=${diagnostics.interfaceCount ?? "unknown"}${suffix}`;
+}
+
 /** Proves that the marked verifier exposes only the configured loopback interface. */
 export function hasLinuxProductNamespaceProof({
   env = process.env,
   readdir = (directory) => readdirSync(directory),
 } = {}) {
-  if (env[LINUX_PRODUCT_NAMESPACE_MARKER] !== "1") return false;
-  try {
-    const interfaces = readdir("/sys/class/net");
-    return Array.isArray(interfaces) && interfaces.slice().sort().join("\0") === "lo";
-  } catch {
-    return false;
-  }
+  const diagnostics = describeLinuxProductNamespaceProof({ env, readdir });
+  return diagnostics.markerPresent &&
+    diagnostics.interfaceCount === 1 &&
+    diagnostics.interfaces?.[0] === "lo" &&
+    !diagnostics.interfacesTruncated;
 }
 
 /** Returns whether the Linux product command still needs its namespace re-exec. */
@@ -402,7 +437,7 @@ export function buildLinuxProductVerifierLaunch({
       "--net",
       "/bin/sh",
       "-c",
-      `${LINUX_NAMESPACE_SCRIPT}; test -n "\${SUDO_UID:-}"; test -n "\${SUDO_GID:-}"; exec /usr/bin/setpriv --reuid="$SUDO_UID" --regid="$SUDO_GID" --init-groups -- "$MCODE_RELEASE_NODE" "$MCODE_RELEASE_SCRIPT" "$@"`,
+      `${LINUX_NAMESPACE_SCRIPT}; test -n "\${SUDO_UID:-}"; test -n "\${SUDO_GID:-}"; MCODE_TERMINAL_PRODUCT_NAMESPACE=1 exec /usr/bin/setpriv --reuid="$SUDO_UID" --regid="$SUDO_GID" --init-groups -- "$MCODE_RELEASE_NODE" "$MCODE_RELEASE_SCRIPT" "$@"`,
       "--",
       ...args,
     ],
@@ -512,7 +547,10 @@ export function buildProductLaunch({
   }
   if (isolationReceipt.mode === "linux-network-namespace") {
     if (!hasLinuxProductNamespaceProof({ env, readdir })) {
-      throw new Error("Linux Electron launch requires the isolated product verifier");
+      const diagnostics = describeLinuxProductNamespaceProof({ env, readdir });
+      throw new Error(
+        `Linux Electron launch requires the isolated product verifier (${formatLinuxProductNamespaceProofDiagnostics(diagnostics)})`,
+      );
     }
     return {
       command: executablePath,
@@ -551,15 +589,75 @@ export async function sendTerminalCommand(page, command) {
   await page.keyboard.press("Enter");
 }
 
+/** Summarizes one renderer probe for bounded packaged-smoke failure evidence. */
+export function summarizeReleaseProbe(probe) {
+  const lines = Array.isArray(probe?.normalizedLines) ? probe.normalizedLines : [];
+  const cursor = probe?.cursor;
+  return {
+    cols: Number.isInteger(probe?.cols) ? probe.cols : null,
+    rows: Number.isInteger(probe?.rows) ? probe.rows : null,
+    cursor: {
+      x: Number.isInteger(cursor?.x) ? cursor.x : null,
+      y: Number.isInteger(cursor?.y) ? cursor.y : null,
+    },
+    normalizedLines: lines
+      .slice(-PROBE_DIAGNOSTIC_LINE_LIMIT)
+      .map((line) => {
+        const text = String(line);
+        if (text.length <= PROBE_DIAGNOSTIC_LINE_LENGTH) return text;
+        const suffixLength = Math.floor((PROBE_DIAGNOSTIC_LINE_LENGTH - 1) / 2);
+        const prefixLength = PROBE_DIAGNOSTIC_LINE_LENGTH - suffixLength - 1;
+        return `${text.slice(0, prefixLength)}…${text.slice(-suffixLength)}`;
+      }),
+  };
+}
+
+/** Formats bounded renderer focus and terminal-buffer evidence for a timeout. */
+export function formatProbeTimeoutDiagnostics({ probe, focus }) {
+  const diagnostics = {
+    lastProbe: probe ? summarizeReleaseProbe(probe) : null,
+    focus: focus
+      ? {
+          hasFocus: focus.hasFocus === true,
+          tagName: typeof focus.tagName === "string" ? focus.tagName : null,
+          className: typeof focus.className === "string" ? focus.className : null,
+          testId: typeof focus.testId === "string" ? focus.testId : null,
+        }
+      : null,
+  };
+  return JSON.stringify(diagnostics).slice(0, PROBE_DIAGNOSTIC_MAX_LENGTH);
+}
+
 async function waitForProbe(page, predicate, timeoutMs = 10_000) {
   const deadline = Date.now() + timeoutMs;
   const probe = page.locator("[data-terminal-release-test-probe]").first();
+  let lastProbe;
   while (Date.now() < deadline) {
     const value = await probe.getAttribute("data-terminal-release-test-probe");
-    if (value && predicate(JSON.parse(value))) return;
+    if (value) {
+      const parsed = JSON.parse(value);
+      lastProbe = parsed;
+      if (predicate(parsed)) return;
+    }
     await page.waitForTimeout(100);
   }
-  throw new Error("Timed out waiting for the renderer release probe");
+  const focus = await page
+    .evaluate(() => {
+      const active = document.activeElement;
+      return {
+        hasFocus: document.hasFocus(),
+        tagName: active?.tagName,
+        className: typeof active?.className === "string" ? active.className : undefined,
+        testId: active?.getAttribute("data-testid") ?? undefined,
+      };
+    })
+    .catch(() => undefined);
+  throw new Error(
+    `Timed out waiting for the renderer release probe\n${formatProbeTimeoutDiagnostics({
+      probe: lastProbe,
+      focus,
+    })}`,
+  );
 }
 
 async function readRuntimeObservation(page) {
@@ -1011,7 +1109,10 @@ async function main(argv) {
   }
   if (shouldReexecLinuxProductVerifier({ command, platform })) {
     if (process.env[LINUX_PRODUCT_NAMESPACE_MARKER] === "1") {
-      throw new Error("Linux product namespace proof is missing");
+      const diagnostics = describeLinuxProductNamespaceProof();
+      throw new Error(
+        `Linux product namespace proof is missing (${formatLinuxProductNamespaceProofDiagnostics(diagnostics)})`,
+      );
     }
     const launch = buildLinuxProductVerifierLaunch({
       args: argv.slice(2),
