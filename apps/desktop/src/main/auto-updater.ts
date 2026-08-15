@@ -14,134 +14,13 @@
 import { autoUpdater } from "electron-updater";
 import { app, BrowserWindow, Notification } from "electron";
 import type { Event } from "electron";
-import { readFileSync } from "fs";
-import { join } from "path";
-import { getMcodeDir } from "@mcode/shared";
-import { SettingsSchema as BundledSettingsSchema } from "@mcode/contracts";
-
-/** Use snapshot-provided schema when available (V8 snapshot pre-initializes Zod). */
-const SettingsSchema =
-  globalThis.__v8Snapshot?.contracts?.SettingsSchema ?? BundledSettingsSchema;
-
-/**
- * Connectivity-class error tokens that should NOT surface as a red
- * "Update failed" banner. These are transient: WiFi reconnecting, VPN flap,
- * captive portal, IPv6 resolver hiccup, brief DNS outage. The next periodic
- * check will succeed without user intervention, so the right UX is to stay
- * quiet rather than alarm the user about a self-healing condition.
- *
- * Chromium `net::ERR_*` codes are emitted when the updater goes through
- * Electron's net module; POSIX `E*` codes are emitted by Node-level DNS/socket
- * failures (still possible inside electron-updater's HTTP layer on some paths).
- */
-const TRANSIENT_NETWORK_TOKENS: readonly string[] = [
-  "ERR_NAME_NOT_RESOLVED",
-  "ERR_INTERNET_DISCONNECTED",
-  "ERR_NETWORK_CHANGED",
-  "ERR_PROXY_CONNECTION_FAILED",
-  "ERR_CONNECTION_RESET",
-  "ERR_CONNECTION_REFUSED",
-  "ERR_CONNECTION_TIMED_OUT",
-  "ERR_CONNECTION_ABORTED",
-  "ERR_CONNECTION_CLOSED",
-  "ERR_NETWORK_IO_SUSPENDED",
-  "ERR_TIMED_OUT",
-  "ERR_ADDRESS_UNREACHABLE",
-  "ENOTFOUND",
-  "EAI_AGAIN",
-  "ECONNRESET",
-  "ECONNREFUSED",
-  "ECONNABORTED",
-  "ETIMEDOUT",
-  "ENETUNREACH",
-  "EHOSTUNREACH",
-  "ENETDOWN",
-];
-
-/**
- * HTTP status codes that mean "the release host is briefly unavailable", not
- * "this update is broken". GitHub returns 502/503/504 when its edge is
- * overloaded and 429 when we poll too eagerly; 408 is a server-side read
- * timeout. All resolve on the next periodic check, so they should stay quiet
- * exactly like the connectivity tokens above. 4xx codes that indicate a real
- * problem (401 auth, 403 forbidden, 404 missing asset) are deliberately
- * excluded — those need to surface.
- */
-const TRANSIENT_HTTP_STATUS: ReadonlySet<number> = new Set([
-  408, 429, 500, 502, 503, 504,
-]);
-
-/**
- * Human-readable gateway phrases electron-updater includes in the error body
- * when the HTTP layer doesn't expose a numeric `statusCode`. Matched against
- * the message so a "504 Gateway Time-out" HTML response is recognized even
- * when it arrives as plain text. Kept narrow so "404" can't sneak in.
- */
-const TRANSIENT_HTTP_PHRASES: readonly string[] = [
-  "Gateway Time-out",
-  "Gateway Timeout",
-  "Bad Gateway",
-  "Service Unavailable",
-  "Too Many Requests",
-];
-
-/**
- * True for connectivity-class and transient-server failures that should be
- * logged but not surfaced to the user as an update error. Covers Chromium/POSIX
- * network tokens (`TRANSIENT_NETWORK_TOKENS`) and transient HTTP gateway
- * statuses (`TRANSIENT_HTTP_STATUS` / `TRANSIENT_HTTP_PHRASES`).
- */
-export function isTransientNetworkError(err: unknown): boolean {
-  const message = err instanceof Error ? err.message : String(err ?? "");
-  const code = (err as NodeJS.ErrnoException | undefined)?.code;
-  if (typeof code === "string" && TRANSIENT_NETWORK_TOKENS.includes(code)) {
-    return true;
-  }
-  const statusCode = (err as { statusCode?: number } | undefined)?.statusCode;
-  if (typeof statusCode === "number" && TRANSIENT_HTTP_STATUS.has(statusCode)) {
-    return true;
-  }
-  if (TRANSIENT_HTTP_PHRASES.some((phrase) => message.includes(phrase))) {
-    return true;
-  }
-  return TRANSIENT_NETWORK_TOKENS.some((token) => message.includes(token));
-}
-
-/** Map from user-friendly interval names to milliseconds. */
-const INTERVAL_MS_MAP: Record<string, number> = {
-  "15min": 15 * 60 * 1000,
-  "1hour": 60 * 60 * 1000,
-  "4hours": 4 * 60 * 60 * 1000,
-  "1day": 24 * 60 * 60 * 1000,
-  never: Infinity,
-};
-
-interface UpdaterSettings {
-  /** Stable follows tagged releases; nightly follows the CI prerelease channel. */
-  releaseLine: "stable" | "nightly";
-  autoDownload: boolean;
-  autoInstallOnQuit: boolean;
-  checkInterval: string;
-}
-
-/**
- * Maps persisted `updates.channel` to the electron-updater publish channel name.
- */
-function releaseLineToUpdaterChannel(
-  releaseLine: "stable" | "nightly",
-): string {
-  return releaseLine === "nightly" ? "nightly" : "latest";
-}
-
-/**
- * Apply both `autoUpdater.channel` and `autoUpdater.allowPrerelease` from the
- * persisted release line. Nightly per-build releases are GitHub prereleases,
- * so the updater must opt in via `allowPrerelease` to discover them.
- */
-export function applyChannelConfig(releaseLine: "stable" | "nightly"): void {
-  autoUpdater.channel = releaseLineToUpdaterChannel(releaseLine);
-  autoUpdater.allowPrerelease = releaseLine === "nightly";
-}
+import { applyChannelConfig } from "../features/application-updates/policy/release-line.js";
+import { isTransientNetworkError } from "../features/application-updates/policy/network-errors.js";
+import {
+  intervalToMs,
+  loadUpdaterSettings,
+  type UpdaterSettings,
+} from "../features/application-updates/configuration/settings.js";
 
 /** Shared promise so concurrent callers of applyReleaseLineSwitch await the same switch. */
 let inFlightReleaseLineSwitch: Promise<UpdateStatus> | null = null;
@@ -168,7 +47,7 @@ export async function applyReleaseLineSwitch(
     return inFlightReleaseLineSwitch;
   }
   inFlightReleaseLineSwitch = (async () => {
-    applyChannelConfig(releaseLine);
+    applyChannelConfig(autoUpdater, releaseLine);
     const previousAllowDowngrade = autoUpdater.allowDowngrade;
     if (options.allowDowngrade) {
       autoUpdater.allowDowngrade = true;
@@ -187,136 +66,12 @@ export async function applyReleaseLineSwitch(
 }
 
 /**
- * Compare a major.minor.patch[-prerelease] string against another using semver
- * precedence rules (numeric segments compared numerically; prerelease present
- * is less than no prerelease at the same MAJOR.MINOR.PATCH).
- */
-function semverGt(a: string, b: string): boolean {
-  const parse = (v: string) => {
-    const [main, pre] = v.split("-", 2);
-    const nums = main.split(".").map((n) => Number(n));
-    return { nums, pre: pre ?? null };
-  };
-  const A = parse(a);
-  const B = parse(b);
-  for (let i = 0; i < 3; i++) {
-    const ai = A.nums[i] ?? 0;
-    const bi = B.nums[i] ?? 0;
-    if (ai !== bi) return ai > bi;
-  }
-  // Equal core. No-prerelease > has-prerelease.
-  if (A.pre === null && B.pre !== null) return true;
-  if (A.pre !== null && B.pre === null) return false;
-  if (A.pre === null && B.pre === null) return false;
-  // Both prerelease: compare identifiers per semver §11.4.
-  const ap = (A.pre as string).split(".");
-  const bp = (B.pre as string).split(".");
-  for (let i = 0; i < Math.max(ap.length, bp.length); i++) {
-    const x = ap[i];
-    const y = bp[i];
-    if (x === undefined) return false;
-    if (y === undefined) return true;
-    const xn = Number(x);
-    const yn = Number(y);
-    const xIsNum = !Number.isNaN(xn);
-    const yIsNum = !Number.isNaN(yn);
-    if (xIsNum && yIsNum) {
-      if (xn !== yn) return xn > yn;
-    } else if (xIsNum) {
-      return false; // numeric < alphanumeric
-    } else if (yIsNum) {
-      return true;
-    } else if (x !== y) {
-      return x > y;
-    }
-  }
-  return false;
-}
-
-/**
- * True when switching `from` → `to` would require electron-updater to install
- * a version older than what is currently running. Used by the renderer's
- * channel-switch handler to decide whether to show a downgrade-confirmation
- * dialog before applying the new channel.
- */
-export function isCrossChannelDowngrade(args: {
-  from: "stable" | "nightly";
-  to: "stable" | "nightly";
-  currentVersion: string;
-  latestStable: string | undefined;
-}): boolean {
-  if (args.from === args.to) return false;
-  if (args.to !== "stable") return false;
-  if (!args.latestStable) return false;
-  return semverGt(args.currentVersion, args.latestStable);
-}
-
-/**
  * Applies the updater channel configuration (`channel` and `allowPrerelease`)
  * from user settings via `applyChannelConfig`, so checks target the stable or
  * nightly feed correctly.
  */
 function applyUpdaterChannelFromSettings(settings: UpdaterSettings): void {
-  applyChannelConfig(settings.releaseLine);
-}
-
-/**
- * Returns true when the running app version contains a `-nightly.` prerelease tag
- * (e.g. `0.11.1-nightly.20260518.3`). Used to auto-select the nightly update channel.
- */
-function isNightlyBuild(): boolean {
-  return app.getVersion().includes("-nightly.");
-}
-
-/** Read updater settings from settings.json; falls back to safe defaults if the file is missing or invalid. */
-function loadUpdaterSettings(): UpdaterSettings {
-  const defaults: UpdaterSettings = {
-    releaseLine: isNightlyBuild() ? "nightly" : "stable",
-    autoDownload: true,
-    autoInstallOnQuit: true,
-    checkInterval: "4hours",
-  };
-  try {
-    const raw = readFileSync(join(getMcodeDir(), "settings.json"), "utf-8");
-    const parsed = JSON.parse(raw);
-    const result = SettingsSchema().safeParse(parsed);
-    if (result.success) {
-      // Zod applies `.default("stable")` even when the user never set a
-      // channel, so we check the raw JSON to tell "unset" from "explicit".
-      // When no explicit channel is present, nightly builds default to
-      // "nightly"; otherwise respect the user's explicit choice.
-      const explicitChannel = parsed?.updates?.channel as string | undefined;
-      const releaseLine = explicitChannel
-        ? (result.data.updates.channel as "stable" | "nightly")
-        : defaults.releaseLine;
-
-      return {
-        releaseLine,
-        autoDownload:
-          result.data.updates?.autoDownload ?? defaults.autoDownload,
-        autoInstallOnQuit:
-          result.data.updates?.autoInstallOnQuit ?? defaults.autoInstallOnQuit,
-        checkInterval:
-          result.data.updates?.checkInterval ?? defaults.checkInterval,
-      };
-    }
-    console.warn(
-      "[auto-updater] settings.json failed validation, using defaults",
-    );
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-      const message = err instanceof Error ? err.message : String(err);
-      console.warn(
-        `[auto-updater] settings.json could not be loaded, using defaults: ${message}`,
-      );
-    }
-  }
-  return defaults;
-}
-
-/** Convert a check-interval name to milliseconds, defaulting to 4 hours. */
-function intervalToMs(interval: string): number {
-  return INTERVAL_MS_MAP[interval] ?? 4 * 60 * 60 * 1000;
+  applyChannelConfig(autoUpdater, settings.releaseLine);
 }
 
 /** IPC push channel used to broadcast update status to the renderer. */
