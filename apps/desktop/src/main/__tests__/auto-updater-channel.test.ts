@@ -467,7 +467,7 @@ describe("update installation safety", () => {
 
     expect(mainSource).not.toMatch(/app\s*\.\s*on\s*\(\s*["']before-quit["']/);
     expect(mainSource).toMatch(
-      /setBeforeInstallHook\(\s*createBeforeInstallHook\(\(\)\s*=>\s*serverManager\.forceReplace\(\)\)\s*,?\s*\)/s,
+      /setBeforeInstallHook\(\s*createBeforeInstallHook\(\(\)\s*=>\s*serverRuntime\.forceReplace\(\)\)\s*,?\s*\)/s,
     );
     expect(updaterMock.appListeners.has("before-quit")).toBe(true);
     expect(updaterMock.appListeners.size).toBe(1);
