@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { HookExecution, ToolCall } from "@/transport/types";
-import type { NarrativeItem } from "./types";
+import type { NarrativeItem } from "../types";
 import {
   areNarrativeRowPropsEqual,
   type NarrativeRowProps,
-} from "./NarrativeRow";
+} from "../NarrativeRow";
 
 const toolCall: ToolCall = {
   id: "tool-1",

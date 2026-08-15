@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useDiffStore } from "@/stores/diffStore";
 import { createEmptyThreadRecord, getThreadRecord } from "@/stores/thread-record";
 import { useThreadStore } from "@/stores/threadStore";
-import { SubagentsPanel } from "./SubagentsPanel";
+import { SubagentsPanel } from "../SubagentsPanel";
 
 vi.mock("@/transport", async () => ({
   ...(await vi.importActual("@/transport")),

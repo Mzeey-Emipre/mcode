@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach } from "vitest";
 import {
   isThreadRunningForSubmit,
   shouldQueueActiveThreadSubmit,
-} from "./Composer";
+} from "../Composer";
 import { resetThreadStoreForTests } from "@/stores/thread-store-test-utils";
 import { useThreadStore } from "@/stores/threadStore";
 

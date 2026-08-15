@@ -127,7 +127,7 @@ vi.mock("@/stores/workspaceStore", () => ({
 }));
 
 // Stub heavy children.
-vi.mock("./MessageBubble", () => ({
+vi.mock("../MessageBubble", () => ({
   MessageBubble: ({ message }: { message: { id: string; content: string } }) => (
     <div data-message-id={message.id}>{message.content}</div>
   ),
@@ -138,12 +138,12 @@ vi.mock("@/components/chat/StreamingCard", () => ({ StreamingCard: () => null })
 vi.mock("@/components/chat/TurnChangeSummary", () => ({ TurnChangeSummary: () => null }));
 vi.mock("@/components/chat/PermissionRequestCard", () => ({ PermissionRequestCard: () => null }));
 vi.mock("@/components/chat/HookActivitySection", () => ({ HookActivitySection: () => null }));
-vi.mock("../narrative", () => ({
+vi.mock("../../narrative", () => ({
   NarrativeFlow: ({ isAgentRunning }: { isAgentRunning: boolean }) =>
     isAgentRunning ? <div>Thinking</div> : null,
 }));
 
-import { MessageList, preservePrependedVirtualRange } from "./MessageList";
+import { MessageList, preservePrependedVirtualRange } from "../MessageList";
 import {
   rememberScrollTop,
   recallScrollPosition,

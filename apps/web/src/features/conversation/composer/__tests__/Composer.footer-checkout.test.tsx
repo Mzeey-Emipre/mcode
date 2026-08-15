@@ -6,7 +6,7 @@ import { dirname, resolve } from "path";
 describe("Composer footer visibility", () => {
   it("reserves the footer strip for branch mode", () => {
     const here = dirname(fileURLToPath(import.meta.url));
-    const source = readFileSync(resolve(here, "Composer.tsx"), "utf8");
+    const source = readFileSync(resolve(here, "../Composer.tsx"), "utf8");
 
     expect(source).toContain("const showComposerStatusBar = !!branchFromMessageId;");
     expect(source).toContain("aria-hidden={!showComposerStatusBar}");

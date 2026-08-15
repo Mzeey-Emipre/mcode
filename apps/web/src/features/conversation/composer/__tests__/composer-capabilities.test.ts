@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveComposerCapabilities } from "./composer-capabilities";
+import { resolveComposerCapabilities } from "../composer-capabilities";
 
 describe("resolveComposerCapabilities", () => {
   it.each([

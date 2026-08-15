@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import type { NarrativeItem } from "./types";
-import { NarrativeRows } from "./NarrativeRows";
+import type { NarrativeItem } from "../types";
+import { NarrativeRows } from "../NarrativeRows";
 
 function thought(index: number): NarrativeItem {
   return {

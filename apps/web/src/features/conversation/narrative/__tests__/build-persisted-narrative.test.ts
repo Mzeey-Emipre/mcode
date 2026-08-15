@@ -3,7 +3,7 @@ import {
   buildPersistedNarrativeItems,
   recordToHookExecution,
   recordToToolCall,
-} from "./build-persisted-narrative";
+} from "../build-persisted-narrative";
 import type {
   ToolCallRecord,
   ThoughtSegmentRecord,

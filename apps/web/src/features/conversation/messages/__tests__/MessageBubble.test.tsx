@@ -3,7 +3,7 @@ import { act, fireEvent, render, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Message, StoredAttachment } from "@/transport";
 import type { PreviewAnnotationBundle } from "@mcode/contracts";
-import { MessageBubble } from "./MessageBubble";
+import { MessageBubble } from "../MessageBubble";
 
 // Mock MarkdownContent to detect when it's used
 vi.mock("@/components/chat/MarkdownContent", () => ({

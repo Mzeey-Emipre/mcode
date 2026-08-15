@@ -3,7 +3,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentEvent } from "@mcode/contracts";
-import { Composer } from "./Composer";
+import { Composer } from "../Composer";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import {
   usePreviewAnnotationStore,

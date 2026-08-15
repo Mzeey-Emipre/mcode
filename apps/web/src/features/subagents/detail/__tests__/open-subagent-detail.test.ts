@@ -6,7 +6,7 @@ import { useUiStore } from "@/stores/uiStore";
 const mocks = vi.hoisted(() => ({ showRightPanelAdaptive: vi.fn() }));
 vi.mock("@/lib/right-panel-layout", () => ({ showRightPanelAdaptive: mocks.showRightPanelAdaptive }));
 
-import { openSubagentDetail, openSubagentsPanel } from "./open-subagent-detail";
+import { openSubagentDetail, openSubagentsPanel } from "../open-subagent-detail";
 
 describe("openSubagentDetail", () => {
   beforeEach(() => {

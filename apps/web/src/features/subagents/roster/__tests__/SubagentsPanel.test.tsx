@@ -30,7 +30,7 @@ vi.mock("@/features/conversation", async (importOriginal) => ({
   ),
 }));
 
-import { SubagentsPanel } from "./SubagentsPanel";
+import { SubagentsPanel } from "../SubagentsPanel";
 
 function canonicalRow(
   overrides: Partial<CanonicalSubagentRosterRow> = {},

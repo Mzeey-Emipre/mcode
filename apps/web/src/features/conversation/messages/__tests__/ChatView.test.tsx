@@ -110,11 +110,11 @@ vi.mock("@/features/conversation/residency/conversation-residency", () => ({
 }));
 
 // Composer and MessageList have deep dependencies; stub them out.
-vi.mock("../composer/Composer", () => ({
+vi.mock("../../composer/Composer", () => ({
   Composer: () => <div data-testid="composer" />,
 }));
 
-vi.mock("./MessageList", () => ({
+vi.mock("../MessageList", () => ({
   MessageList: ({ displayThreadId }: { displayThreadId?: string }) => (
     <div data-testid="message-list" data-display-thread-id={displayThreadId} />
   ),
@@ -140,7 +140,7 @@ import {
   __resetThreadSwitchTelemetryForTests,
   getThreadSwitchTelemetryCounters,
 } from "@/lib/thread-switch-telemetry";
-import { ChatView } from "./ChatView";
+import { ChatView } from "../ChatView";
 
 /** Build a minimal Thread fixture. */
 function makeThread(overrides: Partial<Thread> = {}): Thread {

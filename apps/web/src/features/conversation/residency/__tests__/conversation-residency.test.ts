@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createConversationResidency } from "./conversation-residency";
+import { createConversationResidency } from "../conversation-residency";
 
 function deps() {
   return {

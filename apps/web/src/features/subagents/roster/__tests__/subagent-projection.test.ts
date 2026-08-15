@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ToolCall, ToolCallRecord } from "@/transport/types";
-import { projectSubagents } from "./subagent-projection";
+import { projectSubagents } from "../subagent-projection";
 
 function call(overrides: Partial<ToolCall> & Pick<ToolCall, "id" | "toolName">): ToolCall {
   return {
