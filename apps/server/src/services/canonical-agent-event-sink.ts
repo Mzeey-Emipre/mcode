@@ -1332,6 +1332,7 @@ export class CanonicalAgentEventSink {
         updatedAt,
         endedAt,
         terminalOutcome: canonicalSubagentTerminalOutcome(latestTurn?.status ?? null),
+        ...(action?.source.itemId ? { sourceItemId: action.source.itemId } : {}),
         ...(optionalText(sourcePayload.description) ? { task: sourcePayload.description as string } : {}),
         ...(optionalText(sourcePayload.identity) ? { identity: sourcePayload.identity as string } : {}),
         ...(optionalText(sourcePayload.model) ? { model: sourcePayload.model as string } : {}),

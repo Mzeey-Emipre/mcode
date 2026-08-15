@@ -503,6 +503,34 @@ describe("SubagentsPanel", () => {
     expect(useWorkspaceStore.getState().activeThreadId).toBe("thread-1");
   });
 
+  it("resolves a timeline Agent call to its canonical detail after roster load", async () => {
+    const child = canonicalRow({
+      id: "canonical-timeline-child",
+      sourceItemId: "toolCall:raw-agent-call",
+      identity: "Timeline child",
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+    });
+    harness.loadCanonicalSubagentRoster.mockResolvedValue(canonicalRoster([child], []));
+    useDiffStore.setState({
+      subagentDetailByThread: {
+        "thread-1": { id: "raw-agent-call", originTab: "active", scrollTop: 0 },
+      },
+      subagentReviewScopeByThread: {},
+    });
+
+    render(<SubagentsPanel threadId="thread-1" />);
+
+    expect(await screen.findByTestId("shared-message-list")).toHaveAttribute(
+      "data-display-thread-id",
+      "canonical-timeline-child",
+    );
+    expect(screen.getByRole("region", { name: "Timeline child subagent details" })).toBeInTheDocument();
+    expect(screen.getByTestId("subagent-technical-details")).toHaveTextContent("Technical details");
+    expect(screen.getByTestId("subagent-technical-details").querySelector("[data-state='open']")).toBeNull();
+  });
+
   it("restores canonical roster focus and scroll position on Back", async () => {
     const child = canonicalRow({
       id: "canonical-back",

@@ -241,11 +241,8 @@ describe("buildPersistedNarrativeItems", () => {
       thoughts: [],
       hooks: [],
     });
-    expect(items).toHaveLength(2);
-    expect(items.map((item) => item.type === "subagent" ? item.lifecycle : item.type)).toEqual([
-      "started",
-      "finished",
-    ]);
+    expect(items).toHaveLength(1);
+    expect(items.map((item) => item.type === "subagent" ? item.lifecycle : item.type)).toEqual(["finished"]);
     if (items[0]?.type === "subagent") {
       expect(items[0].children).toHaveLength(1);
       expect(items[0].toolCall.id).toBe("agent-1");
@@ -263,7 +260,7 @@ describe("buildPersistedNarrativeItems", () => {
       thoughts: [],
       hooks: [],
     });
-    expect(items.filter((i) => i.type === "subagent")).toHaveLength(4);
+    expect(items.filter((i) => i.type === "subagent")).toHaveLength(2);
   });
 
   it("hydrates every persisted lifecycle update without exposing child activity", () => {
@@ -304,12 +301,32 @@ describe("buildPersistedNarrativeItems", () => {
       hooks: [],
     });
 
-    expect(items.map((item) => item.type === "subagent" ? item.lifecycle : item.type)).toEqual([
-      "started",
-      "updated",
-      "updated",
-      "finished",
-    ]);
+    expect(items.map((item) => item.type === "subagent" ? item.lifecycle : item.type)).toEqual(["finished"]);
+  });
+
+  it("uses the latest persisted marker while an Agent is still running", () => {
+    const items = buildPersistedNarrativeItems({
+      tools: [
+        makeTool({
+          id: "agent-running",
+          tool_name: "Agent",
+          status: "running",
+          sort_order: 1,
+        }),
+        makeTool({
+          id: "update-running",
+          tool_name: "__McodeSubagentLifecycle",
+          input_summary: '{"lifecycle":"updated"}',
+          parent_tool_call_id: "agent-running",
+          sort_order: 2,
+        }),
+      ],
+      thoughts: [],
+      hooks: [],
+    });
+
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ type: "subagent", lifecycle: "updated" });
   });
 
   it("matches live source-then-target participants and tolerates legacy markers", () => {
@@ -353,23 +370,17 @@ describe("buildPersistedNarrativeItems", () => {
     const targetRows = items.filter(
       (item) => item.type === "subagent" && item.toolCall.id === "agent-target",
     );
-    const legacyRow = items.find(
-      (item) => item.type === "subagent"
-        && item.toolCall.id === "agent-source"
-        && item.lifecycle === "updated",
+    const sourceRow = items.find(
+      (item) => item.type === "subagent" && item.toolCall.id === "agent-source",
     );
 
-    expect(targetRows.map((item) => item.type === "subagent" ? item.lifecycle : "")).toEqual([
-      "started",
-      "updated",
-      "finished",
-    ]);
+    expect(targetRows.map((item) => item.type === "subagent" ? item.lifecycle : "")).toEqual(["finished"]);
     expect(targetRows.every(
       (item) => item.type === "subagent"
         && item.participants.map((participant) => participant.id).join(",") === "agent-source,agent-target",
     )).toBe(true);
-    expect(legacyRow?.type === "subagent"
-      ? legacyRow.participants.map((participant) => participant.id)
+    expect(sourceRow?.type === "subagent"
+      ? sourceRow.participants.map((participant) => participant.id)
       : []).toEqual(["agent-source"]);
   });
 

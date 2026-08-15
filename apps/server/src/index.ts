@@ -85,6 +85,7 @@ import {
 import { AgentEventType } from "@mcode/contracts";
 import type { AgentEvent } from "@mcode/contracts";
 import { normalizeAgentProviderError } from "./services/provider-agent-error-normalize.js";
+import { publishParentProviderEvent } from "./services/provider-event-publication.js";
 import type Database from "better-sqlite3";
 import type { JobObject } from "./services/job-object.js";
 import { resolveWebAutomationFlag } from "./startup-policy.js";
@@ -621,14 +622,22 @@ for (const provider of providerRegistry.resolveAll()) {
       };
     }
 
-    const sequencedEvent = broadcast("agent.event", enrichedEvent) ?? enrichedEvent;
-    portPush.send("agent.event", sequencedEvent);
+    const publishedToParent = publishParentProviderEvent(event, enrichedEvent, {
+      publishAgentEvent: (publishedEvent) => {
+        const sequencedEvent = broadcast("agent.event", publishedEvent) ?? publishedEvent;
+        portPush.send("agent.event", sequencedEvent);
+      },
+      updateThreadStatus: (threadId, status) => {
+        threadRepo.updateStatus(threadId, status);
+      },
+      publishThreadStatus: (status) => {
+        broadcast("thread.status", status);
+        portPush.send("thread.status", status);
+      },
+    });
+    if (!publishedToParent) return;
 
     if (event.type === AgentEventType.TurnComplete) {
-      threadRepo.updateStatus(event.threadId, "completed");
-      const completedStatus = { threadId: event.threadId, status: "completed" };
-      broadcast("thread.status", completedStatus);
-      portPush.send("thread.status", completedStatus);
       const thread = threadRepo.findById(event.threadId);
       if (thread) {
         // Detect or refresh PR state for feature branches only
@@ -662,11 +671,6 @@ for (const provider of providerRegistry.resolveAll()) {
           });
         }
       }
-    } else if (event.type === AgentEventType.Error) {
-      threadRepo.updateStatus(event.threadId, "errored");
-      const erroredStatus = { threadId: event.threadId, status: "errored" };
-      broadcast("thread.status", erroredStatus);
-      portPush.send("thread.status", erroredStatus);
     }
   });
 
