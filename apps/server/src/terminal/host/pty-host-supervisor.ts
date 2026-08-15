@@ -17,6 +17,7 @@ import type {
   PtyHostRunning,
 } from "./pty-host-adapter.js";
 import {
+  PTY_HOST_HEARTBEAT_INTERVAL_MS,
   parsePtyHostEvent,
   PtyHostServerMessageSchema,
   type PtyHostEvent,
@@ -430,7 +431,7 @@ export class PtyHostSupervisor implements PtyHostAdapter {
       const receivedAtMs = Date.now();
       this.heartbeatEventLoopLagMs = this.lastHeartbeatReceivedAtMs === null
         ? 0
-        : Math.max(0, receivedAtMs - this.lastHeartbeatReceivedAtMs - HEARTBEAT_INTERVAL_MS);
+        : Math.max(0, receivedAtMs - this.lastHeartbeatReceivedAtMs - PTY_HOST_HEARTBEAT_INTERVAL_MS);
       this.lastHeartbeatReceivedAtMs = receivedAtMs;
       this.lastHeartbeatAtMs = receivedAtMs;
       this.heartbeatQueueBytes = event.queueBytes;

@@ -34,6 +34,13 @@ export interface TerminalLinkCellRange {
 const LOCATION_LIMIT = 1_000_000;
 const TRAILING_PUNCTUATION = /[\])}>,.;!?]+$/;
 
+function containsControlCharacter(value: string): boolean {
+  return [...value].some((character) => {
+    const code = character.charCodeAt(0);
+    return code <= 0x1f || code === 0x7f;
+  });
+}
+
 /** Parses one Terminal file link without accepting URLs or traversal paths. */
 export function parseTerminalLink(value: string): TerminalLinkTarget | null {
   const candidate = value.trim().replace(TRAILING_PUNCTUATION, "");
@@ -44,7 +51,7 @@ export function parseTerminalLink(value: string): TerminalLinkTarget | null {
   if (
     !path ||
     path.length > 2_048 ||
-    /[\u0000-\u001f\u007f]/.test(path) ||
+    containsControlCharacter(path) ||
     path.includes("://") ||
     path.split(/[\\/]/).includes("..") ||
     !(/^[A-Za-z]:[\\/]/.test(path) || path.startsWith("/"))

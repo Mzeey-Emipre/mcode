@@ -19,6 +19,8 @@ export const PTY_HOST_MAX_MESSAGE_BYTES = 131_072;
 export const PTY_HOST_MAX_DATA_BYTES = 65_536;
 /** Maximum retained PTY host messages or events per direction. */
 export const PTY_HOST_MAX_RETAINED_RECORDS = 256;
+/** Heartbeat interval used by the PTY host and its supervisor. */
+export const PTY_HOST_HEARTBEAT_INTERVAL_MS = 250;
 
 const u64 = TerminalU64Schema();
 const uuid = TerminalUuidSchema();

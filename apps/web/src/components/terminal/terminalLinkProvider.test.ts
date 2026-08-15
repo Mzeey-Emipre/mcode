@@ -23,6 +23,7 @@ describe("parseTerminalLink", () => {
     expect(parseTerminalLink("../../src/main.ts:1")).toBeNull();
     expect(parseTerminalLink("src/main.ts:1")).toBeNull();
     expect(parseTerminalLink("/workspace/src/main.ts:1000001")).toBeNull();
+    expect(parseTerminalLink("/workspace/src/\u0001main.ts:1")).toBeNull();
   });
 
   it("finds only a safe file target inside a diagnostic line", () => {

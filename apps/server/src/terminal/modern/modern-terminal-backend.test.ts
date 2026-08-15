@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import {
   TERMINAL_CHECKPOINT_CHUNK_BYTES,
+  TerminalDiagnosticsBundleSchema,
   decodeTerminalFrame,
   encodeTerminalFrame,
   type TerminalAttachmentDescriptor,
@@ -161,9 +162,9 @@ describe("ModernTerminalBackend", () => {
     }, harness.client);
     expect(report).toEqual({ accepted: 1 });
 
-    const bundle = await harness.backend.routeV1("terminal.diagnostics.getBundle", {}, harness.client) as {
-      readonly events: readonly [{ readonly correlationId: string }];
-    };
+    const bundle = TerminalDiagnosticsBundleSchema().parse(
+      await harness.backend.routeV1("terminal.diagnostics.getBundle", {}, harness.client),
+    );
     expect(bundle.events[0]?.correlationId).not.toBe("secret-correlation");
     expect(JSON.stringify(bundle)).not.toContain("secret-correlation");
     expect(bundle.health).toMatchObject({
