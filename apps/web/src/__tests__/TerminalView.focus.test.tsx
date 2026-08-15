@@ -883,7 +883,9 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
     act(() => {
       emitPtyReconnectGap({ ptyId: "pty-gap" });
     });
-    expect(screen.getByRole("status")).toHaveTextContent("Some earlier output may be unavailable");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Some earlier output is unavailable. The retained output is shown below.",
+    );
 
     await act(async () => {
       screen.getByRole("button", { name: "Reload available output" }).click();
