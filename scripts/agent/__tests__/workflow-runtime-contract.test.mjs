@@ -87,7 +87,7 @@ test("renderer performance keeps Electron available for its runtime", () => {
   const jobSource = extractWorkflowJob(source, "renderer-performance");
 
   assert.ok(jobSource, "ci.yml: renderer-performance job missing");
-  assert.match(jobSource, /SKIP_ELECTRON_REBUILD:\s*["']?1["']?/);
+  assert.doesNotMatch(jobSource, /SKIP_ELECTRON_REBUILD\s*:/);
   assert.doesNotMatch(jobSource, /ELECTRON_SKIP_BINARY_DOWNLOAD\s*:/);
 });
 
