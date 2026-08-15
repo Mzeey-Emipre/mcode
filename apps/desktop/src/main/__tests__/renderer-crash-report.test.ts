@@ -58,6 +58,9 @@ vi.mock("@mcode/shared", () => ({
 vi.mock("@mcode/contracts", () => ({
   getExtension: vi.fn().mockReturnValue(""),
   isMcodeWorkspacePreviewUrl: vi.fn().mockReturnValue(false),
+  SettingsSchema: vi.fn(() => ({
+    safeParse: vi.fn(() => ({ success: false })),
+  })),
 }));
 
 vi.mock("../open-in/index.js", () => ({ openInRegistry: vi.fn() }));
@@ -74,15 +77,9 @@ vi.mock("../../features/server-runtime/index.js", () => ({
     }
   },
 }));
-vi.mock("../auto-updater.js", () => ({
-  applyReleaseLineSwitch: vi.fn(),
-  checkForUpdatesNow: vi.fn(),
-  downloadUpdate: vi.fn(),
-  getUpdateStatus: vi.fn().mockReturnValue({ state: "idle" }),
-  initAutoUpdater: vi.fn(),
-  installUpdate: vi.fn(),
-  cleanupAutoUpdater: vi.fn(),
-  setBeforeInstallHook: vi.fn(),
+vi.mock("../../features/application-updates/index.js", () => ({
+  initializeApplicationUpdates: vi.fn(),
+  cleanupApplicationUpdates: vi.fn(),
 }));
 vi.mock("../spellcheck.js", () => ({ setupSpellcheck: vi.fn() }));
 vi.mock("../../features/preview/index.js", () => ({
