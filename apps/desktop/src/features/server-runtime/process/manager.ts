@@ -33,8 +33,8 @@ import {
   SERVER_HEAP_MAX_MB,
   SERVER_HEAP_MIN_MB,
 } from "@mcode/contracts";
-import { resolveServerBinary } from "./server-binary-resolver.js";
-import { isDesktopDev } from "./is-desktop-dev.js";
+import { resolveServerBinary } from "./binary-resolver.js";
+import { isDesktopDev } from "../../../main/is-desktop-dev.js";
 
 /** Use snapshot-provided schema when available (V8 snapshot pre-initializes Zod). */
 const SettingsSchema =
@@ -79,18 +79,12 @@ function getServerPaths(): {
     };
   }
 
-  /** Matches both `src/main/` (Vitest) and bundled `dist/main/` (`__dirname`). */
-  const serverBundle = resolve(
-    __dirname,
-    "..",
-    "..",
-    "dist",
-    "server",
-    "server.cjs",
-  );
-  const desktopRequire = createRequire(
-    resolve(__dirname, "..", "..", "package.json"),
-  );
+  /** Vitest loads from the feature tree; the bundled main loads from `dist/main`. */
+  const desktopRoot = __dirname.endsWith(join("dist", "main"))
+    ? resolve(__dirname, "..", "..")
+    : resolve(__dirname, "..", "..", "..", "..");
+  const serverBundle = resolve(desktopRoot, "dist", "server", "server.cjs");
+  const desktopRequire = createRequire(resolve(desktopRoot, "package.json"));
   const betterSqliteDir = dirname(
     desktopRequire.resolve("better-sqlite3/package.json"),
   );

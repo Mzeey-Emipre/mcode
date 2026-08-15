@@ -170,7 +170,9 @@ Thin Electron shell. Spawns the server, creates the BrowserWindow, and bridges n
 apps/desktop/src/main/
   main.ts                     Window creation, server spawn, native IPC handlers, lifecycle
   preload.ts                  contextBridge: desktopBridge + getPathForFile
-  server-manager.ts           Child process lifecycle (spawn, health poll, restart, shutdown)
+apps/desktop/src/features/server-runtime/process/
+  manager.ts                  Child process lifecycle (spawn, health poll, restart, shutdown)
+  binary-resolver.ts          Packaged and development server executable selection
 ```
 
 ## 4. Communication Flow
@@ -640,7 +642,7 @@ Child processes inherit an explicit `env` object from **`EnvService`**, which la
 
 ### 9.1 ServerManager
 
-`ServerManager` in `apps/desktop/src/main/server-manager.ts` handles the server child process lifecycle:
+`ServerManager` in `apps/desktop/src/features/server-runtime/process/manager.ts` handles the server child process lifecycle:
 
 1. **Port discovery**: Scans ports 19400-19500 for an available TCP port
 2. **Spawn**: Forks the server entry point with `ELECTRON_RUN_AS_NODE=1` and passes port, auth token, data directory, and version via environment variables
