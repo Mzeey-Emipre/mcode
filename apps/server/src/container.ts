@@ -68,6 +68,7 @@ import { PtyHostSupervisor } from "./terminal/host/pty-host-supervisor.js";
 import { resolvePtyHostEntryPath, spawnPtyHostChild } from "./terminal/host/pty-host-child.js";
 import { TerminalProfileService } from "./terminal/profiles/terminal-profile-service.js";
 import { WorkspaceTerminalPreferencesService } from "./terminal/preferences/workspace-terminal-preferences-service.js";
+import { TerminalDiagnosticsService } from "./terminal/diagnostics/terminal-diagnostics-service.js";
 import { PtyHostCleanupLedger } from "./terminal/cleanup/terminal-cleanup-ledger.js";
 import { AttachmentService } from "./services/attachment-service";
 import { HandoffStorage } from "./services/handoff/handoff-storage.js";
@@ -486,6 +487,7 @@ export function setupContainer(mcodeDir: string): typeof container {
     { lifecycle: Lifecycle.Singleton },
   );
   let modernTerminalBackend: ModernTerminalBackend | undefined;
+  let modernTerminalSessions: TerminalSessionService | undefined;
   let terminalBackendSelector: TerminalBackendSelector | undefined;
   container.register("ModernTerminalBackend", {
     useFactory: (c: typeof container) => {
@@ -513,6 +515,7 @@ export function setupContainer(mcodeDir: string): typeof container {
           c.resolve(GitService).resolveWorkingDir(workspacePath, mode, worktreePath),
         hostGeneration: () => host.health().hostGeneration,
       });
+      modernTerminalSessions = sessions;
       modernTerminalBackend = new ModernTerminalBackend(
         sessions,
         runtime,
@@ -522,6 +525,14 @@ export function setupContainer(mcodeDir: string): typeof container {
       return modernTerminalBackend;
     },
   } as never);
+  container.register("ModernTerminalSessionService", {
+    useFactory: () => {
+      if (!modernTerminalSessions) {
+        throw new Error("Modern Terminal session service is unavailable");
+      }
+      return modernTerminalSessions;
+    },
+  });
   container.register(
     "TerminalBackendSelector",
     { useFactory: (c: typeof container) => {
@@ -538,6 +549,41 @@ export function setupContainer(mcodeDir: string): typeof container {
   container.register<TerminalBackend>(TERMINAL_BACKEND_TOKEN, {
     useFactory: (c) => c.resolve<TerminalBackendSelector>("TerminalBackendSelector").getSelectedBackend(),
   });
+  container.register(
+    TerminalDiagnosticsService,
+    {
+      useFactory: (c: typeof container) => {
+        const terminalService = c.resolve<TerminalBackend>(TERMINAL_BACKEND_TOKEN);
+        const modernSessions = terminalService.capabilities().backend === "modern"
+          ? c.resolve<{ listSessions(): readonly unknown[] }>("ModernTerminalSessionService")
+          : undefined;
+        return new TerminalDiagnosticsService({
+          backend: () => terminalService.capabilities().backend,
+          health: () => {
+            const capabilities = terminalService.capabilities();
+            const host = capabilities.backend === "modern" ? capabilities.host : undefined;
+            return {
+              contractVersion: 1,
+              state: host?.state ?? "healthy",
+              hostGeneration: host?.generation ?? "0",
+              activeSessions: capabilities.backend === "modern"
+                ? (() => {
+                  if (!modernSessions) {
+                    throw new Error("Modern Terminal session service is unavailable");
+                  }
+                  return modernSessions.listSessions().length;
+                })()
+                : terminalService.listActiveSessions().length,
+              lastHeartbeatMsAgo: null,
+              queueBytes: 0,
+              eventLoopLagMs: 0,
+              hostRssBytes: "0",
+            };
+          },
+        });
+      },
+    } as never,
+  );
   container.register(
     SnapshotService,
     { useClass: SnapshotService },

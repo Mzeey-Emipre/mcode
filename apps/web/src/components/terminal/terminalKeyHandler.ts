@@ -1,37 +1,77 @@
+/** Keyboard platform used by the terminal clipboard contract. */
+export type TerminalShortcutPlatform = "mac" | "windows" | "linux" | "other";
+
+/** Resolves the host platform without treating a modifier as platform evidence. */
+export function detectTerminalShortcutPlatform(): TerminalShortcutPlatform {
+  const platform = typeof navigator === "undefined"
+    ? ""
+    : `${navigator.platform} ${navigator.userAgent}`.toLowerCase();
+  if (platform.includes("mac")) return "mac";
+  if (platform.includes("linux")) return "linux";
+  if (platform.includes("win")) return "windows";
+  return "other";
+}
+
+function usesPlatformModifier(
+  event: KeyboardEvent,
+  platform: TerminalShortcutPlatform,
+): boolean {
+  return platform === "mac"
+    ? event.metaKey && !event.ctrlKey
+    : event.ctrlKey && !event.metaKey;
+}
+
 /**
- * Returns `true` if the keyboard event should be intercepted for clipboard copy
- * (i.e. xterm should NOT forward it to the PTY), `false` otherwise.
- *
- * Rules:
- * - Ctrl+Shift+C / Cmd+Shift+C: always intercept (explicit copy shortcut, like gnome-terminal)
- * - Ctrl+C / Cmd+C with a selection: intercept and copy selected text
- * - Ctrl+C / Cmd+C without a selection: do NOT intercept (let SIGINT through to PTY)
- * - Everything else: do NOT intercept
+ * Returns whether the keyboard event is the platform-valid terminal copy shortcut.
  *
  * @param event - The keyboard event from xterm's `attachCustomKeyEventHandler` callback.
  * @param hasSelection - Whether the terminal currently has selected text.
- * @returns `true` to intercept (copy to clipboard; xterm will not forward to PTY), `false` to let xterm handle normally.
+ * @param platform - Optional platform override for deterministic tests.
  */
 export function shouldInterceptKeyEvent(
   event: KeyboardEvent,
   hasSelection: boolean,
+  platform?: TerminalShortcutPlatform,
 ): boolean {
-  const isMod = event.ctrlKey || event.metaKey;
-  if (!isMod) return false;
-
+  if (event.isComposing) return false;
+  // Modifier inference keeps this pure helper useful in existing callers and
+  // tests. The renderer passes its detected platform explicitly.
+  const resolvedPlatform = platform ?? (event.metaKey ? "mac" : "other");
+  if (!usesPlatformModifier(event, resolvedPlatform)) return false;
   const key = event.key.toLowerCase();
 
-  // Ctrl+Shift+C or Cmd+Shift+C: always intercept as explicit copy
-  if (key === "c" && event.shiftKey) return true;
+  if (key !== "c") return false;
 
-  // Ctrl+C or Cmd+C: only intercept when the terminal has selected text
-  if (key === "c" && !event.shiftKey) return hasSelection;
+  // Windows and Linux use Ctrl+Shift+C. macOS uses Cmd+C.
+  if (resolvedPlatform !== "mac" && event.shiftKey) return true;
+  if (resolvedPlatform === "mac" && !event.shiftKey) return hasSelection;
 
+  // Ctrl+C always reaches the PTY on Windows/Linux, even when xterm has a selection.
   return false;
+}
+
+/** Returns whether the keyboard event is the platform-valid terminal paste shortcut. */
+export function isTerminalPasteShortcut(
+  event: KeyboardEvent,
+  platform: TerminalShortcutPlatform = detectTerminalShortcutPlatform(),
+): boolean {
+  if (event.isComposing) return false;
+  return event.key.toLowerCase() === "v" &&
+    usesPlatformModifier(event, platform) &&
+    (platform === "mac" || event.shiftKey);
+}
+
+/** Returns whether a middle-click should paste on this host platform. */
+export function isTerminalMiddleClickPaste(
+  event: Pick<MouseEvent, "button">,
+  platform: TerminalShortcutPlatform = detectTerminalShortcutPlatform(),
+): boolean {
+  return platform === "linux" && event.button === 1;
 }
 
 /** Returns true for the platform-neutral Ctrl/Cmd+F terminal search shortcut. */
 export function isTerminalSearchShortcut(event: KeyboardEvent): boolean {
+  if (event.isComposing) return false;
   return (
     (event.ctrlKey || event.metaKey) &&
     !event.altKey &&

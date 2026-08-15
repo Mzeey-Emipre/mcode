@@ -1,6 +1,8 @@
 // apps/web/src/__tests__/TerminalView.keyhandler.test.ts
 import { describe, it, expect } from "vitest";
 import {
+  isTerminalPasteShortcut,
+  isTerminalMiddleClickPaste,
   isTerminalSearchShortcut,
   shouldInterceptKeyEvent,
 } from "@/components/terminal/terminalKeyHandler";
@@ -18,36 +20,79 @@ function makeEvent(overrides: Partial<KeyboardEvent>): KeyboardEvent {
 
 describe("shouldInterceptKeyEvent", () => {
   describe("Ctrl+C / Cmd+C", () => {
-    it("intercepts Ctrl+C when terminal has a selection", () => {
+    it("lets Ctrl+C reach the PTY when terminal has a selection", () => {
       const event = makeEvent({ key: "c", ctrlKey: true });
-      expect(shouldInterceptKeyEvent(event, true)).toBe(true);
+      expect(shouldInterceptKeyEvent(event, true, "other")).toBe(false);
     });
 
     it("does NOT intercept Ctrl+C when terminal has no selection", () => {
       const event = makeEvent({ key: "c", ctrlKey: true });
-      expect(shouldInterceptKeyEvent(event, false)).toBe(false);
+      expect(shouldInterceptKeyEvent(event, false, "other")).toBe(false);
     });
 
     it("intercepts Cmd+C when terminal has a selection", () => {
       const event = makeEvent({ key: "c", metaKey: true });
-      expect(shouldInterceptKeyEvent(event, true)).toBe(true);
+      expect(shouldInterceptKeyEvent(event, true, "mac")).toBe(true);
     });
 
     it("does NOT intercept Cmd+C when terminal has no selection", () => {
       const event = makeEvent({ key: "c", metaKey: true });
-      expect(shouldInterceptKeyEvent(event, false)).toBe(false);
+      expect(shouldInterceptKeyEvent(event, false, "mac")).toBe(false);
     });
   });
 
-  describe("Ctrl+Shift+C / Cmd+Shift+C", () => {
+  describe("platform copy shortcuts", () => {
     it("intercepts Ctrl+Shift+C regardless of selection", () => {
       const event = makeEvent({ key: "C", ctrlKey: true, shiftKey: true });
       expect(shouldInterceptKeyEvent(event, false)).toBe(true);
     });
 
-    it("intercepts Cmd+Shift+C regardless of selection", () => {
+    it("does not swallow platform-invalid Cmd+Shift+C", () => {
       const event = makeEvent({ key: "C", metaKey: true, shiftKey: true });
-      expect(shouldInterceptKeyEvent(event, false)).toBe(true);
+      expect(shouldInterceptKeyEvent(event, false, "mac")).toBe(false);
+    });
+  });
+
+  describe("platform paste shortcuts", () => {
+    it("accepts Cmd+V on macOS", () => {
+      expect(isTerminalPasteShortcut(makeEvent({ key: "v", metaKey: true }), "mac")).toBe(true);
+    });
+
+    it("accepts Ctrl+Shift+V on Windows and Linux", () => {
+      const event = makeEvent({ key: "v", ctrlKey: true, shiftKey: true });
+      expect(isTerminalPasteShortcut(event, "windows")).toBe(true);
+      expect(isTerminalPasteShortcut(event, "linux")).toBe(true);
+    });
+
+    it("does not swallow Linux Ctrl+V", () => {
+      expect(isTerminalPasteShortcut(makeEvent({ key: "v", ctrlKey: true }), "linux")).toBe(false);
+    });
+
+    it("does not intercept copy, paste, or search while composing text", () => {
+      const event = makeEvent({
+        key: "c",
+        ctrlKey: true,
+        shiftKey: true,
+        isComposing: true,
+      });
+
+      expect(shouldInterceptKeyEvent(event, true, "other")).toBe(false);
+      expect(isTerminalPasteShortcut(makeEvent({ ...event, key: "v" }), "other")).toBe(false);
+      expect(isTerminalSearchShortcut(makeEvent({ ...event, key: "f", shiftKey: false }))).toBe(false);
+    });
+  });
+
+  describe("middle-click paste", () => {
+    it("allows middle-click only on Linux", () => {
+      const event = { button: 1 } as MouseEvent;
+      expect(isTerminalMiddleClickPaste(event, "linux")).toBe(true);
+      expect(isTerminalMiddleClickPaste(event, "mac")).toBe(false);
+      expect(isTerminalMiddleClickPaste(event, "windows")).toBe(false);
+    });
+
+    it("ignores other mouse buttons on Linux", () => {
+      expect(isTerminalMiddleClickPaste({ button: 0 }, "linux")).toBe(false);
+      expect(isTerminalMiddleClickPaste({ button: 2 }, "linux")).toBe(false);
     });
   });
 

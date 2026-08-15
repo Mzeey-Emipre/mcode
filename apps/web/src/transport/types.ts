@@ -550,6 +550,8 @@ export interface McodeTransport {
   terminalCapabilities(): Promise<TerminalBackendCapabilities>;
   /** Retrieve bounded, content-free Terminal diagnostics for recovery support. */
   terminalDiagnosticsGetBundle?: () => Promise<import("@mcode/contracts").TerminalDiagnosticsBundle>;
+  /** Fetch the bounded, content-free diagnostics bundle through the selected client. */
+  terminalDiagnostics(): Promise<import("@mcode/contracts").TerminalDiagnosticsBundle>;
   /** Create a PTY, optionally atomically replacing an exited or failed session. */
   terminalCreate(threadId: string, replacesSessionId?: string): Promise<{ ptyId: string; shell: string }>;
   /** Write data (keystrokes) to a PTY. */
