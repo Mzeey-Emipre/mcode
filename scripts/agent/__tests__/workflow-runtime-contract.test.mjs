@@ -82,6 +82,15 @@ test("direct Bun stdin detection rejects unsupported heredocs", () => {
   }
 });
 
+test("renderer performance keeps Electron available for its runtime", () => {
+  const source = readFileSync(join(workflowDirectory, "ci.yml"), "utf8");
+  const jobSource = extractWorkflowJob(source, "renderer-performance");
+
+  assert.ok(jobSource, "ci.yml: renderer-performance job missing");
+  assert.match(jobSource, /SKIP_ELECTRON_REBUILD:\s*["']?1["']?/);
+  assert.doesNotMatch(jobSource, /ELECTRON_SKIP_BINARY_DOWNLOAD\s*:/);
+});
+
 test("workflows use Bun runtime and repository commands", () => {
   const workflowFiles = readdirSync(workflowDirectory)
     .filter((file) => file.endsWith(".yml") || file.endsWith(".yaml"))
