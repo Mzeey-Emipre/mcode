@@ -13,7 +13,7 @@ export default defineConfig({
     environment: "node",
     include: [
       "src/main/__tests__/**/*.test.ts",
-      "src/features/preview/**/__tests__/**/*.test.ts",
+      "src/features/**/__tests__/**/*.test.ts",
       "scripts/__tests__/**/*.test.{ts,mjs,js}",
     ],
     env: {

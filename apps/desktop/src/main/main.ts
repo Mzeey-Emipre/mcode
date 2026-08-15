@@ -37,7 +37,7 @@ const getExtension =
   globalThis.__v8Snapshot?.contracts?.getExtension ?? bundledGetExtension;
 
 import { openInRegistry } from "./open-in/index.js";
-import { ServerManager } from "./server-manager.js";
+import { ServerManager } from "../features/server-runtime/index.js";
 import { ServerCrashRecovery } from "./server-crash-recovery.js";
 import { startIpcRelay } from "./ipc-relay.js";
 import {

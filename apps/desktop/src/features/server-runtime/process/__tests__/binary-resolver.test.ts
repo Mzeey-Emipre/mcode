@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import path from "node:path";
 import { existsSync } from "node:fs";
-import { resolveServerBinary } from "../server-binary-resolver.js";
+import { resolveServerBinary } from "../binary-resolver.js";
 
 vi.mock("node:fs", async () => {
   const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
