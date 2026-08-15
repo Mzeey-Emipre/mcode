@@ -33,6 +33,12 @@ export interface CleanupJob {
   created_at: number;
 }
 
+/** Counts due cleanup jobs by their processing kind. */
+export interface CleanupJobDueCounts {
+  explicit: number;
+  retention: number;
+}
+
 const SELECT_COLS =
   "id, thread_id, workspace_path, worktree_path, branch, kind, attempts, next_retry_at, last_error, created_at";
 
@@ -40,7 +46,8 @@ const SELECT_COLS =
 @injectable()
 export class CleanupJobRepo {
   private readonly stmtInsert: Statement;
-  private readonly stmtFindDue: Statement;
+  private readonly stmtFindDueByKind: Statement;
+  private readonly stmtFindDueCounts: Statement;
   private readonly stmtRecordFailure: Statement;
   private readonly stmtDelete: Statement;
   private readonly stmtResetAttempts: Statement;
@@ -54,11 +61,18 @@ export class CleanupJobRepo {
         (id, thread_id, workspace_path, worktree_path, branch, kind, attempts, next_retry_at, created_at)
        VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?)`,
     );
-    this.stmtFindDue = db.prepare(
+    this.stmtFindDueByKind = db.prepare(
       `SELECT ${SELECT_COLS} FROM cleanup_jobs
+          WHERE next_retry_at <= ? AND attempts < ?
+            AND kind = ?
+          ORDER BY created_at ASC
+          LIMIT ?`,
+    );
+    this.stmtFindDueCounts = db.prepare(
+      `SELECT kind, COUNT(*) AS count FROM cleanup_jobs
          WHERE next_retry_at <= ? AND attempts < ?
-         ORDER BY created_at ASC
-         LIMIT ?`,
+           AND kind IN ('explicit', 'retention')
+         GROUP BY kind`,
     );
     this.stmtRecordFailure = db.prepare(
       `UPDATE cleanup_jobs
@@ -132,7 +146,64 @@ export class CleanupJobRepo {
    */
   findDue(nowMs: number, limit = CLEANUP_BATCH_LIMIT): CleanupJob[] {
     const boundedLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
-    return this.stmtFindDue.all(nowMs, MAX_CLEANUP_ATTEMPTS, boundedLimit) as CleanupJob[];
+    const counts = this.getDueCounts(nowMs);
+    if (counts.explicit === 0 || counts.retention === 0) {
+      const kind = counts.retention > 0 ? "retention" : "explicit";
+      return this.stmtFindDueByKind.all(
+        nowMs,
+        MAX_CLEANUP_ATTEMPTS,
+        kind,
+        boundedLimit,
+      ) as CleanupJob[];
+    }
+
+    let retentionLimit = Math.min(counts.retention, Math.max(1, Math.floor(boundedLimit / 2)));
+    let explicitLimit = Math.min(counts.explicit, boundedLimit - retentionLimit);
+    const spareLimit = boundedLimit - explicitLimit - retentionLimit;
+    if (spareLimit > 0) {
+      const additionalRetention = Math.min(spareLimit, counts.retention - retentionLimit);
+      retentionLimit += additionalRetention;
+      explicitLimit += Math.min(
+        spareLimit - additionalRetention,
+        counts.explicit - explicitLimit,
+      );
+    }
+    const explicitJobs = this.stmtFindDueByKind.all(
+      nowMs,
+      MAX_CLEANUP_ATTEMPTS,
+      "explicit",
+      explicitLimit,
+    ) as CleanupJob[];
+    const retentionJobs = this.stmtFindDueByKind.all(
+      nowMs,
+      MAX_CLEANUP_ATTEMPTS,
+      "retention",
+      retentionLimit,
+    ) as CleanupJob[];
+
+    const selected: CleanupJob[] = [];
+    for (
+      let index = 0;
+      selected.length < boundedLimit && (index < retentionJobs.length || index < explicitJobs.length);
+      index += 1
+    ) {
+      if (index < retentionJobs.length) selected.push(retentionJobs[index]);
+      if (selected.length < boundedLimit && index < explicitJobs.length) {
+        selected.push(explicitJobs[index]);
+      }
+    }
+    return selected;
+  }
+
+  /** Return due cleanup job counts grouped by processing kind. */
+  getDueCounts(nowMs: number): CleanupJobDueCounts {
+    const counts: CleanupJobDueCounts = { explicit: 0, retention: 0 };
+    const rows = this.stmtFindDueCounts.all(nowMs, MAX_CLEANUP_ATTEMPTS) as Array<{
+      kind: CleanupJob["kind"];
+      count: number;
+    }>;
+    for (const row of rows) counts[row.kind] = row.count;
+    return counts;
   }
 
   /** Queue a bounded set of expired completed threads in one database transaction. */

@@ -90,6 +90,32 @@ describe("MessageRepo", () => {
     localDb.close();
   });
 
+  it("persists a supplied user message ID", () => {
+    const messageId = "550e8400-e29b-41d4-a716-446655440000";
+
+    const message = repo.create(
+      "thread-1",
+      "user",
+      "follow-up",
+      1,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      messageId,
+    );
+    const persisted = db
+      .prepare("SELECT id FROM messages WHERE thread_id = ? AND sequence = ?")
+      .get("thread-1", 1) as { id: string } | undefined;
+
+    expect(message.id).toBe(messageId);
+    expect(persisted?.id).toBe(messageId);
+  });
+
   describe("listByThread", () => {
     it("returns tool_call_count per message via indexed lookup", () => {
       const m1 = repo.create("thread-1", "user", "a", 1);

@@ -250,6 +250,7 @@ export class MessageRepo {
    * produced (e.g. "claude-opus-4-7"). Null for user/system messages and
    * acceptable for assistant messages when the provider doesn't surface a
    * model — the UI footer falls back gracefully.
+   * `messageId` preserves the renderer's optimistic identity when supplied.
    */
   create(
     threadId: string,
@@ -264,8 +265,9 @@ export class MessageRepo {
     mentions?: MessageMention[],
     previewAnnotations?: PreviewAnnotationBundle,
     origin: MessageOriginInput = { type: "composer" },
+    messageId?: string,
   ): Message {
-    const id = randomUUID();
+    const id = messageId ?? randomUUID();
     const now = new Date().toISOString();
     const attachmentsJson =
       attachments && attachments.length > 0

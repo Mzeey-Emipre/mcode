@@ -5,6 +5,7 @@ import {
   getTestActiveMessages,
 } from "@/stores/thread-store-test-utils";
 import {
+  createEmptyThreadRecord,
   patchThreadRecord,
   type ThreadRecord,
 } from "@/stores/thread-record";
@@ -115,6 +116,23 @@ await activateTestConversation("t1");
     await useThreadStore.getState().sendMessage("t1", "first user message");
 
     expect(getTestActiveMessages().at(-1)?.sequence).toBe(1);
+  });
+
+  it("sends the optimistic user message ID to the agent transport", async () => {
+    const threadId = "t1";
+    resetThreadStoreForTests({
+      currentThreadId: threadId,
+      records: new Map<string, ThreadRecord>([
+        [threadId, createEmptyThreadRecord()],
+      ]),
+    });
+
+    await useThreadStore.getState().sendMessage(threadId, "follow-up");
+
+    const optimisticMessage = getTestActiveMessages().at(-1);
+    const sendPayload = vi.mocked(mockTransport.sendMessage).mock.calls.at(-1)?.[0];
+    expect(optimisticMessage?.role).toBe("user");
+    expect(sendPayload?.messageId).toBe(optimisticMessage?.id);
   });
 
   it("does NOT clear toolCallRecordCache on cache hit", async () => {

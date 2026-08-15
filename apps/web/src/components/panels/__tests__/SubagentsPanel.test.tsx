@@ -312,6 +312,35 @@ describe("SubagentsPanel", () => {
     expect(await screen.findByTestId("subagent-stop-control")).toBeInTheDocument();
   });
 
+  it("keeps lifecycle controls out of the detail header", async () => {
+    const child = canonicalRow({
+      id: "detail-layout-child",
+      identity: "Detail layout child",
+      lineage: ["thread-1", "ancestor", "detail-layout-child"],
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+      canStop: true,
+    });
+    harness.loadCanonicalSubagentRoster.mockResolvedValue(canonicalRoster([child], []));
+
+    render(<SubagentsPanel threadId="thread-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: /Open Detail layout child details, Active/ }));
+
+    const detail = await screen.findByRole("region", { name: "Detail layout child subagent details" });
+    const header = detail.querySelector("header");
+    const stop = screen.getByRole("button", { name: "Stop Detail layout child" });
+    expect(header).toBeTruthy();
+    expect(header).toHaveTextContent("Detail layout child");
+    expect(header).toHaveTextContent("Parent / ancestor");
+    expect(header).toHaveTextContent("GPT-5.6 Sol");
+    expect(header).toHaveTextContent("High");
+    expect(screen.getByTestId("subagent-technical-details")).toHaveTextContent("Technical details");
+    expect(screen.queryByTestId("subagent-detail-status")).not.toBeInTheDocument();
+    expect(screen.getByTestId("subagent-detail-actions")).toContainElement(stop);
+    expect(header?.contains(stop)).toBe(false);
+  });
+
   it("passes exact parent and child IDs without selecting the child", async () => {
     const child = canonicalRow({
       id: "exact-child",
@@ -444,7 +473,9 @@ describe("SubagentsPanel", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Open Detail stop child details, Active/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Stop Detail stop child" }));
 
-    await waitFor(() => expect(screen.getByTestId("subagent-detail-status")).toHaveTextContent(terminal.terminalOutcome!));
+    await waitFor(() => expect(screen.queryByTestId("subagent-detail-actions")).not.toBeInTheDocument());
+    expect(screen.queryByTestId("subagent-detail-status")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("subagent-detail-actions")).not.toBeInTheDocument();
     expect(screen.queryByTestId("subagent-stop-control")).not.toBeInTheDocument();
     expect(screen.getByTestId("shared-message-list")).toHaveAttribute("data-display-thread-id", "detail-stop-child");
     expect(useDiffStore.getState().subagentDetailByThread["thread-1"]?.id).toBe("detail-stop-child");
