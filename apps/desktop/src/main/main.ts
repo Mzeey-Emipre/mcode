@@ -21,6 +21,7 @@ import {
   session,
   shell,
 } from "electron";
+import { autoUpdater } from "electron-updater";
 import { existsSync, createReadStream } from "fs";
 import { mkdir, writeFile } from "fs/promises";
 import { isAbsolute, join } from "path";
@@ -39,16 +40,14 @@ const getExtension =
 import { openInRegistry } from "./open-in/index.js";
 import { ServerRuntime } from "../features/server-runtime/index.js";
 import {
-  applyReleaseLineSwitch,
-  checkForUpdatesNow,
-  downloadUpdate,
-  getUpdateStatus,
-  initAutoUpdater,
-  installUpdate,
-  cleanupAutoUpdater,
-  createBeforeInstallHook,
-  setBeforeInstallHook,
-} from "./auto-updater.js";
+  initializeApplicationUpdates,
+  cleanupApplicationUpdates,
+  type ApplicationUpdates,
+  type ApplicationLifecycle,
+  type UpdateTimer,
+} from "../features/application-updates/index.js";
+import { loadUpdaterSettings } from "../features/application-updates/configuration/settings.js";
+import type { ApplicationWindowProvider } from "../features/application-updates/state/update-status.js";
 import { setupSpellcheck } from "./spellcheck.js";
 import {
   registerPreviewBrowserHandlers,
@@ -60,6 +59,8 @@ import {
 } from "../features/preview/index.js";
 import { isDesktopDev } from "./is-desktop-dev.js";
 import { shouldPrintVersion } from "./cli-args.js";
+
+let applicationUpdates: ApplicationUpdates | undefined;
 
 // Isolate dev's Electron userData (cache, cookies, localStorage, IndexedDB)
 // from the installed prod build. Without this, both share %APPDATA%/Mcode/
@@ -679,10 +680,18 @@ function registerIpcHandlers(): void {
 
   // App version + auto-update controls
   ipcMain.handle("app:get-version", () => app.getVersion());
-  ipcMain.handle("app:get-update-status", () => getUpdateStatus());
-  ipcMain.handle("app:check-for-updates", () => checkForUpdatesNow());
-  ipcMain.handle("app:install-update", () => installUpdate());
-  ipcMain.handle("app:download-update", () => downloadUpdate());
+  ipcMain.handle("app:get-update-status", () =>
+    applicationUpdates!.getUpdateStatus(),
+  );
+  ipcMain.handle("app:check-for-updates", () =>
+    applicationUpdates!.checkForUpdatesNow(),
+  );
+  ipcMain.handle("app:install-update", () =>
+    applicationUpdates!.installUpdate(),
+  );
+  ipcMain.handle("app:download-update", () =>
+    applicationUpdates!.downloadUpdate(),
+  );
   ipcMain.handle(
     "app:apply-release-line",
     async (
@@ -695,7 +704,7 @@ function registerIpcHandlers(): void {
       ) {
         throw new Error(`Invalid releaseLine: ${String(payload?.releaseLine)}`);
       }
-      return applyReleaseLineSwitch(payload.releaseLine, {
+      return applicationUpdates!.applyReleaseLineSwitch(payload.releaseLine, {
         allowDowngrade: payload.allowDowngrade === true,
       });
     },
@@ -1010,12 +1019,6 @@ app.whenReady().then(async () => {
     );
     console.log(`Server started on port ${port}`);
 
-    // Stop the detached server before any quitAndInstall so the NSIS
-    // installer does not hit locked files under the install directory.
-    setBeforeInstallHook(
-      createBeforeInstallHook(() => serverRuntime.forceReplace()),
-    );
-
     serverRuntime.registerLifecycle();
 
     // Register custom protocol for attachment files
@@ -1052,8 +1055,21 @@ app.whenReady().then(async () => {
       }
     });
 
-    // Initialize auto-updater (checks still run in dev; install hooks are packaged-only paths)
-    initAutoUpdater();
+    // Initialize updates after the server and main window dependencies exist.
+    applicationUpdates = initializeApplicationUpdates({
+      updater: autoUpdater,
+      application: app as unknown as ApplicationLifecycle,
+      windows: BrowserWindow as unknown as ApplicationWindowProvider,
+      timer: {
+        setTimeout: (callback, delay) => setTimeout(callback, delay),
+        clearTimeout: (handle) => clearTimeout(handle as NodeJS.Timeout),
+        setInterval: (callback, delay) => setInterval(callback, delay),
+        clearInterval: (handle) => clearInterval(handle as NodeJS.Timeout),
+        setImmediate: (callback) => setImmediate(callback),
+      } satisfies UpdateTimer,
+      settings: () => loadUpdaterSettings(app.getVersion()),
+      forceReplace: () => serverRuntime.forceReplace(),
+    });
 
     console.log(
       `[perf] Startup complete: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`,
@@ -1076,7 +1092,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("will-quit", () => {
-  cleanupAutoUpdater();
+  cleanupApplicationUpdates();
 });
 
 export { mainWindow };
