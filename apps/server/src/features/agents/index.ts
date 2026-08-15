@@ -6,3 +6,6 @@ export { CanonicalAgentEventSink } from "../../services/canonical-agent-event-si
 
 /** Publishes canonical agent events for the server composition roots. */
 export { publishCanonicalAgentEvents } from "../../services/canonical-agent-event-sink";
+
+/** Starts agent execution and normalized provider-event publication. */
+export { startAgentOrchestration } from "./orchestration/start-agent-orchestration.js";

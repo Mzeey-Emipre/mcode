@@ -58,40 +58,28 @@ vi.mock("@mcode/shared", () => ({
 vi.mock("@mcode/contracts", () => ({
   getExtension: vi.fn().mockReturnValue(""),
   isMcodeWorkspacePreviewUrl: vi.fn().mockReturnValue(false),
+  SettingsSchema: vi.fn(() => ({
+    safeParse: vi.fn(() => ({ success: false })),
+  })),
 }));
 
 vi.mock("../open-in/index.js", () => ({ openInRegistry: vi.fn() }));
 vi.mock("../../features/server-runtime/index.js", () => ({
-  ServerManager: class {
+  ServerRuntime: class {
     start = vi.fn();
-    restart = vi.fn();
-    isHealthy = vi.fn();
+    registerLifecycle = vi.fn();
+    registerConnectionHandlers = vi.fn();
+    installAuthCookie = vi.fn();
+    attachWindow = vi.fn();
     forceReplace = vi.fn();
-  },
-  ServerCrashRecovery: class {
-    handleUnexpectedExit = vi.fn();
-  },
-  ServerHealthRecovery: class {
-    ensureServerRunning = vi.fn();
-  },
-  ServerNotifications: class {
-    showCrashDialog = vi.fn();
-    showRecoveredNotification = vi.fn();
-  },
-  BusyBlocker: class {
-    report = vi.fn();
+    get port() {
+      return 0;
+    }
   },
 }));
-vi.mock("../ipc-relay.js", () => ({ startIpcRelay: vi.fn() }));
-vi.mock("../auto-updater.js", () => ({
-  applyReleaseLineSwitch: vi.fn(),
-  checkForUpdatesNow: vi.fn(),
-  downloadUpdate: vi.fn(),
-  getUpdateStatus: vi.fn().mockReturnValue({ state: "idle" }),
-  initAutoUpdater: vi.fn(),
-  installUpdate: vi.fn(),
-  cleanupAutoUpdater: vi.fn(),
-  setBeforeInstallHook: vi.fn(),
+vi.mock("../../features/application-updates/index.js", () => ({
+  initializeApplicationUpdates: vi.fn(),
+  cleanupApplicationUpdates: vi.fn(),
 }));
 vi.mock("../spellcheck.js", () => ({ setupSpellcheck: vi.fn() }));
 vi.mock("../../features/preview/index.js", () => ({

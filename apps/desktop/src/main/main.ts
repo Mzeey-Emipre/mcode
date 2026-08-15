@@ -21,6 +21,7 @@ import {
   session,
   shell,
 } from "electron";
+import { autoUpdater } from "electron-updater";
 import { existsSync, createReadStream } from "fs";
 import { mkdir, writeFile } from "fs/promises";
 import { isAbsolute, join } from "path";
@@ -37,25 +38,16 @@ const getExtension =
   globalThis.__v8Snapshot?.contracts?.getExtension ?? bundledGetExtension;
 
 import { openInRegistry } from "./open-in/index.js";
+import { ServerRuntime } from "../features/server-runtime/index.js";
 import {
-  BusyBlocker,
-  ServerCrashRecovery,
-  ServerHealthRecovery,
-  ServerManager,
-  ServerNotifications,
-} from "../features/server-runtime/index.js";
-import { startIpcRelay } from "./ipc-relay.js";
-import {
-  applyReleaseLineSwitch,
-  checkForUpdatesNow,
-  downloadUpdate,
-  getUpdateStatus,
-  initAutoUpdater,
-  installUpdate,
-  cleanupAutoUpdater,
-  createBeforeInstallHook,
-  setBeforeInstallHook,
-} from "./auto-updater.js";
+  initializeApplicationUpdates,
+  cleanupApplicationUpdates,
+  type ApplicationLifecycle,
+  type UpdateTimer,
+  type ApplicationUpdateIpc,
+} from "../features/application-updates/index.js";
+import { loadUpdaterSettings } from "../features/application-updates/configuration/settings.js";
+import type { ApplicationWindowProvider } from "../features/application-updates/state/update-status.js";
 import { setupSpellcheck } from "./spellcheck.js";
 import {
   registerPreviewBrowserHandlers,
@@ -320,40 +312,21 @@ export function handleRendererCrashReport(
     componentStackTruncated: normalized.componentStackTruncated,
   });
 }
-const serverManager = new ServerManager();
-const serverNotifications = new ServerNotifications({
+const serverRuntime = new ServerRuntime({
+  ipcMain,
   getMainWindow: () => mainWindow,
   dialog: {
     showMessageBox: (window, options) =>
       dialog.showMessageBox(window as BrowserWindow, options),
   },
-  restart: () => serverManager.restart(),
   app: { quit: () => app.quit() },
   notification: {
     isSupported: () => Notification.isSupported(),
     create: (options) => new Notification(options),
   },
-});
-const serverCrashRecovery = new ServerCrashRecovery({
-  restart: () => serverManager.restart(),
-  notifyRecovered: (code) => serverNotifications.showRecoveredNotification(code),
-  showError: (code) => serverNotifications.showCrashDialog(code),
-});
-const serverHealthRecovery = new ServerHealthRecovery({
-  isHealthy: () => serverManager.isHealthy(),
-  restart: () => serverManager.restart(),
-  showError: () => serverNotifications.showCrashDialog(null),
-  logger: {
-    log: (...args) => console.log(...args),
-    error: (...args) => console.error(...args),
-  },
-});
-const serverBusyBlocker = new BusyBlocker({
-  blocker: {
-    start: (reason) => powerSaveBlocker.start(reason),
-    stop: (id) => powerSaveBlocker.stop(id),
-  },
-  log: (...args) => console.log(...args),
+  powerMonitor,
+  powerSaveBlocker,
+  getCookieStore: () => session.defaultSession.cookies,
 });
 
 /** Returns the app icon path used for dev windows and packaged resources. */
@@ -505,16 +478,12 @@ function registerIpcHandlers(): void {
       if (!mainWindow || event.sender !== mainWindow.webContents) {
         throw new Error("Performance cleanup requires the main renderer");
       }
-      await serverManager.forceReplace();
+      await serverRuntime.forceReplace();
       app.quit();
     });
   }
 
-  // Server URL for WebSocket connection
-  ipcMain.handle("get-server-url", () => ({
-    url: `ws://localhost:${serverManager.port}?token=${serverManager.authToken}`,
-    ipcPath: serverManager.ipcPath,
-  }));
+  serverRuntime.registerConnectionHandlers();
 
   // Native file dialog
   ipcMain.handle(
@@ -684,14 +653,6 @@ function registerIpcHandlers(): void {
     }
   });
 
-  ipcMain.handle("ensure-server-running", () =>
-    serverHealthRecovery.ensureServerRunning(),
-  );
-
-  ipcMain.handle("set-server-busy", (event, busy: boolean) => {
-    serverBusyBlocker.report(event.sender, busy);
-  });
-
   ipcMain.handle("accessibility:get-support", (event): boolean => {
     if (!mainWindow || event.sender !== mainWindow.webContents) {
       throw new Error("Accessibility support requires the main renderer");
@@ -714,30 +675,6 @@ function registerIpcHandlers(): void {
     if (!window || window.isDestroyed()) return;
     performDesktopWindowAction(window, action as DesktopWindowAction);
   });
-
-  // App version + auto-update controls
-  ipcMain.handle("app:get-version", () => app.getVersion());
-  ipcMain.handle("app:get-update-status", () => getUpdateStatus());
-  ipcMain.handle("app:check-for-updates", () => checkForUpdatesNow());
-  ipcMain.handle("app:install-update", () => installUpdate());
-  ipcMain.handle("app:download-update", () => downloadUpdate());
-  ipcMain.handle(
-    "app:apply-release-line",
-    async (
-      _e,
-      payload: { releaseLine: "stable" | "nightly"; allowDowngrade?: boolean },
-    ) => {
-      if (
-        payload?.releaseLine !== "stable" &&
-        payload?.releaseLine !== "nightly"
-      ) {
-        throw new Error(`Invalid releaseLine: ${String(payload?.releaseLine)}`);
-      }
-      return applyReleaseLineSwitch(payload.releaseLine, {
-        allowDowngrade: payload.allowDowngrade === true,
-      });
-    },
-  );
 
   registerPreviewBrowserHandlers();
 }
@@ -791,7 +728,7 @@ function setupCloseHandler(): void {
     // Check active agent count via the server's HTTP API
     let count = 0;
     try {
-      const res = await fetch(`http://localhost:${serverManager.port}/health`);
+      const res = await fetch(`http://localhost:${serverRuntime.port}/health`);
       if (res.ok) {
         const data = (await res.json()) as { activeAgents?: number };
         count = data.activeAgents ?? 0;
@@ -1042,25 +979,13 @@ app.whenReady().then(async () => {
     configureApplicationMenu();
 
     // Start the server child process
-    const { port } = await serverManager.start();
+    const port = await serverRuntime.start();
     console.log(
       `[perf] Server ready: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`,
     );
     console.log(`Server started on port ${port}`);
 
-    // Stop the detached server before any quitAndInstall so the NSIS
-    // installer does not hit locked files under the install directory.
-    setBeforeInstallHook(
-      createBeforeInstallHook(() => serverManager.forceReplace()),
-    );
-
-    serverManager.onUnexpectedExit = (code) => {
-      void serverCrashRecovery.handleUnexpectedExit(code);
-    };
-
-    powerMonitor.on("resume", () => {
-      void serverHealthRecovery.ensureServerRunning();
-    });
+    serverRuntime.registerLifecycle();
 
     // Register custom protocol for attachment files
     registerAttachmentProtocol();
@@ -1070,13 +995,7 @@ app.whenReady().then(async () => {
     registerIpcHandlers();
 
     // Set auth cookie so the renderer can authenticate to the server via HTTP
-    await session.defaultSession.cookies.set({
-      url: `http://localhost:${serverManager.port}`,
-      name: "mcode-auth",
-      value: serverManager.authToken,
-      httpOnly: true,
-      sameSite: "strict",
-    });
+    await serverRuntime.installAuthCookie();
 
     // Create window
     createWindow();
@@ -1087,12 +1006,7 @@ app.whenReady().then(async () => {
     // Enable spellchecker and attach per-window context-menu handler.
     setupSpellcheck(mainWindow!);
 
-    // Start IPC push relay (main process → renderer via webContents.send).
-    // Destroy the socket when the window closes to prevent named-pipe handle leaks.
-    if (mainWindow && serverManager.ipcPath) {
-      const cleanupRelay = startIpcRelay(serverManager.ipcPath, mainWindow);
-      mainWindow.once("closed", cleanupRelay);
-    }
+    serverRuntime.attachWindow(mainWindow!);
 
     // Set up close handler
     setupCloseHandler();
@@ -1103,15 +1017,26 @@ app.whenReady().then(async () => {
         createWindow();
         setupSpellcheck(mainWindow!);
         setupCloseHandler();
-        if (mainWindow && serverManager.ipcPath) {
-          const cleanupRelay = startIpcRelay(serverManager.ipcPath, mainWindow);
-          mainWindow.once("closed", cleanupRelay);
-        }
+        serverRuntime.attachWindow(mainWindow!);
       }
     });
 
-    // Initialize auto-updater (checks still run in dev; install hooks are packaged-only paths)
-    initAutoUpdater();
+    // Initialize updates after the server and main window dependencies exist.
+    initializeApplicationUpdates({
+      updater: autoUpdater,
+      application: app as unknown as ApplicationLifecycle,
+      windows: BrowserWindow as unknown as ApplicationWindowProvider,
+      timer: {
+        setTimeout: (callback, delay) => setTimeout(callback, delay),
+        clearTimeout: (handle) => clearTimeout(handle as NodeJS.Timeout),
+        setInterval: (callback, delay) => setInterval(callback, delay),
+        clearInterval: (handle) => clearInterval(handle as NodeJS.Timeout),
+        setImmediate: (callback) => setImmediate(callback),
+      } satisfies UpdateTimer,
+      settings: () => loadUpdaterSettings(app.getVersion()),
+      ipc: ipcMain as unknown as ApplicationUpdateIpc,
+      forceReplace: () => serverRuntime.forceReplace(),
+    });
 
     console.log(
       `[perf] Startup complete: ${(performance.now() - STARTUP_TIME).toFixed(1)}ms`,
@@ -1134,7 +1059,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("will-quit", () => {
-  cleanupAutoUpdater();
+  cleanupApplicationUpdates();
 });
 
 export { mainWindow };
