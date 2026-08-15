@@ -5,6 +5,7 @@
 
 import "reflect-metadata";
 import { container, Lifecycle } from "tsyringe";
+import { TERMINAL_MAX_SESSIONS } from "@mcode/contracts";
 
 import { openDatabase } from "./store/database";
 
@@ -487,7 +488,6 @@ export function setupContainer(mcodeDir: string): typeof container {
     { lifecycle: Lifecycle.Singleton },
   );
   let modernTerminalBackend: ModernTerminalBackend | undefined;
-  let modernTerminalSessions: TerminalSessionService | undefined;
   let terminalBackendSelector: TerminalBackendSelector | undefined;
   container.register("ModernTerminalBackend", {
     useFactory: (c: typeof container) => {
@@ -515,7 +515,6 @@ export function setupContainer(mcodeDir: string): typeof container {
           c.resolve(GitService).resolveWorkingDir(workspacePath, mode, worktreePath),
         hostGeneration: () => host.health().hostGeneration,
       });
-      modernTerminalSessions = sessions;
       modernTerminalBackend = new ModernTerminalBackend(
         sessions,
         runtime,
@@ -525,14 +524,6 @@ export function setupContainer(mcodeDir: string): typeof container {
       return modernTerminalBackend;
     },
   } as never);
-  container.register("ModernTerminalSessionService", {
-    useFactory: () => {
-      if (!modernTerminalSessions) {
-        throw new Error("Modern Terminal session service is unavailable");
-      }
-      return modernTerminalSessions;
-    },
-  });
   container.register(
     "TerminalBackendSelector",
     { useFactory: (c: typeof container) => {
@@ -554,26 +545,17 @@ export function setupContainer(mcodeDir: string): typeof container {
     {
       useFactory: (c: typeof container) => {
         const terminalService = c.resolve<TerminalBackend>(TERMINAL_BACKEND_TOKEN);
-        const modernSessions = terminalService.capabilities().backend === "modern"
-          ? c.resolve<{ listSessions(): readonly unknown[] }>("ModernTerminalSessionService")
-          : undefined;
+        if (terminalService.capabilities().backend === "modern") {
+          return c.resolve<ModernTerminalBackend>("ModernTerminalBackend").getDiagnosticsService();
+        }
         return new TerminalDiagnosticsService({
           backend: () => terminalService.capabilities().backend,
           health: () => {
-            const capabilities = terminalService.capabilities();
-            const host = capabilities.backend === "modern" ? capabilities.host : undefined;
             return {
               contractVersion: 1,
-              state: host?.state ?? "healthy",
-              hostGeneration: host?.generation ?? "0",
-              activeSessions: capabilities.backend === "modern"
-                ? (() => {
-                  if (!modernSessions) {
-                    throw new Error("Modern Terminal session service is unavailable");
-                  }
-                  return modernSessions.listSessions().length;
-                })()
-                : terminalService.listActiveSessions().length,
+              state: "healthy",
+              hostGeneration: "0",
+              activeSessions: Math.min(terminalService.listActiveSessions().length, TERMINAL_MAX_SESSIONS),
               lastHeartbeatMsAgo: null,
               queueBytes: 0,
               eventLoopLagMs: 0,

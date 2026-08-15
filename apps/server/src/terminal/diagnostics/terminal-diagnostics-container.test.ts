@@ -5,7 +5,9 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { container } from "tsyringe";
 import type Database from "better-sqlite3";
+import { routeMessage, type RouterDeps } from "../../transport/ws-router.js";
 import { setupContainer } from "../../container.js";
+import { LegacyTerminalBackend } from "../legacy/legacy-terminal-backend.js";
 import { TERMINAL_BACKEND_TOKEN, type TerminalBackend } from "../terminal-backend.js";
 import { TerminalDiagnosticsService } from "./terminal-diagnostics-service.js";
 
@@ -22,6 +24,7 @@ const MODERN_CAPABILITIES = {
 describe("Terminal diagnostics container wiring", () => {
   let database: Database.Database | undefined;
   let temporaryDirectory: string | undefined;
+  let modernDiagnostics: TerminalDiagnosticsService;
   const previousBackend = process.env.MCODE_TERMINAL_BACKEND;
   const previousDatabasePath = process.env.MCODE_DB_PATH;
 
@@ -33,16 +36,27 @@ describe("Terminal diagnostics container wiring", () => {
     setupContainer(temporaryDirectory);
     database = container.resolve<Database.Database>("Database");
 
+    modernDiagnostics = new TerminalDiagnosticsService({
+      backend: () => "modern",
+      health: () => ({
+        contractVersion: 1,
+        state: "healthy",
+        hostGeneration: "7",
+        activeSessions: 2,
+        lastHeartbeatMsAgo: 11,
+        queueBytes: 43,
+        eventLoopLagMs: 5,
+        hostRssBytes: "2048",
+      }),
+    });
     const modernBackend = {
       capabilities: () => MODERN_CAPABILITIES,
       listActiveSessions: () => {
         throw new Error("Use terminal.session.list");
       },
+      getDiagnosticsService: () => modernDiagnostics,
     } as unknown as TerminalBackend;
     container.register("ModernTerminalBackend", { useValue: modernBackend });
-    container.register("ModernTerminalSessionService", {
-      useValue: { listSessions: () => [{ sessionId: "one" }, { sessionId: "two" }] },
-    });
   });
 
   afterEach(() => {
@@ -60,14 +74,59 @@ describe("Terminal diagnostics container wiring", () => {
     temporaryDirectory = undefined;
   });
 
-  it("resolves diagnostics with modern selection and uses the session service count", () => {
+  it("routes backend-owned modern health measurements through diagnostics RPC", async () => {
     const diagnostics = container.resolve(TerminalDiagnosticsService);
-    const bundle = diagnostics.getBundle();
+    expect(diagnostics).toBe(modernDiagnostics);
+    const response = await routeMessage(JSON.stringify({
+      id: "modern_bundle",
+      method: "terminal.diagnostics.getBundle",
+      params: {},
+    }), { terminalDiagnosticsService: diagnostics } as unknown as RouterDeps);
 
-    expect(bundle.backend).toBe("modern");
-    expect(bundle.health.activeSessions).toBe(2);
+    expect(response).toMatchObject({
+      id: "modern_bundle",
+      result: {
+        backend: "modern",
+        health: {
+          lastHeartbeatMsAgo: 11,
+          queueBytes: 43,
+          eventLoopLagMs: 5,
+          hostRssBytes: "2048",
+        },
+      },
+    });
     expect(container.resolve<TerminalBackend>(TERMINAL_BACKEND_TOKEN).capabilities()).toEqual(
       MODERN_CAPABILITIES,
     );
+  });
+
+  it("caps legacy active sessions at the diagnostics schema limit", async () => {
+    process.env.MCODE_TERMINAL_BACKEND = "legacy";
+    container.register(LegacyTerminalBackend, {
+      useValue: {
+        capabilities: () => ({
+          contractVersion: 0,
+          backend: "legacy",
+          publicFrameVersion: 0,
+          recovery: { replay: true, checkpoint: true, gap: true },
+        }),
+        listActiveSessions: () => Array.from(
+          { length: 25 },
+          (_, index) => ({ ptyId: `pty-${index}`, threadId: "thread" }),
+        ),
+      } as unknown as TerminalBackend,
+    });
+
+    const diagnostics = container.resolve(TerminalDiagnosticsService);
+    const response = await routeMessage(JSON.stringify({
+      id: "legacy_bundle",
+      method: "terminal.diagnostics.getBundle",
+      params: {},
+    }), { terminalDiagnosticsService: diagnostics } as unknown as RouterDeps);
+
+    expect(response).toMatchObject({
+      id: "legacy_bundle",
+      result: { backend: "legacy", health: { activeSessions: 20 } },
+    });
   });
 });
