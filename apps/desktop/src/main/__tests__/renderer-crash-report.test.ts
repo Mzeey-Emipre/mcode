@@ -68,9 +68,19 @@ vi.mock("../../features/server-runtime/index.js", () => ({
     isHealthy = vi.fn();
     forceReplace = vi.fn();
   },
-}));
-vi.mock("../server-crash-recovery.js", () => ({
-  ServerCrashRecovery: class {},
+  ServerCrashRecovery: class {
+    handleUnexpectedExit = vi.fn();
+  },
+  ServerHealthRecovery: class {
+    ensureServerRunning = vi.fn();
+  },
+  ServerNotifications: class {
+    showCrashDialog = vi.fn();
+    showRecoveredNotification = vi.fn();
+  },
+  BusyBlocker: class {
+    report = vi.fn();
+  },
 }));
 vi.mock("../ipc-relay.js", () => ({ startIpcRelay: vi.fn() }));
 vi.mock("../auto-updater.js", () => ({

@@ -2,7 +2,7 @@ import { create } from "zustand";
 import type { Message, ToolCall, HookExecution, PermissionMode, InteractionMode, AttachmentMeta, StoredAttachment, ToolCallRecord, ThoughtSegmentRecord } from "@/transport";
 import type { AgentEvent, CanonicalAgentEventEnvelope, CanonicalAgentReconnectRecovery, ContextWindowMode, MessageMention, ReasoningLevel, OrchestrationMode, PlanQuestion, PlanAnswer, QuotaCategory, ProviderBillingMode, ProviderUsageInfo, GoalLookupResult, GoalState, PreviewAnnotationBundle, TurnFileEffectSummary, TurnRuntimeSnapshot } from "@mcode/contracts";
 import type { PermissionRequest, PermissionDecision } from "@mcode/contracts";
-import type { ThoughtSegment } from "@/components/chat/narrative/types";
+import type { ThoughtSegment } from "@/features/conversation/narrative/types";
 import {
   PlanQuestionSchema,
   PERMISSION_MODES,
@@ -23,7 +23,7 @@ import { useToastStore } from "./toastStore";
 import { findModelById } from "@/lib/model-registry";
 import { resolveContextWindow } from "@/lib/resolve-context-window";
 import { useSettingsStore } from "./settingsStore";
-import { createConversationResidency, registerConversationResidency } from "./conversation-residency";
+import { createConversationResidency, registerConversationResidency } from "@/features/conversation/residency/conversation-residency";
 import { recordBackgroundEventDropped } from "@/lib/thread-switch-telemetry";
 import {
   clearPendingTurnPersistMessage,
@@ -42,11 +42,11 @@ import {
   CONVERSATION_NARRATIVE_BYTES,
   selectConversationNarrative,
   selectConversationWindow,
-} from "@/lib/thread-hydrator/conversation-memory-policy";
+} from "@/features/conversation/hydration/conversation-memory-policy";
 import {
   setActiveConversation,
   setConversationTransientTextBytes,
-} from "@/lib/thread-hydrator/record-cache";
+} from "@/features/conversation/hydration/record-cache";
 import { releaseBrowserCaptureSpills } from "@/lib/browser-capture-spill";
 import { isGoalControlCommand } from "@/lib/goal-command";
 import { resolveGoalLookupGoal } from "@/lib/goal-lookup";
@@ -56,7 +56,7 @@ import {
   registerThreadHydrator,
   MESSAGE_FETCH_SIZE as HYDRATOR_MESSAGE_FETCH_SIZE,
   type ThreadHydratorWriteState,
-} from "@/lib/thread-hydrator";
+} from "@/features/conversation/hydration";
 import {
   type ThreadRecord,
   type HandoffMeta,

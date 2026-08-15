@@ -37,8 +37,13 @@ const getExtension =
   globalThis.__v8Snapshot?.contracts?.getExtension ?? bundledGetExtension;
 
 import { openInRegistry } from "./open-in/index.js";
-import { ServerManager } from "../features/server-runtime/index.js";
-import { ServerCrashRecovery } from "./server-crash-recovery.js";
+import {
+  BusyBlocker,
+  ServerCrashRecovery,
+  ServerHealthRecovery,
+  ServerManager,
+  ServerNotifications,
+} from "../features/server-runtime/index.js";
 import { startIpcRelay } from "./ipc-relay.js";
 import {
   applyReleaseLineSwitch,
@@ -316,10 +321,39 @@ export function handleRendererCrashReport(
   });
 }
 const serverManager = new ServerManager();
+const serverNotifications = new ServerNotifications({
+  getMainWindow: () => mainWindow,
+  dialog: {
+    showMessageBox: (window, options) =>
+      dialog.showMessageBox(window as BrowserWindow, options),
+  },
+  restart: () => serverManager.restart(),
+  app: { quit: () => app.quit() },
+  notification: {
+    isSupported: () => Notification.isSupported(),
+    create: (options) => new Notification(options),
+  },
+});
 const serverCrashRecovery = new ServerCrashRecovery({
   restart: () => serverManager.restart(),
-  notifyRecovered: (code) => showServerRecoveredNotification(code),
-  showError: (code) => showServerCrashDialog(code),
+  notifyRecovered: (code) => serverNotifications.showRecoveredNotification(code),
+  showError: (code) => serverNotifications.showCrashDialog(code),
+});
+const serverHealthRecovery = new ServerHealthRecovery({
+  isHealthy: () => serverManager.isHealthy(),
+  restart: () => serverManager.restart(),
+  showError: () => serverNotifications.showCrashDialog(null),
+  logger: {
+    log: (...args) => console.log(...args),
+    error: (...args) => console.error(...args),
+  },
+});
+const serverBusyBlocker = new BusyBlocker({
+  blocker: {
+    start: (reason) => powerSaveBlocker.start(reason),
+    stop: (id) => powerSaveBlocker.stop(id),
+  },
+  log: (...args) => console.log(...args),
 });
 
 /** Returns the app icon path used for dev windows and packaged resources. */
@@ -334,109 +368,6 @@ function getWindowIconPath(): string {
     return join(process.resourcesPath, iconFile);
   }
   return join(app.getAppPath(), "build", iconFile);
-}
-
-// ---------------------------------------------------------------------------
-// Sleep-resilient server lifecycle (self-healing restart + power save blocker)
-// ---------------------------------------------------------------------------
-
-/** Sliding window for counting silent restarts before escalating to the crash dialog. */
-const SILENT_RESTART_WINDOW_MS = 60_000;
-/** Silent restarts allowed within the window; the next failure shows the crash dialog. */
-const SILENT_RESTART_LIMIT = 3;
-
-/** Timestamps of recent silent restarts (pruned to the sliding window). */
-let silentRestartTimestamps: number[] = [];
-/** Single in-flight ensure promise so concurrent triggers (resume + renderer fallback) coalesce. */
-let ensureInFlight: Promise<void> | null = null;
-
-/** Show the Restart / Quit dialog used when the server crashes or restart-loops. */
-async function showServerCrashDialog(code: number | null): Promise<void> {
-  if (!mainWindow) return;
-  const { response } = await dialog.showMessageBox(mainWindow, {
-    type: "error",
-    title: "Server crashed",
-    message: `The Mcode server exited unexpectedly (code ${code ?? "unknown"}).`,
-    buttons: ["Restart", "Quit"],
-    defaultId: 0,
-    cancelId: 1,
-  });
-  if (response === 0) {
-    await serverManager.restart();
-  } else {
-    app.quit();
-  }
-}
-
-/** Notify the user after an automatic backend restart succeeds. */
-function showServerRecoveredNotification(code: number | null): void {
-  if (!Notification.isSupported()) return;
-  const notification = new Notification({
-    title: "Mcode server recovered",
-    body: `The backend crashed (code ${code ?? "unknown"}) and restarted.`,
-  });
-  notification.on("click", () => {
-    if (!mainWindow) return;
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.show();
-    mainWindow.focus();
-  });
-  notification.show();
-}
-
-/**
- * Verify the server is reachable and silently restart it if not.
- * Called on OS resume and from the renderer's reconnect fallback.
- * Escalates to the crash dialog after {@link SILENT_RESTART_LIMIT} silent
- * restarts within {@link SILENT_RESTART_WINDOW_MS} — a restart loop means
- * something is genuinely broken and hiding it would strand the user.
- */
-function ensureServerRunning(): Promise<void> {
-  if (ensureInFlight) return ensureInFlight;
-  ensureInFlight = (async () => {
-    if (await serverManager.isHealthy()) return;
-
-    const now = Date.now();
-    silentRestartTimestamps = silentRestartTimestamps.filter(
-      (t) => now - t < SILENT_RESTART_WINDOW_MS,
-    );
-    if (silentRestartTimestamps.length >= SILENT_RESTART_LIMIT) {
-      await showServerCrashDialog(null);
-      return;
-    }
-    silentRestartTimestamps.push(now);
-
-    console.log("[main] Server unhealthy, restarting silently");
-    try {
-      await serverManager.restart();
-    } catch (err) {
-      console.error("[main] Silent server restart failed:", err);
-    }
-  })().finally(() => {
-    ensureInFlight = null;
-  });
-  return ensureInFlight;
-}
-
-/** WebContents ids that currently report the server as busy. */
-const busySenders = new Set<number>();
-/** Sender ids that already have a destroyed-cleanup listener registered. */
-const busyCleanupRegistered = new Set<number>();
-/** Active powerSaveBlocker id, or null when not blocking. */
-let powerSaveBlockerId: number | null = null;
-
-/** Start/stop the app-suspension blocker to match the busy-sender set. */
-function updatePowerSaveBlocker(): void {
-  if (busySenders.size > 0) {
-    if (powerSaveBlockerId === null) {
-      powerSaveBlockerId = powerSaveBlocker.start("prevent-app-suspension");
-      console.log("[main] Power save blocker started (server busy)");
-    }
-  } else if (powerSaveBlockerId !== null) {
-    powerSaveBlocker.stop(powerSaveBlockerId);
-    powerSaveBlockerId = null;
-    console.log("[main] Power save blocker stopped (server idle)");
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -753,28 +684,12 @@ function registerIpcHandlers(): void {
     }
   });
 
-  // Renderer fallback: verify the server is up, silently restart if not.
-  ipcMain.handle("ensure-server-running", () => ensureServerRunning());
+  ipcMain.handle("ensure-server-running", () =>
+    serverHealthRecovery.ensureServerRunning(),
+  );
 
-  // Busy reporting: while any sender is busy, hold a power save blocker so
-  // the OS does not suspend the machine mid-turn. Refcounted per webContents
-  // and cleared on destroy so a crashed/closed renderer cannot leak the blocker.
   ipcMain.handle("set-server-busy", (event, busy: boolean) => {
-    const id = event.sender.id;
-    if (busy) {
-      busySenders.add(id);
-      if (!busyCleanupRegistered.has(id)) {
-        busyCleanupRegistered.add(id);
-        event.sender.once("destroyed", () => {
-          busySenders.delete(id);
-          busyCleanupRegistered.delete(id);
-          updatePowerSaveBlocker();
-        });
-      }
-    } else {
-      busySenders.delete(id);
-    }
-    updatePowerSaveBlocker();
+    serverBusyBlocker.report(event.sender, busy);
   });
 
   ipcMain.handle("accessibility:get-support", (event): boolean => {
@@ -1139,15 +1054,12 @@ app.whenReady().then(async () => {
       createBeforeInstallHook(() => serverManager.forceReplace()),
     );
 
-    // Recover once the server process exits unexpectedly.
     serverManager.onUnexpectedExit = (code) => {
       void serverCrashRecovery.handleUnexpectedExit(code);
     };
 
-    // Self-heal after sleep: the server's grace timer or the OS may have
-    // killed it while the machine was suspended.
     powerMonitor.on("resume", () => {
-      void ensureServerRunning();
+      void serverHealthRecovery.ensureServerRunning();
     });
 
     // Register custom protocol for attachment files

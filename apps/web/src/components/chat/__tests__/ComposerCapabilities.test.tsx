@@ -8,7 +8,7 @@ import {
   resolveComposerCapabilities,
   type ComposerCapabilityId,
   type ResolvedComposerCapability,
-} from "../composer-capabilities";
+} from "@/features/conversation/composer/composer-capabilities";
 
 const COMPOSER_RECT = new DOMRect(80, 80, 640, 160);
 const CLAUDE_CAPABILITIES = resolveComposerCapabilities({

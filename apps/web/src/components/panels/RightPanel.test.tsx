@@ -81,7 +81,10 @@ vi.mock("./ResizableRightPanel", () => ({
     </div>
   ),
 }));
-vi.mock("./SubagentsPanel", () => ({ SubagentsPanel: () => <div /> }));
+vi.mock("@/features/subagents", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/features/subagents")>()),
+  SubagentsPanel: () => <div />,
+}));
 vi.mock("./CoordinationPanel", () => ({
   CoordinationPanel: ({ workspaceId, threadId }: { workspaceId: string; threadId: string }) => (
     <div data-testid="coordination-panel-integration">{workspaceId}:{threadId}</div>

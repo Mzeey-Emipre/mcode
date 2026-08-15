@@ -8,7 +8,7 @@ import type { AgentEvent } from "@mcode/contracts";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useThreadStore } from "@/stores/threadStore";
 import { hydrateRunningThreadsFromServer } from "@/transport/ws-transport";
-import { isThreadRunningForSubmit } from "@/components/chat/Composer";
+import { isThreadRunningForSubmit } from "@/features/conversation";
 
 describe("hydrateRunningThreadsFromServer", () => {
   beforeEach(() => {

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { StackedLayersIcon } from "../narrative/StackedLayersIcon";
+import { StackedLayersIcon } from "@/components/ui/StackedLayersIcon";
 import type { ToolRendererProps } from "./types";
 import { ToolCallWrapper } from "./ToolCallWrapper";
 

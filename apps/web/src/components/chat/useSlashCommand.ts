@@ -15,7 +15,7 @@ import type { SlashCommandNamespace } from "./lexical/SlashCommandNode";
 import {
   resolveComposerCapabilities,
   type ComposerCapabilityAction,
-} from "./composer-capabilities";
+} from "@/features/conversation/composer/composer-capabilities";
 
 /** A slash command entry shown in the popup. */
 export type ComposerCommandAction = ComposerCapabilityAction;

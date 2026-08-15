@@ -8,7 +8,7 @@ import type {
 import type { Thread } from "@/transport";
 import { AlertCircle, GitFork } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Composer } from "@/components/chat/Composer";
+import { Composer } from "@/features/conversation";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,

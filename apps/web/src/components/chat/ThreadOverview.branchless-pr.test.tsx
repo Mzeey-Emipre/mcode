@@ -104,7 +104,8 @@ vi.mock("@/stores/threadStore", () => ({
   ),
 }));
 
-vi.mock("@/lib/open-subagent-detail", () => ({
+vi.mock("@/features/subagents", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/features/subagents")>()),
   openSubagentsPanel: mockOpenSubagentsPanel,
 }));
 
@@ -142,7 +143,7 @@ vi.mock("./CreatePrDialog", () => ({
 }));
 
 import { getThreadOverviewBrowserTabs, ThreadOverview, canStartBranchlessCreatePr } from "./ThreadOverview";
-import { getSubagentIdentityPaletteIndex } from "@/components/subagents/SubagentIdentityGlyph";
+import { getSubagentIdentityPaletteIndex } from "@/features/subagents";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {

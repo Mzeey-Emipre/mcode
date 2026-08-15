@@ -13,7 +13,7 @@ import type {
 } from "@mcode/contracts";
 import type { PermissionRequest, PermissionDecision } from "@mcode/contracts";
 import { PERMISSION_MODES, INTERACTION_MODES } from "@mcode/contracts";
-import type { ThoughtSegment } from "@/components/chat/narrative/types";
+import type { ThoughtSegment } from "@/features/conversation/narrative/types";
 import {
   createCanonicalAgentReplica,
   type CanonicalAgentReplica,

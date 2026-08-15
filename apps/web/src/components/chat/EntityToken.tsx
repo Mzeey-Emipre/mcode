@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { FileTypeIcon } from "@/components/ui/file-type-icon";
 import { cn } from "@/lib/utils";
-import { StackedLayersIcon } from "./narrative/StackedLayersIcon";
+import { StackedLayersIcon } from "@/components/ui/StackedLayersIcon";
 
 /** Entity categories that share one visual language across composer and transcript surfaces. */
 export type EntityKind = "agent" | "command" | "file" | "mcode" | "plugin" | "skill";
