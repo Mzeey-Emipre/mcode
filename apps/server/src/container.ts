@@ -37,14 +37,10 @@ import { registerCodexProvider } from "./providers/codex-provider-registration";
 // Services
 import { WorkspaceService } from "./services/workspace-service";
 import { ThreadService } from "./services/thread-service";
-import { AgentService } from "./services/agent-service";
+import { AgentService, CanonicalAgentEventSink, publishCanonicalAgentEvents } from "./features/agents";
 import { TurnRecoveryService } from "./services/turn-recovery-service";
 import { NarrativeStore } from "./services/narrative-store";
 import { LegacyConversationMigration } from "./services/legacy-conversation-migration";
-import {
-  CanonicalAgentEventSink,
-  publishCanonicalAgentEvents,
-} from "./services/canonical-agent-event-sink";
 import { PlanQuestionService } from "./services/plan-question-service";
 import { GitService } from "./services/git-service";
 import { WorktreeDirectoryRemover } from "./services/worktree-directory-remover.js";
