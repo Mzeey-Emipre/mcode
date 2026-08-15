@@ -379,6 +379,7 @@ describe("packaged Terminal product smoke contract", () => {
     };
     let waits = 0;
     await waitForTerminalControl({
+      evaluate: async () => true,
       locator: (selector) => {
         selectors.push(selector);
         return selector === "html"
@@ -395,9 +396,29 @@ describe("packaged Terminal product smoke contract", () => {
     expect(selectors).toContain('[data-rail-tab="terminal"]');
   });
 
+  it("fails immediately when the release-test bridge is missing", async () => {
+    let waits = 0;
+    let locatorCalled = false;
+    await expect(
+      waitForTerminalControl({
+        evaluate: async () => false,
+        locator: () => {
+          locatorCalled = true;
+          return { first: () => ({ count: async () => 0, isVisible: async () => false }) };
+        },
+        waitForTimeout: async () => {
+          waits += 1;
+        },
+      }),
+    ).rejects.toThrow("Terminal release-test bridge is missing");
+    expect(locatorCalled).toBe(false);
+    expect(waits).toBe(0);
+  });
+
   it("fails immediately on the renderer bootstrap error", async () => {
     let waits = 0;
     await expect(waitForTerminalControl({
+      evaluate: async () => true,
       locator: (selector) =>
         selector === "html"
           ? { getAttribute: async () => "Terminal release-test workspace is missing" }
@@ -414,6 +435,7 @@ describe("packaged Terminal product smoke contract", () => {
     };
     await expect(
       waitForTerminalControl({
+        evaluate: async () => true,
         locator: (selector) =>
           selector === "html"
             ? { getAttribute: async () => null }

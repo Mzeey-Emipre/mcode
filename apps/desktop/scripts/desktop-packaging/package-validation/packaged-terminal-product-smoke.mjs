@@ -482,6 +482,12 @@ export async function waitForTerminalControl(
   page,
   { timeoutMs = 10_000, intervalMs = 100 } = {},
 ) {
+  const releaseTestBridgeEnabled = await page.evaluate(
+    () => window.desktopBridge?.terminalReleaseTest?.enabled === true,
+  );
+  if (!releaseTestBridgeEnabled) {
+    throw new Error("Terminal release-test bridge is missing");
+  }
   const terminalToggle = page.locator('[data-rail-tab="terminal"]').first();
   const html = page.locator("html");
   const deadline = Date.now() + timeoutMs;
