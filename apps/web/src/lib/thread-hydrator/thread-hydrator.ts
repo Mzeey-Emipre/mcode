@@ -272,7 +272,12 @@ export class ThreadHydrator {
       return;
     }
     const cached = getCachedRecord(threadId);
-    if (cached && !opts.force) {
+    // An empty cache can be a snapshot of a released in-flight display load.
+    if (
+      cached
+      && (cached.messages.length > 0 || cached.lastHydratedAt !== undefined)
+      && !opts.force
+    ) {
       if (!opts.isCurrent()) return;
       this.restoreFromCache(threadId, this.compactCachedRecordForRestore(threadId, cached), {
         bumpLoadEpoch: true,

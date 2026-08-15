@@ -150,18 +150,10 @@ function CanonicalDetailView({
             {lineage && <p className="truncate text-xs text-muted-foreground">{lineage}</p>}
           </div>
           <div className="flex shrink-0 items-center gap-2 font-mono text-xs text-muted-foreground">
-            <span data-testid="subagent-detail-status" aria-live="polite">{canonicalStatus(row)}</span>
             {row.model && <span>{resolveModelDisplayLabel(row.model)}</span>}
             {row.reasoning && <span>{formatReasoningLevel(row.reasoning)}</span>}
           </div>
         </div>
-        <SubagentStopControl
-          active={active}
-          canStop={row.canStop}
-          label={identity}
-          onStop={onStop}
-          onTerminal={onTerminal}
-        />
       </header>
       <Collapsible open={technicalOpen} onOpenChange={setTechnicalOpen} className="shrink-0 border-b border-border/40 px-4 py-2 text-xs text-muted-foreground" data-testid="subagent-technical-details">
         <CollapsibleTrigger asChild>
@@ -177,6 +169,17 @@ function CanonicalDetailView({
       <div className="min-h-0 flex-1">
         {displayLeaseAcquired && <MessageList displayThreadId={row.id} />}
       </div>
+      {active && row.canStop && (
+        <div data-testid="subagent-detail-actions" className="flex shrink-0 justify-end border-t border-border/40 px-4 py-2">
+          <SubagentStopControl
+            active={active}
+            canStop={row.canStop}
+            label={identity}
+            onStop={onStop}
+            onTerminal={onTerminal}
+          />
+        </div>
+      )}
     </section>
   );
 }
