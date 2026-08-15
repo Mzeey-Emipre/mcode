@@ -12,6 +12,7 @@ import {
   buildLinuxProductVerifierLaunch,
   buildLoopbackIsolationPlan,
   buildProductLaunch,
+  closeTerminalAndWaitForWorkloadCleanup,
   cleanupLoopbackIsolation,
   classifyProductSmokeOutcome,
   diagnoseDarwinSpawnHelper,
@@ -433,6 +434,62 @@ describe("packaged Terminal product smoke contract", () => {
     });
     expect(result).toMatchObject({ pids: [7], aliveAfterCleanup: [], passed: true });
     expect(result.cleanupDurationMs).toBeLessThanOrEqual(20);
+  });
+
+  it("closes Terminal before polling workload PIDs without tearing down the app", async () => {
+    const events = [];
+    const workloadPids = [101, 202, 303];
+    const page = {
+      evaluate: async () => {
+        throw new Error("app teardown must remain outside workload cleanup");
+      },
+      getByRole: () => ({
+        first: () => ({
+          count: async () => 1,
+          click: async () => events.push("close"),
+        }),
+      }),
+    };
+    const cleanup = await closeTerminalAndWaitForWorkloadCleanup(page, workloadPids, {
+      pollCleanup: async (pids) => {
+        events.push(["poll", pids]);
+        return { aliveAfterCleanup: [], passed: true };
+      },
+    });
+
+    expect(events).toEqual(["close", ["poll", workloadPids]]);
+    expect(cleanup.passed).toBe(true);
+  });
+
+  it("reports only alive workload roles and PIDs when inner cleanup fails", async () => {
+    const events = [];
+    const workloadPids = [401, 402, 403];
+    const page = {
+      getByRole: () => ({
+        first: () => ({
+          count: async () => 1,
+          click: async () => events.push("close"),
+        }),
+      }),
+    };
+
+    let failure;
+    try {
+      await closeTerminalAndWaitForWorkloadCleanup(page, workloadPids, {
+        pollCleanup: async (pids) => {
+          events.push(["poll", pids]);
+          return { aliveAfterCleanup: [401, 403], passed: false };
+        },
+      });
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure.message).toContain("parent=401");
+    expect(failure.message).toContain("grandchild=403");
+    expect(failure.message).not.toContain("child=402");
+    expect(failure.message.length).toBeLessThanOrEqual(512);
+    expect(events).toEqual(["close", ["poll", workloadPids]]);
   });
 
   it("releases every packaged process handle after a launch", () => {

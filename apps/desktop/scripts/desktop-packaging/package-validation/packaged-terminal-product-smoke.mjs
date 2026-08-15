@@ -28,6 +28,7 @@ const PROBE_DIAGNOSTIC_LINE_LIMIT = 16;
 const PROBE_DIAGNOSTIC_LINE_LENGTH = 192;
 const PROBE_DIAGNOSTIC_MAX_LENGTH = 4_096;
 const TARGET_PLATFORM = { win32: "windows", darwin: "macos", linux: "linux" };
+const WORKLOAD_PID_ROLES = ["parent", "child", "grandchild"];
 const LINUX_NAMESPACE_SCRIPT =
   'set -eu; ip_cmd="$(command -v ip || command -v /sbin/ip)"; "$ip_cmd" link set lo up; "$ip_cmd" -4 addr add 127.0.0.1/8 dev lo 2>/dev/null || true; "$ip_cmd" -6 addr add ::1/128 dev lo 2>/dev/null || true; "$ip_cmd" -4 addr show dev lo | grep -q "127.0.0.1"; "$ip_cmd" -6 addr show dev lo | grep -q "::1"';
 /** Restricts Darwin product launches and helper probes to loopback networking. */
@@ -791,11 +792,33 @@ export async function runTerminalWorkload(page, terminal, workload) {
 }
 
 function extractWorkloadPids(output) {
-  return ["parent", "child", "grandchild"].map((role) => {
+  return WORKLOAD_PID_ROLES.map((role) => {
     const match = output.match(new RegExp(`WF:cleanup:${role}:(\\d+)`));
     if (!match) throw new Error(`Process-cleanup ${role} PID marker is missing`);
     return Number(match[1]);
   });
+}
+
+/** Closes the active Terminal and waits for its workload before app teardown. */
+export async function closeTerminalAndWaitForWorkloadCleanup(
+  page,
+  workloadPids,
+  { pollCleanup = pollProcessCleanup } = {},
+) {
+  const close = page.getByRole("button", { name: /Close .*terminal|Close process tree/i }).first();
+  if (await close.count()) await close.click();
+  const cleanup = await pollCleanup(workloadPids);
+  if (!cleanup.passed) {
+    const alivePids = new Set(cleanup.aliveAfterCleanup);
+    const aliveRoles = WORKLOAD_PID_ROLES
+      .map((role, index) => alivePids.has(workloadPids[index]) ? `${role}=${workloadPids[index]}` : null)
+      .filter(Boolean)
+      .join(", ");
+    throw new Error(
+      `Terminal workload process cleanup exceeded three seconds (alive: ${aliveRoles || "none"})`,
+    );
+  }
+  return cleanup;
 }
 
 function extractHostPids(runtime) {
@@ -940,8 +963,12 @@ async function runProductBoot({ target, env, bootFault, isolationReceipt, worklo
     let newSession = null;
     const hostPids = extractHostPids(runtime);
     let processPids = [child.pid, ...hostPids];
+    let workloadPids = null;
     let renderer = workloadResult?.finalProbe ?? null;
-    if (workloadResult) processPids.push(...extractWorkloadPids(workloadResult.output));
+    if (workloadResult) {
+      workloadPids = extractWorkloadPids(workloadResult.output);
+      processPids.push(...workloadPids);
+    }
     if (bootFault !== undefined) {
       const replacementGeneration = runtime.capabilities.host?.generation;
       if (!replacementGeneration) throw new Error("Healthy replacement generation is missing");
@@ -951,11 +978,11 @@ async function runProductBoot({ target, env, bootFault, isolationReceipt, worklo
       newSession = runtime.sessions.find((session) => session.state === "running" && session.hostGeneration === replacementGeneration) ?? null;
       if (!newSession) throw new Error("Replacement did not expose a running modern session");
       renderer = replacementWorkload.finalProbe;
-      processPids.push(...extractWorkloadPids(replacementWorkload.output));
+      workloadPids = extractWorkloadPids(replacementWorkload.output);
+      processPids.push(...workloadPids);
     }
     await page.keyboard.press("Control+C").catch(() => undefined);
-    const close = page.getByRole("button", { name: /Close .*terminal|Close process tree/i }).first();
-    if (await close.count()) await close.click();
+    if (workloadPids) await closeTerminalAndWaitForWorkloadCleanup(page, workloadPids);
     return {
       initialCapabilities,
       runtime,
