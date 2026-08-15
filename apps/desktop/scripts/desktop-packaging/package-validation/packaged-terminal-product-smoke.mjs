@@ -7,6 +7,7 @@ import {
   readFileSync,
   writeFileSync,
 } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { chromium } from "playwright-core";
@@ -56,11 +57,13 @@ export const LINUX_SUDO_PRESERVE_ENV = [
 /** Marks the verifier process that was re-executed inside the Linux namespace. */
 export const LINUX_PRODUCT_NAMESPACE_MARKER = "MCODE_TERMINAL_PRODUCT_NAMESPACE";
 
-function readLinuxProductNetworkInterfaces(readdir) {
+function readLinuxProductNetworkInterfaces(networkInterfaces) {
   try {
-    const interfaces = readdir("/sys/class/net");
-    return Array.isArray(interfaces) && interfaces.every((name) => typeof name === "string")
-      ? interfaces.slice().sort()
+    const interfaces = networkInterfaces();
+    return interfaces !== null &&
+      typeof interfaces === "object" &&
+      !Array.isArray(interfaces)
+      ? Object.keys(interfaces).sort()
       : null;
   } catch {
     return null;
@@ -70,9 +73,9 @@ function readLinuxProductNetworkInterfaces(readdir) {
 /** Returns bounded Linux namespace proof diagnostics without exposing environment values. */
 export function describeLinuxProductNamespaceProof({
   env = process.env,
-  readdir = (directory) => readdirSync(directory),
+  networkInterfaces = os.networkInterfaces,
 } = {}) {
-  const interfaces = readLinuxProductNetworkInterfaces(readdir);
+  const interfaces = readLinuxProductNetworkInterfaces(networkInterfaces);
   return {
     markerPresent: env[LINUX_PRODUCT_NAMESPACE_MARKER] === "1",
     interfaces: interfaces?.slice(0, LINUX_INTERFACE_DIAGNOSTIC_LIMIT) ?? null,
@@ -92,9 +95,9 @@ function formatLinuxProductNamespaceProofDiagnostics(diagnostics) {
 /** Proves that the marked verifier exposes only the configured loopback interface. */
 export function hasLinuxProductNamespaceProof({
   env = process.env,
-  readdir = (directory) => readdirSync(directory),
+  networkInterfaces = os.networkInterfaces,
 } = {}) {
-  const diagnostics = describeLinuxProductNamespaceProof({ env, readdir });
+  const diagnostics = describeLinuxProductNamespaceProof({ env, networkInterfaces });
   return diagnostics.markerPresent &&
     diagnostics.interfaceCount === 1 &&
     diagnostics.interfaces?.[0] === "lo" &&
@@ -106,12 +109,12 @@ export function shouldReexecLinuxProductVerifier({
   command,
   platform,
   env = process.env,
-  readdir = (directory) => readdirSync(directory),
+  networkInterfaces = os.networkInterfaces,
 }) {
   return (
     command === "product" &&
     platform === "linux" &&
-    !hasLinuxProductNamespaceProof({ env, readdir })
+    !hasLinuxProductNamespaceProof({ env, networkInterfaces })
   );
 }
 
@@ -538,7 +541,7 @@ export function buildProductLaunch({
   launchArgs,
   platform,
   env = process.env,
-  readdir = (directory) => readdirSync(directory),
+  networkInterfaces = os.networkInterfaces,
 }) {
   const executablePath = path.resolve(target.executablePath);
   const isolatedLaunchArgs = ["--no-sandbox", ...launchArgs];
@@ -546,8 +549,8 @@ export function buildProductLaunch({
     throw new Error("Linux product launch requires Linux network namespace isolation");
   }
   if (isolationReceipt.mode === "linux-network-namespace") {
-    if (!hasLinuxProductNamespaceProof({ env, readdir })) {
-      const diagnostics = describeLinuxProductNamespaceProof({ env, readdir });
+    if (!hasLinuxProductNamespaceProof({ env, networkInterfaces })) {
+      const diagnostics = describeLinuxProductNamespaceProof({ env, networkInterfaces });
       throw new Error(
         `Linux Electron launch requires the isolated product verifier (${formatLinuxProductNamespaceProofDiagnostics(diagnostics)})`,
       );
@@ -628,9 +631,9 @@ export function formatProbeTimeoutDiagnostics({ probe, focus }) {
   return JSON.stringify(diagnostics).slice(0, PROBE_DIAGNOSTIC_MAX_LENGTH);
 }
 
-async function waitForProbe(page, predicate, timeoutMs = 10_000) {
+async function waitForProbe(page, predicate, timeoutMs = 10_000, terminal) {
   const deadline = Date.now() + timeoutMs;
-  const probe = page.locator("[data-terminal-release-test-probe]").first();
+  const probe = terminal ?? page.locator("[data-terminal-release-test-probe]").first();
   let lastProbe;
   while (Date.now() < deadline) {
     const value = await probe.getAttribute("data-terminal-release-test-probe");
@@ -754,9 +757,9 @@ export async function waitForTerminalControl(
   }
 }
 
-async function runTerminalWorkload(page, terminal, workload) {
-  await sendTerminalCommand(page, commandForWorkload(workload));
-  await waitForProbe(page, (snapshot) => snapshot.normalizedLines.some((line) => line.includes(workload.synchronizationMarker)));
+/** Runs the finite renderer-wrap probe before the persistent cleanup workload. */
+export async function runTerminalWorkload(page, terminal, workload) {
+  await waitForProbe(page, () => true, 10_000, terminal);
   const initialProbe = JSON.parse(await terminal.getAttribute("data-terminal-release-test-probe"));
   await page.setViewportSize({ width: 1_040, height: 620 });
   await page.waitForTimeout(150);
@@ -766,7 +769,22 @@ async function runTerminalWorkload(page, terminal, workload) {
   }
   const longLine = "MCODE_RELEASE_WRAP_" + "x".repeat(Math.max(80, resizedProbe.cols + 20));
   await sendTerminalCommand(page, `printf '${longLine}\\n'`);
-  await waitForProbe(page, (snapshot) => snapshot.normalizedLines.some((line) => line.includes("MCODE_RELEASE_WRAP_")));
+  await waitForProbe(
+    page,
+    (snapshot) => snapshot.normalizedLines.some((line) => line.includes("MCODE_RELEASE_WRAP_")),
+    10_000,
+    terminal,
+  );
+  const wrappedProbe = JSON.parse(await terminal.getAttribute("data-terminal-release-test-probe"));
+  if (!wrappedProbe.lines.some((line) => line.wrapped)) throw new Error("Wrap probe has no wrapped cell evidence");
+
+  await sendTerminalCommand(page, commandForWorkload(workload));
+  await waitForProbe(
+    page,
+    (snapshot) => snapshot.normalizedLines.some((line) => line.includes(workload.synchronizationMarker)),
+    10_000,
+    terminal,
+  );
   const finalProbe = JSON.parse(await terminal.getAttribute("data-terminal-release-test-probe"));
   if (!finalProbe.lines.some((line) => line.wrapped)) throw new Error("Final xterm state has no wrapped cell evidence");
   return { finalProbe, output: finalProbe.normalizedLines.join("\n") };

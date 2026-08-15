@@ -24,6 +24,7 @@ import {
   parseProductSmokeArguments,
   pollProcessCleanup,
   releaseProductProcess,
+  runTerminalWorkload,
   sendTerminalCommand,
   formatProbeTimeoutDiagnostics,
   summarizeReleaseProbe,
@@ -172,52 +173,69 @@ describe("packaged Terminal product smoke contract", () => {
     );
     expect(hostileLaunch.args.slice(shellArgumentDelimiter + 1)).toEqual(hostileVerifierArgs);
 
-    const onlyLoopbackInterfaces = () => ["lo"];
-    const missingLoopbackInterfaces = () => ["eth0"];
-    const extraNetworkInterfaces = () => ["eth0", "lo"];
+    const onlyLoopbackInterfaces = () => ({
+      lo: [{ address: "127.0.0.1" }],
+    });
+    const missingLoopbackInterfaces = () => ({
+      eth0: [{ address: "192.0.2.10" }],
+    });
+    const extraNetworkInterfaces = () => ({
+      docker0: [{ address: "192.0.2.20" }],
+      lo: [{ address: "127.0.0.1" }],
+      bsdummy6: [{ address: "192.0.2.30" }],
+    });
+    const manyNetworkInterfaces = () => Object.fromEntries(
+      Array.from({ length: 40 }, (_, index) => [`eth${index}`, []]),
+    );
     const unreadableInterfaces = () => {
       throw new Error("network interface directory unavailable");
     };
     expect(
       hasLinuxProductNamespaceProof({
         env: {},
-        readdir: onlyLoopbackInterfaces,
+        networkInterfaces: onlyLoopbackInterfaces,
       }),
     ).toBe(false);
     expect(
       hasLinuxProductNamespaceProof({
         env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
-        readdir: onlyLoopbackInterfaces,
+        networkInterfaces: onlyLoopbackInterfaces,
       }),
     ).toBe(true);
     expect(
       hasLinuxProductNamespaceProof({
         env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
-        readdir: extraNetworkInterfaces,
+        networkInterfaces: extraNetworkInterfaces,
       }),
     ).toBe(false);
     expect(
       hasLinuxProductNamespaceProof({
         env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
-        readdir: missingLoopbackInterfaces,
+        networkInterfaces: missingLoopbackInterfaces,
       }),
     ).toBe(false);
     expect(
       hasLinuxProductNamespaceProof({
         env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
-        readdir: unreadableInterfaces,
+        networkInterfaces: unreadableInterfaces,
       }),
     ).toBe(false);
     expect(
       hasLinuxProductNamespaceProof({
         env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
-        readdir: () => null,
+        networkInterfaces: () => null,
+      }),
+    ).toBe(false);
+    expect(
+      hasLinuxProductNamespaceProof({
+        env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
+        networkInterfaces: () => [],
       }),
     ).toBe(false);
     expect(
       describeLinuxProductNamespaceProof({
         env: {},
-        readdir: onlyLoopbackInterfaces,
+        networkInterfaces: onlyLoopbackInterfaces,
       }),
     ).toEqual({
       markerPresent: false,
@@ -225,10 +243,18 @@ describe("packaged Terminal product smoke contract", () => {
       interfaceCount: 1,
       interfacesTruncated: false,
     });
+    const boundedDiagnostics = describeLinuxProductNamespaceProof({
+      env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
+      networkInterfaces: manyNetworkInterfaces,
+    });
+    expect(boundedDiagnostics.interfaces).toHaveLength(32);
+    expect(boundedDiagnostics.interfaces).toEqual([...boundedDiagnostics.interfaces].sort());
+    expect(boundedDiagnostics.interfaceCount).toBe(40);
+    expect(boundedDiagnostics.interfacesTruncated).toBe(true);
     expect(
       describeLinuxProductNamespaceProof({
         env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
-        readdir: unreadableInterfaces,
+        networkInterfaces: unreadableInterfaces,
       }),
     ).toEqual({
       markerPresent: true,
@@ -241,7 +267,7 @@ describe("packaged Terminal product smoke contract", () => {
         command: "product",
         platform: "linux",
         env: {},
-        readdir: onlyLoopbackInterfaces,
+        networkInterfaces: onlyLoopbackInterfaces,
       }),
     ).toBe(true);
     expect(
@@ -249,7 +275,7 @@ describe("packaged Terminal product smoke contract", () => {
         command: "product",
         platform: "linux",
         env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
-        readdir: extraNetworkInterfaces,
+        networkInterfaces: extraNetworkInterfaces,
       }),
     ).toBe(true);
     expect(
@@ -257,7 +283,7 @@ describe("packaged Terminal product smoke contract", () => {
         command: "product",
         platform: "linux",
         env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
-        readdir: onlyLoopbackInterfaces,
+        networkInterfaces: onlyLoopbackInterfaces,
       }),
     ).toBe(false);
 
@@ -267,7 +293,7 @@ describe("packaged Terminal product smoke contract", () => {
       launchArgs: ["--remote-debugging-port=39000"],
       platform: "linux",
       env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
-      readdir: onlyLoopbackInterfaces,
+      networkInterfaces: onlyLoopbackInterfaces,
     });
     expect(linuxLaunch.command).toBe(path.resolve(executable));
     expect(linuxLaunch.args.at(-1)).toBe("--remote-debugging-port=39000");
@@ -281,9 +307,9 @@ describe("packaged Terminal product smoke contract", () => {
         launchArgs: [],
         platform: "linux",
         env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
-        readdir: extraNetworkInterfaces,
+        networkInterfaces: extraNetworkInterfaces,
       }),
-    ).toThrow(/isolated product verifier.*interfaces=\["eth0","lo"\]/);
+    ).toThrow(/isolated product verifier.*interfaces=\["bsdummy6","docker0","lo"\]/);
     expect(() =>
       buildProductLaunch({
         target: { executablePath: executable },
@@ -291,7 +317,7 @@ describe("packaged Terminal product smoke contract", () => {
         launchArgs: [],
         platform: "linux",
         env: { MCODE_TERMINAL_PRODUCT_NAMESPACE: "1" },
-        readdir: true,
+        networkInterfaces: true,
       }),
     ).toThrow("isolated product verifier");
     const macLaunch = buildProductLaunch({
@@ -498,6 +524,80 @@ describe("packaged Terminal product smoke contract", () => {
     expect(diagnostics).toContain('"cols":80');
     expect(diagnostics).toContain('"tagName":"TEXTAREA"');
     expect(diagnostics.length).toBeLessThanOrEqual(4_096);
+  });
+
+  it("runs the finite wrap command before the foreground cleanup workload", async () => {
+    const commands = [];
+    let pageLocatorCalls = 0;
+    let terminalProbeReads = 0;
+    let probeIndex = 0;
+    const probes = [
+      {
+        cols: 80,
+        rows: 24,
+        lines: [],
+        normalizedLines: [],
+      },
+      {
+        cols: 100,
+        rows: 24,
+        lines: [],
+        normalizedLines: [],
+      },
+      {
+        cols: 100,
+        rows: 24,
+        lines: [{ text: "MCODE_RELEASE_WRAP_" + "x".repeat(120), wrapped: true }],
+        normalizedLines: ["MCODE_RELEASE_WRAP_" + "x".repeat(120)],
+      },
+      {
+        cols: 100,
+        rows: 24,
+        lines: [{ text: "MCODE_RELEASE_WRAP_" + "x".repeat(120), wrapped: true }],
+        normalizedLines: [
+          "MCODE_RELEASE_WRAP_" + "x".repeat(120),
+          "WF:cleanup:parent:10",
+          "WF:cleanup:child:11",
+          "WF:cleanup:grandchild:12",
+        ],
+      },
+    ];
+    const serializedProbe = () => JSON.stringify(probes[probeIndex]);
+    const page = {
+      keyboard: {
+        insertText: async (command) => commands.push(command),
+        press: async (key) => {
+          if (key === "Enter") probeIndex += 1;
+        },
+      },
+      locator: () => {
+        pageLocatorCalls += 1;
+        throw new Error("runTerminalWorkload must use the supplied terminal locator");
+      },
+      setViewportSize: async () => {
+        probeIndex = 1;
+      },
+      waitForTimeout: async () => undefined,
+    };
+    const terminal = {
+      getAttribute: async () => {
+        terminalProbeReads += 1;
+        return serializedProbe();
+      },
+    };
+
+    const result = await runTerminalWorkload(page, terminal, {
+      program: { source: "setInterval(() => {}, 1_000)" },
+      synchronizationMarker: "WF:cleanup:parent",
+    });
+
+    expect(commands).toHaveLength(2);
+    expect(commands[0]).toContain("MCODE_RELEASE_WRAP_");
+    expect(commands[1]).toContain("node -e");
+    expect(result.output).toContain("WF:cleanup:parent:10");
+    expect(result.finalProbe.lines.some((line) => line.wrapped)).toBe(true);
+    expect(terminalProbeReads).toBeGreaterThan(0);
+    expect(pageLocatorCalls).toBe(0);
   });
 
   it("fails immediately when the packaged Terminal controls are missing", async () => {
