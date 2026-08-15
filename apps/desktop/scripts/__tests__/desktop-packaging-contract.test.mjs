@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import {
   assertDesktopWorkflowMatrices,
@@ -8,11 +15,36 @@ import {
   resolveDesktopTargetPackagePlans,
 } from "../desktop-packaging/target-inventory/target-inventory.mjs";
 import {
+  buildElectronBuilderArgs,
   classifyElectronBuilderFailure,
+  prepareDarwinNodePtySource,
   runElectronBuilderWithRetry,
 } from "../desktop-packaging/target-package/ci-package.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "../../../..");
+
+function createNodePtyFixture(version = "1.1.0") {
+  const desktopRoot = mkdtempSync(path.join(os.tmpdir(), "mcode-ci-package-"));
+  const packageRoot = path.join(desktopRoot, "node_modules", "node-pty");
+  mkdirSync(packageRoot, { recursive: true });
+  writeFileSync(
+    path.join(packageRoot, "package.json"),
+    `${JSON.stringify({ name: "node-pty", version })}\n`,
+  );
+  return { desktopRoot, packageRoot };
+}
+
+function createPatchFixture() {
+  const fixtureRoot = mkdtempSync(path.join(os.tmpdir(), "mcode-ci-patch-"));
+  const patchPath = path.join(fixtureRoot, "patches", "node-pty@1.1.0.patch");
+  mkdirSync(path.dirname(patchPath), { recursive: true });
+  writeFileSync(patchPath, "fixture patch");
+  return { fixtureRoot, patchPath };
+}
+
+function removeFixture(...roots) {
+  for (const root of roots) rmSync(root, { recursive: true, force: true });
+}
 
 describe("desktop packaging target inventory", () => {
   it("covers every target used by the package matrix", () => {
@@ -175,6 +207,133 @@ describe("electron-builder transient failure classification", () => {
     expect(result).toMatchObject({ status: 0 });
     expect(attempts).toEqual([1, 2]);
   });
+});
+
+describe("Darwin node-pty packaging boundary", () => {
+  it("applies the exact package patch before enabling source rebuild", () => {
+    const { desktopRoot, packageRoot } = createNodePtyFixture();
+    const { fixtureRoot, patchPath } = createPatchFixture();
+    const calls = [];
+    try {
+      expect(
+        prepareDarwinNodePtySource({
+          desktopRoot,
+          hostPlatform: "darwin",
+          repoRoot: fixtureRoot,
+          runCommand: (command, args, options) => {
+            calls.push({ command, args, options });
+            return { status: 0, stdout: "", stderr: "" };
+          },
+        }),
+      ).toEqual({ applied: true, packageRoot, patchPath });
+      expect(calls.map(({ command, args }) => [command, args])).toEqual([
+        ["git", ["apply", "--check", patchPath]],
+        ["git", ["apply", patchPath]],
+      ]);
+      expect(calls[0].options).toMatchObject({ cwd: packageRoot });
+      expect(calls[0].options.shell).toBeUndefined();
+      expect(
+        buildElectronBuilderArgs({
+          electronBuilderCli: "electron-builder.js",
+          buildArgs: ["--mac", "--arm64"],
+          hostPlatform: "darwin",
+        }),
+      ).toEqual([
+        "electron-builder.js",
+        "--publish",
+        "never",
+        "--mac",
+        "--arm64",
+        "--config.buildDependenciesFromSource=true",
+      ]);
+    } finally {
+      removeFixture(desktopRoot, fixtureRoot);
+    }
+  });
+
+  it("skips the patch and source-build argument on non-Darwin hosts", () => {
+    const { desktopRoot } = createNodePtyFixture();
+    const calls = [];
+    try {
+      for (const hostPlatform of ["linux", "win32"]) {
+        expect(
+          prepareDarwinNodePtySource({
+            desktopRoot,
+            hostPlatform,
+            runCommand: (...args) => calls.push(args),
+          }),
+        ).toEqual({ applied: false });
+      }
+      expect(calls).toEqual([]);
+      expect(
+        buildElectronBuilderArgs({
+          electronBuilderCli: "electron-builder.js",
+          buildArgs: ["--linux"],
+          hostPlatform: "win32",
+        }),
+      ).toEqual(["electron-builder.js", "--publish", "never", "--linux"]);
+    } finally {
+      removeFixture(desktopRoot);
+    }
+  });
+
+  it("rejects a Darwin node-pty version other than 1.1.0", () => {
+    const { desktopRoot } = createNodePtyFixture("1.1.1");
+    try {
+      expect(() =>
+        prepareDarwinNodePtySource({ desktopRoot, hostPlatform: "darwin" }),
+      ).toThrow("must be exactly 1.1.0");
+    } finally {
+      removeFixture(desktopRoot);
+    }
+  });
+
+  it("fails closed when git apply check fails", () => {
+    const { desktopRoot } = createNodePtyFixture();
+    const { fixtureRoot } = createPatchFixture();
+    const calls = [];
+    try {
+      expect(() =>
+        prepareDarwinNodePtySource({
+          desktopRoot,
+          hostPlatform: "darwin",
+          repoRoot: fixtureRoot,
+          runCommand: (command, args) => {
+            calls.push({ command, args });
+            return { status: 1, stderr: "x".repeat(10_000) };
+          },
+        }),
+      ).toThrow(/git apply check failed/);
+      expect(calls).toHaveLength(1);
+    } finally {
+      removeFixture(desktopRoot, fixtureRoot);
+    }
+  });
+
+  it("fails closed when git apply fails after a successful check", () => {
+    const { desktopRoot } = createNodePtyFixture();
+    const { fixtureRoot } = createPatchFixture();
+    const calls = [];
+    try {
+      expect(() =>
+        prepareDarwinNodePtySource({
+          desktopRoot,
+          hostPlatform: "darwin",
+          repoRoot: fixtureRoot,
+          runCommand: (command, args) => {
+            calls.push({ command, args });
+            return calls.length === 1
+              ? { status: 0 }
+              : { status: 2, stderr: "apply failed" };
+          },
+        }),
+      ).toThrow(/git apply apply failed/);
+      expect(calls).toHaveLength(2);
+    } finally {
+      removeFixture(desktopRoot, fixtureRoot);
+    }
+  });
+
 });
 
 describe("desktop packaging workflow contract", () => {

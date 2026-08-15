@@ -10,6 +10,8 @@ import { sanitizePackageManifest } from "./sanitize-package-manifest.mjs";
 
 const MAX_ATTEMPTS = 3;
 const DEFAULT_DIAGNOSTIC_LIMIT_BYTES = 64 * 1024;
+const DARWIN_NODE_PTY_VERSION = "1.1.0";
+const PATCH_COMMAND_DIAGNOSTIC_LIMIT_BYTES = 4 * 1024;
 const ELECTRON_DOWNLOAD_URL = /(?:https:\/\/github\.com\/electron\/electron\/releases\/download\/|https:\/\/(?:www\.)?electronjs\.org\/headers\/v\d+(?:\.\d+){2}\/node-v\d+(?:\.\d+){2}-headers\.tar\.gz\b)/i;
 const TRANSIENT_DOWNLOAD_FAILURE = /\b(?:EOF|ECONNRESET|ETIMEDOUT|temporary connection failure)\b/i;
 
@@ -33,6 +35,88 @@ function boundedTail(value, limitBytes) {
   if (Buffer.byteLength(text) <= limitBytes) return text;
   const bytes = Buffer.from(text);
   return bytes.subarray(bytes.length - limitBytes).toString("utf8");
+}
+
+function patchCommandDiagnostics(result) {
+  const output = [result?.error?.message ?? result?.error, result?.stderr, result?.stdout]
+    .filter((value) => value != null)
+    .map((value) => String(value))
+    .join("\n");
+  return boundedTail(output, PATCH_COMMAND_DIAGNOSTIC_LIMIT_BYTES);
+}
+
+function assertPatchCommandSucceeded(result, stage) {
+  if (result?.status === 0 && !result.error && !result.signal) return;
+  const diagnostics = patchCommandDiagnostics(result);
+  const suffix = diagnostics ? `: ${diagnostics}` : "";
+  throw new Error(
+    `[ci-package] git apply ${stage} failed with status ${result?.status ?? "unknown"}${suffix}`,
+  );
+}
+
+/**
+ * Applies the pinned Darwin node-pty source patch after npm has installed the target package.
+ *
+ * @param {{
+ *   desktopRoot: string,
+ *   hostPlatform?: NodeJS.Platform,
+ *   repoRoot?: string,
+ *   runCommand?: (command: string, args: string[], options: object) => object,
+ * }} options
+ * @returns {{ applied: boolean, packageRoot?: string, patchPath?: string }}
+ */
+export function prepareDarwinNodePtySource({
+  desktopRoot,
+  hostPlatform = process.platform,
+  repoRoot = resolve(desktopRoot, "..", ".."),
+  runCommand = (command, args, options) => spawnSync(command, args, options),
+}) {
+  if (hostPlatform !== "darwin") return { applied: false };
+
+  const packageRoot = resolve(desktopRoot, "node_modules", "node-pty");
+  const packageManifest = JSON.parse(
+    readFileSync(resolve(packageRoot, "package.json"), "utf8"),
+  );
+  if (packageManifest.version !== DARWIN_NODE_PTY_VERSION) {
+    throw new Error(
+      `[ci-package] Darwin node-pty package must be exactly ${DARWIN_NODE_PTY_VERSION}`,
+    );
+  }
+
+  const patchPath = resolve(repoRoot, "patches", "node-pty@1.1.0.patch");
+  if (!existsSync(patchPath)) {
+    throw new Error("[ci-package] Darwin node-pty source patch is missing");
+  }
+  const commandOptions = {
+    cwd: packageRoot,
+    encoding: "utf8",
+    maxBuffer: PATCH_COMMAND_DIAGNOSTIC_LIMIT_BYTES,
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 30_000,
+    windowsHide: true,
+  };
+  assertPatchCommandSucceeded(
+    runCommand("git", ["apply", "--check", patchPath], commandOptions),
+    "check",
+  );
+  assertPatchCommandSucceeded(
+    runCommand("git", ["apply", patchPath], commandOptions),
+    "apply",
+  );
+  return { applied: true, packageRoot, patchPath };
+}
+
+/** Builds the electron-builder command line for the current packaging host. */
+export function buildElectronBuilderArgs({
+  electronBuilderCli,
+  buildArgs = [],
+  hostPlatform = process.platform,
+}) {
+  const args = [electronBuilderCli, "--publish", "never", ...buildArgs];
+  if (hostPlatform === "darwin") {
+    args.push("--config.buildDependenciesFromSource=true");
+  }
+  return args;
 }
 
 function packageFailure({ status, diagnostics, attempts, attemptLimit }) {
@@ -192,9 +276,14 @@ async function packageDesktop() {
   });
   if (npmResult.status !== 0) throw new Error("[ci-package] npm install failed");
 
+  prepareDarwinNodePtySource({ desktopRoot: scriptRoot });
+
   const electronBuilderCli = findElectronBuilderCli(scriptRoot);
   const nodeExecutable = process.platform === "win32" ? "node.exe" : "node";
-  const args = [electronBuilderCli, "--publish", "never", ...process.argv.slice(2)];
+  const args = buildElectronBuilderArgs({
+    electronBuilderCli,
+    buildArgs: process.argv.slice(2),
+  });
   const result = await runElectronBuilderWithRetry({
     runAttempt: () =>
       runElectronBuilderAttempt({
