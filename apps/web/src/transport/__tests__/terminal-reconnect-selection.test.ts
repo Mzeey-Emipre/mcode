@@ -24,7 +24,7 @@ describe("resolveSelectedTerminalId", () => {
     })).toBeNull();
   });
 
-  it("reattaches the selected starting session but leaves tombstones headless", () => {
+  it("reattaches the selected starting session and retained tombstones", () => {
     expect(shouldReattachSelectedTerminal(
       { ptyId: "pty-starting", state: "starting" },
       "pty-starting",
@@ -32,6 +32,6 @@ describe("resolveSelectedTerminalId", () => {
     expect(shouldReattachSelectedTerminal(
       { ptyId: "pty-exited", state: "exited" },
       "pty-exited",
-    )).toBe(false);
+    )).toBe(true);
   });
 });

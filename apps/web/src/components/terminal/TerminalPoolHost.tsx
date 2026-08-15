@@ -1,5 +1,7 @@
 import { createPortal } from "react-dom";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { TerminalBackendCapabilities } from "@mcode/contracts";
+import { getTransport } from "@/transport";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useDiffStore } from "@/stores/diffStore";
 import {
@@ -11,7 +13,6 @@ import { useTerminalPoolSlot } from "./TerminalPoolSlotContext";
 import { isContainerReadyForFit } from "./safeFit";
 import { dispatchTerminalPoolRefit } from "./terminalPoolRefit";
 import { resolveActiveTerminalId } from "./resolveActiveTerminalId";
-import { getTransport } from "@/transport";
 
 /**
  * Mounts at most one terminal view (ADR-0010): the active shell on the active
@@ -56,29 +57,23 @@ export function TerminalPoolHost() {
   }, [terminalTabVisible]);
 
   const terminals = useTerminalStore((s) => s.terminals);
+  const [terminalCapabilities, setTerminalCapabilities] = useState<TerminalBackendCapabilities | null>(null);
 
   useEffect(() => {
-    const unsubs = Object.values(terminals).flat().map((terminal) =>
-      getTransport().terminalSubscribe(terminal.id, { onExit: () => {
-        const state = useTerminalStore.getState();
-        const scopeId = state.ptyToThread[terminal.id];
-        if (!scopeId) return;
-        state.removeTerminal(terminal.id);
-        const workspace = useWorkspaceStore.getState();
-        const thread = workspace.threads.find((candidate) => candidate.id === scopeId);
-        const workspaceId = thread?.workspace_id ??
-          (workspace.workspaces.some((candidate) => candidate.id === scopeId) ? scopeId : undefined);
-        if (workspaceId) {
-          useDiffStore.getState().closeRightPanelTabInstance(
-            workspaceId,
-            thread ? scopeId : undefined,
-            `terminal:${terminal.id}`,
-          );
-        }
-      }}),
-    );
-    return () => unsubs.forEach((unsubscribe) => unsubscribe());
-  }, [terminals]);
+    let disposed = false;
+    void Promise.resolve()
+      .then(() => getTransport().terminalCapabilities())
+      .then((capabilities) => {
+        if (!disposed) setTerminalCapabilities(capabilities);
+      })
+      .catch(() => {
+        // Capability absence keeps unsupported recovery actions hidden.
+      });
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
   const storedActiveTerminalId = useTerminalStore((s) =>
     terminalScopeId
       ? (s.terminalPanelByThread[terminalScopeId] ?? TERMINAL_PANEL_DEFAULTS)
@@ -119,7 +114,7 @@ export function TerminalPoolHost() {
       ? terminals[terminalScopeId]?.find(
           (terminal) =>
             terminal.id === activeTerminalId &&
-            (terminal.state ?? "running") === "running",
+            (terminal.state ?? "running") !== "starting",
         )
       : undefined;
 
@@ -210,6 +205,10 @@ export function TerminalPoolHost() {
       <TerminalView
         key={mountedTerm.id}
         ptyId={mountedTerm.id}
+        ownerScopeId={mountedTerm.threadId}
+        sessionState={mountedTerm.state ?? "running"}
+        exit={mountedTerm.exit}
+        diagnosticsAvailable={terminalCapabilities?.contractVersion === 1 && terminalCapabilities.backend === "modern"}
         visible={displayed}
         threadActive={displayed}
         onDisposed={handleDisposed}

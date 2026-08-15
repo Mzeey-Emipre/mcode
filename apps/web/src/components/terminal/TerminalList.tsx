@@ -1,11 +1,27 @@
 import { memo } from "react";
 import { Terminal, X, Plus, Trash2, ChevronsLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { useTerminalStore, type TerminalInstance } from "@/stores/terminalStore";
 import { cn } from "@/lib/utils";
 
 const EMPTY_TERMINALS: readonly TerminalInstance[] = [];
+
+function terminalStateLabel(terminal: TerminalInstance): string {
+  switch (terminal.state) {
+    case "exited":
+      return "Exited";
+    case "failed":
+      return "Failed";
+    case "starting":
+      return "Starting";
+    case "exiting":
+      return "Closing";
+    default:
+      return "Running";
+  }
+}
 
 /** Props for the terminal sidebar. */
 interface TerminalListProps {
@@ -73,6 +89,7 @@ export const TerminalList = memo(function TerminalList({
         <div className="flex flex-1 flex-col items-center gap-0.5 overflow-y-auto py-1">
           {terminals.map((terminal) => {
             const isActive = terminal.id === activeTerminalId;
+            const stateLabel = terminalStateLabel(terminal);
             return (
               <div key={terminal.id} className={shellRowClass(isActive)}>
                 <Tooltip>
@@ -84,7 +101,7 @@ export const TerminalList = memo(function TerminalList({
                         size="icon-xs"
                         onClick={() => setActiveTerminal(threadId, terminal.id)}
                         className="bg-transparent hover:bg-transparent active:translate-y-0 active:bg-transparent"
-                        aria-label={terminal.label}
+                        aria-label={`${terminal.label}, ${stateLabel}`}
                         aria-current={isActive ? "true" : undefined}
                       />
                     }
@@ -167,6 +184,7 @@ export const TerminalList = memo(function TerminalList({
       <div className="flex-1 overflow-y-auto py-1">
         {terminals.map((terminal) => {
           const isActive = terminal.id === activeTerminalId;
+          const stateLabel = terminalStateLabel(terminal);
           return (
             <div key={terminal.id} className={shellRowClass(isActive)}>
               <Button
@@ -175,6 +193,8 @@ export const TerminalList = memo(function TerminalList({
                 className={shellSelectButtonClass}
                 onClick={() => setActiveTerminal(threadId, terminal.id)}
                 aria-current={isActive ? "true" : undefined}
+                aria-label={`${terminal.label}, ${stateLabel}`}
+                data-terminal-state={terminal.state ?? "running"}
               >
                 <Terminal
                   className={cn(
@@ -190,6 +210,11 @@ export const TerminalList = memo(function TerminalList({
                 >
                   {terminal.label}
                 </span>
+                {stateLabel !== "Running" ? (
+                  <Badge variant="secondary" size="sm" className="ml-auto">
+                    {stateLabel}
+                  </Badge>
+                ) : null}
               </Button>
               <Button
                 type="button"

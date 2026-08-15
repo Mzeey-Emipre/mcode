@@ -8,8 +8,13 @@ import {
   encodeTerminalFrame,
   type TerminalBackendCapabilities,
   type TerminalBinaryFrame,
+  type TerminalHealthSnapshot,
 } from "@mcode/contracts";
-import type { PtyHostAdapter, PtyHostHealth } from "../host/pty-host-adapter.js";
+import type {
+  PtyHostAdapter,
+  PtyHostDiagnostics,
+  PtyHostHealth,
+} from "../host/pty-host-adapter.js";
 import type {
   TerminalRuntimeDeliveryEvent,
   TerminalSessionRuntime,
@@ -21,6 +26,7 @@ import {
   type TerminalBackendSender,
   type TerminalReattachResult,
 } from "../terminal-backend.js";
+import { TerminalDiagnosticsService } from "../diagnostics/terminal-diagnostics-service.js";
 
 interface AttachmentRoute {
   readonly client: WebSocket;
@@ -59,16 +65,25 @@ export class ModernTerminalBackend extends TerminalBackend {
   private readonly attachments = new Map<string, AttachmentRoute>();
   private readonly uploads = new Map<string, CheckpointUpload>();
   private readonly selectedAt = new Date().toISOString();
+  private readonly diagnostics: TerminalDiagnosticsService;
   private readonly startPromise: Promise<PtyHostHealth>;
   private readonly unsubscribeDelivery: () => void;
 
   constructor(
     private readonly sessions: TerminalSessionService,
     private readonly runtime: TerminalSessionRuntime,
-    private readonly host: PtyHostAdapter & { health(): PtyHostHealth },
+    private readonly host: PtyHostAdapter & {
+      health(): PtyHostHealth;
+      diagnostics(): PtyHostDiagnostics;
+    },
     private readonly sessionLimit: () => number,
+    diagnostics?: TerminalDiagnosticsService,
   ) {
     super();
+    this.diagnostics = diagnostics ?? new TerminalDiagnosticsService({
+      backend: () => "modern",
+      health: () => this.healthSnapshot(),
+    });
     this.startPromise = host.start();
     this.unsubscribeDelivery = runtime.subscribeDelivery?.((event) => this.deliver(event)) ?? (() => undefined);
   }
@@ -98,6 +113,8 @@ export class ModernTerminalBackend extends TerminalBackend {
     if (!contract) throw new Error(`Unsupported Terminal v1 method: ${method}`);
     const input = contract.params.parse(params) as Record<string, unknown>;
     if (method === "terminal.capabilities") return this.capabilities();
+    if (method === "terminal.diagnostics.report") return this.diagnostics.report(input);
+    if (method === "terminal.diagnostics.getBundle") return this.diagnostics.getBundle();
     try {
       await this.startPromise;
     } catch (error) {
@@ -158,6 +175,21 @@ export class ModernTerminalBackend extends TerminalBackend {
       default:
         throw new Error(`Terminal v1 method is outside the protected session path: ${method}`);
     }
+  }
+
+  private healthSnapshot(): TerminalHealthSnapshot {
+    const health = this.host.health();
+    const diagnostics = this.host.diagnostics();
+    return {
+      contractVersion: 1,
+      state: health.state,
+      hostGeneration: health.hostGeneration,
+      activeSessions: Math.min(this.sessions.listSessions().length, 20),
+      lastHeartbeatMsAgo: diagnostics.lastHeartbeatMsAgo,
+      queueBytes: diagnostics.queueBytes,
+      eventLoopLagMs: diagnostics.eventLoopLagMs,
+      hostRssBytes: diagnostics.hostRssBytes,
+    };
   }
 
   /** Applies a strict Terminal v1 attachment frame. */

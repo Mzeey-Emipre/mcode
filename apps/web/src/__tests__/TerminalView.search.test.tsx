@@ -53,8 +53,20 @@ const searchHarness = vi.hoisted(() => {
   };
 });
 
+const terminalOptions: {
+  scrollback: number;
+  disableStdin: boolean;
+  allowProposedApi: boolean;
+  screenReaderMode: boolean | undefined;
+} = {
+  scrollback: 0,
+  disableStdin: false,
+  allowProposedApi: false,
+  screenReaderMode: undefined,
+};
+
 const term = {
-  options: { scrollback: 0, disableStdin: false, allowProposedApi: false },
+  options: terminalOptions,
   buffer: { active: { viewportY: 0, length: 1 } },
   cols: 80,
   rows: 24,
@@ -62,6 +74,7 @@ const term = {
     addon.activate?.(term);
   }),
   open: vi.fn(),
+  registerLinkProvider: vi.fn(() => ({ dispose: vi.fn() })),
   attachCustomKeyEventHandler: vi.fn(),
   getSelection: vi.fn(() => ""),
   hasSelection: vi.fn(() => false),
@@ -178,6 +191,7 @@ describe("TerminalView terminal search wiring", () => {
     const view = render(<TerminalView ptyId="pty-search" visible threadActive />);
     await settle();
     expect(term.options.allowProposedApi).toBe(true);
+    expect(term.options.screenReaderMode).toBe(false);
 
     const handler = term.attachCustomKeyEventHandler.mock.calls[0]?.[0];
     const preventDefault = vi.fn();

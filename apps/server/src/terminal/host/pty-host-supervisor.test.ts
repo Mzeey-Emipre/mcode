@@ -117,6 +117,12 @@ describe("PtyHostSupervisor", () => {
       hostGeneration: "1",
       state: "healthy",
     });
+    expect(supervisor.diagnostics()).toMatchObject({
+      lastHeartbeatMsAgo: 0,
+      queueBytes: 0,
+      eventLoopLagMs: 0,
+      hostRssBytes: "1",
+    });
     expect(children).toHaveLength(1);
 
     children[0]!.crash();

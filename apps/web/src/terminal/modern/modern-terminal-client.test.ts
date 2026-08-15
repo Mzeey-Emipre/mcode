@@ -355,6 +355,93 @@ describe("ModernTerminalClient", () => {
     ]);
   });
 
+  it("delivers structured replay gaps and exit metadata for the current attachment", async () => {
+    let attachmentId = "";
+    const rpc = vi.fn(async (method: string, params: Record<string, unknown>) => {
+      if (method !== "terminal.session.attach") throw new Error(`Unexpected RPC: ${method}`);
+      attachmentId = String(params.attachmentId);
+      return { attachmentId, attachmentEpoch: "1", hydrationId };
+    });
+    const client = new ModernTerminalClient(
+      rpc as never,
+      vi.fn(),
+      capabilities,
+      async () => ({ kind: "workspace", workspaceId: sessionId }),
+    );
+    const gaps: unknown[] = [];
+    const exits: unknown[] = [];
+    client.subscribe(sessionId, {
+      onReconnectGap: (gap) => gaps.push(gap),
+      onExit: (exit) => exits.push(exit),
+    });
+
+    const reattach = client.reattach(sessionId, -1);
+    const hydration = {
+      hydrationId,
+      mode: "delta",
+      requestedAfterSeq: "0",
+      checkpointThroughSeq: null,
+      firstOutputSeq: null,
+      lastOutputSeq: null,
+      gap: null,
+      chunkCount: 0,
+      totalBytes: 0,
+    };
+    client.handleFrame(encodeTerminalFrame({
+      kind: "hydrationComplete",
+      sessionId,
+      attachmentId,
+      hydrationId,
+      hostGeneration,
+      attachmentEpoch: "1",
+      primarySeq: "0",
+      relatedSeq: "0",
+      payload: new TextEncoder().encode(JSON.stringify(hydration)),
+    }));
+    await reattach;
+
+    const gap = {
+      kind: "replay",
+      firstMissingSeq: "1",
+      lastMissingSeq: "1",
+      retainedFromSeq: "2",
+      retainedThroughSeq: "2",
+      reason: "evicted",
+    } as const;
+    client.handleFrame(encodeTerminalFrame({
+      kind: "gap",
+      sessionId,
+      attachmentId,
+      hydrationId,
+      hostGeneration,
+      attachmentEpoch: "1",
+      primarySeq: "1",
+      relatedSeq: "1",
+      payload: new TextEncoder().encode(JSON.stringify(gap)),
+    }));
+    client.handleFrame(encodeTerminalFrame({
+      kind: "exitBarrier",
+      sessionId,
+      attachmentId,
+      hostGeneration,
+      attachmentEpoch: "1",
+      primarySeq: "1",
+      relatedSeq: "1",
+      payload: new TextEncoder().encode(JSON.stringify({
+        finalOutputSeq: "1",
+        exit: { code: 7, signal: null, reason: "natural" },
+      })),
+    }));
+
+    expect(gaps).toEqual([gap]);
+    expect(exits).toEqual([expect.objectContaining({
+      ptyId: sessionId,
+      code: 7,
+      state: "exited",
+      exit: { code: 7, signal: null, reason: "natural" },
+    })]);
+  });
+
   it("rejects stale output, gap, and exit frames after a new attachment epoch", async () => {
     let attachmentId = "";
     const received: string[] = [];

@@ -61,7 +61,10 @@ describe("TerminalClientSelector", () => {
       sessionLimit: 4,
     });
 
-    await expect(client.create("00000000-0000-4000-8000-000000000002")).resolves.toEqual({
+    await expect(client.create(
+      "00000000-0000-4000-8000-000000000002",
+      "00000000-0000-4000-8000-000000000004",
+    )).resolves.toEqual({
       ptyId: "00000000-0000-4000-8000-000000000001",
       shell: "pwsh",
     });
@@ -71,6 +74,7 @@ describe("TerminalClientSelector", () => {
         threadId: "00000000-0000-4000-8000-000000000002",
         workspaceId: "00000000-0000-4000-8000-000000000003",
       },
+      replacesSessionId: "00000000-0000-4000-8000-000000000004",
     });
     expect(selector.getSelected()).toBe(client);
   });

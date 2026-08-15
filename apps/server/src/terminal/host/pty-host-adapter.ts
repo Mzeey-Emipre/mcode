@@ -7,6 +7,14 @@ export interface PtyHostHealth {
   readonly state: "starting" | "healthy" | "degraded" | "unhealthy" | "stopped";
 }
 
+/** Content-free measurements exposed by the supervised PTY host. */
+export interface PtyHostDiagnostics {
+  readonly lastHeartbeatMsAgo: number | null;
+  readonly queueBytes: number;
+  readonly eventLoopLagMs: number;
+  readonly hostRssBytes: string;
+}
+
 /** Strict request that creates one native PTY. */
 export interface PtyHostCreate {
   readonly sessionId: string;
@@ -59,6 +67,8 @@ export interface PtyHostClose {
 /** Private process seam used by the Terminal session runtime. */
 export interface PtyHostAdapter {
   start(): Promise<PtyHostHealth>;
+  /** Returns the latest host measurements without session content. */
+  diagnostics?(): PtyHostDiagnostics;
   create(input: PtyHostCreate): Promise<PtyHostRunning>;
   send(command: PtyHostCommand): Promise<void>;
   inspectChildren(
