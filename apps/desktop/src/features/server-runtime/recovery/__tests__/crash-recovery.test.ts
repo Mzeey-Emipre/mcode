@@ -3,7 +3,7 @@ import {
   SERVER_CRASH_BACKOFF_MS,
   SERVER_CRASH_WINDOW_MS,
   ServerCrashRecovery,
-} from "../server-crash-recovery.js";
+} from "../crash-recovery.js";
 
 describe("ServerCrashRecovery", () => {
   it("restarts after the first abnormal exit with the first backoff delay", async () => {
