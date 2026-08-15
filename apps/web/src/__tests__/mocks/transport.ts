@@ -179,6 +179,10 @@ export const mockTransport: McodeTransport = {
     active: [],
     done: [],
   }),
+  stopCanonicalSubagent: vi.fn().mockResolvedValue({
+    childThreadId: "child-1",
+    status: "interrupted",
+  }),
   loadOlderConversationPage: vi.fn(),
   loadNewerConversationPage: vi.fn(),
   createAndSendMessage: vi.fn(),

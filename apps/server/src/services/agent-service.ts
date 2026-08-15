@@ -12,6 +12,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { logger, validateBranchName } from "@mcode/shared";
 import {
   AgentEventType,
+  CanonicalSubagentRosterSchema,
+  isChildTurnCancellable,
   isGoalCapable,
   isGoalOpen,
   isSessionEvictable,
@@ -43,6 +45,10 @@ import type {
   TurnRuntimeSnapshot,
   AgentStopResult,
   CollaborationActionKind,
+  CanonicalSubagentRoster,
+  CanonicalSubagentRosterRequest,
+  CanonicalSubagentStopRequest,
+  CanonicalSubagentStopResult,
 } from "@mcode/contracts";
 import { ThreadRepo } from "../repositories/thread-repo";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
@@ -395,6 +401,8 @@ export class AgentService {
   private readonly activeMutationReservations = new Map<string, string>();
   /** Single-flight user stop operation per thread. */
   private readonly stopOperationsByThread = new Map<string, Promise<AgentStopResult>>();
+  /** Single-flight child stop operation per canonical child thread. */
+  private readonly childStopOperationsByThread = new Map<string, Promise<CanonicalSubagentStopResult>>();
   /** Monotonic turn generation per thread, including turns that failed setup. */
   private readonly turnGenerations = new Map<string, number>();
   private readonly mutationReservations: ThreadControlMutationReservationService;
@@ -1749,6 +1757,131 @@ export class AgentService {
         this.stopOperationsByThread.delete(threadId);
       }
     }
+  }
+
+  /** Load the canonical child roster with server-authoritative stop eligibility. */
+  loadCanonicalSubagentRoster(request: CanonicalSubagentRosterRequest): CanonicalSubagentRoster {
+    const roster = this.canonicalSink.loadSubagentRoster(request);
+    const addStopEligibility = (row: CanonicalSubagentRoster["active"][number]) => {
+      const target = this.canonicalSink.loadCanonicalChildStopTarget({
+        owningParentThreadId: request.owningParentThreadId,
+        childThreadId: row.id,
+      });
+      if (!target
+        || target.latestTurn?.status !== "Running"
+        || !target.nativeThreadId
+        || !target.nativeTurnId) return row;
+      try {
+        const provider = this.providerRegistry.resolve(target.childThread.providerId as ProviderId);
+        return { ...row, canStop: isChildTurnCancellable(provider) };
+      } catch {
+        return row;
+      }
+    };
+    return CanonicalSubagentRosterSchema().parse({
+      ...roster,
+      active: roster.active.map(addStopEligibility),
+      done: roster.done,
+    });
+  }
+
+  /** Stop one exact canonical child turn without stopping its provider session. */
+  async stopChildTurn(
+    owningParentThreadId: string,
+    childThreadId: string,
+  ): Promise<CanonicalSubagentStopResult> {
+    return this.stopCanonicalChild({ owningParentThreadId, childThreadId });
+  }
+
+  /** Stop one exact canonical child turn without stopping its provider session. */
+  async stopCanonicalChild(request: CanonicalSubagentStopRequest): Promise<CanonicalSubagentStopResult> {
+    const operationKey = JSON.stringify([
+      request.owningParentThreadId,
+      request.childThreadId,
+    ]);
+    const existing = this.childStopOperationsByThread.get(operationKey);
+    if (existing) return existing;
+    const operation = this.stopCanonicalChildInternal(request);
+    this.childStopOperationsByThread.set(operationKey, operation);
+    try {
+      return await operation;
+    } finally {
+      if (this.childStopOperationsByThread.get(operationKey) === operation) {
+        this.childStopOperationsByThread.delete(operationKey);
+      }
+    }
+  }
+
+  private async stopCanonicalChildInternal(
+    request: CanonicalSubagentStopRequest,
+  ): Promise<CanonicalSubagentStopResult> {
+    const target = this.canonicalSink.loadCanonicalChildStopTarget(request);
+    if (!target) {
+      return {
+        childThreadId: request.childThreadId,
+        status: "failed",
+        message: "The selected child does not belong to this parent thread.",
+      };
+    }
+    if (target.latestTurn?.status !== "Running") {
+      return { childThreadId: request.childThreadId, status: "already-terminal" };
+    }
+    if (!target.nativeThreadId || !target.nativeTurnId) {
+      return {
+        childThreadId: request.childThreadId,
+        status: "unsupported",
+        message: "The active child turn does not have an exact provider identity.",
+      };
+    }
+
+    let provider: IAgentProvider;
+    try {
+      provider = this.providerRegistry.resolve(target.childThread.providerId as ProviderId);
+    } catch {
+      return {
+        childThreadId: request.childThreadId,
+        status: "unsupported",
+        message: "The child provider is unavailable.",
+      };
+    }
+    if (!isChildTurnCancellable(provider)) {
+      return {
+        childThreadId: request.childThreadId,
+        status: "unsupported",
+        message: "The child provider does not support independent cancellation.",
+      };
+    }
+
+    try {
+      await provider.interruptChildTurn(
+        `mcode-${request.owningParentThreadId}`,
+        target.nativeThreadId,
+        target.nativeTurnId,
+      );
+    } catch {
+      logger.warn("Canonical child interruption failed", {
+        category: "provider-interrupt-failed",
+        owningParentThreadId: request.owningParentThreadId,
+        childThreadId: request.childThreadId,
+        providerId: target.childThread.providerId,
+      });
+      return {
+        childThreadId: request.childThreadId,
+        status: "failed",
+        message: "Child interruption failed.",
+      };
+    }
+
+    const finished = this.canonicalSink.finishCodexChildTurn({
+      childThreadId: request.childThreadId,
+      nativeTurnId: target.nativeTurnId,
+      outcome: "cancelled",
+      error: "Interrupted by user",
+    });
+    return {
+      childThreadId: request.childThreadId,
+      status: finished.status === "Interrupted" ? "interrupted" : "already-terminal",
+    };
   }
 
   /** Stop exact active turn, preserving provider failure as retryable RPC error. */

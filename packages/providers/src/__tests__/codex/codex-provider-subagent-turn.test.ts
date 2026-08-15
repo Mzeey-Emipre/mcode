@@ -11,9 +11,10 @@ vi.mock("../../private/codex/codex-version.js", () => ({
   meetsMinVersion: () => true,
 }));
 
-const { sendTurnMock, getChildThreadMetadataMock } = vi.hoisted(() => ({
+const { sendTurnMock, getChildThreadMetadataMock, interruptChildTurnMock } = vi.hoisted(() => ({
   sendTurnMock: vi.fn().mockResolvedValue(null),
   getChildThreadMetadataMock: vi.fn().mockResolvedValue({ model: "gpt-5.6-sol", reasoningEffort: "medium" }),
+  interruptChildTurnMock: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("../../private/codex/codex-app-server.js", async () => {
@@ -30,6 +31,9 @@ vi.mock("../../private/codex/codex-app-server.js", async () => {
       return getChildThreadMetadataMock(childThreadId);
     }
     async interruptTurn(): Promise<void> {}
+    async interruptChildTurn(nativeThreadId: string, nativeTurnId: string): Promise<void> {
+      await interruptChildTurnMock(nativeThreadId, nativeTurnId);
+    }
     async kill(): Promise<void> {}
   }
   return { CodexAppServer: MockCodexAppServer };
@@ -107,6 +111,7 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
   beforeEach(() => {
     sendTurnMock.mockClear();
     getChildThreadMetadataMock.mockClear();
+    interruptChildTurnMock.mockClear();
     loggerWarnMock.mockClear();
   });
 
@@ -1482,5 +1487,25 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
     expect(maps.turnExecutionIdsByNativeTurn.get("child-turn-a")).toBe("exec-mcode-child-replay-events");
     expect(maps.turnExecutionIdsByNativeTurn.get("child-turn-b")).toBe("exec-b");
     expect(maps.nativeThreadExecutionIds.get("child-replay")).toBe("exec-b");
+  });
+
+  it("interrupts one exact child through the existing runtime session", async () => {
+    const provider = makeProvider();
+    const entry = await startSession(provider, "mcode-child-stop", "child-stop");
+
+    await provider.interruptChildTurn(
+      "mcode-child-stop",
+      "native-child-thread",
+      "native-child-turn",
+    );
+
+    expect(interruptChildTurnMock).toHaveBeenCalledOnce();
+    expect(interruptChildTurnMock).toHaveBeenCalledWith(
+      "native-child-thread",
+      "native-child-turn",
+    );
+    expect((provider as unknown as {
+      runtime: { get: (sessionId: string) => PoolEntry | undefined };
+    }).runtime.get("mcode-child-stop")).toBe(entry);
   });
 });

@@ -27,12 +27,29 @@ export const CanonicalSubagentRosterRequestSchema = lazySchema(() =>
   }).strict(),
 );
 
+/** Request to stop one exact active canonical child turn. */
+export const CanonicalSubagentStopRequestSchema = lazySchema(() =>
+  z.object({
+    owningParentThreadId: AgentThreadIdSchema,
+    childThreadId: AgentThreadIdSchema,
+  }).strict(),
+);
+
 /** Exact terminal state represented in the canonical turn model. */
 export const CanonicalSubagentTerminalOutcomeSchema = z.enum([
   "Completed",
   "Interrupted",
   "Errored",
 ]);
+
+/** Result of one canonical child interruption attempt. */
+export const CanonicalSubagentStopResultSchema = lazySchema(() =>
+  z.object({
+    childThreadId: AgentThreadIdSchema,
+    status: z.enum(["interrupted", "already-terminal", "unsupported", "failed"]),
+    message: z.string().trim().min(1).max(512).optional(),
+  }).strict(),
+);
 
 /** One canonical child in the authoritative Sub-agents roster. */
 export const CanonicalSubagentRosterRowSchema = lazySchema(() =>
@@ -55,6 +72,7 @@ export const CanonicalSubagentRosterRowSchema = lazySchema(() =>
     providerIdentities: z.array(ProviderIdentitySchema).max(16),
     sourceProviderIdentities: z.array(ProviderIdentitySchema).max(16),
     hasActiveDescendant: z.boolean(),
+    canStop: z.boolean(),
   }).strict(),
 );
 
@@ -70,6 +88,12 @@ export const CanonicalSubagentRosterSchema = lazySchema(() =>
 
 /** Bounded canonical roster request. */
 export type CanonicalSubagentRosterRequest = z.infer<ReturnType<typeof CanonicalSubagentRosterRequestSchema>>;
+
+/** Request to stop one exact active canonical child turn. */
+export type CanonicalSubagentStopRequest = z.infer<ReturnType<typeof CanonicalSubagentStopRequestSchema>>;
+
+/** Result of one canonical child interruption attempt. */
+export type CanonicalSubagentStopResult = z.infer<ReturnType<typeof CanonicalSubagentStopResultSchema>>;
 
 /** Exact terminal outcome for one canonical child turn. */
 export type CanonicalSubagentTerminalOutcome = z.infer<typeof CanonicalSubagentTerminalOutcomeSchema>;

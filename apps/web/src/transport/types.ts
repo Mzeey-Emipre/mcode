@@ -44,6 +44,7 @@ import type {
   ConversationOlderPageRequest,
   ConversationTail,
   CanonicalSubagentRoster,
+  CanonicalSubagentStopResult,
   SetThreadSubscriptionsInput,
   SetThreadSubscriptionsResult,
   GoalLookupResult,
@@ -428,6 +429,11 @@ export interface McodeTransport {
     owningParentThreadId: string,
     limit?: number,
   ): Promise<CanonicalSubagentRoster>;
+  /** Stop one exact active canonical child turn. */
+  stopCanonicalSubagent(
+    owningParentThreadId: string,
+    childThreadId: string,
+  ): Promise<CanonicalSubagentStopResult>;
   /** Fetch one identity-bound and byte-bounded page of older conversation history. */
   loadOlderConversationPage(request: ConversationOlderPageRequest): Promise<ConversationOlderPage>;
   /** Fetch one identity-bound and byte-bounded page of newer conversation history. */
