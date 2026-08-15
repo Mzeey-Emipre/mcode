@@ -2771,9 +2771,13 @@ export class AgentService {
    * Must be called once at startup after the DI container is fully resolved.
    * Keeps assistant message persistence inside the service rather than
    * leaking it into the composition root.
+   * The optional publication callback runs after the synchronous internal pass
+   * for every normalized event, including events that take an internal
+   * early-return path. A deferred file-tracking replay handles the event
+   * internally but does not publish it again.
    * Idempotent: subsequent calls are no-ops.
    */
-  init(): void {
+  init(onProviderEvent?: (event: AgentEvent) => void): void {
     if (this.initialized) return;
     this.initialized = true;
 
@@ -2793,10 +2797,7 @@ export class AgentService {
           )
         ));
       });
-      const handleEvent = (event: AgentEvent): void => {
-        const normalizedEvent = this.prepareProviderEvent(event);
-        if (!normalizedEvent) return;
-        event = normalizedEvent;
+      const handleNormalizedEvent = (event: AgentEvent): void => {
         if (
           event.type === AgentEventType.ToolUse
           && event.toolName === "Agent"
@@ -2813,11 +2814,10 @@ export class AgentService {
             ),
           };
         }
-        if (
-          (event.type === AgentEventType.ToolUse || event.type === AgentEventType.ToolResult)
-          && !("codexChild" in event && event.codexChild)
-        ) {
-          this.recordCodexCollaborationAction(event, `toolCall:${event.toolCallId}`);
+        if (event.type === AgentEventType.ToolUse || event.type === AgentEventType.ToolResult) {
+          if (!("codexChild" in event && event.codexChild)) {
+            this.recordCodexCollaborationAction(event, `toolCall:${event.toolCallId}`);
+          }
         }
         if (
           event.type === AgentEventType.TurnStarted
@@ -2842,22 +2842,24 @@ export class AgentService {
           this.earlyFileTrackingEvents.add(event);
         }
         if (existingBarrier && event.type === AgentEventType.ToolUse) {
+          const toolUseEvent = event;
           this.queueTurnFileTracking(event.threadId, () => (
             this.turnFileTracker.observeToolUse(
-              event.threadId,
-              event.toolCallId,
-              event.toolName,
-              event.toolInput,
+              toolUseEvent.threadId,
+              toolUseEvent.toolCallId,
+              toolUseEvent.toolName,
+              toolUseEvent.toolInput,
             )
           ));
           this.earlyFileTrackingEvents.add(event);
         }
         if (existingBarrier && event.type === AgentEventType.ToolResult) {
+          const toolResultEvent = event;
           this.queueTurnFileTracking(event.threadId, () => (
             this.turnFileTracker.observeToolResult(
-              event.threadId,
-              event.toolCallId,
-              event.toolInput,
+              toolResultEvent.threadId,
+              toolResultEvent.toolCallId,
+              toolResultEvent.toolInput,
             )
           ));
           this.earlyFileTrackingEvents.add(event);
@@ -2872,7 +2874,9 @@ export class AgentService {
               this.providerEventBarrierByThread.delete(event.threadId);
             }
             const deferredEvent = this.turnRuntime.normalizeEvent(event);
-            if (deferredEvent) handleEvent(deferredEvent);
+            if (deferredEvent) {
+              handleEvent(deferredEvent, false);
+            }
           });
           return;
         }
@@ -3133,15 +3137,16 @@ export class AgentService {
         }
 
         if (event.type === AgentEventType.ToolUse) {
+          const toolUseEvent = event;
           this.narrativeStore.closeOpenThought(event.threadId);
-          this.bufferToolCall(event.threadId, event);
-          if (!this.earlyFileTrackingEvents.delete(event)) {
+          this.bufferToolCall(event.threadId, toolUseEvent);
+          if (!this.earlyFileTrackingEvents.delete(toolUseEvent)) {
             this.queueTurnFileTracking(event.threadId, () => (
               this.turnFileTracker.observeToolUse(
-                event.threadId,
-                event.toolCallId,
-                event.toolName,
-                event.toolInput,
+                toolUseEvent.threadId,
+                toolUseEvent.toolCallId,
+                toolUseEvent.toolName,
+                toolUseEvent.toolInput,
               )
             ));
           }
@@ -3217,12 +3222,13 @@ export class AgentService {
         }
 
         if (event.type === AgentEventType.ToolResult) {
-          if (!this.earlyFileTrackingEvents.delete(event)) {
+          const toolResultEvent = event;
+          if (!this.earlyFileTrackingEvents.delete(toolResultEvent)) {
             this.queueTurnFileTracking(event.threadId, () => (
               this.turnFileTracker.observeToolResult(
-                event.threadId,
-                event.toolCallId,
-                event.toolInput,
+                toolResultEvent.threadId,
+                toolResultEvent.toolCallId,
+                toolResultEvent.toolInput,
               )
             ));
           }
@@ -3562,6 +3568,12 @@ export class AgentService {
           this.pendingExitPlanMarkdown.delete(event.threadId);
           this.planCapturedThisTurn.delete(event.threadId);
         }
+      };
+      const handleEvent = (event: AgentEvent, publish = true): void => {
+        const normalizedEvent = this.prepareProviderEvent(event);
+        if (!normalizedEvent) return;
+        handleNormalizedEvent(normalizedEvent);
+        if (publish) onProviderEvent?.(normalizedEvent);
       };
       provider.on("event", handleEvent);
     }
