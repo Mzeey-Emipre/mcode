@@ -193,28 +193,21 @@ export function buildNarrativeItems(params: {
 
     const startedAt = tc.startedAt ?? Date.now();
     const lifecycleMarkers = (childrenMap.get(tc.id) ?? []).filter(isSubagentLifecycleCall);
-    timeline.push({ kind: "subagent", call: tc, lifecycle: "started", startedAt });
-    for (const marker of lifecycleMarkers) {
-      timeline.push({
-        kind: "subagent",
-        call: tc,
-        marker,
-        lifecycle: "updated",
-        startedAt: marker.startedAt ?? startedAt,
-      });
-    }
-    if (tc.isComplete) {
-      const lastMarkerAt = lifecycleMarkers.reduce(
-        (latest, marker) => Math.max(latest, marker.startedAt ?? startedAt),
-        startedAt,
-      );
-      const completedAt = Math.max(
-        lastMarkerAt,
-        tc.lastActivityAt ?? startedAt,
-        tc.durationMs === undefined ? startedAt : startedAt + tc.durationMs,
-      );
-      timeline.push({ kind: "subagent", call: tc, lifecycle: "finished", startedAt: completedAt });
-    }
+    const latestMarker = lifecycleMarkers.reduce<ToolCall | undefined>(
+      (latest, marker) => (
+        !latest || (marker.startedAt ?? startedAt) >= (latest.startedAt ?? startedAt)
+          ? marker
+          : latest
+      ),
+      undefined,
+    );
+    timeline.push({
+      kind: "subagent",
+      call: tc,
+      ...(latestMarker ? { marker: latestMarker } : {}),
+      lifecycle: tc.isComplete ? "finished" : latestMarker ? "updated" : "started",
+      startedAt,
+    });
   }
   for (const hook of hooks) {
     timeline.push({ kind: "hook", hook, startedAt: hook.startedAt });

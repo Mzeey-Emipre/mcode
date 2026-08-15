@@ -1267,6 +1267,7 @@ describe("CanonicalAgentEventSink", () => {
         id: delegation.childThread.id,
         parentThreadId: THREAD_ID,
         lineage: [THREAD_ID, delegation.childThread.id],
+        sourceItemId: "toolCall:spawn-roster-source",
         task: "Inspect the source item",
         identity: "Roster analyst",
         model: "gpt-5.6-sol",
