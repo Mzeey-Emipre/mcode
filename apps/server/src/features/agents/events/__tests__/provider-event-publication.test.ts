@@ -58,6 +58,23 @@ describe("provider event publication ownership", () => {
     expect(deps.publishThreadStatus).not.toHaveBeenCalled();
   });
 
+  it("does not publish generated attachments to the parent UI", () => {
+    const deps = buildPublicationDeps();
+    const event: AgentEvent = {
+      type: AgentEventType.GeneratedAttachment,
+      threadId: "parent-thread",
+      attachment: {
+        id: "attachment-1",
+        name: "capture.png",
+        mimeType: "image/png",
+        sizeBytes: 1,
+      },
+    };
+
+    expect(publishParentProviderEvent(event, event, deps)).toBe(false);
+    expect(deps.publishAgentEvent).not.toHaveBeenCalled();
+  });
+
   it("publishes a parent completion and updates its status", () => {
     const deps = buildPublicationDeps();
     const parentEvent: AgentEvent = {

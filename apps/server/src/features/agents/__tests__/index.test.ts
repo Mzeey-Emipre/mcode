@@ -8,6 +8,7 @@ describe("agents feature boundary", () => {
       "AgentService",
       "CanonicalAgentEventSink",
       "publishCanonicalAgentEvents",
+      "startAgentOrchestration",
     ]);
   });
 });

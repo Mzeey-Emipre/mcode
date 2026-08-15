@@ -339,6 +339,130 @@ describe("AgentService turn cleanup", () => {
     vi.clearAllMocks();
   });
 
+  it("uses one provider event listener and forwards each normalized event once", () => {
+    const { service, providerEmitter } = buildService();
+    const publish = vi.fn();
+    service.init(publish);
+
+    expect(providerEmitter.listenerCount("event")).toBe(1);
+
+    const event = {
+      type: AgentEventType.ProviderUnavailable,
+      threadId: THREAD_ID,
+      providerId: "claude",
+      reason: "disabled",
+    } satisfies AgentEvent;
+    providerEmitter.emit("event", event);
+
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(publish).toHaveBeenCalledWith(event);
+  });
+
+  it("forwards normalized events even when internal continuation validation returns early", async () => {
+    const { service, providerEmitter } = buildService();
+    const publish = vi.fn();
+    service.init(publish);
+
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+    const executionId = activeExecutionId(service);
+    publish.mockClear();
+    vi.spyOn(
+      service as unknown as { startCodexProviderContinuationFromEvent: () => boolean },
+      "startCodexProviderContinuationFromEvent",
+    ).mockReturnValue(false);
+
+    const event = {
+      type: AgentEventType.TurnStarted,
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      codexContinuation: {
+        sourceNativeThreadId: "missing-source-thread",
+        sourceNativeTurnId: "missing-source-turn",
+        sourceNativeItemId: "missing-source-item",
+        targetNativeThreadId: "missing-target-thread",
+      },
+    } satisfies AgentEvent;
+    providerEmitter.emit("event", event);
+
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(publish).toHaveBeenCalledWith(event);
+  });
+
+  it("publishes once before a provider-event barrier replay", async () => {
+    const { service, providerEmitter } = buildService();
+    const publish = vi.fn();
+    service.init(publish);
+    const executionId = startProviderTurn(service);
+
+    let releaseBarrier!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      releaseBarrier = resolve;
+    });
+    const eventState = service as unknown as {
+      providerEventBarrierByThread: Map<string, Promise<void>>;
+    };
+    eventState.providerEventBarrierByThread.set(THREAD_ID, barrier);
+
+    const event = {
+      type: AgentEventType.TurnStarted,
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+    } satisfies AgentEvent;
+    providerEmitter.emit("event", event);
+
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(publish).toHaveBeenCalledWith(event);
+
+    releaseBarrier();
+    await barrier;
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(publish).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not publish when internal event handling throws", async () => {
+    const { service, providerEmitter } = buildService();
+    const publish = vi.fn();
+    service.init(publish);
+
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+    const executionId = activeExecutionId(service);
+    publish.mockClear();
+    vi.spyOn(
+      service as unknown as { startCodexChildFromProviderEvent: () => void },
+      "startCodexChildFromProviderEvent",
+    ).mockImplementation(() => {
+      throw new Error("internal event failure");
+    });
+
+    const event = {
+      type: AgentEventType.ToolUse,
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      toolCallId: "tool-1",
+      toolName: "Agent",
+      toolInput: { codexCollabKind: "spawnAgent", prompt: "delegate" },
+    } satisfies AgentEvent;
+
+    expect(() => providerEmitter.emit("event", event)).toThrow("internal event failure");
+    expect(publish).not.toHaveBeenCalled();
+  });
+
   it("removes thread from activeThreadIds on TurnComplete", async () => {
     const { service, providerEmitter, memoryPressureService } = buildService();
     service.init();

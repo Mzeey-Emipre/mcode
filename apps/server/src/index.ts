@@ -15,12 +15,11 @@ import { randomUUID } from "crypto";
 import { execFileSync } from "child_process";
 import { killOrphanedServer, reapOrphanedPtys } from "./services/orphan-cleanup";
 import { PtyPidRegistry } from "./services/pty-pid-registry";
-import { sanitizePublicToolInput } from "./services/public-tool-input";
 
 // Services
 import { WorkspaceService } from "./services/workspace-service";
 import { ThreadService } from "./services/thread-service";
-import { AgentService, CanonicalAgentEventSink } from "./features/agents";
+import { AgentService, CanonicalAgentEventSink, startAgentOrchestration } from "./features/agents";
 import { TurnRecoveryService } from "./services/turn-recovery-service";
 import { ThreadControlService } from "./services/thread-control-service";
 import { ExternalThreadControlPairingService } from "./services/external-thread-control-pairing-service";
@@ -81,10 +80,6 @@ import {
   EXPLICIT_SHUTDOWN_DEADLINE_MS,
   type ShutdownCoordinator,
 } from "./shutdown-coordinator.js";
-import { AgentEventType } from "@mcode/contracts";
-import type { AgentEvent } from "@mcode/contracts";
-import { normalizeAgentProviderError } from "./services/provider-agent-error-normalize.js";
-import { publishParentProviderEvent } from "./services/provider-event-publication.js";
 import type Database from "better-sqlite3";
 import type { JobObject } from "./services/job-object.js";
 import { resolveWebAutomationFlag } from "./startup-policy.js";
@@ -426,8 +421,29 @@ setInterval(() => {
   terminalService.onBufferedAmountTick(maxBufferedAmount());
 }, 50).unref();
 
-// AgentService self-wires persistence and session tracking against providers
-agentService.init();
+// Agents own provider execution; this composition adapter supplies the server
+// publication and background PR/CI integrations.
+startAgentOrchestration({
+  agentService,
+  threadRepo,
+  workspaceRepo,
+  narrativeStore,
+  threadService,
+  githubService,
+  ciWatcherService,
+  publishAgentEvent: (event) => {
+    const sequencedEvent = broadcast("agent.event", event) ?? event;
+    portPush.send("agent.event", sequencedEvent);
+  },
+  publishThreadStatus: (status) => {
+    broadcast("thread.status", status);
+    portPush.send("thread.status", status);
+  },
+  publishThreadPrLinked: (payload) => {
+    broadcast("thread.prLinked", payload);
+    portPush.send("thread.prLinked", payload);
+  },
+});
 void legacyConversationMigration.runToCompletion().then((result) => {
   if (result.migratedMessages > 0 || result.ambiguousMessages > 0) {
     logger.info("Legacy parent conversation migration completed", {
@@ -529,11 +545,6 @@ skillWatcherService.registerDebouncedInvalidateListener(() => {
   });
 }
 
-// Wire up push broadcasting for agent events and thread status changes.
-// AgentService.init() registers its listener first, so bufferToolCall (which
-// maintains the canonical agentCallStack) has already run by the time this
-// listener fires. We read the stack via getCurrentParentToolCallId to enrich
-// non-Agent tool calls with their parent ID.
 for (const provider of providerRegistry.resolveAll()) {
   provider.on("permission_request", (request) => {
     broadcast("permission.request", request);
@@ -543,134 +554,6 @@ for (const provider of providerRegistry.resolveAll()) {
   provider.on("permission_resolved", (payload) => {
     broadcast("permission.resolved", payload);
     portPush.send("permission.resolved", payload);
-  });
-
-  provider.on("event", (event: AgentEvent) => {
-    const normalizedEvent = agentService.prepareProviderEvent(event);
-    if (!normalizedEvent) return;
-    event = normalizedEvent;
-    if (event.type === AgentEventType.GeneratedAttachment) {
-      return;
-    }
-
-    let enrichedEvent = event;
-
-    if (event.type === AgentEventType.TurnStarted) {
-      const fileEffectTurnId = agentService.getCurrentFileEffectTurnId(event.threadId);
-      if (fileEffectTurnId) enrichedEvent = { ...event, fileEffectTurnId };
-    }
-
-    // Enrich non-Agent tool calls with their parent Agent ID.
-    // Prefer the SDK-provided parent_tool_use_id on the event (set by the
-    // provider when the SDK message carries it). This is the only correct
-    // source for parallel subagents. `getCurrentParentToolCallId` only fills
-    // gaps when exactly one Agent on the stack is still running in the turn
-    // buffer; never use a raw LIFO peek (see narrative-pipeline.md trap 1).
-    if (event.type === AgentEventType.ToolUse && event.toolName !== "Agent") {
-      // SDK omitted parent_tool_use_id; fill from turn buffer fallback when unique running Agent (see narrative-pipeline.md).
-      if (!event.parentToolCallId) {
-        const parentId = narrativeStore.getCurrentParentToolCallId(event.threadId);
-        if (parentId) {
-          enrichedEvent = { ...event, parentToolCallId: parentId };
-        }
-      }
-    }
-
-    // Hide failed-attempt teardown (`Ended`, `TurnComplete`) so the UI's running
-    // state survives the retry window instead of flashing blank before the fresh
-    // attempt streams (see AgentService.endedSuppressionThreads).
-    if (
-      (event.type === AgentEventType.Ended &&
-        agentService.shouldSuppressTurnEnded(event.threadId)) ||
-      (event.type === AgentEventType.TurnComplete &&
-        agentService.shouldSuppressTurnComplete(event.threadId))
-    ) {
-      return;
-    }
-
-    if (event.type === AgentEventType.Error) {
-      // Hide a transient failure that AgentService is about to retry, so the user
-      // never sees the swallowed flake. The gate only suppresses transient
-      // signatures inside an active retry window; fatal errors still broadcast.
-      if (agentService.shouldSuppressTransientTurnError(event.threadId, event.error ?? "")) {
-        return;
-      }
-      const threadMeta = threadRepo.findById(event.threadId);
-      const providerForThread =
-        typeof threadMeta?.provider === "string" && threadMeta.provider.length > 0
-          ? threadMeta.provider
-          : "claude";
-      enrichedEvent = {
-        ...event,
-        error: normalizeAgentProviderError(providerForThread, event.error ?? ""),
-      };
-    }
-
-    // Provider mutation evidence may contain full before/after text for server-side
-    // verification. Keep that content inside AgentService and send only bounded,
-    // content-free tool metadata to clients.
-    if (enrichedEvent.type === AgentEventType.ToolUse) {
-      enrichedEvent = {
-        ...enrichedEvent,
-        toolInput: sanitizePublicToolInput(enrichedEvent.toolInput, enrichedEvent.toolName),
-      };
-    } else if (enrichedEvent.type === AgentEventType.ToolResult && enrichedEvent.toolInput) {
-      enrichedEvent = {
-        ...enrichedEvent,
-        toolInput: sanitizePublicToolInput(enrichedEvent.toolInput),
-      };
-    }
-
-    const publishedToParent = publishParentProviderEvent(event, enrichedEvent, {
-      publishAgentEvent: (publishedEvent) => {
-        const sequencedEvent = broadcast("agent.event", publishedEvent) ?? publishedEvent;
-        portPush.send("agent.event", sequencedEvent);
-      },
-      updateThreadStatus: (threadId, status) => {
-        threadRepo.updateStatus(threadId, status);
-      },
-      publishThreadStatus: (status) => {
-        broadcast("thread.status", status);
-        portPush.send("thread.status", status);
-      },
-    });
-    if (!publishedToParent) return;
-
-    if (event.type === AgentEventType.TurnComplete) {
-      const thread = threadRepo.findById(event.threadId);
-      if (thread) {
-        // Detect or refresh PR state for feature branches only
-        const isFeatureBranch = thread.branch !== "main" && thread.branch !== "master";
-        const workspace = isFeatureBranch ? workspaceRepo.findById(thread.workspace_id) : null;
-        if (workspace) {
-          githubService.getBranchPr(thread.branch, workspace.path).then((pr) => {
-            if (!pr) return;
-            const stateChanged = thread.pr_number == null
-              || thread.pr_status?.toLowerCase() !== pr.state.toLowerCase();
-            if (stateChanged) {
-              threadService.linkPr(thread.id, pr.number, pr.state);
-              const prPayload = { threadId: thread.id, prNumber: pr.number, prStatus: pr.state };
-              broadcast("thread.prLinked", prPayload);
-              portPush.send("thread.prLinked", prPayload);
-            }
-            // Start CI watching if PR is open/active; stop watching if it became terminal.
-            const prState = pr.state.toLowerCase();
-            if (prState !== "merged" && prState !== "closed") {
-              ciWatcherService.watch(thread.id, pr.number, thread.branch, workspace.path);
-            } else {
-              ciWatcherService.unwatch(thread.id);
-            }
-          }).catch((err) => {
-            logger.debug("PR lookup failed on turnComplete", {
-              threadId: thread.id,
-              branch: thread.branch,
-              workspacePath: workspace.path,
-              error: err instanceof Error ? err.message : String(err),
-            });
-          });
-        }
-      }
-    }
   });
 
   // ExitPlanMode: Claude SDK's native plan output. The provider intercepts
