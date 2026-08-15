@@ -13,7 +13,8 @@ export type SubagentRosterTab = "active" | "finished";
 /** Navigation state for one thread's Subagents detail view. */
 export interface SubagentDetailSelection {
   readonly id: string;
-  readonly originTab: SubagentRosterTab;
+  /** Canonical roster tab, unresolved for selections opened from narration. */
+  readonly originTab?: SubagentRosterTab;
   readonly scrollTop: number;
 }
 
@@ -807,13 +808,18 @@ export const useDiffStore = create<DiffState>((set, get) => ({
         : { subagentRosterTabByThread: { ...state.subagentRosterTabByThread, [threadId]: tab } },
     ),
   selectSubagentDetail: (threadId, selection) =>
-    set((state) => ({
-      subagentDetailByThread: { ...state.subagentDetailByThread, [threadId]: selection },
-      subagentRosterTabByThread: {
-        ...state.subagentRosterTabByThread,
-        [threadId]: selection.originTab,
-      },
-    })),
+    set((state) => {
+      const subagentRosterTabByThread = { ...state.subagentRosterTabByThread };
+      if (selection.originTab === undefined) {
+        delete subagentRosterTabByThread[threadId];
+      } else {
+        subagentRosterTabByThread[threadId] = selection.originTab;
+      }
+      return {
+        subagentDetailByThread: { ...state.subagentDetailByThread, [threadId]: selection },
+        subagentRosterTabByThread,
+      };
+    }),
   clearSubagentDetail: (threadId) =>
     set((state) => {
       if (!(threadId in state.subagentDetailByThread)) return {};

@@ -11,7 +11,7 @@ import { ComposerOverlaySurface } from "./ComposerOverlaySurface";
 import type {
   ComposerCapabilityId,
   ResolvedComposerCapability,
-} from "./composer-capabilities";
+} from "@/features/conversation/composer/composer-capabilities";
 
 interface ComposerAddMenuProps {
   disabled: boolean;

@@ -40,7 +40,7 @@ vi.mock("@/stores/composerDraftStore", () => ({
   useComposerDraftStore: { getState: () => draftState },
 }));
 
-vi.mock("@/components/chat/Composer", () => ({
+vi.mock("@/features/conversation", () => ({
   Composer: ({
     workspaceId,
     onThreadCreated,

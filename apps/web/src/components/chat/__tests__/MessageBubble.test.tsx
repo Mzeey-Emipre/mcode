@@ -1,11 +1,11 @@
 import { render, screen } from "@testing-library/react";
 import type { Message } from "@/transport";
 import { describe, expect, it, vi } from "vitest";
-import { MessageBubble } from "../MessageBubble";
+import { MessageBubble } from "@/features/conversation";
 
 const mockDeltaBlock = vi.hoisted(() => vi.fn());
 
-vi.mock("../narrative/DeltaBlock", () => ({
+vi.mock("@/features/conversation/narrative/DeltaBlock", () => ({
   DeltaBlock: (props: Record<string, unknown>) => {
     mockDeltaBlock(props);
     return <div data-testid="delta-block" />;

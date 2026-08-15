@@ -6,7 +6,7 @@ import {
   createVolatileItemsBuilder,
   createVirtualItemsBuilder,
   type ChatVirtualItem,
-} from "@/components/chat/virtual-items";
+} from "@/features/conversation/messages/virtual-items";
 import type { Message, ToolCall } from "@/transport/types";
 
 const renderCounts = new Map<string, number>();

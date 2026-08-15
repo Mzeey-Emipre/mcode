@@ -13,7 +13,7 @@ import {
   clearRecordCache,
   getConversationCacheUsage,
   setActiveConversation,
-} from "@/lib/thread-hydrator/record-cache";
+} from "@/features/conversation/hydration/record-cache";
 
 vi.mock("@/transport", async () => ({
   ...(await vi.importActual("@/transport")),

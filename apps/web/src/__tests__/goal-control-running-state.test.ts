@@ -4,7 +4,7 @@ import {
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useThreadStore } from "@/stores/threadStore";
 import { mockTransport } from "./mocks/transport";
-import { clearRecordCache } from "@/lib/thread-hydrator/record-cache";
+import { clearRecordCache } from "@/features/conversation/hydration/record-cache";
 
 vi.mock("@/transport", async () => ({
   ...(await vi.importActual("@/transport")),

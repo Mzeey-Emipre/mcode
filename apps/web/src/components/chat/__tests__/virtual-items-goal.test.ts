@@ -5,7 +5,7 @@ import {
   buildVirtualItems,
   buildVolatileItems,
   createVirtualItemsBuilder,
-} from "../virtual-items";
+} from "@/features/conversation/messages/virtual-items";
 
 function message(
   id: string,

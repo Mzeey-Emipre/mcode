@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CONVERSATION_REVISION_GUARD } from "@/lib/thread-hydrator/conversation-revision";
+import { CONVERSATION_REVISION_GUARD } from "@/features/conversation/hydration/conversation-revision";
 import {
   MATERIAL_REVISION_SERIALIZATION_BYTES,
   createRepresentativeConversation,

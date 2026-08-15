@@ -21,7 +21,7 @@ vi.mock("@/stores/toastStore", () => ({
   },
 }));
 
-import { ActiveGoalChip } from "../Composer";
+import { ActiveGoalChip } from "@/features/conversation";
 
 const goal: GoalState = {
   threadId: "thread-1",

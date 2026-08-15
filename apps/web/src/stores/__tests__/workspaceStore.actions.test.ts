@@ -4,8 +4,8 @@ import { useDiffStore } from "../diffStore";
 import type { Workspace } from "@/transport/types";
 import { rememberComposerMode } from "@/lib/composer-mode-preference";
 import type { WorkspaceThread } from "@/lib/workspace-thread";
-import * as conversationResidency from "../conversation-residency";
-import type { ConversationResidency } from "../conversation-residency";
+import * as conversationResidency from "@/features/conversation/residency/conversation-residency";
+import type { ConversationResidency } from "@/features/conversation/residency/conversation-residency";
 
 function makeWs(overrides?: Partial<Workspace>): Workspace {
   return {

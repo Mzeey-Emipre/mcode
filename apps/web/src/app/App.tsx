@@ -7,7 +7,8 @@ import {
   Suspense,
 } from "react";
 import { Sidebar } from "@/components/sidebar/Sidebar";
-import { ChatView } from "@/components/chat/ChatView";
+import { ChatView } from "@/features/conversation";
+import { openSubagentDetail } from "@/features/subagents";
 import { ConnectionBanner } from "@/components/ConnectionBanner";
 import { useUpdateStore } from "@/stores/updateStore";
 import { useToastStore } from "@/stores/toastStore";
@@ -703,7 +704,7 @@ export function App() {
                       />
                     </Suspense>
                   ) : (
-                    <ChatView />
+                    <ChatView onSubagentSelect={(id) => openSubagentDetail(id)} />
                   )}
                 </main>
               )}

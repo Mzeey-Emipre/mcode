@@ -12,7 +12,7 @@ import {
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useThreadStore, MESSAGE_FETCH_SIZE } from "@/stores/threadStore";
 import { getThreadRecord } from "@/stores/thread-record";
-import { clearRecordCache, getCachedRecord } from "@/lib/thread-hydrator/record-cache";
+import { clearRecordCache, getCachedRecord } from "@/features/conversation/hydration/record-cache";
 import { mockTransport, createMockMessage } from "./mocks/transport";
 
 vi.mock("@/transport", async () => ({

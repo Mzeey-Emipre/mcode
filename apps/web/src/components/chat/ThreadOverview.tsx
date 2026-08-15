@@ -76,9 +76,11 @@ import {
 } from "@/lib/open-url-in-preview";
 import { sanitizeCustomBranchInput, trimTrailingBranchChars } from "@/lib/branch-name";
 import { showRightPanelAdaptive } from "@/lib/right-panel-layout";
-import { openSubagentsPanel } from "@/lib/open-subagent-detail";
-import { projectSubagents } from "@/components/subagents/subagent-projection";
-import { SubagentIdentityGlyph } from "@/components/subagents/SubagentIdentityGlyph";
+import {
+  openSubagentsPanel,
+  projectSubagents,
+  SubagentIdentityGlyph,
+} from "@/features/subagents";
 import { cn } from "@/lib/utils";
 import { resolveThreadCheckoutLabel } from "@/lib/checkout-label";
 import { formatUsageResetText } from "@/lib/usage-reset-format";

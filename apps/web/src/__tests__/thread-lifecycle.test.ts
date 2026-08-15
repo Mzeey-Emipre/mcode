@@ -13,7 +13,7 @@ import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-reco
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useThreadStore } from "@/stores/threadStore";
 import { mockTransport, createMockMessage } from "./mocks/transport";
-import { clearRecordCache } from "@/lib/thread-hydrator/record-cache";
+import { clearRecordCache } from "@/features/conversation/hydration/record-cache";
 import type { AgentEvent, PreviewAnnotationBundle } from "@mcode/contracts";
 
 vi.mock("@/transport", async () => ({

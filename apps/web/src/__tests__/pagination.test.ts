@@ -16,14 +16,14 @@ import type {
   TurnSnapshot,
 } from "@mcode/contracts";
 import { useThreadStore } from "@/stores/threadStore";
-import { getConversationResidency } from "@/stores/conversation-residency";
+import { getConversationResidency } from "@/features/conversation/residency/conversation-residency";
 import {
   cacheRecord as cacheConversationRecord,
   cachePrefetchedHistoryPage,
   clearRecordCache,
   getCachedRecord,
   projectConversationCacheState,
-} from "@/lib/thread-hydrator/record-cache";
+} from "@/features/conversation/hydration/record-cache";
 import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-record";
 import { mockTransport, createMockMessage } from "./mocks/transport";
 import type { Message } from "@/transport";
@@ -31,7 +31,7 @@ import { rememberScrollTop } from "@/components/chat/scrollPositionMemory";
 import {
   ACTIVE_CONVERSATION_MESSAGE_BYTES,
   measureConversationMessages,
-} from "@/lib/thread-hydrator/conversation-memory-policy";
+} from "@/features/conversation/hydration/conversation-memory-policy";
 
 vi.mock("@/transport", async () => ({
   ...(await vi.importActual("@/transport")),
