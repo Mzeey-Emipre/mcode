@@ -2,13 +2,18 @@ import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import {
   TERMINAL_CHECKPOINT_CHUNK_BYTES,
+  TerminalDiagnosticsBundleSchema,
   decodeTerminalFrame,
   encodeTerminalFrame,
   type TerminalAttachmentDescriptor,
   type TerminalSessionSnapshot,
 } from "@mcode/contracts";
 import type { WebSocket } from "ws";
-import type { PtyHostAdapter, PtyHostHealth } from "../host/pty-host-adapter.js";
+import type {
+  PtyHostAdapter,
+  PtyHostDiagnostics,
+  PtyHostHealth,
+} from "../host/pty-host-adapter.js";
 import type {
   TerminalRuntimeDeliveryEvent,
   TerminalSessionRuntime,
@@ -104,9 +109,18 @@ function makeHarness() {
     }),
     shutdown: vi.fn(async () => undefined),
   } as unknown as TerminalSessionRuntime;
-  const host: PtyHostAdapter & { health(): PtyHostHealth } = {
+  const host: PtyHostAdapter & {
+    health(): PtyHostHealth;
+    diagnostics(): PtyHostDiagnostics;
+  } = {
     start: vi.fn(async () => ({ hostGeneration, state: "healthy" as const })),
     health: vi.fn(() => ({ hostGeneration, state: "healthy" as const })),
+    diagnostics: vi.fn(() => ({
+      lastHeartbeatMsAgo: 10,
+      queueBytes: 42,
+      eventLoopLagMs: 3,
+      hostRssBytes: "1024",
+    })),
     create: vi.fn(),
     send: vi.fn(),
     inspectChildren: vi.fn(async () => ({ hasChildren: false })),
@@ -133,6 +147,34 @@ function makeHarness() {
 }
 
 describe("ModernTerminalBackend", () => {
+  it("routes redacted diagnostics through the authenticated Terminal seam", async () => {
+    const harness = makeHarness();
+    const report = await harness.backend.routeV1("terminal.diagnostics.report", {
+      events: [{
+        eventId: "00000000-0000-4000-8000-000000000004",
+        at: "2026-08-12T10:00:00.000Z",
+        metric: "input.keydownToWrite.ms",
+        unit: "ms",
+        value: 12,
+        outcome: "ok",
+        correlationId: "secret-correlation",
+      }],
+    }, harness.client);
+    expect(report).toEqual({ accepted: 1 });
+
+    const bundle = TerminalDiagnosticsBundleSchema().parse(
+      await harness.backend.routeV1("terminal.diagnostics.getBundle", {}, harness.client),
+    );
+    expect(bundle.events[0]?.correlationId).not.toBe("secret-correlation");
+    expect(JSON.stringify(bundle)).not.toContain("secret-correlation");
+    expect(bundle.health).toMatchObject({
+      lastHeartbeatMsAgo: 10,
+      queueBytes: 42,
+      eventLoopLagMs: 3,
+      hostRssBytes: "1024",
+    });
+  });
+
   it("keeps hydration directed and enforces attachment ownership for input", async () => {
     const harness = makeHarness();
     const descriptor = await harness.backend.routeV1("terminal.session.attach", {

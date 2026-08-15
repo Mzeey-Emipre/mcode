@@ -4,7 +4,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { openMemoryDatabase } from "../../store/database.js";
 import { MessageRepo } from "../../repositories/message-repo.js";
 import { ThreadRepo } from "../../repositories/thread-repo.js";
-import { CanonicalAgentEventSink } from "../canonical-agent-event-sink.js";
+import {
+  CanonicalAgentEventSink,
+  type CanonicalAgentEventPublisher,
+} from "../canonical-agent-event-sink.js";
 import { TurnRecoveryService } from "../turn-recovery-service.js";
 import { AttachmentService } from "../attachment-service.js";
 import type { SendMessageCommand } from "../agent-service.js";
@@ -18,6 +21,7 @@ describe("TurnRecoveryService", () => {
   let db: Database.Database;
   let sink: CanonicalAgentEventSink;
   let threadRepo: ThreadRepo;
+  let published: ReturnType<typeof vi.fn<CanonicalAgentEventPublisher>>;
 
   beforeEach(() => {
     db = openMemoryDatabase();
@@ -27,7 +31,8 @@ describe("TurnRecoveryService", () => {
     db.prepare(
       "INSERT INTO threads (id, workspace_id, title, branch, provider, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     ).run(THREAD_ID, "workspace-recovery", "Recovery", "main", "codex", "active", NOW, NOW);
-    sink = new CanonicalAgentEventSink(db, vi.fn());
+    published = vi.fn();
+    sink = new CanonicalAgentEventSink(db, published);
     threadRepo = new ThreadRepo(db);
     const messageRepo = new MessageRepo(db);
     sink.startParentTurn({
@@ -58,6 +63,38 @@ describe("TurnRecoveryService", () => {
     expect(result).toEqual({ interrupted: [EXECUTION_ID] });
     expect(sink.loadTurn(TURN_ID)?.status).toBe("Interrupted");
     expect(threadRepo.findById(THREAD_ID)?.status).toBe("interrupted");
+  });
+
+  it("marks an unresolved child delivery unknown before interrupting its parent execution", () => {
+    // Regression: restart must not classify a dispatched child as rejected or make
+    // its uncertain identity eligible for reuse.
+    const delegation = sink.startCodexChildDelegation({
+      parentThreadId: THREAD_ID,
+      parentTurnId: TURN_ID,
+      parentExecutionId: EXECUTION_ID,
+      parentItemId: "toolCall:recovery-child",
+      receiverThreadIds: ["native-recovery-child"],
+      providerIdentities: [],
+    });
+    published.mockClear();
+    const service = new TurnRecoveryService(sink, threadRepo, new AttachmentService());
+
+    service.reconcileOnStartup();
+
+    expect(sink.loadCollaborationAction(delegation.collaborationAction.id)).toMatchObject({
+      status: "Dispatched",
+      deliveryUnknown: true,
+    });
+    expect(sink.loadThread(delegation.childThread.id)?.activityState).toBe("Unavailable");
+    expect(published).toHaveBeenCalledTimes(3);
+    expect(published.mock.calls[1]![0].every((event: { routing: { threadId: string } }) => (
+      event.routing.threadId === delegation.childThread.id
+    ))).toBe(true);
+    expect(sink.loadThread(delegation.childThread.id)?.conversationRevision).toBe(1);
+    expect(sink.recoverThread(delegation.childThread.id, {
+      conversationRevision: 0,
+      rosterRevision: 0,
+    }).mode).toBe("snapshot");
   });
 
   it("offers Retry but never Resume for an unproved native cursor", () => {

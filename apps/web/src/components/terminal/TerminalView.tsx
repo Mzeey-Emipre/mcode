@@ -2,12 +2,16 @@ import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 
 import type { Terminal, IDisposable } from "@xterm/xterm";
 import type { SerializeAddon } from "@xterm/addon-serialize";
 import type { SearchAddon } from "@xterm/addon-search";
-import type { TerminalSettings } from "@mcode/contracts";
+import type {
+  TerminalExitMetadata,
+  TerminalSessionState,
+  TerminalSettings,
+} from "@mcode/contracts";
 import { getTransport } from "@/transport";
+import { Button } from "@/components/ui/button";
 import { useSettingsStore } from "@/stores/settingsStore";
-import { useDiffStore } from "@/stores/diffStore";
+import { resolveDefaultOpenInApp } from "@/lib/resolveDefaultOpenInApp";
 import { useTerminalStore, type TerminalSearchOptions } from "@/stores/terminalStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { isTerminalSearchShortcut, shouldInterceptKeyEvent } from "./terminalKeyHandler";
 import { ClientTerminalFlowControl } from "./terminalFlowControl";
 import {
@@ -41,6 +45,10 @@ import {
   type TerminalSearchRunResult,
 } from "./TerminalSearchShelf";
 import { loadTerminalSearchAddon } from "./terminalSearchAddon";
+import {
+  findTerminalLinks,
+  terminalLinkCellRange,
+} from "./terminalLinkProvider";
 // Static import so bundler deduplicates the stylesheet
 import "@xterm/xterm/css/xterm.css";
 
@@ -382,6 +390,14 @@ async function loadRenderer(
 interface TerminalViewProps {
   /** The PTY session ID this view is bound to. */
   readonly ptyId: string;
+  /** Scope used to create a replacement session after a failed tombstone. */
+  readonly ownerScopeId?: string;
+  /** Server-authoritative lifecycle state for the rendered PTY. */
+  readonly sessionState?: TerminalSessionState;
+  /** Retained exit metadata for a completed or failed PTY. */
+  readonly exit?: TerminalExitMetadata;
+  /** Whether the selected backend exposes the v1 diagnostics route. */
+  readonly diagnosticsAvailable?: boolean;
   /**
    * Whether this terminal is the active tab for the active workspace thread
    * (combined pool flag from {@link TerminalTabContent}).
@@ -400,6 +416,10 @@ interface TerminalViewProps {
 /** Renders a single xterm.js terminal backed by a server-side PTY via WS transport. */
 export const TerminalView = memo(function TerminalView({
   ptyId,
+  ownerScopeId,
+  sessionState = "running",
+  exit,
+  diagnosticsAvailable = false,
   visible: shown,
   threadActive,
   onDisposed,
@@ -411,6 +431,7 @@ export const TerminalView = memo(function TerminalView({
   const cleanupRef = useRef<(() => void) | null>(null);
   const flushResizeRpcRef = useRef<(() => void) | null>(null);
   const resumeWarmViewRef = useRef<(() => void) | null>(null);
+  const retryRecoveryRef = useRef<(() => void) | null>(null);
   const rendererRef = useRef<IDisposable | null>(null);
   const searchAddonRef = useRef<SearchAddon | null>(null);
   const searchResultDisposableRef = useRef<IDisposable | null>(null);
@@ -418,6 +439,10 @@ export const TerminalView = memo(function TerminalView({
   const [searchAddonState, setSearchAddonState] = useState<TerminalSearchAddonState>("loading");
   const [searchAddonRetry, setSearchAddonRetry] = useState(0);
   const [termReady, setTermReady] = useState(false);
+  const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null);
+  const [recoveryAction, setRecoveryAction] = useState<"reload" | null>(null);
+  const sessionEndedRef = useRef(sessionState === "exited" || sessionState === "failed");
+  sessionEndedRef.current = sessionState === "exited" || sessionState === "failed";
   /** Cancels in-flight {@link loadRenderer} when the thread goes dormant or the effect cleans up. */
   const rendererInitCancelledRef = useRef(false);
   const onDisposedRef = useRef(onDisposed);
@@ -482,7 +507,45 @@ export const TerminalView = memo(function TerminalView({
       term.open(el);
       applyTerminalSettings(term, terminalSettingsRef.current);
       incrementLiveTerminalCount();
-      let exited = false;
+      let exited = sessionEndedRef.current;
+      if (exited) term.options.disableStdin = true;
+
+      const linkDisposable = term.registerLinkProvider({
+        provideLinks: (bufferLineNumber, callback) => {
+          const line = term.buffer.active.getLine(bufferLineNumber);
+          if (!line) {
+            callback(undefined);
+            return;
+          }
+          const matches = findTerminalLinks(line.translateToString(true));
+          const links = matches.flatMap((match) => {
+            const cellRange = terminalLinkCellRange(line, match);
+            if (!cellRange) return [];
+            const inclusiveEnd = cellRange.end - 1;
+            return [{
+              text: match.text,
+              range: {
+                start: { x: cellRange.start + 1, y: bufferLineNumber + 1 },
+                end: { x: inclusiveEnd + 1, y: bufferLineNumber + 1 },
+              },
+              activate: () => {
+                void getTransport()
+                  .listOpenInApps()
+                  .then((apps) => {
+                    const defaultEditor = useSettingsStore.getState().settings.externalApps.defaultEditor || null;
+                    const appId = resolveDefaultOpenInApp(null, defaultEditor, apps);
+                    return getTransport().openIn(appId, match.target.path, match.target.line);
+                  })
+                .catch(() => {
+                  setRecoveryAction(null);
+                  setRecoveryNotice("The file link could not be opened.");
+                });
+              },
+            }];
+          });
+          callback(links);
+        },
+      });
 
       const pasteText = (text: string) => {
         if (!text) return;
@@ -493,7 +556,7 @@ export const TerminalView = memo(function TerminalView({
       };
 
       const selectionDisposable = term.onSelectionChange(() => {
-        if (!copyOnSelectRef.current || exited) return;
+        if (!copyOnSelectRef.current || exited || sessionEndedRef.current) return;
         const selection = term.getSelection();
         if (selection) {
           navigator.clipboard.writeText(selection).catch(() => {});
@@ -543,7 +606,7 @@ export const TerminalView = memo(function TerminalView({
       // paste mode when the shell requests it, preventing embedded newlines from auto-executing commands.
       const handleContextMenu = (e: MouseEvent) => {
         e.preventDefault();
-        if (exited) return;
+        if (exited || sessionEndedRef.current) return;
         navigator.clipboard
           .readText()
           .then((text) => {
@@ -564,7 +627,7 @@ export const TerminalView = memo(function TerminalView({
 
       // Forward keystrokes to the backend via WS RPC
       const dataDisposable = term.onData((data) => {
-        if (exited) return;
+        if (exited || sessionEndedRef.current) return;
         resizeControllerRef.current?.flushBeforeInput();
         transport.terminalWrite(ptyId, data).catch(() => {});
       });
@@ -698,7 +761,13 @@ export const TerminalView = memo(function TerminalView({
 
       // Show a reconnect banner when the server signals that the replay window
       // was exceeded and some output may have been missed.
-      const unsubReconnectGap = transport.terminalSubscribe(ptyId, { onReconnectGap: () => {
+      const unsubReconnectGap = transport.terminalSubscribe(ptyId, { onReconnectGap: (gap) => {
+        setRecoveryAction("reload");
+        setRecoveryNotice(
+          gap
+            ? "Some earlier output is unavailable. The retained output is shown below."
+            : "Some earlier output may be unavailable. The retained output is shown below.",
+        );
         trackedWrite(
           "\r\n\x1b[90m[Reconnected - some output may be missing]\x1b[0m\r\n",
         );
@@ -711,25 +780,12 @@ export const TerminalView = memo(function TerminalView({
         exited = true;
         term.options.disableStdin = true;
         trackedWrite(
-          `\r\n\x1b[90m[Process exited with code ${detail.code}]\x1b[0m\r\n`,
+          `\r\n\x1b[90m[Process ${detail.state === "failed" ? "failed" : "exited"} with code ${detail.code}]\x1b[0m\r\n`,
         );
-        // The PTY is gone and cannot remount; drop any saved scroll anchor.
+        // Exit turns the renderer into a read-only tombstone, so a future mount
+        // starts from the server checkpoint instead of an obsolete scroll anchor.
         dropRemountAnchor(ptyId);
-        const terminal = useTerminalStore.getState();
-        const scopeId = terminal.ptyToThread[ptyId];
-        if (!scopeId) return;
-        terminal.removeTerminal(ptyId);
-        const workspace = useWorkspaceStore.getState();
-        const thread = workspace.threads.find((candidate) => candidate.id === scopeId);
-        const workspaceId = thread?.workspace_id ??
-          (workspace.workspaces.some((candidate) => candidate.id === scopeId) ? scopeId : undefined);
-        if (workspaceId) {
-          useDiffStore.getState().closeRightPanelTabInstance(
-            workspaceId,
-            thread ? scopeId : undefined,
-            `terminal:${ptyId}`,
-          );
-        }
+        useTerminalStore.getState().recordTerminalExit(ptyId, detail.exit);
       }});
 
       const resizeController = createTerminalResizeController({
@@ -737,7 +793,7 @@ export const TerminalView = memo(function TerminalView({
         fitAddon,
         term,
         isActive: () => shownRef.current && threadActiveRef.current,
-        isDisposed: () => disposed || exited,
+        isDisposed: () => disposed || exited || sessionEndedRef.current,
         shouldDeferFit: () => terminalScroll.shouldDeferFitRefresh(ptyId),
         runProgrammatic: (fn) => terminalScroll.runProgrammatic(ptyId, fn),
         captureScrollIntent: () => captureScrollAnchor(term),
@@ -761,11 +817,13 @@ export const TerminalView = memo(function TerminalView({
         resizeControllerRef.current = null;
         flushResizeRpcRef.current = null;
         resumeWarmViewRef.current = null;
+        retryRecoveryRef.current = null;
         openSearchRef.current = () => {};
         setTermReady(false);
         dataDisposable.dispose();
         scrollDisposable.dispose();
         selectionDisposable.dispose();
+        linkDisposable.dispose();
         el.removeEventListener("wheel", onWheel);
         el.removeEventListener("contextmenu", handleContextMenu);
         el.removeEventListener("paste", handlePaste, true);
@@ -841,6 +899,9 @@ export const TerminalView = memo(function TerminalView({
           .terminalReattach(ptyId, lastSeq, mode === "cold")
         .then((result) => {
           if (disposed) return;
+          setRecoveryAction(null);
+          setRecoveryNotice(null);
+          if (shownRef.current) term.focus();
           if (result.mode === "checkpoint") {
             lastWrittenSeq = result.checkpointThrough;
             transport.ptySetLastSeq(ptyId, result.checkpointThrough);
@@ -859,22 +920,28 @@ export const TerminalView = memo(function TerminalView({
           flushReplayGate();
         })
         .catch(() => {
-          // Reattach failed (e.g. the PTY already exited); release the gate so
-          // any buffered live frames still paint.
+          // Release the gate so any buffered live frames still paint, while
+          // keeping the failure visible beside the affected Terminal.
           if (disposed) return;
+          setRecoveryAction("reload");
+          setRecoveryNotice("Terminal output could not be reattached. Reload available output or close this terminal.");
           flushReplayGate();
         })
         .finally(() => {
-          if (!disposed && !exited && shownRef.current) {
+          if (!disposed && !exited && !sessionEndedRef.current && shownRef.current) {
             transport.terminalResume(ptyId).catch(() => {});
           }
         });
       };
 
       resumeWarmViewRef.current = () => {
-        if (disposed || exited || replaying) return;
+        if (disposed || exited || sessionEndedRef.current || replaying) return;
         const lastSeq = Number.isFinite(lastWrittenSeq) ? lastWrittenSeq : -1;
         void reattach(lastSeq, "warm");
+      };
+      retryRecoveryRef.current = () => {
+        if (disposed || replaying) return;
+        void reattach(-1, "cold");
       };
 
       // Newly created PTYs begin paused. Reattach first so retained output and
@@ -1074,6 +1141,12 @@ export const TerminalView = memo(function TerminalView({
     }
   }, [terminalSettings]);
 
+  useEffect(() => {
+    if (sessionState !== "exited" && sessionState !== "failed") return;
+    const term = termRef.current;
+    if (term) term.options.disableStdin = true;
+  }, [sessionState]);
+
   // Attach WebGL only while shown and after scroll restore; one GL context pool-wide.
   useEffect(() => {
     if (!shown || !threadActive) {
@@ -1186,17 +1259,110 @@ export const TerminalView = memo(function TerminalView({
     setSearchAddonRetry((retry) => retry + 1);
   }, []);
 
+  const closeRetainedTerminal = useCallback(() => {
+    void getTransport()
+      .terminalKill(ptyId)
+      .then(() => useTerminalStore.getState().removeTerminal(ptyId))
+      .catch(() => {
+        setRecoveryAction(null);
+        setRecoveryNotice("Terminal could not be closed. Try again.");
+      });
+  }, [ptyId]);
+
+  const retryTerminal = useCallback(() => {
+    if (sessionState === "running" || sessionState === "starting" || sessionState === "exiting") {
+      retryRecoveryRef.current?.();
+      return;
+    }
+    if (!ownerScopeId) return;
+    setRecoveryNotice("Starting a replacement terminal.");
+    void getTransport()
+      .terminalCreate(ownerScopeId, ptyId)
+      .then(({ ptyId: replacementPtyId, shell }) => {
+        useTerminalStore.getState().removeTerminal(ptyId);
+        useTerminalStore.getState().addTerminal(ownerScopeId, replacementPtyId, shell);
+      })
+      .catch(() => {
+        setRecoveryAction(null);
+        setRecoveryNotice("Replacement terminal could not be started. Try again.");
+      });
+  }, [ownerScopeId, ptyId, sessionState]);
+
+  const copyDiagnostics = useCallback(() => {
+    const getBundle = getTransport().terminalDiagnosticsGetBundle;
+    if (!getBundle) return;
+    void getBundle()
+      .then((bundle) => navigator.clipboard.writeText(JSON.stringify(bundle)))
+      .catch(() => {
+        setRecoveryAction(null);
+        setRecoveryNotice("Diagnostics could not be copied. Try again.");
+      });
+  }, []);
+
+  const statusActionLabel = sessionState === "exited" || sessionState === "failed"
+    ? "Retry terminal"
+    : "Reload available output";
+
   return (
     <div
       ref={containerRef}
       className="flex h-full min-h-0 w-full flex-col overflow-hidden"
       data-terminal-hydrated={hydrated}
       data-testid="terminal-render-content"
+      role="region"
+      aria-label="Terminal output"
       style={{
         backgroundColor: TERMINAL_BACKGROUND,
         visibility: shown && hydrated ? "visible" : "hidden",
       }}
     >
+      {recoveryNotice || sessionState === "exited" || sessionState === "failed" ? (
+        <div
+          className="mx-3 mt-2 rounded border border-border/70 bg-muted/30 px-2 py-1 text-xs text-muted-foreground"
+          data-testid="terminal-status"
+        >
+          <div role="status" aria-live="polite" aria-atomic="true">
+            {recoveryNotice ?? (
+              sessionState === "failed"
+                ? "This terminal failed. Its completed output is retained."
+                : `This terminal exited with code ${exit?.code ?? 0}. Its completed output is retained.`
+            )}
+          </div>
+          <div className="mt-1 flex items-center gap-2">
+            {(recoveryAction === "reload" ||
+              ((sessionState === "exited" || sessionState === "failed") && ownerScopeId)) ? (
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                onClick={retryTerminal}
+              >
+                {statusActionLabel}
+              </Button>
+            ) : null}
+            {(sessionState === "exited" || sessionState === "failed") ? (
+              <Button
+                type="button"
+                size="xs"
+                variant="ghost"
+                onClick={closeRetainedTerminal}
+              >
+                Close terminal
+              </Button>
+            ) : null}
+            {diagnosticsAvailable ? (
+              <Button
+                type="button"
+                size="xs"
+                variant="ghost"
+                onClick={copyDiagnostics}
+              >
+                Copy diagnostics
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
       <div ref={fitHostRef} className="min-h-0 flex-1 w-full p-3" />
       {termReady ? (
         <TerminalSearchShelf

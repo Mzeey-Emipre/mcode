@@ -4,6 +4,7 @@ import type { IPty } from "node-pty";
 import type { TerminalPlatform } from "@mcode/contracts";
 import {
   PTY_HOST_MAX_DATA_BYTES,
+  PTY_HOST_HEARTBEAT_INTERVAL_MS,
   parsePtyHostServerMessage,
   PtyHostServerMessageSchema,
   type PtyHostEvent,
@@ -12,7 +13,6 @@ import {
 import { createPtyProcessScope } from "./pty-process-scope.js";
 
 const nativeRequire = createRequire(import.meta.url);
-const HEARTBEAT_INTERVAL_MS = 250;
 const MAX_SESSIONS = 20;
 
 /** Containment operations owned by one PTY host session. */
@@ -152,7 +152,7 @@ export class PtyHostProcessRuntime {
     });
     this.heartbeatTimer = setInterval(
       () => this.publishHeartbeat(),
-      HEARTBEAT_INTERVAL_MS,
+      PTY_HOST_HEARTBEAT_INTERVAL_MS,
     );
   }
 

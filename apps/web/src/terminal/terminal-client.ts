@@ -1,4 +1,8 @@
-import type { TerminalSessionState } from "@mcode/contracts";
+import type {
+  TerminalExitMetadata,
+  TerminalGap,
+  TerminalSessionState,
+} from "@mcode/contracts";
 
 /** Upper bound for renderer-side Terminal cleanup RPCs. */
 export const TERMINAL_CLEANUP_TIMEOUT_MS = 2_000;
@@ -45,13 +49,15 @@ export interface TerminalDataEvent {
 export interface TerminalExitEvent {
   readonly ptyId: string;
   readonly code: number;
+  readonly state: "exited" | "failed";
+  readonly exit: TerminalExitMetadata;
 }
 
 /** Events delivered by one client-owned Terminal attachment. */
 export interface TerminalClientSubscription {
   readonly onData?: (event: TerminalDataEvent) => void;
   readonly onExit?: (event: TerminalExitEvent) => void;
-  readonly onReconnectGap?: () => void;
+  readonly onReconnectGap?: (gap?: TerminalGap) => void;
 }
 
 /** Serialized renderer state to preserve before releasing a shell switch. */
@@ -65,11 +71,12 @@ export interface TerminalActiveSession {
   readonly ptyId: string;
   readonly threadId: string;
   readonly state: TerminalSessionState;
+  readonly exit?: TerminalExitMetadata;
 }
 
 /** Client-side adapter for the Terminal backend selected at server boot. */
 export interface TerminalClient {
-  create(threadId: string): Promise<{ ptyId: string; shell: string }>;
+  create(threadId: string, replacesSessionId?: string): Promise<{ ptyId: string; shell: string }>;
   write(ptyId: string, data: string): Promise<void>;
   resize(ptyId: string, cols: number, rows: number): Promise<void>;
   kill(ptyId: string): Promise<void>;
