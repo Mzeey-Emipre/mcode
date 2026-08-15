@@ -44,6 +44,7 @@ export const ENABLED_PROVIDER_CONFORMANCE: readonly ProviderConformanceRegistrat
       "orchestration",
       "browser-access",
       "thread-control",
+      "child-cancellation",
     ],
     fixtureFiles: [
       fixtureFile("codex"),
