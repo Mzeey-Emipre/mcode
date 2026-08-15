@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -40,6 +41,15 @@ function createPatchFixture() {
   mkdirSync(path.dirname(patchPath), { recursive: true });
   writeFileSync(patchPath, "fixture patch");
   return { fixtureRoot, patchPath };
+}
+
+function createStaleNodePtyBuild(packageRoot) {
+  const releaseRoot = path.join(packageRoot, "build", "Release");
+  mkdirSync(releaseRoot, { recursive: true });
+  for (const fileName of ["pty.node", ".forge-meta", "spawn-helper"]) {
+    writeFileSync(path.join(releaseRoot, fileName), "stale");
+  }
+  return releaseRoot;
 }
 
 function removeFixture(...roots) {
@@ -213,6 +223,7 @@ describe("Darwin node-pty packaging boundary", () => {
   it("applies the exact package patch before enabling source rebuild", () => {
     const { desktopRoot, packageRoot } = createNodePtyFixture();
     const { fixtureRoot, patchPath } = createPatchFixture();
+    const releaseRoot = createStaleNodePtyBuild(packageRoot);
     const calls = [];
     try {
       expect(
@@ -226,6 +237,7 @@ describe("Darwin node-pty packaging boundary", () => {
           },
         }),
       ).toEqual({ applied: true, packageRoot, patchPath });
+      expect(existsSync(releaseRoot)).toBe(false);
       expect(calls.map(({ command, args }) => [command, args])).toEqual([
         ["git", ["apply", "--check", patchPath]],
         ["git", ["apply", patchPath]],
@@ -253,6 +265,9 @@ describe("Darwin node-pty packaging boundary", () => {
 
   it("skips the patch and source-build argument on non-Darwin hosts", () => {
     const { desktopRoot } = createNodePtyFixture();
+    const releaseRoot = createStaleNodePtyBuild(
+      path.join(desktopRoot, "node_modules", "node-pty"),
+    );
     const calls = [];
     try {
       for (const hostPlatform of ["linux", "win32"]) {
@@ -265,6 +280,7 @@ describe("Darwin node-pty packaging boundary", () => {
         ).toEqual({ applied: false });
       }
       expect(calls).toEqual([]);
+      expect(existsSync(releaseRoot)).toBe(true);
       expect(
         buildElectronBuilderArgs({
           electronBuilderCli: "electron-builder.js",
@@ -290,6 +306,9 @@ describe("Darwin node-pty packaging boundary", () => {
 
   it("fails closed when git apply check fails", () => {
     const { desktopRoot } = createNodePtyFixture();
+    const releaseRoot = createStaleNodePtyBuild(
+      path.join(desktopRoot, "node_modules", "node-pty"),
+    );
     const { fixtureRoot } = createPatchFixture();
     const calls = [];
     try {
@@ -305,6 +324,7 @@ describe("Darwin node-pty packaging boundary", () => {
         }),
       ).toThrow(/git apply check failed/);
       expect(calls).toHaveLength(1);
+      expect(existsSync(releaseRoot)).toBe(true);
     } finally {
       removeFixture(desktopRoot, fixtureRoot);
     }
@@ -312,6 +332,9 @@ describe("Darwin node-pty packaging boundary", () => {
 
   it("fails closed when git apply fails after a successful check", () => {
     const { desktopRoot } = createNodePtyFixture();
+    const releaseRoot = createStaleNodePtyBuild(
+      path.join(desktopRoot, "node_modules", "node-pty"),
+    );
     const { fixtureRoot } = createPatchFixture();
     const calls = [];
     try {
@@ -329,6 +352,7 @@ describe("Darwin node-pty packaging boundary", () => {
         }),
       ).toThrow(/git apply apply failed/);
       expect(calls).toHaveLength(2);
+      expect(existsSync(releaseRoot)).toBe(true);
     } finally {
       removeFixture(desktopRoot, fixtureRoot);
     }

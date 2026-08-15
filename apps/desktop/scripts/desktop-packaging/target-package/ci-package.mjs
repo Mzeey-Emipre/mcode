@@ -2,7 +2,13 @@
  * CI-only helper that prepares the desktop package and invokes electron-builder.
  */
 
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -103,6 +109,10 @@ export function prepareDarwinNodePtySource({
     runCommand("git", ["apply", patchPath], commandOptions),
     "apply",
   );
+  rmSync(resolve(packageRoot, "build", "Release"), {
+    force: true,
+    recursive: true,
+  });
   return { applied: true, packageRoot, patchPath };
 }
 
