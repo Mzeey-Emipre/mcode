@@ -30,6 +30,21 @@ const createRequest = {
   rows: 24,
 };
 
+function heartbeatEvent(
+  hostGeneration = "1",
+  monotonicMs = "2",
+): Extract<PtyHostEvent, { kind: "heartbeat" }> {
+  return {
+    contractVersion: 1,
+    kind: "heartbeat",
+    hostGeneration,
+    monotonicMs,
+    activeSessions: 0,
+    queueBytes: 0,
+    rssBytes: "1",
+  };
+}
+
 class FakeHostChild extends EventEmitter implements PtyHostChild {
   readonly pid = 42;
   readonly connected = true;
@@ -166,7 +181,7 @@ describe("PtyHostSupervisor", () => {
     vi.useRealTimers();
   });
 
-  it("probes a missed heartbeat and replaces the unresponsive host once", async () => {
+  it("stays healthy through 1999ms with the default heartbeat bounds", async () => {
     vi.useFakeTimers();
     const children: FakeHostChild[] = [];
     const supervisor = new PtyHostSupervisor({
@@ -180,21 +195,144 @@ describe("PtyHostSupervisor", () => {
     });
     await supervisor.start();
 
-    await vi.advanceTimersByTimeAsync(750);
-    expect(supervisor.health().state).toBe("degraded");
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(supervisor.health().state).toBe("healthy");
+    expect(
+      children[0]!.send.mock.calls.filter(([message]) => message.kind === "probe"),
+    ).toHaveLength(0);
+    const creating = supervisor.create(createRequest);
     expect(children[0]!.send).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: "probe" }),
+      expect.objectContaining({ kind: "create", sessionId: UUID }),
       expect.any(Function),
     );
+    children[0]!.emitMessage({
+      contractVersion: 1,
+      kind: "running",
+      sessionId: UUID,
+      hostGeneration: "1",
+      rootPid: 123,
+      processGroupId: "job-123",
+      containment: "job-object",
+    });
+    await expect(creating).resolves.toMatchObject({
+      sessionId: UUID,
+      hostGeneration: "1",
+      state: "running",
+    });
+    await supervisor.shutdown();
+    vi.useRealTimers();
+  });
 
+  it("degrades and sends exactly one probe at 2000ms", async () => {
+    vi.useFakeTimers();
+    const children: FakeHostChild[] = [];
+    const supervisor = new PtyHostSupervisor({
+      platform: "windows",
+      cleanupLedger: new InMemoryPtyHostCleanupLedger(),
+      spawnHost: () => {
+        const child = new FakeHostChild();
+        children.push(child);
+        return child;
+      },
+    });
+    await supervisor.start();
+
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(supervisor.health().state).toBe("degraded");
+    expect(
+      children[0]!.send.mock.calls.filter(([message]) => message.kind === "probe"),
+    ).toHaveLength(1);
+    await supervisor.shutdown();
+    vi.useRealTimers();
+  });
+
+  it("returns to healthy when a heartbeat arrives during the probe window", async () => {
+    vi.useFakeTimers();
+    const children: FakeHostChild[] = [];
+    const supervisor = new PtyHostSupervisor({
+      platform: "windows",
+      cleanupLedger: new InMemoryPtyHostCleanupLedger(),
+      spawnHost: () => {
+        const child = new FakeHostChild();
+        children.push(child);
+        return child;
+      },
+    });
+    await supervisor.start();
+
+    await vi.advanceTimersByTimeAsync(2_000);
     await vi.advanceTimersByTimeAsync(500);
+    children[0]!.emitMessage(heartbeatEvent());
+    expect(supervisor.health().state).toBe("healthy");
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(supervisor.health().state).toBe("healthy");
+    expect(children).toHaveLength(1);
+    await supervisor.shutdown();
+    vi.useRealTimers();
+  });
+
+  it("publishes unhealthy at 3000ms and starts one replacement after 250ms", async () => {
+    vi.useFakeTimers();
+    const children: FakeHostChild[] = [];
+    const events: PtyHostEvent[] = [];
+    const supervisor = new PtyHostSupervisor({
+      platform: "windows",
+      cleanupLedger: new InMemoryPtyHostCleanupLedger(),
+      spawnHost: () => {
+        const child = new FakeHostChild();
+        children.push(child);
+        return child;
+      },
+    });
+    supervisor.subscribe((event) => events.push(event));
+    await supervisor.start();
+
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(supervisor.health().state).toBe("unhealthy");
+    expect(
+      events.filter((event) => event.kind === "failure"),
+    ).toHaveLength(1);
+    expect(events.at(-1)).toMatchObject({
+      kind: "failure",
+      code: "HOST_UNHEALTHY",
+    });
+    expect(children).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(249);
+    expect(children).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
     await expect(supervisor.whenHealthy()).resolves.toMatchObject({
       hostGeneration: "2",
       state: "healthy",
     });
     expect(children).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(children).toHaveLength(2);
     await supervisor.shutdown();
     vi.useRealTimers();
+  });
+
+  it("rejects invalid and equal heartbeat bounds", () => {
+    const options = {
+      platform: "windows" as const,
+      cleanupLedger: new InMemoryPtyHostCleanupLedger(),
+      spawnHost: () => new FakeHostChild(),
+    };
+    expect(() =>
+      new PtyHostSupervisor({
+        ...options,
+        heartbeatDegradedMs: 0,
+        heartbeatUnhealthyMs: 3_000,
+      }),
+    ).toThrow(/invalid/);
+    expect(() =>
+      new PtyHostSupervisor({
+        ...options,
+        heartbeatDegradedMs: 2_000,
+        heartbeatUnhealthyMs: 2_000,
+      }),
+    ).toThrow(/invalid/);
   });
 
   it("waits for running and exit events at the adapter boundary", async () => {

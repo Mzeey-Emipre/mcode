@@ -28,8 +28,8 @@ import { reapPosixProcessSession } from "./posix-process-scope.js";
 
 const STARTUP_TIMEOUT_MS = 5_000;
 const REPLACEMENT_DELAY_MS = 250;
-const HEARTBEAT_DEGRADED_MS = 750;
-const HEARTBEAT_UNHEALTHY_MS = 1_000;
+const HEARTBEAT_DEGRADED_MS = 2_000;
+const HEARTBEAT_UNHEALTHY_MS = 3_000;
 const OPERATION_TIMEOUT_MS = 5_000;
 const MAX_IPC_QUEUE_BYTES = 1_048_576;
 const CONTAINMENT_SETTLE_TIMEOUT_MS = 500;
@@ -731,7 +731,7 @@ export class PtyHostSupervisor implements PtyHostAdapter {
         if (child !== this.child || this.state !== "degraded") return;
         this.handleHostFailure(
           child,
-          new Error(`PTY host heartbeat exceeded ${HEARTBEAT_UNHEALTHY_MS}ms`),
+          new Error(`PTY host heartbeat exceeded ${unhealthyMs}ms`),
         );
       }, unhealthyMs - degradedMs);
     }, degradedMs);
