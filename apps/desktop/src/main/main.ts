@@ -13,7 +13,6 @@ import {
   clipboard,
   dialog,
   ipcMain,
-  Menu,
   Notification,
   powerMonitor,
   powerSaveBlocker,
@@ -30,7 +29,6 @@ import { Readable } from "stream";
 import { getLogPath, getMcodeDir, getRecentLogs, logger } from "@mcode/shared";
 import {
   getExtension as bundledGetExtension,
-  isMcodeWorkspacePreviewUrl,
 } from "@mcode/contracts";
 
 /** Use snapshot-provided module when available (V8 snapshot skips re-init). */
@@ -57,6 +55,12 @@ import {
   hardenPreviewWebviewAttachment,
   resolvePreviewGuestPreloadPath,
 } from "../features/preview/index.js";
+import {
+  configureApplicationMenu,
+  installMainWindowNavigationPolicy,
+  registerDesktopWindowActionHandler,
+  registerExternalUrlHandler,
+} from "../features/desktop-window/index.js";
 import { isDesktopDev } from "./is-desktop-dev.js";
 import { shouldPrintVersion } from "./cli-args.js";
 
@@ -98,30 +102,6 @@ const MIME_MAP: Record<string, string> = {
   pdf: "application/pdf",
   txt: "text/plain",
 };
-
-// ---------------------------------------------------------------------------
-// External URL helper
-// ---------------------------------------------------------------------------
-
-/** Protocols that may be opened in the user's default browser. */
-const EXTERNAL_PROTOCOLS = new Set(["https:", "http:", "mailto:"]);
-
-/** Open a URL in the system browser if its protocol is allowed. */
-function openIfAllowed(url: string): void {
-  try {
-    const parsed = new URL(url);
-    if (EXTERNAL_PROTOCOLS.has(parsed.protocol)) {
-      shell.openExternal(parsed.href).catch((err: unknown) => {
-        console.error(
-          `[openIfAllowed] Failed to open ${parsed.protocol} URL: ${parsed.href}`,
-          err,
-        );
-      });
-    }
-  } catch {
-    // Invalid URL, ignore
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Application state
@@ -400,12 +380,7 @@ function createWindow(): void {
     disposeBrowserAutomationForWindow(mainWindow!.id);
   });
 
-  // Intercept target="_blank" and window.open() calls.
-  // Deny the new window and open the URL in the system browser instead.
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    openIfAllowed(url);
-    return { action: "deny" };
-  });
+  installMainWindowNavigationPolicy(mainWindow);
 
   // Harden every <webview> and replace any renderer-supplied preload with the
   // fixed takeover bridge bundled with the desktop application.
@@ -415,23 +390,6 @@ function createWindow(): void {
       params,
       resolvePreviewGuestPreloadPath(__dirname),
     );
-  });
-
-  // Prevent the main window from navigating away from the app.
-  mainWindow.webContents.on("will-navigate", (event, url) => {
-    const currentUrl = mainWindow!.webContents.getURL();
-    // Allow same-origin navigation for the SPA router (dev mode http://localhost).
-    // In production (file://), origin is "null" so all navigation is blocked,
-    // which is correct since the SPA uses pushState routing.
-    try {
-      const current = new URL(currentUrl);
-      const target = new URL(url);
-      if (current.origin !== "null" && current.origin === target.origin) return;
-    } catch {
-      // Parse error, fall through to block
-    }
-    event.preventDefault();
-    openIfAllowed(url);
   });
 
   // Show the window as soon as the first frame is painted.
@@ -522,30 +480,7 @@ function registerIpcHandlers(): void {
     },
   );
 
-  // Open external URL (https, http, mailto), or workspace-relative preview targets in the default browser.
-  ipcMain.handle(
-    "open-external-url",
-    async (_event, url: string, workspacePath?: string | null) => {
-      const trimmed = typeof url === "string" ? url.trim() : "";
-      if (!trimmed) return;
-      if (isMcodeWorkspacePreviewUrl(trimmed)) {
-        const ws =
-          typeof workspacePath === "string" && workspacePath.trim().length > 0
-            ? workspacePath.trim()
-            : null;
-        const resolved = await resolveMcodeWorkspacePreviewUrl(trimmed, ws);
-        if (!resolved.ok) return;
-        void shell.openExternal(resolved.url).catch((err: unknown) => {
-          console.error(
-            `[open-external-url] Failed to open file URL: ${resolved.url}`,
-            err,
-          );
-        });
-        return;
-      }
-      openIfAllowed(trimmed);
-    },
-  );
+  registerExternalUrlHandler(resolveMcodeWorkspacePreviewUrl);
 
   // Read clipboard image and save to temp JPEG
   ipcMain.handle("read-clipboard-image", async () => {
@@ -664,17 +599,7 @@ function registerIpcHandlers(): void {
     return supported;
   });
 
-  ipcMain.handle("window:perform", (event, action: unknown) => {
-    if (
-      typeof action !== "string" ||
-      !DESKTOP_WINDOW_ACTIONS.has(action as DesktopWindowAction)
-    ) {
-      throw new Error("Invalid desktop window action");
-    }
-    const window = BrowserWindow.fromWebContents(event.sender);
-    if (!window || window.isDestroyed()) return;
-    performDesktopWindowAction(window, action as DesktopWindowAction);
-  });
+  registerDesktopWindowActionHandler();
 
   registerPreviewBrowserHandlers();
 }
@@ -792,172 +717,6 @@ if (process.platform === "win32") {
   app.setAppUserModelId(APP_ID);
 }
 
-/** Native window and edit commands accepted from the context-isolated renderer. */
-export type DesktopWindowAction =
-  | "closeWindow"
-  | "quit"
-  | "undo"
-  | "redo"
-  | "cut"
-  | "copy"
-  | "paste"
-  | "selectAll"
-  | "zoomIn"
-  | "zoomOut"
-  | "zoomReset"
-  | "toggleFullScreen"
-  | "reload"
-  | "toggleDevTools";
-
-/** Explicit allowlist for native actions exposed through IPC. */
-export const DESKTOP_WINDOW_ACTIONS = new Set<DesktopWindowAction>([
-  "closeWindow",
-  "quit",
-  "undo",
-  "redo",
-  "cut",
-  "copy",
-  "paste",
-  "selectAll",
-  "zoomIn",
-  "zoomOut",
-  "zoomReset",
-  "toggleFullScreen",
-  "reload",
-  "toggleDevTools",
-]);
-
-function performDesktopWindowAction(
-  window: BrowserWindow,
-  action: DesktopWindowAction,
-): void {
-  switch (action) {
-    case "closeWindow":
-      window.close();
-      return;
-    case "quit":
-      app.quit();
-      return;
-    case "undo":
-      window.webContents.undo();
-      return;
-    case "redo":
-      window.webContents.redo();
-      return;
-    case "cut":
-      window.webContents.cut();
-      return;
-    case "copy":
-      window.webContents.copy();
-      return;
-    case "paste":
-      window.webContents.paste();
-      return;
-    case "selectAll":
-      window.webContents.selectAll();
-      return;
-    case "zoomIn":
-      window.webContents.setZoomLevel(window.webContents.getZoomLevel() + 0.5);
-      return;
-    case "zoomOut":
-      window.webContents.setZoomLevel(window.webContents.getZoomLevel() - 0.5);
-      return;
-    case "zoomReset":
-      window.webContents.setZoomLevel(0);
-      return;
-    case "toggleFullScreen":
-      window.setFullScreen(!window.isFullScreen());
-      return;
-    case "reload":
-      if (isDesktopDev()) window.webContents.reloadIgnoringCache();
-      return;
-    case "toggleDevTools":
-      if (!isDesktopDev()) return;
-      if (window.webContents.isDevToolsOpened())
-        window.webContents.closeDevTools();
-      else window.webContents.openDevTools({ mode: "right" });
-  }
-}
-
-type DesktopRendererCommand =
-  | "workspace.new"
-  | "thread.new"
-  | "sidebar.toggle"
-  | "rightPanel.toggle"
-  | "settings.keyboard"
-  | "settings.about";
-
-function sendDesktopRendererCommand(command: DesktopRendererCommand): void {
-  const target = BrowserWindow.getFocusedWindow() ?? mainWindow;
-  if (!target || target.isDestroyed()) return;
-  target.webContents.send("desktop:command", command);
-}
-
-function configureApplicationMenu(): void {
-  if (process.platform !== "darwin") {
-    Menu.setApplicationMenu(null);
-    return;
-  }
-  Menu.setApplicationMenu(
-    Menu.buildFromTemplate([
-      { role: "appMenu" },
-      {
-        label: "File",
-        submenu: [
-          {
-            label: "New Project",
-            accelerator: "CmdOrCtrl+Shift+N",
-            click: () => sendDesktopRendererCommand("workspace.new"),
-          },
-          {
-            label: "New Thread",
-            accelerator: "CmdOrCtrl+N",
-            click: () => sendDesktopRendererCommand("thread.new"),
-          },
-          { type: "separator" },
-          { role: "close" },
-        ],
-      },
-      { role: "editMenu" },
-      {
-        label: "View",
-        submenu: [
-          {
-            label: "Toggle Sidebar",
-            accelerator: "CmdOrCtrl+\\",
-            click: () => sendDesktopRendererCommand("sidebar.toggle"),
-          },
-          {
-            label: "Toggle Right Panel",
-            accelerator: "CmdOrCtrl+Alt+B",
-            click: () => sendDesktopRendererCommand("rightPanel.toggle"),
-          },
-          { type: "separator" },
-          { role: "resetZoom" },
-          { role: "zoomIn" },
-          { role: "zoomOut" },
-          { type: "separator" },
-          { role: "togglefullscreen" },
-        ],
-      },
-      { role: "windowMenu" },
-      {
-        role: "help",
-        submenu: [
-          {
-            label: "Keyboard Shortcuts",
-            click: () => sendDesktopRendererCommand("settings.keyboard"),
-          },
-          {
-            label: "About Mcode",
-            click: () => sendDesktopRendererCommand("settings.about"),
-          },
-        ],
-      },
-    ]),
-  );
-}
-
 // Tag the dev main process so `ps`/console output distinguishes it from a
 // packaged instance. process.title does not change app.getName() or the
 // userData path, so dev and prod still share data-dir resolution. On packaged
@@ -976,7 +735,7 @@ app.whenReady().then(async () => {
     if (process.platform === "darwin") {
       app.dock?.setIcon(getWindowIconPath());
     }
-    configureApplicationMenu();
+    configureApplicationMenu({ getMainWindow: () => mainWindow });
 
     // Start the server child process
     const port = await serverRuntime.start();
