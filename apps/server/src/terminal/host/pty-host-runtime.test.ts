@@ -1,6 +1,21 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { IDisposable, IPty } from "node-pty";
 import type { PtyHostEvent } from "./pty-host-protocol.js";
+
+const { nativeRequire } = vi.hoisted(() => {
+  const nativeSpawn = vi.fn() as unknown as typeof import("node-pty").spawn;
+  const nativeRequire = vi.fn((moduleName: string) => {
+    if (moduleName === "node-pty") return { spawn: nativeSpawn };
+    throw new Error(`Missing native test module: ${moduleName}`);
+  });
+  return { nativeRequire };
+});
+
+vi.mock("node:module", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:module")>();
+  return { ...actual, createRequire: () => nativeRequire };
+});
+
 import {
   PtyHostNativeLoadError,
   PtyHostProcessRuntime,
@@ -66,6 +81,30 @@ function createScope(established = true): PtyProcessScope {
 }
 
 describe("PtyHostProcessRuntime", () => {
+  beforeEach(() => {
+    nativeRequire.mockClear();
+  });
+
+  it("validates native spawn before publishing ready when spawn is not injected", async () => {
+    const events: PtyHostEvent[] = [];
+    const runtime = new PtyHostProcessRuntime({
+      platform: "windows",
+      nativeAbi: "fake-v1",
+      publish: (event) => events.push(event),
+    });
+
+    await runtime.receive({
+      contractVersion: 1,
+      kind: "handshake",
+      requestedGeneration: "7",
+      platform: "windows",
+    });
+
+    expect(nativeRequire).toHaveBeenCalledWith("node-pty");
+    expect(events[0]).toMatchObject({ kind: "ready" });
+    await runtime.dispose();
+  });
+
   it("fails before ready for the protected startup faults", async () => {
     const events: PtyHostEvent[] = [];
     const runtime = new PtyHostProcessRuntime({
@@ -109,6 +148,10 @@ describe("PtyHostProcessRuntime", () => {
       boundary: "startup",
       code: "HOST_UNHEALTHY",
     }));
+    expect(events).not.toContainEqual(expect.objectContaining({ kind: "ready" }));
+    expect(nativeRequire).toHaveBeenCalledWith(
+      "node-pty/__mcode_missing_release_native_artifact__",
+    );
     await runtime.dispose();
   });
 

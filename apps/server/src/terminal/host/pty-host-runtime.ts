@@ -155,7 +155,10 @@ export class PtyHostProcessRuntime {
     }
     this.releaseTestFault = message.releaseTestFault;
     this.generation = message.requestedGeneration;
-    if (this.releaseTestFault === "missing-native-artifact") {
+    if (
+      this.releaseTestFault === "missing-native-artifact" ||
+      this.options.spawnPty === undefined
+    ) {
       try {
         this.loadNativeSpawn();
       } catch (error) {
