@@ -59,7 +59,7 @@ import {
   resolveMcodeWorkspacePreviewUrl,
   hardenPreviewWebviewAttachment,
   resolvePreviewGuestPreloadPath,
-} from "./preview/index.js";
+} from "../features/preview/index.js";
 import { isDesktopDev } from "./is-desktop-dev.js";
 import { shouldSetDockIcon } from "./dock-icon.js";
 import { shouldPrintVersion } from "./cli-args.js";
