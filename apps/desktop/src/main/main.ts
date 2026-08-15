@@ -42,9 +42,9 @@ import { ServerRuntime } from "../features/server-runtime/index.js";
 import {
   initializeApplicationUpdates,
   cleanupApplicationUpdates,
-  type ApplicationUpdates,
   type ApplicationLifecycle,
   type UpdateTimer,
+  type ApplicationUpdateIpc,
 } from "../features/application-updates/index.js";
 import { loadUpdaterSettings } from "../features/application-updates/configuration/settings.js";
 import type { ApplicationWindowProvider } from "../features/application-updates/state/update-status.js";
@@ -59,8 +59,6 @@ import {
 } from "../features/preview/index.js";
 import { isDesktopDev } from "./is-desktop-dev.js";
 import { shouldPrintVersion } from "./cli-args.js";
-
-let applicationUpdates: ApplicationUpdates | undefined;
 
 // Isolate dev's Electron userData (cache, cookies, localStorage, IndexedDB)
 // from the installed prod build. Without this, both share %APPDATA%/Mcode/
@@ -678,38 +676,6 @@ function registerIpcHandlers(): void {
     performDesktopWindowAction(window, action as DesktopWindowAction);
   });
 
-  // App version + auto-update controls
-  ipcMain.handle("app:get-version", () => app.getVersion());
-  ipcMain.handle("app:get-update-status", () =>
-    applicationUpdates!.getUpdateStatus(),
-  );
-  ipcMain.handle("app:check-for-updates", () =>
-    applicationUpdates!.checkForUpdatesNow(),
-  );
-  ipcMain.handle("app:install-update", () =>
-    applicationUpdates!.installUpdate(),
-  );
-  ipcMain.handle("app:download-update", () =>
-    applicationUpdates!.downloadUpdate(),
-  );
-  ipcMain.handle(
-    "app:apply-release-line",
-    async (
-      _e,
-      payload: { releaseLine: "stable" | "nightly"; allowDowngrade?: boolean },
-    ) => {
-      if (
-        payload?.releaseLine !== "stable" &&
-        payload?.releaseLine !== "nightly"
-      ) {
-        throw new Error(`Invalid releaseLine: ${String(payload?.releaseLine)}`);
-      }
-      return applicationUpdates!.applyReleaseLineSwitch(payload.releaseLine, {
-        allowDowngrade: payload.allowDowngrade === true,
-      });
-    },
-  );
-
   registerPreviewBrowserHandlers();
 }
 
@@ -1056,7 +1022,7 @@ app.whenReady().then(async () => {
     });
 
     // Initialize updates after the server and main window dependencies exist.
-    applicationUpdates = initializeApplicationUpdates({
+    initializeApplicationUpdates({
       updater: autoUpdater,
       application: app as unknown as ApplicationLifecycle,
       windows: BrowserWindow as unknown as ApplicationWindowProvider,
@@ -1068,6 +1034,7 @@ app.whenReady().then(async () => {
         setImmediate: (callback) => setImmediate(callback),
       } satisfies UpdateTimer,
       settings: () => loadUpdaterSettings(app.getVersion()),
+      ipc: ipcMain as unknown as ApplicationUpdateIpc,
       forceReplace: () => serverRuntime.forceReplace(),
     });
 
