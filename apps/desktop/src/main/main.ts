@@ -684,14 +684,10 @@ function registerIpcHandlers(): void {
     }
   });
 
-  // Renderer fallback: verify the server is up, silently restart if not.
   ipcMain.handle("ensure-server-running", () =>
     serverHealthRecovery.ensureServerRunning(),
   );
 
-  // Busy reporting: while any sender is busy, hold a power save blocker so
-  // the OS does not suspend the machine mid-turn. Refcounted per webContents
-  // and cleared on destroy so a crashed/closed renderer cannot leak the blocker.
   ipcMain.handle("set-server-busy", (event, busy: boolean) => {
     serverBusyBlocker.report(event.sender, busy);
   });
@@ -1058,13 +1054,10 @@ app.whenReady().then(async () => {
       createBeforeInstallHook(() => serverManager.forceReplace()),
     );
 
-    // Recover once the server process exits unexpectedly.
     serverManager.onUnexpectedExit = (code) => {
       void serverCrashRecovery.handleUnexpectedExit(code);
     };
 
-    // Self-heal after sleep: the server's grace timer or the OS may have
-    // killed it while the machine was suspended.
     powerMonitor.on("resume", () => {
       void serverHealthRecovery.ensureServerRunning();
     });

@@ -1,28 +1,17 @@
-/** Sliding window for counting silent server restarts. */
-export const SERVER_HEALTH_RESTART_WINDOW_MS = 60_000;
+const SERVER_HEALTH_RESTART_WINDOW_MS = 60_000;
 
-/** Silent restarts allowed before health recovery escalates to the crash dialog. */
-export const SERVER_HEALTH_RESTART_LIMIT = 3;
+const SERVER_HEALTH_RESTART_LIMIT = 3;
 
-/** Logger boundary used by {@link ServerHealthRecovery}. */
-export interface ServerHealthRecoveryLogger {
-  /** Write an informational recovery message. */
+interface ServerHealthRecoveryLogger {
   log: (...args: unknown[]) => void;
-  /** Write a recovery failure message. */
   error: (...args: unknown[]) => void;
 }
 
-/** Dependencies required by {@link ServerHealthRecovery}. */
-export interface ServerHealthRecoveryDeps {
-  /** Check whether the server can serve requests. */
+interface ServerHealthRecoveryDeps {
   isHealthy: () => Promise<boolean>;
-  /** Restart the server after an unhealthy check. */
   restart: () => Promise<void>;
-  /** Surface the terminal health-recovery state to the user. */
   showError: () => Promise<void> | void;
-  /** Clock injection for deterministic sliding-window tests. */
   now?: () => number;
-  /** Logger injection for deterministic recovery diagnostics. */
   logger?: ServerHealthRecoveryLogger;
 }
 
@@ -49,7 +38,6 @@ export class ServerHealthRecovery {
     this.logger = deps.logger ?? defaultLogger;
   }
 
-  /** Verify server health and silently restart it when necessary. */
   ensureServerRunning(): Promise<void> {
     if (this.inFlight) return this.inFlight;
 

@@ -1,24 +1,15 @@
-/** Sender boundary required by {@link BusyBlocker}. */
-export interface ServerBusySender {
-  /** Stable Electron WebContents id. */
+interface ServerBusySender {
   readonly id: number;
-  /** Register cleanup when the sender is destroyed. */
   once: (event: "destroyed", listener: () => void) => void;
 }
 
-/** Power-management boundary required by {@link BusyBlocker}. */
-export interface ServerPowerSaveBlocker {
-  /** Start preventing application suspension. */
+interface ServerPowerSaveBlocker {
   start: (reason: "prevent-app-suspension") => number;
-  /** Stop a previously started blocker. */
   stop: (id: number) => void;
 }
 
-/** Dependencies required by {@link BusyBlocker}. */
-export interface BusyBlockerDeps {
-  /** Electron power-save blocker boundary. */
+interface BusyBlockerDeps {
   blocker: ServerPowerSaveBlocker;
-  /** Log blocker transitions. */
   log?: (...args: unknown[]) => void;
 }
 
@@ -35,7 +26,6 @@ export class BusyBlocker {
     this.log = deps.log ?? ((...args) => console.log(...args));
   }
 
-  /** Report a sender's busy state and update the shared suspension blocker. */
   report(sender: ServerBusySender, busy: boolean): void {
     const id = sender.id;
     if (busy) {

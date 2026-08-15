@@ -1,9 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-  SERVER_HEALTH_RESTART_LIMIT,
-  SERVER_HEALTH_RESTART_WINDOW_MS,
-  ServerHealthRecovery,
-} from "../health-recovery.js";
+import { ServerHealthRecovery } from "../health-recovery.js";
+
+const healthRestartLimit = 3;
+const healthRestartWindowMs = 60_000;
 
 function createRecovery(overrides: {
   isHealthy?: () => Promise<boolean>;
@@ -73,13 +72,13 @@ describe("ServerHealthRecovery", () => {
       now: () => now,
     });
 
-    for (let attempt = 0; attempt < SERVER_HEALTH_RESTART_LIMIT; attempt += 1) {
+    for (let attempt = 0; attempt < healthRestartLimit; attempt += 1) {
       await recovery.ensureServerRunning();
       now += 1_000;
     }
     await recovery.ensureServerRunning();
 
-    expect(restart).toHaveBeenCalledTimes(SERVER_HEALTH_RESTART_LIMIT);
+    expect(restart).toHaveBeenCalledTimes(healthRestartLimit);
     expect(showError).toHaveBeenCalledOnce();
   });
 
@@ -102,14 +101,14 @@ describe("ServerHealthRecovery", () => {
     let now = 1_000;
     const recovery = createRecovery({ restart, showError, now: () => now });
 
-    for (let attempt = 0; attempt < SERVER_HEALTH_RESTART_LIMIT; attempt += 1) {
+    for (let attempt = 0; attempt < healthRestartLimit; attempt += 1) {
       await recovery.ensureServerRunning();
       now += 1_000;
     }
-    now += SERVER_HEALTH_RESTART_WINDOW_MS;
+    now += healthRestartWindowMs;
     await recovery.ensureServerRunning();
 
-    expect(restart).toHaveBeenCalledTimes(SERVER_HEALTH_RESTART_LIMIT + 1);
+    expect(restart).toHaveBeenCalledTimes(healthRestartLimit + 1);
     expect(showError).not.toHaveBeenCalled();
   });
 });

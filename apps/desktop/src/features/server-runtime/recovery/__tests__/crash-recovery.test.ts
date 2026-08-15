@@ -1,9 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import {
-  SERVER_CRASH_BACKOFF_MS,
-  SERVER_CRASH_WINDOW_MS,
-  ServerCrashRecovery,
-} from "../crash-recovery.js";
+import { ServerCrashRecovery } from "../crash-recovery.js";
+
+const expectedBackoffMs = [1_000, 5_000, 15_000] as const;
+const crashWindowMs = 5 * 60_000;
 
 describe("ServerCrashRecovery", () => {
   it("restarts after the first abnormal exit with the first backoff delay", async () => {
@@ -22,7 +21,7 @@ describe("ServerCrashRecovery", () => {
 
     await recovery.handleUnexpectedExit(1);
 
-    expect(sleep).toHaveBeenCalledWith(SERVER_CRASH_BACKOFF_MS[0]);
+    expect(sleep).toHaveBeenCalledWith(expectedBackoffMs[0]);
     expect(restart).toHaveBeenCalledOnce();
     expect(notifyRecovered).toHaveBeenCalledWith(1);
     expect(showError).not.toHaveBeenCalled();
@@ -43,7 +42,7 @@ describe("ServerCrashRecovery", () => {
       sleep,
     });
 
-    for (const delay of SERVER_CRASH_BACKOFF_MS) {
+    for (const delay of expectedBackoffMs) {
       await recovery.handleUnexpectedExit(1);
       expect(sleep).toHaveBeenLastCalledWith(delay);
       now += 1_000;
@@ -51,7 +50,7 @@ describe("ServerCrashRecovery", () => {
 
     await recovery.handleUnexpectedExit(1);
 
-    expect(restart).toHaveBeenCalledTimes(SERVER_CRASH_BACKOFF_MS.length);
+    expect(restart).toHaveBeenCalledTimes(expectedBackoffMs.length);
     expect(showError).toHaveBeenCalledWith(1);
   });
 
@@ -71,11 +70,11 @@ describe("ServerCrashRecovery", () => {
     });
 
     await recovery.handleUnexpectedExit(1);
-    now += SERVER_CRASH_WINDOW_MS + 1;
+    now += crashWindowMs + 1;
     await recovery.handleUnexpectedExit(1);
 
-    expect(sleep).toHaveBeenNthCalledWith(1, SERVER_CRASH_BACKOFF_MS[0]);
-    expect(sleep).toHaveBeenNthCalledWith(2, SERVER_CRASH_BACKOFF_MS[0]);
+    expect(sleep).toHaveBeenNthCalledWith(1, expectedBackoffMs[0]);
+    expect(sleep).toHaveBeenNthCalledWith(2, expectedBackoffMs[0]);
     expect(showError).not.toHaveBeenCalled();
   });
 
