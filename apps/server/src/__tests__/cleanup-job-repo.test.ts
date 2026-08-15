@@ -111,6 +111,57 @@ describe("CleanupJobRepo", () => {
       expect(repo.findDue(Date.now())).toHaveLength(20);
       expect(repo.findDue(Date.now(), 5)).toHaveLength(5);
     });
+
+    it("uses the full batch limit when only retention jobs are due", () => {
+      for (let index = 0; index < 25; index += 1) {
+        repo.insert({
+          thread_id: `retention-${index}`,
+          workspace_path: "/r",
+          worktree_path: `/r/retention-${index}`,
+          branch: null,
+          kind: "retention",
+        });
+      }
+
+      const due = repo.findDue(Date.now());
+
+      expect(due).toHaveLength(20);
+      expect(due.every((job) => job.kind === "retention")).toBe(true);
+    });
+
+    it("selects due retention jobs when an older explicit backlog fills the batch", () => {
+      const explicitJobs = Array.from({ length: 25 }, (_, index) => repo.insert({
+        thread_id: `explicit-${index}`,
+        workspace_path: "/r",
+        worktree_path: `/r/explicit-${index}`,
+        branch: null,
+      }));
+      const retentionJobs = Array.from({ length: 25 }, (_, index) => repo.insert({
+        thread_id: `retention-${index}`,
+        workspace_path: "/r",
+        worktree_path: `/r/retention-${index}`,
+        branch: null,
+        kind: "retention",
+      }));
+
+      explicitJobs.forEach((job, index) => {
+        db.prepare("UPDATE cleanup_jobs SET created_at = ? WHERE id = ?").run(index + 1, job.id);
+      });
+      retentionJobs.forEach((job, index) => {
+        db.prepare("UPDATE cleanup_jobs SET created_at = ? WHERE id = ?").run(10_000 + index, job.id);
+      });
+
+      const due = repo.findDue(Date.now());
+
+      expect(due).toHaveLength(20);
+      expect(due.filter((job) => job.kind === "explicit")).toHaveLength(10);
+      expect(due.filter((job) => job.kind === "retention")).toHaveLength(10);
+      expect(due.slice(0, 2).map((job) => job.kind)).toEqual(["retention", "explicit"]);
+      expect(due.filter((job) => job.kind === "explicit").map((job) => job.thread_id))
+        .toEqual(explicitJobs.slice(0, 10).map((job) => job.thread_id));
+      expect(due.filter((job) => job.kind === "retention").map((job) => job.thread_id))
+        .toEqual(retentionJobs.slice(0, 10).map((job) => job.thread_id));
+    });
   });
 
   describe("enqueueExpiredCompleted", () => {
