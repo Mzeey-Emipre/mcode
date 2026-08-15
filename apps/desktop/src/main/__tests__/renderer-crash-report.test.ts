@@ -84,20 +84,16 @@ vi.mock("../auto-updater.js", () => ({
   setBeforeInstallHook: vi.fn(),
 }));
 vi.mock("../spellcheck.js", () => ({ setupSpellcheck: vi.fn() }));
-vi.mock("../preview/index.js", () => ({
+vi.mock("../../features/preview/index.js", () => ({
   registerPreviewBrowserHandlers: vi.fn(),
   disposeBrowserAutomationForWindow: vi.fn(),
   disposePreviewForWindow: vi.fn(),
-}));
-vi.mock("../../features/preview/navigation/local-file.js", () => ({
   resolveMcodeWorkspacePreviewUrl: vi.fn(),
-}));
-vi.mock("../is-desktop-dev.js", () => ({ isDesktopDev: vi.fn().mockReturnValue(false) }));
-vi.mock("../cli-args.js", () => ({ shouldPrintVersion: vi.fn().mockReturnValue(false) }));
-vi.mock("../../features/preview/security/webview-attachment-policy.js", () => ({
   hardenPreviewWebviewAttachment: vi.fn(),
   resolvePreviewGuestPreloadPath: vi.fn(),
 }));
+vi.mock("../is-desktop-dev.js", () => ({ isDesktopDev: vi.fn().mockReturnValue(false) }));
+vi.mock("../cli-args.js", () => ({ shouldPrintVersion: vi.fn().mockReturnValue(false) }));
 
 import {
   getFrontendPerformanceMetrics,
