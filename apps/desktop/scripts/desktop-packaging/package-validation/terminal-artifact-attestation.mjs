@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  chmodSync,
   existsSync,
   lstatSync,
   readFileSync,
@@ -41,6 +42,25 @@ function requireDirectory(directoryPath, label) {
     throw new Error(`${label} is missing at ${directoryPath}`);
   }
   return realpathSync(directoryPath);
+}
+
+function assertExecutableFile(filePath, label) {
+  const stats = lstatSync(filePath);
+  if (!stats.isFile()) {
+    throw new Error(`${label} is not a regular file at ${filePath}`);
+  }
+  if ((stats.mode & 0o111) === 0) {
+    throw new Error(`${label} is not executable at ${filePath}`);
+  }
+}
+
+function ensureExecutableFile(filePath, label) {
+  const stats = lstatSync(filePath);
+  if (!stats.isFile()) {
+    throw new Error(`${label} is not a regular file at ${filePath}`);
+  }
+  chmodSync(filePath, 0o755);
+  assertExecutableFile(filePath, label);
 }
 
 function relativeArtifactPath(resourcesRoot, artifactPath) {
@@ -251,6 +271,11 @@ export function retainTargetTerminalNativeArtifacts({
     targetPlatform,
     targetArch,
   );
+  if (targetPlatform === "darwin") {
+    for (const runtimePath of expected.nodePtyRuntime) {
+      ensureExecutableFile(runtimePath, "macOS node-pty spawn helper");
+    }
+  }
   const retained = new Set(
     [expected.nodePtyBinding, expected.koffiBinding, ...expected.nodePtyRuntime].map(
       artifactPathKey,
@@ -657,6 +682,11 @@ export function attestPackagedTerminalArtifacts({
     nativeByPackage.get("node-pty"),
     targetPlatform,
   );
+  if (targetPlatform === "darwin") {
+    for (const runtimePath of nodePtyRuntime) {
+      assertExecutableFile(runtimePath, "macOS node-pty spawn helper");
+    }
+  }
   const expectedNativePaths = [
     nativeByPackage.get("node-pty"),
     nativeByPackage.get("koffi"),

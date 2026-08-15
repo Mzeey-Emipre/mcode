@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   truncateSync,
   writeFileSync,
@@ -281,56 +283,133 @@ describe("attestPackagedTerminalArtifacts", () => {
     ]);
   });
 
-  it("gives a Rosetta artifact probe the shared packaged-runtime startup budget", () => {
-    const darwinNodePtyBinding = path.join(
-      nodePtyRoot,
-      "build/Release/pty.node",
-    );
-    const darwinSpawnHelper = path.join(
-      nodePtyRoot,
-      "build/Release/spawn-helper",
-    );
-    const darwinKoffiBinding = path.join(
-      koffiRoot,
-      "build/koffi/darwin_x64/koffi.node",
-    );
-    writeFile(darwinNodePtyBinding, machOBinary(0x01000007));
-    writeFile(darwinSpawnHelper, machOBinary(0x01000007));
-    writeFile(darwinKoffiBinding, machOBinary(0x01000007));
+  it.skipIf(process.platform === "win32")(
+    "makes the retained macOS spawn helper executable",
+    () => {
+      const darwinNodePtyBinding = path.join(
+        nodePtyRoot,
+        "build/Release/pty.node",
+      );
+      const darwinSpawnHelper = path.join(
+        nodePtyRoot,
+        "build/Release/spawn-helper",
+      );
+      const darwinKoffiBinding = path.join(
+        koffiRoot,
+        "build/koffi/darwin_x64/koffi.node",
+      );
+      writeFile(darwinNodePtyBinding, machOBinary(0x01000007));
+      writeFile(darwinSpawnHelper, machOBinary(0x01000007));
+      chmodSync(darwinSpawnHelper, 0o644);
+      writeFile(darwinKoffiBinding, machOBinary(0x01000007));
 
-    retainTargetTerminalNativeArtifacts({
-      resourcesRoot,
-      targetPlatform: "darwin",
-      targetArch: "x64",
-    });
+      expect(statSync(darwinSpawnHelper).mode & 0o111).toBe(0);
+      retainTargetTerminalNativeArtifacts({
+        resourcesRoot,
+        targetPlatform: "darwin",
+        targetArch: "x64",
+      });
 
-    let startupTimeoutMs;
-    attestPackagedTerminalArtifacts({
-      resourcesRoot,
-      runtimePath,
-      hostPlatform: "darwin",
-      hostArch: "arm64",
-      targetPlatform: "darwin",
-      targetArch: "x64",
-      runLoadProbe: (input) => {
-        startupTimeoutMs = input.startupTimeoutMs;
-        return {
-          platform: "darwin",
-          arch: "x64",
-          modulesAbi: "127",
-          nodeVersion: "22.18.0",
-          electronVersion: "35.7.5",
-          hostReady: true,
-          nativeModules: [
-            { packageName: "node-pty", path: darwinNodePtyBinding },
-            { packageName: "koffi", path: darwinKoffiBinding },
-          ],
-        };
-      },
-    });
+      expect(statSync(darwinSpawnHelper).mode & 0o111).toBe(0o111);
+    },
+  );
 
-    expect(startupTimeoutMs).toBe(60_000);
-  });
+  it.skipIf(process.platform === "win32")(
+    "rejects a macOS package with a non-executable spawn helper",
+    () => {
+      const darwinNodePtyBinding = path.join(
+        nodePtyRoot,
+        "build/Release/pty.node",
+      );
+      const darwinSpawnHelper = path.join(
+        nodePtyRoot,
+        "build/Release/spawn-helper",
+      );
+      const darwinKoffiBinding = path.join(
+        koffiRoot,
+        "build/koffi/darwin_x64/koffi.node",
+      );
+      writeFile(darwinNodePtyBinding, machOBinary(0x01000007));
+      writeFile(darwinSpawnHelper, machOBinary(0x01000007));
+      chmodSync(darwinSpawnHelper, 0o644);
+      writeFile(darwinKoffiBinding, machOBinary(0x01000007));
+
+      expect(() =>
+        attestPackagedTerminalArtifacts({
+          resourcesRoot,
+          runtimePath,
+          targetPlatform: "darwin",
+          targetArch: "x64",
+          runLoadProbe: () => ({
+            platform: "darwin",
+            arch: "x64",
+            modulesAbi: "127",
+            nodeVersion: "22.18.0",
+            electronVersion: "35.7.5",
+            hostReady: true,
+            nativeModules: [
+              { packageName: "node-pty", path: darwinNodePtyBinding },
+              { packageName: "koffi", path: darwinKoffiBinding },
+            ],
+          }),
+        }),
+      ).toThrow("macOS node-pty spawn helper is not executable");
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "gives a Rosetta artifact probe the shared packaged-runtime startup budget",
+    () => {
+      const darwinNodePtyBinding = path.join(
+        nodePtyRoot,
+        "build/Release/pty.node",
+      );
+      const darwinSpawnHelper = path.join(
+        nodePtyRoot,
+        "build/Release/spawn-helper",
+      );
+      const darwinKoffiBinding = path.join(
+        koffiRoot,
+        "build/koffi/darwin_x64/koffi.node",
+      );
+      writeFile(darwinNodePtyBinding, machOBinary(0x01000007));
+      writeFile(darwinSpawnHelper, machOBinary(0x01000007));
+      writeFile(darwinKoffiBinding, machOBinary(0x01000007));
+
+      retainTargetTerminalNativeArtifacts({
+        resourcesRoot,
+        targetPlatform: "darwin",
+        targetArch: "x64",
+      });
+
+      let startupTimeoutMs;
+      attestPackagedTerminalArtifacts({
+        resourcesRoot,
+        runtimePath,
+        hostPlatform: "darwin",
+        hostArch: "arm64",
+        targetPlatform: "darwin",
+        targetArch: "x64",
+        runLoadProbe: (input) => {
+          startupTimeoutMs = input.startupTimeoutMs;
+          return {
+            platform: "darwin",
+            arch: "x64",
+            modulesAbi: "127",
+            nodeVersion: "22.18.0",
+            electronVersion: "35.7.5",
+            hostReady: true,
+            nativeModules: [
+              { packageName: "node-pty", path: darwinNodePtyBinding },
+              { packageName: "koffi", path: darwinKoffiBinding },
+            ],
+          };
+        },
+      });
+
+      expect(startupTimeoutMs).toBe(60_000);
+    },
+  );
 
   it("retains a valid target prebuild when a stale rebuilt binding is foreign", () => {
     const targetPrebuild = path.join(
