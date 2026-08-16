@@ -7,7 +7,7 @@ import { Command } from "@/components/ui/command";
 import { useCommandPaletteStore } from "@/stores/commandPaletteStore";
 import { setContext } from "@/lib/context-tracker";
 import { RootView } from "./views/RootView";
-import { ProjectsView } from "./views/ProjectsView";
+import { ProjectsView } from "@/features/projects";
 import { BrowseView } from "./views/BrowseView";
 import { SelectionListView } from "./views/SelectionListView";
 import { ThreadSearchView } from "./views/ThreadSearchView";

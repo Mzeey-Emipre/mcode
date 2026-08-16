@@ -5,11 +5,11 @@ import { getFirstHunkHeaderIndex } from "@/lib/diff-parser";
 import { useDiffHighlighter } from "@/hooks/useDiffHighlighter";
 import { useShikiTheme } from "@/hooks/useTheme";
 import { useDiffStore } from "@/stores/diffStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import {
   usePreviewAnnotationStore,
   type SavedDiffAnnotation,
-} from "@/stores/previewAnnotationStore";
+} from "@/features/preview/state/previewAnnotationStore";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { HunkSeparator } from "./HunkSeparator";

@@ -20,12 +20,12 @@ import {
   BrowserSessionDriver,
   ElectronBrowserSessionAdapter,
   getBrowserAutomationRuntimeOperations,
-} from "../../../../../../web/src/services/browser-automation/browserSessionDriver";
-import { WebBrowserSessionAdapter } from "../../../../../../web/src/services/browser-automation/webBrowserSessionAdapter";
-import { executeWebBrowserDispatch } from "../../../../../../web/src/components/panels/browserAutomationWebExecutor";
+} from "../../../../../../web/src/features/preview/automation/services/browserSessionDriver";
+import { WebBrowserSessionAdapter } from "../../../../../../web/src/features/preview/automation/services/webBrowserSessionAdapter";
+import { executeWebBrowserDispatch } from "../../../../../../web/src/features/preview/automation/browserAutomationWebExecutor";
 import { BrowserAutomationKernel } from "../kernel.js";
 
-vi.mock("../../../../../../web/src/components/panels/web-browser-automation/capture", () => ({
+vi.mock("../../../../../../web/src/features/preview/automation/web-browser-automation/capture", () => ({
   captureVisibleWebScreenshot: vi.fn(async () => ({
     ok: true,
     value: {

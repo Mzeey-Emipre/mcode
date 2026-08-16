@@ -11,7 +11,7 @@ import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-reco
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { countActiveSubagentCalls, useThreadStore } from "@/stores/threadStore";
 import { mockTransport, createMockThread } from "./mocks/transport";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { useToastStore } from "@/stores/toastStore";
 import { useTaskStore } from "@/stores/taskStore";
 

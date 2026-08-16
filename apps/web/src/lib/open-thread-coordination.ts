@@ -1,6 +1,6 @@
 import { showRightPanelAdaptive } from "@/lib/right-panel-layout";
 import { useDiffStore } from "@/stores/diffStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 
 /** Opens the active thread's persisted coordination panel. */
 export function openThreadCoordinationPanel(): boolean {

@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { useDiffStore } from "@/stores/diffStore";
 import { getTransport } from "@/transport";
 import { CommitEntry } from "./CommitEntry";

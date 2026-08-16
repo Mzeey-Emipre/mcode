@@ -4,7 +4,7 @@ import { useQueueStore } from "@/stores/queueStore";
 import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-record";
 import { resetThreadStoreForTests } from "@/stores/thread-store-test-utils";
 import { useThreadStore } from "@/stores/threadStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { createMockThread, mockTransport } from "./mocks/transport";
 
 vi.mock("@/transport", async () => ({

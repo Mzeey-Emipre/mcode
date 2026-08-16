@@ -16,7 +16,7 @@ const { mockLoadBranches, mockWorkspaceState, mockGeneratePrDraft } = vi.hoisted
   },
 }));
 
-vi.mock("@/stores/workspaceStore", () => ({
+vi.mock("@/features/projects/state/workspaceStore", () => ({
   useWorkspaceStore: vi.fn((selector: (state: unknown) => unknown) =>
     selector({
       ...mockWorkspaceState,

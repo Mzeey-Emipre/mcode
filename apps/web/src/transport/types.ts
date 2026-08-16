@@ -573,7 +573,7 @@ export interface McodeTransport {
   /** Subscribe one renderer controller to its selected Terminal attachment. */
   terminalSubscribe(
     ptyId: string,
-    subscription: import("@/terminal/terminal-client").TerminalClientSubscription,
+    subscription: import("@/features/terminal/adapters/terminal-client").TerminalClientSubscription,
   ): () => void;
   /** Detach one renderer because its shell is being replaced. */
   terminalDetachForSwitch(

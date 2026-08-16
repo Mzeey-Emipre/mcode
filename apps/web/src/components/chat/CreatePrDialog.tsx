@@ -22,7 +22,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { SegControl } from "@/components/settings/SegControl";
 import { getTransport } from "@/transport";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { useToastStore } from "@/stores/toastStore";
 import type { GitBranch as GitBranchType } from "@mcode/contracts";
 

@@ -20,7 +20,7 @@ const {
   mockGetProviderUsage: vi.fn<() => Promise<ProviderUsageInfo>>(),
 }));
 
-vi.mock("@/stores/workspaceStore", () => {
+vi.mock("@/features/projects/state/workspaceStore", () => {
   const store = Object.assign(
     vi.fn((selector: (s: unknown) => unknown) => mockWorkspaceSelector(selector)),
     { setState: vi.fn(), getState: vi.fn() },
@@ -61,7 +61,7 @@ vi.mock("@/transport", async (importOriginal) => {
   };
 });
 
-vi.mock("@/stores/terminalStore", () => ({
+vi.mock("@/features/terminal", () => ({
   useTerminalStore: vi.fn((selector: (s: unknown) => unknown) =>
     selector({ terminalPanelByThread: {}, toggleTerminalPanel: vi.fn() }),
   ),

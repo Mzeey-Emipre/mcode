@@ -15,7 +15,7 @@ import {
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useThreadStore, extractPendingPlanQuestions } from "@/stores/threadStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { useTaskStore } from "@/stores/taskStore";
 import { usePlanStore } from "@/stores/planStore";
 import {

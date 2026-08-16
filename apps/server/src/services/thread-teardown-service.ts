@@ -2,7 +2,7 @@
  * Central teardown boundary for resources owned by a single thread.
  */
 import { injectable, inject } from "tsyringe";
-import { AgentService } from "./agent-service";
+import { AgentService } from "../features/agents/index.js";
 import { TerminalBackend, TERMINAL_BACKEND_TOKEN } from "../terminal/terminal-backend.js";
 import { ThreadRepo } from "../repositories/thread-repo";
 

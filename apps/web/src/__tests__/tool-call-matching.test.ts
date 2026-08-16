@@ -6,7 +6,7 @@ import {
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { useThreadStore } from "@/stores/threadStore";
 import { mockTransport, createMockThread } from "./mocks/transport";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-record";
 
 vi.mock("@/transport", async () => ({

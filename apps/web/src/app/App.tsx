@@ -17,10 +17,12 @@ import type { UpdateStatus } from "@/transport/desktop-bridge";
 import { useCommandPaletteStore } from "@/stores/commandPaletteStore";
 import { ShortcutHelpDialog } from "@/components/ShortcutHelpDialog";
 import { useSettingsStore } from "@/stores/settingsStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { COMPOSER_MIN_WIDTH } from "@/stores/diffStore";
-import { usePreviewFocusStore } from "@/stores/previewFocusStore";
-import { usePreviewDesignModeStore } from "@/stores/previewDesignModeStore";
+import {
+  usePreviewDesignModeStore,
+  usePreviewFocusStore,
+} from "@/features/preview";
 import { useUiStore } from "@/stores/uiStore";
 import { initShortcuts } from "@/lib/shortcuts";
 import { summonTab } from "@/lib/summon-tab";
@@ -33,18 +35,21 @@ import { toggleRightPanelAdaptive } from "@/lib/right-panel-layout";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ToastContainer } from "@/components/Toast";
 import type { SettingsSection } from "@/components/settings/settings-nav";
-import { TerminalPoolHost } from "@/components/terminal/TerminalPoolHost";
-import { TerminalPoolSlotProvider } from "@/components/terminal/TerminalPoolSlotContext";
-import { BrowserAutomationHost } from "@/components/panels/BrowserAutomationHost";
-import { BrowserSurfaceHostRoot } from "@/components/panels/BrowserSurfaceHostRoot";
+import {
+  BrowserAutomationHost,
+  BrowserSurfaceHostRoot,
+} from "@/features/preview";
+import { TerminalPoolHost, TerminalPoolSlotProvider } from "@/features/terminal";
 import { DesktopTitleBar } from "@/components/desktop/DesktopTitleBar";
 import {
   useNavigationHistoryStore,
   type NavigationLocation,
   type PullRequestHistoryTab,
 } from "@/stores/navigationHistoryStore";
-import { usePullRequestDetailStore } from "@/stores/pullRequestDetailStore";
-import { usePullRequestStore } from "@/stores/pullRequestStore";
+import {
+  usePullRequestDetailStore,
+  usePullRequestStore,
+} from "@/features/pull-requests";
 
 const LazySettingsView = lazy(async () => {
   const m = await import("@/components/settings/SettingsView");
@@ -62,7 +67,7 @@ const LazyCommandPalette = lazy(async () => {
 });
 
 const LazyPullRequestSurface = lazy(async () => {
-  const m = await import("@/components/pull-requests/PullRequestSurface");
+  const m = await import("@/features/pull-requests");
   return { default: m.PullRequestSurface };
 });
 

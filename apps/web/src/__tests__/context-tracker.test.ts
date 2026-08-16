@@ -7,7 +7,7 @@ import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-reco
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useThreadStore } from "@/stores/threadStore";
 import { mockTransport, createMockThread } from "./mocks/transport";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import type { AgentEvent } from "@mcode/contracts";
 
 vi.mock("@/transport", async () => ({

@@ -1,6 +1,6 @@
 import type { McodeTransport } from "@/transport/types";
 import type { SelectedFile } from "@/stores/diffStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 
 /**
  * Fetch the unified diff for a single file in a Review view. Centralizes the

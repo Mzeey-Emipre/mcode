@@ -1,6 +1,6 @@
 import { getTransport } from "@/transport";
 import { useDiffStore } from "@/stores/diffStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 
 /**
  * Refresh turn snapshots after `turn.persisted` when a turn touched files.

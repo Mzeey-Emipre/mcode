@@ -43,37 +43,37 @@ import { PrSplitButton } from "./PrSplitButton";
 import { ChecksPopover } from "./ChecksPopover";
 import { CreatePrDialog } from "./CreatePrDialog";
 import { useThreadGitActions } from "@/hooks/useThreadGitActions";
-import { usePullRequestReviewLink } from "@/hooks/usePullRequestReviewLink";
+import { usePullRequestReviewLink } from "@/features/pull-requests";
 import { useThreadRecap } from "@/hooks/useThreadRecap";
-import { usePreviewTabSet } from "@/components/panels/hooks/usePreviewTabs";
+import {
+  isEmptyPreviewTabUrl,
+  browserAutomationTargetKey,
+  findPendingBrowserAutomationOpen,
+  isModifierClick,
+  isPreviewableUrl,
+  openUrlInPreview,
+  useBrowserAutomationStore,
+  usePreviewTabSet,
+  usePreviewTabsStore,
+} from "@/features/preview";
 import {
   getBreakdown,
   getCiOverviewSummaryLabel,
   getCiSummaryHeadline,
 } from "@/lib/ci-status";
 import { useDiffStore } from "@/stores/diffStore";
-import {
-  browserAutomationTargetKey,
-  findPendingBrowserAutomationOpen,
-  useBrowserAutomationStore,
-  type BrowserAutomationLiveTarget,
-  type BrowserAutomationPendingAgentOpen,
-} from "@/stores/browserAutomationStore";
-import { usePreviewTabsStore } from "@/stores/previewTabsStore";
+import type {
+  BrowserAutomationLiveTarget,
+  BrowserAutomationPendingAgentOpen,
+} from "@/features/preview";
 import { useThreadStore } from "@/stores/threadStore";
 import { useThreadRecord } from "@/stores/thread-selectors";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { useOverviewStore } from "@/stores/overviewStore";
 import { usePlanStore } from "@/stores/planStore";
 import { executeCommand, registerCommand } from "@/lib/command-registry";
 import { shouldAutoOpenOverview } from "@/lib/composer-layout";
 import { extractThreadSources, type ThreadSource } from "@/lib/message-sources";
-import {
-  isEmptyPreviewTabUrl,
-  isModifierClick,
-  isPreviewableUrl,
-  openUrlInPreview,
-} from "@/lib/open-url-in-preview";
 import { sanitizeCustomBranchInput, trimTrailingBranchChars } from "@/lib/branch-name";
 import { showRightPanelAdaptive } from "@/lib/right-panel-layout";
 import {
@@ -101,7 +101,7 @@ import type {
   QuotaCategory,
   TurnSnapshot,
 } from "@mcode/contracts";
-import type { BrowserSessionLifecycleTab } from "@/services/browser-automation/browserSessionDriver";
+import type { BrowserSessionLifecycleTab } from "@/features/preview";
 
 /** Stable empty messages reference so the closed Overview never re-renders on new messages. */
 const EMPTY_MESSAGES: Message[] = [];

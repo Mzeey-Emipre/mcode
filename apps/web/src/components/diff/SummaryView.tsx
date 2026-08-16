@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { MarkdownContent } from "@/components/chat/MarkdownContent";
 import { useDiffStore } from "@/stores/diffStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { getTransport } from "@/transport";
 import { registerCommand } from "@/lib/command-registry";
 

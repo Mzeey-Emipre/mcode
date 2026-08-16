@@ -16,7 +16,7 @@ vi.mock("@/hooks/useHasCommitsAhead", () => ({
   useHasCommitsAhead: (...args: unknown[]) => mockUseHasCommitsAhead(...args),
 }));
 
-vi.mock("@/stores/workspaceStore", () => {
+vi.mock("@/features/projects/state/workspaceStore", () => {
   const store = Object.assign(
     vi.fn((selector: (state: unknown) => unknown) => mockWorkspaceSelector(selector)),
     { setState: vi.fn(), getState: vi.fn() },
@@ -30,7 +30,7 @@ vi.mock("@/stores/composerDraftStore", () => ({
   ),
 }));
 
-vi.mock("@/lib/open-url-in-preview", () => ({
+vi.mock("@/features/preview/navigation/open-url-in-preview", () => ({
   openGitHubUrl: vi.fn(),
 }));
 

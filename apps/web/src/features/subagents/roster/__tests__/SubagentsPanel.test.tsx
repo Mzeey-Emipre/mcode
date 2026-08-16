@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CanonicalSubagentRoster, CanonicalSubagentRosterRow } from "@mcode/contracts";
 import { useDiffStore } from "@/stores/diffStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
 
 const harness = vi.hoisted(() => ({

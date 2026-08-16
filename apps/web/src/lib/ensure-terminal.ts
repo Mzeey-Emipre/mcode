@@ -1,6 +1,6 @@
 import { useDiffStore } from "@/stores/diffStore";
-import { MAX_TERMINALS_PER_SCOPE, useTerminalStore } from "@/stores/terminalStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { MAX_TERMINALS_PER_SCOPE, useTerminalStore } from "@/features/terminal";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { getTransport } from "@/transport";
 
 /**

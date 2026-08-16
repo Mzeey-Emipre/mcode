@@ -120,7 +120,7 @@ vi.mock("@/stores/thread-selectors", () => ({
   ),
 }));
 
-vi.mock("@/stores/workspaceStore", () => ({
+vi.mock("@/features/projects/state/workspaceStore", () => ({
   useWorkspaceStore: vi.fn((selector: (s: unknown) => unknown) =>
     selector({ activeThreadId: activeThreadIdValue }),
   ),

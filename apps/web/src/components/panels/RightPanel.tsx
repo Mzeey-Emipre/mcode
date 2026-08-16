@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/shallow";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { useUiStore } from "@/stores/uiStore";
 import {
   useDiffStore,
@@ -22,26 +22,26 @@ import {
 } from "./ActivityRail";
 import type { PanelScope } from "@/lib/panel-tabs";
 import { DiffPanel } from "@/components/diff";
-import { PreviewPanel } from "@/components/panels/PreviewPanel";
-import { usePreviewTabsStore } from "@/stores/previewTabsStore";
-import { TerminalPoolSlot } from "@/components/terminal/TerminalPoolSlotContext";
-import { createTerminalForScope } from "@/lib/ensure-terminal";
+import {
+  BROWSER_AUTOMATION_WARM_TARGET_LIMIT,
+  PreviewPanel,
+  browserAutomationScopeKey,
+  browserAutomationTargetKey,
+  useBrowserAutomationStore,
+  usePreviewTabSet,
+  usePreviewTabsStore,
+} from "@/features/preview";
 import {
   MAX_TERMINALS_PER_SCOPE,
-  type TerminalInstance,
+  TerminalPoolSlot,
   useTerminalStore,
-} from "@/stores/terminalStore";
+  type TerminalInstance,
+} from "@/features/terminal";
+import { createTerminalForScope } from "@/lib/ensure-terminal";
 import { toggleRightPanelAdaptive } from "@/lib/right-panel-layout";
 import { getTransport } from "@/transport";
 import { cn } from "@/lib/utils";
 import { ResizableRightPanel } from "./ResizableRightPanel";
-import {
-  BROWSER_AUTOMATION_WARM_TARGET_LIMIT,
-  browserAutomationScopeKey,
-  browserAutomationTargetKey,
-  useBrowserAutomationStore,
-} from "@/stores/browserAutomationStore";
-import { usePreviewTabSet } from "./hooks/usePreviewTabs";
 
 /** One thread/workspace Browser panel retained by the warm LRU pool. */
 export interface WarmPreviewScope {

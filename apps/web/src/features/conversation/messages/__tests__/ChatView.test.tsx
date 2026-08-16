@@ -35,7 +35,7 @@ const {
   },
 }));
 
-vi.mock("@/stores/workspaceStore", () => ({
+vi.mock("@/features/projects/state/workspaceStore", () => ({
   useWorkspaceStore: Object.assign(
     vi.fn((selector: (s: unknown) => unknown) => {
       const snap = chatViewWorkspaceMockRef.current;
@@ -133,7 +133,7 @@ vi.mock("@/components/chat/CliErrorBanner", () => ({
   isCliError: () => false,
 }));
 
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { createEmptyThreadRecord } from "@/stores/thread-record";
 import { createMockMessage } from "@/__tests__/mocks/transport";
 import {

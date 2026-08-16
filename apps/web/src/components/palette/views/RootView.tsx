@@ -1,6 +1,6 @@
 import { useEffect, useMemo } from "react";
 import { useCommandPaletteStore } from "@/stores/commandPaletteStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { useRecentThreadsStore } from "@/stores/recentThreadsStore";
 import { getAllCommands, executeCommand } from "@/lib/command-registry";
 import { getKeybindingForCommand, formatKeybinding } from "@/lib/keybinding-manager";

@@ -18,8 +18,8 @@ import {
   isModifierClick,
   isPreviewableUrl,
   openUrlInPreview,
-} from "@/lib/open-url-in-preview";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+} from "@/features/preview/navigation/open-url-in-preview";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { EntityToken, type EntityKind } from "./EntityToken";
 
 /** Pass through workspace preview URLs; otherwise use react-markdown's default sanitizer. */

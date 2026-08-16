@@ -92,16 +92,17 @@ vi.mock("./CoordinationPanel", () => ({
 }));
 vi.mock("./plan", () => ({ PlanPanel: () => <div /> }));
 vi.mock("@/components/diff", () => ({ DiffPanel: () => <div /> }));
-vi.mock("@/components/panels/PreviewPanel", () => ({
+vi.mock("@/features/preview", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/features/preview")>()),
   PreviewPanel: (props: Record<string, unknown>) => {
     previewPanelRender(props);
     return <div data-testid="preview-panel" data-covered-left={props.coveredLeft ?? 0} />;
   },
 }));
-vi.mock("@/components/terminal/TerminalPoolSlotContext", () => ({
+vi.mock("@/features/terminal/surfaces/TerminalPoolSlotContext", () => ({
   TerminalPoolSlot: () => <div data-testid="terminal-pool-slot" />,
 }));
-vi.mock("@/stores/previewTabsStore", () => ({
+vi.mock("@/features/preview/state/previewTabsStore", () => ({
   usePreviewDisplayTabSet: () => previewTabSet.current,
   usePreviewTabsStore: {
     getState: () => ({
@@ -119,10 +120,10 @@ vi.mock("@/transport", () => ({ getTransport: () => ({ terminalKill: vi.fn() }) 
 
 import { reconcileWarmPreviewScopes, RightPanel } from "./RightPanel";
 import { createRightPanelState, useDiffStore } from "@/stores/diffStore";
-import { useTerminalStore } from "@/stores/terminalStore";
+import { useTerminalStore } from "@/features/terminal/state/terminalStore";
 import { useUiStore } from "@/stores/uiStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
-import { useBrowserAutomationStore } from "@/stores/browserAutomationStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
+import { useBrowserAutomationStore } from "@/features/preview";
 
 describe("RightPanel", () => {
   beforeEach(() => {

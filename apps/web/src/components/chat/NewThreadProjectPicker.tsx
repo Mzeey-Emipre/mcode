@@ -10,7 +10,7 @@ import {
 } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useCommandPaletteStore } from "@/stores/commandPaletteStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 
 /** Props for {@link NewThreadProjectPicker}. */
 interface NewThreadProjectPickerProps {

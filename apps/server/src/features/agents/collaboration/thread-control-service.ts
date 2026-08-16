@@ -74,7 +74,7 @@ import {
 } from "../../../repositories/thread-control-approval-repo.js";
 import { ThreadControlAuditRepo } from "../../../repositories/thread-control-audit-repo.js";
 import { ProviderRegistry } from "../../../providers/provider-registry.js";
-import { AgentService } from "../../../services/agent-service.js";
+import { AgentService } from "../orchestration/agent-service.js";
 import {
   ThreadControlMutationReservationService,
   type ThreadMutationReservationState,

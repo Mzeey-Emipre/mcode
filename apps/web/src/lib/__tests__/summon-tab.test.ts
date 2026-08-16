@@ -7,9 +7,9 @@ vi.mock("@/lib/ensure-terminal", () => ({ createTerminalForScope }));
 
 import { summonTab } from "@/lib/summon-tab";
 import { useDiffStore } from "@/stores/diffStore";
-import { useTerminalStore } from "@/stores/terminalStore";
+import { useTerminalStore } from "@/features/terminal/state/terminalStore";
 import { useUiStore } from "@/stores/uiStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 
 const WID = "ws-1";
 const TID = "thread-1";

@@ -8,13 +8,13 @@ vi.mock("@/transport", () => ({
 
 import { pushEmitter } from "./ws-transport";
 import { startPushListeners, stopPushListeners } from "./ws-events";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { useProviderCatalogStore } from "@/stores/providerCatalogStore";
 import { useDiffStore } from "@/stores/diffStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useThreadControlStore } from "@/stores/threadControlStore";
-import { useTerminalStore } from "@/stores/terminalStore";
-import { onPtyExit } from "@/terminal/pty-data-registry";
+import { useTerminalStore } from "@/features/terminal/state/terminalStore";
+import { onPtyExit } from "@/features/terminal/adapters/pty-data-registry";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {

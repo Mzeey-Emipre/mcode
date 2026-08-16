@@ -1,7 +1,7 @@
 import { inject, injectable } from "tsyringe";
 import type { CompletedThreadRetentionDays, Settings, Thread } from "@mcode/contracts";
 import { ThreadRepo } from "../repositories/thread-repo";
-import { AgentService } from "./agent-service";
+import { AgentService } from "../features/agents/index.js";
 import { SettingsService } from "./settings-service";
 import { ThreadTeardownService } from "./thread-teardown-service";
 import { ThreadControlMutationReservationService } from "./thread-control-mutation-reservation-service";

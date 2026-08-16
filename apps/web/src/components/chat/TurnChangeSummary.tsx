@@ -3,7 +3,7 @@ import { ChevronRight, FileText, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useDiffStore } from "@/stores/diffStore";
 import { readThreadRecord } from "@/stores/thread-selectors";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { showRightPanelAdaptive } from "@/lib/right-panel-layout";
 import { getTransport } from "@/transport";
 import { diffCardSurfaceClass } from "@/components/diff/diff-surface";
