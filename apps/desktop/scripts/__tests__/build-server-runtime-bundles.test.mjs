@@ -25,6 +25,7 @@ describe("buildServerRuntimeBundles", () => {
     const ptyHostEntry = path.join(
       serverRoot,
       "dist-tsc",
+      "features",
       "terminal",
       "host",
       "pty-host-entry.js",
