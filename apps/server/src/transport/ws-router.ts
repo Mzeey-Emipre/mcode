@@ -29,17 +29,37 @@ import {
 } from "@mcode/contracts";
 import { logger, validateBranchName } from "@mcode/shared";
 import { discoverCopilotAgents } from "../providers/copilot/copilot-agent-discovery.js";
-import type { WorkspaceService } from "../services/workspace-service";
-import type { ThreadService } from "../services/thread-service";
 import type {
   AgentPermissionService,
   AgentService,
   CanonicalAgentEventSink,
-  ThreadControlService,
   TurnRecoveryService,
 } from "../features/agents/index.js";
-import type { GitService } from "../services/git-service";
-import type { GithubService } from "../services/github-service";
+import type {
+  FilesystemBrowser,
+  GitService,
+  WorkspaceEnricher,
+  WorkspaceService,
+} from "../features/projects/index.js";
+import type { HandoffStorage } from "../features/handoff/index.js";
+import type {
+  GithubService,
+  PullRequestMutationService,
+  PullRequestService,
+  ReviewWorktreeService,
+} from "../features/pull-requests/index.js";
+import type {
+  BrowserAutomationBroker,
+  BrowserAutomationHostConnectionAuthorization,
+} from "../features/browser-automation/index.js";
+import type {
+  ExternalThreadControlMcpRuntime,
+  ExternalThreadControlPairingService,
+  ThreadCompletionService,
+  ThreadControlService,
+  ThreadService,
+  ThreadTeardownService,
+} from "../features/thread-control/index.js";
 import type { FileService } from "../services/file-service";
 import type { ConfigService } from "../services/config-service";
 import type { SkillService } from "../services/skill-service";
@@ -73,8 +93,6 @@ import type { PrDraftService } from "../services/pr-draft-service";
 import type { CiWatcherService } from "../services/ci-watcher";
 import type { ThreadRepo } from "../repositories/thread-repo";
 import type { WorkspaceRepo } from "../repositories/workspace-repo";
-import type { WorkspaceEnricher } from "../services/workspace-enricher";
-import type { FilesystemBrowser } from "../services/filesystem-browser";
 import {
   broadcast,
   setClientThreadSubscriptions,
@@ -112,22 +130,12 @@ function appendPreviewAnnotationsForAgent(
 import type { ModelCacheService } from "../services/model-cache-service.js";
 import type { DiffSummaryService } from "../services/diff-summary-service.js";
 import type { RecapService } from "../services/recap-service.js";
-import type { HandoffStorage } from "../services/handoff/handoff-storage.js";
 import {
   loadConversationPage,
   loadConversationTail,
   loadNewerConversationPage,
   loadOlderConversationPage,
 } from "../services/conversation-page.js";
-import type { ThreadTeardownService } from "../services/thread-teardown-service.js";
-import type { ThreadCompletionService } from "../services/thread-completion-service.js";
-import type { PullRequestService } from "../services/pull-requests/pull-request-service.js";
-import type { PullRequestMutationService } from "../services/pull-requests/pull-request-mutation-service.js";
-import type { ReviewWorktreeService } from "../services/pull-requests/review-worktree-service.js";
-import type { BrowserAutomationBroker } from "../services/browser-automation/broker.js";
-import type { BrowserAutomationHostConnectionAuthorization } from "../services/browser-automation/broker.js";
-import type { ExternalThreadControlPairingService } from "../services/external-thread-control-pairing-service.js";
-import type { ExternalThreadControlMcpRuntime } from "../services/external-thread-control-mcp-runtime.js";
 
 const DEFAULT_PULL_REQUEST_CONNECTION = {};
 

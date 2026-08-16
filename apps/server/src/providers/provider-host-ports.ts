@@ -3,8 +3,8 @@ import type { JobObject } from "../services/job-object.js";
 import type { EnvService } from "../services/env-service.js";
 import type { ScopedPreGrantService } from "../services/scoped-pre-grant.js";
 import type { CanonicalAgentEventSink } from "../features/agents/index.js";
-import type { InternalThreadControlMcpRuntime } from "../services/thread-control-mcp-runtime.js";
-import type { BrowserAutomationSessionLease } from "../services/browser-automation/browser-automation-session-lease.js";
+import type { BrowserAutomationSessionLease } from "../features/browser-automation/index.js";
+import type { InternalThreadControlMcpRuntime } from "../features/thread-control/index.js";
 import { killProcessTree } from "../services/process-kill.js";
 
 /** Server services used to compose the narrow Provider host-port boundary. */

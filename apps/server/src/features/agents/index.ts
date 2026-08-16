@@ -18,6 +18,3 @@ export { startAgentOrchestration } from "./orchestration/start-agent-orchestrati
 
 /** Resolves provider/model targets for delegated thread creation. */
 export { DelegationTargetResolver } from "./collaboration/delegation-target-resolver.js";
-
-/** Coordinates provider-neutral collaboration actions. */
-export { ThreadControlService } from "./collaboration/thread-control-service.js";
