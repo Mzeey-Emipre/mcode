@@ -13,7 +13,7 @@ import {
 import { previewTabsScopeKey, usePreviewTabsStore } from "@/stores/previewTabsStore";
 import type { BrowserSessionLifecycleTab } from "@/features/preview";
 import { useDiffStore } from "@/stores/diffStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 
 const {
   mockCreateBranch,
@@ -62,7 +62,7 @@ vi.mock("@/stores/composerDraftStore", () => ({
   ),
 }));
 
-vi.mock("@/stores/workspaceStore", () => {
+vi.mock("@/features/projects/state/workspaceStore", () => {
   const store = Object.assign(
     vi.fn((selector: (state: unknown) => unknown) => selector(mockWorkspaceState)),
     {

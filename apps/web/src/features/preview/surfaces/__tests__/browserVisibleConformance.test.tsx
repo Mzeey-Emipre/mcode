@@ -65,7 +65,7 @@ vi.mock("@/transport", async (importOriginal) => {
   };
 });
 
-vi.mock("@/stores/workspaceStore", () => {
+vi.mock("@/features/projects/state/workspaceStore", () => {
   const store = Object.assign(
     vi.fn((selector: (state: typeof mockWorkspaceState) => unknown) => selector(mockWorkspaceState)),
     { getState: vi.fn(() => mockWorkspaceState), setState: vi.fn() },

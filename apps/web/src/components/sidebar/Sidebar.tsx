@@ -1,4 +1,4 @@
-import { ProjectTree } from "@/features/projects";
+import { ProjectTree, useWorkspaceStore } from "@/features/projects";
 import {
   Settings,
   ArrowLeft,
@@ -17,7 +17,6 @@ import { useUiStore } from "@/stores/uiStore";
 import { McodeLogo } from "@/components/brand/McodeLogo";
 import { cn } from "@/lib/utils";
 import { useCommandPaletteStore } from "@/stores/commandPaletteStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
 
 /** True when running inside the Electron shell. */
 const IS_DESKTOP = typeof window !== "undefined" && !!window.desktopBridge;

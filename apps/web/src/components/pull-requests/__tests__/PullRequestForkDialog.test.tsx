@@ -32,7 +32,7 @@ const { workspaceState, draftState } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("@/stores/workspaceStore", () => ({
+vi.mock("@/features/projects/state/workspaceStore", () => ({
   useWorkspaceStore: { getState: () => workspaceState },
 }));
 

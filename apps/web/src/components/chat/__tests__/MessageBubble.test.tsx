@@ -12,7 +12,7 @@ vi.mock("@/features/conversation/narrative/DeltaBlock", () => ({
   },
 }));
 
-vi.mock("@/stores/workspaceStore", () => ({
+vi.mock("@/features/projects/state/workspaceStore", () => ({
   useWorkspaceStore: (selector: (state: { threads: [] }) => unknown) => selector({ threads: [] }),
 }));
 

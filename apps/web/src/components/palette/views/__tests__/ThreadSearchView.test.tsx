@@ -55,7 +55,7 @@ vi.mock("@/stores/sidebarSearchStore", () => ({
     }),
 }));
 
-vi.mock("@/stores/workspaceStore", () => ({
+vi.mock("@/features/projects/state/workspaceStore", () => ({
   useWorkspaceStore: (selector: (state: unknown) => unknown) =>
     selector({
       workspaces: [workspace],

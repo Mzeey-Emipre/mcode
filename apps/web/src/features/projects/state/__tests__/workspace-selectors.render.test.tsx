@@ -1,8 +1,8 @@
 import { Profiler, type ProfilerOnRenderCallback } from "react";
 import { render, act } from "@testing-library/react";
 import { describe, it, expect, beforeEach } from "vitest";
-import { useWorkspaceThread } from "@/stores/workspace-selectors";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceThread } from "../workspace-selectors";
+import { useWorkspaceStore } from "../workspaceStore";
 import type { WorkspaceThread } from "@/lib/workspace-thread";
 
 function thread(id: string, title: string, status: WorkspaceThread["status"] = "paused"): WorkspaceThread {

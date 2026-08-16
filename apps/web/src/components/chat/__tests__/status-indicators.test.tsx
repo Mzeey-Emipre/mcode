@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from "vitest";
 
 // Store mocks must be declared before importing the components under test.
 
-vi.mock("@/stores/workspaceStore", () => ({
+vi.mock("@/features/projects/state/workspaceStore", () => ({
   useWorkspaceStore: vi.fn((selector: (s: unknown) => unknown) =>
     selector({ activeThreadId: "thread-1" })
   ),
