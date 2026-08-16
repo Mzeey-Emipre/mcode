@@ -15,3 +15,9 @@ export { PullRequestMutationService } from "./pull-request-mutation-service.js";
 
 /** Creates and restores pull-request review worktrees. */
 export { ReviewWorktreeService } from "./review-worktree-service.js";
+
+/** Polls linked pull requests for CI state and lifecycle changes. */
+export { CiWatcherService } from "./ci-watcher.js";
+
+/** Generates pull-request titles and bodies from repository and thread context. */
+export { PrDraftService } from "./pr-draft-service.js";

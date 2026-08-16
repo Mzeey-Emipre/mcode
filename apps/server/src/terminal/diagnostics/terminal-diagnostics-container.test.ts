@@ -7,6 +7,9 @@ import { container } from "tsyringe";
 import type Database from "better-sqlite3";
 import { routeMessage, type RouterDeps } from "../../transport/ws-router.js";
 import { setupContainer } from "../../container.js";
+import { AgentService } from "../../features/agents/index.js";
+import { HandoffCheckoutService } from "../../features/handoff/index.js";
+import { GitWatcherService, WorkspaceService } from "../../features/projects/index.js";
 import { TERMINAL_BACKEND_TOKEN, type TerminalBackend } from "../terminal-backend.js";
 import { TerminalDiagnosticsService } from "./terminal-diagnostics-service.js";
 
@@ -97,6 +100,13 @@ describe("Terminal diagnostics container wiring", () => {
     expect(container.resolve<TerminalBackend>(TERMINAL_BACKEND_TOKEN).capabilities()).toEqual(
       MODERN_CAPABILITIES,
     );
+  });
+
+  it("resolves workspace, agent, Git watcher, and Handoff lifecycles through the configured container", () => {
+    expect(container.resolve(WorkspaceService)).toBeInstanceOf(WorkspaceService);
+    expect(container.resolve(AgentService)).toBeInstanceOf(AgentService);
+    expect(container.resolve(GitWatcherService)).toBeInstanceOf(GitWatcherService);
+    expect(container.resolve(HandoffCheckoutService)).toBeInstanceOf(HandoffCheckoutService);
   });
 
   it("caps legacy active sessions at the diagnostics schema limit", async () => {

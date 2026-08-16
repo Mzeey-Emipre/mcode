@@ -1,9 +1,8 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach } from "vitest";
-import { openMemoryDatabase } from "../store/database.js";
-import { ThreadRepo } from "../repositories/thread-repo.js";
-import { MessageRepo } from "../repositories/message-repo.js";
-import { HANDOFF_MARKER } from "../services/handoff-builder.js";
+import { openMemoryDatabase } from "../../../store/database.js";
+import { ThreadRepo } from "../../../repositories/thread-repo.js";
+import { MessageRepo } from "../../../repositories/message-repo.js";
 import type Database from "better-sqlite3";
 
 describe("thread forking - data layer", () => {

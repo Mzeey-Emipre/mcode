@@ -8,7 +8,7 @@ import { describe, it, expect } from "vitest";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { tmpdir, homedir, platform } from "node:os";
-import { FilesystemBrowser } from "../features/projects/index.js";
+import { FilesystemBrowser } from "../../index.js";
 
 describe("FilesystemBrowser", () => {
   const browser = new FilesystemBrowser();

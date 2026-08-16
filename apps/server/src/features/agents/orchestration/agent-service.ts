@@ -94,7 +94,7 @@ import { normalizeAgentProviderError } from "./provider-agent-error-normalize.js
 import { TurnErrorPolicy } from "../turns/turn-error-policy.js";
 import { TurnRuntimeRegistry } from "../turns/turn-runtime.js";
 import type { TurnOutcome } from "../turns/turn-outcome.js";
-import { BrowserNarrativeEventSanitizer } from "../../../services/browser-narrative-event-sanitizer.js";
+import { BrowserNarrativeEventSanitizer } from "../../browser-automation/index.js";
 import { CanonicalAgentEventSink } from "../canonical/canonical-agent-event-sink.js";
 
 /**
@@ -415,7 +415,7 @@ export class AgentService {
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
     @inject(WorkspaceRepo) private readonly workspaceRepo: WorkspaceRepo,
     @inject(MessageRepo) private readonly messageRepo: MessageRepo,
-    @inject(GitService) private readonly gitService: GitService,
+    @inject(delay(() => GitService)) private readonly gitService: GitService,
     @inject(AttachmentService)
     private readonly attachmentService: AttachmentService,
     @inject("IProviderRegistry")
@@ -446,7 +446,7 @@ export class AgentService {
     @inject(FileService) private readonly fileService?: FileService,
     @inject(delay(() => InternalThreadControlMcpRuntime))
     private readonly threadControlMcp?: InternalThreadControlMcpRuntime,
-    @inject(ThreadControlMutationReservationService)
+    @inject(delay(() => ThreadControlMutationReservationService))
     mutationReservations?: ThreadControlMutationReservationService,
     @inject(CanonicalAgentEventSink)
     canonicalSink?: CanonicalAgentEventSink,

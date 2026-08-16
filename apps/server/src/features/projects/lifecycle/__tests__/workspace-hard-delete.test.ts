@@ -2,25 +2,27 @@ import "reflect-metadata";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type Database from "better-sqlite3";
 import { existsSync } from "fs";
-import { openMemoryDatabase } from "../store/database";
-import { WorkspaceRepo } from "../repositories/workspace-repo";
-import { ThreadRepo } from "../repositories/thread-repo";
-import { CleanupJobRepo } from "../repositories/cleanup-job-repo";
-import { WorkspaceService } from "../features/projects/index.js";
-import { AttachmentService } from "../services/attachment-service";
-import { CleanupWorker } from "../services/cleanup-worker";
-import { HandoffStorage } from "../features/handoff/index.js";
-import type { AgentService } from "../features/agents/index.js";
-import type { ClaudeProvider } from "../providers/claude/claude-provider";
-import type { TerminalBackend as TerminalService } from "../terminal/terminal-backend.js";
-import type { GitService } from "../features/projects/index.js";
-import { killDescendantsByName } from "../services/process-kill";
+import { openMemoryDatabase } from "../../../../store/database";
+import { WorkspaceRepo } from "../../../../repositories/workspace-repo";
+import { ThreadRepo } from "../../../../repositories/thread-repo";
+import { CleanupJobRepo } from "../../../../repositories/cleanup-job-repo";
+import { WorkspaceService, type GitService } from "../../index.js";
+import { AttachmentService } from "../../../../services/attachment-service";
+import { CleanupWorker } from "../../../../services/cleanup-worker";
+import { HandoffStorage } from "../../../handoff/index.js";
+import type { AgentService } from "../../../agents/index.js";
+import type { ClaudeProvider } from "../../../../providers/claude/claude-provider";
+import type { TerminalBackend as TerminalService } from "../../../../terminal/terminal-backend.js";
+import { killDescendantsByName } from "../../../../services/process-kill";
+import type { GitExecutor } from "../../../../services/git-executor/index.js";
+
+const mockGitExecutor = { exec: vi.fn() } as unknown as GitExecutor;
 
 vi.mock("fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("fs")>();
   return { ...actual, existsSync: vi.fn().mockReturnValue(true) };
 });
-vi.mock("../services/process-kill.js", () => ({
+vi.mock("../../../../services/process-kill.js", () => ({
   killDescendantsByName: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -97,7 +99,7 @@ describe("WorkspaceRepo - soft/hard delete", () => {
   });
 
   it("findDeletingWorkspaces returns only soft-deleted workspaces", () => {
-    const ws1 = workspaceRepo.create("Active", "/tmp/active");
+    workspaceRepo.create("Active", "/tmp/active");
     const ws2 = workspaceRepo.create("Deleting", "/tmp/deleting");
     workspaceRepo.softDelete(ws2.id);
 
@@ -142,7 +144,7 @@ describe("ThreadRepo - workspace deletion helpers", () => {
 
   it("findWorktreeThreadsByWorkspace returns threads with worktree_path set", () => {
     const ws = workspaceRepo.create("Test", "/tmp/test-ws");
-    const t1 = threadRepo.create(ws.id, "Direct", "direct", "main");
+    threadRepo.create(ws.id, "Direct", "direct", "main");
     const t2 = threadRepo.create(ws.id, "Worktree", "worktree", "feat/x");
     // Simulate worktree path being set after creation
     db.prepare("UPDATE threads SET worktree_path = ? WHERE id = ?")
@@ -234,7 +236,6 @@ describe("WorkspaceService.delete - two-phase orchestration", () => {
   let cleanupJobRepo: CleanupJobRepo;
   let workspaceService: WorkspaceService;
   let mockAttachmentService: AttachmentService;
-  let mockHandoffStorage: HandoffStorage;
 
   beforeEach(() => {
     db = openMemoryDatabase();
@@ -246,16 +247,13 @@ describe("WorkspaceService.delete - two-phase orchestration", () => {
       removeForThread: vi.fn(),
     } as unknown as AttachmentService;
 
-    mockHandoffStorage = {
-      deleteThreadFiles: vi.fn().mockResolvedValue(undefined),
-    } as unknown as HandoffStorage;
-
     workspaceService = new WorkspaceService(
       workspaceRepo,
       threadRepo,
       cleanupJobRepo,
       mockAttachmentService,
       { stopSession: vi.fn().mockResolvedValue(undefined) } as unknown as AgentService,
+      mockGitExecutor,
     );
   });
 
@@ -267,8 +265,8 @@ describe("WorkspaceService.delete - two-phase orchestration", () => {
 
   it("soft-deletes all active threads", () => {
     const ws = workspaceRepo.create("Test", "/tmp/ws");
-    const t1 = threadRepo.create(ws.id, "T1", "direct", "main");
-    const t2 = threadRepo.create(ws.id, "T2", "direct", "main");
+    threadRepo.create(ws.id, "T1", "direct", "main");
+    threadRepo.create(ws.id, "T2", "direct", "main");
 
     workspaceService.delete(ws.id);
 
@@ -655,7 +653,6 @@ describe("WorkspaceService.delete - active session handling", () => {
   let cleanupJobRepo: CleanupJobRepo;
   let workspaceService: WorkspaceService;
   let mockAttachmentService: AttachmentService;
-  let mockHandoffStorage: HandoffStorage;
   let mockAgentService: { stopSession: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
@@ -668,10 +665,6 @@ describe("WorkspaceService.delete - active session handling", () => {
       removeForThread: vi.fn(),
     } as unknown as AttachmentService;
 
-    mockHandoffStorage = {
-      deleteThreadFiles: vi.fn().mockResolvedValue(undefined),
-    } as unknown as HandoffStorage;
-
     mockAgentService = {
       stopSession: vi.fn().mockResolvedValue(undefined),
     };
@@ -682,6 +675,7 @@ describe("WorkspaceService.delete - active session handling", () => {
       cleanupJobRepo,
       mockAttachmentService,
       mockAgentService as unknown as AgentService,
+      mockGitExecutor,
     );
   });
 
@@ -715,7 +709,6 @@ describe("Workspace delete - cross-workspace fork lineage", () => {
   let cleanupJobRepo: CleanupJobRepo;
   let workspaceService: WorkspaceService;
   let mockAttachmentService: AttachmentService;
-  let mockHandoffStorage: HandoffStorage;
 
   beforeEach(() => {
     db = openMemoryDatabase();
@@ -729,6 +722,7 @@ describe("Workspace delete - cross-workspace fork lineage", () => {
       cleanupJobRepo,
       mockAttachmentService,
       { stopSession: vi.fn().mockResolvedValue(undefined) } as unknown as AgentService,
+      mockGitExecutor,
     );
   });
 
@@ -787,6 +781,7 @@ describe("CleanupWorker - exhausted retries", () => {
       { removeWorktree: vi.fn().mockResolvedValue(true), isRegisteredWorktreePath: vi.fn().mockReturnValue(true) } as any,
       workspaceRepo,
       { removeForThread: vi.fn() } as any,
+      { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as any,
     );
   });
 
@@ -972,7 +967,6 @@ describe("Workspace delete - zero-worktree fast path", () => {
   let cleanupJobRepo: CleanupJobRepo;
   let workspaceService: WorkspaceService;
   let mockAttachmentService: AttachmentService;
-  let mockHandoffStorage: HandoffStorage;
 
   beforeEach(() => {
     db = openMemoryDatabase();
@@ -986,13 +980,14 @@ describe("Workspace delete - zero-worktree fast path", () => {
       cleanupJobRepo,
       mockAttachmentService,
       { stopSession: vi.fn().mockResolvedValue(undefined) } as unknown as AgentService,
+      mockGitExecutor,
     );
   });
 
   it("synchronously hard-deletes workspace with only direct-mode threads", () => {
     const ws = workspaceRepo.create("Direct Only", "/tmp/direct");
-    const t1 = threadRepo.create(ws.id, "T1", "direct", "main");
-    const t2 = threadRepo.create(ws.id, "T2", "direct", "develop");
+    threadRepo.create(ws.id, "T1", "direct", "main");
+    threadRepo.create(ws.id, "T2", "direct", "develop");
     const t3 = threadRepo.create(ws.id, "T3", "direct", "main");
     threadRepo.softDelete(t3.id);
 

@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { describe, it, expect } from "vitest";
-import { resolveForkSnapshot } from "../services/handoff-builder.js";
+import { resolveForkSnapshot } from "../handoff-builder.js";
 import type { TurnSnapshot } from "@mcode/contracts";
 
 function makeSnapshot(

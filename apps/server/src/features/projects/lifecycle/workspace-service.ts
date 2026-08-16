@@ -5,7 +5,7 @@
 
 import { existsSync } from "fs";
 import { join } from "path";
-import { injectable, inject } from "tsyringe";
+import { injectable, inject, delay } from "tsyringe";
 import type { Workspace } from "@mcode/contracts";
 import { WorkspaceRepo } from "../../../repositories/workspace-repo";
 import { ThreadRepo } from "../../../repositories/thread-repo";
@@ -23,7 +23,7 @@ export class WorkspaceService {
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
     @inject(CleanupJobRepo) private readonly cleanupJobRepo: CleanupJobRepo,
     @inject(AttachmentService) private readonly attachmentService: AttachmentService,
-    @inject(AgentService) private readonly agentService: AgentService,
+    @inject(delay(() => AgentService)) private readonly agentService: AgentService,
     @inject("GitExecutor") private readonly gitExecutor: GitExecutor,
   ) {}
 

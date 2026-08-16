@@ -1,8 +1,8 @@
 import "reflect-metadata";
 import { describe, it, expect } from "vitest";
-import type { WorkspaceRepo } from "../../repositories/workspace-repo.js";
-import { FakeGitExecutor } from "../git-executor/fake-git-executor.js";
-import { GitService } from "../../features/projects/index.js";
+import type { WorkspaceRepo } from "../../../../repositories/workspace-repo.js";
+import { FakeGitExecutor } from "../../../../services/git-executor/fake-git-executor.js";
+import { GitService } from "../git-service.js";
 
 /**
  * resolveWorkingDir decides the cwd a threadless or thread-scoped terminal

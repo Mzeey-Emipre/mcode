@@ -19,7 +19,7 @@ vi.mock("@mcode/shared", () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 
-import { PrDraftService } from "../services/pr-draft-service";
+import { PrDraftService } from "../pr-draft-service.js";
 
 describe("PrDraftService", () => {
   let service: PrDraftService;
@@ -162,7 +162,7 @@ describe("PrDraftService", () => {
       body: "## Summary\nDid thing\n\n## Testing\nUnit tests\n\n## Screenshots\nN/A",
     }));
 
-    const result = await service.generateDraft("ws-1", "thread-1", "main");
+    await service.generateDraft("ws-1", "thread-1", "main");
 
     const promptArg = mockComplete.mock.calls[0][0];
     expect(promptArg).toContain("## Summary");

@@ -18,15 +18,15 @@ vi.mock("fs", async () => {
   };
 });
 
-vi.mock("../transport/push", () => ({
+vi.mock("../../../../transport/push", () => ({
   broadcast: broadcastMock,
 }));
 
-import { GitWatcherService } from "./git-watcher-service";
-import type { WorkspaceRepo } from "../repositories/workspace-repo";
-import type { GitExecutor } from "./git-executor/index";
-import type { GitService } from "../features/projects/index.js";
-import type { HandoffCheckoutService } from "../features/handoff/index.js";
+import { GitWatcherService } from "../git-watcher-service.js";
+import type { WorkspaceRepo } from "../../../../repositories/workspace-repo";
+import type { GitExecutor } from "../../../../services/git-executor/index";
+import type { GitService } from "../git-service.js";
+import type { HandoffCheckoutService } from "../../../handoff/index.js";
 
 class MockWatcher extends EventEmitter {
   close = vi.fn();

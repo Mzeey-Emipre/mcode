@@ -26,3 +26,6 @@ export {
 
 /** Records bounded browser automation lifecycle telemetry. */
 export { BrowserAutomationTelemetry } from "./telemetry.js";
+
+/** Projects Browser provider events into content-free narrative events. */
+export { BrowserNarrativeEventSanitizer } from "./browser-narrative-event-sanitizer.js";
