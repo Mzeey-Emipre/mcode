@@ -26,7 +26,7 @@ import { GitWatcherService } from "./git-watcher-service";
 import type { WorkspaceRepo } from "../repositories/workspace-repo";
 import type { GitExecutor } from "./git-executor/index";
 import type { GitService } from "../features/projects/index.js";
-import type { ThreadService } from "./thread-service";
+import type { HandoffCheckoutService } from "../features/handoff/index.js";
 
 class MockWatcher extends EventEmitter {
   close = vi.fn();
@@ -36,7 +36,7 @@ describe("GitWatcherService", () => {
   let callbacks: Array<(eventType: string, filename: string) => void>;
   let service: GitWatcherService;
   let gitService: GitService;
-  let threadService: ThreadService;
+  let handoffCheckoutService: HandoffCheckoutService;
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -55,7 +55,7 @@ describe("GitWatcherService", () => {
     gitService = {
       getCurrentBranchAt: vi.fn().mockResolvedValue("main"),
     } as unknown as GitService;
-    threadService = {
+    handoffCheckoutService = {
       syncCheckoutFromHead: vi.fn().mockResolvedValue({
         changed: true,
         thread: {
@@ -68,12 +68,12 @@ describe("GitWatcherService", () => {
           pr_status: null,
         },
       }),
-    } as unknown as ThreadService;
+    } as unknown as HandoffCheckoutService;
     service = new GitWatcherService(
       {} as WorkspaceRepo,
       gitExecutor,
       gitService,
-      threadService,
+      handoffCheckoutService,
     );
   });
 
@@ -96,7 +96,7 @@ describe("GitWatcherService", () => {
     callbacks[0]("change", "HEAD");
     await vi.advanceTimersByTimeAsync(200);
 
-    expect(threadService.syncCheckoutFromHead).toHaveBeenCalledWith("thread-1");
+    expect(handoffCheckoutService.syncCheckoutFromHead).toHaveBeenCalledWith("thread-1");
     expect(broadcastMock).toHaveBeenCalledWith("thread.checkoutChanged", {
       threadId: "thread-1",
       workspaceId: "ws-1",
@@ -141,7 +141,7 @@ describe("GitWatcherService", () => {
 
   it("does not invoke the checkout-changed listener when sync reports no checkout change", async () => {
     const listener = vi.fn();
-    (threadService.syncCheckoutFromHead as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+    (handoffCheckoutService.syncCheckoutFromHead as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
       changed: false,
       thread: {
         id: "thread-1",

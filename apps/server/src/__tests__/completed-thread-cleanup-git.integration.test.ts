@@ -15,7 +15,7 @@ import { RealGitExecutor } from "../services/git-executor/real-git-executor";
 import type { ClaudeProvider } from "../providers/claude/claude-provider";
 import type { TerminalBackend } from "../terminal/terminal-backend";
 import type { AttachmentService } from "../services/attachment-service";
-import type { HandoffStorage } from "../services/handoff/handoff-storage";
+import type { HandoffStorage } from "../features/handoff/index.js";
 
 vi.mock("../services/process-kill.js", () => ({
   killDescendantsByName: vi.fn().mockResolvedValue(undefined),

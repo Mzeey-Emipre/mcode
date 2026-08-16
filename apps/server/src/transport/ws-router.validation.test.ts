@@ -993,8 +993,10 @@ describe("routeMessage git.createBranch", () => {
     });
     const deps = {
       threadService: {
-        createBranchForThread,
         findById,
+      },
+      handoffCheckoutService: {
+        createBranchForThread,
       },
     } as unknown as RouterDeps;
 
@@ -1033,7 +1035,7 @@ describe("routeMessage git.createBranch", () => {
       .fn()
       .mockRejectedValue(new Error("Failed to update checkout state for thread thread-1"));
     const deps = {
-      threadService: {
+      handoffCheckoutService: {
         createBranchForThread,
       },
     } as unknown as RouterDeps;
@@ -1062,7 +1064,7 @@ describe("routeMessage git.createBranch", () => {
       .fn()
       .mockRejectedValue(new Error("Thread thread-1 does not belong to workspace ws-1"));
     const deps = {
-      threadService: {
+      handoffCheckoutService: {
         createBranchForThread,
       },
     } as unknown as RouterDeps;
@@ -1089,7 +1091,7 @@ describe("routeMessage git.createBranch", () => {
   it("rejects invalid branch names before dispatch", async () => {
     const createBranchForThread = vi.fn();
     const deps = {
-      threadService: {
+      handoffCheckoutService: {
         createBranchForThread,
       },
     } as unknown as RouterDeps;

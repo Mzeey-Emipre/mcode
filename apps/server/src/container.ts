@@ -45,6 +45,7 @@ import {
 } from "./features/projects";
 import {
   HandoffCoordinator,
+  HandoffCheckoutService,
   HandoffPipelineService,
   HandoffStorage,
 } from "./features/handoff";
@@ -604,6 +605,11 @@ export function setupContainer(mcodeDir: string): typeof container {
   container.register(
     HandoffCoordinator,
     { useClass: HandoffCoordinator },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    HandoffCheckoutService,
+    { useClass: HandoffCheckoutService },
     { lifecycle: Lifecycle.Singleton },
   );
   container.register(
