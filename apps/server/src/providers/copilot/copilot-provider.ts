@@ -30,21 +30,19 @@ import {
 import { logger } from "@mcode/shared";
 import { SettingsService } from "../../services/settings-service.js";
 import { EnvService } from "../../services/env-service.js";
-import { InternalThreadControlMcpRuntime } from "../../services/thread-control-mcp-runtime.js";
+import { InternalThreadControlMcpRuntime } from "../../features/thread-control/index.js";
 import { buildMcodeInstructionPlan, renderMcodeInstructions } from "@mcode/thread-orchestration";
 import { JobObject } from "../../services/job-object.js";
 import { SessionRuntime } from "../../services/session-runtime.js";
 import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../services/session-runtime.js";
-import { CleanForker } from "../../services/handoff/session-forker.js";
+import { CleanForker } from "../../features/handoff/index.js";
 import {
   browserAutomationPermissionCapability,
   type BrowserAutomationCredentialMetadata,
-} from "../../services/browser-automation/access-service.js";
-import {
   BrowserAutomationSessionLease,
   type BrowserAutomationSessionLeaseScope,
   type BrowserAutomationSessionLeaseStage,
-} from "../../services/browser-automation/browser-automation-session-lease.js";
+} from "../../features/browser-automation/index.js";
 import type {
   IAgentProvider,
   ISessionEvictable,
@@ -63,7 +61,7 @@ import {
   AgentEventType,
   BROWSER_AUTOMATION_OPERATION_METADATA,
 } from "@mcode/contracts";
-import type { InternalThreadControlMcpHttpConnection } from "../../services/thread-control-mcp-runtime.js";
+import type { InternalThreadControlMcpHttpConnection } from "../../features/thread-control/index.js";
 
 /** Promisified execFile used to retrieve the gh auth token. */
 const execFileAsync = promisify(execFile);

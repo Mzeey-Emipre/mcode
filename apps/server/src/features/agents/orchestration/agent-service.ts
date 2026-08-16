@@ -63,7 +63,7 @@ import { TurnSnapshotRepo } from "../../../repositories/turn-snapshot-repo";
 import type Database from "better-sqlite3";
 import { TaskRepo, type StoredTask } from "../../../repositories/task-repo";
 import { PlanQuestionAnswersRepo } from "../../../repositories/plan-question-answers-repo";
-import { GitService } from "../../../services/git-service";
+import { GitService } from "../../projects/index.js";
 import { AttachmentService } from "../../../services/attachment-service";
 import { FileService } from "../../../services/file-service";
 import { SnapshotService } from "../../../services/snapshot-service";
@@ -74,7 +74,11 @@ import { CommandRouter } from "../../../commands/command-router";
 // Lazy-imported to break circular dependency: AgentService -> ThreadService -> (shared repos)
 // Using delay() ensures tsyringe resolves ThreadService from the container at first access,
 // not at AgentService construction time.
-import { ThreadService } from "../../../services/thread-service";
+import {
+  InternalThreadControlMcpRuntime,
+  ThreadControlMutationReservationService,
+  ThreadService,
+} from "../../thread-control/index.js";
 import { SettingsService } from "../../../services/settings-service.js";
 import { ProviderAvailabilityService } from "../../../services/provider-availability-service.js";
 import {
@@ -84,15 +88,13 @@ import {
 import { PlanQuestionParser } from "../../../services/plan-question-parser.js";
 import { PlanOutputParser } from "../../../services/plan-output-parser.js";
 import { PlanRepo } from "../../../repositories/plan-repo";
-import { HandoffCoordinator } from "../../../services/handoff/handoff-coordinator.js";
+import { HandoffCoordinator } from "../../handoff/index.js";
 import { ScopedPreGrantService } from "../../../services/scoped-pre-grant.js";
 import { normalizeAgentProviderError } from "./provider-agent-error-normalize.js";
 import { TurnErrorPolicy } from "../turns/turn-error-policy.js";
-import { InternalThreadControlMcpRuntime } from "../../../services/thread-control-mcp-runtime.js";
-import { ThreadControlMutationReservationService } from "../../../services/thread-control-mutation-reservation-service.js";
 import { TurnRuntimeRegistry } from "../turns/turn-runtime.js";
 import type { TurnOutcome } from "../turns/turn-outcome.js";
-import { BrowserNarrativeEventSanitizer } from "../../../services/browser-narrative-event-sanitizer.js";
+import { BrowserNarrativeEventSanitizer } from "../../browser-automation/index.js";
 import { CanonicalAgentEventSink } from "../canonical/canonical-agent-event-sink.js";
 
 /**
@@ -413,7 +415,7 @@ export class AgentService {
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
     @inject(WorkspaceRepo) private readonly workspaceRepo: WorkspaceRepo,
     @inject(MessageRepo) private readonly messageRepo: MessageRepo,
-    @inject(GitService) private readonly gitService: GitService,
+    @inject(delay(() => GitService)) private readonly gitService: GitService,
     @inject(AttachmentService)
     private readonly attachmentService: AttachmentService,
     @inject("IProviderRegistry")
@@ -444,7 +446,7 @@ export class AgentService {
     @inject(FileService) private readonly fileService?: FileService,
     @inject(delay(() => InternalThreadControlMcpRuntime))
     private readonly threadControlMcp?: InternalThreadControlMcpRuntime,
-    @inject(ThreadControlMutationReservationService)
+    @inject(delay(() => ThreadControlMutationReservationService))
     mutationReservations?: ThreadControlMutationReservationService,
     @inject(CanonicalAgentEventSink)
     canonicalSink?: CanonicalAgentEventSink,

@@ -107,7 +107,7 @@ import which from "which";
 import { CopilotProvider } from "../providers/copilot/copilot-provider.js";
 import { stubEnvService } from "./stub-env-service.js";
 import { stubJobObject } from "./stub-job-object.js";
-import { BrowserAutomationSessionLease } from "../services/browser-automation/browser-automation-session-lease.js";
+import { BrowserAutomationSessionLease } from "../features/browser-automation/index.js";
 
 /** Minimal SettingsService stub. */
 function makeSettingsService(cliPath = "") {

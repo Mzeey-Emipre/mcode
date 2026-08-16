@@ -17,22 +17,49 @@ import { killOrphanedServer, reapOrphanedPtys } from "./services/orphan-cleanup"
 import { PtyPidRegistry } from "./services/pty-pid-registry";
 
 // Services
-import { WorkspaceService } from "./services/workspace-service";
-import { ThreadService } from "./services/thread-service";
+import {
+  FilesystemBrowser,
+  GitService,
+  GitWatcherService,
+  WorkspaceEnricher,
+  WorkspaceService,
+} from "./features/projects";
+import {
+  HandoffCheckoutService,
+  HandoffStorage,
+} from "./features/handoff";
+import {
+  GithubService,
+  CiWatcherService,
+  PrDraftService,
+  PullRequestMutationService,
+  PullRequestService,
+  ReviewWorktreeService,
+} from "./features/pull-requests";
+import {
+  BrowserAutomationBroker,
+  BrowserAutomationCredentialRegistry,
+  BrowserAutomationMcpHandler,
+  BrowserAutomationSessionLease,
+  BrowserAutomationTelemetry,
+} from "./features/browser-automation";
+import {
+  ExternalThreadControlMcpRuntime,
+  ExternalThreadControlPairingService,
+  ThreadCompletionService,
+  ThreadControlService,
+  ThreadService,
+  ThreadTeardownService,
+} from "./features/thread-control";
 import {
   AgentPermissionService,
   AgentService,
   CanonicalAgentEventSink,
-  ThreadControlService,
   TurnRecoveryService,
   startAgentOrchestration,
 } from "./features/agents";
-import { ExternalThreadControlPairingService } from "./services/external-thread-control-pairing-service";
-import { ExternalThreadControlMcpRuntime } from "./services/external-thread-control-mcp-runtime";
 import { NarrativeStore } from "./services/narrative-store";
 import { LegacyConversationMigration } from "./services/legacy-conversation-migration";
-import { GitService } from "./services/git-service";
-import { GithubService } from "./services/github-service";
 import { FileService } from "./services/file-service";
 import { ConfigService } from "./services/config-service";
 import { SkillService } from "./services/skill-service";
@@ -54,28 +81,17 @@ import { PlanRepo } from "./repositories/plan-repo";
 import { SnapshotService } from "./services/snapshot-service";
 import { SettingsService } from "./services/settings-service";
 import { warmCodexProviderVersion } from "@mcode/providers";
-import { GitWatcherService } from "./services/git-watcher-service";
 import { SkillWatcherService } from "./services/skill-watcher-service";
 import { MemoryPressureService } from "./services/memory-pressure-service";
 import { WorkspaceRepo } from "./repositories/workspace-repo";
 import { CleanupWorker } from "./services/cleanup-worker";
-import { PrDraftService } from "./services/pr-draft-service";
-import { CiWatcherService } from "./services/ci-watcher";
 import { ProviderAvailabilityService } from "./services/provider-availability-service";
 import { ProviderUsageWarmupService } from "./services/provider-usage-warmup-service";
 import { ProviderRegistry } from "./providers/provider-registry";
 import { CursorProvider } from "./providers/cursor/cursor-provider";
-import { WorkspaceEnricher } from "./services/workspace-enricher";
-import { FilesystemBrowser } from "./services/filesystem-browser";
 import { ModelCacheService } from "./services/model-cache-service";
 import { DiffSummaryService } from "./services/diff-summary-service";
 import { RecapService } from "./services/recap-service";
-import { ThreadTeardownService } from "./services/thread-teardown-service";
-import { ThreadCompletionService } from "./services/thread-completion-service";
-import { PullRequestService } from "./services/pull-requests/pull-request-service";
-import { PullRequestMutationService } from "./services/pull-requests/pull-request-mutation-service";
-import { ReviewWorktreeService } from "./services/pull-requests/review-worktree-service";
-import { HandoffStorage } from "./services/handoff/handoff-storage";
 import { seedAgentRuntimeWorkspace } from "./dev-agent-seed";
 import { WebSocket } from "ws";
 import { resolveGracePeriodMs, shouldShutdownOnIdle } from "./grace-period-ms";
@@ -89,13 +105,6 @@ import type Database from "better-sqlite3";
 import type { JobObject } from "./services/job-object.js";
 import { resolveWebAutomationFlag } from "./startup-policy.js";
 import { listenWithPortRetry } from "./http-listener.js";
-import {
-  BrowserAutomationBroker,
-  BrowserAutomationCredentialRegistry,
-  BrowserAutomationMcpHandler,
-  BrowserAutomationSessionLease,
-  BrowserAutomationTelemetry,
-} from "./services/browser-automation/index.js";
 
 // process.title affects `ps`/`top`/`htop` output on Unix and the console window
 // title. On Windows, Task Manager pulls the display name from the binary's
@@ -354,6 +363,7 @@ const prDraftService = container.resolve(PrDraftService);
 const diffSummaryService = container.resolve(DiffSummaryService);
 const recapService = container.resolve(RecapService);
 const handoffStorage = container.resolve(HandoffStorage);
+const handoffCheckoutService = container.resolve(HandoffCheckoutService);
 const db = container.resolve<Database.Database>("Database");
 const jobObject = container.resolve<JobObject>("JobObject");
 
@@ -627,6 +637,7 @@ const { httpServer, wss } = createWsServer({
   diffSummaryService,
   recapService,
   handoffStorage,
+  handoffCheckoutService,
   threadTeardownService,
   threadCompletionService,
   browserAutomationBroker,

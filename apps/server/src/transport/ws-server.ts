@@ -18,9 +18,11 @@ import { extractToken, buildAuthCookie } from "./auth";
 import { createReadStream, existsSync } from "fs";
 import { join } from "path";
 import { getMcodeDir } from "@mcode/shared";
-import type { BrowserAutomationMcpHandler } from "../services/browser-automation/mcp-handler.js";
-import type { BrowserAutomationHostConnectionAuthorization } from "../services/browser-automation/broker.js";
-import { EXTERNAL_THREAD_CONTROL_MCP_PATH } from "../services/external-thread-control-mcp-runtime.js";
+import type {
+  BrowserAutomationHostConnectionAuthorization,
+  BrowserAutomationMcpHandler,
+} from "../features/browser-automation/index.js";
+import { EXTERNAL_THREAD_CONTROL_MCP_PATH } from "../features/thread-control/index.js";
 
 /** Constant-time string comparison to prevent timing attacks on token validation. */
 function safeTokenEqual(a: string, b: string): boolean {

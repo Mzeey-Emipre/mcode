@@ -4,12 +4,12 @@
  * Extracted from apps/desktop/src/main/file-ops.ts with untracked file support.
  */
 
-import { injectable, inject } from "tsyringe";
+import { injectable, inject, delay } from "tsyringe";
 import { readFileSync, existsSync, statSync, realpathSync } from "fs";
 import { resolve, isAbsolute, sep } from "path";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
 import { ThreadRepo } from "../repositories/thread-repo";
-import { GitService } from "./git-service";
+import { GitService } from "../features/projects/index.js";
 import type { GitExecutor } from "./git-executor/index.js";
 
 /** Handles file listing and content reading for workspaces and threads. */
@@ -18,7 +18,7 @@ export class FileService {
   constructor(
     @inject(WorkspaceRepo) private readonly workspaceRepo: WorkspaceRepo,
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
-    @inject(GitService) private readonly gitService: GitService,
+    @inject(delay(() => GitService)) private readonly gitService: GitService,
     @inject("GitExecutor") private readonly gitExecutor: GitExecutor,
   ) {}
 

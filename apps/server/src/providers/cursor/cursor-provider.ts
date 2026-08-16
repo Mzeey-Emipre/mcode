@@ -30,22 +30,20 @@ import { SettingsService } from "../../services/settings-service.js";
 import {
   InternalThreadControlMcpRuntime,
   type InternalThreadControlMcpHttpConnection,
-} from "../../services/thread-control-mcp-runtime.js";
+} from "../../features/thread-control/index.js";
 import { SkillService } from "../../services/skill-service.js";
 import { EnvService } from "../../services/env-service.js";
 import { JobObject } from "../../services/job-object.js";
 import {
   browserAutomationPermissionCapability,
-  type BrowserAutomationCredentialMetadata,
-} from "../../services/browser-automation/access-service.js";
-import {
   BrowserAutomationSessionLease,
+  type BrowserAutomationCredentialMetadata,
   type BrowserAutomationSessionLeaseGrant,
   type BrowserAutomationSessionLeaseStage,
-} from "../../services/browser-automation/browser-automation-session-lease.js";
+} from "../../features/browser-automation/index.js";
 import { SessionRuntime } from "../../services/session-runtime.js";
 import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../services/session-runtime.js";
-import { CleanForker } from "../../services/handoff/session-forker.js";
+import { CleanForker } from "../../features/handoff/index.js";
 import { killProcessTree } from "../../services/process-kill.js";
 import {
   AgentEventType,

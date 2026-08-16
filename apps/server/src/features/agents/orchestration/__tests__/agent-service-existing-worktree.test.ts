@@ -7,8 +7,8 @@ import { WorkspaceRepo } from "../../../../repositories/workspace-repo";
 import { MessageRepo } from "../../../../repositories/message-repo";
 import { AgentService } from "../agent-service";
 import { createCanonicalAgentEventSinkStub } from "../../../../test-utils/canonical-agent-event-sink-stub";
-import type { GitService } from "../../../../services/git-service";
-import type { ThreadService } from "../../../../services/thread-service";
+import type { GitService } from "../../../projects/index.js";
+import type { ThreadService } from "../../../thread-control/index.js";
 import type { TurnRuntimeSnapshot } from "@mcode/contracts";
 
 function createAgentServiceHarness() {

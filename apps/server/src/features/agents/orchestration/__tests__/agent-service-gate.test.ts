@@ -10,7 +10,7 @@ import { ProviderDisabledError } from "../../../../services/provider-availabilit
 import type { ThreadRepo } from "../../../../repositories/thread-repo.js";
 import type { WorkspaceRepo } from "../../../../repositories/workspace-repo.js";
 import type { MessageRepo } from "../../../../repositories/message-repo.js";
-import type { GitService } from "../../../../services/git-service.js";
+import type { GitService } from "../../../projects/index.js";
 import type { AttachmentService } from "../../../../services/attachment-service.js";
 import type { ToolCallRecordRepo } from "../../../../repositories/tool-call-record-repo.js";
 import type { TurnSnapshotRepo } from "../../../../repositories/turn-snapshot-repo.js";
@@ -18,7 +18,7 @@ import type { SnapshotService } from "../../../../services/snapshot-service.js";
 import type { MemoryPressureService } from "../../../../services/memory-pressure-service.js";
 import type { TaskRepo } from "../../../../repositories/task-repo.js";
 import type { SettingsService } from "../../../../services/settings-service.js";
-import type { ThreadService } from "../../../../services/thread-service.js";
+import type { ThreadService } from "../../../thread-control/index.js";
 import { EventEmitter } from "node:events";
 
 // Mock the broadcast transport so we can assert agent.event emissions

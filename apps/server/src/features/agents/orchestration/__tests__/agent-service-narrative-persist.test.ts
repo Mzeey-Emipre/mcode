@@ -15,7 +15,7 @@ import type { ThreadRepo } from "../../../../repositories/thread-repo.js";
 import type { WorkspaceRepo } from "../../../../repositories/workspace-repo.js";
 import type { MessageRepo } from "../../../../repositories/message-repo.js";
 import { MessageRepo as SqliteMessageRepo } from "../../../../repositories/message-repo.js";
-import type { GitService } from "../../../../services/git-service.js";
+import type { GitService } from "../../../projects/index.js";
 import type { AttachmentService } from "../../../../services/attachment-service.js";
 import type {
   ToolCallRecordRepo,
@@ -28,7 +28,7 @@ import type { SnapshotService } from "../../../../services/snapshot-service.js";
 import type { MemoryPressureService } from "../../../../services/memory-pressure-service.js";
 import type { TaskRepo } from "../../../../repositories/task-repo.js";
 import type { SettingsService } from "../../../../services/settings-service.js";
-import type { ThreadService } from "../../../../services/thread-service.js";
+import type { ThreadService } from "../../../thread-control/index.js";
 import type { ProviderAvailabilityService } from "../../../../services/provider-availability-service.js";
 import type { PlanQuestionAnswersRepo } from "../../../../repositories/plan-question-answers-repo.js";
 

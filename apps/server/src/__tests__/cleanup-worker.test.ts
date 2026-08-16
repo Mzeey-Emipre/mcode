@@ -8,14 +8,14 @@ import { CleanupJobRepo, MAX_CLEANUP_ATTEMPTS } from "../repositories/cleanup-jo
 import { ThreadRepo } from "../repositories/thread-repo";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
 import { CleanupWorker } from "../services/cleanup-worker";
-import { HandoffStorage } from "../services/handoff/handoff-storage";
+import { HandoffStorage } from "../features/handoff/index.js";
 import type { ClaudeProvider } from "../providers/claude/claude-provider";
 import type { TerminalBackend as TerminalService } from "../terminal/terminal-backend.js";
-import type { GitService } from "../services/git-service";
+import type { GitService } from "../features/projects/index.js";
 import { AttachmentService } from "../services/attachment-service";
 import { killDescendantsByName } from "../services/process-kill";
 import { getMcodeDir, logger } from "@mcode/shared";
-import { ThreadControlMutationReservationService } from "../services/thread-control-mutation-reservation-service";
+import { ThreadControlMutationReservationService } from "../features/thread-control/index.js";
 
 vi.mock("../services/process-kill.js", () => ({
   killDescendantsByName: vi.fn().mockResolvedValue(undefined),

@@ -35,23 +35,55 @@ import { createProviderHostPorts } from "./providers/provider-host-ports";
 import { registerCodexProvider } from "./providers/codex-provider-registration";
 
 // Services
-import { WorkspaceService } from "./services/workspace-service";
-import { ThreadService } from "./services/thread-service";
+import {
+  FilesystemBrowser,
+  GitService,
+  GitWatcherService,
+  ProjectWorktreeService,
+  WorktreeDirectoryRemover,
+  WorkspaceEnricher,
+  WorkspaceService,
+} from "./features/projects";
+import {
+  HandoffCoordinator,
+  HandoffCheckoutService,
+  HandoffPipelineService,
+  HandoffStorage,
+} from "./features/handoff";
+import {
+  GithubPullRequestClient,
+  GithubService,
+  PullRequestMutationService,
+  PullRequestService,
+  ReviewWorktreeService,
+  PrDraftService,
+} from "./features/pull-requests";
+import {
+  BrowserAutomationCredentialRegistry,
+  BrowserAutomationSessionLease,
+} from "./features/browser-automation";
+import {
+  ExternalThreadControlMcpRuntime,
+  ExternalThreadControlPairingService,
+  InternalThreadControlMcpAuthority,
+  InternalThreadControlMcpRuntime,
+  ThreadCompletionService,
+  ThreadControlMutationReservationService,
+  ThreadControlService,
+  ThreadService,
+  ThreadTeardownService,
+} from "./features/thread-control";
 import {
   AgentPermissionService,
   AgentService,
   CanonicalAgentEventSink,
   DelegationTargetResolver,
-  ThreadControlService,
   TurnRecoveryService,
   publishCanonicalAgentEvents,
 } from "./features/agents";
 import { NarrativeStore } from "./services/narrative-store";
 import { LegacyConversationMigration } from "./services/legacy-conversation-migration";
 import { PlanQuestionService } from "./services/plan-question-service";
-import { GitService } from "./services/git-service";
-import { WorktreeDirectoryRemover } from "./services/worktree-directory-remover.js";
-import { GithubService } from "./services/github-service";
 import { FileService } from "./services/file-service";
 import { ConfigService } from "./services/config-service";
 import { SkillService } from "./services/skill-service";
@@ -75,17 +107,12 @@ import { WorkspaceTerminalPreferencesService } from "./terminal/preferences/work
 import { TerminalDiagnosticsService } from "./terminal/diagnostics/terminal-diagnostics-service.js";
 import { PtyHostCleanupLedger } from "./terminal/cleanup/terminal-cleanup-ledger.js";
 import { AttachmentService } from "./services/attachment-service";
-import { HandoffStorage } from "./services/handoff/handoff-storage.js";
-import { HandoffPipelineService } from "./services/handoff/handoff-pipeline.js";
-import { HandoffCoordinator } from "./services/handoff/handoff-coordinator.js";
 import { SnapshotService } from "./services/snapshot-service";
 import { SettingsService } from "./services/settings-service";
-import { GitWatcherService } from "./services/git-watcher-service";
 import { SkillWatcherService } from "./services/skill-watcher-service";
 import { MemoryPressureService } from "./services/memory-pressure-service";
 import { ScopedPreGrantService } from "./services/scoped-pre-grant";
 import { CleanupWorker } from "./services/cleanup-worker";
-import { PrDraftService } from "./services/pr-draft-service";
 import {
   ProviderAvailabilityService,
   defaultResolver,
@@ -93,33 +120,16 @@ import {
 import { ProviderUsageWarmupService } from "./services/provider-usage-warmup-service";
 import { PtyPidRegistry } from "./services/pty-pid-registry";
 import { JobObject } from "./services/job-object.js";
-import { WorkspaceEnricher } from "./services/workspace-enricher";
-import { FilesystemBrowser } from "./services/filesystem-browser";
 import { ModelCacheService } from "./services/model-cache-service";
 import { ProtectedEnvStore } from "./services/protected-env-store";
 import { ShellEnvResolver } from "./services/shell-env-resolver";
 import { EnvService } from "./services/env-service";
-import { ThreadControlMutationReservationService } from "./services/thread-control-mutation-reservation-service";
 import { ThreadControlApprovalRepo } from "./repositories/thread-control-approval-repo";
 import { ThreadControlAuditRepo } from "./repositories/thread-control-audit-repo";
-import { InternalThreadControlMcpAuthority } from "./services/thread-control-mcp-authority";
-import { InternalThreadControlMcpRuntime } from "./services/thread-control-mcp-runtime";
-import { ExternalThreadControlPairingService } from "./services/external-thread-control-pairing-service";
-import { ExternalThreadControlMcpRuntime } from "./services/external-thread-control-mcp-runtime";
 import { UtilityCompletionService } from "./services/utility-completion-service";
 import { DiffSummaryService } from "./services/diff-summary-service";
 import { RecapService } from "./services/recap-service";
-import { ThreadTeardownService } from "./services/thread-teardown-service";
-import { ThreadCompletionService } from "./services/thread-completion-service";
 import { RealGitExecutor } from "./services/git-executor/index.js";
-import { GithubPullRequestClient } from "./services/pull-requests/github-pull-request-client.js";
-import { PullRequestService } from "./services/pull-requests/pull-request-service.js";
-import { PullRequestMutationService } from "./services/pull-requests/pull-request-mutation-service.js";
-import { ReviewWorktreeService } from "./services/pull-requests/review-worktree-service.js";
-import {
-  BrowserAutomationCredentialRegistry,
-  BrowserAutomationSessionLease,
-} from "./services/browser-automation/index.js";
 
 /** Initialize the DI container with all server dependencies. */
 export function setupContainer(mcodeDir: string): typeof container {
@@ -340,6 +350,11 @@ export function setupContainer(mcodeDir: string): typeof container {
   container.register(
     WorktreeDirectoryRemover,
     { useClass: WorktreeDirectoryRemover },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    ProjectWorktreeService,
+    { useClass: ProjectWorktreeService },
     { lifecycle: Lifecycle.Singleton },
   );
   container.register("GitService", {
@@ -590,6 +605,11 @@ export function setupContainer(mcodeDir: string): typeof container {
   container.register(
     HandoffCoordinator,
     { useClass: HandoffCoordinator },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    HandoffCheckoutService,
+    { useClass: HandoffCheckoutService },
     { lifecycle: Lifecycle.Singleton },
   );
   container.register(

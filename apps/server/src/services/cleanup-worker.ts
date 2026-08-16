@@ -15,14 +15,14 @@ import type { CleanupJob } from "../repositories/cleanup-job-repo.js";
 import { ThreadRepo } from "../repositories/thread-repo.js";
 import { ClaudeProvider } from "../providers/claude/claude-provider.js";
 import { TerminalBackend, TERMINAL_BACKEND_TOKEN } from "../terminal/terminal-backend.js";
-import { GitService } from "./git-service.js";
+import { GitService } from "../features/projects/index.js";
 import { AttachmentService } from "./attachment-service.js";
 import { killDescendantsByName } from "./process-kill.js";
 import { WorkspaceRepo } from "../repositories/workspace-repo.js";
 import { broadcast } from "../transport/push.js";
-import { HandoffStorage } from "./handoff/handoff-storage.js";
+import { HandoffStorage } from "../features/handoff/index.js";
 import { pruneStaleToolOutputArtifacts } from "@mcode/providers";
-import { ThreadControlMutationReservationService } from "./thread-control-mutation-reservation-service.js";
+import { ThreadControlMutationReservationService } from "../features/thread-control/index.js";
 
 /** How often to check for due cleanup jobs (ms). */
 const POLL_INTERVAL_MS = 5_000;
