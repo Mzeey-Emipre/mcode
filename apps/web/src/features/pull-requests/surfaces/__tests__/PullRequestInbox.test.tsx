@@ -17,8 +17,8 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PullRequestTransport } from "@/transport/pull-requests";
 import { PullRequestInbox } from "../PullRequestInbox";
-import { selectPullRequestByKey } from "@/stores/pull-request-selectors";
-import { usePullRequestStore } from "@/stores/pullRequestStore";
+import { selectPullRequestByKey } from "@/features/pull-requests/state/pull-request-selectors";
+import { usePullRequestStore } from "@/features/pull-requests/state/pullRequestStore";
 
 const virtualizerSpies = vi.hoisted(() => ({
   measureElement: vi.fn(),

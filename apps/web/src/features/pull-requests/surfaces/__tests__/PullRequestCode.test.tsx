@@ -13,9 +13,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getPullRequestDetailKey,
   usePullRequestDetailStore,
-} from "@/stores/pullRequestDetailStore";
-import { usePullRequestCodeStore } from "@/stores/pullRequestCodeStore";
-import { usePullRequestStore } from "@/stores/pullRequestStore";
+} from "@/features/pull-requests/state/pullRequestDetailStore";
+import { usePullRequestCodeStore } from "@/features/pull-requests/state/pullRequestCodeStore";
+import { usePullRequestStore } from "@/features/pull-requests/state/pullRequestStore";
 import type { PullRequestTransport } from "@/transport/pull-requests";
 
 const layout = vi.hoisted(() => ({ codeWidth: 0 }));

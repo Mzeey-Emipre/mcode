@@ -9,11 +9,11 @@ import {
   getPullRequestMutationLaneKey,
   usePullRequestMutationStore,
   type PullRequestMutationLane,
-} from "@/stores/pullRequestMutationStore";
+} from "@/features/pull-requests/state/pullRequestMutationStore";
 import {
   usePullRequestReviewDraftStore,
   type PullRequestDraftSnapshot,
-} from "@/stores/pullRequestReviewDraftStore";
+} from "@/features/pull-requests/state/pullRequestReviewDraftStore";
 import type { PullRequestMutationTransport } from "@/transport/pull-request-mutations";
 import type { PullRequestTransport } from "@/transport/pull-requests";
 import { PullRequestSubmitReviewDialog } from "../PullRequestSubmitReviewDialog";

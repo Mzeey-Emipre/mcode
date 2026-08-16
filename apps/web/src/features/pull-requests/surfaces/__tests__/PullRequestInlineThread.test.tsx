@@ -1,8 +1,8 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { PullRequestDiffInlineRow } from "@/lib/pull-request-diff-row-model";
-import { usePullRequestReviewDraftStore } from "@/stores/pullRequestReviewDraftStore";
+import type { PullRequestDiffInlineRow } from "@/features/pull-requests/lib/pull-request-diff-row-model";
+import { usePullRequestReviewDraftStore } from "@/features/pull-requests/state/pullRequestReviewDraftStore";
 import { PullRequestInlineThread } from "../PullRequestInlineThread";
 
 vi.mock("../RemoteMarkdown", () => ({

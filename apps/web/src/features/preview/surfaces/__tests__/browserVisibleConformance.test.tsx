@@ -78,7 +78,7 @@ vi.mock("@/stores/threadStore", () => ({
     selector({ records: mockThreadRecords, fetchProviderUsage: vi.fn() })),
 }));
 
-vi.mock("@/hooks/usePullRequestReviewLink", () => ({ usePullRequestReviewLink: vi.fn().mockReturnValue(null) }));
+vi.mock("@/features/pull-requests", () => ({ usePullRequestReviewLink: vi.fn().mockReturnValue(null) }));
 vi.mock("@/hooks/useThreadGitActions", () => ({
   useThreadGitActions: vi.fn().mockReturnValue({
     prable: false,

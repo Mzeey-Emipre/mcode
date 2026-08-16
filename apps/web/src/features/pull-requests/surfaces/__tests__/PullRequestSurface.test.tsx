@@ -12,8 +12,8 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   getPullRequestDetailKey,
   usePullRequestDetailStore,
-} from "@/stores/pullRequestDetailStore";
-import { usePullRequestStore } from "@/stores/pullRequestStore";
+} from "@/features/pull-requests/state/pullRequestDetailStore";
+import { usePullRequestStore } from "@/features/pull-requests/state/pullRequestStore";
 import { useUiStore } from "@/stores/uiStore";
 import type { PullRequestTransport } from "@/transport/pull-requests";
 

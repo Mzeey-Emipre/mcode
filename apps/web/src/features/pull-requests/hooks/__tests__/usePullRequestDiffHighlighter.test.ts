@@ -1,6 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { PullRequestDiffRow } from "@/lib/pull-request-diff-row-model";
+import type { PullRequestDiffRow } from "@/features/pull-requests/lib/pull-request-diff-row-model";
 
 const workerMock = vi.hoisted(() => {
   const postMessage = vi.fn();
@@ -22,7 +22,7 @@ vi.mock("@/lib/shiki-worker-client", () => ({
 import {
   buildPullRequestHighlightWindow,
   usePullRequestDiffHighlighter,
-} from "./usePullRequestDiffHighlighter";
+} from "../usePullRequestDiffHighlighter";
 
 function lineRow(index: number, path = "src/a.ts", hunkIndex = 0): PullRequestDiffRow {
   return {

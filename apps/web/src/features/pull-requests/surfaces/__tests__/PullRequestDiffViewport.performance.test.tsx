@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { PullRequestFile, PullRequestPatchResult } from "@mcode/contracts";
-import { buildPullRequestDiffRowModel } from "@/lib/pull-request-diff-row-model";
+import { buildPullRequestDiffRowModel } from "@/features/pull-requests/lib/pull-request-diff-row-model";
 import { PullRequestVirtualDiff } from "../PullRequestVirtualDiff";
 
 const performanceProbe = vi.hoisted(() => ({
@@ -41,7 +41,7 @@ vi.mock("@/components/ui/scroll-area", () => ({
   ),
 }));
 
-vi.mock("@/hooks/usePullRequestDiffHighlighter", () => ({
+vi.mock("@/features/pull-requests/hooks/usePullRequestDiffHighlighter", () => ({
   usePullRequestDiffHighlighter: () => ({
     getLineTokens: () => null,
     tokenBytes: 0,

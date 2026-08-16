@@ -17,13 +17,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getPullRequestDetailKey,
   usePullRequestDetailStore,
-} from "@/stores/pullRequestDetailStore";
+} from "@/features/pull-requests/state/pullRequestDetailStore";
 import {
   getPullRequestMutationLaneKey,
   usePullRequestMutationStore,
   type PullRequestMutationLane,
-} from "@/stores/pullRequestMutationStore";
-import { usePullRequestStore } from "@/stores/pullRequestStore";
+} from "@/features/pull-requests/state/pullRequestMutationStore";
+import { usePullRequestStore } from "@/features/pull-requests/state/pullRequestStore";
 import type { PullRequestTransport } from "@/transport/pull-requests";
 import type { PullRequestReviewTaskTransport } from "@/transport/pull-request-review-task";
 import { clearCommands, getCommand } from "@/lib/command-registry";
