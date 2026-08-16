@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
-import { OpenInRegistry } from "../open-in/registry";
-import type { LaunchTarget, OpenInAdapter } from "../open-in/types";
+import { OpenInRegistry } from "../registry";
+import type { LaunchTarget, OpenInAdapter } from "../../contracts/types";
 
 /** Build a fake adapter that records its launches instead of spawning anything. */
 function fakeAdapter(

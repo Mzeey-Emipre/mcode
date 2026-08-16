@@ -5,7 +5,7 @@
  */
 
 import { shell } from "electron";
-import type { LaunchTarget, OpenInAdapter } from "./types.js";
+import type { LaunchTarget, OpenInAdapter } from "../contracts/types.js";
 
 /** Stable id for the system file manager adapter. */
 export const FILE_EXPLORER_ID = "explorer";

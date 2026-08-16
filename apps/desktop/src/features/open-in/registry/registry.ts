@@ -9,7 +9,7 @@ import type {
   LaunchTarget,
   OpenInAdapter,
   OpenInAppMeta,
-} from "./types.js";
+} from "../contracts/types.js";
 
 /** Serializable app metadata plus live detection status (the renderer's view). */
 export interface OpenInAppStatus extends OpenInAppMeta {

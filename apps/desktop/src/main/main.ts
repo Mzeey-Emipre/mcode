@@ -35,7 +35,7 @@ import {
 const getExtension =
   globalThis.__v8Snapshot?.contracts?.getExtension ?? bundledGetExtension;
 
-import { openInRegistry } from "./open-in/index.js";
+import { openInRegistry } from "../features/open-in/index.js";
 import { ServerRuntime } from "../features/server-runtime/index.js";
 import {
   initializeApplicationUpdates,

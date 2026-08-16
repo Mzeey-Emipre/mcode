@@ -14,7 +14,7 @@ vi.mock("fs", () => ({
   existsSync: existsSyncMock,
 }));
 
-import { createExecutableResolver, spawnDetached } from "../open-in/spawn-launch";
+import { createExecutableResolver, spawnDetached } from "../spawn-launch";
 
 /** Fake child process that records its event handlers so a test can drive them. */
 function fakeChild() {
@@ -89,36 +89,103 @@ describe("createExecutableResolver", () => {
 });
 
 describe("spawnDetached", () => {
-  it("quotes only tokens with spaces or shell metacharacters in the Windows shell branch", async () => {
-    setPlatform("win32");
+  it("uses the selected win32 platform for the fixed cmd path", async () => {
+    setPlatform("darwin");
     const child = fakeChild();
     spawnMock.mockReturnValue(child);
 
-    const promise = spawnDetached("C:\\Program Files\\app\\code.cmd", ["C:\\my repo"]);
+    const promise = spawnDetached("probe.cmd", ["C:\\target folder"], "win32");
     child.emit("spawn");
     await promise;
 
     expect(spawnMock).toHaveBeenCalledWith(
-      '"C:\\Program Files\\app\\code.cmd"',
-      ['"C:\\my repo"'],
-      expect.objectContaining({ shell: true, detached: true }),
+      "cmd.exe",
+      [
+        "/d",
+        "/v:on",
+        "/s",
+        "/c",
+        "!MCODE_OPEN_IN_COMMAND! !MCODE_OPEN_IN_ARG_0!",
+      ],
+      expect.objectContaining({
+        shell: false,
+        windowsVerbatimArguments: true,
+        env: expect.objectContaining({
+          MCODE_OPEN_IN_COMMAND: '"probe.cmd"',
+          MCODE_OPEN_IN_ARG_0: '"C:\\target folder"',
+        }),
+      }),
+    );
+  });
+
+  it("uses direct spawning for the selected non-win32 platform", async () => {
+    setPlatform("win32");
+    const child = fakeChild();
+    spawnMock.mockReturnValue(child);
+    const target = "C:\\target folder\\%NAME%\\!NAME!&calc^";
+
+    const promise = spawnDetached("probe.cmd", [target], "darwin");
+    child.emit("spawn");
+    await promise;
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      "probe.cmd",
+      [target],
+      expect.objectContaining({ detached: true }),
+    );
+    expect(spawnMock.mock.calls[0]?.[2]).not.toHaveProperty("shell");
+  });
+
+  it("passes hostile cmd targets through fixed environment slots", async () => {
+    setPlatform("win32");
+    const child = fakeChild();
+    spawnMock.mockReturnValue(child);
+
+    const promise = spawnDetached(
+      "C:\\Program Files\\Open In Probe\\probe.cmd",
+      ["C:\\Open In Probe\\%NAME%\\!NAME!\\target folder&calc^", "-g"],
+    );
+    child.emit("spawn");
+    await promise;
+
+    expect(spawnMock).toHaveBeenCalledWith(
+      "cmd.exe",
+      [
+        "/d",
+        "/v:on",
+        "/s",
+        "/c",
+        "!MCODE_OPEN_IN_COMMAND! !MCODE_OPEN_IN_ARG_0! !MCODE_OPEN_IN_ARG_1!",
+      ],
+      expect.objectContaining({
+        detached: true,
+        shell: false,
+        windowsVerbatimArguments: true,
+        env: expect.objectContaining({
+          MCODE_OPEN_IN_COMMAND: '"C:\\Program Files\\Open In Probe\\probe.cmd"',
+          MCODE_OPEN_IN_ARG_0:
+            '"C:\\Open In Probe\\%NAME%\\!NAME!\\target folder&calc^"',
+          MCODE_OPEN_IN_ARG_1: '"-g"',
+        }),
+      }),
     );
     expect(child.unref).toHaveBeenCalledOnce();
   });
 
-  it("leaves bare PATH commands and CLI flags unquoted in the Windows shell branch", async () => {
+  it("passes hostile arguments directly to a safe Windows executable launch", async () => {
     setPlatform("win32");
     const child = fakeChild();
     spawnMock.mockReturnValue(child);
 
-    const promise = spawnDetached("code", ["-g", "C:\\my repo\\file.ts:42"]);
+    const target = "C:\\Open In Probe\\%NAME%\\!NAME!\\target folder&calc^";
+    const promise = spawnDetached("C:\\Program Files\\Open In Probe\\probe.exe", [target]);
     child.emit("spawn");
     await promise;
 
     expect(spawnMock).toHaveBeenCalledWith(
-      "code",
-      ["-g", '"C:\\my repo\\file.ts:42"'],
-      expect.objectContaining({ shell: true, detached: true }),
+      "C:\\Program Files\\Open In Probe\\probe.exe",
+      [target],
+      expect.objectContaining({ detached: true }),
     );
   });
 

@@ -6,14 +6,14 @@
  */
 
 import { join } from "path";
-import { createEditorAdapter, type EditorAdapterConfig } from "./editor-adapter.js";
-import { createGitGuiAdapter, type GitGuiAdapterConfig } from "./git-gui-adapter.js";
-import { createFileExplorerAdapter } from "./file-explorer-adapter.js";
+import { createEditorAdapter, type EditorAdapterConfig } from "./adapters/editor.js";
+import { createGitGuiAdapter, type GitGuiAdapterConfig } from "./adapters/git-gui.js";
+import { createFileExplorerAdapter } from "./adapters/file-explorer.js";
 import {
   createTerminalAdapter,
   type TerminalAdapterConfig,
-} from "./terminal-adapter.js";
-import { OpenInRegistry } from "./registry.js";
+} from "./adapters/terminal.js";
+import { OpenInRegistry } from "./registry/registry.js";
 
 /**
  * Candidate `devenv.exe` locations for Visual Studio across editions and years.
@@ -168,11 +168,11 @@ export const openInRegistry = new OpenInRegistry([
   createFileExplorerAdapter(),
 ]);
 
-export { OpenInRegistry } from "./registry.js";
-export type { OpenInAppStatus } from "./registry.js";
+export { OpenInRegistry } from "./registry/registry.js";
+export type { OpenInAppStatus } from "./registry/registry.js";
 export type {
   LaunchTarget,
   OpenInAdapter,
   OpenInAppKind,
   OpenInAppMeta,
-} from "./types.js";
+} from "./contracts/types.js";
