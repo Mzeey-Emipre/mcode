@@ -13,8 +13,8 @@ vi.mock("@mcode/shared", async (importOriginal) => {
 });
 
 import { ClaudeProvider } from "../providers/claude/claude-provider";
-import { stubEnvService } from "./stub-env-service.js";
-import { stubJobObject } from "./stub-job-object.js";
+import { stubEnvService } from "../runtime/environment/__tests__/stub-env-service.js";
+import { stubJobObject } from "../runtime/process/containment/__tests__/stub-job-object.js";
 import { queryMethodStubs } from "./helpers/mock-sdk-query";
 import { AgentEventType } from "@mcode/contracts";
 

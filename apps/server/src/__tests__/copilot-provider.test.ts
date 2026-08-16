@@ -105,8 +105,8 @@ beforeEach(() => {
 
 import which from "which";
 import { CopilotProvider } from "../providers/copilot/copilot-provider.js";
-import { stubEnvService } from "./stub-env-service.js";
-import { stubJobObject } from "./stub-job-object.js";
+import { stubEnvService } from "../runtime/environment/__tests__/stub-env-service.js";
+import { stubJobObject } from "../runtime/process/containment/__tests__/stub-job-object.js";
 import { BrowserAutomationSessionLease } from "../features/browser-automation/index.js";
 
 /** Minimal SettingsService stub. */

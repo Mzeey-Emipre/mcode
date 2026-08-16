@@ -2,8 +2,8 @@ import "reflect-metadata";
 import { describe, it, expect, beforeEach } from "vitest";
 import { EventEmitter } from "events";
 import { ClaudeProvider } from "../providers/claude/claude-provider.js";
-import { stubEnvService } from "./stub-env-service.js";
-import { stubJobObject } from "./stub-job-object.js";
+import { stubEnvService } from "../runtime/environment/__tests__/stub-env-service.js";
+import { stubJobObject } from "../runtime/process/containment/__tests__/stub-job-object.js";
 
 /**
  * Tests that verify resume listener cleanup in ClaudeProvider.
