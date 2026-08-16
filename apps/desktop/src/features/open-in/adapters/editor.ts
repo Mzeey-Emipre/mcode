@@ -5,9 +5,9 @@
  * in the IPC layer.
  */
 
-import { buildEditorArgs, type EditorId } from "../editor-args.js";
-import type { LaunchTarget, OpenInAdapter } from "./types.js";
-import { createExecutableResolver, spawnDetached } from "./spawn-launch.js";
+import { buildEditorArgs, type EditorId } from "../launch/editor-args.js";
+import type { LaunchTarget, OpenInAdapter } from "../contracts/types.js";
+import { createExecutableResolver, spawnDetached } from "../launch/spawn-launch.js";
 
 /** Static declaration for an editor adapter. */
 export interface EditorAdapterConfig {

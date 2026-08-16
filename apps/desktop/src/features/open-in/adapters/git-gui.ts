@@ -5,8 +5,8 @@
  * than inlined in the IPC layer.
  */
 
-import type { LaunchTarget, OpenInAdapter } from "./types.js";
-import { createExecutableResolver, spawnDetached } from "./spawn-launch.js";
+import type { LaunchTarget, OpenInAdapter } from "../contracts/types.js";
+import { createExecutableResolver, spawnDetached } from "../launch/spawn-launch.js";
 
 /** Static declaration for a git GUI adapter. */
 export interface GitGuiAdapterConfig {

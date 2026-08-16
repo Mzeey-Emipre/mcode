@@ -50,46 +50,64 @@ export function createExecutableResolver(
   };
 }
 
-/**
- * Quote a token for a `shell: true` spawn on Windows. cmd.exe joins the command
- * and args into a single line and applies no quoting of its own, so a token
- * containing whitespace or a shell metacharacter (`& | < > ^ ( )`) would be
- * split - or, for metacharacters, interpreted by cmd.exe (command injection).
- * Wrapping such a token in double quotes neutralizes both; Windows paths cannot
- * contain `"`, so quoting is lossless. Tokens needing no quoting (e.g. `code`,
- * `-g`) pass through untouched so PATH shims and CLI flags stay intact.
- */
-function quoteForShell(token: string): string {
-  return /[\s&|<>^()]/.test(token) ? `"${token}"` : token;
+const WINDOWS_COMMAND_SLOT = "MCODE_OPEN_IN_COMMAND";
+const WINDOWS_ARGUMENT_SLOT_PREFIX = "MCODE_OPEN_IN_ARG_";
+
+function quoteForWindowsCommand(token: string): string {
+  return `"${token}"`;
+}
+
+function spawnWindowsCommand(
+  cmd: string,
+  args: string[],
+  spawnProcess: typeof spawn,
+): ChildProcess {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    [WINDOWS_COMMAND_SLOT]: quoteForWindowsCommand(cmd),
+  };
+  const commandSlots = args.map((arg, index) => {
+    const slot = `${WINDOWS_ARGUMENT_SLOT_PREFIX}${index}`;
+    env[slot] = quoteForWindowsCommand(arg);
+    return `!${slot}!`;
+  });
+  const fixedCommand = [`!${WINDOWS_COMMAND_SLOT}!`, ...commandSlots].join(" ");
+
+  return spawnProcess("cmd.exe", ["/d", "/v:on", "/s", "/c", fixedCommand], {
+    detached: true,
+    stdio: "ignore",
+    shell: false,
+    windowsVerbatimArguments: true,
+    env,
+  });
 }
 
 /**
  * Spawn a detached, fire-and-forget child process and resolve once it has been
  * created.
  *
- * On Windows, an absolute path to an `.exe` (e.g. Visual Studio's `devenv.exe`,
- * which lives under "C:\Program Files\...") is spawned directly so spaces in the
- * path are handled by Node instead of breaking `cmd.exe` word-splitting. Bare
- * PATH commands ("code") and `.cmd`/`.bat` shims still need `shell: true` so
- * Windows can resolve and execute them; with `shell: true` Node forwards the raw
- * argv to `cmd.exe` without quoting, so only tokens that carry spaces or shell
- * metacharacters are quoted here. That keeps spaced install paths (e.g.
- * "Microsoft VS Code") and spaced target directories intact without wrapping bare
- * command names or flags like `-g` in extra quotes.
+ * On Windows, an absolute path to an `.exe` is spawned directly. Bare PATH
+ * commands and `.cmd`/`.bat` shims run through a fixed `cmd.exe` command while
+ * the executable and arguments remain in child environment slots. This keeps
+ * shell metacharacters out of the command string.
+ *
+ * @param platform Platform selected by the owning adapter.
+ * @param spawnProcess Injectable process boundary used by focused tests.
  */
-export function spawnDetached(cmd: string, args: string[]): Promise<void> {
+export function spawnDetached(
+  cmd: string,
+  args: string[],
+  platform: NodeJS.Platform = process.platform,
+  spawnProcess: typeof spawn = spawn,
+): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     let child: ChildProcess;
-    if (process.platform === "win32" && /\.exe$/i.test(cmd)) {
-      child = spawn(cmd, args, { detached: true, stdio: "ignore" });
-    } else if (process.platform === "win32") {
-      child = spawn(quoteForShell(cmd), args.map(quoteForShell), {
-        detached: true,
-        stdio: "ignore",
-        shell: true,
-      });
+    if (platform === "win32" && /\.exe$/i.test(cmd)) {
+      child = spawnProcess(cmd, args, { detached: true, stdio: "ignore" });
+    } else if (platform === "win32") {
+      child = spawnWindowsCommand(cmd, args, spawnProcess);
     } else {
-      child = spawn(cmd, args, { detached: true, stdio: "ignore" });
+      child = spawnProcess(cmd, args, { detached: true, stdio: "ignore" });
     }
 
     child.on("error", (err: Error) => reject(new Error(err.message)));

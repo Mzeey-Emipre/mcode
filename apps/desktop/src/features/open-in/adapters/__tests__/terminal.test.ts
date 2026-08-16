@@ -6,7 +6,7 @@ import {
   type TerminalAdapterConfig,
   type TerminalAdapterDeps,
   type TerminalId,
-} from "../open-in/terminal-adapter";
+} from "../terminal";
 
 const WT_CONFIG: TerminalAdapterConfig = {
   id: "windows-terminal",
@@ -20,17 +20,23 @@ const WT_CONFIG: TerminalAdapterConfig = {
 function fakeDeps(overrides: Partial<TerminalAdapterDeps> = {}): {
   deps: TerminalAdapterDeps;
   spawns: { cmd: string; args: readonly string[] }[];
+  spawnOptions: Record<string, unknown>[];
 } {
   const spawns: { cmd: string; args: readonly string[] }[] = [];
-  const spawn = vi.fn((cmd: string, args: readonly string[]) => {
-    spawns.push({ cmd, args });
-    const child = new EventEmitter() as EventEmitter & { unref(): void };
-    child.unref = () => {};
-    queueMicrotask(() => child.emit("spawn"));
-    return child;
-  });
+  const spawnOptions: Record<string, unknown>[] = [];
+  const spawn = vi.fn(
+    (cmd: string, args: readonly string[], options: Record<string, unknown>) => {
+      spawns.push({ cmd, args });
+      spawnOptions.push(options);
+      const child = new EventEmitter() as EventEmitter & { unref(): void };
+      child.unref = () => {};
+      queueMicrotask(() => child.emit("spawn"));
+      return child;
+    },
+  );
   return {
     spawns,
+    spawnOptions,
     deps: {
       commandOnPath: () => false,
       fileExists: () => false,
@@ -92,10 +98,32 @@ describe("createTerminalAdapter detection", () => {
 
 describe("createTerminalAdapter launch", () => {
   it("spawns the resolved command with directory args", async () => {
-    const { deps, spawns } = fakeDeps({ commandOnPath: (c) => c === "wt" });
+    const { deps, spawns, spawnOptions } = fakeDeps({ commandOnPath: (c) => c === "wt" });
     await createTerminalAdapter(WT_CONFIG, deps).launch({ path: "C:\\repo" });
 
-    expect(spawns).toEqual([{ cmd: "wt", args: ["-d", "C:\\repo"] }]);
+    expect(spawns).toEqual([
+      {
+        cmd: "cmd.exe",
+        args: [
+          "/d",
+          "/v:on",
+          "/s",
+          "/c",
+          "!MCODE_OPEN_IN_COMMAND! !MCODE_OPEN_IN_ARG_0! !MCODE_OPEN_IN_ARG_1!",
+        ],
+      },
+    ]);
+    expect(spawnOptions[0]).toEqual(
+      expect.objectContaining({
+        shell: false,
+        windowsVerbatimArguments: true,
+        env: expect.objectContaining({
+          MCODE_OPEN_IN_COMMAND: '"wt"',
+          MCODE_OPEN_IN_ARG_0: '"-d"',
+          MCODE_OPEN_IN_ARG_1: '"C:\\repo"',
+        }),
+      }),
+    );
   });
 
   it("spawns the fallback executable path when PATH lookup misses", async () => {
@@ -108,7 +136,7 @@ describe("createTerminalAdapter launch", () => {
     expect(spawns[0]?.cmd).toBe("C:\\fallback\\wt.exe");
   });
 
-  it("quotes a launcher path containing spaces so cmd.exe does not split it (Git Bash)", async () => {
+  it("launches a safe executable fallback directly (Git Bash)", async () => {
     const gitBashPath = "C:\\Program Files\\Git\\git-bash.exe";
     const { deps, spawns } = fakeDeps({
       commandOnPath: () => false,
@@ -126,35 +154,50 @@ describe("createTerminalAdapter launch", () => {
     ).launch({ path: "C:\\repo" });
 
     expect(spawns[0]).toEqual({
-      cmd: `"${gitBashPath}"`,
+      cmd: gitBashPath,
       args: ["--cd=C:\\repo"],
     });
   });
 
-  it("does not quote a bare PATH command without spaces", async () => {
-    const { deps, spawns } = fakeDeps({ commandOnPath: (c) => c === "wt" });
-    await createTerminalAdapter(WT_CONFIG, deps).launch({ path: "C:\\repo" });
+  it("keeps hostile terminal targets literal in the shared Windows launch slots", async () => {
+    const { deps, spawns, spawnOptions } = fakeDeps({ commandOnPath: (c) => c === "wt" });
+    const target = "C:\\Open In Probe\\%NAME%\\!NAME!\\target folder&calc^";
+    await createTerminalAdapter(WT_CONFIG, deps).launch({ path: target });
 
-    expect(spawns[0]?.cmd).toBe("wt");
+    expect(spawns[0]).toEqual({
+      cmd: "cmd.exe",
+      args: [
+        "/d",
+        "/v:on",
+        "/s",
+        "/c",
+        "!MCODE_OPEN_IN_COMMAND! !MCODE_OPEN_IN_ARG_0! !MCODE_OPEN_IN_ARG_1!",
+      ],
+    });
+    expect(spawnOptions[0]).toEqual(
+      expect.objectContaining({
+        env: expect.objectContaining({
+          MCODE_OPEN_IN_COMMAND: '"wt"',
+          MCODE_OPEN_IN_ARG_0: '"-d"',
+          MCODE_OPEN_IN_ARG_1: `"${target}"`,
+        }),
+      }),
+    );
   });
 
-  it("quotes a target directory containing spaces so cmd.exe does not split it", async () => {
+  it("preserves the terminal argument shape for a spaced target", async () => {
     const { deps, spawns } = fakeDeps({ commandOnPath: (c) => c === "wt" });
     await createTerminalAdapter(WT_CONFIG, deps).launch({
       path: "C:\\Users\\John Doe\\repo",
     });
 
-    expect(spawns[0]).toEqual({
-      cmd: "wt",
-      args: ["-d", '"C:\\Users\\John Doe\\repo"'],
-    });
-  });
-
-  it("quotes a target directory with a shell metacharacter so cmd.exe cannot inject", async () => {
-    const { deps, spawns } = fakeDeps({ commandOnPath: (c) => c === "wt" });
-    await createTerminalAdapter(WT_CONFIG, deps).launch({ path: "C:\\repo&calc" });
-
-    expect(spawns[0]?.args).toEqual(["-d", '"C:\\repo&calc"']);
+    expect(spawns[0]?.args).toEqual([
+      "/d",
+      "/v:on",
+      "/s",
+      "/c",
+      "!MCODE_OPEN_IN_COMMAND! !MCODE_OPEN_IN_ARG_0! !MCODE_OPEN_IN_ARG_1!",
+    ]);
   });
 
   it("rejects when the terminal is not detected", async () => {
