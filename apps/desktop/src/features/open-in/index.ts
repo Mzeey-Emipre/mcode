@@ -13,6 +13,10 @@ import {
   createTerminalAdapter,
   type TerminalAdapterConfig,
 } from "./adapters/terminal.js";
+import {
+  registerOpenInHandlers as registerOpenInHandlersForRegistry,
+  type OpenInIpc,
+} from "./ipc/handlers.js";
 import { OpenInRegistry } from "./registry/registry.js";
 
 /**
@@ -168,7 +172,13 @@ export const openInRegistry = new OpenInRegistry([
   createFileExplorerAdapter(),
 ]);
 
+/** Register Open In handlers with the configured registry. */
+export function registerOpenInHandlers(ipcMain: OpenInIpc): void {
+  registerOpenInHandlersForRegistry({ ipcMain, registry: openInRegistry });
+}
+
 export { OpenInRegistry } from "./registry/registry.js";
+export type { OpenInIpc } from "./ipc/handlers.js";
 export type { OpenInAppStatus } from "./registry/registry.js";
 export type {
   LaunchTarget,
