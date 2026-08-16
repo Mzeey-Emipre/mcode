@@ -19,7 +19,7 @@ import type { TerminalBackend as TerminalService } from "../terminal/terminal-ba
 import type { GitService } from "../services/git-service";
 import { AttachmentService } from "../services/attachment-service";
 import { WorkspaceService } from "../services/workspace-service";
-import type { AgentService } from "../services/agent-service";
+import type { AgentService } from "../features/agents/index.js";
 import { killDescendantsByName } from "../services/process-kill.js";
 import { getMcodeDir } from "@mcode/shared";
 

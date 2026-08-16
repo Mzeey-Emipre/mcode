@@ -1,4 +1,4 @@
-import { AgentEventType, type AgentEvent } from "@mcode/contracts";
+import { AgentEventType, type AgentEvent, type IProviderRegistry, type PermissionRequest } from "@mcode/contracts";
 import { logger } from "@mcode/shared";
 import type { AgentService } from "../../../services/agent-service.js";
 import type { CiWatcherService } from "../../../services/ci-watcher.js";
@@ -10,6 +10,7 @@ import type { ThreadService } from "../../../services/thread-service.js";
 import type { ThreadRepo } from "../../../repositories/thread-repo.js";
 import type { WorkspaceRepo } from "../../../repositories/workspace-repo.js";
 import { publishParentProviderEvent } from "../events/provider-event-publication.js";
+import { publishAgentPermissionEvents } from "../permissions/permission-publication.js";
 
 interface AgentOrchestrationDependencies {
   agentService: AgentService;
@@ -19,7 +20,10 @@ interface AgentOrchestrationDependencies {
   threadService: ThreadService;
   githubService: GithubService;
   ciWatcherService: CiWatcherService;
+  providerRegistry: IProviderRegistry;
   publishAgentEvent: (event: AgentEvent) => void;
+  publishPermissionRequest: (request: PermissionRequest) => void;
+  publishPermissionResolved: (payload: { requestId: string; decision: "allow" | "allow-session" | "deny" | "cancelled" }) => void;
   publishThreadStatus: (payload: { threadId: string; status: "completed" | "errored" }) => void;
   publishThreadPrLinked: (payload: { threadId: string; prNumber: number; prStatus: string }) => void;
 }
@@ -36,10 +40,19 @@ export function startAgentOrchestration({
   threadService,
   githubService,
   ciWatcherService,
+  providerRegistry,
   publishAgentEvent,
+  publishPermissionRequest,
+  publishPermissionResolved,
   publishThreadStatus,
   publishThreadPrLinked,
 }: AgentOrchestrationDependencies): void {
+  publishAgentPermissionEvents({
+    providerRegistry,
+    publishPermissionRequest,
+    publishPermissionResolved,
+  });
+
   agentService.init((event) => {
     let enrichedEvent = event;
 

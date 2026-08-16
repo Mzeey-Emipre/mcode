@@ -4,10 +4,10 @@ import { THREAD_GET_TRANSCRIPT_MAX_BYTES } from "@mcode/contracts";
 
 const { mockBroadcast } = vi.hoisted(() => ({ mockBroadcast: vi.fn() }));
 
-vi.mock("../../transport/push.js", () => ({ broadcast: mockBroadcast }));
+vi.mock("../../../../transport/push.js", () => ({ broadcast: mockBroadcast }));
 
 import { ThreadControlService, type InternalThreadControlAuthority } from "../thread-control-service.js";
-import { ThreadControlMutationReservationService } from "../thread-control-mutation-reservation-service.js";
+import { ThreadControlMutationReservationService } from "../../../../services/thread-control-mutation-reservation-service.js";
 
 const authority: InternalThreadControlAuthority = {
   type: "internal",

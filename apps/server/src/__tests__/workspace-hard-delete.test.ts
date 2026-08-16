@@ -10,7 +10,7 @@ import { WorkspaceService } from "../services/workspace-service";
 import { AttachmentService } from "../services/attachment-service";
 import { CleanupWorker } from "../services/cleanup-worker";
 import { HandoffStorage } from "../services/handoff/handoff-storage";
-import type { AgentService } from "../services/agent-service";
+import type { AgentService } from "../features/agents/index.js";
 import type { ClaudeProvider } from "../providers/claude/claude-provider";
 import type { TerminalBackend as TerminalService } from "../terminal/terminal-backend.js";
 import type { GitService } from "../services/git-service";

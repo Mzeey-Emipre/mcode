@@ -51,7 +51,7 @@ import {
 import {
   CanonicalAgentDiagnostics,
   type CanonicalDiagnosticExport,
-} from "../../../services/canonical-agent-diagnostics.js";
+} from "../observability/canonical-agent-diagnostics.js";
 
 /** Capacity held back so volatile input cannot consume every semantic batch slot. */
 export const CANONICAL_AGENT_CONTROL_EVENT_RESERVE = 16;

@@ -62,29 +62,29 @@ export type {
   ThreadControlAuthority,
 } from "@mcode/thread-orchestration";
 import { delay, inject, injectable } from "tsyringe";
-import { WorkspaceRepo } from "../repositories/workspace-repo.js";
-import { WorktreeRepo, type InternalRegisteredWorktree } from "../repositories/worktree-repo.js";
-import { ThreadRepo } from "../repositories/thread-repo.js";
-import { MessageRepo, type ThreadControlMessageRecord } from "../repositories/message-repo.js";
+import { WorkspaceRepo } from "../../../repositories/workspace-repo.js";
+import { WorktreeRepo, type InternalRegisteredWorktree } from "../../../repositories/worktree-repo.js";
+import { ThreadRepo } from "../../../repositories/thread-repo.js";
+import { MessageRepo, type ThreadControlMessageRecord } from "../../../repositories/message-repo.js";
 import {
   ThreadControlApprovalRepo,
   type RecoverableThreadCreateApproval,
   type PendingThreadSendApproval,
   type PendingThreadStopApproval,
-} from "../repositories/thread-control-approval-repo.js";
-import { ThreadControlAuditRepo } from "../repositories/thread-control-audit-repo.js";
-import { ProviderRegistry } from "../providers/provider-registry.js";
-import { AgentService } from "./agent-service.js";
+} from "../../../repositories/thread-control-approval-repo.js";
+import { ThreadControlAuditRepo } from "../../../repositories/thread-control-audit-repo.js";
+import { ProviderRegistry } from "../../../providers/provider-registry.js";
+import { AgentService } from "../../../services/agent-service.js";
 import {
   ThreadControlMutationReservationService,
   type ThreadMutationReservationState,
-} from "./thread-control-mutation-reservation-service.js";
-import { GitService } from "./git-service.js";
-import { ModelCacheService } from "./model-cache-service.js";
-import { SettingsService } from "./settings-service.js";
-import { ThreadService } from "./thread-service.js";
+} from "../../../services/thread-control-mutation-reservation-service.js";
+import { GitService } from "../../../services/git-service.js";
+import { ModelCacheService } from "../../../services/model-cache-service.js";
+import { SettingsService } from "../../../services/settings-service.js";
+import { ThreadService } from "../../../services/thread-service.js";
 import { DelegationTargetResolver } from "./delegation-target-resolver.js";
-import { broadcast } from "../transport/push.js";
+import { broadcast } from "../../../transport/push.js";
 
 const THREAD_WAIT_POLL_INTERVAL_MS = 250;
 

@@ -7,7 +7,7 @@ import { ThreadRepo } from "../repositories/thread-repo";
 import { CleanupJobRepo } from "../repositories/cleanup-job-repo";
 import { WorkspaceService } from "../services/workspace-service";
 import { AttachmentService } from "../services/attachment-service";
-import type { AgentService } from "../services/agent-service";
+import type { AgentService } from "../features/agents/index.js";
 import { FakeGitExecutor } from "../services/git-executor/fake-git-executor.js";
 
 describe("WorkspaceRepo", () => {

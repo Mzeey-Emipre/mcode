@@ -4,7 +4,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { inject, injectable } from "tsyringe";
 import { ExternalThreadControlPairingService } from "./external-thread-control-pairing-service.js";
 import { createExternalThreadControlMcpSession, type ExternalThreadControlMcpSession } from "./external-thread-control-mcp-transport.js";
-import { ThreadControlService } from "./thread-control-service.js";
+import { ThreadControlService } from "../features/agents/collaboration/thread-control-service.js";
 
 /** Existing-server loopback path used by paired external MCP clients. */
 export const EXTERNAL_THREAD_CONTROL_MCP_PATH = "/mcp/external-thread-control";

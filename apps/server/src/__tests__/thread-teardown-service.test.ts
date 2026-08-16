@@ -2,7 +2,7 @@ import "reflect-metadata";
 import { describe, expect, it, vi } from "vitest";
 import type { ThreadRepo } from "../repositories/thread-repo";
 import { ThreadTeardownService } from "../services/thread-teardown-service";
-import type { AgentService } from "../services/agent-service";
+import type { AgentService } from "../features/agents/index.js";
 import type { TerminalBackend as TerminalService } from "../terminal/terminal-backend.js";
 
 function build(existingThreadId: string | null = "thread-1") {
