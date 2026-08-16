@@ -24,10 +24,10 @@ import {
   GitService,
   PullRequestReviewGitError,
   type PullRequestReviewGitSource,
-} from "../../features/projects/index.js";
-import { AgentService } from "../../features/agents/index.js";
-import { SettingsService } from "../settings-service.js";
-import { ProviderAvailabilityService } from "../provider-availability-service.js";
+} from "../projects/index.js";
+import { AgentService } from "../agents/index.js";
+import { SettingsService } from "../../services/settings-service.js";
+import { ProviderAvailabilityService } from "../../services/provider-availability-service.js";
 import { GithubPullRequestClientError } from "./github-pull-request-client.js";
 import {
   PullRequestService,

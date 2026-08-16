@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import type { GithubService } from "../services/github-service";
+import type { GithubService } from "../features/pull-requests/index.js";
 import type { ChecksStatus } from "@mcode/contracts";
 
 vi.mock("@mcode/shared", () => ({

@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import type { WorkspaceRepo } from "../repositories/workspace-repo";
+import type { WorkspaceRepo } from "../../repositories/workspace-repo";
 
 const { mockExecFile } = vi.hoisted(() => ({
   mockExecFile: vi.fn(),
@@ -15,7 +15,7 @@ vi.mock("@mcode/shared", () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 
-import { GithubService } from "../services/github-service";
+import { GithubService } from "./github-service.js";
 
 describe("GithubService.createPr", () => {
   let ghService: GithubService;
