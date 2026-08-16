@@ -18,7 +18,7 @@ import { ToolCallRecordRepo } from "../repositories/tool-call-record-repo";
 import { TurnSnapshotRepo } from "../repositories/turn-snapshot-repo";
 import { TaskRepo } from "../repositories/task-repo";
 import { AgentService } from "../services/agent-service";
-import { CanonicalAgentEventSink } from "../services/canonical-agent-event-sink";
+import { CanonicalAgentEventSink } from "../features/agents/canonical/canonical-agent-event-sink";
 import { NarrativeStore } from "../services/narrative-store";
 import { PlanQuestionService } from "../services/plan-question-service";
 import type { GitService } from "../services/git-service";

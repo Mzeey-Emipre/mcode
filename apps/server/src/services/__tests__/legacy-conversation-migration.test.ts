@@ -5,7 +5,7 @@ import { fileURLToPath } from "url";
 import type Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { openMemoryDatabase } from "../../store/database.js";
-import { CanonicalAgentEventSink } from "../canonical-agent-event-sink.js";
+import { CanonicalAgentEventSink } from "../../features/agents/canonical/canonical-agent-event-sink.js";
 import {
   LEGACY_CONVERSATION_MIGRATION_MAX_BYTES,
   LEGACY_CONVERSATION_MIGRATION_VERSION,

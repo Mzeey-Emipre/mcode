@@ -19,8 +19,12 @@ import { PtyPidRegistry } from "./services/pty-pid-registry";
 // Services
 import { WorkspaceService } from "./services/workspace-service";
 import { ThreadService } from "./services/thread-service";
-import { AgentService, CanonicalAgentEventSink, startAgentOrchestration } from "./features/agents";
-import { TurnRecoveryService } from "./services/turn-recovery-service";
+import {
+  AgentService,
+  CanonicalAgentEventSink,
+  startAgentOrchestration,
+  TurnRecoveryService,
+} from "./features/agents";
 import { ThreadControlService } from "./services/thread-control-service";
 import { ExternalThreadControlPairingService } from "./services/external-thread-control-pairing-service";
 import { ExternalThreadControlMcpRuntime } from "./services/external-thread-control-mcp-runtime";

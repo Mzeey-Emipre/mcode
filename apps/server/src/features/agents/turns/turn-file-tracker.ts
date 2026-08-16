@@ -4,7 +4,7 @@ import { lstat, readFile, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import type { FileEffect, TurnFileEffectSummary } from "@mcode/contracts";
 import { MAX_TURN_FILE_EFFECTS } from "@mcode/contracts";
-import { normalizeFilesystemPath } from "./path-identity.js";
+import { normalizeFilesystemPath } from "../../../services/path-identity.js";
 
 const MAX_FILE_BYTES = 1_048_576;
 const MAX_EVIDENCE_TEXT_BYTES = 1_048_576;

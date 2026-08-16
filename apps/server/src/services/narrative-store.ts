@@ -58,7 +58,7 @@ import {
   HookExecutionRepo,
   type CreateHookExecutionInput,
 } from "../repositories/hook-execution-repo";
-import type { TurnOutcome } from "./turn-outcome";
+import type { TurnOutcome } from "../features/agents/turns/turn-outcome.js";
 
 /** Default number of recent messages hydrated when no range is supplied. */
 const DEFAULT_LOAD_LIMIT = 200;

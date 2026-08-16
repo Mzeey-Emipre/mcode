@@ -1,16 +1,16 @@
 import "reflect-metadata";
 import type Database from "better-sqlite3";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { openMemoryDatabase } from "../../store/database.js";
-import { MessageRepo } from "../../repositories/message-repo.js";
-import { ThreadRepo } from "../../repositories/thread-repo.js";
+import { openMemoryDatabase } from "../../../../store/database.js";
+import { MessageRepo } from "../../../../repositories/message-repo.js";
+import { ThreadRepo } from "../../../../repositories/thread-repo.js";
 import {
   CanonicalAgentEventSink,
   type CanonicalAgentEventPublisher,
-} from "../canonical-agent-event-sink.js";
+} from "../../canonical/canonical-agent-event-sink.js";
 import { TurnRecoveryService } from "../turn-recovery-service.js";
-import { AttachmentService } from "../attachment-service.js";
-import type { SendMessageCommand } from "../agent-service.js";
+import { AttachmentService } from "../../../../services/attachment-service.js";
+import type { SendMessageCommand } from "../../../../services/agent-service.js";
 
 const NOW = "2026-08-10T09:00:00.000Z";
 const THREAD_ID = "thread-recovery";
