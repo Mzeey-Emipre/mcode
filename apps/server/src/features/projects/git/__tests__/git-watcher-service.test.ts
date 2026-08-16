@@ -24,7 +24,7 @@ vi.mock("../../../../transport/push", () => ({
 
 import { GitWatcherService } from "../git-watcher-service.js";
 import type { WorkspaceRepo } from "../../../../repositories/workspace-repo";
-import type { GitExecutor } from "../../../../services/git-executor/index";
+import type { GitExecutor } from "../execution/index";
 import type { GitService } from "../git-service.js";
 import type { HandoffCheckoutService } from "../../../handoff/index.js";
 

@@ -81,55 +81,55 @@ import {
   TurnRecoveryService,
   publishCanonicalAgentEvents,
 } from "./features/agents";
-import { NarrativeStore } from "./services/narrative-store";
-import { LegacyConversationMigration } from "./services/legacy-conversation-migration";
-import { PlanQuestionService } from "./services/plan-question-service";
-import { FileService } from "./services/file-service";
-import { ConfigService } from "./services/config-service";
-import { SkillService } from "./services/skill-service";
+import { NarrativeStore } from "./features/agents/conversation/narrative/narrative-store";
+import { LegacyConversationMigration } from "./features/agents/conversation/migrations/legacy-conversation-migration";
+import { PlanQuestionService } from "./features/agents/planning/plan-question-service";
+import { FileService } from "./features/projects/files/file-service";
+import { ConfigService } from "./features/providers/configuration/config-service";
+import { SkillService } from "./features/agents/skills/catalog/skill-service";
 import {
   CodexCatalogClientFactory,
   CodexCatalogService,
-} from "./services/codex-catalog-service";
-import { CodexCustomPromptService } from "./services/codex-custom-prompt-service";
-import { ProviderCatalogService } from "./services/provider-catalog-service";
-import { TerminalBackend, TERMINAL_BACKEND_TOKEN } from "./terminal/terminal-backend.js";
-import { TerminalBackendSelector } from "./terminal/terminal-backend-selector.js";
-import { LegacyTerminalBackend } from "./terminal/legacy/legacy-terminal-backend.js";
-import { TerminalService as LegacyTerminalService } from "./terminal/legacy/terminal-service.js";
-import { ModernTerminalBackend } from "./terminal/modern/modern-terminal-backend.js";
-import { ModernTerminalSessionRuntime } from "./terminal/runtime/terminal-session-runtime.js";
-import { TerminalSessionService } from "./terminal/terminal-session-service.js";
-import { PtyHostSupervisor } from "./terminal/host/pty-host-supervisor.js";
-import { resolvePtyHostEntryPath, spawnPtyHostChild } from "./terminal/host/pty-host-child.js";
-import { TerminalProfileService } from "./terminal/profiles/terminal-profile-service.js";
-import { WorkspaceTerminalPreferencesService } from "./terminal/preferences/workspace-terminal-preferences-service.js";
-import { TerminalDiagnosticsService } from "./terminal/diagnostics/terminal-diagnostics-service.js";
-import { PtyHostCleanupLedger } from "./terminal/cleanup/terminal-cleanup-ledger.js";
-import { AttachmentService } from "./services/attachment-service";
-import { SnapshotService } from "./services/snapshot-service";
-import { SettingsService } from "./services/settings-service";
-import { SkillWatcherService } from "./services/skill-watcher-service";
-import { MemoryPressureService } from "./services/memory-pressure-service";
-import { ScopedPreGrantService } from "./services/scoped-pre-grant";
-import { CleanupWorker } from "./services/cleanup-worker";
+} from "./features/providers/catalog/codex-catalog-service";
+import { CodexCustomPromptService } from "./features/providers/catalog/codex-custom-prompt-service";
+import { ProviderCatalogService } from "./features/providers/catalog/provider-catalog-service";
+import { TerminalBackend, TERMINAL_BACKEND_TOKEN } from "./features/terminal/backends/terminal-backend.js";
+import { TerminalBackendSelector } from "./features/terminal/backends/terminal-backend-selector.js";
+import { LegacyTerminalBackend } from "./features/terminal/backends/legacy/legacy-terminal-backend.js";
+import { TerminalService as LegacyTerminalService } from "./features/terminal/backends/legacy/terminal-service.js";
+import { ModernTerminalBackend } from "./features/terminal/backends/modern/modern-terminal-backend.js";
+import { ModernTerminalSessionRuntime } from "./features/terminal/sessions/terminal-session-runtime.js";
+import { TerminalSessionService } from "./features/terminal/sessions/terminal-session-service.js";
+import { PtyHostSupervisor } from "./features/terminal/host/pty-host-supervisor.js";
+import { resolvePtyHostEntryPath, spawnPtyHostChild } from "./features/terminal/host/pty-host-child.js";
+import { TerminalProfileService } from "./features/terminal/profiles/terminal-profile-service.js";
+import { WorkspaceTerminalPreferencesService } from "./features/terminal/preferences/workspace-terminal-preferences-service.js";
+import { TerminalDiagnosticsService } from "./features/terminal/diagnostics/terminal-diagnostics-service.js";
+import { PtyHostCleanupLedger } from "./features/terminal/cleanup/terminal-cleanup-ledger.js";
+import { AttachmentService } from "./features/attachments/storage/attachment-service";
+import { SnapshotService } from "./features/projects/diffs/snapshots/snapshot-service";
+import { SettingsService } from "./shared/settings/settings-service";
+import { SkillWatcherService } from "./features/agents/skills/catalog/skill-watcher-service";
+import { MemoryPressureService } from "./runtime/memory/memory-pressure-service";
+import { ScopedPreGrantService } from "./features/agents/permissions/scoped-pre-grant";
+import { CleanupWorker } from "./features/thread-control/cleanup/cleanup-worker";
 import {
   ProviderAvailabilityService,
   defaultResolver,
-} from "./services/provider-availability-service";
-import { ProviderUsageWarmupService } from "./services/provider-usage-warmup-service";
-import { PtyPidRegistry } from "./services/pty-pid-registry";
-import { JobObject } from "./services/job-object.js";
-import { ModelCacheService } from "./services/model-cache-service";
-import { ProtectedEnvStore } from "./services/protected-env-store";
-import { ShellEnvResolver } from "./services/shell-env-resolver";
-import { EnvService } from "./services/env-service";
+} from "./features/providers/availability/provider-availability-service";
+import { ProviderUsageWarmupService } from "./features/providers/availability/provider-usage-warmup-service";
+import { PtyPidRegistry } from "./features/terminal/host/pty-pid-registry";
+import { JobObject } from "./runtime/process/containment/job-object.js";
+import { ModelCacheService } from "./features/providers/models/model-cache-service";
+import { ProtectedEnvStore } from "./runtime/environment/protected-env-store";
+import { ShellEnvResolver } from "./runtime/environment/shell-env-resolver";
+import { EnvService } from "./runtime/environment/env-service";
 import { ThreadControlApprovalRepo } from "./repositories/thread-control-approval-repo";
 import { ThreadControlAuditRepo } from "./repositories/thread-control-audit-repo";
-import { UtilityCompletionService } from "./services/utility-completion-service";
-import { DiffSummaryService } from "./services/diff-summary-service";
-import { RecapService } from "./services/recap-service";
-import { RealGitExecutor } from "./services/git-executor/index.js";
+import { UtilityCompletionService } from "./shared/completion/utility-completion-service";
+import { DiffSummaryService } from "./features/projects/diffs/summaries/diff-summary-service";
+import { RecapService } from "./features/agents/recap/recap-service";
+import { RealGitExecutor } from "./features/projects/git/execution/index.js";
 
 /** Initialize the DI container with all server dependencies. */
 export function setupContainer(mcodeDir: string): typeof container {

@@ -7,14 +7,14 @@ import { WorkspaceRepo } from "../../../../repositories/workspace-repo";
 import { ThreadRepo } from "../../../../repositories/thread-repo";
 import { CleanupJobRepo } from "../../../../repositories/cleanup-job-repo";
 import { WorkspaceService, type GitService } from "../../index.js";
-import { AttachmentService } from "../../../../services/attachment-service";
-import { CleanupWorker } from "../../../../services/cleanup-worker";
+import { AttachmentService } from "../../../attachments/storage/attachment-service";
+import { CleanupWorker } from "../../../thread-control/cleanup/cleanup-worker";
 import { HandoffStorage } from "../../../handoff/index.js";
 import type { AgentService } from "../../../agents/index.js";
 import type { ClaudeProvider } from "../../../../providers/claude/claude-provider";
-import type { TerminalBackend as TerminalService } from "../../../../terminal/terminal-backend.js";
-import { killDescendantsByName } from "../../../../services/process-kill";
-import type { GitExecutor } from "../../../../services/git-executor/index.js";
+import type { TerminalBackend as TerminalService } from "../../../terminal/backends/terminal-backend.js";
+import { killDescendantsByName } from "../../../../runtime/process/containment/process-kill";
+import type { GitExecutor } from "../../git/execution/index.js";
 
 const mockGitExecutor = { exec: vi.fn() } as unknown as GitExecutor;
 
@@ -22,7 +22,7 @@ vi.mock("fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("fs")>();
   return { ...actual, existsSync: vi.fn().mockReturnValue(true) };
 });
-vi.mock("../../../../services/process-kill.js", () => ({
+vi.mock("../../../../runtime/process/containment/process-kill.js", () => ({
   killDescendantsByName: vi.fn().mockResolvedValue(undefined),
 }));
 

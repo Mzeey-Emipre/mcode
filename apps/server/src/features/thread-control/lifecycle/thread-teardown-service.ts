@@ -3,7 +3,7 @@
  */
 import { injectable, inject } from "tsyringe";
 import { AgentService } from "../../agents/index.js";
-import { TerminalBackend, TERMINAL_BACKEND_TOKEN } from "../../../terminal/terminal-backend.js";
+import { TerminalBackend, TERMINAL_BACKEND_TOKEN } from "../../terminal/backends/terminal-backend.js";
 import { ThreadRepo } from "../../../repositories/thread-repo";
 
 function failureMessage(result: PromiseRejectedResult): string {

@@ -5,21 +5,21 @@ import type { Thread, IProviderRegistry, TurnRequest } from "@mcode/contracts";
 import { AgentService } from "../agent-service.js";
 import { createCanonicalAgentEventSinkStub } from "../../../../test-utils/canonical-agent-event-sink-stub.js";
 import { ThreadControlMutationReservationService } from "../../../thread-control/index.js";
-import { NarrativeStore } from "../../../../services/narrative-store.js";
-import { PlanQuestionService } from "../../../../services/plan-question-service.js";
+import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
+import { PlanQuestionService } from "../../planning/plan-question-service.js";
 import type { ThreadRepo } from "../../../../repositories/thread-repo.js";
 import type { WorkspaceRepo } from "../../../../repositories/workspace-repo.js";
 import type { MessageRepo } from "../../../../repositories/message-repo.js";
 import type { GitService } from "../../../projects/index.js";
-import type { AttachmentService } from "../../../../services/attachment-service.js";
+import type { AttachmentService } from "../../../attachments/storage/attachment-service.js";
 import type { ToolCallRecordRepo } from "../../../../repositories/tool-call-record-repo.js";
 import type { TurnSnapshotRepo } from "../../../../repositories/turn-snapshot-repo.js";
-import type { SnapshotService } from "../../../../services/snapshot-service.js";
-import type { MemoryPressureService } from "../../../../services/memory-pressure-service.js";
+import type { SnapshotService } from "../../../projects/diffs/snapshots/snapshot-service.js";
+import type { MemoryPressureService } from "../../../../runtime/memory/memory-pressure-service.js";
 import type { TaskRepo } from "../../../../repositories/task-repo.js";
-import type { SettingsService } from "../../../../services/settings-service.js";
+import type { SettingsService } from "../../../../shared/settings/settings-service.js";
 import type { ThreadService } from "../../../thread-control/index.js";
-import type { ProviderAvailabilityService } from "../../../../services/provider-availability-service.js";
+import type { ProviderAvailabilityService } from "../../../providers/availability/provider-availability-service.js";
 import type { PlanQuestionAnswersRepo } from "../../../../repositories/plan-question-answers-repo.js";
 
 vi.mock("fs", async (importOriginal) => {

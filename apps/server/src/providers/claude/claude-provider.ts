@@ -41,10 +41,10 @@ import { readAnthropicOauthToken } from "@mcode/shared/usage";
 import { AnthropicOAuthUsageSource } from "./usage/oauth-usage-source.js";
 import { AnthropicHeaderUsageSource } from "./usage/header-usage-source.js";
 import { CompositeUsageSource } from "./usage/composite-usage-source.js";
-import { EnvService } from "../../services/env-service.js";
-import { JobObject } from "../../services/job-object.js";
-import { ScopedPreGrantService } from "../../services/scoped-pre-grant.js";
-import { SessionRuntime } from "../../services/session-runtime.js";
+import { EnvService } from "../../runtime/environment/env-service.js";
+import { JobObject } from "../../runtime/process/containment/job-object.js";
+import { ScopedPreGrantService } from "../../features/agents/permissions/scoped-pre-grant.js";
+import { SessionRuntime } from "../../features/providers/runtime/session-runtime.js";
 import { InternalThreadControlMcpRuntime } from "../../features/thread-control/index.js";
 import { buildMcodeInstructionPlan, renderMcodeInstructions } from "@mcode/thread-orchestration";
 
@@ -66,8 +66,8 @@ export function mergeClaudeMcpServers(
       : {}),
   };
 }
-import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../services/session-runtime.js";
-import { listDirectChildren } from "../../services/process-kill.js";
+import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../features/providers/runtime/session-runtime.js";
+import { listDirectChildren } from "../../runtime/process/containment/process-kill.js";
 import { CleanForker } from "../../features/handoff/index.js";
 import {
   browserAutomationPermissionCapability,

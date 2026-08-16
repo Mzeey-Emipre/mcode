@@ -63,34 +63,34 @@ import type {
   ThreadService,
   ThreadTeardownService,
 } from "../features/thread-control/index.js";
-import type { FileService } from "../services/file-service";
-import type { ConfigService } from "../services/config-service";
-import type { SkillService } from "../services/skill-service";
+import type { FileService } from "../features/projects/files/file-service";
+import type { ConfigService } from "../features/providers/configuration/config-service";
+import type { SkillService } from "../features/agents/skills/catalog/skill-service";
 import type {
   CodexCatalogRefreshResult,
   CodexCatalogService,
-} from "../services/codex-catalog-service";
-import type { ProviderCatalogService } from "../services/provider-catalog-service";
-import type { TerminalBackend } from "../terminal/terminal-backend.js";
-import { TerminalBackendError } from "../terminal/terminal-backend.js";
-import type { TerminalDiagnosticsService } from "../terminal/diagnostics/terminal-diagnostics-service.js";
-import { TerminalSessionPolicyError } from "../terminal/terminal-session-service.js";
-import { TerminalSessionRuntimeError } from "../terminal/runtime/terminal-session-runtime.js";
-import type { TerminalProfileService } from "../terminal/profiles/terminal-profile-service.js";
-import type { WorkspaceTerminalPreferencesService } from "../terminal/preferences/workspace-terminal-preferences-service.js";
-import type { SettingsService } from "../services/settings-service";
+} from "../features/providers/catalog/codex-catalog-service";
+import type { ProviderCatalogService } from "../features/providers/catalog/provider-catalog-service";
+import type { TerminalBackend } from "../features/terminal/backends/terminal-backend.js";
+import { TerminalBackendError } from "../features/terminal/backends/terminal-backend.js";
+import type { TerminalDiagnosticsService } from "../features/terminal/diagnostics/terminal-diagnostics-service.js";
+import { TerminalSessionPolicyError } from "../features/terminal/sessions/terminal-session-service.js";
+import { TerminalSessionRuntimeError } from "../features/terminal/sessions/terminal-session-runtime.js";
+import type { TerminalProfileService } from "../features/terminal/profiles/terminal-profile-service.js";
+import type { WorkspaceTerminalPreferencesService } from "../features/terminal/preferences/workspace-terminal-preferences-service.js";
+import type { SettingsService } from "../shared/settings/settings-service";
 import { ZodError } from "zod";
 import type { MessageRepo } from "../repositories/message-repo";
 import type { ToolCallRecordRepo } from "../repositories/tool-call-record-repo";
-import type { NarrativeStore } from "../services/narrative-store";
+import type { NarrativeStore } from "../features/agents/conversation/narrative/narrative-store";
 import type { ThoughtSegmentRepo } from "../repositories/thought-segment-repo";
 import type { HookExecutionRepo } from "../repositories/hook-execution-repo";
 import type { TurnSnapshotRepo } from "../repositories/turn-snapshot-repo";
 import type { TaskRepo } from "../repositories/task-repo";
 import type { PlanQuestionAnswersRepo } from "../repositories/plan-question-answers-repo";
 import type { PlanRepo } from "../repositories/plan-repo";
-import type { SnapshotService } from "../services/snapshot-service";
-import type { MemoryPressureService } from "../services/memory-pressure-service";
+import type { SnapshotService } from "../features/projects/diffs/snapshots/snapshot-service";
+import type { MemoryPressureService } from "../runtime/memory/memory-pressure-service";
 import type { ThreadRepo } from "../repositories/thread-repo";
 import type { WorkspaceRepo } from "../repositories/workspace-repo";
 import {
@@ -103,14 +103,14 @@ import { getTransportPayloadValidator } from "./payload-validation.js";
 import {
   ProviderCliMissingError,
   isProviderAvailabilityError,
-} from "../services/provider-availability-errors.js";
-import type { ProviderAvailabilityService } from "../services/provider-availability-service.js";
+} from "../features/providers/availability/provider-availability-errors.js";
+import type { ProviderAvailabilityService } from "../features/providers/availability/provider-availability-service.js";
 import {
   attributedWorkspacePathGroups,
   attributedWorkspacePaths,
   collectAttributedWorkspacePathGroups,
   collectAttributedWorkspacePaths,
-} from "../services/snapshot-attribution.js";
+} from "../features/projects/diffs/snapshots/snapshot-attribution.js";
 import {
   buildProviderCatalogSnapshot,
 } from "./provider-catalog.js";
@@ -127,15 +127,15 @@ function appendPreviewAnnotationsForAgent(
   if (content.includes(PREVIEW_ANNOTATION_FENCE_START)) return content;
   return `${content.trim()}\n\n${PREVIEW_ANNOTATION_FENCE_START}\n${JSON.stringify(previewAnnotations)}\n${PREVIEW_ANNOTATION_FENCE_END}`.trim();
 }
-import type { ModelCacheService } from "../services/model-cache-service.js";
-import type { DiffSummaryService } from "../services/diff-summary-service.js";
-import type { RecapService } from "../services/recap-service.js";
+import type { ModelCacheService } from "../features/providers/models/model-cache-service.js";
+import type { DiffSummaryService } from "../features/projects/diffs/summaries/diff-summary-service.js";
+import type { RecapService } from "../features/agents/recap/recap-service.js";
 import {
   loadConversationPage,
   loadConversationTail,
   loadNewerConversationPage,
   loadOlderConversationPage,
-} from "../services/conversation-page.js";
+} from "../features/agents/conversation/read-model/conversation-page.js";
 
 const DEFAULT_PULL_REQUEST_CONNECTION = {};
 

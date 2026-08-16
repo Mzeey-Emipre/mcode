@@ -9,7 +9,7 @@ import {
   type CanonicalAgentEventPublisher,
 } from "../../canonical/canonical-agent-event-sink.js";
 import { TurnRecoveryService } from "../turn-recovery-service.js";
-import { AttachmentService } from "../../../../services/attachment-service.js";
+import { AttachmentService } from "../../../attachments/storage/attachment-service.js";
 import type { SendMessageCommand } from "../../orchestration/agent-service.js";
 
 const NOW = "2026-08-10T09:00:00.000Z";

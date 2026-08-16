@@ -1,11 +1,11 @@
 import type { ProviderHostPorts } from "@mcode/providers";
-import type { JobObject } from "../services/job-object.js";
-import type { EnvService } from "../services/env-service.js";
-import type { ScopedPreGrantService } from "../services/scoped-pre-grant.js";
+import type { JobObject } from "../runtime/process/containment/job-object.js";
+import type { EnvService } from "../runtime/environment/env-service.js";
+import type { ScopedPreGrantService } from "../features/agents/permissions/scoped-pre-grant.js";
 import type { CanonicalAgentEventSink } from "../features/agents/index.js";
 import type { BrowserAutomationSessionLease } from "../features/browser-automation/index.js";
 import type { InternalThreadControlMcpRuntime } from "../features/thread-control/index.js";
-import { killProcessTree } from "../services/process-kill.js";
+import { killProcessTree } from "../runtime/process/containment/process-kill.js";
 
 /** Server services used to compose the narrow Provider host-port boundary. */
 export interface ProviderHostPortDependencies {

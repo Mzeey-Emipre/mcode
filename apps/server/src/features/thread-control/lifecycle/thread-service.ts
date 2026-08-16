@@ -9,7 +9,7 @@ import { validateBranchName, logger } from "@mcode/shared";
 import type { Thread, RecentThread, ThreadMode, ContextWindowMode } from "@mcode/contracts";
 import { ThreadRepo } from "../../../repositories/thread-repo";
 import { ProjectWorktreeService } from "../../projects/index.js";
-import { AttachmentService } from "../../../services/attachment-service";
+import { AttachmentService } from "../../attachments/storage/attachment-service";
 import { HandoffStorage } from "../../handoff/index.js";
 
 /** Handles thread creation, deletion, worktree provisioning, and lifecycle. */

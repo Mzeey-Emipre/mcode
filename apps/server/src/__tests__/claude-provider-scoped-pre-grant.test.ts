@@ -75,7 +75,7 @@ vi.mock("@mcode/shared", async (importOriginal) => {
 });
 
 import { ClaudeProvider } from "../providers/claude/claude-provider";
-import { ScopedPreGrantService } from "../services/scoped-pre-grant";
+import { ScopedPreGrantService } from "../features/agents/permissions/scoped-pre-grant";
 import { stubEnvService } from "./stub-env-service.js";
 import { stubJobObject } from "./stub-job-object.js";
 

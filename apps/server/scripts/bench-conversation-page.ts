@@ -8,12 +8,12 @@ import { ToolCallRecordRepo } from "../src/repositories/tool-call-record-repo.js
 import { ThoughtSegmentRepo } from "../src/repositories/thought-segment-repo.js";
 import { HookExecutionRepo } from "../src/repositories/hook-execution-repo.js";
 import { PlanQuestionAnswersRepo } from "../src/repositories/plan-question-answers-repo.js";
-import { NarrativeStore } from "../src/services/narrative-store.js";
+import { NarrativeStore } from "../src/features/agents/conversation/narrative/narrative-store.js";
 import {
   loadConversationPage,
   loadNewerConversationPage,
   loadOlderConversationPage,
-} from "../src/services/conversation-page.js";
+} from "../src/features/agents/conversation/read-model/conversation-page.js";
 
 const assistantCount = Number(process.argv[2] ?? 100);
 const iterations = Number(process.argv[3] ?? 50);

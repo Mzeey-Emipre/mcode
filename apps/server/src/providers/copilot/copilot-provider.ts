@@ -28,13 +28,13 @@ import {
   type CopilotCliResolution,
 } from "./copilot-cli-resolver.js";
 import { logger } from "@mcode/shared";
-import { SettingsService } from "../../services/settings-service.js";
-import { EnvService } from "../../services/env-service.js";
+import { SettingsService } from "../../shared/settings/settings-service.js";
+import { EnvService } from "../../runtime/environment/env-service.js";
 import { InternalThreadControlMcpRuntime } from "../../features/thread-control/index.js";
 import { buildMcodeInstructionPlan, renderMcodeInstructions } from "@mcode/thread-orchestration";
-import { JobObject } from "../../services/job-object.js";
-import { SessionRuntime } from "../../services/session-runtime.js";
-import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../services/session-runtime.js";
+import { JobObject } from "../../runtime/process/containment/job-object.js";
+import { SessionRuntime } from "../../features/providers/runtime/session-runtime.js";
+import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../features/providers/runtime/session-runtime.js";
 import { CleanForker } from "../../features/handoff/index.js";
 import {
   browserAutomationPermissionCapability,

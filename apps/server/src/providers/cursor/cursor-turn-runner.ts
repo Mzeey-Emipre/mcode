@@ -20,7 +20,7 @@ import { spawn as nodeSpawn } from "node:child_process";
 import type { ChildProcess, SpawnOptions } from "node:child_process";
 import { logger } from "@mcode/shared";
 import type { AgentEvent } from "@mcode/contracts";
-import { flattenProcessEnv } from "../../services/shell-env-utils.js";
+import { flattenProcessEnv } from "../../runtime/environment/shell-env-utils.js";
 import { CursorStreamJsonParser } from "./cursor-stream-json-parser.js";
 import {
   createCursorStreamAccumulator,

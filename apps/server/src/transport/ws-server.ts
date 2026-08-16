@@ -8,7 +8,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { WebSocketServer, WebSocket } from "ws";
 import type { Server } from "http";
 import { logger } from "@mcode/shared";
-import { TerminalBackendError } from "../terminal/terminal-backend.js";
+import { TerminalBackendError } from "../features/terminal/backends/terminal-backend.js";
 import { BinaryUploadHeaderSchema, TERMINAL_BINARY_MAGIC, type BinaryUploadHeader } from "@mcode/contracts";
 import { routeMessage, type RouterDeps } from "./ws-router";
 import { addClient, removeClient } from "./push";

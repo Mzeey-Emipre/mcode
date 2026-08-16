@@ -26,14 +26,14 @@ import {
   type McpServer,
 } from "@agentclientprotocol/sdk";
 
-import { SettingsService } from "../../services/settings-service.js";
+import { SettingsService } from "../../shared/settings/settings-service.js";
 import {
   InternalThreadControlMcpRuntime,
   type InternalThreadControlMcpHttpConnection,
 } from "../../features/thread-control/index.js";
-import { SkillService } from "../../services/skill-service.js";
-import { EnvService } from "../../services/env-service.js";
-import { JobObject } from "../../services/job-object.js";
+import { SkillService } from "../../features/agents/skills/catalog/skill-service.js";
+import { EnvService } from "../../runtime/environment/env-service.js";
+import { JobObject } from "../../runtime/process/containment/job-object.js";
 import {
   browserAutomationPermissionCapability,
   BrowserAutomationSessionLease,
@@ -41,10 +41,10 @@ import {
   type BrowserAutomationSessionLeaseGrant,
   type BrowserAutomationSessionLeaseStage,
 } from "../../features/browser-automation/index.js";
-import { SessionRuntime } from "../../services/session-runtime.js";
-import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../services/session-runtime.js";
+import { SessionRuntime } from "../../features/providers/runtime/session-runtime.js";
+import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../features/providers/runtime/session-runtime.js";
 import { CleanForker } from "../../features/handoff/index.js";
-import { killProcessTree } from "../../services/process-kill.js";
+import { killProcessTree } from "../../runtime/process/containment/process-kill.js";
 import {
   AgentEventType,
   CURSOR_STATIC_MODEL_FALLBACK,

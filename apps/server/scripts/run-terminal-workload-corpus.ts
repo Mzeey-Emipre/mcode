@@ -15,7 +15,7 @@ import {
   type TerminalWorkloadId,
   type TerminalWorkloadResult,
   type TerminalWorkloadSpec,
-} from "../src/services/terminal-workload-corpus.ts";
+} from "../src/features/terminal/testing/terminal-workload-corpus.ts";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 

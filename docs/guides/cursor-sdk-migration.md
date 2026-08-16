@@ -105,7 +105,7 @@ cursor-provider.ts uses it, the workaround infrastructure can be retired.
   ETIMEDOUT classification for unresumable sessions and the conversation
   history fallback prompt).
 - Implement the same `cwd` parameter routing that Claude's side-channel
-  takes. The orchestrator at `apps/server/src/services/handoff/handoff-pipeline.ts`
+  takes. The orchestrator at `apps/server/src/features/handoff/orchestration/handoff-pipeline.ts`
   already passes `cwd` through; Cursor's implementation just needs to consume
   it.
 
@@ -121,7 +121,7 @@ cursor-provider.ts uses it, the workaround infrastructure can be retired.
 ### Pipeline simplification
 
 After the migration, no provider in mcode declares `"mutating"`, so the
-path A branch in `apps/server/src/services/handoff/handoff-pipeline.ts`
+path A branch in `apps/server/src/features/handoff/orchestration/handoff-pipeline.ts`
 becomes dead code. Options:
 
 1. Delete the path A branch entirely. The `LadderStep` union becomes
@@ -157,7 +157,7 @@ acceptable on reads from old artifacts. New artifacts only ever get
   `apps/server/src/providers/claude/__tests__/` already mocks
   `@anthropic-ai/claude-agent-sdk` via `vi.mock`.
 - The handoff-pipeline tests that explicitly exercise path A (search
-  `runHiddenTurn` in `apps/server/src/services/handoff/__tests__/`) will
+  `runHiddenTurn` in `apps/server/src/features/handoff/orchestration/__tests__/`) will
   fail once the method is removed. Either delete those tests or rewrite to
   exercise path B against a Cursor provider that now supports clean fork.
 
@@ -261,7 +261,7 @@ References, not duplicated content:
 - `apps/server/src/providers/cursor/cursor-provider.ts`. The current
   implementation. Reads as a JSON-RPC ACP subprocess wrapper plus the
   hidden-turn workaround.
-- `apps/server/src/services/handoff/handoff-pipeline.ts`. The orchestrator.
+- `apps/server/src/features/handoff/orchestration/handoff-pipeline.ts`. The orchestrator.
   Path A branch around lines 195 to 280. Path B branch above it shows the
   pattern Cursor will use after the migration.
 - `packages/contracts/src/providers/interfaces.ts`. The `IAgentProvider`

@@ -6,9 +6,9 @@ import type {
 } from "@mcode/contracts";
 import { getCatalogEntry } from "@mcode/contracts";
 import { inject, injectable } from "tsyringe";
-import { ModelCacheService } from "../../../services/model-cache-service.js";
-import { ProviderAvailabilityService } from "../../../services/provider-availability-service.js";
-import { SettingsService } from "../../../services/settings-service.js";
+import { ModelCacheService } from "../../providers/models/model-cache-service.js";
+import { ProviderAvailabilityService } from "../../providers/availability/provider-availability-service.js";
+import { SettingsService } from "../../../shared/settings/settings-service.js";
 
 /** Server-side resolution result used by ThreadControlService. */
 export type DelegationTargetResolution =

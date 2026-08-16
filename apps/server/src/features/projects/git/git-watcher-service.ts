@@ -10,7 +10,7 @@ import { join, dirname, basename } from "path";
 import { logger } from "@mcode/shared";
 import { broadcast } from "../../../transport/push";
 import { WorkspaceRepo } from "../../../repositories/workspace-repo";
-import type { GitExecutor } from "../../../services/git-executor/index.js";
+import type { GitExecutor } from "./execution/index.js";
 import type { GitService } from "./git-service.js";
 import { HandoffCheckoutService } from "../../handoff/index.js";
 

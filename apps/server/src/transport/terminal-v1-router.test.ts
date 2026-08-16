@@ -7,8 +7,8 @@ import {
   type TerminalHealthSnapshot,
 } from "@mcode/contracts";
 import { ZodError } from "zod";
-import { TerminalBackendError } from "../terminal/terminal-backend.js";
-import { TerminalDiagnosticsService } from "../terminal/diagnostics/terminal-diagnostics-service.js";
+import { TerminalBackendError } from "../features/terminal/backends/terminal-backend.js";
+import { TerminalDiagnosticsService } from "../features/terminal/diagnostics/terminal-diagnostics-service.js";
 import { routeMessage, type RouterDeps } from "./ws-router.js";
 
 const sessionId = "00000000-0000-4000-8000-000000000001";

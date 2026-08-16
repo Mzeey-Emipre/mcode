@@ -10,10 +10,10 @@ import type { Workspace } from "@mcode/contracts";
 import { WorkspaceRepo } from "../../../repositories/workspace-repo";
 import { ThreadRepo } from "../../../repositories/thread-repo";
 import { CleanupJobRepo } from "../../../repositories/cleanup-job-repo";
-import { AttachmentService } from "../../../services/attachment-service";
+import { AttachmentService } from "../../attachments/storage/attachment-service";
 import { AgentService } from "../../agents/index.js";
 import { logger } from "@mcode/shared";
-import type { GitExecutor } from "../../../services/git-executor/index.js";
+import type { GitExecutor } from "../git/execution/index.js";
 
 /** Handles workspace creation, rename, listing, and two-phase deletion. */
 @injectable()

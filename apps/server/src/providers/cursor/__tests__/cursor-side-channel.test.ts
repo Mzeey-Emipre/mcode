@@ -7,10 +7,10 @@ import { MessageRepo } from "../../../repositories/message-repo.js";
 import { CursorProvider } from "../cursor-provider.js";
 import { BrowserAutomationSessionLease } from "../../../features/browser-automation/index.js";
 import type { InternalThreadControlMcpRuntime } from "../../../features/thread-control/index.js";
-import type { SettingsService } from "../../../services/settings-service.js";
-import type { SkillService } from "../../../services/skill-service.js";
-import type { EnvService } from "../../../services/env-service.js";
-import type { JobObject } from "../../../services/job-object.js";
+import type { SettingsService } from "../../../shared/settings/settings-service.js";
+import type { SkillService } from "../../../features/agents/skills/catalog/skill-service.js";
+import type { EnvService } from "../../../runtime/environment/env-service.js";
+import type { JobObject } from "../../../runtime/process/containment/job-object.js";
 import type { Client } from "@agentclientprotocol/sdk";
 import type { ForkRequest } from "@mcode/contracts";
 

@@ -6,8 +6,8 @@ import { AgentEventType } from "@mcode/contracts";
 import type { Thread, IProviderRegistry, Message } from "@mcode/contracts";
 import { AgentService } from "../agent-service.js";
 import { createCanonicalAgentEventSinkStub } from "../../../../test-utils/canonical-agent-event-sink-stub.js";
-import { NarrativeStore } from "../../../../services/narrative-store.js";
-import { PlanQuestionService } from "../../../../services/plan-question-service.js";
+import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
+import { PlanQuestionService } from "../../planning/plan-question-service.js";
 import { CanonicalAgentEventSink } from "../../canonical/canonical-agent-event-sink.js";
 import { openMemoryDatabase } from "../../../../store/database.js";
 import { isTurnScopedEvent } from "../../turns/turn-runtime.js";
@@ -16,7 +16,7 @@ import type { WorkspaceRepo } from "../../../../repositories/workspace-repo.js";
 import type { MessageRepo } from "../../../../repositories/message-repo.js";
 import { MessageRepo as SqliteMessageRepo } from "../../../../repositories/message-repo.js";
 import type { GitService } from "../../../projects/index.js";
-import type { AttachmentService } from "../../../../services/attachment-service.js";
+import type { AttachmentService } from "../../../attachments/storage/attachment-service.js";
 import type {
   ToolCallRecordRepo,
   CreateToolCallRecordInput,
@@ -24,12 +24,12 @@ import type {
 import type { ThoughtSegmentRepo, CreateThoughtSegmentInput } from "../../../../repositories/thought-segment-repo.js";
 import type { HookExecutionRepo, CreateHookExecutionInput } from "../../../../repositories/hook-execution-repo.js";
 import type { TurnSnapshotRepo } from "../../../../repositories/turn-snapshot-repo.js";
-import type { SnapshotService } from "../../../../services/snapshot-service.js";
-import type { MemoryPressureService } from "../../../../services/memory-pressure-service.js";
+import type { SnapshotService } from "../../../projects/diffs/snapshots/snapshot-service.js";
+import type { MemoryPressureService } from "../../../../runtime/memory/memory-pressure-service.js";
 import type { TaskRepo } from "../../../../repositories/task-repo.js";
-import type { SettingsService } from "../../../../services/settings-service.js";
+import type { SettingsService } from "../../../../shared/settings/settings-service.js";
 import type { ThreadService } from "../../../thread-control/index.js";
-import type { ProviderAvailabilityService } from "../../../../services/provider-availability-service.js";
+import type { ProviderAvailabilityService } from "../../../providers/availability/provider-availability-service.js";
 import type { PlanQuestionAnswersRepo } from "../../../../repositories/plan-question-answers-repo.js";
 
 vi.mock("../../../../transport/push.js", () => ({ broadcast: vi.fn() }));

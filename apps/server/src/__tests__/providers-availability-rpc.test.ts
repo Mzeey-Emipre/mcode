@@ -12,7 +12,7 @@ import WebSocket from "ws";
 import { createWsServer } from "../transport/ws-server.js";
 import type { RouterDeps } from "../transport/ws-router.js";
 import type { ProviderAvailability } from "@mcode/contracts";
-import { ProviderDisabledError } from "../services/provider-availability-errors.js";
+import { ProviderDisabledError } from "../features/providers/availability/provider-availability-errors.js";
 
 const AUTH_TOKEN = "test-token-providers";
 

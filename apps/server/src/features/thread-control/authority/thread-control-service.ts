@@ -80,8 +80,8 @@ import {
   type ThreadMutationReservationState,
 } from "./thread-control-mutation-reservation-service.js";
 import { GitService, ProjectWorktreeService } from "../../projects/index.js";
-import { ModelCacheService } from "../../../services/model-cache-service.js";
-import { SettingsService } from "../../../services/settings-service.js";
+import { ModelCacheService } from "../../providers/models/model-cache-service.js";
+import { SettingsService } from "../../../shared/settings/settings-service.js";
 import { broadcast } from "../../../transport/push.js";
 
 const THREAD_WAIT_POLL_INTERVAL_MS = 250;

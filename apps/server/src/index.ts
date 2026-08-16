@@ -13,8 +13,8 @@ import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from "
 import { join } from "path";
 import { randomUUID } from "crypto";
 import { execFileSync } from "child_process";
-import { killOrphanedServer, reapOrphanedPtys } from "./services/orphan-cleanup";
-import { PtyPidRegistry } from "./services/pty-pid-registry";
+import { killOrphanedServer, reapOrphanedPtys } from "./runtime/process/orphan-cleanup";
+import { PtyPidRegistry } from "./features/terminal/host/pty-pid-registry";
 
 // Services
 import {
@@ -58,17 +58,17 @@ import {
   TurnRecoveryService,
   startAgentOrchestration,
 } from "./features/agents";
-import { NarrativeStore } from "./services/narrative-store";
-import { LegacyConversationMigration } from "./services/legacy-conversation-migration";
-import { FileService } from "./services/file-service";
-import { ConfigService } from "./services/config-service";
-import { SkillService } from "./services/skill-service";
-import { CodexCatalogService } from "./services/codex-catalog-service";
-import { ProviderCatalogService } from "./services/provider-catalog-service";
-import { TerminalBackend, TERMINAL_BACKEND_TOKEN } from "./terminal/terminal-backend.js";
-import { TerminalProfileService } from "./terminal/profiles/terminal-profile-service.js";
-import { WorkspaceTerminalPreferencesService } from "./terminal/preferences/workspace-terminal-preferences-service.js";
-import { TerminalDiagnosticsService } from "./terminal/diagnostics/terminal-diagnostics-service.js";
+import { NarrativeStore } from "./features/agents/conversation/narrative/narrative-store";
+import { LegacyConversationMigration } from "./features/agents/conversation/migrations/legacy-conversation-migration";
+import { FileService } from "./features/projects/files/file-service";
+import { ConfigService } from "./features/providers/configuration/config-service";
+import { SkillService } from "./features/agents/skills/catalog/skill-service";
+import { CodexCatalogService } from "./features/providers/catalog/codex-catalog-service";
+import { ProviderCatalogService } from "./features/providers/catalog/provider-catalog-service";
+import { TerminalBackend, TERMINAL_BACKEND_TOKEN } from "./features/terminal/backends/terminal-backend.js";
+import { TerminalProfileService } from "./features/terminal/profiles/terminal-profile-service.js";
+import { WorkspaceTerminalPreferencesService } from "./features/terminal/preferences/workspace-terminal-preferences-service.js";
+import { TerminalDiagnosticsService } from "./features/terminal/diagnostics/terminal-diagnostics-service.js";
 import { MessageRepo } from "./repositories/message-repo";
 import { ThreadRepo } from "./repositories/thread-repo";
 import { ToolCallRecordRepo } from "./repositories/tool-call-record-repo";
@@ -78,33 +78,33 @@ import { TurnSnapshotRepo } from "./repositories/turn-snapshot-repo";
 import { TaskRepo } from "./repositories/task-repo";
 import { PlanQuestionAnswersRepo } from "./repositories/plan-question-answers-repo";
 import { PlanRepo } from "./repositories/plan-repo";
-import { SnapshotService } from "./services/snapshot-service";
-import { SettingsService } from "./services/settings-service";
+import { SnapshotService } from "./features/projects/diffs/snapshots/snapshot-service";
+import { SettingsService } from "./shared/settings/settings-service";
 import { warmCodexProviderVersion } from "@mcode/providers";
-import { SkillWatcherService } from "./services/skill-watcher-service";
-import { MemoryPressureService } from "./services/memory-pressure-service";
+import { SkillWatcherService } from "./features/agents/skills/catalog/skill-watcher-service";
+import { MemoryPressureService } from "./runtime/memory/memory-pressure-service";
 import { WorkspaceRepo } from "./repositories/workspace-repo";
-import { CleanupWorker } from "./services/cleanup-worker";
-import { ProviderAvailabilityService } from "./services/provider-availability-service";
-import { ProviderUsageWarmupService } from "./services/provider-usage-warmup-service";
+import { CleanupWorker } from "./features/thread-control/cleanup/cleanup-worker";
+import { ProviderAvailabilityService } from "./features/providers/availability/provider-availability-service";
+import { ProviderUsageWarmupService } from "./features/providers/availability/provider-usage-warmup-service";
 import { ProviderRegistry } from "./providers/provider-registry";
 import { CursorProvider } from "./providers/cursor/cursor-provider";
-import { ModelCacheService } from "./services/model-cache-service";
-import { DiffSummaryService } from "./services/diff-summary-service";
-import { RecapService } from "./services/recap-service";
-import { seedAgentRuntimeWorkspace } from "./dev-agent-seed";
+import { ModelCacheService } from "./features/providers/models/model-cache-service";
+import { DiffSummaryService } from "./features/projects/diffs/summaries/diff-summary-service";
+import { RecapService } from "./features/agents/recap/recap-service";
+import { seedAgentRuntimeWorkspace } from "./runtime/startup/dev-agent-seed";
 import { WebSocket } from "ws";
-import { resolveGracePeriodMs, shouldShutdownOnIdle } from "./grace-period-ms";
-import { createGraceController } from "./grace-controller";
+import { resolveGracePeriodMs, shouldShutdownOnIdle } from "./runtime/lifecycle/grace-period-ms";
+import { createGraceController } from "./runtime/lifecycle/grace-controller";
 import {
   createShutdownCoordinator,
   EXPLICIT_SHUTDOWN_DEADLINE_MS,
   type ShutdownCoordinator,
-} from "./shutdown-coordinator.js";
+} from "./runtime/lifecycle/shutdown-coordinator.js";
 import type Database from "better-sqlite3";
-import type { JobObject } from "./services/job-object.js";
-import { resolveWebAutomationFlag } from "./startup-policy.js";
-import { listenWithPortRetry } from "./http-listener.js";
+import type { JobObject } from "./runtime/process/containment/job-object.js";
+import { resolveWebAutomationFlag } from "./runtime/startup/startup-policy.js";
+import { listenWithPortRetry } from "./runtime/http/http-listener.js";
 
 // process.title affects `ps`/`top`/`htop` output on Unix and the console window
 // title. On Windows, Task Manager pulls the display name from the binary's

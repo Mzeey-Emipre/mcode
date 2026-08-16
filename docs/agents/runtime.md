@@ -105,7 +105,7 @@ Copy `.env.example` to `.env` and uncomment to override any variable.
 
 ### Child process environment
 
-PTY sessions, provider CLI subprocesses, and other server-spawned children receive environment built by **`EnvService`** (`apps/server/src/services/env-service.ts`). It merges, in order:
+PTY sessions, provider CLI subprocesses, and other server-spawned children receive environment built by **`EnvService`** (`apps/server/src/runtime/environment/env-service.ts`). It merges, in order:
 
 1. The current server `process.env` (keeps volatile vars such as `TEMP` on Windows)
 2. A refresh from the user's login shell (`env -0` on Unix) or from the Windows user and machine registry (cached about 60 seconds)

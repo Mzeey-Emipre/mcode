@@ -21,7 +21,7 @@ import {
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { InternalThreadControlMcpAuthority } from "./thread-control-mcp-authority.js";
 import type { ThreadControlService } from "./thread-control-service.js";
-import { getMcodeBrowserGuide, getThreadControlGuide } from "../../../services/mcode-capability-guide.js";
+import { getMcodeBrowserGuide, getThreadControlGuide } from "../../../shared/capability-guides/mcode-capability-guide.js";
 
 /** Incoming request context for the server-internal MCP transport. */
 export interface InternalThreadControlMcpRequest {
