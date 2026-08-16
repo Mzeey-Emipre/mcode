@@ -56,8 +56,8 @@ import { WorkspaceRepo } from "../repositories/workspace-repo";
 import { MessageRepo } from "../repositories/message-repo";
 import { HookExecutionRepo, type CreateHookExecutionInput } from "../repositories/hook-execution-repo";
 import { NarrativeStore } from "./narrative-store.js";
-import { TurnFinalizer } from "./turn-finalizer.js";
-import { TurnFileTracker } from "./turn-file-tracker.js";
+import { TurnFinalizer } from "../features/agents/turns/turn-finalizer.js";
+import { TurnFileTracker } from "../features/agents/turns/turn-file-tracker.js";
 import { PlanQuestionService } from "./plan-question-service.js";
 import { TurnSnapshotRepo } from "../repositories/turn-snapshot-repo";
 import type Database from "better-sqlite3";
@@ -87,13 +87,13 @@ import { PlanRepo } from "../repositories/plan-repo";
 import { HandoffCoordinator } from "./handoff/handoff-coordinator.js";
 import { ScopedPreGrantService } from "./scoped-pre-grant.js";
 import { normalizeAgentProviderError } from "./provider-agent-error-normalize.js";
-import { TurnErrorPolicy } from "./turn-error-policy.js";
+import { TurnErrorPolicy } from "../features/agents/turns/turn-error-policy.js";
 import { InternalThreadControlMcpRuntime } from "./thread-control-mcp-runtime.js";
 import { ThreadControlMutationReservationService } from "./thread-control-mutation-reservation-service.js";
-import { TurnRuntimeRegistry } from "./turn-runtime.js";
-import type { TurnOutcome } from "./turn-outcome.js";
+import { TurnRuntimeRegistry } from "../features/agents/turns/turn-runtime.js";
+import type { TurnOutcome } from "../features/agents/turns/turn-outcome.js";
 import { BrowserNarrativeEventSanitizer } from "./browser-narrative-event-sanitizer.js";
-import { CanonicalAgentEventSink } from "./canonical-agent-event-sink.js";
+import { CanonicalAgentEventSink } from "../features/agents/canonical/canonical-agent-event-sink.js";
 
 /**
  * Escape special XML characters in a string to prevent injection into

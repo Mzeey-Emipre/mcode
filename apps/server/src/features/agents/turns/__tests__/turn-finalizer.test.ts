@@ -2,22 +2,22 @@ import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { CANONICAL_AGENT_EVENT_BATCH_MAX } from "@mcode/contracts";
 import type Database from "better-sqlite3";
-import { openMemoryDatabase } from "../../store/database";
-import { MessageRepo } from "../../repositories/message-repo";
-import { ToolCallRecordRepo } from "../../repositories/tool-call-record-repo";
-import { ThoughtSegmentRepo } from "../../repositories/thought-segment-repo";
-import { HookExecutionRepo } from "../../repositories/hook-execution-repo";
-import { NarrativeStore } from "../narrative-store";
+import { openMemoryDatabase } from "../../../../store/database";
+import { MessageRepo } from "../../../../repositories/message-repo";
+import { ToolCallRecordRepo } from "../../../../repositories/tool-call-record-repo";
+import { ThoughtSegmentRepo } from "../../../../repositories/thought-segment-repo";
+import { HookExecutionRepo } from "../../../../repositories/hook-execution-repo";
+import { NarrativeStore } from "../../../../services/narrative-store";
 import { TurnFinalizer, deriveTurnAssistantMessageId } from "../turn-finalizer";
-import { ThreadRepo } from "../../repositories/thread-repo";
-import type { SnapshotService } from "../snapshot-service";
-import { TurnSnapshotRepo } from "../../repositories/turn-snapshot-repo";
+import { ThreadRepo } from "../../../../repositories/thread-repo";
+import type { SnapshotService } from "../../../../services/snapshot-service";
+import { TurnSnapshotRepo } from "../../../../repositories/turn-snapshot-repo";
 import type { TurnOutcome } from "../turn-outcome";
 import type { TurnFileTracker } from "../turn-file-tracker";
-import { broadcast } from "../../transport/push";
-import { CanonicalAgentEventSink } from "../canonical-agent-event-sink";
+import { broadcast } from "../../../../transport/push";
+import { CanonicalAgentEventSink } from "../../canonical/canonical-agent-event-sink";
 
-vi.mock("../../transport/push.js", () => ({ broadcast: vi.fn() }));
+vi.mock("../../../../transport/push.js", () => ({ broadcast: vi.fn() }));
 
 const THREAD = "thread-1";
 const IDEMPOTENT_SQL =

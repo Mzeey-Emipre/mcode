@@ -2,7 +2,7 @@ import type { ProviderHostPorts } from "@mcode/providers";
 import type { JobObject } from "../services/job-object.js";
 import type { EnvService } from "../services/env-service.js";
 import type { ScopedPreGrantService } from "../services/scoped-pre-grant.js";
-import type { CanonicalAgentEventSink } from "../services/canonical-agent-event-sink.js";
+import type { CanonicalAgentEventSink } from "../features/agents/canonical/canonical-agent-event-sink.js";
 import type { InternalThreadControlMcpRuntime } from "../services/thread-control-mcp-runtime.js";
 import type { BrowserAutomationSessionLease } from "../services/browser-automation/browser-automation-session-lease.js";
 import { killProcessTree } from "../services/process-kill.js";

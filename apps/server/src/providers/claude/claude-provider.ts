@@ -33,7 +33,7 @@ import type {
   CompletionOptions,
 } from "@mcode/contracts";
 import { buildReasoningOptions } from "./build-reasoning-options.js";
-import { createTurnEventSink } from "../../services/turn-event-sink.js";
+import { createTurnEventSink } from "../../features/agents/turns/turn-event-sink.js";
 import { listClaudeModels } from "./list-models.js";
 import { resolveSdkModelSlug } from "./resolve-slug.js";
 import { clampContextWindowToMode, resolveAutoCompactWindow } from "./context-window.js";

@@ -42,16 +42,16 @@ import {
   ToolCallRecordSchema,
   ThoughtSegmentRecordSchema,
 } from "@mcode/contracts";
-import { broadcast } from "../transport/push.js";
+import { broadcast } from "../../../transport/push.js";
 import {
   ACTIVE_TURN_WRITE_BATCH_LIMITS,
   runBoundedWriteBatches,
   type WriteBatchResult,
-} from "../store/bounded-write-batches.js";
+} from "../../../store/bounded-write-batches.js";
 import {
   CanonicalAgentDiagnostics,
   type CanonicalDiagnosticExport,
-} from "./canonical-agent-diagnostics.js";
+} from "../../../services/canonical-agent-diagnostics.js";
 
 /** Capacity held back so volatile input cannot consume every semantic batch slot. */
 export const CANONICAL_AGENT_CONTROL_EVENT_RESERVE = 16;

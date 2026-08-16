@@ -22,16 +22,16 @@ import { logger } from "@mcode/shared";
 import { AgentEventType } from "@mcode/contracts";
 import type { AgentEvent, StoredAttachment } from "@mcode/contracts";
 import type Database from "better-sqlite3";
-import { broadcast } from "../transport/push";
-import type { MessageRepo } from "../repositories/message-repo";
-import type { ThreadRepo } from "../repositories/thread-repo";
-import type { TurnSnapshotRepo } from "../repositories/turn-snapshot-repo";
-import type { SnapshotService } from "./snapshot-service";
-import type { NarrativeStore } from "./narrative-store";
+import { broadcast } from "../../../transport/push";
+import type { MessageRepo } from "../../../repositories/message-repo";
+import type { ThreadRepo } from "../../../repositories/thread-repo";
+import type { TurnSnapshotRepo } from "../../../repositories/turn-snapshot-repo";
+import type { SnapshotService } from "../../../services/snapshot-service";
+import type { NarrativeStore } from "../../../services/narrative-store";
 import type { TurnOutcome } from "./turn-outcome";
 import type { TurnFileTracker } from "./turn-file-tracker.js";
 import type { TurnFileEffectSummary } from "@mcode/contracts";
-import type { CanonicalAgentEventSink } from "./canonical-agent-event-sink.js";
+import type { CanonicalAgentEventSink } from "../canonical/canonical-agent-event-sink.js";
 
 /** Pre-turn git ref captured at send time, used to diff the turn's file changes. */
 interface TurnRef {
