@@ -15,15 +15,13 @@ import {
   Notification,
   powerMonitor,
   powerSaveBlocker,
-  protocol,
   session,
   shell,
 } from "electron";
 import { autoUpdater } from "electron-updater";
-import { existsSync, createReadStream } from "fs";
+import { existsSync } from "fs";
 import { mkdir, writeFile } from "fs/promises";
 import { join } from "path";
-import { Readable } from "stream";
 import { getLogPath, getMcodeDir, getRecentLogs, logger } from "@mcode/shared";
 
 import {
@@ -79,22 +77,6 @@ if (shouldPrintVersion(process.argv)) {
   console.log(app.getVersion());
   app.exit(0);
 }
-
-// ---------------------------------------------------------------------------
-// Attachment protocol constants
-// ---------------------------------------------------------------------------
-
-const VALID_ATTACHMENT_ID = /^[a-f0-9-]+$/;
-
-const MIME_MAP: Record<string, string> = {
-  jpg: "image/jpeg",
-  jpeg: "image/jpeg",
-  png: "image/png",
-  gif: "image/gif",
-  webp: "image/webp",
-  pdf: "application/pdf",
-  txt: "text/plain",
-};
 
 // ---------------------------------------------------------------------------
 // Application state
@@ -422,43 +404,6 @@ function registerIpcHandlers(): void {
 }
 
 // ---------------------------------------------------------------------------
-// Attachment protocol handler
-// ---------------------------------------------------------------------------
-
-/** Register the mcode-attachment:// protocol for serving attachment files. */
-function registerAttachmentProtocol(): void {
-  protocol.handle("mcode-attachment", async (request) => {
-    const url = new URL(request.url);
-    const threadId = url.hostname;
-    const filename = url.pathname.replace(/^\//, "");
-
-    if (!VALID_ATTACHMENT_ID.test(threadId)) {
-      return new Response("Invalid thread ID", { status: 400 });
-    }
-    if (!/^[a-f0-9-]+\.\w+$/.test(filename)) {
-      return new Response("Invalid attachment ID", { status: 400 });
-    }
-
-    const filePath = join(getMcodeDir(), "attachments", threadId, filename);
-    if (!existsSync(filePath)) {
-      return new Response("Not found", { status: 404 });
-    }
-
-    const ext = filename.split(".").pop() ?? "";
-    const nodeStream = createReadStream(filePath);
-    const webStream = Readable.toWeb(nodeStream) as ReadableStream;
-
-    return new Response(webStream, {
-      headers: {
-        "Content-Type": MIME_MAP[ext] ?? "application/octet-stream",
-        "Cache-Control": "public, max-age=31536000, immutable",
-        "Content-Security-Policy": "default-src 'none'",
-      },
-    });
-  });
-}
-
-// ---------------------------------------------------------------------------
 // App lifecycle
 // ---------------------------------------------------------------------------
 
@@ -537,14 +482,11 @@ app.whenReady().then(async () => {
     console.log(`Server started on port ${port}`);
 
     serverRuntime.registerLifecycle();
-
-    // Register custom protocol for attachment files
-    registerAttachmentProtocol();
+    registerAttachmentsFeature();
 
     // Register IPC handlers BEFORE creating the window so the renderer can
     // invoke get-server-url as soon as it loads, without racing the handler.
     registerIpcHandlers();
-    registerAttachmentsFeature();
 
     // Set auth cookie so the renderer can authenticate to the server via HTTP
     await serverRuntime.installAuthCookie();
