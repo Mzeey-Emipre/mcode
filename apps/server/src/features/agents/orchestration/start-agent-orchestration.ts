@@ -4,11 +4,11 @@ import type { AgentService } from "./agent-service.js";
 import type { CiWatcherService } from "../../pull-requests/index.js";
 import { normalizeAgentProviderError } from "./provider-agent-error-normalize.js";
 import type { GithubService } from "../../pull-requests/index.js";
-import type { NarrativeStore } from "../../../services/narrative-store.js";
-import { sanitizePublicToolInput } from "../../../services/public-tool-input.js";
+import type { NarrativeStore } from "../conversation/narrative/narrative-store.js";
+import { sanitizePublicToolInput } from "../tools/input/public-tool-input.js";
 import type { ThreadService } from "../../thread-control/index.js";
-import type { ThreadRepo } from "../../../repositories/thread-repo.js";
-import type { WorkspaceRepo } from "../../../repositories/workspace-repo.js";
+import type { ThreadRepo } from "../../thread-control/persistence/thread-repo.js";
+import type { WorkspaceRepo } from "../../projects/persistence/workspace-repo.js";
 import { publishParentProviderEvent } from "../events/provider-event-publication.js";
 import { publishAgentPermissionEvents } from "../permissions/permission-publication.js";
 

@@ -16,9 +16,9 @@ import { getMcodeDir, validateBranchName, validateWorktreeName, logger } from "@
 import type { GitBranch, WorktreeInfo, GitCommit, BranchComparison, GitRemoteUrl, ReviewComparison, ReviewFileChange } from "@mcode/contracts";
 
 const MAX_REVIEW_COMPARISON_FILES = 10_000;
-import { WorkspaceRepo } from "../../../repositories/workspace-repo";
-import type { GitExecutor } from "../../../services/git-executor/index.js";
-import { normalizePathForComparison } from "../../../services/path-identity.js";
+import { WorkspaceRepo } from "../persistence/workspace-repo.js";
+import type { GitExecutor } from "./execution/index.js";
+import { normalizePathForComparison } from "../../../shared/filesystem/path-identity.js";
 import { WorktreeDirectoryRemover } from "../worktrees/worktree-directory-remover.js";
 
 /** Normalized configured remote used for repository-identity matching. */

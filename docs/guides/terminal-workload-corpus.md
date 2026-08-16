@@ -78,6 +78,6 @@ Node with native mode completes all eight scenarios. These are bounded corpus
 observations for this host and runtime matrix, not universal product claims.
 
 The reusable plans and pure result evaluator live in
-apps/server/src/services/terminal-workload-corpus.ts. The CLI is a thin
+apps/server/src/features/terminal/testing/terminal-workload-corpus.ts. The CLI is a thin
 node-pty consumer, so a server, renderer, or future comparison harness can
 reuse the same workload mechanics without copying fixture logic.

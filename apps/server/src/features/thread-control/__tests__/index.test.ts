@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { describe, expect, it } from "vitest";
-import * as threadControl from "../index";
+import * as threadControl from "../index.js";
 
 describe("thread control feature boundary", () => {
   it("exposes only the composition-root thread-control symbols", () => {

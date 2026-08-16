@@ -61,7 +61,7 @@ These are suitable service inputs, but unsuitable agent tool contracts. Several 
 
 ### Thread creation and persistence
 
-`ThreadService.create()` is the server-side creation seam. It validates workspace and worktree choices, creates any required worktree, and persists the thread through the thread repository. The repository owns durable thread records rather than the provider session (`apps/server/src/services/thread-service.ts:34`, `apps/server/src/repositories/thread-repo.ts:115`).
+`ThreadService.create()` is the server-side creation seam. It validates workspace and worktree choices, creates any required worktree, and persists the thread through the thread repository. The repository owns durable thread records rather than the provider session (`apps/server/src/features/thread-control/lifecycle/thread-service.ts:30`, `apps/server/src/repositories/thread-repo.ts:115`).
 
 The existing model already distinguishes a Mcode thread from a provider session. A thread belongs to a workspace and may run directly in the workspace, in a new worktree, or in an existing worktree (`CONTEXT.md`, “Thread” and “Composer mode”).
 

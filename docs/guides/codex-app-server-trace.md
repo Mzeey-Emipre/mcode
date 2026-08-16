@@ -51,7 +51,7 @@ The current mapper implements these routes. The traces give no contradiction; th
 
 ## Sub-agent nesting (collabAgentToolCall)
 
-**Verified in golden fixture** (`apps/server/src/providers/codex/__tests__/fixtures/codex-protocol-golden.ndjson`, scenario `D_subagents`, codex-cli 0.130.0, capture via `scripts/codex-protocol-capture.mjs`):
+**Verified in golden fixture** (`packages/providers/src/__tests__/codex/fixtures/codex-protocol-golden.ndjson`, scenario `D_subagents`, codex-cli 0.130.0, capture via `scripts/codex-protocol-capture.mjs`):
 
 - Many `item/started` / `item/completed` rows with `type: "collabAgentToolCall"` (`spawnAgent`, `wait`).
 - `item/started` can be provisional: rejected or superseded spawn attempts may carry empty `receiverThreadIds` and empty `agentsStates`.
@@ -61,7 +61,7 @@ The current mapper implements these routes. The traces give no contradiction; th
 - No `item/reasoning/*` or `item/plan/delta` in this capture (low/default effort).
 - `configWarning` appeared once; listed in `KNOWN_METHODS` / silenced set in protocol coverage test.
 
-Replay: `bun run test src/providers/codex/__tests__/codex-protocol-coverage.test.ts`.
+Replay: `bun run --cwd packages/providers test -- src/__tests__/codex/codex-protocol-coverage.test.ts`.
 
 ## Gaps (union methods never observed)
 

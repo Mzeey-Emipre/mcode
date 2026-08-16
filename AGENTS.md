@@ -183,7 +183,7 @@ server startup before spawning children.
 - **Database migrations / branch-specific DBs:** [`docs/guides/db-migrations.md`](docs/guides/db-migrations.md)
 - **Shiki worker (syntax highlighting):** [`docs/guides/shiki-worker.md`](docs/guides/shiki-worker.md)
 - **Chat fork handoff:** [`docs/guides/chat-fork-handoff.md`](docs/guides/chat-fork-handoff.md)
-- **Codex provider (`codex app-server` JSON-RPC 2.0):** `apps/server/src/providers/codex/` and `ARCHITECTURE.md`
+- **Codex provider (`codex app-server` JSON-RPC 2.0):** `packages/providers/src/private/codex/` and `ARCHITECTURE.md`
 
 ## Performance targets
 

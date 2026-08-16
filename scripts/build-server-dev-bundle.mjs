@@ -513,7 +513,7 @@ export async function buildServerRuntimeBundles({
     build({
       ...shared,
       entryPoints: [
-        resolve(serverRoot, "dist-tsc/terminal/host/pty-host-entry.js"),
+        resolve(serverRoot, "dist-tsc/features/terminal/host/pty-host-entry.js"),
       ],
       outfile: ptyHostOutFile,
     }),

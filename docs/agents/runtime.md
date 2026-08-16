@@ -105,7 +105,7 @@ Copy `.env.example` to `.env` and uncomment to override any variable.
 
 ### Child process environment
 
-PTY sessions, provider CLI subprocesses, and other server-spawned children receive environment built by **`EnvService`** (`apps/server/src/services/env-service.ts`). It merges, in order:
+PTY sessions, provider CLI subprocesses, and other server-spawned children receive environment built by **`EnvService`** (`apps/server/src/runtime/environment/env-service.ts`). It merges, in order:
 
 1. The current server `process.env` (keeps volatile vars such as `TEMP` on Windows)
 2. A refresh from the user's login shell (`env -0` on Unix) or from the Windows user and machine registry (cached about 60 seconds)
@@ -176,7 +176,7 @@ Capture live ACP envelopes for mapper work:
 bun apps/server/scripts/capture-cursor-acp.ts --suite
 ```
 
-Artifacts land in `<repo>/.mcode-local/cursor-acp-capture/` (`*-raw.jsonl`, `*-mapped.jsonl`, `*-summary.txt`). Golden tool-only traces live in `apps/server/src/providers/cursor/__tests__/fixtures/`.
+Artifacts land in `<repo>/.mcode-local/cursor-acp-capture/` (`*-raw.jsonl`, `*-mapped.jsonl`, `*-summary.txt`). Golden tool-only traces live in `apps/server/src/features/providers/adapters/cursor/__tests__/fixtures/`.
 
 ---
 

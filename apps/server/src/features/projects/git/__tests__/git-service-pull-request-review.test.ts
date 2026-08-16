@@ -4,10 +4,10 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { openMemoryDatabase } from "../../../../store/database.js";
-import { WorkspaceRepo } from "../../../../repositories/workspace-repo.js";
-import { FakeGitExecutor } from "../../../../services/git-executor/fake-git-executor.js";
-import type { GitExecOptions, GitExecResult } from "../../../../services/git-executor/types.js";
+import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
+import { WorkspaceRepo } from "../../persistence/workspace-repo.js";
+import { FakeGitExecutor } from "../execution/fake-git-executor.js";
+import type { GitExecOptions, GitExecResult } from "../execution/types.js";
 import {
   GitService,
   type PullRequestReviewGitSource,

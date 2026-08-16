@@ -2,22 +2,22 @@ import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { CANONICAL_AGENT_EVENT_BATCH_MAX } from "@mcode/contracts";
 import type Database from "better-sqlite3";
-import { openMemoryDatabase } from "../../../../store/database";
-import { MessageRepo } from "../../../../repositories/message-repo";
-import { ToolCallRecordRepo } from "../../../../repositories/tool-call-record-repo";
-import { ThoughtSegmentRepo } from "../../../../repositories/thought-segment-repo";
-import { HookExecutionRepo } from "../../../../repositories/hook-execution-repo";
-import { NarrativeStore } from "../../../../services/narrative-store";
-import { TurnFinalizer, deriveTurnAssistantMessageId } from "../turn-finalizer";
-import { ThreadRepo } from "../../../../repositories/thread-repo";
-import type { SnapshotService } from "../../../../services/snapshot-service";
-import { TurnSnapshotRepo } from "../../../../repositories/turn-snapshot-repo";
-import type { TurnOutcome } from "../turn-outcome";
-import type { TurnFileTracker } from "../turn-file-tracker";
-import { broadcast } from "../../../../transport/push";
-import { CanonicalAgentEventSink } from "../../canonical/canonical-agent-event-sink";
+import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
+import { MessageRepo } from "../../conversation/persistence/message-repo.js";
+import { ToolCallRecordRepo } from "../../tools/persistence/tool-call-record-repo.js";
+import { ThoughtSegmentRepo } from "../../conversation/narrative/persistence/thought-segment-repo.js";
+import { HookExecutionRepo } from "../../events/persistence/hook-execution-repo.js";
+import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
+import { TurnFinalizer, deriveTurnAssistantMessageId } from "../turn-finalizer.js";
+import { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
+import type { SnapshotService } from "../../../projects/diffs/snapshots/snapshot-service.js";
+import { TurnSnapshotRepo } from "../persistence/turn-snapshot-repo.js";
+import type { TurnOutcome } from "../turn-outcome.js";
+import type { TurnFileTracker } from "../turn-file-tracker.js";
+import { broadcast } from "../../../../application/transport/push.js";
+import { CanonicalAgentEventSink } from "../../canonical/canonical-agent-event-sink.js";
 
-vi.mock("../../../../transport/push.js", () => ({ broadcast: vi.fn() }));
+vi.mock("../../../../application/transport/push.js", () => ({ broadcast: vi.fn() }));
 
 const THREAD = "thread-1";
 const IDEMPOTENT_SQL =
