@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { describe, expect, it } from "vitest";
-import { ThreadControlMutationReservationService } from "../thread-control-mutation-reservation-service.js";
+import { ThreadControlMutationReservationService } from "./thread-control-mutation-reservation-service.js";
 
 describe("ThreadControlMutationReservationService", () => {
   it("allows one idle claimant and rejects a competing claimant", () => {

@@ -7,10 +7,10 @@
 import { injectable, inject } from "tsyringe";
 import { validateBranchName, logger } from "@mcode/shared";
 import type { Thread, RecentThread, ThreadMode, ContextWindowMode } from "@mcode/contracts";
-import { ThreadRepo } from "../repositories/thread-repo";
-import { ProjectWorktreeService } from "../features/projects/index.js";
-import { AttachmentService } from "./attachment-service";
-import { HandoffStorage } from "../features/handoff/index.js";
+import { ThreadRepo } from "../../../repositories/thread-repo";
+import { ProjectWorktreeService } from "../../projects/index.js";
+import { AttachmentService } from "../../../services/attachment-service";
+import { HandoffStorage } from "../../handoff/index.js";
 
 /** Handles thread creation, deletion, worktree provisioning, and lifecycle. */
 @injectable()

@@ -30,7 +30,7 @@ import { SettingsService } from "../../services/settings-service.js";
 import {
   InternalThreadControlMcpRuntime,
   type InternalThreadControlMcpHttpConnection,
-} from "../../services/thread-control-mcp-runtime.js";
+} from "../../features/thread-control/index.js";
 import { SkillService } from "../../services/skill-service.js";
 import { EnvService } from "../../services/env-service.js";
 import { JobObject } from "../../services/job-object.js";

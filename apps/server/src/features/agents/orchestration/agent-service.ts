@@ -74,7 +74,11 @@ import { CommandRouter } from "../../../commands/command-router";
 // Lazy-imported to break circular dependency: AgentService -> ThreadService -> (shared repos)
 // Using delay() ensures tsyringe resolves ThreadService from the container at first access,
 // not at AgentService construction time.
-import { ThreadService } from "../../../services/thread-service";
+import {
+  InternalThreadControlMcpRuntime,
+  ThreadControlMutationReservationService,
+  ThreadService,
+} from "../../thread-control/index.js";
 import { SettingsService } from "../../../services/settings-service.js";
 import { ProviderAvailabilityService } from "../../../services/provider-availability-service.js";
 import {
@@ -88,8 +92,6 @@ import { HandoffCoordinator } from "../../handoff/index.js";
 import { ScopedPreGrantService } from "../../../services/scoped-pre-grant.js";
 import { normalizeAgentProviderError } from "./provider-agent-error-normalize.js";
 import { TurnErrorPolicy } from "../turns/turn-error-policy.js";
-import { InternalThreadControlMcpRuntime } from "../../../services/thread-control-mcp-runtime.js";
-import { ThreadControlMutationReservationService } from "../../../services/thread-control-mutation-reservation-service.js";
 import { TurnRuntimeRegistry } from "../turns/turn-runtime.js";
 import type { TurnOutcome } from "../turns/turn-outcome.js";
 import { BrowserNarrativeEventSanitizer } from "../../../services/browser-narrative-event-sanitizer.js";

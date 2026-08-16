@@ -5,8 +5,8 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { createServer } from "node:http";
 import { Readable } from "node:stream";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { ExternalThreadControlMcpRuntime } from "../external-thread-control-mcp-runtime.js";
-import { createExternalThreadControlMcpSession } from "../external-thread-control-mcp-transport.js";
+import { ExternalThreadControlMcpRuntime } from "./external-thread-control-mcp-runtime.js";
+import { createExternalThreadControlMcpSession } from "./external-thread-control-mcp-transport.js";
 
 const pairing = {
   pairingId: "pairing-1",

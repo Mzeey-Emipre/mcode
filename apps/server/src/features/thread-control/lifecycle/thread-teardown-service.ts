@@ -2,9 +2,9 @@
  * Central teardown boundary for resources owned by a single thread.
  */
 import { injectable, inject } from "tsyringe";
-import { AgentService } from "../features/agents/index.js";
-import { TerminalBackend, TERMINAL_BACKEND_TOKEN } from "../terminal/terminal-backend.js";
-import { ThreadRepo } from "../repositories/thread-repo";
+import { AgentService } from "../../agents/index.js";
+import { TerminalBackend, TERMINAL_BACKEND_TOKEN } from "../../../terminal/terminal-backend.js";
+import { ThreadRepo } from "../../../repositories/thread-repo";
 
 function failureMessage(result: PromiseRejectedResult): string {
   return result.reason instanceof Error ? result.reason.message : String(result.reason);

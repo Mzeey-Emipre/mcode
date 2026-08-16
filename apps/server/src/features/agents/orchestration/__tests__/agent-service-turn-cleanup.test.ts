@@ -36,10 +36,10 @@ import type { SnapshotService } from "../../../../services/snapshot-service.js";
 import type { MemoryPressureService } from "../../../../services/memory-pressure-service.js";
 import type { TaskRepo } from "../../../../repositories/task-repo.js";
 import type { SettingsService } from "../../../../services/settings-service.js";
-import type { ThreadService } from "../../../../services/thread-service.js";
+import type { ThreadService } from "../../../thread-control/index.js";
 import type { ProviderAvailabilityService } from "../../../../services/provider-availability-service.js";
 import type { PlanQuestionAnswersRepo } from "../../../../repositories/plan-question-answers-repo.js";
-import { ThreadControlMutationReservationService } from "../../../../services/thread-control-mutation-reservation-service.js";
+import { ThreadControlMutationReservationService } from "../../../thread-control/index.js";
 
 vi.mock("../../../../transport/push.js", () => ({ broadcast: vi.fn() }));
 

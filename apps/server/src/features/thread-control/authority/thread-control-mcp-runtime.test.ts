@@ -3,12 +3,12 @@ import { request, type Server } from "node:http";
 import { describe, expect, it, vi } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { InternalThreadControlMcpAuthority } from "../thread-control-mcp-authority.js";
+import { InternalThreadControlMcpAuthority } from "./thread-control-mcp-authority.js";
 import {
   INTERNAL_MCP_REQUEST_TIMEOUT_MS,
   MAX_INTERNAL_MCP_REQUEST_BODY_BYTES,
   InternalThreadControlMcpRuntime,
-} from "../thread-control-mcp-runtime.js";
+} from "./thread-control-mcp-runtime.js";
 
 function status(url: string, options: { headers?: Record<string, string>; body?: Buffer } = {}): Promise<number> {
   return new Promise((resolve, reject) => {
