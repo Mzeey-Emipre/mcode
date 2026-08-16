@@ -3,7 +3,7 @@ import {
   findTerminalLinks,
   parseTerminalLink,
   terminalLinkCellRange,
-} from "./terminalLinkProvider";
+} from "../terminalLinkProvider";
 
 describe("parseTerminalLink", () => {
   it("accepts absolute file targets with bounded location metadata", () => {

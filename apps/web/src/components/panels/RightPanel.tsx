@@ -31,13 +31,13 @@ import {
   usePreviewTabSet,
   usePreviewTabsStore,
 } from "@/features/preview";
-import { TerminalPoolSlot } from "@/features/terminal";
-import { createTerminalForScope } from "@/lib/ensure-terminal";
 import {
   MAX_TERMINALS_PER_SCOPE,
-  type TerminalInstance,
+  TerminalPoolSlot,
   useTerminalStore,
-} from "@/stores/terminalStore";
+  type TerminalInstance,
+} from "@/features/terminal";
+import { createTerminalForScope } from "@/lib/ensure-terminal";
 import { toggleRightPanelAdaptive } from "@/lib/right-panel-layout";
 import { getTransport } from "@/transport";
 import { cn } from "@/lib/utils";

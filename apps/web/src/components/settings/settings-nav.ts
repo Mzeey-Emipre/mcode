@@ -3,7 +3,7 @@ import { ModelSection } from "./sections/ModelSection";
 import { AgentSection } from "./sections/AgentSection";
 import { AppearanceSection } from "./sections/AppearanceSection";
 import { NotificationsSection } from "./sections/NotificationsSection";
-import { TerminalSection } from "./sections/TerminalSection";
+import { TerminalSection } from "@/features/terminal";
 import { ExternalAppsSection } from "./sections/ExternalAppsSection";
 import { PerformanceSection } from "./sections/PerformanceSection";
 import { ThreadsSection } from "./sections/ThreadsSection";

@@ -4,7 +4,7 @@ import {
   encodeTerminalFrame,
   type TerminalBackendCapabilities,
 } from "@mcode/contracts";
-import { ModernTerminalClient } from "./modern-terminal-client";
+import { ModernTerminalClient } from "../modern/modern-terminal-client";
 
 const sessionId = "00000000-0000-4000-8000-000000000001";
 const hydrationId = "00000000-0000-4000-8000-000000000002";

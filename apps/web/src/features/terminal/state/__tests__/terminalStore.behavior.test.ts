@@ -6,7 +6,7 @@ vi.mock("@/transport", () => ({
   getTransport: () => ({ terminalPause }),
 }));
 
-import { MAX_TERMINALS_PER_SCOPE, useTerminalStore, TERMINAL_PANEL_DEFAULTS } from "@/stores/terminalStore";
+import { MAX_TERMINALS_PER_SCOPE, useTerminalStore, TERMINAL_PANEL_DEFAULTS } from "../terminalStore";
 
 describe("TerminalStore", () => {
   beforeEach(() => {

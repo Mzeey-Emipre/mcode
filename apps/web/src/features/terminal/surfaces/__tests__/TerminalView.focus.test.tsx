@@ -3,7 +3,7 @@ import { act } from "react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { getDefaultSettings } from "@mcode/contracts";
 import { useSettingsStore } from "@/stores/settingsStore";
-import { useTerminalStore } from "@/stores/terminalStore";
+import { useTerminalStore } from "@/features/terminal/state/terminalStore";
 import {
   emitPtyData,
   emitPtyExit,
@@ -11,8 +11,8 @@ import {
   onPtyData,
   onPtyExit,
   onPtyReconnectGap,
-} from "@/terminal/pty-data-registry";
-import { dropRemountAnchor } from "@/components/terminal/terminalRemountScroll";
+} from "@/features/terminal/adapters/pty-data-registry";
+import { dropRemountAnchor } from "../terminalRemountScroll";
 
 // jsdom doesn't implement ResizeObserver; TerminalView instantiates one in
 // its mount effect. A no-op stub is enough — fit is exercised via the
@@ -205,7 +205,7 @@ vi.mock("@/transport", async (importOriginal) => {
   };
 });
 
-import { TerminalView } from "@/components/terminal/TerminalView";
+import { TerminalView } from "../TerminalView";
 
 /** Flushes init's dynamic imports and the reattach microtask chain. */
 async function settle(): Promise<void> {

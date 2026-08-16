@@ -4,7 +4,7 @@ import { useUiStore } from "@/stores/uiStore";
 import { PANEL_TAB_TYPES } from "@/lib/panel-tabs";
 import { hideRightPanelAdaptive, showRightPanelAdaptive } from "@/lib/right-panel-layout";
 import { createTerminalForScope } from "@/lib/ensure-terminal";
-import { useTerminalStore } from "@/stores/terminalStore";
+import { useTerminalStore } from "@/features/terminal";
 
 /** Whether a tab type only makes sense once a thread exists. */
 function tabNeedsThread(tab: RightPanelTab): boolean {

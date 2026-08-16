@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { ClientTerminalFlowControl } from "@/components/terminal/terminalFlowControl";
+import { ClientTerminalFlowControl } from "../terminalFlowControl";
 
 describe("ClientTerminalFlowControl", () => {
   it("requests pause when pending bytes cross the high-water mark", () => {

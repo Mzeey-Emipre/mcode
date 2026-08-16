@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useTerminalStore } from "@/stores/terminalStore";
+import { useTerminalStore } from "@/features/terminal/state/terminalStore";
 
 const searchHarness = vi.hoisted(() => {
   const resultListeners: Array<(result: { resultIndex: number; resultCount: number }) => void> = [];
@@ -137,7 +137,7 @@ vi.mock("@xterm/addon-serialize", () => ({
   },
 }));
 
-vi.mock("@/components/terminal/terminalSearchAddon", () => ({
+vi.mock("../terminalSearchAddon", () => ({
   loadTerminalSearchAddon: searchHarness.load,
 }));
 
@@ -146,7 +146,7 @@ vi.mock("@/transport", async (importOriginal) => {
   return { ...actual, getTransport: () => transport };
 });
 
-import { TerminalView } from "@/components/terminal/TerminalView";
+import { TerminalView } from "../TerminalView";
 
 async function settle(): Promise<void> {
   for (let index = 0; index < 6; index += 1) {

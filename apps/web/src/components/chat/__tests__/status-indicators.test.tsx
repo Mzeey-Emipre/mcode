@@ -9,7 +9,7 @@ vi.mock("@/features/projects/state/workspaceStore", () => ({
   ),
 }));
 
-vi.mock("@/stores/terminalStore", () => ({
+vi.mock("@/features/terminal", () => ({
   useTerminalStore: vi.fn((selector: (s: unknown) => unknown) =>
     selector({
       terminals: { "thread-1": [{ id: "pty-1" }, { id: "pty-2" }] },

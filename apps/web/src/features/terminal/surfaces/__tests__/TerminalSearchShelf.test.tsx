@@ -6,7 +6,7 @@ import {
   type TerminalSearchDirection,
   type TerminalSearchRunResult,
 } from "../TerminalSearchShelf";
-import { useTerminalStore, type TerminalSearchOptions } from "@/stores/terminalStore";
+import { useTerminalStore, type TerminalSearchOptions } from "@/features/terminal/state/terminalStore";
 
 function makeSearchHarness() {
   const addon = {

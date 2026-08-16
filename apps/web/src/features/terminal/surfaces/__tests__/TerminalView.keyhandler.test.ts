@@ -5,7 +5,7 @@ import {
   isTerminalMiddleClickPaste,
   isTerminalSearchShortcut,
   shouldInterceptKeyEvent,
-} from "@/components/terminal/terminalKeyHandler";
+} from "../terminalKeyHandler";
 
 function makeEvent(overrides: Partial<KeyboardEvent>): KeyboardEvent {
   return {
