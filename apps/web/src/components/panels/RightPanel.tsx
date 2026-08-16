@@ -22,9 +22,9 @@ import {
 } from "./ActivityRail";
 import type { PanelScope } from "@/lib/panel-tabs";
 import { DiffPanel } from "@/components/diff";
-import { PreviewPanel } from "@/components/panels/PreviewPanel";
+import { PreviewPanel } from "@/features/preview";
 import { usePreviewTabsStore } from "@/stores/previewTabsStore";
-import { TerminalPoolSlot } from "@/components/terminal/TerminalPoolSlotContext";
+import { TerminalPoolSlot } from "@/features/terminal";
 import { createTerminalForScope } from "@/lib/ensure-terminal";
 import {
   MAX_TERMINALS_PER_SCOPE,

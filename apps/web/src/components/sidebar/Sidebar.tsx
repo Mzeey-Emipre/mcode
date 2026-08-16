@@ -1,4 +1,4 @@
-import { ProjectTree } from "./ProjectTree";
+import { ProjectTree } from "@/features/projects";
 import {
   Settings,
   ArrowLeft,
