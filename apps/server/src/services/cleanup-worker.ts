@@ -22,7 +22,7 @@ import { WorkspaceRepo } from "../repositories/workspace-repo.js";
 import { broadcast } from "../transport/push.js";
 import { HandoffStorage } from "../features/handoff/index.js";
 import { pruneStaleToolOutputArtifacts } from "@mcode/providers";
-import { ThreadControlMutationReservationService } from "./thread-control-mutation-reservation-service.js";
+import { ThreadControlMutationReservationService } from "../features/thread-control/index.js";
 
 /** How often to check for due cleanup jobs (ms). */
 const POLL_INTERVAL_MS = 5_000;

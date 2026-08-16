@@ -74,16 +74,14 @@ import {
 } from "../../../repositories/thread-control-approval-repo.js";
 import { ThreadControlAuditRepo } from "../../../repositories/thread-control-audit-repo.js";
 import { ProviderRegistry } from "../../../providers/provider-registry.js";
-import { AgentService } from "../orchestration/agent-service.js";
+import { AgentService, DelegationTargetResolver } from "../../agents/index.js";
 import {
   ThreadControlMutationReservationService,
   type ThreadMutationReservationState,
-} from "../../../services/thread-control-mutation-reservation-service.js";
-import { GitService } from "../../projects/git/git-service.js";
-import { ProjectWorktreeService } from "../../projects/worktrees/project-worktree-service.js";
+} from "./thread-control-mutation-reservation-service.js";
+import { GitService, ProjectWorktreeService } from "../../projects/index.js";
 import { ModelCacheService } from "../../../services/model-cache-service.js";
 import { SettingsService } from "../../../services/settings-service.js";
-import { DelegationTargetResolver } from "./delegation-target-resolver.js";
 import { broadcast } from "../../../transport/push.js";
 
 const THREAD_WAIT_POLL_INTERVAL_MS = 250;
@@ -104,9 +102,9 @@ export class ThreadControlService {
   constructor(
     @inject(WorkspaceRepo) private readonly workspaces: WorkspaceRepo,
     @inject(WorktreeRepo) private readonly worktrees: WorktreeRepo,
-    @inject(GitService) private readonly git: ThreadControlGitDiscovery,
+    @inject(delay(() => GitService)) private readonly git: ThreadControlGitDiscovery,
     @inject(ThreadRepo) private readonly threads: ThreadRepo,
-    @inject(ProjectWorktreeService) private readonly projectWorktreeService: ProjectWorktreeService,
+    @inject(delay(() => ProjectWorktreeService)) private readonly projectWorktreeService: ProjectWorktreeService,
     @inject(delay(() => AgentService)) private readonly agentService: AgentService,
     @inject(SettingsService) private readonly settings: SettingsService,
     @inject(delay(() => ProviderRegistry)) private readonly providers: IProviderRegistry,

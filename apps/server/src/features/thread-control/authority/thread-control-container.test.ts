@@ -1,17 +1,17 @@
 import "reflect-metadata";
 import { describe, expect, it, vi } from "vitest";
 import { container } from "tsyringe";
-import { WorkspaceRepo } from "../../../../repositories/workspace-repo.js";
-import { WorktreeRepo } from "../../../../repositories/worktree-repo.js";
-import { ThreadRepo } from "../../../../repositories/thread-repo.js";
-import { ThreadControlApprovalRepo } from "../../../../repositories/thread-control-approval-repo.js";
-import { ThreadControlAuditRepo } from "../../../../repositories/thread-control-audit-repo.js";
-import { GitService } from "../../../projects/index.js";
-import { ProjectWorktreeService } from "../../../projects/worktrees/project-worktree-service.js";
-import { ThreadControlService } from "../thread-control-service.js";
-import { ThreadService } from "../../../../services/thread-service.js";
-import { SettingsService } from "../../../../services/settings-service.js";
-import { DelegationTargetResolver } from "../delegation-target-resolver.js";
+import { WorkspaceRepo } from "../../../repositories/workspace-repo.js";
+import { WorktreeRepo } from "../../../repositories/worktree-repo.js";
+import { ThreadRepo } from "../../../repositories/thread-repo.js";
+import { ThreadControlApprovalRepo } from "../../../repositories/thread-control-approval-repo.js";
+import { ThreadControlAuditRepo } from "../../../repositories/thread-control-audit-repo.js";
+import { GitService } from "../../projects/index.js";
+import { ProjectWorktreeService } from "../../projects/worktrees/project-worktree-service.js";
+import { ThreadControlService } from "./thread-control-service.js";
+import { ThreadService } from "../lifecycle/thread-service.js";
+import { SettingsService } from "../../../services/settings-service.js";
+import { DelegationTargetResolver } from "../../agents/collaboration/delegation-target-resolver.js";
 
 describe("thread-control DI", () => {
   it("resolves explicit repository and Git dependencies", () => {

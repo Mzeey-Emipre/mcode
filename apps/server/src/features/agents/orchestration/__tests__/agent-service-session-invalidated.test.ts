@@ -25,7 +25,7 @@ import type { GitService } from "../../../projects/index.js";
 import type { AttachmentService } from "../../../../services/attachment-service.js";
 import type { SnapshotService } from "../../../../services/snapshot-service.js";
 import type { MemoryPressureService } from "../../../../services/memory-pressure-service.js";
-import type { ThreadService } from "../../../../services/thread-service.js";
+import type { ThreadService } from "../../../thread-control/index.js";
 import type { SettingsService } from "../../../../services/settings-service.js";
 import type { ProviderAvailabilityService } from "../../../../services/provider-availability-service.js";
 

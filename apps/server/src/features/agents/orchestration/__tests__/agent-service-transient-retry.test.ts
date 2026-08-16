@@ -4,7 +4,7 @@ import { EventEmitter } from "events";
 import type { Thread, IProviderRegistry, TurnRequest } from "@mcode/contracts";
 import { AgentService } from "../agent-service.js";
 import { createCanonicalAgentEventSinkStub } from "../../../../test-utils/canonical-agent-event-sink-stub.js";
-import { ThreadControlMutationReservationService } from "../../../../services/thread-control-mutation-reservation-service.js";
+import { ThreadControlMutationReservationService } from "../../../thread-control/index.js";
 import { NarrativeStore } from "../../../../services/narrative-store.js";
 import { PlanQuestionService } from "../../../../services/plan-question-service.js";
 import type { ThreadRepo } from "../../../../repositories/thread-repo.js";
@@ -18,7 +18,7 @@ import type { SnapshotService } from "../../../../services/snapshot-service.js";
 import type { MemoryPressureService } from "../../../../services/memory-pressure-service.js";
 import type { TaskRepo } from "../../../../repositories/task-repo.js";
 import type { SettingsService } from "../../../../services/settings-service.js";
-import type { ThreadService } from "../../../../services/thread-service.js";
+import type { ThreadService } from "../../../thread-control/index.js";
 import type { ProviderAvailabilityService } from "../../../../services/provider-availability-service.js";
 import type { PlanQuestionAnswersRepo } from "../../../../repositories/plan-question-answers-repo.js";
 

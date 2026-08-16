@@ -18,7 +18,7 @@ import type { SnapshotService } from "../../../../services/snapshot-service.js";
 import type { MemoryPressureService } from "../../../../services/memory-pressure-service.js";
 import type { TaskRepo } from "../../../../repositories/task-repo.js";
 import type { SettingsService } from "../../../../services/settings-service.js";
-import type { ThreadService } from "../../../../services/thread-service.js";
+import type { ThreadService } from "../../../thread-control/index.js";
 import { EventEmitter } from "node:events";
 
 // Mock the broadcast transport so we can assert agent.event emissions

@@ -1,16 +1,16 @@
 import "reflect-metadata";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ThreadCreateBatchResultSchema } from "@mcode/contracts";
-import { MessageRepo } from "../../../../repositories/message-repo.js";
-import { ThreadControlApprovalRepo } from "../../../../repositories/thread-control-approval-repo.js";
-import { ThreadControlAuditRepo } from "../../../../repositories/thread-control-audit-repo.js";
-import { ThreadRepo } from "../../../../repositories/thread-repo.js";
-import { WorkspaceRepo } from "../../../../repositories/workspace-repo.js";
-import { openMemoryDatabase } from "../../../../store/database.js";
-import { InternalThreadControlMcpAuthority } from "../../../../services/thread-control-mcp-authority.js";
-import { createInternalThreadControlMcpSession } from "../../../../services/thread-control-mcp-transport.js";
-import { ThreadControlMutationReservationService } from "../../../../services/thread-control-mutation-reservation-service.js";
-import { ThreadControlService } from "../thread-control-service.js";
+import { MessageRepo } from "../../../repositories/message-repo.js";
+import { ThreadControlApprovalRepo } from "../../../repositories/thread-control-approval-repo.js";
+import { ThreadControlAuditRepo } from "../../../repositories/thread-control-audit-repo.js";
+import { ThreadRepo } from "../../../repositories/thread-repo.js";
+import { WorkspaceRepo } from "../../../repositories/workspace-repo.js";
+import { openMemoryDatabase } from "../../../store/database.js";
+import { InternalThreadControlMcpAuthority } from "./thread-control-mcp-authority.js";
+import { createInternalThreadControlMcpSession } from "./thread-control-mcp-transport.js";
+import { ThreadControlMutationReservationService } from "./thread-control-mutation-reservation-service.js";
+import { ThreadControlService } from "./thread-control-service.js";
 
 vi.mock("../../../../transport/push.js", () => ({ broadcast: vi.fn() }));
 

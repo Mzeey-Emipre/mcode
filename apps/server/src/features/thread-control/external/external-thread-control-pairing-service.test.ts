@@ -6,7 +6,7 @@ import {
   ExternalThreadControlPairingService,
   type ExternalThreadControlAuthenticatedPairing,
   type ExternalThreadControlPairingInput,
-} from "../external-thread-control-pairing-service.js";
+} from "./external-thread-control-pairing-service.js";
 
 interface FakePairingRow {
   pairing_id: string;

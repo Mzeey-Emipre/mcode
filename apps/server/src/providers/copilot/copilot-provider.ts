@@ -30,7 +30,7 @@ import {
 import { logger } from "@mcode/shared";
 import { SettingsService } from "../../services/settings-service.js";
 import { EnvService } from "../../services/env-service.js";
-import { InternalThreadControlMcpRuntime } from "../../services/thread-control-mcp-runtime.js";
+import { InternalThreadControlMcpRuntime } from "../../features/thread-control/index.js";
 import { buildMcodeInstructionPlan, renderMcodeInstructions } from "@mcode/thread-orchestration";
 import { JobObject } from "../../services/job-object.js";
 import { SessionRuntime } from "../../services/session-runtime.js";
@@ -61,7 +61,7 @@ import {
   AgentEventType,
   BROWSER_AUTOMATION_OPERATION_METADATA,
 } from "@mcode/contracts";
-import type { InternalThreadControlMcpHttpConnection } from "../../services/thread-control-mcp-runtime.js";
+import type { InternalThreadControlMcpHttpConnection } from "../../features/thread-control/index.js";
 
 /** Promisified execFile used to retrieve the gh auth token. */
 const execFileAsync = promisify(execFile);

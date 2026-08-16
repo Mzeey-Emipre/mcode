@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { constantTimeCredentialEqual, InternalThreadControlMcpAuthority } from "../thread-control-mcp-authority.js";
+import { constantTimeCredentialEqual, InternalThreadControlMcpAuthority } from "./thread-control-mcp-authority.js";
 
 describe("InternalThreadControlMcpAuthority", () => {
   it("keeps one opaque credential per pooled session while rotating its active turn lease", () => {

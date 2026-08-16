@@ -45,7 +45,7 @@ import { EnvService } from "../../services/env-service.js";
 import { JobObject } from "../../services/job-object.js";
 import { ScopedPreGrantService } from "../../services/scoped-pre-grant.js";
 import { SessionRuntime } from "../../services/session-runtime.js";
-import { InternalThreadControlMcpRuntime } from "../../services/thread-control-mcp-runtime.js";
+import { InternalThreadControlMcpRuntime } from "../../features/thread-control/index.js";
 import { buildMcodeInstructionPlan, renderMcodeInstructions } from "@mcode/thread-orchestration";
 
 /** Merges exact internal and Browser MCP grants used by one Claude session. */

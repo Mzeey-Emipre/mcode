@@ -6,7 +6,7 @@ import { normalizeAgentProviderError } from "./provider-agent-error-normalize.js
 import type { GithubService } from "../../pull-requests/index.js";
 import type { NarrativeStore } from "../../../services/narrative-store.js";
 import { sanitizePublicToolInput } from "../../../services/public-tool-input.js";
-import type { ThreadService } from "../../../services/thread-service.js";
+import type { ThreadService } from "../../thread-control/index.js";
 import type { ThreadRepo } from "../../../repositories/thread-repo.js";
 import type { WorkspaceRepo } from "../../../repositories/workspace-repo.js";
 import { publishParentProviderEvent } from "../events/provider-event-publication.js";
