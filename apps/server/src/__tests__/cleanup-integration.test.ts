@@ -18,7 +18,7 @@ import type { ClaudeProvider } from "../providers/claude/claude-provider";
 import type { TerminalBackend as TerminalService } from "../terminal/terminal-backend.js";
 import type { GitService } from "../services/git-service";
 import { AttachmentService } from "../services/attachment-service";
-import { WorkspaceService } from "../services/workspace-service";
+import { WorkspaceService } from "../features/projects/index.js";
 import type { AgentService } from "../features/agents/index.js";
 import { killDescendantsByName } from "../services/process-kill.js";
 import { getMcodeDir } from "@mcode/shared";

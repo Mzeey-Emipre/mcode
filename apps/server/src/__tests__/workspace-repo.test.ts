@@ -5,7 +5,7 @@ import { openMemoryDatabase } from "../store/database";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
 import { ThreadRepo } from "../repositories/thread-repo";
 import { CleanupJobRepo } from "../repositories/cleanup-job-repo";
-import { WorkspaceService } from "../services/workspace-service";
+import { WorkspaceService } from "../features/projects/index.js";
 import { AttachmentService } from "../services/attachment-service";
 import type { AgentService } from "../features/agents/index.js";
 import { FakeGitExecutor } from "../services/git-executor/fake-git-executor.js";
