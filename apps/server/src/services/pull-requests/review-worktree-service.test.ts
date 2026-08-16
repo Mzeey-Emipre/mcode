@@ -6,7 +6,7 @@ import { openMemoryDatabase } from "../../store/database.js";
 import { WorkspaceRepo } from "../../repositories/workspace-repo.js";
 import { ThreadRepo } from "../../repositories/thread-repo.js";
 import { PullRequestReviewLinkRepo } from "../../repositories/pull-request-review-link-repo.js";
-import type { GitService } from "../git-service.js";
+import type { GitService } from "../../features/projects/index.js";
 import type { AgentService } from "../../features/agents/index.js";
 import type { SettingsService } from "../settings-service.js";
 import type { ProviderAvailabilityService } from "../provider-availability-service.js";

@@ -4,7 +4,7 @@ import { existsSync } from "fs";
 import path from "path";
 import { validateBranchName } from "@mcode/shared";
 import type { WorkspaceRepo } from "../repositories/workspace-repo";
-import { GitService } from "../services/git-service";
+import { GitService } from "../features/projects/index.js";
 import { createMockGitExecutor } from "../services/git-executor/__tests__/mock-git-executor.js";
 
 vi.mock("fs", () => ({

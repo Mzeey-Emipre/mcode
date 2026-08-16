@@ -9,7 +9,7 @@ import { readFileSync, existsSync, statSync, realpathSync } from "fs";
 import { resolve, isAbsolute, sep } from "path";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
 import { ThreadRepo } from "../repositories/thread-repo";
-import { GitService } from "./git-service";
+import { GitService } from "../features/projects/index.js";
 import type { GitExecutor } from "./git-executor/index.js";
 
 /** Handles file listing and content reading for workspaces and threads. */

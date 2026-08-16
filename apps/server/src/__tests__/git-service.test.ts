@@ -25,8 +25,8 @@ vi.mock("@mcode/shared", () => ({
   logger: mockLogger,
 }));
 
-import { GitService } from "../services/git-service";
-import type { WorktreeDirectoryRemover } from "../services/worktree-directory-remover.js";
+import { GitService } from "../features/projects/index.js";
+import type { WorktreeDirectoryRemover } from "../features/projects/index.js";
 import { createMockGitExecutor } from "../services/git-executor/__tests__/mock-git-executor.js";
 
 describe("GitService.reviewComparison", () => {

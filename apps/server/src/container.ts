@@ -38,6 +38,7 @@ import { registerCodexProvider } from "./providers/codex-provider-registration";
 import {
   FilesystemBrowser,
   GitService,
+  ProjectWorktreeService,
   WorktreeDirectoryRemover,
   WorkspaceEnricher,
   WorkspaceService,
@@ -348,6 +349,11 @@ export function setupContainer(mcodeDir: string): typeof container {
   container.register(
     WorktreeDirectoryRemover,
     { useClass: WorktreeDirectoryRemover },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    ProjectWorktreeService,
+    { useClass: ProjectWorktreeService },
     { lifecycle: Lifecycle.Singleton },
   );
   container.register("GitService", {

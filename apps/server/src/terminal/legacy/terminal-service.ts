@@ -17,7 +17,7 @@ import { TerminalReplayBuffer, replayCapBytesForScrollback } from "./terminal-re
 import type { PtyPidRegistry } from "../../services/pty-pid-registry.js";
 import type { ThreadRepo } from "../../repositories/thread-repo";
 import type { WorkspaceRepo } from "../../repositories/workspace-repo";
-import type { GitService } from "../../services/git-service";
+import type { GitService } from "../../features/projects/index.js";
 import type { SettingsService } from "../../services/settings-service";
 import { EnvService } from "../../services/env-service.js";
 import {

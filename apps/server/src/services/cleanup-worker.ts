@@ -15,7 +15,7 @@ import type { CleanupJob } from "../repositories/cleanup-job-repo.js";
 import { ThreadRepo } from "../repositories/thread-repo.js";
 import { ClaudeProvider } from "../providers/claude/claude-provider.js";
 import { TerminalBackend, TERMINAL_BACKEND_TOKEN } from "../terminal/terminal-backend.js";
-import { GitService } from "./git-service.js";
+import { GitService } from "../features/projects/index.js";
 import { AttachmentService } from "./attachment-service.js";
 import { killDescendantsByName } from "./process-kill.js";
 import { WorkspaceRepo } from "../repositories/workspace-repo.js";

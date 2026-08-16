@@ -63,7 +63,7 @@ import { TurnSnapshotRepo } from "../../../repositories/turn-snapshot-repo";
 import type Database from "better-sqlite3";
 import { TaskRepo, type StoredTask } from "../../../repositories/task-repo";
 import { PlanQuestionAnswersRepo } from "../../../repositories/plan-question-answers-repo";
-import { GitService } from "../../../services/git-service";
+import { GitService } from "../../projects/index.js";
 import { AttachmentService } from "../../../services/attachment-service";
 import { FileService } from "../../../services/file-service";
 import { SnapshotService } from "../../../services/snapshot-service";

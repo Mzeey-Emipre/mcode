@@ -7,6 +7,8 @@ describe("projects feature boundary", () => {
     expect(Object.keys(projects).sort()).toStrictEqual([
       "FilesystemBrowser",
       "GitService",
+      "ProjectWorktreeService",
+      "PullRequestReviewGitError",
       "WorkspaceEnricher",
       "WorkspaceService",
       "WorktreeDirectoryRemover",

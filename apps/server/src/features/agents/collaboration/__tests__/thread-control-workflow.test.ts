@@ -45,7 +45,7 @@ describe("internal thread-control MCP workflow", () => {
       listWorktrees: vi.fn().mockResolvedValue([{ path: "C:/private/child", name: "main", branch: "main", managed: false }]),
       getCurrentBranch: vi.fn().mockResolvedValue("main"),
     };
-    const threadService = {
+    const projectWorktreeService = {
       provisionWorktree: vi.fn().mockImplementation(async (threadId: string) => ({
         ...threads.findById(threadId),
         mode: "worktree",
@@ -102,7 +102,7 @@ describe("internal thread-control MCP workflow", () => {
       worktrees as never,
       git as never,
       threads,
-      threadService as never,
+      projectWorktreeService as never,
       agentService as never,
       settings as never,
       providers as never,

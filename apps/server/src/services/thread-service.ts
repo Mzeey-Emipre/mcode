@@ -5,18 +5,13 @@
  */
 
 import { injectable, inject } from "tsyringe";
-import { validateBranchName, sanitizeBranchForFolder, logger } from "@mcode/shared";
+import { validateBranchName, logger } from "@mcode/shared";
 import type { Thread, RecentThread, ThreadMode, ContextWindowMode } from "@mcode/contracts";
 import { ThreadRepo } from "../repositories/thread-repo";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
-import { GitService } from "./git-service";
-import { CleanupJobRepo } from "../repositories/cleanup-job-repo";
+import { GitService, ProjectWorktreeService } from "../features/projects/index.js";
 import { AttachmentService } from "./attachment-service";
 import { HandoffStorage } from "./handoff/handoff-storage.js";
-
-function managedWorktreeName(ref: string, threadId: string): string {
-  return `${sanitizeBranchForFolder(ref).slice(0, 91)}-${threadId.slice(0, 8)}`;
-}
 
 /** Handles thread creation, deletion, worktree provisioning, and lifecycle. */
 @injectable()
@@ -25,7 +20,7 @@ export class ThreadService {
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
     @inject(WorkspaceRepo) private readonly workspaceRepo: WorkspaceRepo,
     @inject(GitService) private readonly gitService: GitService,
-    @inject(CleanupJobRepo) private readonly cleanupJobRepo: CleanupJobRepo,
+    @inject(ProjectWorktreeService) private readonly projectWorktreeService: ProjectWorktreeService,
     @inject(AttachmentService) private readonly attachmentService: AttachmentService,
     @inject(HandoffStorage) private readonly handoffStorage: HandoffStorage,
   ) {}
@@ -64,63 +59,13 @@ export class ThreadService {
     );
 
     if (threadMode === "worktree") {
-      const workspace = this.workspaceRepo.findById(workspaceId);
-      if (!workspace) {
-        this.threadRepo.hardDelete(thread.id);
-        throw new Error(`Workspace not found: ${workspaceId}`);
-      }
-
       try {
-        const worktreeName = managedWorktreeName(branch, thread.id);
-        const info = await this.gitService.createWorktree(
-          workspace.path,
-          worktreeName,
+        return await this.projectWorktreeService.provisionThreadWorktree(
+          thread,
+          workspaceId,
           branch,
-          { branchless: options.branchless },
+          options,
         );
-
-        this.threadRepo.updateStatus(thread.id, "active");
-        const updated = this.threadRepo.updateWorktreePath(
-          thread.id,
-          info.path,
-        );
-
-        if (!updated) {
-          try {
-            const rollbackOptions = info.createdBranch
-              ? { branchName: branch }
-              : { deleteBranch: false };
-            const cleaned = await this.gitService.removeWorktree(
-              workspace.path,
-              worktreeName,
-              rollbackOptions,
-            );
-            if (!cleaned) {
-              logger.warn("Rollback worktree cleanup returned false during thread creation", {
-                threadId: thread.id,
-                worktreeName,
-                workspacePath: workspace.path,
-              });
-            }
-          } catch (err) {
-            logger.warn("Rollback worktree cleanup failed during thread creation", {
-              threadId: thread.id,
-              worktreeName,
-              workspacePath: workspace.path,
-              error: err instanceof Error ? err.message : String(err),
-            });
-          }
-          this.threadRepo.hardDelete(thread.id);
-          throw new Error(
-            `Failed to persist worktree path for thread ${thread.id}`,
-          );
-        }
-
-        return {
-          ...thread,
-          worktree_path: info.path,
-          warnings: info.warnings.length > 0 ? info.warnings : undefined,
-        };
       } catch (err) {
         this.threadRepo.hardDelete(thread.id);
         throw err;
@@ -128,63 +73,6 @@ export class ThreadService {
     }
 
     return thread;
-  }
-
-  /** Provision a new worktree for an already-persisted delegated thread. */
-  async provisionWorktree(
-    threadId: string,
-    workspaceId: string,
-    placement: { baseRef: string; branchName?: string },
-  ): Promise<Thread & { warnings?: string[] }> {
-    const thread = this.threadRepo.findById(threadId);
-    if (!thread || thread.workspace_id !== workspaceId || thread.mode !== "worktree") {
-      throw new Error("Delegated worktree thread is not available for provisioning");
-    }
-    if (thread.worktree_path) {
-      throw new Error("Delegated worktree thread is already provisioned");
-    }
-    validateBranchName(placement.baseRef);
-    if (placement.branchName) validateBranchName(placement.branchName);
-    const workspace = this.workspaceRepo.findById(workspaceId);
-    if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
-
-    const worktreeRef = placement.branchName ?? placement.baseRef;
-    const worktreeName = managedWorktreeName(worktreeRef, thread.id);
-    const info = await this.gitService.createWorktree(
-      workspace.path,
-      worktreeName,
-      worktreeRef,
-      {
-        branchless: placement.branchName === undefined,
-        ...(placement.branchName ? { baseRef: placement.baseRef } : {}),
-      },
-    );
-    const updated = this.threadRepo.updateWorktreePath(thread.id, info.path);
-    if (!updated) {
-      await this.gitService.removeWorktree(workspace.path, worktreeName, {
-        ...(info.createdBranch ? { branchName: worktreeRef } : { deleteBranch: false }),
-      });
-      throw new Error(`Failed to persist worktree path for thread ${thread.id}`);
-    }
-    this.threadRepo.updateStatus(thread.id, "active");
-    return {
-      ...thread,
-      worktree_path: info.path,
-      warnings: info.warnings.length > 0 ? info.warnings : undefined,
-    };
-  }
-
-  /** Idempotently remove only the deterministic managed worktree for interrupted provisioning. */
-  async cleanupInterruptedProvisioning(
-    threadId: string,
-    workspaceId: string,
-    placement: { baseRef: string; branchName?: string },
-  ): Promise<boolean> {
-    const workspace = this.workspaceRepo.findById(workspaceId);
-    if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
-    const ref = placement.branchName ?? placement.baseRef;
-    const name = managedWorktreeName(ref, threadId);
-    return this.gitService.removeWorktree(workspace.path, name, { deleteBranch: false });
   }
 
   /**
@@ -256,52 +144,7 @@ export class ThreadService {
     if (!thread || thread.deleted_at !== null) return false;
 
     if (cleanupWorktree && thread.worktree_path && thread.worktree_managed) {
-      const worktreePath = thread.worktree_path;
-      const workspace = this.workspaceRepo.findById(thread.workspace_id);
-      if (workspace) {
-        const current = this.threadRepo.findById(threadId);
-        if (
-          current
-          && current.deleted_at === null
-          && current.worktree_managed
-          && current.worktree_path === worktreePath
-        ) {
-          const siblings = this.threadRepo.listActiveSiblingWorktreePaths(threadId);
-          const safety = await this.gitService.assessWorktreeRemovalSafety(
-            current.worktree_path,
-            siblings.paths,
-            siblings.truncated,
-          );
-          if (!safety.safe) {
-            logger.info("Worktree cleanup skipped because ownership is not exclusive", {
-              threadId,
-              worktreePath: current.worktree_path,
-              reason: safety.reason,
-            });
-          } else {
-            // The cleanup worker repeats this ownership check while holding the
-            // repository lock. Keeping that lock out of the foreground RPC
-            // prevents an unrelated cleanup from stalling the delete dialog.
-            this.cleanupJobRepo.insert({
-              thread_id: threadId,
-              workspace_path: workspace.path,
-              worktree_path: current.worktree_path,
-              branch: current.branch,
-            });
-            logger.info("Worktree cleanup job enqueued", {
-              threadId,
-              worktreePath: current.worktree_path,
-            });
-            if (this.threadRepo.softDelete(threadId)) return true;
-          }
-        }
-      } else {
-        logger.warn("Worktree cleanup skipped - workspace not found, directory will not be removed", {
-          threadId,
-          workspaceId: thread.workspace_id,
-          worktreePath: thread.worktree_path,
-        });
-      }
+      if (await this.projectWorktreeService.scheduleCleanup(threadId)) return true;
     } else if (cleanupWorktree && thread.worktree_path) {
       logger.info("Worktree cleanup skipped because the checkout is reused or unmanaged", {
         threadId,

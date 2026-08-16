@@ -13,7 +13,7 @@ import { HandoffStorage } from "../services/handoff/handoff-storage";
 import type { AgentService } from "../features/agents/index.js";
 import type { ClaudeProvider } from "../providers/claude/claude-provider";
 import type { TerminalBackend as TerminalService } from "../terminal/terminal-backend.js";
-import type { GitService } from "../services/git-service";
+import type { GitService } from "../features/projects/index.js";
 import { killDescendantsByName } from "../services/process-kill";
 
 vi.mock("fs", async (importOriginal) => {

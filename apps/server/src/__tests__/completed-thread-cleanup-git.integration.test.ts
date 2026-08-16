@@ -10,7 +10,7 @@ import { WorkspaceRepo } from "../repositories/workspace-repo";
 import { ThreadRepo } from "../repositories/thread-repo";
 import { CleanupJobRepo, MAX_CLEANUP_ATTEMPTS } from "../repositories/cleanup-job-repo";
 import { CleanupWorker } from "../services/cleanup-worker";
-import { GitService } from "../services/git-service";
+import { GitService } from "../features/projects/index.js";
 import { RealGitExecutor } from "../services/git-executor/real-git-executor";
 import type { ClaudeProvider } from "../providers/claude/claude-provider";
 import type { TerminalBackend } from "../terminal/terminal-backend";
