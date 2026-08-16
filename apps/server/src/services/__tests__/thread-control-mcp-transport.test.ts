@@ -3,7 +3,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { InternalThreadControlMcpAuthority } from "../thread-control-mcp-authority.js";
 import { createInternalThreadControlMcpSession } from "../thread-control-mcp-transport.js";
-import type { ThreadControlService } from "../../features/agents/index.js";
+import type { ThreadControlService } from "../../features/thread-control/index.js";
 
 describe("internal thread-control MCP transport", () => {
   it("dispatches workspace_search through an active bearer lease", async () => {
