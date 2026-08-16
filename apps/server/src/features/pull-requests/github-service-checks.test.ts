@@ -1,7 +1,7 @@
 import "reflect-metadata";
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { EventEmitter } from "events";
-import type { WorkspaceRepo } from "../repositories/workspace-repo";
+import type { WorkspaceRepo } from "../../repositories/workspace-repo";
 
 const { mockExecFile } = vi.hoisted(() => ({
   mockExecFile: vi.fn(),
@@ -14,7 +14,7 @@ vi.mock("child_process", () => ({
   execFile: mockExecFile,
 }));
 
-vi.mock("../services/process-kill.js", () => ({
+vi.mock("../../services/process-kill.js", () => ({
   killProcessTree: mockKillProcessTree,
 }));
 
@@ -23,7 +23,7 @@ vi.mock("@mcode/shared", () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
-import { GithubService } from "../services/github-service";
+import { GithubService } from "./github-service.js";
 
 type CallbackFn = (error: Error | null, stdout: string, stderr: string) => void;
 
