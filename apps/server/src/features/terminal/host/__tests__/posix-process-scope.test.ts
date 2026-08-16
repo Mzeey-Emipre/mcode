@@ -35,6 +35,23 @@ describe("POSIX PTY process scope", () => {
     expect(dependencies.signalProcessGroup).not.toHaveBeenCalled();
   });
 
+  it("polls until the PTY root appears as its session leader", async () => {
+    const readProcessTable = vi
+      .fn<PosixProcessScopeDependencies["readProcessTable"]>()
+      .mockResolvedValueOnce([
+        { pid: 400, processGroupId: 399, sessionId: 400 },
+      ])
+      .mockResolvedValueOnce([
+        { pid: 400, processGroupId: 400, sessionId: 400 },
+      ]);
+    const dependencies = createDependencies({ readProcessTable });
+    const scope = createPosixProcessScope(400, dependencies);
+
+    await expect(scope.establish()).resolves.toBe(true);
+    expect(dependencies.sleep).toHaveBeenCalledTimes(1);
+    expect(dependencies.sleep).toHaveBeenCalledWith(25);
+  });
+
   it("inspects every member of the contained process group", async () => {
     const dependencies = createDependencies({
       readProcessTable: vi.fn(async () => [

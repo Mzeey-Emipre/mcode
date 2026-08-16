@@ -7,6 +7,7 @@ const PROCESS_TABLE_TIMEOUT_MS = 1_000;
 const PROCESS_TABLE_MAX_BYTES = 1_048_576;
 const GRACEFUL_CLOSE_TIMEOUT_MS = 3_000;
 const FORCED_CLOSE_TIMEOUT_MS = 5_000;
+const ESTABLISH_TIMEOUT_MS = 500;
 const CLOSE_POLL_INTERVAL_MS = 25;
 
 interface PosixProcessRecord {
@@ -113,15 +114,19 @@ export function createPosixProcessScope(
     processGroupId: String(rootPid),
     establish: async () => {
       if (!Number.isSafeInteger(rootPid) || rootPid <= 1) return false;
-      const root = (await session.readMembers()).find(
-        (record) => record.pid === rootPid,
-      );
-      if (root?.processGroupId !== rootPid || root.sessionId !== rootPid) {
-        return false;
+      const deadlineMs = dependencies.monotonicNow() + ESTABLISH_TIMEOUT_MS;
+      while (true) {
+        const root = (await session.readMembers()).find(
+          (record) => record.pid === rootPid,
+        );
+        if (root?.processGroupId === rootPid && root.sessionId === rootPid) {
+          if (!signal(0)) return false;
+          established = true;
+          return true;
+        }
+        if (dependencies.monotonicNow() >= deadlineMs) return false;
+        await dependencies.sleep(CLOSE_POLL_INTERVAL_MS);
       }
-      if (!signal(0)) return false;
-      established = true;
-      return true;
     },
     hasChildren: async () => {
       if (!established)
