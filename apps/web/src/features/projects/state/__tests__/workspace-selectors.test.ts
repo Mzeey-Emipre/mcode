@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { getWorkspaceThread } from "@/stores/workspace-selectors";
+import { getWorkspaceThread } from "../workspace-selectors";
 import type { WorkspaceThread } from "@/lib/workspace-thread";
 
 function thread(id: string, title: string): WorkspaceThread {

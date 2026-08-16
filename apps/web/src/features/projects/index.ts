@@ -1,3 +1,23 @@
 /** Public Projects feature surface for workbench composition. */
-export { ProjectTree } from "@/components/sidebar/ProjectTree";
-export { ProjectsView } from "@/components/palette/views/ProjectsView";
+export { PathLabel } from "./PathLabel";
+export { ProjectRow } from "./ProjectRow";
+export { ProjectTree } from "./ProjectTree";
+export { ProjectsView } from "./ProjectsView";
+export {
+  __clearPendingThreadCreationsForTests,
+  __resetThreadListMutationEpochForTests,
+  useWorkspaceStore,
+} from "./state/workspaceStore";
+export type { WorkspaceRpcCall } from "./state/workspaceStore";
+export {
+  getWorkspaceThread,
+  readWorkspaceThread,
+  useActiveWorkspaceThread,
+  useInterruptedThreadIds,
+  useParentThreadExists,
+  useWorkspaceThread,
+} from "./state/workspace-selectors";
+export {
+  useProjectSelectorStore,
+} from "./state/projectSelectorStore";
+export type { WorkspaceEnrichmentData } from "./state/projectSelectorStore";

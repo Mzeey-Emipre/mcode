@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { useWorkspaceStore, type WorkspaceRpcCall } from "../workspaceStore";
-import { useDiffStore } from "../diffStore";
+import { useDiffStore } from "@/stores/diffStore";
 import type { Workspace } from "@/transport/types";
 import { rememberComposerMode } from "@/lib/composer-mode-preference";
 import type { WorkspaceThread } from "@/lib/workspace-thread";

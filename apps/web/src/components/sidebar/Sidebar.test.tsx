@@ -20,13 +20,14 @@ vi.mock("@/stores/uiStore", () => ({
     }),
 }));
 
-vi.mock("@/stores/workspaceStore", () => ({
+vi.mock("@/features/projects/state/workspaceStore", () => ({
   useWorkspaceStore: Object.assign(vi.fn(), {
     getState: () => ({ beginNewThread: vi.fn() }),
   }),
 }));
 
-vi.mock("./ProjectTree", () => ({
+vi.mock("@/features/projects", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/features/projects")>()),
   ProjectTree: () => <div data-testid="project-tree" />,
 }));
 

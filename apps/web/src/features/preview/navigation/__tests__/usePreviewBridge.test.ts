@@ -25,7 +25,7 @@ vi.mock("@/stores/diffStore", () => ({
   ),
 }));
 
-vi.mock("@/stores/workspaceStore", () => ({
+vi.mock("@/features/projects/state/workspaceStore", () => ({
   useWorkspaceStore: vi.fn(
     (
       selector: (s: {

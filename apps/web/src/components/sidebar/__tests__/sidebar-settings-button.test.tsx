@@ -29,7 +29,7 @@ describe('Sidebar "Edit settings.json" button', () => {
     };
 
     // Register non-hoisted mocks for heavy transitive deps.
-    vi.doMock("@/components/sidebar/ProjectTree", () => ({
+    vi.doMock("@/features/projects/ProjectTree", () => ({
       ProjectTree: () =>
         React.createElement("div", { "data-testid": "project-tree" }),
     }));

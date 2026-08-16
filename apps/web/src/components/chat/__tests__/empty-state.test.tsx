@@ -9,7 +9,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 // Store mocks must be declared before importing the component under test.
 
-vi.mock("@/stores/workspaceStore", () => ({
+vi.mock("@/features/projects/state/workspaceStore", () => ({
   useWorkspaceStore: vi.fn((selector: (s: unknown) => unknown) =>
     selector(defaultWorkspaceState())
   ),
@@ -62,7 +62,7 @@ vi.mock("@/components/chat/CliErrorBanner", () => ({
   isCliError: () => false,
 }));
 
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { ChatView } from "@/features/conversation";
 
 /** Produces a workspace state that shows the new-thread empty state. */

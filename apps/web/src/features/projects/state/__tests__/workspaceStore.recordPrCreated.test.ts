@@ -4,8 +4,8 @@ const { mockDeleteThread } = vi.hoisted(() => ({
   mockDeleteThread: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("../transport", async (importOriginal) => {
-  const original = await importOriginal<typeof import("../transport")>();
+vi.mock("@/transport", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/transport")>();
   return {
     ...original,
     getTransport: () => ({
@@ -14,8 +14,8 @@ vi.mock("../transport", async (importOriginal) => {
   };
 });
 
-import { useWorkspaceStore } from "../stores/workspaceStore";
-import type { Thread } from "../transport";
+import { useWorkspaceStore } from "../workspaceStore";
+import type { Thread } from "@/transport";
 
 const baseThread = {
   id: "t1",

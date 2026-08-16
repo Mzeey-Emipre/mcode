@@ -18,21 +18,21 @@ const {
 vi.mock("@/transport", () => ({
   getTransport: () => ({ completeThread, reopenThread }),
 }));
-vi.mock("../previewTabsStore", () => ({
+vi.mock("@/stores/previewTabsStore", () => ({
   usePreviewTabsStore: { getState: () => ({ clearScope }) },
 }));
-vi.mock("../previewReferenceQueueStore", () => ({
+vi.mock("@/stores/previewReferenceQueueStore", () => ({
   usePreviewReferenceQueueStore: {
     getState: () => ({ clearThread: clearPreviewReferences }),
   },
 }));
-vi.mock("../browserAutomationStore", () => ({
+vi.mock("@/stores/browserAutomationStore", () => ({
   releaseBrowserAutomationThreadScope: releaseBrowserScope,
   releaseBrowserAutomationWorkspaceScopes: vi.fn(),
 }));
 
-import { useTerminalStore } from "../terminalStore";
-import { useDiffStore } from "../diffStore";
+import { useTerminalStore } from "@/stores/terminalStore";
+import { useDiffStore } from "@/stores/diffStore";
 import { useWorkspaceStore } from "../workspaceStore";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {

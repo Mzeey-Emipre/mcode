@@ -23,7 +23,7 @@ vi.mock("@/transport", () => ({
     stopThreadControl: vi.fn(),
   }),
 }));
-vi.mock("@/stores/workspaceStore", () => ({
+vi.mock("@/features/projects/state/workspaceStore", () => ({
   useWorkspaceStore: { getState: () => ({
     activeWorkspaceId: null,
     threads: [],

@@ -5,7 +5,7 @@ import {
 } from "@/stores/thread-store-test-utils";
 import { createEmptyThreadRecord, patchThreadRecord, type ThreadRecord } from "@/stores/thread-record";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { useWorkspaceStore, __resetThreadListMutationEpochForTests, __clearPendingThreadCreationsForTests } from "@/stores/workspaceStore";
+import { useWorkspaceStore, __resetThreadListMutationEpochForTests, __clearPendingThreadCreationsForTests } from "../workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useDiffStore } from "@/stores/diffStore";
 import { usePreviewReferenceQueueStore } from "@/stores/previewReferenceQueueStore";
@@ -14,7 +14,7 @@ import {
   mockTransport,
   createMockWorkspace,
   createMockThread,
-} from "./mocks/transport";
+} from "../../../../__tests__/mocks/transport";
 import type { CreateAndSendResult, TurnRuntimeSnapshot } from "@mcode/contracts";
 
 function createMockCreateAndSendResult(

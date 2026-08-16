@@ -38,7 +38,7 @@ beforeAll(() => {
   Element.prototype.scrollIntoView = () => {};
 });
 
-vi.mock("@/stores/workspaceStore", () => ({
+vi.mock("../state/workspaceStore", () => ({
   useWorkspaceStore: (selector: (s: unknown) => unknown) =>
     selector({
       workspaces: [hoisted.pinnedWorkspace],
@@ -47,7 +47,7 @@ vi.mock("@/stores/workspaceStore", () => ({
     }),
 }));
 
-vi.mock("@/stores/projectSelectorStore", () => ({
+vi.mock("../state/projectSelectorStore", () => ({
   useProjectSelectorStore: (selector: (s: unknown) => unknown) =>
     selector({
       enrich: hoisted.enrich,

@@ -6,7 +6,7 @@ import type { Thread } from "@/transport/types";
 // through the exported ProjectTree. Stores and the virtualizer are mocked so
 // the list renders items in the jsdom environment.
 
-vi.mock("@/stores/workspaceStore", () => ({
+vi.mock("../state/workspaceStore", () => ({
   useWorkspaceStore: vi.fn((selector: (s: unknown) => unknown) =>
     selector({
       workspaces: [],
@@ -124,10 +124,10 @@ vi.mock("@tanstack/react-virtual", () => ({
 }));
 
 // Import after mocks are registered.
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "../state/workspaceStore";
 import { useUiStore } from "@/stores/uiStore";
 import { prefetchOnPointerDown } from "@/features/conversation";
-import { ProjectTree } from "./ProjectTree";
+import { ProjectTree } from "../ProjectTree";
 
 /** Build a minimal Thread fixture. */
 type TestWorkspaceThread = Thread & { clientPreparing?: boolean };
