@@ -2,7 +2,7 @@
 import { Popover, PopoverContent, PopoverTrigger } from "../ui/popover";
 import { useThreadStore } from "../../stores/threadStore";
 import { useThreadRecord } from "../../stores/thread-selectors";
-import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import type { QuotaCategory } from "@mcode/contracts";
 import { useEffect, useRef, type ReactNode } from "react";
 import { formatUsageResetText } from "@/lib/usage-reset-format";

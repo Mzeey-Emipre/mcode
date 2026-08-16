@@ -1,7 +1,7 @@
 import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useTerminalStore } from "@/features/terminal/state/terminalStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { TerminalStatusIndicator } from "@/components/chat/TerminalStatusIndicator";
 
 const executeCommandMock = vi.fn((_id: string) => true);

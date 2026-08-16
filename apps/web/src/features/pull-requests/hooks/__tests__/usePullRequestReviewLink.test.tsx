@@ -2,7 +2,7 @@ import type { PullRequestReviewLink } from "@mcode/contracts";
 import { render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { usePullRequestReviewLink } from "../usePullRequestReviewLink";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import type { PullRequestReviewTaskTransport } from "@/transport/pull-request-review-task";
 
 const reviewLink: PullRequestReviewLink = {

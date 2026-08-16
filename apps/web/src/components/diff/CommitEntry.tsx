@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { getTransport } from "@/transport";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import type { GitCommit } from "@mcode/contracts";
 import { FileList } from "./FileList";
 

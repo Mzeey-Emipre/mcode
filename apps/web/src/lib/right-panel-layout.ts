@@ -1,6 +1,6 @@
 import { useDiffStore } from "@/stores/diffStore";
 import { useUiStore } from "@/stores/uiStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import {
   canFitSideBySidePanel,
   getContentRowWidth,

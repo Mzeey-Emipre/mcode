@@ -15,7 +15,7 @@ vi.mock("@/transport", () => ({ getTransport: () => transport }));
 import { TerminalSection } from "../TerminalSection";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useTerminalSettingsStore } from "../terminalSettingsStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 
 describe("TerminalSection", () => {
   beforeEach(() => {

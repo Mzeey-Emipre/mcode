@@ -3,7 +3,7 @@ import { PanelRight } from "lucide-react";
 import { OpenInAppButton } from "./OpenInAppButton";
 import { ThreadOverview } from "./ThreadOverview";
 import { useDiffStore } from "@/stores/diffStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { toggleRightPanelAdaptive } from "@/lib/right-panel-layout";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";

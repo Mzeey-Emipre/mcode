@@ -8,7 +8,7 @@ import {
 import type { PermissionRequest, PermissionDecision } from "@mcode/contracts";
 import { pushEmitter } from "./ws-transport";
 import { getTransport } from "@/transport";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { useDiffStore } from "@/stores/diffStore";
 import { refreshTurnSnapshotsAfterPersist } from "@/lib/turn-snapshot-refresh";
 import { useThreadStore } from "@/stores/threadStore";

@@ -4,13 +4,13 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentEvent } from "@mcode/contracts";
 import { Composer } from "../Composer";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import {
   usePreviewAnnotationStore,
   type SavedDiffAnnotation,
   type SavedPreviewAnnotation,
-} from "@/stores/previewAnnotationStore";
-import { usePreviewDesignModeStore } from "@/stores/previewDesignModeStore";
+} from "@/features/preview/state/previewAnnotationStore";
+import { usePreviewDesignModeStore } from "@/features/preview/state/previewDesignModeStore";
 import { useQueueStore } from "@/stores/queueStore";
 import { resetThreadStoreForTests, seedThreadRecord } from "@/stores/thread-store-test-utils";
 import { useThreadStore } from "@/stores/threadStore";

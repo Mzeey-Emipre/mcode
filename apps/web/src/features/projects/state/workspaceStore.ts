@@ -21,12 +21,12 @@ import { useQueueStore } from "@/stores/queueStore";
 import { useTaskStore } from "@/stores/taskStore";
 import { useComposerDraftStore } from "@/stores/composerDraftStore";
 import { useDiffStore } from "@/stores/diffStore";
-import { usePreviewReferenceQueueStore } from "@/stores/previewReferenceQueueStore";
-import { usePreviewTabsStore } from "@/stores/previewTabsStore";
+import { usePreviewReferenceQueueStore } from "@/features/preview/state/previewReferenceQueueStore";
+import { usePreviewTabsStore } from "@/features/preview/state/previewTabsStore";
 import {
   releaseBrowserAutomationThreadScope,
   releaseBrowserAutomationWorkspaceScopes,
-} from "@/stores/browserAutomationStore";
+} from "@/features/preview/automation/browserAutomationStore";
 import type { ContextWindowMode, NamingMode, ReasoningLevel, InteractionMode, OrchestrationMode } from "@mcode/contracts";
 import { sanitizeCustomBranchInput } from "@/lib/branch-name";
 import { isDetachedWorktree, normalizeWorktreePath } from "@/lib/worktree";

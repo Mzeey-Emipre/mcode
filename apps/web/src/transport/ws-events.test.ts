@@ -8,7 +8,7 @@ vi.mock("@/transport", () => ({
 
 import { pushEmitter } from "./ws-transport";
 import { startPushListeners, stopPushListeners } from "./ws-events";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { useProviderCatalogStore } from "@/stores/providerCatalogStore";
 import { useDiffStore } from "@/stores/diffStore";
 import { useThreadStore } from "@/stores/threadStore";

@@ -6,7 +6,7 @@ import {
   minContentWidthForSideBySidePanel,
 } from "@/lib/composer-layout";
 import { COMPOSER_MIN_WIDTH, useDiffStore } from "@/stores/diffStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 
 /** Top-level content surface displayed beside the application sidebar. */
 export type PrimarySurface = "chat" | "pullRequests";

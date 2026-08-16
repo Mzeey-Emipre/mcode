@@ -1,7 +1,7 @@
 import { isMcodeWorkspacePreviewUrl } from "@mcode/contracts";
 import type { BrowserTabInfo } from "@mcode/contracts";
 import { useDiffStore } from "@/stores/diffStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { showRightPanelAdaptive } from "@/lib/right-panel-layout";
 
 /** Returns true when the event is a Ctrl+click (Windows/Linux) or Cmd+click (macOS). */

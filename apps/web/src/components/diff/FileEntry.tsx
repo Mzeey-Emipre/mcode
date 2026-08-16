@@ -2,7 +2,7 @@ import { memo, useState, useEffect, useRef, useMemo, useId } from "react";
 import { ChevronsDownUp, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useDiffStore, type SelectedFile } from "@/stores/diffStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { getTransport } from "@/transport";
 import { parseDiffLines, isMarkdownFile, getLeadingHiddenLineCount } from "@/lib/diff-parser";
 import { loadFileDiff } from "@/lib/load-file-diff";

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { MarkdownContent } from "../components/chat/MarkdownContent";
 import { CodeBlock } from "../components/chat/CodeBlock";
-import { useWorkspaceStore } from "../stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { useDiffStore } from "../stores/diffStore";
 import { createMockWorkspace, createMockThread } from "./mocks/transport";
 

@@ -7,7 +7,7 @@ import type {
   ReasoningLevel,
   OrchestrationMode,
 } from "@mcode/contracts";
-import { releaseBrowserCaptureSpills } from "@/lib/browser-capture-spill";
+import { releaseBrowserCaptureSpills } from "@/features/preview/capture/browser-capture-spill";
 
 /** A message waiting to be sent while the thread is busy with another turn. */
 export interface QueuedMessage {

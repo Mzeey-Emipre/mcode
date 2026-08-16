@@ -11,7 +11,7 @@ import {
   CommandList,
 } from "@/components/ui/command";
 import { getTransport } from "@/transport";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { useDiffStore } from "@/stores/diffStore";
 
 /** How many commits to load into the picker. Matches the Commits tab's window. */

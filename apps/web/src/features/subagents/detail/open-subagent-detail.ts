@@ -1,6 +1,6 @@
 import { showRightPanelAdaptive } from "@/lib/right-panel-layout";
 import { useDiffStore } from "@/stores/diffStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { selectSubagentDetail, type SubagentRosterTab } from "../state";
 
 /** Opens the active thread's Subagents panel. */

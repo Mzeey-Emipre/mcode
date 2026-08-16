@@ -20,7 +20,7 @@ import {
   OpenCodeIcon,
 } from "@/components/chat/ProviderIcons";
 import { getTransport } from "@/transport";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { threadControlKey, useThreadControlStore } from "@/stores/threadControlStore";
 
 const STATUS_LABELS: Record<ThreadObservedState["status"], string> = {

@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { useTaskStore } from "@/stores/taskStore";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { TaskGroup } from "./TaskGroup";

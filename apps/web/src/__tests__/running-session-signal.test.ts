@@ -7,7 +7,7 @@ import {
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useThreadStore } from "@/stores/threadStore";
 import { useTaskStore } from "@/stores/taskStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { createMockThread } from "./mocks/transport";
 import type { GoalState } from "@mcode/contracts";
 

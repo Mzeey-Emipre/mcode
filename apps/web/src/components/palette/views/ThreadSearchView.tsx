@@ -17,7 +17,7 @@ import {
   type ThreadFilters,
   type ThreadSortField,
 } from "@/stores/sidebarSearchStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useShallow } from "zustand/shallow";

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReviewComparison, ReviewFileChange } from "@mcode/contracts";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { useDiffStore } from "@/stores/diffStore";
 import { getTransport } from "@/transport";
 import { DiffToolbar } from "./DiffToolbar";

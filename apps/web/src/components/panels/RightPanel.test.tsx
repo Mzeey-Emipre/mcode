@@ -122,7 +122,7 @@ import { reconcileWarmPreviewScopes, RightPanel } from "./RightPanel";
 import { createRightPanelState, useDiffStore } from "@/stores/diffStore";
 import { useTerminalStore } from "@/features/terminal/state/terminalStore";
 import { useUiStore } from "@/stores/uiStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { useBrowserAutomationStore } from "@/features/preview";
 
 describe("RightPanel", () => {

@@ -12,7 +12,7 @@ import {
 import { FileEntry } from "./FileEntry";
 import { FileTypeIcon } from "@/components/ui/file-type-icon";
 import { useDiffStore, type SelectedFile } from "@/stores/diffStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {

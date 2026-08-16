@@ -10,7 +10,7 @@ import {
   browserAutomationTargetKey,
   useBrowserAutomationStore,
 } from "@/features/preview";
-import { previewTabsScopeKey, usePreviewTabsStore } from "@/stores/previewTabsStore";
+import { previewTabsScopeKey, usePreviewTabsStore } from "@/features/preview/state/previewTabsStore";
 import type { BrowserSessionLifecycleTab } from "@/features/preview";
 import { useDiffStore } from "@/stores/diffStore";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";

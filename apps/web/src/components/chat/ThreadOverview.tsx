@@ -68,7 +68,7 @@ import type {
 } from "@/features/preview";
 import { useThreadStore } from "@/stores/threadStore";
 import { useThreadRecord } from "@/stores/thread-selectors";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { useOverviewStore } from "@/stores/overviewStore";
 import { usePlanStore } from "@/stores/planStore";
 import { executeCommand, registerCommand } from "@/lib/command-registry";

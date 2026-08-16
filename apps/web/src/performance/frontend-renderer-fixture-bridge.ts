@@ -1,7 +1,7 @@
 import { useDiffStore } from "@/stores/diffStore";
 import { createEmptyThreadRecord } from "@/stores/thread-record";
 import { useThreadStore } from "@/stores/threadStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { resetWorkerForPerformance } from "@/lib/shiki-worker-client";
 import { resetChatHighlightCoordinator } from "@/lib/chat-highlight-coordinator";
 import {

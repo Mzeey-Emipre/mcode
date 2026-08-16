@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { PullRequestReviewLink } from "@mcode/contracts";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import {
   getPullRequestReviewTaskTransport,
   type PullRequestReviewTaskTransport,

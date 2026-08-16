@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useDiffStore } from "@/stores/diffStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 
 const mocks = vi.hoisted(() => ({ showRightPanelAdaptive: vi.fn() }));
 vi.mock("@/lib/right-panel-layout", () => ({ showRightPanelAdaptive: mocks.showRightPanelAdaptive }));

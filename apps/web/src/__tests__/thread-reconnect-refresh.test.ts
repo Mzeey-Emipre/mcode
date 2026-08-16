@@ -4,7 +4,7 @@
  * are reflected in the client without a full page reload.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { createEmptyThreadRecord } from "@/stores/thread-record";
 import { useThreadStore } from "@/stores/threadStore";
 import { createWsTransport } from "@/transport/ws-transport";

@@ -15,7 +15,7 @@ import {
 import { getTransport, pushEmitter } from "@/transport";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useThreadStore } from "@/stores/threadStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import {
   browserAutomationRequestKey,
   browserAutomationScopeKey,
@@ -28,8 +28,8 @@ import {
   useBrowserAutomationStore,
 } from "./browserAutomationStore";
 import { useDiffStore } from "@/stores/diffStore";
-import { previewTabsScopeKey, usePreviewTabsStore } from "@/stores/previewTabsStore";
-import { isEmptyPreviewTabUrl } from "@/lib/open-url-in-preview";
+import { previewTabsScopeKey, usePreviewTabsStore } from "@/features/preview/state/previewTabsStore";
+import { isEmptyPreviewTabUrl } from "@/features/preview/navigation/open-url-in-preview";
 import { BrowserAutomationRecorder } from "./browserAutomationRecorder";
 import {
   resolveSameOriginFrame,

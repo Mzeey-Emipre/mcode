@@ -13,7 +13,7 @@ import {
   CONVERSATION_HISTORY_PAGE_MAX_BYTES,
 } from "@mcode/contracts";
 import { getTransport } from "@/transport";
-import { useWorkspaceStore } from "./workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { useQueueStore } from "./queueStore";
 import { LruCache } from "@/lib/lru-cache";
 import { useTaskStore, coerceTaskStatus } from "./taskStore";
@@ -47,7 +47,7 @@ import {
   setActiveConversation,
   setConversationTransientTextBytes,
 } from "@/features/conversation/hydration/record-cache";
-import { releaseBrowserCaptureSpills } from "@/lib/browser-capture-spill";
+import { releaseBrowserCaptureSpills } from "@/features/preview/capture/browser-capture-spill";
 import { isGoalControlCommand } from "@/lib/goal-command";
 import { resolveGoalLookupGoal } from "@/lib/goal-lookup";
 import { isGoalStatusNotice } from "@/lib/goal-message";

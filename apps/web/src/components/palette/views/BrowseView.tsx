@@ -3,7 +3,7 @@ import { Folder, ArrowUp } from "lucide-react";
 import { CommandGroup, CommandItem, CommandList, CommandEmpty } from "@/components/ui/command";
 import { Button } from "@/components/ui/button";
 import { useCommandPaletteStore } from "@/stores/commandPaletteStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { getTransport } from "@/transport";
 import { isMac } from "@/lib/platform";
 import { Kbd } from "../Kbd";

@@ -337,7 +337,7 @@ export function createWsTransport(
       // (e.g. flaky networks, server restarts causing multiple reconnect attempts).
       // Deferred import avoids a circular dependency at module evaluation time.
       const nowForThreads = Date.now();
-      import("@/stores/workspaceStore").then(({ useWorkspaceStore }) => {
+      import("@/features/projects/state/workspaceStore").then(({ useWorkspaceStore }) => {
         const { activeWorkspaceId, loadThreads, refreshActiveConversation } = useWorkspaceStore.getState();
         if (!activeWorkspaceId) return;
         const last = lastLoadThreadsAtByWorkspace.get(activeWorkspaceId) ?? 0;
@@ -533,7 +533,7 @@ export function createWsTransport(
     <T>(method: string, params: Record<string, unknown>) => rpc<T>(method, params),
     (frame) => ws.send(frame),
     async (scopeId) => {
-      const { useWorkspaceStore } = await import("@/stores/workspaceStore");
+      const { useWorkspaceStore } = await import("@/features/projects/state/workspaceStore");
       const state = useWorkspaceStore.getState();
       const thread = state.threads.find((candidate) => candidate.id === scopeId);
       if (thread) return { kind: "thread", workspaceId: thread.workspace_id, threadId: thread.id };

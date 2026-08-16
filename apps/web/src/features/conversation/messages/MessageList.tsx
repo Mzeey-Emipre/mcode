@@ -7,7 +7,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useShallow } from "zustand/shallow";
 import { defaultRangeExtractor, useVirtualizer, type Range } from "@tanstack/react-virtual";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { recordThreadPositioned } from "@/lib/thread-switch-telemetry";
 import { useThreadStore } from "@/stores/threadStore";
 import { useThreadRecord, getThreadRecord, getHandoffStatus } from "../state";

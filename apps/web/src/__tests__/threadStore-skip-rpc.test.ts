@@ -8,7 +8,7 @@ import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-reco
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useThreadStore, MESSAGE_FETCH_SIZE } from "@/stores/threadStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import {
   cacheRecord,
   clearRecordCache,
