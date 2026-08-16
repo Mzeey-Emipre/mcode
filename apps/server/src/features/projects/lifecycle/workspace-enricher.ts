@@ -6,7 +6,7 @@
 
 import { injectable, inject } from "tsyringe";
 import { logger } from "@mcode/shared";
-import { GitService } from "../../../services/git-service.js";
+import { GitService } from "../git/git-service.js";
 import { ThreadRepo } from "../../../repositories/thread-repo.js";
 import type { WorkspaceEnrichment } from "@mcode/contracts";
 

@@ -28,7 +28,7 @@ import { broadcast } from "../../../../transport/push.js";
 import type { ThreadRepo } from "../../../../repositories/thread-repo.js";
 import type { WorkspaceRepo } from "../../../../repositories/workspace-repo.js";
 import type { MessageRepo } from "../../../../repositories/message-repo.js";
-import type { GitService } from "../../../../services/git-service.js";
+import type { GitService } from "../../../projects/index.js";
 import type { AttachmentService } from "../../../../services/attachment-service.js";
 import type { ToolCallRecordRepo } from "../../../../repositories/tool-call-record-repo.js";
 import type { TurnSnapshotRepo } from "../../../../repositories/turn-snapshot-repo.js";

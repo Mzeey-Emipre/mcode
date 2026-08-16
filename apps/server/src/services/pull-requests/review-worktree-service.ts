@@ -24,7 +24,7 @@ import {
   GitService,
   PullRequestReviewGitError,
   type PullRequestReviewGitSource,
-} from "../git-service.js";
+} from "../../features/projects/index.js";
 import { AgentService } from "../../features/agents/index.js";
 import { SettingsService } from "../settings-service.js";
 import { ProviderAvailabilityService } from "../provider-availability-service.js";

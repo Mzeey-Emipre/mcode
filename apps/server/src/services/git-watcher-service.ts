@@ -11,7 +11,7 @@ import { logger } from "@mcode/shared";
 import { broadcast } from "../transport/push";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
 import type { GitExecutor } from "./git-executor/index.js";
-import type { GitService } from "./git-service.js";
+import type { GitService } from "../features/projects/index.js";
 import { ThreadService } from "./thread-service.js";
 
 /** Debounce delay in milliseconds to batch rapid HEAD file writes (e.g., during rebase). */

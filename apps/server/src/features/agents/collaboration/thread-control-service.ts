@@ -79,10 +79,10 @@ import {
   ThreadControlMutationReservationService,
   type ThreadMutationReservationState,
 } from "../../../services/thread-control-mutation-reservation-service.js";
-import { GitService } from "../../../services/git-service.js";
+import { GitService } from "../../projects/git/git-service.js";
+import { ProjectWorktreeService } from "../../projects/worktrees/project-worktree-service.js";
 import { ModelCacheService } from "../../../services/model-cache-service.js";
 import { SettingsService } from "../../../services/settings-service.js";
-import { ThreadService } from "../../../services/thread-service.js";
 import { DelegationTargetResolver } from "./delegation-target-resolver.js";
 import { broadcast } from "../../../transport/push.js";
 
@@ -106,7 +106,7 @@ export class ThreadControlService {
     @inject(WorktreeRepo) private readonly worktrees: WorktreeRepo,
     @inject(GitService) private readonly git: ThreadControlGitDiscovery,
     @inject(ThreadRepo) private readonly threads: ThreadRepo,
-    @inject(ThreadService) private readonly threadService: ThreadService,
+    @inject(ProjectWorktreeService) private readonly projectWorktreeService: ProjectWorktreeService,
     @inject(delay(() => AgentService)) private readonly agentService: AgentService,
     @inject(SettingsService) private readonly settings: SettingsService,
     @inject(delay(() => ProviderRegistry)) private readonly providers: IProviderRegistry,
@@ -697,7 +697,7 @@ export class ThreadControlService {
 
     try {
       this.requirePhase(requestId, "provisioning");
-      const provisioned = await this.threadService.provisionWorktree(
+      const provisioned = await this.projectWorktreeService.provisionWorktree(
         pending.threadId,
         pending.workspaceId,
         pending.placement,
@@ -1030,7 +1030,7 @@ export class ThreadControlService {
       return;
     }
     if (approval.operationPhase === "provisioning") {
-      const cleaned = await this.threadService.cleanupInterruptedProvisioning(
+      const cleaned = await this.projectWorktreeService.cleanupInterruptedProvisioning(
         approval.threadId,
         approval.workspaceId,
         approval.placement,
@@ -1253,7 +1253,7 @@ export class ThreadControlService {
 
       let placement: ResolvedPlacement;
       if (input.placement.type === "new_worktree") {
-        const provisioned = await this.threadService.provisionWorktree(
+        const provisioned = await this.projectWorktreeService.provisionWorktree(
           threadId,
           input.workspaceId,
           input.placement,

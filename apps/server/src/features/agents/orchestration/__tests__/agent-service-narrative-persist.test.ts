@@ -15,7 +15,7 @@ import type { ThreadRepo } from "../../../../repositories/thread-repo.js";
 import type { WorkspaceRepo } from "../../../../repositories/workspace-repo.js";
 import type { MessageRepo } from "../../../../repositories/message-repo.js";
 import { MessageRepo as SqliteMessageRepo } from "../../../../repositories/message-repo.js";
-import type { GitService } from "../../../../services/git-service.js";
+import type { GitService } from "../../../projects/index.js";
 import type { AttachmentService } from "../../../../services/attachment-service.js";
 import type {
   ToolCallRecordRepo,

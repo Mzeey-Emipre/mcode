@@ -16,9 +16,9 @@ import { HandoffStorage } from "../services/handoff/handoff-storage";
 import { ThreadService } from "../services/thread-service";
 import type { ClaudeProvider } from "../providers/claude/claude-provider";
 import type { TerminalBackend as TerminalService } from "../terminal/terminal-backend.js";
-import type { GitService } from "../services/git-service";
+import type { GitService } from "../features/projects/index.js";
 import { AttachmentService } from "../services/attachment-service";
-import { WorkspaceService } from "../features/projects/index.js";
+import { ProjectWorktreeService, WorkspaceService } from "../features/projects/index.js";
 import type { AgentService } from "../features/agents/index.js";
 import { killDescendantsByName } from "../services/process-kill.js";
 import { getMcodeDir } from "@mcode/shared";
@@ -51,6 +51,7 @@ describe("Cleanup integration", () => {
   let mockHandoffStorage: HandoffStorage;
   let mockAgentService: AgentService;
   let workspaceService: WorkspaceService;
+  let projectWorktreeService: ProjectWorktreeService;
 
   beforeEach(() => {
     vi.mocked(killDescendantsByName).mockClear();
@@ -94,11 +95,17 @@ describe("Cleanup integration", () => {
     mockHandoffStorage = {
       deleteThreadFiles: vi.fn().mockResolvedValue(undefined),
     } as unknown as HandoffStorage;
+    projectWorktreeService = new ProjectWorktreeService(
+      threadRepo,
+      workspaceRepo,
+      cleanupJobRepo,
+      mockGitService,
+    );
     threadService = new ThreadService(
       threadRepo,
       workspaceRepo,
       mockGitService,
-      cleanupJobRepo,
+      projectWorktreeService,
       mockAttachmentService,
       mockHandoffStorage,
     );

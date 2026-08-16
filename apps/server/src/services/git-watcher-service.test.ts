@@ -25,7 +25,7 @@ vi.mock("../transport/push", () => ({
 import { GitWatcherService } from "./git-watcher-service";
 import type { WorkspaceRepo } from "../repositories/workspace-repo";
 import type { GitExecutor } from "./git-executor/index";
-import type { GitService } from "./git-service";
+import type { GitService } from "../features/projects/index.js";
 import type { ThreadService } from "./thread-service";
 
 class MockWatcher extends EventEmitter {

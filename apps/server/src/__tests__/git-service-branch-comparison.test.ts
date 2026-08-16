@@ -1,7 +1,7 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { WorkspaceRepo } from "../repositories/workspace-repo";
-import { GitService } from "../services/git-service";
+import { GitService } from "../features/projects/index.js";
 import { createMockGitExecutor } from "../services/git-executor/__tests__/mock-git-executor.js";
 
 const { mockLogger } = vi.hoisted(() => ({

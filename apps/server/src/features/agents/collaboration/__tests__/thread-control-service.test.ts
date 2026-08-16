@@ -63,7 +63,7 @@ describe("ThreadControlService", () => {
     findDelegationLineage: ReturnType<typeof vi.fn>;
     listDelegationChildren: ReturnType<typeof vi.fn>;
   };
-  let threadService: { provisionWorktree: ReturnType<typeof vi.fn>; cleanupInterruptedProvisioning: ReturnType<typeof vi.fn> };
+  let projectWorktreeService: { provisionWorktree: ReturnType<typeof vi.fn>; cleanupInterruptedProvisioning: ReturnType<typeof vi.fn> };
   let agentService: { sendMessage: ReturnType<typeof vi.fn>; stopSession: ReturnType<typeof vi.fn>; activeThreadIds?: ReturnType<typeof vi.fn> };
   let approvals: {
     create: ReturnType<typeof vi.fn>;
@@ -116,7 +116,7 @@ describe("ThreadControlService", () => {
     messages = {
       listByThreadForThreadControl: vi.fn().mockReturnValue({ messages: [], hasMore: false }),
     };
-    threadService = {
+    projectWorktreeService = {
       provisionWorktree: vi.fn().mockResolvedValue({
         ...createdThread,
         mode: "worktree",
@@ -149,7 +149,7 @@ describe("ThreadControlService", () => {
       worktrees as never,
       git as never,
       threads as never,
-      threadService as never,
+      projectWorktreeService as never,
       agentService as never,
       {
         get: () => ({
@@ -181,6 +181,7 @@ describe("ThreadControlService", () => {
     const workspacePath = "C:/private/workspace";
     const service = new ThreadControlService(
       { search: () => [{ id: "workspace-1", name: "Workspace", path: workspacePath, last_opened_at: null }] } as never,
+      {} as never,
       {} as never,
       {} as never,
       {} as never,
@@ -655,7 +656,7 @@ describe("ThreadControlService", () => {
     }]);
     expect(threads.create).toHaveBeenCalled();
     expect(approvals.create).toHaveBeenCalled();
-    expect(threadService.provisionWorktree).not.toHaveBeenCalled();
+    expect(projectWorktreeService.provisionWorktree).not.toHaveBeenCalled();
     expect(agentService.sendMessage).not.toHaveBeenCalled();
   });
 
@@ -686,7 +687,7 @@ describe("ThreadControlService", () => {
       },
     });
     expect(JSON.stringify(result)).not.toContain("C:/private");
-    expect(threadService.provisionWorktree).toHaveBeenCalledWith(
+    expect(projectWorktreeService.provisionWorktree).toHaveBeenCalledWith(
       createdThread.id,
       workspace.id,
       {
@@ -715,7 +716,7 @@ describe("ThreadControlService", () => {
       placement: { type: "new_worktree", baseRef: "main", worktreeId: "worktree-created" },
     });
     expect(result.results[0]).not.toHaveProperty("placement.branchName");
-    expect(threadService.provisionWorktree).toHaveBeenCalledWith(createdThread.id, workspace.id, {
+    expect(projectWorktreeService.provisionWorktree).toHaveBeenCalledWith(createdThread.id, workspace.id, {
       type: "new_worktree",
       baseRef: "main",
     });
@@ -744,7 +745,7 @@ describe("ThreadControlService", () => {
 
     await expect(service.respondToApproval("approval-1", "allow")).resolves.toBe(true);
 
-    expect(threadService.provisionWorktree).toHaveBeenCalledTimes(1);
+    expect(projectWorktreeService.provisionWorktree).toHaveBeenCalledTimes(1);
     expect(agentService.sendMessage).toHaveBeenCalledWith(expect.objectContaining({
       threadId: createdThread.id,
       content: "Resume this prompt.",
@@ -757,7 +758,7 @@ describe("ThreadControlService", () => {
 
     approvals.claim.mockReturnValue(null);
     await expect(service.respondToApproval("approval-1", "allow")).resolves.toBe(false);
-    expect(threadService.provisionWorktree).toHaveBeenCalledTimes(1);
+    expect(projectWorktreeService.provisionWorktree).toHaveBeenCalledTimes(1);
   });
 
   it("keeps an approved thread active when its post-settlement audit write fails", async () => {
@@ -825,7 +826,7 @@ describe("ThreadControlService", () => {
     await service.recoverApprovals();
 
     expect(approvals.requeue).toHaveBeenCalledWith("safe");
-    expect(threadService.cleanupInterruptedProvisioning).toHaveBeenCalledWith(
+    expect(projectWorktreeService.cleanupInterruptedProvisioning).toHaveBeenCalledWith(
       "thread-provisioning",
       workspace.id,
       { type: "new_worktree", baseRef: "main" },
@@ -951,8 +952,8 @@ describe("ThreadControlService", () => {
   });
 
   it.each([
-    ["returns false", () => threadService.cleanupInterruptedProvisioning.mockResolvedValue(false)],
-    ["throws", () => threadService.cleanupInterruptedProvisioning.mockRejectedValue(new Error("locked"))],
+    ["returns false", () => projectWorktreeService.cleanupInterruptedProvisioning.mockResolvedValue(false)],
+    ["throws", () => projectWorktreeService.cleanupInterruptedProvisioning.mockRejectedValue(new Error("locked"))],
   ])("fails recovery when managed worktree cleanup %s", async (_case, arrange) => {
     const service = createService();
     arrange();

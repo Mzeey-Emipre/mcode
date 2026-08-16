@@ -11,7 +11,7 @@ import type { GitExecOptions, GitExecResult } from "../git-executor/types.js";
 import {
   GitService,
   type PullRequestReviewGitSource,
-} from "../git-service.js";
+} from "../../features/projects/index.js";
 
 const headOid = "a".repeat(40);
 const source: PullRequestReviewGitSource = {

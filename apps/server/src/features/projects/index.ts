@@ -8,7 +8,25 @@ export { WorkspaceEnricher } from "./lifecycle/workspace-enricher.js";
 export { FilesystemBrowser } from "./lifecycle/filesystem-browser.js";
 
 /** Provides project Git and worktree operations. */
-export { GitService } from "../../services/git-service.js";
+export {
+  GitService,
+  PullRequestReviewGitError,
+} from "./git/git-service.js";
+export type {
+  BranchlessWorktreeRemovalSafety,
+  NormalizedGitRemote,
+  PullRequestReviewGitCandidate,
+  PullRequestReviewGitProvisionRequest,
+  PullRequestReviewGitProvisionResult,
+  PullRequestReviewGitSource,
+  WorktreeRemovalSafety,
+} from "./git/git-service.js";
 
 /** Removes managed worktree directories with bounded safety checks. */
-export { WorktreeDirectoryRemover } from "../../services/worktree-directory-remover.js";
+export {
+  WorktreeDirectoryRemover,
+} from "./worktrees/worktree-directory-remover.js";
+export type { WorktreeDirectoryRemoverDependencies } from "./worktrees/worktree-directory-remover.js";
+
+/** Provisions and schedules cleanup for project worktrees. */
+export { ProjectWorktreeService } from "./worktrees/project-worktree-service.js";

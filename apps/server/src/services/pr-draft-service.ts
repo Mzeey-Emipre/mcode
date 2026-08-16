@@ -8,7 +8,7 @@ import { injectable, inject } from "tsyringe";
 import { existsSync, readFileSync, statSync } from "fs";
 import { join } from "path";
 import { logger } from "@mcode/shared";
-import type { GitService } from "./git-service.js";
+import type { GitService } from "../features/projects/index.js";
 import type { MessageRepo } from "../repositories/message-repo.js";
 import type { WorkspaceRepo } from "../repositories/workspace-repo.js";
 import type { ThreadRepo } from "../repositories/thread-repo.js";

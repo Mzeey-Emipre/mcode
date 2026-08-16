@@ -15,7 +15,7 @@ import { createCanonicalAgentEventSinkStub } from "../../../../test-utils/canoni
 import { NarrativeStore } from "../../../../services/narrative-store.js";
 import { PlanQuestionService } from "../../../../services/plan-question-service.js";
 import { ProviderAvailabilityService } from "../../../../services/provider-availability-service.js";
-import type { GitService } from "../../../../services/git-service.js";
+import type { GitService } from "../../../projects/index.js";
 import type { AttachmentService } from "../../../../services/attachment-service.js";
 import type { SnapshotService } from "../../../../services/snapshot-service.js";
 import type { MemoryPressureService } from "../../../../services/memory-pressure-service.js";

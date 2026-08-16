@@ -11,7 +11,7 @@ import { CleanupWorker } from "../services/cleanup-worker";
 import { HandoffStorage } from "../services/handoff/handoff-storage";
 import type { ClaudeProvider } from "../providers/claude/claude-provider";
 import type { TerminalBackend as TerminalService } from "../terminal/terminal-backend.js";
-import type { GitService } from "../services/git-service";
+import type { GitService } from "../features/projects/index.js";
 import { AttachmentService } from "../services/attachment-service";
 import { killDescendantsByName } from "../services/process-kill";
 import { getMcodeDir, logger } from "@mcode/shared";

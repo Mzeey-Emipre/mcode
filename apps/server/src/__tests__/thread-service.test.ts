@@ -6,7 +6,8 @@ import { ThreadRepo } from "../repositories/thread-repo";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
 import { CleanupJobRepo } from "../repositories/cleanup-job-repo";
 import { ThreadService } from "../services/thread-service";
-import type { GitService } from "../services/git-service";
+import { ProjectWorktreeService } from "../features/projects/index.js";
+import type { GitService } from "../features/projects/index.js";
 import type { AttachmentService } from "../services/attachment-service";
 import type { HandoffStorage } from "../services/handoff/handoff-storage";
 
@@ -19,6 +20,7 @@ describe("ThreadService.delete", () => {
   let mockAttachmentService: AttachmentService;
   let mockHandoffStorage: HandoffStorage;
   let threadService: ThreadService;
+  let projectWorktreeService: ProjectWorktreeService;
 
   beforeEach(() => {
     db = openMemoryDatabase();
@@ -56,11 +58,17 @@ describe("ThreadService.delete", () => {
     mockHandoffStorage = {
       deleteThreadFiles: vi.fn().mockResolvedValue(undefined),
     } as unknown as HandoffStorage;
+    projectWorktreeService = new ProjectWorktreeService(
+      threadRepo,
+      workspaceRepo,
+      cleanupJobRepo,
+      mockGitService,
+    );
     threadService = new ThreadService(
       threadRepo,
       workspaceRepo,
       mockGitService,
-      cleanupJobRepo,
+      projectWorktreeService,
       mockAttachmentService,
       mockHandoffStorage,
     );
@@ -341,7 +349,7 @@ describe("ThreadService.delete", () => {
   it("removes only the deterministic interrupted provisioning worktree without deleting its branch", async () => {
     const ws = workspaceRepo.create("test", "/tmp/test");
 
-    await expect(threadService.cleanupInterruptedProvisioning(
+    await expect(projectWorktreeService.cleanupInterruptedProvisioning(
       "12345678-thread-id",
       ws.id,
       { baseRef: "main", branchName: "codex/issue-960" },
