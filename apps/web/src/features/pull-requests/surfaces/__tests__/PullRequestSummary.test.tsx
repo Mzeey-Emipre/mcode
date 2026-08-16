@@ -6,7 +6,7 @@ import type {
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { usePullRequestMutationStore } from "@/stores/pullRequestMutationStore";
+import { usePullRequestMutationStore } from "@/features/pull-requests/state/pullRequestMutationStore";
 import { PullRequestSummary } from "../PullRequestSummary";
 
 const virtualizerProbe = vi.hoisted(() => ({

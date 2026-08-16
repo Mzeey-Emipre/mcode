@@ -8,9 +8,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getPullRequestPatchKey,
   usePullRequestCodeStore,
-} from "@/stores/pullRequestCodeStore";
-import { usePullRequestReviewDraftStore } from "@/stores/pullRequestReviewDraftStore";
-import type { PullRequestDiffRow } from "@/lib/pull-request-diff-row-model";
+} from "@/features/pull-requests/state/pullRequestCodeStore";
+import { usePullRequestReviewDraftStore } from "@/features/pull-requests/state/pullRequestReviewDraftStore";
+import type { PullRequestDiffRow } from "@/features/pull-requests/lib/pull-request-diff-row-model";
 
 const viewportProbe = vi.hoisted(() => ({
   rows: [] as PullRequestDiffRow[],

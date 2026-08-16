@@ -10,7 +10,7 @@ import {
   getPullRequestMutationLaneKey,
   usePullRequestMutationStore,
   type PullRequestMutationLane,
-} from "@/stores/pullRequestMutationStore";
+} from "@/features/pull-requests/state/pullRequestMutationStore";
 import type { PullRequestMutationTransport } from "@/transport/pull-request-mutations";
 import type { PullRequestTransport } from "@/transport/pull-requests";
 import { PullRequestIssueCommentComposer } from "../PullRequestIssueCommentComposer";

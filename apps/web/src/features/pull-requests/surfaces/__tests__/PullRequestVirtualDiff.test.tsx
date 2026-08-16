@@ -4,7 +4,7 @@ import type {
   PullRequestDiffFileRow,
   PullRequestDiffLineRow,
   PullRequestDiffRow,
-} from "@/lib/pull-request-diff-row-model";
+} from "@/features/pull-requests/lib/pull-request-diff-row-model";
 import { PullRequestVirtualDiff } from "../PullRequestVirtualDiff";
 
 const virtualizerProbe = vi.hoisted(() => ({
@@ -64,7 +64,7 @@ vi.mock("@/components/ui/scroll-area", () => ({
   ),
 }));
 
-vi.mock("@/hooks/usePullRequestDiffHighlighter", () => ({
+vi.mock("@/features/pull-requests/hooks/usePullRequestDiffHighlighter", () => ({
   usePullRequestDiffHighlighter: () => ({
     getLineTokens: () => null,
     tokenBytes: 0,

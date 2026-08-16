@@ -2,7 +2,7 @@ import { RefreshCw, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { ReviewFileChange } from "@mcode/contracts";
 import { FilesPanel, type FilesPanelProps } from "@/components/files/FilesPanel";
-import { PullRequestFileTree } from "@/components/pull-requests/PullRequestFileTree";
+import { PullRequestFileTree } from "@/features/pull-requests";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 

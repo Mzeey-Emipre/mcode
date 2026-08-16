@@ -46,8 +46,10 @@ import {
   type NavigationLocation,
   type PullRequestHistoryTab,
 } from "@/stores/navigationHistoryStore";
-import { usePullRequestDetailStore } from "@/stores/pullRequestDetailStore";
-import { usePullRequestStore } from "@/stores/pullRequestStore";
+import {
+  usePullRequestDetailStore,
+  usePullRequestStore,
+} from "@/features/pull-requests";
 
 const LazySettingsView = lazy(async () => {
   const m = await import("@/components/settings/SettingsView");

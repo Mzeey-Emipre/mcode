@@ -43,7 +43,7 @@ import { PrSplitButton } from "./PrSplitButton";
 import { ChecksPopover } from "./ChecksPopover";
 import { CreatePrDialog } from "./CreatePrDialog";
 import { useThreadGitActions } from "@/hooks/useThreadGitActions";
-import { usePullRequestReviewLink } from "@/hooks/usePullRequestReviewLink";
+import { usePullRequestReviewLink } from "@/features/pull-requests";
 import { useThreadRecap } from "@/hooks/useThreadRecap";
 import {
   isEmptyPreviewTabUrl,

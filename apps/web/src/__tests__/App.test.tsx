@@ -96,7 +96,7 @@ vi.mock("@/components/ui/scroll-area", () => ({
 }));
 
 // Keep cold transform time outside the test timeout; this suite verifies navigation, not chunk loading.
-await import("@/components/pull-requests/PullRequestSurface");
+await import("@/features/pull-requests");
 
 describe("App", () => {
   afterEach(() => {
