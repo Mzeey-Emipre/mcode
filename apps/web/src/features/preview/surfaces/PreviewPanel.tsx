@@ -79,7 +79,7 @@ import {
   useFileTagPopup,
 } from "@/components/chat/FileTagPopup";
 import type { MentionSuggestion } from "@/components/chat/useFileAutocomplete";
-import { useWorkspaceThread } from "@/stores/workspace-selectors";
+import { useWorkspaceThread } from "@/features/projects/state/workspace-selectors";
 import {
   browserAutomationTargetKey,
   isBrowserAutomationAgentControlled,

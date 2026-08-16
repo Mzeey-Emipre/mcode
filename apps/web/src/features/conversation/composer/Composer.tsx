@@ -1,8 +1,8 @@
 import { useState, useRef, useCallback, useEffect, useMemo, lazy, Suspense } from "react";
 import { useThreadStore, scheduleDrainAfterEdit } from "@/stores/threadStore";
 import { useThreadRecord, getThreadRecord, getHandoffStatus } from "../state";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
-import { useWorkspaceThread, readWorkspaceThread } from "@/stores/workspace-selectors";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
+import { useWorkspaceThread, readWorkspaceThread } from "@/features/projects/state/workspace-selectors";
 import { resolveComposerSession, snapshotComposerDraft } from "@/lib/composer-session";
 import type { PermissionMode, InteractionMode, AttachmentMeta, Thread } from "@/transport";
 import { PERMISSION_MODES, INTERACTION_MODES, getTransport } from "@/transport";

@@ -11,7 +11,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import type { GitBranch as GitBranchType, PrDetail } from "@/transport/types";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 
 type TabId = "local" | "remote" | "prs";
 

@@ -4,8 +4,6 @@ export { ProjectRow } from "./ProjectRow";
 export { ProjectTree } from "./ProjectTree";
 export { ProjectsView } from "./ProjectsView";
 export {
-  __clearPendingThreadCreationsForTests,
-  __resetThreadListMutationEpochForTests,
   useWorkspaceStore,
 } from "./state/workspaceStore";
 export type { WorkspaceRpcCall } from "./state/workspaceStore";

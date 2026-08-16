@@ -7,7 +7,7 @@ import { stripInjectedFiles } from "@/lib/file-tags";
 import { buildStoredAttachmentImageSrc } from "@/lib/attachment-url";
 import { resolveModelDisplayLabel } from "@/lib/format-model-label";
 import { useProviderModelsStore } from "@/stores/providerModelsStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { isHandoffMessage, parseHandoffJson } from "@/components/chat/handoff-utils";
 import { HandoffCard } from "@/components/chat/HandoffCard";
 import { FileAttachmentTile } from "@/components/chat/FileAttachmentTile";

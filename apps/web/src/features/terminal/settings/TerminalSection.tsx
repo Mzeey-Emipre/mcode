@@ -14,7 +14,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useTerminalSettingsStore } from "./terminalSettingsStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { RangeControl } from "@/components/settings/RangeControl";
 import { SectionHeading } from "@/components/settings/SectionHeading";
 import { SegControl } from "@/components/settings/SegControl";

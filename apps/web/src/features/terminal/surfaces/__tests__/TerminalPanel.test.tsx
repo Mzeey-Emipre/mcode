@@ -28,7 +28,7 @@ vi.mock("../TerminalView", () => ({
 }));
 
 import { useTerminalStore } from "@/features/terminal/state/terminalStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { TerminalPanel } from "../TerminalPanel";
 
 describe("TerminalPanel", () => {

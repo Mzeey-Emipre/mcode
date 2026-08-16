@@ -3,8 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ParsedDiffLine } from "@/lib/diff-parser";
 import { useDiffStore } from "@/stores/diffStore";
-import { usePreviewAnnotationStore } from "@/stores/previewAnnotationStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { usePreviewAnnotationStore } from "@/features/preview/state/previewAnnotationStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { UnifiedDiff } from "../UnifiedDiff";
 
 vi.mock("@/hooks/useDiffHighlighter", () => ({

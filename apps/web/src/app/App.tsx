@@ -17,7 +17,7 @@ import type { UpdateStatus } from "@/transport/desktop-bridge";
 import { useCommandPaletteStore } from "@/stores/commandPaletteStore";
 import { ShortcutHelpDialog } from "@/components/ShortcutHelpDialog";
 import { useSettingsStore } from "@/stores/settingsStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { COMPOSER_MIN_WIDTH } from "@/stores/diffStore";
 import {
   usePreviewDesignModeStore,

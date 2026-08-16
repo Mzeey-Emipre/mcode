@@ -7,7 +7,7 @@ import {
   openGitHubUrl,
 } from "../open-url-in-preview";
 import { useDiffStore } from "@/stores/diffStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { createMockWorkspace, createMockThread } from "@/__tests__/mocks/transport";
 
 describe("isModifierClick", () => {

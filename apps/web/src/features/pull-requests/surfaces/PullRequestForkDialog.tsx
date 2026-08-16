@@ -29,7 +29,7 @@ import { useComposerDraftStore } from "@/stores/composerDraftStore";
 import { useOverviewStore } from "@/stores/overviewStore";
 import { useToastStore } from "@/stores/toastStore";
 import { useUiStore } from "@/stores/uiStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import {
   getPullRequestReviewTaskTransport,
   type PullRequestReviewTaskTransport,

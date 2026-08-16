@@ -1,4 +1,4 @@
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { useDiffStore, type RightPanelTab } from "@/stores/diffStore";
 import { useUiStore } from "@/stores/uiStore";
 import { PANEL_TAB_TYPES } from "@/lib/panel-tabs";

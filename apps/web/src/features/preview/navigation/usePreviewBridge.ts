@@ -7,7 +7,7 @@ import {
 } from "react";
 import type { PreviewPageStatus } from "@mcode/contracts";
 import { useDiffStore } from "@/stores/diffStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { resolveScopeBasePath } from "@/lib/resolve-scope-path";
 import type { PreviewResolveNavigationResult } from "@/transport/desktop-bridge";
 

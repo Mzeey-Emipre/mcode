@@ -1,10 +1,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from "react";
 import { Bug, GitFork, Hammer, SearchCode, ScanSearch } from "lucide-react";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import {
   useActiveWorkspaceThread,
   useParentThreadExists,
-} from "@/stores/workspace-selectors";
+} from "@/features/projects/state/workspace-selectors";
 import { useThreadStore } from "@/stores/threadStore";
 import { useActiveThreadRecord, readThreadRecord } from "../state";
 import { getConversationResidency } from "../residency/conversation-residency";

@@ -8,8 +8,8 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useWorkspaceStore, __resetThreadListMutationEpochForTests, __clearPendingThreadCreationsForTests } from "../workspaceStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useDiffStore } from "@/stores/diffStore";
-import { usePreviewReferenceQueueStore } from "@/stores/previewReferenceQueueStore";
-import { previewTabsScopeKey, usePreviewTabsStore } from "@/stores/previewTabsStore";
+import { usePreviewReferenceQueueStore } from "@/features/preview/state/previewReferenceQueueStore";
+import { previewTabsScopeKey, usePreviewTabsStore } from "@/features/preview/state/previewTabsStore";
 import {
   mockTransport,
   createMockWorkspace,

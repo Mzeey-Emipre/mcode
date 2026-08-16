@@ -16,9 +16,9 @@ import {
   releaseBrowserAutomationThreadScope,
   useBrowserAutomationStore,
 } from "../browserAutomationStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { useDiffStore } from "@/stores/diffStore";
-import { previewTabsScopeKey, usePreviewTabsStore } from "@/stores/previewTabsStore";
+import { previewTabsScopeKey, usePreviewTabsStore } from "@/features/preview/state/previewTabsStore";
 import { browserTargetRegistry } from "../services/browserTargetRegistry";
 
 const harness = vi.hoisted(() => {

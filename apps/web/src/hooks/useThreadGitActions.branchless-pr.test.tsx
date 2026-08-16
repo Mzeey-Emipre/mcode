@@ -30,7 +30,7 @@ vi.mock("@/stores/composerDraftStore", () => ({
   ),
 }));
 
-vi.mock("@/lib/open-url-in-preview", () => ({
+vi.mock("@/features/preview/navigation/open-url-in-preview", () => ({
   openGitHubUrl: vi.fn(),
 }));
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { createRightPanelState, useDiffStore } from "@/stores/diffStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { refreshTurnSnapshotsAfterPersist } from "@/lib/turn-snapshot-refresh";
 import { mockTransport, createMockThread } from "@/__tests__/mocks/transport";
 

@@ -3,7 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PlanRecord } from "@mcode/contracts";
 import { usePlanStore } from "@/stores/planStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { createMockThread, mockTransport } from "@/__tests__/mocks/transport";
 import { PlanPanel } from "./PlanPanel";
 

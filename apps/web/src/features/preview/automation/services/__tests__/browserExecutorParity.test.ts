@@ -28,7 +28,7 @@ import { executeWebBrowserDispatch } from "../../browserAutomationWebExecutor";
 
 const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../../");
 
-vi.mock("../../components/panels/web-browser-automation/capture", () => ({
+vi.mock("../../web-browser-automation/capture", () => ({
   captureVisibleWebScreenshot: vi.fn(async () => ({
     ok: true,
     value: {

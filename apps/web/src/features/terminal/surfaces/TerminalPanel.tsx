@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { TerminalSquare } from "lucide-react";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { useTerminalStore, TERMINAL_PANEL_DEFAULTS, type TerminalInstance } from "@/features/terminal/state/terminalStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { getTransport } from "@/transport";

@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { useTerminalStore } from "@/features/terminal";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { executeCommand } from "@/lib/command-registry";
 import { Spinner } from "@/components/ui/spinner";
 

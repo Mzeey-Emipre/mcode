@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type MouseEvent } from "react";
 import { useBranchPr } from "@/hooks/useBranchPr";
 import { useHasCommitsAhead } from "@/hooks/useHasCommitsAhead";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { useComposerDraftStore } from "@/stores/composerDraftStore";
 import { isPrable } from "@/lib/is-prable";
 import { openGitHubUrl } from "@/features/preview/navigation/open-url-in-preview";

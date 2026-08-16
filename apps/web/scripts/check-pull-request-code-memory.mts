@@ -1,7 +1,7 @@
 import {
   buildPullRequestDiffRowModel,
   releasePullRequestPatchRows,
-} from "../src/lib/pull-request-diff-row-model.ts";
+} from "../src/features/pull-requests/lib/pull-request-diff-row-model.ts";
 
 const MAX_CACHE_BYTES = 16 * 1024 * 1024;
 const ITERATIONS = 3;

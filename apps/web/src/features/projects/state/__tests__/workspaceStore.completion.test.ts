@@ -18,15 +18,15 @@ const {
 vi.mock("@/transport", () => ({
   getTransport: () => ({ completeThread, reopenThread }),
 }));
-vi.mock("@/stores/previewTabsStore", () => ({
+vi.mock("@/features/preview/state/previewTabsStore", () => ({
   usePreviewTabsStore: { getState: () => ({ clearScope }) },
 }));
-vi.mock("@/stores/previewReferenceQueueStore", () => ({
+vi.mock("@/features/preview/state/previewReferenceQueueStore", () => ({
   usePreviewReferenceQueueStore: {
     getState: () => ({ clearThread: clearPreviewReferences }),
   },
 }));
-vi.mock("@/stores/browserAutomationStore", () => ({
+vi.mock("@/features/preview/automation/browserAutomationStore", () => ({
   releaseBrowserAutomationThreadScope: releaseBrowserScope,
   releaseBrowserAutomationWorkspaceScopes: vi.fn(),
 }));

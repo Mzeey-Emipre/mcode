@@ -5,7 +5,7 @@ import { getFirstHunkHeaderIndex } from "@/lib/diff-parser";
 import { useDiffHighlighter } from "@/hooks/useDiffHighlighter";
 import { useShikiTheme } from "@/hooks/useTheme";
 import { useDiffStore } from "@/stores/diffStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import {
   usePreviewAnnotationStore,
   type SavedDiffAnnotation,

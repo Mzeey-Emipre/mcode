@@ -2,7 +2,7 @@ import { resetThreadStoreForTests } from "@/stores/thread-store-test-utils";
 import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-record";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useThreadStore } from "@/stores/threadStore";
-import { useWorkspaceStore } from "@/stores/workspaceStore";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { mockTransport, createMockThread } from "./mocks/transport";
 
 vi.mock("@/transport", async () => ({
