@@ -11,7 +11,7 @@ import {
   parseBrowserAutomationScopeKey,
   parseBrowserAutomationTargetKey,
   useBrowserAutomationStore,
-} from "@/stores/browserAutomationStore";
+} from "../automation/browserAutomationStore";
 import { usePreviewTabsStore } from "../state/previewTabsStore";
 
 let surfaceRoot: HTMLDivElement | null = null;

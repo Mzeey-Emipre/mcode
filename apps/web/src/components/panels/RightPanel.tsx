@@ -23,7 +23,11 @@ import {
 import type { PanelScope } from "@/lib/panel-tabs";
 import { DiffPanel } from "@/components/diff";
 import {
+  BROWSER_AUTOMATION_WARM_TARGET_LIMIT,
   PreviewPanel,
+  browserAutomationScopeKey,
+  browserAutomationTargetKey,
+  useBrowserAutomationStore,
   usePreviewTabSet,
   usePreviewTabsStore,
 } from "@/features/preview";
@@ -38,12 +42,6 @@ import { toggleRightPanelAdaptive } from "@/lib/right-panel-layout";
 import { getTransport } from "@/transport";
 import { cn } from "@/lib/utils";
 import { ResizableRightPanel } from "./ResizableRightPanel";
-import {
-  BROWSER_AUTOMATION_WARM_TARGET_LIMIT,
-  browserAutomationScopeKey,
-  browserAutomationTargetKey,
-  useBrowserAutomationStore,
-} from "@/stores/browserAutomationStore";
 
 /** One thread/workspace Browser panel retained by the warm LRU pool. */
 export interface WarmPreviewScope {

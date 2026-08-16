@@ -6,7 +6,7 @@ import {
   type ViewportHostOperation,
   type ViewportHostResetOperation,
   type ViewportHostResult,
-} from "./viewportCoordinator";
+} from "../viewportCoordinator";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;

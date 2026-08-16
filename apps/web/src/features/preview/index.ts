@@ -1,5 +1,24 @@
 /** Public Preview feature surface for workbench composition. */
-export { BrowserAutomationHost } from "@/components/panels/BrowserAutomationHost";
+export {
+  BrowserAutomationHost,
+  isBrowserAutomationWebRuntimeEnabled,
+} from "./automation/BrowserAutomationHost";
+export {
+  BROWSER_AUTOMATION_WARM_TARGET_LIMIT,
+  browserAutomationLifecycleKey,
+  browserAutomationScopeKey,
+  browserAutomationTargetKey,
+  findPendingBrowserAutomationOpen,
+  isBrowserAutomationAgentControlled,
+  useBrowserAutomationStore,
+} from "./automation/browserAutomationStore";
+export type {
+  BrowserAutomationActiveRequest,
+  BrowserAutomationHostStatus,
+  BrowserAutomationLiveTarget,
+  BrowserAutomationPendingAgentOpen,
+} from "./automation/browserAutomationStore";
+export type { BrowserSessionLifecycleTab } from "./automation/services/browserSessionDriver";
 export { BrowserSurfaceHostRoot, browserSurfaceHost } from "./surfaces/BrowserSurfaceHostRoot";
 export {
   PREVIEW_WEBVIEW_FALLBACK_TAB_ID,

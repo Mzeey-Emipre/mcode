@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { BrowserTargetRegistry } from "./browserTargetRegistry";
+import { BrowserTargetRegistry } from "../browserTargetRegistry";
 
 describe("BrowserTargetRegistry", () => {
   let registry: BrowserTargetRegistry;

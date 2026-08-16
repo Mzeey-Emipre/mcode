@@ -7,7 +7,7 @@ import {
 } from "../BrowserSurfaceHostRoot";
 import type { BrowserSurfaceIdentity } from "../../browser-surfaces";
 import { previewTabsScopeKey, usePreviewTabsStore } from "../../state/previewTabsStore";
-import { useBrowserAutomationStore } from "@/stores/browserAutomationStore";
+import { useBrowserAutomationStore } from "../../automation/browserAutomationStore";
 import type {
   PreviewPopupRequest,
   PreviewSurfaceDiscardRequest,

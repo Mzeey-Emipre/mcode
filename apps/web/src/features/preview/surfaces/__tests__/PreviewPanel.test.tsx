@@ -87,7 +87,7 @@ import {
   PREVIEW_WEBVIEW_FALLBACK_TAB_ID,
   PreviewPanel,
 } from "../PreviewPanel";
-import { executeWebBrowserDispatch } from "@/components/panels/browserAutomationWebExecutor";
+import { executeWebBrowserDispatch } from "../../automation/browserAutomationWebExecutor";
 import { useSettingsStore } from "@/stores/settingsStore";
 import {
   normalizePreviewPageIdentity,
@@ -100,8 +100,8 @@ import { useDiffStore } from "@/stores/diffStore";
 import {
   browserAutomationTargetKey,
   useBrowserAutomationStore,
-} from "@/stores/browserAutomationStore";
-import { ViewportCoordinator } from "@/services/browser-automation/viewportCoordinator";
+} from "../../automation/browserAutomationStore";
+import { ViewportCoordinator } from "../../automation/services/viewportCoordinator";
 import { browserSurfaceHost } from "../BrowserSurfaceHostRoot";
 
 function mockBridgeState(overrides: Record<string, unknown> = {}) {

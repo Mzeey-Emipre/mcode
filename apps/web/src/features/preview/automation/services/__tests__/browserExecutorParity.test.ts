@@ -22,9 +22,9 @@ import {
   BrowserSessionDriver,
   ElectronBrowserSessionAdapter,
   getBrowserAutomationRuntimeOperations,
-} from "./browserSessionDriver";
-import { WebBrowserSessionAdapter } from "./webBrowserSessionAdapter";
-import { executeWebBrowserDispatch } from "../../components/panels/browserAutomationWebExecutor";
+} from "../browserSessionDriver";
+import { WebBrowserSessionAdapter } from "../webBrowserSessionAdapter";
+import { executeWebBrowserDispatch } from "../../browserAutomationWebExecutor";
 
 const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../../");
 

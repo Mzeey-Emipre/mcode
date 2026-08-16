@@ -7,7 +7,7 @@ import {
   onBrowserAutomationObservationInvalidation,
   releaseBrowserAutomationThreadScope,
   useBrowserAutomationStore,
-} from "@/stores/browserAutomationStore";
+} from "../../automation/browserAutomationStore";
 import { PreviewWebview, type PreviewWebviewHandle } from "../PreviewWebview";
 import { browserSurfaceHost } from "../BrowserSurfaceHostRoot";
 

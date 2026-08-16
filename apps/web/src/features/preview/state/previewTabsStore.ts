@@ -6,7 +6,7 @@ import {
   type BrowserTabSet,
 } from "@mcode/contracts";
 import { usePreviewFocusStore } from "./previewFocusStore";
-import { browserAutomationScopeKey, useBrowserAutomationStore } from "@/stores/browserAutomationStore";
+import { browserAutomationScopeKey, useBrowserAutomationStore } from "../automation/browserAutomationStore";
 
 /** Stable key for one workspace and preview scope. */
 export function previewTabsScopeKey(workspaceId: string, scopeId: string): string {

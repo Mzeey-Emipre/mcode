@@ -17,7 +17,7 @@ import {
   type ViewportCoordinatorState,
   type ViewportPresentation,
   type ViewportSize,
-} from "@/services/browser-automation/viewportCoordinator";
+} from "../automation/services/viewportCoordinator";
 
 const VIEWPORT_ZOOM_PRESETS = ["50%", "75%", "100%", "125%", "150%", "200%"] as const;
 

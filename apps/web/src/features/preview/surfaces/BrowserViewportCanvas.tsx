@@ -10,7 +10,7 @@ import {
   type ViewportCoordinatorState,
   type ViewportCanvasBounds,
   type ViewportSize,
-} from "@/services/browser-automation/viewportCoordinator";
+} from "../automation/services/viewportCoordinator";
 
 type DragAxis = "width" | "height" | "both";
 type DragHandlePosition =

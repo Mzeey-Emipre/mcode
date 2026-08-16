@@ -18,12 +18,12 @@ import {
   type BrowserAutomationActiveRequest,
   type BrowserAutomationLiveTarget,
 } from "../browserAutomationStore";
-import type { BrowserSessionLifecycleTab } from "@/services/browser-automation/browserSessionDriver";
-import { selectBrowserAutomationWorkspaceIds } from "@/components/panels/BrowserAutomationHost";
+import type { BrowserSessionLifecycleTab } from "../services/browserSessionDriver";
+import { selectBrowserAutomationWorkspaceIds } from "../BrowserAutomationHost";
 import { reconcileWarmPreviewScopes } from "@/components/panels/RightPanel";
-import { browserTargetRegistry } from "@/services/browser-automation/browserTargetRegistry";
-import { ViewportCoordinator } from "@/services/browser-automation/viewportCoordinator";
-import { createViewportCoordinator } from "@/services/browser-automation/viewportCoordinatorFactory";
+import { browserTargetRegistry } from "../services/browserTargetRegistry";
+import { ViewportCoordinator } from "../services/viewportCoordinator";
+import { createViewportCoordinator } from "../services/viewportCoordinatorFactory";
 
 function target(
   workspaceId: string,

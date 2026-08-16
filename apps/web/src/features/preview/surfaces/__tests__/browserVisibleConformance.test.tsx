@@ -27,14 +27,14 @@ import {
   browserAutomationTargetKey,
   releaseBrowserAutomationThreadScope,
   useBrowserAutomationStore,
-} from "@/stores/browserAutomationStore";
+} from "../../automation/browserAutomationStore";
 import { previewTabsScopeKey, usePreviewTabsStore } from "../../state/previewTabsStore";
-import { browserTargetRegistry } from "@/services/browser-automation/browserTargetRegistry";
+import { browserTargetRegistry } from "../../automation/services/browserTargetRegistry";
 import {
   ViewportCoordinator,
   type ViewportHostOperation,
-} from "@/services/browser-automation/viewportCoordinator";
-import type { BrowserSessionLifecycleTab } from "@/services/browser-automation/browserSessionDriver";
+} from "../../automation/services/viewportCoordinator";
+import type { BrowserSessionLifecycleTab } from "../../automation/services/browserSessionDriver";
 
 const {
   mockThreadRecords,

@@ -37,7 +37,7 @@ import type { RightPanelTab, RightPanelTabInstance } from "@/stores/diffStore";
 import {
   isBrowserAutomationAgentControlled,
   useBrowserAutomationStore,
-} from "@/stores/browserAutomationStore";
+} from "@/features/preview";
 import { cn } from "@/lib/utils";
 
 /** Legacy task completion payload kept for tab API compatibility. */

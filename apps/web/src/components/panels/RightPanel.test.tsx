@@ -123,7 +123,7 @@ import { createRightPanelState, useDiffStore } from "@/stores/diffStore";
 import { useTerminalStore } from "@/stores/terminalStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
-import { useBrowserAutomationStore } from "@/stores/browserAutomationStore";
+import { useBrowserAutomationStore } from "@/features/preview";
 
 describe("RightPanel", () => {
   beforeEach(() => {

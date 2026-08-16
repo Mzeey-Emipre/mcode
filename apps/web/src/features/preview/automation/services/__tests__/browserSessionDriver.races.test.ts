@@ -22,9 +22,9 @@ import {
   type BrowserConformanceScheduledEvent,
   type BrowserConformanceSubject,
 } from "@mcode/browser-conformance";
-import { executeWebBrowserDispatch } from "../../components/panels/browserAutomationWebExecutor";
-import { BrowserSessionDriver } from "./browserSessionDriver";
-import { WebBrowserSessionAdapter } from "./webBrowserSessionAdapter";
+import { executeWebBrowserDispatch } from "../../browserAutomationWebExecutor";
+import { BrowserSessionDriver } from "../browserSessionDriver";
+import { WebBrowserSessionAdapter } from "../webBrowserSessionAdapter";
 
 const replayRoots: string[] = [];
 

@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   ViewportCoordinator,
   type ViewportHostOperation,
-} from "@/services/browser-automation/viewportCoordinator";
+} from "../../automation/services/viewportCoordinator";
 import { BrowserViewportToolbar } from "../BrowserViewportToolbar";
 
 function createCoordinator(apply: (operation: ViewportHostOperation) => Promise<{
