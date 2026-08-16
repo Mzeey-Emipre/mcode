@@ -31,8 +31,13 @@ import { logger, validateBranchName } from "@mcode/shared";
 import { discoverCopilotAgents } from "../providers/copilot/copilot-agent-discovery.js";
 import type { WorkspaceService } from "../services/workspace-service";
 import type { ThreadService } from "../services/thread-service";
-import type { AgentService } from "../services/agent-service";
-import type { ThreadControlService } from "../services/thread-control-service";
+import type {
+  AgentPermissionService,
+  AgentService,
+  CanonicalAgentEventSink,
+  ThreadControlService,
+  TurnRecoveryService,
+} from "../features/agents/index.js";
 import type { GitService } from "../services/git-service";
 import type { GithubService } from "../services/github-service";
 import type { FileService } from "../services/file-service";
@@ -55,8 +60,6 @@ import { ZodError } from "zod";
 import type { MessageRepo } from "../repositories/message-repo";
 import type { ToolCallRecordRepo } from "../repositories/tool-call-record-repo";
 import type { NarrativeStore } from "../services/narrative-store";
-import type { CanonicalAgentEventSink } from "../services/canonical-agent-event-sink.js";
-import type { TurnRecoveryService } from "../services/turn-recovery-service.js";
 import type { ThoughtSegmentRepo } from "../repositories/thought-segment-repo";
 import type { HookExecutionRepo } from "../repositories/hook-execution-repo";
 import type { TurnSnapshotRepo } from "../repositories/turn-snapshot-repo";
@@ -237,6 +240,8 @@ export interface RouterDeps {
   workspaceService: WorkspaceService;
   threadService: ThreadService;
   agentService: AgentService;
+  /** Routes provider permission decisions through the Agents feature boundary. */
+  agentPermissionService: AgentPermissionService;
   /** Owns restart reconciliation and explicit turn recovery actions. */
   turnRecoveryService: TurnRecoveryService;
   /** Owns durable approvals for protected delegated-thread mutations. */
@@ -1841,14 +1846,14 @@ async function dispatch(
       if (await deps.threadControlService.respondToApproval(params.requestId, params.decision)) {
         return;
       }
-      deps.agentService.respondToPermission(params.requestId, params.decision);
-      // broadcast is handled by the provider's "permission_resolved" event → index.ts listener
+      deps.agentPermissionService.respondToPermission(params.requestId, params.decision);
+      // The Agents permission publication boundary broadcasts provider resolution events.
       return;
     }
     case "permission.listPending":
       return [
         ...deps.threadControlService.listPendingApprovals(params.threadId),
-        ...deps.agentService.listPendingPermissions(params.threadId),
+        ...deps.agentPermissionService.listPendingPermissions(params.threadId),
       ];
 
     case "handoff.regenerate":

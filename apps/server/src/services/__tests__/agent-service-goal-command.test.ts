@@ -16,7 +16,7 @@ import { createCanonicalAgentEventSinkStub } from "../../test-utils/canonical-ag
 import { NarrativeStore } from "../narrative-store.js";
 import { PlanQuestionService } from "../plan-question-service.js";
 import { ProviderAvailabilityService } from "../provider-availability-service.js";
-import { isTurnScopedEvent } from "../turn-runtime.js";
+import { isTurnScopedEvent } from "../../features/agents/turns/turn-runtime.js";
 import type { GitService } from "../git-service.js";
 import type { AttachmentService } from "../attachment-service.js";
 import type { SnapshotService } from "../snapshot-service.js";

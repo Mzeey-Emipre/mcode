@@ -5,8 +5,12 @@ import * as agents from "../index";
 describe("agents feature boundary", () => {
   it("exposes only the composition-root agent symbols", () => {
     expect(Object.keys(agents).sort()).toStrictEqual([
+      "AgentPermissionService",
       "AgentService",
       "CanonicalAgentEventSink",
+      "DelegationTargetResolver",
+      "ThreadControlService",
+      "TurnRecoveryService",
       "publishCanonicalAgentEvents",
       "startAgentOrchestration",
     ]);

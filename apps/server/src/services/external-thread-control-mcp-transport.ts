@@ -21,7 +21,7 @@ import {
   ThreadTargetListInputSchema,
   ThreadTargetListResultSchema,
 } from "@mcode/contracts";
-import type { ThreadControlService } from "./thread-control-service.js";
+import type { ThreadControlService } from "../features/agents/index.js";
 import {
   ExternalThreadControlPairingError,
   ExternalThreadControlPairingService,

@@ -37,8 +37,15 @@ import { registerCodexProvider } from "./providers/codex-provider-registration";
 // Services
 import { WorkspaceService } from "./services/workspace-service";
 import { ThreadService } from "./services/thread-service";
-import { AgentService, CanonicalAgentEventSink, publishCanonicalAgentEvents } from "./features/agents";
-import { TurnRecoveryService } from "./services/turn-recovery-service";
+import {
+  AgentPermissionService,
+  AgentService,
+  CanonicalAgentEventSink,
+  DelegationTargetResolver,
+  ThreadControlService,
+  TurnRecoveryService,
+  publishCanonicalAgentEvents,
+} from "./features/agents";
 import { NarrativeStore } from "./services/narrative-store";
 import { LegacyConversationMigration } from "./services/legacy-conversation-migration";
 import { PlanQuestionService } from "./services/plan-question-service";
@@ -83,7 +90,6 @@ import {
   ProviderAvailabilityService,
   defaultResolver,
 } from "./services/provider-availability-service";
-import { DelegationTargetResolver } from "./services/delegation-target-resolver";
 import { ProviderUsageWarmupService } from "./services/provider-usage-warmup-service";
 import { PtyPidRegistry } from "./services/pty-pid-registry";
 import { JobObject } from "./services/job-object.js";
@@ -93,7 +99,6 @@ import { ModelCacheService } from "./services/model-cache-service";
 import { ProtectedEnvStore } from "./services/protected-env-store";
 import { ShellEnvResolver } from "./services/shell-env-resolver";
 import { EnvService } from "./services/env-service";
-import { ThreadControlService } from "./services/thread-control-service";
 import { ThreadControlMutationReservationService } from "./services/thread-control-mutation-reservation-service";
 import { ThreadControlApprovalRepo } from "./repositories/thread-control-approval-repo";
 import { ThreadControlAuditRepo } from "./repositories/thread-control-audit-repo";
@@ -387,6 +392,11 @@ export function setupContainer(mcodeDir: string): typeof container {
   container.register(
     AgentService,
     { useClass: AgentService },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    AgentPermissionService,
+    { useClass: AgentPermissionService },
     { lifecycle: Lifecycle.Singleton },
   );
   container.register(

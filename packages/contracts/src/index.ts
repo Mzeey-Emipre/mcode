@@ -396,6 +396,14 @@ export {
 export type { FileCategory } from "./models/file-types.js";
 
 export {
+  ATTACHMENT_IMAGE_AND_FALLBACK_MAX_BYTES,
+  ATTACHMENT_PDF_MAX_BYTES,
+  ATTACHMENT_TEXT_MAX_BYTES,
+  ATTACHMENT_DOCUMENT_MAX_BYTES,
+  getAttachmentMaxSizeForMime,
+} from "./models/attachment-limits.js";
+
+export {
   BrowserPreviewBoundsSchema,
   BrowserPreviewCaptureKindSchema,
   BrowserPreviewElementStyleSchema,

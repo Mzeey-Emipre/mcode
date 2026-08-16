@@ -1,4 +1,4 @@
-import type { CanonicalAgentEventSink } from "../services/canonical-agent-event-sink.js";
+import type { CanonicalAgentEventSink } from "../features/agents/index.js";
 import type Database from "better-sqlite3";
 
 /** Creates an AgentService test seam that runs compatibility writes without canonical persistence. */

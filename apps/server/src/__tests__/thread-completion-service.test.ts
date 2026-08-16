@@ -6,7 +6,7 @@ import { ThreadRepo } from "../repositories/thread-repo";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
 import { MessageRepo } from "../repositories/message-repo";
 import { getDefaultSettings, type CompletedThreadRetentionDays, type Settings } from "@mcode/contracts";
-import type { AgentService } from "../services/agent-service";
+import type { AgentService } from "../features/agents/index.js";
 import type { SettingsService } from "../services/settings-service";
 import type { ThreadTeardownService } from "../services/thread-teardown-service";
 import { ThreadControlMutationReservationService } from "../services/thread-control-mutation-reservation-service";

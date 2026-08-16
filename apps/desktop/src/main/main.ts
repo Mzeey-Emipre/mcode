@@ -10,32 +10,23 @@ const STARTUP_TIME = performance.now();
 import {
   app,
   BrowserWindow,
-  clipboard,
   dialog,
   ipcMain,
   Notification,
   powerMonitor,
   powerSaveBlocker,
-  protocol,
   session,
   shell,
 } from "electron";
 import { autoUpdater } from "electron-updater";
-import { existsSync, createReadStream } from "fs";
+import { existsSync } from "fs";
 import { mkdir, writeFile } from "fs/promises";
-import { isAbsolute, join } from "path";
-import { randomUUID } from "crypto";
-import { Readable } from "stream";
+import { join } from "path";
 import { getLogPath, getMcodeDir, getRecentLogs, logger } from "@mcode/shared";
+
 import {
-  getExtension as bundledGetExtension,
-} from "@mcode/contracts";
-
-/** Use snapshot-provided module when available (V8 snapshot skips re-init). */
-const getExtension =
-  globalThis.__v8Snapshot?.contracts?.getExtension ?? bundledGetExtension;
-
-import { openInRegistry } from "./open-in/index.js";
+  registerOpenInHandlers,
+} from "../features/open-in/index.js";
 import { ServerRuntime } from "../features/server-runtime/index.js";
 import {
   initializeApplicationUpdates,
@@ -60,6 +51,7 @@ import {
   getWindowIconPath,
   registerExternalUrlHandler,
 } from "../features/desktop-window/index.js";
+import { registerAttachmentsFeature } from "../features/attachments/index.js";
 import { isDesktopDev } from "./is-desktop-dev.js";
 import { shouldPrintVersion } from "./cli-args.js";
 
@@ -85,22 +77,6 @@ if (shouldPrintVersion(process.argv)) {
   console.log(app.getVersion());
   app.exit(0);
 }
-
-// ---------------------------------------------------------------------------
-// Attachment protocol constants
-// ---------------------------------------------------------------------------
-
-const VALID_ATTACHMENT_ID = /^[a-f0-9-]+$/;
-
-const MIME_MAP: Record<string, string> = {
-  jpg: "image/jpeg",
-  jpeg: "image/jpeg",
-  png: "image/png",
-  gif: "image/gif",
-  webp: "image/webp",
-  pdf: "application/pdf",
-  txt: "text/plain",
-};
 
 // ---------------------------------------------------------------------------
 // Application state
@@ -346,73 +322,9 @@ function registerIpcHandlers(): void {
     },
   );
 
-  // Open-in app metadata + detection, sourced from the registry. The renderer
-  // reads labels, icon keys, and kinds from here rather than a local copy.
-  ipcMain.handle("list-open-in-apps", () => {
-    return openInRegistry.list();
-  });
-
-  // Unified open-in seam: dispatch a path to the registry adapter for `appId`.
-  // The registry rejects unknown ids, so no separate allowlist is needed — the
-  // same handler opens an editor or reveals a path in the file manager. `line`
-  // is honored only by editor adapters with a file target (directories ignore it).
-  ipcMain.handle(
-    "open-in",
-    async (_event, appId: string, targetPath: string, line?: number) => {
-      if (!isAbsolute(targetPath)) {
-        throw new Error("Open-in path must be absolute");
-      }
-      if (!existsSync(targetPath)) {
-        throw new Error(`Path does not exist: ${targetPath}`);
-      }
-      await openInRegistry.launch(appId, { path: targetPath, line });
-    },
-  );
+  registerOpenInHandlers(ipcMain);
 
   registerExternalUrlHandler(resolveMcodeWorkspacePreviewUrl);
-
-  // Read clipboard image and save to temp JPEG
-  ipcMain.handle("read-clipboard-image", async () => {
-    const img = clipboard.readImage();
-    if (img.isEmpty()) return null;
-
-    const buffer = img.toJPEG(85);
-    const id = randomUUID();
-    const name = `clipboard-${Date.now()}.jpg`;
-    const tempDir = join(app.getPath("temp"), "mcode-attachments");
-    await mkdir(tempDir, { recursive: true });
-    const tempPath = join(tempDir, `${id}.jpg`);
-    await writeFile(tempPath, buffer);
-
-    return {
-      id,
-      name,
-      mimeType: "image/jpeg",
-      sizeBytes: buffer.byteLength,
-      sourcePath: tempPath,
-    };
-  });
-
-  // Save a clipboard file blob to a temp location and return metadata
-  ipcMain.handle(
-    "save-clipboard-file",
-    async (_event, buffer: Uint8Array, mimeType: string, fileName: string) => {
-      const id = randomUUID();
-      const ext = getExtension(fileName);
-      const suffix = ext ? `.${ext}` : "";
-      const tempDir = join(app.getPath("temp"), "mcode-attachments");
-      await mkdir(tempDir, { recursive: true });
-      const tempPath = join(tempDir, `${id}${suffix}`);
-      await writeFile(tempPath, Buffer.from(buffer));
-      return {
-        id,
-        name: fileName,
-        mimeType,
-        sizeBytes: buffer.byteLength,
-        sourcePath: tempPath,
-      };
-    },
-  );
 
   // Log path
   ipcMain.handle("get-log-path", () => {
@@ -489,43 +401,6 @@ function registerIpcHandlers(): void {
   });
 
   registerPreviewBrowserHandlers();
-}
-
-// ---------------------------------------------------------------------------
-// Attachment protocol handler
-// ---------------------------------------------------------------------------
-
-/** Register the mcode-attachment:// protocol for serving attachment files. */
-function registerAttachmentProtocol(): void {
-  protocol.handle("mcode-attachment", async (request) => {
-    const url = new URL(request.url);
-    const threadId = url.hostname;
-    const filename = url.pathname.replace(/^\//, "");
-
-    if (!VALID_ATTACHMENT_ID.test(threadId)) {
-      return new Response("Invalid thread ID", { status: 400 });
-    }
-    if (!/^[a-f0-9-]+\.\w+$/.test(filename)) {
-      return new Response("Invalid attachment ID", { status: 400 });
-    }
-
-    const filePath = join(getMcodeDir(), "attachments", threadId, filename);
-    if (!existsSync(filePath)) {
-      return new Response("Not found", { status: 404 });
-    }
-
-    const ext = filename.split(".").pop() ?? "";
-    const nodeStream = createReadStream(filePath);
-    const webStream = Readable.toWeb(nodeStream) as ReadableStream;
-
-    return new Response(webStream, {
-      headers: {
-        "Content-Type": MIME_MAP[ext] ?? "application/octet-stream",
-        "Cache-Control": "public, max-age=31536000, immutable",
-        "Content-Security-Policy": "default-src 'none'",
-      },
-    });
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -607,9 +482,7 @@ app.whenReady().then(async () => {
     console.log(`Server started on port ${port}`);
 
     serverRuntime.registerLifecycle();
-
-    // Register custom protocol for attachment files
-    registerAttachmentProtocol();
+    registerAttachmentsFeature();
 
     // Register IPC handlers BEFORE creating the window so the renderer can
     // invoke get-server-url as soon as it loads, without racing the handler.

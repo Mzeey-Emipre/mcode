@@ -19,9 +19,14 @@ import { PtyPidRegistry } from "./services/pty-pid-registry";
 // Services
 import { WorkspaceService } from "./services/workspace-service";
 import { ThreadService } from "./services/thread-service";
-import { AgentService, CanonicalAgentEventSink, startAgentOrchestration } from "./features/agents";
-import { TurnRecoveryService } from "./services/turn-recovery-service";
-import { ThreadControlService } from "./services/thread-control-service";
+import {
+  AgentPermissionService,
+  AgentService,
+  CanonicalAgentEventSink,
+  ThreadControlService,
+  TurnRecoveryService,
+  startAgentOrchestration,
+} from "./features/agents";
 import { ExternalThreadControlPairingService } from "./services/external-thread-control-pairing-service";
 import { ExternalThreadControlMcpRuntime } from "./services/external-thread-control-mcp-runtime";
 import { NarrativeStore } from "./services/narrative-store";
@@ -252,6 +257,7 @@ browserAutomationCredentials.onRemoved((revocation) => {
 const workspaceService = container.resolve(WorkspaceService);
 const threadService = container.resolve(ThreadService);
 const agentService = container.resolve(AgentService);
+const agentPermissionService = container.resolve(AgentPermissionService);
 const turnRecoveryService = container.resolve(TurnRecoveryService);
 const threadControlService = container.resolve(ThreadControlService);
 const externalThreadControlPairingService = container.resolve(ExternalThreadControlPairingService);
@@ -431,6 +437,7 @@ startAgentOrchestration({
   threadService,
   githubService,
   ciWatcherService,
+  providerRegistry,
   publishAgentEvent: (event) => {
     const sequencedEvent = broadcast("agent.event", event) ?? event;
     portPush.send("agent.event", sequencedEvent);
@@ -442,6 +449,14 @@ startAgentOrchestration({
   publishThreadPrLinked: (payload) => {
     broadcast("thread.prLinked", payload);
     portPush.send("thread.prLinked", payload);
+  },
+  publishPermissionRequest: (request) => {
+    broadcast("permission.request", request);
+    portPush.send("permission.request", request);
+  },
+  publishPermissionResolved: (payload) => {
+    broadcast("permission.resolved", payload);
+    portPush.send("permission.resolved", payload);
   },
 });
 void legacyConversationMigration.runToCompletion().then((result) => {
@@ -546,16 +561,6 @@ skillWatcherService.registerDebouncedInvalidateListener(() => {
 }
 
 for (const provider of providerRegistry.resolveAll()) {
-  provider.on("permission_request", (request) => {
-    broadcast("permission.request", request);
-    portPush.send("permission.request", request);
-  });
-
-  provider.on("permission_resolved", (payload) => {
-    broadcast("permission.resolved", payload);
-    portPush.send("permission.resolved", payload);
-  });
-
   // ExitPlanMode: Claude SDK's native plan output. The provider intercepts
   // the tool call, captures the plan markdown, and emits this event. We
   // persist the plan and broadcast to clients.
@@ -577,6 +582,7 @@ const { httpServer, wss } = createWsServer({
   workspaceService,
   threadService,
   agentService,
+  agentPermissionService,
   turnRecoveryService,
   threadControlService,
   externalThreadControlPairingService,
