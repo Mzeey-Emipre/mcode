@@ -1,9 +1,9 @@
 import "reflect-metadata";
 import type Database from "better-sqlite3";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { openMemoryDatabase } from "../../../../store/database.js";
-import { MessageRepo } from "../../../../repositories/message-repo.js";
-import { ThreadRepo } from "../../../../repositories/thread-repo.js";
+import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
+import { MessageRepo } from "../../conversation/persistence/message-repo.js";
+import { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
 import {
   CanonicalAgentEventSink,
   type CanonicalAgentEventPublisher,

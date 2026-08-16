@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import type { WorkspaceRepo } from "../../../../repositories/workspace-repo";
+import type { WorkspaceRepo } from "../../persistence/workspace-repo.js";
 
 const { mockRemove, mockRmdir, mockExistsSync, mockLogger } = vi.hoisted(() => ({
   mockRemove: vi.fn(),

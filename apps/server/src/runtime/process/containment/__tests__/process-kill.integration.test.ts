@@ -1,7 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
-import { killProcessTree } from "../process-kill";
+import { killProcessTree } from "../process-kill.js";
 
 const execFileAsync = promisify(execFile);
 const spawnedRoots = new Set<number>();

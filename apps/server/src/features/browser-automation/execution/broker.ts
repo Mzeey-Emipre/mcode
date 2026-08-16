@@ -19,7 +19,7 @@ import {
   type BrowserAutomationPublicOperation,
   type BrowserAutomationRequestOperation,
 } from "@mcode/contracts";
-import { sendToClient } from "../../../transport/push.js";
+import { sendToClient } from "../../../application/transport/push.js";
 import type { BrowserAutomationCredentialClaims } from "../access/credential-registry.js";
 import {
   BrowserAutomationTelemetry,

@@ -8,7 +8,7 @@ import { injectable, inject } from "tsyringe";
 import { execFile, type ChildProcess } from "child_process";
 import type { PrInfo, PrDetail, ChecksStatus, CheckRun } from "@mcode/contracts";
 import { logger } from "@mcode/shared";
-import { WorkspaceRepo } from "../../../repositories/workspace-repo";
+import { WorkspaceRepo } from "../../projects/persistence/workspace-repo.js";
 import { killProcessTree } from "../../../runtime/process/containment/process-kill.js";
 
 const MAX_PULL_REQUESTS_PER_WATCH_BATCH = 25;

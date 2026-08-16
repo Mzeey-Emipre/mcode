@@ -12,7 +12,7 @@ function defaultSqliteUrl(): string {
 
 export default defineConfig({
   dialect: "sqlite",
-  schema: "./src/store/schema.ts",
+  schema: "./src/runtime/persistence/sqlite/schema.ts",
   out: "./drizzle",
   dbCredentials: {
     url: process.env.MCODE_DRIZZLE_DB ?? defaultSqliteUrl(),

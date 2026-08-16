@@ -1,6 +1,6 @@
 import { EventEmitter } from "events";
 import { describe, expect, it, vi } from "vitest";
-import { listenWithPortRetry } from "../http-listener";
+import { listenWithPortRetry } from "../http-listener.js";
 
 class FakeServer extends EventEmitter {
   readonly attempts: number[] = [];

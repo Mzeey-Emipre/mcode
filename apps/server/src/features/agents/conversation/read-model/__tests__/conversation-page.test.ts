@@ -1,19 +1,19 @@
 import "reflect-metadata";
 import { describe, expect, it, vi } from "vitest";
 import type Database from "better-sqlite3";
-import { openMemoryDatabase } from "../../../../../store/database";
-import { MessageRepo } from "../../../../../repositories/message-repo";
-import { ToolCallRecordRepo } from "../../../../../repositories/tool-call-record-repo";
-import { ThoughtSegmentRepo } from "../../../../../repositories/thought-segment-repo";
-import { HookExecutionRepo } from "../../../../../repositories/hook-execution-repo";
-import { PlanQuestionAnswersRepo } from "../../../../../repositories/plan-question-answers-repo";
-import { NarrativeStore } from "../../narrative/narrative-store";
+import { openMemoryDatabase } from "../../../../../runtime/persistence/sqlite/database.js";
+import { MessageRepo } from "../../persistence/message-repo.js";
+import { ToolCallRecordRepo } from "../../../tools/persistence/tool-call-record-repo.js";
+import { ThoughtSegmentRepo } from "../../narrative/persistence/thought-segment-repo.js";
+import { HookExecutionRepo } from "../../../events/persistence/hook-execution-repo.js";
+import { PlanQuestionAnswersRepo } from "../../../planning/persistence/plan-question-answers-repo.js";
+import { NarrativeStore } from "../../narrative/narrative-store.js";
 import {
   loadConversationPage,
   loadConversationTail,
   loadNewerConversationPage,
   loadOlderConversationPage,
-} from "../conversation-page";
+} from "../conversation-page.js";
 
 function seedThread(db: Database.Database): void {
   const now = new Date().toISOString();

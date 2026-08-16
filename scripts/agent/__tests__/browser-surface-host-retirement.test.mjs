@@ -7,7 +7,7 @@ import { test } from "node:test";
 const repositoryRoot = process.cwd();
 const sourceExtensions = new Set([".js", ".jsx", ".mjs", ".ts", ".tsx"]);
 const legacyMigrationFixtures = new Set([
-  "apps/server/src/shared/settings/__tests__/settings-service.test.ts",
+  "apps/server/src/features/settings/__tests__/settings-service.test.ts",
   "packages/contracts/src/models/__tests__/settings.test.ts",
 ]);
 const supersededDecision = "docs/adr/0016-preview-rendering-host-switch.md";

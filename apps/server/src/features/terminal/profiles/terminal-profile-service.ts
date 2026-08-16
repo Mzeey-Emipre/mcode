@@ -12,7 +12,7 @@ import {
   type TerminalProfileReference,
   type TerminalResolvedProfile,
 } from "@mcode/contracts";
-import type { SettingsService } from "../../../shared/settings/settings-service.js";
+import type { SettingsService } from "../../settings/settings-service.js";
 import type { WorkspaceTerminalPreferencesService } from "../preferences/workspace-terminal-preferences-service.js";
 
 interface CertifiedProfileDefinition {

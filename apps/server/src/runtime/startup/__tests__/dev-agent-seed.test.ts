@@ -4,9 +4,9 @@ import { mkdtemp } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, describe, expect, it } from "vitest";
-import { WorkspaceRepo } from "../../../repositories/workspace-repo";
-import { seedAgentRuntimeWorkspace } from "../dev-agent-seed";
-import { openMemoryDatabase } from "../../../store/database";
+import { WorkspaceRepo } from "../../../features/projects/persistence/workspace-repo.js";
+import { seedAgentRuntimeWorkspace } from "../dev-agent-seed.js";
+import { openMemoryDatabase } from "../../persistence/sqlite/database.js";
 import type Database from "better-sqlite3";
 
 describe("seedAgentRuntimeWorkspace", () => {

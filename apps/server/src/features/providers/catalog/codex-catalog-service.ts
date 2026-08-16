@@ -28,7 +28,7 @@ import {
   type CodexCatalogPluginsResult,
 } from "@mcode/providers";
 import { codexPluginNameFromSkillPath } from "../../agents/skills/catalog/skill-service.js";
-import { SettingsService } from "../../../shared/settings/settings-service.js";
+import { SettingsService } from "../../settings/settings-service.js";
 import { EnvService } from "../../../runtime/environment/env-service.js";
 import {
   CodexCustomPromptService,

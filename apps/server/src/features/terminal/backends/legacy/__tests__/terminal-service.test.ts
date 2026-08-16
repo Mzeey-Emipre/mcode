@@ -31,8 +31,8 @@ vi.mock("@mcode/shared", () => ({
 }));
 
 import { logger } from "@mcode/shared";
-import { TerminalService } from "../terminal-service";
-import { TerminalReplayBuffer } from "../terminal-replay-buffer";
+import { TerminalService } from "../terminal-service.js";
+import { TerminalReplayBuffer } from "../terminal-replay-buffer.js";
 
 function terminalServiceWithReplay(
   replay: TerminalReplayBuffer,

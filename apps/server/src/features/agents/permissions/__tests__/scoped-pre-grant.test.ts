@@ -1,7 +1,7 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach } from "vitest";
 import { resolve } from "node:path";
-import { ScopedPreGrantService } from "../scoped-pre-grant";
+import { ScopedPreGrantService } from "../scoped-pre-grant.js";
 
 const T = "child-thread-1";
 const DOC = resolve("/tmp/mcode-handoff-child-thread-1-123.md");

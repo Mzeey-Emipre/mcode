@@ -5,7 +5,7 @@
 import { basename } from "path";
 import { existsSync } from "fs";
 import { logger } from "@mcode/shared";
-import type { WorkspaceRepo } from "../../repositories/workspace-repo";
+import type { WorkspaceRepo } from "../../features/projects/persistence/workspace-repo.js";
 
 /** Environment variables that opt the server into agent-runtime seeding. */
 export interface AgentRuntimeSeedEnv {

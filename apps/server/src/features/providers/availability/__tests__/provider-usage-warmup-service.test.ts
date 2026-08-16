@@ -7,7 +7,7 @@ import {
   type Settings,
 } from "@mcode/contracts";
 import { ProviderUsageWarmupService } from "../provider-usage-warmup-service.js";
-import type { SettingsService } from "../../../../shared/settings/settings-service.js";
+import type { SettingsService } from "../../../settings/settings-service.js";
 
 function makeSettings(enabled: Partial<Settings["provider"]["enabled"]> = {}): Settings {
   const settings = SettingsSchema().parse({});

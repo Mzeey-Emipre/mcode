@@ -1,13 +1,13 @@
 import "reflect-metadata";
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { broadcast } from "../../../../transport/push";
+import { broadcast } from "../../../../application/transport/push.js";
 import { HandoffCoordinator } from "../handoff-coordinator.js";
 import type { HandoffArtifact, LadderStep, ProviderErrorClass } from "@mcode/contracts";
 
 // The coordinator broadcasts UI handoff-status events as part of path selection
 // ("generating" -> "ready"/"fallback"). Mock the push module so tests can assert
 // which path ran without a live transport.
-vi.mock("../../../../transport/push", () => ({ broadcast: vi.fn() }));
+vi.mock("../../../../application/transport/push.js", () => ({ broadcast: vi.fn() }));
 const broadcastMock = vi.mocked(broadcast);
 
 /** Build a pipeline-produced artifact for a given ladder step. */

@@ -11,7 +11,7 @@ import { logger } from "@mcode/shared";
 import {
   applySQLiteCacheBudget,
   optimizeSQLiteConnection,
-} from "../../store/sqlite-connection-policy.js";
+} from "../persistence/sqlite/sqlite-connection-policy.js";
 
 /**
  * Idle state levels, from most active to most aggressive reclamation.

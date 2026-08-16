@@ -5,16 +5,16 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type Database from "better-sqlite3";
-import { openMemoryDatabase } from "../../../../store/database";
-import { WorkspaceRepo } from "../../../../repositories/workspace-repo";
-import { ThreadRepo } from "../../../../repositories/thread-repo";
-import { CleanupJobRepo, MAX_CLEANUP_ATTEMPTS } from "../../../../repositories/cleanup-job-repo";
-import { CleanupWorker } from "../cleanup-worker";
+import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
+import { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
+import { ThreadRepo } from "../../persistence/thread-repo.js";
+import { CleanupJobRepo, MAX_CLEANUP_ATTEMPTS } from "../persistence/cleanup-job-repo.js";
+import { CleanupWorker } from "../cleanup-worker.js";
 import { GitService } from "../../../projects/index.js";
-import { RealGitExecutor } from "../../../projects/git/execution/real-git-executor";
-import type { ClaudeProvider } from "../../../../providers/claude/claude-provider";
-import type { TerminalBackend } from "../../../terminal/backends/terminal-backend";
-import type { AttachmentService } from "../../../attachments/storage/attachment-service";
+import { RealGitExecutor } from "../../../projects/git/execution/real-git-executor.js";
+import type { ClaudeProvider } from "../../../providers/adapters/claude/claude-provider.js";
+import type { TerminalBackend } from "../../../terminal/backends/terminal-backend.js";
+import type { AttachmentService } from "../../../attachments/storage/attachment-service.js";
 import type { HandoffStorage } from "../../../handoff/index.js";
 
 vi.mock("../../../../runtime/process/containment/process-kill.js", () => ({

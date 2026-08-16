@@ -1,16 +1,16 @@
 import "reflect-metadata";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type Database from "better-sqlite3";
-import { openMemoryDatabase } from "../../../../store/database";
-import { ThreadRepo } from "../../../../repositories/thread-repo";
-import { WorkspaceRepo } from "../../../../repositories/workspace-repo";
-import { MessageRepo } from "../../../../repositories/message-repo";
+import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
+import { ThreadRepo } from "../../persistence/thread-repo.js";
+import { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
+import { MessageRepo } from "../../../agents/conversation/persistence/message-repo.js";
 import { getDefaultSettings, type CompletedThreadRetentionDays, type Settings } from "@mcode/contracts";
 import type { AgentService } from "../../../agents/index.js";
-import type { SettingsService } from "../../../../shared/settings/settings-service";
-import type { ThreadTeardownService } from "../thread-teardown-service";
-import { ThreadControlMutationReservationService } from "../../authority/thread-control-mutation-reservation-service";
-import { ThreadCompletionService } from "../thread-completion-service";
+import type { SettingsService } from "../../../settings/settings-service.js";
+import type { ThreadTeardownService } from "../thread-teardown-service.js";
+import { ThreadControlMutationReservationService } from "../../authority/thread-control-mutation-reservation-service.js";
+import { ThreadCompletionService } from "../thread-completion-service.js";
 
 describe("ThreadCompletionService", () => {
   let db: Database.Database;

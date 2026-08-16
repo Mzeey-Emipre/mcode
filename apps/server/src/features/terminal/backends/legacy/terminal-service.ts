@@ -15,10 +15,10 @@ import { killProcessTree, gracefulKillProcessTree, listDirectChildren } from "..
 import { TerminalFlowControl } from "./terminal-flow-control.js";
 import { TerminalReplayBuffer, replayCapBytesForScrollback } from "./terminal-replay-buffer.js";
 import type { PtyPidRegistry } from "../../host/pty-pid-registry.js";
-import type { ThreadRepo } from "../../../../repositories/thread-repo";
-import type { WorkspaceRepo } from "../../../../repositories/workspace-repo";
+import type { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
+import type { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
 import type { GitService } from "../../../projects/index.js";
-import type { SettingsService } from "../../../../shared/settings/settings-service";
+import type { SettingsService } from "../../../settings/settings-service.js";
 import { EnvService } from "../../../../runtime/environment/env-service.js";
 import {
   WindowsProcessScopeFactory,

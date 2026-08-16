@@ -2,7 +2,7 @@ import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { UtilityCompletionService } from "../utility-completion-service.js";
 import type { IProviderRegistry, IAgentProvider } from "@mcode/contracts";
-import type { SettingsService } from "../../settings/settings-service.js";
+import type { SettingsService } from "../../../features/settings/settings-service.js";
 import type { ProviderAvailabilityService } from "../../../features/providers/availability/provider-availability-service.js";
 
 function mockProvider(supportsCompletion: boolean) {

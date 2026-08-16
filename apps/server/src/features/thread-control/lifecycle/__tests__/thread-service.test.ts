@@ -1,14 +1,14 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type Database from "better-sqlite3";
-import { openMemoryDatabase } from "../../../../store/database";
-import { ThreadRepo } from "../../../../repositories/thread-repo";
-import { WorkspaceRepo } from "../../../../repositories/workspace-repo";
-import { CleanupJobRepo } from "../../../../repositories/cleanup-job-repo";
-import { ThreadService } from "../thread-service";
+import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
+import { ThreadRepo } from "../../persistence/thread-repo.js";
+import { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
+import { CleanupJobRepo } from "../../cleanup/persistence/cleanup-job-repo.js";
+import { ThreadService } from "../thread-service.js";
 import { ProjectWorktreeService } from "../../../projects/index.js";
 import type { GitService } from "../../../projects/index.js";
-import type { AttachmentService } from "../../../attachments/storage/attachment-service";
+import type { AttachmentService } from "../../../attachments/storage/attachment-service.js";
 import type { HandoffStorage } from "../../../handoff/index.js";
 
 describe("ThreadService.delete", () => {

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import type Database from "better-sqlite3";
-import { openMemoryDatabase } from "../../../../store/database.js";
+import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { PtyHostCleanupLedger } from "../terminal-cleanup-ledger.js";
 
 const SESSION_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";

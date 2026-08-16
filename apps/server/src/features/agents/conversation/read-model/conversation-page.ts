@@ -9,9 +9,9 @@ import type {
   NarrativeEntry,
 } from "@mcode/contracts";
 import { CONVERSATION_TAIL_MAX_MESSAGES } from "@mcode/contracts";
-import type { MessageRepo } from "../../../../repositories/message-repo.js";
+import type { MessageRepo } from "../persistence/message-repo.js";
 import type { NarrativeStore } from "../narrative/narrative-store.js";
-import type { PlanQuestionAnswersRepo } from "../../../../repositories/plan-question-answers-repo.js";
+import type { PlanQuestionAnswersRepo } from "../../planning/persistence/plan-question-answers-repo.js";
 import type { CanonicalAgentEventSink } from "../../index.js";
 
 /** Dependencies needed to load one paginated conversation page. */

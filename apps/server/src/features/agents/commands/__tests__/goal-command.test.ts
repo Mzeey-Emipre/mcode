@@ -4,8 +4,8 @@ import type Database from "better-sqlite3";
 import type { IAgentProvider, AgentEvent, GoalState } from "@mcode/contracts";
 import { AgentEventType } from "@mcode/contracts";
 import { EventEmitter } from "events";
-import { openMemoryDatabase } from "../../../../store/database.js";
-import { MessageRepo } from "../../../../repositories/message-repo.js";
+import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
+import { MessageRepo } from "../../conversation/persistence/message-repo.js";
 import { GoalCommand } from "../goal-command.js";
 import type { CommandContext } from "../command-router.js";
 

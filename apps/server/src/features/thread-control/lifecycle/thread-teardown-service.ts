@@ -4,7 +4,7 @@
 import { injectable, inject } from "tsyringe";
 import { AgentService } from "../../agents/index.js";
 import { TerminalBackend, TERMINAL_BACKEND_TOKEN } from "../../terminal/backends/terminal-backend.js";
-import { ThreadRepo } from "../../../repositories/thread-repo";
+import { ThreadRepo } from "../persistence/thread-repo.js";
 
 function failureMessage(result: PromiseRejectedResult): string {
   return result.reason instanceof Error ? result.reason.message : String(result.reason);

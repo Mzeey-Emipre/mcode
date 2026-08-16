@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { describe, it, expect } from "vitest";
-import type { WorkspaceRepo } from "../../../../repositories/workspace-repo.js";
+import type { WorkspaceRepo } from "../../persistence/workspace-repo.js";
 import { FakeGitExecutor } from "../execution/fake-git-executor.js";
 import { GitService } from "../git-service.js";
 

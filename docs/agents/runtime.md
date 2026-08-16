@@ -176,7 +176,7 @@ Capture live ACP envelopes for mapper work:
 bun apps/server/scripts/capture-cursor-acp.ts --suite
 ```
 
-Artifacts land in `<repo>/.mcode-local/cursor-acp-capture/` (`*-raw.jsonl`, `*-mapped.jsonl`, `*-summary.txt`). Golden tool-only traces live in `apps/server/src/providers/cursor/__tests__/fixtures/`.
+Artifacts land in `<repo>/.mcode-local/cursor-acp-capture/` (`*-raw.jsonl`, `*-mapped.jsonl`, `*-summary.txt`). Golden tool-only traces live in `apps/server/src/features/providers/adapters/cursor/__tests__/fixtures/`.
 
 ---
 

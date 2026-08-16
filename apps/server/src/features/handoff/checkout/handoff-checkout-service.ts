@@ -1,7 +1,7 @@
 import { delay, inject, injectable } from "tsyringe";
 import type { Thread } from "@mcode/contracts";
-import { WorkspaceRepo } from "../../../repositories/workspace-repo.js";
-import { ThreadRepo } from "../../../repositories/thread-repo.js";
+import { WorkspaceRepo } from "../../projects/persistence/workspace-repo.js";
+import { ThreadRepo } from "../../thread-control/persistence/thread-repo.js";
 import { GitService } from "../../projects/index.js";
 
 /** Owns branch creation and checkout-state synchronization for thread handoffs. */

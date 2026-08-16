@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { createGraceController } from "../grace-controller";
+import { createGraceController } from "../grace-controller.js";
 
 const GRACE_MS = 10_000;
 

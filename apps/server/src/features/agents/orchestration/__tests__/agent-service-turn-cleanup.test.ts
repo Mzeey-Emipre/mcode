@@ -13,35 +13,35 @@ import type {
   Thread,
 } from "@mcode/contracts";
 import type Database from "better-sqlite3";
-import { openMemoryDatabase } from "../../../../store/database.js";
-import { ThreadRepo as RealThreadRepo } from "../../../../repositories/thread-repo.js";
-import { WorkspaceRepo as RealWorkspaceRepo } from "../../../../repositories/workspace-repo.js";
-import { MessageRepo as RealMessageRepo } from "../../../../repositories/message-repo.js";
-import { ToolCallRecordRepo as RealToolCallRecordRepo } from "../../../../repositories/tool-call-record-repo.js";
-import { ThoughtSegmentRepo as RealThoughtSegmentRepo } from "../../../../repositories/thought-segment-repo.js";
-import { HookExecutionRepo as RealHookExecutionRepo } from "../../../../repositories/hook-execution-repo.js";
+import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
+import { ThreadRepo as RealThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
+import { WorkspaceRepo as RealWorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
+import { MessageRepo as RealMessageRepo } from "../../conversation/persistence/message-repo.js";
+import { ToolCallRecordRepo as RealToolCallRecordRepo } from "../../tools/persistence/tool-call-record-repo.js";
+import { ThoughtSegmentRepo as RealThoughtSegmentRepo } from "../../conversation/narrative/persistence/thought-segment-repo.js";
+import { HookExecutionRepo as RealHookExecutionRepo } from "../../events/persistence/hook-execution-repo.js";
 import { AgentService } from "../agent-service.js";
-import { createCanonicalAgentEventSinkStub } from "../../../../test-utils/canonical-agent-event-sink-stub.js";
+import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/canonical-agent-event-sink-stub.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
 import { PlanQuestionService } from "../../planning/plan-question-service.js";
-import { broadcast } from "../../../../transport/push.js";
-import type { ThreadRepo } from "../../../../repositories/thread-repo.js";
-import type { WorkspaceRepo } from "../../../../repositories/workspace-repo.js";
-import type { MessageRepo } from "../../../../repositories/message-repo.js";
+import { broadcast } from "../../../../application/transport/push.js";
+import type { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
+import type { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
+import type { MessageRepo } from "../../conversation/persistence/message-repo.js";
 import type { GitService } from "../../../projects/index.js";
 import type { AttachmentService } from "../../../attachments/storage/attachment-service.js";
-import type { ToolCallRecordRepo } from "../../../../repositories/tool-call-record-repo.js";
-import type { TurnSnapshotRepo } from "../../../../repositories/turn-snapshot-repo.js";
+import type { ToolCallRecordRepo } from "../../tools/persistence/tool-call-record-repo.js";
+import type { TurnSnapshotRepo } from "../../turns/persistence/turn-snapshot-repo.js";
 import type { SnapshotService } from "../../../projects/diffs/snapshots/snapshot-service.js";
 import type { MemoryPressureService } from "../../../../runtime/memory/memory-pressure-service.js";
-import type { TaskRepo } from "../../../../repositories/task-repo.js";
-import type { SettingsService } from "../../../../shared/settings/settings-service.js";
+import type { TaskRepo } from "../persistence/task-repo.js";
+import type { SettingsService } from "../../../settings/settings-service.js";
 import type { ThreadService } from "../../../thread-control/index.js";
 import type { ProviderAvailabilityService } from "../../../providers/availability/provider-availability-service.js";
-import type { PlanQuestionAnswersRepo } from "../../../../repositories/plan-question-answers-repo.js";
+import type { PlanQuestionAnswersRepo } from "../../planning/persistence/plan-question-answers-repo.js";
 import { ThreadControlMutationReservationService } from "../../../thread-control/index.js";
 
-vi.mock("../../../../transport/push.js", () => ({ broadcast: vi.fn() }));
+vi.mock("../../../../application/transport/push.js", () => ({ broadcast: vi.fn() }));
 
 // Mock fs so sendMessage's cwd validation passes without a real directory
 vi.mock("fs", async (importOriginal) => {
@@ -297,7 +297,7 @@ function buildService(
     attachmentService,
     providerRegistry,
     threadService,
-    { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../../../repositories/hook-execution-repo.js").HookExecutionRepo,
+    { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../events/persistence/hook-execution-repo.js").HookExecutionRepo,
     turnSnapshotRepo,
     snapshotService,
     db,
@@ -306,14 +306,14 @@ function buildService(
     settingsService,
     availability,
     planQuestionAnswersRepo,
-      { create: vi.fn(), updateStatus: vi.fn(), listByThread: vi.fn(() => []), getLatestForThread: vi.fn(() => null), getById: vi.fn(() => null) } as unknown as import("../../../../repositories/plan-repo.js").PlanRepo,
+      { create: vi.fn(), updateStatus: vi.fn(), listByThread: vi.fn(() => []), getLatestForThread: vi.fn(() => null), getById: vi.fn(() => null) } as unknown as import("../../planning/persistence/plan-repo.js").PlanRepo,
       { deliverHandoff: vi.fn(async () => ({ providerWireOverride: "" })) } as any,
       { issue: vi.fn(), tryConsume: vi.fn(() => false), clear: vi.fn(), hasActiveGrant: vi.fn(() => false) } as any,
       new NarrativeStore(
         messageRepo,
         toolCallRecordRepo,
-      { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../../../repositories/thought-segment-repo.js").ThoughtSegmentRepo,
-      { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../../../repositories/hook-execution-repo.js").HookExecutionRepo,
+      { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../conversation/narrative/persistence/thought-segment-repo.js").ThoughtSegmentRepo,
+      { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../events/persistence/hook-execution-repo.js").HookExecutionRepo,
       ),
       new PlanQuestionService(messageRepo, planQuestionAnswersRepo),
       undefined,
@@ -1232,7 +1232,7 @@ describe("AgentService Ended finalization", () => {
       settingsService,
       { assertUsable: vi.fn() } as unknown as ProviderAvailabilityService,
       planQuestionAnswersRepo,
-      { create: vi.fn(), updateStatus: vi.fn(), listByThread: vi.fn(() => []), getLatestForThread: vi.fn(() => null), getById: vi.fn(() => null) } as unknown as import("../../../../repositories/plan-repo.js").PlanRepo,
+      { create: vi.fn(), updateStatus: vi.fn(), listByThread: vi.fn(() => []), getLatestForThread: vi.fn(() => null), getById: vi.fn(() => null) } as unknown as import("../../planning/persistence/plan-repo.js").PlanRepo,
       { deliverHandoff: vi.fn(async () => ({ providerWireOverride: "" })) } as any,
       { issue: vi.fn(), tryConsume: vi.fn(() => false), clear: vi.fn(), hasActiveGrant: vi.fn(() => false) } as any,
       new NarrativeStore(messageRepo, toolCallRecordRepo, thoughtSegmentRepo, hookExecutionRepo),

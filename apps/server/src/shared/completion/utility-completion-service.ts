@@ -2,7 +2,7 @@ import { injectable, inject } from "tsyringe";
 import { logger } from "@mcode/shared";
 import { isCompletionCapable } from "@mcode/contracts";
 import type { CompletionOptions, IProviderRegistry, ProviderId } from "@mcode/contracts";
-import { SettingsService } from "../settings/settings-service.js";
+import { SettingsService } from "../../features/settings/settings-service.js";
 import { ProviderAvailabilityService } from "../../features/providers/availability/provider-availability-service.js";
 
 /** Per-provider default model IDs for utility tasks. */

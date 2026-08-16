@@ -15,11 +15,11 @@ import { join } from "path";
 import { logger, getMcodeDir } from "@mcode/shared";
 import { storedAttachmentSuffix } from "@mcode/contracts";
 import type { Thread, Message, ProviderId, ForkHistoryBudget } from "@mcode/contracts";
-import { ThreadRepo } from "../../../repositories/thread-repo";
-import { MessageRepo } from "../../../repositories/message-repo";
-import { TurnSnapshotRepo } from "../../../repositories/turn-snapshot-repo";
-import { TaskRepo } from "../../../repositories/task-repo";
-import { broadcast } from "../../../transport/push";
+import { ThreadRepo } from "../../thread-control/persistence/thread-repo.js";
+import { MessageRepo } from "../../agents/conversation/persistence/message-repo.js";
+import { TurnSnapshotRepo } from "../../agents/turns/persistence/turn-snapshot-repo.js";
+import { TaskRepo } from "../../agents/orchestration/persistence/task-repo.js";
+import { broadcast } from "../../../application/transport/push.js";
 import {
   buildHandoffContent,
   buildConversationReplay,

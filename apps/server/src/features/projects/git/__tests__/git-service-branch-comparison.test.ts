@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import type { WorkspaceRepo } from "../../../../repositories/workspace-repo";
+import type { WorkspaceRepo } from "../../persistence/workspace-repo.js";
 import { GitService } from "../git-service.js";
 import { createMockGitExecutor } from "../execution/__tests__/mock-git-executor.js";
 

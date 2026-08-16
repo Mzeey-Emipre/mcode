@@ -13,8 +13,8 @@
  */
 
 import { injectable, inject } from "tsyringe";
-import { MessageRepo } from "../../../repositories/message-repo";
-import { PlanQuestionAnswersRepo } from "../../../repositories/plan-question-answers-repo";
+import { MessageRepo } from "../conversation/persistence/message-repo.js";
+import { PlanQuestionAnswersRepo } from "./persistence/plan-question-answers-repo.js";
 import { PLAN_ANSWER_MESSAGE_PREFIX } from "@mcode/contracts";
 
 /** Matches a fenced `plan-questions` block and captures its JSON body. */

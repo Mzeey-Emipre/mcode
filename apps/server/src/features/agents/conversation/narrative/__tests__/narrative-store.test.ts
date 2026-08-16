@@ -1,12 +1,12 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type Database from "better-sqlite3";
-import { openMemoryDatabase } from "../../../../../store/database";
-import { MessageRepo } from "../../../../../repositories/message-repo";
-import { ToolCallRecordRepo } from "../../../../../repositories/tool-call-record-repo";
-import { ThoughtSegmentRepo } from "../../../../../repositories/thought-segment-repo";
-import { HookExecutionRepo } from "../../../../../repositories/hook-execution-repo";
-import { NarrativeStore } from "../narrative-store";
+import { openMemoryDatabase } from "../../../../../runtime/persistence/sqlite/database.js";
+import { MessageRepo } from "../../persistence/message-repo.js";
+import { ToolCallRecordRepo } from "../../../tools/persistence/tool-call-record-repo.js";
+import { ThoughtSegmentRepo } from "../persistence/thought-segment-repo.js";
+import { HookExecutionRepo } from "../../../events/persistence/hook-execution-repo.js";
+import { NarrativeStore } from "../narrative-store.js";
 
 /** Seed a workspace + thread so message/record foreign keys are satisfied. */
 function seedThread(db: Database.Database): string {

@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { describe, expect, it } from "vitest";
-import * as browserAutomation from "../index";
+import * as browserAutomation from "../index.js";
 
 describe("browser automation feature boundary", () => {
   it("exposes only the composition-root browser automation symbols", () => {

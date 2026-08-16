@@ -9,16 +9,16 @@ import type {
   IProviderRegistry,
   ProviderId,
 } from "@mcode/contracts";
-import { openMemoryDatabase } from "../../../../store/database.js";
-import { ThreadRepo } from "../../../../repositories/thread-repo.js";
-import { WorkspaceRepo } from "../../../../repositories/workspace-repo.js";
-import { MessageRepo } from "../../../../repositories/message-repo.js";
-import { PlanQuestionAnswersRepo } from "../../../../repositories/plan-question-answers-repo.js";
-import { ToolCallRecordRepo } from "../../../../repositories/tool-call-record-repo.js";
-import { TurnSnapshotRepo } from "../../../../repositories/turn-snapshot-repo.js";
-import { TaskRepo } from "../../../../repositories/task-repo.js";
+import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
+import { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
+import { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
+import { MessageRepo } from "../../conversation/persistence/message-repo.js";
+import { PlanQuestionAnswersRepo } from "../../planning/persistence/plan-question-answers-repo.js";
+import { ToolCallRecordRepo } from "../../tools/persistence/tool-call-record-repo.js";
+import { TurnSnapshotRepo } from "../../turns/persistence/turn-snapshot-repo.js";
+import { TaskRepo } from "../persistence/task-repo.js";
 import { AgentService } from "../agent-service.js";
-import { createCanonicalAgentEventSinkStub } from "../../../../test-utils/canonical-agent-event-sink-stub.js";
+import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/canonical-agent-event-sink-stub.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
 import { PlanQuestionService } from "../../planning/plan-question-service.js";
 import type { GitService } from "../../../projects/index.js";
@@ -26,7 +26,7 @@ import type { AttachmentService } from "../../../attachments/storage/attachment-
 import type { SnapshotService } from "../../../projects/diffs/snapshots/snapshot-service.js";
 import type { MemoryPressureService } from "../../../../runtime/memory/memory-pressure-service.js";
 import type { ThreadService } from "../../../thread-control/index.js";
-import type { SettingsService } from "../../../../shared/settings/settings-service.js";
+import type { SettingsService } from "../../../settings/settings-service.js";
 import type { ProviderAvailabilityService } from "../../../providers/availability/provider-availability-service.js";
 
 /**
@@ -105,7 +105,7 @@ describe("AgentService clears sdk_session_id on session invalidation", () => {
       attachmentServiceStub,
       registryStub,
       threadServiceStub,
-      { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../../../repositories/hook-execution-repo.js").HookExecutionRepo,
+      { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../events/persistence/hook-execution-repo.js").HookExecutionRepo,
       turnSnapshotRepo,
       snapshotServiceStub,
       db,
@@ -113,15 +113,15 @@ describe("AgentService clears sdk_session_id on session invalidation", () => {
       taskRepo,
       settingsServiceStub,
       availabilityStub,
-      { markAnswered: vi.fn(), isAnswered: vi.fn(() => false), listAnsweredForThread: vi.fn(() => []) } as unknown as import("../../../../repositories/plan-question-answers-repo.js").PlanQuestionAnswersRepo,
-      { create: vi.fn(), updateStatus: vi.fn(), listByThread: vi.fn(() => []), getLatestForThread: vi.fn(() => null), getById: vi.fn(() => null) } as unknown as import("../../../../repositories/plan-repo.js").PlanRepo,
+      { markAnswered: vi.fn(), isAnswered: vi.fn(() => false), listAnsweredForThread: vi.fn(() => []) } as unknown as import("../../planning/persistence/plan-question-answers-repo.js").PlanQuestionAnswersRepo,
+      { create: vi.fn(), updateStatus: vi.fn(), listByThread: vi.fn(() => []), getLatestForThread: vi.fn(() => null), getById: vi.fn(() => null) } as unknown as import("../../planning/persistence/plan-repo.js").PlanRepo,
       { deliverHandoff: vi.fn(async () => ({ providerWireOverride: "" })) } as any,
       { issue: vi.fn(), tryConsume: vi.fn(() => false), clear: vi.fn(), hasActiveGrant: vi.fn(() => false) } as any,
       new NarrativeStore(
         messageRepo,
         toolCallRecordRepo,
-        { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../../../repositories/thought-segment-repo.js").ThoughtSegmentRepo,
-        { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../../../repositories/hook-execution-repo.js").HookExecutionRepo,
+        { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../conversation/narrative/persistence/thought-segment-repo.js").ThoughtSegmentRepo,
+        { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../events/persistence/hook-execution-repo.js").HookExecutionRepo,
       ),
       new PlanQuestionService(messageRepo, new PlanQuestionAnswersRepo(db)),
       undefined,

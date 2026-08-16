@@ -7,7 +7,7 @@ import {
   isGoalCapable,
   isGoalOpen,
 } from "@mcode/contracts";
-import type { MessageRepo } from "../../../repositories/message-repo.js";
+import type { MessageRepo } from "../conversation/persistence/message-repo.js";
 import type { CommandContext, CommandOutcome, McodeCommand } from "./command-router.js";
 
 /** Broadcast function shape used to push agent events to connected clients. */

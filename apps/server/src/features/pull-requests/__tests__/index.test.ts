@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { describe, expect, it } from "vitest";
-import * as pullRequests from "../index";
+import * as pullRequests from "../index.js";
 
 describe("pull requests feature boundary", () => {
   it("exposes only the composition-root pull-request symbols", () => {

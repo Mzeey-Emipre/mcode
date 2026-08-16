@@ -1,8 +1,8 @@
 import "reflect-metadata";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type Database from "better-sqlite3";
-import { WorkspaceRepo } from "../../../../repositories/workspace-repo.js";
-import { openMemoryDatabase } from "../../../../store/database.js";
+import { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
+import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { WorkspaceTerminalPreferencesService } from "../workspace-terminal-preferences-service.js";
 
 describe("WorkspaceTerminalPreferencesService", () => {

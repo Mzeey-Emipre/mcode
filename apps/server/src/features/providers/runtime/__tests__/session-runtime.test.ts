@@ -1,7 +1,7 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { SessionRuntime } from "../session-runtime";
-import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../session-runtime";
+import { SessionRuntime } from "../session-runtime.js";
+import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../session-runtime.js";
 
 /** Per-session state for the fake adapter. */
 interface FakeState {
@@ -40,8 +40,8 @@ class FakeAdapter implements ProtocolAdapter<FakeState> {
   }
 }
 
-const jobObject = { isWindowsJob: false, assign: vi.fn(), setDescription: vi.fn() } as unknown as import("../../../../runtime/process/containment/job-object").JobObject;
-const envService = { getEnv: () => ({ MCODE_TEST: "1" }) } as unknown as import("../../../../runtime/environment/env-service").EnvService;
+const jobObject = { isWindowsJob: false, assign: vi.fn(), setDescription: vi.fn() } as unknown as import("../../../../runtime/process/containment/job-object.js").JobObject;
+const envService = { getEnv: () => ({ MCODE_TEST: "1" }) } as unknown as import("../../../../runtime/environment/env-service.js").EnvService;
 
 function makeRuntime(adapter: FakeAdapter, idleTtlMs = 1000): SessionRuntime<FakeState> {
   return new SessionRuntime<FakeState>(adapter, { jobObject, envService, idleTtlMs });

@@ -7,8 +7,8 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type Database from "better-sqlite3";
-import { openMemoryDatabase } from "../../../../store/database.js";
-import { ModelCacheRepo } from "../../../../repositories/model-cache-repo.js";
+import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
+import { ModelCacheRepo } from "../persistence/model-cache-repo.js";
 import { ModelCacheService } from "../model-cache-service.js";
 import type { ProviderModelInfo, IProviderRegistry } from "@mcode/contracts";
 

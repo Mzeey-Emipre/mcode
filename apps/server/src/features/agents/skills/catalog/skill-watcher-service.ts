@@ -10,8 +10,8 @@ import { watch, existsSync, type FSWatcher } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import { logger } from "@mcode/shared";
-import { broadcast } from "../../../../transport/push";
-import { SkillService, copilotUserAgentsDir } from "./skill-service";
+import { broadcast } from "../../../../application/transport/push.js";
+import { SkillService, copilotUserAgentsDir } from "./skill-service.js";
 
 const DEBOUNCE_MS = 200;
 

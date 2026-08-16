@@ -15,10 +15,10 @@
 
 import { inject, injectable } from "tsyringe";
 import { logger } from "@mcode/shared";
-import { ThreadRepo } from "../../../repositories/thread-repo.js";
-import { WorkspaceRepo } from "../../../repositories/workspace-repo.js";
-import { ToolCallRecordRepo } from "../../../repositories/tool-call-record-repo.js";
-import { ThoughtSegmentRepo } from "../../../repositories/thought-segment-repo.js";
+import { ThreadRepo } from "../../thread-control/persistence/thread-repo.js";
+import { WorkspaceRepo } from "../../projects/persistence/workspace-repo.js";
+import { ToolCallRecordRepo } from "../../agents/tools/persistence/tool-call-record-repo.js";
+import { ThoughtSegmentRepo } from "../../agents/conversation/narrative/persistence/thought-segment-repo.js";
 import { classifyProviderError } from "./error-classifier.js";
 import { buildHandoffPrompt } from "../artifacts/handoff-prompt.js";
 import { DeterministicForker } from "../providers/session-forker.js";

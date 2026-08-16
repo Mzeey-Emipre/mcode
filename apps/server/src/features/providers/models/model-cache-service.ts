@@ -11,7 +11,7 @@
 import { inject, injectable } from "tsyringe";
 import { logger } from "@mcode/shared";
 import type { ProviderModelInfo, IProviderRegistry } from "@mcode/contracts";
-import { ModelCacheRepo } from "../../../repositories/model-cache-repo.js";
+import { ModelCacheRepo } from "./persistence/model-cache-repo.js";
 
 /** How long a cached entry is considered "fresh" (no background refresh). */
 const CACHE_FRESH_MS = 60 * 60 * 1000; // 1 hour

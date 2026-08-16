@@ -1,7 +1,7 @@
 import { inject, injectable } from "tsyringe";
 import type { IAgentProvider, IProviderRegistry } from "@mcode/contracts";
 import { logger } from "@mcode/shared";
-import { SettingsService } from "../../../shared/settings/settings-service.js";
+import { SettingsService } from "../../settings/settings-service.js";
 
 interface WarmableUsageProvider extends IAgentProvider {
   warmUsageCache?: (force?: boolean) => Promise<unknown>;

@@ -7,7 +7,7 @@ the specific traps we hit so the next person doesn't trip on them.
 
 If you are about to touch any of these files, **read this first**:
 
-- `apps/server/src/providers/claude/claude-provider.ts` (event source)
+- `apps/server/src/features/providers/adapters/claude/claude-provider.ts` (event source)
 - `apps/server/src/features/agents/conversation/narrative/narrative-store.ts` (write seam: enrichment +
   classification + persistence; owns the per-turn buffers and the
   `agentCallStack`. Also owns the read seam, `load`.)

@@ -18,13 +18,13 @@ vi.mock("fs", async () => {
   };
 });
 
-vi.mock("../../../../transport/push", () => ({
+vi.mock("../../../../application/transport/push.js", () => ({
   broadcast: broadcastMock,
 }));
 
 import { GitWatcherService } from "../git-watcher-service.js";
-import type { WorkspaceRepo } from "../../../../repositories/workspace-repo";
-import type { GitExecutor } from "../execution/index";
+import type { WorkspaceRepo } from "../../persistence/workspace-repo.js";
+import type { GitExecutor } from "../execution/index.js";
 import type { GitService } from "../git-service.js";
 import type { HandoffCheckoutService } from "../../../handoff/index.js";
 

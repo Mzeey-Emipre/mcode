@@ -1,0 +1,74 @@
+import { Lifecycle, type DependencyContainer } from "tsyringe";
+
+import {
+  FilesystemBrowser,
+  GitService,
+  ProjectWorktreeService,
+  WorktreeDirectoryRemover,
+  WorkspaceEnricher,
+  WorkspaceService,
+} from "../index.js";
+import { WorkspaceRepo } from "../persistence/workspace-repo.js";
+import { WorktreeRepo } from "../persistence/worktree-repo.js";
+
+/** Register the workspace repository and its string-keyed dependency alias. */
+export function registerWorkspaceRepository(container: DependencyContainer): void {
+  container.register(
+    WorkspaceRepo,
+    { useClass: WorkspaceRepo },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register("WorkspaceRepo", {
+    useFactory: (c) => c.resolve(WorkspaceRepo),
+  });
+}
+
+/** Register the worktree repository at the point required by thread services. */
+export function registerWorktreeRepository(container: DependencyContainer): void {
+  container.register(
+    WorktreeRepo,
+    { useClass: WorktreeRepo },
+    { lifecycle: Lifecycle.Singleton },
+  );
+}
+
+/** Register project lifecycle services and the GitService token alias. */
+export function registerProjectServices(container: DependencyContainer): void {
+  container.register(
+    WorkspaceService,
+    { useClass: WorkspaceService },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    GitService,
+    { useClass: GitService },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    WorktreeDirectoryRemover,
+    { useClass: WorktreeDirectoryRemover },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    ProjectWorktreeService,
+    { useClass: ProjectWorktreeService },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register("GitService", {
+    useFactory: (c) => c.resolve(GitService),
+  });
+}
+
+/** Register project startup support services after their Git dependencies exist. */
+export function registerProjectSupportServices(container: DependencyContainer): void {
+  container.register(
+    WorkspaceEnricher,
+    { useClass: WorkspaceEnricher },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    FilesystemBrowser,
+    { useClass: FilesystemBrowser },
+    { lifecycle: Lifecycle.Singleton },
+  );
+}

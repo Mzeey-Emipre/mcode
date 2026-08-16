@@ -9,8 +9,8 @@
 import "reflect-metadata";
 import { describe, it, expect, afterEach } from "vitest";
 import { container } from "tsyringe";
-import { openMemoryDatabase } from "../../../../store/database.js";
-import { ModelCacheRepo } from "../../../../repositories/model-cache-repo.js";
+import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
+import { ModelCacheRepo } from "../persistence/model-cache-repo.js";
 import { ModelCacheService } from "../model-cache-service.js";
 import type Database from "better-sqlite3";
 

@@ -1,7 +1,7 @@
 import "reflect-metadata";
 import { describe, expect, it, vi } from "vitest";
-import type { ThreadRepo } from "../../../../repositories/thread-repo";
-import { ThreadTeardownService } from "../thread-teardown-service";
+import type { ThreadRepo } from "../../persistence/thread-repo.js";
+import { ThreadTeardownService } from "../thread-teardown-service.js";
 import type { AgentService } from "../../../agents/index.js";
 import type { TerminalBackend as TerminalService } from "../../../terminal/backends/terminal-backend.js";
 

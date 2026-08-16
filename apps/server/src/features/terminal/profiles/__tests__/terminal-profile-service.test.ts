@@ -1,7 +1,7 @@
 import "reflect-metadata";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TerminalPlatform, TerminalProfileRecovery, TerminalProfileReference } from "@mcode/contracts";
-import type { SettingsService } from "../../../../shared/settings/settings-service.js";
+import type { SettingsService } from "../../../settings/settings-service.js";
 import type { WorkspaceTerminalPreferencesService } from "../../preferences/workspace-terminal-preferences-service.js";
 import {
   TerminalProfileInUseError,

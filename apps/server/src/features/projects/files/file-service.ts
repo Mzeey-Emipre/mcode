@@ -7,8 +7,8 @@
 import { injectable, inject, delay } from "tsyringe";
 import { readFileSync, existsSync, statSync, realpathSync } from "fs";
 import { resolve, isAbsolute, sep } from "path";
-import { WorkspaceRepo } from "../../../repositories/workspace-repo";
-import { ThreadRepo } from "../../../repositories/thread-repo";
+import { WorkspaceRepo } from "../persistence/workspace-repo.js";
+import { ThreadRepo } from "../../thread-control/persistence/thread-repo.js";
 import { GitService } from "../index.js";
 import type { GitExecutor } from "../git/execution/index.js";
 

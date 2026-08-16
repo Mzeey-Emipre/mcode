@@ -1,7 +1,7 @@
 # Database Migrations
 
 Migrations are managed by [Drizzle Kit](https://orm.drizzle.team/docs/kit-overview).
-The declarative schema lives in `apps/server/src/store/schema.ts`. Generated SQL
+The declarative schema lives in `apps/server/src/runtime/persistence/sqlite/schema.ts`. Generated SQL
 files live under `apps/server/drizzle/`.
 
 ```sh

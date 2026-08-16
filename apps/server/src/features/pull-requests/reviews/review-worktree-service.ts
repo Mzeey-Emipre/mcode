@@ -14,19 +14,19 @@ import type {
   PullRequestWorkspaceCandidate,
 } from "@mcode/contracts";
 import { logger } from "@mcode/shared";
-import { WorkspaceRepo } from "../../../repositories/workspace-repo.js";
-import { ThreadRepo } from "../../../repositories/thread-repo.js";
+import { WorkspaceRepo } from "../../projects/persistence/workspace-repo.js";
+import { ThreadRepo } from "../../thread-control/persistence/thread-repo.js";
 import {
   PullRequestReviewLinkRepo,
   type PullRequestReviewLink,
-} from "../../../repositories/pull-request-review-link-repo.js";
+} from "./persistence/pull-request-review-link-repo.js";
 import {
   GitService,
   PullRequestReviewGitError,
   type PullRequestReviewGitSource,
 } from "../../projects/index.js";
 import { AgentService } from "../../agents/index.js";
-import { SettingsService } from "../../../shared/settings/settings-service.js";
+import { SettingsService } from "../../settings/settings-service.js";
 import { ProviderAvailabilityService } from "../../providers/availability/provider-availability-service.js";
 import { GithubPullRequestClientError } from "../github/github-pull-request-client.js";
 import {

@@ -14,10 +14,10 @@ import {
   MAX_TURN_RECOVERIES,
   type ProviderIdentity,
 } from "@mcode/contracts";
-import { openMemoryDatabase } from "../../../../store/database.js";
-import { MessageRepo } from "../../../../repositories/message-repo.js";
-import { ThreadRepo } from "../../../../repositories/thread-repo.js";
-import { ACTIVE_TURN_WRITE_BATCH_LIMITS } from "../../../../store/bounded-write-batches.js";
+import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
+import { MessageRepo } from "../../conversation/persistence/message-repo.js";
+import { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
+import { ACTIVE_TURN_WRITE_BATCH_LIMITS } from "../../../../runtime/persistence/sqlite/bounded-write-batches.js";
 import {
   CANONICAL_AGENT_CONTROL_EVENT_RESERVE,
   CanonicalAgentEventSink,

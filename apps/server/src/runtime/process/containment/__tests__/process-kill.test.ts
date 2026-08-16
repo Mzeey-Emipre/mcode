@@ -23,7 +23,7 @@ import {
   findDescendantsByName,
   killDescendantsByName,
   listDirectChildren,
-} from "../process-kill";
+} from "../process-kill.js";
 import { logger } from "@mcode/shared";
 
 function stableThenGone(stableReads = 2): (pid: number) => Promise<string | null> {

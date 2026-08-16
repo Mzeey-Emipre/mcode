@@ -1,9 +1,9 @@
 import "reflect-metadata";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type Database from "better-sqlite3";
-import { openMemoryDatabase } from "../../../../store/database";
-import { ThreadRepo } from "../../../../repositories/thread-repo";
-import { WorkspaceRepo } from "../../../../repositories/workspace-repo";
+import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
+import { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
+import { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
 import type { GitService } from "../../../projects/index.js";
 import { HandoffCheckoutService } from "../handoff-checkout-service.js";
 

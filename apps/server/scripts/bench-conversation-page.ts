@@ -2,12 +2,12 @@ import "reflect-metadata";
 import { performance } from "node:perf_hooks";
 import type Database from "better-sqlite3";
 import { CONVERSATION_HISTORY_PAGE_MAX_BYTES } from "@mcode/contracts";
-import { openMemoryDatabase } from "../src/store/database.js";
-import { MessageRepo } from "../src/repositories/message-repo.js";
-import { ToolCallRecordRepo } from "../src/repositories/tool-call-record-repo.js";
-import { ThoughtSegmentRepo } from "../src/repositories/thought-segment-repo.js";
-import { HookExecutionRepo } from "../src/repositories/hook-execution-repo.js";
-import { PlanQuestionAnswersRepo } from "../src/repositories/plan-question-answers-repo.js";
+import { openMemoryDatabase } from "../src/runtime/persistence/sqlite/database.js";
+import { MessageRepo } from "../src/features/agents/conversation/persistence/message-repo.js";
+import { ToolCallRecordRepo } from "../src/features/agents/tools/persistence/tool-call-record-repo.js";
+import { ThoughtSegmentRepo } from "../src/features/agents/conversation/narrative/persistence/thought-segment-repo.js";
+import { HookExecutionRepo } from "../src/features/agents/events/persistence/hook-execution-repo.js";
+import { PlanQuestionAnswersRepo } from "../src/features/agents/planning/persistence/plan-question-answers-repo.js";
 import { NarrativeStore } from "../src/features/agents/conversation/narrative/narrative-store.js";
 import {
   loadConversationPage,

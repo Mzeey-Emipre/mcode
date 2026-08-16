@@ -45,19 +45,19 @@ import {
   type NarrativeEntry,
   type TurnRange,
 } from "@mcode/contracts";
-import { MessageRepo } from "../../../../repositories/message-repo";
+import { MessageRepo } from "../persistence/message-repo.js";
 import {
   ToolCallRecordRepo,
   type CreateToolCallRecordInput,
-} from "../../../../repositories/tool-call-record-repo";
+} from "../../tools/persistence/tool-call-record-repo.js";
 import {
   ThoughtSegmentRepo,
   type CreateThoughtSegmentInput,
-} from "../../../../repositories/thought-segment-repo";
+} from "./persistence/thought-segment-repo.js";
 import {
   HookExecutionRepo,
   type CreateHookExecutionInput,
-} from "../../../../repositories/hook-execution-repo";
+} from "../../events/persistence/hook-execution-repo.js";
 import type { TurnOutcome } from "../../turns/turn-outcome.js";
 
 /** Default number of recent messages hydrated when no range is supplied. */

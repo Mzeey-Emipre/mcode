@@ -9,7 +9,7 @@ import type {
   SelectableProviderAgent,
 } from "@mcode/contracts";
 import { logger } from "@mcode/shared";
-import { ProviderCatalogSnapshotRepo } from "../../../repositories/provider-catalog-snapshot-repo.js";
+import { ProviderCatalogSnapshotRepo } from "./persistence/provider-catalog-snapshot-repo.js";
 
 /** Inputs for one stale-while-revalidate provider catalog request. */
 export interface ProviderCatalogLoadInput {

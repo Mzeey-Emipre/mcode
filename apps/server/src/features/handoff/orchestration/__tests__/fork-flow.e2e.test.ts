@@ -31,8 +31,8 @@ function withCleanForker<T extends { runSideChannelQuery: (...a: any[]) => any }
 // ---------------------------------------------------------------------------
 // Mock the push broadcast so the pipeline's callers don't need a real WS server.
 // ---------------------------------------------------------------------------
-vi.mock("../../../../transport/push.js", () => ({ broadcast: vi.fn() }));
-import { broadcast } from "../../../../transport/push.js";
+vi.mock("../../../../application/transport/push.js", () => ({ broadcast: vi.fn() }));
+import { broadcast } from "../../../../application/transport/push.js";
 
 // ---------------------------------------------------------------------------
 // Helpers

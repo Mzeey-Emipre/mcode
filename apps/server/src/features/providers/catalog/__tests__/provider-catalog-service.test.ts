@@ -6,8 +6,8 @@ import type {
   ProviderCatalogRequest,
   ProviderCatalogSnapshot,
 } from "@mcode/contracts";
-import { openMemoryDatabase } from "../../../../store/database.js";
-import { ProviderCatalogSnapshotRepo } from "../../../../repositories/provider-catalog-snapshot-repo.js";
+import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
+import { ProviderCatalogSnapshotRepo } from "../persistence/provider-catalog-snapshot-repo.js";
 import {
   ProviderCatalogService,
   providerCatalogContextKey,

@@ -7,7 +7,7 @@ import {
   type IProviderRegistry,
 } from "@mcode/contracts";
 import { logger } from "@mcode/shared";
-import { SettingsService } from "../../../shared/settings/settings-service.js";
+import { SettingsService } from "../../settings/settings-service.js";
 import {
   ProviderDisabledError,
   ProviderCliMissingError,

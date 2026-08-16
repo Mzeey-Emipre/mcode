@@ -4,7 +4,7 @@ import { mkdtempSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
-import { SnapshotService } from "../snapshot-service";
+import { SnapshotService } from "../snapshot-service.js";
 import { RealGitExecutor } from "../../../git/execution/real-git-executor.js";
 
 const GIT_REPO_SETUP_TIMEOUT_MS = 30_000;

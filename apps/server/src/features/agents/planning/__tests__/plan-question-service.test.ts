@@ -1,10 +1,10 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach } from "vitest";
 import type Database from "better-sqlite3";
-import { openMemoryDatabase } from "../../../../store/database";
-import { MessageRepo } from "../../../../repositories/message-repo";
-import { PlanQuestionAnswersRepo } from "../../../../repositories/plan-question-answers-repo";
-import { PlanQuestionService } from "../plan-question-service";
+import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
+import { MessageRepo } from "../../conversation/persistence/message-repo.js";
+import { PlanQuestionAnswersRepo } from "../persistence/plan-question-answers-repo.js";
+import { PlanQuestionService } from "../plan-question-service.js";
 import { PLAN_ANSWER_MESSAGE_PREFIX } from "@mcode/contracts";
 
 /** Seed a workspace + thread so message foreign keys are satisfied. */
