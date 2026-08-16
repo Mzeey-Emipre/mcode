@@ -1,6 +1,10 @@
-import { app, clipboard, ipcMain } from "electron";
+import { app, clipboard, ipcMain, protocol } from "electron";
+import { join } from "node:path";
+import { getMcodeDir } from "@mcode/shared";
 import type { ClipboardIpc, ClipboardReader, ClipboardHandlers } from "./clipboard/handlers.js";
 import { registerClipboardHandlers } from "./clipboard/handlers.js";
+import type { AttachmentProtocolRegistry } from "./protocol/handler.js";
+import { registerAttachmentProtocol } from "./protocol/handler.js";
 import {
   createTempAttachmentStore,
   type TempAttachmentStore,
@@ -18,9 +22,13 @@ export interface AttachmentsFeatureDependencies {
   readonly getTempDirectory?: () => string;
   /** Clock used by clipboard image metadata. */
   readonly now?: () => number;
+  /** Protocol registry used to serve durable attachments. */
+  readonly protocol?: AttachmentProtocolRegistry;
+  /** Root directory that contains durable thread attachment directories. */
+  readonly attachmentsDirectory?: string;
 }
 
-/** Register the desktop Attachments feature's clipboard IPC capability. */
+/** Register the desktop Attachments feature's clipboard and durable protocol capabilities. */
 export function registerAttachmentsFeature(
   dependencies: AttachmentsFeatureDependencies = {},
 ): ClipboardHandlers {
@@ -29,12 +37,18 @@ export function registerAttachmentsFeature(
     createTempAttachmentStore({
       getTempDirectory: dependencies.getTempDirectory ?? (() => app.getPath("temp")),
     });
-  return registerClipboardHandlers({
+  const clipboardHandlers = registerClipboardHandlers({
     ipc: dependencies.ipc ?? ipcMain,
     clipboard: dependencies.clipboard ?? clipboard,
     tempStore,
     now: dependencies.now ?? Date.now,
   });
+  registerAttachmentProtocol({
+    protocol: dependencies.protocol ?? protocol,
+    attachmentsDirectory:
+      dependencies.attachmentsDirectory ?? join(getMcodeDir(), "attachments"),
+  });
+  return clipboardHandlers;
 }
 
 export {
@@ -61,3 +75,14 @@ export type {
   TempAttachmentStore,
   TempAttachmentStoreDependencies,
 } from "./staging/temp-store.js";
+export {
+  ATTACHMENT_PROTOCOL_SCHEME,
+  createAttachmentProtocolHandler,
+  registerAttachmentProtocol,
+} from "./protocol/handler.js";
+export type {
+  AttachmentProtocolHandlerDependencies,
+  AttachmentProtocolRegistry,
+  AttachmentProtocolRequest,
+} from "./protocol/handler.js";
+export { getAttachmentMimeType } from "./protocol/mime-types.js";
