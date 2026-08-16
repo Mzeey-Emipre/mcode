@@ -10,7 +10,7 @@
  */
 
 import { useThreadStore } from "@/stores/threadStore";
-import { useTerminalStore } from "@/stores/terminalStore";
+import { useTerminalStore } from "@/features/terminal";
 
 /** Trailing-edge debounce so rapid turn/terminal churn does not flap the blocker. */
 const BUSY_DEBOUNCE_MS = 1_000;

@@ -99,7 +99,7 @@ vi.mock("@/features/preview", async (importOriginal) => ({
     return <div data-testid="preview-panel" data-covered-left={props.coveredLeft ?? 0} />;
   },
 }));
-vi.mock("@/components/terminal/TerminalPoolSlotContext", () => ({
+vi.mock("@/features/terminal/surfaces/TerminalPoolSlotContext", () => ({
   TerminalPoolSlot: () => <div data-testid="terminal-pool-slot" />,
 }));
 vi.mock("@/features/preview/state/previewTabsStore", () => ({
@@ -120,7 +120,7 @@ vi.mock("@/transport", () => ({ getTransport: () => ({ terminalKill: vi.fn() }) 
 
 import { reconcileWarmPreviewScopes, RightPanel } from "./RightPanel";
 import { createRightPanelState, useDiffStore } from "@/stores/diffStore";
-import { useTerminalStore } from "@/stores/terminalStore";
+import { useTerminalStore } from "@/features/terminal/state/terminalStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useBrowserAutomationStore } from "@/features/preview";

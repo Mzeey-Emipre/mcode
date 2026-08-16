@@ -13,13 +13,13 @@ import { useDiffStore } from "@/stores/diffStore";
 import { refreshTurnSnapshotsAfterPersist } from "@/lib/turn-snapshot-refresh";
 import { useThreadStore } from "@/stores/threadStore";
 import { getThreadRecord, patchThreadRecord } from "@/stores/thread-record";
-import { useTerminalStore } from "@/stores/terminalStore";
+import { useTerminalStore } from "@/features/terminal/state/terminalStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useProviderAvailabilityStore } from "@/stores/providerAvailabilityStore";
 import { useProviderCatalogStore } from "@/stores/providerCatalogStore";
 import { usePlanStore } from "@/stores/planStore";
 import { clearFileListCache } from "@/components/chat/useFileAutocomplete";
-import { emitPtyData, emitPtyExit } from "@/terminal/pty-data-registry";
+import { emitPtyData, emitPtyExit } from "@/features/terminal/adapters/pty-data-registry";
 import { useThreadControlStore } from "@/stores/threadControlStore";
 
 /** Unsubscribe handles for all push listeners. */

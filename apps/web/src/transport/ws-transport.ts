@@ -75,12 +75,12 @@ import { useSettingsStore } from "@/stores/settingsStore";
 import { useThreadStore } from "@/stores/threadStore";
 import type { PermissionRequest } from "@mcode/contracts";
 import { setAttachmentTransportWsUrl } from "@/lib/attachment-url";
-import { TerminalClientSelector } from "@/terminal/terminal-client-selector";
+import { TerminalClientSelector } from "@/features/terminal/adapters/terminal-client-selector";
 import type {
   TerminalActiveSession,
   TerminalClient,
   TerminalClientSubscription,
-} from "@/terminal/terminal-client";
+} from "@/features/terminal/adapters/terminal-client";
 import { TerminalRpcError } from "./terminal-rpc-error";
 
 /** Minimum reconnect delay in milliseconds. */
@@ -359,14 +359,14 @@ export function createWsTransport(
 
       // Reattach active terminals after reconnect.
       // Deferred import avoids a circular dependency at module evaluation time.
-      import("@/stores/terminalStore").then(async ({ useTerminalStore }) => {
+      import("@/features/terminal/state/terminalStore").then(async ({ useTerminalStore }) => {
         try {
           await terminalSelectionPromise;
           const terminalClient = terminalClientSelector.getSelected();
           const activePtys = await terminalClient.listActive();
           useTerminalStore.getState().reconcileActiveSessions(activePtys);
           const terminalState = useTerminalStore.getState();
-          const { useWorkspaceStore } = await import("@/stores/workspaceStore");
+          const { useWorkspaceStore } = await import("@/features/projects/state/workspaceStore");
           const workspaceState = useWorkspaceStore.getState();
           const selectedTerminalId = resolveSelectedTerminalId({
             activeThreadId: workspaceState.activeThreadId,

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { LegacyTerminalClient } from "./legacy-terminal-client";
+import { LegacyTerminalClient } from "../legacy/legacy-terminal-client";
 
 const bundle = {
   contractVersion: 1,

@@ -15,8 +15,8 @@ vi.mock("@/transport", () => ({
   }),
 }));
 
-import { TerminalTabContent } from "@/components/terminal/TerminalTabContent";
-import { useTerminalStore } from "@/stores/terminalStore";
+import { TerminalTabContent } from "../TerminalTabContent";
+import { useTerminalStore } from "@/features/terminal/state/terminalStore";
 
 function seedTerminal(): void {
   useTerminalStore.setState({

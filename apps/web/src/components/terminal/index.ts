@@ -1,4 +1,9 @@
-export { TerminalTabContent } from "./TerminalTabContent";
-export { TerminalPoolHost } from "./TerminalPoolHost";
-export { TerminalPoolSlotProvider, TerminalPoolSlot } from "./TerminalPoolSlotContext";
-export { terminalScroll } from "./terminalScrollController";
+export {
+  TerminalPanel,
+  TerminalPoolHost,
+  TerminalPoolSlot,
+  TerminalPoolSlotProvider,
+  TerminalTabContent,
+  TerminalView,
+} from "@/features/terminal";
+export { terminalScroll } from "@/features/terminal/surfaces/terminalScrollController";

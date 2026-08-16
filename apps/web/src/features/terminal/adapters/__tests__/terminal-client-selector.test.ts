@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { TerminalClientSelector } from "./terminal-client-selector";
+import { TerminalClientSelector } from "../terminal-client-selector";
 
 describe("TerminalClientSelector", () => {
   it("routes legacy lifecycle calls through the frozen version 0 RPC names", async () => {

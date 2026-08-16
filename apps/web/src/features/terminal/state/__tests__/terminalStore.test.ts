@@ -9,7 +9,7 @@ vi.mock("@/transport", () => ({
 
 // Import AFTER vi.mock — vitest hoists vi.mock to the top automatically,
 // so the store sees the mocked transport when the module initializes.
-import { useTerminalStore } from "./terminalStore";
+import { useTerminalStore } from "../terminalStore";
 
 describe("terminalStore pause/resume wiring", () => {
   beforeEach(() => {

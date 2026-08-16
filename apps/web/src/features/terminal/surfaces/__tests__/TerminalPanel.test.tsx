@@ -23,13 +23,13 @@ vi.mock("@/transport", async (importOriginal) => {
 
 // TerminalView pulls in xterm and dynamic addon imports. We don't need its
 // behaviour here — the toolbar action is what we're verifying.
-vi.mock("@/components/terminal/TerminalView", () => ({
+vi.mock("../TerminalView", () => ({
   TerminalView: () => null,
 }));
 
-import { useTerminalStore } from "@/stores/terminalStore";
+import { useTerminalStore } from "@/features/terminal/state/terminalStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
-import { TerminalPanel } from "@/components/terminal/TerminalPanel";
+import { TerminalPanel } from "../TerminalPanel";
 
 describe("TerminalPanel", () => {
   beforeEach(() => {

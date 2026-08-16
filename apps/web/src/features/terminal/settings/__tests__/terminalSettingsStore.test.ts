@@ -19,8 +19,8 @@ const { transport } = vi.hoisted(() => ({
 
 vi.mock("@/transport", () => ({ getTransport: () => transport }));
 
-import { useSettingsStore } from "./settingsStore";
-import { useTerminalSettingsStore } from "./terminalSettingsStore";
+import { useSettingsStore } from "@/stores/settingsStore";
+import { useTerminalSettingsStore } from "../terminalSettingsStore";
 
 const profile = {
   id: "custom:11111111-1111-4111-8111-111111111111",

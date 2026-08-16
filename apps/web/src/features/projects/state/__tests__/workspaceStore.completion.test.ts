@@ -31,7 +31,7 @@ vi.mock("@/stores/browserAutomationStore", () => ({
   releaseBrowserAutomationWorkspaceScopes: vi.fn(),
 }));
 
-import { useTerminalStore } from "@/stores/terminalStore";
+import { useTerminalStore } from "@/features/terminal/state/terminalStore";
 import { useDiffStore } from "@/stores/diffStore";
 import { useWorkspaceStore } from "../workspaceStore";
 
