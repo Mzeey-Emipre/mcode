@@ -6,8 +6,8 @@
 
 import { injectable, inject } from "tsyringe";
 import { logger } from "@mcode/shared";
-import { GitService } from "./git-service.js";
-import { ThreadRepo } from "../repositories/thread-repo.js";
+import { GitService } from "../../../services/git-service.js";
+import { ThreadRepo } from "../../../repositories/thread-repo.js";
 import type { WorkspaceEnrichment } from "@mcode/contracts";
 
 /** Enriches workspace records with git + thread metadata for the project selector. */
