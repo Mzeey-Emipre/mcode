@@ -1,14 +1,14 @@
 import "reflect-metadata";
 import { describe, expect, it, vi } from "vitest";
 import type Database from "better-sqlite3";
-import { openMemoryDatabase } from "../../store/database";
-import { ThreadRepo } from "../../repositories/thread-repo";
-import { WorkspaceRepo } from "../../repositories/workspace-repo";
-import { MessageRepo } from "../../repositories/message-repo";
+import { openMemoryDatabase } from "../../../../store/database";
+import { ThreadRepo } from "../../../../repositories/thread-repo";
+import { WorkspaceRepo } from "../../../../repositories/workspace-repo";
+import { MessageRepo } from "../../../../repositories/message-repo";
 import { AgentService } from "../agent-service";
-import { createCanonicalAgentEventSinkStub } from "../../test-utils/canonical-agent-event-sink-stub";
-import type { GitService } from "../git-service";
-import type { ThreadService } from "../thread-service";
+import { createCanonicalAgentEventSinkStub } from "../../../../test-utils/canonical-agent-event-sink-stub";
+import type { GitService } from "../../../../services/git-service";
+import type { ThreadService } from "../../../../services/thread-service";
 import type { TurnRuntimeSnapshot } from "@mcode/contracts";
 
 function createAgentServiceHarness() {

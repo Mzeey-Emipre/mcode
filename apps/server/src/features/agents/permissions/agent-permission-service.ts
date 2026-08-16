@@ -5,7 +5,7 @@ import {
   type PermissionRequest,
 } from "@mcode/contracts";
 import { inject, injectable } from "tsyringe";
-import { AgentService } from "../../../services/agent-service.js";
+import { AgentService } from "../orchestration/agent-service.js";
 
 /** Composition capability for provider permission decisions and pending state. */
 @injectable()

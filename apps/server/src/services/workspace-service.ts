@@ -11,7 +11,7 @@ import { WorkspaceRepo } from "../repositories/workspace-repo";
 import { ThreadRepo } from "../repositories/thread-repo";
 import { CleanupJobRepo } from "../repositories/cleanup-job-repo";
 import { AttachmentService } from "./attachment-service";
-import { AgentService } from "./agent-service.js";
+import { AgentService } from "../features/agents/index.js";
 import { logger } from "@mcode/shared";
 import type { GitExecutor } from "./git-executor/index.js";
 

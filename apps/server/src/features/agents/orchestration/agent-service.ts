@@ -51,49 +51,49 @@ import type {
   CanonicalSubagentStopRequest,
   CanonicalSubagentStopResult,
 } from "@mcode/contracts";
-import { ThreadRepo } from "../repositories/thread-repo";
-import { WorkspaceRepo } from "../repositories/workspace-repo";
-import { MessageRepo } from "../repositories/message-repo";
-import { HookExecutionRepo, type CreateHookExecutionInput } from "../repositories/hook-execution-repo";
-import { NarrativeStore } from "./narrative-store.js";
-import { TurnFinalizer } from "../features/agents/turns/turn-finalizer.js";
-import { TurnFileTracker } from "../features/agents/turns/turn-file-tracker.js";
-import { PlanQuestionService } from "./plan-question-service.js";
-import { TurnSnapshotRepo } from "../repositories/turn-snapshot-repo";
+import { ThreadRepo } from "../../../repositories/thread-repo";
+import { WorkspaceRepo } from "../../../repositories/workspace-repo";
+import { MessageRepo } from "../../../repositories/message-repo";
+import { HookExecutionRepo, type CreateHookExecutionInput } from "../../../repositories/hook-execution-repo";
+import { NarrativeStore } from "../../../services/narrative-store.js";
+import { TurnFinalizer } from "../turns/turn-finalizer.js";
+import { TurnFileTracker } from "../turns/turn-file-tracker.js";
+import { PlanQuestionService } from "../../../services/plan-question-service.js";
+import { TurnSnapshotRepo } from "../../../repositories/turn-snapshot-repo";
 import type Database from "better-sqlite3";
-import { TaskRepo, type StoredTask } from "../repositories/task-repo";
-import { PlanQuestionAnswersRepo } from "../repositories/plan-question-answers-repo";
-import { GitService } from "./git-service";
-import { AttachmentService } from "./attachment-service";
-import { FileService } from "./file-service";
-import { SnapshotService } from "./snapshot-service";
-import { MemoryPressureService, type MemoryPressureSnapshot } from "./memory-pressure-service";
-import { broadcast } from "../transport/push";
-import { GoalCommand } from "../commands/goal-command";
-import { CommandRouter } from "../commands/command-router";
+import { TaskRepo, type StoredTask } from "../../../repositories/task-repo";
+import { PlanQuestionAnswersRepo } from "../../../repositories/plan-question-answers-repo";
+import { GitService } from "../../../services/git-service";
+import { AttachmentService } from "../../../services/attachment-service";
+import { FileService } from "../../../services/file-service";
+import { SnapshotService } from "../../../services/snapshot-service";
+import { MemoryPressureService, type MemoryPressureSnapshot } from "../../../services/memory-pressure-service";
+import { broadcast } from "../../../transport/push";
+import { GoalCommand } from "../../../commands/goal-command";
+import { CommandRouter } from "../../../commands/command-router";
 // Lazy-imported to break circular dependency: AgentService -> ThreadService -> (shared repos)
 // Using delay() ensures tsyringe resolves ThreadService from the container at first access,
 // not at AgentService construction time.
-import { ThreadService } from "./thread-service";
-import { SettingsService } from "./settings-service.js";
-import { ProviderAvailabilityService } from "./provider-availability-service.js";
+import { ThreadService } from "../../../services/thread-service";
+import { SettingsService } from "../../../services/settings-service.js";
+import { ProviderAvailabilityService } from "../../../services/provider-availability-service.js";
 import {
   ProviderDisabledError,
   ProviderCliMissingError,
-} from "./provider-availability-errors.js";
-import { PlanQuestionParser } from "./plan-question-parser.js";
-import { PlanOutputParser } from "./plan-output-parser.js";
-import { PlanRepo } from "../repositories/plan-repo";
-import { HandoffCoordinator } from "./handoff/handoff-coordinator.js";
-import { ScopedPreGrantService } from "./scoped-pre-grant.js";
+} from "../../../services/provider-availability-errors.js";
+import { PlanQuestionParser } from "../../../services/plan-question-parser.js";
+import { PlanOutputParser } from "../../../services/plan-output-parser.js";
+import { PlanRepo } from "../../../repositories/plan-repo";
+import { HandoffCoordinator } from "../../../services/handoff/handoff-coordinator.js";
+import { ScopedPreGrantService } from "../../../services/scoped-pre-grant.js";
 import { normalizeAgentProviderError } from "./provider-agent-error-normalize.js";
-import { TurnErrorPolicy } from "../features/agents/turns/turn-error-policy.js";
-import { InternalThreadControlMcpRuntime } from "./thread-control-mcp-runtime.js";
-import { ThreadControlMutationReservationService } from "./thread-control-mutation-reservation-service.js";
-import { TurnRuntimeRegistry } from "../features/agents/turns/turn-runtime.js";
-import type { TurnOutcome } from "../features/agents/turns/turn-outcome.js";
-import { BrowserNarrativeEventSanitizer } from "./browser-narrative-event-sanitizer.js";
-import { CanonicalAgentEventSink } from "../features/agents/canonical/canonical-agent-event-sink.js";
+import { TurnErrorPolicy } from "../turns/turn-error-policy.js";
+import { InternalThreadControlMcpRuntime } from "../../../services/thread-control-mcp-runtime.js";
+import { ThreadControlMutationReservationService } from "../../../services/thread-control-mutation-reservation-service.js";
+import { TurnRuntimeRegistry } from "../turns/turn-runtime.js";
+import type { TurnOutcome } from "../turns/turn-outcome.js";
+import { BrowserNarrativeEventSanitizer } from "../../../services/browser-narrative-event-sanitizer.js";
+import { CanonicalAgentEventSink } from "../canonical/canonical-agent-event-sink.js";
 
 /**
  * Escape special XML characters in a string to prevent injection into

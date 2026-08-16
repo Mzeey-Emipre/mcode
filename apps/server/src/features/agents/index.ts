@@ -1,5 +1,5 @@
 /** Agent orchestration service used by the server composition roots. */
-export { AgentService } from "../../services/agent-service";
+export { AgentService } from "./orchestration/agent-service.js";
 
 /** Agent permission capability used by the server composition roots. */
 export { AgentPermissionService } from "./permissions/agent-permission-service.js";
