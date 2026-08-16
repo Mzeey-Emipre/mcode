@@ -36,7 +36,10 @@ function buildOrchestration() {
     threadService: { linkPr: vi.fn() },
     githubService: { getBranchPr: vi.fn() },
     ciWatcherService: { watch: vi.fn(), unwatch: vi.fn() },
+    providerRegistry: { resolveAll: vi.fn(() => []) },
     publishAgentEvent: (event: AgentEvent) => publishedEvents.push(event),
+    publishPermissionRequest: vi.fn(),
+    publishPermissionResolved: vi.fn(),
     publishThreadStatus,
     publishThreadPrLinked,
   } as never);

@@ -10,7 +10,7 @@ import {
   type ActivateInternalThreadControlMcpLease,
 } from "./thread-control-mcp-authority.js";
 import { createInternalThreadControlMcpSession } from "./thread-control-mcp-transport.js";
-import { ThreadControlService } from "./thread-control-service.js";
+import { ThreadControlService } from "../features/agents/collaboration/thread-control-service.js";
 
 const CODEX_MCP_TOKEN_ENV = "MCODE_INTERNAL_THREAD_CONTROL_TOKEN";
 const CODEX_MCP_NAME = "mcode_internal_thread_control";

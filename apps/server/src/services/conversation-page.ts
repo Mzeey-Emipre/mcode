@@ -12,7 +12,7 @@ import { CONVERSATION_TAIL_MAX_MESSAGES } from "@mcode/contracts";
 import type { MessageRepo } from "../repositories/message-repo.js";
 import type { NarrativeStore } from "./narrative-store.js";
 import type { PlanQuestionAnswersRepo } from "../repositories/plan-question-answers-repo.js";
-import type { CanonicalAgentEventSink } from "../features/agents/canonical/canonical-agent-event-sink.js";
+import type { CanonicalAgentEventSink } from "../features/agents/index.js";
 
 /** Dependencies needed to load one paginated conversation page. */
 export interface ConversationPageDeps {
