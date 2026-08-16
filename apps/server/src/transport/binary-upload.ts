@@ -7,8 +7,8 @@
 import { randomUUID } from "crypto";
 import { mkdir, writeFile } from "fs/promises";
 import { join, basename } from "path";
+import { getAttachmentMaxSizeForMime } from "@mcode/contracts";
 import { getMcodeDir } from "@mcode/shared";
-import { getMaxSizeForMime } from "../services/attachment-service";
 
 /** Metadata accompanying a binary upload frame. */
 interface BinaryUploadMeta {
@@ -41,7 +41,7 @@ export async function handleBinaryUpload(
   const safeName = basename(meta.fileName);
 
   // Enforce size limits (shared with AttachmentService)
-  const maxSize = getMaxSizeForMime(meta.mimeType);
+  const maxSize = getAttachmentMaxSizeForMime(meta.mimeType);
   if (payload.byteLength > maxSize) {
     throw new Error(
       `File "${meta.fileName}" exceeds ${maxSize} byte limit (actual: ${payload.byteLength})`,

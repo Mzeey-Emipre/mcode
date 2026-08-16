@@ -12,16 +12,13 @@ import { basename, extname, join, resolve, relative } from "path";
 import { getMcodeDir } from "@mcode/shared";
 import type { AttachmentMeta, StoredAttachment } from "@mcode/contracts";
 import {
+  getAttachmentMaxSizeForMime,
   isVirtualBrowserContextAttachment,
   MCODE_BROWSER_CONTEXT_ATTACHMENT_MIME,
   shouldPersistAttachmentWithoutFile,
   storedAttachmentSuffix,
 } from "@mcode/contracts";
 
-const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
-const MAX_PDF_SIZE = 32 * 1024 * 1024;
-const MAX_TEXT_SIZE = 1 * 1024 * 1024;
-const MAX_DOCUMENT_SIZE = 16 * 1024 * 1024;
 const MAX_GENERATED_IMAGE_SIZE = 16 * 1024 * 1024;
 
 /**
@@ -29,29 +26,6 @@ const MAX_GENERATED_IMAGE_SIZE = 16 * 1024 * 1024;
  * Prevents path traversal via crafted IDs containing `../` or other special characters.
  */
 const SAFE_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
-
-/**
- * Returns the maximum allowed size in bytes for a MIME type used by attachments.
- *
- * Shared with binary upload validation. Unknown categories fall back to the image cap for safety.
- *
- * @param mimeType - MIME type string for the upload (for example `image/png` or `application/pdf`).
- * @returns Maximum permitted bytes for that category.
- */
-export function getMaxSizeForMime(mimeType: string): number {
-  if (mimeType.startsWith("image/")) return MAX_IMAGE_SIZE;
-  if (mimeType === "application/pdf") return MAX_PDF_SIZE;
-  if (mimeType === "text/plain") return MAX_TEXT_SIZE;
-  if (
-    mimeType === "application/rtf" ||
-    mimeType === "text/rtf" ||
-    mimeType.startsWith("application/vnd.openxmlformats-officedocument.") ||
-    mimeType.startsWith("application/vnd.oasis.opendocument.")
-  ) {
-    return MAX_DOCUMENT_SIZE;
-  }
-  return MAX_IMAGE_SIZE; // conservative fallback
-}
 
 /** Return the stored MIME type for supported image file extensions. */
 export function imageMimeTypeFromPath(filePath: string): string | null {
@@ -158,7 +132,7 @@ export class AttachmentService {
         }
 
         const actualSize = statSync(att.sourcePath).size;
-        const maxSize = getMaxSizeForMime(att.mimeType);
+        const maxSize = getAttachmentMaxSizeForMime(att.mimeType);
         if (actualSize > maxSize) {
           throw new Error(
             `Attachment "${att.name}" exceeds ${maxSize} byte limit (actual: ${actualSize})`,

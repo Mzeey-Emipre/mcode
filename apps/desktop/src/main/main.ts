@@ -10,7 +10,6 @@ const STARTUP_TIME = performance.now();
 import {
   app,
   BrowserWindow,
-  clipboard,
   dialog,
   ipcMain,
   Notification,
@@ -24,16 +23,8 @@ import { autoUpdater } from "electron-updater";
 import { existsSync, createReadStream } from "fs";
 import { mkdir, writeFile } from "fs/promises";
 import { join } from "path";
-import { randomUUID } from "crypto";
 import { Readable } from "stream";
 import { getLogPath, getMcodeDir, getRecentLogs, logger } from "@mcode/shared";
-import {
-  getExtension as bundledGetExtension,
-} from "@mcode/contracts";
-
-/** Use snapshot-provided module when available (V8 snapshot skips re-init). */
-const getExtension =
-  globalThis.__v8Snapshot?.contracts?.getExtension ?? bundledGetExtension;
 
 import {
   registerOpenInHandlers,
@@ -62,6 +53,7 @@ import {
   getWindowIconPath,
   registerExternalUrlHandler,
 } from "../features/desktop-window/index.js";
+import { registerAttachmentsFeature } from "../features/attachments/index.js";
 import { isDesktopDev } from "./is-desktop-dev.js";
 import { shouldPrintVersion } from "./cli-args.js";
 
@@ -352,49 +344,6 @@ function registerIpcHandlers(): void {
 
   registerExternalUrlHandler(resolveMcodeWorkspacePreviewUrl);
 
-  // Read clipboard image and save to temp JPEG
-  ipcMain.handle("read-clipboard-image", async () => {
-    const img = clipboard.readImage();
-    if (img.isEmpty()) return null;
-
-    const buffer = img.toJPEG(85);
-    const id = randomUUID();
-    const name = `clipboard-${Date.now()}.jpg`;
-    const tempDir = join(app.getPath("temp"), "mcode-attachments");
-    await mkdir(tempDir, { recursive: true });
-    const tempPath = join(tempDir, `${id}.jpg`);
-    await writeFile(tempPath, buffer);
-
-    return {
-      id,
-      name,
-      mimeType: "image/jpeg",
-      sizeBytes: buffer.byteLength,
-      sourcePath: tempPath,
-    };
-  });
-
-  // Save a clipboard file blob to a temp location and return metadata
-  ipcMain.handle(
-    "save-clipboard-file",
-    async (_event, buffer: Uint8Array, mimeType: string, fileName: string) => {
-      const id = randomUUID();
-      const ext = getExtension(fileName);
-      const suffix = ext ? `.${ext}` : "";
-      const tempDir = join(app.getPath("temp"), "mcode-attachments");
-      await mkdir(tempDir, { recursive: true });
-      const tempPath = join(tempDir, `${id}${suffix}`);
-      await writeFile(tempPath, Buffer.from(buffer));
-      return {
-        id,
-        name: fileName,
-        mimeType,
-        sizeBytes: buffer.byteLength,
-        sourcePath: tempPath,
-      };
-    },
-  );
-
   // Log path
   ipcMain.handle("get-log-path", () => {
     return getLogPath();
@@ -595,6 +544,7 @@ app.whenReady().then(async () => {
     // Register IPC handlers BEFORE creating the window so the renderer can
     // invoke get-server-url as soon as it loads, without racing the handler.
     registerIpcHandlers();
+    registerAttachmentsFeature();
 
     // Set auth cookie so the renderer can authenticate to the server via HTTP
     await serverRuntime.installAuthCookie();
