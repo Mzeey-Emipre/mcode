@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { describe, expect, it, vi } from "vitest";
-import { AgentService } from "../services/agent-service";
+import { AgentService } from "../agent-service.js";
 import type { GoalLookupResult, GoalState, IAgentProvider, IGoalCapable } from "@mcode/contracts";
 
 const openGoal: GoalState = {
@@ -17,14 +17,16 @@ const openGoal: GoalState = {
   controls: { canInspect: true, canClear: true },
 };
 
+type AgentServiceGoalHarness = Pick<AgentService, "getThreadGoal" | "clearThreadGoal"> & {
+  threadRepo: { findById: ReturnType<typeof vi.fn> };
+  providerRegistry: { resolve: ReturnType<typeof vi.fn> };
+};
+
 function makeService(opts: {
   thread?: { id: string; provider: string | null };
   provider: Partial<IAgentProvider>;
-}): AgentService {
-  const service = Object.create(AgentService.prototype) as AgentService & {
-    threadRepo: { findById: ReturnType<typeof vi.fn> };
-    providerRegistry: { resolve: ReturnType<typeof vi.fn> };
-  };
+}): AgentServiceGoalHarness {
+  const service = Object.create(AgentService.prototype) as AgentServiceGoalHarness;
   service.threadRepo = {
     findById: vi.fn().mockReturnValue(opts.thread ?? null),
   };
@@ -38,7 +40,7 @@ function goalProvider(result: GoalLookupResult): IGoalCapable {
   return {
     id: "codex",
     supportsCompletion: false,
-    sessionForkOnResume: "unsupported",
+    sessionForkOnResume: "unsupported" as const,
     forker: {} as IGoalCapable["forker"],
     maxInputCharactersPerTurn: 16_000,
     sendTurn: vi.fn(),
@@ -62,7 +64,7 @@ function clearableProvider(opts: {
   const provider = {
     id: opts.id ?? "codex",
     supportsCompletion: false,
-    sessionForkOnResume: "unsupported",
+    sessionForkOnResume: "unsupported" as const,
     forker: {} as IGoalCapable["forker"],
     maxInputCharactersPerTurn: 16_000,
     sendTurn: vi.fn(),
@@ -88,10 +90,7 @@ function clearableProvider(opts: {
 describe("AgentService.getThreadGoal", () => {
   it("rejects unknown thread ids before provider access", async () => {
     const providerRegistry = { resolve: vi.fn() };
-    const service = Object.create(AgentService.prototype) as AgentService & {
-      threadRepo: { findById: ReturnType<typeof vi.fn> };
-      providerRegistry: typeof providerRegistry;
-    };
+    const service = Object.create(AgentService.prototype) as AgentServiceGoalHarness;
     service.threadRepo = { findById: vi.fn().mockReturnValue(null) };
     service.providerRegistry = providerRegistry;
 

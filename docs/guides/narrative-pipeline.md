@@ -11,7 +11,7 @@ If you are about to touch any of these files, **read this first**:
 - `apps/server/src/services/narrative-store.ts` (write seam: enrichment +
   classification + persistence; owns the per-turn buffers and the
   `agentCallStack`. Also owns the read seam, `load`.)
-- `apps/server/src/services/agent-service.ts` (event dispatch; delegates the
+- `apps/server/src/features/agents/orchestration/agent-service.ts` (event dispatch; delegates the
   write seam to NarrativeStore and retains turn-level concerns — turn snapshots,
   `turn.persisted` broadcast, late-hook flushing)
 - `apps/server/src/index.ts` (broadcast layer)

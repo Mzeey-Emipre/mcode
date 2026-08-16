@@ -3,26 +3,24 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EventEmitter } from "events";
 import type { Thread, IProviderRegistry, TurnRequest } from "@mcode/contracts";
 import { AgentService } from "../agent-service.js";
-import { createCanonicalAgentEventSinkStub } from "../../test-utils/canonical-agent-event-sink-stub.js";
-import { ThreadControlMutationReservationService } from "../thread-control-mutation-reservation-service.js";
-import { NarrativeStore } from "../narrative-store.js";
-import { PlanQuestionService } from "../plan-question-service.js";
-import type { ThreadRepo } from "../../repositories/thread-repo.js";
-import type { WorkspaceRepo } from "../../repositories/workspace-repo.js";
-import type { MessageRepo } from "../../repositories/message-repo.js";
-import type { GitService } from "../git-service.js";
-import type { AttachmentService } from "../attachment-service.js";
-import type { ToolCallRecordRepo } from "../../repositories/tool-call-record-repo.js";
-import type { TurnSnapshotRepo } from "../../repositories/turn-snapshot-repo.js";
-import type { SnapshotService } from "../snapshot-service.js";
-import type { MemoryPressureService } from "../memory-pressure-service.js";
-import type { TaskRepo } from "../../repositories/task-repo.js";
-import type { SettingsService } from "../settings-service.js";
-import type { ThreadService } from "../thread-service.js";
-import type { ProviderAvailabilityService } from "../provider-availability-service.js";
-import type { PlanQuestionAnswersRepo } from "../../repositories/plan-question-answers-repo.js";
-
-vi.mock("../../transport/push.js", () => ({ broadcast: vi.fn() }));
+import { createCanonicalAgentEventSinkStub } from "../../../../test-utils/canonical-agent-event-sink-stub.js";
+import { ThreadControlMutationReservationService } from "../../../../services/thread-control-mutation-reservation-service.js";
+import { NarrativeStore } from "../../../../services/narrative-store.js";
+import { PlanQuestionService } from "../../../../services/plan-question-service.js";
+import type { ThreadRepo } from "../../../../repositories/thread-repo.js";
+import type { WorkspaceRepo } from "../../../../repositories/workspace-repo.js";
+import type { MessageRepo } from "../../../../repositories/message-repo.js";
+import type { GitService } from "../../../../services/git-service.js";
+import type { AttachmentService } from "../../../../services/attachment-service.js";
+import type { ToolCallRecordRepo } from "../../../../repositories/tool-call-record-repo.js";
+import type { TurnSnapshotRepo } from "../../../../repositories/turn-snapshot-repo.js";
+import type { SnapshotService } from "../../../../services/snapshot-service.js";
+import type { MemoryPressureService } from "../../../../services/memory-pressure-service.js";
+import type { TaskRepo } from "../../../../repositories/task-repo.js";
+import type { SettingsService } from "../../../../services/settings-service.js";
+import type { ThreadService } from "../../../../services/thread-service.js";
+import type { ProviderAvailabilityService } from "../../../../services/provider-availability-service.js";
+import type { PlanQuestionAnswersRepo } from "../../../../repositories/plan-question-answers-repo.js";
 
 vi.mock("fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("fs")>();
@@ -186,7 +184,7 @@ function buildService(): {
     attachmentService,
     providerRegistry,
     threadService,
-    { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../repositories/hook-execution-repo.js").HookExecutionRepo,
+    { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../../../repositories/hook-execution-repo.js").HookExecutionRepo,
     turnSnapshotRepo,
     snapshotService,
     db,
@@ -195,14 +193,14 @@ function buildService(): {
     settingsService,
     availability,
     planQuestionAnswersRepo,
-    { create: vi.fn(), updateStatus: vi.fn(), listByThread: vi.fn(() => []), getLatestForThread: vi.fn(() => null), getById: vi.fn(() => null) } as unknown as import("../../repositories/plan-repo.js").PlanRepo,
+    { create: vi.fn(), updateStatus: vi.fn(), listByThread: vi.fn(() => []), getLatestForThread: vi.fn(() => null), getById: vi.fn(() => null) } as unknown as import("../../../../repositories/plan-repo.js").PlanRepo,
     { deliverHandoff: vi.fn(async () => ({ providerWireOverride: "" })) } as never,
     { issue: vi.fn(), tryConsume: vi.fn(() => false), clear: vi.fn(), hasActiveGrant: vi.fn(() => false) } as never,
     new NarrativeStore(
       messageRepo,
       toolCallRecordRepo,
-      { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../repositories/thought-segment-repo.js").ThoughtSegmentRepo,
-      { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../repositories/hook-execution-repo.js").HookExecutionRepo,
+      { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../../../repositories/thought-segment-repo.js").ThoughtSegmentRepo,
+      { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../../../repositories/hook-execution-repo.js").HookExecutionRepo,
     ),
     new PlanQuestionService(messageRepo, planQuestionAnswersRepo),
     undefined,
@@ -789,6 +787,66 @@ describe("AgentService transient-failure auto-retry", () => {
     expect(endedSuppressedWhenDiscardUnwinds).toBe(true);
     providerEmitter.emit("event", { type: "turnComplete", threadId: THREAD_ID, reason: "end_turn", costUsd: null, tokensIn: 0, tokensOut: 0 });
     expect(service.shouldSuppressTurnEnded(THREAD_ID)).toBe(false);
+  });
+
+  it("keeps a transient disconnect unfinished until a real terminal outcome", async () => {
+    const { service, sendTurn, providerEmitter } = buildService();
+    const events: Array<Record<string, unknown>> = [];
+    providerEmitter.on("event", (event: Record<string, unknown>) => events.push(event));
+    let markRetryStarted!: () => void;
+    const retryStarted = new Promise<void>((resolve) => { markRetryStarted = resolve; });
+    let releaseRetry!: () => void;
+    const retryBlocked = new Promise<void>((resolve) => { releaseRetry = resolve; });
+    service.init();
+    sendTurn
+      .mockResolvedValueOnce(undefined)
+      .mockImplementationOnce(() => {
+        markRetryStarted();
+        return retryBlocked;
+      });
+
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "hello",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+
+    const executionId = service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.turnExecutionId;
+    providerEmitter.emit("event", {
+      type: "error",
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      error: "read ECONNRESET",
+    });
+    providerEmitter.emit("event", {
+      type: "ended",
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+    });
+    await retryStarted;
+
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("running");
+    expect(events.filter((event) => event.type === "turnComplete")).toHaveLength(0);
+
+    releaseRetry();
+    await Promise.resolve();
+    await Promise.resolve();
+    providerEmitter.emit("event", {
+      type: "turnComplete",
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      reason: "end_turn",
+      costUsd: null,
+      tokensIn: 0,
+      tokensOut: 0,
+    });
+    await Promise.resolve();
+
+    expect(events.filter((event) => event.type === "turnComplete")).toHaveLength(1);
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("completed");
   });
 
   it("does not suppress a bare Ended for a normal in-flight turn (no transient retry armed)", async () => {

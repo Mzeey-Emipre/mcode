@@ -2,7 +2,7 @@ import { inject, injectable } from "tsyringe";
 import { CanonicalAgentEventSink } from "../canonical/canonical-agent-event-sink.js";
 import { ThreadRepo } from "../../../repositories/thread-repo.js";
 import { AttachmentService } from "../../../services/attachment-service.js";
-import type { SendMessageCommand } from "../../../services/agent-service.js";
+import type { SendMessageCommand } from "../orchestration/agent-service.js";
 import type { TurnRecovery } from "@mcode/contracts";
 
 const UNPROVED_EXECUTION_REASON =
