@@ -5,8 +5,8 @@ import {
   BrowserSurfaceHostRoot,
   browserSurfaceHost,
 } from "../BrowserSurfaceHostRoot";
-import type { BrowserSurfaceIdentity } from "@/services/browser-surfaces";
-import { previewTabsScopeKey, usePreviewTabsStore } from "@/stores/previewTabsStore";
+import type { BrowserSurfaceIdentity } from "../../browser-surfaces";
+import { previewTabsScopeKey, usePreviewTabsStore } from "../../state/previewTabsStore";
 import { useBrowserAutomationStore } from "@/stores/browserAutomationStore";
 import type {
   PreviewPopupRequest,

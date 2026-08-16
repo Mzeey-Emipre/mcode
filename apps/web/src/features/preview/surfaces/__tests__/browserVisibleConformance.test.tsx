@@ -28,7 +28,7 @@ import {
   releaseBrowserAutomationThreadScope,
   useBrowserAutomationStore,
 } from "@/stores/browserAutomationStore";
-import { previewTabsScopeKey, usePreviewTabsStore } from "@/stores/previewTabsStore";
+import { previewTabsScopeKey, usePreviewTabsStore } from "../../state/previewTabsStore";
 import { browserTargetRegistry } from "@/services/browser-automation/browserTargetRegistry";
 import {
   ViewportCoordinator,

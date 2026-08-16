@@ -130,25 +130,25 @@ import type {
 } from "@mcode/contracts";
 import { getModelContextWindow } from "@mcode/shared/model-context";
 import { useComposerDraftStore } from "@/stores/composerDraftStore";
-import { usePreviewReferenceQueueStore } from "@/stores/previewReferenceQueueStore";
+import { usePreviewReferenceQueueStore } from "@/features/preview/state/previewReferenceQueueStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useToastStore } from "@/stores/toastStore";
 import { useProviderAvailabilityStore } from "@/stores/providerAvailabilityStore";
 import { useElementWidth } from "@/hooks/useElementWidth";
 import { ProviderUnavailableBanner } from "@/components/chat/ProviderUnavailableBanner";
-import { appendBrowserCaptureFence } from "@/lib/browser-capture-append";
+import { appendBrowserCaptureFence } from "@/features/preview/capture/browser-capture-append";
 import {
   appendPreviewAnnotationFence,
   stripPreviewAnnotationFence,
-} from "@/lib/preview-annotation-append";
-import { usePreviewAnnotationStore } from "@/stores/previewAnnotationStore";
-import { usePreviewDesignModeStore } from "@/stores/previewDesignModeStore";
+} from "@/features/preview/capture/preview-annotation-append";
+import { usePreviewAnnotationStore } from "@/features/preview/state/previewAnnotationStore";
+import { usePreviewDesignModeStore } from "@/features/preview/state/previewDesignModeStore";
 import { PreviewAnnotationBundleChip } from "@/components/chat/PreviewAnnotationBundleChip";
 import {
   collectBrowserCaptureSpillPaths,
   collectSpillPathsFromPendingAttachments,
   releaseBrowserCaptureSpills,
-} from "@/lib/browser-capture-spill";
+} from "@/features/preview/capture/browser-capture-spill";
 
 const EMPTY_TASK_BUBBLE_TASKS: readonly TaskItem[] = [];
 /** Build structured preview metadata payloads paired with outbound attachment IDs. */

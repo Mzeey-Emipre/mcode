@@ -45,7 +45,14 @@ import { CreatePrDialog } from "./CreatePrDialog";
 import { useThreadGitActions } from "@/hooks/useThreadGitActions";
 import { usePullRequestReviewLink } from "@/hooks/usePullRequestReviewLink";
 import { useThreadRecap } from "@/hooks/useThreadRecap";
-import { usePreviewTabSet } from "@/components/panels/hooks/usePreviewTabs";
+import {
+  isEmptyPreviewTabUrl,
+  isModifierClick,
+  isPreviewableUrl,
+  openUrlInPreview,
+  usePreviewTabSet,
+  usePreviewTabsStore,
+} from "@/features/preview";
 import {
   getBreakdown,
   getCiOverviewSummaryLabel,
@@ -59,7 +66,6 @@ import {
   type BrowserAutomationLiveTarget,
   type BrowserAutomationPendingAgentOpen,
 } from "@/stores/browserAutomationStore";
-import { usePreviewTabsStore } from "@/stores/previewTabsStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useThreadRecord } from "@/stores/thread-selectors";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
@@ -68,12 +74,6 @@ import { usePlanStore } from "@/stores/planStore";
 import { executeCommand, registerCommand } from "@/lib/command-registry";
 import { shouldAutoOpenOverview } from "@/lib/composer-layout";
 import { extractThreadSources, type ThreadSource } from "@/lib/message-sources";
-import {
-  isEmptyPreviewTabUrl,
-  isModifierClick,
-  isPreviewableUrl,
-  openUrlInPreview,
-} from "@/lib/open-url-in-preview";
 import { sanitizeCustomBranchInput, trimTrailingBranchChars } from "@/lib/branch-name";
 import { showRightPanelAdaptive } from "@/lib/right-panel-layout";
 import {

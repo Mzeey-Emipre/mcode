@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { collectSpillPathsFromPendingAttachments } from "@/lib/browser-capture-spill";
+import { collectSpillPathsFromPendingAttachments } from "../browser-capture-spill";
 import type { PendingAttachment } from "@/components/chat/AttachmentPreview";
 
 describe("collectSpillPathsFromPendingAttachments", () => {

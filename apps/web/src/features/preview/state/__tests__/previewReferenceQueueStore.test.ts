@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { usePreviewReferenceQueueStore } from "@/stores/previewReferenceQueueStore";
+import { usePreviewReferenceQueueStore } from "../previewReferenceQueueStore";
 import type { PendingAttachment } from "@/components/chat/AttachmentPreview";
 
 const dummyAtt = (id: string): PendingAttachment => ({

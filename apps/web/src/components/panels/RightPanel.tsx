@@ -22,8 +22,11 @@ import {
 } from "./ActivityRail";
 import type { PanelScope } from "@/lib/panel-tabs";
 import { DiffPanel } from "@/components/diff";
-import { PreviewPanel } from "@/features/preview";
-import { usePreviewTabsStore } from "@/stores/previewTabsStore";
+import {
+  PreviewPanel,
+  usePreviewTabSet,
+  usePreviewTabsStore,
+} from "@/features/preview";
 import { TerminalPoolSlot } from "@/features/terminal";
 import { createTerminalForScope } from "@/lib/ensure-terminal";
 import {
@@ -41,7 +44,6 @@ import {
   browserAutomationTargetKey,
   useBrowserAutomationStore,
 } from "@/stores/browserAutomationStore";
-import { usePreviewTabSet } from "./hooks/usePreviewTabs";
 
 /** One thread/workspace Browser panel retained by the warm LRU pool. */
 export interface WarmPreviewScope {

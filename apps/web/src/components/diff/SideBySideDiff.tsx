@@ -9,7 +9,7 @@ import { useWorkspaceStore } from "@/stores/workspaceStore";
 import {
   usePreviewAnnotationStore,
   type SavedDiffAnnotation,
-} from "@/stores/previewAnnotationStore";
+} from "@/features/preview/state/previewAnnotationStore";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { HunkSeparator } from "./HunkSeparator";
