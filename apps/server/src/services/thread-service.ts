@@ -8,18 +8,15 @@ import { injectable, inject } from "tsyringe";
 import { validateBranchName, logger } from "@mcode/shared";
 import type { Thread, RecentThread, ThreadMode, ContextWindowMode } from "@mcode/contracts";
 import { ThreadRepo } from "../repositories/thread-repo";
-import { WorkspaceRepo } from "../repositories/workspace-repo";
-import { GitService, ProjectWorktreeService } from "../features/projects/index.js";
+import { ProjectWorktreeService } from "../features/projects/index.js";
 import { AttachmentService } from "./attachment-service";
-import { HandoffStorage } from "./handoff/handoff-storage.js";
+import { HandoffStorage } from "../features/handoff/index.js";
 
 /** Handles thread creation, deletion, worktree provisioning, and lifecycle. */
 @injectable()
 export class ThreadService {
   constructor(
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
-    @inject(WorkspaceRepo) private readonly workspaceRepo: WorkspaceRepo,
-    @inject(GitService) private readonly gitService: GitService,
     @inject(ProjectWorktreeService) private readonly projectWorktreeService: ProjectWorktreeService,
     @inject(AttachmentService) private readonly attachmentService: AttachmentService,
     @inject(HandoffStorage) private readonly handoffStorage: HandoffStorage,
@@ -73,43 +70,6 @@ export class ThreadService {
     }
 
     return thread;
-  }
-
-  /**
-   * Create a named branch in a thread's resolved checkout and persist the named checkout state.
-   */
-  async createBranchForThread(
-    workspaceId: string,
-    threadId: string | undefined,
-    name: string,
-  ): Promise<string> {
-    const workspace = this.workspaceRepo.findById(workspaceId);
-    if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
-
-    let path = workspace.path;
-    if (threadId) {
-      const thread = this.threadRepo.findById(threadId);
-      if (!thread) throw new Error(`Thread not found: ${threadId}`);
-      if (thread.workspace_id !== workspaceId) {
-        throw new Error(`Thread ${threadId} does not belong to workspace ${workspaceId}`);
-      }
-      path = this.gitService.resolveWorkingDir(
-        workspace.path,
-        thread.mode,
-        thread.worktree_path,
-      );
-    }
-
-    const branch = await this.gitService.createBranch(path, name);
-    if (threadId) {
-      const updated = this.threadRepo.updateCheckoutToNamedBranch(threadId, branch);
-      if (!updated) {
-        throw new Error(
-          `Failed to update checkout state for thread ${threadId}`,
-        );
-      }
-    }
-    return branch;
   }
 
   /** List non-deleted threads for a workspace. */
@@ -222,26 +182,4 @@ export class ThreadService {
     return this.threadRepo.findById(threadId);
   }
 
-  /**
-   * Sync a worktree thread's persisted checkout state from its current Git HEAD.
-   */
-  async syncCheckoutFromHead(threadId: string): Promise<{ thread: Thread; changed: boolean } | null> {
-    const thread = this.threadRepo.findById(threadId);
-    if (!thread || thread.mode !== "worktree" || !thread.worktree_path) return null;
-
-    const currentBranch = await this.gitService.getCurrentBranchAt(thread.worktree_path);
-    const detached = !currentBranch || currentBranch === "HEAD";
-    const branch = detached ? "HEAD" : currentBranch;
-    const checkoutState = detached ? "branchless" : "named";
-    const baseBranch = detached
-      ? thread.base_branch ?? (thread.branch !== "HEAD" ? thread.branch : null)
-      : null;
-
-    return this.threadRepo.updateCheckoutFromHead(
-      threadId,
-      branch,
-      checkoutState,
-      baseBranch,
-    );
-  }
 }

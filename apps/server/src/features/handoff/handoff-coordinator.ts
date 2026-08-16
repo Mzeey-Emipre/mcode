@@ -25,13 +25,13 @@ import {
   buildConversationReplay,
   replayBudgetChars,
   resolveForkSnapshot,
-} from "../handoff-builder.js";
+} from "../../services/handoff-builder.js";
 import { HandoffPipelineService } from "./handoff-pipeline.js";
 import { HandoffStorage } from "./handoff-storage.js";
 import type { AttachmentSource } from "./handoff-storage.js";
 import type { HandoffArtifact } from "./handoff-types.js";
 import { classifyProviderError } from "./error-classifier.js";
-import { ScopedPreGrantService } from "../scoped-pre-grant.js";
+import { ScopedPreGrantService } from "../../services/scoped-pre-grant.js";
 
 /** Array.findLastIndex polyfill for ES2022 targets that lack it. */
 function findLastIndex<T>(arr: T[], predicate: (item: T) => boolean): number {

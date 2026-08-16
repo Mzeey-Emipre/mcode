@@ -45,7 +45,7 @@ import {
 } from "../../services/browser-automation/browser-automation-session-lease.js";
 import { SessionRuntime } from "../../services/session-runtime.js";
 import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../services/session-runtime.js";
-import { CleanForker } from "../../services/handoff/session-forker.js";
+import { CleanForker } from "../../features/handoff/index.js";
 import { killProcessTree } from "../../services/process-kill.js";
 import {
   AgentEventType,

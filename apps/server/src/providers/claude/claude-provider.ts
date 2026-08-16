@@ -68,7 +68,7 @@ export function mergeClaudeMcpServers(
 }
 import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../services/session-runtime.js";
 import { listDirectChildren } from "../../services/process-kill.js";
-import { CleanForker } from "../../services/handoff/session-forker.js";
+import { CleanForker } from "../../features/handoff/index.js";
 import { browserAutomationPermissionCapability } from "../../services/browser-automation/access-service.js";
 import {
   BrowserAutomationSessionLease,

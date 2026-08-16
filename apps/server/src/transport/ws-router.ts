@@ -41,7 +41,7 @@ import type {
   WorkspaceEnricher,
   WorkspaceService,
 } from "../features/projects/index.js";
-import type { HandoffStorage } from "../features/handoff/index.js";
+import type { HandoffCheckoutService, HandoffStorage } from "../features/handoff/index.js";
 import type {
   GithubService,
   PullRequestMutationService,
@@ -300,6 +300,7 @@ export interface RouterDeps {
   prDraftService: PrDraftService;
   /** Reads handoff artifacts from the filesystem. */
   handoffStorage: HandoffStorage;
+  handoffCheckoutService: HandoffCheckoutService;
   /** CI check watcher for adaptive polling and manual refresh. */
   ciWatcherService: CiWatcherService;
   /** Thread repository for resolving worktree paths in git operations. */
@@ -1048,7 +1049,7 @@ async function dispatch(
       return;
     }
     case "git.createBranch": {
-      const branch = await deps.threadService.createBranchForThread(
+      const branch = await deps.handoffCheckoutService.createBranchForThread(
         params.workspaceId,
         params.threadId,
         params.name,

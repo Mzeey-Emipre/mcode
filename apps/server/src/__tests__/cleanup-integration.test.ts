@@ -12,7 +12,7 @@ import { CleanupJobRepo } from "../repositories/cleanup-job-repo";
 import { ThreadRepo } from "../repositories/thread-repo";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
 import { CleanupWorker } from "../services/cleanup-worker";
-import { HandoffStorage } from "../services/handoff/handoff-storage";
+import { HandoffStorage } from "../features/handoff/index.js";
 import { ThreadService } from "../services/thread-service";
 import type { ClaudeProvider } from "../providers/claude/claude-provider";
 import type { TerminalBackend as TerminalService } from "../terminal/terminal-backend.js";
@@ -103,8 +103,6 @@ describe("Cleanup integration", () => {
     );
     threadService = new ThreadService(
       threadRepo,
-      workspaceRepo,
-      mockGitService,
       projectWorktreeService,
       mockAttachmentService,
       mockHandoffStorage,

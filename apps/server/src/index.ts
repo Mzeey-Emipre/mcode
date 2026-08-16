@@ -24,6 +24,7 @@ import {
   WorkspaceService,
 } from "./features/projects";
 import {
+  HandoffCheckoutService,
   HandoffStorage,
 } from "./features/handoff";
 import {
@@ -362,6 +363,7 @@ const prDraftService = container.resolve(PrDraftService);
 const diffSummaryService = container.resolve(DiffSummaryService);
 const recapService = container.resolve(RecapService);
 const handoffStorage = container.resolve(HandoffStorage);
+const handoffCheckoutService = container.resolve(HandoffCheckoutService);
 const db = container.resolve<Database.Database>("Database");
 const jobObject = container.resolve<JobObject>("JobObject");
 
@@ -635,6 +637,7 @@ const { httpServer, wss } = createWsServer({
   diffSummaryService,
   recapService,
   handoffStorage,
+  handoffCheckoutService,
   threadTeardownService,
   threadCompletionService,
   browserAutomationBroker,

@@ -35,7 +35,7 @@ import { buildMcodeInstructionPlan, renderMcodeInstructions } from "@mcode/threa
 import { JobObject } from "../../services/job-object.js";
 import { SessionRuntime } from "../../services/session-runtime.js";
 import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../services/session-runtime.js";
-import { CleanForker } from "../../services/handoff/session-forker.js";
+import { CleanForker } from "../../features/handoff/index.js";
 import {
   browserAutomationPermissionCapability,
   type BrowserAutomationCredentialMetadata,

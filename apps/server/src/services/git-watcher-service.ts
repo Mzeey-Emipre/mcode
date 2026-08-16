@@ -12,7 +12,7 @@ import { broadcast } from "../transport/push";
 import { WorkspaceRepo } from "../repositories/workspace-repo";
 import type { GitExecutor } from "./git-executor/index.js";
 import type { GitService } from "../features/projects/index.js";
-import { ThreadService } from "./thread-service.js";
+import { HandoffCheckoutService } from "../features/handoff/index.js";
 
 /** Debounce delay in milliseconds to batch rapid HEAD file writes (e.g., during rebase). */
 const DEBOUNCE_MS = 200;
@@ -39,7 +39,7 @@ export class GitWatcherService {
     @inject(WorkspaceRepo) private readonly workspaceRepo: WorkspaceRepo,
     @inject("GitExecutor") private readonly gitExecutor: GitExecutor,
     @inject("GitService") private readonly gitService: GitService,
-    @inject(ThreadService) private readonly threadService: ThreadService,
+    @inject(HandoffCheckoutService) private readonly handoffCheckoutService: HandoffCheckoutService,
   ) {}
 
   /** Register a callback invoked after a thread checkout branch/state changes. */
@@ -179,7 +179,7 @@ export class GitWatcherService {
         }
         entry.timer = setTimeout(() => {
           entry.timer = null;
-          void this.threadService.syncCheckoutFromHead(threadId).then((result) => {
+          void this.handoffCheckoutService.syncCheckoutFromHead(threadId).then((result) => {
             if (!result?.changed) return;
             const { thread } = result;
             try {

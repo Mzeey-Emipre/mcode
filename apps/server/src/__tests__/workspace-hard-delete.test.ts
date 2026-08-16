@@ -9,7 +9,7 @@ import { CleanupJobRepo } from "../repositories/cleanup-job-repo";
 import { WorkspaceService } from "../features/projects/index.js";
 import { AttachmentService } from "../services/attachment-service";
 import { CleanupWorker } from "../services/cleanup-worker";
-import { HandoffStorage } from "../services/handoff/handoff-storage";
+import { HandoffStorage } from "../features/handoff/index.js";
 import type { AgentService } from "../features/agents/index.js";
 import type { ClaudeProvider } from "../providers/claude/claude-provider";
 import type { TerminalBackend as TerminalService } from "../terminal/terminal-backend.js";
