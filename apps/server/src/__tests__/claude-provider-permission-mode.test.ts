@@ -82,8 +82,10 @@ vi.mock("@mcode/shared", async (importOriginal) => {
 import { ClaudeProvider } from "../providers/claude/claude-provider";
 import { stubEnvService } from "./stub-env-service.js";
 import { stubJobObject } from "./stub-job-object.js";
-import { BrowserAutomationSessionLease } from "../services/browser-automation/browser-automation-session-lease.js";
-import { BrowserAutomationCredentialRegistry } from "../services/browser-automation/credential-registry.js";
+import {
+  BrowserAutomationCredentialRegistry,
+  BrowserAutomationSessionLease,
+} from "../features/browser-automation/index.js";
 
 describe("ClaudeProvider permission mode changes", () => {
   let provider: ClaudeProvider;
