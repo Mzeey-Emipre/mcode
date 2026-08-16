@@ -36,13 +36,11 @@ import { EnvService } from "../../services/env-service.js";
 import { JobObject } from "../../services/job-object.js";
 import {
   browserAutomationPermissionCapability,
-  type BrowserAutomationCredentialMetadata,
-} from "../../services/browser-automation/access-service.js";
-import {
   BrowserAutomationSessionLease,
+  type BrowserAutomationCredentialMetadata,
   type BrowserAutomationSessionLeaseGrant,
   type BrowserAutomationSessionLeaseStage,
-} from "../../services/browser-automation/browser-automation-session-lease.js";
+} from "../../features/browser-automation/index.js";
 import { SessionRuntime } from "../../services/session-runtime.js";
 import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../services/session-runtime.js";
 import { CleanForker } from "../../features/handoff/index.js";

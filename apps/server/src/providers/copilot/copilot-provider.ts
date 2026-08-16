@@ -39,12 +39,10 @@ import { CleanForker } from "../../features/handoff/index.js";
 import {
   browserAutomationPermissionCapability,
   type BrowserAutomationCredentialMetadata,
-} from "../../services/browser-automation/access-service.js";
-import {
   BrowserAutomationSessionLease,
   type BrowserAutomationSessionLeaseScope,
   type BrowserAutomationSessionLeaseStage,
-} from "../../services/browser-automation/browser-automation-session-lease.js";
+} from "../../features/browser-automation/index.js";
 import type {
   IAgentProvider,
   ISessionEvictable,

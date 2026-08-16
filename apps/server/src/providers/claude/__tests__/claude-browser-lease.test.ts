@@ -4,7 +4,7 @@ import { MCODE_BROWSER_GUIDE } from "@mcode/thread-orchestration";
 import {
   BrowserAutomationSessionLease,
   type BrowserAutomationSessionLeaseScope,
-} from "../../../services/browser-automation/browser-automation-session-lease.js";
+} from "../../../features/browser-automation/index.js";
 import { ClaudeProvider } from "../claude-provider.js";
 
 const { mockQuery } = vi.hoisted(() => ({ mockQuery: vi.fn() }));

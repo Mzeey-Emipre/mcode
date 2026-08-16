@@ -10,6 +10,7 @@ describe("browser automation feature boundary", () => {
       "BrowserAutomationMcpHandler",
       "BrowserAutomationSessionLease",
       "BrowserAutomationTelemetry",
+      "browserAutomationPermissionCapability",
     ]);
   });
 });

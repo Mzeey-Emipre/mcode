@@ -8,7 +8,7 @@ import {
   type BrowserAutomationSessionLeaseGrant,
   type BrowserAutomationSessionLeaseScope,
   type BrowserAutomationSessionLeaseStage,
-} from "../../../services/browser-automation/browser-automation-session-lease.js";
+} from "../../../features/browser-automation/index.js";
 import {
   buildCursorBrowserMcpServers,
   CursorProvider,

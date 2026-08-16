@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { WebSocket } from "ws";
 import { BROWSER_AUTOMATION_CONTRACT_VERSION, BROWSER_AUTOMATION_OPERATIONS } from "@mcode/contracts";
-import { BrowserAutomationBroker } from "../services/browser-automation/broker.js";
+import { BrowserAutomationBroker } from "../features/browser-automation/index.js";
 import { routeMessage, type RouterDeps } from "./ws-router.js";
 
 function registration(

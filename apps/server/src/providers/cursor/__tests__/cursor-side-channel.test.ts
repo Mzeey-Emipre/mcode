@@ -5,7 +5,7 @@ import { openMemoryDatabase } from "../../../store/database.js";
 import { ThreadRepo } from "../../../repositories/thread-repo.js";
 import { MessageRepo } from "../../../repositories/message-repo.js";
 import { CursorProvider } from "../cursor-provider.js";
-import { BrowserAutomationSessionLease } from "../../../services/browser-automation/browser-automation-session-lease.js";
+import { BrowserAutomationSessionLease } from "../../../features/browser-automation/index.js";
 import type { InternalThreadControlMcpRuntime } from "../../../services/thread-control-mcp-runtime.js";
 import type { SettingsService } from "../../../services/settings-service.js";
 import type { SkillService } from "../../../services/skill-service.js";

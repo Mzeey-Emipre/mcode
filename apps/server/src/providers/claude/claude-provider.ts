@@ -69,13 +69,13 @@ export function mergeClaudeMcpServers(
 import type { ProtocolAdapter, SpawnArgs, SpawnResult } from "../../services/session-runtime.js";
 import { listDirectChildren } from "../../services/process-kill.js";
 import { CleanForker } from "../../features/handoff/index.js";
-import { browserAutomationPermissionCapability } from "../../services/browser-automation/access-service.js";
 import {
+  browserAutomationPermissionCapability,
   BrowserAutomationSessionLease,
   type BrowserAutomationSessionLeaseGrant,
   type BrowserAutomationSessionLeaseScope,
   type BrowserAutomationSessionLeaseStage,
-} from "../../services/browser-automation/browser-automation-session-lease.js";
+} from "../../features/browser-automation/index.js";
 import type { SessionForker } from "@mcode/contracts";
 import { parseClaudeGoalCommandResult } from "./claude-goal-command-parser.js";
 
