@@ -15,13 +15,13 @@ import type {
 import {
   browserAutomationTargetKey,
   useBrowserAutomationStore,
-} from "@/stores/browserAutomationStore";
+} from "../automation/browserAutomationStore";
 import { browserSurfaceHost } from "./BrowserSurfaceHostRoot";
-import { DEFAULT_VIEWPORT_SIZE } from "@/services/browser-automation/viewportCoordinator";
+import { DEFAULT_VIEWPORT_SIZE } from "../automation/services/viewportCoordinator";
 import {
   getOrCreateViewportCoordinator,
   waitForViewportLayout,
-} from "@/services/browser-automation/viewportCoordinatorFactory";
+} from "../automation/services/viewportCoordinatorFactory";
 
 /** Properties for one hosted renderer Browser surface. */
 export interface PreviewWebviewProps {

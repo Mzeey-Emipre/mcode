@@ -15,11 +15,11 @@ import {
   interruptBrowserAutomationTarget,
   releaseBrowserAutomationThreadScope,
   useBrowserAutomationStore,
-} from "@/stores/browserAutomationStore";
+} from "../browserAutomationStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useDiffStore } from "@/stores/diffStore";
 import { previewTabsScopeKey, usePreviewTabsStore } from "@/stores/previewTabsStore";
-import { browserTargetRegistry } from "@/services/browser-automation/browserTargetRegistry";
+import { browserTargetRegistry } from "../services/browserTargetRegistry";
 
 const harness = vi.hoisted(() => {
   const listeners = new Map<string, Set<(payload: unknown) => void>>();
@@ -54,7 +54,7 @@ vi.mock("@/transport", () => ({
   },
 }));
 
-vi.mock("../PreviewPanel", () => ({
+vi.mock("../../surfaces/PreviewPanel", () => ({
   WEB_RUNTIME_PREVIEW_TAB_ID: "web-preview",
   PreviewPanel: ({ threadId, automationOnly }: { readonly threadId: string; readonly automationOnly?: boolean }) => (
     <div
@@ -85,8 +85,8 @@ import { BrowserAutomationRecorder } from "../browserAutomationRecorder";
 import {
   BrowserSessionDriver,
   type BrowserSessionLifecycleTab,
-} from "@/services/browser-automation/browserSessionDriver";
-import { ViewportCoordinator } from "@/services/browser-automation/viewportCoordinator";
+} from "../services/browserSessionDriver";
+import { ViewportCoordinator } from "../services/viewportCoordinator";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;

@@ -87,22 +87,22 @@ import {
   invalidateBrowserAutomationTargetObservation,
   selectWarmBrowserTabIds,
   useBrowserAutomationStore,
-} from "@/stores/browserAutomationStore";
+} from "../automation/browserAutomationStore";
 import {
   isBrowserAutomationWebRuntimeEnabled,
   normalizeWebPreviewUrl,
   resolveWebPreviewState,
-} from "@/components/panels/browserAutomationRuntime";
+} from "../automation/browserAutomationRuntime";
 import {
   calculateViewportPresentationScale,
   DEFAULT_VIEWPORT_SIZE,
   type ViewportCoordinator,
   type ViewportCoordinatorState,
-} from "@/services/browser-automation/viewportCoordinator";
+} from "../automation/services/viewportCoordinator";
 import {
   getOrCreateViewportCoordinator,
   waitForViewportLayout,
-} from "@/services/browser-automation/viewportCoordinatorFactory";
+} from "../automation/services/viewportCoordinatorFactory";
 import type {
   BrowserSurfaceIdentity,
   BrowserSurfacePageState,

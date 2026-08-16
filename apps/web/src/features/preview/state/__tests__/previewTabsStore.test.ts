@@ -7,8 +7,8 @@ import {
   type PreviewLiveChrome,
 } from "../previewTabsStore";
 import { usePreviewFocusStore } from "../previewFocusStore";
-import { useBrowserAutomationStore } from "@/stores/browserAutomationStore";
-import { browserTargetRegistry } from "@/services/browser-automation/browserTargetRegistry";
+import { useBrowserAutomationStore } from "../../automation/browserAutomationStore";
+import { browserTargetRegistry } from "../../automation/services/browserTargetRegistry";
 
 const SCOPE = "thread-1";
 const WORKSPACE_ID = "workspace-1";

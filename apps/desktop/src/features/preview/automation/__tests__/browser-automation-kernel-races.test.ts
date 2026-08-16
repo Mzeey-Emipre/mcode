@@ -185,7 +185,7 @@ vi.mock("../../state/window-session.js", () => ({
 }));
 
 import { BrowserAutomationKernel } from "../kernel.js";
-import { BrowserSessionDriver, ElectronBrowserSessionAdapter } from "../../../../../../web/src/services/browser-automation/browserSessionDriver";
+import { BrowserSessionDriver, ElectronBrowserSessionAdapter } from "../../../../../../web/src/features/preview/automation/services/browserSessionDriver";
 
 function seedTab(tabId = "tab", threadId = "thread"): void {
   tabsByThread.set(JSON.stringify(["workspace", threadId]), {

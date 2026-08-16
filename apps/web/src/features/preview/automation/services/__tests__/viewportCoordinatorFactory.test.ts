@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createViewportCoordinator } from "./viewportCoordinatorFactory";
+import { createViewportCoordinator } from "../viewportCoordinatorFactory";
 
 describe("viewport coordinator factory", () => {
   it("applies and resets user viewport changes through the Browser surface", async () => {

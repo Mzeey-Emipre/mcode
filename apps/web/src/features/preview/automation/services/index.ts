@@ -3,16 +3,16 @@ export {
   ElectronBrowserSessionAdapter,
   getBrowserAutomationRuntimeActOperations,
   getBrowserAutomationRuntimeOperations,
-} from "@/features/preview/automation/services/browserSessionDriver";
+} from "./browserSessionDriver";
 export type {
   BrowserAutomationRuntimeOperationOptions,
   BrowserSessionDriverOptions,
   BrowserSessionLifecycleTab,
   BrowserSessionRuntimeAdapter,
   BrowserSessionTabLifecycleAdapter,
-} from "@/features/preview/automation/services/browserSessionDriver";
-export { BrowserTargetRegistry, browserTargetRegistry } from "@/features/preview/automation/services/browserTargetRegistry";
-export type { BrowserTargetRecord } from "@/features/preview/automation/services/browserTargetRegistry";
+} from "./browserSessionDriver";
+export { BrowserTargetRegistry, browserTargetRegistry } from "./browserTargetRegistry";
+export type { BrowserTargetRecord } from "./browserTargetRegistry";
 export {
   MAX_VIEWPORT_CSS_PX,
   MAX_VIEWPORT_PRESENTATION_SCALE,
@@ -23,7 +23,7 @@ export {
   ViewportCoordinator,
   calculateViewportPresentationScale,
   clampViewportSize,
-} from "@/features/preview/automation/services/viewportCoordinator";
+} from "./viewportCoordinator";
 export type {
   ViewportApplyResult,
   ViewportCanvasBounds,
@@ -43,17 +43,17 @@ export type {
   ViewportPreset,
   ViewportSize,
   ViewportSource,
-} from "@/features/preview/automation/services/viewportCoordinator";
+} from "./viewportCoordinator";
 export {
   createViewportCoordinator,
   getOrCreateViewportCoordinator,
   waitForViewportLayout,
-} from "@/features/preview/automation/services/viewportCoordinatorFactory";
+} from "./viewportCoordinatorFactory";
 export type {
   GetOrCreateViewportCoordinatorOptions,
   ViewportCoordinatorFactoryOptions,
   ViewportCoordinatorTarget,
   ViewportSurfaceAdapter,
-} from "@/features/preview/automation/services/viewportCoordinatorFactory";
-export { WebBrowserSessionAdapter } from "@/features/preview/automation/services/webBrowserSessionAdapter";
-export type { WebBrowserSessionAdapterOptions } from "@/features/preview/automation/services/webBrowserSessionAdapter";
+} from "./viewportCoordinatorFactory";
+export { WebBrowserSessionAdapter } from "./webBrowserSessionAdapter";
+export type { WebBrowserSessionAdapterOptions } from "./webBrowserSessionAdapter";

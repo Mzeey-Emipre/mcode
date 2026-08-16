@@ -47,9 +47,12 @@ import { usePullRequestReviewLink } from "@/hooks/usePullRequestReviewLink";
 import { useThreadRecap } from "@/hooks/useThreadRecap";
 import {
   isEmptyPreviewTabUrl,
+  browserAutomationTargetKey,
+  findPendingBrowserAutomationOpen,
   isModifierClick,
   isPreviewableUrl,
   openUrlInPreview,
+  useBrowserAutomationStore,
   usePreviewTabSet,
   usePreviewTabsStore,
 } from "@/features/preview";
@@ -59,13 +62,10 @@ import {
   getCiSummaryHeadline,
 } from "@/lib/ci-status";
 import { useDiffStore } from "@/stores/diffStore";
-import {
-  browserAutomationTargetKey,
-  findPendingBrowserAutomationOpen,
-  useBrowserAutomationStore,
-  type BrowserAutomationLiveTarget,
-  type BrowserAutomationPendingAgentOpen,
-} from "@/stores/browserAutomationStore";
+import type {
+  BrowserAutomationLiveTarget,
+  BrowserAutomationPendingAgentOpen,
+} from "@/features/preview";
 import { useThreadStore } from "@/stores/threadStore";
 import { useThreadRecord } from "@/stores/thread-selectors";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
@@ -101,7 +101,7 @@ import type {
   QuotaCategory,
   TurnSnapshot,
 } from "@mcode/contracts";
-import type { BrowserSessionLifecycleTab } from "@/services/browser-automation/browserSessionDriver";
+import type { BrowserSessionLifecycleTab } from "@/features/preview";
 
 /** Stable empty messages reference so the closed Overview never re-renders on new messages. */
 const EMPTY_MESSAGES: Message[] = [];

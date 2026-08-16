@@ -5,7 +5,7 @@ import { rightPanelSingletonId, type RightPanelTab } from "@/stores/diffStore";
 import {
   browserAutomationTargetKey,
   useBrowserAutomationStore,
-} from "@/stores/browserAutomationStore";
+} from "@/features/preview";
 import { ActivityRail } from "./ActivityRail";
 
 const EXPECTED_EXPAND_DELAY_MS = 140;

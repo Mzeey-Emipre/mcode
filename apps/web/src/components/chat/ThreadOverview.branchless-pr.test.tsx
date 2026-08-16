@@ -9,9 +9,9 @@ import {
   browserAutomationLifecycleKey,
   browserAutomationTargetKey,
   useBrowserAutomationStore,
-} from "@/stores/browserAutomationStore";
+} from "@/features/preview";
 import { previewTabsScopeKey, usePreviewTabsStore } from "@/stores/previewTabsStore";
-import type { BrowserSessionLifecycleTab } from "@/services/browser-automation/browserSessionDriver";
+import type { BrowserSessionLifecycleTab } from "@/features/preview";
 import { useDiffStore } from "@/stores/diffStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 

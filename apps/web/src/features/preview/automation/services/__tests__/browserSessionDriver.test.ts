@@ -11,8 +11,8 @@ import {
   getBrowserAutomationRuntimeActOperations,
   getBrowserAutomationRuntimeOperations,
   type BrowserSessionLifecycleTab,
-} from "./browserSessionDriver";
-import { WebBrowserSessionAdapter } from "./webBrowserSessionAdapter";
+} from "../browserSessionDriver";
+import { WebBrowserSessionAdapter } from "../webBrowserSessionAdapter";
 
 const response = {} as BrowserAutomationResponse;
 const dispatch = {} as BrowserAutomationHostDispatch;
