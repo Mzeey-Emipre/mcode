@@ -20,6 +20,7 @@ import { PtyPidRegistry } from "./services/pty-pid-registry";
 import {
   FilesystemBrowser,
   GitService,
+  GitWatcherService,
   WorkspaceEnricher,
   WorkspaceService,
 } from "./features/projects";
@@ -29,6 +30,8 @@ import {
 } from "./features/handoff";
 import {
   GithubService,
+  CiWatcherService,
+  PrDraftService,
   PullRequestMutationService,
   PullRequestService,
   ReviewWorktreeService,
@@ -78,13 +81,10 @@ import { PlanRepo } from "./repositories/plan-repo";
 import { SnapshotService } from "./services/snapshot-service";
 import { SettingsService } from "./services/settings-service";
 import { warmCodexProviderVersion } from "@mcode/providers";
-import { GitWatcherService } from "./services/git-watcher-service";
 import { SkillWatcherService } from "./services/skill-watcher-service";
 import { MemoryPressureService } from "./services/memory-pressure-service";
 import { WorkspaceRepo } from "./repositories/workspace-repo";
 import { CleanupWorker } from "./services/cleanup-worker";
-import { PrDraftService } from "./services/pr-draft-service";
-import { CiWatcherService } from "./services/ci-watcher";
 import { ProviderAvailabilityService } from "./services/provider-availability-service";
 import { ProviderUsageWarmupService } from "./services/provider-usage-warmup-service";
 import { ProviderRegistry } from "./providers/provider-registry";

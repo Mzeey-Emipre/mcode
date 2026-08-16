@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import type { GithubService } from "../features/pull-requests/index.js";
+import type { GithubService } from "../github-service.js";
 import type { ChecksStatus } from "@mcode/contracts";
 
 vi.mock("@mcode/shared", () => ({
@@ -8,7 +8,7 @@ vi.mock("@mcode/shared", () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
-import { CiWatcherService } from "../services/ci-watcher";
+import { CiWatcherService, type PullRequestStateChange } from "../ci-watcher.js";
 
 function makeChecks(aggregate: ChecksStatus["aggregate"]): ChecksStatus {
   return { aggregate, runs: [], fetchedAt: Date.now() };
@@ -17,13 +17,13 @@ function makeChecks(aggregate: ChecksStatus["aggregate"]): ChecksStatus {
 describe("CiWatcherService", () => {
   let watcher: CiWatcherService;
   let mockGithubService: {
-    getCheckRuns: ReturnType<typeof vi.fn>;
-    getPullRequestWatchSnapshots: ReturnType<typeof vi.fn>;
-    cancelCheckRuns: ReturnType<typeof vi.fn>;
-    cancelAllInFlight: ReturnType<typeof vi.fn>;
+    getCheckRuns: ReturnType<typeof vi.fn<() => Promise<ChecksStatus>>>;
+    getPullRequestWatchSnapshots: ReturnType<typeof vi.fn<(targets: Array<{ threadId: string; prNumber: number }>) => Promise<unknown>>>;
+    cancelCheckRuns: ReturnType<typeof vi.fn<(branch: string, repoPath: string) => Promise<void>>>;
+    cancelAllInFlight: ReturnType<typeof vi.fn<() => Promise<void>>>;
   };
-  let mockBroadcast: ReturnType<typeof vi.fn>;
-  let mockPullRequestStateChange: ReturnType<typeof vi.fn>;
+  let mockBroadcast: ReturnType<typeof vi.fn<(channel: string, data: unknown) => void>>;
+  let mockPullRequestStateChange: ReturnType<typeof vi.fn<(change: PullRequestStateChange) => void>>;
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -44,8 +44,8 @@ describe("CiWatcherService", () => {
         })),
       ),
     );
-    mockBroadcast = vi.fn();
-    mockPullRequestStateChange = vi.fn();
+    mockBroadcast = vi.fn<(channel: string, data: unknown) => void>();
+    mockPullRequestStateChange = vi.fn<(change: PullRequestStateChange) => void>();
     watcher = new CiWatcherService(
       mockGithubService as unknown as GithubService,
       mockBroadcast,

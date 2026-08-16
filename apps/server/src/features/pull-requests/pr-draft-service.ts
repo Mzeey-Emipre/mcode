@@ -8,12 +8,12 @@ import { injectable, inject } from "tsyringe";
 import { existsSync, readFileSync, statSync } from "fs";
 import { join } from "path";
 import { logger } from "@mcode/shared";
-import type { GitService } from "../features/projects/index.js";
-import type { MessageRepo } from "../repositories/message-repo.js";
-import type { WorkspaceRepo } from "../repositories/workspace-repo.js";
-import type { ThreadRepo } from "../repositories/thread-repo.js";
+import type { GitService } from "../projects/index.js";
+import type { MessageRepo } from "../../repositories/message-repo.js";
+import type { WorkspaceRepo } from "../../repositories/workspace-repo.js";
+import type { ThreadRepo } from "../../repositories/thread-repo.js";
 import type { PrDraft } from "@mcode/contracts";
-import { UtilityCompletionService } from "./utility-completion-service.js";
+import { UtilityCompletionService } from "../../services/utility-completion-service.js";
 import { parseCompletionDraft } from "./pr-draft-parser.js";
 
 /** Candidate paths for a repo-level PR template, checked in order. */

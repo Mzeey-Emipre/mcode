@@ -22,7 +22,7 @@ import { ThoughtSegmentRepo } from "../../repositories/thought-segment-repo.js";
 import { classifyProviderError } from "./error-classifier.js";
 import { buildHandoffPrompt } from "./handoff-prompt.js";
 import { DeterministicForker } from "./session-forker.js";
-import { buildConversationReplay } from "../../services/handoff-builder.js";
+import { buildConversationReplay } from "./handoff-builder.js";
 import type {
   ForkRequest,
   IAgentProvider,

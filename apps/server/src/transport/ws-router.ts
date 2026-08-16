@@ -38,6 +38,7 @@ import type {
 import type {
   FilesystemBrowser,
   GitService,
+  GitWatcherService,
   WorkspaceEnricher,
   WorkspaceService,
 } from "../features/projects/index.js";
@@ -45,8 +46,10 @@ import type { HandoffCheckoutService, HandoffStorage } from "../features/handoff
 import type {
   GithubService,
   PullRequestMutationService,
+  PrDraftService,
   PullRequestService,
   ReviewWorktreeService,
+  CiWatcherService,
 } from "../features/pull-requests/index.js";
 import type {
   BrowserAutomationBroker,
@@ -87,10 +90,7 @@ import type { TaskRepo } from "../repositories/task-repo";
 import type { PlanQuestionAnswersRepo } from "../repositories/plan-question-answers-repo";
 import type { PlanRepo } from "../repositories/plan-repo";
 import type { SnapshotService } from "../services/snapshot-service";
-import type { GitWatcherService } from "../services/git-watcher-service";
 import type { MemoryPressureService } from "../services/memory-pressure-service";
-import type { PrDraftService } from "../services/pr-draft-service";
-import type { CiWatcherService } from "../services/ci-watcher";
 import type { ThreadRepo } from "../repositories/thread-repo";
 import type { WorkspaceRepo } from "../repositories/workspace-repo";
 import {

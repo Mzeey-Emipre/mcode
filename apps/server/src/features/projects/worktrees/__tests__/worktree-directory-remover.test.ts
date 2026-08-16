@@ -9,7 +9,7 @@ import {
   WorktreeDirectoryRemover,
   type WorktreeDirectoryRemoverDependencies,
   validateRemovalTarget,
-} from "../../features/projects/worktrees/worktree-directory-remover.js";
+} from "../worktree-directory-remover.js";
 
 function fakeChild() {
   const child = new EventEmitter() as unknown as ChildProcess;

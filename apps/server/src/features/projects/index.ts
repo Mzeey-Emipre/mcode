@@ -12,6 +12,8 @@ export {
   GitService,
   PullRequestReviewGitError,
 } from "./git/git-service.js";
+/** Watches project Git HEAD changes and synchronizes checkout state. */
+export { GitWatcherService } from "./git/git-watcher-service.js";
 export type {
   BranchlessWorktreeRemovalSafety,
   NormalizedGitRemote,

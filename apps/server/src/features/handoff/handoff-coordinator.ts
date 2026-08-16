@@ -25,7 +25,7 @@ import {
   buildConversationReplay,
   replayBudgetChars,
   resolveForkSnapshot,
-} from "../../services/handoff-builder.js";
+} from "./handoff-builder.js";
 import { HandoffPipelineService } from "./handoff-pipeline.js";
 import { HandoffStorage } from "./handoff-storage.js";
 import type { AttachmentSource } from "./handoff-storage.js";

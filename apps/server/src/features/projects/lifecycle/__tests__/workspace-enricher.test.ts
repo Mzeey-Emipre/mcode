@@ -5,7 +5,7 @@
 
 import "reflect-metadata";
 import { describe, it, expect, vi } from "vitest";
-import { WorkspaceEnricher } from "../features/projects/index.js";
+import { WorkspaceEnricher } from "../../index.js";
 
 const mockGit = {
   getCurrentBranchAt: vi.fn(),

@@ -38,6 +38,7 @@ import { registerCodexProvider } from "./providers/codex-provider-registration";
 import {
   FilesystemBrowser,
   GitService,
+  GitWatcherService,
   ProjectWorktreeService,
   WorktreeDirectoryRemover,
   WorkspaceEnricher,
@@ -55,6 +56,7 @@ import {
   PullRequestMutationService,
   PullRequestService,
   ReviewWorktreeService,
+  PrDraftService,
 } from "./features/pull-requests";
 import {
   BrowserAutomationCredentialRegistry,
@@ -107,12 +109,10 @@ import { PtyHostCleanupLedger } from "./terminal/cleanup/terminal-cleanup-ledger
 import { AttachmentService } from "./services/attachment-service";
 import { SnapshotService } from "./services/snapshot-service";
 import { SettingsService } from "./services/settings-service";
-import { GitWatcherService } from "./services/git-watcher-service";
 import { SkillWatcherService } from "./services/skill-watcher-service";
 import { MemoryPressureService } from "./services/memory-pressure-service";
 import { ScopedPreGrantService } from "./services/scoped-pre-grant";
 import { CleanupWorker } from "./services/cleanup-worker";
-import { PrDraftService } from "./services/pr-draft-service";
 import {
   ProviderAvailabilityService,
   defaultResolver,

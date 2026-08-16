@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import type { WorkspaceRepo } from "../repositories/workspace-repo";
+import type { WorkspaceRepo } from "../../../../repositories/workspace-repo";
 
 const { mockRemove, mockRmdir, mockExistsSync, mockLogger } = vi.hoisted(() => ({
   mockRemove: vi.fn(),
@@ -25,9 +25,9 @@ vi.mock("@mcode/shared", () => ({
   logger: mockLogger,
 }));
 
-import { GitService } from "../features/projects/index.js";
-import type { WorktreeDirectoryRemover } from "../features/projects/index.js";
-import { createMockGitExecutor } from "../services/git-executor/__tests__/mock-git-executor.js";
+import { GitService } from "../git-service.js";
+import type { WorktreeDirectoryRemover } from "../../worktrees/worktree-directory-remover.js";
+import { createMockGitExecutor } from "../../../../services/git-executor/__tests__/mock-git-executor.js";
 
 describe("GitService.reviewComparison", () => {
   it("returns one batched status result for changed, renamed, copied, and binary files", async () => {
@@ -40,7 +40,7 @@ describe("GitService.reviewComparison", () => {
         };
       }
       return {
-        stdout: "2\t0\tsrc/added.ts\0-\t-\tassets/logo.png\00\t3\tsrc/gone.ts\00\t0\t\0src/old.ts\0src/new.ts\00\t0\t\0src/base.ts\0src/copy.ts\0",
+        stdout: "2\t0\tsrc/added.ts\0-\t-\tassets/logo.png\x000\t3\tsrc/gone.ts\x000\t0\t\0src/old.ts\0src/new.ts\x000\t0\t\0src/base.ts\0src/copy.ts\0",
         stderr: "",
       };
     });

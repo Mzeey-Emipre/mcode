@@ -1,4 +1,4 @@
-import { inject, injectable } from "tsyringe";
+import { delay, inject, injectable } from "tsyringe";
 import type { Thread } from "@mcode/contracts";
 import { WorkspaceRepo } from "../../repositories/workspace-repo.js";
 import { ThreadRepo } from "../../repositories/thread-repo.js";
@@ -10,7 +10,7 @@ export class HandoffCheckoutService {
   constructor(
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
     @inject(WorkspaceRepo) private readonly workspaceRepo: WorkspaceRepo,
-    @inject(GitService) private readonly gitService: GitService,
+    @inject(delay(() => GitService)) private readonly gitService: GitService,
   ) {}
 
   /** Create a named branch in a thread's resolved checkout and persist its state. */

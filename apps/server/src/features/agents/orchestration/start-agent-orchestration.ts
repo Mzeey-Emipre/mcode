@@ -1,7 +1,7 @@
 import { AgentEventType, type AgentEvent, type IProviderRegistry, type PermissionRequest } from "@mcode/contracts";
 import { logger } from "@mcode/shared";
 import type { AgentService } from "./agent-service.js";
-import type { CiWatcherService } from "../../../services/ci-watcher.js";
+import type { CiWatcherService } from "../../pull-requests/index.js";
 import { normalizeAgentProviderError } from "./provider-agent-error-normalize.js";
 import type { GithubService } from "../../pull-requests/index.js";
 import type { NarrativeStore } from "../../../services/narrative-store.js";

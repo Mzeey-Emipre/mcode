@@ -4,15 +4,15 @@
  * `branch.changed` push event when the active branch switches.
  */
 
-import { injectable, inject } from "tsyringe";
+import { injectable, inject, delay } from "tsyringe";
 import { watch, existsSync, type FSWatcher } from "fs";
 import { join, dirname, basename } from "path";
 import { logger } from "@mcode/shared";
-import { broadcast } from "../transport/push";
-import { WorkspaceRepo } from "../repositories/workspace-repo";
-import type { GitExecutor } from "./git-executor/index.js";
-import type { GitService } from "../features/projects/index.js";
-import { HandoffCheckoutService } from "../features/handoff/index.js";
+import { broadcast } from "../../../transport/push";
+import { WorkspaceRepo } from "../../../repositories/workspace-repo";
+import type { GitExecutor } from "../../../services/git-executor/index.js";
+import type { GitService } from "./git-service.js";
+import { HandoffCheckoutService } from "../../handoff/index.js";
 
 /** Debounce delay in milliseconds to batch rapid HEAD file writes (e.g., during rebase). */
 const DEBOUNCE_MS = 200;
@@ -39,7 +39,8 @@ export class GitWatcherService {
     @inject(WorkspaceRepo) private readonly workspaceRepo: WorkspaceRepo,
     @inject("GitExecutor") private readonly gitExecutor: GitExecutor,
     @inject("GitService") private readonly gitService: GitService,
-    @inject(HandoffCheckoutService) private readonly handoffCheckoutService: HandoffCheckoutService,
+    @inject(delay(() => HandoffCheckoutService))
+    private readonly handoffCheckoutService: HandoffCheckoutService,
   ) {}
 
   /** Register a callback invoked after a thread checkout branch/state changes. */
