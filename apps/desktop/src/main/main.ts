@@ -23,7 +23,7 @@ import {
 import { autoUpdater } from "electron-updater";
 import { existsSync, createReadStream } from "fs";
 import { mkdir, writeFile } from "fs/promises";
-import { isAbsolute, join } from "path";
+import { join } from "path";
 import { randomUUID } from "crypto";
 import { Readable } from "stream";
 import { getLogPath, getMcodeDir, getRecentLogs, logger } from "@mcode/shared";
@@ -35,7 +35,9 @@ import {
 const getExtension =
   globalThis.__v8Snapshot?.contracts?.getExtension ?? bundledGetExtension;
 
-import { openInRegistry } from "../features/open-in/index.js";
+import {
+  registerOpenInHandlers,
+} from "../features/open-in/index.js";
 import { ServerRuntime } from "../features/server-runtime/index.js";
 import {
   initializeApplicationUpdates,
@@ -346,28 +348,7 @@ function registerIpcHandlers(): void {
     },
   );
 
-  // Open-in app metadata + detection, sourced from the registry. The renderer
-  // reads labels, icon keys, and kinds from here rather than a local copy.
-  ipcMain.handle("list-open-in-apps", () => {
-    return openInRegistry.list();
-  });
-
-  // Unified open-in seam: dispatch a path to the registry adapter for `appId`.
-  // The registry rejects unknown ids, so no separate allowlist is needed — the
-  // same handler opens an editor or reveals a path in the file manager. `line`
-  // is honored only by editor adapters with a file target (directories ignore it).
-  ipcMain.handle(
-    "open-in",
-    async (_event, appId: string, targetPath: string, line?: number) => {
-      if (!isAbsolute(targetPath)) {
-        throw new Error("Open-in path must be absolute");
-      }
-      if (!existsSync(targetPath)) {
-        throw new Error(`Path does not exist: ${targetPath}`);
-      }
-      await openInRegistry.launch(appId, { path: targetPath, line });
-    },
-  );
+  registerOpenInHandlers(ipcMain);
 
   registerExternalUrlHandler(resolveMcodeWorkspacePreviewUrl);
 
