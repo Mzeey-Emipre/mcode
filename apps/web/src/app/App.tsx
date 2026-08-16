@@ -33,10 +33,11 @@ import { toggleRightPanelAdaptive } from "@/lib/right-panel-layout";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ToastContainer } from "@/components/Toast";
 import type { SettingsSection } from "@/components/settings/settings-nav";
-import { TerminalPoolHost } from "@/components/terminal/TerminalPoolHost";
-import { TerminalPoolSlotProvider } from "@/components/terminal/TerminalPoolSlotContext";
-import { BrowserAutomationHost } from "@/components/panels/BrowserAutomationHost";
-import { BrowserSurfaceHostRoot } from "@/components/panels/BrowserSurfaceHostRoot";
+import {
+  BrowserAutomationHost,
+  BrowserSurfaceHostRoot,
+} from "@/features/preview";
+import { TerminalPoolHost, TerminalPoolSlotProvider } from "@/features/terminal";
 import { DesktopTitleBar } from "@/components/desktop/DesktopTitleBar";
 import {
   useNavigationHistoryStore,
@@ -62,7 +63,7 @@ const LazyCommandPalette = lazy(async () => {
 });
 
 const LazyPullRequestSurface = lazy(async () => {
-  const m = await import("@/components/pull-requests/PullRequestSurface");
+  const m = await import("@/features/pull-requests");
   return { default: m.PullRequestSurface };
 });
 
