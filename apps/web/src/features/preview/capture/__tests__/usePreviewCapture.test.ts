@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
 import { MCODE_BROWSER_CONTEXT_ATTACHMENT_MIME } from "@mcode/contracts";
 import { usePreviewCapture } from "../usePreviewCapture";
-import { usePreviewAnnotationStore } from "@/stores/previewAnnotationStore";
+import { usePreviewAnnotationStore } from "../../state/previewAnnotationStore";
 
 // ---------------------------------------------------------------------------
 // Store mocks — must be declared before the module is imported.
@@ -15,7 +15,7 @@ vi.mock("@/stores/toastStore", () => ({
   useToastStore: { getState: () => ({ show: mockShow }) },
 }));
 
-vi.mock("@/stores/previewReferenceQueueStore", () => ({
+vi.mock("../../state/previewReferenceQueueStore", () => ({
   usePreviewReferenceQueueStore: {
     getState: () => ({ enqueuePreviewReference: mockEnqueue }),
   },

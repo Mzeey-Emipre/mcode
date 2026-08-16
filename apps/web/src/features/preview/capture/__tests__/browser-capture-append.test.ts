@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { appendBrowserCaptureFence, MCODE_BROWSER_CAPTURE_FENCE_CLOSE, MCODE_BROWSER_CAPTURE_FENCE_OPEN } from "@/lib/browser-capture-append";
+import { appendBrowserCaptureFence, MCODE_BROWSER_CAPTURE_FENCE_CLOSE, MCODE_BROWSER_CAPTURE_FENCE_OPEN } from "../browser-capture-append";
 import {
   AttachedBrowserCaptureSchema,
   MCODE_BROWSER_CAPTURE_V2_STRING_MAX,

@@ -92,7 +92,8 @@ vi.mock("./CoordinationPanel", () => ({
 }));
 vi.mock("./plan", () => ({ PlanPanel: () => <div /> }));
 vi.mock("@/components/diff", () => ({ DiffPanel: () => <div /> }));
-vi.mock("@/components/panels/PreviewPanel", () => ({
+vi.mock("@/features/preview", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/features/preview")>()),
   PreviewPanel: (props: Record<string, unknown>) => {
     previewPanelRender(props);
     return <div data-testid="preview-panel" data-covered-left={props.coveredLeft ?? 0} />;
@@ -101,7 +102,7 @@ vi.mock("@/components/panels/PreviewPanel", () => ({
 vi.mock("@/components/terminal/TerminalPoolSlotContext", () => ({
   TerminalPoolSlot: () => <div data-testid="terminal-pool-slot" />,
 }));
-vi.mock("@/stores/previewTabsStore", () => ({
+vi.mock("@/features/preview/state/previewTabsStore", () => ({
   usePreviewDisplayTabSet: () => previewTabSet.current,
   usePreviewTabsStore: {
     getState: () => ({

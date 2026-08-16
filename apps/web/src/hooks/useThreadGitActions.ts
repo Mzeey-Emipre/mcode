@@ -4,7 +4,7 @@ import { useHasCommitsAhead } from "@/hooks/useHasCommitsAhead";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { useComposerDraftStore } from "@/stores/composerDraftStore";
 import { isPrable } from "@/lib/is-prable";
-import { openGitHubUrl } from "@/lib/open-url-in-preview";
+import { openGitHubUrl } from "@/features/preview/navigation/open-url-in-preview";
 import type { Thread } from "@/transport";
 
 /** Composer prefill the "Commit or push" action drops into the thread for the agent. */

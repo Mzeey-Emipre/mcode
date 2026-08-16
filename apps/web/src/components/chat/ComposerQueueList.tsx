@@ -20,7 +20,7 @@ import { restrictToVerticalAxis, restrictToParentElement } from "@dnd-kit/modifi
 import { GripVertical, Paperclip, Pencil, Play, Trash2, X, Zap } from "lucide-react";
 import { useQueueStore, type QueuedMessage } from "@/stores/queueStore";
 import { providerSupportsSendNow } from "@/lib/model-registry";
-import { stripPreviewAnnotationFence } from "@/lib/preview-annotation-append";
+import { stripPreviewAnnotationFence } from "@/features/preview/capture/preview-annotation-append";
 import { cn } from "@/lib/utils";
 import { PreviewAnnotationBundleChip } from "./PreviewAnnotationBundleChip";
 

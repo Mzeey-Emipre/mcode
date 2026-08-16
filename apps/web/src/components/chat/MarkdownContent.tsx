@@ -18,7 +18,7 @@ import {
   isModifierClick,
   isPreviewableUrl,
   openUrlInPreview,
-} from "@/lib/open-url-in-preview";
+} from "@/features/preview/navigation/open-url-in-preview";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { EntityToken, type EntityKind } from "./EntityToken";
 

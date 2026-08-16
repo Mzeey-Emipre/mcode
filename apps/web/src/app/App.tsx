@@ -19,8 +19,10 @@ import { ShortcutHelpDialog } from "@/components/ShortcutHelpDialog";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useWorkspaceStore } from "@/stores/workspaceStore";
 import { COMPOSER_MIN_WIDTH } from "@/stores/diffStore";
-import { usePreviewFocusStore } from "@/stores/previewFocusStore";
-import { usePreviewDesignModeStore } from "@/stores/previewDesignModeStore";
+import {
+  usePreviewDesignModeStore,
+  usePreviewFocusStore,
+} from "@/features/preview";
 import { useUiStore } from "@/stores/uiStore";
 import { initShortcuts } from "@/lib/shortcuts";
 import { summonTab } from "@/lib/summon-tab";

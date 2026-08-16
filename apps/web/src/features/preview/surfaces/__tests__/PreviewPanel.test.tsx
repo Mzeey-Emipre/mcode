@@ -49,7 +49,7 @@ const {
 }));
 
 // Mock hooks before importing the component under test.
-vi.mock("../hooks/usePreviewBridge", () => ({
+vi.mock("../../navigation/usePreviewBridge", () => ({
   usePreviewBridge: mockUsePreviewBridge,
   formatNavError: (code: string) => code,
 }));
@@ -63,11 +63,11 @@ vi.mock("@/transport", () => ({
 
 // The panel only consumes usePreviewTabs for the header's "New page" action and
 // the store subscription; page switching/closing lives in the activity rail.
-vi.mock("../hooks/usePreviewTabs", () => ({
+vi.mock("../../tabs/usePreviewTabs", () => ({
   usePreviewTabs: mockUsePreviewTabs,
 }));
 
-vi.mock("../hooks/usePreviewCapture", () => ({
+vi.mock("../../capture/usePreviewCapture", () => ({
   usePreviewCapture: () => ({
     captureBusy: false,
     regionBusy: false,
@@ -87,15 +87,15 @@ import {
   PREVIEW_WEBVIEW_FALLBACK_TAB_ID,
   PreviewPanel,
 } from "../PreviewPanel";
-import { executeWebBrowserDispatch } from "../browserAutomationWebExecutor";
+import { executeWebBrowserDispatch } from "@/components/panels/browserAutomationWebExecutor";
 import { useSettingsStore } from "@/stores/settingsStore";
 import {
   normalizePreviewPageIdentity,
   usePreviewAnnotationStore,
-} from "@/stores/previewAnnotationStore";
-import { usePreviewDesignModeStore } from "@/stores/previewDesignModeStore";
+} from "../../state/previewAnnotationStore";
+import { usePreviewDesignModeStore } from "../../state/previewDesignModeStore";
 import { useProviderCatalogStore } from "@/stores/providerCatalogStore";
-import { previewTabsScopeKey, usePreviewTabsStore } from "@/stores/previewTabsStore";
+import { previewTabsScopeKey, usePreviewTabsStore } from "../../state/previewTabsStore";
 import { useDiffStore } from "@/stores/diffStore";
 import {
   browserAutomationTargetKey,

@@ -6,7 +6,7 @@ import {
   usePreviewAnnotationStore,
   type DiffAnnotationInput,
   type SavedDiffAnnotation,
-} from "@/stores/previewAnnotationStore";
+} from "@/features/preview/state/previewAnnotationStore";
 
 /** Props for the inline editor attached to a local diff line. */
 export interface DiffAnnotationEditorProps {
