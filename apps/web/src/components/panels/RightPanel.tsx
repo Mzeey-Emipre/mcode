@@ -111,6 +111,7 @@ const WarmPreviewSurface = memo(function WarmPreviewSurface({
           data-automation-preview-dock={scope.scopeId}
           data-automation-preview-workspace={scope.workspaceId}
           data-visible={visible ? "true" : "false"}
+          data-covered-left={coveredLeft}
           className="min-h-0 min-w-0 flex-1"
         />
       ) : (

@@ -56,11 +56,16 @@ vi.mock("@/transport", () => ({
 
 vi.mock("../../surfaces/PreviewPanel", () => ({
   WEB_RUNTIME_PREVIEW_TAB_ID: "web-preview",
-  PreviewPanel: ({ threadId, automationOnly }: { readonly threadId: string; readonly automationOnly?: boolean }) => (
+  PreviewPanel: ({ threadId, automationOnly, coveredLeft }: {
+    readonly threadId: string;
+    readonly automationOnly?: boolean;
+    readonly coveredLeft?: number;
+  }) => (
     <div
       data-testid="automation-preview-panel"
       data-thread-id={threadId}
       data-automation-only={String(automationOnly ?? false)}
+      data-covered-left={String(coveredLeft ?? 0)}
     />
   ),
 }));
@@ -801,6 +806,7 @@ describe("BrowserAutomationHost", () => {
     dock.dataset.automationPreviewDock = "thread-1";
     dock.dataset.automationPreviewWorkspace = "workspace-1";
     dock.dataset.visible = "true";
+    dock.dataset.coveredLeft = "0";
     Object.defineProperty(dock, "getBoundingClientRect", {
       configurable: true,
       value: () => ({ left: 40, top: 20, width: 640, height: 480, right: 680, bottom: 500, x: 40, y: 20, toJSON: () => ({}) }),
@@ -809,6 +815,13 @@ describe("BrowserAutomationHost", () => {
     await act(async () => usePreviewTabsStore.getState().activatePage("workspace-1", "thread-1", tabId));
     await waitFor(() => expect(usePreviewTabsStore.getState().tabSetByScope[previewTabsScopeKey("workspace-1", "thread-1")]?.activeTabId).toBe(tabId));
     expect(document.querySelector('[data-automation-persistent-scope="thread-1"]')).toHaveAttribute("aria-hidden", "false");
+    const hostedPanel = document.querySelector('[data-automation-persistent-scope="thread-1"] [data-testid="automation-preview-panel"]');
+    expect(hostedPanel).toHaveAttribute("data-covered-left", "0");
+
+    act(() => {
+      dock.dataset.coveredLeft = "112";
+    });
+    await waitFor(() => expect(hostedPanel).toHaveAttribute("data-covered-left", "112"));
 
     iframe.remove();
     dock.remove();

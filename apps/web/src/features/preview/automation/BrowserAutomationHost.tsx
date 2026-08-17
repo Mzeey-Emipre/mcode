@@ -663,6 +663,12 @@ interface PersistentSurfaceLayout {
   readonly top: number;
   readonly width: number;
   readonly height: number;
+  readonly coveredLeft: number;
+}
+
+function boundedDockCoveredLeft(dock: HTMLElement, width: number): number {
+  const value = Number(dock.dataset.coveredLeft);
+  return Number.isFinite(value) ? Math.min(width, Math.max(0, value)) : 0;
 }
 
 function findAutomationDock(workspaceId: string, threadId: string): HTMLElement | null {
@@ -691,6 +697,7 @@ function PersistentAutomationPreviewSurface({
     top: 0,
     width: 1_280,
     height: 720,
+    coveredLeft: 0,
   });
 
   useEffect(() => {
@@ -707,11 +714,26 @@ function PersistentAutomationPreviewSurface({
       }
       const rect = dock?.getBoundingClientRect();
       const next: PersistentSurfaceLayout = rect && rect.width > 0 && rect.height > 0
-        ? { visible: true, left: rect.left, top: rect.top, width: rect.width, height: rect.height }
-        : { visible: false, left: -20_000, top: 0, width: 1_280, height: 720 };
+        ? {
+            visible: true,
+            left: rect.left,
+            top: rect.top,
+            width: rect.width,
+            height: rect.height,
+            coveredLeft: boundedDockCoveredLeft(dock!, rect.width),
+          }
+        : {
+            visible: false,
+            left: -20_000,
+            top: 0,
+            width: 1_280,
+            height: 720,
+            coveredLeft: 0,
+          };
       setLayout((current) => (
         current.visible === next.visible && current.left === next.left && current.top === next.top &&
-        current.width === next.width && current.height === next.height ? current : next
+        current.width === next.width && current.height === next.height &&
+        current.coveredLeft === next.coveredLeft ? current : next
       ));
     };
     const mutationObserver = new MutationObserver(update);
@@ -719,7 +741,7 @@ function PersistentAutomationPreviewSurface({
       subtree: true,
       childList: true,
       attributes: true,
-      attributeFilter: ["class", "data-visible"],
+      attributeFilter: ["class", "data-visible", "data-covered-left"],
     });
     window.addEventListener("resize", update);
     update();
@@ -751,6 +773,7 @@ function PersistentAutomationPreviewSurface({
         threadId={scope.threadId}
         workspaceId={scope.workspaceId}
         automationOnly={!layout.visible}
+        coveredLeft={layout.coveredLeft}
       />
     </div>
   );

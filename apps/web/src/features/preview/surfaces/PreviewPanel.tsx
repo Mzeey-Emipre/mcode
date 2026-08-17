@@ -2966,7 +2966,7 @@ export function PreviewPanel({
     return (
       <PreviewWebview
         key={tab.id}
-        active={automationOnly || tab.id === activeWebviewTabId}
+        active={automationOnly || (tab.id === activeWebviewTabId && webviewLayerInteractive)}
         ref={(handle) => {
           webviewRefs.current[tab.id] = handle;
         }}
