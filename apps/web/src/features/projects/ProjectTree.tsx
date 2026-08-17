@@ -1999,7 +1999,7 @@ const ProjectNode = memo(function ProjectNode({
                 aria-label={`Open project ${workspace.name}`}
                 onKeyDown={(event) => event.stopPropagation()}
                 onClick={handleOpenProject}
-                className="h-auto min-w-0 flex-1 shrink justify-start rounded-sm p-0 text-left hover:bg-transparent dark:hover:bg-transparent"
+                className="h-auto min-w-0 flex-1 shrink justify-start rounded-sm p-0 text-left hover:bg-transparent group-hover/ws:pr-24 group-focus-within/ws:pr-24 dark:hover:bg-transparent"
               >
                 <span
                   className="min-w-0 flex-1 overflow-hidden whitespace-nowrap font-medium tracking-tight group-hover/ws:[mask-image:linear-gradient(to_right,black_calc(100%_-_1.5rem),transparent)] group-focus-within/ws:[mask-image:linear-gradient(to_right,black_calc(100%_-_1.5rem),transparent)] group-hover/ws:[-webkit-mask-image:linear-gradient(to_right,black_calc(100%_-_1.5rem),transparent)] group-focus-within/ws:[-webkit-mask-image:linear-gradient(to_right,black_calc(100%_-_1.5rem),transparent)]"
@@ -2053,7 +2053,7 @@ const ProjectNode = memo(function ProjectNode({
         {visibleThreads.length > 0 && (
           <span
             data-testid={`project-thread-count-${workspace.id}`}
-            className="ml-auto shrink-0 font-mono text-[9.5px] leading-none tabular-nums text-muted-foreground/40 transition-opacity duration-150 group-hover/ws:opacity-0 group-focus-within/ws:opacity-0 motion-reduce:transition-none"
+            className="ml-auto flex h-4 min-w-3 shrink-0 items-center justify-end font-mono text-xs leading-4 tabular-nums text-muted-foreground/45 transition-opacity duration-150 group-hover/ws:opacity-0 group-focus-within/ws:opacity-0 motion-reduce:transition-none"
           >
             {visibleThreads.length}
           </span>
@@ -2061,7 +2061,7 @@ const ProjectNode = memo(function ProjectNode({
 
         <div
           data-testid={`project-row-actions-${workspace.id}`}
-          className="pointer-events-none absolute inset-y-0 right-1.5 z-10 flex items-center justify-end gap-1 bg-page px-0.5 opacity-0 transition-opacity duration-150 group-hover/ws:pointer-events-auto group-hover/ws:opacity-100 group-focus-within/ws:pointer-events-auto group-focus-within/ws:opacity-100 motion-reduce:transition-none"
+          className="pointer-events-none absolute inset-y-0 right-1.5 z-10 flex items-center justify-end gap-1 bg-transparent px-0.5 opacity-0 transition-opacity duration-150 group-hover/ws:pointer-events-auto group-hover/ws:opacity-100 group-focus-within/ws:pointer-events-auto group-focus-within/ws:opacity-100 motion-reduce:transition-none"
         >
           <Button
             type="button"

@@ -847,17 +847,29 @@ describe("ProjectTree thread interactions", () => {
       "project-thread-count-ws-1",
     );
     const actions = within(projectRow).getByTestId("project-row-actions-ws-1");
+    const projectName = screen.getByRole("button", {
+      name: "Open project Test Project",
+    });
 
     expect(threadCount).toHaveTextContent("1");
     expect(threadCount).toHaveClass(
       "ml-auto",
+      "h-4",
+      "items-center",
+      "text-xs",
+      "leading-4",
       "group-hover/ws:opacity-0",
       "group-focus-within/ws:opacity-0",
+    );
+    expect(projectName).toHaveClass(
+      "group-hover/ws:pr-24",
+      "group-focus-within/ws:pr-24",
     );
     expect(threadCount.nextElementSibling).toBe(actions);
     expect(actions).toHaveClass(
       "absolute",
       "right-1.5",
+      "bg-transparent",
       "pointer-events-none",
       "group-hover/ws:pointer-events-auto",
       "group-focus-within/ws:pointer-events-auto",
