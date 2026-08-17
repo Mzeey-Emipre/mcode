@@ -837,6 +837,42 @@ describe("ProjectTree thread interactions", () => {
     );
   });
 
+  it("keeps the thread count trailing and swaps it for an overlaid action group", () => {
+    setupStoreMocks();
+
+    render(<ProjectTree />);
+
+    const projectRow = screen.getByTestId("project-row-ws-1");
+    const threadCount = within(projectRow).getByTestId(
+      "project-thread-count-ws-1",
+    );
+    const actions = within(projectRow).getByTestId("project-row-actions-ws-1");
+
+    expect(threadCount).toHaveTextContent("1");
+    expect(threadCount).toHaveClass(
+      "ml-auto",
+      "group-hover/ws:opacity-0",
+      "group-focus-within/ws:opacity-0",
+    );
+    expect(threadCount.nextElementSibling).toBe(actions);
+    expect(actions).toHaveClass(
+      "absolute",
+      "right-1.5",
+      "pointer-events-none",
+      "group-hover/ws:pointer-events-auto",
+      "group-focus-within/ws:pointer-events-auto",
+    );
+    expect(actions).toContainElement(
+      screen.getByRole("button", { name: "Toggle threads for Test Project" }),
+    );
+    expect(actions).toContainElement(
+      screen.getByRole("button", { name: "Project options for Test Project" }),
+    );
+    expect(actions).toContainElement(
+      screen.getByRole("button", { name: "New thread in Test Project" }),
+    );
+  });
+
   it("exposes the full project name from the focused project control", () => {
     const projectName =
       "A project name that stays available when the sidebar is narrow";
