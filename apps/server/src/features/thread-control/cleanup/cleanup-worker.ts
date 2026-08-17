@@ -6,7 +6,7 @@
  */
 
 import { injectable, inject } from "tsyringe";
-import { isAbsolute, relative, resolve } from "path";
+import { isAbsolute, relative, resolve, sep } from "path";
 import { existsSync } from "fs";
 import type Database from "better-sqlite3";
 import { getMcodeDir, logger } from "@mcode/shared";
@@ -42,8 +42,6 @@ const HANDLE_RELEASE_DELAY_MS = 1_500;
 const SESSION_EXIT_TIMEOUT_MS = 5_000;
 
 type RetentionBlockCode =
-  | "unmanaged-worktree"
-  | "named-branch"
   | "missing-base-branch"
   | "workspace-repository-inaccessible"
   | "worktree-safety";
@@ -216,24 +214,25 @@ export class CleanupWorker {
       if (!job.worktree_path) {
         throw new Error("Explicit worktree cleanup job has no worktree path");
       }
-      if (retentionThread && !retentionThread.worktree_managed) {
-        this.blockRetentionCleanup(job, "Mcode does not manage this worktree.", "unmanaged-worktree");
-        return;
-      }
-      if (retentionThread?.checkout_state === "named") {
-        this.blockRetentionCleanup(job, "The worktree uses a named branch.", "named-branch");
-        return;
-      }
-      if (retentionThread && !retentionThread.base_branch) {
-        this.blockRetentionCleanup(job, "Mcode cannot verify the branchless worktree base.", "missing-base-branch");
-        return;
-      }
-
       // Validate paths from DB before using them in filesystem operations.
       // Normalise Windows backslashes so resolve() works on all platforms.
       const worktreeBase = resolve(getMcodeDir(), "worktrees");
       const resolvedWt = resolve(job.worktree_path.replace(/\\/g, "/"));
       const resolvedWs = resolve(job.workspace_path.replace(/\\/g, "/"));
+      const rel = relative(worktreeBase, resolvedWt);
+      const isCanonicalPath =
+        rel !== ""
+        && !(rel === ".." || rel.startsWith(".." + sep) || isAbsolute(rel));
+      if (job.kind === "retention" && !isCanonicalPath) {
+        await this.teardownThreadRuntime(job.thread_id, job.id);
+        await this.completeCleanupWithoutWorktree(job);
+        await this.finalizeWorkspaceIfDone(job.workspace_path);
+        return;
+      }
+      if (retentionThread?.checkout_state === "branchless" && !retentionThread.base_branch) {
+        this.blockRetentionCleanup(job, "Mcode cannot verify the branchless worktree base.", "missing-base-branch");
+        return;
+      }
 
       if (!existsSync(resolvedWs)) {
         // The workspace directory is already gone (e.g. external deletion, re-installation).
@@ -258,43 +257,11 @@ export class CleanupWorker {
         throw new Error(`worktree_path must not equal workspace_path: ${resolvedWt}`);
       }
 
-      const rel = relative(worktreeBase, resolvedWt);
-      const isManagedPath = !(rel.startsWith("..") || isAbsolute(rel));
-      if (!isManagedPath && !(await this.gitService.isRegisteredWorktreePath(resolvedWs, resolvedWt))) {
+      if (!isCanonicalPath && !(await this.gitService.isRegisteredWorktreePath(resolvedWs, resolvedWt))) {
         throw new Error(`worktree_path is not a registered worktree for repo: ${resolvedWt}`);
       }
 
-      // 1. Signal the SDK subprocess to exit and wait for it to actually stop.
-      //    waitForSessionExit is idempotent: no-op if no active session.
-      const sessionId = `mcode-${job.thread_id}`;
-      await this.claudeProvider.waitForSessionExit(sessionId, SESSION_EXIT_TIMEOUT_MS);
-
-      // 2. Kill PTY terminal sessions for this thread (idempotent).
-      try {
-        await this.terminalService.killByThread(job.thread_id);
-      } catch (err) {
-        logger.warn("CleanupWorker terminal sessions killed with error", {
-          jobId: job.id,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-
-      // 3. Force-kill any lingering SDK subprocess (claude.exe) that is a
-      //    descendant of this server process. waitForSessionExit only confirms
-      //    the stream ended, not that the OS process exited.  Its cwd handle
-      //    locks the worktree directory and ancestors on Windows.
-      //
-      //    Scope: targets all claude.exe descendants of the server, not just
-      //    this session's subprocess. The SDK does not expose subprocess PIDs,
-      //    so per-session targeting is not possible. This is acceptable because
-      //    cleanup jobs only exist for deleted threads whose sessions have
-      //    already been asked to exit in step 1.
-      await killDescendantsByName(process.pid, "claude.exe");
-
-      // 4. Brief delay on Windows so the OS releases directory handles.
-      if (process.platform === "win32") {
-        await new Promise<void>((resolve) => setTimeout(resolve, HANDLE_RELEASE_DELAY_MS));
-      }
+      await this.teardownThreadRuntime(job.thread_id, job.id);
 
       if (!existsSync(resolvedWt)) {
         // The worktree directory is already gone but the workspace root exists.
@@ -308,10 +275,20 @@ export class CleanupWorker {
         return;
       }
 
-      // 5. Remove the worktree directory and delete the exact thread branch when
-      //    the thread record has one. The delete-thread dialog is the user intent
-      //    boundary; rollback paths are handled separately in ThreadService.
-      //    Skip branch deletion when another active thread references the same branch.
+      if (
+        job.kind === "retention"
+        && retentionThread?.checkout_state === "named"
+        && job.branch
+        && !this.shouldDeleteBranch(job)
+      ) {
+        await this.completeCleanupWithoutWorktree(job);
+        await this.finalizeWorkspaceIfDone(job.workspace_path);
+        return;
+      }
+
+      // 5. Remove the canonical worktree and delete its exact thread branch when
+      //    no active sibling references that branch. Rollback paths are handled
+      //    separately in ThreadService.
       const wtName = resolvedWt.replace(/\\/g, "/").split("/").pop() ?? resolvedWt;
       let preserveWorktreeReason: string | null = null;
       const removed = await this.gitService.withReviewWorktreeMutationLock(
@@ -327,7 +304,11 @@ export class CleanupWorker {
             preserveWorktreeReason = safety.reason;
             return true;
           }
-          if (job.kind === "retention" && retentionThread?.base_branch) {
+          if (
+            job.kind === "retention"
+            && retentionThread?.checkout_state === "branchless"
+            && retentionThread.base_branch
+          ) {
             const automaticSafety = await this.gitService.assessBranchlessWorktreeRemoval(
               resolvedWt,
               retentionThread.base_branch,
@@ -338,7 +319,12 @@ export class CleanupWorker {
             }
           }
           const shouldDelete = job.branch ? this.shouldDeleteBranch(job) : false;
-          const removeOptions = job.kind === "retention"
+          const removeOptions =
+            job.kind === "retention"
+            && retentionThread?.checkout_state === "named"
+            && shouldDelete
+            ? { branchName: job.branch!, worktreePath: resolvedWt }
+            : job.kind === "retention"
             ? { deleteBranch: false, worktreePath: resolvedWt }
             : (job.branch && shouldDelete)
             ? { branchName: job.branch, worktreePath: resolvedWt }
@@ -415,6 +401,31 @@ export class CleanupWorker {
       }
     } finally {
       if (mutationToken) this.mutationReservations.release(job.thread_id, mutationToken);
+    }
+  }
+
+  private async teardownThreadRuntime(threadId: string, jobId: string): Promise<void> {
+    // Signal the SDK subprocess to exit and wait for it to actually stop.
+    // waitForSessionExit is idempotent: no-op if no active session.
+    const sessionId = `mcode-${threadId}`;
+    await this.claudeProvider.waitForSessionExit(sessionId, SESSION_EXIT_TIMEOUT_MS);
+
+    // Kill PTY terminal sessions for this thread (idempotent).
+    try {
+      await this.terminalService.killByThread(threadId);
+    } catch (err) {
+      logger.warn("CleanupWorker terminal sessions killed with error", {
+        jobId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    // The SDK does not expose subprocess PIDs, so target all claude.exe
+    // descendants to release any worktree directory handles on Windows.
+    await killDescendantsByName(process.pid, "claude.exe");
+
+    if (process.platform === "win32") {
+      await new Promise<void>((resolve) => setTimeout(resolve, HANDLE_RELEASE_DELAY_MS));
     }
   }
 

@@ -1,8 +1,7 @@
 import "reflect-metadata";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type Database from "better-sqlite3";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
@@ -12,6 +11,7 @@ import { CleanupJobRepo, MAX_CLEANUP_ATTEMPTS } from "../persistence/cleanup-job
 import { CleanupWorker } from "../cleanup-worker.js";
 import { GitService } from "../../../projects/index.js";
 import { RealGitExecutor } from "../../../projects/git/execution/real-git-executor.js";
+import { getMcodeDir } from "@mcode/shared";
 import type { ClaudeProvider } from "../../../providers/adapters/claude/claude-provider.js";
 import type { TerminalBackend } from "../../../terminal/backends/terminal-backend.js";
 import type { AttachmentService } from "../../../attachments/storage/attachment-service.js";
@@ -32,7 +32,9 @@ describe("completed thread cleanup Git safety", () => {
   let worker: CleanupWorker;
 
   beforeEach(() => {
-    repositoryPath = mkdtempSync(join(tmpdir(), "mcode-completed-cleanup-"));
+    const worktreesPath = join(getMcodeDir(), "worktrees");
+    mkdirSync(worktreesPath, { recursive: true });
+    repositoryPath = mkdtempSync(join(worktreesPath, "mcode-completed-cleanup-"));
     worktreePath = join(repositoryPath, "worktree");
     execFileSync("git", ["-C", repositoryPath, "init", "-b", "main"]);
     execFileSync("git", ["-C", repositoryPath, "config", "user.email", "test@mcode.test"]);
@@ -73,7 +75,6 @@ describe("completed thread cleanup Git safety", () => {
     title: string;
     mode?: "direct" | "worktree";
     path?: string | null;
-    managed?: boolean;
     checkoutState?: "named" | "branchless";
     baseBranch?: string | null;
     deadline?: string;
@@ -85,7 +86,7 @@ describe("completed thread cleanup Git safety", () => {
       options.title,
       options.mode ?? "worktree",
       options.branch ?? "",
-      options.managed ?? true,
+      true,
       "claude",
       undefined,
       options.checkoutState ?? "branchless",
@@ -178,16 +179,7 @@ describe("completed thread cleanup Git safety", () => {
     expect(existsSync(worktreePath)).toBe(true);
   }, 30_000);
 
-  it("blocks unmanaged worktrees", async () => {
-    const thread = addCompletedThread({ title: "Unmanaged", managed: false });
-
-    await worker.poll();
-
-    expect(threadRepo.findById(thread.id)).toMatchObject({ cleanup_state: "blocked" });
-    expect(existsSync(worktreePath)).toBe(true);
-  }, 30_000);
-
-  it("blocks named checkouts without deleting their branch", async () => {
+  it("removes named checkouts and deletes their exact branch", async () => {
     execFileSync("git", ["-C", repositoryPath, "branch", "mcode/named", "main"]);
     const thread = addCompletedThread({
       title: "Named",
@@ -198,9 +190,10 @@ describe("completed thread cleanup Git safety", () => {
 
     await worker.poll();
 
-    expect(threadRepo.findById(thread.id)).toMatchObject({ cleanup_state: "blocked" });
+    expect(threadRepo.findById(thread.id)).toBeNull();
+    expect(existsSync(worktreePath)).toBe(false);
     expect(execFileSync("git", ["-C", repositoryPath, "branch", "--list", "mcode/named"], { encoding: "utf8" }))
-      .toContain("mcode/named");
+      .not.toContain("mcode/named");
   }, 30_000);
 
   it("blocks branchless worktrees with unique commits", async () => {
