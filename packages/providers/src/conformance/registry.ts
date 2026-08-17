@@ -67,7 +67,7 @@ export const ENABLED_PROVIDER_CONFORMANCE: readonly ProviderConformanceRegistrat
       component: "@github/copilot",
       oldestSupported: "0.0.403",
       currentTested: "1.0.25",
-      source: "apps/server/src/providers/copilot/copilot-cli-resolver.ts and bun.lock",
+      source: "apps/server/src/features/providers/adapters/copilot/copilot-cli-resolver.ts and bun.lock",
     }],
   },
   {

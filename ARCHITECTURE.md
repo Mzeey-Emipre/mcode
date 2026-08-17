@@ -618,7 +618,7 @@ The server process is long-lived (spawned once by desktop, lives until app close
 
 ### 8.4 Codex Provider (Session Architecture)
 
-The Codex provider (`apps/server/src/providers/codex/`) uses one persistent `codex app-server` child process per session, communicating via JSON-RPC 2.0 over stdin/stdout (NDJSON):
+The Codex provider (`packages/providers/src/private/codex/`) uses one persistent `codex app-server` child process per session, communicating via JSON-RPC 2.0 over stdin/stdout (NDJSON):
 
 - `codex-provider.ts` - `IAgentProvider` implementation; manages `CodexAppServer` sessions
 - `codex-app-server.ts` - persistent child process lifecycle manager

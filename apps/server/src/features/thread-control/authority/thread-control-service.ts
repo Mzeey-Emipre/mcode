@@ -62,27 +62,27 @@ export type {
   ThreadControlAuthority,
 } from "@mcode/thread-orchestration";
 import { delay, inject, injectable } from "tsyringe";
-import { WorkspaceRepo } from "../../../repositories/workspace-repo.js";
-import { WorktreeRepo, type InternalRegisteredWorktree } from "../../../repositories/worktree-repo.js";
-import { ThreadRepo } from "../../../repositories/thread-repo.js";
-import { MessageRepo, type ThreadControlMessageRecord } from "../../../repositories/message-repo.js";
+import { WorkspaceRepo } from "../../projects/persistence/workspace-repo.js";
+import { WorktreeRepo, type InternalRegisteredWorktree } from "../../projects/persistence/worktree-repo.js";
+import { ThreadRepo } from "../persistence/thread-repo.js";
+import { MessageRepo, type ThreadControlMessageRecord } from "../../agents/conversation/persistence/message-repo.js";
 import {
   ThreadControlApprovalRepo,
   type RecoverableThreadCreateApproval,
   type PendingThreadSendApproval,
   type PendingThreadStopApproval,
-} from "../../../repositories/thread-control-approval-repo.js";
-import { ThreadControlAuditRepo } from "../../../repositories/thread-control-audit-repo.js";
-import { ProviderRegistry } from "../../../providers/provider-registry.js";
+} from "./persistence/thread-control-approval-repo.js";
+import { ThreadControlAuditRepo } from "./persistence/thread-control-audit-repo.js";
+import { ProviderRegistry } from "../../providers/composition/provider-registry.js";
 import { AgentService, DelegationTargetResolver } from "../../agents/index.js";
 import {
   ThreadControlMutationReservationService,
   type ThreadMutationReservationState,
 } from "./thread-control-mutation-reservation-service.js";
 import { GitService, ProjectWorktreeService } from "../../projects/index.js";
-import { ModelCacheService } from "../../../services/model-cache-service.js";
-import { SettingsService } from "../../../services/settings-service.js";
-import { broadcast } from "../../../transport/push.js";
+import { ModelCacheService } from "../../providers/models/model-cache-service.js";
+import { SettingsService } from "../../settings/settings-service.js";
+import { broadcast } from "../../../application/transport/push.js";
 
 const THREAD_WAIT_POLL_INTERVAL_MS = 250;
 

@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import type { WorkspaceRepo } from "../../../../repositories/workspace-repo";
+import type { WorkspaceRepo } from "../../persistence/workspace-repo.js";
 
 const { mockRemove, mockRmdir, mockExistsSync, mockLogger } = vi.hoisted(() => ({
   mockRemove: vi.fn(),
@@ -27,7 +27,7 @@ vi.mock("@mcode/shared", () => ({
 
 import { GitService } from "../git-service.js";
 import type { WorktreeDirectoryRemover } from "../../worktrees/worktree-directory-remover.js";
-import { createMockGitExecutor } from "../../../../services/git-executor/__tests__/mock-git-executor.js";
+import { createMockGitExecutor } from "../execution/__tests__/mock-git-executor.js";
 
 describe("GitService.reviewComparison", () => {
   it("returns one batched status result for changed, renamed, copied, and binary files", async () => {

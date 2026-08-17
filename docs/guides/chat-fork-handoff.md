@@ -8,7 +8,7 @@ Clicking the fork icon on a message in a parent thread creates a child thread. T
 
 The document is produced either by the parent's provider (when the provider supports a side-channel query) or by a deterministic builder (when it does not). Either way the artifact is the same shape: a Markdown file with YAML frontmatter plus a JSON sidecar.
 
-The pipeline lives in `apps/server/src/services/handoff/`.
+The pipeline lives in `apps/server/src/features/handoff/orchestration/`.
 
 ## The B/D ladder
 
@@ -77,6 +77,6 @@ The pipeline includes several guards to avoid blocking or corrupting the fork fl
 
 3. If `"clean"`: implement `runSideChannelQuery({ parentThreadId, parentSdkSessionId, prompt, abortSignal })`. The method must return a Markdown string. It must respect `abortSignal` and throw (or let the signal reject the underlying fetch) when it fires.
 
-4. Run `(cd apps/server && npx vitest run src/services/handoff)` to verify the existing tests still pass with the new provider registered.
+4. Run `(cd apps/server && npx vitest run src/features/handoff)` to verify the existing tests still pass with the new provider registered.
 
-5. Add a test case in `apps/server/src/services/handoff/__tests__/handoff-pipeline.test.ts` covering the happy path and at least one failure mode for the new provider.
+5. Add a test case in `apps/server/src/features/handoff/orchestration/__tests__/handoff-pipeline.test.ts` covering the happy path and at least one failure mode for the new provider.

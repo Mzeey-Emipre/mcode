@@ -3,10 +3,10 @@
  * Multi-scenario Codex app-server protocol capture for Mcode mapper coverage.
  *
  * Writes NDJSON (one JSON object per line). Replay in
- * `apps/server/src/providers/codex/__tests__/codex-protocol-coverage.test.ts`.
+ * `packages/providers/src/__tests__/codex/codex-protocol-coverage.test.ts`.
  *
  * Usage:
- *   bun scripts/codex-protocol-capture.mjs <cwd> <out.ndjson>
+ *   bun scripts/codex-protocol-capture.mjs <cwd> packages/providers/src/__tests__/codex/fixtures/codex-protocol-golden.ndjson
  *
  * Requires: `codex` on PATH, ChatGPT auth, network.
  */

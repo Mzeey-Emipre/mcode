@@ -1,9 +1,9 @@
 import { inject, injectable } from "tsyringe";
 import { sanitizeBranchForFolder, validateBranchName, logger } from "@mcode/shared";
 import type { Thread } from "@mcode/contracts";
-import { CleanupJobRepo } from "../../../repositories/cleanup-job-repo.js";
-import { ThreadRepo } from "../../../repositories/thread-repo.js";
-import { WorkspaceRepo } from "../../../repositories/workspace-repo.js";
+import { CleanupJobRepo } from "../../thread-control/cleanup/persistence/cleanup-job-repo.js";
+import { ThreadRepo } from "../../thread-control/persistence/thread-repo.js";
+import { WorkspaceRepo } from "../persistence/workspace-repo.js";
 import { GitService } from "../git/git-service.js";
 
 function managedWorktreeName(ref: string, threadId: string): string {

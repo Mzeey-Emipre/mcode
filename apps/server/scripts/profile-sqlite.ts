@@ -9,13 +9,13 @@ import {
   parseSQLiteProfileCliOptions,
   runSQLiteProfile,
   type SQLiteProfileReport,
-} from "../src/performance/sqlite-profile.js";
+} from "../src/runtime/persistence/sqlite/performance/sqlite-profile.js";
 import {
   createSQLiteCertificationReport,
   runSQLiteCacheBudgetCertification,
   runSQLiteRecoveryCertification,
   type SQLiteCertificationReport,
-} from "../src/performance/sqlite-certification.js";
+} from "../src/runtime/persistence/sqlite/performance/sqlite-certification.js";
 
 const MAX_BASELINE_BYTES = 5 * 1024 * 1024;
 

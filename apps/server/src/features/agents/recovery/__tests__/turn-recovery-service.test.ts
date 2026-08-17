@@ -1,15 +1,15 @@
 import "reflect-metadata";
 import type Database from "better-sqlite3";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { openMemoryDatabase } from "../../../../store/database.js";
-import { MessageRepo } from "../../../../repositories/message-repo.js";
-import { ThreadRepo } from "../../../../repositories/thread-repo.js";
+import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
+import { MessageRepo } from "../../conversation/persistence/message-repo.js";
+import { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
 import {
   CanonicalAgentEventSink,
   type CanonicalAgentEventPublisher,
 } from "../../canonical/canonical-agent-event-sink.js";
 import { TurnRecoveryService } from "../turn-recovery-service.js";
-import { AttachmentService } from "../../../../services/attachment-service.js";
+import { AttachmentService } from "../../../attachments/storage/attachment-service.js";
 import type { SendMessageCommand } from "../../orchestration/agent-service.js";
 
 const NOW = "2026-08-10T09:00:00.000Z";

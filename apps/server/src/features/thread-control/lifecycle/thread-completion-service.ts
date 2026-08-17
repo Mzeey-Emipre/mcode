@@ -1,10 +1,10 @@
 import { inject, injectable } from "tsyringe";
 import type { CompletedThreadRetentionDays, Settings, Thread } from "@mcode/contracts";
-import { ThreadRepo } from "../../../repositories/thread-repo";
+import { ThreadRepo } from "../persistence/thread-repo.js";
 import { AgentService } from "../../agents/index.js";
-import { SettingsService } from "../../../services/settings-service";
-import { ThreadTeardownService } from "./thread-teardown-service";
-import { ThreadControlMutationReservationService } from "../authority/thread-control-mutation-reservation-service";
+import { SettingsService } from "../../settings/settings-service.js";
+import { ThreadTeardownService } from "./thread-teardown-service.js";
+import { ThreadControlMutationReservationService } from "../authority/thread-control-mutation-reservation-service.js";
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 const OVERDUE_SAFETY_MS = DAY_MS;

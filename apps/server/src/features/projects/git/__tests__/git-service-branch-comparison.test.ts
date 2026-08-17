@@ -1,8 +1,8 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import type { WorkspaceRepo } from "../../../../repositories/workspace-repo";
+import type { WorkspaceRepo } from "../../persistence/workspace-repo.js";
 import { GitService } from "../git-service.js";
-import { createMockGitExecutor } from "../../../../services/git-executor/__tests__/mock-git-executor.js";
+import { createMockGitExecutor } from "../execution/__tests__/mock-git-executor.js";
 
 const { mockLogger } = vi.hoisted(() => ({
   mockLogger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
@@ -27,7 +27,7 @@ vi.mock("@mcode/shared", () => ({
 }));
 
 import type { Mock } from "vitest";
-import type { GitExecOptions, GitExecResult } from "../../../../services/git-executor/types.js";
+import type { GitExecOptions, GitExecResult } from "../execution/types.js";
 
 /**
  * Builds the `git branch -a --format=...` output the standalone ref lister

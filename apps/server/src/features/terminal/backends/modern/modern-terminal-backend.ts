@@ -1,0 +1,567 @@
+import { createHash, randomUUID } from "node:crypto";
+import type { WebSocket } from "ws";
+import {
+  TERMINAL_CHECKPOINT_CHUNK_BYTES,
+  TERMINAL_CHECKPOINT_EXPIRES_AFTER_MS,
+  TERMINAL_V1_METHODS,
+  decodeTerminalFrame,
+  encodeTerminalFrame,
+  type TerminalBackendCapabilities,
+  type TerminalBinaryFrame,
+  type TerminalHealthSnapshot,
+} from "@mcode/contracts";
+import type {
+  PtyHostAdapter,
+  PtyHostDiagnostics,
+  PtyHostHealth,
+} from "../../host/pty-host-adapter.js";
+import type {
+  TerminalRuntimeDeliveryEvent,
+  TerminalSessionRuntime,
+} from "../../sessions/terminal-session-runtime.js";
+import type { TerminalSessionService } from "../../sessions/terminal-session-service.js";
+import {
+  TerminalBackend,
+  TerminalBackendError,
+  type TerminalBackendSender,
+  type TerminalReattachResult,
+} from "../terminal-backend.js";
+import { TerminalDiagnosticsService } from "../../diagnostics/terminal-diagnostics-service.js";
+
+interface AttachmentRoute {
+  readonly client: WebSocket;
+  readonly sessionId: string;
+  attachmentId: string;
+  attachmentEpoch: string;
+  hostGeneration: string;
+  hydrationId: string;
+  provisional: boolean;
+  hydrated: boolean;
+  readonly pendingDelivery: TerminalRuntimeDeliveryEvent[];
+}
+
+interface CheckpointUpload {
+  readonly owner: WebSocket;
+  readonly sessionId: string;
+  readonly attachmentId: string;
+  readonly attachmentEpoch: string;
+  readonly hostGeneration: string;
+  readonly baseOutputSeq: string;
+  readonly declaredBytes: number;
+  readonly sha256: string;
+  readonly expiresAt: number;
+  readonly chunks: Map<number, Uint8Array>;
+}
+
+const terminalBackendError = (
+  code: ConstructorParameters<typeof TerminalBackendError>[0],
+  retry: ConstructorParameters<typeof TerminalBackendError>[1],
+  message: string,
+): TerminalBackendError => new TerminalBackendError(code, retry, message);
+
+/** Joins Terminal v1 management and binary frames to the modern session runtime. */
+export class ModernTerminalBackend extends TerminalBackend {
+  private sender: TerminalBackendSender | null = null;
+  private readonly attachments = new Map<string, AttachmentRoute>();
+  private readonly uploads = new Map<string, CheckpointUpload>();
+  private readonly selectedAt = new Date().toISOString();
+  private readonly diagnostics: TerminalDiagnosticsService;
+  private readonly startPromise: Promise<PtyHostHealth>;
+  private readonly unsubscribeDelivery: () => void;
+
+  constructor(
+    private readonly sessions: TerminalSessionService,
+    private readonly runtime: TerminalSessionRuntime,
+    private readonly host: PtyHostAdapter & {
+      health(): PtyHostHealth;
+      diagnostics(): PtyHostDiagnostics;
+    },
+    private readonly sessionLimit: () => number,
+    diagnostics?: TerminalDiagnosticsService,
+  ) {
+    super();
+    this.diagnostics = diagnostics ?? new TerminalDiagnosticsService({
+      backend: () => "modern",
+      health: () => this.healthSnapshot(),
+    });
+    this.startPromise = host.start();
+    this.unsubscribeDelivery = runtime.subscribeDelivery?.((event) => this.deliver(event)) ?? (() => undefined);
+  }
+
+  /** Reports the immutable modern selection and current host health. */
+  capabilities(): TerminalBackendCapabilities {
+    const health = this.host.health();
+    return {
+      contractVersion: 1,
+      backend: "modern",
+      selectedAt: this.selectedAt,
+      publicFrameVersion: 1,
+      recovery: { replay: true, checkpoint: true, gap: true },
+      host: { state: health.state, generation: health.hostGeneration },
+      sessionLimit: this.sessionLimit(),
+    };
+  }
+
+  /** Installs the directed WebSocket frame sender. */
+  setSender(sender: TerminalBackendSender): void {
+    this.sender = sender;
+  }
+
+  /** Returns the diagnostics service that owns live PTY host measurements. */
+  getDiagnosticsService(): TerminalDiagnosticsService {
+    return this.diagnostics;
+  }
+
+  /** Routes a strict Terminal v1 management request. */
+  async routeV1(method: string, params: unknown, client: WebSocket): Promise<unknown> {
+    const contract = TERMINAL_V1_METHODS[method as keyof typeof TERMINAL_V1_METHODS];
+    if (!contract) throw new Error(`Unsupported Terminal v1 method: ${method}`);
+    const input = contract.params.parse(params) as Record<string, unknown>;
+    if (method === "terminal.capabilities") return this.capabilities();
+    if (method === "terminal.diagnostics.report") return this.diagnostics.report(input);
+    if (method === "terminal.diagnostics.getBundle") return this.diagnostics.getBundle();
+    try {
+      await this.startPromise;
+    } catch (error) {
+      throw new TerminalBackendError(
+        "HOST_UNHEALTHY",
+        "SAFE_RETRY",
+        error instanceof Error ? error.message : "The Terminal host failed to start",
+      );
+    }
+    switch (method) {
+      case "terminal.session.create":
+        return this.sessions.createSession(input as Parameters<TerminalSessionService["createSession"]>[0]);
+      case "terminal.session.list":
+        return this.sessions.listSessions(input.scope as Parameters<TerminalSessionService["listSessions"]>[0]);
+      case "terminal.session.attach":
+        return this.attach(input, client);
+      case "terminal.session.detach":
+        this.requireAttachmentDetails(client, String(input.sessionId), String(input.attachmentId), String(input.attachmentEpoch));
+        await this.runtime.detach(input as unknown as Parameters<TerminalSessionRuntime["detach"]>[0]);
+        this.attachments.delete(String(input.sessionId));
+        return { detached: true };
+      case "terminal.session.close":
+        {
+          const closed = await this.sessions.closeSession(
+            String(input.sessionId),
+            input.reason as Parameters<TerminalSessionService["closeSession"]>[1],
+          );
+          const route = this.attachments.get(String(input.sessionId));
+          if (route && !route.provisional && closed.exit) {
+            this.send(route, {
+              kind: "exitBarrier",
+              primarySeq: closed.lastOutputSeq,
+              relatedSeq: closed.lastOutputSeq,
+              payload: jsonBytes({
+                finalOutputSeq: closed.lastOutputSeq,
+                exit: closed.exit,
+              }),
+            });
+          }
+          this.cleanupSession(String(input.sessionId));
+          return closed;
+        }
+      case "terminal.session.hasChildren": {
+        const snapshot = this.requireSession(String(input.sessionId));
+        return this.host.inspectChildren(snapshot.sessionId, snapshot.hostGeneration);
+      }
+      case "terminal.session.checkpoint.begin":
+        this.requireAttachmentDetails(
+          client,
+          String(input.sessionId),
+          String(input.attachmentId),
+          String(input.attachmentEpoch),
+          String(input.hostGeneration),
+        );
+        return this.beginCheckpoint(input, client);
+      case "terminal.session.checkpoint.complete":
+        return this.completeCheckpoint(input, client);
+      default:
+        throw new Error(`Terminal v1 method is outside the protected session path: ${method}`);
+    }
+  }
+
+  private healthSnapshot(): TerminalHealthSnapshot {
+    const health = this.host.health();
+    const diagnostics = this.host.diagnostics();
+    return {
+      contractVersion: 1,
+      state: health.state,
+      hostGeneration: health.hostGeneration,
+      activeSessions: Math.min(this.sessions.listSessions().length, 20),
+      lastHeartbeatMsAgo: diagnostics.lastHeartbeatMsAgo,
+      queueBytes: diagnostics.queueBytes,
+      eventLoopLagMs: diagnostics.eventLoopLagMs,
+      hostRssBytes: diagnostics.hostRssBytes,
+    };
+  }
+
+  /** Applies a strict Terminal v1 attachment frame. */
+  async handleV1Frame(client: WebSocket, bytes: Uint8Array): Promise<void> {
+    const frame = decodeTerminalFrame(bytes);
+    if (frame.kind === "checkpointChunk") {
+      this.acceptCheckpointChunk(client, frame);
+      return;
+    }
+    const route = this.requireAttachment(client, frame);
+    if (frame.kind === "input") {
+      await this.runtime.sendCommand({
+        sessionId: route.sessionId,
+        hostGeneration: route.hostGeneration,
+        attachmentEpoch: route.attachmentEpoch,
+        commandSeq: frame.primarySeq,
+        kind: "input",
+        data: frame.payload,
+      });
+      return;
+    }
+    if (frame.kind === "resize") {
+      const view = new DataView(frame.payload.buffer, frame.payload.byteOffset, frame.payload.byteLength);
+      await this.runtime.sendCommand({
+        sessionId: route.sessionId,
+        hostGeneration: route.hostGeneration,
+        attachmentEpoch: route.attachmentEpoch,
+        commandSeq: frame.primarySeq,
+        kind: "resize",
+        data: { cols: view.getUint16(0, false), rows: view.getUint16(2, false) },
+      });
+      return;
+    }
+    if (frame.kind === "outputAck") {
+      this.runtime.acknowledgeOutput({
+        sessionId: route.sessionId,
+        hostGeneration: route.hostGeneration,
+        attachmentEpoch: route.attachmentEpoch,
+        outputSeq: frame.primarySeq,
+      });
+      return;
+    }
+    throw terminalBackendError(
+      "PROTOCOL_MISMATCH",
+      "RESTART",
+      `Terminal client frame kind is not accepted: ${frame.kind}`,
+    );
+  }
+
+  /** Releases every attachment and upload owned by a disconnected client. */
+  disconnectClient(client: WebSocket): void {
+    for (const [sessionId, route] of this.attachments) {
+      if (route.client !== client) continue;
+      this.attachments.delete(sessionId);
+      void this.runtime.detach({
+        sessionId,
+        attachmentId: route.attachmentId,
+        attachmentEpoch: route.attachmentEpoch,
+        reason: "disconnect",
+      }).catch(() => undefined);
+    }
+    for (const [uploadId, upload] of this.uploads) {
+      if (upload.owner === client) this.uploads.delete(uploadId);
+    }
+  }
+
+  private async attach(input: Record<string, unknown>, client: WebSocket): Promise<unknown> {
+    const provisional: AttachmentRoute = {
+      client,
+      sessionId: String(input.sessionId),
+      attachmentId: String(input.attachmentId),
+      attachmentEpoch: "",
+      hostGeneration: String(input.hostGeneration),
+      hydrationId: "",
+      provisional: true,
+      hydrated: false,
+      pendingDelivery: [],
+    };
+    this.attachments.set(provisional.sessionId, provisional);
+    try {
+      const descriptor = await this.runtime.attach({
+        sessionId: provisional.sessionId,
+        attachmentId: provisional.attachmentId,
+        hostGeneration: provisional.hostGeneration,
+        lastOutputSeq: String(input.lastOutputSeq),
+        lastCommandSeq: String(input.lastCommandSeq),
+        checkpointSeq: input.checkpointSeq === undefined ? null : String(input.checkpointSeq),
+      });
+      provisional.attachmentId = descriptor.attachmentId;
+      provisional.attachmentEpoch = descriptor.attachmentEpoch;
+      provisional.hostGeneration = descriptor.hostGeneration;
+      provisional.hydrationId = descriptor.hydrationId;
+      provisional.provisional = false;
+      const hydration = this.runtime.consumeHydration({
+        sessionId: provisional.sessionId,
+        hostGeneration: provisional.hostGeneration,
+        attachmentEpoch: provisional.attachmentEpoch,
+        hydrationId: provisional.hydrationId,
+      });
+      const checkpointChunks = chunkBytes(hydration.checkpoint?.data ?? new Uint8Array());
+      checkpointChunks.forEach((payload, index) => this.send(provisional, {
+        kind: "hydrationChunk",
+        hydrationId: provisional.hydrationId,
+        primarySeq: String(index),
+        relatedSeq: String(checkpointChunks.length),
+        payload,
+      }));
+      for (const output of chunkReplayOutput(hydration.output)) {
+        this.send(provisional, {
+          kind: "output",
+          hydrationId: provisional.hydrationId,
+          primarySeq: output.outputSeq,
+          relatedSeq: "0",
+          payload: output.data,
+        });
+      }
+      if (hydration.descriptor.gap) {
+        this.send(provisional, {
+          kind: "gap",
+          hydrationId: provisional.hydrationId,
+          primarySeq: hydration.descriptor.gap.firstMissingSeq,
+          relatedSeq: hydration.descriptor.gap.lastMissingSeq,
+          payload: jsonBytes(hydration.descriptor.gap),
+        });
+      }
+      this.send(provisional, {
+        kind: "hydrationComplete",
+        hydrationId: provisional.hydrationId,
+        primarySeq: hydration.descriptor.lastOutputSeq ?? "0",
+        relatedSeq: "0",
+        payload: jsonBytes(hydration.descriptor),
+      });
+      provisional.hydrated = true;
+      for (const event of provisional.pendingDelivery.splice(0)) {
+        if (event.attachmentEpoch === provisional.attachmentEpoch) this.deliver(event);
+      }
+      return descriptor;
+    } catch (error) {
+      if (this.attachments.get(provisional.sessionId) === provisional) this.attachments.delete(provisional.sessionId);
+      throw error;
+    }
+  }
+
+  private beginCheckpoint(input: Record<string, unknown>, client: WebSocket): unknown {
+    const uploadId = randomUUID();
+    this.uploads.set(uploadId, {
+      owner: client,
+      sessionId: String(input.sessionId),
+      attachmentId: String(input.attachmentId),
+      attachmentEpoch: String(input.attachmentEpoch),
+      hostGeneration: String(input.hostGeneration),
+      baseOutputSeq: String(input.baseOutputSeq),
+      declaredBytes: Number(input.declaredBytes),
+      sha256: String(input.sha256),
+      expiresAt: Date.now() + TERMINAL_CHECKPOINT_EXPIRES_AFTER_MS,
+      chunks: new Map(),
+    });
+    return { uploadId, chunkBytes: TERMINAL_CHECKPOINT_CHUNK_BYTES, expiresAfterMs: TERMINAL_CHECKPOINT_EXPIRES_AFTER_MS };
+  }
+
+  private cleanupSession(sessionId: string): void {
+    this.attachments.delete(sessionId);
+    for (const [uploadId, upload] of this.uploads) {
+      if (upload.sessionId === sessionId) this.uploads.delete(uploadId);
+    }
+  }
+
+  private acceptCheckpointChunk(client: WebSocket, frame: TerminalBinaryFrame): void {
+    const upload = frame.uploadId ? this.uploads.get(frame.uploadId) : null;
+    if (!upload || upload.owner !== client || upload.expiresAt < Date.now()) {
+      throw terminalBackendError("CHECKPOINT_REJECTED", "REATTACH", "Terminal checkpoint upload is unavailable");
+    }
+    const route = this.requireAttachment(client, frame);
+    if (
+      upload.sessionId !== route.sessionId ||
+      upload.attachmentId !== route.attachmentId ||
+      upload.attachmentEpoch !== route.attachmentEpoch ||
+      upload.hostGeneration !== route.hostGeneration
+    ) {
+      throw terminalBackendError("STALE_ATTACHMENT", "REATTACH", "Terminal checkpoint attachment is stale");
+    }
+    const index = Number(frame.primarySeq);
+    const expectedChunks = Math.ceil(upload.declaredBytes / TERMINAL_CHECKPOINT_CHUNK_BYTES);
+    if (Number(frame.relatedSeq) !== expectedChunks || index >= expectedChunks || upload.chunks.has(index)) {
+      throw new TerminalBackendError("CHECKPOINT_REJECTED", "REATTACH", "Terminal checkpoint chunks are not contiguous");
+    }
+    if (frame.payload.byteLength !== (index === expectedChunks - 1
+      ? upload.declaredBytes - index * TERMINAL_CHECKPOINT_CHUNK_BYTES
+      : TERMINAL_CHECKPOINT_CHUNK_BYTES)) {
+      throw new TerminalBackendError("CHECKPOINT_REJECTED", "REATTACH", "Terminal checkpoint chunk size is invalid");
+    }
+    upload.chunks.set(index, Uint8Array.from(frame.payload));
+  }
+
+  private async completeCheckpoint(input: Record<string, unknown>, client: WebSocket): Promise<unknown> {
+    const uploadId = String(input.uploadId);
+    const upload = this.uploads.get(uploadId);
+    this.uploads.delete(uploadId);
+    if (!upload || upload.owner !== client || upload.expiresAt < Date.now()) {
+      throw terminalBackendError("CHECKPOINT_REJECTED", "REATTACH", "Terminal checkpoint upload is unavailable");
+    }
+    this.requireAttachmentDetails(
+      client,
+      upload.sessionId,
+      upload.attachmentId,
+      upload.attachmentEpoch,
+      upload.hostGeneration,
+    );
+    if (
+      String(input.sessionId) !== upload.sessionId ||
+      String(input.attachmentId) !== upload.attachmentId ||
+      String(input.attachmentEpoch) !== upload.attachmentEpoch ||
+      String(input.hostGeneration) !== upload.hostGeneration
+    ) {
+      throw terminalBackendError("STALE_ATTACHMENT", "REATTACH", "Terminal checkpoint attachment is stale");
+    }
+    const expectedChunks = Math.ceil(upload.declaredBytes / TERMINAL_CHECKPOINT_CHUNK_BYTES);
+    if (upload.chunks.size !== expectedChunks || [...Array(expectedChunks).keys()].some((index) => !upload.chunks.has(index))) {
+      throw new TerminalBackendError("CHECKPOINT_REJECTED", "REATTACH", "Terminal checkpoint upload is incomplete");
+    }
+    const data = concatBytes([...upload.chunks.entries()].sort(([a], [b]) => a - b).map(([, value]) => value));
+    const sha256 = createHash("sha256").update(data).digest("hex");
+    if (data.byteLength !== upload.declaredBytes || data.byteLength !== Number(input.totalBytes) || sha256 !== upload.sha256 || sha256 !== input.sha256) {
+      throw terminalBackendError("CHECKPOINT_REJECTED", "REATTACH", "Terminal checkpoint upload failed validation");
+    }
+    await this.runtime.saveCheckpoint({
+      sessionId: upload.sessionId,
+      hostGeneration: upload.hostGeneration,
+      attachmentEpoch: upload.attachmentEpoch,
+      baseOutputSeq: upload.baseOutputSeq,
+      data,
+      sha256,
+    });
+    return { accepted: true, checkpointThroughSeq: upload.baseOutputSeq };
+  }
+
+  private deliver(event: TerminalRuntimeDeliveryEvent): void {
+    const route = this.attachments.get(event.sessionId);
+    if (!route) return;
+    if (route.provisional) {
+      route.pendingDelivery.push(event);
+      return;
+    }
+    if (route.attachmentEpoch !== event.attachmentEpoch || route.hostGeneration !== event.hostGeneration) return;
+    if (!route.hydrated) {
+      route.pendingDelivery.push(event);
+      return;
+    }
+    if (event.kind === "output") {
+      this.send(route, { kind: "output", primarySeq: event.outputSeq, relatedSeq: "0", payload: event.data });
+    } else if (event.kind === "commandAck") {
+      this.send(route, { kind: "commandAck", primarySeq: event.commandSeq, relatedSeq: event.outputSeq, payload: new Uint8Array() });
+    } else {
+      this.send(route, {
+        kind: "exitBarrier",
+        primarySeq: event.finalOutputSeq,
+        relatedSeq: event.acknowledgedOutputSeq,
+        payload: jsonBytes({ finalOutputSeq: event.finalOutputSeq, exit: event.exit }),
+      });
+    }
+  }
+
+  private send(route: AttachmentRoute, frame: Pick<TerminalBinaryFrame, "kind" | "primarySeq" | "relatedSeq" | "payload"> & { hydrationId?: string }): void {
+    if (!this.sender?.frame) throw new Error("Terminal v1 sender is not configured");
+    this.sender.frame(route.client, encodeTerminalFrame({
+      ...frame,
+      sessionId: route.sessionId,
+      attachmentId: route.attachmentId,
+      hostGeneration: route.hostGeneration,
+      attachmentEpoch: route.attachmentEpoch,
+    }));
+  }
+
+  private requireAttachment(client: WebSocket, frame: TerminalBinaryFrame): AttachmentRoute {
+    const route = this.attachments.get(frame.sessionId);
+    if (!route || route.client !== client || route.attachmentId !== frame.attachmentId || route.attachmentEpoch !== frame.attachmentEpoch || route.hostGeneration !== frame.hostGeneration) {
+      throw terminalBackendError("STALE_ATTACHMENT", "REATTACH", "Terminal attachment is stale");
+    }
+    return route;
+  }
+
+  private requireAttachmentDetails(
+    client: WebSocket,
+    sessionId: string,
+    attachmentId: string,
+    attachmentEpoch: string,
+    hostGeneration?: string,
+  ): AttachmentRoute {
+    const route = this.attachments.get(sessionId);
+    if (
+      !route ||
+      route.client !== client ||
+      route.attachmentId !== attachmentId ||
+      route.attachmentEpoch !== attachmentEpoch ||
+      (hostGeneration !== undefined && route.hostGeneration !== hostGeneration)
+    ) {
+      throw terminalBackendError("STALE_ATTACHMENT", "REATTACH", "Terminal attachment is stale");
+    }
+    return route;
+  }
+
+  private requireSession(sessionId: string) {
+    const snapshot = this.runtime.getSnapshot(sessionId);
+    if (!snapshot) throw new Error("Terminal session was not found");
+    return snapshot;
+  }
+
+  create(): never { throw new Error("Use terminal.session.create"); }
+  pause(): never { throw new Error("Use terminal.session.detach"); }
+  resume(): never { throw new Error("Use terminal.session.attach"); }
+  onBufferedAmountTick(): void {}
+  write(): never { throw new Error("Use Terminal v1 input frames"); }
+  resize(): never { throw new Error("Use Terminal v1 resize frames"); }
+  kill(): Promise<void> { return Promise.reject(new Error("Use terminal.session.close")); }
+  killByThread(): Promise<void> { return Promise.reject(new Error("Use terminal.session.close")); }
+  async shutdown(): Promise<void> { this.unsubscribeDelivery(); this.sessions.dispose(); await this.runtime.shutdown(); }
+  setGracefulKill(): void {}
+  reattach(): TerminalReattachResult { throw new Error("Use terminal.session.attach"); }
+  checkpoint(): { accepted: boolean } { throw new Error("Use Terminal v1 checkpoint methods"); }
+  listActiveSessions(): Array<{ ptyId: string; threadId: string }> { throw new Error("Use terminal.session.list"); }
+  hasChildren(): Promise<{ hasChildren: boolean }> { return Promise.reject(new Error("Use terminal.session.hasChildren")); }
+}
+
+function jsonBytes(value: unknown): Uint8Array {
+  return new TextEncoder().encode(JSON.stringify(value));
+}
+
+function concatBytes(values: readonly Uint8Array[]): Uint8Array {
+  const result = new Uint8Array(values.reduce((total, value) => total + value.byteLength, 0));
+  let offset = 0;
+  for (const value of values) { result.set(value, offset); offset += value.byteLength; }
+  return result;
+}
+
+function chunkBytes(value: Uint8Array): Uint8Array[] {
+  const chunks: Uint8Array[] = [];
+  for (let offset = 0; offset < value.byteLength; offset += TERMINAL_CHECKPOINT_CHUNK_BYTES) {
+    chunks.push(value.slice(offset, offset + TERMINAL_CHECKPOINT_CHUNK_BYTES));
+  }
+  return chunks;
+}
+
+function chunkReplayOutput(
+  outputs: ReadonlyArray<{ readonly outputSeq: string; readonly data: Uint8Array }>,
+): Array<{ readonly outputSeq: string; readonly data: Uint8Array }> {
+  const chunks: Array<{ outputSeq: string; data: Uint8Array }> = [];
+  let pending: Uint8Array[] = [];
+  let pendingBytes = 0;
+  let outputSeq = "0";
+  const flush = () => {
+    if (pendingBytes === 0) return;
+    chunks.push({ outputSeq, data: concatBytes(pending) });
+    pending = [];
+    pendingBytes = 0;
+  };
+  for (const output of outputs) {
+    let offset = 0;
+    while (offset < output.data.byteLength) {
+      const capacity = TERMINAL_CHECKPOINT_CHUNK_BYTES - pendingBytes;
+      const part = output.data.slice(offset, offset + capacity);
+      pending.push(part);
+      pendingBytes += part.byteLength;
+      outputSeq = output.outputSeq;
+      offset += part.byteLength;
+      if (pendingBytes === TERMINAL_CHECKPOINT_CHUNK_BYTES) flush();
+    }
+  }
+  flush();
+  return chunks;
+}

@@ -1,12 +1,12 @@
 import "reflect-metadata";
 import { describe, expect, it, vi } from "vitest";
 import type Database from "better-sqlite3";
-import { openMemoryDatabase } from "../../../../store/database";
-import { ThreadRepo } from "../../../../repositories/thread-repo";
-import { WorkspaceRepo } from "../../../../repositories/workspace-repo";
-import { MessageRepo } from "../../../../repositories/message-repo";
-import { AgentService } from "../agent-service";
-import { createCanonicalAgentEventSinkStub } from "../../../../test-utils/canonical-agent-event-sink-stub";
+import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
+import { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
+import { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
+import { MessageRepo } from "../../conversation/persistence/message-repo.js";
+import { AgentService } from "../agent-service.js";
+import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/canonical-agent-event-sink-stub.js";
 import type { GitService } from "../../../projects/index.js";
 import type { ThreadService } from "../../../thread-control/index.js";
 import type { TurnRuntimeSnapshot } from "@mcode/contracts";

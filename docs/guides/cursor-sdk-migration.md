@@ -61,7 +61,7 @@ exhaustive context (cross-references the existing plan + glossary).
 
 ## What the next session should focus on
 
-Migrate `apps/server/src/providers/cursor/cursor-provider.ts` from spawning
+Migrate `apps/server/src/features/providers/adapters/cursor/cursor-provider.ts` from spawning
 the long-lived `cursor-agent acp` subprocess to using the new TypeScript
 `@cursor/sdk` package directly. Once the SDK's `Agent.resume` primitive is in
 place, Cursor's `sessionForkOnResume` capability flips from `"mutating"` to
@@ -86,7 +86,7 @@ cursor-provider.ts uses it, the workaround infrastructure can be retired.
 
 ### Files to rewrite
 
-- `apps/server/src/providers/cursor/cursor-provider.ts`. Replace the
+- `apps/server/src/features/providers/adapters/cursor/cursor-provider.ts`. Replace the
   `spawn("cursor-agent", ["acp"])` subprocess plumbing, the long-lived
   process management, the JSON-RPC framing, and the session-entry state
   tracking. Use `@cursor/sdk` `Agent.create` / `Agent.prompt` / `Agent.resume`
@@ -94,18 +94,18 @@ cursor-provider.ts uses it, the workaround infrastructure can be retired.
 
 ### Capability and method changes
 
-- `apps/server/src/providers/cursor/cursor-provider.ts` declares:
+- `apps/server/src/features/providers/adapters/cursor/cursor-provider.ts` declares:
   - `sessionForkOnResume = "mutating" as const` becomes
     `sessionForkOnResume = "clean" as const`.
   - `maxInputCharactersPerTurn` stays at 4000 unless the SDK exposes a
     different per-turn cap.
 - Implement `runSideChannelQuery` (mirror the Claude implementation; see
-  `apps/server/src/providers/claude/claude-provider.ts` lines 409 to 520 for
+  `apps/server/src/features/providers/adapters/claude/claude-provider.ts` lines 409 to 520 for
   the side-channel and sessionless-fallback pattern, including the
   ETIMEDOUT classification for unresumable sessions and the conversation
   history fallback prompt).
 - Implement the same `cwd` parameter routing that Claude's side-channel
-  takes. The orchestrator at `apps/server/src/services/handoff/handoff-pipeline.ts`
+  takes. The orchestrator at `apps/server/src/features/handoff/orchestration/handoff-pipeline.ts`
   already passes `cwd` through; Cursor's implementation just needs to consume
   it.
 
@@ -121,7 +121,7 @@ cursor-provider.ts uses it, the workaround infrastructure can be retired.
 ### Pipeline simplification
 
 After the migration, no provider in mcode declares `"mutating"`, so the
-path A branch in `apps/server/src/services/handoff/handoff-pipeline.ts`
+path A branch in `apps/server/src/features/handoff/orchestration/handoff-pipeline.ts`
 becomes dead code. Options:
 
 1. Delete the path A branch entirely. The `LadderStep` union becomes
@@ -151,13 +151,13 @@ acceptable on reads from old artifacts. New artifacts only ever get
 
 ### Tests
 
-- `apps/server/src/providers/cursor/__tests__/` mocks the `cursor-agent`
+- `apps/server/src/features/providers/adapters/cursor/__tests__/` mocks the `cursor-agent`
   subprocess and the JSON-RPC frame parsing. After the migration these tests
   rewrite to mock `@cursor/sdk` directly. Pattern to follow:
-  `apps/server/src/providers/claude/__tests__/` already mocks
+  `apps/server/src/features/providers/adapters/claude/__tests__/` already mocks
   `@anthropic-ai/claude-agent-sdk` via `vi.mock`.
 - The handoff-pipeline tests that explicitly exercise path A (search
-  `runHiddenTurn` in `apps/server/src/services/handoff/__tests__/`) will
+  `runHiddenTurn` in `apps/server/src/features/handoff/orchestration/__tests__/`) will
   fail once the method is removed. Either delete those tests or rewrite to
   exercise path B against a Cursor provider that now supports clean fork.
 
@@ -214,7 +214,7 @@ changes during the migration window.
 1. Read `CONTEXT.md` (this repo) end to end. Understand the B/A/D ladder
    and what "path A" is.
 2. Read the existing Claude side-channel implementation at
-   `apps/server/src/providers/claude/claude-provider.ts` lines 409 to 660
+   `apps/server/src/features/providers/adapters/claude/claude-provider.ts` lines 409 to 660
    (the `runSideChannelQuery` and `runSideChannelQuerySessionless` methods
    plus the abort-controller forwarding pattern). The Cursor SDK
    implementation should mirror it.
@@ -256,12 +256,12 @@ References, not duplicated content:
   guards that this migration would delete live in `cursor-provider.ts`
   and `handoff-pipeline.ts`; read them there instead.
 - `CONTEXT.md`. Glossary of all the relevant vocabulary.
-- `apps/server/src/providers/claude/claude-provider.ts`. The implementation
+- `apps/server/src/features/providers/adapters/claude/claude-provider.ts`. The implementation
   pattern Cursor will follow post-migration.
-- `apps/server/src/providers/cursor/cursor-provider.ts`. The current
+- `apps/server/src/features/providers/adapters/cursor/cursor-provider.ts`. The current
   implementation. Reads as a JSON-RPC ACP subprocess wrapper plus the
   hidden-turn workaround.
-- `apps/server/src/services/handoff/handoff-pipeline.ts`. The orchestrator.
+- `apps/server/src/features/handoff/orchestration/handoff-pipeline.ts`. The orchestrator.
   Path A branch around lines 195 to 280. Path B branch above it shows the
   pattern Cursor will use after the migration.
 - `packages/contracts/src/providers/interfaces.ts`. The `IAgentProvider`
@@ -288,7 +288,7 @@ remain deferred:
 
 This migration is complete when:
 
-1. `apps/server/src/providers/cursor/cursor-provider.ts` no longer spawns
+1. `apps/server/src/features/providers/adapters/cursor/cursor-provider.ts` no longer spawns
    `cursor-agent` as a subprocess.
 2. Cursor's `sessionForkOnResume` is declared `"clean"`.
 3. `runSideChannelQuery` is implemented on Cursor with both the clean-resume

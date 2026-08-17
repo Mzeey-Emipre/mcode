@@ -4,7 +4,7 @@
  *
  * Fixture: `fixtures/codex-protocol-golden.ndjson` (optional).
  * Generate with:
- *   node scripts/codex-protocol-capture.mjs <cwd> apps/server/src/providers/codex/__tests__/fixtures/codex-protocol-golden.ndjson
+ *   node scripts/codex-protocol-capture.mjs <cwd> packages/providers/src/__tests__/codex/fixtures/codex-protocol-golden.ndjson
  */
 import { readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
