@@ -1,5 +1,6 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import "@fontsource-variable/jetbrains-mono/index.css";
 import { App } from "./app/App";
 import { AppErrorBoundary } from "./app/AppErrorBoundary";
 import { initTransport } from "./transport";

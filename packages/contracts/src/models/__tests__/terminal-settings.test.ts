@@ -10,6 +10,9 @@ describe("Terminal v1 settings", () => {
   it("provides a strict bounded default document", () => {
     const defaults = getDefaultTerminalSettingsDocument();
     expect(TerminalSettingsDocumentSchema().parse(defaults)).toEqual(defaults);
+    expect(defaults.terminal.presentation.fontFamily).toBe(
+      '"JetBrains Mono Variable", "JetBrains Mono", "SF Mono", "Cascadia Code", "Consolas", monospace',
+    );
     expect(defaults.terminal.behavior).toMatchObject({ scrollback: 1000, sessionLimit: 20 });
     expect(() =>
       TerminalSettingsDocumentSchema().parse({

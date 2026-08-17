@@ -22,7 +22,7 @@ Per-setting reference for Mcode's `settings.json`. For schema conventions and st
 | `meta.schemaVersion` | string | `"0.0.1"` | `"0.0.1"` | - | Version of the persisted settings document. A malformed or newer version blocks writes until repair or reset. |
 | `terminal.defaultProfileId` | profile ID | `"automatic"` | `"automatic"`, a certified profile ID, or a configured custom profile ID | - | Profile selection for new Terminal sessions when the workspace has no explicit override. |
 | `terminal.profiles` | array | `[]` | Up to 32 custom profiles | - | Custom profile definitions. Each profile contains a stable ID, name, executable, and argument list. |
-| `terminal.presentation.fontFamily` | string | `"mcodeMono"` | 1-128 characters | - | Terminal font family. |
+| `terminal.presentation.fontFamily` | string | `"JetBrains Mono Variable", "JetBrains Mono", "SF Mono", "Cascadia Code", "Consolas", monospace` | 1-128 characters | - | Terminal font family. |
 | `terminal.presentation.fontSize` | enum | `"sm"` | `"xs"` \| `"sm"` \| `"md"` \| `"lg"` \| `"xl"` | - | Terminal font size. |
 | `terminal.presentation.lineHeight` | enum | `"normal"` | `"compact"` \| `"normal"` \| `"relaxed"` | - | Terminal line spacing. |
 | `terminal.presentation.cursorStyle` | enum | `"block"` | `"block"` \| `"underline"` \| `"bar"` | - | Terminal cursor shape. |

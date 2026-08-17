@@ -17,6 +17,9 @@ export const TERMINAL_MIN_SCROLLBACK_LINES = 100;
 export const TERMINAL_MAX_SCROLLBACK_LINES = 5_000;
 /** Default retained renderer lines. */
 export const TERMINAL_DEFAULT_SCROLLBACK_LINES = 1_000;
+/** Default Terminal font family, with the bundled JetBrains Mono font first. */
+export const TERMINAL_DEFAULT_FONT_FAMILY =
+  '"JetBrains Mono Variable", "JetBrains Mono", "SF Mono", "Cascadia Code", "Consolas", monospace';
 
 const fontFamilySchema = () =>
   z
@@ -166,7 +169,7 @@ export function getDefaultTerminalSettingsDocument(): TerminalSettingsDocument {
       defaultProfileId: "automatic",
       profiles: [],
       presentation: {
-        fontFamily: "mcodeMono",
+        fontFamily: TERMINAL_DEFAULT_FONT_FAMILY,
         fontSize: "sm",
         lineHeight: "normal",
         cursorStyle: "block",
