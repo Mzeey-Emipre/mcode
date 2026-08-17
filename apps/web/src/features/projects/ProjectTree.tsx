@@ -1396,7 +1396,7 @@ const WorkspaceCiRollupChip = memo(function WorkspaceCiRollupChip({
       title={label}
       aria-label={label}
       className={cn(
-        "shrink-0 inline-flex items-center gap-0.5 px-1 h-4 rounded-[3px] border",
+        "shrink-0 inline-flex items-center gap-0.5 px-1 h-4 rounded-[3px] border transition-opacity duration-150 group-hover/ws:opacity-0 group-focus-within/ws:opacity-0 motion-reduce:transition-none",
         "text-[10px] font-medium tabular-nums leading-none",
         chromeClass,
       )}
@@ -2040,7 +2040,7 @@ const ProjectNode = memo(function ProjectNode({
               render={
                 <span
                   aria-hidden="true"
-                  className="shrink-0 h-1.5 w-1.5 rounded-full bg-primary status-pulse"
+                  className="shrink-0 h-1.5 w-1.5 rounded-full bg-primary status-pulse transition-opacity duration-150 group-hover/ws:opacity-0 group-focus-within/ws:opacity-0 motion-reduce:transition-none"
                 />
               }
             />

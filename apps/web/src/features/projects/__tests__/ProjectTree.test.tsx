@@ -1333,6 +1333,34 @@ describe("ProjectTree action-required indicator", () => {
     expect(screen.queryByTestId("thread-pr-ci-thread-pending")).toBeNull();
   });
 
+  it("hides project status metadata when row actions appear", () => {
+    currentChecks = {
+      "thread-pending": {
+        aggregate: "pending",
+        runs: [{ name: "ci", status: "in_progress", conclusion: null }],
+      },
+    };
+    installWorkspaceMock();
+    threadStoreOverrides.runningThreadIds = new Set(["thread-pending"]);
+
+    render(<ProjectTree />);
+
+    const projectRow = screen.getByTestId("project-row-ws-1");
+    const ciRollup = within(projectRow).getByLabelText(
+      "1 thread with checks running",
+    );
+    const activeAgent = projectRow.querySelector(".status-pulse");
+
+    expect(ciRollup).toHaveClass(
+      "group-hover/ws:opacity-0",
+      "group-focus-within/ws:opacity-0",
+    );
+    expect(activeAgent).toHaveClass(
+      "group-hover/ws:opacity-0",
+      "group-focus-within/ws:opacity-0",
+    );
+  });
+
   it("does not dim row chrome when the thread row is a client scaffold", () => {
     currentThread = {
       ...makeThread({
