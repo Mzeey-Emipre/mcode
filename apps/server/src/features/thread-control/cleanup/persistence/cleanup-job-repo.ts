@@ -39,6 +39,12 @@ export interface CleanupJobDueCounts {
   retention: number;
 }
 
+/** Bounded result from requeueing blocked retention candidates. */
+export interface RequeuedRetentionBatch {
+  threadIds: string[];
+  hasMore: boolean;
+}
+
 const SELECT_COLS =
   "id, thread_id, workspace_path, worktree_path, branch, kind, attempts, next_retry_at, last_error, created_at";
 
@@ -290,6 +296,142 @@ export class CleanupJobRepo {
   count(): number {
     const row = this.stmtCount.get() as { n: number };
     return row.n;
+  }
+
+  /** Count completed retention candidates that are waiting for user retry. */
+  countBlockedRetentionCandidates(): number {
+    const row = this.db.prepare(
+      `SELECT COUNT(*) AS count
+         FROM threads
+        WHERE deleted_at IS NULL
+          AND user_completed_at IS NOT NULL
+          AND cleanup_state = 'blocked'`,
+    ).get() as { count: number };
+    return row.count;
+  }
+
+  /**
+   * Requeue one bounded page of blocked retention candidates.
+   * Each candidate is updated and its retention job is rebuilt in the same
+   * transaction so a worker cannot observe a queued thread without a job.
+   */
+  requeueBlockedRetentionBatch(limit = CLEANUP_BATCH_LIMIT): RequeuedRetentionBatch {
+    const boundedLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
+    const rows = this.db.prepare(
+      `SELECT t.id, w.path AS workspace_path, t.worktree_path, t.branch
+         FROM threads t
+         JOIN workspaces w ON w.id = t.workspace_id
+        WHERE t.deleted_at IS NULL
+          AND t.user_completed_at IS NOT NULL
+          AND t.cleanup_state = 'blocked'
+        ORDER BY t.id
+        LIMIT ?`,
+    ).all(boundedLimit) as Array<{
+      id: string;
+      workspace_path: string;
+      worktree_path: string | null;
+      branch: string | null;
+    }>;
+
+    if (rows.length === 0) return { threadIds: [], hasMore: false };
+
+    const update = this.db.prepare(
+      `UPDATE threads
+          SET cleanup_state = 'queued', cleanup_reason = NULL
+        WHERE id = ?
+          AND deleted_at IS NULL
+          AND user_completed_at IS NOT NULL
+          AND cleanup_state = 'blocked'`,
+    );
+    const deleteRetentionJob = this.db.prepare(
+      "DELETE FROM cleanup_jobs WHERE thread_id = ? AND kind = 'retention'",
+    );
+    const insertRetentionJob = this.db.prepare(
+      `INSERT OR IGNORE INTO cleanup_jobs
+        (id, thread_id, workspace_path, worktree_path, branch, kind, attempts, next_retry_at, created_at)
+       VALUES (?, ?, ?, ?, ?, 'retention', 0, 0, ?)`,
+    );
+    const now = Date.now();
+    const threadIds = this.db.transaction(() => {
+      const changed: string[] = [];
+      for (const row of rows) {
+        if (update.run(row.id).changes === 0) continue;
+        deleteRetentionJob.run(row.id);
+        insertRetentionJob.run(
+          randomUUID(),
+          row.id,
+          row.workspace_path,
+          row.worktree_path,
+          row.branch,
+          now,
+        );
+        changed.push(row.id);
+      }
+      return changed;
+    })();
+
+    return {
+      threadIds,
+      hasMore: rows.length === boundedLimit && this.hasRequeueableBlockedRetentionCandidates(),
+    };
+  }
+
+  private hasRequeueableBlockedRetentionCandidates(): boolean {
+    const row = this.db.prepare(
+      `SELECT 1
+         FROM threads t
+         JOIN workspaces w ON w.id = t.workspace_id
+        WHERE t.deleted_at IS NULL
+          AND t.user_completed_at IS NOT NULL
+          AND t.cleanup_state = 'blocked'
+        LIMIT 1`,
+    ).get() as { 1: number } | undefined;
+    return row !== undefined;
+  }
+
+  /** Atomically rebuild one blocked thread's retention job and queue it. */
+  requeueBlockedRetention(threadId: string): boolean {
+    return this.db.transaction(() => {
+      const row = this.db.prepare(
+        `SELECT t.id, w.path AS workspace_path, t.worktree_path, t.branch
+           FROM threads t
+           JOIN workspaces w ON w.id = t.workspace_id
+          WHERE t.id = ?
+            AND t.deleted_at IS NULL
+            AND t.user_completed_at IS NOT NULL
+            AND t.cleanup_state = 'blocked'`,
+      ).get(threadId) as {
+        id: string;
+        workspace_path: string;
+        worktree_path: string | null;
+        branch: string | null;
+      } | undefined;
+      if (!row) return false;
+
+      const changed = this.db.prepare(
+        `UPDATE threads
+            SET cleanup_state = 'queued', cleanup_reason = NULL
+          WHERE id = ? AND cleanup_state = 'blocked'`,
+      ).run(threadId);
+      if (changed.changes === 0) return false;
+
+      this.db.prepare(
+        "DELETE FROM cleanup_jobs WHERE thread_id = ? AND kind = 'retention'",
+      ).run(threadId);
+      this.db.prepare(
+        `INSERT OR IGNORE INTO cleanup_jobs
+          (id, thread_id, workspace_path, worktree_path, branch, kind, attempts, next_retry_at, created_at)
+         VALUES (?, ?, ?, ?, ?, 'retention', 0, 0, ?)`,
+      ).run(
+        randomUUID(),
+        row.id,
+        row.workspace_path,
+        row.worktree_path,
+        row.branch,
+        Date.now(),
+      );
+      return true;
+    })();
   }
 
   /**

@@ -18,6 +18,15 @@ Review task. Setup may change Git and SQLite, but performs no remote write.
 `pullRequest.reviewLink` restores the PR URL and state, worktree, local branch,
 head OID, and push target for an active canonical thread.
 
+## Completed-thread retention ownership
+
+Automatic cleanup may remove a worktree filesystem only when the completed
+thread records `worktree_managed=true` and its resolved path is a descendant of
+the canonical Mcode `worktrees` directory. An external, unmanaged, shared, or
+non-descendant worktree keeps its filesystem and Git state; only the thread's
+database row and generated artifacts expire. Retention cleanup never deletes a
+local branch, including branches associated with an open pull request.
+
 ## Repository mapping
 
 The base repository maps to a Workspace through normalized Git remotes. SSH,

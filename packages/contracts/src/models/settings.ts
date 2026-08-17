@@ -88,6 +88,11 @@ export const CompletedThreadRetentionDaysSchema = z.number().int().min(1).max(36
 /** Completed-thread retention value. */
 export type CompletedThreadRetentionDays = z.infer<typeof CompletedThreadRetentionDaysSchema>;
 
+/** Policy used when completed-thread worktree state is unsafe to remove. */
+export const UnsafeWorktreePolicySchema = z.enum(["block", "delete"]);
+/** Completed-thread unsafe worktree policy value. */
+export type UnsafeWorktreePolicy = z.infer<typeof UnsafeWorktreePolicySchema>;
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -228,6 +233,8 @@ export const SettingsSchema = lazySchema(() =>
           .object({
             /** Days before a completed thread becomes eligible for deletion. */
             retentionDays: CompletedThreadRetentionDaysSchema.default(3),
+            /** Whether unsafe owned worktrees remain blocked or are removed. */
+            unsafeWorktreePolicy: UnsafeWorktreePolicySchema.default("block"),
           })
           .default({}),
       })
@@ -548,6 +555,7 @@ export const PartialSettingsSchema = lazySchema(() =>
         completion: z
           .object({
             retentionDays: CompletedThreadRetentionDaysSchema.optional(),
+            unsafeWorktreePolicy: UnsafeWorktreePolicySchema.optional(),
           })
           .optional(),
       })

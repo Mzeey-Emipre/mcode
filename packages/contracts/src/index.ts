@@ -363,6 +363,7 @@ export {
   UpdateCheckIntervalSchema,
   UpdateReleaseLineSchema,
   CompletedThreadRetentionDaysSchema,
+  UnsafeWorktreePolicySchema,
   GRACE_PERIOD_DEFAULT_SECONDS,
   SERVER_HEAP_DEFAULT_MB,
   SERVER_HEAP_MIN_MB,
@@ -381,6 +382,7 @@ export type {
   UpdateCheckInterval,
   UpdateReleaseLine,
   CompletedThreadRetentionDays,
+  UnsafeWorktreePolicy,
 } from "./models/settings.js";
 
 export {

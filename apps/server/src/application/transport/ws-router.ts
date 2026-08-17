@@ -908,6 +908,13 @@ async function dispatch(
       broadcast("thread.lifecycleChanged", { thread: reopened });
       return reopened;
     }
+    case "thread.cleanupBlockedCount":
+      return deps.threadCompletionService.cleanupBlockedCount();
+    case "thread.retryCleanup": {
+      const queued = deps.threadCompletionService.retryCleanup(params.threadId);
+      broadcast("thread.lifecycleChanged", { thread: queued });
+      return queued;
+    }
     case "thread.updateTitle":
       return deps.threadService.updateTitle(
         params.threadId,

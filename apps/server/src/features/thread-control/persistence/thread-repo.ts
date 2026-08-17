@@ -454,21 +454,13 @@ export class ThreadRepo {
     const update = this.db.prepare(
       `UPDATE threads
        SET scheduled_deletion_at = ?,
-           cleanup_state = NULL,
-           cleanup_reason = NULL
+           cleanup_state = CASE WHEN cleanup_state = 'blocked' THEN 'blocked' ELSE NULL END,
+           cleanup_reason = CASE WHEN cleanup_state = 'blocked' THEN cleanup_reason ELSE NULL END
        WHERE id = ?
          AND user_completed_at = ?
          AND scheduled_deletion_at IS ?
          AND deleted_at IS NULL
-         AND cleanup_state IS NOT 'running'
-         AND NOT (
-           cleanup_state = 'blocked'
-           AND EXISTS (
-             SELECT 1 FROM cleanup_jobs
-             WHERE cleanup_jobs.thread_id = threads.id
-               AND cleanup_jobs.kind = 'retention'
-           )
-         )`,
+         AND cleanup_state IS NOT 'running'`,
     );
     const apply = this.db.transaction(() => {
       const changedIds: string[] = [];

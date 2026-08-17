@@ -9,6 +9,7 @@ import { ThreadRepo } from "../../persistence/thread-repo.js";
 import { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
 import { CleanupWorker } from "../cleanup-worker.js";
 import { HandoffStorage } from "../../../handoff/index.js";
+import type { SettingsService } from "../../../settings/settings-service.js";
 import type { ClaudeProvider } from "../../../providers/adapters/claude/claude-provider.js";
 import type { TerminalBackend as TerminalService } from "../../../terminal/backends/terminal-backend.js";
 import type { GitService } from "../../../projects/index.js";
@@ -24,7 +25,11 @@ vi.mock("../../../../runtime/process/containment/process-kill.js", () => ({
 // Stub filesystem checks - paths in tests are synthetic; we test logic not fs state.
 vi.mock("fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("fs")>();
-  return { ...actual, existsSync: vi.fn().mockReturnValue(true) };
+  return {
+    ...actual,
+    existsSync: vi.fn().mockReturnValue(true),
+    realpathSync: vi.fn((path: string) => path),
+  };
 });
 
 // Synthetic worktree base that satisfies the production mcode-dir path guard.
@@ -43,6 +48,9 @@ describe("CleanupWorker", () => {
   let mockClaudeProvider: ClaudeProvider;
   let mockTerminalService: TerminalService;
   let mockGitService: GitService;
+  let mockAttachmentService: AttachmentService;
+  let mockHandoffStorage: HandoffStorage;
+  let unsafeWorktreePolicy: "block" | "delete";
   let mutationReservations: ThreadControlMutationReservationService;
   let worker: CleanupWorker;
 
@@ -53,6 +61,7 @@ describe("CleanupWorker", () => {
     threadRepo = new ThreadRepo(db);
     workspaceRepo = new WorkspaceRepo(db);
     mutationReservations = new ThreadControlMutationReservationService();
+    unsafeWorktreePolicy = "block";
 
     mockClaudeProvider = {
       waitForSessionExit: vi.fn().mockResolvedValue(undefined),
@@ -81,7 +90,14 @@ describe("CleanupWorker", () => {
         safe: true,
         reason: "clean",
       }),
+      assessNamedWorktreeRemoval: vi.fn().mockResolvedValue({
+        safe: true,
+        reason: "clean",
+      }),
     } as unknown as GitService;
+
+    mockAttachmentService = { removeForThread: vi.fn() } as unknown as AttachmentService;
+      mockHandoffStorage = { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as unknown as HandoffStorage;
 
     worker = new CleanupWorker(
       db,
@@ -91,9 +107,10 @@ describe("CleanupWorker", () => {
       mockTerminalService,
       mockGitService,
       workspaceRepo,
-      { removeForThread: vi.fn() } as unknown as AttachmentService,
-      { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as unknown as HandoffStorage,
+      mockAttachmentService,
+      mockHandoffStorage,
       mutationReservations,
+      { get: vi.fn(() => ({ thread: { completion: { unsafeWorktreePolicy } } })) } as unknown as SettingsService,
     );
   });
 
@@ -200,7 +217,7 @@ describe("CleanupWorker", () => {
           `INSERT INTO threads
             (id, workspace_id, title, branch, checkout_state, mode, status, worktree_path,
              worktree_managed, user_completed_at, scheduled_deletion_at, created_at, updated_at)
-           VALUES ('retention-blocked-log', ?, 'Named', 'feature/keep', 'named', 'worktree', 'active', ?,
+           VALUES ('retention-blocked-log', ?, 'Branchless', 'main', 'branchless', 'worktree', 'active', ?,
                    1, ?, ?, ?, ?)`,
         ).run(
           workspace.id,
@@ -219,7 +236,7 @@ describe("CleanupWorker", () => {
           jobId: expect.any(String),
           threadId: "retention-blocked-log",
           kind: "retention",
-          reason: "named-branch",
+          reason: "missing-base-branch",
         });
       } finally {
         info.mockRestore();
@@ -275,7 +292,7 @@ describe("CleanupWorker", () => {
       expect(mockGitService.removeWorktree).not.toHaveBeenCalled();
     });
 
-    it("keeps an expired named-branch worktree visible with a cleanup reason", async () => {
+    it("removes an expired named worktree when only its branch is shared", async () => {
       const workspace = workspaceRepo.create("Named", "/named-repo");
       const completedAt = "2026-08-01T00:00:00.000Z";
       db.prepare(
@@ -294,15 +311,29 @@ describe("CleanupWorker", () => {
         completedAt,
         completedAt,
       );
+      const sibling = threadRepo.create(
+        workspace.id,
+        "Active sibling",
+        "worktree",
+        "feature/keep",
+      );
 
       await worker.poll();
 
-      const blocked = threadRepo.findById("expired-named");
-      expect(blocked).toMatchObject({
-        cleanup_state: "blocked",
-        cleanup_reason: "The worktree uses a named branch.",
+      expect(threadRepo.findById("expired-named")).toBeNull();
+      expect(mockAttachmentService.removeForThread).toHaveBeenCalledWith("expired-named");
+      expect(mockHandoffStorage.deleteThreadFiles).toHaveBeenCalledWith("expired-named");
+      expect(mockGitService.assessWorktreeRemovalSafety).toHaveBeenCalled();
+      expect(mockGitService.withReviewWorktreeMutationLock).toHaveBeenCalled();
+      expect(mockGitService.removeWorktree).toHaveBeenCalledWith(
+        expect.any(String),
+        "named",
+        { deleteBranch: false, worktreePath: wt("named"), managedCanonicalOnly: true },
+      );
+      expect(threadRepo.findById(sibling.id)).toMatchObject({
+        branch: "feature/keep",
+        status: "active",
       });
-      expect(mockGitService.removeWorktree).not.toHaveBeenCalled();
       expect(cleanupJobRepo.count()).toBe(0);
     });
 
@@ -334,13 +365,18 @@ describe("CleanupWorker", () => {
       expect(mockGitService.removeWorktree).toHaveBeenCalledWith(
         expect.any(String),
         "branchless-clean",
-        { deleteBranch: false, worktreePath: expect.stringContaining("branchless-clean") },
+        {
+          deleteBranch: false,
+          worktreePath: expect.stringContaining("branchless-clean"),
+          managedCanonicalOnly: true,
+        },
       );
     });
 
-    it("keeps an unmanaged expired worktree visible", async () => {
+    it("deletes thread data without removing an external worktree", async () => {
       const workspace = workspaceRepo.create("Unmanaged", "/unmanaged-repo");
       const completedAt = "2026-08-01T00:00:00.000Z";
+      const worktreePath = join(getMcodeDir(), "worktrees-sibling", "unmanaged");
       db.prepare(
         `INSERT INTO threads
           (id, workspace_id, title, branch, checkout_state, base_branch, mode, status,
@@ -352,7 +388,7 @@ describe("CleanupWorker", () => {
         workspace.id,
         "Expired unmanaged thread",
         "main",
-        wt("unmanaged"),
+        worktreePath,
         completedAt,
         completedAt,
         completedAt,
@@ -361,10 +397,9 @@ describe("CleanupWorker", () => {
 
       await worker.poll();
 
-      expect(threadRepo.findById("expired-unmanaged")).toMatchObject({
-        cleanup_state: "blocked",
-        cleanup_reason: "Mcode does not manage this worktree.",
-      });
+      expect(threadRepo.findById("expired-unmanaged")).toBeNull();
+      expect(mockAttachmentService.removeForThread).toHaveBeenCalledWith("expired-unmanaged");
+      expect(mockHandoffStorage.deleteThreadFiles).toHaveBeenCalledWith("expired-unmanaged");
       expect(mockGitService.removeWorktree).not.toHaveBeenCalled();
     });
 
@@ -409,6 +444,115 @@ describe("CleanupWorker", () => {
         cleanup_state: "blocked",
         cleanup_reason: message,
       });
+      expect(mockGitService.removeWorktree).not.toHaveBeenCalled();
+    });
+
+    it.each(["dirty", "unique_commits"] as const)(
+      "reads delete policy at execution and bypasses branchless %s safety",
+      async (reason) => {
+        const workspace = workspaceRepo.create(`Delete ${reason}`, `/delete-${reason}`);
+        const completedAt = "2026-08-01T00:00:00.000Z";
+        db.prepare(
+          `INSERT INTO threads
+            (id, workspace_id, title, branch, checkout_state, base_branch, mode, status,
+             worktree_path, worktree_managed, user_completed_at, scheduled_deletion_at,
+             created_at, updated_at)
+           VALUES (?, ?, ?, 'main', 'branchless', 'main', 'worktree', 'active', ?, 1, ?, ?, ?, ?)` ,
+        ).run(
+          `delete-${reason}`,
+          workspace.id,
+          `Delete ${reason}`,
+          wt(`delete-${reason}`),
+          completedAt,
+          completedAt,
+          completedAt,
+          completedAt,
+        );
+        cleanupJobRepo.enqueueExpiredCompleted(new Date().toISOString());
+        unsafeWorktreePolicy = "delete";
+        vi.mocked(mockGitService.assessBranchlessWorktreeRemoval).mockResolvedValueOnce({
+          safe: false,
+          reason,
+        });
+
+        await worker.poll();
+
+        expect(threadRepo.findById(`delete-${reason}`)).toBeNull();
+        expect(mockGitService.removeWorktree).toHaveBeenCalledWith(
+          expect.any(String),
+          `delete-${reason}`,
+          {
+            deleteBranch: false,
+            worktreePath: wt(`delete-${reason}`),
+            managedCanonicalOnly: true,
+          },
+        );
+      },
+    );
+
+    it("does not bypass named dirty state when policy is block, then uses delete at execution", async () => {
+      const workspace = workspaceRepo.create("Named dirty", "/named-dirty");
+      const completedAt = "2026-08-01T00:00:00.000Z";
+      const path = wt("named-dirty");
+      db.prepare(
+        `INSERT INTO threads
+          (id, workspace_id, title, branch, checkout_state, mode, status, worktree_path,
+           worktree_managed, user_completed_at, scheduled_deletion_at, created_at, updated_at)
+         VALUES ('named-dirty', ?, 'Named dirty', 'feature/dirty', 'named', 'worktree', 'active', ?, 1, ?, ?, ?, ?)` ,
+      ).run(workspace.id, path, completedAt, completedAt, completedAt, completedAt);
+      vi.mocked(mockGitService.assessNamedWorktreeRemoval).mockResolvedValue({ safe: false, reason: "dirty" });
+
+      await worker.poll();
+      expect(threadRepo.findById("named-dirty")?.cleanup_state).toBe("blocked");
+
+      expect(cleanupJobRepo.requeueBlockedRetention("named-dirty")).toBe(true);
+      unsafeWorktreePolicy = "delete";
+      await worker.poll();
+      expect(threadRepo.findById("named-dirty")).toBeNull();
+    });
+
+    it("does not bypass shared-path safety when policy is delete", async () => {
+      const workspace = workspaceRepo.create("Shared delete", "/shared-delete");
+      const completedAt = "2026-08-01T00:00:00.000Z";
+      const path = wt("shared-delete");
+      db.prepare(
+        `INSERT INTO threads
+          (id, workspace_id, title, branch, checkout_state, base_branch, mode, status,
+           worktree_path, worktree_managed, user_completed_at, scheduled_deletion_at,
+           created_at, updated_at)
+         VALUES ('shared-delete', ?, 'Shared delete', 'main', 'branchless', 'main', 'worktree', 'active', ?, 1, ?, ?, ?, ?)` ,
+      ).run(workspace.id, path, completedAt, completedAt, completedAt, completedAt);
+      const sibling = threadRepo.create(workspace.id, "Sibling", "worktree", "main");
+      db.prepare("UPDATE threads SET worktree_path = ? WHERE id = ?").run(path, sibling.id);
+      unsafeWorktreePolicy = "delete";
+      vi.mocked(mockGitService.assessWorktreeRemovalSafety).mockResolvedValueOnce({ safe: false, reason: "shared" });
+
+      await worker.poll();
+
+      expect(threadRepo.findById("shared-delete")).toBeNull();
+      expect(threadRepo.findById(sibling.id)).not.toBeNull();
+      expect(mockGitService.removeWorktree).not.toHaveBeenCalled();
+    });
+
+    it("does not bypass branchless verification failure when policy is delete", async () => {
+      const workspace = workspaceRepo.create("Verification delete", "/verification-delete");
+      const completedAt = "2026-08-01T00:00:00.000Z";
+      db.prepare(
+        `INSERT INTO threads
+          (id, workspace_id, title, branch, checkout_state, base_branch, mode, status,
+           worktree_path, worktree_managed, user_completed_at, scheduled_deletion_at,
+           created_at, updated_at)
+         VALUES ('verification-delete', ?, 'Verification delete', 'main', 'branchless', 'main', 'worktree', 'active', ?, 1, ?, ?, ?, ?)` ,
+      ).run(workspace.id, wt("verification-delete"), completedAt, completedAt, completedAt, completedAt);
+      unsafeWorktreePolicy = "delete";
+      vi.mocked(mockGitService.assessBranchlessWorktreeRemoval).mockResolvedValueOnce({
+        safe: false,
+        reason: "verification_failed",
+      });
+
+      await worker.poll();
+
+      expect(threadRepo.findById("verification-delete")?.cleanup_state).toBe("blocked");
       expect(mockGitService.removeWorktree).not.toHaveBeenCalled();
     });
 
@@ -476,7 +620,7 @@ describe("CleanupWorker", () => {
       expect(mockGitService.removeWorktree).not.toHaveBeenCalled();
     });
 
-    it("blocks reopen after destructive cleanup exhausts its retries", async () => {
+    it("blocks cleanup after destructive cleanup exhausts its retries", async () => {
       const workspace = workspaceRepo.create("Retry", "/retry-repo");
       const completedAt = "2026-08-01T00:00:00.000Z";
       db.prepare(
@@ -514,11 +658,11 @@ describe("CleanupWorker", () => {
         db.prepare(
           "SELECT attempts, last_error FROM cleanup_jobs WHERE thread_id = 'expired-retry'",
         ).get(),
-      ).toEqual({
-        attempts: MAX_CLEANUP_ATTEMPTS,
-        last_error: expect.stringContaining("still exists"),
+      ).toBeUndefined();
+      expect(threadRepo.reopen("expired-retry")).toMatchObject({
+        cleanup_state: null,
+        user_completed_at: null,
       });
-      expect(threadRepo.reopen("expired-retry")).toBeNull();
     }, 15_000);
 
     it("runs cleanup steps in correct order: session exit, terminal kill, SDK kill, worktree removal", async () => {

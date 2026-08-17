@@ -253,6 +253,7 @@ function setupStoreMocks({
   updateThreadTitle = vi.fn(),
   completeThread = vi.fn().mockResolvedValue(undefined),
   reopenThread = vi.fn().mockResolvedValue(undefined),
+  retryThreadCleanup = vi.fn().mockResolvedValue(undefined),
 }: {
   thread?: Thread | null;
   threads?: Thread[];
@@ -263,6 +264,7 @@ function setupStoreMocks({
   updateThreadTitle?: ReturnType<typeof vi.fn>;
   completeThread?: ReturnType<typeof vi.fn>;
   reopenThread?: ReturnType<typeof vi.fn>;
+  retryThreadCleanup?: ReturnType<typeof vi.fn>;
 } = {}) {
   const state = {
     workspaces,
@@ -279,6 +281,7 @@ function setupStoreMocks({
     deleteThread: vi.fn(),
     completeThread,
     reopenThread,
+    retryThreadCleanup,
     beginNewThread,
     updateThreadTitle,
     loadWorktrees: vi.fn(),
@@ -660,6 +663,71 @@ describe("ProjectTree thread interactions", () => {
     );
     expect(preview).not.toHaveTextContent("Deletes");
     vi.useFakeTimers();
+  });
+
+  it("shows retry cleanup and reopen controls for a blocked completed thread", async () => {
+    vi.useRealTimers();
+    const retryThreadCleanup = vi.fn().mockResolvedValue(undefined);
+    const reopenThread = vi.fn().mockResolvedValue(undefined);
+    setupStoreMocks({
+      thread: makeThread({
+        title: "Blocked work",
+        user_completed_at: "2026-08-12T08:00:00.000Z",
+        cleanup_state: "blocked",
+        cleanup_reason: "The worktree has uncommitted changes.",
+      }),
+      retryThreadCleanup,
+      reopenThread,
+    });
+
+    render(<ProjectTree />);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "View 1 completed thread for Test Project",
+      }),
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Retry cleanup for Blocked work" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reopen Blocked work" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry cleanup for Blocked work" }));
+    await Promise.resolve();
+    expect(retryThreadCleanup).toHaveBeenCalledWith("thread-1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Reopen Blocked work" }));
+    await Promise.resolve();
+    expect(reopenThread).toHaveBeenCalledWith("thread-1");
+    vi.useFakeTimers();
+  });
+
+  it("shows a manual retry failure inline while the thread remains blocked", async () => {
+    vi.useRealTimers();
+    try {
+      const retryThreadCleanup = vi.fn().mockRejectedValue(new Error("still blocked"));
+      setupStoreMocks({
+        thread: makeThread({
+          title: "Blocked work",
+          user_completed_at: "2026-08-12T08:00:00.000Z",
+          cleanup_state: "blocked",
+          cleanup_reason: "The worktree has uncommitted changes.",
+        }),
+        retryThreadCleanup,
+      });
+
+      render(<ProjectTree />);
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "View 1 completed thread for Test Project",
+        }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Retry cleanup for Blocked work" }));
+
+      expect(await screen.findByText("Cleanup retry failed: Error: still blocked")).toBeInTheDocument();
+    } finally {
+      vi.useFakeTimers();
+    }
   });
 
   it("keeps expanded threads mounted when a project drag starts", () => {

@@ -11,6 +11,7 @@ import type { SettingsService } from "../../../settings/settings-service.js";
 import type { ThreadTeardownService } from "../thread-teardown-service.js";
 import { ThreadControlMutationReservationService } from "../../authority/thread-control-mutation-reservation-service.js";
 import { ThreadCompletionService } from "../thread-completion-service.js";
+import { CleanupJobRepo } from "../../cleanup/persistence/cleanup-job-repo.js";
 
 describe("ThreadCompletionService", () => {
   let db: Database.Database;
@@ -20,6 +21,7 @@ describe("ThreadCompletionService", () => {
   let settingsService: SettingsService;
   let service: ThreadCompletionService;
   let threadId: string;
+  let cleanupJobRepo: CleanupJobRepo;
   let now: Date;
   let settings: Settings;
   let settingsListener: ((settings: Settings) => void) | null;
@@ -28,6 +30,7 @@ describe("ThreadCompletionService", () => {
     db = openMemoryDatabase();
     const workspaceRepo = new WorkspaceRepo(db);
     threadRepo = new ThreadRepo(db);
+    cleanupJobRepo = new CleanupJobRepo(db);
     threadId = threadRepo.create(
       workspaceRepo.create("Test", "/tmp/test", true).id,
       "Complete me",
@@ -60,6 +63,7 @@ describe("ThreadCompletionService", () => {
       new ThreadControlMutationReservationService(),
       settingsService,
       () => now,
+      cleanupJobRepo,
     );
     service.start();
   });
@@ -67,7 +71,12 @@ describe("ThreadCompletionService", () => {
   function applyRetention(retentionDays: CompletedThreadRetentionDays): void {
     settings = {
       ...settings,
-      thread: { completion: { retentionDays } },
+      thread: {
+        completion: {
+          ...settings.thread.completion,
+          retentionDays,
+        },
+      },
     };
     settingsListener?.(settings);
   }
@@ -110,6 +119,23 @@ describe("ThreadCompletionService", () => {
     expect(recalculated?.user_completed_at).toBe("2026-08-12T08:00:00.000Z");
     expect(recalculated?.scheduled_deletion_at).toBe("2026-08-22T08:00:00.000Z");
     expect(changed).toHaveBeenCalledWith([recalculated]);
+  });
+
+  it("preserves blocked cleanup state while recalculating its deadline", () => {
+    db.prepare(
+      `UPDATE threads
+          SET user_completed_at = ?, scheduled_deletion_at = ?, cleanup_state = 'blocked', cleanup_reason = 'dirty'
+        WHERE id = ?`,
+    ).run(now.toISOString(), "2026-08-13T08:00:00.000Z", threadId);
+
+    applyRetention(10);
+
+    expect(threadRepo.findById(threadId)).toMatchObject({
+      scheduled_deletion_at: "2026-08-22T08:00:00.000Z",
+      cleanup_state: "blocked",
+      cleanup_reason: "dirty",
+    });
+    expect(cleanupJobRepo.findByThreadId(threadId)).toBeNull();
   });
 
   it("recalculates large histories in bounded batches", async () => {
@@ -209,6 +235,7 @@ describe("ThreadCompletionService", () => {
       new ThreadControlMutationReservationService(),
       settingsService,
       () => new Date("2026-08-20T08:00:00.000Z"),
+      cleanupJobRepo,
     );
 
     restarted.start();
@@ -237,6 +264,17 @@ describe("ThreadCompletionService", () => {
 
     expect(releaseCiWatcher).toHaveBeenCalledOnce();
     expect(releaseCiWatcher).toHaveBeenCalledWith(threadId);
+  });
+
+  it("does not expose completion while releasing runtime resources", async () => {
+    let observedCompletion: string | null | undefined;
+    service.registerResourceOwner("completion-observer", async (id) => {
+      observedCompletion = threadRepo.findById(id)?.user_completed_at;
+    });
+
+    await service.complete(threadId);
+
+    expect(observedCompletion).toBeNull();
   });
 
   it("rejects completion while the thread is running", async () => {
@@ -303,19 +341,20 @@ describe("ThreadCompletionService", () => {
     });
   });
 
-  it("keeps a retry-exhausted destructive cleanup closed", async () => {
+  it("allows reopening after retry exhaustion has removed the cleanup job", async () => {
     await service.complete(threadId);
-    db.prepare("UPDATE threads SET cleanup_state = 'blocked' WHERE id = ?").run(threadId);
     db.prepare(
-      `INSERT INTO cleanup_jobs
-        (id, thread_id, workspace_path, worktree_path, branch, kind, attempts, next_retry_at, created_at)
-       VALUES ('cleanup-blocked', ?, '/repo', NULL, 'main', 'retention', 5, 0, 1)`,
-    ).run(threadId);
+      "UPDATE threads SET cleanup_state = 'blocked', cleanup_reason = ? WHERE id = ?",
+    ).run("Cleanup failed after 5 attempts.", threadId);
 
-    expect(() => service.reopen(threadId)).toThrow("Thread cleanup has already started");
+    expect(service.reopen(threadId)).toMatchObject({
+      cleanup_state: null,
+      user_completed_at: null,
+    });
+    expect(cleanupJobRepo.findByThreadId(threadId)).toBeNull();
     expect(threadRepo.findById(threadId)).toMatchObject({
-      cleanup_state: "blocked",
-      user_completed_at: expect.any(String),
+      cleanup_state: null,
+      user_completed_at: null,
     });
   });
 
@@ -327,6 +366,102 @@ describe("ThreadCompletionService", () => {
       cleanup_state: null,
       user_completed_at: null,
     });
+  });
+
+  it("counts blocked completed retention candidates", () => {
+    db.prepare(
+      `UPDATE threads
+          SET user_completed_at = ?, scheduled_deletion_at = ?, cleanup_state = 'blocked'
+        WHERE id = ?`,
+    ).run(now.toISOString(), now.toISOString(), threadId);
+    const second = threadRepo.create(
+      threadRepo.findById(threadId)!.workspace_id,
+      "Second blocked",
+      "direct",
+      "main",
+    );
+    db.prepare(
+      `UPDATE threads
+          SET user_completed_at = ?, scheduled_deletion_at = ?, cleanup_state = 'blocked'
+        WHERE id = ?`,
+    ).run(now.toISOString(), now.toISOString(), second.id);
+
+    expect(service.cleanupBlockedCount()).toEqual({ count: 2 });
+  });
+
+  it("requeues one blocked thread and rebuilds its retention job atomically", () => {
+    db.prepare(
+      `UPDATE threads
+          SET user_completed_at = ?, scheduled_deletion_at = ?, cleanup_state = 'blocked'
+        WHERE id = ?`,
+    ).run(now.toISOString(), now.toISOString(), threadId);
+    const oldJob = cleanupJobRepo.insert({
+      thread_id: threadId,
+      workspace_path: "/tmp/test",
+      worktree_path: null,
+      branch: "main",
+      kind: "retention",
+    });
+    cleanupJobRepo.recordFailure(oldJob.id, "old failure");
+
+    const queued = service.retryCleanup(threadId);
+    const rebuilt = cleanupJobRepo.findByThreadId(threadId);
+    expect(queued.cleanup_state).toBe("queued");
+    expect(rebuilt).toMatchObject({ kind: "retention", attempts: 0, next_retry_at: 0 });
+    expect(rebuilt?.id).not.toBe(oldJob.id);
+  });
+
+  it("rejects retry for a thread that is not blocked", () => {
+    const initial = threadRepo.findById(threadId);
+    expect(() => service.retryCleanup(threadId)).toThrow();
+    expect(threadRepo.findById(threadId)).toEqual(initial);
+    db.prepare(
+      `UPDATE threads
+          SET user_completed_at = ?, scheduled_deletion_at = ?, cleanup_state = 'queued'
+        WHERE id = ?`,
+    ).run(now.toISOString(), now.toISOString(), threadId);
+    const queued = threadRepo.findById(threadId);
+    expect(() => service.retryCleanup(threadId)).toThrow();
+    expect(threadRepo.findById(threadId)).toEqual(queued);
+    expect(cleanupJobRepo.findByThreadId(threadId)).toBeNull();
+  });
+
+  it("requeues every blocked candidate when policy changes from block to delete", () => {
+    db.prepare(
+      `UPDATE threads
+          SET user_completed_at = ?, scheduled_deletion_at = ?, cleanup_state = 'blocked'
+        WHERE id = ?`,
+    ).run(now.toISOString(), now.toISOString(), threadId);
+    const second = threadRepo.create(
+      threadRepo.findById(threadId)!.workspace_id,
+      "Second blocked",
+      "direct",
+      "main",
+    );
+    db.prepare(
+      `UPDATE threads
+          SET user_completed_at = ?, scheduled_deletion_at = ?, cleanup_state = 'blocked'
+        WHERE id = ?`,
+    ).run(now.toISOString(), now.toISOString(), second.id);
+    const changedIds: string[] = [];
+    service.onDeadlineChanges((threads) => changedIds.push(...threads.map((thread) => thread.id)));
+
+    settings = {
+      ...settings,
+      thread: {
+        completion: {
+          ...settings.thread.completion,
+          unsafeWorktreePolicy: "delete",
+        },
+      },
+    };
+    settingsListener?.(settings);
+
+    expect(threadRepo.findById(threadId)?.cleanup_state).toBe("queued");
+    expect(threadRepo.findById(second.id)?.cleanup_state).toBe("queued");
+    expect(cleanupJobRepo.findByThreadId(threadId)?.kind).toBe("retention");
+    expect(cleanupJobRepo.findByThreadId(second.id)?.kind).toBe("retention");
+    expect(changedIds).toEqual(expect.arrayContaining([threadId, second.id]));
   });
 
   it("preserves conversation, attachments, and repository identity", async () => {

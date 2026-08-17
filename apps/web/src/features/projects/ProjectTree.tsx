@@ -33,6 +33,7 @@ import {
   SquarePen,
   Circle,
   Check,
+  RefreshCw,
 } from "lucide-react";
 import {
   Tooltip,
@@ -244,6 +245,7 @@ export function ProjectTree() {
   const deleteThread = useWorkspaceStore((s) => s.deleteThread);
   const completeThread = useWorkspaceStore((s) => s.completeThread);
   const reopenThread = useWorkspaceStore((s) => s.reopenThread);
+  const retryThreadCleanup = useWorkspaceStore((s) => s.retryThreadCleanup);
   const beginNewThread = useWorkspaceStore((s) => s.beginNewThread);
   const setPrimarySurface = useUiStore((s) => s.setPrimarySurface);
   const updateThreadTitle = useWorkspaceStore((s) => s.updateThreadTitle);
@@ -653,6 +655,7 @@ export function ProjectTree() {
                     onToggleLifecycleView={toggleLifecycleView}
                     onCompleteThread={completeThread}
                     onReopenThread={reopenThread}
+                    onRetryThreadCleanup={retryThreadCleanup}
                     pendingPermissionThreadIds={pendingPermissionThreadIds}
                     isThreadListExpanded={threadListExpanded[ws.id] ?? false}
                     checksById={checksById}
@@ -940,6 +943,7 @@ interface VirtualizedThreadListProps {
   onThreadContextMenu: (e: React.MouseEvent, thread: Thread) => void;
   onCompleteThread: (threadId: string) => Promise<void>;
   onReopenThread: (threadId: string) => Promise<void>;
+  onRetryThreadCleanup: (threadId: string) => Promise<void>;
 }
 
 interface ThreadRowProps {
@@ -966,6 +970,7 @@ interface ThreadRowProps {
   onThreadContextMenu: (e: React.MouseEvent, thread: Thread) => void;
   onCompleteThread: (threadId: string) => Promise<void>;
   onReopenThread: (threadId: string) => Promise<void>;
+  onRetryThreadCleanup: (threadId: string) => Promise<void>;
 }
 
 /** Renders one sidebar thread row and subscribes only to its own active and running state. */
@@ -989,6 +994,7 @@ const ThreadRow = memo(function ThreadRow({
   onThreadContextMenu,
   onCompleteThread,
   onReopenThread,
+  onRetryThreadCleanup,
 }: ThreadRowProps) {
   const isActive = useWorkspaceStore((s) => s.activeThreadId === thread.id);
   const isRunning = useThreadStore((s) => s.runningThreadIds.has(thread.id));
@@ -1031,7 +1037,10 @@ const ThreadRow = memo(function ThreadRow({
   const providerMeta = getProviderMeta(thread.provider);
   const RowProviderIcon = providerMeta.icon;
   const [isLifecyclePending, setIsLifecyclePending] = useState(false);
+  const [isCleanupRetryPending, setIsCleanupRetryPending] = useState(false);
+  const [cleanupRetryError, setCleanupRetryError] = useState<string | null>(null);
   const isUserCompleted = thread.user_completed_at !== null;
+  const cleanupBlocked = isUserCompleted && thread.cleanup_state === "blocked";
   const showEndMarker =
     marker.kind !== "time" &&
     (!showPrCi || marker.kind !== "ci");
@@ -1062,6 +1071,29 @@ const ThreadRow = memo(function ThreadRow({
       thread.id,
     ],
   );
+  const handleCleanupRetry = useCallback(
+    async (event: React.MouseEvent) => {
+      event.stopPropagation();
+      if (!cleanupBlocked || isCleanupRetryPending) return;
+      setCleanupRetryError(null);
+      setIsCleanupRetryPending(true);
+      try {
+        await onRetryThreadCleanup(thread.id);
+      } catch (cause: unknown) {
+        setCleanupRetryError(String(cause));
+      } finally {
+        setIsCleanupRetryPending(false);
+      }
+    },
+    [cleanupBlocked, isCleanupRetryPending, onRetryThreadCleanup, thread.id],
+  );
+  const cleanupStatusLabel = cleanupRetryError
+    ? `Cleanup retry failed: ${cleanupRetryError}`
+    : thread.cleanup_state === "queued"
+      ? "Cleanup queued"
+      : thread.cleanup_state === "retrying"
+        ? "Retrying cleanup"
+        : null;
   const row = (
     <div
       role="button"
@@ -1242,7 +1274,43 @@ const ThreadRow = memo(function ThreadRow({
             </TooltipContent>
           </Tooltip>
         )}
+        {!isEditing && cleanupStatusLabel ? (
+          <span
+            role="status"
+            className="shrink-0 truncate text-xs text-muted-foreground"
+          >
+            {cleanupStatusLabel}
+          </span>
+        ) : null}
       </div>
+      {!isEditing && cleanupBlocked ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                aria-label={`Retry cleanup for ${thread.title}`}
+                disabled={isCleanupRetryPending}
+                onPointerDown={(event) => event.stopPropagation()}
+                onKeyDown={(event) => event.stopPropagation()}
+                onClick={handleCleanupRetry}
+                className="size-6 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:bg-transparent hover:text-foreground group-hover/row:opacity-100 group-focus-visible/row:opacity-100 focus-visible:opacity-100"
+              >
+                {isCleanupRetryPending ? (
+                  <Spinner size={12} />
+                ) : (
+                  <RefreshCw size={13} aria-hidden />
+                )}
+              </Button>
+            }
+          />
+          <TooltipContent side="right" className="text-xs">
+            Retry cleanup
+          </TooltipContent>
+        </Tooltip>
+      ) : null}
       {!isEditing && prable && thread.pr_number != null ? (
         <ThreadPrIndicator
           threadId={thread.id}
@@ -1401,6 +1469,14 @@ function SidebarThreadPreview({
               <div className="text-xs text-destructive" role="status">
                 Cleanup blocked: {thread.cleanup_reason ?? "User action is required."}
               </div>
+            ) : thread.cleanup_state === "queued" ? (
+              <div className="text-xs text-muted-foreground" role="status">
+                Cleanup queued
+              </div>
+            ) : thread.cleanup_state === "retrying" ? (
+              <div className="text-xs text-muted-foreground" role="status">
+                Retrying cleanup
+              </div>
             ) : (
               <div className="text-xs text-muted-foreground">
                 {thread.scheduled_deletion_at
@@ -1517,6 +1593,7 @@ function VirtualizedThreadList({
   onThreadContextMenu,
   onCompleteThread,
   onReopenThread,
+  onRetryThreadCleanup,
 }: VirtualizedThreadListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [scrollMargin, setScrollMargin] = useState(0);
@@ -1649,6 +1726,7 @@ function VirtualizedThreadList({
               onThreadContextMenu={onThreadContextMenu}
               onCompleteThread={onCompleteThread}
               onReopenThread={onReopenThread}
+              onRetryThreadCleanup={onRetryThreadCleanup}
             />
           </div>
         );
@@ -1698,6 +1776,7 @@ interface ProjectNodeProps {
   onToggleLifecycleView: (workspaceId: string) => void;
   onCompleteThread: (threadId: string) => Promise<void>;
   onReopenThread: (threadId: string) => Promise<void>;
+  onRetryThreadCleanup: (threadId: string) => Promise<void>;
 }
 
 /** Renders a collapsible workspace row with its virtualized thread list. */
@@ -1728,6 +1807,7 @@ const ProjectNode = memo(function ProjectNode({
   onToggleLifecycleView,
   onCompleteThread,
   onReopenThread,
+  onRetryThreadCleanup,
 }: ProjectNodeProps) {
   const hasRunning = useThreadStore((s) =>
     threads.some((thread) => s.runningThreadIds.has(thread.id)),
@@ -2069,6 +2149,7 @@ const ProjectNode = memo(function ProjectNode({
             onThreadContextMenu={handleThreadContextMenu}
             onCompleteThread={onCompleteThread}
             onReopenThread={onReopenThread}
+            onRetryThreadCleanup={onRetryThreadCleanup}
           />
 
           {needsCap && !forceExpand && (
