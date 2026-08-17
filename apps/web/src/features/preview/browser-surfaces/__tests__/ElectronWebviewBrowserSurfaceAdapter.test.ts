@@ -91,9 +91,13 @@ describe("ElectronWebviewBrowserSurfaceAdapter", () => {
     expect(adapter.element.style.left).toBe("10px");
     expect(adapter.element.style.width).toBe("640px");
     expect(adapter.element.style.zIndex).toBe("42");
-    expect(adapter.element.style.clipPath).toBe("inset(0px 0px 0px 112px)");
+    expect(adapter.element.style.clipPath).toBe(
+      "inset(0px 0px 0px 112px round var(--radius-md) 0px 0px 0px)",
+    );
     adapter.present({ left: 10, top: 20, width: 640, height: 480, coveredLeft: 0 });
-    expect(adapter.element.style.clipPath).toBe("");
+    expect(adapter.element.style.clipPath).toBe(
+      "inset(0px 0px 0px 0px round var(--radius-md) 0px 0px 0px)",
+    );
     adapter.hide();
     expect(adapter.element.style.visibility).toBe("hidden");
 

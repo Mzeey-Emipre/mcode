@@ -33,7 +33,9 @@ describe("WebIframeBrowserSurfaceAdapter", () => {
     expect(adapter.element.style.left).toBe("10px");
     expect(adapter.element.style.width).toBe("640px");
     expect(adapter.element.style.zIndex).toBe("42");
-    expect(adapter.element.style.clipPath).toBe("inset(0px 0px 0px 112px)");
+    expect(adapter.element.style.clipPath).toBe(
+      "inset(0px 0px 0px 112px round var(--radius-md) 0px 0px 0px)",
+    );
     adapter.dispose();
     expect(document.body.contains(adapter.element)).toBe(false);
   });

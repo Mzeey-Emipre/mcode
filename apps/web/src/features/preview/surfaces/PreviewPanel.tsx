@@ -3046,7 +3046,10 @@ export function PreviewPanel({
       data-testid="preview-panel"
       className="flex h-full min-h-0 min-w-0 flex-1 basis-0 flex-col overflow-hidden"
     >
-      <div className={cn(showWebviewPreview && "relative z-20")}>
+      <div
+        className={cn(showWebviewPreview && "relative z-20")}
+        style={coveredLeft ? { clipPath: `inset(0 0 0 ${coveredLeft}px)` } : undefined}
+      >
         {showAnnotationCommandBar ? (
           <PreviewAnnotationHeader
             pageCount={pageAnnotations.length}

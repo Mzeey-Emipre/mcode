@@ -863,6 +863,14 @@ describe("PreviewPanel: full panel state", () => {
     );
   });
 
+  it("clips the Browser chrome around the expanded activity rail", () => {
+    render(<PreviewPanel threadId="thread-1" coveredLeft={112} />);
+
+    expect(screen.getByTestId("browser-header").parentElement).toHaveStyle({
+      clipPath: "inset(0 0 0 112px)",
+    });
+  });
+
   it("mounts a blank Electron surface for a new page", async () => {
     mockUsePreviewTabs.mockReturnValue({
       tabSet: {
