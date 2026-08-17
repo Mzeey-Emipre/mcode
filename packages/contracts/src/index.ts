@@ -1087,6 +1087,7 @@ export {
   TERMINAL_MIN_SCROLLBACK_LINES,
   TERMINAL_MAX_SCROLLBACK_LINES,
   TERMINAL_DEFAULT_SCROLLBACK_LINES,
+  TERMINAL_DEFAULT_FONT_FAMILY,
   TerminalPresentationSettingsSchema,
   TerminalBehaviorSettingsSchema,
   TerminalAccessibilitySettingsSchema,

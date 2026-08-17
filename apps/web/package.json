@@ -20,6 +20,7 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@fontsource-variable/geist": "^5.2.8",
+    "@fontsource-variable/jetbrains-mono": "^5.3.0",
     "@lexical/react": "^0.42.0",
     "@mcode/contracts": "workspace:*",
     "@mcode/shared": "workspace:*",

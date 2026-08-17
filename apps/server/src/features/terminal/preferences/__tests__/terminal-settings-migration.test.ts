@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getDefaultSettings } from "@mcode/contracts";
+import { getDefaultSettings, TERMINAL_DEFAULT_FONT_FAMILY } from "@mcode/contracts";
 import {
   migrateTerminalSettingsDocument,
   type TerminalSettingsMigrationResult,
@@ -61,6 +61,71 @@ describe("Terminal settings migration", () => {
 
     const second = migrateTerminalSettingsDocument(migrated);
     expect(second).toEqual({ status: "current", document: migrated });
+  });
+
+  it("repairs the legacy current default without changing other terminal settings", () => {
+    const defaults = getDefaultSettings();
+    const legacy = {
+      ...defaults,
+      terminal: {
+        ...defaults.terminal,
+        presentation: {
+          ...defaults.terminal.presentation,
+          fontFamily: "mcodeMono",
+          fontSize: "xl",
+          lineHeight: "relaxed",
+          cursorStyle: "bar",
+          cursorBlink: true,
+          ligatures: true,
+        },
+        behavior: {
+          ...defaults.terminal.behavior,
+          scrollback: 2_500,
+          sessionLimit: 5,
+          confirmOnKill: "always",
+          copyOnSelect: true,
+          confirmMultilinePaste: false,
+        },
+        accessibility: { screenReaderMode: "on" },
+      },
+    };
+
+    const first = migrateTerminalSettingsDocument(legacy);
+
+    expect(first.status).toBe("migrated");
+    const migrated = currentDocument(first);
+    expect(migrated).toEqual({
+      ...legacy,
+      terminal: {
+        ...legacy.terminal,
+        presentation: {
+          ...legacy.terminal.presentation,
+          fontFamily: TERMINAL_DEFAULT_FONT_FAMILY,
+        },
+      },
+    });
+
+    const second = migrateTerminalSettingsDocument(migrated);
+    expect(second).toEqual({ status: "current", document: migrated });
+  });
+
+  it("keeps a custom terminal font family unchanged", () => {
+    const defaults = getDefaultSettings();
+    const document = {
+      ...defaults,
+      terminal: {
+        ...defaults.terminal,
+        presentation: {
+          ...defaults.terminal.presentation,
+          fontFamily: "mcodeMono, Consolas, monospace",
+        },
+      },
+    };
+
+    expect(migrateTerminalSettingsDocument(document)).toEqual({
+      status: "current",
+      document,
+    });
   });
 
   it("blocks malformed and unsupported future documents without changing them", () => {

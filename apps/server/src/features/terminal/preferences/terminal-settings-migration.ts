@@ -1,12 +1,15 @@
 import {
   PartialSettingsSchema,
   SettingsSchema,
+  TERMINAL_DEFAULT_FONT_FAMILY,
   TERMINAL_SETTINGS_SCHEMA_VERSION,
   getDefaultSettings,
   migrateLegacyTerminalScrollback,
   type Settings,
 } from "@mcode/contracts";
 import { z } from "zod";
+
+const LEGACY_TERMINAL_DEFAULT_FONT_FAMILY = "mcodeMono";
 
 const legacyFlowControlSchema = z
   .object({
@@ -52,15 +55,31 @@ export function migrateTerminalSettingsDocument(value: unknown): TerminalSetting
       return { status: "blocked", reason: "future-version", original: value };
     }
     const current = SettingsSchema().safeParse(value);
-    return current.success
-      ? { status: "current", document: current.data }
-      : {
-          status: "blocked",
-          reason: hasMissingCustomProfileReference(value)
-            ? "missing-profile-reference"
-            : "malformed",
-          original: value,
-        };
+    if (!current.success) {
+      return {
+        status: "blocked",
+        reason: hasMissingCustomProfileReference(value)
+          ? "missing-profile-reference"
+          : "malformed",
+        original: value,
+      };
+    }
+    if (current.data.terminal.presentation.fontFamily !== LEGACY_TERMINAL_DEFAULT_FONT_FAMILY) {
+      return { status: "current", document: current.data };
+    }
+    return {
+      status: "migrated",
+      document: {
+        ...current.data,
+        terminal: {
+          ...current.data.terminal,
+          presentation: {
+            ...current.data.terminal.presentation,
+            fontFamily: TERMINAL_DEFAULT_FONT_FAMILY,
+          },
+        },
+      },
+    };
   }
 
   const legacyTerminal = legacyTerminalSchema.safeParse(value.terminal ?? {});

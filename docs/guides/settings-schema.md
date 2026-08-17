@@ -139,7 +139,7 @@ When adding a new setting, ask these questions in order:
     "defaultProfileId": "automatic",
     "profiles": [],
     "presentation": {
-      "fontFamily": "mcodeMono",
+      "fontFamily": "\"JetBrains Mono Variable\", \"JetBrains Mono\", \"SF Mono\", \"Cascadia Code\", \"Consolas\", monospace",
       "fontSize": "sm",
       "lineHeight": "normal",
       "cursorStyle": "block",
