@@ -127,8 +127,8 @@ export class WebIframeBrowserSurfaceAdapter implements BrowserSurfaceAdapter {
       ? `inset(0px 0px 0px ${presentation.coveredLeft}px)`
       : "";
     this.frame.style.visibility = "visible";
-    this.frame.style.pointerEvents = "auto";
-    this.frame.setAttribute("aria-hidden", "false");
+    this.frame.style.pointerEvents = presentation.inputEnabled === false ? "none" : "auto";
+    this.frame.setAttribute("aria-hidden", presentation.accessible === false ? "true" : "false");
   }
 
   /** Hides the iframe without replacing its document. */

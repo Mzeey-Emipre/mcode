@@ -124,6 +124,22 @@ describe("ElectronWebviewBrowserSurfaceAdapter", () => {
     expect(() => adapter.element.dispatchEvent(new Event("did-navigate"))).not.toThrow();
   });
 
+  it("applies explicit input and accessibility state", () => {
+    const adapter = new ElectronWebviewBrowserSurfaceAdapter(IDENTITY, 8, {
+      root: document.body,
+      bridge: bridge(),
+    });
+
+    adapter.present({ left: 0, top: 0, width: 640, height: 480, inputEnabled: false, accessible: false });
+    expect(adapter.element.style.pointerEvents).toBe("none");
+    expect(adapter.element).toHaveAttribute("aria-hidden", "true");
+
+    adapter.present({ left: 0, top: 0, width: 640, height: 480, inputEnabled: true, accessible: true });
+    expect(adapter.element.style.pointerEvents).toBe("auto");
+    expect(adapter.element).toHaveAttribute("aria-hidden", "false");
+    adapter.dispose();
+  });
+
   it("publishes renderer history state after address, history, and in-page commits", () => {
     const adapter = new ElectronWebviewBrowserSurfaceAdapter(IDENTITY, 4, {
       root: document.body,

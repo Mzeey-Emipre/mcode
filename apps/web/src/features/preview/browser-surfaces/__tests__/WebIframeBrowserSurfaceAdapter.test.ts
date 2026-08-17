@@ -38,6 +38,19 @@ describe("WebIframeBrowserSurfaceAdapter", () => {
     expect(document.body.contains(adapter.element)).toBe(false);
   });
 
+  it("applies explicit input and accessibility state", () => {
+    const adapter = new WebIframeBrowserSurfaceAdapter(IDENTITY, 2, { root: document.body });
+
+    adapter.present({ left: 0, top: 0, width: 640, height: 480, inputEnabled: false, accessible: false });
+    expect(adapter.element.style.pointerEvents).toBe("none");
+    expect(adapter.element).toHaveAttribute("aria-hidden", "true");
+
+    adapter.present({ left: 0, top: 0, width: 640, height: 480, inputEnabled: true, accessible: true });
+    expect(adapter.element.style.pointerEvents).toBe("auto");
+    expect(adapter.element).toHaveAttribute("aria-hidden", "false");
+    adapter.dispose();
+  });
+
   it("reports cross-origin observation as unknown and history as null", () => {
     const adapter = new WebIframeBrowserSurfaceAdapter(IDENTITY, 1, { root: document.body });
     const events: string[] = [];

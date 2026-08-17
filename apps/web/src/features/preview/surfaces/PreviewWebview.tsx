@@ -16,7 +16,14 @@ import {
   browserAutomationTargetKey,
   useBrowserAutomationStore,
 } from "../automation/browserAutomationStore";
-import { browserSurfaceHost } from "./BrowserSurfaceHostRoot";
+import {
+  browserSurfaceHost,
+  browserSurfacePresentationCoordinator,
+} from "./BrowserSurfaceHostRoot";
+import type {
+  BrowserSurfacePresentationRegistration,
+  BrowserSurfacePresentationSource,
+} from "./BrowserSurfacePresentationCoordinator";
 import { DEFAULT_VIEWPORT_SIZE } from "../automation/services/viewportCoordinator";
 import {
   getOrCreateViewportCoordinator,
@@ -33,7 +40,11 @@ export interface PreviewWebviewProps {
   readonly className?: string;
   /** Keep an off-screen automation surface presented inside its dedicated inert host. */
   readonly allowHiddenPresentation?: boolean;
-  /** Width covered by floating panel chrome at the left edge. */
+  /** Whether this mounted surface currently owns the visible panel presentation. */
+  readonly presentationActive?: boolean;
+  /** Renderer path that owns this surface's presentation intent. */
+  readonly presentationSource?: BrowserSurfacePresentationSource;
+  /** Optional explicit overlap retained for focused renderer coverage. */
   readonly coveredLeft?: number;
   readonly viewport?: { readonly width: number; readonly height: number };
   readonly onPageStatus?: (status: PreviewPageStatus) => void;
@@ -98,7 +109,9 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       src,
       className,
       allowHiddenPresentation = false,
-      coveredLeft = 0,
+      presentationActive = true,
+      presentationSource = "panel",
+      coveredLeft,
       viewport,
       onPageStatus,
       onNavigationStateChange,
@@ -106,6 +119,23 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
     forwardedRef,
   ) {
     const placementRef = useRef<HTMLDivElement | null>(null);
+    const presentationRegistrationRef = useRef<BrowserSurfacePresentationRegistration | null>(null);
+    const presentationIntentRef = useRef({
+      active,
+      allowHiddenPresentation,
+      coveredLeft,
+      presentationActive,
+      presentationSource,
+      viewport,
+    });
+    presentationIntentRef.current = {
+      active,
+      allowHiddenPresentation,
+      coveredLeft,
+      presentationActive,
+      presentationSource,
+      viewport,
+    };
     const stateRef = useRef<BrowserSurfacePageState | null>(null);
     const initialAddressRef = useRef(supportedInitialAddress(src));
     const callbacksRef = useRef({ onPageStatus, onNavigationStateChange });
@@ -116,6 +146,22 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       tabId,
     }), [tabId, threadId, workspaceId]);
     const initialViewportRef = useRef(viewport ?? DEFAULT_VIEWPORT_SIZE);
+    const publishPresentation = useCallback((pageState: BrowserSurfacePageState | null): void => {
+      const current = presentationIntentRef.current;
+      const placement = placementRef.current;
+      const activePresentation = current.allowHiddenPresentation ||
+        (current.active && current.presentationActive);
+      browserSurfacePresentationCoordinator.publish(identity, {
+        source: current.presentationSource,
+        active: activePresentation && (current.allowHiddenPresentation || !placement?.closest("[inert], [aria-hidden='true']")),
+        anchor: placement,
+        pageState,
+        viewport: current.viewport,
+        ...(current.coveredLeft === undefined ? {} : { coveredLeft: current.coveredLeft }),
+        inputEnabled: current.presentationSource === "panel",
+        accessible: current.presentationSource === "panel",
+      }, presentationRegistrationRef.current?.token);
+    }, [identity]);
 
     const ensureViewportCoordinator = useCallback((targetGeneration: number) => {
       const key = browserAutomationTargetKey(workspaceId, threadId, tabId);
@@ -230,8 +276,13 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       const initial = browserSurfaceHost.ensure(identity, {
         address: initialAddressRef.current,
       });
+      const registration = placementRef.current
+        ? browserSurfacePresentationCoordinator.registerAnchor(identity, presentationSource, placementRef.current)
+        : null;
+      presentationRegistrationRef.current = registration;
       stateRef.current = initial;
       callbacksRef.current.onPageStatus?.(previewStatus(initial));
+      publishPresentation(initial);
       const unsubscribe = browserSurfaceHost.subscribe(identity, (state) => {
         stateRef.current = state;
         callbacksRef.current.onPageStatus?.(previewStatus(state));
@@ -239,12 +290,16 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
           canGoBack: false,
           canGoForward: false,
         });
+        publishPresentation(state);
       });
       return () => {
         unsubscribe();
-        browserSurfaceHost.hide(identity);
+        if (presentationRegistrationRef.current === registration) {
+          registration?.release();
+          presentationRegistrationRef.current = null;
+        }
       };
-    }, [ensureViewportCoordinator, identity, tabId, threadId, workspaceId]);
+    }, [ensureViewportCoordinator, identity, presentationSource, publishPresentation, tabId, threadId, workspaceId]);
 
     useEffect(() => {
       const address = supportedInitialAddress(src);
@@ -257,31 +312,8 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
     useLayoutEffect(() => {
       const placement = placementRef.current;
       if (!placement) return;
-      if (!active) {
-        browserSurfaceHost.hide(identity);
-        return;
-      }
       const update = (): void => {
-        const bounds = placement.getBoundingClientRect();
-        if (
-          bounds.width <= 0 ||
-          bounds.height <= 0 ||
-          (!allowHiddenPresentation && placement.closest("[inert], [aria-hidden='true']"))
-        ) {
-          browserSurfaceHost.hide(identity);
-          return;
-        }
-        const intrinsicWidth = viewport?.width ?? bounds.width;
-        const intrinsicHeight = viewport?.height ?? bounds.height;
-        browserSurfaceHost.present(identity, {
-          left: bounds.left,
-          top: bounds.top,
-          width: intrinsicWidth,
-          height: intrinsicHeight,
-          scale: viewport ? Math.min(bounds.width / intrinsicWidth, bounds.height / intrinsicHeight) : 1,
-          zIndex: 31,
-          coveredLeft,
-        });
+        publishPresentation(stateRef.current);
       };
       const observer = typeof ResizeObserver === "function" ? new ResizeObserver(update) : null;
       observer?.observe(placement);
@@ -290,9 +322,8 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
       return () => {
         observer?.disconnect();
         window.removeEventListener("resize", update);
-        browserSurfaceHost.hide(identity);
       };
-    }, [active, allowHiddenPresentation, coveredLeft, identity, viewport]);
+    }, [active, allowHiddenPresentation, coveredLeft, identity, presentationActive, presentationSource, publishPresentation, viewport]);
 
     return (
       <div
@@ -308,6 +339,7 @@ export const PreviewWebview = forwardRef<PreviewWebviewHandle, PreviewWebviewPro
           height: viewport?.height ?? "100%",
           minWidth: 0,
           minHeight: 0,
+          pointerEvents: "none",
         }}
       />
     );

@@ -9,7 +9,10 @@ import {
   useBrowserAutomationStore,
 } from "../../automation/browserAutomationStore";
 import { PreviewWebview, type PreviewWebviewHandle } from "../PreviewWebview";
-import { browserSurfaceHost } from "../BrowserSurfaceHostRoot";
+import {
+  browserSurfaceHost,
+  browserSurfacePresentationCoordinator,
+} from "../BrowserSurfaceHostRoot";
 
 describe("PreviewWebview", () => {
   beforeEach(() => {
@@ -18,6 +21,8 @@ describe("PreviewWebview", () => {
   });
 
   afterEach(() => {
+    browserSurfacePresentationCoordinator.setActivityRailOverlap(0);
+    browserSurfacePresentationCoordinator.dispose();
     browserSurfaceHost.disposeAll();
     delete window.desktopBridge;
   });
@@ -229,7 +234,20 @@ describe("PreviewWebview", () => {
     expect(screen.getByTestId("preview-webview")).toHaveStyle({
       width: "1024px",
       height: "768px",
+      pointerEvents: "none",
     });
+  });
+
+  it("keeps the transparent renderer anchor out of Browser hit testing", () => {
+    render(
+      <PreviewWebview
+        threadId="thread-hit-test"
+        tabId="tab-hit-test"
+        src="https://example.com"
+      />,
+    );
+
+    expect(screen.getByTestId("preview-webview")).toHaveStyle({ pointerEvents: "none" });
   });
 
   it("hides a warm inactive surface and presents it when selected", () => {
@@ -332,6 +350,139 @@ describe("PreviewWebview", () => {
       height: "720px",
       visibility: "visible",
     });
+    rect.mockRestore();
+  });
+
+  it("hides and restores a warm normal presentation without replacing its generation", async () => {
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(10, 20, 640, 480),
+    );
+    const props = {
+      active: true,
+      presentationActive: true,
+      workspaceId: "workspace-warm",
+      threadId: "thread-warm",
+      tabId: "tab-warm",
+      src: "https://example.com",
+      viewport: { width: 1280, height: 720 },
+    } as const;
+    const { rerender } = render(<PreviewWebview {...props} />);
+    const surface = screen.getByTestId("web-runtime-preview-iframe");
+    const identity = {
+      workspaceId: props.workspaceId,
+      scope: { kind: "thread" as const, id: props.threadId },
+      tabId: props.tabId,
+    };
+    const generation = browserSurfaceHost.getSnapshot(identity)?.generation;
+    expect(surface).toHaveStyle({ visibility: "visible", pointerEvents: "auto" });
+    expect(surface).toHaveAttribute("aria-hidden", "false");
+
+    rerender(
+      <PreviewWebview
+        {...props}
+        presentationActive={false}
+        viewport={{ width: 640, height: 360 }}
+      />
+    );
+    expect(surface).toHaveStyle({ visibility: "hidden", pointerEvents: "none" });
+    expect(surface).toHaveAttribute("aria-hidden", "true");
+    expect(browserSurfaceHost.getSnapshot(identity)?.generation).toBe(generation);
+
+    browserSurfaceHost.handleEvent({
+      type: "title-updated",
+      identity,
+      generation: generation!,
+      title: "Updated while hidden",
+    });
+    await waitFor(() => expect(surface).toHaveStyle({ visibility: "hidden" }));
+
+    rerender(
+      <PreviewWebview
+        {...props}
+        presentationActive
+        viewport={{ width: 640, height: 360 }}
+      />
+    );
+    expect(surface).toHaveStyle({
+      visibility: "visible",
+      pointerEvents: "auto",
+      width: "640px",
+      height: "360px",
+    });
+    expect(surface).toHaveAttribute("aria-hidden", "false");
+    expect(browserSurfaceHost.getSnapshot(identity)?.generation).toBe(generation);
+
+    browserSurfaceHost.handleEvent({
+      type: "title-updated",
+      identity,
+      generation: generation!,
+      title: "Updated after restore",
+    });
+    await waitFor(() => expect(surface).toHaveStyle({ width: "640px", height: "360px" }));
+    rect.mockRestore();
+  });
+
+  it("hides a zero-layout active panel while retaining its warm generation", () => {
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 0, 0),
+    );
+    render(
+      <PreviewWebview
+        workspaceId="workspace-zero"
+        threadId="thread-zero"
+        tabId="tab-zero"
+        src="https://example.com"
+      />,
+    );
+    const surface = screen.getByTestId("web-runtime-preview-iframe");
+    const snapshot = browserSurfaceHost.getSnapshot({
+      workspaceId: "workspace-zero",
+      scope: { kind: "thread", id: "thread-zero" },
+      tabId: "tab-zero",
+    });
+
+    expect(snapshot?.generation).toBeDefined();
+    expect(surface).toHaveStyle({ visibility: "hidden", pointerEvents: "none" });
+    expect(surface).toHaveAttribute("aria-hidden", "true");
+    rect.mockRestore();
+  });
+
+  it("uses the coordinator Activity Rail overlap when automation has no explicit override", () => {
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(10, 20, 640, 480),
+    );
+    window.desktopBridge = {
+      preview: {
+        surface: {
+          prepare: vi.fn().mockResolvedValue({ ok: true }),
+          adopt: vi.fn().mockResolvedValue({ ok: true }),
+          navigate: vi.fn().mockResolvedValue({ ok: true }),
+          release: vi.fn().mockResolvedValue({ ok: true }),
+        },
+      },
+    } as unknown as NonNullable<typeof window.desktopBridge>;
+
+    render(
+      <PreviewWebview
+        presentationSource="automation"
+        workspaceId="workspace-rail"
+        threadId="thread-rail"
+        tabId="tab-rail"
+        src="https://example.com"
+      />,
+    );
+    const anchor = screen.getByTestId("preview-webview");
+    const releaseAnchor = browserSurfacePresentationCoordinator.registerAutomationAnchor(
+      "workspace-rail",
+      "thread-rail",
+      anchor,
+    );
+    browserSurfacePresentationCoordinator.setActivityRailOverlap(112);
+
+    expect(screen.getByTestId("electron-browser-surface-webview")).toHaveStyle({
+      clipPath: "inset(0px 0px 0px 112px)",
+    });
+    releaseAnchor();
     rect.mockRestore();
   });
 });

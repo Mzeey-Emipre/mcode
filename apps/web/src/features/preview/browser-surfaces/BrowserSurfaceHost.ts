@@ -102,6 +102,10 @@ export interface BrowserSurfacePresentation {
   readonly zIndex?: number;
   /** Width hidden at the left edge while the full Browser viewport remains unchanged. */
   readonly coveredLeft?: number;
+  /** Whether the detached surface accepts pointer and keyboard input. */
+  readonly inputEnabled?: boolean;
+  /** Whether the detached surface is exposed to the accessibility tree. */
+  readonly accessible?: boolean;
 }
 
 /** Factory that creates the adapter for one complete identity and generation. */
@@ -248,6 +252,12 @@ function boundPresentation(presentation: BrowserSurfacePresentation): BrowserSur
     ...(presentation.coveredLeft === undefined
       ? {}
       : { coveredLeft: boundedNumber(presentation.coveredLeft, 0, 0, width) }),
+    ...(presentation.inputEnabled === undefined
+      ? {}
+      : { inputEnabled: presentation.inputEnabled }),
+    ...(presentation.accessible === undefined
+      ? {}
+      : { accessible: presentation.accessible }),
   };
 }
 

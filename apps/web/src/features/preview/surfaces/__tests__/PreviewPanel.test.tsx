@@ -326,6 +326,9 @@ describe("PreviewPanel: unavailable state", () => {
 
   it("publishes the web preview target identity used by the executor", async () => {
     vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(10, 20, 640, 480),
+    );
     useDiffStore.setState({ previewUrlByThread: { "thread-1": window.location.origin + "/fixture" } });
     render(<PreviewPanel threadId="thread-1" workspaceId="workspace-1" />);
     const iframe = screen.getByTestId("web-runtime-preview-iframe");
@@ -383,6 +386,7 @@ describe("PreviewPanel: unavailable state", () => {
       },
     } satisfies BrowserAutomationHostDispatch, new AbortController().signal);
     expect(result).toMatchObject({ ok: true, result: { operation: "snapshot" } });
+    rect.mockRestore();
   });
 
   it("switches thread presentation without replacing the prior warm iframe", () => {
@@ -469,6 +473,36 @@ describe("PreviewPanel: unavailable state", () => {
       expect(iframe).toHaveAttribute("aria-hidden", "true");
       expect(iframe).toHaveStyle({ visibility: "hidden" });
     });
+  });
+
+  it("hides and restores a warm web runtime panel from explicit presentation visibility", async () => {
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(10, 20, 640, 480),
+    );
+    const view = render(
+      <PreviewPanel threadId="thread-1" workspaceId="workspace-1" presentationActive />,
+    );
+    const iframe = screen.getByTestId("web-runtime-preview-iframe");
+    expect(iframe).toHaveStyle({ visibility: "visible", pointerEvents: "auto" });
+    expect(iframe).toHaveAttribute("aria-hidden", "false");
+
+    view.rerender(
+      <PreviewPanel threadId="thread-1" workspaceId="workspace-1" presentationActive={false} />,
+    );
+    await waitFor(() => {
+      expect(iframe).toHaveStyle({ visibility: "hidden", pointerEvents: "none" });
+      expect(iframe).toHaveAttribute("aria-hidden", "true");
+    });
+
+    view.rerender(
+      <PreviewPanel threadId="thread-1" workspaceId="workspace-1" presentationActive />,
+    );
+    await waitFor(() => {
+      expect(iframe).toHaveStyle({ visibility: "visible", pointerEvents: "auto" });
+      expect(iframe).toHaveAttribute("aria-hidden", "false");
+    });
+    rect.mockRestore();
   });
 
   it("keeps the responsive toolbar available through the web Browser overflow menu", async () => {

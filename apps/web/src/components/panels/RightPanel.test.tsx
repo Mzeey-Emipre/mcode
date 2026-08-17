@@ -123,7 +123,11 @@ import { createRightPanelState, useDiffStore } from "@/stores/diffStore";
 import { useTerminalStore } from "@/features/terminal/state/terminalStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
-import { browserAutomationScopeKey, useBrowserAutomationStore } from "@/features/preview";
+import {
+  browserAutomationScopeKey,
+  browserSurfacePresentationCoordinator,
+  useBrowserAutomationStore,
+} from "@/features/preview";
 
 describe("RightPanel", () => {
   beforeEach(() => {
@@ -504,10 +508,7 @@ describe("RightPanel", () => {
 
     fireEvent.click(screen.getByTestId("expand-activity-rail"));
 
-    expect(screen.getByTestId("preview-panel")).toHaveAttribute(
-      "data-covered-left",
-      "112",
-    );
+    expect(browserSurfacePresentationCoordinator.getActivityRailOverlap()).toBe(112);
   });
 
   it("publishes the covered edge on the automation Browser dock", async () => {
@@ -539,14 +540,14 @@ describe("RightPanel", () => {
     });
 
     render(<RightPanel />);
-    await waitFor(() => expect(document.querySelector("[data-automation-preview-dock]")).not.toBeNull());
-    const dock = document.querySelector<HTMLElement>("[data-automation-preview-dock]");
+    await waitFor(() => expect(screen.queryByTestId("automation-preview-dock")).not.toBeNull());
+    const dock = screen.getByTestId("automation-preview-dock");
     expect(dock).not.toBeNull();
-    expect(dock).toHaveAttribute("data-covered-left", "0");
+    expect(browserSurfacePresentationCoordinator.getActivityRailOverlap()).toBe(0);
 
     fireEvent.click(screen.getByTestId("expand-activity-rail"));
 
-    await waitFor(() => expect(dock).toHaveAttribute("data-covered-left", "112"));
+    await waitFor(() => expect(browserSurfacePresentationCoordinator.getActivityRailOverlap()).toBe(112));
   });
 
   it("does not render the active Browser surface for another scope's request", () => {
