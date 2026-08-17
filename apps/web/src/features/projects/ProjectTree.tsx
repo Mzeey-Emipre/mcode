@@ -2002,13 +2002,7 @@ const ProjectNode = memo(function ProjectNode({
                 className="h-auto min-w-0 flex-1 shrink justify-start rounded-sm p-0 text-left hover:bg-transparent dark:hover:bg-transparent"
               >
                 <span
-                  className="min-w-0 flex-1 overflow-hidden whitespace-nowrap font-medium tracking-tight"
-                  style={{
-                    maskImage:
-                      "linear-gradient(to right, black calc(100% - 1.5rem), transparent)",
-                    WebkitMaskImage:
-                      "linear-gradient(to right, black calc(100% - 1.5rem), transparent)",
-                  }}
+                  className="min-w-0 flex-1 overflow-hidden whitespace-nowrap font-medium tracking-tight group-hover/ws:[mask-image:linear-gradient(to_right,black_calc(100%_-_1.5rem),transparent)] group-focus-within/ws:[mask-image:linear-gradient(to_right,black_calc(100%_-_1.5rem),transparent)] group-hover/ws:[-webkit-mask-image:linear-gradient(to_right,black_calc(100%_-_1.5rem),transparent)] group-focus-within/ws:[-webkit-mask-image:linear-gradient(to_right,black_calc(100%_-_1.5rem),transparent)]"
                 >
                   {workspace.name}
                 </span>
