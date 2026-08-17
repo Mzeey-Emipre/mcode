@@ -1,6 +1,35 @@
 import { render, screen, act, fireEvent, within } from "@testing-library/react";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { useLayoutEffect, useState } from "react";
 import type { Thread } from "@/transport/types";
+
+const sortableMockState = vi.hoisted(() => ({
+  transform: null as {
+    x: number;
+    y: number;
+    scaleX: number;
+    scaleY: number;
+  } | null,
+  isDragging: false,
+}));
+
+vi.mock("@dnd-kit/sortable", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@dnd-kit/sortable")>();
+  return {
+    ...actual,
+    useSortable: (
+      options: Parameters<typeof actual.useSortable>[0],
+    ) => {
+      const sortable = actual.useSortable(options);
+      if (!sortableMockState.transform) return sortable;
+      return {
+        ...sortable,
+        transform: sortableMockState.transform,
+        isDragging: sortableMockState.isDragging,
+      };
+    },
+  };
+});
 
 // VirtualizedThreadList is not exported, so we exercise double-click behaviour
 // through the exported ProjectTree. Stores and the virtualizer are mocked so
@@ -103,25 +132,52 @@ vi.mock("@tanstack/react-virtual", () => ({
   useVirtualizer: ({
     count,
     getItemKey,
+    getScrollElement,
+    initialOffset,
   }: {
     count: number;
     getItemKey?: (index: number) => string | number;
-  }) => ({
-    getTotalSize: () => count * 32,
-    getVirtualItems: () => {
-      const keys = Array.from({ length: count }, (_, i) =>
-        getItemKey ? getItemKey(i) : i,
-      );
-      virtualizerKeyHistory.push(keys);
-      return keys.map((key, i) => ({
-        index: i,
-        start: i * 32,
-        size: 32,
-        key,
-      }));
-    },
-  }),
+    getScrollElement?: () => HTMLElement | null;
+    initialOffset?: number | (() => number);
+  }) => {
+    const [hasMounted, setHasMounted] = useState(false);
+    // TanStack resolves the initial offset when it attaches to a scroll
+    // element. A follow-up render models the nested virtualizer update that
+    // can happen after the parent restores its pending scroll position.
+    useLayoutEffect(() => {
+      const scrollElement = getScrollElement?.();
+      if (!scrollElement) return;
+
+      const offset =
+        typeof initialOffset === "function"
+          ? initialOffset()
+          : (initialOffset ?? 0);
+      scrollElement.scrollTop = offset;
+      if (!hasMounted) setHasMounted(true);
+    });
+
+    return {
+      getTotalSize: () => count * 32,
+      getVirtualItems: () => {
+        const keys = Array.from({ length: count }, (_, i) =>
+          getItemKey ? getItemKey(i) : i,
+        );
+        virtualizerKeyHistory.push(keys);
+        return keys.map((key, i) => ({
+          index: i,
+          start: i * 32,
+          size: 32,
+          key,
+        }));
+      },
+    };
+  },
 }));
+
+afterEach(() => {
+  sortableMockState.transform = null;
+  sortableMockState.isDragging = false;
+});
 
 // Import after mocks are registered.
 import { useWorkspaceStore } from "../state/workspaceStore";
@@ -625,6 +681,46 @@ describe("ProjectTree thread interactions", () => {
     ).toHaveAttribute("aria-expanded", "true");
 
     fireEvent.keyDown(projectRow, { key: " " });
+  });
+
+  it("applies only translation while a project is dragged", () => {
+    sortableMockState.transform = { x: 12, y: 34, scaleX: 1.5, scaleY: 0.5 };
+    sortableMockState.isDragging = true;
+
+    setupStoreMocks();
+    render(<ProjectTree />);
+
+    const shell = screen.getByTestId("project-row-ws-1").parentElement
+      ?.parentElement;
+    expect(shell).not.toBeNull();
+    expect(shell).toHaveStyle({ transform: "translate3d(12px, 34px, 0)" });
+  });
+
+  it("restores the project viewport across repeated disclosure cycles", () => {
+    localStorage.setItem(
+      "mcode-expanded-projects",
+      JSON.stringify({ "ws-1": false }),
+    );
+    setupStoreMocks();
+    render(<ProjectTree />);
+
+    const viewport = document.querySelector<HTMLElement>(
+      '[data-slot="scroll-area-viewport"]',
+    );
+    expect(viewport).not.toBeNull();
+    viewport!.scrollTop = 240;
+
+    const disclosure = () =>
+      screen.getByRole("button", { name: "Toggle threads for Test Project" });
+
+    fireEvent.click(disclosure());
+    expect(viewport).toHaveProperty("scrollTop", 240);
+
+    fireEvent.click(disclosure());
+    expect(viewport).toHaveProperty("scrollTop", 240);
+
+    fireEvent.click(disclosure());
+    expect(viewport).toHaveProperty("scrollTop", 240);
   });
 
   it("reveals project actions when the project row is hovered or focused", () => {

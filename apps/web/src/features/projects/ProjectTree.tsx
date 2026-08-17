@@ -333,6 +333,9 @@ export function ProjectTree() {
     setThreadListExpanded(threadListExpanded);
   }, [threadListExpanded]);
 
+  const scrollViewportRef = useRef<HTMLDivElement>(null);
+  const pendingScrollTopRef = useRef<number | null>(null);
+
   const checksById = useWorkspaceStore(useShallow((s) => s.checksById));
 
   const toggleThreadList = useCallback((wsId: string) => {
@@ -391,6 +394,7 @@ export function ProjectTree() {
 
   const toggleExpand = useCallback(
     (wsId: string) => {
+      pendingScrollTopRef.current = scrollViewportRef.current?.scrollTop ?? null;
       setExpanded((prev) => {
         const isExpanding = !prev[wsId];
         const next = { ...prev, [wsId]: isExpanding };
@@ -558,7 +562,15 @@ export function ProjectTree() {
     setActiveDragId(null);
   }, []);
 
-  const scrollViewportRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const previousScrollTop = pendingScrollTopRef.current;
+    if (previousScrollTop === null) return;
+
+    pendingScrollTopRef.current = null;
+    if (scrollViewportRef.current) {
+      scrollViewportRef.current.scrollTop = previousScrollTop;
+    }
+  }, [expanded]);
 
   /**
    * Only the project list viewport may autoscroll during drag so outer sidebar
@@ -1584,6 +1596,7 @@ function VirtualizedThreadList({
     count: treeItems.length,
     getItemKey: (index) => treeItems[index].thread.id,
     getScrollElement: () => scrollElementRef.current,
+    initialOffset: () => scrollElementRef.current?.scrollTop ?? 0,
     estimateSize: () => 32,
     overscan: 5,
     scrollMargin,
@@ -2087,7 +2100,7 @@ const SortableProjectShell = memo(function SortableProjectShell(
     id: sortableId,
   });
   const style: CSSProperties = {
-    transform: CSS.Transform.toString(transform),
+    transform: transform ? CSS.Translate.toString(transform) : undefined,
     transition,
     ...(isDragging ? { opacity: 0.92, zIndex: 2 } : {}),
   };
