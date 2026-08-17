@@ -414,6 +414,24 @@ const terminalV1SessionMethods = (): Record<TerminalV1WsMethodName, { params: z.
   } satisfies Record<string, { params: z.ZodTypeAny; result: z.ZodTypeAny }>;
 };
 
+type ThreadCleanupWsMethodName = "thread.cleanupBlockedCount" | "thread.retryCleanup";
+
+const threadCleanupLifecycleMethods = (): Record<
+  ThreadCleanupWsMethodName,
+  { params: z.ZodTypeAny; result: z.ZodTypeAny }
+> => ({
+  /** Return the number of completed retention candidates currently blocked. */
+  "thread.cleanupBlockedCount": {
+    params: z.object({}).strict(),
+    result: z.object({ count: z.number().int().nonnegative() }).strict(),
+  },
+  /** Requeue one blocked completed thread for retention cleanup. */
+  "thread.retryCleanup": {
+    params: z.object({ threadId: z.string() }).strict(),
+    result: ThreadSchema(),
+  },
+});
+
 /** All RPC method definitions keyed by method name with params and result schemas. */
 export const WS_METHODS = lazySchema(() => ({
   /** Registers this WebSocket as a visible-browser automation host. */
@@ -567,6 +585,7 @@ export const WS_METHODS = lazySchema(() => ({
     params: z.object({ threadId: z.string() }),
     result: ThreadSchema(),
   },
+  ...threadCleanupLifecycleMethods(),
   "thread.updateTitle": {
     params: z.object({ threadId: z.string(), title: z.string() }),
     result: z.boolean(),

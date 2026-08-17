@@ -4,19 +4,21 @@ import type { Thread } from "@mcode/contracts";
 const {
   completeThread,
   reopenThread,
+  retryThreadCleanup,
   clearScope,
   clearPreviewReferences,
   releaseBrowserScope,
 } = vi.hoisted(() => ({
   completeThread: vi.fn(),
   reopenThread: vi.fn(),
+  retryThreadCleanup: vi.fn(),
   clearScope: vi.fn().mockResolvedValue(undefined),
   clearPreviewReferences: vi.fn(),
   releaseBrowserScope: vi.fn(),
 }));
 
 vi.mock("@/transport", () => ({
-  getTransport: () => ({ completeThread, reopenThread }),
+  getTransport: () => ({ completeThread, reopenThread, retryThreadCleanup }),
 }));
 vi.mock("@/features/preview/state/previewTabsStore", () => ({
   usePreviewTabsStore: { getState: () => ({ clearScope }) },
@@ -187,5 +189,32 @@ describe("workspaceStore completion lifecycle", () => {
     expect(reopenThread).toHaveBeenCalledWith(reopened.id);
     expect(useWorkspaceStore.getState().threads[0]).toMatchObject(reopened);
     expect(clearScope).not.toHaveBeenCalled();
+  });
+
+  it("applies a queued manual cleanup retry inline", async () => {
+    const queued = makeThread({
+      user_completed_at: "2026-08-12T08:00:00.000Z",
+      scheduled_deletion_at: "2026-08-15T08:00:00.000Z",
+      cleanup_state: "queued",
+      cleanup_reason: null,
+    });
+    useWorkspaceStore.setState({
+      threads: [
+        makeThread({
+          user_completed_at: "2026-08-12T08:00:00.000Z",
+          cleanup_state: "blocked",
+          cleanup_reason: "The worktree has uncommitted changes.",
+        }),
+      ],
+    });
+    retryThreadCleanup.mockResolvedValue(queued);
+
+    await useWorkspaceStore.getState().retryThreadCleanup(queued.id);
+
+    expect(retryThreadCleanup).toHaveBeenCalledWith(queued.id);
+    expect(useWorkspaceStore.getState().threads[0]).toMatchObject({
+      cleanup_state: "queued",
+      cleanup_reason: null,
+    });
   });
 });

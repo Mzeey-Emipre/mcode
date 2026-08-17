@@ -7,7 +7,7 @@
 
 import { injectable, inject } from "tsyringe";
 import { isAbsolute, relative, resolve, sep } from "path";
-import { existsSync } from "fs";
+import { existsSync, realpathSync } from "fs";
 import type Database from "better-sqlite3";
 import { getMcodeDir, logger } from "@mcode/shared";
 import { CleanupJobRepo, MAX_CLEANUP_ATTEMPTS } from "./persistence/cleanup-job-repo.js";
@@ -23,6 +23,7 @@ import { broadcast } from "../../../application/transport/push.js";
 import { HandoffStorage } from "../../handoff/index.js";
 import { pruneStaleToolOutputArtifacts } from "@mcode/providers";
 import { ThreadControlMutationReservationService } from "../index.js";
+import { SettingsService } from "../../settings/settings-service.js";
 
 /** How often to check for due cleanup jobs (ms). */
 const POLL_INTERVAL_MS = 5_000;
@@ -71,6 +72,8 @@ export class CleanupWorker {
     @inject(HandoffStorage) private readonly handoffStorage: HandoffStorage,
     @inject(ThreadControlMutationReservationService, { isOptional: true })
     mutationReservations?: ThreadControlMutationReservationService,
+    @inject(SettingsService, { isOptional: true })
+    private readonly settingsService?: SettingsService,
   ) {
     this.mutationReservations = mutationReservations
       ?? new ThreadControlMutationReservationService();
@@ -220,10 +223,16 @@ export class CleanupWorker {
       const resolvedWt = resolve(job.worktree_path.replace(/\\/g, "/"));
       const resolvedWs = resolve(job.workspace_path.replace(/\\/g, "/"));
       const rel = relative(worktreeBase, resolvedWt);
-      const isCanonicalPath =
+      const lexicalCanonicalPath =
         rel !== ""
         && !(rel === ".." || rel.startsWith(".." + sep) || isAbsolute(rel));
-      if (job.kind === "retention" && !isCanonicalPath) {
+      const isCanonicalPath = !existsSync(resolvedWt)
+        ? lexicalCanonicalPath
+        : this.isCanonicalWorktreePath(worktreeBase, resolvedWt, lexicalCanonicalPath);
+      if (
+        job.kind === "retention"
+        && (!isCanonicalPath || retentionThread?.worktree_managed !== true)
+      ) {
         await this.teardownThreadRuntime(job.thread_id, job.id);
         await this.completeCleanupWithoutWorktree(job);
         await this.finalizeWorkspaceIfDone(job.workspace_path);
@@ -275,17 +284,6 @@ export class CleanupWorker {
         return;
       }
 
-      if (
-        job.kind === "retention"
-        && retentionThread?.checkout_state === "named"
-        && job.branch
-        && !this.shouldDeleteBranch(job)
-      ) {
-        await this.completeCleanupWithoutWorktree(job);
-        await this.finalizeWorkspaceIfDone(job.workspace_path);
-        return;
-      }
-
       // 5. Remove the canonical worktree and delete its exact thread branch when
       //    no active sibling references that branch. Rollback paths are handled
       //    separately in ThreadService.
@@ -304,6 +302,16 @@ export class CleanupWorker {
             preserveWorktreeReason = safety.reason;
             return true;
           }
+          if (job.kind === "retention" && retentionThread?.checkout_state === "named") {
+            const namedSafety = await this.gitService.assessNamedWorktreeRemoval(resolvedWt);
+            if (
+              !namedSafety.safe
+              && !(this.unsafeWorktreePolicy() === "delete" && namedSafety.reason === "dirty")
+            ) {
+              preserveWorktreeReason = namedSafety.reason;
+              return true;
+            }
+          }
           if (
             job.kind === "retention"
             && retentionThread?.checkout_state === "branchless"
@@ -313,19 +321,24 @@ export class CleanupWorker {
               resolvedWt,
               retentionThread.base_branch,
             );
-            if (!automaticSafety.safe) {
+            if (
+              !automaticSafety.safe
+              && !(
+                this.unsafeWorktreePolicy() === "delete"
+                && (automaticSafety.reason === "dirty" || automaticSafety.reason === "unique_commits")
+              )
+            ) {
               preserveWorktreeReason = automaticSafety.reason;
               return true;
             }
           }
-          const shouldDelete = job.branch ? this.shouldDeleteBranch(job) : false;
-          const removeOptions =
-            job.kind === "retention"
-            && retentionThread?.checkout_state === "named"
-            && shouldDelete
-            ? { branchName: job.branch!, worktreePath: resolvedWt }
-            : job.kind === "retention"
-            ? { deleteBranch: false, worktreePath: resolvedWt }
+          const shouldDelete = job.kind === "explicit" && job.branch
+            ? this.shouldDeleteBranch(job)
+            : false;
+          // Retention cleanup never deletes a local branch. Explicit user
+          // deletion retains its existing branch-deletion behavior.
+          const removeOptions = job.kind === "retention"
+            ? { deleteBranch: false, worktreePath: resolvedWt, managedCanonicalOnly: true }
             : (job.branch && shouldDelete)
             ? { branchName: job.branch, worktreePath: resolvedWt }
             : { deleteBranch: false, worktreePath: resolvedWt };
@@ -395,7 +408,10 @@ export class CleanupWorker {
           ? `Cleanup failed after ${MAX_CLEANUP_ATTEMPTS} attempts.`
           : "Cleanup failed. Mcode will retry.";
         const thread = failed.attempts >= MAX_CLEANUP_ATTEMPTS
-          ? this.threadRepo.blockRetentionCleanup(job.thread_id, reason)
+          ? this.db.transaction(() => {
+              this.cleanupJobRepo.delete(job.id);
+              return this.threadRepo.blockRetentionCleanup(job.thread_id, reason);
+            })()
           : this.threadRepo.retryRetentionCleanup(job.thread_id, reason);
         if (thread) broadcast("thread.lifecycleChanged", { thread });
       }
@@ -474,6 +490,33 @@ export class CleanupWorker {
         return "Mcode cannot prove that the worktree is safe to remove.";
       default:
         return "Mcode cannot prove that the worktree is safe to remove.";
+    }
+  }
+
+  /** Read the unsafe-worktree policy at execution time, defaulting safely. */
+  private unsafeWorktreePolicy(): "block" | "delete" {
+    return this.settingsService?.get().thread.completion.unsafeWorktreePolicy === "delete"
+      ? "delete"
+      : "block";
+  }
+
+  /** Resolve filesystem identities before allowing deletion under Mcode storage. */
+  private isCanonicalWorktreePath(
+    worktreeBase: string,
+    worktreePath: string,
+    lexicalCanonicalPath: boolean,
+  ): boolean {
+    if (!lexicalCanonicalPath) return false;
+    try {
+      const canonicalBase = realpathSync(worktreeBase);
+      const canonicalWorktree = realpathSync(worktreePath);
+      const relativePath = relative(canonicalBase, canonicalWorktree);
+      return relativePath !== ""
+        && relativePath !== ".."
+        && !relativePath.startsWith(".." + sep)
+        && !isAbsolute(relativePath);
+    } catch {
+      return false;
     }
   }
 

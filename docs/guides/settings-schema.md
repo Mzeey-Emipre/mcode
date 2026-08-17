@@ -168,7 +168,8 @@ When adding a new setting, ask these questions in order:
   },
   "thread": {
     "completion": {
-      "retentionDays": 3              // 1-365, null disables automatic deletion
+      "retentionDays": 3,             // 1-365, null disables automatic deletion
+      "unsafeWorktreePolicy": "block" // block or delete; delete bypasses only dirty/unique-commit checks
     }
   },
   "worktree": {},                      // Legacy worktree.naming.* values are tolerated on load only

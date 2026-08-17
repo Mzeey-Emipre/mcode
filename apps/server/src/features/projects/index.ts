@@ -16,6 +16,7 @@ export {
 export { GitWatcherService } from "./git/git-watcher-service.js";
 export type {
   BranchlessWorktreeRemovalSafety,
+  NamedWorktreeRemovalSafety,
   NormalizedGitRemote,
   PullRequestReviewGitCandidate,
   PullRequestReviewGitProvisionRequest,

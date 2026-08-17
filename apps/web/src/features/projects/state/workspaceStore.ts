@@ -284,6 +284,8 @@ interface WorkspaceState {
   completeThread: (threadId: string) => Promise<void>;
   /** Reopen a completed thread and cancel its pending automatic deletion. */
   reopenThread: (threadId: string) => Promise<void>;
+  /** Retry cleanup for a blocked completed thread and apply its returned lifecycle state. */
+  retryThreadCleanup: (threadId: string) => Promise<void>;
   /** Apply a server-authoritative completion lifecycle push. */
   applyThreadLifecycle: (thread: Thread) => void;
   /** Remove a thread after server-authoritative automatic cleanup. */
@@ -1230,6 +1232,17 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     try {
       const reopened = await getTransport().reopenThread(threadId);
       get().applyThreadLifecycle(reopened);
+    } catch (e) {
+      set({ error: String(e) });
+      throw e;
+    }
+  },
+
+  retryThreadCleanup: async (threadId) => {
+    set({ error: null });
+    try {
+      const retried = await getTransport().retryThreadCleanup(threadId);
+      get().applyThreadLifecycle(retried);
     } catch (e) {
       set({ error: String(e) });
       throw e;

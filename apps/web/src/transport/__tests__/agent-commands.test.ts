@@ -50,6 +50,34 @@ afterEach(() => {
 });
 
 describe("agent command transport", () => {
+  it("sends completed-thread cleanup count and retry commands", async () => {
+    const transport = createWsTransport("ws://localhost:1234");
+    mockWs.simulateOpen();
+
+    const countPending = transport.countBlockedThreadCleanupCandidates();
+    await vi.waitFor(() => {
+      expect(mockWs.sent.some((row) => JSON.parse(row).method === "thread.cleanupBlockedCount")).toBe(true);
+    });
+    const countRequest = mockWs.sent
+      .map((row) => JSON.parse(row) as { id: string; method: string; params: unknown })
+      .find((row) => row.method === "thread.cleanupBlockedCount");
+    expect(countRequest?.params).toEqual({});
+    mockWs.respond(countRequest!.id, { count: 2 });
+    await expect(countPending).resolves.toEqual({ count: 2 });
+
+    const retryPending = transport.retryThreadCleanup("thread-1");
+    await vi.waitFor(() => {
+      expect(mockWs.sent.some((row) => JSON.parse(row).method === "thread.retryCleanup")).toBe(true);
+    });
+    const retryRequest = mockWs.sent
+      .map((row) => JSON.parse(row) as { id: string; method: string; params: unknown })
+      .find((row) => row.method === "thread.retryCleanup");
+    expect(retryRequest?.params).toEqual({ threadId: "thread-1" });
+    mockWs.respond(retryRequest!.id, { id: "thread-1" });
+    await expect(retryPending).resolves.toEqual({ id: "thread-1" });
+    transport.close();
+  });
+
   it("sends provider catalog context through the typed RPC method", async () => {
     const transport = createWsTransport("ws://localhost:1234");
     mockWs.simulateOpen();

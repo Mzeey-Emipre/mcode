@@ -324,6 +324,10 @@ export interface McodeTransport {
   completeThread(threadId: string): Promise<Thread>;
   /** Reopen a completed thread and cancel its pending automatic deletion. */
   reopenThread(threadId: string): Promise<Thread>;
+  /** Count completed threads that are blocked by the unsafe-worktree policy. */
+  countBlockedThreadCleanupCandidates(): Promise<{ count: number }>;
+  /** Retry cleanup for one blocked completed thread. */
+  retryThreadCleanup(threadId: string): Promise<Thread>;
 
   // Git branch commands
   listBranches(workspaceId: string): Promise<GitBranch[]>;

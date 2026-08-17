@@ -5,6 +5,9 @@ import { AgentService } from "../../agents/index.js";
 import { SettingsService } from "../../settings/settings-service.js";
 import { ThreadTeardownService } from "./thread-teardown-service.js";
 import { ThreadControlMutationReservationService } from "../authority/thread-control-mutation-reservation-service.js";
+import { CleanupJobRepo, CLEANUP_BATCH_LIMIT } from "../cleanup/persistence/cleanup-job-repo.js";
+import { logger } from "@mcode/shared";
+import type { UnsafeWorktreePolicy } from "@mcode/contracts";
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 const OVERDUE_SAFETY_MS = DAY_MS;
@@ -20,6 +23,7 @@ export class ThreadCompletionService {
   private readonly resourceOwners = new Map<string, (threadId: string) => Promise<void>>();
   private deadlineChangesListener: ((threads: readonly Thread[]) => void) | null = null;
   private lastRetentionDays: CompletedThreadRetentionDays | undefined;
+  private lastUnsafeWorktreePolicy: UnsafeWorktreePolicy | undefined;
   private unsubscribeSettings: (() => void) | null = null;
   private retentionRecalculationGeneration = 0;
 
@@ -31,29 +35,36 @@ export class ThreadCompletionService {
     private readonly mutationReservations: ThreadControlMutationReservationService,
     @inject(SettingsService) private readonly settingsService: SettingsService,
     @inject("ThreadCompletionClock", { isOptional: true })
-    private readonly clock?: () => Date,
+    private readonly clock: (() => Date) | undefined,
+    @inject(CleanupJobRepo)
+    private readonly cleanupJobRepo: CleanupJobRepo,
   ) {}
 
   /** Start retention reconciliation for settings changes. */
   start(): void {
     if (this.unsubscribeSettings) return;
-    this.lastRetentionDays = this.retentionDays(this.settingsService.get());
+    const initialSettings = this.settingsService.get();
+    this.lastRetentionDays = this.retentionDays(initialSettings);
+    this.lastUnsafeWorktreePolicy = this.unsafeWorktreePolicy(initialSettings);
     this.unsubscribeSettings = this.settingsService.on("change", (settings) => {
       const nextRetentionDays = this.retentionDays(settings);
+      const nextUnsafeWorktreePolicy = this.unsafeWorktreePolicy(settings);
       const previousRetentionDays = this.lastRetentionDays;
-      if (previousRetentionDays === nextRetentionDays) return;
-      if (previousRetentionDays === undefined) {
+      const previousUnsafeWorktreePolicy = this.lastUnsafeWorktreePolicy;
+      if (previousRetentionDays === undefined || previousUnsafeWorktreePolicy === undefined) {
         this.lastRetentionDays = nextRetentionDays;
+        this.lastUnsafeWorktreePolicy = nextUnsafeWorktreePolicy;
         return;
       }
       this.lastRetentionDays = nextRetentionDays;
-      const generation = ++this.retentionRecalculationGeneration;
-      this.recalculateDeadlineBatch(
-        previousRetentionDays,
-        nextRetentionDays,
-        null,
-        generation,
-      );
+      this.lastUnsafeWorktreePolicy = nextUnsafeWorktreePolicy;
+      if (previousRetentionDays !== nextRetentionDays) {
+        const generation = ++this.retentionRecalculationGeneration;
+        this.recalculateDeadlineBatch(previousRetentionDays, nextRetentionDays, null, generation);
+      }
+      if (previousUnsafeWorktreePolicy === "block" && nextUnsafeWorktreePolicy === "delete") {
+        this.requeueBlockedRetentionBatch();
+      }
     });
   }
 
@@ -94,14 +105,6 @@ export class ThreadCompletionService {
 
       const completedAt = this.clock?.() ?? new Date();
       const retentionDays = this.retentionDays(this.settingsService.get());
-      const completed = this.threadRepo.complete(
-        thread.id,
-        completedAt.toISOString(),
-        retentionDays === null
-          ? null
-          : new Date(completedAt.getTime() + retentionDays * DAY_MS).toISOString(),
-      );
-      if (!completed) throw new Error(`Thread not found: ${threadId}`);
       const releases = [
         this.teardownService.teardownThread(threadId),
         ...[...this.resourceOwners.values()].map((release) => release(threadId)),
@@ -110,11 +113,19 @@ export class ThreadCompletionService {
         (result): result is PromiseRejectedResult => result.status === "rejected",
       );
       if (failures.length > 0) {
-        this.threadRepo.reopen(threadId, thread.updated_at);
         throw new Error(
           `Thread completion failed for ${threadId}: ${failures.map(completionFailureMessage).join("; ")}`,
         );
       }
+
+      const completed = this.threadRepo.complete(
+        thread.id,
+        completedAt.toISOString(),
+        retentionDays === null
+          ? null
+          : new Date(completedAt.getTime() + retentionDays * DAY_MS).toISOString(),
+      );
+      if (!completed) throw new Error(`Thread not found: ${threadId}`);
       return completed;
     } finally {
       this.mutationReservations.release(threadId, token);
@@ -145,6 +156,38 @@ export class ThreadCompletionService {
     }
   }
 
+  /** Return the number of completed retention candidates waiting for retry. */
+  cleanupBlockedCount(): { count: number } {
+    return { count: this.cleanupJobRepo.countBlockedRetentionCandidates() };
+  }
+
+  /** Atomically requeue one blocked completed thread for retention cleanup. */
+  retryCleanup(threadId: string): Thread {
+    const token = this.mutationReservations.reserve(threadId, "cleaning");
+    if (!token) throw new Error(`Thread cleanup is already running: ${threadId}`);
+
+    try {
+      const thread = this.requireThread(threadId);
+      if (thread.user_completed_at === null) {
+        throw new Error("Thread is not completed");
+      }
+      if (thread.cleanup_state === "running") {
+        throw new Error("Thread cleanup is already running");
+      }
+      if (thread.cleanup_state !== "blocked") {
+        throw new Error("Thread cleanup is not blocked");
+      }
+      if (!this.cleanupJobRepo.requeueBlockedRetention(threadId)) {
+        throw new Error("Thread cleanup is no longer blocked");
+      }
+      const queued = this.threadRepo.findById(threadId);
+      if (!queued) throw new Error(`Thread not found: ${threadId}`);
+      return queued;
+    } finally {
+      this.mutationReservations.release(threadId, token);
+    }
+  }
+
   private requireThread(threadId: string): Thread {
     const thread = this.threadRepo.findById(threadId);
     if (!thread || thread.deleted_at !== null) {
@@ -155,6 +198,30 @@ export class ThreadCompletionService {
 
   private retentionDays(settings: Settings): CompletedThreadRetentionDays {
     return settings.thread.completion.retentionDays;
+  }
+
+  private unsafeWorktreePolicy(settings: Settings): UnsafeWorktreePolicy {
+    return settings.thread.completion.unsafeWorktreePolicy === "delete" ? "delete" : "block";
+  }
+
+  /** Requeue blocked candidates one bounded page at a time after policy opt-in. */
+  private requeueBlockedRetentionBatch(): void {
+    try {
+      const batch = this.cleanupJobRepo.requeueBlockedRetentionBatch(CLEANUP_BATCH_LIMIT);
+      if (batch.threadIds.length > 0) {
+        const changed = batch.threadIds
+          .map((id) => this.threadRepo.findById(id))
+          .filter((thread): thread is Thread => thread !== null);
+        if (changed.length > 0) this.deadlineChangesListener?.(changed);
+      }
+      if (batch.hasMore) {
+        setTimeout(() => this.requeueBlockedRetentionBatch(), 0);
+      }
+    } catch (error) {
+      logger.warn("Failed to requeue blocked retention candidates", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   private recalculateDeadlineBatch(

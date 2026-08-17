@@ -11,7 +11,7 @@ import { createHash } from "crypto";
 import { AsyncLocalStorage } from "async_hooks";
 import { rmdir, realpath } from "fs/promises";
 import { existsSync, mkdirSync, realpathSync } from "fs";
-import { join, basename, dirname, resolve, relative, isAbsolute } from "path";
+import { join, basename, dirname, resolve, relative, isAbsolute, sep } from "path";
 import { getMcodeDir, validateBranchName, validateWorktreeName, logger } from "@mcode/shared";
 import type { GitBranch, WorktreeInfo, GitCommit, BranchComparison, GitRemoteUrl, ReviewComparison, ReviewFileChange } from "@mcode/contracts";
 
@@ -52,6 +52,12 @@ export interface WorktreeRemovalSafety {
 export interface BranchlessWorktreeRemovalSafety {
   safe: boolean;
   reason: "clean" | "dirty" | "unique_commits" | "verification_failed";
+}
+
+/** Result of checking a named worktree's tracked and untracked files. */
+export interface NamedWorktreeRemovalSafety {
+  safe: boolean;
+  reason: "clean" | "dirty" | "verification_failed";
 }
 
 /** Registered compatible worktree offered through an opaque server-issued ID. */
@@ -124,6 +130,11 @@ interface RemoveWorktreeOptions {
    * When omitted, removeWorktree derives the managed path under the mcode worktree directory from the worktree name.
    */
   worktreePath?: string;
+  /**
+   * Require the supplied path to resolve to a canonical descendant of Mcode's
+   * managed worktree root before any Git or filesystem removal is attempted.
+   */
+  managedCanonicalOnly?: boolean;
 }
 
 /** Resolve the worktree base directory path under the mcode data dir. */
@@ -831,7 +842,10 @@ export class GitService {
   ): Promise<boolean> {
     validateWorktreeName(name);
 
-    const wtPath = options.worktreePath ?? join(getWorktreeBaseDir(repoPath), name);
+    let wtPath = options.worktreePath ?? join(getWorktreeBaseDir(repoPath), name);
+    if (options.managedCanonicalOnly) {
+      wtPath = await this.resolveManagedCanonicalWorktreePath(wtPath);
+    }
     const deleteBranch = options.deleteBranch ?? true;
     const branch = deleteBranch
       ? (options.branchName ?? `mcode/${name}`)
@@ -1664,6 +1678,36 @@ export class GitService {
       logger.warn("Automatic worktree cleanup verification failed", {
         worktreePath,
         baseBranch,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return { safe: false, reason: "verification_failed" };
+    }
+  }
+
+  /** Resolve and validate a managed worktree path without following a link later. */
+  private async resolveManagedCanonicalWorktreePath(worktreePath: string): Promise<string> {
+    const managedRoot = await realpath(resolve(getMcodeDir(), "worktrees"));
+    const canonicalPath = await realpath(worktreePath);
+    const rel = relative(managedRoot, canonicalPath);
+    if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
+      throw new Error(`worktreePath is not a canonical managed worktree: ${worktreePath}`);
+    }
+    return canonicalPath;
+  }
+
+  /** Verify that a named worktree is accessible and has no uncommitted files. */
+  async assessNamedWorktreeRemoval(worktreePath: string): Promise<NamedWorktreeRemovalSafety> {
+    try {
+      const status = await this.gitExecutor.exec(
+        ["-C", worktreePath, "status", "--porcelain"],
+        { timeout: 5_000 },
+      );
+      return status.stdout.trim() === ""
+        ? { safe: true, reason: "clean" }
+        : { safe: false, reason: "dirty" };
+    } catch (error) {
+      logger.warn("Named worktree cleanup verification failed", {
+        worktreePath,
         error: error instanceof Error ? error.message : String(error),
       });
       return { safe: false, reason: "verification_failed" };
