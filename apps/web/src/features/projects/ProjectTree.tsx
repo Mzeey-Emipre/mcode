@@ -1896,19 +1896,36 @@ const ProjectNode = memo(function ProjectNode({
             {lifecycleLabel}
           </TooltipContent>
         </Tooltip>
-        <Button
-          type="button"
-          variant="ghost"
-          size="xs"
-          aria-label={`Open project ${workspace.name}`}
-          onKeyDown={(event) => event.stopPropagation()}
-          onClick={handleOpenProject}
-          className="h-auto min-w-0 justify-start rounded-sm p-0 text-left hover:bg-transparent dark:hover:bg-transparent"
-        >
-          <span className="truncate font-medium tracking-tight">
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                aria-label={`Open project ${workspace.name}`}
+                onKeyDown={(event) => event.stopPropagation()}
+                onClick={handleOpenProject}
+                className="h-auto min-w-0 flex-1 shrink justify-start rounded-sm p-0 text-left hover:bg-transparent dark:hover:bg-transparent"
+              >
+                <span
+                  className="min-w-0 flex-1 overflow-hidden whitespace-nowrap font-medium tracking-tight"
+                  style={{
+                    maskImage:
+                      "linear-gradient(to right, black calc(100% - 1.5rem), transparent)",
+                    WebkitMaskImage:
+                      "linear-gradient(to right, black calc(100% - 1.5rem), transparent)",
+                  }}
+                >
+                  {workspace.name}
+                </span>
+              </Button>
+            }
+          />
+          <TooltipContent side="right" className="text-xs">
             {workspace.name}
-          </span>
-        </Button>
+          </TooltipContent>
+        </Tooltip>
 
         {!workspace.is_git_repo && (
           <Tooltip>
@@ -1950,8 +1967,6 @@ const ProjectNode = memo(function ProjectNode({
           />
         </Button>
 
-        <span className="flex-1" />
-
         <WorkspaceCiRollupChip threads={visibleThreads} checksById={checksById} />
 
         {hasRunning && (
@@ -1980,7 +1995,7 @@ const ProjectNode = memo(function ProjectNode({
           <DropdownMenuTrigger
             aria-label={`Project options for ${workspace.name}`}
             onClick={(event) => event.stopPropagation()}
-            className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground opacity-0 outline-none transition-colors hover:bg-background/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/70 group-hover/ws:opacity-100 group-focus-within/ws:opacity-100"
+            className="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 outline-none transition-colors hover:bg-background/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/70 group-hover/ws:opacity-100 group-focus-within/ws:opacity-100"
           >
             <MoreHorizontal size={13} />
           </DropdownMenuTrigger>

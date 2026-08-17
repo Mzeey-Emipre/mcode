@@ -648,6 +648,28 @@ describe("ProjectTree thread interactions", () => {
     );
   });
 
+  it("exposes the full project name from the focused project control", () => {
+    const projectName =
+      "A project name that stays available when the sidebar is narrow";
+    setupStoreMocks({
+      workspaces: [{ ...WORKSPACE, name: projectName }],
+    });
+
+    render(<ProjectTree />);
+
+    const projectButton = screen.getByRole("button", {
+      name: `Open project ${projectName}`,
+    });
+    act(() => {
+      projectButton.focus();
+      vi.runAllTimers();
+    });
+
+    expect(document.querySelector('[data-slot="tooltip-content"]')).toHaveTextContent(
+      projectName,
+    );
+  });
+
   it("optically aligns the provider mark and separates it from the thread title", () => {
     setupStoreMocks();
 
