@@ -341,6 +341,31 @@ describe("ProjectTree thread interactions", () => {
     expect(state.loadThreads).not.toHaveBeenCalled();
   });
 
+  it("keeps long project names clear until the project row is engaged", () => {
+    const longName = "A project name long enough to reach the row controls";
+    setupStoreMocks({ workspaces: [{ ...WORKSPACE, name: longName }] });
+
+    render(<ProjectTree />);
+
+    const projectRow = screen.getByTestId("project-row-ws-1");
+    const projectName = within(projectRow).getByText(longName);
+    const className = projectName.getAttribute("class") ?? "";
+    const fade =
+      "linear-gradient(to_right,black_calc(100%_-_1.5rem),transparent)";
+    const classes = className.split(/\s+/);
+
+    expect((projectName as HTMLElement).style.maskImage).toBe("");
+    expect(projectName.getAttribute("style") ?? "").not.toMatch(/mask-image/i);
+    expect(classes).not.toContain(`[mask-image:${fade}]`);
+    expect(classes).not.toContain(`[-webkit-mask-image:${fade}]`);
+    expect(className).toContain(`group-hover/ws:[mask-image:${fade}]`);
+    expect(className).toContain(`group-focus-within/ws:[mask-image:${fade}]`);
+    expect(className).toContain(`group-hover/ws:[-webkit-mask-image:${fade}]`);
+    expect(className).toContain(
+      `group-focus-within/ws:[-webkit-mask-image:${fade}]`,
+    );
+  });
+
   it("expands a project from its folder without opening a new composer", () => {
     localStorage.setItem(
       "mcode-expanded-projects",
