@@ -158,6 +158,41 @@ describe("projectCanonicalMessageList", () => {
     expect(projection?.assistantResponseKeys).toEqual({
       "child-answer": `canonical-turn-response:${TURN_ID}`,
     });
+    expect(projection?.turnSummariesByMessageId).toEqual({
+      "child-answer": {
+        counts: { steps: 0, thoughts: 1, subagents: 0 },
+        durationMs: 0,
+      },
+    });
+  });
+
+  it("does not summarize a child turn until it completes", () => {
+    const state = createAgentModelState();
+    state.turns[TURN_ID] = turn("Running");
+    const answer = message({
+      id: "child-answer",
+      role: "assistant",
+      content: "Still working",
+      sequence: 1,
+      timestamp: "2026-08-18T12:00:04.000Z",
+    });
+    state.items.answer = item(
+      "answer",
+      "message",
+      { projection: "message", message: answer },
+      answer.timestamp,
+    );
+
+    const projection = projectCanonicalMessageList({
+      threadId: THREAD_ID,
+      state,
+      messages: [message()],
+      toolCalls: [],
+      thoughtSegments: [],
+    });
+
+    expect(projection?.messages.map((entry) => entry.id)).toEqual(["child-prompt"]);
+    expect(projection?.turnSummariesByMessageId).toEqual({});
   });
 
   it("summarizes structured activity for every completed child turn", () => {

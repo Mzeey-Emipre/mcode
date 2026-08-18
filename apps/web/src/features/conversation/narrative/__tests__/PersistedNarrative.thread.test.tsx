@@ -147,6 +147,24 @@ describe("persisted child timeline thread selection", () => {
     expect(loadNarrativeForMessage).not.toHaveBeenCalled();
   });
 
+  it("renders the elapsed time for a completed canonical turn without tools", () => {
+    recordsByThread.delete("child-thread");
+
+    render(
+      <PersistedTurnFooter
+        threadId="child-thread"
+        messageId="assistant-1"
+        summary={{
+          counts: { steps: 0, thoughts: 0, subagents: 0 },
+          durationMs: 2_500,
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId("persisted-footer-steps")).toHaveTextContent("0");
+    expect(loadNarrativeForMessage).not.toHaveBeenCalled();
+  });
+
   it("routes persisted subagent rows through the chat detail callback", () => {
     const onSubagentSelect = vi.fn();
 

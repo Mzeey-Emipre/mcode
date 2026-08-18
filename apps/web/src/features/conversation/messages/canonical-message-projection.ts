@@ -73,12 +73,11 @@ function isTerminalTurn(turn: AgentTurn): boolean {
   return turn.status === "Completed" || turn.status === "Interrupted" || turn.status === "Errored";
 }
 
-function canonicalTurnSummary(items: readonly AgentItem[]): TurnFooterSummary | undefined {
+function canonicalTurnSummary(turn: AgentTurn, items: readonly AgentItem[]): TurnFooterSummary {
   const topLevelTools = items.filter((item) =>
     item.kind === "tool-call"
     && item.parentItemId === undefined
     && item.payload.projection === "codexChildToolCall");
-  if (topLevelTools.length === 0) return undefined;
   const reasoningItems = items.filter((item) => item.payload.projection === "codexChildReasoning");
   const activityItems = items.filter((item) =>
     item.payload.projection === "codexChildToolCall"
@@ -92,6 +91,8 @@ function canonicalTurnSummary(items: readonly AgentItem[]): TurnFooterSummary | 
     const value = timestamp(item.updatedAt);
     return value === undefined ? [] : [value];
   });
+  const turnStartedAt = timestamp(turn.startedAt ?? turn.createdAt);
+  const turnEndedAt = timestamp(turn.endedAt ?? turn.updatedAt);
   return {
     counts: {
       steps: topLevelTools.length,
@@ -100,7 +101,9 @@ function canonicalTurnSummary(items: readonly AgentItem[]): TurnFooterSummary | 
     },
     durationMs: starts.length > 0 && ends.length > 0
       ? Math.max(0, Math.max(...ends) - Math.min(...starts))
-      : null,
+      : turnStartedAt !== undefined && turnEndedAt !== undefined
+        ? Math.max(0, turnEndedAt - turnStartedAt)
+        : null,
   };
 }
 
@@ -201,8 +204,7 @@ export function projectCanonicalMessageList({
       .map((item) => canonicalMessage(item.payload))
       .find((message) => message?.role === "assistant");
     if (!answer) continue;
-    const summary = canonicalTurnSummary(turnItems);
-    if (summary) turnSummariesByMessageId[answer.id] = summary;
+    turnSummariesByMessageId[answer.id] = canonicalTurnSummary(turn, turnItems);
   }
 
   return {

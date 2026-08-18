@@ -74,8 +74,13 @@ export function PersistedTurnFooter({ threadId, messageId, summary }: PersistedT
 
   const resolvedSummary = summary ?? persistedSummary;
   if (!resolvedSummary) return null;
-  // Suppress entirely when the turn had zero structured activity.
-  if (resolvedSummary.counts.steps === 0 && resolvedSummary.counts.subagents === 0) return null;
+  // Legacy narrative rows do not establish a complete turn boundary. A
+  // canonical summary does, so its elapsed time still closes a tool-free turn.
+  if (
+    !summary
+    && resolvedSummary.counts.steps === 0
+    && resolvedSummary.counts.subagents === 0
+  ) return null;
 
   return <TurnFooter counts={resolvedSummary.counts} durationMs={resolvedSummary.durationMs} />;
 }
