@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { SubagentIdentityGlyph } from "@/components/ui/SubagentIdentityGlyph";
+import { formatSubagentIdentity } from "../identity/format-subagent-identity";
 import { SubagentStopControl } from "../lifecycle/SubagentStopControl";
 import {
   useClearSubagentDetail,
@@ -31,7 +32,7 @@ function formatReasoningLevel(value: string): string {
 }
 
 function canonicalIdentity(row: CanonicalSubagentRosterRow): string {
-  return row.identity ?? "Subagent";
+  return formatSubagentIdentity(row.identity ?? "Subagent");
 }
 
 function canonicalIsActive(row: CanonicalSubagentRosterRow): boolean {
@@ -110,7 +111,6 @@ function CanonicalRosterRow({
             )}
           </span>
           {lineage && <span className="mt-0.5 block truncate text-xs text-muted-foreground" aria-label={`Lineage: ${lineage}`}>{lineage}</span>}
-          {row.task && <span className="mt-0.5 block truncate text-xs text-muted-foreground">{row.task}</span>}
           {!active && row.hasActiveDescendant && (
             <span className="mt-0.5 block text-xs text-primary">Active descendant</span>
           )}

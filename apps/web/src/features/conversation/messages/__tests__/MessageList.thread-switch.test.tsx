@@ -72,6 +72,7 @@ let hasMoreMessagesValue = false;
 let hasNewerMessagesValue = false;
 let runningThreadIdsValue = new Set<string>();
 let handoffStatusByThread: Record<string, "generating" | "ready" | "fallback" | "error"> = {};
+let recordOverridesByThread: Record<string, Record<string, unknown>> = {};
 
 function buildMockRecord(threadId = currentThreadIdValue) {
   return {
@@ -107,6 +108,7 @@ function buildMockRecord(threadId = currentThreadIdValue) {
     narrativeByMessage: {},
     agentStartTime: undefined,
     ...(handoffStatusByThread[threadId] ? { handoffMeta: { status: handoffStatusByThread[threadId] } } : {}),
+    ...recordOverridesByThread[threadId],
   };
 }
 
@@ -148,7 +150,11 @@ vi.mock("../MessageBubble", () => ({
 vi.mock("@/components/chat/ToolCallCard", () => ({ ToolCallCard: () => null }));
 vi.mock("@/components/chat/StreamingIndicator", () => ({ StreamingIndicator: () => null }));
 vi.mock("@/components/chat/StreamingCard", () => ({ StreamingCard: () => null }));
-vi.mock("@/components/chat/TurnChangeSummary", () => ({ TurnChangeSummary: () => null }));
+vi.mock("@/components/chat/TurnChangeSummary", () => ({
+  TurnChangeSummary: ({ filesChanged }: { filesChanged: string[] }) => (
+    <div data-testid="turn-change-summary">{filesChanged.join(",")}</div>
+  ),
+}));
 vi.mock("@/components/chat/PermissionRequestCard", () => ({ PermissionRequestCard: () => null }));
 vi.mock("@/components/chat/HookActivitySection", () => ({ HookActivitySection: () => null }));
 vi.mock("../../narrative", () => ({
@@ -177,6 +183,7 @@ beforeEach(() => {
   currentThreadIdValue = "thread-A";
   runningThreadIdsValue = new Set();
   handoffStatusByThread = {};
+  recordOverridesByThread = {};
   clearScrollMemory();
 });
 
@@ -185,6 +192,27 @@ afterEach(() => {
 });
 
 describe("MessageList thread switch", () => {
+  it("shows file changes from only the displayed child thread", () => {
+    activeThreadIdValue = "thread-A";
+    recordOverridesByThread = {
+      "thread-A": {
+        messages: [{ id: "parent-answer", sequence: 1, thread_id: "thread-A", role: "assistant", content: "Parent" }],
+        persistedFilesChanged: { "parent-answer": ["parent-only.ts"] },
+        latestTurnWithChanges: "parent-answer",
+      },
+      "thread-B": {
+        messages: [{ id: "child-answer", sequence: 1, thread_id: "thread-B", role: "assistant", content: "Child" }],
+        persistedFilesChanged: { "child-answer": ["child-only.ts"] },
+        latestTurnWithChanges: "child-answer",
+      },
+    };
+
+    const { getByTestId, queryByText } = render(<MessageList displayThreadId="thread-B" />);
+
+    expect(getByTestId("turn-change-summary")).toHaveTextContent("child-only.ts");
+    expect(queryByText("parent-only.ts")).toBeNull();
+  });
+
   it("hides the sticky user message when virtualizer geometry makes the bubble visible", async () => {
     messagesValue = [{
       id: "last-user",

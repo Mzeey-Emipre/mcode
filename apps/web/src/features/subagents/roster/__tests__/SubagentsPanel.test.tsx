@@ -151,6 +151,22 @@ describe("SubagentsPanel", () => {
     }
   });
 
+  it("shows only the formatted identity and roster metadata", async () => {
+    const child = canonicalRow({
+      id: "direct-detail-child",
+      identity: "direct_detail_worker",
+      task: "Read only README.md and return the full summary",
+    });
+    harness.loadCanonicalSubagentRoster.mockResolvedValue(canonicalRoster([], [child]));
+
+    render(<SubagentsPanel threadId="thread-1" />);
+
+    const row = await screen.findByTestId("subagent-finished-row");
+    expect(row).toHaveTextContent("Direct detail worker");
+    expect(row).not.toHaveTextContent("direct_detail_worker");
+    expect(row).not.toHaveTextContent("Read only README.md and return the full summary");
+  });
+
   it("opens a chat-selected child when the canonical row arrives after the first roster read", async () => {
     const child = canonicalRow({
       id: "canonical-delayed-child",
@@ -457,7 +473,8 @@ describe("SubagentsPanel", () => {
     harness.stopCanonicalSubagent.mockResolvedValue({ childThreadId: child.id, status, message: message.split(": ")[1] });
 
     render(<SubagentsPanel threadId="thread-1" />);
-    fireEvent.click(await screen.findByRole("button", { name: `Stop ${status} child` }));
+    const displayedIdentity = `${status.charAt(0).toUpperCase()}${status.slice(1)} child`;
+    fireEvent.click(await screen.findByRole("button", { name: `Stop ${displayedIdentity}` }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(message);
     expect(screen.queryByText(/Stopped successfully/)).not.toBeInTheDocument();

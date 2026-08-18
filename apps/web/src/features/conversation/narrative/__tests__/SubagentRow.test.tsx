@@ -47,6 +47,13 @@ describe("SubagentRow", () => {
     expect(document.querySelector('[data-subagent-identity-glyph="Explorer"]')).toBeInTheDocument();
   });
 
+  it("formats a provider identity as a sentence title", () => {
+    renderRow(agent({ toolInput: { agentName: "direct_detail_worker" } }));
+
+    expect(screen.getByRole("button", { name: "Open Direct detail worker subagent details" })).toBeInTheDocument();
+    expect(screen.queryByText("direct_detail_worker")).not.toBeInTheDocument();
+  });
+
   it("keeps one identity color stable across rerenders", () => {
     const view = renderRow(agent());
     const firstPalette = document.querySelector('[data-subagent-identity-glyph="Explorer"]')?.getAttribute("data-subagent-palette");

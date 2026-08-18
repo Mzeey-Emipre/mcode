@@ -1,6 +1,7 @@
 import { resolveSubagentDisplayName } from "@mcode/contracts";
 import { Button } from "@/components/ui/button";
 import { SubagentIdentityGlyph } from "@/components/ui/SubagentIdentityGlyph";
+import { formatSubagentIdentity } from "@/features/subagents/identity/format-subagent-identity";
 import type { HookExecution, ToolCall } from "@/transport/types";
 import { NARRATIVE_TOOL_ROW } from "./narrative-layout";
 import type { SubagentLifecycle } from "./subagent-lifecycle";
@@ -75,7 +76,7 @@ export function SubagentRow({
       <div className={`flex min-w-0 flex-1 items-center overflow-hidden ${groupedActivities ? "gap-1" : "gap-2"}`}>
         {visibleParticipants.map(({ participant, lifecycle: participantLifecycle }) => {
           const resolvedIdentity = resolveSubagentDisplayName(participant.toolInput);
-          const identity = resolvedIdentity ?? "Subagent";
+          const identity = formatSubagentIdentity(resolvedIdentity ?? "Subagent");
           return (
             <span key={participant.id} className="flex min-w-0 shrink items-center gap-1">
               <Button
