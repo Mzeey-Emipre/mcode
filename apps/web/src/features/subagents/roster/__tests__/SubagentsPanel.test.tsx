@@ -151,6 +151,47 @@ describe("SubagentsPanel", () => {
     }
   });
 
+  it("opens a chat-selected child when the canonical row arrives after the first roster read", async () => {
+    const child = canonicalRow({
+      id: "canonical-delayed-child",
+      sourceItemId: "toolCall:live-agent-call",
+      identity: "Delayed child",
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+    });
+    harness.loadCanonicalSubagentRoster
+      .mockResolvedValueOnce(canonicalRoster([], []))
+      .mockResolvedValue(canonicalRoster([child], [], 2));
+    useDiffStore.setState({
+      subagentDetailByThread: {
+        "thread-1": { id: "live-agent-call", originTab: "active", scrollTop: 0 },
+      },
+      subagentReviewScopeByThread: {},
+    });
+    let poll: (() => void) | undefined;
+    const intervalSpy = vi.spyOn(window, "setInterval").mockImplementation((callback, delay) => {
+      if (delay === 1_500) poll = () => callback();
+      return 1 as unknown as ReturnType<typeof window.setInterval>;
+    });
+
+    render(<SubagentsPanel threadId="thread-1" />);
+    try {
+      await screen.findByTestId("subagents-empty");
+      expect(useDiffStore.getState().subagentDetailByThread["thread-1"]?.id).toBe("live-agent-call");
+      expect(poll).toBeDefined();
+      poll!();
+      await waitFor(() => expect(harness.loadCanonicalSubagentRoster).toHaveBeenCalledTimes(2));
+
+      expect(await screen.findByTestId("shared-message-list")).toHaveAttribute(
+        "data-display-thread-id",
+        "canonical-delayed-child",
+      );
+    } finally {
+      intervalSpy.mockRestore();
+    }
+  });
+
   it("retains the last good roster and child lease after a polling failure", async () => {
     const child = canonicalRow({
       id: "canonical-refresh-failure",

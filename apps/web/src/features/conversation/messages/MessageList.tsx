@@ -189,7 +189,15 @@ const VirtualItemRenderer = memo(function VirtualItemRenderer({
         />
       );
     case "persisted-narrative":
-      return <PersistedNarrative threadId={threadId} messageId={item.messageId} messageContent={item.messageContent} />;
+      return (
+        <PersistedNarrative
+          threadId={threadId}
+          messageId={item.messageId}
+          messageContent={item.messageContent}
+          onSubagentSelect={onSubagentSelect}
+          onOpenSubagents={onOpenSubagents}
+        />
+      );
     case "persisted-late-hooks":
       return <PersistedLateHooks threadId={threadId} messageId={item.messageId} />;
     case "persisted-turn-footer":

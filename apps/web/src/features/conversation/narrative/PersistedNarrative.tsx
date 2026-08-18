@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { useThreadStore } from "@/stores/threadStore";
 import { useThreadRecord } from "@/stores/thread-selectors";
-import type { NarrativeItem } from "./types";
+import type { NarrativeItem, SubagentRosterTarget } from "./types";
 import type { ToolCall } from "@/transport/types";
 import { NarrativeRows } from "./NarrativeRows";
 import {
@@ -21,6 +21,10 @@ export interface PersistedNarrativeProps {
    * safety net to suppress thought segments that duplicate the message body.
    */
   messageContent?: string;
+  /** Opens one persisted subagent row in the shared detail panel. */
+  onSubagentSelect?: (id: string, target: SubagentRosterTarget) => void;
+  /** Opens the owning thread's Subagents roster for aggregate activity. */
+  onOpenSubagents?: (target: SubagentRosterTarget) => void;
 }
 
 /**
@@ -37,7 +41,13 @@ export interface PersistedNarrativeProps {
  *   - Sub-agents render via the same `SubagentRow` but lack the "active"
  *     visual treatment (no pulse, no primary tint)
  */
-export function PersistedNarrative({ threadId, messageId, messageContent }: PersistedNarrativeProps) {
+export function PersistedNarrative({
+  threadId,
+  messageId,
+  messageContent,
+  onSubagentSelect,
+  onOpenSubagents,
+}: PersistedNarrativeProps) {
   const records = useThreadRecord(threadId, (r) => r.narrativeByMessage[messageId]);
   const load = useThreadStore((s) => s.loadNarrativeForMessage);
   const triggered = useRef(false);
@@ -66,7 +76,12 @@ export function PersistedNarrative({ threadId, messageId, messageContent }: Pers
   return (
     <NarrativePerformanceBoundary>
     <div className="relative min-w-0 max-w-full">
-      <NarrativeRows items={items} allToolCalls={allToolCalls} />
+      <NarrativeRows
+        items={items}
+        allToolCalls={allToolCalls}
+        onSubagentSelect={onSubagentSelect}
+        onOpenSubagents={onOpenSubagents}
+      />
     </div>
     </NarrativePerformanceBoundary>
   );

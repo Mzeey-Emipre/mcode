@@ -257,11 +257,6 @@ export function SubagentsPanel({ threadId }: { readonly threadId: string }) {
     selectDetail(threadId, { ...detailSelection, originTab });
   }, [canonicalState.roster, canonicalState.status, detailSelection, isCurrentRequest, selectDetail, selectedCanonicalRow, threadId]);
 
-  useEffect(() => {
-    if (!detailSelection || !isCurrentRequest || canonicalState.status === "pending") return;
-    if (!selectedCanonicalRow) clearDetail(threadId);
-  }, [canonicalState.status, clearDetail, detailSelection, isCurrentRequest, selectedCanonicalRow, threadId]);
-
   const selectRow = (id: string, originTab: SubagentRosterTab) => {
     selectDetail(threadId, { id, originTab, scrollTop: viewportRef.current?.scrollTop ?? 0 });
   };

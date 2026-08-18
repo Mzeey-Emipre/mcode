@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { HookExecutionRecord, ToolCallRecord } from "@/transport/types";
 
@@ -16,13 +16,22 @@ vi.mock("@/stores/threadStore", () => ({
 }));
 
 vi.mock("../NarrativeRows", () => ({
-  NarrativeRows: ({ items }: { items: readonly { type: string; toolCall?: { id: string } }[] }) => (
-    <div data-testid="persisted-row-ids">
-      {items
-        .filter((item) => item.type === "subagent")
-        .map((item) => item.toolCall?.id)
-        .join(",")}
-    </div>
+  NarrativeRows: ({
+    items,
+    onSubagentSelect,
+  }: {
+    items: readonly { type: string; toolCall?: { id: string } }[];
+    onSubagentSelect?: (id: string, target: "active" | "finished") => void;
+  }) => (
+    <>
+      <div data-testid="persisted-row-ids">
+        {items
+          .filter((item) => item.type === "subagent")
+          .map((item) => item.toolCall?.id)
+          .join(",")}
+      </div>
+      <button type="button" onClick={() => onSubagentSelect?.("child-tool", "finished")}>Open child</button>
+    </>
   ),
 }));
 
@@ -117,5 +126,21 @@ describe("persisted child timeline thread selection", () => {
     expect(loadNarrativeForMessage).toHaveBeenCalledTimes(2);
     expect(loadNarrativeForMessage).toHaveBeenCalledWith("assistant-1", "child-thread");
     expect(loadNarrativeForMessage).not.toHaveBeenCalledWith("assistant-1", "parent-thread");
+  });
+
+  it("routes persisted subagent rows through the chat detail callback", () => {
+    const onSubagentSelect = vi.fn();
+
+    render(
+      <PersistedNarrative
+        threadId="child-thread"
+        messageId="assistant-1"
+        messageContent="Child result"
+        onSubagentSelect={onSubagentSelect}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Open child" }));
+
+    expect(onSubagentSelect).toHaveBeenCalledWith("child-tool", "finished");
   });
 });
