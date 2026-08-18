@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { useThreadStore } from "@/stores/threadStore";
 import { useThreadRecord } from "@/stores/thread-selectors";
 import { TurnFooter } from "./TurnFooter";
-import type { NarrativeCounts } from "./types";
+import type { NarrativeCounts, TurnFooterSummary } from "./types";
 
 /** Props for {@link PersistedTurnFooter}. */
 export interface PersistedTurnFooterProps {
@@ -10,6 +10,8 @@ export interface PersistedTurnFooterProps {
   threadId?: string | null;
   /** Assistant message id this footer belongs to. */
   messageId: string;
+  /** Canonical summary used when this message has no legacy narrative cache. */
+  summary?: TurnFooterSummary;
 }
 
 /**
@@ -21,22 +23,21 @@ export interface PersistedTurnFooterProps {
  * the answer they led to. Putting the footer at the end keeps the reading
  * order: actions → response → wrap-up.
  *
- * Lazy-loads the same narrative records as `PersistedNarrative` via the
- * threadStore cache. Returns `null` until records arrive so the layout does
- * not jump.
+ * Uses a supplied canonical summary or lazily loads the same narrative records
+ * as `PersistedNarrative` through the threadStore cache.
  */
-export function PersistedTurnFooter({ threadId, messageId }: PersistedTurnFooterProps) {
+export function PersistedTurnFooter({ threadId, messageId, summary }: PersistedTurnFooterProps) {
   const records = useThreadRecord(threadId, (r) => r.narrativeByMessage[messageId]);
   const load = useThreadStore((s) => s.loadNarrativeForMessage);
   const triggered = useRef(false);
 
   useEffect(() => {
-    if (records || triggered.current) return;
+    if (summary || records || triggered.current) return;
     triggered.current = true;
     void load(messageId, threadId ?? undefined);
-  }, [messageId, records, load, threadId]);
+  }, [messageId, records, load, summary, threadId]);
 
-  const summary = useMemo(() => {
+  const persistedSummary = useMemo(() => {
     if (!records) return null;
     const topLevel = records.tools.filter((t) => t.parent_tool_call_id == null);
     const counts: NarrativeCounts = {
@@ -71,9 +72,10 @@ export function PersistedTurnFooter({ threadId, messageId }: PersistedTurnFooter
     return { counts, durationMs };
   }, [records]);
 
-  if (!records || !summary) return null;
+  const resolvedSummary = summary ?? persistedSummary;
+  if (!resolvedSummary) return null;
   // Suppress entirely when the turn had zero structured activity.
-  if (summary.counts.steps === 0 && summary.counts.subagents === 0) return null;
+  if (resolvedSummary.counts.steps === 0 && resolvedSummary.counts.subagents === 0) return null;
 
-  return <TurnFooter counts={summary.counts} durationMs={summary.durationMs} />;
+  return <TurnFooter counts={resolvedSummary.counts} durationMs={resolvedSummary.durationMs} />;
 }

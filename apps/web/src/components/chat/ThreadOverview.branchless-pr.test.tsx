@@ -482,7 +482,7 @@ describe("ThreadOverview branchless Create PR", () => {
     expect(screen.getByText("Subagents").compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
     expect(summary.querySelector('[data-subagent-identity-glyph="Explorer"]')).toHaveAttribute(
       "data-subagent-palette",
-      String(getSubagentIdentityPaletteIndex("Explorer")),
+      String(getSubagentIdentityPaletteIndex("agent-1")),
     );
     fireEvent.click(summary);
     expect(mockOpenSubagentsPanel).toHaveBeenCalledOnce();
@@ -610,11 +610,14 @@ describe("ThreadOverview branchless Create PR", () => {
 
     const glyphs = screen.getByTestId("thread-overview-subagents")
       .querySelectorAll('[data-subagent-identity-glyph="Subagent"]');
-    expect(glyphs[0]).not.toHaveAttribute("data-subagent-palette");
-    expect(glyphs[0]).not.toHaveAttribute("style");
+    expect(glyphs[0]).toHaveAttribute(
+      "data-subagent-palette",
+      String(getSubagentIdentityPaletteIndex("unnamed")),
+    );
+    expect(glyphs[0]?.getAttribute("style")).toContain("--subagent-identity-color");
     expect(glyphs[1]).toHaveAttribute(
       "data-subagent-palette",
-      String(getSubagentIdentityPaletteIndex("Subagent")),
+      String(getSubagentIdentityPaletteIndex("explicit")),
     );
     expect(glyphs[1]?.getAttribute("style")).toContain("--subagent-identity-color");
   });

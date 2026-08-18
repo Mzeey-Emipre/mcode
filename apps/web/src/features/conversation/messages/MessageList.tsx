@@ -111,6 +111,7 @@ const VirtualItemRenderer = memo(function VirtualItemRenderer({
   onScrollToMessage,
   currentTurnMessageIdByThread,
   threadId,
+  showParentAgentProvenance,
 }: {
   item: ChatVirtualItem;
   turnExpandRef?: React.RefObject<Map<string, boolean>>;
@@ -121,6 +122,7 @@ const VirtualItemRenderer = memo(function VirtualItemRenderer({
   onScrollToMessage?: (messageId: string) => void;
   currentTurnMessageIdByThread: Record<string, string>;
   threadId: string | null | undefined;
+  showParentAgentProvenance: boolean;
 }) {
   switch (item.type) {
     case "message": {
@@ -137,6 +139,7 @@ const VirtualItemRenderer = memo(function VirtualItemRenderer({
             onScrollToMessage={onScrollToMessage}
             assistantStreaming={item.assistantState?.isStreaming}
             assistantActionsVisible={item.assistantState?.actionsVisible}
+            showParentAgentProvenance={showParentAgentProvenance}
           />
         </div>
       );
@@ -201,7 +204,7 @@ const VirtualItemRenderer = memo(function VirtualItemRenderer({
     case "persisted-late-hooks":
       return <PersistedLateHooks threadId={threadId} messageId={item.messageId} />;
     case "persisted-turn-footer":
-      return <PersistedTurnFooter threadId={threadId} messageId={item.messageId} />;
+      return <PersistedTurnFooter threadId={threadId} messageId={item.messageId} summary={item.summary} />;
     case "narrative-indicator":
       return (
         <NarrativeIndicator
@@ -223,7 +226,8 @@ const VirtualItemRenderer = memo(function VirtualItemRenderer({
   && prev.onOpenSubagents === next.onOpenSubagents
   && prev.onScrollToMessage === next.onScrollToMessage
   && prev.currentTurnMessageIdByThread === next.currentTurnMessageIdByThread
-  && prev.threadId === next.threadId,
+  && prev.threadId === next.threadId
+  && prev.showParentAgentProvenance === next.showParentAgentProvenance,
 );
 
 /** Props for {@link ScrollToBottomButton}. */
@@ -269,10 +273,12 @@ export interface MessageListProps {
   onSubagentSelect?: (id: string, target: SubagentRosterTarget) => void;
   /** Opens the owning thread's Subagents roster for aggregate activity. */
   onOpenSubagents?: (target: SubagentRosterTarget) => void;
+  /** Whether child prompts display their parent-agent provenance label. */
+  showParentAgentProvenance?: boolean;
 }
 
 /** Virtualized list of chat messages, tool calls, and streaming indicators. */
-export function MessageList({ displayThreadId, onBranch, onReply, onSubagentSelect, onOpenSubagents }: MessageListProps) {
+export function MessageList({ displayThreadId, onBranch, onReply, onSubagentSelect, onOpenSubagents, showParentAgentProvenance = true }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   /** Survives virtualizer remounts: remembers manual expand/collapse toggles by messageId. */
   const turnExpandRef = useRef<Map<string, boolean>>(new Map());
@@ -698,7 +704,7 @@ export function MessageList({ displayThreadId, onBranch, onReply, onSubagentSele
       messageId: currentTurnMessageId || undefined,
       responseKey: currentTurnResponseKey || undefined,
       responseKeysByMessageId: assistantResponseKeys,
-    }, persistedNarrativeByMessage),
+    }, persistedNarrativeByMessage, canonicalProjection?.turnSummariesByMessageId),
     [
       messages,
       persistedFilesChanged,
@@ -708,6 +714,7 @@ export function MessageList({ displayThreadId, onBranch, onReply, onSubagentSele
       currentTurnResponseKey,
       assistantResponseKeys,
       persistedNarrativeByMessage,
+      canonicalProjection?.turnSummariesByMessageId,
     ],
   );
 
@@ -1561,7 +1568,7 @@ export function MessageList({ displayThreadId, onBranch, onReply, onSubagentSele
                 style={{ transform: `translateY(${vi.start}px)` }}
               >
                 <div className={cn(PRIMARY_CONTENT_RAIL_CLASS, "min-w-0 overflow-x-hidden")}>
-                  <VirtualItemRenderer item={item} turnExpandRef={turnExpandRef} onBranch={onBranch} onReply={onReply} onSubagentSelect={onSubagentSelect} onOpenSubagents={onOpenSubagents} onScrollToMessage={scrollToMessage} currentTurnMessageIdByThread={currentTurnMessageIdByThread} threadId={renderedThreadId} />
+                  <VirtualItemRenderer item={item} turnExpandRef={turnExpandRef} onBranch={onBranch} onReply={onReply} onSubagentSelect={onSubagentSelect} onOpenSubagents={onOpenSubagents} onScrollToMessage={scrollToMessage} currentTurnMessageIdByThread={currentTurnMessageIdByThread} threadId={renderedThreadId} showParentAgentProvenance={showParentAgentProvenance} />
                 </div>
               </div>
             );

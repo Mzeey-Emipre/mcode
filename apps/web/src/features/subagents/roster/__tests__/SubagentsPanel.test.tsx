@@ -25,8 +25,8 @@ vi.mock("@/transport", async () => ({
 vi.mock("@/features/conversation", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/features/conversation")>()),
   getConversationResidency: () => harness.residency,
-  MessageList: ({ displayThreadId }: { displayThreadId?: string }) => (
-    <div data-testid="shared-message-list" data-display-thread-id={displayThreadId} />
+  MessageList: ({ displayThreadId, showParentAgentProvenance }: { displayThreadId?: string; showParentAgentProvenance?: boolean }) => (
+    <div data-testid="shared-message-list" data-display-thread-id={displayThreadId} data-show-parent-provenance={showParentAgentProvenance} />
   ),
 }));
 
@@ -302,9 +302,11 @@ describe("SubagentsPanel", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: /Open Active child details, Active/ })).toBeInTheDocument());
     const activeRow = screen.getAllByTestId("subagent-roster-row");
     expect(activeRow[0]).toHaveTextContent("Active child");
-    expect(activeRow[1]).toHaveTextContent("Parent / Ancestor child");
+    expect(activeRow[1]).toHaveTextContent("Ancestor child");
+    expect(activeRow[1]).not.toHaveTextContent("Parent / Ancestor child");
     expect(screen.getByText("Active descendant")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Open Completed child details, Completed/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Open Completed child details, Completed/ }).querySelector(".font-mono")).toBeNull();
     expect(screen.getByRole("button", { name: /Open Interrupted child details, Interrupted/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Open Errored child details, Errored/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Open Unknown child details, Idle/ })).not.toHaveTextContent("Completed");
@@ -370,14 +372,15 @@ describe("SubagentsPanel", () => {
     const stop = screen.getByRole("button", { name: "Stop Detail layout child" });
     expect(header).toBeTruthy();
     expect(header).toHaveTextContent("Detail layout child");
-    expect(header).toHaveTextContent("Parent / ancestor");
-    expect(header).toHaveTextContent("GPT-5.6 Sol");
-    expect(header).toHaveTextContent("High");
+    expect(header).toHaveTextContent("ancestor");
+    expect(header).not.toHaveTextContent("Parent");
+    expect(header).toHaveTextContent("GPT-5.6 Sol · High");
     expect(screen.queryByText("Technical details")).not.toBeInTheDocument();
     expect(screen.queryByText("Canonical ID:")).not.toBeInTheDocument();
     expect(screen.queryByText("Provider identity provenance:")).not.toBeInTheDocument();
     expect(screen.queryByTestId("subagent-detail-status")).not.toBeInTheDocument();
     expect(screen.getByTestId("subagent-detail-actions")).toContainElement(stop);
+    expect(screen.getByTestId("shared-message-list")).toHaveAttribute("data-show-parent-provenance", "false");
     expect(header?.contains(stop)).toBe(false);
   });
 

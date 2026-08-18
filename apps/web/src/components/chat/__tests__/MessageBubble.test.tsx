@@ -128,6 +128,9 @@ describe("MessageBubble", () => {
     expect(screen.getByTestId("parent-agent-provenance")).toHaveTextContent("Parent agent");
     expect(screen.getByRole("note", { name: /parent-thread.*parent-turn.*receiver-thread/i })).toBeInTheDocument();
 
+    rerender(<MessageBubble message={parentMessage} showParentAgentProvenance={false} />);
+    expect(screen.queryByTestId("parent-agent-provenance")).not.toBeInTheDocument();
+
     rerender(<MessageBubble message={createUserMessage()} />);
     expect(screen.queryByTestId("parent-agent-provenance")).not.toBeInTheDocument();
   });

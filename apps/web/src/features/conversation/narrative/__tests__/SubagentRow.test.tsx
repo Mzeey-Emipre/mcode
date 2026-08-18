@@ -86,8 +86,29 @@ describe("SubagentRow", () => {
     expect(screen.queryByText("Private prompt")).not.toBeInTheDocument();
     expect(screen.queryByText("Private task")).not.toBeInTheDocument();
     const glyph = document.querySelector('[data-subagent-identity-glyph="Subagent"]');
-    expect(glyph).not.toHaveAttribute("data-subagent-palette");
-    expect(glyph).not.toHaveAttribute("style");
+    expect(glyph).toHaveAttribute(
+      "data-subagent-palette",
+      String(getSubagentIdentityPaletteIndex("agent-1")),
+    );
+    expect(glyph?.getAttribute("style")).toContain("--subagent-identity-color");
+  });
+
+  it("gives anonymous agents stable per-agent colors", () => {
+    const first = agent({ id: "agent-1", toolInput: {} });
+    const second = agent({ id: "agent-2", toolInput: {} });
+    render(
+      <SubagentRow
+        toolCall={first}
+        participants={[first, second]}
+        lifecycle="started"
+        children={[]}
+        hooks={[]}
+      />,
+    );
+
+    const palettes = [...document.querySelectorAll('[data-subagent-identity-glyph="Subagent"]')]
+      .map((glyph) => glyph.getAttribute("data-subagent-palette"));
+    expect(palettes).toEqual(["0", "4"]);
   });
 
   it("colors an explicitly named Subagent instead of treating the label as anonymous", () => {

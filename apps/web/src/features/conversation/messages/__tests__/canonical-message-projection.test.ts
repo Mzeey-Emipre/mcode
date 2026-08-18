@@ -23,7 +23,11 @@ function message(overrides: Partial<Message> = {}): Message {
   };
 }
 
-function turn(status: AgentTurn["status"], endedAt: string | null = null): AgentTurn {
+function turn(
+  status: AgentTurn["status"],
+  endedAt: string | null = null,
+  overrides: Partial<AgentTurn> = {},
+): AgentTurn {
   return {
     id: TURN_ID,
     threadId: THREAD_ID,
@@ -35,6 +39,7 @@ function turn(status: AgentTurn["status"], endedAt: string | null = null): Agent
     endedAt,
     createdAt: STARTED_AT,
     updatedAt: endedAt ?? STARTED_AT,
+    ...overrides,
   };
 }
 
@@ -44,11 +49,12 @@ function item(
   payload: Record<string, unknown>,
   createdAt: string,
   updatedAt = createdAt,
+  turnId = TURN_ID,
 ): AgentItem {
   return {
     id,
     threadId: THREAD_ID,
-    turnId: TURN_ID,
+    turnId,
     kind,
     providerIdentities: [],
     payload,
@@ -151,6 +157,106 @@ describe("projectCanonicalMessageList", () => {
     expect(projection?.currentTurnMessageId).toBe("child-answer");
     expect(projection?.assistantResponseKeys).toEqual({
       "child-answer": `canonical-turn-response:${TURN_ID}`,
+    });
+  });
+
+  it("summarizes structured activity for every completed child turn", () => {
+    const state = createAgentModelState();
+    const secondTurnId = "canonical-turn-2";
+    state.turns[TURN_ID] = turn("Completed", "2026-08-18T12:00:05.000Z");
+    state.turns[secondTurnId] = turn("Completed", "2026-08-18T12:01:05.000Z", {
+      id: secondTurnId,
+      startedAt: "2026-08-18T12:01:00.000Z",
+      createdAt: "2026-08-18T12:01:00.000Z",
+      updatedAt: "2026-08-18T12:01:05.000Z",
+    });
+    const firstAnswer = message({
+      id: "child-answer-1",
+      role: "assistant",
+      content: "First answer",
+      sequence: 1,
+      timestamp: "2026-08-18T12:00:04.000Z",
+    });
+    const secondPrompt = message({
+      id: "child-prompt-2",
+      content: "Follow up",
+      sequence: 2,
+      timestamp: "2026-08-18T12:01:00.000Z",
+    });
+    const secondAnswer = message({
+      id: "child-answer-2",
+      role: "assistant",
+      content: "Second answer",
+      sequence: 3,
+      timestamp: "2026-08-18T12:01:04.000Z",
+    });
+    state.items.firstCall = item(
+      "first-call",
+      "tool-call",
+      { projection: "codexChildToolCall", nativeItemId: "read-1", toolName: "Read" },
+      "2026-08-18T12:00:01.000Z",
+    );
+    state.items.firstResult = item(
+      "first-result",
+      "tool-result",
+      { projection: "codexChildToolResult", nativeItemId: "read-1", output: "ok" },
+      "2026-08-18T12:00:02.000Z",
+      "2026-08-18T12:00:03.000Z",
+    );
+    state.items.firstAnswer = item(
+      "first-answer",
+      "message",
+      { projection: "message", message: firstAnswer },
+      firstAnswer.timestamp,
+    );
+    state.items.secondCall = item(
+      "second-call",
+      "tool-call",
+      { projection: "codexChildToolCall", nativeItemId: "read-2", toolName: "Read" },
+      "2026-08-18T12:01:01.000Z",
+      "2026-08-18T12:01:01.000Z",
+      secondTurnId,
+    );
+    state.items.secondResult = item(
+      "second-result",
+      "tool-result",
+      { projection: "codexChildToolResult", nativeItemId: "read-2", output: "ok" },
+      "2026-08-18T12:01:02.000Z",
+      "2026-08-18T12:01:03.000Z",
+      secondTurnId,
+    );
+    state.items.secondAnswer = item(
+      "second-answer",
+      "message",
+      { projection: "message", message: secondAnswer },
+      secondAnswer.timestamp,
+      secondAnswer.timestamp,
+      secondTurnId,
+    );
+
+    const projection = projectCanonicalMessageList({
+      threadId: THREAD_ID,
+      state,
+      messages: [message(), firstAnswer, secondPrompt, secondAnswer],
+      toolCalls: [],
+      thoughtSegments: [],
+    });
+
+    expect(projection?.messages.map((entry) => entry.id)).toEqual([
+      "child-prompt",
+      "child-answer-1",
+      "child-prompt-2",
+      "child-answer-2",
+    ]);
+    expect(projection?.turnSummariesByMessageId).toEqual({
+      "child-answer-1": {
+        counts: { steps: 1, thoughts: 0, subagents: 0 },
+        durationMs: 2_000,
+      },
+      "child-answer-2": {
+        counts: { steps: 1, thoughts: 0, subagents: 0 },
+        durationMs: 2_000,
+      },
     });
   });
 });

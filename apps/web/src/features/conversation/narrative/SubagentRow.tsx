@@ -81,6 +81,7 @@ export function SubagentRow({
                 <SubagentIdentityGlyph
                   identity={identity}
                   hasExplicitIdentity={resolvedIdentity !== undefined}
+                  paletteSeed={participant.id}
                   className="size-4"
                   size={12}
                 />

@@ -85,6 +85,14 @@ export interface NarrativeCounts {
   subagents: number;
 }
 
+/** Completed-turn counts and duration rendered by the shared timeline footer. */
+export interface TurnFooterSummary {
+  /** Structured activity counts for the completed turn. */
+  counts: NarrativeCounts;
+  /** Elapsed structured-activity time, or null when no complete boundary exists. */
+  durationMs: number | null;
+}
+
 /** Return value of `buildNarrativeItems` — items plus aggregate counts. */
 export interface NarrativeBuildResult {
   items: NarrativeItem[];

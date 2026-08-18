@@ -1414,20 +1414,72 @@ export class CanonicalAgentEventSink {
 
   /** Provision one Starting child and one directional Dispatched action exactly once. */
   startCodexChildDelegation(input: CodexChildDelegationInput): CodexChildDelegation {
-    const existing = this.loadCodexChildDelegation(input.parentThreadId, input.parentItemId);
-    if (existing) return existing;
-    const parentThread = this.loadThread(input.parentThreadId);
-    const parentTurn = this.loadTurn(input.parentTurnId);
-    if (!parentThread || !parentTurn || parentTurn.threadId !== parentThread.id) {
-      throw new Error(`Codex parent turn is not canonical: ${input.parentTurnId}`);
-    }
-    const now = new Date().toISOString();
     const normalizedDescription = typeof input.description === "string"
       ? input.description.trim().slice(0, CANONICAL_SUBAGENT_TASK_MAX_LENGTH) || undefined
       : undefined;
     const normalizedIdentity = resolveSubagentDisplayName({ agentName: input.identity });
     const normalizedModel = resolveSubagentMetadata(input.model);
     const normalizedReasoningEffort = resolveSubagentMetadata(input.reasoningEffort);
+    const existing = this.loadCodexChildDelegation(input.parentThreadId, input.parentItemId);
+    if (existing) {
+      const updatedPayload = {
+        ...existing.parentItem.payload,
+        ...(normalizedDescription !== undefined ? { description: normalizedDescription } : {}),
+        ...(normalizedIdentity !== undefined ? { identity: normalizedIdentity } : {}),
+        ...(normalizedModel !== undefined ? { model: normalizedModel } : {}),
+        ...(normalizedReasoningEffort !== undefined
+          ? { reasoningEffort: normalizedReasoningEffort }
+          : {}),
+      };
+      const providerIdentities = this.uniqueProviderIdentities([
+        ...existing.parentItem.providerIdentities,
+        ...input.providerIdentities,
+      ]);
+      if (
+        JSON.stringify(updatedPayload) === JSON.stringify(existing.parentItem.payload)
+        && JSON.stringify(providerIdentities) === JSON.stringify(existing.parentItem.providerIdentities)
+      ) return existing;
+
+      const parentThread = this.loadThread(input.parentThreadId);
+      const parentTurn = this.loadTurn(input.parentTurnId);
+      if (!parentThread || !parentTurn || parentTurn.threadId !== parentThread.id) {
+        throw new Error(`Codex parent turn is not canonical: ${input.parentTurnId}`);
+      }
+      const updatedParentItem: AgentItem = {
+        ...existing.parentItem,
+        providerIdentities,
+        payload: updatedPayload,
+        updatedAt: new Date().toISOString(),
+      };
+      const metadataKey = hashCodexKey(JSON.stringify({
+        previousUpdatedAt: existing.parentItem.updatedAt,
+        description: normalizedDescription,
+        identity: normalizedIdentity,
+        model: normalizedModel,
+        reasoningEffort: normalizedReasoningEffort,
+        providerIdentities,
+      }));
+      this.commit({
+        threadId: parentThread.id,
+        turnId: parentTurn.id,
+        executionId: input.parentExecutionId,
+        phase: "running",
+        events: [this.itemDraft(
+          input.parentExecutionId,
+          parentThread,
+          parentTurn,
+          updatedParentItem,
+          `${input.parentExecutionId}:codex-child:${hashCodexKey(input.parentItemId)}:metadata:${metadataKey}`,
+        )],
+      });
+      return { ...existing, parentItem: updatedParentItem };
+    }
+    const parentThread = this.loadThread(input.parentThreadId);
+    const parentTurn = this.loadTurn(input.parentTurnId);
+    if (!parentThread || !parentTurn || parentTurn.threadId !== parentThread.id) {
+      throw new Error(`Codex parent turn is not canonical: ${input.parentTurnId}`);
+    }
+    const now = new Date().toISOString();
     const childThread: AgentThread = {
       id: `thread:codex-child:${randomUUID()}`,
       workspaceId: parentThread.workspaceId,
@@ -3285,9 +3337,10 @@ export class CanonicalAgentEventSink {
     thread: AgentThread,
     turn: AgentTurn,
     item: AgentItem,
+    eventId = `${executionId}:item:${item.id}`,
   ): CanonicalAgentEventDraft {
     return {
-      eventId: `${executionId}:item:${item.id}`,
+      eventId,
       routing: {
         threadId: thread.id,
         turnId: turn.id,

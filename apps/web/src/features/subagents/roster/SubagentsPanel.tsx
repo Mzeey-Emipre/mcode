@@ -46,7 +46,8 @@ function canonicalLineage(row: CanonicalSubagentRosterRow, rows: readonly Canoni
   const identities = new Map(rows.map((candidate) => [candidate.id, canonicalIdentity(candidate)]));
   return row.lineage
     .slice(0, -1)
-    .map((id) => id === row.owningParentThreadId ? "Parent" : identities.get(id) ?? id)
+    .filter((id) => id !== row.owningParentThreadId)
+    .map((id) => identities.get(id) ?? id)
     .join(" / ");
 }
 
@@ -90,6 +91,7 @@ function CanonicalRosterRow({
         <SubagentIdentityGlyph
           identity={canonicalIdentity(row)}
           hasExplicitIdentity={row.identity !== undefined}
+          paletteSeed={row.id}
           animated={active}
           className="size-6"
           size={15}
@@ -97,7 +99,9 @@ function CanonicalRosterRow({
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-center gap-2">
             <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{canonicalIdentity(row)}</span>
-            <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">{status}</span>
+            {status !== "Completed" && (
+              <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">{status}</span>
+            )}
           </span>
           {lineage && <span className="mt-0.5 block truncate text-xs text-muted-foreground" aria-label={`Lineage: ${lineage}`}>{lineage}</span>}
           {row.task && <span className="mt-0.5 block truncate text-xs text-muted-foreground">{row.task}</span>}
@@ -134,6 +138,10 @@ function CanonicalDetailView({
   const identity = canonicalIdentity(row);
   const lineage = canonicalLineage(row, rows);
   const active = canonicalIsActive(row);
+  const configuration = [
+    row.model ? resolveModelDisplayLabel(row.model) : undefined,
+    row.reasoning ? formatReasoningLevel(row.reasoning) : undefined,
+  ].filter((value): value is string => value !== undefined).join(" · ");
   const [displayLeaseAcquired, setDisplayLeaseAcquired] = useState(false);
   useEffect(() => {
     const residency = getConversationResidency();
@@ -148,21 +156,19 @@ function CanonicalDetailView({
           <ArrowLeft size={15} aria-hidden />
         </Button>
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          <SubagentIdentityGlyph identity={identity} hasExplicitIdentity={row.identity !== undefined} className="size-6" size={15} />
+          <SubagentIdentityGlyph identity={identity} hasExplicitIdentity={row.identity !== undefined} paletteSeed={row.id} className="size-6" size={15} />
           <div className="min-w-0 flex-1">
             <h2 className="truncate text-sm font-semibold">{identity}</h2>
             {lineage && <p className="truncate text-xs text-muted-foreground">{lineage}</p>}
           </div>
-          <div className="flex shrink-0 items-center gap-2 font-mono text-xs text-muted-foreground">
-            {row.model && <span>{resolveModelDisplayLabel(row.model)}</span>}
-            {row.reasoning && <span>{formatReasoningLevel(row.reasoning)}</span>}
-          </div>
+          {configuration && <span className="shrink-0 font-mono text-xs text-muted-foreground">{configuration}</span>}
         </div>
       </header>
       <div className="min-h-0 flex-1">
         {displayLeaseAcquired && (
           <MessageList
             displayThreadId={row.id}
+            showParentAgentProvenance={false}
             onSubagentSelect={openSubagentDetail}
             onOpenSubagents={openSubagentsRoster}
           />

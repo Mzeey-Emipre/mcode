@@ -281,6 +281,8 @@ interface MessageBubbleProps {
   assistantStreaming?: boolean;
   /** Controls whether persisted-message actions are interactive for assistant output. */
   assistantActionsVisible?: boolean;
+  /** Whether a child prompt displays its parent-agent provenance label. */
+  showParentAgentProvenance?: boolean;
 }
 
 /** Single image thumbnail with error fallback and optional full-size preview. */
@@ -473,6 +475,7 @@ export const MessageBubble = memo(function MessageBubble({
   onScrollToMessage,
   assistantStreaming,
   assistantActionsVisible = true,
+  showParentAgentProvenance = true,
 }: MessageBubbleProps) {
   const [imagePreview, setImagePreview] = useState<{
     items: { src: string; title: string }[];
@@ -671,7 +674,7 @@ export const MessageBubble = memo(function MessageBubble({
               </div>
             ) : null}
 
-            {parentAgentProvenance ? (
+            {showParentAgentProvenance && parentAgentProvenance ? (
               <div
                 className="flex justify-end"
                 role="note"

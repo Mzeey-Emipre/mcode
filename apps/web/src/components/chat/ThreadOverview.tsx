@@ -2387,6 +2387,7 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
                         key={row.id}
                         identity={row.identity}
                         hasExplicitIdentity={row.hasExplicitIdentity}
+                        paletteSeed={row.id}
                         size={11}
                         className="size-4 ring-2 ring-background"
                       />

@@ -36,8 +36,8 @@ vi.mock("../NarrativeRows", () => ({
 }));
 
 vi.mock("../TurnFooter", () => ({
-  TurnFooter: ({ counts }: { counts: { steps: number } }) => (
-    <div data-testid="persisted-footer-steps">{counts.steps}</div>
+  TurnFooter: ({ counts }: { counts: { steps: number; subagents: number } }) => (
+    <div data-testid="persisted-footer-steps" data-subagents={counts.subagents}>{counts.steps}</div>
   ),
 }));
 
@@ -126,6 +126,25 @@ describe("persisted child timeline thread selection", () => {
     expect(loadNarrativeForMessage).toHaveBeenCalledTimes(2);
     expect(loadNarrativeForMessage).toHaveBeenCalledWith("assistant-1", "child-thread");
     expect(loadNarrativeForMessage).not.toHaveBeenCalledWith("assistant-1", "parent-thread");
+  });
+
+  it("renders a canonical footer without loading legacy narrative records", () => {
+    recordsByThread.delete("child-thread");
+
+    render(
+      <PersistedTurnFooter
+        threadId="child-thread"
+        messageId="assistant-1"
+        summary={{
+          counts: { steps: 2, thoughts: 1, subagents: 1 },
+          durationMs: 2_500,
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId("persisted-footer-steps")).toHaveTextContent("2");
+    expect(screen.getByTestId("persisted-footer-steps")).toHaveAttribute("data-subagents", "1");
+    expect(loadNarrativeForMessage).not.toHaveBeenCalled();
   });
 
   it("routes persisted subagent rows through the chat detail callback", () => {

@@ -1287,6 +1287,43 @@ describe("CanonicalAgentEventSink", () => {
     });
   });
 
+  it("enriches an existing delegation when authoritative child metadata arrives later", () => {
+    startCanonicalParent(sink, db);
+    const input = {
+      parentThreadId: THREAD_ID,
+      parentTurnId: TURN_ID,
+      parentExecutionId: EXECUTION_ID,
+      parentItemId: "toolCall:spawn-late-roster-metadata",
+      receiverThreadIds: ["native-late-roster-metadata"],
+      providerIdentities: [] as ProviderIdentity[],
+    };
+    const delegation = sink.startCodexChildDelegation(input);
+
+    const enriched = sink.startCodexChildDelegation({
+      ...input,
+      description: "Inspect late metadata",
+      identity: "Worker",
+      model: "gpt-5.6-terra",
+      reasoningEffort: "medium",
+      providerIdentities: [identity()],
+    });
+    const roster = sink.loadSubagentRoster({
+      owningParentThreadId: THREAD_ID,
+      limit: CANONICAL_SUBAGENT_ROSTER_MAX_CHILDREN,
+    });
+
+    expect(enriched.childThread.id).toBe(delegation.childThread.id);
+    expect(roster.active).toHaveLength(1);
+    expect(roster.active[0]).toMatchObject({
+      id: delegation.childThread.id,
+      task: "Inspect late metadata",
+      identity: "Worker",
+      model: "gpt-5.6-terra",
+      reasoning: "medium",
+      sourceProviderIdentities: [identity()],
+    });
+  });
+
   it("bounds hostile roster metadata before canonical persistence", () => {
     startCanonicalParent(sink, db);
     const description = "d".repeat(CANONICAL_SUBAGENT_TASK_MAX_LENGTH + 1);

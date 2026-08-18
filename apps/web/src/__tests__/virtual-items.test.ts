@@ -135,6 +135,29 @@ describe("buildStableItems", () => {
       "persisted-late-hooks",
     ]);
   });
+
+  it("emits a completed-turn footer from canonical summary data", () => {
+    const messages: Message[] = [
+      makeMessage({ id: "u1", role: "user", content: "hi" }),
+      makeMessage({ id: "a1", role: "assistant", content: "hello" }),
+    ];
+    const items = buildStableItems(messages, undefined, undefined, undefined, undefined, {
+      a1: {
+        counts: { steps: 1, thoughts: 0, subagents: 0 },
+        durationMs: 1_250,
+      },
+    });
+
+    expect(items.at(-1)).toEqual({
+      key: "persisted-turn-footer-a1",
+      type: "persisted-turn-footer",
+      messageId: "a1",
+      summary: {
+        counts: { steps: 1, thoughts: 0, subagents: 0 },
+        durationMs: 1_250,
+      },
+    });
+  });
 });
 
 describe("final response item keys", () => {
