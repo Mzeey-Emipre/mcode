@@ -3,7 +3,6 @@ import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { SubagentIdentityGlyph } from "@/components/ui/SubagentIdentityGlyph";
 import { SubagentStopControl } from "../lifecycle/SubagentStopControl";
 import {
@@ -49,14 +48,6 @@ function canonicalLineage(row: CanonicalSubagentRosterRow, rows: readonly Canoni
     .slice(0, -1)
     .map((id) => id === row.owningParentThreadId ? "Parent" : identities.get(id) ?? id)
     .join(" / ");
-}
-
-function providerIdentityProvenance(row: CanonicalSubagentRosterRow): string {
-  const identities = [...row.sourceProviderIdentities, ...row.providerIdentities];
-  if (identities.length === 0) return "No provider identity recorded";
-  return identities
-    .map((identity) => `${identity.providerId} · ${identity.scope} · ${identity.value} · ${identity.provenance}`)
-    .join("; ");
 }
 
 /** Resolve a panel selection by canonical child ID or exact provider source item ID. */
@@ -143,7 +134,6 @@ function CanonicalDetailView({
   const identity = canonicalIdentity(row);
   const lineage = canonicalLineage(row, rows);
   const active = canonicalIsActive(row);
-  const [technicalOpen, setTechnicalOpen] = useState(false);
   const [displayLeaseAcquired, setDisplayLeaseAcquired] = useState(false);
   useEffect(() => {
     const residency = getConversationResidency();
@@ -169,17 +159,6 @@ function CanonicalDetailView({
           </div>
         </div>
       </header>
-      <Collapsible open={technicalOpen} onOpenChange={setTechnicalOpen} className="shrink-0 border-b border-border/40 px-4 py-2 text-xs text-muted-foreground" data-testid="subagent-technical-details">
-        <CollapsibleTrigger asChild>
-          <Button type="button" variant="ghost" size="sm" className="h-7 px-0 font-medium text-foreground hover:bg-transparent">Technical details</Button>
-        </CollapsibleTrigger>
-        <CollapsibleContent>
-          <dl className="mt-2 grid gap-1 font-mono">
-            <div><dt className="inline font-semibold">Canonical ID: </dt><dd className="inline">{row.id}</dd></div>
-            <div><dt className="inline font-semibold">Provider identity provenance: </dt><dd className="inline break-words">{providerIdentityProvenance(row)}</dd></div>
-          </dl>
-        </CollapsibleContent>
-      </Collapsible>
       <div className="min-h-0 flex-1">
         {displayLeaseAcquired && (
           <MessageList

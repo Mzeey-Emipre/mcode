@@ -332,7 +332,9 @@ describe("SubagentsPanel", () => {
     expect(header).toHaveTextContent("Parent / ancestor");
     expect(header).toHaveTextContent("GPT-5.6 Sol");
     expect(header).toHaveTextContent("High");
-    expect(screen.getByTestId("subagent-technical-details")).toHaveTextContent("Technical details");
+    expect(screen.queryByText("Technical details")).not.toBeInTheDocument();
+    expect(screen.queryByText("Canonical ID:")).not.toBeInTheDocument();
+    expect(screen.queryByText("Provider identity provenance:")).not.toBeInTheDocument();
     expect(screen.queryByTestId("subagent-detail-status")).not.toBeInTheDocument();
     expect(screen.getByTestId("subagent-detail-actions")).toContainElement(stop);
     expect(header?.contains(stop)).toBe(false);
@@ -524,8 +526,6 @@ describe("SubagentsPanel", () => {
       "canonical-timeline-child",
     );
     expect(screen.getByRole("region", { name: "Timeline child subagent details" })).toBeInTheDocument();
-    expect(screen.getByTestId("subagent-technical-details")).toHaveTextContent("Technical details");
-    expect(screen.getByTestId("subagent-technical-details").querySelector("[data-state='open']")).toBeNull();
     await waitFor(() => expect(useDiffStore.getState().subagentDetailByThread["thread-1"]).toMatchObject({
       id: "raw-agent-call",
       originTab: "finished",
