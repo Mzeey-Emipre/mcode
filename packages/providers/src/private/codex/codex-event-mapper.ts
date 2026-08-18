@@ -133,6 +133,8 @@ export class CodexEventMapper {
   private childAssistantTextByThreadId = new Map<string, BoundedToolOutputBuffer>();
   /** Native assistant item ids used to give completed child messages structural identity. */
   private childAssistantItemIdByThreadId = new Map<string, string>();
+  /** Parent follow-up prompts waiting for the next turn on an existing child thread. */
+  private pendingChildPromptByThreadId = new Map<string, string>();
   /** Native child turn ids learned from exact turn-start evidence. */
   private childTurnIdByThreadId = new Map<string, string>();
   /** Suppresses duplicate native child turn-start notifications. */
@@ -491,6 +493,14 @@ export class CodexEventMapper {
       const startKey = `${childThreadId}:${nativeTurnId}`;
       if (this.emittedChildTurnStarts.has(startKey)) return [];
       this.emittedChildTurnStarts.add(startKey);
+      this.childAssistantTextByThreadId.delete(childThreadId);
+      this.childAssistantItemIdByThreadId.delete(childThreadId);
+      const prompt = this.pendingChildPromptByThreadId.get(childThreadId)
+        ?? this.stringField(
+          this.spawnAgentToolInputById.get(parentCollaborationItemId) ?? {},
+          "prompt",
+        );
+      this.pendingChildPromptByThreadId.delete(childThreadId);
       const turnStarted: AgentEvent = {
         type: AgentEventType.TurnStarted,
         threadId: this.threadId,
@@ -498,13 +508,7 @@ export class CodexEventMapper {
           nativeThreadId: childThreadId,
           nativeTurnId,
           parentCollaborationItemId,
-          ...(() => {
-            const prompt = this.stringField(
-              this.spawnAgentToolInputById.get(parentCollaborationItemId) ?? {},
-              "prompt",
-            );
-            return prompt ? { prompt } : {};
-          })(),
+          ...(prompt ? { prompt } : {}),
           nativeEventId: this.childNativeEventId("turnStarted", {
             nativeThreadId: childThreadId,
             nativeTurnId,
@@ -583,6 +587,7 @@ export class CodexEventMapper {
       }
       if (itemType === "collabAgentToolCall" && itemId && item) {
         if (this.isWaitCollab(item)) return [];
+        this.rememberPendingChildPrompt(item);
         this.collabToolUseFromStartIds.add(itemId);
         if (this.isSpawnAgentCollab(item) && this.registerCollabReceiverThreads(itemId, item, true) > 0) {
           this.openSpawnAgentIds.add(itemId);
@@ -790,6 +795,7 @@ export class CodexEventMapper {
       this.strictChildTurnThreads.delete(oldest);
       this.childAssistantTextByThreadId.delete(oldest);
       this.childAssistantItemIdByThreadId.delete(oldest);
+      this.pendingChildPromptByThreadId.delete(oldest);
       this.childThreadMetadataById.delete(oldest);
       const early = this.earlyChildNotificationsByThread.get(oldest);
       if (early) {
@@ -881,12 +887,54 @@ export class CodexEventMapper {
     };
   }
 
+  /** Associates a parent follow-up prompt with the next turn of its exact child receiver. */
+  private rememberPendingChildPrompt(item: CompletedItem): void {
+    if (this.isSpawnAgentCollab(item) || this.isWaitCollab(item)) return;
+    const raw = item as unknown as Record<string, unknown>;
+    const prompt = this.stringField(raw, "prompt");
+    if (!prompt || !Array.isArray(raw.receiverThreadIds)) return;
+    for (const value of raw.receiverThreadIds) {
+      if (
+        typeof value === "string"
+        && this.collabReceiverThreadToCollabId.has(value)
+      ) {
+        this.pendingChildPromptByThreadId.set(value, prompt.slice(0, 32_768));
+      }
+    }
+  }
+
   /** Merges any newly-arrived spawn metadata for later child/wait completion. */
   private mergeSpawnAgentToolInput(collabId: string, item: CompletedItem): Record<string, unknown> {
     const existing = this.spawnAgentToolInputById.get(collabId) ?? {};
     const next = { ...existing, ...this.buildCollabToolInput(item) };
     this.spawnAgentToolInputById.set(collabId, next);
     return next;
+  }
+
+  /** Applies resolved model settings carried by a completed native spawn item. */
+  private applySpawnItemMetadata(item: CompletedItem): AgentEvent[] {
+    const raw = item as unknown as Record<string, unknown>;
+    const model = this.stringField(raw, "model");
+    const reasoningEffort =
+      this.stringField(raw, "reasoningEffort")
+      ?? this.stringField(raw, "reasoning_effort");
+    if (!model || !reasoningEffort) return [];
+
+    const receiverThreadIds = new Set<string>();
+    if (Array.isArray(raw.receiverThreadIds)) {
+      for (const value of raw.receiverThreadIds) {
+        if (typeof value === "string" && value.length > 0) receiverThreadIds.add(value);
+      }
+    }
+    if (raw.agentsStates && typeof raw.agentsStates === "object") {
+      for (const childThreadId of Object.keys(raw.agentsStates as Record<string, unknown>)) {
+        if (childThreadId.length > 0) receiverThreadIds.add(childThreadId);
+      }
+    }
+
+    return [...receiverThreadIds].flatMap((childThreadId) => (
+      this.applyChildThreadMetadata(childThreadId, { model, reasoningEffort })
+    ));
   }
 
   /** Maps native Codex sub-agent activity to Agent and persisted lifecycle records. */
@@ -1526,6 +1574,7 @@ export class CodexEventMapper {
       if (itemType === "collabAgentToolCall" && itemId) {
         const collabItem = item as CompletedItem;
         const isSpawn = this.isSpawnAgentCollab(collabItem);
+        this.rememberPendingChildPrompt(collabItem);
         const receiverCount = isSpawn ? this.registerCollabReceiverThreads(itemId, collabItem, true) : 0;
         if (this.collabToolUseFromStartIds.has(itemId)) {
           if (isSpawn) {
@@ -1772,6 +1821,7 @@ export class CodexEventMapper {
     this.parentAgentToolCallIdById.clear();
     this.childAssistantTextByThreadId.clear();
     this.childAssistantItemIdByThreadId.clear();
+    this.pendingChildPromptByThreadId.clear();
     this.emittedChildTurnStarts.clear();
     this.pendingLegacyCollabPops.clear();
     this.earlyChildNotificationsByThread.clear();
@@ -1921,6 +1971,7 @@ export class CodexEventMapper {
         return this.mapWaitStates(item);
       }
       const isSpawn = this.isSpawnAgentCollab(item);
+      if (route === "main") this.rememberPendingChildPrompt(item);
       const out =
         typeof item.result === "string" && item.result.length > 0
           ? item.result
@@ -1944,6 +1995,8 @@ export class CodexEventMapper {
         this.collabToolUseFromStartIds.delete(toolCallId);
         if (route === "main") this.popCollabFromScopeStack(toolCallId);
         if (isSpawn) {
+          const metadataEvents = this.applySpawnItemMetadata(item);
+          if (metadataEvents.length > 0) return metadataEvents;
           const completedResult = this.completedSpawnAgentResults.get(toolCallId);
           return completedResult && mergedToolInput
             ? [{ ...completedResult, toolInput: mergedToolInput }]

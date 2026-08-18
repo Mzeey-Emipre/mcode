@@ -1916,6 +1916,81 @@ describe("CodexEventMapper", () => {
     ]);
   });
 
+  it("keeps follow-up prompts and assistant output isolated across reused child turns", () => {
+    mapper = new CodexEventMapper("test-thread", "main-thread");
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "main-thread",
+        item: {
+          type: "collabAgentToolCall",
+          id: "spawn-worker",
+          tool: "spawnAgent",
+          prompt: "Read the repository purpose.",
+          receiverThreadIds: ["child-worker"],
+        },
+      },
+    });
+    const firstStarted = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/started",
+      params: { threadId: "child-worker", turn: { id: "child-turn-1" } },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/agentMessage/delta",
+      params: { threadId: "child-worker", itemId: "message-1", delta: "First answer." },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/completed",
+      params: { threadId: "child-worker", turn: { id: "child-turn-1", status: "completed" } },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "main-thread",
+        item: {
+          type: "collabAgentToolCall",
+          id: "follow-up-worker",
+          tool: "sendInput",
+          prompt: "Read the README heading.",
+          receiverThreadIds: ["child-worker"],
+        },
+      },
+    });
+    const secondStarted = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/started",
+      params: { threadId: "child-worker", turn: { id: "child-turn-2" } },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/agentMessage/delta",
+      params: { threadId: "child-worker", itemId: "message-2", delta: "Second answer." },
+    });
+    const secondCompleted = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/completed",
+      params: { threadId: "child-worker", turn: { id: "child-turn-2", status: "completed" } },
+    });
+
+    expect(firstStarted).toEqual([expect.objectContaining({
+      type: "turnStarted",
+      codexChild: expect.objectContaining({ prompt: "Read the repository purpose." }),
+    })]);
+    expect(secondStarted).toEqual([expect.objectContaining({
+      type: "turnStarted",
+      codexChild: expect.objectContaining({ prompt: "Read the README heading." }),
+    })]);
+    expect(secondCompleted).toContainEqual(expect.objectContaining({
+      type: "message",
+      content: "Second answer.",
+    }));
+  });
+
   it("passes Codex sub-agent task, model, kind, and effort metadata through the result", () => {
     mapper = new CodexEventMapper("test-thread", "main-thread");
     const started = mapper.mapNotification({
@@ -1975,7 +2050,19 @@ describe("CodexEventMapper", () => {
         },
       },
     ]);
-    expect(spawnCompleted).toEqual([]);
+    expect(spawnCompleted).toEqual([{
+      type: "toolUse",
+      threadId: "test-thread",
+      toolCallId: "spawn-meta",
+      toolName: "Agent",
+      toolInput: {
+        codexCollabKind: "spawnAgent",
+        description: "Inspect mapper metadata.",
+        prompt: "Inspect mapper metadata.",
+        model: "gpt-5.5",
+        reasoningEffort: "high",
+      },
+    }]);
     expect(childCompleted).toEqual([
       {
         type: "toolResult",
