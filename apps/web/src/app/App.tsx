@@ -710,8 +710,8 @@ export function App() {
                     </Suspense>
                   ) : (
                     <ChatView
-                      onSubagentSelect={(id) => openSubagentDetail(id)}
-                      onOpenSubagents={() => openSubagentsRoster()}
+                      onSubagentSelect={openSubagentDetail}
+                      onOpenSubagents={openSubagentsRoster}
                     />
                   )}
                 </main>

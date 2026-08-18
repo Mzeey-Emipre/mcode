@@ -31,7 +31,7 @@ import {
   recallScrollPosition,
   type ThreadScrollPosition,
 } from "@/components/chat/scrollPositionMemory";
-import { NarrativeFlow } from "../narrative";
+import { NarrativeFlow, type SubagentRosterTarget } from "../narrative";
 import { PersistedNarrative } from "../narrative/PersistedNarrative";
 import { PersistedTurnFooter } from "../narrative/PersistedTurnFooter";
 import { NarrativeIndicator } from "../narrative/NarrativeIndicator";
@@ -116,8 +116,8 @@ const VirtualItemRenderer = memo(function VirtualItemRenderer({
   turnExpandRef?: React.RefObject<Map<string, boolean>>;
   onBranch?: (messageId: string) => void;
   onReply?: (messageId: string, content: string, role: "user" | "assistant") => void;
-  onSubagentSelect?: (id: string) => void;
-  onOpenSubagents?: () => void;
+  onSubagentSelect?: (id: string, target: SubagentRosterTarget) => void;
+  onOpenSubagents?: (target: SubagentRosterTarget) => void;
   onScrollToMessage?: (messageId: string) => void;
   currentTurnMessageIdByThread: Record<string, string>;
   threadId: string | null | undefined;
@@ -258,9 +258,9 @@ export interface MessageListProps {
   /** Called when the user clicks the reply button or selects text in a message. */
   onReply?: (messageId: string, content: string, role: "user" | "assistant") => void;
   /** Opens a selected canonical child through the composition root. */
-  onSubagentSelect?: (id: string) => void;
+  onSubagentSelect?: (id: string, target: SubagentRosterTarget) => void;
   /** Opens the owning thread's Subagents roster for aggregate activity. */
-  onOpenSubagents?: () => void;
+  onOpenSubagents?: (target: SubagentRosterTarget) => void;
 }
 
 /** Virtualized list of chat messages, tool calls, and streaming indicators. */

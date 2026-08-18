@@ -14,11 +14,13 @@ export function openSubagentsPanel(): boolean {
   return true;
 }
 
-/** Clears the active child detail and opens the active thread's Subagents roster. */
-export function openSubagentsRoster(): boolean {
+/** Clears the active child detail and opens the active thread's targeted Subagents roster. */
+export function openSubagentsRoster(tab?: SubagentRosterTab): boolean {
   const { activeWorkspaceId, activeThreadId } = useWorkspaceStore.getState();
   if (!activeWorkspaceId || !activeThreadId) return false;
 
+  const diff = useDiffStore.getState();
+  if (tab !== undefined) diff.setSubagentRosterTab(activeThreadId, tab);
   clearSubagentDetail(activeThreadId);
   return openSubagentsPanel();
 }

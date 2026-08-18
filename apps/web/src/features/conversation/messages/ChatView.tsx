@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { MessageList } from "./MessageList";
+import type { SubagentRosterTarget } from "../narrative";
 import { ConversationHoldOverlay } from "@/components/chat/ConversationHoldOverlay";
 import { Composer } from "../composer/Composer";
 import { PlanQuestionWizard } from "@/components/chat/PlanQuestionWizard";
@@ -343,9 +344,9 @@ function ConversationErrorState({ error }: { error: string }) {
 /** Props for the composed Conversation chat surface. */
 export interface ChatViewProps {
   /** Opens a selected canonical child through the composition root. */
-  onSubagentSelect?: (id: string) => void;
+  onSubagentSelect?: (id: string, target: SubagentRosterTarget) => void;
   /** Opens the owning thread's Subagents roster for aggregate activity. */
-  onOpenSubagents?: () => void;
+  onOpenSubagents?: (target: SubagentRosterTarget) => void;
 }
 
 /** Renders the main chat UI for sending and receiving messages within a thread. */

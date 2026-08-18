@@ -1,6 +1,6 @@
 import { memo } from "react";
 import type { ToolCall } from "@/transport/types";
-import type { NarrativeItem } from "./types";
+import type { NarrativeItem, SubagentRosterTarget } from "./types";
 import { ThoughtBlock } from "./ThoughtBlock";
 import { ToolSummaryLine } from "./ToolSummaryLine";
 import { HookRow } from "./HookRow";
@@ -18,9 +18,9 @@ export interface NarrativeRowProps {
   /** Full turn graph retained for the sub-agent detail contract. */
   allToolCalls: readonly ToolCall[];
   /** Opens a selected canonical child through the composition root. */
-  onSubagentSelect?: (id: string) => void;
+  onSubagentSelect?: (id: string, target: SubagentRosterTarget) => void;
   /** Opens the owning thread's Subagents roster for aggregate activity. */
-  onOpenSubagents?: () => void;
+  onOpenSubagents?: (target: SubagentRosterTarget) => void;
 }
 
 function sameItems<T>(left: readonly T[], right: readonly T[]): boolean {
@@ -74,8 +74,8 @@ export function areNarrativeRowPropsEqual(
 function renderItem(
   item: NarrativeItem,
   allToolCalls: readonly ToolCall[],
-  onSubagentSelect?: (id: string) => void,
-  onOpenSubagents?: () => void,
+  onSubagentSelect?: (id: string, target: SubagentRosterTarget) => void,
+  onOpenSubagents?: (target: SubagentRosterTarget) => void,
 ): React.ReactNode {
   switch (item.type) {
     case "thought":

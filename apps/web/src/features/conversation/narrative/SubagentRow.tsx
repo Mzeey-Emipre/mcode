@@ -4,7 +4,7 @@ import { SubagentIdentityGlyph } from "@/components/ui/SubagentIdentityGlyph";
 import type { HookExecution, ToolCall } from "@/transport/types";
 import { NARRATIVE_TOOL_ROW } from "./narrative-layout";
 import type { SubagentLifecycle } from "./subagent-lifecycle";
-import type { SubagentActivity } from "./types";
+import type { SubagentActivity, SubagentRosterTarget } from "./types";
 
 interface SubagentRowProps {
   toolCall: ToolCall;
@@ -18,9 +18,9 @@ interface SubagentRowProps {
   /** Nested depth retained for the shared narrative contract. */
   depth?: number;
   /** Opens the selected canonical child through the composition root. */
-  onSubagentSelect?: (id: string) => void;
+  onSubagentSelect?: (id: string, target: SubagentRosterTarget) => void;
   /** Opens the owning thread's Subagents roster for aggregate activity. */
-  onOpenSubagents?: () => void;
+  onOpenSubagents?: (target: SubagentRosterTarget) => void;
   /** Contiguous sibling Agent calls sharing one parent timeline unit. */
   activities?: readonly SubagentActivity[];
 }
@@ -55,6 +55,9 @@ export function SubagentRow({
     : participants.slice(0, 2).map((participant) => ({ participant, lifecycle }));
   const remainingActivities = groupedActivities?.slice(2) ?? [];
   const aggregateLabel = remainingActivities.length > 0 ? remainingLabel(remainingActivities) : "";
+  const aggregateTarget: SubagentRosterTarget = remainingActivities.some(
+    (activity) => activity.lifecycle !== "finished",
+  ) ? "active" : "finished";
 
   return (
     <div className={`${NARRATIVE_TOOL_ROW} min-w-0 gap-2`}>
@@ -68,7 +71,10 @@ export function SubagentRow({
                 type="button"
                 variant="ghost"
                 size="sm"
-                onClick={() => onSubagentSelect?.(participant.id)}
+                onClick={() => onSubagentSelect?.(
+                  participant.id,
+                  participantLifecycle === "finished" ? "finished" : "active",
+                )}
                 className="min-w-0 shrink gap-1 rounded-full px-2 text-left transition-colors duration-150 motion-reduce:transition-none hover:bg-muted/30"
                 aria-label={`Open ${identity} subagent details`}
               >
@@ -94,7 +100,7 @@ export function SubagentRow({
           type="button"
           variant="ghost"
           size="sm"
-          onClick={() => onOpenSubagents?.()}
+          onClick={() => onOpenSubagents?.(aggregateTarget)}
           className="shrink-0 justify-start rounded-full px-2 text-left text-xs text-muted-foreground hover:bg-muted/30"
           aria-label={`Open full Subagents roster, ${aggregateLabel}`}
         >

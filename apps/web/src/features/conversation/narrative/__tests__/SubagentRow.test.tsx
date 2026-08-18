@@ -163,8 +163,8 @@ describe("SubagentRow", () => {
 
     await userEvent.click(sourceButton);
     await userEvent.click(targetButton);
-    expect(openSubagentDetail).toHaveBeenNthCalledWith(1, "agent-source");
-    expect(openSubagentDetail).toHaveBeenNthCalledWith(2, "agent-target");
+    expect(openSubagentDetail).toHaveBeenNthCalledWith(1, "agent-source", "finished");
+    expect(openSubagentDetail).toHaveBeenNthCalledWith(2, "agent-target", "finished");
   });
 
   it("caps sibling names at two and aggregates remaining lifecycle counts", async () => {
@@ -204,7 +204,8 @@ describe("SubagentRow", () => {
     expect(screen.getByRole("button", { name: "Open Explorer subagent details" })).not.toHaveTextContent("updated");
 
     await userEvent.click(aggregate);
-    expect(rosterOpen).toHaveBeenCalledOnce();
+    expect(rosterOpen).toHaveBeenCalledTimes(1);
+    expect(rosterOpen).toHaveBeenCalledWith("active");
   });
 
   it("keeps identity controls content-sized and permits truncation only when space is constrained", () => {
@@ -248,7 +249,8 @@ describe("SubagentRow", () => {
     expect(screen.getAllByText("updated")).toHaveLength(2);
   });
 
-  it("prefixes a finished-only remaining group with plus", () => {
+  it("opens the finished roster for a finished-only remaining group", async () => {
+    const rosterOpen = vi.fn();
     const activities = [
       agent({ id: "child-a", toolInput: { agentName: "Explorer" }, isComplete: true }),
       agent({ id: "child-b", toolInput: { agentName: "Reviewer" }, isComplete: true }),
@@ -269,10 +271,12 @@ describe("SubagentRow", () => {
         children={[]}
         hooks={[]}
         activities={activities}
-        onOpenSubagents={vi.fn()}
+        onOpenSubagents={rosterOpen}
       />,
     );
 
-    expect(screen.getByRole("button", { name: "Open full Subagents roster, +1 finished" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Open full Subagents roster, +1 finished" }));
+    expect(rosterOpen).toHaveBeenCalledTimes(1);
+    expect(rosterOpen).toHaveBeenCalledWith("finished");
   });
 });

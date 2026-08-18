@@ -1,6 +1,9 @@
 import type { ToolCall, HookExecution } from "@/transport/types";
 import type { SubagentLifecycle } from "./subagent-lifecycle";
 
+/** Roster view associated with a sub-agent activity control. */
+export type SubagentRosterTarget = "active" | "finished";
+
 /** One sibling Agent call rendered inside a compact parent collaboration row. */
 export interface SubagentActivity {
   /** Lifecycle state of the delegated Agent call. */

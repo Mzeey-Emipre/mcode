@@ -85,6 +85,13 @@ describe("openSubagentDetail", () => {
     });
   });
 
+  it("targets the requested roster view before opening it", () => {
+    expect(openSubagentsRoster("finished")).toBe(true);
+
+    expect(useDiffStore.getState().getSubagentRosterTab("thread-1")).toBe("finished");
+    expect(useDiffStore.getState().subagentDetailByThread["thread-1"]).toBeUndefined();
+  });
+
   it("preserves an existing detail when reopening the panel directly", () => {
     const selection = { id: "agent-1", originTab: "finished" as const, scrollTop: 12 };
     useDiffStore.setState({ subagentDetailByThread: { "thread-1": selection } });

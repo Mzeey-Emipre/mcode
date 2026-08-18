@@ -2377,7 +2377,7 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
                   size="sm"
                   type="button"
                   data-testid="thread-overview-subagents"
-                  onClick={openSubagentsRoster}
+                  onClick={() => openSubagentsRoster()}
                   aria-label={`Subagents, ${subagentRoster.active.length} active, ${subagentRoster.finished.length} done`}
                   className={cn(OVERVIEW_ROW_CLASS, "cursor-pointer justify-start gap-2")}
                 >
