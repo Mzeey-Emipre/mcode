@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ListChecks } from "lucide-react";
+import { Layers, ListChecks } from "lucide-react";
 import {
   PANEL_TAB_TYPES,
   creatableTypes,
@@ -57,6 +57,11 @@ describe("PANEL_TAB_TYPES catalog", () => {
     expect(plan?.label).toBe("Plan");
     expect(plan?.blurb).toBe("Read saved plans");
     expect(plan?.icon).toBe(ListChecks);
+  });
+
+  it("uses Layers for the Subagents panel tab", () => {
+    const subagents = PANEL_TAB_TYPES.find((type) => type.id === "subagents");
+    expect(subagents?.icon).toBe(Layers);
   });
 });
 

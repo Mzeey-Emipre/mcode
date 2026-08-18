@@ -77,7 +77,7 @@ import { extractThreadSources, type ThreadSource } from "@/lib/message-sources";
 import { sanitizeCustomBranchInput, trimTrailingBranchChars } from "@/lib/branch-name";
 import { showRightPanelAdaptive } from "@/lib/right-panel-layout";
 import {
-  openSubagentsPanel,
+  openSubagentsRoster,
   projectSubagents,
   SubagentIdentityGlyph,
 } from "@/features/subagents";
@@ -2377,7 +2377,7 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
                   size="sm"
                   type="button"
                   data-testid="thread-overview-subagents"
-                  onClick={openSubagentsPanel}
+                  onClick={openSubagentsRoster}
                   aria-label={`Subagents, ${subagentRoster.active.length} active, ${subagentRoster.finished.length} done`}
                   className={cn(OVERVIEW_ROW_CLASS, "cursor-pointer justify-start gap-2")}
                 >

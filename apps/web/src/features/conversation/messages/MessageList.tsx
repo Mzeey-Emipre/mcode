@@ -106,16 +106,20 @@ const VirtualItemRenderer = memo(function VirtualItemRenderer({
   onBranch,
   onReply,
   onSubagentSelect,
+  onOpenSubagents,
   onScrollToMessage,
   currentTurnMessageIdByThread,
+  threadId,
 }: {
   item: ChatVirtualItem;
   turnExpandRef?: React.RefObject<Map<string, boolean>>;
   onBranch?: (messageId: string) => void;
   onReply?: (messageId: string, content: string, role: "user" | "assistant") => void;
   onSubagentSelect?: (id: string) => void;
+  onOpenSubagents?: () => void;
   onScrollToMessage?: (messageId: string) => void;
   currentTurnMessageIdByThread: Record<string, string>;
+  threadId: string | null | undefined;
 }) {
   switch (item.type) {
     case "message": {
@@ -180,14 +184,15 @@ const VirtualItemRenderer = memo(function VirtualItemRenderer({
           startTime={item.startTime}
           committedAssistantBody={item.committedAssistantBody}
           onSubagentSelect={onSubagentSelect}
+          onOpenSubagents={onOpenSubagents}
         />
       );
     case "persisted-narrative":
-      return <PersistedNarrative messageId={item.messageId} messageContent={item.messageContent} />;
+      return <PersistedNarrative threadId={threadId} messageId={item.messageId} messageContent={item.messageContent} />;
     case "persisted-late-hooks":
-      return <PersistedLateHooks messageId={item.messageId} />;
+      return <PersistedLateHooks threadId={threadId} messageId={item.messageId} />;
     case "persisted-turn-footer":
-      return <PersistedTurnFooter messageId={item.messageId} />;
+      return <PersistedTurnFooter threadId={threadId} messageId={item.messageId} />;
     case "narrative-indicator":
       return (
         <NarrativeIndicator
@@ -206,8 +211,10 @@ const VirtualItemRenderer = memo(function VirtualItemRenderer({
   && prev.onBranch === next.onBranch
   && prev.onReply === next.onReply
   && prev.onSubagentSelect === next.onSubagentSelect
+  && prev.onOpenSubagents === next.onOpenSubagents
   && prev.onScrollToMessage === next.onScrollToMessage
-  && prev.currentTurnMessageIdByThread === next.currentTurnMessageIdByThread,
+  && prev.currentTurnMessageIdByThread === next.currentTurnMessageIdByThread
+  && prev.threadId === next.threadId,
 );
 
 /** Props for {@link ScrollToBottomButton}. */
@@ -251,10 +258,12 @@ export interface MessageListProps {
   onReply?: (messageId: string, content: string, role: "user" | "assistant") => void;
   /** Opens a selected canonical child through the composition root. */
   onSubagentSelect?: (id: string) => void;
+  /** Opens the owning thread's Subagents roster for aggregate activity. */
+  onOpenSubagents?: () => void;
 }
 
 /** Virtualized list of chat messages, tool calls, and streaming indicators. */
-export function MessageList({ displayThreadId, onBranch, onReply, onSubagentSelect }: MessageListProps) {
+export function MessageList({ displayThreadId, onBranch, onReply, onSubagentSelect, onOpenSubagents }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   /** Survives virtualizer remounts: remembers manual expand/collapse toggles by messageId. */
   const turnExpandRef = useRef<Map<string, boolean>>(new Map());
@@ -1517,7 +1526,7 @@ export function MessageList({ displayThreadId, onBranch, onReply, onSubagentSele
                 style={{ transform: `translateY(${vi.start}px)` }}
               >
                 <div className={cn(PRIMARY_CONTENT_RAIL_CLASS, "min-w-0 overflow-x-hidden")}>
-                  <VirtualItemRenderer item={item} turnExpandRef={turnExpandRef} onBranch={onBranch} onReply={onReply} onSubagentSelect={onSubagentSelect} onScrollToMessage={scrollToMessage} currentTurnMessageIdByThread={currentTurnMessageIdByThread} />
+                  <VirtualItemRenderer item={item} turnExpandRef={turnExpandRef} onBranch={onBranch} onReply={onReply} onSubagentSelect={onSubagentSelect} onOpenSubagents={onOpenSubagents} onScrollToMessage={scrollToMessage} currentTurnMessageIdByThread={currentTurnMessageIdByThread} threadId={renderedThreadId} />
                 </div>
               </div>
             );

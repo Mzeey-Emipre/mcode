@@ -26,6 +26,8 @@ export interface NarrativeFlowProps {
   committedAssistantBody?: string;
   /** Opens a selected canonical child through the composition root. */
   onSubagentSelect?: (id: string) => void;
+  /** Opens the owning thread's Subagents roster for aggregate activity. */
+  onOpenSubagents?: () => void;
 }
 
 /**
@@ -43,6 +45,7 @@ export function NarrativeFlow({
   isAgentRunning,
   committedAssistantBody,
   onSubagentSelect,
+  onOpenSubagents,
 }: NarrativeFlowProps) {
   const { items } = useMemo(
     () =>
@@ -83,6 +86,7 @@ export function NarrativeFlow({
           allToolCalls={toolCalls}
           animateEntry
           onSubagentSelect={onSubagentSelect}
+          onOpenSubagents={onOpenSubagents}
         />
       )}
 

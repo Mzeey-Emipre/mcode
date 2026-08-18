@@ -56,20 +56,20 @@ describe("parallel sub-agent nesting", () => {
     });
 
     const subagentItems = items.filter((i) => i.type === "subagent");
-    expect(subagentItems.length).toBe(4);
+    expect(subagentItems.length).toBe(1);
 
     for (const agentId of ["agent-sec", "agent-perf", "agent-qual", "agent-corr"]) {
-      expect(
-        subagentItems
-          .filter((item) => item.toolCall.id === agentId)
-          .map((item) => item.lifecycle),
-      ).toEqual(["finished"]);
+      const item = subagentItems[0];
+      expect(item?.type).toBe("subagent");
+      expect(item?.type === "subagent"
+        ? item.activities?.find((activity) => activity.toolCall.id === agentId)?.lifecycle
+        : undefined).toBe("finished");
     }
 
     const agentRow = (agentId: string) =>
-      subagentItems.find(
-        (item) => item.toolCall.id === agentId,
-      );
+      subagentItems[0]?.type === "subagent"
+        ? subagentItems[0].activities?.find((activity) => activity.toolCall.id === agentId)
+        : undefined;
     expect(agentRow("agent-sec")?.children.map((c) => c.id)).toEqual(["c1", "c2"]);
     expect(agentRow("agent-perf")?.children.map((c) => c.id)).toEqual(["c3"]);
     expect(agentRow("agent-qual")?.children.map((c) => c.id)).toEqual(["c4", "c5", "c6"]);

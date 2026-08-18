@@ -6,13 +6,15 @@
  */
 
 import { useMemo } from "react";
-import { useActiveThreadRecord } from "@/stores/thread-selectors";
+import { useThreadRecord } from "@/stores/thread-selectors";
 import { HookRow } from "../narrative/HookRow";
 import { recordToHookExecution } from "../narrative/build-persisted-narrative";
 import type { HookExecutionRecord } from "@mcode/contracts";
 
 /** Props for `PersistedLateHooks`. */
 interface PersistedLateHooksProps {
+  /** Thread whose resident narrative cache owns this assistant message. */
+  threadId?: string | null;
   /** Assistant message id whose late stop hooks to render. */
   messageId: string;
 }
@@ -22,8 +24,8 @@ interface PersistedLateHooksProps {
  * turn's narrative timeline was already finalised. Returns null when no such
  * hooks exist for this message so the virtualizer item occupies zero height.
  */
-export function PersistedLateHooks({ messageId }: PersistedLateHooksProps) {
-  const records = useActiveThreadRecord((r) => r.narrativeByMessage[messageId]);
+export function PersistedLateHooks({ threadId, messageId }: PersistedLateHooksProps) {
+  const records = useThreadRecord(threadId, (r) => r.narrativeByMessage[messageId]);
 
   const lateHooks = useMemo<HookExecutionRecord[]>(() => {
     if (!records) return [];

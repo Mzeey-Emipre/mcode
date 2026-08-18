@@ -6,7 +6,7 @@ import { useUiStore } from "@/stores/uiStore";
 const mocks = vi.hoisted(() => ({ showRightPanelAdaptive: vi.fn() }));
 vi.mock("@/lib/right-panel-layout", () => ({ showRightPanelAdaptive: mocks.showRightPanelAdaptive }));
 
-import { openSubagentDetail, openSubagentsPanel } from "../open-subagent-detail";
+import { openSubagentDetail, openSubagentsPanel, openSubagentsRoster } from "../open-subagent-detail";
 
 describe("openSubagentDetail", () => {
   beforeEach(() => {
@@ -67,5 +67,30 @@ describe("openSubagentDetail", () => {
       rightPanelMaximized: false,
       rightPanelMaximizedByLayout: false,
     });
+  });
+
+  it("clears the active detail before opening the full roster", () => {
+    useDiffStore.setState({
+      subagentDetailByThread: {
+        "thread-1": { id: "agent-1", originTab: "active", scrollTop: 24 },
+      },
+    });
+
+    expect(openSubagentsRoster()).toBe(true);
+
+    expect(useDiffStore.getState().subagentDetailByThread["thread-1"]).toBeUndefined();
+    expect(useDiffStore.getState().getRightPanel("workspace-1", "thread-1")).toMatchObject({
+      activeTab: "subagents",
+      openTabs: ["subagents"],
+    });
+  });
+
+  it("preserves an existing detail when reopening the panel directly", () => {
+    const selection = { id: "agent-1", originTab: "finished" as const, scrollTop: 12 };
+    useDiffStore.setState({ subagentDetailByThread: { "thread-1": selection } });
+
+    expect(openSubagentsPanel()).toBe(true);
+
+    expect(useDiffStore.getState().subagentDetailByThread["thread-1"]).toEqual(selection);
   });
 });

@@ -334,10 +334,12 @@ function ConversationErrorState({ error }: { error: string }) {
 export interface ChatViewProps {
   /** Opens a selected canonical child through the composition root. */
   onSubagentSelect?: (id: string) => void;
+  /** Opens the owning thread's Subagents roster for aggregate activity. */
+  onOpenSubagents?: () => void;
 }
 
 /** Renders the main chat UI for sending and receiving messages within a thread. */
-export function ChatView({ onSubagentSelect }: ChatViewProps = {}) {
+export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = {}) {
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
@@ -1025,6 +1027,7 @@ export function ChatView({ onSubagentSelect }: ChatViewProps = {}) {
                 onBranch={handleBranch}
                 onReply={handleReply}
                 onSubagentSelect={onSubagentSelect}
+                onOpenSubagents={onOpenSubagents}
               />
             </div>
             <ConversationHoldOverlay targetTitle={activeThread.title || "Conversation"} />
@@ -1045,6 +1048,7 @@ export function ChatView({ onSubagentSelect }: ChatViewProps = {}) {
             onBranch={handleBranch}
             onReply={handleReply}
             onSubagentSelect={onSubagentSelect}
+            onOpenSubagents={onOpenSubagents}
           />
         )}
       </div>

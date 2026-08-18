@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import { useThreadStore } from "@/stores/threadStore";
-import { useActiveThreadRecord } from "@/stores/thread-selectors";
+import { useThreadRecord } from "@/stores/thread-selectors";
 import type { NarrativeItem } from "./types";
 import type { ToolCall } from "@/transport/types";
 import { NarrativeRows } from "./NarrativeRows";
@@ -12,6 +12,8 @@ import { NarrativePerformanceBoundary } from "./NarrativePerformanceBoundary";
 
 /** Props for `PersistedNarrative`. */
 export interface PersistedNarrativeProps {
+  /** Thread whose resident narrative cache owns this assistant message. */
+  threadId?: string | null;
   /** Assistant message id (server-side or local) whose narrative to render. */
   messageId: string;
   /**
@@ -35,16 +37,16 @@ export interface PersistedNarrativeProps {
  *   - Sub-agents render via the same `SubagentRow` but lack the "active"
  *     visual treatment (no pulse, no primary tint)
  */
-export function PersistedNarrative({ messageId, messageContent }: PersistedNarrativeProps) {
-  const records = useActiveThreadRecord((r) => r.narrativeByMessage[messageId]);
+export function PersistedNarrative({ threadId, messageId, messageContent }: PersistedNarrativeProps) {
+  const records = useThreadRecord(threadId, (r) => r.narrativeByMessage[messageId]);
   const load = useThreadStore((s) => s.loadNarrativeForMessage);
   const triggered = useRef(false);
 
   useEffect(() => {
     if (records || triggered.current) return;
     triggered.current = true;
-    void load(messageId);
-  }, [messageId, records, load]);
+    void load(messageId, threadId ?? undefined);
+  }, [messageId, records, load, threadId]);
 
   const { items, allToolCalls } = useMemo(() => {
     if (!records) {

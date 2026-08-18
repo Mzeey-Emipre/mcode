@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef } from "react";
 import { useThreadStore } from "@/stores/threadStore";
-import { useActiveThreadRecord } from "@/stores/thread-selectors";
+import { useThreadRecord } from "@/stores/thread-selectors";
 import { TurnFooter } from "./TurnFooter";
 import type { NarrativeCounts } from "./types";
 
 /** Props for {@link PersistedTurnFooter}. */
 export interface PersistedTurnFooterProps {
+  /** Thread whose resident narrative cache owns this assistant message. */
+  threadId?: string | null;
   /** Assistant message id this footer belongs to. */
   messageId: string;
 }
@@ -23,16 +25,16 @@ export interface PersistedTurnFooterProps {
  * threadStore cache. Returns `null` until records arrive so the layout does
  * not jump.
  */
-export function PersistedTurnFooter({ messageId }: PersistedTurnFooterProps) {
-  const records = useActiveThreadRecord((r) => r.narrativeByMessage[messageId]);
+export function PersistedTurnFooter({ threadId, messageId }: PersistedTurnFooterProps) {
+  const records = useThreadRecord(threadId, (r) => r.narrativeByMessage[messageId]);
   const load = useThreadStore((s) => s.loadNarrativeForMessage);
   const triggered = useRef(false);
 
   useEffect(() => {
     if (records || triggered.current) return;
     triggered.current = true;
-    void load(messageId);
-  }, [messageId, records, load]);
+    void load(messageId, threadId ?? undefined);
+  }, [messageId, records, load, threadId]);
 
   const summary = useMemo(() => {
     if (!records) return null;

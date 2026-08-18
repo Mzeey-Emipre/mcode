@@ -18,6 +18,8 @@ export interface NarrativeRowsProps {
   animateEntry?: boolean;
   /** Opens a selected canonical child through the composition root. */
   onSubagentSelect?: (id: string) => void;
+  /** Opens the owning thread's Subagents roster for aggregate activity. */
+  onOpenSubagents?: () => void;
 }
 
 /** Returns the top margin for one narrative item. */
@@ -84,6 +86,7 @@ export function NarrativeRows({
   allToolCalls,
   animateEntry = false,
   onSubagentSelect,
+  onOpenSubagents,
 }: NarrativeRowsProps) {
   const [pageIndex, setPageIndex] = useState<number | null>(null);
   const isDense = items.length > MAX_COLLAPSED_ROWS;
@@ -136,6 +139,7 @@ export function NarrativeRows({
                 item={item}
                 allToolCalls={allToolCalls}
                 onSubagentSelect={onSubagentSelect}
+                onOpenSubagents={onOpenSubagents}
               />
             </div>
           </Fragment>

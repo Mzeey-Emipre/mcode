@@ -12,7 +12,7 @@ import {
   useSubagentDetailSelection,
   type SubagentRosterTab,
 } from "../state";
-import { openSubagentDetail } from "../detail/open-subagent-detail";
+import { openSubagentDetail, openSubagentsRoster } from "../detail/open-subagent-detail";
 import { getTransport } from "@/transport";
 import { resolveModelDisplayLabel } from "@/lib/format-model-label";
 import { getConversationResidency, MessageList } from "@/features/conversation";
@@ -182,7 +182,11 @@ function CanonicalDetailView({
       </Collapsible>
       <div className="min-h-0 flex-1">
         {displayLeaseAcquired && (
-          <MessageList displayThreadId={row.id} onSubagentSelect={openSubagentDetail} />
+          <MessageList
+            displayThreadId={row.id}
+            onSubagentSelect={openSubagentDetail}
+            onOpenSubagents={openSubagentsRoster}
+          />
         )}
       </div>
       {active && row.canStop && (

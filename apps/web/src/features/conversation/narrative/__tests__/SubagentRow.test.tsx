@@ -154,8 +154,10 @@ describe("SubagentRow", () => {
     expect(sourceButton.parentElement).toHaveClass("gap-1");
     expect(sourceButton.parentElement?.parentElement).toHaveClass("gap-2");
     expect(sourceButton).toHaveTextContent("Explorer with a deliberately long identity");
-    expect(screen.getByText("finished")).toHaveClass("shrink-0");
-    expect(screen.getByText("finished")).not.toHaveAttribute("role", "button");
+    for (const lifecycle of screen.getAllByText("finished")) {
+      expect(lifecycle).toHaveClass("shrink-0");
+      expect(lifecycle).not.toHaveAttribute("role", "button");
+    }
     expect(document.querySelector('[data-subagent-identity-glyph="Implementer"]')).toHaveClass("size-4");
     expect(container.querySelector("[data-lucide='chevron-right']")).not.toBeInTheDocument();
 
@@ -163,5 +165,73 @@ describe("SubagentRow", () => {
     await userEvent.click(targetButton);
     expect(openSubagentDetail).toHaveBeenNthCalledWith(1, "agent-source");
     expect(openSubagentDetail).toHaveBeenNthCalledWith(2, "agent-target");
+  });
+
+  it("caps sibling names at two and aggregates remaining lifecycle counts", async () => {
+    const rosterOpen = vi.fn();
+    const activities = [
+      agent({ id: "child-a", toolInput: { agentName: "Explorer" }, isComplete: false }),
+      agent({ id: "child-b", toolInput: { agentName: "Reviewer" }, isComplete: true }),
+      agent({ id: "child-c", toolInput: { agentName: "Implementer" }, isComplete: false }),
+      agent({ id: "child-d", toolInput: { agentName: "Tester" }, isComplete: true }),
+    ].map((toolCall, index) => ({
+      toolCall,
+      participants: [toolCall],
+      lifecycle: index === 1 || index === 3 ? "finished" as const : "updated" as const,
+      children: [],
+      hooks: [],
+    }));
+
+    render(
+      <SubagentRow
+        toolCall={activities[0]!.toolCall}
+        participants={activities[0]!.participants}
+        lifecycle={activities[0]!.lifecycle}
+        children={[]}
+        hooks={[]}
+        activities={activities}
+        onSubagentSelect={openSubagentDetail}
+        onOpenSubagents={rosterOpen}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Open Explorer subagent details" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Reviewer subagent details" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open Implementer subagent details" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Open Tester subagent details" })).not.toBeInTheDocument();
+    const aggregate = screen.getByRole("button", { name: "Open full Subagents roster, +1 working, 1 finished" });
+    expect(aggregate).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Explorer subagent details" })).not.toHaveTextContent("updated");
+
+    await userEvent.click(aggregate);
+    expect(rosterOpen).toHaveBeenCalledOnce();
+  });
+
+  it("prefixes a finished-only remaining group with plus", () => {
+    const activities = [
+      agent({ id: "child-a", toolInput: { agentName: "Explorer" }, isComplete: true }),
+      agent({ id: "child-b", toolInput: { agentName: "Reviewer" }, isComplete: true }),
+      agent({ id: "child-c", toolInput: { agentName: "Tester" }, isComplete: true }),
+    ].map((toolCall) => ({
+      toolCall,
+      participants: [toolCall],
+      lifecycle: "finished" as const,
+      children: [],
+      hooks: [],
+    }));
+
+    render(
+      <SubagentRow
+        toolCall={activities[0]!.toolCall}
+        participants={activities[0]!.participants}
+        lifecycle="finished"
+        children={[]}
+        hooks={[]}
+        activities={activities}
+        onOpenSubagents={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Open full Subagents roster, +1 finished" })).toBeInTheDocument();
   });
 });

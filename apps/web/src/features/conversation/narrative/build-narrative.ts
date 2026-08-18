@@ -1,5 +1,10 @@
 import type { ToolCall, HookExecution } from "@/transport/types";
-import type { ThoughtSegment, NarrativeItem, NarrativeBuildResult } from "./types";
+import type {
+  ThoughtSegment,
+  NarrativeItem,
+  NarrativeBuildResult,
+  SubagentActivity,
+} from "./types";
 import {
   isSubagentLifecycleCall,
   subagentLifecycleParticipants,
@@ -98,6 +103,16 @@ type TimelineEvent =
   | { kind: "tool"; call: ToolCall; startedAt: number }
   | { kind: "subagent"; call: ToolCall; marker?: ToolCall; lifecycle: SubagentLifecycle; startedAt: number }
   | { kind: "hook"; hook: HookExecution; startedAt: number };
+
+function sameSubagentParent(left: ToolCall, right: ToolCall): boolean {
+  const leftParent = typeof left.parentToolCallId === "string" && left.parentToolCallId.length > 0
+    ? left.parentToolCallId
+    : null;
+  const rightParent = typeof right.parentToolCallId === "string" && right.parentToolCallId.length > 0
+    ? right.parentToolCallId
+    : null;
+  return leftParent === rightParent;
+}
 
 /**
  * Transforms raw live state into an ordered NarrativeItem[] for the timeline.
@@ -241,7 +256,8 @@ export function buildNarrativeItems(params: {
 
   let emittedFinalDeltaFromTape = false;
 
-  for (const evt of timeline) {
+  for (let timelineIndex = 0; timelineIndex < timeline.length; timelineIndex += 1) {
+    const evt = timeline[timelineIndex]!;
     if (evt.kind === "thought") {
       flushGroup();
       const isLatest = evt.segment.startedAt === lastSegmentStartedAt;
@@ -284,15 +300,27 @@ export function buildNarrativeItems(params: {
 
     if (evt.kind === "subagent") {
       flushGroup();
-      items.push({
-        type: "subagent",
-        lifecycle: evt.lifecycle,
-        toolCall: evt.call,
-        participants: subagentLifecycleParticipants(evt.call, evt.marker, toolCalls),
-        children: (childrenMap.get(evt.call.id) ?? []).filter(
+      const groupedEvents: Extract<TimelineEvent, { kind: "subagent" }>[] = [evt];
+      while (timelineIndex + 1 < timeline.length) {
+        const next = timeline[timelineIndex + 1];
+        if (next?.kind !== "subagent" || !sameSubagentParent(evt.call, next.call)) break;
+        groupedEvents.push(next);
+        timelineIndex += 1;
+      }
+      const activities: SubagentActivity[] = groupedEvents.map((groupedEvent) => ({
+        lifecycle: groupedEvent.lifecycle,
+        toolCall: groupedEvent.call,
+        participants: subagentLifecycleParticipants(groupedEvent.call, groupedEvent.marker, toolCalls),
+        children: (childrenMap.get(groupedEvent.call.id) ?? []).filter(
           (child) => !isSubagentLifecycleCall(child),
         ),
         hooks: hooks.filter((h) => h.toolName === AGENT_TOOL_NAME),
+      }));
+      const firstActivity = activities[0]!;
+      items.push({
+        type: "subagent",
+        ...firstActivity,
+        ...(activities.length > 1 ? { activities } : {}),
       });
       continue;
     }

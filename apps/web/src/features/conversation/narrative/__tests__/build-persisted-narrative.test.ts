@@ -249,7 +249,7 @@ describe("buildPersistedNarrativeItems", () => {
     }
   });
 
-  it("parallel sub-agents render as separate subagent rows", () => {
+  it("parallel sibling sub-agents render in one bounded activity row", () => {
     const items = buildPersistedNarrativeItems({
       tools: [
         makeTool({ id: "agent-1", tool_name: "Agent", sort_order: 1 }),
@@ -260,7 +260,11 @@ describe("buildPersistedNarrativeItems", () => {
       thoughts: [],
       hooks: [],
     });
-    expect(items.filter((i) => i.type === "subagent")).toHaveLength(2);
+    const rows = items.filter((i) => i.type === "subagent");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.type === "subagent"
+      ? rows[0].activities?.map((activity) => activity.toolCall.id)
+      : []).toEqual(["agent-1", "agent-2"]);
   });
 
   it("hydrates every persisted lifecycle update without exposing child activity", () => {

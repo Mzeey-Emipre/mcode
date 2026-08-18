@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { Bot, Globe, Terminal, Files, Diff, ListChecks, Network } from "lucide-react";
+import { Globe, Terminal, Files, Diff, ListChecks, Layers, Network } from "lucide-react";
 import type { RightPanelTab } from "@/stores/diffStore";
 
 /**
@@ -94,7 +94,7 @@ export const PANEL_TAB_TYPES: readonly PanelTabType[] = [
   {
     id: "subagents",
     label: "Subagents",
-    icon: Bot,
+    icon: Layers,
     blurb: "Follow delegated work",
     needsThread: true,
   },
