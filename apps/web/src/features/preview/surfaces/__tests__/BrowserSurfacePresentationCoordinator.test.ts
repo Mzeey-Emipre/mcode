@@ -29,6 +29,7 @@ function page(address = "https://example.test"): BrowserSurfacePageState {
     favicon: null,
     phase: "loaded",
     mainFrameError: null,
+    mainFrameErrorCode: null,
     navigation: null,
     documentAccess: "unknown",
   };

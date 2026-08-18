@@ -86,7 +86,9 @@ function previewStatus(state: BrowserSurfacePageState): PreviewPageStatus {
       ? {
           error: {
             kind: "network" as const,
-            code: "ERR_FAILED",
+            code: state.mainFrameErrorCode === null
+              ? "ERR_FAILED"
+              : String(state.mainFrameErrorCode),
             message: state.mainFrameError,
           },
         }

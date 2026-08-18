@@ -283,4 +283,41 @@ describe("preview typed surface bridge", () => {
     expect(guest.reloadIgnoringCache).toHaveBeenCalledTimes(1);
     expect(await invoke("preview.surface.navigate", { surface: surface(2), navigation: { kind: "reload" } })).toMatchObject({ ok: false, error: "stale-generation" });
   });
+
+  it("accepts an aborted address load after the guest commits a new URL", async () => {
+    const guest = makeGuest(allWindows[0]!);
+    expect(invoke("preview.surface.prepare", { surface: surface(), adoptionToken: "token-1234" })).toEqual({ ok: true });
+    expect(invoke("preview.surface.adopt", { surface: surface(), adoptionToken: "token-1234" })).toEqual({ ok: true });
+    guest.loadURL.mockImplementationOnce(async () => {
+      guest.url = "https://example.test/final";
+      throw Object.assign(new Error("ERR_ABORTED (-3)"), {
+        code: "ERR_ABORTED",
+        errno: -3,
+      });
+    });
+
+    await expect(invoke("preview.surface.navigate", {
+      surface: surface(),
+      navigation: { kind: "address", address: "https://example.test/redirect" },
+    })).resolves.toEqual({ ok: true });
+  });
+
+  it("preserves the Electron error code when an address load fails", async () => {
+    const guest = makeGuest(allWindows[0]!);
+    expect(invoke("preview.surface.prepare", { surface: surface(), adoptionToken: "token-1234" })).toEqual({ ok: true });
+    expect(invoke("preview.surface.adopt", { surface: surface(), adoptionToken: "token-1234" })).toEqual({ ok: true });
+    guest.loadURL.mockRejectedValueOnce(Object.assign(new Error("ERR_NAME_NOT_RESOLVED (-105)"), {
+      code: "ERR_NAME_NOT_RESOLVED",
+      errno: -105,
+    }));
+
+    await expect(invoke("preview.surface.navigate", {
+      surface: surface(),
+      navigation: { kind: "address", address: "https://missing.example.test" },
+    })).resolves.toEqual({
+      ok: false,
+      error: "navigation-failed",
+      errorCode: "ERR_NAME_NOT_RESOLVED",
+    });
+  });
 });

@@ -391,7 +391,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
           | { kind: "initial"; address?: string }
           | { kind: "restored" | "address"; address: string }
           | { kind: "back" | "forward" | "reload" | "force-reload" };
-      }): Promise<{ ok: true } | { ok: false; error: string }> {
+      }): Promise<{ ok: true } | { ok: false; error: string; errorCode?: string | number }> {
         return ipcRenderer.invoke("preview.surface.navigate", payload);
       },
       /** Subscribes to opener-free popup requests for exact adopted surfaces. */
