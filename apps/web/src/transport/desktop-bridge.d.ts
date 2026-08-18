@@ -321,6 +321,8 @@ export interface PreviewAutomationBridge {
   >;
   /** Subscribe to controller transitions for adopted tabs in this window. */
   onControllerChanged(callback: (state: BrowserAutomationControllerState) => void): () => void;
+  /** Subscribe to Browser host heartbeat pulses owned by Electron main. */
+  onHostHeartbeat(callback: () => void): () => void;
 }
 
 interface PreviewDesignBridge {

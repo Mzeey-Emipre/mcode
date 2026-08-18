@@ -57,8 +57,13 @@ import {
   getOrCreateViewportCoordinator,
   waitForViewportLayout,
 } from "./services/viewportCoordinatorFactory";
+import {
+  BrowserAutomationHostSupervisor,
+  type BrowserAutomationHostLease,
+} from "./services/browserAutomationHostSupervisor";
 
 const HEARTBEAT_INTERVAL_MS = 10_000;
+const HOST_REGISTRATION_RETRY_MS = 1_000;
 const TARGET_DISCOVERY_RETRY_MS = 50;
 const TARGET_DISCOVERY_MAX_ATTEMPTS = 40;
 const WEB_AUTOMATION_UNAVAILABLE_REASON = "Web automation executor is unavailable";
@@ -609,13 +614,6 @@ function waitForWebPreviewIframe(
   });
 }
 
-interface HostLease {
-  readonly hostId: string;
-  readonly generation: number;
-  readonly desktopInstanceId: string;
-  readonly epoch: number;
-}
-
 interface WebNavigationExpectation {
   readonly targetKey: string;
   readonly expectedUrl: string;
@@ -763,8 +761,9 @@ export function BrowserAutomationHost() {
   const activeWorkspaceId = useWorkspaceStore((state) => state.activeWorkspaceId);
   const liveTargets = useBrowserAutomationStore((state) => state.liveTargets);
   const registered = useBrowserAutomationStore((state) => state.registered);
-  const leaseRef = useRef<HostLease | null>(null);
-  const shutdownLeaseRef = useRef<HostLease | null>(null);
+  const leaseRef = useRef<BrowserAutomationHostLease | null>(null);
+  const shutdownLeaseRef = useRef<BrowserAutomationHostLease | null>(null);
+  const supervisorRef = useRef<BrowserAutomationHostSupervisor | null>(null);
   const executorDescriptor = useMemo(() => {
     const runtime = window.desktopBridge?.preview?.automation ? "electron" as const : "web" as const;
     return {
@@ -777,7 +776,6 @@ export function BrowserAutomationHost() {
     };
   }, []);
   const recorderRef = useRef(new BrowserAutomationRecorder());
-  const registrationEpochRef = useRef(0);
   const inFlightRef = useRef(new Map<string, BrowserAutomationHostDispatch>());
   const requestAbortRef = useRef(new Map<string, AbortController>());
   const webAbortRef = useRef(new Map<string, AbortController>());
@@ -888,7 +886,7 @@ export function BrowserAutomationHost() {
               candidate.workspaceId === workspaceId &&
               candidate.threadId === target.threadId &&
               candidate.tabId === target.tabId,
-            );
+          );
           if (matches.length !== 1) throw new Error("Browser target is unavailable");
           await usePreviewTabsStore.getState().closePage(matches[0]!.workspaceId, target.threadId, target.tabId);
         },
@@ -940,7 +938,7 @@ export function BrowserAutomationHost() {
     key: string,
     dispatch: BrowserAutomationHostDispatch,
     reason: "human-interrupted" | "user-stopped" | "host-shutdown",
-    leaseOverride?: HostLease | null,
+    leaseOverride?: BrowserAutomationHostLease | null,
   ): void => {
     if (cancelledRef.current.has(key)) return;
     cancelledRef.current.add(key);
@@ -997,72 +995,96 @@ export function BrowserAutomationHost() {
       useBrowserAutomationStore.getState().setStatus("unavailable");
       return;
     }
-    const epoch = ++registrationEpochRef.current;
     useBrowserAutomationStore.getState().setLifecycleTabs([]);
     const transport = getTransport();
     const liveTargetSnapshot = useBrowserAutomationStore.getState().liveTargets;
     const activeTarget = [...liveTargetSnapshot.values()].find((target) => target.workspaceId === activeWorkspaceId);
     const worktreeIdentity = import.meta.env.VITE_MCODE_WORKTREE_IDENTITY?.trim() || "web-runtime";
-    void transport.registerBrowserAutomationHost({
-      contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
-      hostId: stableHostId,
-      runtime: executorDescriptor.runtime,
-      desktopInstanceId: "pending-desktop",
-      worktreeIdentity: desktopAutomation ? "pending-worktree" : worktreeIdentity,
-      workspaceIds,
-      ...(activeTarget && !desktopAutomation && webAutomationEnabled ? {
-        targetIdentity: webTargetIdentity(worktreeIdentity, "pending-desktop", activeTarget),
-      } : {}),
-      executorDescriptor,
-      capabilities: executorDescriptor.operations.map((operation) => ({ operation, available: true })),
-      maxPendingRequests: BROWSER_AUTOMATION_MAX_PENDING_REQUESTS,
-      connectedAt: Date.now(),
-    }).then((result) => {
-      if (registrationEpochRef.current !== epoch) return;
-      leaseRef.current = {
-        hostId: stableHostId,
-        generation: result.generation,
-        desktopInstanceId: result.desktopInstanceId,
-        epoch,
-      };
-      shutdownLeaseRef.current = leaseRef.current;
-      useBrowserAutomationStore.getState().setRegistered(true);
-      useBrowserAutomationStore.getState().setStatus("registered");
-      sessionDriverRef.current?.publishLifecycleProjection();
-    }).catch(() => {
-      if (registrationEpochRef.current === epoch) {
-        leaseRef.current = null;
-        useBrowserAutomationStore.getState().setRegistered(false);
-        useBrowserAutomationStore.getState().setStatus("unavailable");
-      }
-    });
-    return () => {
-      if (registrationEpochRef.current === epoch) {
+    const supervisor = new BrowserAutomationHostSupervisor({
+      register: async () => {
+        const result = await transport.registerBrowserAutomationHost({
+          contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
+          hostId: stableHostId,
+          runtime: executorDescriptor.runtime,
+          desktopInstanceId: "pending-desktop",
+          worktreeIdentity: desktopAutomation ? "pending-worktree" : worktreeIdentity,
+          workspaceIds,
+          ...(activeTarget && !desktopAutomation && webAutomationEnabled ? {
+            targetIdentity: webTargetIdentity(worktreeIdentity, "pending-desktop", activeTarget),
+          } : {}),
+          executorDescriptor,
+          capabilities: executorDescriptor.operations.map((operation) => ({ operation, available: true })),
+          maxPendingRequests: BROWSER_AUTOMATION_MAX_PENDING_REQUESTS,
+          connectedAt: Date.now(),
+        });
+        return { hostId: stableHostId, ...result };
+      },
+      heartbeat: (lease) => transport.heartbeatBrowserAutomationHost(
+        lease.hostId,
+        lease.generation,
+        Date.now(),
+      ),
+      onLeaseChanged: (lease) => {
+        if (supervisorRef.current !== supervisor) return;
         const previousLease = leaseRef.current;
-        for (const [key, dispatch] of inFlightRef.current) {
-          cancelHostedRequest(key, dispatch, "host-shutdown", previousLease);
-        }
-        for (const [key, request] of bootstrapRequestRef.current) {
-          bootstrapAbortRef.current.get(key)?.abort(new Error("Browser host registration was replaced"));
-          const lease = previousLease;
-          if (lease) {
-            void getTransport().cancelBrowserAutomationRequest(
-              lease.hostId,
-              lease.generation,
-              request.requestId,
-              request.sequence,
-              "host-shutdown",
-            ).catch(() => undefined);
+        leaseRef.current = lease;
+        if (!lease) {
+          if (previousLease) {
+            for (const [key, dispatch] of inFlightRef.current) {
+              cancelHostedRequest(key, dispatch, "host-shutdown", previousLease);
+            }
+            for (const [key, request] of bootstrapRequestRef.current) {
+              bootstrapAbortRef.current.get(key)?.abort(new Error("Browser host lease was rejected"));
+              void transport.cancelBrowserAutomationRequest(
+                previousLease.hostId,
+                previousLease.generation,
+                request.requestId,
+                request.sequence,
+                "host-shutdown",
+              ).catch(() => undefined);
+            }
           }
+          sessionDriverRef.current?.clearIdempotency();
+          useBrowserAutomationStore.getState().setLifecycleTabs([]);
+          agentOpenTabsRef.current.clear();
+          useBrowserAutomationStore.getState().setRegistered(false);
+          useBrowserAutomationStore.getState().setStatus("unavailable");
+          return;
         }
-        registrationEpochRef.current += 1;
-        leaseRef.current = null;
-        sessionDriverRef.current?.clearIdempotency();
-        useBrowserAutomationStore.getState().setLifecycleTabs([]);
-        agentOpenTabsRef.current.clear();
-        useBrowserAutomationStore.getState().setRegistered(false);
-        useBrowserAutomationStore.getState().setStatus("unavailable");
+        shutdownLeaseRef.current = lease;
+        useBrowserAutomationStore.getState().setRegistered(true);
+        useBrowserAutomationStore.getState().setStatus("registered");
+        sessionDriverRef.current?.publishLifecycleProjection();
+      },
+      retryDelayMs: HOST_REGISTRATION_RETRY_MS,
+    });
+    supervisorRef.current = supervisor;
+    void supervisor.start();
+    return () => {
+      const previousLease = leaseRef.current;
+      for (const [key, dispatch] of inFlightRef.current) {
+        cancelHostedRequest(key, dispatch, "host-shutdown", previousLease);
       }
+      for (const [key, request] of bootstrapRequestRef.current) {
+        bootstrapAbortRef.current.get(key)?.abort(new Error("Browser host registration was replaced"));
+        if (previousLease) {
+          void transport.cancelBrowserAutomationRequest(
+            previousLease.hostId,
+            previousLease.generation,
+            request.requestId,
+            request.sequence,
+            "host-shutdown",
+          ).catch(() => undefined);
+        }
+      }
+      supervisor.stop();
+      if (supervisorRef.current === supervisor) supervisorRef.current = null;
+      leaseRef.current = null;
+      sessionDriverRef.current?.clearIdempotency();
+      useBrowserAutomationStore.getState().setLifecycleTabs([]);
+      agentOpenTabsRef.current.clear();
+      useBrowserAutomationStore.getState().setRegistered(false);
+      useBrowserAutomationStore.getState().setStatus("unavailable");
     };
   }, [cancelHostedRequest, connectionStatus, stableHostId, workspaceSignature]);
 
@@ -1183,17 +1205,26 @@ export function BrowserAutomationHost() {
   }, [cancelHostedRequest, liveTargets]);
 
   useEffect(() => {
-    const lease = leaseRef.current;
-    if (!lease || connectionStatus !== "connected") return;
+    const supervisor = supervisorRef.current;
+    if (!supervisor || connectionStatus !== "connected") return;
     const heartbeat = (): void => {
-      if (leaseRef.current !== lease) return;
-      void getTransport()
-        .heartbeatBrowserAutomationHost(lease.hostId, lease.generation, Date.now())
-        .catch(() => undefined);
+      void supervisor.pulse();
     };
-    heartbeat();
-    const timer = window.setInterval(heartbeat, HEARTBEAT_INTERVAL_MS);
-    return () => window.clearInterval(timer);
+    const onVisible = (): void => {
+      if (document.visibilityState === "visible") heartbeat();
+    };
+    const desktopAutomation = window.desktopBridge?.preview?.automation;
+    const unsubscribeDesktop = desktopAutomation?.onHostHeartbeat(heartbeat);
+    const timer = desktopAutomation ? null : window.setInterval(heartbeat, HEARTBEAT_INTERVAL_MS);
+    if (!desktopAutomation) heartbeat();
+    window.addEventListener("focus", heartbeat);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      unsubscribeDesktop?.();
+      if (timer !== null) window.clearInterval(timer);
+      window.removeEventListener("focus", heartbeat);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [connectionStatus, workspaceSignature, liveTargets.size, registered]);
 
   useEffect(() => {

@@ -449,6 +449,12 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         ipcRenderer.on("preview:automation.controller", listener);
         return () => ipcRenderer.removeListener("preview:automation.controller", listener);
       },
+      onHostHeartbeat(callback: () => void): () => void {
+        const listener = () => callback();
+        ipcRenderer.on("preview:automation.heartbeat", listener);
+        ipcRenderer.send("preview:automation.heartbeat.subscribe");
+        return () => ipcRenderer.removeListener("preview:automation.heartbeat", listener);
+      },
     },
     /** Design mode operations applied to the adopted Browser guest. */
     design: {

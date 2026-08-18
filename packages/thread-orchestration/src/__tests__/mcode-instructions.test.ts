@@ -42,5 +42,7 @@ describe("Mcode runtime instruction plan", () => {
     expect(MCODE_BROWSER_GUIDE).toContain("wait durationMs");
     expect(MCODE_BROWSER_GUIDE).toContain("click target");
     expect(MCODE_BROWSER_GUIDE).toContain("assert text/target/url");
+    expect(MCODE_BROWSER_GUIDE).toContain('"steps": [{ "operation": "click"');
+    expect(MCODE_BROWSER_GUIDE).toContain("Never send `steps: []`");
   });
 });

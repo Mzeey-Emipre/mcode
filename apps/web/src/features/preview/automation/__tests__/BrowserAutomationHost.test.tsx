@@ -211,6 +211,7 @@ describe("BrowserAutomationHost", () => {
   const closeTab = vi.fn();
   const listTabs = vi.fn();
   let controllerChanged: ((state: BrowserAutomationControllerState) => void) | null;
+  let hostHeartbeat: (() => void) | null;
   let nextGeneration: number;
 
   beforeEach(() => {
@@ -218,6 +219,7 @@ describe("BrowserAutomationHost", () => {
     harness.listeners.clear();
     sessionStorage.clear();
     controllerChanged = null;
+    hostHeartbeat = null;
     nextGeneration = 1;
     harness.transport.registerBrowserAutomationHost.mockImplementation(async () => {
       const generation = nextGeneration++;
@@ -260,6 +262,12 @@ describe("BrowserAutomationHost", () => {
             controllerChanged = callback;
             return () => {
               if (controllerChanged === callback) controllerChanged = null;
+            };
+          },
+          onHostHeartbeat(callback: () => void) {
+            hostHeartbeat = callback;
+            return () => {
+              if (hostHeartbeat === callback) hostHeartbeat = null;
             };
           },
         },
@@ -1117,6 +1125,30 @@ describe("BrowserAutomationHost", () => {
     first.resolve(response(firstDispatch.request));
     await act(async () => first.promise);
     expect(harness.transport.respondToBrowserAutomationRequest).not.toHaveBeenCalled();
+    view.unmount();
+  });
+
+  it("replaces a rejected desktop lease and republishes targets", async () => {
+    harness.transport.heartbeatBrowserAutomationHost.mockRejectedValueOnce(
+      new Error("Host registration is stale"),
+    );
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    await waitFor(() => expect(harness.transport.updateBrowserAutomationHostTargets).toHaveBeenCalled());
+
+    act(() => hostHeartbeat?.());
+
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(harness.transport.updateBrowserAutomationHostTargets).toHaveBeenCalledWith(
+      sessionStorage.getItem("mcode.browserAutomation.hostId"),
+      2,
+      expect.any(Array),
+    ));
+    expect(harness.transport.heartbeatBrowserAutomationHost).toHaveBeenCalledWith(
+      sessionStorage.getItem("mcode.browserAutomation.hostId"),
+      1,
+      expect.any(Number),
+    );
     view.unmount();
   });
 
