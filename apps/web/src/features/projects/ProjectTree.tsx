@@ -1396,7 +1396,7 @@ const WorkspaceCiRollupChip = memo(function WorkspaceCiRollupChip({
       title={label}
       aria-label={label}
       className={cn(
-        "shrink-0 inline-flex items-center gap-0.5 px-1 h-4 rounded-[3px] border",
+        "shrink-0 inline-flex items-center gap-0.5 px-1 h-4 rounded-[3px] border transition-opacity duration-150 group-hover/ws:opacity-0 group-focus-within/ws:opacity-0 motion-reduce:transition-none",
         "text-[10px] font-medium tabular-nums leading-none",
         chromeClass,
       )}
@@ -1999,7 +1999,7 @@ const ProjectNode = memo(function ProjectNode({
                 aria-label={`Open project ${workspace.name}`}
                 onKeyDown={(event) => event.stopPropagation()}
                 onClick={handleOpenProject}
-                className="h-auto min-w-0 flex-1 shrink justify-start rounded-sm p-0 text-left hover:bg-transparent dark:hover:bg-transparent"
+                className="h-auto min-w-0 flex-1 shrink justify-start rounded-sm p-0 text-left hover:bg-transparent group-hover/ws:pr-24 group-focus-within/ws:pr-24 dark:hover:bg-transparent"
               >
                 <span
                   className="min-w-0 flex-1 overflow-hidden whitespace-nowrap font-medium tracking-tight group-hover/ws:[mask-image:linear-gradient(to_right,black_calc(100%_-_1.5rem),transparent)] group-focus-within/ws:[mask-image:linear-gradient(to_right,black_calc(100%_-_1.5rem),transparent)] group-hover/ws:[-webkit-mask-image:linear-gradient(to_right,black_calc(100%_-_1.5rem),transparent)] group-focus-within/ws:[-webkit-mask-image:linear-gradient(to_right,black_calc(100%_-_1.5rem),transparent)]"
@@ -2032,28 +2032,6 @@ const ProjectNode = memo(function ProjectNode({
           </Tooltip>
         )}
 
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          aria-label={`Toggle threads for ${workspace.name}`}
-          aria-expanded={isExpanded}
-          onKeyDown={(event) => event.stopPropagation()}
-          onClick={(event) => {
-            event.stopPropagation();
-            handleToggle();
-          }}
-          className="size-6 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:bg-transparent hover:text-muted-foreground dark:hover:bg-transparent group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 focus:opacity-100"
-        >
-          <ChevronRight
-            size={14}
-            className={cn(
-              "transition-transform duration-150 motion-reduce:transition-none",
-              isExpanded && "rotate-90",
-            )}
-          />
-        </Button>
-
         <WorkspaceCiRollupChip threads={visibleThreads} checksById={checksById} />
 
         {hasRunning && (
@@ -2062,7 +2040,7 @@ const ProjectNode = memo(function ProjectNode({
               render={
                 <span
                   aria-hidden="true"
-                  className="shrink-0 h-1.5 w-1.5 rounded-full bg-primary status-pulse"
+                  className="shrink-0 h-1.5 w-1.5 rounded-full bg-primary status-pulse transition-opacity duration-150 group-hover/ws:opacity-0 group-focus-within/ws:opacity-0 motion-reduce:transition-none"
                 />
               }
             />
@@ -2073,55 +2051,85 @@ const ProjectNode = memo(function ProjectNode({
         )}
 
         {visibleThreads.length > 0 && (
-          <span className="shrink-0 font-mono text-[9.5px] leading-none tabular-nums text-muted-foreground/40">
+          <span
+            data-testid={`project-thread-count-${workspace.id}`}
+            className="ml-auto flex h-4 min-w-3 shrink-0 items-center justify-end font-mono text-xs leading-4 tabular-nums text-muted-foreground/45 transition-opacity duration-150 group-hover/ws:opacity-0 group-focus-within/ws:opacity-0 motion-reduce:transition-none"
+          >
             {visibleThreads.length}
           </span>
         )}
 
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            aria-label={`Project options for ${workspace.name}`}
-            onClick={(event) => event.stopPropagation()}
-            className="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 outline-none transition-colors hover:bg-background/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/70 group-hover/ws:opacity-100 group-focus-within/ws:opacity-100"
-          >
-            <MoreHorizontal size={13} />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" sideOffset={4} className="min-w-40">
-            <DropdownMenuItem
-              onClick={handleOpenInExplorer}
-              className="flex cursor-pointer items-center gap-2"
-            >
-              <FolderOpen size={13} />
-              Open in Explorer
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={handleRename}
-              className="flex cursor-pointer items-center gap-2"
-            >
-              <Pencil size={13} />
-              Rename project
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              onClick={handleDelete}
-              className="flex cursor-pointer items-center gap-2 text-destructive focus:text-destructive"
-            >
-              <Trash2 size={13} />
-              Delete project
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          aria-label={`New thread in ${workspace.name}`}
-          title={`New thread in ${workspace.name}`}
-          onKeyDown={(event) => event.stopPropagation()}
-          onClick={handleCreateThreadClick}
-          className="opacity-0 text-muted-foreground hover:bg-background/60 hover:text-foreground group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 focus:opacity-100"
+        <div
+          data-testid={`project-row-actions-${workspace.id}`}
+          className="pointer-events-none absolute inset-y-0 right-1.5 z-10 flex items-center justify-end gap-1 bg-transparent px-0.5 opacity-0 transition-opacity duration-150 group-hover/ws:pointer-events-auto group-hover/ws:opacity-100 group-focus-within/ws:pointer-events-auto group-focus-within/ws:opacity-100 motion-reduce:transition-none"
         >
-          <SquarePen className="size-[1.4rem]" />
-        </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            aria-label={`Toggle threads for ${workspace.name}`}
+            aria-expanded={isExpanded}
+            onKeyDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              handleToggle();
+            }}
+            className="size-6 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:bg-transparent hover:text-muted-foreground dark:hover:bg-transparent group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 focus:opacity-100"
+          >
+            <ChevronRight
+              size={14}
+              className={cn(
+                "transition-transform duration-150 motion-reduce:transition-none",
+                isExpanded && "rotate-90",
+              )}
+            />
+          </Button>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              aria-label={`Project options for ${workspace.name}`}
+              onClick={(event) => event.stopPropagation()}
+              className="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 outline-none transition-colors hover:bg-background/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/70 group-hover/ws:opacity-100 group-focus-within/ws:opacity-100"
+            >
+              <MoreHorizontal size={13} />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" sideOffset={4} className="min-w-40">
+              <DropdownMenuItem
+                onClick={handleOpenInExplorer}
+                className="flex cursor-pointer items-center gap-2"
+              >
+                <FolderOpen size={13} />
+                Open in Explorer
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={handleRename}
+                className="flex cursor-pointer items-center gap-2"
+              >
+                <Pencil size={13} />
+                Rename project
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={handleDelete}
+                className="flex cursor-pointer items-center gap-2 text-destructive focus:text-destructive"
+              >
+                <Trash2 size={13} />
+                Delete project
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label={`New thread in ${workspace.name}`}
+            title={`New thread in ${workspace.name}`}
+            onKeyDown={(event) => event.stopPropagation()}
+            onClick={handleCreateThreadClick}
+            className="opacity-0 text-muted-foreground hover:bg-background/60 hover:text-foreground group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 focus:opacity-100"
+          >
+            <SquarePen className="size-[1.4rem]" />
+          </Button>
+        </div>
       </div>
 
       {/* Threads (when expanded) — indented, no guide rail. */}

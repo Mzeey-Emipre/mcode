@@ -837,6 +837,54 @@ describe("ProjectTree thread interactions", () => {
     );
   });
 
+  it("keeps the thread count trailing and swaps it for an overlaid action group", () => {
+    setupStoreMocks();
+
+    render(<ProjectTree />);
+
+    const projectRow = screen.getByTestId("project-row-ws-1");
+    const threadCount = within(projectRow).getByTestId(
+      "project-thread-count-ws-1",
+    );
+    const actions = within(projectRow).getByTestId("project-row-actions-ws-1");
+    const projectName = screen.getByRole("button", {
+      name: "Open project Test Project",
+    });
+
+    expect(threadCount).toHaveTextContent("1");
+    expect(threadCount).toHaveClass(
+      "ml-auto",
+      "h-4",
+      "items-center",
+      "text-xs",
+      "leading-4",
+      "group-hover/ws:opacity-0",
+      "group-focus-within/ws:opacity-0",
+    );
+    expect(projectName).toHaveClass(
+      "group-hover/ws:pr-24",
+      "group-focus-within/ws:pr-24",
+    );
+    expect(threadCount.nextElementSibling).toBe(actions);
+    expect(actions).toHaveClass(
+      "absolute",
+      "right-1.5",
+      "bg-transparent",
+      "pointer-events-none",
+      "group-hover/ws:pointer-events-auto",
+      "group-focus-within/ws:pointer-events-auto",
+    );
+    expect(actions).toContainElement(
+      screen.getByRole("button", { name: "Toggle threads for Test Project" }),
+    );
+    expect(actions).toContainElement(
+      screen.getByRole("button", { name: "Project options for Test Project" }),
+    );
+    expect(actions).toContainElement(
+      screen.getByRole("button", { name: "New thread in Test Project" }),
+    );
+  });
+
   it("exposes the full project name from the focused project control", () => {
     const projectName =
       "A project name that stays available when the sidebar is narrow";
@@ -1283,6 +1331,34 @@ describe("ProjectTree action-required indicator", () => {
     // CI "failing" would normally paint bg-red-500; the ring must suppress it.
     expect(indicator.className).not.toContain("bg-red-500");
     expect(screen.queryByTestId("thread-pr-ci-thread-pending")).toBeNull();
+  });
+
+  it("hides project status metadata when row actions appear", () => {
+    currentChecks = {
+      "thread-pending": {
+        aggregate: "pending",
+        runs: [{ name: "ci", status: "in_progress", conclusion: null }],
+      },
+    };
+    installWorkspaceMock();
+    threadStoreOverrides.runningThreadIds = new Set(["thread-pending"]);
+
+    render(<ProjectTree />);
+
+    const projectRow = screen.getByTestId("project-row-ws-1");
+    const ciRollup = within(projectRow).getByLabelText(
+      "1 thread with checks running",
+    );
+    const activeAgent = projectRow.querySelector(".status-pulse");
+
+    expect(ciRollup).toHaveClass(
+      "group-hover/ws:opacity-0",
+      "group-focus-within/ws:opacity-0",
+    );
+    expect(activeAgent).toHaveClass(
+      "group-hover/ws:opacity-0",
+      "group-focus-within/ws:opacity-0",
+    );
   });
 
   it("does not dim row chrome when the thread row is a client scaffold", () => {
