@@ -11,7 +11,7 @@ const adoptedWebContents = new Map<string, FakeWebContents | null>();
 const rendererSender = new EventEmitter() as EventEmitter & { isDestroyed: () => boolean; send: ReturnType<typeof vi.fn> };
 rendererSender.isDestroyed = () => false;
 rendererSender.send = vi.fn();
-const fakeWindow = { id: 7, isDestroyed: () => false, webContents: rendererSender };
+const fakeWindow = { id: 7, isDestroyed: () => false, isFocused: () => true, webContents: rendererSender };
 const SMALL_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
 type FakeNativeImage = {
@@ -154,12 +154,16 @@ class FakeWebContents extends EventEmitter {
   loadURL = vi.fn(async () => undefined);
   url = "https://example.test/";
   title = "Example";
+  focused = true;
+  focus = vi.fn(() => {
+    this.focused = true;
+  });
   constructor(readonly id: number) { super(); }
   isDestroyed() { return this.destroyed; }
   getURL() { return this.url; }
   getTitle() { return this.title; }
   isLoading() { return false; }
-  isFocused() { return true; }
+  isFocused() { return this.focused; }
   async executeJavaScript(source: string) {
     if (source.includes("window.innerWidth")) return { width: 1_280, height: 720 };
     if (source.includes("__mcodeEvalMarker")) return undefined;
@@ -205,6 +209,15 @@ vi.mock("../../surfaces/registry.js", () => ({
 vi.mock("../../state/window-session.js", () => ({
   getSession: vi.fn(() => fakePreviewSession),
   getThreadTabSet: vi.fn((session, threadId) => session.tabsByThread.get(threadId)),
+  getActiveTab: vi.fn((session, threadId) => {
+    const tabSet = session.tabsByThread.get(threadId);
+    return tabSet.tabs.find((tab: { id: string }) => tab.id === tabSet.activeTabId);
+  }),
+  sessions: {
+    *[Symbol.iterator]() {
+      yield [7, fakePreviewSession];
+    },
+  },
 }));
 
 import { BrowserAutomationKernel, selectAllModifierMask } from "../kernel.js";
@@ -633,6 +646,30 @@ describe("BrowserAutomationKernel", () => {
       ok: true,
       result: { controller: { controller: "none", controlEpoch: 0 } },
     });
+  });
+
+  it("restores native focus to the active user tab after background agent input", async () => {
+    const userWebContents = new FakeWebContents(10);
+    const agentWebContents = new FakeWebContents(11);
+    userWebContents.focused = false;
+    agentWebContents.focused = true;
+    fakePreviewSession.tabsByThread.set("thread", {
+      threadId: "thread",
+      activeTabId: "user-tab",
+      tabs: [
+        { id: "user-tab", threadId: "thread", view: null },
+        { id: "agent-tab", threadId: "thread", view: null },
+      ],
+    });
+    adoptedWebContents.set(JSON.stringify(["thread", "user-tab"]), userWebContents);
+    adoptedWebContents.set(JSON.stringify(["thread", "agent-tab"]), agentWebContents);
+
+    await expect(kernel.execute(event(), payload(request("press", {
+      key: "A",
+      modifiers: [],
+    }, { requestId: "background-agent-input" }), 0, "agent-tab"))).resolves.toMatchObject({ ok: true });
+
+    expect(userWebContents.focus).toHaveBeenCalledOnce();
   });
 
   it("rejects sessionless and stale same-epoch releases after a newer inspect turn", async () => {

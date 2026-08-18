@@ -309,13 +309,14 @@ export class ElectronWebviewBrowserSurfaceAdapter implements BrowserSurfaceAdapt
     const result = await Promise.resolve(this.bridge.navigate({
       surface: this.surface,
       navigation,
-    })).catch(() => ({ ok: false as const, error: "Navigation failed" }));
+    })).catch(() => ({ ok: false as const, error: "Navigation failed", errorCode: undefined }));
     if (!asResult(result)) {
       this.emit({
         type: "load-failed",
         mainFrame: true,
         address,
         error: result.ok ? undefined : result.error,
+        ...(result.ok || result.errorCode === undefined ? {} : { errorCode: result.errorCode }),
       });
     }
   }

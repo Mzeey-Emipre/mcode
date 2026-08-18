@@ -44,7 +44,7 @@ let currentWebContents: FakeWebContents;
 const rendererSender = new EventEmitter() as EventEmitter & { isDestroyed: () => boolean; send: ReturnType<typeof vi.fn> };
 rendererSender.isDestroyed = () => false;
 rendererSender.send = vi.fn();
-const fakeWindow = { id: 7, isDestroyed: () => false, webContents: rendererSender };
+const fakeWindow = { id: 7, isDestroyed: () => false, isFocused: () => true, webContents: rendererSender };
 const fakePreviewSession = {
   lastPreviewThreadId: "thread",
   tabsByThread: new Map<string, { threadId: string; activeTabId: string; tabs: Array<{ id: string; threadId: string; view: null }> }>(),
@@ -126,6 +126,10 @@ vi.mock("../../contracts/guest-input.js", () => ({ PREVIEW_GUEST_AGENT_INPUT_CHA
 vi.mock("../../state/window-session.js", () => ({
   getSession: vi.fn(() => fakePreviewSession),
   getThreadTabSet: vi.fn((session, threadId) => session.tabsByThread.get(threadId)),
+  getActiveTab: vi.fn((session, threadId) => {
+    const tabSet = session.tabsByThread.get(threadId);
+    return tabSet.tabs.find((tab: { id: string }) => tab.id === tabSet.activeTabId);
+  }),
 }));
 
 function seedTarget(): void {

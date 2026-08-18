@@ -204,6 +204,32 @@ describe("ElectronWebviewBrowserSurfaceAdapter", () => {
     adapter.dispose();
   });
 
+  it("forwards the main process navigation error code", async () => {
+    const surfaceBridge = bridge();
+    surfaceBridge.navigate.mockResolvedValue({
+      ok: false,
+      error: "navigation-failed",
+      errorCode: "ERR_NAME_NOT_RESOLVED",
+    });
+    const adapter = new ElectronWebviewBrowserSurfaceAdapter(IDENTITY, 6, {
+      root: document.body,
+      bridge: surfaceBridge,
+    });
+    const events: BrowserSurfaceAdapterEvent[] = [];
+    adapter.subscribe((event) => events.push(event));
+    adapter.element.dispatchEvent(new Event("did-attach"));
+
+    await vi.waitFor(() => expect(surfaceBridge.adopt).toHaveBeenCalledTimes(1));
+    await adapter.navigate("https://missing.example.test/");
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "load-failed",
+      error: "navigation-failed",
+      errorCode: "ERR_NAME_NOT_RESOLVED",
+    }));
+    adapter.dispose();
+  });
+
   it("reports the next valid generation when preparation finds stale renderer state", async () => {
     const surfaceBridge = bridge();
     surfaceBridge.prepare.mockResolvedValue({

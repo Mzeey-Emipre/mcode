@@ -170,8 +170,18 @@ describe("BrowserSurfaceHost", () => {
     adapter.emit({ type: "load-stopped", mainFrame: true, address: "https://example.test/redirect" });
     expect(host.getSnapshot(IDENTITY)).toMatchObject({ pendingAddress: null, phase: "loaded" });
     adapter.emit({ type: "load-started", mainFrame: true, address: "https://example.test/fail" });
-    adapter.emit({ type: "load-failed", mainFrame: true, address: "https://example.test/fail", error: "offline" });
-    expect(host.getSnapshot(IDENTITY)).toMatchObject({ phase: "error", mainFrameError: "offline" });
+    adapter.emit({
+      type: "load-failed",
+      mainFrame: true,
+      address: "https://example.test/fail",
+      error: "offline",
+      errorCode: "ERR_NAME_NOT_RESOLVED",
+    });
+    expect(host.getSnapshot(IDENTITY)).toMatchObject({
+      phase: "error",
+      mainFrameError: "offline",
+      mainFrameErrorCode: "ERR_NAME_NOT_RESOLVED",
+    });
     adapter.emit({ type: "load-stopped", mainFrame: true });
     expect(host.getSnapshot(IDENTITY)?.phase).toBe("error");
     adapter.emit({ type: "load-failed", mainFrame: true, expected: true, error: "aborted" });

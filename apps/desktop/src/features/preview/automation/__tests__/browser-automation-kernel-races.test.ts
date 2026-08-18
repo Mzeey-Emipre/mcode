@@ -37,6 +37,7 @@ rendererSender.send = vi.fn();
 const fakeWindow = {
   id: 404,
   isDestroyed: () => false,
+  isFocused: () => true,
   webContents: rendererSender,
 };
 
@@ -182,6 +183,10 @@ vi.mock("../../state/window-session.js", () => ({
   getSession: vi.fn(() => ({ workspaceId: "workspace", lastPreviewThreadId: "thread", tabsByThread })),
   getThreadTabSet: vi.fn((session, threadId, workspaceId = session.workspaceId ?? threadId) =>
     session.tabsByThread.get(JSON.stringify([workspaceId, threadId])) ?? session.tabsByThread.get(threadId)),
+  getActiveTab: vi.fn((session, threadId) => {
+    const tabSet = session.tabsByThread.get(JSON.stringify([session.workspaceId, threadId])) ?? session.tabsByThread.get(threadId);
+    return tabSet.tabs.find((tab: { id: string }) => tab.id === tabSet.activeTabId);
+  }),
 }));
 
 import { BrowserAutomationKernel } from "../kernel.js";

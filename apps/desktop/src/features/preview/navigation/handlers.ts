@@ -25,6 +25,7 @@ import {
   resolvePreviewNavigationTarget,
   type PreviewResolveNavigationResult,
 } from "./resolve-target.js";
+import { loadPreviewGuestUrl } from "./guest-navigation.js";
 import { onPreviewHidden, onPreviewVisible } from "../tabs/discard-scheduler.js";
 import { previewSessionAdapter } from "../security/electron-session-policy.js";
 import { findAdoptedWebContentsForWindow } from "../surfaces/registry.js";
@@ -153,7 +154,10 @@ export function registerNavigationHandlers(): void {
       logger.info("Preview: user navigated", { url: target });
       setPreviewLoading(win, s, true);
       trustMainProcessFileNavigation(s, target);
-      void guest.loadURL(target);
+      const loadResult = await loadPreviewGuestUrl(guest, target);
+      if (loadResult.status === "failed") {
+        return { ok: false, error: "navigation-failed" };
+      }
       s.resumePreviewUrl = target;
       if (activeTab) activeTab.resumeUrl = target;
       return { ok: true };

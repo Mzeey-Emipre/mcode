@@ -136,7 +136,12 @@ export type PreviewSurfaceNavigation =
 /** Result returned by a typed Electron Browser surface operation. */
 export type PreviewSurfaceBridgeResult =
   | { readonly ok: true }
-  | { readonly ok: false; readonly error: string; readonly nextGeneration?: number };
+  | {
+      readonly ok: false;
+      readonly error: string;
+      readonly errorCode?: string | number;
+      readonly nextGeneration?: number;
+    };
 
 /** Opaque Electron surface operations exposed to the renderer. */
 export interface PreviewSurfaceBridge {
