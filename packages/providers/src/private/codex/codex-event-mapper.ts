@@ -866,6 +866,7 @@ export class CodexEventMapper {
   private buildCollabToolInput(item: CompletedItem): Record<string, unknown> {
     const raw = item as unknown as Record<string, unknown>;
     const kind = this.collabToolKind(item);
+    const taskName = this.stringField(raw, "task_name");
     const prompt = this.stringField(raw, "prompt");
     const model = this.stringField(raw, "model");
     const reasoningEffort =
@@ -879,6 +880,7 @@ export class CodexEventMapper {
       : [];
     return {
       codexCollabKind: kind,
+      ...(taskName ? { agentName: taskName } : {}),
       ...(prompt ? { description: this.promptDescription(prompt), prompt: prompt.slice(0, 32_768) } : {}),
       ...(model ? { model } : {}),
       ...(reasoningEffort ? { reasoningEffort } : {}),

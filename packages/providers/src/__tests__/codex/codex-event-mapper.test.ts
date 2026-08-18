@@ -1996,7 +1996,7 @@ describe("CodexEventMapper", () => {
     }));
   });
 
-  it("passes Codex sub-agent task, model, kind, and effort metadata through the result", () => {
+  it("passes Codex sub-agent task name, prompt, model, kind, and effort metadata through the result", () => {
     mapper = new CodexEventMapper("test-thread", "main-thread");
     const started = mapper.mapNotification({
       jsonrpc: "2.0",
@@ -2007,6 +2007,7 @@ describe("CodexEventMapper", () => {
           type: "collabAgentToolCall",
           id: "spawn-meta",
           tool: "spawnAgent",
+          task_name: "metadata_worker",
           prompt: "Inspect mapper metadata.",
           model: "",
           reasoningEffort: "medium",
@@ -2022,6 +2023,7 @@ describe("CodexEventMapper", () => {
           type: "collabAgentToolCall",
           id: "spawn-meta",
           tool: "spawnAgent",
+          task_name: "metadata_worker",
           prompt: "Inspect mapper metadata.",
           model: "gpt-5.5",
           reasoningEffort: "high",
@@ -2049,6 +2051,7 @@ describe("CodexEventMapper", () => {
         toolName: "Agent",
         toolInput: {
           codexCollabKind: "spawnAgent",
+          agentName: "metadata_worker",
           description: "Inspect mapper metadata.",
           prompt: "Inspect mapper metadata.",
           reasoningEffort: "medium",
@@ -2062,6 +2065,7 @@ describe("CodexEventMapper", () => {
       toolName: "Agent",
       toolInput: {
         codexCollabKind: "spawnAgent",
+        agentName: "metadata_worker",
         description: "Inspect mapper metadata.",
         prompt: "Inspect mapper metadata.",
         model: "gpt-5.5",
@@ -2078,6 +2082,7 @@ describe("CodexEventMapper", () => {
         isError: false,
         toolInput: {
           codexCollabKind: "spawnAgent",
+          agentName: "metadata_worker",
           description: "Inspect mapper metadata.",
           prompt: "Inspect mapper metadata.",
           model: "gpt-5.5",
