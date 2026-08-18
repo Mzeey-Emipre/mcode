@@ -1326,6 +1326,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
       generation,
       isCurrent: () => conversationResidency.isDisplayLeaseCurrent(threadId, generation),
     }),
+    onDisplayConversationMounted: (threadId) => promoteDeferredNarrativeEvents(threadId),
     refreshDisplayConversation: (threadId, generation) => threadHydrator.hydrateResident(threadId, {
       generation,
       force: true,
@@ -2643,6 +2644,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     // only known conversation. Once running sessions are known, null selection
     // must keep background narrative deferred.
     const isActiveThread = currentThreadId === threadId
+      || conversationResidency?.isDisplayConversationLeased(threadId) === true
       || (currentThreadId === null && get().runningThreadIds.size === 0);
     const isLifecycleExit = event.type === "turnComplete" || event.type === "ended" || event.type === "error";
     const startsNewInstance = event.type === "turnStarted";

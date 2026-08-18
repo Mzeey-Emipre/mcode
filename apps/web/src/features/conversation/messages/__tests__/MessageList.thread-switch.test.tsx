@@ -75,6 +75,19 @@ let handoffStatusByThread: Record<string, "generating" | "ready" | "fallback" | 
 
 function buildMockRecord(threadId = currentThreadIdValue) {
   return {
+    canonicalAgent: {
+      state: {
+        threads: {},
+        turns: {},
+        items: {},
+        collaborationActions: {},
+        appliedEventIds: {},
+        acceptedInputEventIds: {},
+        lastAcceptedSequenceByExecution: {},
+      },
+      revision: { conversationRevision: 0, rosterRevision: 0 },
+      recoveryRequired: false,
+    },
     messages: messagesValue,
     loading: loadingValue,
     streamingPreview: "",

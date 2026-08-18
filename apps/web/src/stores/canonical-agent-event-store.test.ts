@@ -4,10 +4,12 @@ import { getConversationResidency } from "@/features/conversation/residency/conv
 import { resetThreadStoreForTests } from "./thread-store-test-utils";
 import { useThreadStore } from "./threadStore";
 
+const loadConversationPage = vi.hoisted(() => vi.fn());
+
 vi.mock("@/transport", async () => ({
   ...(await vi.importActual("@/transport")),
   getTransport: () => ({
-    loadConversationPage: vi.fn(),
+    loadConversationPage,
   }),
 }));
 
@@ -43,6 +45,7 @@ function threadRecorded(threadId: string): CanonicalAgentEventEnvelope {
 describe("canonical agent event residency guards", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    loadConversationPage.mockResolvedValue({ messages: [], hasMore: false, narrativeByMessage: {} });
     resetThreadStoreForTests({ currentThreadId: null, records: new Map() });
   });
 
@@ -76,5 +79,22 @@ describe("canonical agent event residency guards", () => {
     expect(useThreadStore.getState().records.has(selectedThreadId)).toBe(true);
     expect(useThreadStore.getState().records.has(leasedThreadId)).toBe(true);
     residency.unmountDisplayConversation(leasedThreadId);
+  });
+
+  it("refreshes a leased canonical child through the resident projection path", async () => {
+    const parentThreadId = "parent-thread";
+    const childThreadId = "leased-child";
+    useThreadStore.setState({ currentThreadId: parentThreadId });
+    const residency = getConversationResidency();
+    await residency.mountDisplayConversation(childThreadId);
+    loadConversationPage.mockClear();
+
+    useThreadStore.getState().handleCanonicalAgentEvents(
+      childThreadId,
+      [threadRecorded(childThreadId)],
+    );
+
+    await vi.waitFor(() => expect(loadConversationPage).toHaveBeenCalledWith(childThreadId, expect.any(Number)));
+    residency.unmountDisplayConversation(childThreadId);
   });
 });

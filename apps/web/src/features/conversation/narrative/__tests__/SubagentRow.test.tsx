@@ -207,6 +207,45 @@ describe("SubagentRow", () => {
     expect(rosterOpen).toHaveBeenCalledOnce();
   });
 
+  it("keeps two identity controls and the aggregate from flex-shrinking in a wide rail", () => {
+    const activities = [
+      agent({ id: "child-a", toolInput: {}, isComplete: false }),
+      agent({ id: "child-b", toolInput: {}, isComplete: false }),
+      agent({ id: "child-c", toolInput: {}, isComplete: true }),
+      agent({ id: "child-d", toolInput: {}, isComplete: true }),
+    ].map((toolCall) => ({
+      toolCall,
+      participants: [toolCall],
+      lifecycle: toolCall.isComplete ? "finished" as const : "updated" as const,
+      children: [],
+      hooks: [],
+    }));
+
+    render(
+      <SubagentRow
+        toolCall={activities[0]!.toolCall}
+        participants={activities[0]!.participants}
+        lifecycle={activities[0]!.lifecycle}
+        children={[]}
+        hooks={[]}
+        activities={activities}
+        onSubagentSelect={openSubagentDetail}
+        onOpenSubagents={vi.fn()}
+      />,
+    );
+
+    const identityButtons = screen.getAllByRole("button", { name: "Open Subagent subagent details" });
+    expect(identityButtons).toHaveLength(2);
+    for (const button of identityButtons) {
+      expect(button).not.toHaveClass("shrink");
+      expect(button).not.toHaveClass("max-w-40");
+      expect(button.parentElement).not.toHaveClass("shrink");
+      expect(button.parentElement).not.toHaveClass("max-w-40");
+    }
+    expect(screen.getByRole("button", { name: "Open full Subagents roster, +2 finished" })).not.toHaveClass("shrink");
+    expect(screen.getAllByText("updated")).toHaveLength(2);
+  });
+
   it("prefixes a finished-only remaining group with plus", () => {
     const activities = [
       agent({ id: "child-a", toolInput: { agentName: "Explorer" }, isComplete: true }),

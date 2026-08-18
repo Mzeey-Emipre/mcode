@@ -43,6 +43,7 @@ import { PRIMARY_CONTENT_RAIL_CLASS } from "@/lib/layout-rails";
 import { shouldShowStickyUserMessage, type StickyVisibilityVirtualizer } from "@/components/chat/sticky-user-message-visibility";
 import { resolveUserMessagePreview } from "@/components/chat/user-message-preview";
 import { isConversationVisible } from "../residency/conversation-residency";
+import { projectCanonicalMessageList } from "./canonical-message-projection";
 
 const EMPTY_TOOL_CALLS: ToolCall[] = [];
 const EMPTY_TURN_MAP: Record<string, string> = {};
@@ -356,14 +357,40 @@ export function MessageList({ displayThreadId, onBranch, onReply, onSubagentSele
   const isRenderedConversationVisible = displayThreadId
     ? isConversationVisible(displayThreadId)
     : renderedThreadId === activeThreadId;
-  const messages = useThreadRecord(renderedThreadId, (r) => r.messages);
+  const legacyMessages = useThreadRecord(renderedThreadId, (r) => r.messages);
   const loading = useThreadRecord(renderedThreadId, (r) => r.loading);
-  const isAgentRunning = useThreadStore((s) =>
+  const legacyIsAgentRunning = useThreadStore((s) =>
     renderedThreadId ? s.runningThreadIds.has(renderedThreadId) : false,
   );
-  const agentStartTime = useThreadRecord(renderedThreadId, (r) => r.agentStartTime);
+  const legacyAgentStartTime = useThreadRecord(renderedThreadId, (r) => r.agentStartTime);
   const streamingText = useThreadRecord(renderedThreadId, (r) => r.streaming);
-  const toolCallsRaw = useThreadRecord(renderedThreadId, (r) => r.toolCalls);
+  const legacyToolCalls = useThreadRecord(renderedThreadId, (r) => r.toolCalls);
+  const legacyThoughtSegments = useThreadRecord(renderedThreadId, (r) => r.thoughtSegments);
+  const canonicalAgentState = useThreadRecord(renderedThreadId, (r) => r.canonicalAgent.state);
+  const canonicalProjection = useMemo(
+    () => displayThreadId && renderedThreadId
+      ? projectCanonicalMessageList({
+          threadId: renderedThreadId,
+          state: canonicalAgentState,
+          messages: legacyMessages,
+          toolCalls: legacyToolCalls,
+          thoughtSegments: legacyThoughtSegments,
+        })
+      : undefined,
+    [
+      canonicalAgentState,
+      displayThreadId,
+      legacyMessages,
+      legacyThoughtSegments,
+      legacyToolCalls,
+      renderedThreadId,
+    ],
+  );
+  const messages = canonicalProjection?.messages ?? legacyMessages;
+  const isAgentRunning = canonicalProjection?.isAgentRunning ?? legacyIsAgentRunning;
+  const agentStartTime = canonicalProjection?.agentStartTime ?? legacyAgentStartTime;
+  const toolCalls = canonicalProjection?.toolCalls ?? legacyToolCalls ?? EMPTY_TOOL_CALLS;
+  const thoughtSegments = canonicalProjection?.thoughtSegments ?? legacyThoughtSegments;
   const persistedFilesChanged = useThreadStore(
     useShallow((s) => {
       if (!renderedThreadId) return EMPTY_FILES_CHANGED;
@@ -390,20 +417,20 @@ export function MessageList({ displayThreadId, onBranch, onReply, onSubagentSele
   const transcriptThreadId = messages[0]?.thread_id ?? null;
   const permissions = useThreadRecord(renderedThreadId, (r) => r.permissions);
   const hooks = useThreadRecord(renderedThreadId, (r) => r.hooks);
-  const thoughtSegments = useThreadRecord(renderedThreadId, (r) => r.thoughtSegments);
   const persistedNarrativeByMessage = useThreadRecord(renderedThreadId, (r) => r.narrativeByMessage);
   const loadNarrativeForMessage = useThreadStore((s) => s.loadNarrativeForMessage);
-  const currentTurnMessageId = useThreadRecord(renderedThreadId, (r) => r.currentTurnMessageId);
-  const currentTurnResponseKey = useThreadRecord(renderedThreadId, (r) => r.currentTurnResponseKey);
-  const assistantResponseKeys = useThreadRecord(renderedThreadId, (r) => r.assistantResponseKeys);
+  const legacyCurrentTurnMessageId = useThreadRecord(renderedThreadId, (r) => r.currentTurnMessageId);
+  const legacyCurrentTurnResponseKey = useThreadRecord(renderedThreadId, (r) => r.currentTurnResponseKey);
+  const legacyAssistantResponseKeys = useThreadRecord(renderedThreadId, (r) => r.assistantResponseKeys);
+  const currentTurnMessageId = canonicalProjection?.currentTurnMessageId ?? legacyCurrentTurnMessageId;
+  const currentTurnResponseKey = canonicalProjection?.currentTurnResponseKey ?? legacyCurrentTurnResponseKey;
+  const assistantResponseKeys = canonicalProjection?.assistantResponseKeys ?? legacyAssistantResponseKeys;
   const currentTurnMessageIdByThread = useMemo(
     () => (renderedThreadId && currentTurnMessageId
       ? { [renderedThreadId]: currentTurnMessageId }
       : EMPTY_TURN_MAP),
     [renderedThreadId, currentTurnMessageId],
   );
-
-  const toolCalls = toolCallsRaw ?? EMPTY_TOOL_CALLS;
 
   useLayoutEffect(() => {
     isPositionedRef.current = isPositioned;

@@ -58,18 +58,18 @@ export function SubagentRow({
 
   return (
     <div className={`${NARRATIVE_TOOL_ROW} min-w-0 gap-2`}>
-      <div className={`flex min-w-0 shrink items-center overflow-hidden ${groupedActivities ? "gap-1" : "gap-2"}`}>
+      <div className={`flex min-w-0 flex-1 items-center overflow-hidden ${groupedActivities ? "gap-1" : "gap-2"}`}>
         {visibleParticipants.map(({ participant, lifecycle: participantLifecycle }) => {
           const resolvedIdentity = resolveSubagentDisplayName(participant.toolInput);
           const identity = resolvedIdentity ?? "Subagent";
           return (
-            <span key={participant.id} className="flex min-w-0 max-w-40 shrink items-center gap-1">
+            <span key={participant.id} className="flex min-w-0 flex-1 items-center gap-1">
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
                 onClick={() => onSubagentSelect?.(participant.id)}
-                className="min-w-0 max-w-40 shrink gap-1 rounded-full px-2 text-left transition-colors duration-150 motion-reduce:transition-none hover:bg-muted/30"
+                className="min-w-0 flex-1 gap-1 rounded-full px-2 text-left transition-colors duration-150 motion-reduce:transition-none hover:bg-muted/30"
                 aria-label={`Open ${identity} subagent details`}
               >
                 <SubagentIdentityGlyph
@@ -78,7 +78,7 @@ export function SubagentRow({
                   className="size-4"
                   size={12}
                 />
-                <span className="min-w-0 truncate text-xs font-medium text-foreground/85">
+                <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground/85">
                   {identity}
                 </span>
               </Button>
@@ -95,10 +95,10 @@ export function SubagentRow({
           variant="ghost"
           size="sm"
           onClick={() => onOpenSubagents?.()}
-          className="min-w-0 shrink justify-start rounded-full px-2 text-left text-xs text-muted-foreground hover:bg-muted/30"
+          className="shrink-0 justify-start rounded-full px-2 text-left text-xs text-muted-foreground hover:bg-muted/30"
           aria-label={`Open full Subagents roster, ${aggregateLabel}`}
         >
-          <span className="min-w-0 truncate">{aggregateLabel}</span>
+          <span className="whitespace-nowrap">{aggregateLabel}</span>
         </Button>
       )}
     </div>

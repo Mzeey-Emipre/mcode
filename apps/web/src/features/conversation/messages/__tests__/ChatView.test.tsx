@@ -15,25 +15,38 @@ const {
   chatViewThreadStoreSetStateMock,
   chatViewApplyCanonicalRecoveriesMock,
   chatViewResidencyMock,
-} = vi.hoisted(() => ({
-  chatViewWorkspaceMockRef: { current: null as Record<string, unknown> | null },
-  chatViewThreadMockRef: { current: null as Record<string, unknown> | null },
-  chatViewConnectionStatusRef: { current: "connected" as "connected" | "reconnecting" | "authFailed" },
-  chatViewGetTransportMock: vi.fn(),
-  chatViewTransportMock: {
-    subscribeThread: vi.fn(),
-    unsubscribeThread: vi.fn(),
-    setThreadSubscriptions: vi.fn(),
-    listTurnRecoveries: vi.fn(),
-    retryTurn: vi.fn(),
-  },
-  chatViewThreadStoreSetStateMock: vi.fn(),
-  chatViewApplyCanonicalRecoveriesMock: vi.fn(),
-  chatViewResidencyMock: {
-    invalidateConversation: vi.fn(),
-    refresh: vi.fn().mockResolvedValue(undefined),
-  },
-}));
+  chatViewDisplayLeaseIdsRef,
+  chatViewDisplayLeaseListeners,
+} = vi.hoisted(() => {
+  const chatViewDisplayLeaseIdsRef = { current: [] as readonly string[] };
+  const chatViewDisplayLeaseListeners = new Set<() => void>();
+  return {
+    chatViewWorkspaceMockRef: { current: null as Record<string, unknown> | null },
+    chatViewThreadMockRef: { current: null as Record<string, unknown> | null },
+    chatViewConnectionStatusRef: { current: "connected" as "connected" | "reconnecting" | "authFailed" },
+    chatViewGetTransportMock: vi.fn(),
+    chatViewTransportMock: {
+      subscribeThread: vi.fn(),
+      unsubscribeThread: vi.fn(),
+      setThreadSubscriptions: vi.fn(),
+      listTurnRecoveries: vi.fn(),
+      retryTurn: vi.fn(),
+    },
+    chatViewThreadStoreSetStateMock: vi.fn(),
+    chatViewApplyCanonicalRecoveriesMock: vi.fn(),
+    chatViewDisplayLeaseIdsRef,
+    chatViewDisplayLeaseListeners,
+    chatViewResidencyMock: {
+      invalidateConversation: vi.fn(),
+      refresh: vi.fn().mockResolvedValue(undefined),
+      subscribeDisplayConversations: vi.fn((listener: () => void) => {
+        chatViewDisplayLeaseListeners.add(listener);
+        return () => chatViewDisplayLeaseListeners.delete(listener);
+      }),
+      getDisplayConversationSnapshot: vi.fn(() => chatViewDisplayLeaseIdsRef.current),
+    },
+  };
+});
 
 vi.mock("@/features/projects/state/workspaceStore", () => ({
   useWorkspaceStore: Object.assign(
@@ -261,6 +274,12 @@ function enableAtomicSubscriptionTransport() {
   return setThreadSubscriptions;
 }
 
+/** Simulate a residency lease transition through its external-store contract. */
+function setDisplayedThreadIds(threadIds: readonly string[]) {
+  chatViewDisplayLeaseIdsRef.current = threadIds;
+  for (const listener of chatViewDisplayLeaseListeners) listener();
+}
+
 /** Produces the thread-store fields consumed by ChatView. */
 function defaultThreadState(overrides: Partial<{
   currentThreadId: string | null;
@@ -298,6 +317,8 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     chatViewApplyCanonicalRecoveriesMock.mockClear();
     chatViewResidencyMock.invalidateConversation.mockClear();
     chatViewResidencyMock.refresh.mockClear();
+    chatViewDisplayLeaseIdsRef.current = [];
+    chatViewDisplayLeaseListeners.clear();
     __resetThreadSwitchTelemetryForTests();
     disableAtomicSubscriptionTransport();
     setupWorkspaceMock(defaultWorkspaceState());
@@ -731,6 +752,69 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
       });
     });
     expect(setThreadSubscriptions).toHaveBeenCalledTimes(2);
+  });
+
+  it("adds and removes canonical detail leases without duplicating subscriptions", async () => {
+    const setThreadSubscriptions = enableAtomicSubscriptionTransport();
+    const { unmount } = render(<ChatView />);
+
+    await waitFor(() => {
+      expect(setThreadSubscriptions).toHaveBeenLastCalledWith({
+        threadIds: ["thread-1"],
+        revisions: { "thread-1": { conversationRevision: 0, rosterRevision: 0 } },
+      });
+    });
+
+    setDisplayedThreadIds(["canonical-child"]);
+    await waitFor(() => {
+      expect(setThreadSubscriptions).toHaveBeenLastCalledWith({
+        threadIds: ["thread-1", "canonical-child"],
+        revisions: {
+          "thread-1": { conversationRevision: 0, rosterRevision: 0 },
+          "canonical-child": { conversationRevision: 0, rosterRevision: 0 },
+        },
+      });
+    });
+    const afterMount = setThreadSubscriptions.mock.calls.length;
+
+    setDisplayedThreadIds(["canonical-child"]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(setThreadSubscriptions).toHaveBeenCalledTimes(afterMount);
+
+    setDisplayedThreadIds([]);
+    await waitFor(() => {
+      expect(setThreadSubscriptions).toHaveBeenLastCalledWith({
+        threadIds: ["thread-1"],
+        revisions: { "thread-1": { conversationRevision: 0, rosterRevision: 0 } },
+      });
+    });
+    unmount();
+  });
+
+  it("prioritizes the active thread, then canonical detail leases, within the subscription bound", async () => {
+    const setThreadSubscriptions = enableAtomicSubscriptionTransport();
+    const activeThreadId = "thread-active";
+    const displayedThreadIds = ["canonical-z", "canonical-a"];
+    setDisplayedThreadIds(displayedThreadIds);
+    const runningThreadIds = new Set(
+      Array.from({ length: 105 }, (_, index) => `thread-${String(index).padStart(3, "0")}`),
+    );
+    setupWorkspaceMock(defaultWorkspaceState({ activeThreadId, threads: [] }));
+    chatViewThreadMockRef.current = defaultThreadState({
+      currentThreadId: activeThreadId,
+      runningThreadIds,
+    });
+
+    render(<ChatView />);
+
+    await waitFor(() => expect(setThreadSubscriptions).toHaveBeenCalledTimes(1));
+    const input = setThreadSubscriptions.mock.calls[0]?.[0] as { threadIds: string[] };
+    expect(input.threadIds).toHaveLength(100);
+    expect(input.threadIds.slice(0, 3)).toEqual([
+      activeThreadId,
+      ...displayedThreadIds,
+    ]);
+    expect(new Set(input.threadIds).size).toBe(100);
   });
 
   it("sends observed cursors without reconciling cursor-only changes", async () => {

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback, useSyncExternalStore } from "react";
 import { Bug, GitFork, Hammer, SearchCode, ScanSearch } from "lucide-react";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import {
@@ -47,6 +47,16 @@ import {
   type SetThreadSubscriptionsInput,
   type TurnRecovery,
 } from "@mcode/contracts";
+
+const EMPTY_DISPLAYED_THREAD_IDS: readonly string[] = [];
+
+function subscribeDisplayedConversations(listener: () => void): () => void {
+  return getConversationResidency().subscribeDisplayConversations(listener);
+}
+
+function getDisplayedConversationSnapshot(): readonly string[] {
+  return getConversationResidency().getDisplayConversationSnapshot();
+}
 
 /** Entry point suggestions shown in the empty state — each maps to a real Mcode capability. */
 const ENTRY_POINTS = [
@@ -351,6 +361,11 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
   const branchFromMessageId = activeForkMode?.messageId;
   const branchFromMessageContent = activeForkMode?.content ?? undefined;
   const runningThreadIds = useThreadStore((s) => s.runningThreadIds);
+  const displayedThreadIds = useSyncExternalStore(
+    subscribeDisplayedConversations,
+    getDisplayedConversationSnapshot,
+    () => EMPTY_DISPLAYED_THREAD_IDS,
+  );
   const canonicalRecoverySignature = useThreadStore((state) =>
     Array.from(state.records)
       .filter(([, record]) => record.canonicalAgent.recoveryRequired)
@@ -562,8 +577,10 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
   useEffect(() => {
     const orderedDesiredThreadIds = [
       ...(activeThreadId ? [activeThreadId] : []),
+      ...displayedThreadIds,
       ...Array.from(runningThreadIds).filter((threadId) => threadId !== activeThreadId).sort(),
-    ].slice(0, MAX_THREAD_SUBSCRIPTIONS);
+    ].filter((threadId, index, threadIds) => threadIds.indexOf(threadId) === index)
+      .slice(0, MAX_THREAD_SUBSCRIPTIONS);
     const desired = new Set(orderedDesiredThreadIds);
     desiredThreadIdsRef.current = desired;
 
@@ -814,7 +831,7 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
         }
       }, delay);
     });
-  }, [activeThreadId, canonicalRecoverySignature, connectionStatus, runningThreadIds, subscriptionReconcileVersion]);
+  }, [activeThreadId, canonicalRecoverySignature, connectionStatus, displayedThreadIds, runningThreadIds, subscriptionReconcileVersion]);
 
   useEffect(() => {
     subscriptionMountedRef.current = true;

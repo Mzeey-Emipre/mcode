@@ -19,6 +19,8 @@ export interface ConversationResidencyDeps {
   hydrateDisplayConversation?: (threadId: string, generation: number) => Promise<void>;
   /** Refresh an explicitly displayed non-selected conversation. */
   refreshDisplayConversation?: (threadId: string, generation: number) => Promise<void>;
+  /** Notify the live event store when a display lease first becomes active. */
+  onDisplayConversationMounted?: (threadId: string) => void;
   /** Finalize an explicitly displayed conversation after its last lease ends. */
   releaseDisplayConversation?: (threadId: string, generation: number) => void;
   /** Read the selected transcript without making residency own selection. */
@@ -33,6 +35,9 @@ export interface ConversationResidencyDeps {
   ) => ConversationOlderPage | undefined;
   prefetchConversation: (threadId: string) => Promise<void>;
 }
+
+/** Listener notified when the set of explicitly displayed conversations changes. */
+export type DisplayConversationListener = () => void;
 
 type ConversationHistoryPageIdentity =
   | ConversationOlderPageIdentity
@@ -81,6 +86,8 @@ export class ConversationResidency {
   private readonly historyPageRequests = new Map<string, ConversationHistoryPageRequestHandle>();
   private readonly displayLeases = new Map<string, { count: number; generation: number }>();
   private readonly displayLeaseGenerations = new Map<string, number>();
+  private readonly displayConversationListeners = new Set<DisplayConversationListener>();
+  private displayConversationSnapshot: readonly string[] = [];
   private readonly displayRefreshes = new Map<string, Promise<void>>();
   private readonly adjacentPrefetch;
 
@@ -88,6 +95,22 @@ export class ConversationResidency {
     this.adjacentPrefetch = createAdjacentPrefetchScheduler({
       prefetch: deps.prefetchConversation,
     });
+  }
+
+  /** Subscribe to stable snapshots of explicitly displayed conversation IDs. */
+  subscribeDisplayConversations(listener: DisplayConversationListener): () => void {
+    this.displayConversationListeners.add(listener);
+    return () => this.displayConversationListeners.delete(listener);
+  }
+
+  /** Return the stable ordered IDs currently held by explicit display leases. */
+  getDisplayConversationSnapshot(): readonly string[] {
+    return this.displayConversationSnapshot;
+  }
+
+  private publishDisplayConversationSnapshot(): void {
+    this.displayConversationSnapshot = [...this.displayLeases.keys()];
+    for (const listener of this.displayConversationListeners) listener();
   }
 
   /** Activate the selected thread when it has a persisted conversation identity. */
@@ -128,6 +151,8 @@ export class ConversationResidency {
     this.displayLeaseGenerations.set(threadId, lease.generation);
     this.displayLeases.set(threadId, lease);
     if (lease.count === 1) {
+      this.publishDisplayConversationSnapshot();
+      this.deps.onDisplayConversationMounted?.(threadId);
       return this.deps.hydrateDisplayConversation?.(threadId, lease.generation) ?? Promise.resolve();
     }
     return Promise.resolve();
@@ -140,6 +165,7 @@ export class ConversationResidency {
     lease.count -= 1;
     if (lease.count > 0) return;
     this.displayLeases.delete(threadId);
+    this.publishDisplayConversationSnapshot();
     this.displayRefreshes.delete(threadId);
     this.deps.releaseDisplayConversation?.(threadId, lease.generation);
   }
