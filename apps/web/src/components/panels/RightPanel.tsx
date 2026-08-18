@@ -30,6 +30,7 @@ import {
   useBrowserAutomationStore,
   usePreviewTabSet,
   usePreviewTabsStore,
+  browserSurfacePresentationCoordinator,
 } from "@/features/preview";
 import {
   MAX_TERMINALS_PER_SCOPE,
@@ -100,6 +101,29 @@ const WarmPreviewSurface = memo(function WarmPreviewSurface({
   const automationHosted = useBrowserAutomationStore((state) =>
     state.hostedScopeIds.has(warmPreviewScopeKey(scope)),
   );
+  const anchorCleanupRef = useRef<(() => void) | null>(null);
+  const setAutomationAnchor = useCallback((element: HTMLDivElement | null): void => {
+    anchorCleanupRef.current?.();
+    anchorCleanupRef.current = element
+      ? browserSurfacePresentationCoordinator.registerAutomationAnchor(
+          scope.workspaceId,
+          scope.scopeId,
+          element,
+          visible,
+        )
+      : null;
+  }, [scope.scopeId, scope.workspaceId, visible]);
+  useEffect(() => () => {
+    anchorCleanupRef.current?.();
+    anchorCleanupRef.current = null;
+  }, []);
+  useEffect(() => {
+    browserSurfacePresentationCoordinator.setAutomationAnchorVisibility(
+      scope.workspaceId,
+      scope.scopeId,
+      visible,
+    );
+  }, [scope.scopeId, scope.workspaceId, visible]);
   return (
     <div
       data-preview-scope={scope.scopeId}
@@ -108,15 +132,15 @@ const WarmPreviewSurface = memo(function WarmPreviewSurface({
     >
       {automationHosted ? (
         <div
-          data-automation-preview-dock={scope.scopeId}
-          data-automation-preview-workspace={scope.workspaceId}
-          data-visible={visible ? "true" : "false"}
+          ref={setAutomationAnchor}
+          data-testid="automation-preview-dock"
           className="min-h-0 min-w-0 flex-1"
         />
       ) : (
         <PreviewPanel
           threadId={scope.scopeId}
           workspaceId={scope.workspaceId}
+          presentationActive={visible}
           coveredLeft={coveredLeft}
         />
       )}
@@ -211,6 +235,10 @@ export function RightPanel() {
   const panelScopeId = activeThreadId ?? activeWorkspaceId;
   const [warmPreviewScopes, setWarmPreviewScopes] = useState<readonly WarmPreviewScope[]>([]);
   const [activityRailExpanded, setActivityRailExpanded] = useState(false);
+
+  useEffect(() => () => {
+    browserSurfacePresentationCoordinator.setActivityRailOverlap(0);
+  }, []);
   const retainedPreviewScopeKeys = useMemo(
     () => new Set([
       ...(panelScopeId && activeWorkspaceId ? [browserAutomationScopeKey(activeWorkspaceId, panelScopeId)] : []),
@@ -641,7 +669,12 @@ export function RightPanel() {
                   ),
               });
           }}
-          onExpandedChange={setActivityRailExpanded}
+          onExpandedChange={(expanded) => {
+            setActivityRailExpanded(expanded);
+            browserSurfacePresentationCoordinator.setActivityRailOverlap(
+              expanded ? ACTIVITY_RAIL_FLOATING_OVERLAP_PX : 0,
+            );
+          }}
         />
 
         {/* Tab content — DiffPanel and terminal pool stay mounted (stacked) so
@@ -692,11 +725,7 @@ export function RightPanel() {
                 key={warmPreviewScopeKey(scope)}
                 scope={scope}
                 visible={visible}
-                coveredLeft={
-                  visible && activityRailExpanded
-                    ? ACTIVITY_RAIL_FLOATING_OVERLAP_PX
-                    : 0
-                }
+                coveredLeft={visible && activityRailExpanded ? ACTIVITY_RAIL_FLOATING_OVERLAP_PX : 0}
               />
             );
           })}

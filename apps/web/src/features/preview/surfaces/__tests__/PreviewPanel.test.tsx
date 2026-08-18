@@ -326,6 +326,9 @@ describe("PreviewPanel: unavailable state", () => {
 
   it("publishes the web preview target identity used by the executor", async () => {
     vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(10, 20, 640, 480),
+    );
     useDiffStore.setState({ previewUrlByThread: { "thread-1": window.location.origin + "/fixture" } });
     render(<PreviewPanel threadId="thread-1" workspaceId="workspace-1" />);
     const iframe = screen.getByTestId("web-runtime-preview-iframe");
@@ -383,6 +386,7 @@ describe("PreviewPanel: unavailable state", () => {
       },
     } satisfies BrowserAutomationHostDispatch, new AbortController().signal);
     expect(result).toMatchObject({ ok: true, result: { operation: "snapshot" } });
+    rect.mockRestore();
   });
 
   it("switches thread presentation without replacing the prior warm iframe", () => {
@@ -469,6 +473,36 @@ describe("PreviewPanel: unavailable state", () => {
       expect(iframe).toHaveAttribute("aria-hidden", "true");
       expect(iframe).toHaveStyle({ visibility: "hidden" });
     });
+  });
+
+  it("hides and restores a warm web runtime panel from explicit presentation visibility", async () => {
+    vi.stubEnv("VITE_MCODE_WEB_AUTOMATION", "1");
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(10, 20, 640, 480),
+    );
+    const view = render(
+      <PreviewPanel threadId="thread-1" workspaceId="workspace-1" presentationActive />,
+    );
+    const iframe = screen.getByTestId("web-runtime-preview-iframe");
+    expect(iframe).toHaveStyle({ visibility: "visible", pointerEvents: "auto" });
+    expect(iframe).toHaveAttribute("aria-hidden", "false");
+
+    view.rerender(
+      <PreviewPanel threadId="thread-1" workspaceId="workspace-1" presentationActive={false} />,
+    );
+    await waitFor(() => {
+      expect(iframe).toHaveStyle({ visibility: "hidden", pointerEvents: "none" });
+      expect(iframe).toHaveAttribute("aria-hidden", "true");
+    });
+
+    view.rerender(
+      <PreviewPanel threadId="thread-1" workspaceId="workspace-1" presentationActive />,
+    );
+    await waitFor(() => {
+      expect(iframe).toHaveStyle({ visibility: "visible", pointerEvents: "auto" });
+      expect(iframe).toHaveAttribute("aria-hidden", "false");
+    });
+    rect.mockRestore();
   });
 
   it("keeps the responsive toolbar available through the web Browser overflow menu", async () => {
@@ -715,9 +749,10 @@ describe("PreviewPanel: full panel state", () => {
       ]),
     });
 
-    render(<PreviewPanel threadId="thread-1" />);
+    render(<PreviewPanel threadId="thread-1" coveredLeft={112} />);
 
     const overlay = screen.getByTestId("browser-automation-overlay");
+    expect(overlay).toHaveStyle({ clipPath: "inset(0 0 0 112px)" });
     expect(overlay).not.toHaveClass("border");
     expect(overlay).not.toHaveClass("border-2");
     expect(overlay).not.toHaveClass("border-primary");
@@ -829,7 +864,15 @@ describe("PreviewPanel: full panel state", () => {
     );
   });
 
-  it("mounts a blank Electron surface for a new page", () => {
+  it("clips the Browser chrome around the expanded activity rail", () => {
+    render(<PreviewPanel threadId="thread-1" coveredLeft={112} />);
+
+    expect(screen.getByTestId("browser-header").parentElement).toHaveStyle({
+      clipPath: "inset(0 0 0 112px)",
+    });
+  });
+
+  it("mounts a blank Electron surface for a new page", async () => {
     mockUsePreviewTabs.mockReturnValue({
       tabSet: {
         threadId: "thread-1",
@@ -851,16 +894,27 @@ describe("PreviewPanel: full panel state", () => {
       closeTab: vi.fn(),
     });
 
-    render(<PreviewPanel threadId="thread-1" />);
-
-    expect(screen.getByTestId("preview-webview")).toHaveAttribute(
-      "data-tab-id",
-      "blank-tab",
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 640, 480),
     );
-    expect(
-      screen.getByTestId("electron-browser-surface-webview").getAttribute("src"),
-    ).toMatch(/^about:blank/);
-    expect(screen.getByTestId("browser-local-ports")).toBeInTheDocument();
+    try {
+      render(<PreviewPanel threadId="thread-1" />);
+
+      expect(screen.getByTestId("preview-webview")).toHaveAttribute(
+        "data-tab-id",
+        "blank-tab",
+      );
+      expect(
+        screen.getByTestId("electron-browser-surface-webview").getAttribute("src"),
+      ).toMatch(/^about:blank/);
+      expect(screen.getByTestId("browser-local-ports")).toBeInTheDocument();
+      await waitFor(() => expect(screen.getByTestId("electron-browser-surface-webview")).toHaveStyle({
+        visibility: "hidden",
+        pointerEvents: "none",
+      }));
+    } finally {
+      rect.mockRestore();
+    }
   });
 
   it("renders the active URL in a live webview when the effective engine is webview", () => {
@@ -868,16 +922,27 @@ describe("PreviewPanel: full panel state", () => {
       mockBridgeState({ storedUrl: "https://example.com" }),
     );
 
-    render(<PreviewPanel threadId="thread-1" />);
-
-    const webview = screen.getByTestId("preview-webview");
-    expect(webview).toHaveAttribute("data-tab-id", PREVIEW_WEBVIEW_FALLBACK_TAB_ID);
-    expect(webview).toHaveAttribute("src", "https://example.com");
-    expect(webview).toHaveClass("absolute", "inset-0", "z-0", "h-full", "w-full");
-    expect(screen.queryByTestId("browser-local-ports")).not.toBeInTheDocument();
-    expect(mockUsePreviewBridge).toHaveBeenLastCalledWith(
-      expect.objectContaining({ threadId: "thread-1" }),
+    const rect = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 640, 480),
     );
+    try {
+      render(<PreviewPanel threadId="thread-1" />);
+
+      const webview = screen.getByTestId("preview-webview");
+      expect(webview).toHaveAttribute("data-tab-id", PREVIEW_WEBVIEW_FALLBACK_TAB_ID);
+      expect(webview).toHaveAttribute("src", "https://example.com");
+      expect(webview).toHaveClass("absolute", "inset-0", "z-0", "h-full", "w-full");
+      expect(screen.queryByTestId("browser-local-ports")).not.toBeInTheDocument();
+      expect(screen.getByTestId("electron-browser-surface-webview")).toHaveStyle({
+        visibility: "visible",
+        pointerEvents: "auto",
+      });
+      expect(mockUsePreviewBridge).toHaveBeenLastCalledWith(
+        expect.objectContaining({ threadId: "thread-1" }),
+      );
+    } finally {
+      rect.mockRestore();
+    }
   });
 
   it("keeps an about:blank live tab stable while the persisted URL is empty", async () => {

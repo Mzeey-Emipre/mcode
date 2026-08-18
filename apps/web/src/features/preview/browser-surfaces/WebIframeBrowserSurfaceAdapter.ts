@@ -123,12 +123,13 @@ export class WebIframeBrowserSurfaceAdapter implements BrowserSurfaceAdapter {
     this.frame.style.transformOrigin = "top left";
     this.frame.style.transform = presentation.scale === undefined ? "" : `scale(${presentation.scale})`;
     this.frame.style.zIndex = presentation.zIndex === undefined ? "" : String(presentation.zIndex);
-    this.frame.style.clipPath = presentation.coveredLeft
-      ? `inset(0px 0px 0px ${presentation.coveredLeft}px)`
-      : "";
+    const coveredLeft = presentation.coveredLeft ?? 0;
+    const topLeftRadius = coveredLeft > 0 ? "0px" : "var(--radius-md)";
+    this.frame.style.clipPath =
+      `inset(0px 0px 0px ${coveredLeft}px round ${topLeftRadius} 0px 0px 0px)`;
     this.frame.style.visibility = "visible";
-    this.frame.style.pointerEvents = "auto";
-    this.frame.setAttribute("aria-hidden", "false");
+    this.frame.style.pointerEvents = presentation.inputEnabled === false ? "none" : "auto";
+    this.frame.setAttribute("aria-hidden", presentation.accessible === false ? "true" : "false");
   }
 
   /** Hides the iframe without replacing its document. */

@@ -13,6 +13,7 @@ import {
   useBrowserAutomationStore,
 } from "../automation/browserAutomationStore";
 import { usePreviewTabsStore } from "../state/previewTabsStore";
+import { BrowserSurfacePresentationCoordinator } from "./BrowserSurfacePresentationCoordinator";
 
 let surfaceRoot: HTMLDivElement | null = null;
 
@@ -50,6 +51,11 @@ export const browserSurfaceHost = new BrowserSurfaceHost({
     });
   },
 });
+
+/** Renderer-only authority for Browser surface placement and input state. */
+export const browserSurfacePresentationCoordinator = new BrowserSurfacePresentationCoordinator(
+  browserSurfaceHost,
+);
 
 /** Mounts the single Browser surface root for this renderer window. */
 export function BrowserSurfaceHostRoot() {
@@ -181,6 +187,7 @@ export function BrowserSurfaceHostRoot() {
   useEffect(() => {
     const dispose = (event: PageTransitionEvent): void => {
       if (event.persisted) return;
+      browserSurfacePresentationCoordinator.dispose();
       browserSurfaceHost.disposeHost();
     };
     window.addEventListener("pagehide", dispose);

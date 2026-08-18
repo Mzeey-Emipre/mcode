@@ -107,7 +107,14 @@ import type {
   BrowserSurfaceIdentity,
   BrowserSurfacePageState,
 } from "../browser-surfaces";
-import { browserSurfaceHost } from "./BrowserSurfaceHostRoot";
+import {
+  browserSurfaceHost,
+  browserSurfacePresentationCoordinator,
+} from "./BrowserSurfaceHostRoot";
+import type {
+  BrowserSurfacePresentationRegistration,
+  BrowserSurfacePresentationSource,
+} from "./BrowserSurfacePresentationCoordinator";
 
 /** Human-readable label for the capture confirmation badge. */
 const CAPTURE_KIND_LABEL: Record<PreviewCaptureKind, string> = {
@@ -1559,7 +1566,9 @@ export interface PreviewPanelProps {
   readonly workspaceId?: string | null;
   /** Mount only automation webviews without visible panel chrome. */
   readonly automationOnly?: boolean;
-  /** Width covered by floating panel chrome at the left edge. */
+  /** Whether this warm panel currently owns the visible Browser presentation. */
+  readonly presentationActive?: boolean;
+  /** Explicit overlap supplied by the active Activity Rail. */
   readonly coveredLeft?: number;
 }
 
@@ -1591,6 +1600,8 @@ function WebRuntimePreview({
   viewportToolbarOpen,
   onToggleViewportToolbar,
   onCloseViewportToolbar,
+  automationOnly = false,
+  presentationActive = true,
 }: {
   readonly threadId: string;
   readonly workspaceId?: string | null;
@@ -1599,6 +1610,8 @@ function WebRuntimePreview({
   readonly viewportToolbarOpen: boolean;
   readonly onToggleViewportToolbar: () => void;
   readonly onCloseViewportToolbar: () => void;
+  readonly automationOnly?: boolean;
+  readonly presentationActive?: boolean;
 }) {
   const storedUrl = useDiffStore((state) => state.previewUrlByThread[threadId] ?? "");
   const fixtureUrl = `${window.location.origin}${WEB_AUTOMATION_FIXTURE_URL}`;
@@ -1614,6 +1627,7 @@ function WebRuntimePreview({
   const [canvasBounds, setCanvasBounds] = useState({ width: 0, height: 0 });
   const surfaceRef = useRef<HTMLDivElement>(null);
   const dockRef = useRef<HTMLDivElement>(null);
+  const presentationRegistrationRef = useRef<BrowserSurfacePresentationRegistration | null>(null);
   const identity = useMemo<BrowserSurfaceIdentity>(() => ({
     workspaceId: workspaceId ?? threadId,
     scope: {
@@ -1626,6 +1640,7 @@ function WebRuntimePreview({
   const requestedState = resolveWebPreviewState(requestedAddress, enabled);
   const state = crossOriginObserved ? "cross-origin" : requestedState;
   const surfaceAvailable = enabled && requestedAddress !== null;
+  const presentationSource: BrowserSurfacePresentationSource = automationOnly ? "automation" : "panel";
   const responsiveViewportSize =
     viewportState?.mode === "responsive" ? viewportState.confirmed : null;
   const responsiveViewportScale = responsiveViewportSize
@@ -1635,6 +1650,30 @@ function WebRuntimePreview({
         viewportState?.presentation ?? "fit",
       )
     : 1;
+  const presentationIntentRef = useRef({
+    automationOnly,
+    presentationActive,
+    presentationSource,
+    responsiveViewportSize,
+  });
+  presentationIntentRef.current = {
+    automationOnly,
+    presentationActive,
+    presentationSource,
+    responsiveViewportSize,
+  };
+  const publishPresentation = useCallback((nextPageState: BrowserSurfacePageState | null): void => {
+    const current = presentationIntentRef.current;
+    browserSurfacePresentationCoordinator.publish(identity, {
+      source: current.presentationSource,
+      active: current.automationOnly || current.presentationActive,
+      anchor: dockRef.current,
+      pageState: nextPageState,
+      viewport: current.responsiveViewportSize ?? undefined,
+      inputEnabled: !current.automationOnly,
+      accessible: !current.automationOnly,
+    }, presentationRegistrationRef.current?.token);
+  }, [identity]);
   useLayoutEffect(() => {
     if (!surfaceAvailable) return;
     useBrowserAutomationStore.getState().registerTarget(
@@ -1645,16 +1684,25 @@ function WebRuntimePreview({
     const initial = browserSurfaceHost.ensure(identity, {
       address: requestedAddressRef.current ?? fixtureUrl,
     });
+    const registration = dockRef.current
+      ? browserSurfacePresentationCoordinator.registerAnchor(identity, presentationSource, dockRef.current)
+      : null;
+    presentationRegistrationRef.current = registration;
     setPageState(initial);
+    publishPresentation(initial);
     const unsubscribe = browserSurfaceHost.subscribe(identity, (snapshot) => {
       setPageState(snapshot);
       setCrossOriginObserved(snapshot.documentAccess === "cross-origin");
+      publishPresentation(snapshot);
     });
     return () => {
       unsubscribe();
-      browserSurfaceHost.hide(identity);
+      if (presentationRegistrationRef.current === registration) {
+        registration?.release();
+        presentationRegistrationRef.current = null;
+      }
     };
-  }, [fixtureUrl, identity, surfaceAvailable, threadId]);
+  }, [automationOnly, fixtureUrl, identity, presentationSource, publishPresentation, surfaceAvailable, threadId]);
 
   useEffect(() => {
     setInputUrl(storedUrl);
@@ -1690,24 +1738,10 @@ function WebRuntimePreview({
   useLayoutEffect(() => {
     const dock = dockRef.current;
     if (!dock) {
-      browserSurfaceHost.hide(identity);
       return;
     }
     const update = (): void => {
-      const bounds = dock.getBoundingClientRect();
-      if (dock.closest("[inert], [aria-hidden='true']")) {
-        browserSurfaceHost.hide(identity);
-        return;
-      }
-      const hasGeometry = bounds.width > 0 && bounds.height > 0;
-      browserSurfaceHost.present(identity, {
-        left: hasGeometry ? bounds.left : -20_000,
-        top: hasGeometry ? bounds.top : 0,
-        width: responsiveViewportSize?.width ?? (hasGeometry ? bounds.width : 1),
-        height: responsiveViewportSize?.height ?? (hasGeometry ? bounds.height : 1),
-        scale: responsiveViewportSize ? responsiveViewportScale : 1,
-        zIndex: 31,
-      });
+      publishPresentation(pageState);
     };
     const resizeObserver = typeof ResizeObserver === "function"
       ? new ResizeObserver(update)
@@ -1718,9 +1752,8 @@ function WebRuntimePreview({
     return () => {
       resizeObserver?.disconnect();
       window.removeEventListener("resize", update);
-      browserSurfaceHost.hide(identity);
     };
-  }, [identity, responsiveViewportScale, responsiveViewportSize, state]);
+  }, [automationOnly, identity, pageState, presentationActive, presentationSource, publishPresentation, responsiveViewportScale, responsiveViewportSize, state]);
 
   const navigate = (candidate = inputUrl): void => {
     const next = normalizeWebPreviewUrl(candidate);
@@ -1855,7 +1888,8 @@ export function PreviewPanel({
   threadId,
   workspaceId,
   automationOnly = false,
-  coveredLeft = 0,
+  presentationActive = true,
+  coveredLeft,
 }: PreviewPanelProps) {
   const surfaceRef = useRef<HTMLDivElement>(null);
   const webviewRefs = useRef<Record<string, PreviewWebviewHandle | null>>({});
@@ -2790,6 +2824,8 @@ export function PreviewPanel({
         viewportToolbarOpen={viewportToolbarOpen}
         onToggleViewportToolbar={toggleViewportToolbar}
         onCloseViewportToolbar={closeViewportToolbar}
+        automationOnly={automationOnly}
+        presentationActive={presentationActive}
       />
     );
   }
@@ -2966,7 +3002,7 @@ export function PreviewPanel({
     return (
       <PreviewWebview
         key={tab.id}
-        active={automationOnly || tab.id === activeWebviewTabId}
+        active={automationOnly || (tab.id === activeWebviewTabId && webviewLayerInteractive)}
         ref={(handle) => {
           webviewRefs.current[tab.id] = handle;
         }}
@@ -2975,6 +3011,8 @@ export function PreviewPanel({
         tabId={tab.id}
         src={tab.src}
         allowHiddenPresentation={automationOnly}
+        presentationActive={automationOnly || presentationActive}
+        presentationSource={automationOnly ? "automation" : "panel"}
         coveredLeft={coveredLeft}
         viewport={tabViewportState?.mode === "responsive" ? tabViewport : undefined}
         className={cn(
@@ -3008,7 +3046,10 @@ export function PreviewPanel({
       data-testid="preview-panel"
       className="flex h-full min-h-0 min-w-0 flex-1 basis-0 flex-col overflow-hidden"
     >
-      <div className={cn(showWebviewPreview && "relative z-20")}>
+      <div
+        className={cn(showWebviewPreview && "relative z-20")}
+        style={coveredLeft ? { clipPath: `inset(0 0 0 ${coveredLeft}px)` } : undefined}
+      >
         {showAnnotationCommandBar ? (
           <PreviewAnnotationHeader
             pageCount={pageAnnotations.length}
@@ -3198,6 +3239,7 @@ export function PreviewPanel({
             data-testid="browser-automation-overlay"
             className="pointer-events-none absolute inset-0 z-20 rounded-tl-md"
             style={{
+              clipPath: coveredLeft ? `inset(0 0 0 ${coveredLeft}px)` : undefined,
               backgroundImage: [
                 "linear-gradient(to right, color-mix(in oklab, var(--primary) 26%, transparent), transparent 32px)",
                 "linear-gradient(to left, color-mix(in oklab, var(--primary) 26%, transparent), transparent 32px)",

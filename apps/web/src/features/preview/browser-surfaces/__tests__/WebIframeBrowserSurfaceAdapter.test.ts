@@ -33,9 +33,28 @@ describe("WebIframeBrowserSurfaceAdapter", () => {
     expect(adapter.element.style.left).toBe("10px");
     expect(adapter.element.style.width).toBe("640px");
     expect(adapter.element.style.zIndex).toBe("42");
-    expect(adapter.element.style.clipPath).toBe("inset(0px 0px 0px 112px)");
+    expect(adapter.element.style.clipPath).toBe(
+      "inset(0px 0px 0px 112px round 0px 0px 0px 0px)",
+    );
+    adapter.present({ left: 10, top: 20, width: 640, height: 480, coveredLeft: 0 });
+    expect(adapter.element.style.clipPath).toBe(
+      "inset(0px 0px 0px 0px round var(--radius-md) 0px 0px 0px)",
+    );
     adapter.dispose();
     expect(document.body.contains(adapter.element)).toBe(false);
+  });
+
+  it("applies explicit input and accessibility state", () => {
+    const adapter = new WebIframeBrowserSurfaceAdapter(IDENTITY, 2, { root: document.body });
+
+    adapter.present({ left: 0, top: 0, width: 640, height: 480, inputEnabled: false, accessible: false });
+    expect(adapter.element.style.pointerEvents).toBe("none");
+    expect(adapter.element).toHaveAttribute("aria-hidden", "true");
+
+    adapter.present({ left: 0, top: 0, width: 640, height: 480, inputEnabled: true, accessible: true });
+    expect(adapter.element.style.pointerEvents).toBe("auto");
+    expect(adapter.element).toHaveAttribute("aria-hidden", "false");
+    adapter.dispose();
   });
 
   it("reports cross-origin observation as unknown and history as null", () => {

@@ -35,6 +35,7 @@ import {
   resolveSameOriginFrame,
 } from "./webBrowserInteractionExecutor";
 import { PreviewPanel, WEB_RUNTIME_PREVIEW_TAB_ID } from "../surfaces/PreviewPanel";
+import { browserSurfacePresentationCoordinator } from "../surfaces/BrowserSurfaceHostRoot";
 import type { PreviewAutomationBridge } from "@/transport/desktop-bridge";
 import {
   isBrowserAutomationWebRuntimeEnabled,
@@ -663,15 +664,7 @@ interface PersistentSurfaceLayout {
   readonly top: number;
   readonly width: number;
   readonly height: number;
-}
-
-function findAutomationDock(workspaceId: string, threadId: string): HTMLElement | null {
-  return [...document.querySelectorAll<HTMLElement>("[data-automation-preview-dock]")]
-    .find((candidate) =>
-      candidate.dataset.automationPreviewWorkspace === workspaceId &&
-      candidate.dataset.automationPreviewDock === threadId &&
-      candidate.dataset.visible === "true",
-    ) ?? null;
+  readonly coveredLeft: number;
 }
 
 interface AutomationTargetRef {
@@ -691,41 +684,43 @@ function PersistentAutomationPreviewSurface({
     top: 0,
     width: 1_280,
     height: 720,
+    coveredLeft: 0,
   });
 
   useEffect(() => {
-    let observedDock: HTMLElement | null = null;
-    const resizeObserver = typeof ResizeObserver === "function"
-      ? new ResizeObserver(() => update())
-      : null;
     const update = () => {
-      const dock = findAutomationDock(scope.workspaceId, scope.threadId);
-      if (dock !== observedDock) {
-        resizeObserver?.disconnect();
-        observedDock = dock;
-        if (dock) resizeObserver?.observe(dock);
-      }
-      const rect = dock?.getBoundingClientRect();
-      const next: PersistentSurfaceLayout = rect && rect.width > 0 && rect.height > 0
-        ? { visible: true, left: rect.left, top: rect.top, width: rect.width, height: rect.height }
-        : { visible: false, left: -20_000, top: 0, width: 1_280, height: 720 };
+      const rect = browserSurfacePresentationCoordinator.getAutomationAnchorRect(
+        scope.workspaceId,
+        scope.threadId,
+      );
+      const next: PersistentSurfaceLayout = rect
+        ? {
+            visible: true,
+            left: rect.left,
+            top: rect.top,
+            width: rect.width,
+            height: rect.height,
+            coveredLeft: browserSurfacePresentationCoordinator.getActivityRailOverlap(),
+          }
+        : {
+            visible: false,
+            left: -20_000,
+            top: 0,
+            width: 1_280,
+            height: 720,
+            coveredLeft: 0,
+          };
       setLayout((current) => (
         current.visible === next.visible && current.left === next.left && current.top === next.top &&
-        current.width === next.width && current.height === next.height ? current : next
+        current.width === next.width && current.height === next.height &&
+        current.coveredLeft === next.coveredLeft ? current : next
       ));
     };
-    const mutationObserver = new MutationObserver(update);
-    mutationObserver.observe(document.body, {
-      subtree: true,
-      childList: true,
-      attributes: true,
-      attributeFilter: ["class", "data-visible"],
-    });
+    const unsubscribe = browserSurfacePresentationCoordinator.subscribe(update);
     window.addEventListener("resize", update);
     update();
     return () => {
-      mutationObserver.disconnect();
-      resizeObserver?.disconnect();
+      unsubscribe();
       window.removeEventListener("resize", update);
     };
   }, [scope.threadId, scope.workspaceId]);
@@ -751,6 +746,7 @@ function PersistentAutomationPreviewSurface({
         threadId={scope.threadId}
         workspaceId={scope.workspaceId}
         automationOnly={!layout.visible}
+        coveredLeft={layout.visible ? layout.coveredLeft : 0}
       />
     </div>
   );
@@ -1513,7 +1509,7 @@ export function BrowserAutomationHost() {
             ) || [...inFlightRef.current.values()].some(
               (candidate) => candidate.scope.workspaceId === scope.workspaceId && candidate.scope.threadId === scope.threadId,
             ) || recorderRef.current.hasActiveThread(scope.workspaceId, scope.threadId) ||
-            findAutomationDock(scope.workspaceId, scope.threadId) !== null;
+            browserSurfacePresentationCoordinator.hasAutomationAnchor(scope.workspaceId, scope.threadId);
           const evicted = currentScopes.length >= 5
             ? currentScopes.find((scope) => !isBusy(scope))
             : undefined;
@@ -1629,7 +1625,7 @@ export function BrowserAutomationHost() {
           (agentOwnedOpen ? request.args.url : undefined) ??
           selectedTab?.url ??
           "about:blank";
-        if (!selectedTab?.url || requestedWebUrl || request.args.url) {
+        if ((!selectedTab?.url || requestedWebUrl || request.args.url) && !(bridge && agentOwnedOpen)) {
           usePreviewTabsStore.getState().updateTabChrome(request.workspaceId, request.threadId, tabId, {
             title: null,
             url: initialUrl,

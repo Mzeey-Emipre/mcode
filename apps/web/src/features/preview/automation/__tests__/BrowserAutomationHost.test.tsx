@@ -20,6 +20,7 @@ import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { useDiffStore } from "@/stores/diffStore";
 import { previewTabsScopeKey, usePreviewTabsStore } from "@/features/preview/state/previewTabsStore";
 import { browserTargetRegistry } from "../services/browserTargetRegistry";
+import { browserSurfacePresentationCoordinator } from "../../surfaces/BrowserSurfaceHostRoot";
 
 const harness = vi.hoisted(() => {
   const listeners = new Map<string, Set<(payload: unknown) => void>>();
@@ -56,11 +57,16 @@ vi.mock("@/transport", () => ({
 
 vi.mock("../../surfaces/PreviewPanel", () => ({
   WEB_RUNTIME_PREVIEW_TAB_ID: "web-preview",
-  PreviewPanel: ({ threadId, automationOnly }: { readonly threadId: string; readonly automationOnly?: boolean }) => (
+  PreviewPanel: ({ threadId, automationOnly, coveredLeft }: {
+    readonly threadId: string;
+    readonly automationOnly?: boolean;
+    readonly coveredLeft?: number;
+  }) => (
     <div
       data-testid="automation-preview-panel"
       data-thread-id={threadId}
       data-automation-only={String(automationOnly ?? false)}
+      data-covered-left={coveredLeft ?? 0}
     />
   ),
 }));
@@ -798,19 +804,29 @@ describe("BrowserAutomationHost", () => {
     await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledOnce());
 
     const dock = document.createElement("div");
-    dock.dataset.automationPreviewDock = "thread-1";
-    dock.dataset.automationPreviewWorkspace = "workspace-1";
-    dock.dataset.visible = "true";
     Object.defineProperty(dock, "getBoundingClientRect", {
       configurable: true,
       value: () => ({ left: 40, top: 20, width: 640, height: 480, right: 680, bottom: 500, x: 40, y: 20, toJSON: () => ({}) }),
     });
     document.body.append(dock);
+    const releaseDock = browserSurfacePresentationCoordinator.registerAutomationAnchor(
+      "workspace-1",
+      "thread-1",
+      dock,
+    );
     await act(async () => usePreviewTabsStore.getState().activatePage("workspace-1", "thread-1", tabId));
     await waitFor(() => expect(usePreviewTabsStore.getState().tabSetByScope[previewTabsScopeKey("workspace-1", "thread-1")]?.activeTabId).toBe(tabId));
     expect(document.querySelector('[data-automation-persistent-scope="thread-1"]')).toHaveAttribute("aria-hidden", "false");
+    act(() => {
+      browserSurfacePresentationCoordinator.setActivityRailOverlap(112);
+    });
+    expect(browserSurfacePresentationCoordinator.getActivityRailOverlap()).toBe(112);
+    await waitFor(() => expect(document.querySelector(
+      '[data-automation-persistent-scope="thread-1"] [data-testid="automation-preview-panel"]',
+    )).toHaveAttribute("data-covered-left", "112"));
 
     iframe.remove();
+    releaseDock();
     dock.remove();
     view.unmount();
   });
@@ -1061,6 +1077,7 @@ describe("BrowserAutomationHost", () => {
   afterEach(() => {
     delete window.desktopBridge;
     vi.unstubAllEnvs();
+    browserSurfacePresentationCoordinator.dispose();
   });
 
   it("stays inactive when a partial desktop bridge omits preview automation", async () => {
@@ -1640,17 +1657,33 @@ describe("BrowserAutomationHost", () => {
         },
       };
     });
-    execute.mockResolvedValue({
-      contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
-      requestId: "request-1192",
-      sequence: 1192,
-      ok: true,
-      result: {
-        operation: "open",
-        url: "https://agent.example/loaded",
+    execute.mockImplementation(async (value: BrowserAutomationHostDispatch) => {
+      expect(usePreviewTabsStore.getState().tabSetByScope[
+        previewTabsScopeKey("workspace-1", "thread-1")
+      ]?.tabs.find((tab) => tab.id === agentTab.id)?.url).toBeNull();
+      tabSet = {
+        ...tabSet,
+        tabs: tabSet.tabs.map((tab) => tab.id === agentTab.id
+          ? { ...tab, title: "Agent page", url: "https://agent.example/loaded" }
+          : tab),
+      };
+      usePreviewTabsStore.getState().updateTabChrome("workspace-1", "thread-1", agentTab.id, {
         title: "Agent page",
-        controlEpoch: 0,
-      },
+        url: "https://agent.example/loaded",
+        favicon: null,
+      });
+      return {
+        contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
+        requestId: value.request.requestId,
+        sequence: value.request.sequence,
+        ok: true,
+        result: {
+          operation: "open",
+          url: "https://agent.example/loaded",
+          title: "Agent page",
+          controlEpoch: 0,
+        },
+      };
     });
     const view = render(<BrowserAutomationHost />);
     await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
@@ -1780,18 +1813,25 @@ describe("BrowserAutomationHost", () => {
           lastUsedAt: 32,
         },
       });
-      execute.mockImplementation(async (value: BrowserAutomationHostDispatch): Promise<BrowserAutomationResponse> => ({
-        contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
-        requestId: value.request.requestId,
-        sequence: value.request.sequence,
-        ok: true,
-        result: {
-          operation: "open",
-          url: "https://example.com/",
+      execute.mockImplementation(async (value: BrowserAutomationHostDispatch): Promise<BrowserAutomationResponse> => {
+        usePreviewTabsStore.getState().updateTabChrome("workspace-1", "thread-1", "cold-tab", {
           title: "Example",
-          controlEpoch: 0,
-        },
-      }));
+          url: "https://example.com/",
+          favicon: null,
+        });
+        return {
+          contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
+          requestId: value.request.requestId,
+          sequence: value.request.sequence,
+          ok: true,
+          result: {
+            operation: "open",
+            url: "https://example.com/",
+            title: "Example",
+            controlEpoch: 0,
+          },
+        };
+      });
       const view = render(<BrowserAutomationHost />);
       await act(async () => {
         await Promise.resolve();
@@ -2014,13 +2054,15 @@ describe("BrowserAutomationHost", () => {
           '[data-automation-persistent-scope="sequential-0"] [data-testid="automation-preview-panel"]',
         );
         oldestDock = document.createElement("div");
-        oldestDock.dataset.automationPreviewDock = "sequential-0";
-        oldestDock.dataset.automationPreviewWorkspace = "workspace-1";
-        oldestDock.dataset.visible = "true";
         vi.spyOn(oldestDock, "getBoundingClientRect").mockReturnValue({
           left: 5, top: 10, width: 700, height: 500, right: 705, bottom: 510, x: 5, y: 10, toJSON: () => undefined,
         });
         document.body.append(oldestDock);
+        browserSurfacePresentationCoordinator.registerAutomationAnchor(
+          "workspace-1",
+          "sequential-0",
+          oldestDock,
+        );
         await waitFor(() => expect(oldestVisiblePanel).toHaveAttribute(
           "data-automation-only",
           "false",
@@ -2054,13 +2096,7 @@ describe("BrowserAutomationHost", () => {
       '[data-automation-persistent-scope="sequential-5"] [data-testid="automation-preview-panel"]',
     );
     const fourthDock = document.createElement("div");
-    fourthDock.dataset.automationPreviewDock = "sequential-4";
-    fourthDock.dataset.automationPreviewWorkspace = "workspace-1";
-    fourthDock.dataset.visible = "false";
     const fifthDock = document.createElement("div");
-    fifthDock.dataset.automationPreviewDock = "sequential-5";
-    fifthDock.dataset.automationPreviewWorkspace = "workspace-1";
-    fifthDock.dataset.visible = "true";
     vi.spyOn(fourthDock, "getBoundingClientRect").mockReturnValue({
       left: 10, top: 20, width: 800, height: 600, right: 810, bottom: 620, x: 10, y: 20, toJSON: () => undefined,
     });
@@ -2068,11 +2104,23 @@ describe("BrowserAutomationHost", () => {
       left: 20, top: 30, width: 900, height: 700, right: 920, bottom: 730, x: 20, y: 30, toJSON: () => undefined,
     });
     document.body.append(fourthDock, fifthDock);
+    browserSurfacePresentationCoordinator.registerAutomationAnchor(
+      "workspace-1",
+      "sequential-4",
+      fourthDock,
+      false,
+    );
+    browserSurfacePresentationCoordinator.registerAutomationAnchor(
+      "workspace-1",
+      "sequential-5",
+      fifthDock,
+      true,
+    );
     await waitFor(() => expect(fifthPanel).toHaveAttribute("data-automation-only", "false"));
     expect(fourthPanel).toHaveAttribute("data-automation-only", "true");
 
-    fourthDock.dataset.visible = "true";
-    fifthDock.dataset.visible = "false";
+    browserSurfacePresentationCoordinator.setAutomationAnchorVisibility("workspace-1", "sequential-4", true);
+    browserSurfacePresentationCoordinator.setAutomationAnchorVisibility("workspace-1", "sequential-5", false);
     await waitFor(() => expect(fourthPanel).toHaveAttribute("data-automation-only", "false"));
     expect(fifthPanel).toHaveAttribute("data-automation-only", "true");
     expect(document.querySelector(

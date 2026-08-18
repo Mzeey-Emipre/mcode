@@ -123,7 +123,11 @@ import { createRightPanelState, useDiffStore } from "@/stores/diffStore";
 import { useTerminalStore } from "@/features/terminal/state/terminalStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
-import { useBrowserAutomationStore } from "@/features/preview";
+import {
+  browserAutomationScopeKey,
+  browserSurfacePresentationCoordinator,
+  useBrowserAutomationStore,
+} from "@/features/preview";
 
 describe("RightPanel", () => {
   beforeEach(() => {
@@ -157,6 +161,7 @@ describe("RightPanel", () => {
       lifecycleTabs: new Map(),
       liveTargets: new Map(),
       pendingAgentOpens: new Map(),
+      hostedScopeIds: new Set(),
     });
     useDiffStore.setState({
       rightPanelByThread: {},
@@ -503,10 +508,46 @@ describe("RightPanel", () => {
 
     fireEvent.click(screen.getByTestId("expand-activity-rail"));
 
-    expect(screen.getByTestId("preview-panel")).toHaveAttribute(
-      "data-covered-left",
-      "112",
-    );
+    expect(browserSurfacePresentationCoordinator.getActivityRailOverlap()).toBe(112);
+  });
+
+  it("publishes the covered edge on the automation Browser dock", async () => {
+    previewTabSet.current = {
+      threadId: "workspace-1",
+      activeTabId: "browser-tab-1",
+      tabs: [{
+        id: "browser-tab-1",
+        threadId: "workspace-1",
+        title: "Visible page",
+        url: "https://example.test",
+        faviconUrl: null,
+        warm: true,
+        active: true,
+      }],
+    };
+    useDiffStore.setState({
+      rightPanelFallbackByWorkspace: {
+        "workspace-1": createRightPanelState({
+          visible: true,
+          width: 400,
+          openTabs: ["preview"],
+          activeTab: "preview",
+        }),
+      },
+    });
+    useBrowserAutomationStore.setState({
+      hostedScopeIds: new Set([browserAutomationScopeKey("workspace-1", "workspace-1")]),
+    });
+
+    render(<RightPanel />);
+    await waitFor(() => expect(screen.queryByTestId("automation-preview-dock")).not.toBeNull());
+    const dock = screen.getByTestId("automation-preview-dock");
+    expect(dock).not.toBeNull();
+    expect(browserSurfacePresentationCoordinator.getActivityRailOverlap()).toBe(0);
+
+    fireEvent.click(screen.getByTestId("expand-activity-rail"));
+
+    await waitFor(() => expect(browserSurfacePresentationCoordinator.getActivityRailOverlap()).toBe(112));
   });
 
   it("does not render the active Browser surface for another scope's request", () => {
