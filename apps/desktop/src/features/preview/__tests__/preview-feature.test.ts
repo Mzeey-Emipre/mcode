@@ -125,6 +125,10 @@ describe("Preview feature public interface", () => {
       "preview:automation.subscribe",
       expect.any(Function),
     );
+    expect(previewTest.ipcMain.on).toHaveBeenCalledWith(
+      "preview:automation.heartbeat.subscribe",
+      expect.any(Function),
+    );
     expect(previewTest.previewSession.webRequest.onCompleted).toHaveBeenCalledWith(
       { urls: ["http://*/*", "https://*/*"] },
       expect.any(Function),

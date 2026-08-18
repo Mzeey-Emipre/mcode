@@ -1,8 +1,13 @@
 import { BrowserWindow, ipcMain, type IpcMainEvent } from "electron";
 import { BrowserAutomationKernel } from "./kernel.js";
+import {
+  BROWSER_AUTOMATION_HEARTBEAT_SUBSCRIBE_CHANNEL,
+  BrowserAutomationHeartbeatPulse,
+} from "./heartbeat-pulse.js";
 
 const kernel = new BrowserAutomationKernel();
 const subscribedRenderers = new WeakSet<object>();
+const heartbeatPulse = new BrowserAutomationHeartbeatPulse();
 
 /** Registers the bounded high-level IPC surface for visible browser automation. */
 export function registerBrowserAutomationHandlers(): void {
@@ -24,6 +29,9 @@ export function registerBrowserAutomationHandlers(): void {
       if (!event.sender.isDestroyed()) event.sender.send("preview:automation.controller", state);
     });
     event.sender.once("destroyed", unsubscribe);
+  });
+  ipcMain.on(BROWSER_AUTOMATION_HEARTBEAT_SUBSCRIBE_CHANNEL, (event: IpcMainEvent) => {
+    heartbeatPulse.subscribe(event.sender);
   });
 }
 
