@@ -1400,6 +1400,7 @@ describe("CodexEventMapper", () => {
         agentName: "explorer",
         agentPath: "/root/explorer",
         description: "explorer",
+        receiverThreadIds: ["child-thread"],
       },
     }]);
     expect(childStarted).toEqual([
@@ -1457,6 +1458,7 @@ describe("CodexEventMapper", () => {
         description: "explorer",
         model: "gpt-5.5",
         reasoningEffort: "high",
+        receiverThreadIds: ["child-metadata"],
       },
     }]);
   });
@@ -1508,6 +1510,7 @@ describe("CodexEventMapper", () => {
         agentName: "explorer",
         agentPath: "/root/explorer",
         description: "explorer",
+        receiverThreadIds: ["child-late-settings"],
       },
     }]);
     expect(settings).toEqual([{
@@ -1523,6 +1526,7 @@ describe("CodexEventMapper", () => {
         description: "explorer",
         model: "gpt-5.5",
         reasoningEffort: "high",
+        receiverThreadIds: ["child-late-settings"],
       },
     }]);
   });
@@ -1911,6 +1915,7 @@ describe("CodexEventMapper", () => {
           codexCollabKind: "spawnAgent",
           description: "Do work",
           prompt: "Do work",
+          receiverThreadIds: ["child-1"],
         },
       },
     ]);
@@ -2061,6 +2066,7 @@ describe("CodexEventMapper", () => {
         prompt: "Inspect mapper metadata.",
         model: "gpt-5.5",
         reasoningEffort: "high",
+        receiverThreadIds: ["child-meta"],
       },
     }]);
     expect(childCompleted).toEqual([
@@ -2076,6 +2082,7 @@ describe("CodexEventMapper", () => {
           prompt: "Inspect mapper metadata.",
           model: "gpt-5.5",
           reasoningEffort: "high",
+          receiverThreadIds: ["child-meta"],
         },
       },
     ]);
@@ -2139,6 +2146,7 @@ describe("CodexEventMapper", () => {
           description: "Inspect reverse-order metadata.",
           prompt: "Inspect reverse-order metadata.",
           reasoningEffort: "medium",
+          receiverThreadIds: ["child-late-meta"],
         },
       },
     ]);
@@ -2154,6 +2162,7 @@ describe("CodexEventMapper", () => {
           description: "Inspect reverse-order metadata.",
           prompt: "Inspect reverse-order metadata.",
           reasoningEffort: "medium",
+          receiverThreadIds: ["child-late-meta"],
         },
       },
     ]);
@@ -2170,6 +2179,7 @@ describe("CodexEventMapper", () => {
           prompt: "Inspect reverse-order metadata.",
           model: "gpt-5.5",
           reasoningEffort: "high",
+          receiverThreadIds: ["child-late-meta"],
         },
       },
     ]);
@@ -2377,7 +2387,7 @@ describe("CodexEventMapper", () => {
         toolCallId: "spawn-1",
         output: "child streamed final",
         isError: false,
-        toolInput: { codexCollabKind: "spawnAgent" },
+        toolInput: { codexCollabKind: "spawnAgent", receiverThreadIds: ["child-1"] },
       },
     ]);
     expect(laterWait).toEqual([]);
@@ -3239,7 +3249,7 @@ describe("CodexEventMapper", () => {
         toolCallId: "collab-a",
         output: "",
         isError: false,
-        toolInput: { codexCollabKind: "spawnAgent" },
+        toolInput: { codexCollabKind: "spawnAgent", receiverThreadIds: ["child-thread"] },
       },
     ]);
     expect(mainText).toEqual([

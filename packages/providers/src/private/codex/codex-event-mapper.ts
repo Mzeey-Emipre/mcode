@@ -883,7 +883,7 @@ export class CodexEventMapper {
       ...(model ? { model } : {}),
       ...(reasoningEffort ? { reasoningEffort } : {}),
       ...(!this.isSpawnAgentCollab(item) && senderThreadId ? { senderThreadId } : {}),
-      ...(!this.isSpawnAgentCollab(item) && receiverThreadIds.length > 0 ? { receiverThreadIds } : {}),
+      ...(receiverThreadIds.length > 0 ? { receiverThreadIds } : {}),
     };
   }
 
@@ -993,6 +993,7 @@ export class CodexEventMapper {
       agentName,
       agentPath,
       description: agentName,
+      receiverThreadIds: [agentThreadId],
       ...childThreadMetadata,
     };
     this.spawnAgentToolInputById.set(toolCallId, toolInput);

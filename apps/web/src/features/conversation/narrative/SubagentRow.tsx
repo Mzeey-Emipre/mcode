@@ -38,6 +38,17 @@ function remainingLabel(activities: readonly SubagentActivity[]): string {
   return labels.map((label, index) => index === 0 ? `+${label}` : label).join(", ");
 }
 
+function subagentIdentityKey(participant: ToolCall): string {
+  const receiverThreadIds = participant.toolInput.receiverThreadIds;
+  if (Array.isArray(receiverThreadIds) && receiverThreadIds.length === 1) {
+    const [receiverThreadId] = receiverThreadIds;
+    if (typeof receiverThreadId === "string" && receiverThreadId.trim().length > 0) {
+      return receiverThreadId;
+    }
+  }
+  return participant.id;
+}
+
 /** Renders one identity-only sub-agent lifecycle row in the chat narrative. */
 export function SubagentRow({
   participants,
@@ -72,7 +83,7 @@ export function SubagentRow({
                 variant="ghost"
                 size="sm"
                 onClick={() => onSubagentSelect?.(
-                  participant.id,
+                  subagentIdentityKey(participant),
                   participantLifecycle === "finished" ? "finished" : "active",
                 )}
                 className="min-w-0 shrink gap-1 rounded-full px-2 text-left transition-colors duration-150 motion-reduce:transition-none hover:bg-muted/30"
@@ -81,7 +92,7 @@ export function SubagentRow({
                 <SubagentIdentityGlyph
                   identity={identity}
                   hasExplicitIdentity={resolvedIdentity !== undefined}
-                  paletteSeed={participant.id}
+                  paletteSeed={subagentIdentityKey(participant)}
                   className="size-4"
                   size={12}
                 />

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SubagentRow } from "../SubagentRow";
@@ -33,6 +33,10 @@ function renderRow(toolCall: ToolCall, children: readonly ToolCall[] = []) {
 }
 
 describe("SubagentRow", () => {
+  beforeEach(() => {
+    openSubagentDetail.mockReset();
+  });
+
   it("shows explicit identity and exact lowercase lifecycle copy without delegated task text", () => {
     renderRow(agent());
 
@@ -109,6 +113,37 @@ describe("SubagentRow", () => {
     const palettes = [...document.querySelectorAll('[data-subagent-identity-glyph="Subagent"]')]
       .map((glyph) => glyph.getAttribute("data-subagent-palette"));
     expect(palettes).toEqual(["0", "4"]);
+  });
+
+  it("reserves one color and detail target for repeated turns on the same native subagent", async () => {
+    const firstTurn = agent({
+      id: "spawn-worker",
+      toolInput: { receiverThreadIds: ["child-worker"] },
+    });
+    const secondTurn = agent({
+      id: "follow-up-worker",
+      toolInput: { receiverThreadIds: ["child-worker"] },
+    });
+    render(
+      <SubagentRow
+        toolCall={firstTurn}
+        participants={[firstTurn, secondTurn]}
+        lifecycle="finished"
+        children={[]}
+        hooks={[]}
+        onSubagentSelect={openSubagentDetail}
+      />,
+    );
+
+    const palettes = [...document.querySelectorAll('[data-subagent-identity-glyph="Subagent"]')]
+      .map((glyph) => glyph.getAttribute("data-subagent-palette"));
+    expect(palettes).toEqual([
+      String(getSubagentIdentityPaletteIndex("child-worker")),
+      String(getSubagentIdentityPaletteIndex("child-worker")),
+    ]);
+
+    await userEvent.click(screen.getAllByRole("button", { name: "Open Subagent subagent details" })[1]!);
+    expect(openSubagentDetail).toHaveBeenLastCalledWith("child-worker", "finished");
   });
 
   it("colors an explicitly named Subagent instead of treating the label as anonymous", () => {
