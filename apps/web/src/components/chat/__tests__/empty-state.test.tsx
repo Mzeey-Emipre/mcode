@@ -9,6 +9,8 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 // Store mocks must be declared before importing the component under test.
 
+const emptyDisplayedConversationIds = vi.hoisted((): readonly string[] => []);
+
 vi.mock("@/features/projects/state/workspaceStore", () => ({
   useWorkspaceStore: vi.fn((selector: (s: unknown) => unknown) =>
     selector(defaultWorkspaceState())
@@ -25,6 +27,13 @@ vi.mock("@/stores/threadStore", () => ({
       errorByThread: {},
     })
   ),
+}));
+
+vi.mock("@/features/conversation/residency/conversation-residency", () => ({
+  getConversationResidency: () => ({
+    subscribeDisplayConversations: () => () => undefined,
+    getDisplayConversationSnapshot: () => emptyDisplayedConversationIds,
+  }),
 }));
 
 const setPendingPrefillMock = vi.fn();
