@@ -749,9 +749,10 @@ describe("PreviewPanel: full panel state", () => {
       ]),
     });
 
-    render(<PreviewPanel threadId="thread-1" />);
+    render(<PreviewPanel threadId="thread-1" coveredLeft={112} />);
 
     const overlay = screen.getByTestId("browser-automation-overlay");
+    expect(overlay).toHaveStyle({ clipPath: "inset(0 0 0 112px)" });
     expect(overlay).not.toHaveClass("border");
     expect(overlay).not.toHaveClass("border-2");
     expect(overlay).not.toHaveClass("border-primary");

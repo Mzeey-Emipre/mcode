@@ -3239,6 +3239,7 @@ export function PreviewPanel({
             data-testid="browser-automation-overlay"
             className="pointer-events-none absolute inset-0 z-20 rounded-tl-md"
             style={{
+              clipPath: coveredLeft ? `inset(0 0 0 ${coveredLeft}px)` : undefined,
               backgroundImage: [
                 "linear-gradient(to right, color-mix(in oklab, var(--primary) 26%, transparent), transparent 32px)",
                 "linear-gradient(to left, color-mix(in oklab, var(--primary) 26%, transparent), transparent 32px)",
