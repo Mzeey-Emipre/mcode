@@ -207,7 +207,7 @@ describe("SubagentRow", () => {
     expect(rosterOpen).toHaveBeenCalledOnce();
   });
 
-  it("keeps two identity controls and the aggregate from flex-shrinking in a wide rail", () => {
+  it("keeps identity controls content-sized and permits truncation only when space is constrained", () => {
     const activities = [
       agent({ id: "child-a", toolInput: {}, isComplete: false }),
       agent({ id: "child-b", toolInput: {}, isComplete: false }),
@@ -237,12 +237,14 @@ describe("SubagentRow", () => {
     const identityButtons = screen.getAllByRole("button", { name: "Open Subagent subagent details" });
     expect(identityButtons).toHaveLength(2);
     for (const button of identityButtons) {
-      expect(button).not.toHaveClass("shrink");
+      expect(button).toHaveClass("shrink");
+      expect(button).not.toHaveClass("flex-1");
       expect(button).not.toHaveClass("max-w-40");
-      expect(button.parentElement).not.toHaveClass("shrink");
+      expect(button.parentElement).toHaveClass("shrink");
+      expect(button.parentElement).not.toHaveClass("flex-1");
       expect(button.parentElement).not.toHaveClass("max-w-40");
     }
-    expect(screen.getByRole("button", { name: "Open full Subagents roster, +2 finished" })).not.toHaveClass("shrink");
+    expect(screen.getByRole("button", { name: "Open full Subagents roster, +2 finished" })).toHaveClass("shrink-0");
     expect(screen.getAllByText("updated")).toHaveLength(2);
   });
 

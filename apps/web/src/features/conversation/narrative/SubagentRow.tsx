@@ -63,13 +63,13 @@ export function SubagentRow({
           const resolvedIdentity = resolveSubagentDisplayName(participant.toolInput);
           const identity = resolvedIdentity ?? "Subagent";
           return (
-            <span key={participant.id} className="flex min-w-0 flex-1 items-center gap-1">
+            <span key={participant.id} className="flex min-w-0 shrink items-center gap-1">
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
                 onClick={() => onSubagentSelect?.(participant.id)}
-                className="min-w-0 flex-1 gap-1 rounded-full px-2 text-left transition-colors duration-150 motion-reduce:transition-none hover:bg-muted/30"
+                className="min-w-0 shrink gap-1 rounded-full px-2 text-left transition-colors duration-150 motion-reduce:transition-none hover:bg-muted/30"
                 aria-label={`Open ${identity} subagent details`}
               >
                 <SubagentIdentityGlyph
@@ -78,7 +78,7 @@ export function SubagentRow({
                   className="size-4"
                   size={12}
                 />
-                <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground/85">
+                <span className="min-w-0 truncate text-xs font-medium text-foreground/85">
                   {identity}
                 </span>
               </Button>
