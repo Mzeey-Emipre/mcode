@@ -57,14 +57,16 @@ vi.mock("@/transport", () => ({
 
 vi.mock("../../surfaces/PreviewPanel", () => ({
   WEB_RUNTIME_PREVIEW_TAB_ID: "web-preview",
-  PreviewPanel: ({ threadId, automationOnly }: {
+  PreviewPanel: ({ threadId, automationOnly, coveredLeft }: {
     readonly threadId: string;
     readonly automationOnly?: boolean;
+    readonly coveredLeft?: number;
   }) => (
     <div
       data-testid="automation-preview-panel"
       data-thread-id={threadId}
       data-automation-only={String(automationOnly ?? false)}
+      data-covered-left={coveredLeft ?? 0}
     />
   ),
 }));
@@ -819,6 +821,9 @@ describe("BrowserAutomationHost", () => {
       browserSurfacePresentationCoordinator.setActivityRailOverlap(112);
     });
     expect(browserSurfacePresentationCoordinator.getActivityRailOverlap()).toBe(112);
+    await waitFor(() => expect(document.querySelector(
+      '[data-automation-persistent-scope="thread-1"] [data-testid="automation-preview-panel"]',
+    )).toHaveAttribute("data-covered-left", "112"));
 
     iframe.remove();
     releaseDock();
@@ -1652,17 +1657,33 @@ describe("BrowserAutomationHost", () => {
         },
       };
     });
-    execute.mockResolvedValue({
-      contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
-      requestId: "request-1192",
-      sequence: 1192,
-      ok: true,
-      result: {
-        operation: "open",
-        url: "https://agent.example/loaded",
+    execute.mockImplementation(async (value: BrowserAutomationHostDispatch) => {
+      expect(usePreviewTabsStore.getState().tabSetByScope[
+        previewTabsScopeKey("workspace-1", "thread-1")
+      ]?.tabs.find((tab) => tab.id === agentTab.id)?.url).toBeNull();
+      tabSet = {
+        ...tabSet,
+        tabs: tabSet.tabs.map((tab) => tab.id === agentTab.id
+          ? { ...tab, title: "Agent page", url: "https://agent.example/loaded" }
+          : tab),
+      };
+      usePreviewTabsStore.getState().updateTabChrome("workspace-1", "thread-1", agentTab.id, {
         title: "Agent page",
-        controlEpoch: 0,
-      },
+        url: "https://agent.example/loaded",
+        favicon: null,
+      });
+      return {
+        contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
+        requestId: value.request.requestId,
+        sequence: value.request.sequence,
+        ok: true,
+        result: {
+          operation: "open",
+          url: "https://agent.example/loaded",
+          title: "Agent page",
+          controlEpoch: 0,
+        },
+      };
     });
     const view = render(<BrowserAutomationHost />);
     await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
@@ -1792,18 +1813,25 @@ describe("BrowserAutomationHost", () => {
           lastUsedAt: 32,
         },
       });
-      execute.mockImplementation(async (value: BrowserAutomationHostDispatch): Promise<BrowserAutomationResponse> => ({
-        contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
-        requestId: value.request.requestId,
-        sequence: value.request.sequence,
-        ok: true,
-        result: {
-          operation: "open",
-          url: "https://example.com/",
+      execute.mockImplementation(async (value: BrowserAutomationHostDispatch): Promise<BrowserAutomationResponse> => {
+        usePreviewTabsStore.getState().updateTabChrome("workspace-1", "thread-1", "cold-tab", {
           title: "Example",
-          controlEpoch: 0,
-        },
-      }));
+          url: "https://example.com/",
+          favicon: null,
+        });
+        return {
+          contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
+          requestId: value.request.requestId,
+          sequence: value.request.sequence,
+          ok: true,
+          result: {
+            operation: "open",
+            url: "https://example.com/",
+            title: "Example",
+            controlEpoch: 0,
+          },
+        };
+      });
       const view = render(<BrowserAutomationHost />);
       await act(async () => {
         await Promise.resolve();

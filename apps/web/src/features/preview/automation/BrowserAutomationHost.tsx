@@ -664,6 +664,7 @@ interface PersistentSurfaceLayout {
   readonly top: number;
   readonly width: number;
   readonly height: number;
+  readonly coveredLeft: number;
 }
 
 interface AutomationTargetRef {
@@ -683,6 +684,7 @@ function PersistentAutomationPreviewSurface({
     top: 0,
     width: 1_280,
     height: 720,
+    coveredLeft: 0,
   });
 
   useEffect(() => {
@@ -698,6 +700,7 @@ function PersistentAutomationPreviewSurface({
             top: rect.top,
             width: rect.width,
             height: rect.height,
+            coveredLeft: browserSurfacePresentationCoordinator.getActivityRailOverlap(),
           }
         : {
             visible: false,
@@ -705,10 +708,12 @@ function PersistentAutomationPreviewSurface({
             top: 0,
             width: 1_280,
             height: 720,
+            coveredLeft: 0,
           };
       setLayout((current) => (
         current.visible === next.visible && current.left === next.left && current.top === next.top &&
-        current.width === next.width && current.height === next.height ? current : next
+        current.width === next.width && current.height === next.height &&
+        current.coveredLeft === next.coveredLeft ? current : next
       ));
     };
     const unsubscribe = browserSurfacePresentationCoordinator.subscribe(update);
@@ -741,6 +746,7 @@ function PersistentAutomationPreviewSurface({
         threadId={scope.threadId}
         workspaceId={scope.workspaceId}
         automationOnly={!layout.visible}
+        coveredLeft={layout.visible ? layout.coveredLeft : 0}
       />
     </div>
   );
@@ -1619,7 +1625,7 @@ export function BrowserAutomationHost() {
           (agentOwnedOpen ? request.args.url : undefined) ??
           selectedTab?.url ??
           "about:blank";
-        if (!selectedTab?.url || requestedWebUrl || request.args.url) {
+        if ((!selectedTab?.url || requestedWebUrl || request.args.url) && !(bridge && agentOwnedOpen)) {
           usePreviewTabsStore.getState().updateTabChrome(request.workspaceId, request.threadId, tabId, {
             title: null,
             url: initialUrl,
