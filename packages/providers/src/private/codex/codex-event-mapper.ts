@@ -73,6 +73,8 @@ const TOOL_LIKE_ITEM_TYPES = new Set([
   "fileChange", "collabAgentToolCall", "function_call", "webSearch",
 ]);
 
+const CODEX_TASK_NAME_LINE = /^task_name:\s*([a-z0-9_]{1,96})$/i;
+
 const FALLBACK_ASSISTANT_ITEM_ID = "__codex_assistant_message__";
 const MAX_EARLY_CHILD_THREADS = 8;
 const MAX_EARLY_CHILD_NOTIFICATIONS = 64;
@@ -855,19 +857,32 @@ export class CodexEventMapper {
 
   /** Compact row label derived from the task prompt. */
   private promptDescription(prompt: string): string {
+    const lines = prompt
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+    const firstLine = CODEX_TASK_NAME_LINE.test(lines[0] ?? "")
+      ? (lines[1] ?? lines[0] ?? prompt.trim())
+      : (lines[0] ?? prompt.trim());
+    return firstLine.length <= 80 ? firstLine : `${firstLine.slice(0, 80)}...`;
+  }
+
+  /** Reads the task identity convention used by Codex child prompts. */
+  private taskNameFromPrompt(prompt: string | undefined): string | undefined {
+    if (!prompt) return undefined;
     const firstLine = prompt
       .split(/\r?\n/)
       .map((line) => line.trim())
-      .find((line) => line.length > 0) ?? prompt.trim();
-    return firstLine.length <= 80 ? firstLine : `${firstLine.slice(0, 80)}...`;
+      .find((line) => line.length > 0);
+    return firstLine?.match(CODEX_TASK_NAME_LINE)?.[1];
   }
 
   /** Metadata shared by Codex spawn `ToolUse` and its late `ToolResult`. */
   private buildCollabToolInput(item: CompletedItem): Record<string, unknown> {
     const raw = item as unknown as Record<string, unknown>;
     const kind = this.collabToolKind(item);
-    const taskName = this.stringField(raw, "task_name");
     const prompt = this.stringField(raw, "prompt");
+    const taskName = this.stringField(raw, "task_name") ?? this.taskNameFromPrompt(prompt);
     const model = this.stringField(raw, "model");
     const reasoningEffort =
       this.stringField(raw, "reasoningEffort")
