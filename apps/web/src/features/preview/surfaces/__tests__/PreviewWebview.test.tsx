@@ -302,7 +302,7 @@ describe("PreviewWebview", () => {
     expect(surface).toHaveStyle({
       left: "10px",
       width: "640px",
-      clipPath: "inset(0px 0px 0px 112px round var(--radius-md) 0px 0px 0px)",
+      clipPath: "inset(0px 0px 0px 112px round 0px 0px 0px 0px)",
     });
 
     rerender(
@@ -482,7 +482,7 @@ describe("PreviewWebview", () => {
     browserSurfacePresentationCoordinator.setActivityRailOverlap(112);
 
     expect(screen.getByTestId("electron-browser-surface-webview")).toHaveStyle({
-      clipPath: "inset(0px 0px 0px 112px round var(--radius-md) 0px 0px 0px)",
+      clipPath: "inset(0px 0px 0px 112px round 0px 0px 0px 0px)",
     });
     releaseAnchor();
     rect.mockRestore();
