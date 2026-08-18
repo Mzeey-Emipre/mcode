@@ -51,13 +51,19 @@ function canonicalLineage(row: CanonicalSubagentRosterRow, rows: readonly Canoni
     .join(" / ");
 }
 
-/** Resolve a panel selection by canonical child ID or exact provider source item ID. */
+/** Resolves a canonical child from any identity exposed by the roster contract. */
 export function resolveCanonicalSubagentSelection(
   selectionId: string,
   rows: readonly CanonicalSubagentRosterRow[],
 ): CanonicalSubagentRosterRow | undefined {
   const sourceItemId = `toolCall:${selectionId}`;
-  return rows.find((row) => row.id === selectionId || row.sourceItemId === sourceItemId);
+  return rows.find((row) => (
+    row.id === selectionId
+    || row.sourceItemId === sourceItemId
+    || [...row.providerIdentities, ...row.sourceProviderIdentities].some(
+      (identity) => identity.value === selectionId,
+    )
+  ));
 }
 
 function CanonicalRosterRow({

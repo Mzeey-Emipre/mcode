@@ -576,6 +576,34 @@ describe("SubagentsPanel", () => {
     }));
   });
 
+  it("resolves a provider-native child thread selection to its canonical detail", async () => {
+    const child = canonicalRow({
+      id: "canonical-provider-child",
+      identity: "Provider child",
+      providerIdentities: [{
+        providerId: "codex",
+        scope: "thread",
+        value: "native-provider-child",
+        provenance: "native",
+      }],
+    });
+    harness.loadCanonicalSubagentRoster.mockResolvedValue(canonicalRoster([], [child]));
+    useDiffStore.setState({
+      subagentDetailByThread: {
+        "thread-1": { id: "native-provider-child", originTab: "finished", scrollTop: 0 },
+      },
+      subagentReviewScopeByThread: {},
+    });
+
+    render(<SubagentsPanel threadId="thread-1" />);
+
+    expect(await screen.findByTestId("shared-message-list")).toHaveAttribute(
+      "data-display-thread-id",
+      "canonical-provider-child",
+    );
+    expect(screen.getByRole("region", { name: "Provider child subagent details" })).toBeInTheDocument();
+  });
+
   it("restores canonical roster focus and scroll position on Back", async () => {
     const child = canonicalRow({
       id: "canonical-back",
