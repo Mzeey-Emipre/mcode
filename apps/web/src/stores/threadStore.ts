@@ -11,6 +11,8 @@ import {
   isGoalOpen,
   previewAnnotationSnapshotStoredAttachments,
   CONVERSATION_HISTORY_PAGE_MAX_BYTES,
+  createSubagentPresentation,
+  mergeSubagentPresentation,
 } from "@mcode/contracts";
 import { getTransport } from "@/transport";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
@@ -1326,6 +1328,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
       generation,
       isCurrent: () => conversationResidency.isDisplayLeaseCurrent(threadId, generation),
     }),
+    onDisplayConversationMounted: (threadId) => promoteDeferredNarrativeEvents(threadId),
     refreshDisplayConversation: (threadId, generation) => threadHydrator.hydrateResident(threadId, {
       generation,
       force: true,
@@ -2643,6 +2646,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     // only known conversation. Once running sessions are known, null selection
     // must keep background narrative deferred.
     const isActiveThread = currentThreadId === threadId
+      || conversationResidency?.isDisplayConversationLeased(threadId) === true
       || (currentThreadId === null && get().runningThreadIds.size === 0);
     const isLifecycleExit = event.type === "turnComplete" || event.type === "ended" || event.type === "error";
     const startsNewInstance = event.type === "turnStarted";
@@ -3047,15 +3051,19 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
         if (existing) {
           // Providers may emit a sparse running ToolUse first, then a richer
           // ToolUse with the same id when the completion payload arrives.
-          const shouldMergeDuplicate =
-            !existing.isComplete
-            && (
+          const isAgentEnrichment = existing.toolName === "Agent" && toolName === "Agent";
+          const shouldMergeDuplicate = isAgentEnrichment || (
+            !existing.isComplete && (
               Object.keys(existing.toolInput ?? {}).length === 0
               || existing.toolName !== toolName
-              || (existing.toolName === "Agent" && toolName === "Agent")
-            );
+            ));
           if (shouldMergeDuplicate) {
             const mergedInput = { ...existing.toolInput, ...incomingInput };
+            const incomingPresentation = event.subagentPresentation
+              ?? (toolName === "Agent" ? createSubagentPresentation(incomingInput, toolCallId) : undefined);
+            const subagentPresentation = incomingPresentation
+              ? mergeSubagentPresentation(existing.subagentPresentation, incomingPresentation, toolCallId)
+              : existing.subagentPresentation;
             const resolvedParentToolCallId = existing.parentToolCallId ?? parentToolCallId;
             set((state) => {
               const calls = getThreadRecord(state.records, threadId).toolCalls;
@@ -3065,6 +3073,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
                       ...tc,
                       toolName,
                       toolInput: mergedInput,
+                      subagentPresentation,
                       parentToolCallId: tc.parentToolCallId ?? resolvedParentToolCallId,
                     }
                   : tc,
@@ -3093,10 +3102,17 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
       applyTaskUpdate(incomingInput, parentToolCallId);
       applyUpdatePlanTasks(incomingInput, parentToolCallId);
 
+      const resolvedToolCallId = toolCallId || crypto.randomUUID();
       const toolCall: ToolCall = {
-        id: toolCallId || crypto.randomUUID(),
+        id: resolvedToolCallId,
         toolName,
         toolInput: incomingInput,
+        ...(toolName === "Agent"
+          ? {
+              subagentPresentation: event.subagentPresentation
+                ?? createSubagentPresentation(incomingInput, resolvedToolCallId),
+            }
+          : {}),
         output: null,
         isError: false,
         isComplete: false,
@@ -3179,6 +3195,9 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
         let matched = false;
         const completeCall = (tc: ToolCall): ToolCall => {
           const mergedInput = { ...tc.toolInput, ...incomingInput };
+          const subagentPresentation = event.subagentPresentation
+            ? mergeSubagentPresentation(tc.subagentPresentation, event.subagentPresentation, tc.id)
+            : tc.subagentPresentation;
           const fromInput = mergedInput.durationMs;
           const durationMs =
             typeof fromInput === "number" && Number.isFinite(fromInput)
@@ -3189,6 +3208,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
           return {
             ...tc,
             toolInput: mergedInput,
+            subagentPresentation,
             output,
             isError,
             isComplete: true,

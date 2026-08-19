@@ -356,6 +356,11 @@ export function projectSubagents(
       const startedAt = parsedTimestamp(record.started_at) ?? 0;
       const completedAt = parsedTimestamp(record.completed_at) ?? startedAt;
       const task = hydratedTask(record);
+      const liveRow = liveRows.get(record.id)?.row;
+      const persistedIdentity = hydratedIdentity(record);
+      const identity = persistedIdentity.hasExplicitIdentity || !liveRow?.hasExplicitIdentity
+        ? persistedIdentity
+        : { identity: liveRow.identity, hasExplicitIdentity: true };
       const persistedVisited = new Set<string>([record.id]);
       const persistedActivity: SubagentDetailActivity[] = [];
       const persistedTranscript: ToolCall[] = [];
@@ -394,13 +399,13 @@ export function projectSubagents(
         id: record.id,
         memberCallIds: [record.id],
         providerAgentKey: nonEmptyString(record.provider_agent_key),
-        ...hydratedIdentity(record),
+        ...identity,
         task,
         startedAt,
         activity: boundedDisplayText(nonEmptyString(record.output_summary) ?? task, MAX_ACTIVITY_LENGTH),
         activityAt: record.status === "running" ? startedAt : completedAt,
         elapsedSeconds: elapsedSeconds(startedAt, record.status === "running" ? now : completedAt),
-        detail: liveRows.get(record.id)?.row.detail ?? {
+        detail: liveRow?.detail ?? {
           model: nonEmptyString(record.model),
           reasoningEffort: nonEmptyString(record.reasoning_effort),
           stepCount: persistedStepCount,

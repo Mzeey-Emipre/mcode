@@ -5,8 +5,8 @@ import type {
   ToolCall,
   HookExecution,
 } from "@/transport/types";
-import type { ThoughtSegment, NarrativeItem } from "./types";
-import { resolveBrowserNarrativeTool } from "@mcode/contracts";
+import type { ThoughtSegment, NarrativeItem, SubagentActivity } from "./types";
+import { createSubagentPresentation, resolveBrowserNarrativeTool } from "@mcode/contracts";
 import {
   isSubagentLifecycleRecord,
   parseSubagentLifecycleInput,
@@ -87,6 +87,18 @@ export function recordToToolCall(r: ToolCallRecord): ToolCall {
         ? { agentName: r.display_name }
         : {}),
     },
+    ...(r.tool_name === AGENT_TOOL_NAME
+      ? {
+          subagentPresentation: createSubagentPresentation({
+            ...(r.display_name ? { agentName: r.display_name } : {}),
+            ...(r.provider_agent_key
+              ? { codexCollabKind: "spawnAgent", agentPath: r.provider_agent_key }
+              : {}),
+            ...(r.model ? { model: r.model } : {}),
+            ...(r.reasoning_effort ? { reasoningEffort: r.reasoning_effort } : {}),
+          }, r.provider_agent_key ?? r.id),
+        }
+      : {}),
     output: r.output_summary || null,
     isError: r.status === "failed",
     isComplete: r.status === "completed" || r.status === "failed" || r.status === "cancelled",
@@ -161,6 +173,16 @@ type TimelineEvent =
   | { kind: "tool"; call: ToolCall; sortOrder: number }
   | { kind: "subagent"; call: ToolCall; marker?: ToolCall; lifecycle: SubagentLifecycle; sortOrder: number }
   | { kind: "hook"; hook: HookExecution; sortOrder: number };
+
+function sameSubagentParent(left: ToolCall, right: ToolCall): boolean {
+  const leftParent = typeof left.parentToolCallId === "string" && left.parentToolCallId.length > 0
+    ? left.parentToolCallId
+    : null;
+  const rightParent = typeof right.parentToolCallId === "string" && right.parentToolCallId.length > 0
+    ? right.parentToolCallId
+    : null;
+  return leftParent === rightParent;
+}
 
 /**
  * Build a chronological `NarrativeItem[]` from persisted DB records.
@@ -238,6 +260,7 @@ export function buildPersistedNarrativeItems(
 
   // Map all hooks to live shape once.
   const liveHooks: HookExecution[] = hooks.map(recordToHookExecution);
+  const allToolCalls = tools.map(recordToToolCall);
 
   // Build unified timeline of TOP-LEVEL items, sorted by sort_order.
   const timeline: TimelineEvent[] = [];
@@ -283,7 +306,6 @@ export function buildPersistedNarrativeItems(
   timeline.sort((a, b) => a.sortOrder - b.sortOrder);
 
   const items: NarrativeItem[] = [];
-  const allToolCalls = tools.map(recordToToolCall);
   const pendingGroup: ToolCall[] = [];
 
   const flushGroup = () => {
@@ -300,7 +322,8 @@ export function buildPersistedNarrativeItems(
     pendingGroup.length = 0;
   };
 
-  for (const evt of timeline) {
+  for (let timelineIndex = 0; timelineIndex < timeline.length; timelineIndex += 1) {
+    const evt = timeline[timelineIndex]!;
     if (evt.kind === "thought") {
       flushGroup();
       // Persisted thoughts are always closed — never `isActive`.
@@ -316,19 +339,32 @@ export function buildPersistedNarrativeItems(
 
     if (evt.kind === "subagent") {
       flushGroup();
-      const childRecords = (childrenByParent.get(evt.call.id) ?? [])
-        .filter((child) => !isSubagentLifecycleRecord(child));
-      const children = childRecords
-        .slice()
-        .sort((a, b) => a.sort_order - b.sort_order)
-        .map(recordToToolCall);
+      const groupedEvents: Extract<TimelineEvent, { kind: "subagent" }>[] = [evt];
+      while (timelineIndex + 1 < timeline.length) {
+        const next = timeline[timelineIndex + 1];
+        if (next?.kind !== "subagent" || !sameSubagentParent(evt.call, next.call)) break;
+        groupedEvents.push(next);
+        timelineIndex += 1;
+      }
+      const activities: SubagentActivity[] = groupedEvents.map((groupedEvent) => {
+        const childRecords = (childrenByParent.get(groupedEvent.call.id) ?? [])
+          .filter((child) => !isSubagentLifecycleRecord(child));
+        return {
+          lifecycle: groupedEvent.lifecycle,
+          toolCall: groupedEvent.call,
+          participants: subagentLifecycleParticipants(groupedEvent.call, groupedEvent.marker, allToolCalls),
+          children: childRecords
+            .slice()
+            .sort((a, b) => a.sort_order - b.sort_order)
+            .map(recordToToolCall),
+          hooks: liveHooks.filter((h) => h.toolName === AGENT_TOOL_NAME),
+        };
+      });
+      const firstActivity = activities[0]!;
       items.push({
         type: "subagent",
-        lifecycle: evt.lifecycle,
-        toolCall: evt.call,
-        participants: subagentLifecycleParticipants(evt.call, evt.marker, allToolCalls),
-        children,
-        hooks: liveHooks.filter((h) => h.toolName === AGENT_TOOL_NAME),
+        ...firstActivity,
+        ...(activities.length > 1 ? { activities } : {}),
       });
       continue;
     }

@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import type { ToolCall } from "@/transport/types";
 import { NarrativeRow } from "./NarrativeRow";
 import { narrativePerformanceRowId } from "./NarrativePerformanceBoundary";
-import type { NarrativeItem } from "./types";
+import type { NarrativeItem, SubagentRosterTarget } from "./types";
 
 const MAX_COLLAPSED_ROWS = 24;
 const EDGE_ROWS_PER_TYPE = 2;
@@ -17,7 +17,9 @@ export interface NarrativeRowsProps {
   /** Adds the live row entry animation. */
   animateEntry?: boolean;
   /** Opens a selected canonical child through the composition root. */
-  onSubagentSelect?: (id: string) => void;
+  onSubagentSelect?: (id: string, target: SubagentRosterTarget) => void;
+  /** Opens the owning thread's Subagents roster for aggregate activity. */
+  onOpenSubagents?: (target: SubagentRosterTarget) => void;
 }
 
 /** Returns the top margin for one narrative item. */
@@ -84,6 +86,7 @@ export function NarrativeRows({
   allToolCalls,
   animateEntry = false,
   onSubagentSelect,
+  onOpenSubagents,
 }: NarrativeRowsProps) {
   const [pageIndex, setPageIndex] = useState<number | null>(null);
   const isDense = items.length > MAX_COLLAPSED_ROWS;
@@ -136,6 +139,7 @@ export function NarrativeRows({
                 item={item}
                 allToolCalls={allToolCalls}
                 onSubagentSelect={onSubagentSelect}
+                onOpenSubagents={onOpenSubagents}
               />
             </div>
           </Fragment>

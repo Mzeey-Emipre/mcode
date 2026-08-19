@@ -5,6 +5,7 @@ import {
   getTestActiveMessages,
   getTestActiveLatestTurnWithChanges,
   getTestThreadStreaming,
+  getTestThreadThoughtSegments,
   getTestThreadToolCalls,
   getTestThreadError,
   getTestThreadMessages,
@@ -16,6 +17,7 @@ import {
 } from "@/stores/thread-store-test-utils";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { useThreadStore } from "@/stores/threadStore";
+import { getConversationResidency } from "@/features/conversation/residency/conversation-residency";
 import { mockTransport, createMockThread } from "./mocks/transport";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { useToastStore } from "@/stores/toastStore";
@@ -288,6 +290,113 @@ await activateTestConversation(THREAD_A);
       }
       expect(getTestThreadStreaming(THREAD_A)).toBeUndefined();
       expect(getTestThreadStreaming(THREAD_B)).toBe("background text");
+      expect(getTestThreadThoughtSegments(THREAD_B)).toEqual([]);
+    });
+
+    it("projects a leased child detail's live thought and tool progress into the child record", async () => {
+      const residency = getConversationResidency();
+      residency.mountDisplayConversation(THREAD_B);
+
+      try {
+        const { handleAgentEvent } = useThreadStore.getState();
+        handleAgentEvent({
+          type: "turnStarted",
+          threadId: THREAD_B,
+          turnExecutionId: "exec-b",
+          fileEffectTurnId: "turn-b",
+        } as AgentEvent);
+        handleAgentEvent({
+          type: "toolUse",
+          threadId: THREAD_B,
+          toolCallId: "child-tool",
+          toolName: "Read",
+          toolInput: { path: "/child" },
+        } as AgentEvent);
+        handleAgentEvent({
+          type: "toolProgress",
+          threadId: THREAD_B,
+          toolCallId: "child-tool",
+          toolName: "Read",
+          elapsedSeconds: 7,
+        } as AgentEvent);
+        handleAgentEvent({
+          type: "textDelta",
+          threadId: THREAD_B,
+          delta: "child thought",
+          isFinalResponse: false,
+        } as AgentEvent);
+
+        await Promise.resolve();
+
+        const childRecord = useThreadStore.getState().records.get(THREAD_B);
+        expect({
+          streaming: childRecord?.streaming,
+          thoughtSegments: childRecord?.thoughtSegments,
+          toolCalls: childRecord?.toolCalls,
+        }).toMatchObject({
+          streaming: "child thought",
+          thoughtSegments: [
+            expect.objectContaining({ text: "child thought", isExplicitNonFinal: true }),
+          ],
+          toolCalls: [
+            expect.objectContaining({ id: "child-tool", elapsedSeconds: 7 }),
+          ],
+        });
+      } finally {
+        residency.unmountDisplayConversation(THREAD_B);
+      }
+    });
+
+    it("promotes deferred child narrative when its display lease starts mid-turn", async () => {
+      const { handleAgentEvent } = useThreadStore.getState();
+      handleAgentEvent({
+        type: "turnStarted",
+        threadId: THREAD_B,
+        turnExecutionId: "exec-b",
+        fileEffectTurnId: "turn-b",
+      } as AgentEvent);
+      handleAgentEvent({
+        type: "toolUse",
+        threadId: THREAD_B,
+        toolCallId: "child-tool",
+        toolName: "Read",
+        toolInput: { path: "/child" },
+      } as AgentEvent);
+      handleAgentEvent({
+        type: "toolProgress",
+        threadId: THREAD_B,
+        toolCallId: "child-tool",
+        toolName: "Read",
+        elapsedSeconds: 11,
+      } as AgentEvent);
+      handleAgentEvent({
+        type: "textDelta",
+        threadId: THREAD_B,
+        delta: "queued child thought",
+        isFinalResponse: false,
+      } as AgentEvent);
+      await Promise.resolve();
+
+      expect(getTestThreadThoughtSegments(THREAD_B)).toEqual([]);
+      expect(getTestThreadToolCalls(THREAD_B)[0]?.elapsedSeconds).toBeUndefined();
+
+      const residency = getConversationResidency();
+      residency.mountDisplayConversation(THREAD_B);
+      try {
+        expect({
+          thoughtSegments: getTestThreadThoughtSegments(THREAD_B),
+          toolCalls: getTestThreadToolCalls(THREAD_B),
+        }).toMatchObject({
+          thoughtSegments: [
+            expect.objectContaining({ text: "queued child thought", isExplicitNonFinal: true }),
+          ],
+          toolCalls: [
+            expect.objectContaining({ id: "child-tool", elapsedSeconds: 11 }),
+          ],
+        });
+      } finally {
+        residency.unmountDisplayConversation(THREAD_B);
+      }
     });
 
     it("turnComplete for background thread does not add message to active thread's messages", () => {

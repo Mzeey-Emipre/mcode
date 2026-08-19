@@ -1,6 +1,23 @@
 import type { ToolCall, HookExecution } from "@/transport/types";
 import type { SubagentLifecycle } from "./subagent-lifecycle";
 
+/** Roster view associated with a sub-agent activity control. */
+export type SubagentRosterTarget = "active" | "finished";
+
+/** One sibling Agent call rendered inside a compact parent collaboration row. */
+export interface SubagentActivity {
+  /** Lifecycle state of the delegated Agent call. */
+  lifecycle: SubagentLifecycle;
+  /** Agent call represented by this activity. */
+  toolCall: ToolCall;
+  /** Identity-bearing lineage participants for this activity. */
+  participants: readonly ToolCall[];
+  /** Direct child calls retained for the detail projection contract. */
+  children: readonly ToolCall[];
+  /** Agent hook activity retained for the detail projection contract. */
+  hooks: readonly HookExecution[];
+}
+
 /**
  * Contiguous streamed reasoning text for one timeline row, bounded by tool use or turn end.
  */
@@ -30,7 +47,16 @@ export type NarrativeItem =
   | { type: "thought"; segment: ThoughtSegment; isActive: boolean }
   | { type: "tool-group"; group: ToolGroup; hasError: boolean; hasCancelled: boolean }
   | { type: "hook"; hook: HookExecution }
-  | { type: "subagent"; lifecycle: SubagentLifecycle; toolCall: ToolCall; participants: readonly ToolCall[]; children: readonly ToolCall[]; hooks: readonly HookExecution[] }
+  | {
+      type: "subagent";
+      lifecycle: SubagentLifecycle;
+      toolCall: ToolCall;
+      participants: readonly ToolCall[];
+      children: readonly ToolCall[];
+      hooks: readonly HookExecution[];
+      /** Contiguous sibling Agent calls sharing the same parent timeline unit. */
+      activities?: readonly SubagentActivity[];
+    }
   | { type: "active-tool"; toolCall: ToolCall }
   | { type: "delta"; text: string };
 
@@ -57,6 +83,14 @@ export interface NarrativeCounts {
    * Subset of `steps`.
    */
   subagents: number;
+}
+
+/** Completed-turn counts and duration rendered by the shared timeline footer. */
+export interface TurnFooterSummary {
+  /** Structured activity counts for the completed turn. */
+  counts: NarrativeCounts;
+  /** Elapsed structured-activity time, or null when no complete boundary exists. */
+  durationMs: number | null;
 }
 
 /** Return value of `buildNarrativeItems` — items plus aggregate counts. */

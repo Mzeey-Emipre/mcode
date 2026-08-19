@@ -596,6 +596,88 @@ describe("handleAgentEvent branches", () => {
     expect(calls[0].isComplete).toBe(false);
   });
 
+  it("session.toolUse merges enriched Agent metadata after completion", () => {
+    const handleAgentEvent = useThreadStore.getState().handleAgentEvent;
+    handleAgentEvent({
+      type: "toolUse",
+      threadId: "thread-1",
+      toolCallId: "agent-late-name",
+      toolName: "Agent",
+      toolInput: { receiverThreadIds: ["child-late-name"] },
+    } as AgentEvent);
+    handleAgentEvent({
+      type: "toolResult",
+      threadId: "thread-1",
+      toolCallId: "agent-late-name",
+      output: "done",
+      isError: false,
+    } as AgentEvent);
+    handleAgentEvent({
+      type: "toolUse",
+      threadId: "thread-1",
+      toolCallId: "agent-late-name",
+      toolName: "Agent",
+      toolInput: { agentName: "Hubble", model: "gpt-5.6-luna", reasoningEffort: "low" },
+    } as AgentEvent);
+    vi.runAllTimers();
+
+    expect(getTestThreadToolCalls("thread-1")).toEqual([
+      expect.objectContaining({
+        isComplete: true,
+        toolInput: expect.objectContaining({
+          agentName: "Hubble",
+          model: "gpt-5.6-luna",
+          reasoningEffort: "low",
+        }),
+      }),
+    ]);
+  });
+
+  it("session.toolResult applies normalized Agent presentation after completion", () => {
+    const handleAgentEvent = useThreadStore.getState().handleAgentEvent;
+    handleAgentEvent({
+      type: "toolUse",
+      threadId: "thread-1",
+      toolCallId: "agent-result-name",
+      toolName: "Agent",
+      toolInput: { receiverThreadIds: ["child-result-name"] },
+      subagentPresentation: {
+        displayName: "Subagent",
+        hasExplicitIdentity: false,
+        identityKey: "child-result-name",
+      },
+    } as AgentEvent);
+    handleAgentEvent({
+      type: "toolResult",
+      threadId: "thread-1",
+      toolCallId: "agent-result-name",
+      output: "done",
+      isError: false,
+      toolInput: { agentName: "Franklin" },
+      subagentPresentation: {
+        displayName: "Franklin",
+        hasExplicitIdentity: true,
+        identityKey: "child-result-name",
+        model: "gpt-5.6-luna",
+        reasoningEffort: "low",
+      },
+    } as AgentEvent);
+    vi.runAllTimers();
+
+    expect(getTestThreadToolCalls("thread-1")).toEqual([
+      expect.objectContaining({
+        isComplete: true,
+        subagentPresentation: {
+          displayName: "Franklin",
+          hasExplicitIdentity: true,
+          identityKey: "child-result-name",
+          model: "gpt-5.6-luna",
+          reasoningEffort: "low",
+        },
+      }),
+    ]);
+  });
+
   it("session.toolUse updates tasks when duplicate TodoWrite enriches sparse input", () => {
     useThreadStore.getState().handleAgentEvent({ type: "toolUse", threadId: "thread-1", toolCallId: "todo-1",
         toolName: "TodoWrite",

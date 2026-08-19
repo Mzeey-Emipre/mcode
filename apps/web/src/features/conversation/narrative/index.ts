@@ -1,4 +1,5 @@
 export { NarrativeFlow } from "./NarrativeFlow";
+export type { SubagentRosterTarget } from "./types";
 export type { ThoughtSegment, NarrativeItem } from "./types";
 export {
   extractSubagentDescription,

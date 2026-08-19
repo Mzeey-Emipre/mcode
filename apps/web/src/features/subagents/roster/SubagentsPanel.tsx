@@ -3,8 +3,8 @@ import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { SubagentIdentityGlyph } from "@/components/ui/SubagentIdentityGlyph";
+import { formatSubagentIdentity } from "../identity/format-subagent-identity";
 import { SubagentStopControl } from "../lifecycle/SubagentStopControl";
 import {
   useClearSubagentDetail,
@@ -12,9 +12,10 @@ import {
   useSubagentDetailSelection,
   type SubagentRosterTab,
 } from "../state";
-import { openSubagentDetail } from "../detail/open-subagent-detail";
+import { openSubagentDetail, openSubagentsRoster } from "../detail/open-subagent-detail";
 import { getTransport } from "@/transport";
 import { resolveModelDisplayLabel } from "@/lib/format-model-label";
+import { formatRelative } from "@/lib/format-relative";
 import { getConversationResidency, MessageList } from "@/features/conversation";
 import type {
   CanonicalSubagentRoster,
@@ -32,7 +33,7 @@ function formatReasoningLevel(value: string): string {
 }
 
 function canonicalIdentity(row: CanonicalSubagentRosterRow): string {
-  return row.identity ?? "Subagent";
+  return formatSubagentIdentity(row.identity ?? "Subagent");
 }
 
 function canonicalIsActive(row: CanonicalSubagentRosterRow): boolean {
@@ -47,25 +48,24 @@ function canonicalLineage(row: CanonicalSubagentRosterRow, rows: readonly Canoni
   const identities = new Map(rows.map((candidate) => [candidate.id, canonicalIdentity(candidate)]));
   return row.lineage
     .slice(0, -1)
-    .map((id) => id === row.owningParentThreadId ? "Parent" : identities.get(id) ?? id)
+    .filter((id) => id !== row.owningParentThreadId)
+    .map((id) => identities.get(id) ?? id)
     .join(" / ");
 }
 
-function providerIdentityProvenance(row: CanonicalSubagentRosterRow): string {
-  const identities = [...row.sourceProviderIdentities, ...row.providerIdentities];
-  if (identities.length === 0) return "No provider identity recorded";
-  return identities
-    .map((identity) => `${identity.providerId} · ${identity.scope} · ${identity.value} · ${identity.provenance}`)
-    .join("; ");
-}
-
-/** Resolve a panel selection by canonical child ID or exact provider source item ID. */
+/** Resolves a canonical child from any identity exposed by the roster contract. */
 export function resolveCanonicalSubagentSelection(
   selectionId: string,
   rows: readonly CanonicalSubagentRosterRow[],
 ): CanonicalSubagentRosterRow | undefined {
   const sourceItemId = `toolCall:${selectionId}`;
-  return rows.find((row) => row.id === selectionId || row.sourceItemId === sourceItemId);
+  return rows.find((row) => (
+    row.id === selectionId
+    || row.sourceItemId === sourceItemId
+    || [...row.providerIdentities, ...row.sourceProviderIdentities].some(
+      (identity) => identity.value === selectionId,
+    )
+  ));
 }
 
 function CanonicalRosterRow({
@@ -86,6 +86,8 @@ function CanonicalRosterRow({
   const active = canonicalIsActive(row);
   const status = canonicalStatus(row);
   const lineage = canonicalLineage(row, rows);
+  const lastActiveAt = active ? null : row.endedAt ?? row.updatedAt;
+  const lastActiveLabel = lastActiveAt ? formatRelative(lastActiveAt) : null;
   return (
     <div data-testid={testId} className="flex w-full min-w-0 items-center rounded-none transition-colors duration-150 motion-reduce:transition-none hover:bg-muted/30">
       <Button
@@ -99,6 +101,7 @@ function CanonicalRosterRow({
         <SubagentIdentityGlyph
           identity={canonicalIdentity(row)}
           hasExplicitIdentity={row.identity !== undefined}
+          paletteSeed={row.id}
           animated={active}
           className="size-6"
           size={15}
@@ -106,10 +109,19 @@ function CanonicalRosterRow({
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-center gap-2">
             <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{canonicalIdentity(row)}</span>
-            <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">{status}</span>
+            {!active && (
+              <span className="flex shrink-0 items-center gap-1.5 font-mono text-xs tabular-nums text-muted-foreground">
+                {status !== "Completed" && <span>{status}</span>}
+                {status !== "Completed" && lastActiveLabel && <span aria-hidden>·</span>}
+                {lastActiveAt && lastActiveLabel && (
+                  <time dateTime={lastActiveAt} title={new Date(lastActiveAt).toLocaleString()}>
+                    {lastActiveLabel}
+                  </time>
+                )}
+              </span>
+            )}
           </span>
           {lineage && <span className="mt-0.5 block truncate text-xs text-muted-foreground" aria-label={`Lineage: ${lineage}`}>{lineage}</span>}
-          {row.task && <span className="mt-0.5 block truncate text-xs text-muted-foreground">{row.task}</span>}
           {!active && row.hasActiveDescendant && (
             <span className="mt-0.5 block text-xs text-primary">Active descendant</span>
           )}
@@ -143,7 +155,10 @@ function CanonicalDetailView({
   const identity = canonicalIdentity(row);
   const lineage = canonicalLineage(row, rows);
   const active = canonicalIsActive(row);
-  const [technicalOpen, setTechnicalOpen] = useState(false);
+  const configuration = [
+    row.model ? resolveModelDisplayLabel(row.model) : undefined,
+    row.reasoning ? formatReasoningLevel(row.reasoning) : undefined,
+  ].filter((value): value is string => value !== undefined).join(" · ");
   const [displayLeaseAcquired, setDisplayLeaseAcquired] = useState(false);
   useEffect(() => {
     const residency = getConversationResidency();
@@ -158,31 +173,22 @@ function CanonicalDetailView({
           <ArrowLeft size={15} aria-hidden />
         </Button>
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          <SubagentIdentityGlyph identity={identity} hasExplicitIdentity={row.identity !== undefined} className="size-6" size={15} />
+          <SubagentIdentityGlyph identity={identity} hasExplicitIdentity={row.identity !== undefined} paletteSeed={row.id} className="size-6" size={15} />
           <div className="min-w-0 flex-1">
             <h2 className="truncate text-sm font-semibold">{identity}</h2>
             {lineage && <p className="truncate text-xs text-muted-foreground">{lineage}</p>}
           </div>
-          <div className="flex shrink-0 items-center gap-2 font-mono text-xs text-muted-foreground">
-            {row.model && <span>{resolveModelDisplayLabel(row.model)}</span>}
-            {row.reasoning && <span>{formatReasoningLevel(row.reasoning)}</span>}
-          </div>
+          {configuration && <span className="shrink-0 font-mono text-xs text-muted-foreground">{configuration}</span>}
         </div>
       </header>
-      <Collapsible open={technicalOpen} onOpenChange={setTechnicalOpen} className="shrink-0 border-b border-border/40 px-4 py-2 text-xs text-muted-foreground" data-testid="subagent-technical-details">
-        <CollapsibleTrigger asChild>
-          <Button type="button" variant="ghost" size="sm" className="h-7 px-0 font-medium text-foreground hover:bg-transparent">Technical details</Button>
-        </CollapsibleTrigger>
-        <CollapsibleContent>
-          <dl className="mt-2 grid gap-1 font-mono">
-            <div><dt className="inline font-semibold">Canonical ID: </dt><dd className="inline">{row.id}</dd></div>
-            <div><dt className="inline font-semibold">Provider identity provenance: </dt><dd className="inline break-words">{providerIdentityProvenance(row)}</dd></div>
-          </dl>
-        </CollapsibleContent>
-      </Collapsible>
       <div className="min-h-0 flex-1">
         {displayLeaseAcquired && (
-          <MessageList displayThreadId={row.id} onSubagentSelect={openSubagentDetail} />
+          <MessageList
+            displayThreadId={row.id}
+            showParentAgentProvenance={false}
+            onSubagentSelect={openSubagentDetail}
+            onOpenSubagents={openSubagentsRoster}
+          />
         )}
       </div>
       {active && row.canStop && (
@@ -273,11 +279,6 @@ export function SubagentsPanel({ threadId }: { readonly threadId: string }) {
     ) ? "active" : "finished";
     selectDetail(threadId, { ...detailSelection, originTab });
   }, [canonicalState.roster, canonicalState.status, detailSelection, isCurrentRequest, selectDetail, selectedCanonicalRow, threadId]);
-
-  useEffect(() => {
-    if (!detailSelection || !isCurrentRequest || canonicalState.status === "pending") return;
-    if (!selectedCanonicalRow) clearDetail(threadId);
-  }, [canonicalState.status, clearDetail, detailSelection, isCurrentRequest, selectedCanonicalRow, threadId]);
 
   const selectRow = (id: string, originTab: SubagentRosterTab) => {
     selectDetail(threadId, { id, originTab, scrollTop: viewportRef.current?.scrollTop ?? 0 });

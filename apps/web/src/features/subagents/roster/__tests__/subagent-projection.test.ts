@@ -300,6 +300,25 @@ describe("projectSubagents", () => {
     })]);
   });
 
+  it("preserves a live provider identity when the matching persisted record has none", () => {
+    const roster = projectSubagents([
+      call({
+        id: "agent-with-late-identity",
+        toolName: "Agent",
+        toolInput: { agentName: "Euclid" },
+        isComplete: true,
+      }),
+    ], [[
+      record({ id: "agent-with-late-identity", display_name: null }),
+    ]]);
+
+    expect(roster.finished[0]).toMatchObject({
+      identity: "Euclid",
+      hasExplicitIdentity: true,
+      status: "completed",
+    });
+  });
+
   it("projects top-level running Agents with provider identity, task, descendant activity, and elapsed time", () => {
     const roster = projectSubagents([
       call({
@@ -400,8 +419,8 @@ describe("projectSubagents", () => {
     expect(roster.finished).toHaveLength(1);
     expect(roster.finished[0]).toMatchObject({
       id: "agent-1",
-      identity: "Subagent",
-      hasExplicitIdentity: false,
+      identity: "Live worker",
+      hasExplicitIdentity: true,
       task: "Persisted task",
       activity: "Persisted result",
     });

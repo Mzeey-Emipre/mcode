@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback, useSyncExternalStore } from "react";
 import { Bug, GitFork, Hammer, SearchCode, ScanSearch } from "lucide-react";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import {
@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { MessageList } from "./MessageList";
+import type { SubagentRosterTarget } from "../narrative";
 import { ConversationHoldOverlay } from "@/components/chat/ConversationHoldOverlay";
 import { Composer } from "../composer/Composer";
 import { PlanQuestionWizard } from "@/components/chat/PlanQuestionWizard";
@@ -47,6 +48,16 @@ import {
   type SetThreadSubscriptionsInput,
   type TurnRecovery,
 } from "@mcode/contracts";
+
+const EMPTY_DISPLAYED_THREAD_IDS: readonly string[] = [];
+
+function subscribeDisplayedConversations(listener: () => void): () => void {
+  return getConversationResidency().subscribeDisplayConversations(listener);
+}
+
+function getDisplayedConversationSnapshot(): readonly string[] {
+  return getConversationResidency().getDisplayConversationSnapshot();
+}
 
 /** Entry point suggestions shown in the empty state — each maps to a real Mcode capability. */
 const ENTRY_POINTS = [
@@ -333,11 +344,13 @@ function ConversationErrorState({ error }: { error: string }) {
 /** Props for the composed Conversation chat surface. */
 export interface ChatViewProps {
   /** Opens a selected canonical child through the composition root. */
-  onSubagentSelect?: (id: string) => void;
+  onSubagentSelect?: (id: string, target: SubagentRosterTarget) => void;
+  /** Opens the owning thread's Subagents roster for aggregate activity. */
+  onOpenSubagents?: (target: SubagentRosterTarget) => void;
 }
 
 /** Renders the main chat UI for sending and receiving messages within a thread. */
-export function ChatView({ onSubagentSelect }: ChatViewProps = {}) {
+export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = {}) {
   const activeThreadId = useWorkspaceStore((s) => s.activeThreadId);
   const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
   const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
@@ -349,6 +362,11 @@ export function ChatView({ onSubagentSelect }: ChatViewProps = {}) {
   const branchFromMessageId = activeForkMode?.messageId;
   const branchFromMessageContent = activeForkMode?.content ?? undefined;
   const runningThreadIds = useThreadStore((s) => s.runningThreadIds);
+  const displayedThreadIds = useSyncExternalStore(
+    subscribeDisplayedConversations,
+    getDisplayedConversationSnapshot,
+    () => EMPTY_DISPLAYED_THREAD_IDS,
+  );
   const canonicalRecoverySignature = useThreadStore((state) =>
     Array.from(state.records)
       .filter(([, record]) => record.canonicalAgent.recoveryRequired)
@@ -560,8 +578,10 @@ export function ChatView({ onSubagentSelect }: ChatViewProps = {}) {
   useEffect(() => {
     const orderedDesiredThreadIds = [
       ...(activeThreadId ? [activeThreadId] : []),
+      ...displayedThreadIds,
       ...Array.from(runningThreadIds).filter((threadId) => threadId !== activeThreadId).sort(),
-    ].slice(0, MAX_THREAD_SUBSCRIPTIONS);
+    ].filter((threadId, index, threadIds) => threadIds.indexOf(threadId) === index)
+      .slice(0, MAX_THREAD_SUBSCRIPTIONS);
     const desired = new Set(orderedDesiredThreadIds);
     desiredThreadIdsRef.current = desired;
 
@@ -812,7 +832,7 @@ export function ChatView({ onSubagentSelect }: ChatViewProps = {}) {
         }
       }, delay);
     });
-  }, [activeThreadId, canonicalRecoverySignature, connectionStatus, runningThreadIds, subscriptionReconcileVersion]);
+  }, [activeThreadId, canonicalRecoverySignature, connectionStatus, displayedThreadIds, runningThreadIds, subscriptionReconcileVersion]);
 
   useEffect(() => {
     subscriptionMountedRef.current = true;
@@ -1025,6 +1045,7 @@ export function ChatView({ onSubagentSelect }: ChatViewProps = {}) {
                 onBranch={handleBranch}
                 onReply={handleReply}
                 onSubagentSelect={onSubagentSelect}
+                onOpenSubagents={onOpenSubagents}
               />
             </div>
             <ConversationHoldOverlay targetTitle={activeThread.title || "Conversation"} />
@@ -1045,6 +1066,7 @@ export function ChatView({ onSubagentSelect }: ChatViewProps = {}) {
             onBranch={handleBranch}
             onReply={handleReply}
             onSubagentSelect={onSubagentSelect}
+            onOpenSubagents={onOpenSubagents}
           />
         )}
       </div>

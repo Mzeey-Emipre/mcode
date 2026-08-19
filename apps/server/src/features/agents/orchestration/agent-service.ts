@@ -13,6 +13,7 @@ import { logger, validateBranchName } from "@mcode/shared";
 import {
   AgentEventType,
   CanonicalSubagentRosterSchema,
+  createSubagentPresentation,
   isChildTurnCancellable,
   isGoalCapable,
   isGoalOpen,
@@ -2377,9 +2378,28 @@ export class AgentService {
       return this.preparedProviderEvents.get(event as object);
     }
     const normalizedEvent = this.turnRuntime.normalizeEvent(event);
-    const normalized = normalizedEvent
+    const sanitized = normalizedEvent
       ? this.browserNarrativeEventSanitizer.sanitize(normalizedEvent)
       : undefined;
+    let normalized = sanitized;
+    if (sanitized?.type === AgentEventType.ToolUse && sanitized.toolName === "Agent") {
+      normalized = {
+        ...sanitized,
+        subagentPresentation: createSubagentPresentation(sanitized.toolInput, sanitized.toolCallId),
+      };
+    } else if (sanitized?.type === AgentEventType.ToolResult && sanitized.toolInput) {
+      const bufferedAgent = this.narrativeStore.getBufferedToolCalls(sanitized.threadId)
+        .find((toolCall) => toolCall.toolCallId === sanitized.toolCallId && toolCall.toolName === "Agent");
+      if (bufferedAgent) {
+        normalized = {
+          ...sanitized,
+          subagentPresentation: createSubagentPresentation({
+            ...(bufferedAgent._rawToolInput ?? {}),
+            ...sanitized.toolInput,
+          }, sanitized.toolCallId),
+        };
+      }
+    }
     this.preparedProviderEvents.set(event as object, normalized);
     return normalized;
   }
@@ -2801,20 +2821,22 @@ export class AgentService {
       });
       const handleNormalizedEvent = (event: AgentEvent): void => {
         if (
-          event.type === AgentEventType.ToolUse
-          && event.toolName === "Agent"
-          && event.toolInput.codexCollabKind === "spawnAgent"
+          (event.type === AgentEventType.ToolUse || event.type === AgentEventType.ToolResult)
+          && (event.type !== AgentEventType.ToolUse || event.toolName === "Agent")
+          && event.toolInput?.codexCollabKind === "spawnAgent"
           && !event.codexChild
           && event.turnExecutionId
         ) {
           this.startCodexChildFromProviderEvent(event);
-          // The child turn owns delegated input; the parent narrative keeps only its compact Agent reference.
-          event = {
-            ...event,
-            toolInput: Object.fromEntries(
-              Object.entries(event.toolInput).filter(([key]) => key !== "prompt"),
-            ),
-          };
+          if (event.type === AgentEventType.ToolUse) {
+            // The child turn owns delegated input; the parent narrative keeps only its compact Agent reference.
+            event = {
+              ...event,
+              toolInput: Object.fromEntries(
+                Object.entries(event.toolInput).filter(([key]) => key !== "prompt"),
+              ),
+            };
+          }
         }
         if (event.type === AgentEventType.ToolUse || event.type === AgentEventType.ToolResult) {
           if (!("codexChild" in event && event.codexChild)) {
@@ -3582,23 +3604,26 @@ export class AgentService {
   }
 
   private startCodexChildFromProviderEvent(
-    event: Extract<AgentEvent, { type: typeof AgentEventType.ToolUse }>,
+    event: Extract<AgentEvent, {
+      type: typeof AgentEventType.ToolUse | typeof AgentEventType.ToolResult;
+    }>,
   ): void {
     const executionId = event.turnExecutionId;
-    if (!executionId) return;
+    const toolInput = event.toolInput;
+    if (!executionId || !toolInput) return;
     const parentTurn = this.canonicalSink.loadTurnByExecution(executionId);
     const parentThread = this.canonicalSink.loadThread(event.threadId);
     if (!parentTurn || !parentThread) return;
-    const description = typeof event.toolInput.description === "string"
-      ? event.toolInput.description
+    const description = typeof toolInput.description === "string"
+      ? toolInput.description
       : undefined;
-    const prompt = typeof event.toolInput.prompt === "string" ? event.toolInput.prompt : undefined;
-    const identity = typeof event.toolInput.agentName === "string"
-      ? event.toolInput.agentName
+    const prompt = typeof toolInput.prompt === "string" ? toolInput.prompt : undefined;
+    const identity = typeof toolInput.agentName === "string"
+      ? toolInput.agentName
       : undefined;
-    const model = typeof event.toolInput.model === "string" ? event.toolInput.model : undefined;
-    const reasoningEffort = typeof event.toolInput.reasoningEffort === "string"
-      ? event.toolInput.reasoningEffort
+    const model = typeof toolInput.model === "string" ? toolInput.model : undefined;
+    const reasoningEffort = typeof toolInput.reasoningEffort === "string"
+      ? toolInput.reasoningEffort
       : undefined;
     try {
       this.canonicalSink.startCodexChildDelegation({
@@ -3606,8 +3631,8 @@ export class AgentService {
         parentTurnId: parentTurn.id,
         parentExecutionId: executionId,
         parentItemId: `toolCall:${event.toolCallId}`,
-        receiverThreadIds: Array.isArray(event.toolInput.receiverThreadIds)
-          ? event.toolInput.receiverThreadIds.filter((value): value is string => (
+        receiverThreadIds: Array.isArray(toolInput.receiverThreadIds)
+          ? toolInput.receiverThreadIds.filter((value): value is string => (
               typeof value === "string" && value.trim().length > 0
             )).map((value) => value.trim().slice(0, 512)).slice(0, 32)
           : [],
@@ -4390,6 +4415,7 @@ ${userMessage}`;
       toolName: string;
       toolInput: Record<string, unknown>;
       parentToolCallId?: string;
+      subagentPresentation?: import("@mcode/contracts").SubagentPresentation;
     },
   ): void {
     const parentToolCallId = this.narrativeStore.bufferToolCall(threadId, event);

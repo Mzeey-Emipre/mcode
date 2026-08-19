@@ -195,6 +195,81 @@ describe("NarrativeStore sub-agent identity persistence", () => {
 
     expect(store.getBufferedToolCalls("thread-1")[0]?.displayName).toBeUndefined();
   });
+
+  it("projects late provider metadata onto an existing Agent row", () => {
+    const store = new NarrativeStore(
+      {} as MessageRepo,
+      { bulkCreate: () => undefined } as unknown as ToolCallRecordRepo,
+      { bulkCreate: () => undefined } as unknown as ThoughtSegmentRepo,
+      { bulkCreate: () => undefined } as unknown as HookExecutionRepo,
+    );
+    store.beginTurn("thread-1");
+    store.resetTurnCounters("thread-1");
+    store.bufferToolCall("thread-1", {
+      toolCallId: "agent-1",
+      toolName: "Agent",
+      toolInput: {
+        codexCollabKind: "spawnAgent",
+        agentPath: "/root/subagent",
+        model: "gpt-initial",
+      },
+    });
+
+    store.bufferToolCall("thread-1", {
+      toolCallId: "agent-1",
+      toolName: "Agent",
+      toolInput: {
+        agentName: "Hubble",
+        model: "gpt-5.6-luna",
+        reasoningEffort: "low",
+      },
+    });
+
+    expect(store.getBufferedToolCalls("thread-1")).toEqual([
+      expect.objectContaining({
+        displayName: "Hubble",
+        providerAgentKey: "/root/subagent",
+        model: "gpt-5.6-luna",
+        reasoningEffort: "low",
+      }),
+    ]);
+  });
+
+  it("projects late provider metadata after the Agent row completes", () => {
+    const store = new NarrativeStore(
+      {} as MessageRepo,
+      { bulkCreate: () => undefined } as unknown as ToolCallRecordRepo,
+      { bulkCreate: () => undefined } as unknown as ThoughtSegmentRepo,
+      { bulkCreate: () => undefined } as unknown as HookExecutionRepo,
+    );
+    store.beginTurn("thread-1");
+    store.resetTurnCounters("thread-1");
+    store.bufferToolCall("thread-1", {
+      toolCallId: "agent-1",
+      toolName: "Agent",
+      toolInput: { codexCollabKind: "spawnAgent", receiverThreadIds: ["child-1"] },
+    });
+    store.updateBufferedToolCallOutput("thread-1", "agent-1", "done", false);
+
+    store.bufferToolCall("thread-1", {
+      toolCallId: "agent-1",
+      toolName: "Agent",
+      toolInput: {
+        agentName: "Hubble",
+        model: "gpt-5.6-luna",
+        reasoningEffort: "low",
+      },
+    });
+
+    expect(store.getBufferedToolCalls("thread-1")).toEqual([
+      expect.objectContaining({
+        status: "completed",
+        displayName: "Hubble",
+        model: "gpt-5.6-luna",
+        reasoningEffort: "low",
+      }),
+    ]);
+  });
 });
 
 describe("NarrativeStore.load (read seam)", () => {

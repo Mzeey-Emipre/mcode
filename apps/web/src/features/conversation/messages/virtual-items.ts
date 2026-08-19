@@ -1,6 +1,6 @@
 import type { PermissionDecision } from "@mcode/contracts";
 import type { Message, ToolCall, HookExecution, ToolCallRecord, ThoughtSegmentRecord, HookExecutionRecord } from "@/transport/types";
-import type { ThoughtSegment } from "../narrative/types";
+import type { ThoughtSegment, TurnFooterSummary } from "../narrative/types";
 import { computeLiveStreamingText } from "../narrative/build-narrative";
 import { buildPersistedNarrativeItems } from "../narrative/build-persisted-narrative";
 import { isGoalStatusNotice } from "@/lib/goal-message";
@@ -143,8 +143,8 @@ export type ChatVirtualItem =
        * Assistant message id whose late hooks (Stop / SessionEnd / PreCompact)
        * are rendered here -- i.e. between the assistant bubble and the
        * files-changed summary, giving the render order:
-       *   narrative timeline → assistant text → stop hooks → files summary
-       */
+      *   narrative timeline → assistant text → stop hooks → files summary
+      */
       messageId: string;
     }
   | {
@@ -153,9 +153,11 @@ export type ChatVirtualItem =
       /**
        * Assistant message id whose turn footer (step / sub-agent counts plus
        * duration) is rendered AFTER the message body, closing the turn.
-       * Renders null until the persisted narrative records are loaded.
-       */
+       * Uses canonical summary data or persisted narrative records.
+      */
       messageId: string;
+      /** Canonical summary supplied directly when no legacy narrative cache exists. */
+      summary?: TurnFooterSummary;
     }
   | {
       key: string;
@@ -186,6 +188,7 @@ export function buildStableItems(
   latestTurnWithChanges?: string | null,
   currentTurn?: CurrentTurnResponseIdentity,
   persistedNarrativeByMessage?: PersistedNarrativeRecordsByMessage,
+  turnSummariesByMessageId?: Record<string, TurnFooterSummary>,
 ): ChatVirtualItem[] {
   const items: ChatVirtualItem[] = [];
   for (let i = 0; i < messages.length; i++) {
@@ -250,11 +253,13 @@ export function buildStableItems(
       // Turn footer (step / sub-agent counts + duration) renders AFTER the
       // assistant body — closing the turn rather than separating its actions
       // from its answer.
-      if (hasPersistedFooter) {
+      const turnSummary = turnSummariesByMessageId?.[msg.id];
+      if (hasPersistedFooter || turnSummary) {
         items.push({
           key: `persisted-turn-footer-${msg.id}`,
           type: "persisted-turn-footer",
           messageId: msg.id,
+          ...(turnSummary ? { summary: turnSummary } : {}),
         });
       }
 

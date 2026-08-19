@@ -1188,6 +1188,21 @@ describe("AgentService narrative persistence", () => {
       },
     });
     providerEmitter.emit("event", {
+      type: AgentEventType.ToolResult,
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      toolCallId: "spawn-action-child",
+      toolInput: {
+        codexCollabKind: "spawnAgent",
+        agentName: "Mendel",
+        receiverThreadIds: ["native-action-child"],
+      },
+      output: "ready",
+      isError: false,
+    });
+    expect(canonicalSink.loadSubagentRoster({ owningParentThreadId: THREAD_ID }).active[0]?.identity)
+      .toBe("Mendel");
+    providerEmitter.emit("event", {
       type: AgentEventType.TurnStarted,
       threadId: THREAD_ID,
       turnExecutionId: executionId,

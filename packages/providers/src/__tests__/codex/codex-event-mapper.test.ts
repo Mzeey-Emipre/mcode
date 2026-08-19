@@ -1400,6 +1400,7 @@ describe("CodexEventMapper", () => {
         agentName: "explorer",
         agentPath: "/root/explorer",
         description: "explorer",
+        receiverThreadIds: ["child-thread"],
       },
     }]);
     expect(childStarted).toEqual([
@@ -1457,8 +1458,38 @@ describe("CodexEventMapper", () => {
         description: "explorer",
         model: "gpt-5.5",
         reasoningEffort: "high",
+        receiverThreadIds: ["child-metadata"],
       },
     }]);
+  });
+
+  it("updates an unnamed spawn with the identity from native child metadata", () => {
+    mapper = new CodexEventMapper("test-thread", "main-thread");
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "main-thread",
+        item: {
+          type: "collabAgentToolCall",
+          id: "spawn-without-name",
+          tool: "spawnAgent",
+          receiverThreadIds: ["child-with-title"],
+        },
+      },
+    });
+
+    const updates = mapper.applyChildThreadMetadata("child-with-title", {
+      identity: "read_docs_worker",
+    });
+
+    expect(updates).toContainEqual(expect.objectContaining({
+      type: "toolUse",
+      toolCallId: "spawn-without-name",
+      toolInput: expect.objectContaining({
+        agentName: "read_docs_worker",
+      }),
+    }));
   });
 
   it("updates a completed native sub-agent when child settings arrive late", () => {
@@ -1508,6 +1539,7 @@ describe("CodexEventMapper", () => {
         agentName: "explorer",
         agentPath: "/root/explorer",
         description: "explorer",
+        receiverThreadIds: ["child-late-settings"],
       },
     }]);
     expect(settings).toEqual([{
@@ -1523,6 +1555,7 @@ describe("CodexEventMapper", () => {
         description: "explorer",
         model: "gpt-5.5",
         reasoningEffort: "high",
+        receiverThreadIds: ["child-late-settings"],
       },
     }]);
   });
@@ -1911,12 +1944,88 @@ describe("CodexEventMapper", () => {
           codexCollabKind: "spawnAgent",
           description: "Do work",
           prompt: "Do work",
+          receiverThreadIds: ["child-1"],
         },
       },
     ]);
   });
 
-  it("passes Codex sub-agent task, model, kind, and effort metadata through the result", () => {
+  it("keeps follow-up prompts and assistant output isolated across reused child turns", () => {
+    mapper = new CodexEventMapper("test-thread", "main-thread");
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "main-thread",
+        item: {
+          type: "collabAgentToolCall",
+          id: "spawn-worker",
+          tool: "spawnAgent",
+          prompt: "Read the repository purpose.",
+          receiverThreadIds: ["child-worker"],
+        },
+      },
+    });
+    const firstStarted = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/started",
+      params: { threadId: "child-worker", turn: { id: "child-turn-1" } },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/agentMessage/delta",
+      params: { threadId: "child-worker", itemId: "message-1", delta: "First answer." },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/completed",
+      params: { threadId: "child-worker", turn: { id: "child-turn-1", status: "completed" } },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "main-thread",
+        item: {
+          type: "collabAgentToolCall",
+          id: "follow-up-worker",
+          tool: "sendInput",
+          prompt: "Read the README heading.",
+          receiverThreadIds: ["child-worker"],
+        },
+      },
+    });
+    const secondStarted = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/started",
+      params: { threadId: "child-worker", turn: { id: "child-turn-2" } },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/agentMessage/delta",
+      params: { threadId: "child-worker", itemId: "message-2", delta: "Second answer." },
+    });
+    const secondCompleted = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/completed",
+      params: { threadId: "child-worker", turn: { id: "child-turn-2", status: "completed" } },
+    });
+
+    expect(firstStarted).toEqual([expect.objectContaining({
+      type: "turnStarted",
+      codexChild: expect.objectContaining({ prompt: "Read the repository purpose." }),
+    })]);
+    expect(secondStarted).toEqual([expect.objectContaining({
+      type: "turnStarted",
+      codexChild: expect.objectContaining({ prompt: "Read the README heading." }),
+    })]);
+    expect(secondCompleted).toContainEqual(expect.objectContaining({
+      type: "message",
+      content: "Second answer.",
+    }));
+  });
+
+  it("passes Codex sub-agent task name, prompt, model, kind, and effort metadata through the result", () => {
     mapper = new CodexEventMapper("test-thread", "main-thread");
     const started = mapper.mapNotification({
       jsonrpc: "2.0",
@@ -1927,7 +2036,7 @@ describe("CodexEventMapper", () => {
           type: "collabAgentToolCall",
           id: "spawn-meta",
           tool: "spawnAgent",
-          prompt: "Inspect mapper metadata.",
+          prompt: "task_name: metadata_worker\n\nInspect mapper metadata.",
           model: "",
           reasoningEffort: "medium",
         },
@@ -1942,7 +2051,7 @@ describe("CodexEventMapper", () => {
           type: "collabAgentToolCall",
           id: "spawn-meta",
           tool: "spawnAgent",
-          prompt: "Inspect mapper metadata.",
+          prompt: "task_name: metadata_worker\n\nInspect mapper metadata.",
           model: "gpt-5.5",
           reasoningEffort: "high",
           receiverThreadIds: ["child-meta"],
@@ -1969,13 +2078,28 @@ describe("CodexEventMapper", () => {
         toolName: "Agent",
         toolInput: {
           codexCollabKind: "spawnAgent",
+          agentName: "metadata_worker",
           description: "Inspect mapper metadata.",
-          prompt: "Inspect mapper metadata.",
+          prompt: "task_name: metadata_worker\n\nInspect mapper metadata.",
           reasoningEffort: "medium",
         },
       },
     ]);
-    expect(spawnCompleted).toEqual([]);
+    expect(spawnCompleted).toEqual([{
+      type: "toolUse",
+      threadId: "test-thread",
+      toolCallId: "spawn-meta",
+      toolName: "Agent",
+      toolInput: {
+        codexCollabKind: "spawnAgent",
+        agentName: "metadata_worker",
+        description: "Inspect mapper metadata.",
+        prompt: "task_name: metadata_worker\n\nInspect mapper metadata.",
+        model: "gpt-5.5",
+        reasoningEffort: "high",
+        receiverThreadIds: ["child-meta"],
+      },
+    }]);
     expect(childCompleted).toEqual([
       {
         type: "toolResult",
@@ -1985,10 +2109,12 @@ describe("CodexEventMapper", () => {
         isError: false,
         toolInput: {
           codexCollabKind: "spawnAgent",
+          agentName: "metadata_worker",
           description: "Inspect mapper metadata.",
-          prompt: "Inspect mapper metadata.",
+          prompt: "task_name: metadata_worker\n\nInspect mapper metadata.",
           model: "gpt-5.5",
           reasoningEffort: "high",
+          receiverThreadIds: ["child-meta"],
         },
       },
     ]);
@@ -2052,6 +2178,7 @@ describe("CodexEventMapper", () => {
           description: "Inspect reverse-order metadata.",
           prompt: "Inspect reverse-order metadata.",
           reasoningEffort: "medium",
+          receiverThreadIds: ["child-late-meta"],
         },
       },
     ]);
@@ -2067,6 +2194,7 @@ describe("CodexEventMapper", () => {
           description: "Inspect reverse-order metadata.",
           prompt: "Inspect reverse-order metadata.",
           reasoningEffort: "medium",
+          receiverThreadIds: ["child-late-meta"],
         },
       },
     ]);
@@ -2083,6 +2211,7 @@ describe("CodexEventMapper", () => {
           prompt: "Inspect reverse-order metadata.",
           model: "gpt-5.5",
           reasoningEffort: "high",
+          receiverThreadIds: ["child-late-meta"],
         },
       },
     ]);
@@ -2119,6 +2248,55 @@ describe("CodexEventMapper", () => {
         receiverThreadIds: ["native-child"],
       },
     })]);
+  });
+
+  it("carries a known child identity into later messages to the same sub-agent", () => {
+    mapper = new CodexEventMapper("test-thread", "native-parent");
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "native-parent",
+        item: {
+          type: "collabAgentToolCall",
+          id: "spawn-known-child",
+          tool: "spawnAgent",
+          receiverThreadIds: ["native-child"],
+        },
+      },
+    });
+    mapper.applyChildThreadMetadata("native-child", {
+      identity: "read_docs_worker",
+      model: "gpt-5.6-luna",
+      reasoningEffort: "low",
+    });
+
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "native-parent",
+        item: {
+          type: "collabAgentToolCall",
+          id: "follow-up-known-child",
+          tool: "sendInput",
+          senderThreadId: "native-parent",
+          receiverThreadIds: ["native-child"],
+          prompt: "Confirm the title.",
+        },
+      },
+    });
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "toolUse",
+      toolCallId: "follow-up-known-child",
+      toolInput: expect.objectContaining({
+        agentName: "read_docs_worker",
+        model: "gpt-5.6-luna",
+        reasoningEffort: "low",
+        receiverThreadIds: ["native-child"],
+      }),
+    }));
   });
 
   it("does not infer parent continuation from child evidence and a later main turn", () => {
@@ -2290,7 +2468,7 @@ describe("CodexEventMapper", () => {
         toolCallId: "spawn-1",
         output: "child streamed final",
         isError: false,
-        toolInput: { codexCollabKind: "spawnAgent" },
+        toolInput: { codexCollabKind: "spawnAgent", receiverThreadIds: ["child-1"] },
       },
     ]);
     expect(laterWait).toEqual([]);
@@ -3152,7 +3330,7 @@ describe("CodexEventMapper", () => {
         toolCallId: "collab-a",
         output: "",
         isError: false,
-        toolInput: { codexCollabKind: "spawnAgent" },
+        toolInput: { codexCollabKind: "spawnAgent", receiverThreadIds: ["child-thread"] },
       },
     ]);
     expect(mainText).toEqual([
