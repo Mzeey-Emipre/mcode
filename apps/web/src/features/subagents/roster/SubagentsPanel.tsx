@@ -40,11 +40,7 @@ type StopAllTarget = {
 
 type StopAllTargetStatus = "idle" | "pending" | "success" | "failed";
 
-function stopAllTargetLabel(target: StopAllTarget): string {
-  return target.lineage ? `${target.lineage} / ${target.identity}` : target.identity;
-}
-
-function stopAllStatusLabel(status: StopAllTargetStatus): string {
+function stopAllStatusLabel(status: StopAllTargetStatus): string | null {
   switch (status) {
     case "pending":
       return "Stopping";
@@ -53,18 +49,7 @@ function stopAllStatusLabel(status: StopAllTargetStatus): string {
     case "failed":
       return "Failed";
     default:
-      return "Ready";
-  }
-}
-
-function stopAllStatusVariant(status: StopAllTargetStatus): "secondary" | "destructive" | "outline" {
-  switch (status) {
-    case "success":
-      return "secondary";
-    case "failed":
-      return "destructive";
-    default:
-      return "outline";
+      return null;
   }
 }
 
@@ -95,6 +80,16 @@ function canonicalLineage(row: CanonicalSubagentRosterRow, rows: readonly Canoni
     .slice(0, -1)
     .filter((id) => id !== row.owningParentThreadId)
     .map((id) => identities.get(id) ?? id)
+    .join(" / ");
+}
+
+function canonicalNamedLineage(row: CanonicalSubagentRosterRow, rows: readonly CanonicalSubagentRosterRow[]): string {
+  const identities = new Map(rows.map((candidate) => [candidate.id, canonicalIdentity(candidate)]));
+  return row.lineage
+    .slice(0, -1)
+    .filter((id) => id !== row.owningParentThreadId)
+    .map((id) => identities.get(id))
+    .filter((identity): identity is string => identity !== undefined)
     .join(" / ");
 }
 
@@ -285,7 +280,7 @@ function StopAllConfirmationDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="max-w-lg"
+        className="gap-0 overflow-hidden p-0 sm:max-w-2xl [&_[data-slot=dialog-close]]:right-4 [&_[data-slot=dialog-close]]:top-4"
         initialFocus={cancelRef}
         finalFocus={() => {
           const trigger = triggerRef.current;
@@ -294,31 +289,47 @@ function StopAllConfirmationDialog({
         showCloseButton={!batchActive}
         aria-busy={batchActive}
       >
-        <DialogHeader>
-          <DialogTitle>Stop all active sub-agents?</DialogTitle>
-          <DialogDescription>
-            This will stop every active, stoppable child named below. Unfinished output can be lost.
+        <DialogHeader className="gap-2 pb-5 pl-6 pr-16 pt-6">
+          <DialogTitle className="text-lg leading-6">Stop all active sub-agents?</DialogTitle>
+          <DialogDescription className="max-w-md leading-5">
+            This stops the active sub-agents below. Unfinished output may be lost.
           </DialogDescription>
         </DialogHeader>
-        <ul aria-label="Sub-agents to stop" className="max-h-56 space-y-2 overflow-y-auto rounded-md border border-border/50 p-3">
-          {targets.map((target) => {
-            const status = statuses.get(target.id) ?? "idle";
-            return (
-              <li key={target.id} className="flex items-start justify-between gap-3 text-sm">
-                <span className="min-w-0 break-words text-foreground">{stopAllTargetLabel(target)}</span>
-                <Badge variant={stopAllStatusVariant(status)} size="sm" className="shrink-0">
-                  {stopAllStatusLabel(status)}
-                </Badge>
-              </li>
-            );
-          })}
-        </ul>
-        {failedCount > 0 && (
-          <p role="alert" data-testid="subagent-stop-all-failure-summary" className="text-sm text-destructive">
-            {failedCount} stop{failedCount === 1 ? "" : "s"} failed. Retry will try only failed sub-agents.
-          </p>
-        )}
-        <DialogFooter>
+        <div className="px-6 pb-6">
+          <ul
+            aria-label="Sub-agents to stop"
+            aria-live="polite"
+            className="max-h-64 divide-y divide-border/60 overflow-y-auto border-y border-border/60"
+          >
+            {targets.map((target) => {
+              const status = statuses.get(target.id) ?? "idle";
+              const statusLabel = stopAllStatusLabel(status);
+              return (
+                <li key={target.id} className="flex min-h-12 items-center justify-between gap-6 py-3 text-sm">
+                  <span className="min-w-0 text-foreground">
+                    <span className="block font-medium leading-5">{target.identity}</span>
+                    {target.lineage && (
+                      <span className="mt-1 block text-xs leading-4 text-muted-foreground">
+                        Lineage: {target.lineage}
+                      </span>
+                    )}
+                  </span>
+                  {statusLabel && (
+                    <span className={`shrink-0 text-xs ${status === "failed" ? "text-destructive" : "text-muted-foreground"}`}>
+                      {statusLabel}
+                    </span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+          {failedCount > 0 && (
+            <p role="alert" data-testid="subagent-stop-all-failure-summary" className="mt-4 text-sm text-destructive">
+              {failedCount} stop{failedCount === 1 ? "" : "s"} failed. Retry will try only failed sub-agents.
+            </p>
+          )}
+        </div>
+        <DialogFooter className="!mx-0 !mb-0 gap-3 rounded-none rounded-b-xl px-6 py-4">
           <Button ref={cancelRef} variant="outline" size="sm" onClick={onCancel} disabled={batchActive} autoFocus>
             Cancel
           </Button>
@@ -484,7 +495,7 @@ export function SubagentsPanel({ threadId }: { readonly threadId: string }) {
         id: row.id,
         owningParentThreadId: row.owningParentThreadId,
         identity: canonicalIdentity(row),
-        lineage: canonicalLineage(row, canonicalRows),
+        lineage: canonicalNamedLineage(row, canonicalRows),
       }));
     if (eligibleTargets.length < 2) return;
     setStopAllTargets(eligibleTargets);

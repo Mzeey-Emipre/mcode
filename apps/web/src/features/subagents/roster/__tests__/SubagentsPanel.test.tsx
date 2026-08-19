@@ -729,6 +729,7 @@ describe("SubagentsPanel", () => {
     expect(dialog).toHaveTextContent("First child");
     expect(dialog).toHaveTextContent("Second child");
     expect(dialog).not.toHaveTextContent("Unsupported child");
+    expect(dialog).not.toHaveTextContent("Ready");
   });
 
   it("freezes named and nested Stop all targets while later polls add children", async () => {
@@ -743,7 +744,7 @@ describe("SubagentsPanel", () => {
     const nested = canonicalRow({
       id: "frozen-nested",
       identity: "Frozen nested",
-      lineage: ["thread-1", "frozen-parent", "frozen-nested"],
+      lineage: ["thread-1", "unknown-provider-id", "frozen-parent", "frozen-nested"],
       activityState: "Active",
       latestTurnStatus: "Running",
       terminalOutcome: null,
@@ -774,7 +775,8 @@ describe("SubagentsPanel", () => {
     await screen.findByRole("button", { name: /Open Later child details, Active/, hidden: true });
 
     expect(dialog).toHaveTextContent("Frozen parent");
-    expect(dialog).toHaveTextContent("Frozen parent / Frozen nested");
+    expect(dialog).toHaveTextContent("Lineage: Frozen parent");
+    expect(dialog).not.toHaveTextContent("unknown-provider-id");
     expect(dialog).not.toHaveTextContent("Later child");
   });
 
