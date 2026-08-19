@@ -2250,6 +2250,55 @@ describe("CodexEventMapper", () => {
     })]);
   });
 
+  it("carries a known child identity into later messages to the same sub-agent", () => {
+    mapper = new CodexEventMapper("test-thread", "native-parent");
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "native-parent",
+        item: {
+          type: "collabAgentToolCall",
+          id: "spawn-known-child",
+          tool: "spawnAgent",
+          receiverThreadIds: ["native-child"],
+        },
+      },
+    });
+    mapper.applyChildThreadMetadata("native-child", {
+      identity: "read_docs_worker",
+      model: "gpt-5.6-luna",
+      reasoningEffort: "low",
+    });
+
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "native-parent",
+        item: {
+          type: "collabAgentToolCall",
+          id: "follow-up-known-child",
+          tool: "sendInput",
+          senderThreadId: "native-parent",
+          receiverThreadIds: ["native-child"],
+          prompt: "Confirm the title.",
+        },
+      },
+    });
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "toolUse",
+      toolCallId: "follow-up-known-child",
+      toolInput: expect.objectContaining({
+        agentName: "read_docs_worker",
+        model: "gpt-5.6-luna",
+        reasoningEffort: "low",
+        receiverThreadIds: ["native-child"],
+      }),
+    }));
+  });
+
   it("does not infer parent continuation from child evidence and a later main turn", () => {
     mapper = new CodexEventMapper("test-thread", "native-parent");
     mapper.mapNotification({

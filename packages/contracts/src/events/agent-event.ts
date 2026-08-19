@@ -3,6 +3,7 @@ import { lazySchema } from "../utils/lazySchema.js";
 import { ProviderBillingModeSchema, QuotaCategorySchema } from "../providers/usage.js";
 import { StoredAttachmentSchema } from "../models/attachment.js";
 import { GoalStateSchema } from "../models/goal.js";
+import { SubagentPresentationSchema } from "../models/tool-call-record.js";
 
 const TurnOutcomeSchema = z.enum(["completed", "errored", "cancelled"]);
 
@@ -114,6 +115,7 @@ const AgentEventPayloadSchema = z.discriminatedUnion("type", [
       toolInput: z.record(z.unknown()),
       parentToolCallId: z.string().optional(),
       codexChild: CodexChildEvidenceSchema.optional(),
+      subagentPresentation: SubagentPresentationSchema().optional(),
     }),
     z.object({
       type: z.literal(AgentEventType.ToolResult),
@@ -131,6 +133,8 @@ const AgentEventPayloadSchema = z.discriminatedUnion("type", [
       outputArtifactPath: z.string().optional(),
       /** Optional late-arriving metadata merged into the matching tool call input. */
       toolInput: z.record(z.unknown()).optional(),
+      /** Provider-neutral Agent presentation when this result enriches a sub-agent row. */
+      subagentPresentation: SubagentPresentationSchema().optional(),
       codexChild: CodexChildEvidenceSchema.optional(),
     }),
     z.object({

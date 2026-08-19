@@ -882,17 +882,22 @@ export class CodexEventMapper {
     const raw = item as unknown as Record<string, unknown>;
     const kind = this.collabToolKind(item);
     const prompt = this.stringField(raw, "prompt");
-    const taskName = this.stringField(raw, "task_name") ?? this.taskNameFromPrompt(prompt);
-    const model = this.stringField(raw, "model");
-    const reasoningEffort =
-      this.stringField(raw, "reasoningEffort")
-      ?? this.stringField(raw, "reasoning_effort");
     const senderThreadId = this.stringField(raw, "senderThreadId")?.slice(0, 512);
     const receiverThreadIds = Array.isArray(raw.receiverThreadIds)
       ? [...new Set(raw.receiverThreadIds.filter((value): value is string => (
           typeof value === "string" && value.trim().length > 0
         )).map((value) => value.trim().slice(0, 512)))].slice(0, 32)
       : [];
+    const childMetadata = receiverThreadIds.length === 1
+      ? this.childThreadMetadataById.get(receiverThreadIds[0]!)
+      : undefined;
+    const taskName = this.stringField(raw, "task_name")
+      ?? this.taskNameFromPrompt(prompt)
+      ?? childMetadata?.agentName;
+    const model = this.stringField(raw, "model") ?? childMetadata?.model;
+    const reasoningEffort = this.stringField(raw, "reasoningEffort")
+      ?? this.stringField(raw, "reasoning_effort")
+      ?? childMetadata?.reasoningEffort;
     return {
       codexCollabKind: kind,
       ...(taskName ? { agentName: taskName } : {}),

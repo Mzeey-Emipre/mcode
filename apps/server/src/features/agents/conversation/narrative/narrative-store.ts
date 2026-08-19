@@ -41,9 +41,11 @@ import {
   resolveProviderAgentKey,
   resolveSubagentDisplayName,
   resolveSubagentMetadata,
+  createSubagentPresentation,
   type Message,
   type NarrativeEntry,
   type TurnRange,
+  type SubagentPresentation,
 } from "@mcode/contracts";
 import { MessageRepo } from "../persistence/message-repo.js";
 import {
@@ -93,6 +95,7 @@ export interface BufferToolCallEvent {
   toolName: string;
   toolInput: Record<string, unknown>;
   parentToolCallId?: string;
+  subagentPresentation?: SubagentPresentation;
 }
 
 /** Result of persisting a turn's narrative rows. */
@@ -378,13 +381,12 @@ export class NarrativeStore {
 
     const existing = buffer.find((tc) => tc.toolCallId === event.toolCallId);
     if (existing) {
-      const shouldMergeDuplicate =
-        existing.status === "running"
-        && (
+      const isAgentEnrichment = existing.toolName === "Agent" && event.toolName === "Agent";
+      const shouldMergeDuplicate = isAgentEnrichment || (
+        existing.status === "running" && (
           Object.keys(existing._rawToolInput ?? {}).length === 0
           || existing.toolName !== event.toolName
-          || (existing.toolName === "Agent" && event.toolName === "Agent")
-        );
+        ));
       if (shouldMergeDuplicate) {
         existing.toolName = event.toolName;
         const mergedToolInput = {
@@ -393,10 +395,11 @@ export class NarrativeStore {
         };
         existing._rawToolInput = mergedToolInput;
         if (event.toolName === "Agent") {
-          existing.displayName = resolveSubagentDisplayName(mergedToolInput);
-          existing.providerAgentKey = resolveProviderAgentKey(mergedToolInput);
-          existing.model = resolveSubagentMetadata(mergedToolInput.model);
-          existing.reasoningEffort = resolveSubagentMetadata(mergedToolInput.reasoningEffort);
+          const presentation = createSubagentPresentation(mergedToolInput, event.toolCallId);
+          existing.displayName = presentation.hasExplicitIdentity ? presentation.displayName : undefined;
+          existing.providerAgentKey = presentation.providerAgentKey;
+          existing.model = presentation.model;
+          existing.reasoningEffort = presentation.reasoningEffort;
         }
       }
       if (event.parentToolCallId) {
@@ -413,22 +416,18 @@ export class NarrativeStore {
       this.agentCallStack.set(threadId, stack);
     }
 
+    const presentation = event.toolName === "Agent"
+      ? event.subagentPresentation ?? createSubagentPresentation(event.toolInput, event.toolCallId)
+      : undefined;
+
     buffer.push({
       toolCallId: event.toolCallId,
       messageId: "",
       toolName: event.toolName,
-      displayName: event.toolName === "Agent"
-        ? resolveSubagentDisplayName(event.toolInput)
-        : undefined,
-      providerAgentKey: event.toolName === "Agent"
-        ? resolveProviderAgentKey(event.toolInput)
-        : undefined,
-      model: event.toolName === "Agent"
-        ? resolveSubagentMetadata(event.toolInput.model)
-        : undefined,
-      reasoningEffort: event.toolName === "Agent"
-        ? resolveSubagentMetadata(event.toolInput.reasoningEffort)
-        : undefined,
+      displayName: presentation?.hasExplicitIdentity ? presentation.displayName : undefined,
+      providerAgentKey: presentation?.providerAgentKey,
+      model: presentation?.model,
+      reasoningEffort: presentation?.reasoningEffort,
       inputSummary: "", // Deferred to persistNarrative
       outputSummary: "",
       status: "running",

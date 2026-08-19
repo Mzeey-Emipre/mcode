@@ -1,7 +1,5 @@
-import { resolveSubagentDisplayName } from "@mcode/contracts";
 import { Button } from "@/components/ui/button";
 import { SubagentIdentityGlyph } from "@/components/ui/SubagentIdentityGlyph";
-import { formatSubagentIdentity } from "@/features/subagents/identity/format-subagent-identity";
 import type { HookExecution, ToolCall } from "@/transport/types";
 import { NARRATIVE_TOOL_ROW } from "./narrative-layout";
 import type { SubagentLifecycle } from "./subagent-lifecycle";
@@ -39,17 +37,6 @@ function remainingLabel(activities: readonly SubagentActivity[]): string {
   return labels.map((label, index) => index === 0 ? `+${label}` : label).join(", ");
 }
 
-function subagentIdentityKey(participant: ToolCall): string {
-  const receiverThreadIds = participant.toolInput.receiverThreadIds;
-  if (Array.isArray(receiverThreadIds) && receiverThreadIds.length === 1) {
-    const [receiverThreadId] = receiverThreadIds;
-    if (typeof receiverThreadId === "string" && receiverThreadId.trim().length > 0) {
-      return receiverThreadId;
-    }
-  }
-  return participant.id;
-}
-
 /** Renders one identity-only sub-agent lifecycle row in the chat narrative. */
 export function SubagentRow({
   participants,
@@ -75,8 +62,9 @@ export function SubagentRow({
     <div className={`${NARRATIVE_TOOL_ROW} min-w-0 gap-2`}>
       <div className={`flex min-w-0 flex-1 items-center overflow-hidden ${groupedActivities ? "gap-1" : "gap-2"}`}>
         {visibleParticipants.map(({ participant, lifecycle: participantLifecycle }) => {
-          const resolvedIdentity = resolveSubagentDisplayName(participant.toolInput);
-          const identity = formatSubagentIdentity(resolvedIdentity ?? "Subagent");
+          const presentation = participant.subagentPresentation;
+          const identity = presentation?.displayName ?? "Subagent";
+          const identityKey = presentation?.identityKey ?? participant.id;
           return (
             <span key={participant.id} className="flex min-w-0 shrink items-center gap-1">
               <Button
@@ -84,7 +72,7 @@ export function SubagentRow({
                 variant="ghost"
                 size="sm"
                 onClick={() => onSubagentSelect?.(
-                  subagentIdentityKey(participant),
+                  identityKey,
                   participantLifecycle === "finished" ? "finished" : "active",
                 )}
                 className="min-w-0 shrink gap-1 rounded-full px-2 text-left transition-colors duration-150 motion-reduce:transition-none hover:bg-muted/30"
@@ -92,8 +80,8 @@ export function SubagentRow({
               >
                 <SubagentIdentityGlyph
                   identity={identity}
-                  hasExplicitIdentity={resolvedIdentity !== undefined}
-                  paletteSeed={subagentIdentityKey(participant)}
+                  hasExplicitIdentity={presentation?.hasExplicitIdentity ?? false}
+                  paletteSeed={identityKey}
                   className="size-4"
                   size={12}
                 />

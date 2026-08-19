@@ -310,7 +310,12 @@ export {
   ToolCallStatusSchema,
   PROVIDER_AGENT_KEY_MAX_LENGTH,
   SUBAGENT_DISPLAY_NAME_MAX_LENGTH,
+  SUBAGENT_IDENTITY_KEY_MAX_LENGTH,
   SUBAGENT_METADATA_MAX_LENGTH,
+  SubagentPresentationSchema,
+  createSubagentPresentation,
+  formatSubagentDisplayName,
+  mergeSubagentPresentation,
   resolveProviderAgentKey,
   resolveSubagentDisplayName,
   resolveSubagentMetadata,
@@ -318,6 +323,7 @@ export {
 export type {
   ToolCallRecord,
   ToolCallStatus,
+  SubagentPresentation,
 } from "./models/tool-call-record.js";
 
 export { ThoughtSegmentRecordSchema } from "./models/thought-segment.js";

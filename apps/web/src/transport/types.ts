@@ -178,6 +178,8 @@ export interface ToolCall {
   id: string;
   toolName: string;
   toolInput: Record<string, unknown>;
+  /** Provider-neutral presentation consumed by sub-agent surfaces. */
+  subagentPresentation?: import("@mcode/contracts").SubagentPresentation;
   output: string | null;
   isError: boolean;
   isComplete: boolean;

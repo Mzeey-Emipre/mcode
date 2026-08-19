@@ -6,7 +6,7 @@ import type {
   HookExecution,
 } from "@/transport/types";
 import type { ThoughtSegment, NarrativeItem, SubagentActivity } from "./types";
-import { resolveBrowserNarrativeTool } from "@mcode/contracts";
+import { createSubagentPresentation, resolveBrowserNarrativeTool } from "@mcode/contracts";
 import {
   isSubagentLifecycleRecord,
   parseSubagentLifecycleInput,
@@ -87,6 +87,18 @@ export function recordToToolCall(r: ToolCallRecord): ToolCall {
         ? { agentName: r.display_name }
         : {}),
     },
+    ...(r.tool_name === AGENT_TOOL_NAME
+      ? {
+          subagentPresentation: createSubagentPresentation({
+            ...(r.display_name ? { agentName: r.display_name } : {}),
+            ...(r.provider_agent_key
+              ? { codexCollabKind: "spawnAgent", agentPath: r.provider_agent_key }
+              : {}),
+            ...(r.model ? { model: r.model } : {}),
+            ...(r.reasoning_effort ? { reasoningEffort: r.reasoning_effort } : {}),
+          }, r.provider_agent_key ?? r.id),
+        }
+      : {}),
     output: r.output_summary || null,
     isError: r.status === "failed",
     isComplete: r.status === "completed" || r.status === "failed" || r.status === "cancelled",

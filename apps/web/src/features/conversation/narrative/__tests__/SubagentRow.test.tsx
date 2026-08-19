@@ -4,11 +4,12 @@ import userEvent from "@testing-library/user-event";
 import { SubagentRow } from "../SubagentRow";
 import type { ToolCall } from "@/transport/types";
 import { getSubagentIdentityPaletteIndex } from "@/components/ui/SubagentIdentityGlyph";
+import { createSubagentPresentation } from "@mcode/contracts";
 
 const { openSubagentDetail } = vi.hoisted(() => ({ openSubagentDetail: vi.fn() }));
 
 function agent(overrides: Partial<ToolCall> = {}): ToolCall {
-  return {
+  const toolCall: ToolCall = {
     id: "agent-1",
     toolName: "Agent",
     toolInput: { agentName: "Explorer", description: "Read detection module" },
@@ -16,6 +17,11 @@ function agent(overrides: Partial<ToolCall> = {}): ToolCall {
     isError: false,
     isComplete: false,
     ...overrides,
+  };
+  return {
+    ...toolCall,
+    subagentPresentation: overrides.subagentPresentation
+      ?? createSubagentPresentation(toolCall.toolInput, toolCall.id),
   };
 }
 
@@ -52,6 +58,21 @@ describe("SubagentRow", () => {
 
     expect(screen.getByRole("button", { name: "Open Direct detail worker subagent details" })).toBeInTheDocument();
     expect(screen.queryByText("direct_detail_worker")).not.toBeInTheDocument();
+  });
+
+  it("renders only the normalized presentation when raw provider input conflicts", () => {
+    renderRow(agent({
+      toolInput: { agentName: "wrong_raw_identity", prompt: "Private task" },
+      subagentPresentation: {
+        displayName: "Correct identity",
+        hasExplicitIdentity: true,
+        identityKey: "child-correct",
+      },
+    }));
+
+    expect(screen.getByRole("button", { name: "Open Correct identity subagent details" })).toBeInTheDocument();
+    expect(screen.queryByText("wrong_raw_identity")).not.toBeInTheDocument();
+    expect(screen.queryByText("Private task")).not.toBeInTheDocument();
   });
 
   it("keeps one identity color stable across rerenders", () => {

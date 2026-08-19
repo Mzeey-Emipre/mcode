@@ -60,12 +60,23 @@ describe("buildPersistedNarrativeItems", () => {
     const call = recordToToolCall(makeTool({
       tool_name: "Agent",
       display_name: "Explorer",
+      provider_agent_key: "/root/explorer",
+      model: "gpt-5.6-luna",
+      reasoning_effort: "medium",
       input_summary: "Inspect the private task",
     }));
 
     expect(call.toolInput).toEqual({
       _summary: "Inspect the private task",
       agentName: "Explorer",
+    });
+    expect(call.subagentPresentation).toEqual({
+      displayName: "Explorer",
+      hasExplicitIdentity: true,
+      identityKey: "/root/explorer",
+      providerAgentKey: "/root/explorer",
+      model: "gpt-5.6-luna",
+      reasoningEffort: "medium",
     });
   });
   it("empty input returns no items", () => {
