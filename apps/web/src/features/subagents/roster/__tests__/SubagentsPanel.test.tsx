@@ -321,11 +321,36 @@ describe("SubagentsPanel", () => {
     expect(activeRow[1]).toHaveTextContent("Ancestor child");
     expect(activeRow[1]).not.toHaveTextContent("Parent / Ancestor child");
     expect(screen.getByText("Active descendant")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Open Completed child details, Completed/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Open Completed child details, Completed/ }).querySelector(".font-mono")).toBeNull();
+    const completedButton = screen.getByRole("button", { name: /Open Completed child details, Completed/ });
+    expect(completedButton.querySelector("time")).toHaveAttribute("dateTime", completed.endedAt);
     expect(screen.getByRole("button", { name: /Open Interrupted child details, Interrupted/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Open Errored child details, Errored/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Open Unknown child details, Idle/ })).not.toHaveTextContent("Completed");
+  });
+
+  it("shows relative last activity for done children without repeating the active section state", async () => {
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60_000).toISOString();
+    const active = canonicalRow({
+      id: "active-relative-time",
+      identity: "Working child",
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      endedAt: null,
+      terminalOutcome: null,
+    });
+    const completed = canonicalRow({
+      id: "completed-relative-time",
+      identity: "Completed child",
+      updatedAt: new Date(Date.now() - 4 * 60_000).toISOString(),
+      endedAt: fiveMinutesAgo,
+    });
+    harness.loadCanonicalSubagentRoster.mockResolvedValue(canonicalRoster([active], [completed]));
+
+    render(<SubagentsPanel threadId="thread-1" />);
+
+    const activeRow = await screen.findByRole("button", { name: /Open Working child details, Active/ });
+    expect(activeRow).not.toHaveTextContent("Active");
+    expect(screen.getByText("5m ago")).toHaveAttribute("dateTime", completed.endedAt);
   });
 
   it("hides Stop when a child is not active or cannot stop", async () => {

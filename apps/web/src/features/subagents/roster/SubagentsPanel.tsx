@@ -15,6 +15,7 @@ import {
 import { openSubagentDetail, openSubagentsRoster } from "../detail/open-subagent-detail";
 import { getTransport } from "@/transport";
 import { resolveModelDisplayLabel } from "@/lib/format-model-label";
+import { formatRelative } from "@/lib/format-relative";
 import { getConversationResidency, MessageList } from "@/features/conversation";
 import type {
   CanonicalSubagentRoster,
@@ -85,6 +86,8 @@ function CanonicalRosterRow({
   const active = canonicalIsActive(row);
   const status = canonicalStatus(row);
   const lineage = canonicalLineage(row, rows);
+  const lastActiveAt = active ? null : row.endedAt ?? row.updatedAt;
+  const lastActiveLabel = lastActiveAt ? formatRelative(lastActiveAt) : null;
   return (
     <div data-testid={testId} className="flex w-full min-w-0 items-center rounded-none transition-colors duration-150 motion-reduce:transition-none hover:bg-muted/30">
       <Button
@@ -106,8 +109,16 @@ function CanonicalRosterRow({
         <span className="min-w-0 flex-1">
           <span className="flex min-w-0 items-center gap-2">
             <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{canonicalIdentity(row)}</span>
-            {status !== "Completed" && (
-              <span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">{status}</span>
+            {!active && (
+              <span className="flex shrink-0 items-center gap-1.5 font-mono text-xs tabular-nums text-muted-foreground">
+                {status !== "Completed" && <span>{status}</span>}
+                {status !== "Completed" && lastActiveLabel && <span aria-hidden>·</span>}
+                {lastActiveAt && lastActiveLabel && (
+                  <time dateTime={lastActiveAt} title={new Date(lastActiveAt).toLocaleString()}>
+                    {lastActiveLabel}
+                  </time>
+                )}
+              </span>
             )}
           </span>
           {lineage && <span className="mt-0.5 block truncate text-xs text-muted-foreground" aria-label={`Lineage: ${lineage}`}>{lineage}</span>}
