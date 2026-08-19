@@ -3,6 +3,14 @@ import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { SubagentIdentityGlyph } from "@/components/ui/SubagentIdentityGlyph";
 import { formatSubagentIdentity } from "../identity/format-subagent-identity";
 import { SubagentStopControl } from "../lifecycle/SubagentStopControl";
@@ -22,6 +30,43 @@ import type {
   CanonicalSubagentRosterRow,
   CanonicalSubagentStopResult,
 } from "@mcode/contracts";
+
+type StopAllTarget = {
+  readonly id: string;
+  readonly owningParentThreadId: string;
+  readonly identity: string;
+  readonly lineage: string;
+};
+
+type StopAllTargetStatus = "idle" | "pending" | "success" | "failed";
+
+function stopAllTargetLabel(target: StopAllTarget): string {
+  return target.lineage ? `${target.lineage} / ${target.identity}` : target.identity;
+}
+
+function stopAllStatusLabel(status: StopAllTargetStatus): string {
+  switch (status) {
+    case "pending":
+      return "Stopping";
+    case "success":
+      return "Stopped";
+    case "failed":
+      return "Failed";
+    default:
+      return "Ready";
+  }
+}
+
+function stopAllStatusVariant(status: StopAllTargetStatus): "secondary" | "destructive" | "outline" {
+  switch (status) {
+    case "success":
+      return "secondary";
+    case "failed":
+      return "destructive";
+    default:
+      return "outline";
+  }
+}
 
 function formatReasoningLevel(value: string): string {
   return value
@@ -206,6 +251,93 @@ function CanonicalDetailView({
   );
 }
 
+function StopAllConfirmationDialog({
+  open,
+  targets,
+  statuses,
+  batchActive,
+  triggerRef,
+  panelRef,
+  cancelRef,
+  onOpenChange,
+  onCancel,
+  onConfirm,
+}: {
+  readonly open: boolean;
+  readonly targets: readonly StopAllTarget[] | null;
+  readonly statuses: ReadonlyMap<string, StopAllTargetStatus>;
+  readonly batchActive: boolean;
+  readonly triggerRef: React.RefObject<HTMLButtonElement | null>;
+  readonly panelRef: React.RefObject<HTMLElement | null>;
+  readonly cancelRef: React.RefObject<HTMLButtonElement | null>;
+  readonly onOpenChange: (open: boolean, eventDetails: { cancel: () => void }) => void;
+  readonly onCancel: () => void;
+  readonly onConfirm: () => void;
+}) {
+  if (!targets) return null;
+  const failedCount = targets.filter((target) => statuses.get(target.id) === "failed").length;
+  const actionLabel = batchActive
+    ? "Stopping…"
+    : failedCount > 0
+      ? "Retry failed"
+      : "Stop all";
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent
+        className="max-w-lg"
+        initialFocus={cancelRef}
+        finalFocus={() => {
+          const trigger = triggerRef.current;
+          return trigger?.isConnected ? trigger : panelRef.current;
+        }}
+        showCloseButton={!batchActive}
+        aria-busy={batchActive}
+      >
+        <DialogHeader>
+          <DialogTitle>Stop all active sub-agents?</DialogTitle>
+          <DialogDescription>
+            This will stop every active, stoppable child named below. Unfinished output can be lost.
+          </DialogDescription>
+        </DialogHeader>
+        <ul aria-label="Sub-agents to stop" className="max-h-56 space-y-2 overflow-y-auto rounded-md border border-border/50 p-3">
+          {targets.map((target) => {
+            const status = statuses.get(target.id) ?? "idle";
+            return (
+              <li key={target.id} className="flex items-start justify-between gap-3 text-sm">
+                <span className="min-w-0 break-words text-foreground">{stopAllTargetLabel(target)}</span>
+                <Badge variant={stopAllStatusVariant(status)} size="sm" className="shrink-0">
+                  {stopAllStatusLabel(status)}
+                </Badge>
+              </li>
+            );
+          })}
+        </ul>
+        {failedCount > 0 && (
+          <p role="alert" data-testid="subagent-stop-all-failure-summary" className="text-sm text-destructive">
+            {failedCount} stop{failedCount === 1 ? "" : "s"} failed. Retry will try only failed sub-agents.
+          </p>
+        )}
+        <DialogFooter>
+          <Button ref={cancelRef} variant="outline" size="sm" onClick={onCancel} disabled={batchActive} autoFocus>
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            variant="destructive"
+            size="sm"
+            onClick={onConfirm}
+            disabled={batchActive}
+            aria-busy={batchActive}
+          >
+            {actionLabel}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 /** Renders the canonical child roster for the selected parent thread. */
 export function SubagentsPanel({ threadId }: { readonly threadId: string }) {
   const [canonicalState, setCanonicalState] = useState<{
@@ -217,6 +349,15 @@ export function SubagentsPanel({ threadId }: { readonly threadId: string }) {
   const selectDetail = useSelectSubagentDetail();
   const clearDetail = useClearSubagentDetail();
   const viewportRef = useRef<HTMLDivElement | null>(null);
+  const stopAllTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const subagentsPanelRef = useRef<HTMLElement | null>(null);
+  const stopAllCancelRef = useRef<HTMLButtonElement | null>(null);
+  const stopAllBatchRef = useRef(false);
+  const lifecycleGenerationRef = useRef(0);
+  const [stopAllOpen, setStopAllOpen] = useState(false);
+  const [stopAllTargets, setStopAllTargets] = useState<readonly StopAllTarget[] | null>(null);
+  const [stopAllStatuses, setStopAllStatuses] = useState<ReadonlyMap<string, StopAllTargetStatus>>(new Map());
+  const [stopAllBatchActive, setStopAllBatchActive] = useState(false);
   const rosterLoadRef = useRef<(() => Promise<void>) | null>(null);
   const requestGenerationRef = useRef(0);
   const acceptedGenerationRef = useRef(0);
@@ -256,6 +397,17 @@ export function SubagentsPanel({ threadId }: { readonly threadId: string }) {
       window.clearInterval(timer);
     };
   }, [threadId]);
+  useEffect(() => {
+    lifecycleGenerationRef.current += 1;
+    stopAllBatchRef.current = false;
+    setStopAllOpen(false);
+    setStopAllTargets(null);
+    setStopAllStatuses(new Map());
+    setStopAllBatchActive(false);
+    return () => {
+      lifecycleGenerationRef.current += 1;
+    };
+  }, [threadId]);
   const isCurrentRequest = canonicalState.threadId === threadId;
   const isLoading = !isCurrentRequest || canonicalState.status === "pending";
   const canonicalRows = canonicalState.roster
@@ -284,7 +436,7 @@ export function SubagentsPanel({ threadId }: { readonly threadId: string }) {
     selectDetail(threadId, { id, originTab, scrollTop: viewportRef.current?.scrollTop ?? 0 });
   };
 
-  const refreshRoster = () => rosterLoadRef.current?.();
+  const refreshRoster = (): Promise<void> => rosterLoadRef.current?.() ?? Promise.resolve();
 
   if (isLoading) {
     return (
@@ -324,11 +476,91 @@ export function SubagentsPanel({ threadId }: { readonly threadId: string }) {
     />;
   }
 
+  const openStopAll = () => {
+    if (stopAllBatchRef.current || stopAllBatchActive) return;
+    const eligibleTargets = canonicalRoster.active
+      .filter((row) => row.canStop)
+      .map((row) => ({
+        id: row.id,
+        owningParentThreadId: row.owningParentThreadId,
+        identity: canonicalIdentity(row),
+        lineage: canonicalLineage(row, canonicalRows),
+      }));
+    if (eligibleTargets.length < 2) return;
+    setStopAllTargets(eligibleTargets);
+    setStopAllStatuses(new Map(eligibleTargets.map((target) => [target.id, "idle" as const])));
+    setStopAllOpen(true);
+  };
+
+  const handleStopAllOpenChange = (nextOpen: boolean, eventDetails: { cancel: () => void }) => {
+    if (nextOpen) return;
+    if (stopAllBatchRef.current || stopAllBatchActive) {
+      eventDetails.cancel();
+      return;
+    }
+    setStopAllOpen(false);
+    setStopAllTargets(null);
+    setStopAllStatuses(new Map());
+  };
+
+  const runStopAllBatch = async (targets: readonly StopAllTarget[]) => {
+    if (stopAllBatchRef.current || stopAllBatchActive || targets.length === 0) return;
+    const batchGeneration = lifecycleGenerationRef.current;
+    stopAllBatchRef.current = true;
+    setStopAllBatchActive(true);
+    setStopAllStatuses((previous) => {
+      const next = new Map(previous);
+      for (const target of targets) next.set(target.id, "pending");
+      return next;
+    });
+
+    const outcomes = await Promise.all(targets.map(async (target) => {
+      let success = false;
+      try {
+        const result = await getTransport().stopCanonicalSubagent(target.owningParentThreadId, target.id);
+        success = result.status === "interrupted" || result.status === "already-terminal";
+      } catch {
+        console.error("Canonical subagent stop failed");
+      }
+      if (lifecycleGenerationRef.current !== batchGeneration) return null;
+      setStopAllStatuses((previous) => {
+        const next = new Map(previous);
+        next.set(target.id, success ? "success" : "failed");
+        return next;
+      });
+      if (success) {
+        if (lifecycleGenerationRef.current !== batchGeneration) return null;
+        await refreshRoster();
+        if (lifecycleGenerationRef.current !== batchGeneration) return null;
+      }
+      return success;
+    }));
+
+    if (lifecycleGenerationRef.current !== batchGeneration) return;
+    stopAllBatchRef.current = false;
+    setStopAllBatchActive(false);
+    if (outcomes.every(Boolean)) {
+      setStopAllOpen(false);
+      setStopAllTargets(null);
+      setStopAllStatuses(new Map());
+    }
+  };
+
+  const confirmStopAll = () => {
+    if (!stopAllTargets || stopAllBatchRef.current || stopAllBatchActive) return;
+    const targets = stopAllTargets.filter((target) => {
+      const status = stopAllStatuses.get(target.id) ?? "idle";
+      return status === "idle" || status === "failed";
+    });
+    void runStopAllBatch(targets);
+  };
+
   const activeRows = canonicalRoster.active;
   const doneRows = canonicalRoster.done;
+  const eligibleStopAllCount = activeRows.filter((row) => row.canStop).length;
   const isEmpty = activeRows.length === 0 && doneRows.length === 0;
   return (
-    <section className="flex min-h-0 flex-1 flex-col" aria-label="Subagents">
+    <section ref={subagentsPanelRef} tabIndex={-1} className="flex min-h-0 flex-1 flex-col" aria-label="Subagents">
       <ScrollArea className="min-h-0 flex-1" viewportRef={viewportRef}>
         {isEmpty ? (
           <p data-testid="subagents-empty" className="px-4 py-6 text-sm text-muted-foreground">
@@ -343,6 +575,21 @@ export function SubagentsPanel({ threadId }: { readonly threadId: string }) {
                   <Badge variant="ghost" size="sm" className="px-0 font-mono font-normal text-muted-foreground hover:bg-transparent">
                     {activeRows.length}
                   </Badge>
+                  {eligibleStopAllCount >= 2 && (
+                    <Button
+                      ref={stopAllTriggerRef}
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={openStopAll}
+                      disabled={stopAllBatchActive}
+                      aria-label="Stop all active sub-agents"
+                      data-testid="subagent-stop-all"
+                      className="ml-auto"
+                    >
+                      Stop all
+                    </Button>
+                  )}
                 </div>
                 {canonicalRoster.active.map((row) => (
                      <CanonicalRosterRow
@@ -381,6 +628,18 @@ export function SubagentsPanel({ threadId }: { readonly threadId: string }) {
           </div>
         )}
       </ScrollArea>
+      <StopAllConfirmationDialog
+        open={stopAllOpen}
+        targets={stopAllTargets}
+        statuses={stopAllStatuses}
+        batchActive={stopAllBatchActive}
+        triggerRef={stopAllTriggerRef}
+        panelRef={subagentsPanelRef}
+        cancelRef={stopAllCancelRef}
+        onOpenChange={handleStopAllOpenChange}
+        onCancel={() => handleStopAllOpenChange(false, { cancel: () => undefined })}
+        onConfirm={confirmStopAll}
+      />
     </section>
   );
 }
