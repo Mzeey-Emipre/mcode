@@ -1058,16 +1058,21 @@ export class CodexEventMapper {
   /** Applies authoritative child-thread model settings to the matching Agent row. */
   applyChildThreadMetadata(
     childThreadId: string,
-    metadata: { model: string; reasoningEffort: string },
+    metadata: { identity?: string; model?: string; reasoningEffort?: string },
   ): AgentEvent[] {
-    if (!childThreadId || !metadata.model || !metadata.reasoningEffort) return [];
+    if (!childThreadId || (!metadata.identity && !metadata.model && !metadata.reasoningEffort)) return [];
 
-    this.childThreadMetadataById.set(childThreadId, metadata);
+    const toolMetadata = {
+      ...(metadata.identity ? { agentName: metadata.identity } : {}),
+      ...(metadata.model ? { model: metadata.model } : {}),
+      ...(metadata.reasoningEffort ? { reasoningEffort: metadata.reasoningEffort } : {}),
+    };
+    this.childThreadMetadataById.set(childThreadId, toolMetadata);
     const toolCallId = this.collabReceiverThreadToCollabId.get(childThreadId);
     const existingToolInput = toolCallId ? this.spawnAgentToolInputById.get(toolCallId) : undefined;
     if (!toolCallId || !existingToolInput) return [];
 
-    const toolInput = { ...existingToolInput, ...metadata };
+    const toolInput = { ...existingToolInput, ...toolMetadata };
     this.spawnAgentToolInputById.set(toolCallId, toolInput);
     const completedResult = this.completedSpawnAgentResults.get(toolCallId);
     if (completedResult) return [{ ...completedResult, toolInput }];

@@ -13,7 +13,11 @@ vi.mock("../../private/codex/codex-version.js", () => ({
 
 const { sendTurnMock, getChildThreadMetadataMock, interruptChildTurnMock } = vi.hoisted(() => ({
   sendTurnMock: vi.fn().mockResolvedValue(null),
-  getChildThreadMetadataMock: vi.fn().mockResolvedValue({ model: "gpt-5.6-sol", reasoningEffort: "medium" }),
+  getChildThreadMetadataMock: vi.fn().mockResolvedValue({
+    identity: "read_docs_worker",
+    model: "gpt-5.6-sol",
+    reasoningEffort: "medium",
+  }),
   interruptChildTurnMock: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -27,7 +31,11 @@ vi.mock("../../private/codex/codex-app-server.js", async () => {
     async sendTurn(input: unknown, turnOptions: unknown): Promise<string | null> {
       return sendTurnMock(input, turnOptions);
     }
-    async getChildThreadMetadata(childThreadId: string): Promise<{ model: string; reasoningEffort: string }> {
+    async getChildThreadMetadata(childThreadId: string): Promise<{
+      identity?: string;
+      model: string;
+      reasoningEffort: string;
+    }> {
       return getChildThreadMetadataMock(childThreadId);
     }
     async interruptTurn(): Promise<void> {}
@@ -553,8 +561,114 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
       type: AgentEventType.ToolUse,
       toolCallId: "call-inner",
       parentToolCallId: "call-outer",
-      toolInput: expect.objectContaining({ model: "gpt-5.6-sol", reasoningEffort: "medium" }),
+      toolInput: expect.objectContaining({
+        agentName: "read_docs_worker",
+        model: "gpt-5.6-sol",
+        reasoningEffort: "medium",
+      }),
     }));
+  });
+
+  it("enriches a Codex collab spawn from its receiver thread", async () => {
+    const provider = makeProvider();
+    const events: AgentEvent[] = [];
+    provider.on("event", (event: AgentEvent) => events.push(event));
+    const entry = await startSession(provider, "mcode-collab-metadata", "collab-metadata");
+
+    entry.server.emit("notification", {
+      method: "item/started",
+      params: {
+        threadId: "sdk-thread-1",
+        item: {
+          type: "collabAgentToolCall",
+          id: "call-collab-metadata",
+          tool: "spawnAgent",
+          receiverThreadIds: ["child-collab-metadata"],
+        },
+      },
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    expect(getChildThreadMetadataMock).toHaveBeenCalledWith("child-collab-metadata");
+    expect(events).toContainEqual(expect.objectContaining({
+      type: AgentEventType.ToolUse,
+      toolCallId: "call-collab-metadata",
+      toolInput: expect.objectContaining({
+        agentName: "read_docs_worker",
+        model: "gpt-5.6-sol",
+        reasoningEffort: "medium",
+      }),
+    }));
+  });
+
+  it("retries child metadata until Codex publishes the display identity", async () => {
+    getChildThreadMetadataMock
+      .mockResolvedValueOnce({ model: "gpt-5.6-sol", reasoningEffort: "medium" })
+      .mockResolvedValueOnce({
+        identity: "Euclid",
+        model: "gpt-5.6-sol",
+        reasoningEffort: "medium",
+      });
+    const provider = makeProvider();
+    const events: AgentEvent[] = [];
+    provider.on("event", (event: AgentEvent) => events.push(event));
+    const entry = await startSession(provider, "mcode-subagent-late-identity", "subagent-late-identity");
+
+    entry.server.emit("notification", {
+      method: "item/completed",
+      params: {
+        threadId: "sdk-thread-1",
+        item: {
+          type: "subAgentActivity",
+          id: "call-late-identity",
+          kind: "started",
+          agentThreadId: "child-late-identity",
+          agentPath: "/root/worker",
+        },
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(events).toContainEqual(expect.objectContaining({
+        type: AgentEventType.ToolUse,
+        toolCallId: "call-late-identity",
+        toolInput: expect.objectContaining({ agentName: "Euclid" }),
+      }));
+    });
+    expect(getChildThreadMetadataMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries child metadata after an active-thread read race", async () => {
+    getChildThreadMetadataMock
+      .mockRejectedValueOnce(new Error("thread is not readable yet"))
+      .mockResolvedValueOnce({ identity: "Dirac" });
+    const provider = makeProvider();
+    const events: AgentEvent[] = [];
+    provider.on("event", (event: AgentEvent) => events.push(event));
+    const entry = await startSession(provider, "mcode-subagent-read-race", "subagent-read-race");
+
+    entry.server.emit("notification", {
+      method: "item/started",
+      params: {
+        threadId: "sdk-thread-1",
+        item: {
+          type: "collabAgentToolCall",
+          id: "call-read-race",
+          tool: "spawnAgent",
+          receiverThreadIds: ["child-read-race"],
+        },
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(events).toContainEqual(expect.objectContaining({
+        type: AgentEventType.ToolUse,
+        toolCallId: "call-read-race",
+        toolInput: expect.objectContaining({ agentName: "Dirac" }),
+      }));
+    });
+    expect(getChildThreadMetadataMock).toHaveBeenCalledTimes(2);
   });
 
   it("bounds child metadata lookup dedupe to the active main turn", async () => {

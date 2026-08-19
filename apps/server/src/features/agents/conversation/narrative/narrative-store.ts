@@ -387,10 +387,17 @@ export class NarrativeStore {
         );
       if (shouldMergeDuplicate) {
         existing.toolName = event.toolName;
-        existing._rawToolInput = {
+        const mergedToolInput = {
           ...(existing._rawToolInput ?? {}),
           ...event.toolInput,
         };
+        existing._rawToolInput = mergedToolInput;
+        if (event.toolName === "Agent") {
+          existing.displayName = resolveSubagentDisplayName(mergedToolInput);
+          existing.providerAgentKey = resolveProviderAgentKey(mergedToolInput);
+          existing.model = resolveSubagentMetadata(mergedToolInput.model);
+          existing.reasoningEffort = resolveSubagentMetadata(mergedToolInput.reasoningEffort);
+        }
       }
       if (event.parentToolCallId) {
         existing.parentToolCallId = event.parentToolCallId;

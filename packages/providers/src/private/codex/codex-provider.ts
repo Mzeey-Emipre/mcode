@@ -90,6 +90,7 @@ const USAGE_WARMUP_RETRY_MS = 60_000;
 const CODEX_MIN_VERSION = "0.37.0";
 const MAX_PENDING_CHILD_EVENTS = 128;
 const MAX_CHILD_EVENT_DELIVERY_KEYS = 512;
+const MAX_CHILD_THREADS_PER_NOTIFICATION = 128;
 
 type BrowserAutomationCredentialMetadata = ProviderBrowserCredentialMetadata;
 type BrowserAutomationSessionLeaseStage = ProviderBrowserLeaseHandle;
@@ -737,6 +738,30 @@ function nativeSubAgentThreadId(notification: { method?: string; params?: Record
   if (!isRecord(item) || item.type !== "subAgentActivity" || item.kind !== "started") return undefined;
   const childThreadId = item.agentThreadId;
   return typeof childThreadId === "string" && childThreadId.length > 0 ? childThreadId : undefined;
+}
+
+/** Returns child thread ids exposed directly by a native collab spawn notification. */
+function nativeCollabSpawnThreadIds(notification: { method?: string; params?: Record<string, unknown> }): string[] {
+  if (notification.method !== "item/started" && notification.method !== "item/completed") return [];
+  const item = notification.params?.item;
+  if (!isRecord(item)) return [];
+  const collabKind = item.tool ?? item.kind;
+  if (item.type !== "collabAgentToolCall" || (collabKind !== "spawnAgent" && collabKind !== "spawn_agent")) {
+    return [];
+  }
+
+  const childThreadIds = new Set<string>();
+  if (Array.isArray(item.receiverThreadIds)) {
+    for (const childThreadId of item.receiverThreadIds.slice(0, MAX_CHILD_THREADS_PER_NOTIFICATION)) {
+      if (typeof childThreadId === "string" && childThreadId.length > 0) childThreadIds.add(childThreadId);
+    }
+  }
+  if (isRecord(item.agentsStates)) {
+    for (const childThreadId of Object.keys(item.agentsStates).slice(0, MAX_CHILD_THREADS_PER_NOTIFICATION)) {
+      if (childThreadId.length > 0) childThreadIds.add(childThreadId);
+    }
+  }
+  return [...childThreadIds].slice(0, MAX_CHILD_THREADS_PER_NOTIFICATION);
 }
 
 function completedAssistantText(item: CompletedItem | undefined): string {
@@ -1592,6 +1617,9 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         }
         this.fetchChildThreadMetadata(sessionId, threadId, server, mapper, childThreadId, eventExecutionId);
       }
+      for (const collabChildThreadId of nativeCollabSpawnThreadIds(n)) {
+        this.fetchChildThreadMetadata(sessionId, threadId, server, mapper, collabChildThreadId, eventExecutionId);
+      }
     });
 
     server.on("fatal", (error: string) => {
@@ -1780,7 +1808,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     state.pendingChildEvents = remaining;
   }
 
-  /** Fetches one native child thread's authoritative model settings without affecting the parent turn. */
+  /** Fetches one native child thread's authoritative identity and model settings without affecting the parent turn. */
   private fetchChildThreadMetadata(
     sessionId: string,
     threadId: string,
@@ -1794,19 +1822,43 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     state.childMetadataFetches.add(childThreadId);
     const runTurnSeq = state.runTurnSeq;
 
-    void server.getChildThreadMetadata(childThreadId)
-      .then((metadata) => {
+    void (async () => {
+      const retryDelaysMs = [0, 100, 300, 1_000] as const;
+      let appliedInitialMetadata = false;
+      for (const retryDelayMs of retryDelaysMs) {
+        if (retryDelayMs > 0) {
+          await new Promise<void>((resolve) => setTimeout(resolve, retryDelayMs));
+        }
+
         const activeState = this.runtime.get(sessionId);
-        if (!metadata || !activeState || activeState.mapper !== mapper || activeState.runTurnSeq !== runTurnSeq) return;
-        const events = mapper.applyChildThreadMetadata(childThreadId, metadata);
-        traceCodexIngest(threadId, "child/thread-resume", { childThreadId }, events);
+        if (!activeState || activeState.mapper !== mapper || activeState.runTurnSeq !== runTurnSeq) return;
+        let metadata: Awaited<ReturnType<CodexAppServer["getChildThreadMetadata"]>>;
+        try {
+          metadata = await server.getChildThreadMetadata(childThreadId);
+        } catch {
+          continue;
+        }
+        const currentState = this.runtime.get(sessionId);
+        if (!currentState || currentState.mapper !== mapper || currentState.runTurnSeq !== runTurnSeq) return;
+        if (!metadata) continue;
+
+        const metadataUpdate = appliedInitialMetadata
+          ? metadata.identity ? { identity: metadata.identity } : undefined
+          : metadata;
+        appliedInitialMetadata = true;
+        const events = metadataUpdate
+          ? mapper.applyChildThreadMetadata(childThreadId, metadataUpdate)
+          : [];
+        traceCodexIngest(threadId, "child/thread-read", { childThreadId }, events);
         const resolvedExecutionId = turnExecutionId
-          ?? activeState.nativeThreadExecutionIds.get(childThreadId);
+          ?? currentState.nativeThreadExecutionIds.get(childThreadId);
         for (const event of events) {
           this.recordGoalEvent(sessionId, event);
           this.emit("event", resolvedExecutionId ? { ...event, turnExecutionId: resolvedExecutionId } : event);
         }
-      })
+        if (metadata.identity) return;
+      }
+    })()
       .catch((error: unknown) => {
         logger.debug("Codex child metadata lookup failed", {
           sessionId,

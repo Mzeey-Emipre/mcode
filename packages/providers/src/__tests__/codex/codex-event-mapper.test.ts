@@ -1463,6 +1463,35 @@ describe("CodexEventMapper", () => {
     }]);
   });
 
+  it("updates an unnamed spawn with the identity from native child metadata", () => {
+    mapper = new CodexEventMapper("test-thread", "main-thread");
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "main-thread",
+        item: {
+          type: "collabAgentToolCall",
+          id: "spawn-without-name",
+          tool: "spawnAgent",
+          receiverThreadIds: ["child-with-title"],
+        },
+      },
+    });
+
+    const updates = mapper.applyChildThreadMetadata("child-with-title", {
+      identity: "read_docs_worker",
+    });
+
+    expect(updates).toContainEqual(expect.objectContaining({
+      type: "toolUse",
+      toolCallId: "spawn-without-name",
+      toolInput: expect.objectContaining({
+        agentName: "read_docs_worker",
+      }),
+    }));
+  });
+
   it("updates a completed native sub-agent when child settings arrive late", () => {
     mapper = new CodexEventMapper("test-thread", "main-thread");
     mapper.mapNotification({

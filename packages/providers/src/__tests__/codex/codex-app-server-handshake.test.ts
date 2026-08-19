@@ -628,17 +628,23 @@ describe("CodexAppServer.start (failed handshake teardown)", () => {
     }
   }, 10_000);
 
-  it("reads child metadata through thread/resume without replacing the active thread", async () => {
-    const resumeRequests: Array<Record<string, unknown>> = [];
+  it("reads active child identity without requiring thread/resume to succeed", async () => {
+    const readRequests: Array<Record<string, unknown>> = [];
     harnessFakeServer((req): Record<string, unknown> => {
       if (req.method === "thread/start") return { result: { thread: { id: "parent-thread" } } };
-      if (req.method === "thread/resume") {
-        resumeRequests.push(req as Record<string, unknown>);
+      if (req.method === "thread/read") {
+        readRequests.push(req as Record<string, unknown>);
+        const threadId = (req.params as { threadId?: string } | undefined)?.threadId;
         return {
           result: {
-            thread: { id: "child-thread" },
-            model: "gpt-5.6-sol",
-            reasoningEffort: "medium",
+            thread: threadId === "child-without-settings"
+              ? { id: threadId, agentNickname: "Ada", agentRole: "worker" }
+              : {
+                  id: "child-thread",
+                  name: "read_docs_worker",
+                  agentNickname: "Ada",
+                  agentRole: "worker",
+                },
           },
         };
       }
@@ -648,13 +654,15 @@ describe("CodexAppServer.start (failed handshake teardown)", () => {
 
     await server.start();
     await expect(server.getChildThreadMetadata("child-thread")).resolves.toEqual({
-      model: "gpt-5.6-sol",
-      reasoningEffort: "medium",
+      identity: "read_docs_worker",
+    });
+    await expect(server.getChildThreadMetadata("child-without-settings")).resolves.toEqual({
+      identity: "Ada",
     });
     await expect(server.getChildThreadMetadata("../invalid")).resolves.toBeNull();
 
     expect(server.threadId).toBe("parent-thread");
-    expect(resumeRequests).toHaveLength(1);
+    expect(readRequests).toHaveLength(2);
     await server.kill();
   }, 10_000);
 
