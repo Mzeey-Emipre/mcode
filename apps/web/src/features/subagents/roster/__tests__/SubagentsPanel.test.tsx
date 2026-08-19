@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CanonicalSubagentRoster, CanonicalSubagentRosterRow } from "@mcode/contracts";
 import { useDiffStore } from "@/stores/diffStore";
@@ -667,5 +667,382 @@ describe("SubagentsPanel", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: /Open Back child details, Active/ })).toHaveFocus());
     expect(viewport.scrollTop).toBe(88);
     expect(harness.residency.unmountDisplayConversation).toHaveBeenCalledWith("canonical-back");
+  });
+
+  it("shows Stop all only for two or more stoppable active rows", async () => {
+    const eligible = canonicalRow({
+      id: "eligible-stop-all",
+      identity: "Eligible child",
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+      canStop: true,
+    });
+    const unsupported = canonicalRow({
+      id: "unsupported-stop-all",
+      identity: "Unsupported child",
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+      canStop: false,
+    });
+    harness.loadCanonicalSubagentRoster.mockResolvedValue(canonicalRoster([eligible, unsupported], []));
+
+    render(<SubagentsPanel threadId="thread-1" />);
+
+    await screen.findByRole("button", { name: /Open Eligible child details, Active/ });
+    expect(screen.queryByTestId("subagent-stop-all")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Stop all active sub-agents" })).not.toBeInTheDocument();
+  });
+
+  it("excludes unsupported active rows from the Stop all targets", async () => {
+    const first = canonicalRow({
+      id: "first-stop-all",
+      identity: "First child",
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+      canStop: true,
+    });
+    const unsupported = canonicalRow({
+      id: "unsupported-stop-all-2",
+      identity: "Unsupported child",
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+      canStop: false,
+    });
+    const second = canonicalRow({
+      id: "second-stop-all",
+      identity: "Second child",
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+      canStop: true,
+    });
+    harness.loadCanonicalSubagentRoster.mockResolvedValue(canonicalRoster([first, unsupported, second], []));
+
+    render(<SubagentsPanel threadId="thread-1" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Stop all active sub-agents" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("First child");
+    expect(dialog).toHaveTextContent("Second child");
+    expect(dialog).not.toHaveTextContent("Unsupported child");
+    expect(dialog).not.toHaveTextContent("Ready");
+  });
+
+  it("freezes named and nested Stop all targets while later polls add children", async () => {
+    const parent = canonicalRow({
+      id: "frozen-parent",
+      identity: "Frozen parent",
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+      canStop: true,
+    });
+    const nested = canonicalRow({
+      id: "frozen-nested",
+      identity: "Frozen nested",
+      lineage: ["thread-1", "unknown-provider-id", "frozen-parent", "frozen-nested"],
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+      canStop: true,
+    });
+    const later = canonicalRow({
+      id: "later-child",
+      identity: "Later child",
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+      canStop: true,
+    });
+    harness.loadCanonicalSubagentRoster
+      .mockResolvedValueOnce(canonicalRoster([parent, nested], []))
+      .mockResolvedValueOnce(canonicalRoster([parent, nested, later], [], 2));
+    harness.stopCanonicalSubagent
+      .mockResolvedValueOnce({ childThreadId: parent.id, status: "interrupted" })
+      .mockResolvedValueOnce({ childThreadId: nested.id, status: "failed", message: "Provider rejected stop" });
+
+    render(<SubagentsPanel threadId="thread-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Stop all active sub-agents" }));
+    const dialog = await screen.findByRole("dialog");
+    const confirm = within(dialog).getByRole("button", { name: "Stop all" });
+    fireEvent.click(confirm);
+    fireEvent.click(confirm);
+    await waitFor(() => expect(harness.loadCanonicalSubagentRoster).toHaveBeenCalledTimes(2));
+    await screen.findByRole("button", { name: /Open Later child details, Active/, hidden: true });
+
+    expect(dialog).toHaveTextContent("Frozen parent");
+    expect(dialog).toHaveTextContent("Lineage: Frozen parent");
+    expect(dialog).not.toHaveTextContent("unknown-provider-id");
+    expect(dialog).not.toHaveTextContent("Later child");
+  });
+
+  it("builds a fresh Stop all snapshot after a safe close", async () => {
+    const first = canonicalRow({
+      id: "fresh-first",
+      identity: "Fresh first",
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+      canStop: true,
+    });
+    const second = canonicalRow({
+      id: "fresh-second",
+      identity: "Fresh second",
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+      canStop: true,
+    });
+    const added = canonicalRow({
+      id: "fresh-added",
+      identity: "Fresh added",
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+      canStop: true,
+    });
+    harness.loadCanonicalSubagentRoster
+      .mockResolvedValueOnce(canonicalRoster([first, second], []))
+      .mockResolvedValueOnce(canonicalRoster([first, second, added], [], 2));
+    harness.stopCanonicalSubagent
+      .mockResolvedValueOnce({ childThreadId: first.id, status: "interrupted" })
+      .mockResolvedValueOnce({ childThreadId: second.id, status: "failed", message: "Provider rejected stop" });
+
+    render(<SubagentsPanel threadId="thread-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Stop all active sub-agents" }));
+    const firstDialog = await screen.findByRole("dialog");
+    fireEvent.click(within(firstDialog).getByRole("button", { name: "Stop all" }));
+    await screen.findByTestId("subagent-stop-all-failure-summary");
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    fireEvent.click(await screen.findByRole("button", { name: "Stop all active sub-agents" }));
+    const secondDialog = await screen.findByRole("dialog");
+    expect(secondDialog).toHaveTextContent("Fresh added");
+  });
+
+  it("ignores a stale Stop all batch after the owning thread changes", async () => {
+    const oldFirst = canonicalRow({
+      id: "stale-first",
+      identity: "Stale first",
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+      canStop: true,
+    });
+    const oldSecond = canonicalRow({
+      id: "stale-second",
+      identity: "Stale second",
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+      canStop: true,
+    });
+    const newFirst = canonicalRow({
+      id: "new-first",
+      parentThreadId: "thread-2",
+      rootThreadId: "thread-2",
+      owningParentThreadId: "thread-2",
+      lineage: ["thread-2", "new-first"],
+      identity: "New first",
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+      canStop: true,
+    });
+    const newSecond = canonicalRow({
+      id: "new-second",
+      parentThreadId: "thread-2",
+      rootThreadId: "thread-2",
+      owningParentThreadId: "thread-2",
+      lineage: ["thread-2", "new-second"],
+      identity: "New second",
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+      canStop: true,
+    });
+    const oldFirstResult = deferred<{ childThreadId: string; status: "interrupted" }>();
+    const oldSecondResult = deferred<{ childThreadId: string; status: "interrupted" }>();
+    harness.loadCanonicalSubagentRoster
+      .mockResolvedValueOnce(canonicalRoster([oldFirst, oldSecond], []))
+      .mockResolvedValueOnce({
+        ...canonicalRoster([newFirst, newSecond], []),
+        owningParentThreadId: "thread-2",
+      });
+    harness.stopCanonicalSubagent.mockImplementation((_parentId: string, childId: string) => {
+      if (childId === oldFirst.id) return oldFirstResult.promise;
+      if (childId === oldSecond.id) return oldSecondResult.promise;
+      return Promise.resolve({ childThreadId: childId, status: "interrupted" as const });
+    });
+
+    const { rerender } = render(<SubagentsPanel threadId="thread-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Stop all active sub-agents" }));
+    const oldDialog = await screen.findByRole("dialog");
+    fireEvent.click(within(oldDialog).getByRole("button", { name: "Stop all" }));
+    await waitFor(() => expect(harness.stopCanonicalSubagent).toHaveBeenCalledTimes(2));
+
+    rerender(<SubagentsPanel threadId="thread-2" />);
+    await screen.findByRole("button", { name: /Open New first details, Active/ });
+    fireEvent.click(screen.getByRole("button", { name: "Stop all active sub-agents" }));
+    const newDialog = await screen.findByRole("dialog");
+    expect(newDialog).toHaveTextContent("New first");
+
+    oldFirstResult.resolve({ childThreadId: oldFirst.id, status: "interrupted" });
+    oldSecondResult.resolve({ childThreadId: oldSecond.id, status: "interrupted" });
+    await waitFor(() => expect(harness.loadCanonicalSubagentRoster).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("dialog")).toHaveTextContent("New first");
+    expect(screen.getByRole("dialog")).not.toHaveTextContent("Stale first");
+  });
+
+  it("settles Stop all calls independently and concurrently", async () => {
+    const first = canonicalRow({
+      id: "concurrent-first",
+      identity: "Concurrent first",
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+      canStop: true,
+    });
+    const second = canonicalRow({
+      id: "concurrent-second",
+      identity: "Concurrent second",
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+      canStop: true,
+    });
+    const firstResult = deferred<{ childThreadId: string; status: "interrupted" }>();
+    const secondResult = deferred<{ childThreadId: string; status: "interrupted" }>();
+    harness.loadCanonicalSubagentRoster.mockResolvedValue(canonicalRoster([first, second], []));
+    harness.stopCanonicalSubagent.mockImplementation((_parentId: string, childId: string) => (
+      childId === first.id ? firstResult.promise : secondResult.promise
+    ));
+
+    render(<SubagentsPanel threadId="thread-1" />);
+    const dialog = await (async () => {
+      fireEvent.click(await screen.findByRole("button", { name: "Stop all active sub-agents" }));
+      return screen.findByRole("dialog");
+    })();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Stop all" }));
+
+    await waitFor(() => expect(harness.stopCanonicalSubagent).toHaveBeenCalledTimes(2));
+    expect(within(dialog).getAllByText("Stopping")).toHaveLength(2);
+    firstResult.resolve({ childThreadId: first.id, status: "interrupted" });
+    await waitFor(() => expect(within(dialog).getByText("Stopped")).toBeInTheDocument());
+    await waitFor(() => expect(harness.loadCanonicalSubagentRoster).toHaveBeenCalledTimes(2));
+    expect(within(dialog).getByText("Stopping")).toBeInTheDocument();
+    secondResult.resolve({ childThreadId: second.id, status: "interrupted" });
+    await waitFor(() => expect(harness.loadCanonicalSubagentRoster).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("keeps failed Stop all targets open and retries only failed targets", async () => {
+    const failed = canonicalRow({
+      id: "failed-stop-all",
+      identity: "Failed child",
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+      canStop: true,
+    });
+    const successful = canonicalRow({
+      id: "successful-stop-all",
+      identity: "Successful child",
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+      canStop: true,
+    });
+    harness.loadCanonicalSubagentRoster.mockResolvedValue(canonicalRoster([failed, successful], []));
+    harness.stopCanonicalSubagent
+      .mockResolvedValueOnce({ childThreadId: failed.id, status: "failed", message: "Provider rejected stop" })
+      .mockResolvedValueOnce({ childThreadId: successful.id, status: "interrupted" })
+      .mockResolvedValueOnce({ childThreadId: failed.id, status: "already-terminal" });
+
+    render(<SubagentsPanel threadId="thread-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Stop all active sub-agents" }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Stop all" }));
+
+    await screen.findByTestId("subagent-stop-all-failure-summary");
+    expect(screen.getByTestId("subagent-stop-all-failure-summary")).toHaveTextContent("1 stop failed");
+    expect(within(screen.getByRole("dialog")).getByText("Stopped")).toBeInTheDocument();
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Retry failed" }));
+
+    await waitFor(() => expect(harness.stopCanonicalSubagent).toHaveBeenCalledTimes(3));
+    expect(harness.stopCanonicalSubagent.mock.calls.map(([parentId, childId]) => [parentId, childId])).toEqual([
+      [failed.owningParentThreadId, failed.id],
+      [successful.owningParentThreadId, successful.id],
+      [failed.owningParentThreadId, failed.id],
+    ]);
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+  });
+
+  it("uses accessible dialog semantics and returns focus to Stop all after a safe close", async () => {
+    const first = canonicalRow({
+      id: "focus-first",
+      identity: "Focus first",
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+      canStop: true,
+    });
+    const second = canonicalRow({
+      id: "focus-second",
+      identity: "Focus second",
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+      canStop: true,
+    });
+    harness.loadCanonicalSubagentRoster.mockResolvedValue(canonicalRoster([first, second], []));
+
+    render(<SubagentsPanel threadId="thread-1" />);
+    const trigger = await screen.findByRole("button", { name: "Stop all active sub-agents" });
+    fireEvent.click(trigger);
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveAttribute("aria-describedby");
+    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Cancel" })).toHaveFocus());
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
+  it("returns focus to the persistent panel when success removes the trigger", async () => {
+    const first = canonicalRow({
+      id: "focus-fallback-first",
+      identity: "Focus fallback first",
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+      canStop: true,
+    });
+    const second = canonicalRow({
+      id: "focus-fallback-second",
+      identity: "Focus fallback second",
+      activityState: "Active",
+      latestTurnStatus: "Running",
+      terminalOutcome: null,
+      canStop: true,
+    });
+    harness.loadCanonicalSubagentRoster
+      .mockResolvedValueOnce(canonicalRoster([first, second], []))
+      .mockResolvedValue(canonicalRoster([], [], 2));
+    harness.stopCanonicalSubagent.mockResolvedValue({ childThreadId: first.id, status: "interrupted" });
+
+    render(<SubagentsPanel threadId="thread-1" />);
+    const trigger = await screen.findByRole("button", { name: "Stop all active sub-agents" });
+    const panel = screen.getByRole("region", { name: "Subagents" });
+    fireEvent.click(trigger);
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Stop all" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.queryByTestId("subagent-stop-all")).not.toBeInTheDocument();
+    expect(panel).toHaveFocus();
   });
 });
