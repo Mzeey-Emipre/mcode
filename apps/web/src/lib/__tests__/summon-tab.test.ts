@@ -10,6 +10,7 @@ import { useDiffStore } from "@/stores/diffStore";
 import { useTerminalStore } from "@/features/terminal/state/terminalStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
+import { buildPlaceholderWorkspaceThread } from "@/lib/workspace-thread";
 
 const WID = "ws-1";
 const TID = "thread-1";
@@ -38,7 +39,7 @@ describe("summonTab", () => {
       ptyToThread: {},
     });
     useUiStore.setState({ primarySurface: "chat" });
-    useWorkspaceStore.setState({ activeWorkspaceId: WID, activeThreadId: TID });
+    useWorkspaceStore.setState({ activeWorkspaceId: WID, activeThreadId: TID, threads: [] });
   });
 
   function seedTerminal(): void {
@@ -98,6 +99,45 @@ describe("summonTab", () => {
       summonTab("terminal");
 
       expect(createTerminalForScope).toHaveBeenCalledWith(TID);
+    });
+
+    it("waits for a preparing thread to receive its persisted id before creating a terminal", () => {
+      const placeholder = buildPlaceholderWorkspaceThread({
+        id: "placeholder-1",
+        workspaceId: WID,
+        title: "Starting thread",
+        queuedMessage: "Start",
+        transportMode: "direct",
+        branch: "main",
+        clientPreparingContext: "new-direct",
+      });
+      useWorkspaceStore.setState({
+        activeThreadId: placeholder.id,
+        threads: [placeholder],
+      });
+
+      summonTab("terminal");
+
+      expect(createTerminalForScope).not.toHaveBeenCalled();
+      expect(panel()).toMatchObject({ visible: false, openTabs: [] });
+
+      const persistedThread = {
+        ...placeholder,
+        id: "thread-persisted",
+        clientPreparing: undefined,
+      };
+      useWorkspaceStore.setState({
+        activeThreadId: persistedThread.id,
+        threads: [persistedThread],
+      });
+
+      expect(createTerminalForScope).toHaveBeenCalledOnce();
+      expect(createTerminalForScope).toHaveBeenCalledWith(persistedThread.id);
+      expect(panel()).toMatchObject({
+        visible: true,
+        activeTab: "terminal",
+        openTabs: ["terminal"],
+      });
     });
   });
 
