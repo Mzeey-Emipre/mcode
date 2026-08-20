@@ -265,7 +265,6 @@ describe("CodexProvider permission flow", () => {
       );
       expect(events).toEqual([
         { type: AgentEventType.Error, threadId, error: "simulated fatal" },
-        { type: AgentEventType.Ended, threadId },
       ]);
     } finally {
       start.mockRestore();

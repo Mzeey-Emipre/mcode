@@ -24,7 +24,7 @@ interface AgentOrchestrationDependencies {
   publishAgentEvent: (event: AgentEvent) => void;
   publishPermissionRequest: (request: PermissionRequest) => void;
   publishPermissionResolved: (payload: { requestId: string; decision: "allow" | "allow-session" | "deny" | "cancelled" }) => void;
-  publishThreadStatus: (payload: { threadId: string; status: "completed" | "errored" }) => void;
+  publishThreadStatus: (payload: { threadId: string; status: "completed" | "errored" | "interrupted" }) => void;
   publishThreadPrLinked: (payload: { threadId: string; prNumber: number; prStatus: string }) => void;
 }
 

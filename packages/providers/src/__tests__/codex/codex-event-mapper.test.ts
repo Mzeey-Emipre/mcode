@@ -2498,6 +2498,57 @@ describe("CodexEventMapper", () => {
     expect(laterWait).toEqual([]);
   });
 
+  it("preserves an interrupted native child turn outcome", () => {
+    mapper = new CodexEventMapper("test-thread", "main-thread");
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "main-thread",
+        item: { type: "collabAgentToolCall", id: "spawn-interrupted", tool: "spawnAgent" },
+      },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "main-thread",
+        item: {
+          type: "collabAgentToolCall",
+          id: "spawn-interrupted",
+          tool: "spawnAgent",
+          receiverThreadIds: ["child-interrupted"],
+        },
+      },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/started",
+      params: { threadId: "child-interrupted", turn: { id: "child-turn-interrupted" } },
+    });
+
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/completed",
+      params: {
+        threadId: "child-interrupted",
+        turn: { id: "child-turn-interrupted", status: "interrupted" },
+      },
+    });
+
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "turnComplete",
+        reason: "interrupted",
+        codexChild: expect.objectContaining({
+          nativeThreadId: "child-interrupted",
+          nativeTurnId: "child-turn-interrupted",
+          outcome: "interrupted",
+        }),
+      }),
+    ]));
+  });
+
   it("completes parallel spawnAgents independently from wait states", () => {
     mapper.mapNotification({
       jsonrpc: "2.0",

@@ -1,4 +1,4 @@
-import type { AgentItem, AgentModelState, AgentTurn, Message } from "@mcode/contracts";
+import type { AgentItem, AgentModelState, AgentTurn, Message, TurnOutcome } from "@mcode/contracts";
 import type { ToolCall } from "@/transport/types";
 import type { ThoughtSegment, TurnFooterSummary } from "../narrative/types";
 
@@ -70,7 +70,37 @@ function toolInput(payload: Record<string, unknown>): Record<string, unknown> {
 }
 
 function isTerminalTurn(turn: AgentTurn): boolean {
-  return turn.status === "Completed" || turn.status === "Interrupted" || turn.status === "Errored";
+  return turn.status === "Completed"
+    || turn.status === "Cancelled"
+    || turn.status === "Interrupted"
+    || turn.status === "Errored";
+}
+
+function terminalTurnOutcome(turn: AgentTurn): TurnOutcome | undefined {
+  switch (turn.status) {
+    case "Cancelled":
+      return "cancelled";
+    case "Interrupted":
+      return "interrupted";
+    case "Errored":
+      return "errored";
+    case "Completed":
+      return "completed";
+    default:
+      return undefined;
+  }
+}
+
+function messageOutcome(message: Message | undefined): TurnOutcome | null | undefined {
+  return message
+    ? (message as Message & { outcome?: TurnOutcome | null }).outcome
+    : undefined;
+}
+
+function messageOutcomeExecutionId(message: Message | undefined): string | null | undefined {
+  return message
+    ? (message as Message & { outcomeExecutionId?: string | null }).outcomeExecutionId
+    : undefined;
 }
 
 function canonicalTurnSummary(turn: AgentTurn, items: readonly AgentItem[]): TurnFooterSummary {
@@ -93,6 +123,11 @@ function canonicalTurnSummary(turn: AgentTurn, items: readonly AgentItem[]): Tur
   });
   const turnStartedAt = timestamp(turn.startedAt ?? turn.createdAt);
   const turnEndedAt = timestamp(turn.endedAt ?? turn.updatedAt);
+  const answer = [...items].reverse()
+    .map((item) => canonicalMessage(item.payload))
+    .find((message) => message?.role === "assistant");
+  const outcome = messageOutcome(answer) ?? terminalTurnOutcome(turn);
+  const outcomeExecutionId = messageOutcomeExecutionId(answer);
   return {
     counts: {
       steps: topLevelTools.length,
@@ -104,6 +139,8 @@ function canonicalTurnSummary(turn: AgentTurn, items: readonly AgentItem[]): Tur
       : turnStartedAt !== undefined && turnEndedAt !== undefined
         ? Math.max(0, turnEndedAt - turnStartedAt)
         : null,
+    ...(outcome !== undefined && outcome !== "completed" ? { outcome } : {}),
+    ...(outcomeExecutionId !== undefined ? { outcomeExecutionId } : {}),
   };
 }
 

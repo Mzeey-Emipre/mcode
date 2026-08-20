@@ -60,6 +60,7 @@ describe("AgentEvent ended outcome", () => {
     const parsed = AgentEventSchema().parse({
       type: "ended",
       threadId: "t-1",
+      turnExecutionId: "00000000-0000-4000-8000-000000000001",
       outcome: "errored",
       reason: "codex_idle_timeout",
     });
@@ -67,6 +68,30 @@ describe("AgentEvent ended outcome", () => {
     expect(parsed.type).toBe(AgentEventType.Ended);
     if (parsed.type !== AgentEventType.Ended) throw new Error("unreachable");
     expect(parsed.outcome).toBe("errored");
+  });
+
+  it.each(["completed", "cancelled", "interrupted", "errored"] as const)(
+    "accepts the shared %s terminal outcome",
+    (outcome) => {
+      const parsed = AgentEventSchema().parse({
+        type: "ended",
+        threadId: "t-1",
+        turnExecutionId: "00000000-0000-4000-8000-000000000001",
+        outcome,
+      });
+
+      expect(parsed.type).toBe(AgentEventType.Ended);
+      if (parsed.type !== AgentEventType.Ended) throw new Error("unreachable");
+      expect(parsed.outcome).toBe(outcome);
+    },
+  );
+
+  it("rejects an Ended event without execution identity", () => {
+    expect(() => AgentEventSchema().parse({
+      type: "ended",
+      threadId: "t-1",
+      outcome: "interrupted",
+    })).toThrow();
   });
 });
 

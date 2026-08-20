@@ -1,4 +1,4 @@
-import type { PermissionDecision } from "@mcode/contracts";
+import type { PermissionDecision, TurnOutcome } from "@mcode/contracts";
 import type { Message, ToolCall, HookExecution, ToolCallRecord, ThoughtSegmentRecord, HookExecutionRecord } from "@/transport/types";
 import type { ThoughtSegment, TurnFooterSummary } from "../narrative/types";
 import { computeLiveStreamingText } from "../narrative/build-narrative";
@@ -46,6 +46,14 @@ export interface CurrentTurnResponseIdentity {
   messageId?: string;
   responseKey?: string;
   responseKeysByMessageId?: Record<string, string>;
+}
+
+function messageOutcome(message: Message): TurnOutcome | null | undefined {
+  return (message as Message & { outcome?: TurnOutcome | null }).outcome;
+}
+
+function messageOutcomeExecutionId(message: Message): string | null | undefined {
+  return (message as Message & { outcomeExecutionId?: string | null }).outcomeExecutionId;
 }
 
 /** Returns the stable final-response key for a live turn. */
@@ -253,7 +261,24 @@ export function buildStableItems(
       // Turn footer (step / sub-agent counts + duration) renders AFTER the
       // assistant body — closing the turn rather than separating its actions
       // from its answer.
-      const turnSummary = turnSummariesByMessageId?.[msg.id];
+      const canonicalSummary = turnSummariesByMessageId?.[msg.id];
+      const explicitOutcome = messageOutcome(msg);
+      const outcome = explicitOutcome ?? canonicalSummary?.outcome;
+      const outcomeExecutionId = messageOutcomeExecutionId(msg) ?? canonicalSummary?.outcomeExecutionId;
+      const turnSummary = canonicalSummary
+        ? {
+            ...canonicalSummary,
+            ...(outcome !== undefined ? { outcome } : {}),
+            ...(outcomeExecutionId !== undefined ? { outcomeExecutionId } : {}),
+          }
+        : outcome != null && outcome !== "completed"
+          ? {
+              counts: { steps: 0, thoughts: 0, subagents: 0 },
+              durationMs: null,
+              outcome,
+              ...(outcomeExecutionId !== undefined ? { outcomeExecutionId } : {}),
+            }
+          : undefined;
       if (hasPersistedFooter || turnSummary) {
         items.push({
           key: `persisted-turn-footer-${msg.id}`,
@@ -511,7 +536,16 @@ function sameVirtualItem(
     case "persisted-late-hooks":
       return left.type === "persisted-late-hooks" && left.messageId === right.messageId;
     case "persisted-turn-footer":
-      return left.type === "persisted-turn-footer" && left.messageId === right.messageId;
+      return (
+        left.type === "persisted-turn-footer" &&
+        left.messageId === right.messageId &&
+        left.summary?.counts.steps === right.summary?.counts.steps &&
+        left.summary?.counts.thoughts === right.summary?.counts.thoughts &&
+        left.summary?.counts.subagents === right.summary?.counts.subagents &&
+        left.summary?.durationMs === right.summary?.durationMs &&
+        left.summary?.outcome === right.summary?.outcome &&
+        left.summary?.outcomeExecutionId === right.summary?.outcomeExecutionId
+      );
     case "narrative-indicator":
       return (
         left.type === "narrative-indicator" &&

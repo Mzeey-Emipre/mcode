@@ -742,7 +742,7 @@ export class NarrativeStore {
     for (const toolCall of toolCalls) {
       toolCall.toolCallId ??= randomUUID();
       if (toolCall.status === "running") {
-        toolCall.status = outcome === "errored"
+        toolCall.status = outcome === "errored" || outcome === "interrupted"
           ? "failed"
           : outcome === "cancelled"
             ? "cancelled"

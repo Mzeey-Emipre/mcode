@@ -106,6 +106,32 @@ describe("TurnRuntimeRegistry", () => {
     })).toBeUndefined();
   });
 
+  it("rejects an untagged Ended signal instead of guessing the active execution", () => {
+    const runtime = new TurnRuntimeRegistry();
+    runtime.start("thread-1");
+
+    expect(runtime.normalizeEvent({
+      type: AgentEventType.Ended,
+      threadId: "thread-1",
+    } as AgentEvent)).toBeUndefined();
+  });
+
+  it("classifies an outcome-less Ended for the current execution as interrupted", () => {
+    const runtime = new TurnRuntimeRegistry();
+    const first = runtime.start("thread-1");
+    runtime.terminalize("thread-1", first.turnExecutionId!, "completed");
+    const second = runtime.start("thread-1");
+
+    const ended = runtime.normalizeEvent({
+      type: AgentEventType.Ended,
+      threadId: "thread-1",
+      turnExecutionId: second.turnExecutionId!,
+    });
+    expect(ended?.turnExecutionId).toBe(second.turnExecutionId);
+    expect(runtime.terminalize("thread-1", second.turnExecutionId!, "interrupted")).toBe(true);
+    expect(runtime.snapshot("thread-1")?.phase).toBe("interrupted");
+  });
+
   it("bounds terminal retention without evicting active turns", () => {
     const runtime = new TurnRuntimeRegistry();
     const active = runtime.start("active");

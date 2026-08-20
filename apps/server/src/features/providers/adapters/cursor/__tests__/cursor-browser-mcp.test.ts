@@ -150,6 +150,7 @@ describe("Cursor browser MCP configuration", () => {
     provider.liveSessionIds = new Set();
     provider.planQuestionModeThreads = new Set();
     provider.sdkSessionIds = new Map();
+    provider.pendingTurnExecutionIds = new Map();
     provider.spawnChild = vi.fn().mockResolvedValue({
       child,
       browserHttpMcpSupported: true,
@@ -432,6 +433,7 @@ describe("Cursor browser MCP configuration", () => {
     provider.pendingStops = new Set();
     provider.liveSessionIds = new Set(["mcode-a"]);
     provider.planQuestionModeThreads = new Set();
+    provider.pendingTurnExecutionIds = new Map();
     provider.spawnChild = vi.fn().mockResolvedValue(replacement);
     provider.openLogicalSession = vi.fn(async (_state: unknown, _resume: boolean, servers: unknown) => {
       mcpServers = servers;

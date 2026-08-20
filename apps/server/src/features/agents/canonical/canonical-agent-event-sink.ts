@@ -40,6 +40,7 @@ import {
   type Message,
   type NarrativeEntry,
   type ProviderIdentity,
+  type TurnOutcome,
   ToolCallRecordSchema,
   ThoughtSegmentRecordSchema,
 } from "@mcode/contracts";
@@ -82,7 +83,7 @@ export interface CanonicalAgentCheckpoint {
   lastDurableSequence: number;
   nativeCursor: unknown | null;
   phase: string;
-  terminalOutcome: "completed" | "errored" | "cancelled" | null;
+  terminalOutcome: TurnOutcome | null;
   error: string | null;
   updatedAt: string;
 }
@@ -93,7 +94,7 @@ export interface CanonicalAgentCommitInput {
   turnId: string;
   executionId: string;
   phase: string;
-  terminalOutcome?: "completed" | "errored" | "cancelled";
+  terminalOutcome?: TurnOutcome;
   error?: string;
   nativeCursor?: unknown;
   events: readonly CanonicalAgentEventDraft[] | (() => readonly CanonicalAgentEventDraft[]);
@@ -136,7 +137,7 @@ export interface CanonicalParentTurnFinishInput {
   executionId: string;
   providerId: string;
   providerIdentities: readonly ProviderIdentity[];
-  outcome: "completed" | "errored" | "cancelled";
+  outcome: TurnOutcome;
   error?: string;
   projectTurn: () => CanonicalParentTurnProjection;
   finalizeCompatibility?: () => void;
@@ -229,14 +230,14 @@ export interface CodexChildItemInput {
 export interface CodexChildTurnFinishInput {
   childThreadId: string;
   nativeTurnId: string;
-  outcome: "completed" | "errored" | "cancelled";
+  outcome: TurnOutcome;
   error?: string;
 }
 
 /** Input used to terminalize the latest running canonical child turn by thread identity. */
 export interface CanonicalChildTurnFinishInput {
   childThreadId: string;
-  outcome: "completed" | "errored" | "cancelled";
+  outcome: TurnOutcome;
   error?: string;
 }
 
@@ -742,9 +743,9 @@ export class CanonicalAgentEventSink {
       SELECT checkpoint.*
       FROM canonical_agent_ingest_checkpoints checkpoint
       JOIN canonical_agent_turns turn ON turn.id = checkpoint.turn_id
-      WHERE checkpoint.terminal_outcome = 'cancelled'
-        AND checkpoint.phase = 'interrupted'
-        AND turn.status = 'Interrupted'
+      WHERE checkpoint.terminal_outcome IN ('interrupted', 'errored')
+        AND checkpoint.phase IN ('interrupted', 'errored')
+        AND turn.status IN ('Interrupted', 'Errored')
       ORDER BY checkpoint.updated_at ASC, checkpoint.execution_id ASC
       LIMIT ?
     `).all(MAX_TURN_RECOVERIES + 1) as Record<string, unknown>[];
@@ -807,8 +808,8 @@ export class CanonicalAgentEventSink {
             UPDATE canonical_agent_ingest_checkpoints
             SET phase = 'retried', updated_at = ?
             WHERE execution_id = ?
-              AND phase = 'interrupted'
-              AND terminal_outcome = 'cancelled'
+              AND phase IN ('interrupted', 'errored')
+              AND terminal_outcome IN ('interrupted', 'errored')
           `).run(now, input.retryOfExecutionId);
           if (consumed.changes !== 1) {
             throw new Error(`Interrupted execution not found: ${input.retryOfExecutionId}`);
@@ -2099,7 +2100,7 @@ export class CanonicalAgentEventSink {
   finishCodexChildTurn(input: CodexChildTurnFinishInput): AgentTurn {
     const turn = this.loadCodexChildTurn(input.childThreadId, input.nativeTurnId);
     if (!turn) throw new Error(`Codex child turn not found: ${input.nativeTurnId}`);
-    if (["Completed", "Interrupted", "Errored"].includes(turn.status)) return turn;
+    if (["Completed", "Cancelled", "Interrupted", "Errored"].includes(turn.status)) return turn;
     return this.finishCanonicalChildTurnRecord(turn, input.outcome, input.error);
   }
 
@@ -2132,8 +2133,10 @@ export class CanonicalAgentEventSink {
     const payload: CanonicalAgentEvent = outcome === "completed"
       ? { type: "turn.completed", endedAt }
       : outcome === "cancelled"
-        ? { type: "turn.interrupted", endedAt, reason: error ?? "Child turn cancelled" }
-        : { type: "turn.errored", endedAt, error: error ?? "Child turn failed" };
+        ? { type: "turn.cancelled", endedAt, reason: error ?? "Child turn cancelled" }
+        : outcome === "interrupted"
+          ? { type: "turn.interrupted", endedAt, reason: error ?? "Child turn interrupted" }
+          : { type: "turn.errored", endedAt, error: error ?? "Child turn failed" };
     this.commit({
       threadId: thread.id,
       turnId: turn.id,
@@ -2232,38 +2235,82 @@ export class CanonicalAgentEventSink {
     const thread = this.loadThread(checkpoint.threadId);
     if (!thread) throw new Error(`Canonical thread not found: ${checkpoint.threadId}`);
     const endedAt = new Date().toISOString();
+    const projectedAssistant = this.loadTerminalProjection(checkpoint.turnId).message;
+    const recoveryProjection = projectedAssistant
+      ? {
+          ...projectedAssistant,
+          is_internal: false,
+          outcome: "interrupted" as const,
+          outcomeExecutionId: executionId,
+        }
+      : null;
     return this.commit({
       threadId: checkpoint.threadId,
       turnId: checkpoint.turnId,
       executionId,
       phase: "interrupted",
-      terminalOutcome: "cancelled",
+      terminalOutcome: "interrupted",
       error: reason,
       nativeCursor: checkpoint.nativeCursor ?? undefined,
-      events: [{
-        eventId: `${executionId}:recovery-thread-idle`,
-        routing: { threadId: checkpoint.threadId, executionId },
-        sourceProviderId: thread.providerId,
-        sourceIdentities: thread.providerIdentities,
-        payload: {
-          type: "thread.recorded",
-          thread: {
-            ...thread,
-            activityState: "Idle",
-            updatedAt: endedAt,
+      projectCompatibility: () => {
+        if (!projectedAssistant) return;
+        this.db.prepare(`
+          UPDATE messages
+          SET is_internal = 0, outcome = ?, outcome_execution_id = ?
+          WHERE id = ? AND role = 'assistant'
+        `).run("interrupted", executionId, projectedAssistant.id);
+      },
+      events: () => [
+        {
+          eventId: `${executionId}:recovery-thread-idle`,
+          routing: { threadId: checkpoint.threadId, executionId },
+          sourceProviderId: thread.providerId,
+          sourceIdentities: thread.providerIdentities,
+          payload: {
+            type: "thread.recorded",
+            thread: {
+              ...thread,
+              activityState: "Idle",
+              updatedAt: endedAt,
+            },
           },
         },
-      }, {
-        eventId: `${executionId}:recovery-interrupted`,
-        routing: {
-          threadId: checkpoint.threadId,
-          turnId: checkpoint.turnId,
-          executionId,
+        ...(recoveryProjection ? [{
+          eventId: `${executionId}:recovery-assistant-outcome:${recoveryProjection.id}`,
+          routing: {
+            threadId: checkpoint.threadId,
+            turnId: checkpoint.turnId,
+            executionId,
+            itemId: `message:${recoveryProjection.id}`,
+          },
+          sourceProviderId: thread.providerId,
+          sourceIdentities: thread.providerIdentities,
+          payload: {
+            type: "item.recorded" as const,
+            item: {
+              id: `message:${recoveryProjection.id}`,
+              threadId: checkpoint.threadId,
+              turnId: checkpoint.turnId,
+              kind: "message" as const,
+              providerIdentities: thread.providerIdentities,
+              payload: { projection: "message", message: recoveryProjection },
+              createdAt: recoveryProjection.timestamp,
+              updatedAt: endedAt,
+            },
+          },
+        }] : []),
+        {
+          eventId: `${executionId}:recovery-interrupted`,
+          routing: {
+            threadId: checkpoint.threadId,
+            turnId: checkpoint.turnId,
+            executionId,
+          },
+          sourceProviderId: thread.providerId,
+          sourceIdentities: thread.providerIdentities,
+          payload: { type: "turn.interrupted", endedAt, reason },
         },
-        sourceProviderId: thread.providerId,
-        sourceIdentities: thread.providerIdentities,
-        payload: { type: "turn.interrupted", endedAt, reason },
-      }],
+      ],
     });
   }
 
@@ -2298,7 +2345,7 @@ export class CanonicalAgentEventSink {
       turn: this.loadTurn(input.turnId),
       checkpoint,
     }), "utf8");
-    const terminalEventId = `${input.executionId}:turn.${input.outcome === "cancelled" ? "interrupted" : input.outcome}`;
+    const terminalEventId = `${input.executionId}:turn.${input.outcome}`;
     let latest: Omit<CanonicalAgentBatchedCommitResult, "writeBatches"> | null = null;
     const published: CanonicalAgentEventEnvelope[] = [];
     const pendingPublication: CanonicalAgentEventEnvelope[] = [];
@@ -2786,7 +2833,7 @@ export class CanonicalAgentEventSink {
       executionId: string;
       providerId: string;
       providerIdentities: readonly ProviderIdentity[];
-      outcome: "completed" | "errored" | "cancelled";
+      outcome: TurnOutcome;
       error?: string;
     },
     projection: CanonicalParentTurnProjection | null,
@@ -2797,8 +2844,10 @@ export class CanonicalAgentEventSink {
     const terminalPayload: CanonicalAgentEvent = input.outcome === "completed"
       ? { type: "turn.completed", endedAt }
       : input.outcome === "cancelled"
-        ? { type: "turn.interrupted", endedAt, reason: input.error ?? "Turn cancelled" }
-        : { type: "turn.errored", endedAt, error: input.error ?? "Provider turn failed" };
+        ? { type: "turn.cancelled", endedAt, reason: input.error ?? "Turn cancelled" }
+        : input.outcome === "interrupted"
+          ? { type: "turn.interrupted", endedAt, reason: input.error ?? "Turn interrupted" }
+          : { type: "turn.errored", endedAt, error: input.error ?? "Provider turn failed" };
     const events: CanonicalAgentEventDraft[] = [];
     const currentThread = this.loadThread(input.threadId);
     if (currentThread
@@ -3167,6 +3216,7 @@ export class CanonicalAgentEventSink {
 
   private isTerminalPayload(payload: CanonicalAgentEvent): boolean {
     return payload.type === "turn.completed"
+      || payload.type === "turn.cancelled"
       || payload.type === "turn.interrupted"
       || payload.type === "turn.errored"
       || payload.type === "ingest.overflow";

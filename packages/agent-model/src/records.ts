@@ -50,6 +50,7 @@ export const AgentTurnStatusSchema = z.enum([
   "Pending",
   "Running",
   "Completed",
+  "Cancelled",
   "Interrupted",
   "Errored",
 ]);

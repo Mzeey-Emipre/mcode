@@ -116,6 +116,7 @@ function build(options: { db?: Database.Database; canonicalSink?: CanonicalAgent
     }),
     findByIdInThread: vi.fn(),
     listByThreadUpToSequence: vi.fn(() => []),
+    setAssistantOutcome: vi.fn(),
   } as unknown as MessageRepo;
   const gitService = {
     resolveWorkingDir: vi.fn(() => "/workspace"),
@@ -989,14 +990,10 @@ describe("AgentService narrative persistence", () => {
       codexChild: { ...childEvidence, nativeItemId: "provider-child-message", itemEventKey: "completed" },
     });
     providerEmitter.emit("event", {
-      type: AgentEventType.TurnComplete,
+      type: AgentEventType.Ended,
       threadId: THREAD_ID,
       turnExecutionId: executionId,
-      reason: "completed",
-      costUsd: null,
-      tokensIn: 0,
-      tokensOut: 0,
-      codexChild: { ...childEvidence, outcome: "completed" },
+      codexChild: childEvidence,
     });
 
     const child = canonicalSink.loadCodexChildDelegation(
@@ -1064,7 +1061,7 @@ describe("AgentService narrative persistence", () => {
     expect(JSON.stringify(parentRows)).not.toContain("secret-child-message");
     expect(JSON.stringify(parentRows)).not.toContain("secret-child-narration");
     expect(JSON.stringify(parentRows)).not.toContain("secret child prompt");
-    expect(canonicalSink.loadTurn(child.collaborationAction.target.turnId!)?.status).toBe("Completed");
+    expect(canonicalSink.loadTurn(child.collaborationAction.target.turnId!)?.status).toBe("Interrupted");
   });
 
   it("persists an actionable parent failure record when child persistence fails", () => {
