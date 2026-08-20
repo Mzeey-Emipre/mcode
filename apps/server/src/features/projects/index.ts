@@ -33,3 +33,9 @@ export type { WorktreeDirectoryRemoverDependencies } from "./worktrees/worktree-
 
 /** Provisions and schedules cleanup for project worktrees. */
 export { ProjectWorktreeService } from "./worktrees/project-worktree-service.js";
+
+/** Persists private workspace environment documents with revision checks. */
+export {
+  WorkspaceEnvironmentService,
+} from "./environment/workspace-environment-service.js";
+export { WorkspaceEnvironmentServiceError } from "./environment/workspace-environment-errors.js";

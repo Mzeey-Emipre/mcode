@@ -1,5 +1,13 @@
 import { z } from "zod";
 import { WorkspaceSchema, WorkspaceEnrichmentSchema } from "../models/workspace.js";
+import {
+  WorkspaceEnvironmentReadResultSchema,
+  WorkspaceEnvironmentSaveInputSchema,
+} from "../models/workspace-environment.js";
+import type {
+  WorkspaceEnvironmentReadResult,
+  WorkspaceEnvironmentSaveInput,
+} from "../models/workspace-environment.js";
 import { ThreadSchema, RecentThreadSchema } from "../models/thread.js";
 import { ThreadModeSchema, PermissionModeSchema, InteractionModeSchema, OrchestrationModeSchema } from "../models/enums.js";
 import { PaginatedMessagesSchema } from "../models/message.js";
@@ -506,6 +514,14 @@ export const WS_METHODS = lazySchema(() => ({
       name: z.string().trim().min(1).max(120),
     }),
     result: WorkspaceSchema(),
+  },
+  "workspace.environment.read": {
+    params: z.object({ workspaceId: z.string().min(1).max(256) }).strict() as z.ZodType<{ workspaceId: string }>,
+    result: WorkspaceEnvironmentReadResultSchema() as z.ZodType<WorkspaceEnvironmentReadResult>,
+  },
+  "workspace.environment.save": {
+    params: WorkspaceEnvironmentSaveInputSchema() as z.ZodType<WorkspaceEnvironmentSaveInput>,
+    result: WorkspaceEnvironmentReadResultSchema() as z.ZodType<WorkspaceEnvironmentReadResult>,
   },
   "workspace.delete": {
     params: z.object({ id: z.string() }),

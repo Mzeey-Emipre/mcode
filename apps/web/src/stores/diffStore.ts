@@ -5,7 +5,7 @@ import { defaultReviewView, type ReviewChangeState } from "@/lib/review-views";
 export type { GitCommit, BranchComparison };
 
 /** Active tab in the right panel. */
-export type RightPanelTab = "tasks" | "changes" | "preview" | "terminal" | "subagents" | "coordination";
+export type RightPanelTab = "tasks" | "changes" | "preview" | "terminal" | "subagents" | "coordination" | "environment";
 
 /** Selected roster view within a thread's Subagents panel. */
 export type SubagentRosterTab = "active" | "finished";

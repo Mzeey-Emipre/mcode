@@ -10,7 +10,9 @@ import { useProviderAvailabilityStore } from "@/stores/providerAvailabilityStore
 /** Re-exported transport and domain types for use across the web app. */
 export type { McodeTransport, Workspace, Thread, Message, ToolCall, HookExecution, GitBranch, GitRemoteUrl, WorktreeInfo, PermissionMode, InteractionMode, AttachmentMeta, StoredAttachment, ProviderCatalogRequest, ProviderCatalogSnapshot, PrInfo, PrDetail, PullRequestCapabilities, PullRequestCapabilityLimitation, PullRequestError, PullRequestIdentity, PullRequestRelationship, PullRequestState, PullRequestSummary, PullRequestFile, PullRequestFileChangeType, PullRequestFilePatchStatus, PullRequestPatchResult, ToolCallRecord, ThoughtSegmentRecord, HookExecutionRecord, Settings, PartialSettings, PlanAnswer, TerminalProfileList, TerminalWorkspacePreference, TerminalPreferencesResult } from "./types";
 export { PERMISSION_MODES, INTERACTION_MODES } from "./types";
+export type { WorkspaceEnvironmentDocument, WorkspaceEnvironmentReadResult } from "./types";
 export { pushEmitter } from "./ws-transport";
+export { RpcError } from "./ws-transport";
 
 /** Default server URL when running standalone (no Electron shell). */
 const DEFAULT_SERVER_URL = "ws://localhost:19400";

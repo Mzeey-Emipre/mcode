@@ -83,6 +83,7 @@ export function reconcileWarmPreviewScopes(
 }
 import { SubagentsPanel } from "@/features/subagents";
 import { CoordinationPanel } from "./CoordinationPanel";
+import { ProjectEnvironmentPanel } from "@/features/projects/environment";
 
 const EMPTY_SCOPE_TERMINALS: readonly TerminalInstance[] = [];
 
@@ -704,6 +705,15 @@ export function RightPanel() {
                 key={activeThreadId}
                 workspaceId={activeWorkspaceId}
                 threadId={activeThreadId}
+              />
+            )}
+          {renderedActiveTab === "environment" &&
+            renderedOpenTabs.includes("environment") &&
+            activeWorkspaceId && (
+              <ProjectEnvironmentPanel
+                key={activeWorkspaceId}
+                workspaceId={activeWorkspaceId}
+                active
               />
             )}
           <div
