@@ -18,6 +18,8 @@ import { mockTransport, createMockThread, createMockWorkspace } from "@/__tests_
 import type { GitBranch } from "@/transport";
 
 let lastComposerText = "";
+let lastFileAutocompleteOptions: Record<string, unknown> | undefined;
+let lastSlashCommandOptions: Record<string, unknown> | undefined;
 const EMPTY_QUEUE: [] = [];
 
 const branch = (name: string, isCurrent = false): GitBranch => ({
@@ -65,29 +67,35 @@ vi.mock("@/components/chat/lexical", () => ({
 
 vi.mock("@/components/chat/useFileAutocomplete", () => ({
   clearFileListCache: vi.fn(),
-  useFileAutocomplete: () => ({
-    suggestions: [],
-    query: "",
-    isOpen: false,
-    triggerStart: 0,
-    selectSuggestion: vi.fn(),
-    handleInputChange: vi.fn(),
-    dismiss: vi.fn(),
-  }),
+  useFileAutocomplete: (options: Record<string, unknown>) => {
+    lastFileAutocompleteOptions = options;
+    return {
+      suggestions: [],
+      query: "",
+      isOpen: false,
+      triggerStart: 0,
+      selectSuggestion: vi.fn(),
+      handleInputChange: vi.fn(),
+      dismiss: vi.fn(),
+    };
+  },
 }));
 
 vi.mock("@/components/chat/useSlashCommand", () => ({
-  useSlashCommand: () => ({
-    state: null,
-    selectedIndex: 0,
-    anchorRect: null,
-    isOpen: false,
-    onInputChange: vi.fn(),
-    onDismiss: vi.fn(),
-    onSelect: vi.fn(),
-    onKeyDown: vi.fn(),
-    onRetry: vi.fn(),
-  }),
+  useSlashCommand: (options: Record<string, unknown>) => {
+    lastSlashCommandOptions = options;
+    return {
+      state: null,
+      selectedIndex: 0,
+      anchorRect: null,
+      isOpen: false,
+      onInputChange: vi.fn(),
+      onDismiss: vi.fn(),
+      onSelect: vi.fn(),
+      onKeyDown: vi.fn(),
+      onRetry: vi.fn(),
+    };
+  },
 }));
 
 vi.mock("@/components/chat/ModeSelector", () => ({
@@ -231,6 +239,42 @@ function seedComposerState(
   return workspace;
 }
 
+function seedPreparingComposerState(
+  context:
+    | "new-direct"
+    | "new-worktree"
+    | "new-existing-worktree"
+    | "branch-direct"
+    | "branch-worktree"
+    | "branch-existing-worktree",
+) {
+  const workspace = createMockWorkspace({ id: "ws-1", is_git_repo: true });
+  const isExistingWorktree = context.endsWith("existing-worktree");
+  const placeholder = createMockThread({
+    id: "thread-placeholder",
+    workspace_id: workspace.id,
+    mode: isExistingWorktree || context.endsWith("worktree") ? "worktree" : "direct",
+    provider: "codex",
+    worktree_path: isExistingWorktree ? "/repo/.worktrees/selected" : null,
+  });
+  useWorkspaceStore.setState({
+    workspaces: [workspace],
+    activeWorkspaceId: workspace.id,
+    threads: [{ ...placeholder, clientPreparing: true, clientPreparingContext: context }],
+    activeThreadId: placeholder.id,
+    branches: [branch("main", true)],
+    newThreadMode: isExistingWorktree
+      ? "existing-worktree"
+      : context.endsWith("worktree")
+        ? "worktree"
+        : "direct",
+    newThreadBranch: "main",
+    selectedWorktree: isExistingWorktree
+      ? { name: "selected", path: "/repo/.worktrees/selected", branch: "main", managed: true }
+      : null,
+  });
+}
+
 async function typeAndSend() {
   const user = userEvent.setup();
   await user.type(screen.getByLabelText("Message Mcode"), "Build this");
@@ -302,6 +346,8 @@ describe("Composer checkout confirmation", () => {
     vi.restoreAllMocks();
     vi.clearAllMocks();
     lastComposerText = "";
+    lastFileAutocompleteOptions = undefined;
+    lastSlashCommandOptions = undefined;
     resetThreadStoreForTests({ runningThreadIds: new Set() });
     useQueueStore.setState({ queues: {}, toast: null, editingThreadId: null });
     usePreviewAnnotationStore.setState({ byThread: {}, diffByThread: {}, drafts: {} });
@@ -356,6 +402,90 @@ describe("Composer checkout confirmation", () => {
     expect(within(strip).queryByTestId("mode-selector")).not.toBeInTheDocument();
     expect(within(strip).queryByTestId("branch-picker")).not.toBeInTheDocument();
     expect(useWorkspaceStore.getState().newThreadMode).toBe("worktree");
+  });
+
+  it.each([
+    "new-direct",
+    "new-worktree",
+    "new-existing-worktree",
+    "branch-direct",
+    "branch-worktree",
+    "branch-existing-worktree",
+  ] as const)("uses workspace catalog scope while %s preparation is pending", async (context) => {
+    seedPreparingComposerState(context);
+    render(<Composer threadId="thread-placeholder" workspaceId="ws-1" />);
+
+    await waitFor(() => {
+      expect(lastFileAutocompleteOptions).toBeDefined();
+      expect(lastSlashCommandOptions).toBeDefined();
+    });
+
+    expect(lastFileAutocompleteOptions).toEqual(expect.objectContaining({
+      workspaceId: "ws-1",
+      providerId: "codex",
+      threadId: undefined,
+      cwd: undefined,
+    }));
+    expect(lastSlashCommandOptions).toEqual(expect.objectContaining({
+      providerId: "codex",
+      workspaceId: "ws-1",
+      threadId: undefined,
+    }));
+    expect(lastSlashCommandOptions).not.toHaveProperty("cwd");
+  });
+
+  it("keeps the selected worktree cwd for a normal new-thread composer", async () => {
+    seedComposerState("existing-worktree");
+    render(<Composer isNewThread workspaceId="ws-1" />);
+
+    await waitFor(() => {
+      expect(lastFileAutocompleteOptions).toBeDefined();
+      expect(lastSlashCommandOptions).toBeDefined();
+    });
+
+    expect(lastFileAutocompleteOptions).toEqual(expect.objectContaining({
+      workspaceId: "ws-1",
+      threadId: undefined,
+      cwd: "/repo/.worktrees/existing",
+    }));
+    expect(lastSlashCommandOptions).toEqual(expect.objectContaining({
+      workspaceId: "ws-1",
+      threadId: undefined,
+    }));
+  });
+
+  it("switches catalog requests to the persisted thread and worktree after preparation resolves", async () => {
+    seedPreparingComposerState("new-existing-worktree");
+    const { rerender } = render(<Composer threadId="thread-placeholder" workspaceId="ws-1" />);
+
+    await waitFor(() => expect(lastFileAutocompleteOptions?.threadId).toBeUndefined());
+
+    const persistedThread = createMockThread({
+      id: "thread-persisted",
+      workspace_id: "ws-1",
+      mode: "worktree",
+      provider: "codex",
+      worktree_path: "/repo/.worktrees/persisted",
+    });
+    act(() => {
+      useWorkspaceStore.setState({
+        threads: [persistedThread],
+        activeThreadId: persistedThread.id,
+      });
+    });
+    rerender(<Composer threadId={persistedThread.id} workspaceId="ws-1" />);
+
+    await waitFor(() => {
+      expect(lastFileAutocompleteOptions).toMatchObject({
+        workspaceId: "ws-1",
+        threadId: persistedThread.id,
+        cwd: persistedThread.worktree_path,
+      });
+      expect(lastSlashCommandOptions).toMatchObject({
+        workspaceId: "ws-1",
+        threadId: persistedThread.id,
+      });
+    });
   });
 
   it("clears the selected project without deleting it", async () => {
