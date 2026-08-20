@@ -42,6 +42,7 @@ import {
   resolveSubagentDisplayName,
   resolveSubagentMetadata,
   createSubagentPresentation,
+  resolveSubagentExactIdentity,
   type Message,
   type NarrativeEntry,
   type TurnRange,
@@ -398,6 +399,14 @@ export class NarrativeStore {
           const presentation = createSubagentPresentation(mergedToolInput, event.toolCallId);
           existing.displayName = presentation.hasExplicitIdentity ? presentation.displayName : undefined;
           existing.providerAgentKey = presentation.providerAgentKey;
+          existing.subagentIdentityKey = resolveSubagentExactIdentity(mergedToolInput);
+          if (existing.messageId && existing.subagentIdentityKey) {
+            this.toolCallRecordRepo.updateSubagentIdentity(
+              existing.toolCallId!,
+              existing.messageId,
+              existing.subagentIdentityKey,
+            );
+          }
           existing.model = presentation.model;
           existing.reasoningEffort = presentation.reasoningEffort;
         }
@@ -426,6 +435,9 @@ export class NarrativeStore {
       toolName: event.toolName,
       displayName: presentation?.hasExplicitIdentity ? presentation.displayName : undefined,
       providerAgentKey: presentation?.providerAgentKey,
+      subagentIdentityKey: event.toolName === "Agent"
+        ? resolveSubagentExactIdentity(event.toolInput)
+        : undefined,
       model: presentation?.model,
       reasoningEffort: presentation?.reasoningEffort,
       inputSummary: "", // Deferred to persistNarrative
@@ -742,6 +754,7 @@ export class NarrativeStore {
         if (toolCall.toolName === "Agent") {
           toolCall.displayName = resolveSubagentDisplayName(toolCall._rawToolInput);
           toolCall.providerAgentKey = resolveProviderAgentKey(toolCall._rawToolInput);
+          toolCall.subagentIdentityKey = resolveSubagentExactIdentity(toolCall._rawToolInput);
           toolCall.model = resolveSubagentMetadata(toolCall._rawToolInput.model);
           toolCall.reasoningEffort = resolveSubagentMetadata(toolCall._rawToolInput.reasoningEffort);
         }

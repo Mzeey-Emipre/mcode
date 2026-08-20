@@ -125,6 +125,7 @@ vi.mock("@/stores/threadStore", () => ({
       loadOlderMessages: loadOlderMessagesSpy,
       loadNewerMessages: loadNewerMessagesSpy,
       loadNarrativeForMessage: loadNarrativeForMessageSpy,
+      isNarrativeLoaded: () => false,
     });
   }),
 }));

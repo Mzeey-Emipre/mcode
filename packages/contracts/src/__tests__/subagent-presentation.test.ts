@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   createSubagentPresentation,
   mergeSubagentPresentation,
+  resolveSubagentExactIdentity,
 } from "../models/tool-call-record.js";
 
 describe("sub-agent presentation", () => {
@@ -31,6 +32,16 @@ describe("sub-agent presentation", () => {
       identityKey: "/root/review_probe",
       providerAgentKey: "/root/review_probe",
     });
+  });
+
+  it("resolves only bounded structural receiver/native identities", () => {
+    expect(resolveSubagentExactIdentity({
+      codexCollabKind: "spawnAgent",
+      agentPath: "/root/review_probe",
+    })).toBeUndefined();
+    expect(resolveSubagentExactIdentity({ receiverThreadIds: ["receiver-1"] })).toBe("receiver-1");
+    expect(resolveSubagentExactIdentity({ nativeThreadId: "native-1" })).toBe("native-1");
+    expect(resolveSubagentExactIdentity({ nativeThreadId: "x".repeat(513) })).toBeUndefined();
   });
 
   it("enriches a terminal row without losing its established child identity", () => {

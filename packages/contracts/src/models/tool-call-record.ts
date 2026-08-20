@@ -47,6 +47,16 @@ export function resolveSubagentMetadata(value: unknown): string | undefined {
   return metadata && metadata.length <= SUBAGENT_METADATA_MAX_LENGTH ? metadata : undefined;
 }
 
+/** Resolves the exact receiver/native child identity from structural Agent input. */
+export function resolveSubagentExactIdentity(input: Record<string, unknown>): string | undefined {
+  const receiverThreadId = resolveReceiverThreadId(input);
+  if (receiverThreadId) return receiverThreadId;
+  const nativeThreadId = explicitString(input.nativeThreadId);
+  return nativeThreadId && nativeThreadId.length <= SUBAGENT_IDENTITY_KEY_MAX_LENGTH
+    ? nativeThreadId
+    : undefined;
+}
+
 /** Formats a normalized sub-agent identity as a sentence-style title. */
 export function formatSubagentDisplayName(identity: string): string {
   const sentence = identity.trim().replace(/_+/g, " ").replace(/\s+/g, " ");
@@ -87,7 +97,7 @@ export function createSubagentPresentation(
   return {
     displayName: formatSubagentDisplayName(resolvedDisplayName ?? "Subagent"),
     hasExplicitIdentity: resolvedDisplayName !== undefined,
-    identityKey: resolveReceiverThreadId(input) ?? providerAgentKey ?? fallbackIdentityKey,
+    identityKey: resolveSubagentExactIdentity(input) ?? providerAgentKey ?? fallbackIdentityKey,
     ...(providerAgentKey ? { providerAgentKey } : {}),
     ...(model ? { model } : {}),
     ...(reasoningEffort ? { reasoningEffort } : {}),
@@ -125,6 +135,7 @@ export const ToolCallRecordSchema = z.object({
   tool_name: z.string(),
   display_name: z.string().max(SUBAGENT_DISPLAY_NAME_MAX_LENGTH).nullable().optional(),
   provider_agent_key: z.string().max(PROVIDER_AGENT_KEY_MAX_LENGTH).nullable().optional(),
+  subagent_identity_key: z.string().max(SUBAGENT_IDENTITY_KEY_MAX_LENGTH).nullable().optional(),
   model: z.string().max(SUBAGENT_METADATA_MAX_LENGTH).nullable().optional(),
   reasoning_effort: z.string().max(SUBAGENT_METADATA_MAX_LENGTH).nullable().optional(),
   input_summary: z.string(),

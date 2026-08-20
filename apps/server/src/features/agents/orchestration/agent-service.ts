@@ -96,7 +96,11 @@ import { TurnErrorPolicy } from "../turns/turn-error-policy.js";
 import { TurnRuntimeRegistry } from "../turns/turn-runtime.js";
 import type { TurnOutcome } from "../turns/turn-outcome.js";
 import { BrowserNarrativeEventSanitizer } from "../../browser-automation/index.js";
-import { CanonicalAgentEventSink } from "../canonical/canonical-agent-event-sink.js";
+import {
+  CanonicalAgentEventSink,
+  type CanonicalChildStopTarget,
+} from "../canonical/canonical-agent-event-sink.js";
+import { isExplicitMcodeThreadRequest } from "@mcode/thread-orchestration";
 
 /**
  * Escape special XML characters in a string to prevent injection into
@@ -357,6 +361,8 @@ export class AgentService {
       sourceTurnId: string;
       resolvedProvider: import("@mcode/contracts").IAgentProvider;
       effectiveProvider: ProviderId;
+      /** Immutable authorization decision from the original user request. */
+      threadControlEligible: boolean;
       turnRequest: TurnRequest;
       /** Shared mutation token required for every provider dispatch and release. */
       mutationReservationToken: string;
@@ -607,6 +613,8 @@ export class AgentService {
     // Use the thread's stored provider as authoritative fallback; only override
     // when the caller explicitly supplies a provider (new thread or explicit switch).
     const effectiveProvider: ProviderId = provider ?? (thread.provider as ProviderId) ?? "claude";
+    const threadControlEligible = usesInternalThreadControlMcp(effectiveProvider)
+      && isExplicitMcodeThreadRequest(content);
     // Fall back to the thread's persisted Copilot agent when the caller doesn't supply one.
     // Converts null (DB "cleared") to undefined (provider ignores it) so the SDK defaults.
     const effectiveCopilotAgent = copilotAgent ?? (thread.copilot_agent ?? undefined);
@@ -1081,17 +1089,21 @@ export class AgentService {
       reasoningLevel,
       ...(effectiveBudget > 0 && { maxBudgetUsd: effectiveBudget }),
       ...(effectiveTurns > 0 && { maxTurns: effectiveTurns }),
+      threadControlEligible,
       resumeFrom: attemptResumeFrom,
       providerOptions,
     } as TurnRequest;
-    if (usesInternalThreadControlMcp(effectiveProvider)) {
+    if (usesInternalThreadControlMcp(effectiveProvider) && threadControlEligible) {
       this.threadControlMcp?.activate({
         sessionId: sessionName,
         sourceThreadId: threadId,
         sourceTurnId,
         sourceProviderId: effectiveProvider,
         permissionMode: permissionMode === "full" ? "full" : "supervised",
+        eligible: true,
       });
+    } else if (usesInternalThreadControlMcp(effectiveProvider)) {
+      this.threadControlMcp?.revoke(sessionName);
     }
     if (!this.mutationReservations.owns(threadId, reservationToken, "activeTurn")) {
       return;
@@ -1105,6 +1117,7 @@ export class AgentService {
       sourceTurnId,
       resolvedProvider,
       effectiveProvider,
+      threadControlEligible,
       turnRequest: baseTurnRequest,
       pendingRollback,
       mutationReservationToken: reservationToken,
@@ -1896,6 +1909,46 @@ export class AgentService {
     };
   }
 
+  /** Interrupt and terminalize every active descendant before the parent turn settles. */
+  private stopCanonicalDescendants(owningParentThreadId: string): Promise<void> | undefined {
+    const targets = this.canonicalSink.loadCanonicalChildStopTargets(owningParentThreadId)
+      .filter((target) => target.latestTurn?.status === "Running");
+    if (targets.length === 0) return undefined;
+    return Promise.allSettled(targets.map((target) => (
+      target.nativeThreadId !== null && target.nativeTurnId !== null
+        ? this.stopCanonicalChild({
+            owningParentThreadId,
+            childThreadId: target.childThread.id,
+          })
+        : Promise.resolve({
+            childThreadId: target.childThread.id,
+            status: "unsupported" as const,
+            message: "The active child turn does not have an exact provider identity.",
+          })
+    ))).then((results) => {
+      results.forEach((result) => {
+        if (result.status === "rejected") {
+          logger.warn("Canonical descendant interruption failed", {
+            owningParentThreadId,
+            error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+          });
+        }
+      });
+      this.reconcileCanonicalDescendants(targets);
+    });
+  }
+
+  /** Persist cancellation for every still-running descendant by canonical thread identity. */
+  private reconcileCanonicalDescendants(targets: readonly CanonicalChildStopTarget[]): void {
+    for (const target of targets) {
+      this.canonicalSink.finishCanonicalChildTurn({
+        childThreadId: target.childThread.id,
+        outcome: "cancelled",
+        error: "Interrupted by parent stop",
+      });
+    }
+  }
+
   /** Stop exact active turn, preserving provider failure as retryable RPC error. */
   private async stopSessionInternal(threadId: string): Promise<AgentStopResult> {
     const sessionId = `mcode-${threadId}`;
@@ -1936,6 +1989,8 @@ export class AgentService {
       };
     }
 
+    const descendantStop = this.stopCanonicalDescendants(threadId);
+    if (descendantStop) await descendantStop;
     if (dispatchState !== "not-dispatched") {
       try {
         const provider = this.providerRegistry.resolve(providerId);
@@ -2649,14 +2704,17 @@ export class AgentService {
         });
       }
       if (!this.getCurrentRetryDispatch(threadId, identity)) return false;
-      if (usesInternalThreadControlMcp(dispatch.effectiveProvider)) {
+      if (usesInternalThreadControlMcp(dispatch.effectiveProvider) && dispatch.threadControlEligible) {
         this.threadControlMcp?.activate({
           sessionId: dispatch.sessionName,
           sourceThreadId: threadId,
           sourceTurnId: dispatch.sourceTurnId,
           sourceProviderId: dispatch.effectiveProvider,
           permissionMode: dispatch.turnRequest.permissionMode === "full" ? "full" : "supervised",
+          eligible: true,
         });
+      } else if (usesInternalThreadControlMcp(dispatch.effectiveProvider)) {
+        this.threadControlMcp?.revoke(dispatch.sessionName);
       }
       try {
         this.threadRepo.clearSdkSessionId(threadId);
@@ -4548,7 +4606,9 @@ ${userMessage}`;
   async stopAll(): Promise<void> {
     const ids = [...this.activeSessionIds];
     await Promise.all(
-      ids.map((threadId) => {
+      ids.map(async (threadId) => {
+        const descendantStop = this.stopCanonicalDescendants(threadId);
+        if (descendantStop) await descendantStop;
         const runtime = this.turnRuntime.snapshot(threadId);
         const terminalized = runtime?.turnExecutionId
           ? this.turnRuntime.terminalize(threadId, runtime.turnExecutionId, "cancelled")

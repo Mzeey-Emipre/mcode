@@ -429,6 +429,8 @@ interface CodexSessionState {
   workspaceId: string;
   /** Browser permission class fixed to the provider process at spawn. */
   browserPermissionCapability: "observe" | "interact" | "privileged";
+  /** Whether this session was started with the internal Mcode thread-control MCP. */
+  threadControlEligible: boolean;
 }
 
 /** One pending codex approval bridged into the Phase 1 permission flow. */
@@ -826,7 +828,12 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
    */
   private pendingSpawnTurns = new Map<
     string,
-    { input: string | TurnInputPart[]; turnOptions: CodexTurnOptions; turnExecutionId: string }
+    {
+      input: string | TurnInputPart[];
+      turnOptions: CodexTurnOptions;
+      turnExecutionId: string;
+      threadControlEligible: boolean;
+    }
   >();
   /** Browser scope staged only until a fresh main app-server process starts. */
   private pendingBrowserAccess = new Map<string, {
@@ -1203,6 +1210,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       sessionId, message, cwd, model, permissionMode,
       reasoningLevel, attachments, mentions,
     } = req;
+    const threadControlEligible = req.threadControlEligible === true;
     const codexFastMode = req.providerOptions.fastMode;
 
     const nativeSkills = this.codexPorts.catalog.currentSkills(cwd);
@@ -1290,6 +1298,17 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       });
     }
 
+    if (existing && existing.server.isAlive && existing.threadControlEligible !== threadControlEligible) {
+      logger.info("Codex session restarted due to Mcode thread-control eligibility change", {
+        sessionId,
+        from: existing.threadControlEligible,
+        to: threadControlEligible,
+      });
+      this.drainPending((e) => e.sessionId === sessionId);
+      await this.runtime.stop(sessionId);
+      existing = undefined;
+    }
+
     // Version check only when starting a new session (cached in codex-version
     // per CLI path). Reusing a live, mode-matched session skips this. Emit
     // user-facing errors and abort before touching the runtime so a bad CLI
@@ -1308,7 +1327,12 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
 
     // Stage the per-turn payload so `spawn` can run the first turn of a fresh
     // session; reuse reads it directly below. Keyed by sessionId.
-    this.pendingSpawnTurns.set(sessionId, { input, turnOptions, turnExecutionId: req.turnExecutionId });
+    this.pendingSpawnTurns.set(sessionId, {
+      input,
+      turnOptions,
+      turnExecutionId: req.turnExecutionId,
+      threadControlEligible,
+    });
     const browserStage = this.host.browser.isConfigured()
       ? this.host.browser.stage({
       providerId: this.id,
@@ -1386,7 +1410,9 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     const settings = await this.codexPorts.settings.get();
     const cliPath = settings.cliPath;
     const { sessionId, threadId, cwd, permissionMode, resumeFrom } = args;
-    const stagedExecutionId = this.pendingSpawnTurns.get(sessionId)?.turnExecutionId;
+    const pendingSpawn = this.pendingSpawnTurns.get(sessionId);
+    const stagedExecutionId = pendingSpawn?.turnExecutionId;
+    const threadControlEligible = pendingSpawn?.threadControlEligible === true;
 
     const sandbox = permissionMode === "full" ? "danger-full-access" : "workspace-write";
     const approvalPolicy = permissionMode === "full" ? "never" : "on-request";
@@ -1414,23 +1440,29 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         });
       }
     };
-    try {
-      internalMcp = await this.host.threadControl.bootstrap({
-        providerId: this.id,
-        sessionId,
-        threadId,
-        turnId: stagedExecutionId ?? threadId,
-        protocol: "codex",
-      }) as { configOverrides: string[]; env: Record<string, string> } | undefined;
-    } catch (error) {
-      internalMcpSetupError = error instanceof Error ? error.message : String(error);
-      await closeInternalMcpAuthority();
+    if (threadControlEligible) {
+      try {
+        internalMcp = await this.host.threadControl.bootstrap({
+          providerId: this.id,
+          sessionId,
+          threadId,
+          turnId: stagedExecutionId ?? threadId,
+          protocol: "codex",
+        }) as { configOverrides: string[]; env: Record<string, string> } | undefined;
+      } catch (error) {
+        internalMcpSetupError = error instanceof Error ? error.message : String(error);
+        await closeInternalMcpAuthority();
+      }
     }
     const browserGrant = browserAccess ? this.host.browser.issue(browserAccess.stage) : null;
+    const nestedDelegationModel = pendingSpawn?.turnOptions.model === "gpt-5.6-luna"
+      ? "gpt-5.6-sol"
+      : undefined;
     const mcodeInstructions = renderMcodeInstructions(buildMcodeInstructionPlan({
       sourceThreadId: threadId,
       threadControlGranted: Boolean(internalMcp),
       browserAutomationGranted: Boolean(browserGrant),
+      nestedDelegationModel,
     }));
     const spawnEnv = { ...args.env };
     const browserTokenEnvName = "MCODE_BROWSER_MCP_TOKEN";
@@ -1745,6 +1777,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       deliveredChildEventKeys: new Set(),
       workspaceId: browserAccess?.workspaceId ?? "unknown-workspace",
       browserPermissionCapability: browserAccess?.permissionCapability ?? "interact",
+      threadControlEligible,
       ...(browserGrant && {
         browserCredential: {
           credentialId: browserGrant.credentialId,

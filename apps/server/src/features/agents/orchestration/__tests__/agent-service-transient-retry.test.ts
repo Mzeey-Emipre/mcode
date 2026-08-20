@@ -265,7 +265,7 @@ describe("AgentService transient-failure auto-retry", () => {
 
     await service.sendMessage({
       threadId: THREAD_ID,
-      content: "hello",
+      content: "Create one Mcode thread named leaf_probe",
       permissionMode: "full",
       model: "claude-sonnet-4-6",
       attachments: [],

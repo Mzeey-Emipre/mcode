@@ -71,7 +71,9 @@ function canonicalIsActive(row: CanonicalSubagentRosterRow): boolean {
 }
 
 function canonicalStatus(row: CanonicalSubagentRosterRow): string {
-  return canonicalIsActive(row) ? "Active" : row.terminalOutcome ?? row.activityState;
+  if (canonicalIsActive(row)) return "Active";
+  if (row.terminalOutcome === "Errored") return "Failed";
+  return row.terminalOutcome ?? row.activityState;
 }
 
 function canonicalLineage(row: CanonicalSubagentRosterRow, rows: readonly CanonicalSubagentRosterRow[]): string {
@@ -218,6 +220,9 @@ function CanonicalDetailView({
             <h2 className="truncate text-sm font-semibold">{identity}</h2>
             {lineage && <p className="truncate text-xs text-muted-foreground">{lineage}</p>}
           </div>
+          <span role="status" className="sr-only">
+            {canonicalStatus(row)}
+          </span>
           {configuration && <span className="shrink-0 font-mono text-xs text-muted-foreground">{configuration}</span>}
         </div>
       </header>

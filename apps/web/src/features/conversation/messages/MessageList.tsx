@@ -433,6 +433,7 @@ export function MessageList({ displayThreadId, onBranch, onReply, onSubagentSele
   const hooks = useThreadRecord(renderedThreadId, (r) => r.hooks);
   const persistedNarrativeByMessage = useThreadRecord(renderedThreadId, (r) => r.narrativeByMessage);
   const loadNarrativeForMessage = useThreadStore((s) => s.loadNarrativeForMessage);
+  const isNarrativeLoaded = useThreadStore((s) => s.isNarrativeLoaded);
   const legacyCurrentTurnMessageId = useThreadRecord(renderedThreadId, (r) => r.currentTurnMessageId);
   const legacyCurrentTurnResponseKey = useThreadRecord(renderedThreadId, (r) => r.currentTurnResponseKey);
   const legacyAssistantResponseKeys = useThreadRecord(renderedThreadId, (r) => r.assistantResponseKeys);
@@ -693,10 +694,10 @@ export function MessageList({ displayThreadId, onBranch, onReply, onSubagentSele
   useEffect(() => {
     for (const message of messages) {
       if (message.role !== "assistant") continue;
-      if (persistedNarrativeByMessage[message.id] !== undefined) continue;
+      if (renderedThreadId && isNarrativeLoaded(renderedThreadId, message.id)) continue;
       void loadNarrativeForMessage(message.id, renderedThreadId ?? undefined);
     }
-  }, [messages, persistedNarrativeByMessage, loadNarrativeForMessage, renderedThreadId]);
+  }, [messages, persistedNarrativeByMessage, isNarrativeLoaded, loadNarrativeForMessage, renderedThreadId]);
 
   const stableItems = useMemo(
     () => buildStableItems(messages, persistedFilesChanged, latestTurnWithChanges, {

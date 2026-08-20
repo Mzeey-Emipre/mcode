@@ -24,8 +24,17 @@ interface SubagentRowProps {
   activities?: readonly SubagentActivity[];
 }
 
+function terminalStatus(toolCall: ToolCall): "Completed" | "Interrupted" | "Failed" {
+  if (toolCall.isCancelled) {
+    return "Interrupted";
+  }
+  return toolCall.isError ? "Failed" : "Completed";
+}
+
 function lifecycleLabel(lifecycle: SubagentLifecycle): string {
-  return lifecycle === "started" ? "started working" : lifecycle;
+  if (lifecycle === "started") return "started working";
+  if (lifecycle === "updated") return "updated";
+  return "finished";
 }
 
 function remainingLabel(activities: readonly SubagentActivity[]): string {
@@ -65,6 +74,9 @@ export function SubagentRow({
           const presentation = participant.subagentPresentation;
           const identity = presentation?.displayName ?? "Subagent";
           const identityKey = presentation?.identityKey ?? participant.id;
+          const status = participantLifecycle === "finished"
+            ? terminalStatus(participant)
+            : "Active";
           return (
             <span key={participant.id} className="flex min-w-0 shrink items-center gap-1">
               <Button
@@ -77,6 +89,7 @@ export function SubagentRow({
                 )}
                 className="min-w-0 shrink gap-1 rounded-full px-2 text-left transition-colors duration-150 motion-reduce:transition-none hover:bg-muted/30"
                 aria-label={`Open ${identity} subagent details`}
+                aria-describedby={`subagent-status-${participant.id}`}
               >
                 <SubagentIdentityGlyph
                   identity={identity}
@@ -89,6 +102,9 @@ export function SubagentRow({
                   {identity}
                 </span>
               </Button>
+              <span id={`subagent-status-${participant.id}`} role="status" className="sr-only">
+                {status}
+              </span>
               <span className="shrink-0 text-xs text-muted-foreground">
                 {lifecycleLabel(participantLifecycle)}
               </span>

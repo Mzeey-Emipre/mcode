@@ -612,9 +612,8 @@ export class ThreadHydrator {
         this.transport().loadConversationPage(threadId, MESSAGE_FETCH_SIZE),
         shouldFetchSnapshots
           ? this.transport().listSnapshots(threadId).catch(() => [] as Awaited<ReturnType<ThreadHydratorTransport["listSnapshots"]>>)
-          : Promise.resolve([] as Awaited<ReturnType<ThreadHydratorTransport["listSnapshots"]>>),
+        : Promise.resolve([] as Awaited<ReturnType<ThreadHydratorTransport["listSnapshots"]>>),
       ]);
-
       const tailPage = pageResult;
       const patch = snapshotBuilder.build({
         messages: tailPage.messages,

@@ -1495,6 +1495,50 @@ describe("CanonicalAgentEventSink", () => {
     expect(bounded.done).toHaveLength(0);
   });
 
+  it("loads every descendant stop target once with nested children first", () => {
+    startCanonicalParent(sink, db);
+    const direct = sink.startCodexChildDelegation({
+      parentThreadId: THREAD_ID,
+      parentTurnId: TURN_ID,
+      parentExecutionId: EXECUTION_ID,
+      parentItemId: "toolCall:spawn-stop-direct",
+      receiverThreadIds: ["native-stop-direct"],
+      providerIdentities: [],
+    });
+    const directTurn = sink.startCodexChildTurn({
+      parentThreadId: THREAD_ID,
+      parentTurnId: TURN_ID,
+      parentExecutionId: EXECUTION_ID,
+      parentItemId: "toolCall:spawn-stop-direct",
+      nativeThreadId: "native-stop-direct",
+      nativeTurnId: "native-turn-stop-direct",
+    });
+    const nested = sink.startCodexChildDelegation({
+      parentThreadId: direct.childThread.id,
+      parentTurnId: directTurn.id,
+      parentExecutionId: executionIdForTurn(db, directTurn.id),
+      parentItemId: "toolCall:spawn-stop-nested",
+      receiverThreadIds: ["native-stop-nested"],
+      providerIdentities: [],
+    });
+    sink.startCodexChildTurn({
+      parentThreadId: direct.childThread.id,
+      parentTurnId: directTurn.id,
+      parentExecutionId: executionIdForTurn(db, directTurn.id),
+      parentItemId: "toolCall:spawn-stop-nested",
+      nativeThreadId: "native-stop-nested",
+      nativeTurnId: "native-turn-stop-nested",
+    });
+
+    const targets = sink.loadCanonicalChildStopTargets(THREAD_ID);
+
+    expect(targets.map((target) => target.childThread.id)).toEqual([
+      nested.childThread.id,
+      direct.childThread.id,
+    ]);
+    expect(targets.every((target) => target.latestTurn?.status === "Running")).toBe(true);
+  });
+
   it("retains a newer active descendant when older done rows exceed the roster bound", () => {
     startCanonicalParent(sink, db);
     const insertThread = db.prepare(`

@@ -317,6 +317,7 @@ export {
   formatSubagentDisplayName,
   mergeSubagentPresentation,
   resolveProviderAgentKey,
+  resolveSubagentExactIdentity,
   resolveSubagentDisplayName,
   resolveSubagentMetadata,
 } from "./models/tool-call-record.js";

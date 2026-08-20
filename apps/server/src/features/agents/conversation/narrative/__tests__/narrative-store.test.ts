@@ -148,11 +148,11 @@ describe("NarrativeStore sub-agent identity persistence", () => {
   });
 
   it("persists bounded explicit identity separately from delegated task text", () => {
-    let persisted: Array<{ displayName?: string; inputSummary?: string }> = [];
+    let persisted: Array<{ displayName?: string; inputSummary?: string; subagentIdentityKey?: string }> = [];
     const store = new NarrativeStore(
       {} as MessageRepo,
       {
-        bulkCreate: (records: Array<{ displayName?: string; inputSummary?: string }>) => {
+        bulkCreate: (records: Array<{ displayName?: string; inputSummary?: string; subagentIdentityKey?: string }>) => {
           persisted = records;
         },
       } as unknown as ToolCallRecordRepo,
@@ -165,6 +165,7 @@ describe("NarrativeStore sub-agent identity persistence", () => {
       toolCallId: "agent-1",
       toolName: "Agent",
       toolInput: {
+        nativeThreadId: "native-agent-1",
         agentPath: `/root/${"x".repeat(120)}`,
         description: "Inspect private task details",
       },
@@ -176,6 +177,7 @@ describe("NarrativeStore sub-agent identity persistence", () => {
     expect(persisted[0]?.displayName?.endsWith("…")).toBe(true);
     expect(persisted[0]?.displayName).not.toContain("Inspect private task details");
     expect(persisted[0]?.inputSummary).toContain("Inspect private task details");
+    expect(persisted[0]?.subagentIdentityKey).toBe("native-agent-1");
   });
 
   it("does not promote prompt or description to display identity", () => {
@@ -526,6 +528,105 @@ describe("NarrativeStore write seam (server-side traps)", () => {
       expect(byId.get("agent-unparented")?.parent_tool_call_id).toBeNull();
       expect(byId.get("agent-target")?.parent_tool_call_id).toBe("agent-source");
       expect(byId.get("marker-target")?.parent_tool_call_id).toBe("agent-target");
+    });
+
+    it("reloads parallel provider children with durable exact identities and nesting", () => {
+      seedAssistantMessage("m1", "", 1);
+      store.beginTurn(THREAD);
+      store.resetTurnCounters(THREAD);
+      const sharedProviderInput = {
+        codexCollabKind: "spawnAgent",
+        agentPath: "/root/worker",
+      };
+      store.bufferToolCall(THREAD, {
+        toolCallId: "agent-direct",
+        toolName: "Agent",
+        toolInput: {
+          ...sharedProviderInput,
+          nativeThreadId: "native-direct",
+          description: "Direct child",
+        },
+      });
+      store.bufferToolCall(THREAD, {
+        toolCallId: "agent-nested",
+        toolName: "Agent",
+        parentToolCallId: "agent-direct",
+        toolInput: {
+          ...sharedProviderInput,
+          receiverThreadIds: ["native-nested"],
+          description: "Nested child",
+        },
+      });
+      // A repeated dispatch for the same native child must remain one record.
+      store.bufferToolCall(THREAD, {
+        toolCallId: "agent-direct",
+        toolName: "Agent",
+        toolInput: { ...sharedProviderInput, nativeThreadId: "native-direct" },
+      });
+
+      store.persistNarrative(THREAD, "m1", "", "completed");
+
+      const reloaded = new ToolCallRecordRepo(db).listByMessage("m1")
+        .filter((record) => record.tool_name === "Agent");
+      expect(reloaded).toHaveLength(2);
+      expect(reloaded.map((record) => ({
+        id: record.id,
+        provider: record.provider_agent_key,
+        identity: record.subagent_identity_key,
+        parent: record.parent_tool_call_id,
+      }))).toEqual([
+        {
+          id: "agent-direct",
+          provider: "/root/worker",
+          identity: "native-direct",
+          parent: null,
+        },
+        {
+          id: "agent-nested",
+          provider: "/root/worker",
+          identity: "native-nested",
+          parent: "agent-direct",
+        },
+      ]);
+
+      const transcript = store.load(THREAD)
+        .filter((entry) => entry.kind === "toolCall")
+        .map((entry) => entry.record)
+        .filter((record) => record.tool_name === "Agent");
+      expect(transcript.map((record) => [record.subagent_identity_key, record.parent_tool_call_id])).toEqual([
+        ["native-direct", null],
+        ["native-nested", "agent-direct"],
+      ]);
+    });
+
+    it("backfills an exact identity when Agent enrichment arrives after the row is persisted", () => {
+      seedAssistantMessage("m1", "", 1);
+      store.beginTurn(THREAD);
+      store.resetTurnCounters(THREAD);
+      store.bufferToolCall(THREAD, {
+        toolCallId: "late-agent",
+        toolName: "Agent",
+        toolInput: {
+          codexCollabKind: "spawnAgent",
+          agentPath: "/root/worker",
+        },
+      });
+
+      store.persistNarrative(THREAD, "m1", "", "completed");
+      expect(new ToolCallRecordRepo(db).listByMessage("m1")[0]?.subagent_identity_key).toBeNull();
+
+      store.bufferToolCall(THREAD, {
+        toolCallId: "late-agent",
+        toolName: "Agent",
+        toolInput: {
+          codexCollabKind: "spawnAgent",
+          agentPath: "/root/worker",
+          nativeThreadId: "native-late-agent",
+        },
+      });
+
+      expect(new ToolCallRecordRepo(db).listByMessage("m1")[0]?.subagent_identity_key)
+        .toBe("native-late-agent");
     });
 
     it("falls back to the only running Agent when the SDK omits the parent", () => {
