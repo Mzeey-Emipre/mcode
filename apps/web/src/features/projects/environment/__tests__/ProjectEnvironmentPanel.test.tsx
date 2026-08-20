@@ -23,6 +23,10 @@ const { transport, MockRpcError } = vi.hoisted(() => {
 });
 
 vi.mock("@/transport", () => ({ getTransport: () => transport, RpcError: MockRpcError }));
+vi.mock("@/features/projects/state/workspaceStore", () => ({
+  useWorkspaceStore: (selector: (state: { workspaces: readonly { id: string; name: string }[] }) => unknown) =>
+    selector({ workspaces: [{ id: "workspace-1", name: "Caravan" }] }),
+}));
 
 import { ProjectEnvironmentPanel } from "../ProjectEnvironmentPanel";
 
@@ -45,6 +49,17 @@ describe("ProjectEnvironmentPanel", () => {
       revision: "revision-1",
       status: "present",
     }));
+  });
+
+  it("shows the active project and private environment storage before setup is added", async () => {
+    render(<ProjectEnvironmentPanel workspaceId="workspace-1" />);
+
+    await screen.findByRole("button", { name: "Add Setup" });
+    expect(screen.getByRole("heading", { name: "Project settings" })).toBeInTheDocument();
+    expect(screen.getByText("Caravan")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Environment" })).toBeInTheDocument();
+    expect(screen.getByText("This document is saved in Mcode’s user data on this computer.")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Default command script")).not.toBeInTheDocument();
   });
 
   it("edits setup and named actions, preserves action identity, and saves", async () => {
@@ -74,15 +89,25 @@ describe("ProjectEnvironmentPanel", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Environment saved");
   });
 
-  it("moves between platform editors with keyboard tabs", async () => {
+  it("uses the prototype platform order and moves between editors with keyboard tabs", async () => {
     const user = userEvent.setup();
     render(<ProjectEnvironmentPanel workspaceId="workspace-1" />);
     await screen.findByRole("button", { name: "Add Setup" });
     await user.click(screen.getByRole("button", { name: "Add Setup" }));
 
     const defaultTab = screen.getByRole("tab", { name: "Default" });
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual([
+      "Default",
+      "macOS",
+      "Linux",
+      "Windows",
+    ]);
     defaultTab.focus();
     fireEvent.keyDown(defaultTab, { key: "ArrowRight" });
+    expect(screen.getByRole("tab", { name: "macOS" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByLabelText("macOS command script")).toBeInTheDocument();
+
+    fireEvent.keyDown(screen.getByRole("tab", { name: "macOS" }), { key: "End" });
     expect(screen.getByRole("tab", { name: "Windows" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByLabelText("Windows command script")).toBeInTheDocument();
   });

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
-import { Plus, RefreshCw, Save, SlidersHorizontal, Trash2 } from "lucide-react";
+import { Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import type {
   WorkspaceEnvironmentAction,
   WorkspaceEnvironmentCommand,
@@ -8,14 +8,14 @@ import type {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Separator } from "@/components/ui/separator";
+import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { getTransport, RpcError } from "@/transport";
 
 const PLATFORMS = [
   ["default", "Default"],
-  ["windows", "Windows"],
   ["macos", "macOS"],
   ["linux", "Linux"],
+  ["windows", "Windows"],
 ] as const;
 
 type Platform = (typeof PLATFORMS)[number][0];
@@ -63,8 +63,8 @@ function PlatformCommandEditor({ idPrefix, command, onChange, firstControlRef }:
   const tabId = `${idPrefix}-tab-${platform}`;
   const panelId = `${idPrefix}-panel-${platform}`;
   return (
-    <div className="space-y-2">
-      <div role="tablist" aria-label="Command platform" className="flex flex-wrap gap-1">
+    <div className="space-y-3">
+      <div role="tablist" aria-label="Command platform" className="flex flex-wrap gap-1 pb-1">
         {PLATFORMS.map(([key, label]) => (
           <Button
             key={key}
@@ -77,26 +77,27 @@ function PlatformCommandEditor({ idPrefix, command, onChange, firstControlRef }:
             tabIndex={platform === key ? 0 : -1}
             variant={platform === key ? "secondary" : "ghost"}
             size="sm"
+            className="motion-reduce:transition-none"
             onClick={() => setPlatform(key)}
             onKeyDown={(event) => {
-              if (event.key === "ArrowRight") { event.preventDefault(); movePlatform(1); }
-              else if (event.key === "ArrowLeft") { event.preventDefault(); movePlatform(-1); }
-              else if (event.key === "Home") { event.preventDefault(); focusPlatform("default"); }
-              else if (event.key === "End") { event.preventDefault(); focusPlatform("linux"); }
+              if (event.key === "ArrowRight") { event.preventDefault(); event.stopPropagation(); movePlatform(1); }
+              else if (event.key === "ArrowLeft") { event.preventDefault(); event.stopPropagation(); movePlatform(-1); }
+              else if (event.key === "Home") { event.preventDefault(); event.stopPropagation(); focusPlatform("default"); }
+              else if (event.key === "End") { event.preventDefault(); event.stopPropagation(); focusPlatform("windows"); }
             }}
           >
             {label}
           </Button>
         ))}
       </div>
-      <div id={panelId} role="tabpanel" aria-labelledby={tabId} tabIndex={0}>
+      <div id={panelId} role="tabpanel" aria-labelledby={tabId} tabIndex={0} className="outline-none focus-visible:ring-3 focus-visible:ring-ring/50">
         <Textarea
           ref={platform === "default" ? firstControlRef : undefined}
           id={`${idPrefix}-script-${platform}`}
           aria-label={`${PLATFORMS[tabIndex][1]} command script`}
           value={command[platform] ?? ""}
           onChange={(event) => onChange(updateCommand(command, platform, event.target.value))}
-          className="min-h-24 resize-y font-mono text-xs"
+          className="h-36 min-h-36 w-full resize-none font-mono text-xs"
           spellCheck={false}
         />
       </div>
@@ -127,10 +128,10 @@ interface ActionEditorProps {
 /** Renders one named action editor while preserving its stable id. */
 function ActionEditor({ action, onChange, onRemove, nameRef }: ActionEditorProps) {
   return (
-    <section className="space-y-3 rounded-lg border border-border/70 p-3" aria-labelledby={`${action.id}-heading`}>
-      <div className="flex items-start gap-2">
-        <div className="min-w-0 flex-1">
-          <label htmlFor={`${action.id}-name`} className="mb-1 block text-xs font-medium text-muted-foreground">Action name</label>
+    <section className="space-y-4" aria-labelledby={`${action.id}-heading`}>
+      <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+        <div>
+          <label htmlFor={`${action.id}-name`} className="mb-1 block text-xs font-medium text-muted-foreground">Name</label>
           <Input
             ref={nameRef}
             id={`${action.id}-name`}
@@ -139,9 +140,11 @@ function ActionEditor({ action, onChange, onRemove, nameRef }: ActionEditorProps
             onChange={(event) => onChange({ ...action, name: event.target.value })}
           />
         </div>
-        <Button type="button" variant="ghost" size="icon-sm" aria-label={`Remove action ${action.name}`} onClick={onRemove}>
-          <Trash2 size={15} aria-hidden />
-        </Button>
+        <div className="flex items-end">
+          <Button type="button" variant="ghost" size="icon-sm" aria-label={`Remove action ${action.name}`} onClick={onRemove}>
+            <Trash2 size={15} aria-hidden />
+          </Button>
+        </div>
       </div>
       <h3 id={`${action.id}-heading`} className="sr-only">{action.name} command</h3>
       <PlatformCommandEditor
@@ -155,6 +158,9 @@ function ActionEditor({ action, onChange, onRemove, nameRef }: ActionEditorProps
 
 /** Right-panel editor for one private workspace Project environment document. */
 export function ProjectEnvironmentPanel({ workspaceId, active = true }: { readonly workspaceId: string; readonly active?: boolean }) {
+  const projectName = useWorkspaceStore((state) =>
+    state.workspaces.find((workspace) => workspace.id === workspaceId)?.name ?? "Unknown project",
+  );
   const [draft, setDraft] = useState<WorkspaceEnvironmentDocument>(EMPTY_DOCUMENT);
   const [revision, setRevision] = useState<string | null>(null);
   const [loadedWorkspaceId, setLoadedWorkspaceId] = useState<string | null>(null);
@@ -254,27 +260,31 @@ export function ProjectEnvironmentPanel({ workspaceId, active = true }: { readon
 
   return (
     <section className="flex min-h-0 flex-1 flex-col overflow-hidden" aria-labelledby="project-environment-title">
-      <header className="flex shrink-0 items-center gap-2 border-b border-border/60 px-3 py-2">
-        <SlidersHorizontal size={16} aria-hidden />
-        <div className="min-w-0 flex-1">
-          <h2 id="project-environment-title" className="text-sm font-semibold">Project settings</h2>
-          <p className="text-xs text-muted-foreground">Private environment on this system</p>
-        </div>
-      </header>
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
-        {error ? (
-          <div className="mb-3 max-h-32 overflow-y-auto rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs" role="alert" tabIndex={0} aria-label="Project environment errors">
-            {error.map((message, index) => <p key={`${message}-${index}`}>{message}</p>)}
-          </div>
-        ) : null}
-        {status ? <p className="mb-3 text-xs text-muted-foreground" role="status">{status}</p> : null}
-        {loading ? <p className="text-xs text-muted-foreground">Loading environment...</p> : (
-          <div className="space-y-5">
-            <section aria-labelledby="project-environment-setup-title" className="space-y-3">
-              <div className="flex items-center justify-between gap-2">
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 pt-5 pb-32">
+        <div className="space-y-8">
+          <header>
+            <h1 id="project-environment-title" className="text-base font-semibold">Project settings</h1>
+            <p className="mt-1 text-xs text-muted-foreground">{projectName}</p>
+          </header>
+          {error ? (
+            <div className="max-h-32 overflow-y-auto rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs" role="alert" tabIndex={0} aria-label="Project environment errors">
+              {error.map((message, index) => <p key={`${message}-${index}`}>{message}</p>)}
+            </div>
+          ) : null}
+          {status ? <p className="text-xs text-muted-foreground" role="status">{status}</p> : null}
+          {loading ? <p className="text-xs text-muted-foreground">Loading environment...</p> : (
+            <>
+            <section aria-labelledby="project-environment-storage-title">
+              <h2 id="project-environment-storage-title" className="text-sm font-semibold">Environment</h2>
+              <div className="mt-3 px-1 py-4">
+                <p className="text-xs text-muted-foreground">This document is saved in Mcode’s user data on this computer.</p>
+              </div>
+            </section>
+            <section aria-labelledby="project-environment-setup-title" className="space-y-4 pt-4">
+              <div className="mb-4 flex items-center justify-between gap-3">
                 <div>
-                  <h3 id="project-environment-setup-title" className="text-sm font-semibold">Setup</h3>
-                  <p className="text-xs text-muted-foreground">Optional command configuration.</p>
+                  <h2 id="project-environment-setup-title" className="text-base font-semibold">Setup</h2>
+                  <p className="mt-1 text-xs text-muted-foreground">Optional command configuration for New worktrees.</p>
                 </div>
                 <Button ref={firstTaskRef} type="button" variant="outline" size="sm" onClick={() => setSetup(!setupEnabled)}>
                   {setupEnabled ? "Remove Setup" : "Add Setup"}
@@ -287,21 +297,20 @@ export function ProjectEnvironmentPanel({ workspaceId, active = true }: { readon
                   onChange={(setup) => setDraft((current) => ({ ...current, setup }))}
                   firstControlRef={undefined}
                 />
-              ) : null}
+                ) : null}
             </section>
-            <Separator />
-            <section aria-labelledby="project-environment-actions-title" className="space-y-3">
-              <div className="flex items-center justify-between gap-2">
+            <section aria-labelledby="project-environment-actions-title" className="space-y-4 pt-4">
+              <div className="mb-4 flex items-center justify-between gap-3">
                 <div>
-                  <h3 id="project-environment-actions-title" className="text-sm font-semibold">Actions</h3>
-                  <p className="text-xs text-muted-foreground">Named commands for this Project.</p>
+                  <h2 id="project-environment-actions-title" className="text-base font-semibold">Project actions</h2>
+                  <p className="mt-1 text-xs text-muted-foreground">Save named commands for this Project.</p>
                 </div>
                 <Button type="button" variant="outline" size="sm" aria-label="Add action" onClick={addAction}>
                   <Plus size={15} aria-hidden /> Add action
                 </Button>
               </div>
-              {draft.actions.length === 0 ? <p className="text-xs text-muted-foreground">No actions configured.</p> : (
-                <div className="space-y-3">
+              {draft.actions.length === 0 ? <p className="text-xs text-muted-foreground">No project actions configured.</p> : (
+                <div className="space-y-8">
                   {draft.actions.map((action, index) => (
                     <ActionEditor
                       key={action.id}
@@ -314,8 +323,9 @@ export function ProjectEnvironmentPanel({ workspaceId, active = true }: { readon
                 </div>
               )}
             </section>
-          </div>
-        )}
+            </>
+          )}
+        </div>
       </div>
       <footer className="flex shrink-0 justify-end gap-2 border-t border-border/60 px-3 py-2">
         <Button type="button" variant="ghost" size="sm" onClick={() => void reload()} disabled={loading || saving}>
