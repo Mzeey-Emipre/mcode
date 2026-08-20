@@ -23,6 +23,7 @@ import {
   GitWatcherService,
   WorkspaceEnricher,
   WorkspaceService,
+  WorkspaceEnvironmentService,
 } from "../../features/projects";
 import {
   HandoffCheckoutService,
@@ -266,6 +267,7 @@ browserAutomationCredentials.onRemoved((revocation) => {
 
 // Resolve services
 const workspaceService = container.resolve(WorkspaceService);
+const workspaceEnvironmentService = container.resolve(WorkspaceEnvironmentService);
 const threadService = container.resolve(ThreadService);
 const agentService = container.resolve(AgentService);
 const agentPermissionService = container.resolve(AgentPermissionService);
@@ -592,6 +594,7 @@ codexCatalogService.onSkillsChanged((cwd) => {
 // Create and start HTTP + WS server
 const { httpServer, wss } = createWsServer({
   workspaceService,
+  workspaceEnvironmentService,
   threadService,
   agentService,
   agentPermissionService,

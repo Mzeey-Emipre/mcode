@@ -26,6 +26,7 @@ import {
   type PreviewAnnotationBundle,
   type TerminalProfileInUseData,
   getExtension,
+  workspaceEnvironmentValidationIssues,
 } from "@mcode/contracts";
 import { logger, validateBranchName } from "@mcode/shared";
 import { discoverCopilotAgents } from "../../features/providers/adapters/copilot/copilot-agent-discovery.js";
@@ -41,7 +42,9 @@ import type {
   GitWatcherService,
   WorkspaceEnricher,
   WorkspaceService,
+  WorkspaceEnvironmentService,
 } from "../../features/projects/index.js";
+import { WorkspaceEnvironmentServiceError } from "../../features/projects/environment/workspace-environment-errors.js";
 import type { HandoffCheckoutService, HandoffStorage } from "../../features/handoff/index.js";
 import type {
   GithubService,
@@ -246,6 +249,8 @@ export interface RouterDeps {
     request: IncomingMessage,
   ) => BrowserAutomationHostConnectionAuthorization | null;
   workspaceService: WorkspaceService;
+  /** Owns private workspace environment document reads and revision-checked saves. */
+  workspaceEnvironmentService: WorkspaceEnvironmentService;
   threadService: ThreadService;
   agentService: AgentService;
   /** Routes provider permission decisions through the Agents feature boundary. */
@@ -384,6 +389,25 @@ export async function routeMessage(
   // Validate params
   const paramsResult = methodDef.params.safeParse(request.params);
   if (!paramsResult.success) {
+    if (
+      request.method === "workspace.environment.read" ||
+      request.method === "workspace.environment.save"
+    ) {
+      const issues = workspaceEnvironmentValidationIssues(paramsResult.error);
+      const unsupported = issues.some((candidate) => candidate.reason === "unsupported_version");
+      return {
+        id: request.id,
+        error: {
+          code: unsupported
+            ? "WORKSPACE_ENVIRONMENT_UNSUPPORTED_VERSION"
+            : "WORKSPACE_ENVIRONMENT_VALIDATION",
+          message: unsupported
+            ? "Workspace environment version is not supported"
+            : "Workspace environment request failed validation",
+          data: { issues },
+        },
+      };
+    }
     return {
       id: request.id,
       error: {
@@ -435,6 +459,16 @@ export async function routeMessage(
             err instanceof ProviderCliMissingError
               ? { providerId: err.providerId, configuredPath: err.configuredPath, resolvedPath: null }
               : { providerId: err.providerId },
+        },
+      };
+    }
+    if (err instanceof WorkspaceEnvironmentServiceError) {
+      return {
+        id: request.id,
+        error: {
+          code: err.code,
+          message,
+          ...(err.issues ? { data: { issues: err.issues } } : {}),
         },
       };
     }
@@ -806,6 +840,22 @@ async function dispatch(
     }
     case "workspace.rename":
       return deps.workspaceService.rename(params.id, params.name);
+    case "workspace.environment.read":
+      if (!deps.workspaceService.findById(params.workspaceId)) {
+        throw new WorkspaceEnvironmentServiceError(
+          "WORKSPACE_ENVIRONMENT_NOT_FOUND",
+          `Workspace not found: ${params.workspaceId}`,
+        );
+      }
+      return deps.workspaceEnvironmentService.read(params.workspaceId);
+    case "workspace.environment.save":
+      if (!deps.workspaceService.findById(params.workspaceId)) {
+        throw new WorkspaceEnvironmentServiceError(
+          "WORKSPACE_ENVIRONMENT_NOT_FOUND",
+          `Workspace not found: ${params.workspaceId}`,
+        );
+      }
+      return deps.workspaceEnvironmentService.save(params);
     case "workspace.delete": {
       await teardownWorkspaceThreads(deps, params.id);
       const result = deps.workspaceService.delete(params.id);

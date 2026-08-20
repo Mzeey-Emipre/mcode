@@ -36,6 +36,32 @@ export { WorkspaceSchema, WorkspaceEnrichmentSchema } from "./models/workspace.j
 export type { Workspace, WorkspaceEnrichment } from "./models/workspace.js";
 
 export {
+  WORKSPACE_ENVIRONMENT_VERSION,
+  WORKSPACE_ENVIRONMENT_SCRIPT_MAX_BYTES,
+  WORKSPACE_ENVIRONMENT_COMMAND_MAX_BYTES,
+  WORKSPACE_ENVIRONMENT_DOCUMENT_MAX_BYTES,
+  WorkspaceEnvironmentValidationReasonSchema,
+  WorkspaceEnvironmentValidationIssueSchema,
+  WorkspaceEnvironmentCommandSchema,
+  WorkspaceEnvironmentActionSchema,
+  WorkspaceEnvironmentDocumentSchema,
+  DEFAULT_WORKSPACE_ENVIRONMENT_DOCUMENT,
+  WorkspaceEnvironmentReadResultSchema,
+  WorkspaceEnvironmentSaveInputSchema,
+  WorkspaceEnvironmentErrorSchema,
+  workspaceEnvironmentValidationIssues,
+} from "./models/workspace-environment.js";
+export type {
+  WorkspaceEnvironmentValidationReason,
+  WorkspaceEnvironmentValidationIssue,
+  WorkspaceEnvironmentCommand,
+  WorkspaceEnvironmentAction,
+  WorkspaceEnvironmentDocument,
+  WorkspaceEnvironmentReadResult,
+  WorkspaceEnvironmentSaveInput,
+} from "./models/workspace-environment.js";
+
+export {
   TurnExecutionIdSchema,
   TurnRuntimePhaseSchema,
   TurnRuntimeSnapshotSchema,

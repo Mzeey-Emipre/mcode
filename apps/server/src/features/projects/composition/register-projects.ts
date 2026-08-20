@@ -7,6 +7,7 @@ import {
   WorktreeDirectoryRemover,
   WorkspaceEnricher,
   WorkspaceService,
+  WorkspaceEnvironmentService,
 } from "../index.js";
 import { WorkspaceRepo } from "../persistence/workspace-repo.js";
 import { WorktreeRepo } from "../persistence/worktree-repo.js";
@@ -53,6 +54,10 @@ export function registerProjectServices(container: DependencyContainer): void {
     ProjectWorktreeService,
     { useClass: ProjectWorktreeService },
     { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    WorkspaceEnvironmentService,
+    { useFactory: () => new WorkspaceEnvironmentService() },
   );
   container.register("GitService", {
     useFactory: (c) => c.resolve(GitService),

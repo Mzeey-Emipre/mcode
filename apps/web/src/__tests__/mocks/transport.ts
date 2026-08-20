@@ -107,6 +107,16 @@ export const mockTransport: McodeTransport = {
   createWorkspace: vi.fn(),
   listWorkspaces: vi.fn().mockResolvedValue([]),
   renameWorkspace: vi.fn().mockResolvedValue(createMockWorkspace()),
+  readWorkspaceEnvironment: vi.fn().mockResolvedValue({
+    document: { version: "0.0.1", actions: [] },
+    revision: null,
+    status: "absent",
+  }),
+  saveWorkspaceEnvironment: vi.fn().mockImplementation(async (_workspaceId, document) => ({
+    document,
+    revision: "revision",
+    status: "present",
+  })),
   deleteWorkspace: vi.fn().mockResolvedValue(true),
   touchLastOpened: vi.fn().mockResolvedValue(undefined),
   reorderWorkspace: vi.fn().mockResolvedValue(undefined),

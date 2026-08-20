@@ -18,7 +18,7 @@ import { useCommandPaletteStore } from "@/stores/commandPaletteStore";
 import { ShortcutHelpDialog } from "@/components/ShortcutHelpDialog";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
-import { COMPOSER_MIN_WIDTH } from "@/stores/diffStore";
+import { COMPOSER_MIN_WIDTH, useDiffStore } from "@/stores/diffStore";
 import {
   usePreviewDesignModeStore,
   usePreviewFocusStore,
@@ -31,7 +31,7 @@ import { setContext } from "@/lib/context-tracker";
 import { startPushListeners, stopPushListeners } from "@/transport/ws-events";
 import { useIdleReclamation } from "@/hooks/useIdleReclamation";
 import { useComposerLayoutGuard } from "@/hooks/useComposerLayoutGuard";
-import { toggleRightPanelAdaptive } from "@/lib/right-panel-layout";
+import { showRightPanelAdaptive, toggleRightPanelAdaptive } from "@/lib/right-panel-layout";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ToastContainer } from "@/components/Toast";
 import type { SettingsSection } from "@/components/settings/settings-nav";
@@ -463,6 +463,17 @@ export function App() {
             useWorkspaceStore.getState();
           if (!activeWorkspaceId) return;
           toggleRightPanelAdaptive(activeWorkspaceId, activeThreadId);
+        },
+      }),
+      registerCommand({
+        id: "projectEnvironment.open",
+        title: "Open Project Settings",
+        category: "Project",
+        handler: () => {
+          const { activeWorkspaceId, activeThreadId } = useWorkspaceStore.getState();
+          if (!activeWorkspaceId) return;
+          showRightPanelAdaptive(activeWorkspaceId, activeThreadId);
+          useDiffStore.getState().setRightPanelTab(activeWorkspaceId, activeThreadId, "environment");
         },
       }),
       registerCommand({
