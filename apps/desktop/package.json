@@ -17,6 +17,7 @@
     "rebuild": "electron-rebuild -f",
     "dist": "bun run build && bun scripts/desktop-packaging/target-package/generate-snapshot.mjs && electron-builder --publish never",
     "dist:no-snapshot": "bun run build && electron-builder --publish never",
+    "test:packaged-reliability": "bun scripts/desktop-packaging/package-validation/desktop-reliability-test.mjs",
     "generate:icons": "bun scripts/generate-icons.mjs",
     "test": "bunx vitest run"
   },

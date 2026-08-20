@@ -105,6 +105,7 @@ import type Database from "better-sqlite3";
 import type { JobObject } from "../../runtime/process/containment/job-object.js";
 import { resolveWebAutomationFlag } from "../../runtime/startup/startup-policy.js";
 import { listenWithPortRetry } from "../../runtime/http/http-listener.js";
+import { createReliabilityHarnessAdapter } from "../../runtime/reliability-harness/control.js";
 
 /** Start the server runtime and install its shutdown handlers. */
 export async function startServer(): Promise<void> {
@@ -367,6 +368,7 @@ const recapService = container.resolve(RecapService);
 const handoffStorage = container.resolve(HandoffStorage);
 const handoffCheckoutService = container.resolve(HandoffCheckoutService);
 const db = container.resolve<Database.Database>("Database");
+const reliabilityHarness = createReliabilityHarnessAdapter(db);
 const jobObject = container.resolve<JobObject>("JobObject");
 
 const portPush = new PortPush();
@@ -644,6 +646,7 @@ const { httpServer, wss } = createWsServer({
   threadCompletionService,
   browserAutomationBroker,
   browserAutomationMcpHandler,
+  reliabilityHarness,
   authToken: AUTH_TOKEN,
   singleInstance: SINGLE_INSTANCE,
   instanceToken: INSTANCE_TOKEN,
