@@ -9,8 +9,7 @@ import {
   COMPOSER_MIN_WIDTH,
   PANEL_SPLIT_GAP_PX,
   maxPanelWidthInSplit,
-  createRightPanelState,
-  createDefaultRightPanelState,
+  projectRightPanelForScope,
   getDefaultPanelWidthPx,
 } from "@/stores/diffStore";
 import { PlanPanel } from "./plan";
@@ -193,22 +192,20 @@ export function RightPanel() {
   const maximized = useUiStore((s) => s.rightPanelMaximized);
   const toggleMaximized = useUiStore((s) => s.toggleRightPanelMaximized);
 
-  // Read the scope's effective panel record: the active thread's own once it has
-  // diverged, otherwise the workspace fallback (ADR-0012 copy-on-write). Both
-  // branches return a stable store reference, so the selector does not allocate.
-  const storedPanel = useDiffStore((s) =>
-    activeWorkspaceId
-      ? ((activeThreadId ? s.rightPanelByThread[activeThreadId] : undefined) ??
-        s.rightPanelFallbackByWorkspace[activeWorkspaceId])
+  // Select raw records by reference, then project the scope in useMemo. The
+  // projection removes workspace Terminal instances only for untouched
+  // threads (ADR-0020) while preserving thread-owned records.
+  const ownedPanel = useDiffStore((s) =>
+    activeWorkspaceId && activeThreadId
+      ? s.rightPanelByThread[activeThreadId]
       : undefined,
   );
-  /** Avoid a Zustand selector that allocates a fresh default object every evaluation. */
+  const fallbackPanel = useDiffStore((s) =>
+    activeWorkspaceId ? s.rightPanelFallbackByWorkspace[activeWorkspaceId] : undefined,
+  );
   const panelState = useMemo(
-    () =>
-      storedPanel
-        ? createRightPanelState(storedPanel)
-        : createDefaultRightPanelState(),
-    [storedPanel],
+    () => projectRightPanelForScope(ownedPanel, fallbackPanel, activeThreadId),
+    [activeThreadId, fallbackPanel, ownedPanel],
   );
   const {
     width: panelWidth,

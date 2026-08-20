@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReviewComparison, ReviewFileChange } from "@mcode/contracts";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
-import { useDiffStore } from "@/stores/diffStore";
+import { projectRightPanelForScope, useDiffStore } from "@/stores/diffStore";
 import { getTransport } from "@/transport";
 import { DiffToolbar } from "./DiffToolbar";
 import { LastTurnView } from "./LastTurnView";
@@ -51,13 +51,19 @@ export function DiffPanel() {
   const snapshotsPending = useDiffStore((s) =>
     activeThreadId ? (s.snapshotsPendingByThread[activeThreadId] ?? false) : false,
   );
-  // The whole panel record is per-thread, falling back to the workspace record
-  // for uncustomized threads (ADR-0012).
-  const panelState = useDiffStore((s) =>
-    activeWorkspaceId
-      ? (activeThreadId ? s.rightPanelByThread[activeThreadId] : undefined) ??
-        s.rightPanelFallbackByWorkspace[activeWorkspaceId]
+  // Select raw records by reference, then apply the shared scope projection so
+  // untouched threads do not inherit workspace Terminal instances (ADR-0020).
+  const ownedPanel = useDiffStore((s) =>
+    activeWorkspaceId && activeThreadId
+      ? s.rightPanelByThread[activeThreadId]
       : undefined,
+  );
+  const fallbackPanel = useDiffStore((s) =>
+    activeWorkspaceId ? s.rightPanelFallbackByWorkspace[activeWorkspaceId] : undefined,
+  );
+  const panelState = useMemo(
+    () => projectRightPanelForScope(ownedPanel, fallbackPanel, activeThreadId),
+    [activeThreadId, fallbackPanel, ownedPanel],
   );
   const panelVisible = useDiffStore((s) =>
     activeWorkspaceId ? s.getRightPanelVisible(activeWorkspaceId, activeThreadId) : false,
