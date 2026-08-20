@@ -61,6 +61,26 @@ describe("useFileAutocomplete async lifecycle", () => {
     getProviderCatalog.mockResolvedValue(CACHED_SNAPSHOT);
   });
 
+  it("loads workspace catalog and files without a placeholder thread for @", async () => {
+    listWorkspaceFiles.mockResolvedValueOnce(["src/app.ts"]);
+
+    const { result } = renderHook(() => useFileAutocomplete({
+      workspaceId: "workspace-1",
+      providerId: "codex",
+    }));
+
+    await act(async () => {
+      await result.current.handleInputChange("@", 1);
+    });
+
+    expect(getProviderCatalog).toHaveBeenCalledWith(REQUEST);
+    expect(listWorkspaceFiles).toHaveBeenCalledWith("workspace-1", undefined);
+    expect(result.current.suggestions).toContainEqual(expect.objectContaining({
+      kind: "agent",
+      name: "reviewer",
+    }));
+  });
+
   it("does not reopen after the user dismisses while files are loading", async () => {
     let resolveFiles!: (files: string[]) => void;
     listWorkspaceFiles.mockReturnValueOnce(
