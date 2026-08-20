@@ -36,6 +36,19 @@ treats per-session state as opaque (`SessionRuntime<TState>`) so the same
 lifecycle serves every Provider. Each Provider holds its own instance; the
 runtime is not shared, keeping per-session state type-isolated.
 
+### Provider reattachment
+Restoring observation and control of the same still-running Provider thread
+and turn after transport loss, without creating a new turn.
+
+### Same-turn recovery
+Provider-native continuation of an existing turn with the same turn identity
+and preserved execution history, without a new user message.
+
+### Replacement turn
+A new turn linked to an interrupted turn when same-turn recovery is
+unavailable. It is explicitly initiated and may repeat effects from the
+interrupted turn.
+
 ### Protocol adapter
 The per-Provider seam carrying the protocol-specific I/O the Session runtime
 delegates to: `spawn` (returning the session state plus any child PIDs the
@@ -402,6 +415,11 @@ terminal `stop_reason` (`end_turn`, `stop_sequence`, `max_tokens`,
 from narration segments (which are persisted to a separate table) and from
 reasoning blocks (not yet surfaced).
 
+### Streaming checkpoint
+A server-owned durable record of user-visible output accepted during an
+unfinished turn. Distinct from a finalized Message, which represents the
+completed conversation record.
+
 ### Message
 A persisted unit of conversation in a thread. Each message has a **role**
 (`user`, `assistant`, or `system`), a sequence number, and an optional
@@ -430,18 +448,15 @@ user sees the same final result; only the cost during streaming differs.
 (Epic #649, slice #658.)
 
 ### Turn outcome
-How a turn ended, as one of three mutually-exclusive states:
-**completed** (the agent finished its work normally), **errored** (the turn
-failed — a crash, a provider error, a spawn race), or **cancelled** (the
-user stopped the turn). The outcome is what the end-of-turn decision keys
-off: a cancelled turn and an errored turn record different tool-call
-statuses, so a running tool call can tell whether it was stopped by the user
-or killed by a failure.
+How a turn ended, as one of four mutually-exclusive states:
+**completed** (the agent finished its work normally), **cancelled** (the user
+explicitly stopped the turn), **interrupted** (infrastructure or a process
+disappeared before a terminal outcome), or **errored** (a known terminal
+provider or turn failure).
 
-> **Codebase mismatch (distinction pending).** The turn-end paths today
-> carry a bare `isError` boolean, which collapses *errored* and *cancelled*
-> into one state. The three-way outcome replaces it so the two are no longer
-> conflated.
+> **Codebase mismatch.** Canonical persistence currently stores
+> `Completed|Interrupted|Errored`, so it lacks the distinct `Cancelled`
+> outcome.
 
 ### Empty turn (recordable activity)
 A turn that produced nothing worth keeping: no tool call, no assistant body,
@@ -457,10 +472,10 @@ leave no assistant row, so the thread is not cluttered with hollow entries.
 ### Transient failure (auto-retry)
 A turn failure that a second attempt would plausibly clear — a stale pooled
 session, a subprocess spawn race, a brief network blip — as distinct from a
-fatal failure that will recur. A transient failure is eligible for one
-automatic retry against a fresh session, gated by an attempt cap so a
-misclassified fatal error cannot cause a retry storm. Which signatures count
-as transient is a small explicit allowlist, not a heuristic.
+fatal failure that will recur. A transient failure prioritizes provider-native
+same-turn recovery, with a replacement turn only as an explicit fallback when
+same-turn recovery is unavailable. Which signatures count as transient is a
+small explicit allowlist, not a heuristic.
 
 > **Behaviour pending.** Today every turn failure is treated as terminal and
 > costs a manual re-send, transient or not.
