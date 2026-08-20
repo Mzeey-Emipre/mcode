@@ -2120,6 +2120,30 @@ describe("CodexEventMapper", () => {
     ]);
   });
 
+  it("keeps the named child identity from Codex's generated delegation prompt", () => {
+    mapper = new CodexEventMapper("test-thread", "main-thread");
+
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "main-thread",
+        item: {
+          type: "collabAgentToolCall",
+          id: "spawn-named-child",
+          tool: "spawnAgent",
+          prompt: "You are the child agent named route_probe. Inspect the routing boundary.",
+        },
+      },
+    });
+
+    expect(events).toEqual([expect.objectContaining({
+      type: "toolUse",
+      toolCallId: "spawn-named-child",
+      toolInput: expect.objectContaining({ agentName: "route_probe" }),
+    })]);
+  });
+
   it("updates a completed spawnAgent with metadata when parent completion arrives late", () => {
     mapper = new CodexEventMapper("test-thread", "main-thread");
     const started = mapper.mapNotification({

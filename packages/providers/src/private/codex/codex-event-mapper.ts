@@ -74,6 +74,7 @@ const TOOL_LIKE_ITEM_TYPES = new Set([
 ]);
 
 const CODEX_TASK_NAME_LINE = /^task_name:\s*([a-z0-9_]{1,96})$/i;
+const CODEX_NAMED_CHILD_PROMPT = /^You are the child agent named ([a-z0-9_]{1,96})\.(?:\s|$)/i;
 
 const FALLBACK_ASSISTANT_ITEM_ID = "__codex_assistant_message__";
 const MAX_EARLY_CHILD_THREADS = 8;
@@ -870,6 +871,8 @@ export class CodexEventMapper {
   /** Reads the task identity convention used by Codex child prompts. */
   private taskNameFromPrompt(prompt: string | undefined): string | undefined {
     if (!prompt) return undefined;
+    const namedChild = prompt.trimStart().match(CODEX_NAMED_CHILD_PROMPT)?.[1];
+    if (namedChild) return namedChild;
     const firstLine = prompt
       .split(/\r?\n/)
       .map((line) => line.trim())
