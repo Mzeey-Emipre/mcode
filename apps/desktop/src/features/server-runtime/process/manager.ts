@@ -391,6 +391,8 @@ export class ServerManager {
   private _authToken = "";
   private _ipcPath = "";
   private _reusedExisting = false;
+  private readonly plannedExitProcesses = new Set<ChildProcess>();
+  private plannedRestartInFlight: Promise<void> | null = null;
 
   /**
    * Optional callback invoked when the server process exits unexpectedly
@@ -637,9 +639,10 @@ export class ServerManager {
       child.on("exit", (code) => {
         console.error(`Server process exited with code ${code}`);
         stderrStream?.end();
+        const wasPlannedExit = this.plannedExitProcesses.delete(child);
         if (this.serverProcess === child) {
           this.serverProcess = null;
-          this.onUnexpectedExit?.(code);
+          if (!wasPlannedExit) this.onUnexpectedExit?.(code);
         }
       });
 
@@ -688,6 +691,31 @@ export class ServerManager {
     }
     await new Promise((r) => setTimeout(r, 500));
     await this.start();
+  }
+
+  /** Restart after an explicit harness command without invoking crash recovery. */
+  restartPlanned(): Promise<void> {
+    if (this._reusedExisting) {
+      return Promise.reject(new Error("Cannot plan a restart for an unowned server"));
+    }
+    if (this.plannedRestartInFlight) return this.plannedRestartInFlight;
+
+    const oldChild = this.serverProcess;
+    if (oldChild) this.plannedExitProcesses.add(oldChild);
+
+    let restartPromise: Promise<void>;
+    restartPromise = this.restart()
+      .catch((error) => {
+        if (oldChild) this.plannedExitProcesses.delete(oldChild);
+        throw error;
+      })
+      .finally(() => {
+        if (this.plannedRestartInFlight === restartPromise) {
+          this.plannedRestartInFlight = null;
+        }
+      });
+    this.plannedRestartInFlight = restartPromise;
+    return restartPromise;
   }
 
   /**

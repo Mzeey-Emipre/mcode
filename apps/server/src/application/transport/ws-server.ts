@@ -23,6 +23,7 @@ import type {
   BrowserAutomationMcpHandler,
 } from "../../features/browser-automation/index.js";
 import { EXTERNAL_THREAD_CONTROL_MCP_PATH } from "../../features/thread-control/index.js";
+import type { ReliabilityHarnessAdapter } from "../../runtime/reliability-harness/control.js";
 
 /** Constant-time string comparison to prevent timing attacks on token validation. */
 function safeTokenEqual(a: string, b: string): boolean {
@@ -61,6 +62,8 @@ export type WsServerDeps = RouterDeps & {
   shutdown: () => void;
   /** Handles the loopback-only browser MCP route when the feature is enabled. */
   browserAutomationMcpHandler?: BrowserAutomationMcpHandler;
+  /** Optional opt-in packaged reliability controls. */
+  reliabilityHarness?: ReliabilityHarnessAdapter;
 };
 
 /** Refreshes mutable workspace authorization while preserving one connection's desktop identity. */
@@ -124,8 +127,19 @@ export function createWsServer(deps: WsServerDeps): {
   httpServer: Server;
   wss: WebSocketServer;
 } {
+  let wss: WebSocketServer;
   const httpServer = createServer((req: IncomingMessage, res: ServerResponse) => {
     const requestPath = new URL(req.url ?? "/", "http://localhost").pathname;
+    if (deps.reliabilityHarness?.enabled && requestPath === "/__mcode/reliability") {
+      void deps.reliabilityHarness.handleRequest(req, res, wss.clients).catch((error: unknown) => {
+        logger.error("Reliability harness request failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        if (!res.headersSent) res.writeHead(500);
+        res.end("Reliability harness failure");
+      });
+      return;
+    }
     if (requestPath === "/mcp" && deps.browserAutomationMcpHandler) {
       void deps.browserAutomationMcpHandler.handle(req, res).catch((error: unknown) => {
         logger.error("Browser automation MCP request failed", {
@@ -238,7 +252,7 @@ export function createWsServer(deps: WsServerDeps): {
     res.end("Not found");
   });
 
-  const wss = new WebSocketServer({
+  wss = new WebSocketServer({
     server: httpServer,
     maxPayload: 45 * 1024 * 1024,
     perMessageDeflate: {
