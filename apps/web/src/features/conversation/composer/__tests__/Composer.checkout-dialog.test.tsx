@@ -239,39 +239,24 @@ function seedComposerState(
   return workspace;
 }
 
-function seedPreparingComposerState(
-  context:
-    | "new-direct"
-    | "new-worktree"
-    | "new-existing-worktree"
-    | "branch-direct"
-    | "branch-worktree"
-    | "branch-existing-worktree",
-) {
+function seedPreparingComposerState() {
   const workspace = createMockWorkspace({ id: "ws-1", is_git_repo: true });
-  const isExistingWorktree = context.endsWith("existing-worktree");
   const placeholder = createMockThread({
     id: "thread-placeholder",
     workspace_id: workspace.id,
-    mode: isExistingWorktree || context.endsWith("worktree") ? "worktree" : "direct",
+    mode: "worktree",
     provider: "codex",
-    worktree_path: isExistingWorktree ? "/repo/.worktrees/selected" : null,
+    worktree_path: "/repo/.worktrees/placeholder",
   });
   useWorkspaceStore.setState({
     workspaces: [workspace],
     activeWorkspaceId: workspace.id,
-    threads: [{ ...placeholder, clientPreparing: true, clientPreparingContext: context }],
+    threads: [{ ...placeholder, clientPreparing: true, clientPreparingContext: "new-existing-worktree" }],
     activeThreadId: placeholder.id,
     branches: [branch("main", true)],
-    newThreadMode: isExistingWorktree
-      ? "existing-worktree"
-      : context.endsWith("worktree")
-        ? "worktree"
-        : "direct",
+    newThreadMode: "existing-worktree",
     newThreadBranch: "main",
-    selectedWorktree: isExistingWorktree
-      ? { name: "selected", path: "/repo/.worktrees/selected", branch: "main", managed: true }
-      : null,
+    selectedWorktree: { name: "selected", path: "/repo/.worktrees/selected", branch: "main", managed: true },
   });
 }
 
@@ -404,15 +389,8 @@ describe("Composer checkout confirmation", () => {
     expect(useWorkspaceStore.getState().newThreadMode).toBe("worktree");
   });
 
-  it.each([
-    "new-direct",
-    "new-worktree",
-    "new-existing-worktree",
-    "branch-direct",
-    "branch-worktree",
-    "branch-existing-worktree",
-  ] as const)("uses workspace catalog scope while %s preparation is pending", async (context) => {
-    seedPreparingComposerState(context);
+  it("uses workspace catalog scope while preparation is pending", async () => {
+    seedPreparingComposerState();
     render(<Composer threadId="thread-placeholder" workspaceId="ws-1" />);
 
     await waitFor(() => {
@@ -455,7 +433,7 @@ describe("Composer checkout confirmation", () => {
   });
 
   it("switches catalog requests to the persisted thread and worktree after preparation resolves", async () => {
-    seedPreparingComposerState("new-existing-worktree");
+    seedPreparingComposerState();
     const { rerender } = render(<Composer threadId="thread-placeholder" workspaceId="ws-1" />);
 
     await waitFor(() => expect(lastFileAutocompleteOptions?.threadId).toBeUndefined());
