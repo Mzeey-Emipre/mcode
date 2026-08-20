@@ -280,23 +280,66 @@ function omitByKeyPrefix<V>(record: Record<string, V>, prefix: string): Record<s
   return next;
 }
 
+/** Remove workspace-scoped Terminal instances before seeding a thread panel. */
+function withoutTerminalInstances(state: RightPanelState): RightPanelState {
+  const instances = rightPanelTabInstances(state);
+  const activeTerminalIndex = instances.findIndex(
+    (instance) => instance.id === state.activeTabId && instance.type === "terminal",
+  );
+  const tabInstances = instances.filter((instance) => instance.type !== "terminal");
+  if (activeTerminalIndex < 0) {
+    return createRightPanelState({ ...state, tabInstances });
+  }
+
+  // Match close-tab focus: select the nearest surviving item to the right of
+  // the removed tab, then the nearest surviving item on its left.
+  const nextActive =
+    instances.slice(activeTerminalIndex + 1).find((instance) => instance.type !== "terminal") ??
+    [...instances.slice(0, activeTerminalIndex)]
+      .reverse()
+      .find((instance) => instance.type !== "terminal") ??
+    null;
+  return createRightPanelState({
+    ...state,
+    tabInstances,
+    activeTabId: nextActive?.id ?? null,
+  });
+}
+
+/**
+ * Projects the raw panel records for one scope without leaking workspace
+ * Terminal instances into an untouched thread. Thread-owned records remain
+ * unchanged; inherited fallback state keeps visibility, width, and all
+ * non-Terminal tab state. See ADR-0012 and ADR-0020.
+ */
+export function projectRightPanelForScope(
+  ownedPanel: RightPanelState | undefined,
+  fallbackPanel: RightPanelState | undefined,
+  threadId: string | null | undefined,
+): RightPanelState {
+  const panel = ownedPanel ?? fallbackPanel;
+  if (!panel) return createDefaultRightPanelState();
+  const resolved = createRightPanelState(panel);
+  return threadId && !ownedPanel ? withoutTerminalInstances(resolved) : resolved;
+}
+
 /**
  * Resolves the effective panel record for a scope (ADR-0012 copy-on-write read).
  * A thread with its own record uses it; otherwise it falls through to the
- * workspace fallback, which also serves the threadless shell. Defaults when
- * neither exists yet.
+ * workspace fallback, which also serves the threadless shell. Thread reads
+ * omit workspace-scoped Terminal instances before applying that fallback.
+ * Defaults when neither exists yet.
  */
 function effectiveRightPanel(
   state: DiffState,
   workspaceId: string,
   threadId: string | null | undefined,
 ): RightPanelState {
-  if (threadId) {
-    const own = state.rightPanelByThread[threadId];
-    if (own) return createRightPanelState(own);
-  }
-  const fallback = state.rightPanelFallbackByWorkspace[workspaceId];
-  return fallback ? createRightPanelState(fallback) : createDefaultRightPanelState();
+  return projectRightPanelForScope(
+    threadId ? state.rightPanelByThread[threadId] : undefined,
+    state.rightPanelFallbackByWorkspace[workspaceId],
+    threadId,
+  );
 }
 
 /**
@@ -372,8 +415,9 @@ interface DiffState {
   /**
    * One workspace-level fallback panel record keyed by workspace ID. Serves the
    * threadless Browser/Terminal shell and seeds a not-yet-customized thread's
-   * first read, until that thread diverges into its own
-   * {@link rightPanelByThread} entry. See ADR-0012.
+   * scope-neutral state (visibility, width, and non-Terminal tabs) until that
+   * thread diverges into its own {@link rightPanelByThread} entry. See ADR-0012
+   * and ADR-0020.
    */
   readonly rightPanelFallbackByWorkspace: Record<string, RightPanelState>;
   /**

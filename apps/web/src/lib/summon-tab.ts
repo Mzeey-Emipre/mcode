@@ -6,9 +6,48 @@ import { hideRightPanelAdaptive, showRightPanelAdaptive } from "@/lib/right-pane
 import { createTerminalForScope } from "@/lib/ensure-terminal";
 import { useTerminalStore } from "@/features/terminal";
 
+const deferredTerminalSummons = new Map<string, () => void>();
+
 /** Whether a tab type only makes sense once a thread exists. */
 function tabNeedsThread(tab: RightPanelTab): boolean {
   return PANEL_TAB_TYPES.find((type) => type.id === tab)?.needsThread ?? false;
+}
+
+function deferTerminalSummon(
+  workspaceId: string,
+  placeholderId: string,
+  onFocus?: () => void,
+): void {
+  const pendingKey = `${workspaceId}:${placeholderId}`;
+  const cancelPending = deferredTerminalSummons.get(pendingKey);
+  if (cancelPending) {
+    cancelPending();
+    return;
+  }
+
+  let unsubscribe = () => {};
+  const cleanup = () => {
+    unsubscribe();
+    deferredTerminalSummons.delete(pendingKey);
+  };
+  unsubscribe = useWorkspaceStore.subscribe((state) => {
+    const placeholder = state.threads.find((thread) => thread.id === placeholderId);
+    if (state.activeWorkspaceId !== workspaceId) {
+      cleanup();
+      return;
+    }
+    if (state.activeThreadId === placeholderId) {
+      if (!placeholder?.clientPreparing) cleanup();
+      return;
+    }
+    if (!placeholder && state.activeThreadId) {
+      cleanup();
+      summonTab("terminal", onFocus);
+      return;
+    }
+    cleanup();
+  });
+  deferredTerminalSummons.set(pendingKey, cleanup);
 }
 
 /**
@@ -28,9 +67,18 @@ function tabNeedsThread(tab: RightPanelTab): boolean {
  *   into its URL field.
  */
 export function summonTab(tab: RightPanelTab, onFocus?: () => void): void {
-  const { activeWorkspaceId: wid, activeThreadId: tid } = useWorkspaceStore.getState();
+  const {
+    activeWorkspaceId: wid,
+    activeThreadId: tid,
+    threads,
+  } = useWorkspaceStore.getState();
   if (!wid) return;
   if (tabNeedsThread(tab) && !tid) return;
+  const activeThread = tid ? threads.find((thread) => thread.id === tid) : undefined;
+  if (tab === "terminal" && tid && activeThread?.clientPreparing) {
+    deferTerminalSummon(wid, tid, onFocus);
+    return;
+  }
 
   const { getRightPanel, getRightPanelVisible, setRightPanelTab, setRightPanelTabInstance } = useDiffStore.getState();
   const ui = useUiStore.getState();

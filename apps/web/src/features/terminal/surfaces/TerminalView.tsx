@@ -454,7 +454,6 @@ export const TerminalView = memo(function TerminalView({
   const rendererInitCancelledRef = useRef(false);
   const onDisposedRef = useRef(onDisposed);
   onDisposedRef.current = onDisposed;
-  const disposedNotifiedRef = useRef(false);
   const shownRef = useRef(shown);
   shownRef.current = shown;
 
@@ -478,7 +477,7 @@ export const TerminalView = memo(function TerminalView({
     const fitHost = fitHostRef.current;
     if (!container || !fitHost) return;
 
-    disposedNotifiedRef.current = false;
+    let disposedNotified = false;
     let disposed = false;
     const mountStart = performance.now();
 
@@ -490,8 +489,8 @@ export const TerminalView = memo(function TerminalView({
           import("@xterm/addon-serialize"),
         ]);
       if (disposed || !containerRef.current || !fitHostRef.current) {
-        if (!disposedNotifiedRef.current) {
-          disposedNotifiedRef.current = true;
+        if (!disposedNotified) {
+          disposedNotified = true;
           onDisposedRef.current?.();
         }
         return;
@@ -890,8 +889,8 @@ export const TerminalView = memo(function TerminalView({
             term.dispose();
           } finally {
             decrementLiveTerminalCount();
-            if (!disposedNotifiedRef.current) {
-              disposedNotifiedRef.current = true;
+            if (!disposedNotified) {
+              disposedNotified = true;
               onDisposedRef.current?.();
             }
           }
@@ -995,8 +994,8 @@ export const TerminalView = memo(function TerminalView({
       cleanupRef.current?.();
       cleanupRef.current = null;
       termRef.current = null;
-      if (!hadCleanup && !disposedNotifiedRef.current) {
-        disposedNotifiedRef.current = true;
+      if (!hadCleanup && !disposedNotified) {
+        disposedNotified = true;
         onDisposedRef.current?.();
       }
     });

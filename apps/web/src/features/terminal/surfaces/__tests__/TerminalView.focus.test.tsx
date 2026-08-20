@@ -1,5 +1,5 @@
 import { render, screen, within } from "@testing-library/react";
-import { act } from "react";
+import { act, StrictMode } from "react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { getDefaultSettings } from "@mcode/contracts";
 import { useSettingsStore } from "@/stores/settingsStore";
@@ -490,6 +490,28 @@ describe("TerminalView lifecycle (ADR-0010)", () => {
       "pty-cold",
       expect.any(Promise),
     );
+  });
+
+  it("notifies each effect disposal when Strict Mode probes the mount", async () => {
+    const onDisposed = vi.fn();
+    const view = render(
+      <StrictMode>
+        <TerminalView
+          ptyId="pty-cold"
+          visible={true}
+          threadActive={true}
+          onDisposed={onDisposed}
+        />
+      </StrictMode>,
+    );
+    await settle();
+
+    expect(onDisposed).toHaveBeenCalledOnce();
+
+    view.unmount();
+    await vi.waitFor(() => {
+      expect(onDisposed).toHaveBeenCalledTimes(2);
+    });
   });
 
   it("does not resume after a paused replay batch paints during cleanup", async () => {
