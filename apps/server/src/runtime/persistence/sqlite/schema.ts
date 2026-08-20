@@ -335,6 +335,7 @@ export const toolCallRecords = sqliteTable(
     toolName: text("tool_name").notNull(),
     displayName: text("display_name"),
     providerAgentKey: text("provider_agent_key"),
+    subagentIdentityKey: text("subagent_identity_key"),
     model: text("model"),
     reasoningEffort: text("reasoning_effort"),
     inputSummary: text("input_summary").notNull().default(""),

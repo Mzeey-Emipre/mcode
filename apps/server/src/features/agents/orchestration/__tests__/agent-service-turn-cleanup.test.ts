@@ -22,6 +22,7 @@ import { ThoughtSegmentRepo as RealThoughtSegmentRepo } from "../../conversation
 import { HookExecutionRepo as RealHookExecutionRepo } from "../../events/persistence/hook-execution-repo.js";
 import { AgentService } from "../agent-service.js";
 import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/canonical-agent-event-sink-stub.js";
+import { CanonicalAgentEventSink } from "../../canonical/canonical-agent-event-sink.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
 import { PlanQuestionService } from "../../planning/plan-question-service.js";
 import { broadcast } from "../../../../application/transport/push.js";
@@ -1161,7 +1162,12 @@ describe("AgentService Ended finalization", () => {
   let threadRepo: RealThreadRepo;
   let workspaceRepo: RealWorkspaceRepo;
   let messageRepo: RealMessageRepo;
-  let providerEmitter: EventEmitter & { sendTurn: ReturnType<typeof vi.fn>; stopSession: ReturnType<typeof vi.fn> };
+  let providerEmitter: EventEmitter & {
+    sendTurn: ReturnType<typeof vi.fn>;
+    stopSession: ReturnType<typeof vi.fn>;
+    interruptChildTurn: ReturnType<typeof vi.fn>;
+  };
+  let canonicalSink: CanonicalAgentEventSink;
   let service: AgentService;
 
   beforeEach(() => {
@@ -1174,8 +1180,12 @@ describe("AgentService Ended finalization", () => {
     const thoughtSegmentRepo = new RealThoughtSegmentRepo(db);
     const hookExecutionRepo = new RealHookExecutionRepo(db);
     providerEmitter = Object.assign(new EventEmitter(), {
+      descriptor: {
+        capabilities: [{ name: "child-cancellation", support: "supported" }],
+      },
       sendTurn: vi.fn(() => Promise.resolve()),
       stopSession: vi.fn(),
+      interruptChildTurn: vi.fn(() => Promise.resolve()),
       shutdown: vi.fn(),
     });
 
@@ -1215,6 +1225,7 @@ describe("AgentService Ended finalization", () => {
       listAnsweredForThread: vi.fn(() => []),
     } as unknown as PlanQuestionAnswersRepo;
 
+    canonicalSink = new CanonicalAgentEventSink(db, vi.fn());
     service = new AgentService(
       threadRepo,
       workspaceRepo,
@@ -1240,9 +1251,216 @@ describe("AgentService Ended finalization", () => {
       undefined,
       undefined,
       undefined,
-      createCanonicalAgentEventSinkStub(db),
+      canonicalSink,
     );
     service.init();
+  });
+
+  it("stops every running canonical descendant through the public parent stop seam", async () => {
+    const workspace = workspaceRepo.create("Test", process.cwd());
+    const thread = threadRepo.create(workspace.id, "Parent thread", "direct", "main", true, "codex");
+
+    await service.sendMessage({
+      threadId: thread.id,
+      content: "delegate nested work",
+      permissionMode: "default",
+      model: "gpt-5",
+      attachments: [],
+      provider: "codex",
+    });
+    const executionId = activeExecutionId(service, thread.id);
+    const parentTurn = canonicalSink.loadTurnByExecution(executionId);
+    expect(parentTurn).not.toBeNull();
+
+    const direct = canonicalSink.startCodexChildDelegation({
+      parentThreadId: thread.id,
+      parentTurnId: parentTurn!.id,
+      parentExecutionId: executionId,
+      parentItemId: "toolCall:direct-child",
+      receiverThreadIds: ["native-direct-thread"],
+      providerIdentities: [],
+    });
+    const directTurn = canonicalSink.startCodexChildTurn({
+      parentThreadId: thread.id,
+      parentTurnId: parentTurn!.id,
+      parentExecutionId: executionId,
+      parentItemId: "toolCall:direct-child",
+      nativeThreadId: "native-direct-thread",
+      nativeTurnId: "native-direct-turn",
+    });
+    const nested = canonicalSink.startCodexChildDelegation({
+      parentThreadId: direct.childThread.id,
+      parentTurnId: directTurn.id,
+      parentExecutionId: canonicalSink.loadExecutionIdForTurn(directTurn.id),
+      parentItemId: "toolCall:nested-child",
+      receiverThreadIds: ["native-nested-thread"],
+      providerIdentities: [],
+    });
+    canonicalSink.startCodexChildTurn({
+      parentThreadId: direct.childThread.id,
+      parentTurnId: directTurn.id,
+      parentExecutionId: canonicalSink.loadExecutionIdForTurn(directTurn.id),
+      parentItemId: "toolCall:nested-child",
+      nativeThreadId: "native-nested-thread",
+      nativeTurnId: "native-nested-turn",
+    });
+    const sibling = canonicalSink.startCodexChildDelegation({
+      parentThreadId: thread.id,
+      parentTurnId: parentTurn!.id,
+      parentExecutionId: executionId,
+      parentItemId: "toolCall:completed-sibling",
+      receiverThreadIds: ["native-sibling-thread"],
+      providerIdentities: [],
+    });
+    canonicalSink.startCodexChildTurn({
+      parentThreadId: thread.id,
+      parentTurnId: parentTurn!.id,
+      parentExecutionId: executionId,
+      parentItemId: "toolCall:completed-sibling",
+      nativeThreadId: "native-sibling-thread",
+      nativeTurnId: "native-sibling-turn",
+    });
+    canonicalSink.finishCodexChildTurn({
+      childThreadId: sibling.childThread.id,
+      nativeTurnId: "native-sibling-turn",
+      outcome: "completed",
+    });
+
+    expect(canonicalSink.loadCanonicalChildStopTargets(thread.id).map((target) => [
+      target.childThread.id,
+      target.latestTurn?.status,
+    ])).toEqual(expect.arrayContaining([
+      [direct.childThread.id, "Running"],
+      [nested.childThread.id, "Running"],
+    ]));
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === thread.id))
+      .toMatchObject({ phase: "running", turnExecutionId: executionId });
+
+    providerEmitter.interruptChildTurn.mockRejectedValueOnce(new Error("child interrupt unavailable"));
+    const result = await service.stopSession(thread.id);
+
+    expect(result.status).toBe("cancelled");
+    expect(providerEmitter.interruptChildTurn).toHaveBeenCalledTimes(2);
+    expect(providerEmitter.interruptChildTurn).toHaveBeenCalledWith(
+      `mcode-${thread.id}`,
+      "native-nested-thread",
+      "native-nested-turn",
+    );
+    expect(providerEmitter.interruptChildTurn).toHaveBeenCalledWith(
+      `mcode-${thread.id}`,
+      "native-direct-thread",
+      "native-direct-turn",
+    );
+    expect(providerEmitter.stopSession).toHaveBeenCalledOnce();
+    expect(Math.max(...providerEmitter.interruptChildTurn.mock.invocationCallOrder))
+      .toBeLessThan(providerEmitter.stopSession.mock.invocationCallOrder[0]!);
+    expect(canonicalSink.loadCanonicalChildStopTarget({
+      owningParentThreadId: thread.id,
+      childThreadId: direct.childThread.id,
+    })?.latestTurn?.status).toBe("Interrupted");
+    expect(canonicalSink.loadCanonicalChildStopTarget({
+      owningParentThreadId: thread.id,
+      childThreadId: nested.childThread.id,
+    })?.latestTurn?.status).toBe("Interrupted");
+    expect(canonicalSink.loadCanonicalChildStopTarget({
+      owningParentThreadId: thread.id,
+      childThreadId: sibling.childThread.id,
+    })?.latestTurn?.status).toBe("Completed");
+    expect(service.activeThreadIds()).not.toContain(thread.id);
+    expect(threadRepo.findById(thread.id)?.status).toBe("paused");
+  });
+
+  it("terminalizes a running canonical child when parent stop has no native identity", async () => {
+    const workspace = workspaceRepo.create("Test", process.cwd());
+    const thread = threadRepo.create(workspace.id, "Parent thread", "direct", "main", true, "codex");
+
+    await service.sendMessage({
+      threadId: thread.id,
+      content: "delegate work without provider identity",
+      permissionMode: "default",
+      model: "gpt-5",
+      attachments: [],
+      provider: "codex",
+    });
+    const executionId = activeExecutionId(service, thread.id);
+    const parentTurn = canonicalSink.loadTurnByExecution(executionId);
+    expect(parentTurn).not.toBeNull();
+    const child = canonicalSink.startCodexChildDelegation({
+      parentThreadId: thread.id,
+      parentTurnId: parentTurn!.id,
+      parentExecutionId: executionId,
+      parentItemId: "toolCall:missing-identity",
+      receiverThreadIds: ["native-missing-thread"],
+      providerIdentities: [],
+    });
+    const childTurn = canonicalSink.startCodexChildTurn({
+      parentThreadId: thread.id,
+      parentTurnId: parentTurn!.id,
+      parentExecutionId: executionId,
+      parentItemId: "toolCall:missing-identity",
+      nativeThreadId: "native-missing-thread",
+      nativeTurnId: "native-missing-turn",
+    });
+    db.prepare("UPDATE canonical_agent_threads SET provider_identities_json = '[]' WHERE id = ?")
+      .run(child.childThread.id);
+    db.prepare("UPDATE canonical_agent_turns SET provider_identities_json = '[]' WHERE id = ?")
+      .run(childTurn.id);
+
+    expect(canonicalSink.loadCanonicalChildStopTarget({
+      owningParentThreadId: thread.id,
+      childThreadId: child.childThread.id,
+    })).toMatchObject({ latestTurn: { status: "Running" }, nativeThreadId: null, nativeTurnId: null });
+
+    const result = await service.stopSession(thread.id);
+
+    expect(result.status).toBe("cancelled");
+    expect(providerEmitter.interruptChildTurn).not.toHaveBeenCalled();
+    expect(canonicalSink.loadCanonicalChildStopTarget({
+      owningParentThreadId: thread.id,
+      childThreadId: child.childThread.id,
+    })?.latestTurn?.status).toBe("Interrupted");
+  });
+
+  it("terminalizes canonical descendants during graceful stopAll", async () => {
+    const workspace = workspaceRepo.create("Test", process.cwd());
+    const thread = threadRepo.create(workspace.id, "Parent thread", "direct", "main", true, "codex");
+
+    await service.sendMessage({
+      threadId: thread.id,
+      content: "delegate work before shutdown",
+      permissionMode: "default",
+      model: "gpt-5",
+      attachments: [],
+      provider: "codex",
+    });
+    const executionId = activeExecutionId(service, thread.id);
+    const parentTurn = canonicalSink.loadTurnByExecution(executionId);
+    expect(parentTurn).not.toBeNull();
+    const child = canonicalSink.startCodexChildDelegation({
+      parentThreadId: thread.id,
+      parentTurnId: parentTurn!.id,
+      parentExecutionId: executionId,
+      parentItemId: "toolCall:shutdown-child",
+      receiverThreadIds: ["native-shutdown-thread"],
+      providerIdentities: [],
+    });
+    canonicalSink.startCodexChildTurn({
+      parentThreadId: thread.id,
+      parentTurnId: parentTurn!.id,
+      parentExecutionId: executionId,
+      parentItemId: "toolCall:shutdown-child",
+      nativeThreadId: "native-shutdown-thread",
+      nativeTurnId: "native-shutdown-turn",
+    });
+
+    await service.stopAll();
+
+    expect(canonicalSink.loadCanonicalChildStopTarget({
+      owningParentThreadId: thread.id,
+      childThreadId: child.childThread.id,
+    })?.latestTurn?.status).toBe("Interrupted");
+    expect(service.activeThreadIds()).not.toContain(thread.id);
+    expect(providerEmitter.stopSession).toHaveBeenCalledWith(`mcode-${thread.id}`);
   });
 
   it("persists partial assistant text when a running turn ends with only Ended", async () => {

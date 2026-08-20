@@ -8,6 +8,7 @@ import type {
 import type { ThoughtSegment, NarrativeItem, SubagentActivity } from "./types";
 import { createSubagentPresentation, resolveBrowserNarrativeTool } from "@mcode/contracts";
 import {
+  collapseSubagentRecords,
   isSubagentLifecycleRecord,
   parseSubagentLifecycleInput,
   subagentLifecycleParticipants,
@@ -76,6 +77,16 @@ export function recordToToolCall(r: ToolCallRecord): ToolCall {
     ? parseSubagentLifecycleInput(r.input_summary)
     : undefined;
 
+  const subagentPresentation = r.tool_name === AGENT_TOOL_NAME
+    ? createSubagentPresentation({
+        ...(r.display_name ? { agentName: r.display_name } : {}),
+        ...(r.provider_agent_key
+          ? { codexCollabKind: "spawnAgent", agentPath: r.provider_agent_key }
+          : {}),
+        ...(r.model ? { model: r.model } : {}),
+        ...(r.reasoning_effort ? { reasoningEffort: r.reasoning_effort } : {}),
+      }, r.provider_agent_key ?? r.id)
+    : undefined;
   const toolCall: ToolCall = {
     id: r.id,
     toolName: r.tool_name,
@@ -87,16 +98,11 @@ export function recordToToolCall(r: ToolCallRecord): ToolCall {
         ? { agentName: r.display_name }
         : {}),
     },
-    ...(r.tool_name === AGENT_TOOL_NAME
+    ...(subagentPresentation
       ? {
-          subagentPresentation: createSubagentPresentation({
-            ...(r.display_name ? { agentName: r.display_name } : {}),
-            ...(r.provider_agent_key
-              ? { codexCollabKind: "spawnAgent", agentPath: r.provider_agent_key }
-              : {}),
-            ...(r.model ? { model: r.model } : {}),
-            ...(r.reasoning_effort ? { reasoningEffort: r.reasoning_effort } : {}),
-          }, r.provider_agent_key ?? r.id),
+          subagentPresentation: r.subagent_identity_key
+            ? { ...subagentPresentation, identityKey: r.subagent_identity_key }
+            : subagentPresentation,
         }
       : {}),
     output: r.output_summary || null,
@@ -197,26 +203,31 @@ function sameSubagentParent(left: ToolCall, right: ToolCall): boolean {
  */
 /**
  * WeakMap-based memo so `buildPersistedNarrativeItems` does not rebuild the
- * item tree on every render when inputs are stable. Keyed by the `thoughts`
- * array reference plus trimmed `messageContent` because suffix-match filtering
- * depends on the assistant body even when DB rows are unchanged.
+ * item tree on every render when inputs are stable. All persisted input
+ * collection references are part of the key because hydration can add tools
+ * or hooks while the thought collection remains unchanged.
  */
 const _memoCache = new WeakMap<
   readonly ThoughtSegmentRecord[],
-  Map<string, NarrativeItem[]>
+  WeakMap<
+    readonly ToolCallRecord[],
+    WeakMap<readonly HookExecutionRecord[], Map<string, NarrativeItem[]>>
+  >
 >();
 
 export function buildPersistedNarrativeItems(
   inputs: PersistedNarrativeInputs,
 ): NarrativeItem[] {
-  const { tools, thoughts, hooks, messageContent } = inputs;
+  const { thoughts, hooks, messageContent } = inputs;
+  const toolRecords = inputs.tools;
+  const tools = collapseSubagentRecords(toolRecords);
 
   if (tools.length === 0 && thoughts.length === 0 && hooks.length === 0) {
     return [];
   }
 
   const msgTrimmed = (messageContent ?? "").trim();
-  const cachedByContent = _memoCache.get(thoughts);
+  const cachedByContent = _memoCache.get(thoughts)?.get(toolRecords)?.get(hooks);
   const cached = cachedByContent?.get(msgTrimmed);
   if (cached !== undefined) return cached;
 
@@ -375,8 +386,18 @@ export function buildPersistedNarrativeItems(
   }
   flushGroup();
 
-  const contentCache = _memoCache.get(thoughts) ?? new Map<string, NarrativeItem[]>();
+  const toolsCache = _memoCache.get(thoughts) ?? new WeakMap<
+    readonly ToolCallRecord[],
+    WeakMap<readonly HookExecutionRecord[], Map<string, NarrativeItem[]>>
+  >();
+  const hooksCache = toolsCache.get(toolRecords) ?? new WeakMap<
+    readonly HookExecutionRecord[],
+    Map<string, NarrativeItem[]>
+  >();
+  const contentCache = hooksCache.get(hooks) ?? new Map<string, NarrativeItem[]>();
   contentCache.set(msgTrimmed, items);
-  _memoCache.set(thoughts, contentCache);
+  hooksCache.set(hooks, contentCache);
+  toolsCache.set(toolRecords, hooksCache);
+  _memoCache.set(thoughts, toolsCache);
   return items;
 }

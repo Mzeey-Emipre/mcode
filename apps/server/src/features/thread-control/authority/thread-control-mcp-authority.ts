@@ -8,6 +8,8 @@ interface ActiveLease {
   sourceProviderId: string;
   permissionMode: "supervised" | "full";
   active: boolean;
+  /** Whether the current user request explicitly authorized Mcode thread control. */
+  eligible: boolean;
   controller: AbortController;
 }
 
@@ -18,6 +20,8 @@ export interface ActivateInternalThreadControlMcpLease {
   sourceTurnId: string;
   sourceProviderId: string;
   permissionMode: "supervised" | "full";
+  /** Explicit per-turn eligibility derived from the original user request. */
+  eligible?: boolean;
 }
 
 /** Opaque credential and stable session binding supplied to a provider transport. */
@@ -46,6 +50,7 @@ export class InternalThreadControlMcpAuthority {
       sourceTurnId: input.sourceTurnId,
       sourceProviderId: input.sourceProviderId,
       permissionMode: input.permissionMode,
+      eligible: input.eligible ?? true,
       active: true,
       controller: new AbortController(),
     };
@@ -58,6 +63,7 @@ export class InternalThreadControlMcpAuthority {
     if (sourceToolCallId.length < 1 || sourceToolCallId.length > 128) return undefined;
     for (const entry of this.leases.values()) {
       if (!constantTimeCredentialEqual(entry.credential, credential) || !entry.active?.active) continue;
+      if (!entry.active.eligible) return undefined;
       return {
         type: "internal",
         userId: "local-user",
@@ -73,7 +79,8 @@ export class InternalThreadControlMcpAuthority {
 
   /** Returns the stable credential only while a provider session remains active. */
   credential(sessionId: string): string | undefined {
-    return this.leases.get(sessionId)?.credential;
+    const entry = this.leases.get(sessionId);
+    return entry?.active?.active ? entry.credential : undefined;
   }
 
   /** Returns the revocation signal for one authenticated pooled session. */

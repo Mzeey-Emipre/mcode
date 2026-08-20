@@ -68,10 +68,15 @@ function buildService({
   assertUsable = vi.fn(),
   resolveProvider = vi.fn(),
   threadStatus = "idle",
+  threadControlMcp = {
+    activate: vi.fn(),
+    revoke: vi.fn(),
+  },
 }: {
   assertUsable?: ReturnType<typeof vi.fn>;
   resolveProvider?: ReturnType<typeof vi.fn>;
   threadStatus?: PersistedThreadStatus;
+  threadControlMcp?: { activate: ReturnType<typeof vi.fn>; revoke: ReturnType<typeof vi.fn> };
 } = {}) {
   const thread = makeThread({ status: threadStatus });
 
@@ -215,11 +220,11 @@ function buildService({
       ),
       new PlanQuestionService(messageRepo, planQuestionAnswersRepo),
       undefined,
-      undefined,
+      threadControlMcp as never,
       undefined,
       createCanonicalAgentEventSinkStub(db),
   );
-  return { svc, threadRepo, messageRepo, providerStub, providerRegistry };
+  return { svc, threadRepo, messageRepo, providerStub, providerRegistry, threadControlMcp };
 }
 
 describe("AgentService.sendMessage — provider availability gate", () => {
@@ -358,5 +363,43 @@ describe("AgentService internal MCP provider allowlist", () => {
 
   it("excludes unsupported providers", () => {
     expect(usesInternalThreadControlMcp("unknown")).toBe(false);
+  });
+
+  it.each([
+    "Spawn exactly one nested provider-native child named leaf_probe",
+    "Delegate this task to a provider-native subagent",
+  ])("revokes thread control at turn start for child-agent wording: %s", async (content) => {
+    const { svc, threadControlMcp } = buildService();
+
+    await svc.sendMessage({
+      threadId: THREAD_ID,
+      content,
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "codex",
+    });
+
+    expect(threadControlMcp.activate).not.toHaveBeenCalled();
+    expect(threadControlMcp.revoke).toHaveBeenCalledWith(`mcode-${THREAD_ID}`);
+  });
+
+  it("activates thread control only for an explicit Mcode thread request", async () => {
+    const { svc, threadControlMcp } = buildService();
+
+    await svc.sendMessage({
+      threadId: THREAD_ID,
+      content: "Create one Mcode thread named leaf_probe",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "codex",
+    });
+
+    expect(threadControlMcp.revoke).not.toHaveBeenCalled();
+    expect(threadControlMcp.activate).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: `mcode-${THREAD_ID}`,
+      eligible: true,
+    }));
   });
 });

@@ -91,7 +91,10 @@ function makeProvider(
     shutdown: vi.fn(async () => undefined),
   },
   browserAutomationLease = new BrowserAutomationSessionLease(),
-  threadControlMcp: { createCodexConfiguration?: () => Promise<unknown>; close?: (sessionId: string) => Promise<void> } = undefined as never,
+  threadControlMcp: {
+    createCodexConfiguration?: () => Promise<unknown>;
+    close?: (sessionId: string) => Promise<void>;
+  } = undefined as never,
 ): CodexProvider {
   return new CodexProvider(
     { get: async () => ({ provider: { cli: { codex: "codex" } } }) } as never,
@@ -184,6 +187,58 @@ describe("CodexProvider first turn on new session", () => {
       'plugins."browser@openai-bundled".enabled=false',
     );
     await provider.stopSession("mcode-without-browser-grant");
+  });
+
+  it("routes an explicit child brief through provider collaboration guidance", async () => {
+    const provider = makeProvider();
+    const childBrief = "Spawn one nested child and return NESTED_DONE exactly.";
+
+    await provider.sendTurn({
+      turnExecutionId: "child-routing-execution",
+      sessionId: "mcode-child-routing",
+      workspaceId: "workspace-test",
+      threadId: "child-routing",
+      message: childBrief,
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "supervised",
+    });
+
+    const server = appServers.at(-1)!;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(server.options.developerInstructions).toContain("provider-native collaboration");
+    expect(server.options.developerInstructions).toContain("preserve the exact requested brief");
+    expect(server.options.developerInstructions).toContain("does not authorize Mcode thread control");
+    expect(sendTurnMock).toHaveBeenCalledWith(
+      [{ type: "text", text: childBrief }],
+      { model: "gpt-5.4" },
+    );
+    await provider.stopSession("mcode-child-routing");
+  });
+
+  it("tells Luna parents to choose the nested-capable Sol child model", async () => {
+    const provider = makeProvider();
+
+    await provider.sendTurn({
+      turnExecutionId: "nested-model-guidance-execution",
+      sessionId: "mcode-nested-model-guidance",
+      workspaceId: "workspace-test",
+      threadId: "nested-model-guidance",
+      message: "Spawn a child that must spawn one nested child.",
+      cwd: process.cwd(),
+      model: "gpt-5.6-luna",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "supervised",
+      threadControlEligible: false,
+    });
+
+    const server = appServers.at(-1)!;
+    expect(server.options.developerInstructions).toContain("gpt-5.6-sol");
+    expect(server.options.developerInstructions).toContain("parent spawn_agent call");
+    await provider.stopSession("mcode-nested-model-guidance");
   });
 
   it("revokes a browser credential when app-server startup fails", async () => {
@@ -1362,6 +1417,84 @@ describe("CodexProvider first turn on new session", () => {
     expect(events.some((event) => event.type === AgentEventType.Error)).toBe(false);
     expect(events.some((event) => event.type === AgentEventType.Ended)).toBe(false);
     await provider.stopSession(sessionId);
+  });
+
+  it("omits internal thread-control MCP configuration for an ineligible turn", async () => {
+    const createCodexConfiguration = vi.fn().mockResolvedValue({
+      configOverrides: ["mcp_servers.mcode_internal_thread_control.url=\"http://127.0.0.1\""],
+      env: { MCODE_INTERNAL_THREAD_CONTROL_TOKEN: "token" },
+    });
+    const provider = makeProvider(undefined, new BrowserAutomationSessionLease(), {
+      createCodexConfiguration,
+    });
+
+    await provider.sendTurn({
+      turnExecutionId: "ineligible-execution",
+      sessionId: "mcode-ineligible",
+      workspaceId: "workspace-test",
+      threadId: "ineligible",
+      message: "Spawn a provider-native child",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "supervised",
+      threadControlEligible: false,
+    });
+
+    const server = appServers.at(-1)!;
+    expect(createCodexConfiguration).not.toHaveBeenCalled();
+    expect(server.options.configOverrides).not.toContain(expect.stringContaining("mcode_internal_thread_control"));
+    expect(server.options.developerInstructions).not.toContain("mcode_internal_thread_control");
+    await provider.stopSession("mcode-ineligible");
+  });
+
+  it("restarts a pooled session when Mcode thread-control eligibility changes", async () => {
+    const createCodexConfiguration = vi.fn().mockResolvedValue({
+      configOverrides: ["mcp_servers.mcode_internal_thread_control.url=\"http://127.0.0.1\""],
+      env: { MCODE_INTERNAL_THREAD_CONTROL_TOKEN: "token" },
+    });
+    const provider = makeProvider(undefined, new BrowserAutomationSessionLease(), {
+      createCodexConfiguration,
+    });
+
+    const request = {
+      turnExecutionId: "eligible-execution",
+      sessionId: "mcode-eligibility-transition",
+      workspaceId: "workspace-test",
+      threadId: "eligibility-transition",
+      message: "Create an Mcode thread named child",
+      cwd: process.cwd(),
+      model: "gpt-5.4",
+      interactionMode: "build" as const,
+      providerOptions: {},
+      permissionMode: "supervised",
+    };
+    const firstSend = provider.sendTurn({ ...request, threadControlEligible: true });
+    await vi.waitFor(() => expect(appServers.at(-1)).toBeDefined());
+    appServers[0]!.emit("notification", {
+      method: "mcpServer/startupStatus/updated",
+      params: {
+        threadId: "sdk-thread-1",
+        name: "mcode_internal_thread_control",
+        status: "ready",
+      },
+    });
+    await firstSend;
+    await provider.sendTurn({
+      ...request,
+      turnExecutionId: "ineligible-execution",
+      message: "Spawn a provider-native child named child",
+      threadControlEligible: false,
+    });
+
+    expect(appServers).toHaveLength(2);
+    expect(appServers[0]?.options.configOverrides).toEqual([
+      'mcp_servers.mcode_internal_thread_control.url="http://127.0.0.1"',
+    ]);
+    expect(appServers[1]?.options.configOverrides).toEqual([]);
+    expect(createCodexConfiguration).toHaveBeenCalledTimes(1);
+    await provider.stopSession("mcode-eligibility-transition");
   });
 
   it("continues after an internal MCP startup timeout and keeps the authority open", async () => {

@@ -7,6 +7,7 @@ import type {
   ProviderBrowserLeaseRequest,
   ProviderHostPorts,
 } from "../../host-ports.js";
+import type { TurnRequest } from "@mcode/contracts";
 
 interface TestBrowserScope extends ProviderBrowserLeaseRequest {}
 
@@ -203,5 +204,13 @@ export class CodexProvider extends PackageCodexProvider {
     };
     super(host, codexPorts, 10 * 60 * 1_000);
     this.settingsService = delegatedSettingsService;
+  }
+
+  /** Preserve legacy fixture behavior unless a test explicitly exercises the gate. */
+  override sendTurn(request: TurnRequest<"codex">): Promise<void> {
+    return super.sendTurn({
+      ...request,
+      threadControlEligible: request.threadControlEligible ?? true,
+    });
   }
 }

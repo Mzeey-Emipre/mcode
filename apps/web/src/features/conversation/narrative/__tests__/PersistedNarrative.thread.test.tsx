@@ -180,4 +180,39 @@ describe("persisted child timeline thread selection", () => {
 
     expect(onSubagentSelect).toHaveBeenCalledWith("child-tool", "finished");
   });
+
+  it("reconstructs the persisted child row when tools hydrate after the stored message", () => {
+    recordsByThread.set("child-thread", {
+      narrativeByMessage: {
+        "assistant-1": {
+          tools: [tool("command-tool", "command_execution")],
+          thoughts: [],
+          hooks: [],
+        },
+      },
+    });
+
+    const view = render(
+      <PersistedNarrative threadId="child-thread" messageId="assistant-1" messageContent="Child result" />,
+    );
+    expect(screen.getByTestId("persisted-row-ids")).toHaveTextContent("");
+
+    recordsByThread.set("child-thread", {
+      narrativeByMessage: {
+        "assistant-1": {
+          tools: [
+            tool("command-tool", "command_execution"),
+            tool("child-agent", "Agent"),
+          ],
+          thoughts: [],
+          hooks: [],
+        },
+      },
+    });
+    view.rerender(
+      <PersistedNarrative threadId="child-thread" messageId="assistant-1" messageContent="Child result" />,
+    );
+
+    expect(screen.getByTestId("persisted-row-ids")).toHaveTextContent("child-agent");
+  });
 });

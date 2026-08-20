@@ -6,6 +6,7 @@ import type {
   SubagentActivity,
 } from "./types";
 import {
+  collapseSubagentCalls,
   isSubagentLifecycleCall,
   subagentLifecycleParticipants,
   type SubagentLifecycle,
@@ -146,7 +147,8 @@ export function buildNarrativeItems(params: {
   /** Trimmed comparison text: duplicate thought segments are hidden when non-empty. */
   committedAssistantBody?: string;
 }): NarrativeBuildResult {
-  const { toolCalls, hooks, streamingText, isAgentRunning, committedAssistantBody } = params;
+  const { hooks, streamingText, isAgentRunning, committedAssistantBody } = params;
+  const toolCalls = collapseSubagentCalls(params.toolCalls);
   const assistantTrimmed = (committedAssistantBody ?? "").trim();
   const thoughtSegments =
     assistantTrimmed.length > 0

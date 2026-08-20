@@ -119,6 +119,49 @@ describe("projectSubagents", () => {
     expect(roster.finished.map((row) => row.memberCallIds)).toEqual([["a"], ["b"]]);
   });
 
+  it("keeps parallel receiver identities separate when their provider path matches", () => {
+    const roster = projectSubagents([
+      call({
+        id: "direct-receiver",
+        toolName: "Agent",
+        toolInput: {
+          codexCollabKind: "spawnAgent",
+          agentPath: "/root/worker",
+          receiverThreadIds: ["native-direct"],
+        },
+        isComplete: true,
+      }),
+      call({
+        id: "nested-receiver",
+        toolName: "Agent",
+        toolInput: {
+          codexCollabKind: "spawnAgent",
+          agentPath: "/root/worker",
+          receiverThreadIds: ["native-nested"],
+        },
+        parentToolCallId: "direct-receiver",
+        isComplete: true,
+      }),
+      call({
+        id: "parallel-receiver",
+        toolName: "Agent",
+        toolInput: {
+          codexCollabKind: "spawnAgent",
+          agentPath: "/root/worker",
+          receiverThreadIds: ["native-parallel"],
+        },
+        isComplete: true,
+      }),
+    ], []);
+
+    expect(roster.finished).toHaveLength(2);
+    expect(roster.finished.map((row) => row.memberCallIds)).toEqual([
+      ["direct-receiver"],
+      ["parallel-receiver"],
+    ]);
+    expect(roster.finished[0]?.detail.subagentCount).toBe(1);
+  });
+
   it("keeps a logical agent active while any same-path dispatch remains active", () => {
     const roster = projectSubagents([
       call({ id: "settled", toolName: "Agent", toolInput: { codexCollabKind: "spawnAgent", agentPath: "/root/explorer" }, output: "Earlier result", isComplete: true, lastActivityAt: 10 }),
@@ -423,6 +466,72 @@ describe("projectSubagents", () => {
       hasExplicitIdentity: true,
       task: "Persisted task",
       activity: "Persisted result",
+    });
+  });
+
+  it("keeps persisted children separate when exact identities differ on one provider path", () => {
+    const roster = projectSubagents(undefined, [[
+      record({
+        id: "direct",
+        provider_agent_key: "/root/worker",
+        subagent_identity_key: "native-direct",
+        display_name: "Worker",
+        status: "completed",
+        sort_order: 0,
+      }),
+      record({
+        id: "nested",
+        provider_agent_key: "/root/worker",
+        subagent_identity_key: "native-nested",
+        display_name: "Worker",
+        parent_tool_call_id: "direct",
+        status: "completed",
+        sort_order: 1,
+      }),
+      record({
+        id: "nested-read",
+        tool_name: "Read",
+        parent_tool_call_id: "nested",
+        input_summary: "nested.ts",
+        sort_order: 2,
+      }),
+    ]]);
+
+    expect(roster.finished).toHaveLength(1);
+    expect(roster.finished[0]?.id).toBe("direct");
+    expect(roster.finished[0]?.detail.subtreeIds).toEqual(["direct", "nested", "nested-read"]);
+    expect(roster.finished[0]?.detail.transcript.find((call) => call.id === "nested")
+      ?.subagentPresentation?.identityKey).toBe("native-nested");
+  });
+
+  it("reconciles a live-to-hydrated identity transition by provider key", () => {
+    const roster = projectSubagents([
+      call({
+        id: "live-child-call",
+        toolName: "Agent",
+        toolInput: {
+          codexCollabKind: "spawnAgent",
+          agentPath: "/root/worker",
+          agentName: "Worker",
+        },
+        isComplete: true,
+        output: "Live result",
+      }),
+    ], [[record({
+      id: "persisted-child-call",
+      provider_agent_key: "/root/worker",
+      display_name: "Worker",
+      status: "cancelled",
+      output_summary: "Interrupted by user",
+    })]]);
+
+    expect(roster.active).toEqual([]);
+    expect(roster.finished).toHaveLength(1);
+    expect(roster.finished[0]).toMatchObject({
+      id: "persisted-child-call",
+      identity: "Worker",
+      status: "cancelled",
+      memberCallIds: ["live-child-call", "persisted-child-call"],
     });
   });
 

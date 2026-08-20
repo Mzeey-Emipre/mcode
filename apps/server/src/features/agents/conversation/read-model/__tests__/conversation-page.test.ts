@@ -105,6 +105,71 @@ describe("loadConversationPage", () => {
     ]);
   });
 
+  it("merges canonical narrative rows with persisted-only tool records", () => {
+    const db = openMemoryDatabase();
+    seedThread(db);
+    insertMessage(db, "canonical-assistant", "assistant", "answer", 1);
+    const deps = createDeps(db);
+    new ToolCallRecordRepo(db).bulkCreate([
+      {
+        toolCallId: "command-1",
+        messageId: "canonical-assistant",
+        toolName: "command_execution",
+        inputSummary: "pwd",
+        outputSummary: "/workspace",
+        status: "completed",
+        sortOrder: 1,
+      },
+      {
+        toolCallId: "agent-1",
+        messageId: "canonical-assistant",
+        toolName: "Agent",
+        inputSummary: "delegate",
+        outputSummary: "done",
+        status: "completed",
+        sortOrder: 2,
+      },
+    ]);
+
+    const canonicalSink = {
+      loadConversationProjection: vi.fn(() => ({
+        messages: [deps.messageRepo.findById("canonical-assistant")!],
+        narrativeByMessage: {
+          "canonical-assistant": {
+            tools: [{
+              id: "command-1",
+              message_id: "canonical-assistant",
+              parent_tool_call_id: null,
+              tool_name: "command_execution",
+              input_summary: "pwd",
+              output_summary: "canonical output",
+              status: "completed" as const,
+              started_at: "2026-01-01T00:00:00Z",
+              completed_at: "2026-01-01T00:00:01Z",
+              sort_order: 1,
+            }],
+            thoughts: [],
+            hooks: [],
+          },
+        },
+        hasMore: false,
+      })),
+    };
+
+    const page = loadConversationPage(
+      { ...deps, canonicalSink } as Parameters<typeof loadConversationPage>[0],
+      { threadId: "thread-1", limit: 10 },
+    );
+
+    expect(page.narrativeByMessage["canonical-assistant"]?.tools.map((tool) => tool.id)).toEqual([
+      "command-1",
+      "agent-1",
+    ]);
+    expect(page.narrativeByMessage["canonical-assistant"]?.tools[0]?.output_summary).toBe(
+      "canonical output",
+    );
+  });
+
   it("returns a paginated message page with grouped narrative payloads", () => {
     const db = openMemoryDatabase();
     seedThread(db);

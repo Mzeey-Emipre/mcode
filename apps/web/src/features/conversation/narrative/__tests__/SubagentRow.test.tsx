@@ -110,6 +110,22 @@ describe("SubagentRow", () => {
     },
   );
 
+  it.each([
+    [{ isComplete: true }, "Completed"],
+    [{ isComplete: true, isError: true }, "Failed"],
+    [{ isComplete: true, isCancelled: true }, "Interrupted"],
+  ] as const)("announces the canonical terminal status", (overrides, status) => {
+    const finishedAgent = agent(overrides);
+    render(<SubagentRow toolCall={finishedAgent} participants={[finishedAgent]} lifecycle="finished" children={[]} hooks={[]} onSubagentSelect={openSubagentDetail} />);
+    expect(screen.getByRole("status")).toHaveTextContent(status);
+  });
+
+  it("does not infer interruption from child output text", () => {
+    const finishedAgent = agent({ isComplete: true, output: "The word cancelled appears in the report." });
+    render(<SubagentRow toolCall={finishedAgent} participants={[finishedAgent]} lifecycle="finished" children={[]} hooks={[]} onSubagentSelect={openSubagentDetail} />);
+    expect(screen.getByRole("status")).toHaveTextContent("Completed");
+  });
+
   it("falls back to Subagent and never uses prompt or description as identity", () => {
     const anonymousAgent = agent({ toolInput: { prompt: "Private prompt", description: "Private task" }, isComplete: true });
     render(<SubagentRow toolCall={anonymousAgent} participants={[anonymousAgent]} lifecycle="finished" children={[]} hooks={[]} onSubagentSelect={openSubagentDetail} />);

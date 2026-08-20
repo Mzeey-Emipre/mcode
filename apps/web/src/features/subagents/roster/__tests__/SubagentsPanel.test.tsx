@@ -324,7 +324,7 @@ describe("SubagentsPanel", () => {
     const completedButton = screen.getByRole("button", { name: /Open Completed child details, Completed/ });
     expect(completedButton.querySelector("time")).toHaveAttribute("dateTime", completed.endedAt);
     expect(screen.getByRole("button", { name: /Open Interrupted child details, Interrupted/ })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Open Errored child details, Errored/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Open Errored child details, Failed/ })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Open Unknown child details, Idle/ })).not.toHaveTextContent("Completed");
   });
 
@@ -419,7 +419,8 @@ describe("SubagentsPanel", () => {
     expect(screen.queryByText("Technical details")).not.toBeInTheDocument();
     expect(screen.queryByText("Canonical ID:")).not.toBeInTheDocument();
     expect(screen.queryByText("Provider identity provenance:")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("subagent-detail-status")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Active");
+    expect(screen.getByRole("status")).toHaveClass("sr-only");
     expect(screen.getByTestId("subagent-detail-actions")).toContainElement(stop);
     expect(screen.getByTestId("shared-message-list")).toHaveAttribute("data-show-parent-provenance", "false");
     expect(header?.contains(stop)).toBe(false);

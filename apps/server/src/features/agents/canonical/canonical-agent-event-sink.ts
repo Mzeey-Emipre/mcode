@@ -15,6 +15,7 @@ import {
   type CanonicalSubagentStopRequest,
   type CanonicalSubagentRosterRow,
   CANONICAL_SUBAGENT_LINEAGE_MAX_DEPTH,
+  CANONICAL_SUBAGENT_ROSTER_MAX_CHILDREN,
   CANONICAL_SUBAGENT_TASK_MAX_LENGTH,
   CONVERSATION_HISTORY_PAGE_MAX_MESSAGES,
   MAX_TURN_RECOVERIES,
@@ -228,6 +229,13 @@ export interface CodexChildItemInput {
 export interface CodexChildTurnFinishInput {
   childThreadId: string;
   nativeTurnId: string;
+  outcome: "completed" | "errored" | "cancelled";
+  error?: string;
+}
+
+/** Input used to terminalize the latest running canonical child turn by thread identity. */
+export interface CanonicalChildTurnFinishInput {
+  childThreadId: string;
   outcome: "completed" | "errored" | "cancelled";
   error?: string;
 }
@@ -1367,14 +1375,15 @@ export class CanonicalAgentEventSink {
   /** Resolve one owned child and its latest native identities without mutating canonical state. */
   loadCanonicalChildStopTarget(request: CanonicalSubagentStopRequest): CanonicalChildStopTarget | null {
     const rows = this.db.prepare(`
-      WITH RECURSIVE descendants(id) AS (
-        SELECT id
+      WITH RECURSIVE descendants(id, depth) AS (
+        SELECT id, 1
         FROM canonical_agent_threads
         WHERE id = ?
         UNION ALL
-        SELECT child.id
+        SELECT child.id, descendants.depth + 1
         FROM canonical_agent_threads child
-        JOIN descendants parent ON parent.id = child.parent_thread_id
+        JOIN descendants ON descendants.id = child.parent_thread_id
+        WHERE descendants.depth < ?
       )
       SELECT child.*
       FROM canonical_agent_threads child
@@ -1385,6 +1394,7 @@ export class CanonicalAgentEventSink {
       LIMIT 1
     `).all(
       request.owningParentThreadId,
+      CANONICAL_SUBAGENT_LINEAGE_MAX_DEPTH - 1,
       request.childThreadId,
       request.owningParentThreadId,
       request.owningParentThreadId,
@@ -1410,6 +1420,44 @@ export class CanonicalAgentEventSink {
       && identity.provenance === "native"
     ))?.value ?? null;
     return { childThread, latestTurn, nativeThreadId, nativeTurnId };
+  }
+
+  /** Load bounded active descendants so parent stop can evaluate each target independently. */
+  loadCanonicalChildStopTargets(owningParentThreadId: string): CanonicalChildStopTarget[] {
+    const rows = this.db.prepare(`
+      WITH RECURSIVE descendants(id, depth) AS (
+        SELECT id, 1
+        FROM canonical_agent_threads
+        WHERE parent_thread_id = ?
+        UNION ALL
+        SELECT child.id, descendants.depth + 1
+        FROM canonical_agent_threads child
+        JOIN descendants ON descendants.id = child.parent_thread_id
+        WHERE descendants.depth < ?
+      ), latest_turns AS (
+        SELECT turns.thread_id, turns.status,
+          ROW_NUMBER() OVER (PARTITION BY turns.thread_id ORDER BY turns.updated_at DESC, turns.id DESC) AS row_number
+        FROM canonical_agent_turns turns
+        JOIN descendants ON descendants.id = turns.thread_id
+      )
+      SELECT descendants.id
+      FROM descendants
+      JOIN latest_turns ON latest_turns.thread_id = descendants.id AND latest_turns.row_number = 1
+      WHERE latest_turns.status = 'Running'
+      ORDER BY depth DESC, id ASC
+      LIMIT ?
+    `).all(
+      owningParentThreadId,
+      CANONICAL_SUBAGENT_LINEAGE_MAX_DEPTH - 1,
+      CANONICAL_SUBAGENT_ROSTER_MAX_CHILDREN,
+    ) as Array<{ id: string }>;
+    return rows.flatMap(({ id }) => {
+      const target = this.loadCanonicalChildStopTarget({
+        owningParentThreadId,
+        childThreadId: id,
+      });
+      return target ? [target] : [];
+    });
   }
 
   /** Provision one Starting child and one directional Dispatched action exactly once. */
@@ -2052,22 +2100,47 @@ export class CanonicalAgentEventSink {
     const turn = this.loadCodexChildTurn(input.childThreadId, input.nativeTurnId);
     if (!turn) throw new Error(`Codex child turn not found: ${input.nativeTurnId}`);
     if (["Completed", "Interrupted", "Errored"].includes(turn.status)) return turn;
-    const thread = this.loadThread(input.childThreadId);
-    if (!thread) throw new Error(`Codex child thread not found: ${input.childThreadId}`);
+    return this.finishCanonicalChildTurnRecord(turn, input.outcome, input.error);
+  }
+
+  /** Terminalize the latest running canonical child turn by its durable thread identity. */
+  finishCanonicalChildTurn(input: CanonicalChildTurnFinishInput): AgentTurn | null {
+    const row = this.db.prepare(`
+      SELECT *
+      FROM canonical_agent_turns
+      WHERE thread_id = ? AND status = 'Running'
+      ORDER BY updated_at DESC, id DESC
+      LIMIT 1
+    `).get(input.childThreadId);
+    if (!row) return null;
+    return this.finishCanonicalChildTurnRecord(
+      this.turnFromRow(row as Record<string, unknown>),
+      input.outcome,
+      input.error,
+    );
+  }
+
+  private finishCanonicalChildTurnRecord(
+    turn: AgentTurn,
+    outcome: CodexChildTurnFinishInput["outcome"],
+    error: string | undefined,
+  ): AgentTurn {
+    const thread = this.loadThread(turn.threadId);
+    if (!thread) throw new Error(`Codex child thread not found: ${turn.threadId}`);
     const executionId = this.executionIdForTurn(turn.id);
     const endedAt = new Date().toISOString();
-    const payload: CanonicalAgentEvent = input.outcome === "completed"
+    const payload: CanonicalAgentEvent = outcome === "completed"
       ? { type: "turn.completed", endedAt }
-      : input.outcome === "cancelled"
-        ? { type: "turn.interrupted", endedAt, reason: input.error ?? "Child turn cancelled" }
-        : { type: "turn.errored", endedAt, error: input.error ?? "Child turn failed" };
+      : outcome === "cancelled"
+        ? { type: "turn.interrupted", endedAt, reason: error ?? "Child turn cancelled" }
+        : { type: "turn.errored", endedAt, error: error ?? "Child turn failed" };
     this.commit({
       threadId: thread.id,
       turnId: turn.id,
       executionId,
-      phase: input.outcome,
-      terminalOutcome: input.outcome,
-      error: input.error,
+      phase: outcome,
+      terminalOutcome: outcome,
+      error,
       replayGuard: "terminal-confirmed",
       events: [
         {

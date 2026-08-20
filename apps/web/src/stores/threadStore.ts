@@ -294,9 +294,12 @@ interface ThreadState {
    * Fetch the persisted narrative (tools, thoughts, hooks) for an assistant
    * message and cache it under `narrativeByMessage[messageId]`. Returns the
    * existing in-flight promise on concurrent calls to avoid duplicate RPCs.
-   * Idempotent: returns immediately if the message is already cached.
+   * Idempotent after a dedicated list response has supplied every persisted
+   * tool row expected by the message; partial responses remain refreshable.
    */
   loadNarrativeForMessage: (messageId: string, threadId?: string) => Promise<void>;
+  /** Return whether a complete narrative payload has been loaded for a message. */
+  isNarrativeLoaded: (threadId: string, messageId: string) => boolean;
   /** Drop the cached narrative for a message - call from edit/delete paths. */
   evictNarrativeForMessage: (messageId: string) => void;
 
@@ -360,6 +363,19 @@ const dequeueTimers = new Map<string, ReturnType<typeof setTimeout>>();
  * without triggering re-renders for the inflight bookkeeping.
  */
 const narrativeInflight = new Map<string, Promise<void>>();
+/** Message narratives returned by a complete conversation-page read. */
+const narrativeLoaded = new Set<string>();
+
+function narrativeKey(threadId: string, messageId: string): string {
+  return `${threadId}\u0000${messageId}`;
+}
+
+function clearNarrativeLoadState(threadId: string): void {
+  const prefix = `${threadId}\u0000`;
+  for (const key of narrativeLoaded) {
+    if (key.startsWith(prefix)) narrativeLoaded.delete(key);
+  }
+}
 const USAGE_STALE_TTL_MS = 24 * 60 * 60 * 1000;
 const providerUsageSnapshots = new Map<string, ProviderUsageInfo>();
 
@@ -2270,6 +2286,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
 
   clearThreadState: (threadId) => {
     conversationResidency.invalidateConversation(threadId);
+    clearNarrativeLoadState(threadId);
     clearDequeueTimer(threadId);
     invalidateDeferredNarrativeEvents(threadId);
     threadHydrator.forgetThread(threadId);
@@ -2299,6 +2316,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
 
     for (const threadId of threadIds) {
       conversationResidency.invalidateConversation(threadId);
+      clearNarrativeLoadState(threadId);
       clearDequeueTimer(threadId);
       invalidateDeferredNarrativeEvents(threadId);
       threadHydrator.forgetThread(threadId);
@@ -2560,14 +2578,25 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
   loadNarrativeForMessage: async (messageId, explicitThreadId) => {
     const currentId = explicitThreadId ?? get().currentThreadId;
     if (!currentId) return;
-    const rec = getRec(currentId);
-    if (rec.narrativeByMessage[messageId]) return;
+    const cacheKey = narrativeKey(currentId, messageId);
+    if (narrativeLoaded.has(cacheKey)) return;
     const existing = narrativeInflight.get(messageId);
     if (existing) return existing;
     const p = getTransport()
       .listNarrative(messageId)
       .then((res) => {
-        if (!conversationResidency.isConversationVisible(currentId)) return;
+        // The request is started by a rendered message. Keep its result when
+        // navigation briefly drops the visibility lease during hydration or
+        // an Electron restart; otherwise the one-shot request is lost and the
+        // persisted timeline never gets another chance to render. The message
+        // membership check still prevents a deleted or retired placeholder
+        // from being recreated by a late response.
+        const current = get().records.get(currentId);
+        if (!current || !current.messages.some((message) => message.id === messageId)) return;
+        const expectedToolCount = current.persistedToolCallCounts[messageId] ?? 0;
+        if (res.tools.length >= expectedToolCount) {
+          narrativeLoaded.add(cacheKey);
+        }
         patchRec(currentId, (r) => ({
           narrativeByMessage: selectConversationNarrative(
             { ...r.narrativeByMessage, [messageId]: res },
@@ -2589,9 +2618,12 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     return p;
   },
 
+  isNarrativeLoaded: (threadId, messageId) => narrativeLoaded.has(narrativeKey(threadId, messageId)),
+
   evictNarrativeForMessage: (messageId) => {
     const currentId = get().currentThreadId;
     if (!currentId) return;
+    narrativeLoaded.delete(narrativeKey(currentId, messageId));
     patchRec(currentId, (rec) => {
       if (!(messageId in rec.narrativeByMessage)) return {};
       const next = { ...rec.narrativeByMessage };

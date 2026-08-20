@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { useThreadStore } from "@/stores/threadStore";
 import { useThreadRecord } from "@/stores/thread-selectors";
 import { TurnFooter } from "./TurnFooter";
+import { collapseSubagentRecords } from "./subagent-lifecycle";
 import type { NarrativeCounts, TurnFooterSummary } from "./types";
 
 /** Props for {@link PersistedTurnFooter}. */
@@ -39,7 +40,7 @@ export function PersistedTurnFooter({ threadId, messageId, summary }: PersistedT
 
   const persistedSummary = useMemo(() => {
     if (!records) return null;
-    const topLevel = records.tools.filter((t) => t.parent_tool_call_id == null);
+    const topLevel = collapseSubagentRecords(records.tools).filter((t) => t.parent_tool_call_id == null);
     const counts: NarrativeCounts = {
       steps: topLevel.length,
       thoughts: records.thoughts.length,
