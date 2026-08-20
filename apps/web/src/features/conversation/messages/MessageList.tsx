@@ -108,6 +108,8 @@ const VirtualItemRenderer = memo(function VirtualItemRenderer({
   onReply,
   onSubagentSelect,
   onOpenSubagents,
+  onContinue,
+  onRetry,
   onScrollToMessage,
   currentTurnMessageIdByThread,
   threadId,
@@ -119,6 +121,8 @@ const VirtualItemRenderer = memo(function VirtualItemRenderer({
   onReply?: (messageId: string, content: string, role: "user" | "assistant") => void;
   onSubagentSelect?: (id: string, target: SubagentRosterTarget) => void;
   onOpenSubagents?: (target: SubagentRosterTarget) => void;
+  onContinue?: () => void | Promise<void>;
+  onRetry?: (executionId: string) => void | Promise<void>;
   onScrollToMessage?: (messageId: string) => void;
   currentTurnMessageIdByThread: Record<string, string>;
   threadId: string | null | undefined;
@@ -204,7 +208,15 @@ const VirtualItemRenderer = memo(function VirtualItemRenderer({
     case "persisted-late-hooks":
       return <PersistedLateHooks threadId={threadId} messageId={item.messageId} />;
     case "persisted-turn-footer":
-      return <PersistedTurnFooter threadId={threadId} messageId={item.messageId} summary={item.summary} />;
+      return (
+        <PersistedTurnFooter
+          threadId={threadId}
+          messageId={item.messageId}
+          summary={item.summary}
+          onContinue={onContinue}
+          onRetry={onRetry}
+        />
+      );
     case "narrative-indicator":
       return (
         <NarrativeIndicator
@@ -224,6 +236,8 @@ const VirtualItemRenderer = memo(function VirtualItemRenderer({
   && prev.onReply === next.onReply
   && prev.onSubagentSelect === next.onSubagentSelect
   && prev.onOpenSubagents === next.onOpenSubagents
+  && prev.onContinue === next.onContinue
+  && prev.onRetry === next.onRetry
   && prev.onScrollToMessage === next.onScrollToMessage
   && prev.currentTurnMessageIdByThread === next.currentTurnMessageIdByThread
   && prev.threadId === next.threadId
@@ -273,12 +287,25 @@ export interface MessageListProps {
   onSubagentSelect?: (id: string, target: SubagentRosterTarget) => void;
   /** Opens the owning thread's Subagents roster for aggregate activity. */
   onOpenSubagents?: (target: SubagentRosterTarget) => void;
+  /** Prefills the composer with `Continue` for an interrupted turn. */
+  onContinue?: () => void | Promise<void>;
+  /** Retries one turn with its exact persisted execution identity. */
+  onRetry?: (executionId: string) => void | Promise<void>;
   /** Whether child prompts display their parent-agent provenance label. */
   showParentAgentProvenance?: boolean;
 }
 
 /** Virtualized list of chat messages, tool calls, and streaming indicators. */
-export function MessageList({ displayThreadId, onBranch, onReply, onSubagentSelect, onOpenSubagents, showParentAgentProvenance = true }: MessageListProps) {
+export function MessageList({
+  displayThreadId,
+  onBranch,
+  onReply,
+  onSubagentSelect,
+  onOpenSubagents,
+  onContinue,
+  onRetry,
+  showParentAgentProvenance = true,
+}: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   /** Survives virtualizer remounts: remembers manual expand/collapse toggles by messageId. */
   const turnExpandRef = useRef<Map<string, boolean>>(new Map());
@@ -1569,7 +1596,7 @@ export function MessageList({ displayThreadId, onBranch, onReply, onSubagentSele
                 style={{ transform: `translateY(${vi.start}px)` }}
               >
                 <div className={cn(PRIMARY_CONTENT_RAIL_CLASS, "min-w-0 overflow-x-hidden")}>
-                  <VirtualItemRenderer item={item} turnExpandRef={turnExpandRef} onBranch={onBranch} onReply={onReply} onSubagentSelect={onSubagentSelect} onOpenSubagents={onOpenSubagents} onScrollToMessage={scrollToMessage} currentTurnMessageIdByThread={currentTurnMessageIdByThread} threadId={renderedThreadId} showParentAgentProvenance={showParentAgentProvenance} />
+                  <VirtualItemRenderer item={item} turnExpandRef={turnExpandRef} onBranch={onBranch} onReply={onReply} onSubagentSelect={onSubagentSelect} onOpenSubagents={onOpenSubagents} onContinue={onContinue} onRetry={onRetry} onScrollToMessage={scrollToMessage} currentTurnMessageIdByThread={currentTurnMessageIdByThread} threadId={renderedThreadId} showParentAgentProvenance={showParentAgentProvenance} />
                 </div>
               </div>
             );

@@ -95,7 +95,7 @@ describe("AgentService.stopChildTurn", () => {
     expect(finishCodexChildTurn).toHaveBeenCalledWith({
       childThreadId: request.childThreadId,
       nativeTurnId: "native-child-turn",
-      outcome: "cancelled",
+      outcome: "interrupted",
       error: "Interrupted by user",
     });
   });

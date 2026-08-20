@@ -13,6 +13,10 @@ export interface PersistedTurnFooterProps {
   messageId: string;
   /** Canonical summary used when this message has no legacy narrative cache. */
   summary?: TurnFooterSummary;
+  /** Prefills the existing composer with `Continue` for an interrupted turn. */
+  onContinue?: () => void | Promise<void>;
+  /** Calls the existing retry command with the summary's exact execution ID. */
+  onRetry?: (executionId: string) => void | Promise<void>;
 }
 
 /**
@@ -27,7 +31,13 @@ export interface PersistedTurnFooterProps {
  * Uses a supplied canonical summary or lazily loads the same narrative records
  * as `PersistedNarrative` through the threadStore cache.
  */
-export function PersistedTurnFooter({ threadId, messageId, summary }: PersistedTurnFooterProps) {
+export function PersistedTurnFooter({
+  threadId,
+  messageId,
+  summary,
+  onContinue,
+  onRetry,
+}: PersistedTurnFooterProps) {
   const records = useThreadRecord(threadId, (r) => r.narrativeByMessage[messageId]);
   const load = useThreadStore((s) => s.loadNarrativeForMessage);
   const triggered = useRef(false);
@@ -38,7 +48,7 @@ export function PersistedTurnFooter({ threadId, messageId, summary }: PersistedT
     void load(messageId, threadId ?? undefined);
   }, [messageId, records, load, summary, threadId]);
 
-  const persistedSummary = useMemo(() => {
+  const persistedSummary = useMemo<TurnFooterSummary | null>(() => {
     if (!records) return null;
     const topLevel = collapseSubagentRecords(records.tools).filter((t) => t.parent_tool_call_id == null);
     const counts: NarrativeCounts = {
@@ -81,7 +91,17 @@ export function PersistedTurnFooter({ threadId, messageId, summary }: PersistedT
     !summary
     && resolvedSummary.counts.steps === 0
     && resolvedSummary.counts.subagents === 0
+    && resolvedSummary.outcome == null
   ) return null;
 
-  return <TurnFooter counts={resolvedSummary.counts} durationMs={resolvedSummary.durationMs} />;
+  return (
+    <TurnFooter
+      counts={resolvedSummary.counts}
+      durationMs={resolvedSummary.durationMs}
+      outcome={resolvedSummary.outcome}
+      outcomeExecutionId={resolvedSummary.outcomeExecutionId}
+      onContinue={onContinue}
+      onRetry={onRetry}
+    />
+  );
 }

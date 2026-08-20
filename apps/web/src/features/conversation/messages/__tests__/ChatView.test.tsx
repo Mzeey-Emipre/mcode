@@ -12,6 +12,8 @@ const {
   chatViewConnectionStatusRef,
   chatViewGetTransportMock,
   chatViewTransportMock,
+  chatViewMessageListCallbacksRef,
+  chatViewSetPendingPrefillMock,
   chatViewThreadStoreSetStateMock,
   chatViewApplyCanonicalRecoveriesMock,
   chatViewResidencyMock,
@@ -20,6 +22,12 @@ const {
 } = vi.hoisted(() => {
   const chatViewDisplayLeaseIdsRef = { current: [] as readonly string[] };
   const chatViewDisplayLeaseListeners = new Set<() => void>();
+  const chatViewMessageListCallbacksRef = {
+    current: null as {
+      onContinue?: () => void | Promise<void>;
+      onRetry?: (executionId: string) => void | Promise<void>;
+    } | null,
+  };
   return {
     chatViewWorkspaceMockRef: { current: null as Record<string, unknown> | null },
     chatViewThreadMockRef: { current: null as Record<string, unknown> | null },
@@ -32,6 +40,8 @@ const {
       listTurnRecoveries: vi.fn(),
       retryTurn: vi.fn(),
     },
+    chatViewMessageListCallbacksRef,
+    chatViewSetPendingPrefillMock: vi.fn(),
     chatViewThreadStoreSetStateMock: vi.fn(),
     chatViewApplyCanonicalRecoveriesMock: vi.fn(),
     chatViewDisplayLeaseIdsRef,
@@ -110,7 +120,7 @@ vi.mock("@/stores/thread-selectors", async () => {
 
 vi.mock("@/stores/composerDraftStore", () => ({
   useComposerDraftStore: vi.fn((selector: (s: unknown) => unknown) =>
-    selector({ setPendingPrefill: vi.fn() })
+    selector({ setPendingPrefill: chatViewSetPendingPrefillMock })
   ),
 }));
 
@@ -128,9 +138,18 @@ vi.mock("../../composer/Composer", () => ({
 }));
 
 vi.mock("../MessageList", () => ({
-  MessageList: ({ displayThreadId }: { displayThreadId?: string }) => (
-    <div data-testid="message-list" data-display-thread-id={displayThreadId} />
-  ),
+  MessageList: ({
+    displayThreadId,
+    onContinue,
+    onRetry,
+  }: {
+    displayThreadId?: string;
+    onContinue?: () => void | Promise<void>;
+    onRetry?: (executionId: string) => void | Promise<void>;
+  }) => {
+    chatViewMessageListCallbacksRef.current = { onContinue, onRetry };
+    return <div data-testid="message-list" data-display-thread-id={displayThreadId} />;
+  },
 }));
 
 vi.mock("@/components/chat/HeaderActions", () => ({
@@ -311,6 +330,8 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     chatViewTransportMock.unsubscribeThread.mockClear();
     chatViewTransportMock.listTurnRecoveries.mockClear();
     chatViewTransportMock.retryTurn.mockClear();
+    chatViewMessageListCallbacksRef.current = null;
+    chatViewSetPendingPrefillMock.mockClear();
     chatViewGetTransportMock.mockReset();
     chatViewGetTransportMock.mockReturnValue(chatViewTransportMock);
     chatViewThreadStoreSetStateMock.mockClear();
@@ -352,6 +373,81 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
 
     expect(chatViewTransportMock.retryTurn).toHaveBeenCalledWith(
       "00000000-0000-4000-8000-000000000015",
+    );
+  });
+
+  it("shows only interrupted recoveries in the server restart banner", async () => {
+    chatViewTransportMock.listTurnRecoveries.mockResolvedValue([
+      {
+        threadId: "thread-errored",
+        executionId: "00000000-0000-4000-8000-000000000016",
+        acceptedThrough: 4,
+        durableThrough: 4,
+        phase: "errored",
+        error: "Provider failed",
+        actions: ["retry"],
+      },
+      {
+        threadId: "thread-interrupted",
+        executionId: "00000000-0000-4000-8000-000000000017",
+        acceptedThrough: 6,
+        durableThrough: 6,
+        phase: "interrupted",
+        error: "Provider execution was not proved active.",
+        actions: ["retry"],
+      },
+    ]);
+
+    const user = userEvent.setup();
+    render(<ChatView />);
+
+    expect(await screen.findByText("1 session was interrupted during a server restart.")).toBeInTheDocument();
+    expect(screen.queryByText("2 sessions were interrupted during a server restart.")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /retry all/i }));
+    expect(chatViewTransportMock.retryTurn).toHaveBeenCalledWith(
+      "00000000-0000-4000-8000-000000000017",
+    );
+    expect(chatViewTransportMock.retryTurn).not.toHaveBeenCalledWith(
+      "00000000-0000-4000-8000-000000000016",
+    );
+  });
+
+  it("shows a retry surface for an errored recovery without an assistant message", async () => {
+    chatViewTransportMock.listTurnRecoveries.mockResolvedValue([{
+      threadId: "thread-errored",
+      executionId: "00000000-0000-4000-8000-000000000018",
+      acceptedThrough: 4,
+      durableThrough: 4,
+      phase: "errored",
+      error: "Provider failed before an assistant message was persisted.",
+      actions: ["retry"],
+    }]);
+    const user = userEvent.setup();
+    render(<ChatView />);
+
+    expect(await screen.findByText("1 session failed and can be retried.")).toBeInTheDocument();
+    expect(screen.queryByText(/server restart/i)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /retry failed/i }));
+    expect(chatViewTransportMock.retryTurn).toHaveBeenCalledWith(
+      "00000000-0000-4000-8000-000000000018",
+    );
+  });
+
+  it("wires footer Continue to the composer prefill and Retry to the exact execution", () => {
+    const activeRecord = createEmptyThreadRecord();
+    activeRecord.messages = [createMockMessage({ thread_id: "thread-1", role: "assistant" })];
+    chatViewThreadMockRef.current = defaultThreadState({ activeRecord });
+    render(<ChatView />);
+
+    expect(chatViewMessageListCallbacksRef.current).not.toBeNull();
+    chatViewMessageListCallbacksRef.current?.onContinue?.();
+    chatViewMessageListCallbacksRef.current?.onRetry?.("00000000-0000-4000-8000-000000000042");
+
+    expect(chatViewSetPendingPrefillMock).toHaveBeenCalledWith("Continue");
+    expect(chatViewTransportMock.retryTurn).toHaveBeenCalledWith(
+      "00000000-0000-4000-8000-000000000042",
     );
   });
 

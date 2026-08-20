@@ -309,7 +309,7 @@ export class CodexEventMapper {
       prompt?: string;
       nativeItemId?: string;
       itemEventKey?: string;
-      outcome?: "completed" | "errored" | "cancelled";
+      outcome?: "completed" | "errored" | "interrupted" | "cancelled";
     },
   ): AgentEvent[] {
     return events.map((event) => ({
@@ -689,7 +689,11 @@ export class CodexEventMapper {
         nativeThreadId: childThreadId,
         nativeTurnId,
         parentCollaborationItemId: collabId,
-        outcome: status === "failed" ? "errored" : "completed",
+        outcome: status === "failed"
+          ? "errored"
+          : status === "interrupted"
+            ? "interrupted"
+            : "completed",
         nativeItemId,
         itemEventKey: "completed",
       } as const;
@@ -705,7 +709,11 @@ export class CodexEventMapper {
       childEvents.push(...this.withChildEvidence([{
         type: AgentEventType.TurnComplete,
         threadId: this.threadId,
-        reason: status === "failed" ? "failed" : "completed",
+        reason: status === "failed"
+          ? "failed"
+          : status === "interrupted"
+            ? "interrupted"
+            : "completed",
         costUsd: null,
         tokensIn: 0,
         tokensOut: 0,

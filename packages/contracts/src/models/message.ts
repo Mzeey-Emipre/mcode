@@ -5,6 +5,7 @@ import { lazySchema } from "../utils/lazySchema.js";
 import { MessageMentionsSchema } from "./mention.js";
 import { PreviewAnnotationBundleSchema } from "./browser-preview.js";
 import { ProviderIdentitySchema } from "../compat/agent-model.js";
+import { TurnOutcomeSchema } from "./turn-outcome.js";
 
 /** Canonical provenance for a user-side message sent by a parent agent. */
 export const ParentAgentMessageProvenanceSchema = z.object({
@@ -54,6 +55,10 @@ export const MessageSchema = lazySchema(() =>
      * column existed.
      */
     model: z.string().nullable().optional(),
+    /** Terminal outcome written only when the turn finalizer proves its end. */
+    outcome: TurnOutcomeSchema.nullable().optional(),
+    /** Exact execution identity needed by existing retry recovery after reload. */
+    outcomeExecutionId: z.string().nullable().optional(),
     /**
      * When true, mcode hides this message from the chat timeline.
      * Used for hidden handoff turns on Cursor parent threads.

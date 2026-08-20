@@ -1,4 +1,5 @@
 import type { ToolCall, HookExecution } from "@/transport/types";
+import type { TurnOutcome } from "@mcode/contracts";
 import type { SubagentLifecycle } from "./subagent-lifecycle";
 
 /** Roster view associated with a sub-agent activity control. */
@@ -91,6 +92,10 @@ export interface TurnFooterSummary {
   counts: NarrativeCounts;
   /** Elapsed structured-activity time, or null when no complete boundary exists. */
   durationMs: number | null;
+  /** Explicit terminal outcome. Omitted for legacy rows with no durable outcome. */
+  outcome?: TurnOutcome | null;
+  /** Exact execution identity used by the existing retry command. */
+  outcomeExecutionId?: string | null;
 }
 
 /** Return value of `buildNarrativeItems` — items plus aggregate counts. */

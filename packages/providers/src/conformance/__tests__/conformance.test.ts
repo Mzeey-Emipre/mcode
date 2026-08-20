@@ -181,6 +181,64 @@ describe("Provider fixture pipeline", () => {
 });
 
 describe("Deterministic canonical sink", () => {
+  it.each([
+    {
+      type: "turn.completed" as const,
+      payload: { type: "turn.completed" as const, endedAt: "1970-01-01T00:00:01.000Z" },
+    },
+    {
+      type: "turn.cancelled" as const,
+      payload: {
+        type: "turn.cancelled" as const,
+        endedAt: "1970-01-01T00:00:01.000Z",
+        reason: "user stop",
+      },
+    },
+    {
+      type: "turn.interrupted" as const,
+      payload: {
+        type: "turn.interrupted" as const,
+        endedAt: "1970-01-01T00:00:01.000Z",
+        reason: "provider restart",
+      },
+    },
+    {
+      type: "turn.errored" as const,
+      payload: {
+        type: "turn.errored" as const,
+        endedAt: "1970-01-01T00:00:01.000Z",
+        error: "provider failed",
+      },
+    },
+  ])("ignores and diagnoses events after $type", async ({ type, payload }) => {
+    const sink = new DeterministicCanonicalSink();
+    const routing = {
+      threadId: "THREAD_1",
+      turnId: "TURN_1",
+      executionId: "00000000-0000-4000-8000-000000000001",
+    };
+    const terminal: ProviderEventDraft = {
+      eventId: `terminal:${type}`,
+      routing,
+      sourceProviderId: "codex",
+      sourceIdentities: [],
+      payload,
+    };
+    const lateEvent: ProviderEventDraft = {
+      eventId: `late:${type}`,
+      routing,
+      sourceProviderId: "codex",
+      sourceIdentities: [],
+      payload: { type: "ingest.volatile-truncated", droppedEventCount: 1 },
+    };
+
+    await sink.submit({ ...routing, phase: "streaming", events: [terminal] });
+    await sink.submit({ ...routing, phase: "late", events: [lateEvent] });
+
+    expect(sink.snapshot().events.map(({ payload: eventPayload }) => eventPayload.type)).toEqual([type]);
+    expect(sink.snapshot().diagnostics).toEqual([`Ignored event ingest.volatile-truncated after ${type}`]);
+  });
+
   it("reserves terminal capacity and emits explicit overflow evidence", async () => {
     const sink = new DeterministicCanonicalSink({ maxEvents: 3, maxDiagnostics: 2 });
     const routing = {

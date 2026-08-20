@@ -109,6 +109,7 @@ function buildService({
     }),
     findByIdInThread: vi.fn(),
     listByThreadUpToSequence: vi.fn(() => []),
+    setAssistantOutcome: vi.fn(),
   } as unknown as MessageRepo;
 
   const gitService = {

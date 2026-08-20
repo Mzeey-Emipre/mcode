@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { Message, ToolCall, HookExecution, PermissionMode, InteractionMode, AttachmentMeta, StoredAttachment, ToolCallRecord, ThoughtSegmentRecord } from "@/transport";
-import type { AgentEvent, CanonicalAgentEventEnvelope, CanonicalAgentReconnectRecovery, ContextWindowMode, MessageMention, ReasoningLevel, OrchestrationMode, PlanQuestion, PlanAnswer, QuotaCategory, ProviderBillingMode, ProviderUsageInfo, GoalLookupResult, GoalState, PreviewAnnotationBundle, TurnFileEffectSummary, TurnRuntimeSnapshot } from "@mcode/contracts";
+import type { AgentEvent, CanonicalAgentEventEnvelope, CanonicalAgentReconnectRecovery, ContextWindowMode, MessageMention, ReasoningLevel, OrchestrationMode, PlanQuestion, PlanAnswer, QuotaCategory, ProviderBillingMode, ProviderUsageInfo, GoalLookupResult, GoalState, PreviewAnnotationBundle, TurnFileEffectSummary, TurnRuntimeSnapshot, TurnOutcome } from "@mcode/contracts";
 import type { PermissionRequest, PermissionDecision } from "@mcode/contracts";
 import type { ThoughtSegment } from "@/features/conversation/narrative/types";
 import {
@@ -308,6 +308,8 @@ interface ThreadState {
     threadId: string;
     messageId: string;
     turnId?: string | null;
+    executionId?: string | null;
+    outcome?: TurnOutcome | null;
     toolCallCount: number;
     filesChanged: string[];
     fileEffects?: TurnFileEffectSummary;
@@ -3486,6 +3488,20 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
       const costUsd = turnComplete?.costUsd ?? null;
       const tokensIn = turnComplete?.tokensIn ?? 0;
       const tokensOut = turnComplete?.tokensOut ?? 0;
+      const terminalPhase: ThreadRecord["runtimePhase"] = event.type === "turnComplete"
+        ? "completed"
+        : event.outcome === "completed"
+          ? "completed"
+          : event.outcome === "errored"
+            ? "errored"
+            : event.outcome === "cancelled"
+              ? "cancelled"
+              : "interrupted";
+      const terminalStatus: "completed" | "errored" | "interrupted" = terminalPhase === "completed"
+        ? "completed"
+        : terminalPhase === "errored"
+          ? "errored"
+          : "interrupted";
 
       // Commit any remaining streaming content and stop the agent,
       // Tool calls remain in-place and collapse into a summary.
@@ -3552,7 +3568,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
           const basePatch = {
             streaming: "",
             streamingPreview: "",
-            runtimePhase: "completed" as const,
+            runtimePhase: terminalPhase,
             currentTurnMessageId: message.id,
             ...queuePendingTurnPersistMessage(rec, message.id),
             currentTurnResponseKey: nextLiveKey,
@@ -3597,7 +3613,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
           const basePatch = {
             streaming: "",
             streamingPreview: "",
-            runtimePhase: "completed" as const,
+            runtimePhase: terminalPhase,
             toolCalls: completedCalls,
             permissions: [] as StoredPermission[],
             rateLimit: undefined,
@@ -3677,8 +3693,8 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
       // a collapsed summary in-place. When turn.persisted fires, the DB-backed
       // summary replaces them and tool calls are cleared.
 
-      // Sync the thread's status in workspaceStore so the sidebar shows
-      // the green "Completed" badge without waiting for a full thread reload.
+      // Sync the thread's status in workspaceStore so the sidebar reflects the
+      // terminal outcome without waiting for a full thread reload.
       // If the user is already viewing this thread, skip the badge and
       // immediately mark viewed so the DB transitions to "paused".
       const isActiveThread = useWorkspaceStore.getState().activeThreadId === threadId;
@@ -3687,7 +3703,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
       } else {
         useWorkspaceStore.setState((ws) => ({
           threads: ws.threads.map((t) =>
-            t.id === threadId ? { ...t, status: "completed" as const } : t,
+            t.id === threadId ? { ...t, status: terminalStatus } : t,
           ),
         }));
       }
@@ -4115,18 +4131,30 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
       }
 
       const localMsgId = resolveTurnPersistLocalMessageId(rec, payload.messageId);
-      const ownsLiveFileEffects = payload.turnId != null
-        && payload.turnId === rec.fileEffectTurnId
-        && (localMsgId === rec.currentTurnMessageId
-          || rec.pendingTurnPersistMessageIds.includes(localMsgId));
       const ensuredMessages =
         payload.filesChanged.length > 0 || payload.toolCallCount > 0
           ? ensureAssistantMessageForTurnPersist(rec, payload.threadId, localMsgId)
           : undefined;
-
+      const outcomeMessages = payload.outcome !== undefined
+        ? (ensuredMessages ?? rec.messages).map((message) => {
+            if (message.id !== localMsgId) return message;
+            return {
+              ...message,
+              outcome: payload.outcome,
+              ...(payload.executionId !== undefined
+                ? { outcomeExecutionId: payload.executionId }
+                : {}),
+            };
+          })
+        : undefined;
+      const ownsLiveFileEffects = payload.turnId != null
+        && payload.turnId === rec.fileEffectTurnId
+        && (localMsgId === rec.currentTurnMessageId
+          || rec.pendingTurnPersistMessageIds.includes(localMsgId));
       return {
         records: patchThreadRecord(state.records, payload.threadId, {
-          ...(ensuredMessages ? { messages: ensuredMessages } : {}),
+          ...(outcomeMessages ? { messages: outcomeMessages } : {}),
+          ...(outcomeMessages ? {} : ensuredMessages ? { messages: ensuredMessages } : {}),
           persistedToolCallCounts: {
             ...rec.persistedToolCallCounts,
             [localMsgId]: payload.toolCallCount,

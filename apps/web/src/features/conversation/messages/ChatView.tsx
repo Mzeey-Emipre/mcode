@@ -22,6 +22,7 @@ import { PlanQuestionWizard } from "@/components/chat/PlanQuestionWizard";
 import { HeaderActions } from "@/components/chat/HeaderActions";
 import { CliErrorBanner, isCliError } from "@/components/chat/CliErrorBanner";
 import { InterruptedSessionsBanner } from "@/components/chat/InterruptedSessionsBanner";
+import { ErroredSessionsBanner } from "@/components/chat/ErroredSessionsBanner";
 import { CollapsibleError } from "@/components/chat/CollapsibleError";
 import { ThreadWarningBanner } from "@/components/chat/ThreadWarningBanner";
 import { HandoffFallbackBanner } from "@/components/chat/HandoffFallbackBanner";
@@ -435,7 +436,12 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
   const [dismissedError, setDismissedError] = useState<string | null>(null);
   const [turnRecoveries, setTurnRecoveries] = useState<TurnRecovery[]>([]);
   const [bannerDismissed, setBannerDismissed] = useState(false);
-  const interruptedThreadIds = turnRecoveries.map((recovery) => recovery.threadId);
+  const interruptedThreadIds = turnRecoveries
+    .filter((recovery) => recovery.phase === "interrupted")
+    .map((recovery) => recovery.threadId);
+  const erroredThreadIds = turnRecoveries
+    .filter((recovery) => recovery.phase === "errored")
+    .map((recovery) => recovery.threadId);
 
   const connectionStatus = useConnectionStore((s) => s.status);
   const chatPaneRef = useRef<HTMLDivElement>(null);
@@ -470,7 +476,7 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
     if (connectionStatus !== "connected") setBannerDismissed(false);
   }, [connectionStatus]);
 
-  // Load only canonical interrupted executions. Legacy thread status alone does
+  // Load only canonical recoverable executions. Legacy thread status alone does
   // not prove that Mcode has accepted input which it can retry safely.
   useEffect(() => {
     if (connectionStatus !== "connected" || bannerDismissed) return;
@@ -478,15 +484,15 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
     void getTransport().listTurnRecoveries().then((recoveries) => {
       if (!cancelled) setTurnRecoveries(recoveries);
     }).catch((error: unknown) => {
-      console.error("Failed to load interrupted turn recoveries", error);
+      console.error("Failed to load turn recoveries", error);
     });
     return () => {
       cancelled = true;
     };
   }, [connectionStatus, bannerDismissed]);
 
-  /** Retries each selected interruption as a new execution, then hides the banner. */
-  const handleRetryInterrupted = useCallback(
+  /** Retries each selected recovery as a new execution, then hides its banner. */
+  const handleRetryRecoveries = useCallback(
     async (threadIds: string[]) => {
       setBannerDismissed(true);
       const failedIds: string[] = [];
@@ -496,20 +502,27 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
           if (!recovery || !recovery.actions.includes("retry")) throw new Error("Retry is unavailable");
           await getTransport().retryTurn(recovery.executionId);
         } catch (error) {
-          console.error("Failed to retry interrupted thread", threadId, error);
+          console.error("Failed to retry recoverable thread", threadId, error);
           failedIds.push(threadId);
         }
       }
-      if (failedIds.length > 0) {
-        setTurnRecoveries((recoveries) =>
-          recoveries.filter((recovery) => failedIds.includes(recovery.threadId)));
-        setBannerDismissed(false);
-      } else {
-        setTurnRecoveries([]);
-      }
+      const remainingRecoveries = turnRecoveries.filter((recovery) =>
+        !threadIds.includes(recovery.threadId) || failedIds.includes(recovery.threadId));
+      setTurnRecoveries(remainingRecoveries);
+      setBannerDismissed(remainingRecoveries.length === 0);
     },
     [turnRecoveries],
   );
+
+  /** Prefills the active composer with the existing interrupted-turn continuation prompt. */
+  const handleContinueTurn = useCallback(() => {
+    setPendingPrefill("Continue");
+  }, [setPendingPrefill]);
+
+  /** Retries one persisted turn by its exact execution identity. */
+  const handleRetryTurn = useCallback((executionId: string) => {
+    void getTransport().retryTurn(executionId);
+  }, []);
 
   /** Activates inline fork mode on the composer for the given message. */
   const handleBranch = useCallback((messageId: string) => {
@@ -997,7 +1010,20 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
         <div className="px-4 pt-2">
           <InterruptedSessionsBanner
             threadIds={interruptedThreadIds}
-            onRetry={handleRetryInterrupted}
+            onRetry={handleRetryRecoveries}
+            onDismiss={() => {
+              setBannerDismissed(true);
+              setTurnRecoveries([]);
+            }}
+          />
+        </div>
+      )}
+
+      {erroredThreadIds.length > 0 && !bannerDismissed && (
+        <div className="px-4 pt-2">
+          <ErroredSessionsBanner
+            threadIds={erroredThreadIds}
+            onRetry={handleRetryRecoveries}
             onDismiss={() => {
               setBannerDismissed(true);
               setTurnRecoveries([]);
@@ -1046,6 +1072,8 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
                 onReply={handleReply}
                 onSubagentSelect={onSubagentSelect}
                 onOpenSubagents={onOpenSubagents}
+                onContinue={handleContinueTurn}
+                onRetry={handleRetryTurn}
               />
             </div>
             <ConversationHoldOverlay targetTitle={activeThread.title || "Conversation"} />
@@ -1067,6 +1095,8 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
             onReply={handleReply}
             onSubagentSelect={onSubagentSelect}
             onOpenSubagents={onOpenSubagents}
+            onContinue={handleContinueTurn}
+            onRetry={handleRetryTurn}
           />
         )}
       </div>

@@ -36,8 +36,14 @@ vi.mock("../NarrativeRows", () => ({
 }));
 
 vi.mock("../TurnFooter", () => ({
-  TurnFooter: ({ counts }: { counts: { steps: number; subagents: number } }) => (
-    <div data-testid="persisted-footer-steps" data-subagents={counts.subagents}>{counts.steps}</div>
+  TurnFooter: ({
+    counts,
+    outcome,
+  }: {
+    counts: { steps: number; subagents: number };
+    outcome?: string | null;
+  }) => (
+    <div data-testid="persisted-footer-steps" data-subagents={counts.subagents} data-outcome={outcome ?? ""}>{counts.steps}</div>
   ),
 }));
 
@@ -162,6 +168,26 @@ describe("persisted child timeline thread selection", () => {
     );
 
     expect(screen.getByTestId("persisted-footer-steps")).toHaveTextContent("0");
+    expect(loadNarrativeForMessage).not.toHaveBeenCalled();
+  });
+
+  it("keeps an outcome-only footer when the turn has no activity counts", () => {
+    recordsByThread.delete("child-thread");
+
+    render(
+      <PersistedTurnFooter
+        threadId="child-thread"
+        messageId="assistant-1"
+        summary={{
+          counts: { steps: 0, thoughts: 0, subagents: 0 },
+          durationMs: null,
+          outcome: "interrupted",
+          outcomeExecutionId: "execution-7",
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId("persisted-footer-steps")).toHaveAttribute("data-outcome", "interrupted");
     expect(loadNarrativeForMessage).not.toHaveBeenCalled();
   });
 

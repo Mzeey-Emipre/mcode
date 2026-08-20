@@ -279,6 +279,7 @@ export class TurnFinalizer {
       }
 
       const messageId = materialized.id;
+      this.messageRepo.setAssistantOutcome(messageId, outcome, executionId);
       // Record the message id so late hooks (Stop/SessionEnd) arriving after
       // this point can attach to the correct persisted row.
       this.lastPersistedMessageIdByThread.set(threadId, messageId);
@@ -303,6 +304,8 @@ export class TurnFinalizer {
         messageId,
         toolCallCount,
         filesChanged,
+        outcome,
+        executionId: executionId ?? null,
         ...(fileEffects ? { fileEffects } : {}),
       });
 
@@ -375,13 +378,23 @@ export class TurnFinalizer {
               const message = this.messageRepo
                 .listIncludingInternal(threadId)
                 .find((candidate) => candidate.id === projection.materialized!.id);
-              return message ? { ...message, is_internal: false } : null;
+              return message
+                ? {
+                    ...message,
+                    is_internal: false,
+                    outcome,
+                    outcomeExecutionId: executionId,
+                  }
+                : null;
             })()
           : null,
         narrative: projection.narrative,
       }),
       finalizeCompatibility: () => {
-        if (projection.materialized) this.messageRepo.publishAssistant(projection.materialized.id);
+        if (projection.materialized) {
+          this.messageRepo.setAssistantOutcome(projection.materialized.id, outcome, executionId);
+          this.messageRepo.publishAssistant(projection.materialized.id);
+        }
       },
     });
 
@@ -436,6 +449,8 @@ export class TurnFinalizer {
       messageId,
       toolCallCount: projection.toolCallCount,
       filesChanged,
+      outcome,
+      executionId,
       ...(fileEffects ? { fileEffects } : {}),
     });
     this.clearTurn(threadId, turnRef);

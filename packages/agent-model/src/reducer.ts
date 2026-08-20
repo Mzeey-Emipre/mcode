@@ -52,6 +52,7 @@ export type AgentBatchReduction =
 
 const TERMINAL_TURN_STATUSES: ReadonlySet<AgentTurnStatus> = new Set([
   "Completed",
+  "Cancelled",
   "Interrupted",
   "Errored",
 ]);
@@ -225,6 +226,14 @@ export function reduceAgentEvent(
         event.routing.turnId,
         acceptedInputState,
         { status: "Completed", endedAt: payload.endedAt },
+      );
+    case "turn.cancelled":
+      return updateTurnLifecycle(
+        state,
+        event.routing.threadId,
+        event.routing.turnId,
+        acceptedInputState,
+        { status: "Cancelled", endedAt: payload.endedAt },
       );
     case "turn.interrupted":
       return updateTurnLifecycle(

@@ -317,6 +317,10 @@ export const messages = sqliteTable(
      * the user-visible rendering.
      */
     isInternal: integer("is_internal").notNull().default(0),
+    /** Durable terminal outcome written only by TurnFinalizer. */
+    outcome: text("outcome"),
+    /** Exact execution identity for retrying an interrupted or errored turn. */
+    outcomeExecutionId: text("outcome_execution_id"),
   },
   (table) => [
     index("idx_messages_thread").on(table.threadId),

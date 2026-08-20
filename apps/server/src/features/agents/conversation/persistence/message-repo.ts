@@ -12,6 +12,7 @@ import type {
   MessageRole,
   PreviewAnnotationBundle,
   StoredAttachment,
+  TurnOutcome,
 } from "@mcode/contracts";
 import { PreviewAnnotationBundleSchema, THREAD_GET_TRANSCRIPT_MAX_BYTES } from "@mcode/contracts";
 
@@ -38,6 +39,8 @@ interface MessageRow {
   source_turn_id: string | null;
   source_provider_id: string | null;
   is_internal: number;
+  outcome?: TurnOutcome | null;
+  outcome_execution_id?: string | null;
   tool_call_count?: number;
 }
 
@@ -138,6 +141,8 @@ function rowToMessage(row: MessageRow): Message {
     reply_to_message_id: row.reply_to_message_id,
     quoted_text: row.quoted_text,
     model: row.model,
+    outcome: row.outcome ?? null,
+    outcomeExecutionId: row.outcome_execution_id ?? null,
     is_internal: row.is_internal === 1,
     ...(row.origin_type === "legacy"
       ? {
@@ -159,10 +164,10 @@ function rowToMessage(row: MessageRow): Message {
 }
 
 const MESSAGE_COLUMNS =
-  "id, thread_id, role, content, tool_calls, files_changed, cost_usd, tokens_used, timestamp, sequence, attachments, preview_annotations, mentions, reply_to_message_id, quoted_text, model, provider, origin_type, source_thread_id, source_turn_id, source_provider_id, is_internal";
+  "id, thread_id, role, content, tool_calls, files_changed, cost_usd, tokens_used, timestamp, sequence, attachments, preview_annotations, mentions, reply_to_message_id, quoted_text, model, provider, origin_type, source_thread_id, source_turn_id, source_provider_id, is_internal, outcome, outcome_execution_id";
 
 const MESSAGE_COLUMNS_PREFIXED =
-  "m.id, m.thread_id, m.role, m.content, m.tool_calls, m.files_changed, m.cost_usd, m.tokens_used, m.timestamp, m.sequence, m.attachments, m.preview_annotations, m.mentions, m.reply_to_message_id, m.quoted_text, m.model, m.provider, m.origin_type, m.source_thread_id, m.source_turn_id, m.source_provider_id, m.is_internal";
+  "m.id, m.thread_id, m.role, m.content, m.tool_calls, m.files_changed, m.cost_usd, m.tokens_used, m.timestamp, m.sequence, m.attachments, m.preview_annotations, m.mentions, m.reply_to_message_id, m.quoted_text, m.model, m.provider, m.origin_type, m.source_thread_id, m.source_turn_id, m.source_provider_id, m.is_internal, m.outcome, m.outcome_execution_id";
 
 /**
  * Pre-aggregates tool call counts for the selected page only.
@@ -307,6 +312,8 @@ export class MessageRepo {
       quoted_text: quotedText ?? null,
       model: modelValue,
       is_internal: isInternal ?? false,
+      outcome: null,
+      outcomeExecutionId: null,
     };
   }
 
@@ -384,7 +391,16 @@ export class MessageRepo {
       quoted_text: null,
       model: modelValue,
       is_internal: input.isInternal ?? false,
+      outcome: null,
+      outcomeExecutionId: null,
     };
+  }
+
+  /** Persist a terminal outcome after the turn finalizer proves the turn ended. */
+  setAssistantOutcome(messageId: string, outcome: TurnOutcome, executionId?: string): void {
+    this.db
+      .prepare("UPDATE messages SET outcome = ?, outcome_execution_id = ? WHERE id = ? AND role = 'assistant'")
+      .run(outcome, executionId ?? null, messageId);
   }
 
   /** Make a staged assistant message visible after its terminal checkpoint commits. */
@@ -758,6 +774,7 @@ LIMIT ?`,
   m.id, m.thread_id, m.role, m.content, NULL AS tool_calls,
   m.files_changed, m.cost_usd, m.tokens_used, m.timestamp, m.sequence,
   m.attachments, m.preview_annotations, m.mentions, m.reply_to_message_id, m.quoted_text, m.model, m.is_internal,
+  m.outcome, m.outcome_execution_id,
   ${toolCallCountSql}
 FROM messages m
 WHERE m.id = ?`,
@@ -767,6 +784,7 @@ WHERE m.id = ?`,
   m.id, m.thread_id, m.role, substr(m.content, 1, ?) AS content, NULL AS tool_calls,
   m.files_changed, m.cost_usd, m.tokens_used, m.timestamp, m.sequence,
   m.attachments, m.preview_annotations, m.mentions, m.reply_to_message_id, m.quoted_text, m.model, m.is_internal,
+  m.outcome, m.outcome_execution_id,
   ${toolCallCountSql}
 FROM messages m
 WHERE m.id = ?`,

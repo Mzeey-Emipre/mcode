@@ -396,7 +396,7 @@ describe("CanonicalAgentEventSink", () => {
     expect(sink.loadTurn(TURN_ID)).toMatchObject({ status: "Interrupted" });
     expect(sink.loadCheckpoint(EXECUTION_ID)).toMatchObject({
       phase: "interrupted",
-      terminalOutcome: "cancelled",
+      terminalOutcome: "interrupted",
       lastAcceptedSequence: 6,
       lastDurableSequence: 6,
       nativeCursor: identity(),
@@ -1449,7 +1449,7 @@ describe("CanonicalAgentEventSink", () => {
     sink.finishCodexChildTurn({
       childThreadId: interrupted.childThread.id,
       nativeTurnId: "native-turn-interrupted",
-      outcome: "cancelled",
+      outcome: "interrupted",
     });
 
     db.prepare("UPDATE canonical_agent_turns SET started_at = ?, updated_at = ? WHERE id = ?")

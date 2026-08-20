@@ -4,8 +4,7 @@ import { ProviderBillingModeSchema, QuotaCategorySchema } from "../providers/usa
 import { StoredAttachmentSchema } from "../models/attachment.js";
 import { GoalStateSchema } from "../models/goal.js";
 import { SubagentPresentationSchema } from "../models/tool-call-record.js";
-
-const TurnOutcomeSchema = z.enum(["completed", "errored", "cancelled"]);
+import { TurnOutcomeSchema } from "../models/turn-outcome.js";
 
 const CodexChildEvidenceSchema = z
   .object({
@@ -163,6 +162,8 @@ const AgentEventPayloadSchema = z.discriminatedUnion("type", [
     z.object({
       type: z.literal(AgentEventType.Ended),
       threadId: z.string(),
+      /** Ended is turn-scoped and must identify the execution it terminates. */
+      turnExecutionId: z.string().uuid(),
       outcome: TurnOutcomeSchema.optional(),
       reason: z.string().optional(),
       codexChild: CodexChildEvidenceSchema.optional(),

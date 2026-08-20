@@ -41,6 +41,13 @@ export const CanonicalAgentEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("turn.completed"), endedAt: CanonicalTimestampSchema }).strict(),
   z
     .object({
+      type: z.literal("turn.cancelled"),
+      endedAt: CanonicalTimestampSchema,
+      reason: z.string().trim().min(1).max(2_000),
+    })
+    .strict(),
+  z
+    .object({
       type: z.literal("turn.interrupted"),
       endedAt: CanonicalTimestampSchema,
       reason: z.string().trim().min(1).max(2_000),

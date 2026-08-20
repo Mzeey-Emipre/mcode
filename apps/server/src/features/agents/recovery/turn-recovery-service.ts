@@ -32,7 +32,7 @@ export class TurnRecoveryService {
     return { interrupted };
   }
 
-  /** List explicit actions for interrupted executions. */
+  /** List explicit actions for interrupted and errored executions. */
   listRecoveries(): TurnRecovery[] {
     return this.canonicalSink.listInterruptedCheckpoints().map((checkpoint) => ({
       threadId: checkpoint.threadId,
@@ -53,12 +53,12 @@ export class TurnRecoveryService {
     const checkpoint = this.canonicalSink
       .listInterruptedCheckpoints()
       .find((candidate) => candidate.executionId === executionId);
-    if (!checkpoint) throw new Error(`Interrupted execution not found: ${executionId}`);
+    if (!checkpoint) throw new Error(`Recoverable execution not found: ${executionId}`);
     const message = this.canonicalSink.loadUserMessage(checkpoint.turnId);
     if (!message) throw new Error(`Accepted user input not found: ${executionId}`);
     const thread = this.threadRepo.findById(checkpoint.threadId);
-    if (!thread || thread.status !== "interrupted") {
-      throw new Error(`Interrupted thread not found: ${checkpoint.threadId}`);
+    if (!thread || !["interrupted", "errored"].includes(thread.status)) {
+      throw new Error(`Recoverable thread not found: ${checkpoint.threadId}`);
     }
     const attachments = this.attachmentService.prepareRetryAttachments(
       thread.id,

@@ -62,7 +62,70 @@ describe("TurnRecoveryService", () => {
 
     expect(result).toEqual({ interrupted: [EXECUTION_ID] });
     expect(sink.loadTurn(TURN_ID)?.status).toBe("Interrupted");
+    expect(sink.loadCheckpoint(EXECUTION_ID)).toMatchObject({
+      phase: "interrupted",
+      terminalOutcome: "interrupted",
+    });
     expect(threadRepo.findById(THREAD_ID)?.status).toBe("interrupted");
+  });
+
+  it("marks an existing assistant projection interrupted with its original execution identity", () => {
+    const messageRepo = new MessageRepo(db);
+    const assistant = messageRepo.createAssistantIdempotent({
+      id: "assistant-recovery",
+      threadId: THREAD_ID,
+      content: "A full-looking response",
+      sequence: 2,
+      isInternal: true,
+    });
+    const thread = sink.loadThread(THREAD_ID);
+    if (!thread) throw new Error("Recovery test thread was not persisted canonically");
+
+    sink.commit({
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      executionId: EXECUTION_ID,
+      phase: "running",
+      events: [{
+        eventId: `${EXECUTION_ID}:partial-assistant`,
+        routing: {
+          threadId: THREAD_ID,
+          turnId: TURN_ID,
+          executionId: EXECUTION_ID,
+          itemId: `message:${assistant.id}`,
+        },
+        sourceProviderId: thread.providerId,
+        sourceIdentities: thread.providerIdentities,
+        payload: {
+          type: "item.recorded",
+          item: {
+            id: `message:${assistant.id}`,
+            threadId: THREAD_ID,
+            turnId: TURN_ID,
+            kind: "message",
+            providerIdentities: thread.providerIdentities,
+            payload: { projection: "message", message: assistant },
+            createdAt: assistant.timestamp,
+            updatedAt: assistant.timestamp,
+          },
+        },
+      }],
+    });
+
+    const service = new TurnRecoveryService(sink, threadRepo, new AttachmentService());
+    service.reconcileOnStartup();
+
+    expect(messageRepo.findById(assistant.id)).toMatchObject({
+      outcome: "interrupted",
+      outcomeExecutionId: EXECUTION_ID,
+      is_internal: false,
+    });
+    expect(sink.loadTerminalProjection(TURN_ID).message).toMatchObject({
+      id: assistant.id,
+      is_internal: false,
+      outcome: "interrupted",
+      outcomeExecutionId: EXECUTION_ID,
+    });
   });
 
   it("marks an unresolved child delivery unknown before interrupting its parent execution", () => {
@@ -153,5 +216,34 @@ describe("TurnRecoveryService", () => {
 
     expect(sink.listInterruptedCheckpoints()).toEqual([]);
     expect(sink.loadCheckpoint(EXECUTION_ID)?.phase).toBe("retried");
+  });
+
+  it("offers Retry for a known terminal provider failure", async () => {
+    sink.finishParentTurn({
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      executionId: EXECUTION_ID,
+      providerId: "codex",
+      providerIdentities: [],
+      outcome: "errored",
+      error: "provider failed",
+      projectTurn: () => ({ message: null, narrative: [] }),
+    });
+    threadRepo.updateStatus(THREAD_ID, "errored");
+
+    const service = new TurnRecoveryService(sink, threadRepo, new AttachmentService());
+    expect(service.listRecoveries()).toEqual([expect.objectContaining({
+      executionId: EXECUTION_ID,
+      phase: "errored",
+      error: "provider failed",
+      actions: ["retry"],
+    })]);
+
+    const dispatch = vi.fn(async () => undefined);
+    await service.retry(EXECUTION_ID, dispatch);
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
+      retryOfExecutionId: EXECUTION_ID,
+      forceFreshSession: true,
+    }));
   });
 });

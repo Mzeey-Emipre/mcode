@@ -965,14 +965,16 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     outcome?: CodexEndedOutcome,
     emitEnded = true,
     turnExecutionId?: string,
-  ): AgentEvent {
+  ): AgentEvent | undefined {
     this.emit("event", { type: AgentEventType.Error, threadId, error, ...(turnExecutionId ? { turnExecutionId } : {}) } satisfies AgentEvent);
+    if (!turnExecutionId) return undefined;
     const ended = {
       type: AgentEventType.Ended,
       threadId,
       ...(outcome ? { outcome } : {}),
+      turnExecutionId,
     } satisfies AgentEvent;
-    if (emitEnded) this.emit("event", turnExecutionId ? { ...ended, turnExecutionId } : ended);
+    if (emitEnded) this.emit("event", ended);
     return ended;
   }
 
@@ -2385,6 +2387,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         emitTurnEvent(deferredEnded ?? {
           type: AgentEventType.Ended,
           threadId,
+          turnExecutionId,
           ...(endedOutcome ? { outcome: endedOutcome } : {}),
         } satisfies AgentEvent);
       }

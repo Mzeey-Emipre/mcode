@@ -1439,6 +1439,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
           emitTurnEvent({
           type: AgentEventType.Ended,
           threadId: tid,
+          turnExecutionId,
         } satisfies AgentEvent);
         return "stopped";
       }
@@ -2461,6 +2462,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
         emitTurnEvent({
             type: AgentEventType.Ended,
             threadId,
+            turnExecutionId: currentTurnExecutionId,
           } satisfies AgentEvent);
         }
       }
