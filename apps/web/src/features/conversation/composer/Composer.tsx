@@ -149,6 +149,10 @@ import {
   collectSpillPathsFromPendingAttachments,
   releaseBrowserCaptureSpills,
 } from "@/features/preview/capture/browser-capture-spill";
+import {
+  isSelectedTextCommentsPrototypeEnabled,
+  SelectedTextCommentsComposerCards,
+} from "../messages/prototypes/SelectedTextCommentsPrototype";
 
 const EMPTY_TASK_BUBBLE_TASKS: readonly TaskItem[] = [];
 /** Build structured preview metadata payloads paired with outbound attachment IDs. */
@@ -3069,6 +3073,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         onDragOver={handleDragOver}
         onDrop={handleDrop}
       >
+        {isSelectedTextCommentsPrototypeEnabled() && <SelectedTextCommentsComposerCards threadId={threadId} />}
         {/* Branch mode quote bar */}
         <ComposerBranchBar
           branchFromMessageId={branchFromMessageId}

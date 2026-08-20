@@ -22,6 +22,10 @@ import { $isSlashCommandNode } from "./SlashCommandNode";
 interface KeyboardPluginProps {
   /** Callback to submit the current message. */
   readonly onSubmit: () => void;
+  /** Keyboard shortcut that submits the editor. Defaults to Enter. */
+  readonly submitShortcut?: "enter" | "mod-enter";
+  /** Called when Escape is pressed while no popup is open. */
+  readonly onEscape?: () => void;
   /** When true, Enter-to-submit is suppressed. */
   readonly disabled?: boolean;
   /** When true, intercept navigation keys for popup handling. */
@@ -32,7 +36,7 @@ interface KeyboardPluginProps {
 
 /**
  * Lexical plugin for keyboard shortcuts.
- * - Enter (without Shift): submit message (or select popup item)
+ * - Submit shortcut: Enter by default, or Ctrl/Cmd+Enter in mod-enter mode
  * - Shift+Enter: insert newline (default Lexical behavior)
  * - Arrow keys, Tab, Escape: delegated to popup handler when open
  *
@@ -42,6 +46,8 @@ interface KeyboardPluginProps {
  */
 export function KeyboardPlugin({
   onSubmit,
+  submitShortcut = "enter",
+  onEscape,
   disabled,
   isPopupOpen,
   onPopupKeyDown,
@@ -58,6 +64,12 @@ export function KeyboardPlugin({
   const onSubmitRef = useRef(onSubmit);
   onSubmitRef.current = onSubmit;
 
+  const submitShortcutRef = useRef(submitShortcut);
+  submitShortcutRef.current = submitShortcut;
+
+  const onEscapeRef = useRef(onEscape);
+  onEscapeRef.current = onEscape;
+
   const disabledRef = useRef(disabled);
   disabledRef.current = disabled;
 
@@ -66,6 +78,12 @@ export function KeyboardPlugin({
     // Popup interception at CRITICAL priority (above submit handler)
     const popupHandler = (key: string) => (event: KeyboardEvent | null): boolean => {
       if (!event) return false;
+      if (event.isComposing) return false;
+      if (key === "Escape" && !isPopupOpenRef.current && onEscapeRef.current) {
+        event.preventDefault();
+        onEscapeRef.current();
+        return true;
+      }
       if (!isPopupOpenRef.current || !onPopupKeyDownRef.current) return false;
       if (onPopupKeyDownRef.current(key)) {
         event.preventDefault();
@@ -102,6 +120,7 @@ export function KeyboardPlugin({
       KEY_ENTER_COMMAND,
       (event: KeyboardEvent | null) => {
         if (!event) return false;
+        if (event.isComposing) return false;
         if (event.shiftKey) return false;
         if (!isPopupOpenRef.current || !onPopupKeyDownRef.current) return false;
         if (onPopupKeyDownRef.current("Enter")) {
@@ -118,7 +137,9 @@ export function KeyboardPlugin({
       KEY_ENTER_COMMAND,
       (event: KeyboardEvent | null) => {
         if (!event) return false;
+        if (event.isComposing) return false;
         if (event.shiftKey) return false;
+        if (submitShortcutRef.current === "mod-enter" && !event.ctrlKey && !event.metaKey) return false;
         event.preventDefault();
         if (!disabledRef.current) {
           onSubmitRef.current();

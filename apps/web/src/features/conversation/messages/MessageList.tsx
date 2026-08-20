@@ -44,6 +44,10 @@ import { shouldShowStickyUserMessage, type StickyVisibilityVirtualizer } from "@
 import { resolveUserMessagePreview } from "@/components/chat/user-message-preview";
 import { isConversationVisible } from "../residency/conversation-residency";
 import { projectCanonicalMessageList } from "./canonical-message-projection";
+import {
+  isSelectedTextCommentsPrototypeEnabled,
+  SelectedTextCommentsPrototype,
+} from "./prototypes/SelectedTextCommentsPrototype";
 
 const EMPTY_TOOL_CALLS: ToolCall[] = [];
 const EMPTY_TURN_MAP: Record<string, string> = {};
@@ -112,6 +116,7 @@ const VirtualItemRenderer = memo(function VirtualItemRenderer({
   currentTurnMessageIdByThread,
   threadId,
   showParentAgentProvenance,
+  prototypeEnabled,
 }: {
   item: ChatVirtualItem;
   turnExpandRef?: React.RefObject<Map<string, boolean>>;
@@ -123,6 +128,7 @@ const VirtualItemRenderer = memo(function VirtualItemRenderer({
   currentTurnMessageIdByThread: Record<string, string>;
   threadId: string | null | undefined;
   showParentAgentProvenance: boolean;
+  prototypeEnabled: boolean;
 }) {
   switch (item.type) {
     case "message": {
@@ -140,6 +146,7 @@ const VirtualItemRenderer = memo(function VirtualItemRenderer({
             assistantStreaming={item.assistantState?.isStreaming}
             assistantActionsVisible={item.assistantState?.actionsVisible}
             showParentAgentProvenance={showParentAgentProvenance}
+            prototypeEnabled={prototypeEnabled}
           />
         </div>
       );
@@ -227,7 +234,8 @@ const VirtualItemRenderer = memo(function VirtualItemRenderer({
   && prev.onScrollToMessage === next.onScrollToMessage
   && prev.currentTurnMessageIdByThread === next.currentTurnMessageIdByThread
   && prev.threadId === next.threadId
-  && prev.showParentAgentProvenance === next.showParentAgentProvenance,
+  && prev.showParentAgentProvenance === next.showParentAgentProvenance
+  && prev.prototypeEnabled === next.prototypeEnabled,
 );
 
 /** Props for {@link ScrollToBottomButton}. */
@@ -279,6 +287,7 @@ export interface MessageListProps {
 
 /** Virtualized list of chat messages, tool calls, and streaming indicators. */
 export function MessageList({ displayThreadId, onBranch, onReply, onSubagentSelect, onOpenSubagents, showParentAgentProvenance = true }: MessageListProps) {
+  const prototypeEnabled = isSelectedTextCommentsPrototypeEnabled();
   const containerRef = useRef<HTMLDivElement>(null);
   /** Survives virtualizer remounts: remembers manual expand/collapse toggles by messageId. */
   const turnExpandRef = useRef<Map<string, boolean>>(new Map());
@@ -1462,6 +1471,7 @@ export function MessageList({ displayThreadId, onBranch, onReply, onSubagentSele
   // Only triggers when Ctrl (or Cmd on Mac) is held during mouseup so casual
   // highlights don't accidentally activate the reply bar.
   useEffect(() => {
+    if (prototypeEnabled) return;
     const handleMouseUp = (e: MouseEvent) => {
       if (!e.ctrlKey && !e.metaKey) return;
 
@@ -1496,7 +1506,7 @@ export function MessageList({ displayThreadId, onBranch, onReply, onSubagentSele
 
     document.addEventListener("mouseup", handleMouseUp);
     return () => document.removeEventListener("mouseup", handleMouseUp);
-  }, []);
+  }, [prototypeEnabled]);
 
   /**
    * While {@link pinListTailRef} is set (open or tail restore), keep the viewport on the tail as row heights stabilize.
@@ -1569,13 +1579,15 @@ export function MessageList({ displayThreadId, onBranch, onReply, onSubagentSele
                 style={{ transform: `translateY(${vi.start}px)` }}
               >
                 <div className={cn(PRIMARY_CONTENT_RAIL_CLASS, "min-w-0 overflow-x-hidden")}>
-                  <VirtualItemRenderer item={item} turnExpandRef={turnExpandRef} onBranch={onBranch} onReply={onReply} onSubagentSelect={onSubagentSelect} onOpenSubagents={onOpenSubagents} onScrollToMessage={scrollToMessage} currentTurnMessageIdByThread={currentTurnMessageIdByThread} threadId={renderedThreadId} showParentAgentProvenance={showParentAgentProvenance} />
+                  <VirtualItemRenderer item={item} turnExpandRef={turnExpandRef} onBranch={onBranch} onReply={onReply} onSubagentSelect={onSubagentSelect} onOpenSubagents={onOpenSubagents} onScrollToMessage={scrollToMessage} currentTurnMessageIdByThread={currentTurnMessageIdByThread} threadId={renderedThreadId} showParentAgentProvenance={showParentAgentProvenance} prototypeEnabled={prototypeEnabled} />
                 </div>
               </div>
             );
           })}
         </div>
       </div>
+
+      {prototypeEnabled && <SelectedTextCommentsPrototype containerRef={containerRef} />}
 
       {/* Skeleton placeholder shown while the handoff context is being generated for a child thread.
           Conditions: handoff still generating and only the initial user message has been submitted

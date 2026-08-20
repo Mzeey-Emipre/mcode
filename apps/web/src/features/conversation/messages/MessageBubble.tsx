@@ -283,6 +283,8 @@ interface MessageBubbleProps {
   assistantActionsVisible?: boolean;
   /** Whether a child prompt displays its parent-agent provenance label. */
   showParentAgentProvenance?: boolean;
+  /** Enables the dev-only selected-text comments source markers. */
+  prototypeEnabled?: boolean;
 }
 
 /** Single image thumbnail with error fallback and optional full-size preview. */
@@ -476,6 +478,7 @@ export const MessageBubble = memo(function MessageBubble({
   assistantStreaming,
   assistantActionsVisible = true,
   showParentAgentProvenance = true,
+  prototypeEnabled = false,
 }: MessageBubbleProps) {
   const [imagePreview, setImagePreview] = useState<{
     items: { src: string; title: string }[];
@@ -600,6 +603,7 @@ export const MessageBubble = memo(function MessageBubble({
   }
   const isUser = message.role === "user";
   const userDisplayText = userGoal ? userGoal.condition : textContent;
+  const userPrototypeEligible = prototypeEnabled && isUser && userDisplayText.trim().length > 0;
   const parentAgentProvenance = message.parentAgentProvenance;
   const parentAgentDetails = parentAgentProvenance
     ? [
@@ -616,7 +620,7 @@ export const MessageBubble = memo(function MessageBubble({
 
     return (
       <>
-        <div className="group/msg flex justify-end" data-message-id={message.id} data-message-role={message.role} data-thread-id={message.thread_id}>
+        <div className="group/msg flex justify-end" data-message-id={message.id} data-message-role={message.role} data-thread-id={message.thread_id} tabIndex={userPrototypeEligible ? 0 : undefined}>
           <div className="min-w-0 max-w-[min(82%,56rem)] space-y-1.5">
             {/* Quote block — shown when this message is a reply */}
             {message.reply_to_message_id && (
@@ -688,7 +692,13 @@ export const MessageBubble = memo(function MessageBubble({
             ) : null}
 
           {userDisplayText.trim() && (
-            <div className="overflow-hidden break-words rounded-lg rounded-br-md bg-accent px-3 py-1.5 text-sm text-accent-foreground">
+            <div
+              className="overflow-hidden break-words rounded-lg rounded-br-md bg-accent px-3 py-1.5 text-sm text-accent-foreground"
+              data-prototype-source={userPrototypeEligible ? "user" : undefined}
+              data-message-id={userPrototypeEligible ? message.id : undefined}
+              data-message-role={userPrototypeEligible ? message.role : undefined}
+              data-thread-id={userPrototypeEligible ? message.thread_id : undefined}
+            >
               {!userGoal && message.mentions?.length ? (
                 <MentionedUserText text={userDisplayText} mentions={message.mentions} />
               ) : (
@@ -762,9 +772,11 @@ export const MessageBubble = memo(function MessageBubble({
   const assistantReplyContent =
     textContent.trim() ||
     (imageAttachments.length > 0 ? "[Generated image]" : "[Assistant message]");
+  const assistantPrototypeEligible =
+    prototypeEnabled && assistantActionsVisible && !assistantStreaming && !assistantContentEmpty && textContent.trim().length > 0;
 
   return (
-    <div className="group/msg space-y-2" data-message-id={message.id} data-message-role={message.role} data-thread-id={message.thread_id}>
+    <div className="group/msg space-y-2" data-message-id={message.id} data-message-role={message.role} data-thread-id={message.thread_id} tabIndex={assistantPrototypeEligible ? 0 : undefined}>
       {/* Quote block — shown when this message is a reply */}
       {message.reply_to_message_id && (
         <QuoteBlock
@@ -811,7 +823,14 @@ export const MessageBubble = memo(function MessageBubble({
         </div>
       )}
       {!assistantContentEmpty && (
-        <div className="text-sm text-foreground" data-testid="assistant-response-text">
+        <div
+          className="text-sm text-foreground"
+          data-testid="assistant-response-text"
+          data-prototype-source={assistantPrototypeEligible ? "assistant" : undefined}
+          data-message-id={assistantPrototypeEligible ? message.id : undefined}
+          data-message-role={assistantPrototypeEligible ? message.role : undefined}
+          data-thread-id={assistantPrototypeEligible ? message.thread_id : undefined}
+        >
           {renderAssistantDelta ? (
             <DeltaBlock
               text={message.content}
