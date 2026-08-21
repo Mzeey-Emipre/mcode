@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { ReactNode, ReactElement } from "react";
 import type { Thread } from "@/transport/types";
@@ -12,12 +13,27 @@ const {
   mockSetPendingPrefill,
   mockWorkspaceSelector,
   mockGetProviderUsage,
+  mockGetRightPanel,
+  mockGetRightPanelVisible,
+  mockShowRightPanel,
+  mockSetRightPanelTab,
+  mockSetRightPanelWidth,
 } = vi.hoisted(() => ({
   mockUseBranchPr: vi.fn().mockReturnValue(null),
   mockUseHasCommitsAhead: vi.fn().mockReturnValue(null),
   mockSetPendingPrefill: vi.fn(),
   mockWorkspaceSelector: vi.fn(),
   mockGetProviderUsage: vi.fn<() => Promise<ProviderUsageInfo>>(),
+  mockGetRightPanel: vi.fn().mockReturnValue({
+    visible: false,
+    width: 380,
+    widthSource: "auto",
+    activeTab: "tasks",
+  }),
+  mockGetRightPanelVisible: vi.fn().mockReturnValue(false),
+  mockShowRightPanel: vi.fn(),
+  mockSetRightPanelTab: vi.fn(),
+  mockSetRightPanelWidth: vi.fn(),
 }));
 
 vi.mock("@/features/projects/state/workspaceStore", () => {
@@ -71,15 +87,14 @@ vi.mock("@/stores/diffStore", async (importOriginal) => {
   // Keep the real width constants and layout helpers (composer-layout imports
   // them); override only the store hook so the Overview reads stub panel state.
   const actual = await importOriginal<typeof import("@/stores/diffStore")>();
-  const getRightPanel = vi.fn().mockReturnValue({ visible: false, width: 380, activeTab: "tasks" });
   const actions = {
-    getRightPanel,
-    getRightPanelVisible: vi.fn().mockReturnValue(false),
-    showRightPanel: vi.fn(),
+    getRightPanel: mockGetRightPanel,
+    getRightPanelVisible: mockGetRightPanelVisible,
+    showRightPanel: mockShowRightPanel,
     hideRightPanel: vi.fn(),
     toggleRightPanel: vi.fn(),
-    setRightPanelTab: vi.fn(),
-    setRightPanelWidth: vi.fn(),
+    setRightPanelTab: mockSetRightPanelTab,
+    setRightPanelWidth: mockSetRightPanelWidth,
     setSnapshots: vi.fn(),
   };
   const store = Object.assign(
@@ -269,6 +284,11 @@ function renderHeaderActions(thread: Thread = makeThread()) {
 beforeEach(() => {
   mockGetProviderUsage.mockReset();
   mockGetProviderUsage.mockImplementation(() => new Promise(() => {}));
+  mockGetRightPanel.mockClear();
+  mockGetRightPanelVisible.mockClear();
+  mockShowRightPanel.mockClear();
+  mockSetRightPanelTab.mockClear();
+  mockSetRightPanelWidth.mockClear();
 });
 
 describe("HeaderActions - Create PR menu item", () => {
@@ -407,6 +427,60 @@ describe("HeaderActions - consolidated header", () => {
   it("renders the consolidated workspace menu trigger", () => {
     renderHeaderActions();
     expect(screen.getByTestId("header-workspace-menu")).toBeInTheDocument();
+  });
+
+  it("uses the Settings2 Overview trigger without losing CI status", () => {
+    const state = defaultWorkspaceState();
+    state.checksById["thread-1"] = { aggregate: "passing", fetchedAt: 1, runs: [] };
+    mockWorkspaceSelector.mockImplementation(
+      (selector: (s: unknown) => unknown) => selector(state),
+    );
+    mockUseBranchPr.mockReturnValue({
+      number: 42,
+      state: "OPEN",
+      url: "https://github.com/Mzeey-Empire/mcode/pull/42",
+    });
+
+    renderHeaderActions();
+
+    const trigger = screen.getByRole("button", { name: "Thread overview, CI checks passing" });
+    expect(trigger.querySelector("svg.lucide-settings-2")).toBeInTheDocument();
+    expect(screen.getByTestId("thread-overview-ci-green")).toBeInTheDocument();
+  });
+
+  it("places the sole Project settings control last in the Overview masthead controls", () => {
+    renderHeaderActions();
+
+    const masthead = screen.getByTestId("thread-overview-masthead");
+    const controls = within(masthead).getByTestId("thread-overview-masthead-controls");
+    const projectSettings = within(masthead).getByRole("button", {
+      name: "Open Project settings",
+    });
+
+    expect(screen.getAllByRole("button", { name: "Open Project settings" })).toHaveLength(1);
+    expect(controls).toHaveClass("ml-auto");
+    expect(controls.lastElementChild).toBe(projectSettings);
+  });
+
+  it("opens the Project environment panel through the adaptive route", () => {
+    renderHeaderActions();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Project settings" }));
+
+    expect(mockShowRightPanel).toHaveBeenCalledWith("ws-1", "thread-1");
+    expect(mockSetRightPanelWidth).toHaveBeenCalled();
+    expect(mockSetRightPanelTab).toHaveBeenCalledWith("ws-1", "thread-1", "environment");
+  });
+
+  it("activates Project settings from the keyboard through Button semantics", async () => {
+    const user = userEvent.setup();
+    renderHeaderActions();
+
+    const projectSettings = screen.getByRole("button", { name: "Open Project settings" });
+    projectSettings.focus();
+    await user.keyboard("{Enter}");
+
+    expect(mockSetRightPanelTab).toHaveBeenCalledWith("ws-1", "thread-1", "environment");
   });
 
   it("renders the thread overview rows", () => {

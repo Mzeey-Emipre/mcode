@@ -12,11 +12,12 @@ import {
   Info,
   Laptop,
   ListChecks,
-  Menu,
   MousePointer2,
   Plus,
   RefreshCw,
   Search,
+  Settings,
+  Settings2,
 } from "lucide-react";
 import { Spinner } from "@/components/ui/spinner";
 import { Button } from "@/components/ui/button";
@@ -2028,6 +2029,12 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
     executeCommand("changes.toggle");
   }, []);
 
+  const openProjectSettings = useCallback(() => {
+    setOpen(false);
+    showRightPanelAdaptive(thread.workspace_id, thread.id);
+    useDiffStore.getState().setRightPanelTab(thread.workspace_id, thread.id, "environment");
+  }, [thread.id, thread.workspace_id]);
+
   const plans = usePlanStore((s) => s.plansByThread[thread.id] ?? EMPTY_PLANS);
   const latestPlan = useMemo(() => {
     if (plans.length === 0) return null;
@@ -2137,7 +2144,7 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
         open && "bg-muted text-foreground",
       )}
     >
-      <Menu size={14} />
+      <Settings2 size={14} aria-hidden />
       {ciDot && (
         <span
           data-testid={`thread-overview-ci-${ciDot}`}
@@ -2159,6 +2166,30 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
         className="flex h-9 items-center bg-muted/20 px-3"
       >
         <span className="text-xs font-semibold text-foreground/90">Overview</span>
+        <div
+          data-testid="thread-overview-masthead-controls"
+          className="ml-auto flex items-center gap-0.5"
+        >
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  type="button"
+                  aria-label="Open Project settings"
+                  onClick={openProjectSettings}
+                  className="cursor-pointer text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+                >
+                  <Settings size={14} aria-hidden />
+                </Button>
+              }
+            />
+            <TooltipContent side="bottom" className="text-xs">
+              Open Project settings
+            </TooltipContent>
+          </Tooltip>
+        </div>
       </div>
       <Separator />
       <div className="p-1.5">
