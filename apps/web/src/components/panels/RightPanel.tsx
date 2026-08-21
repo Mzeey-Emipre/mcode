@@ -9,8 +9,7 @@ import {
   COMPOSER_MIN_WIDTH,
   PANEL_SPLIT_GAP_PX,
   maxPanelWidthInSplit,
-  createRightPanelState,
-  createDefaultRightPanelState,
+  projectRightPanelForScope,
   getDefaultPanelWidthPx,
 } from "@/stores/diffStore";
 import { PlanPanel } from "./plan";
@@ -30,6 +29,7 @@ import {
   useBrowserAutomationStore,
   usePreviewTabSet,
   usePreviewTabsStore,
+  browserSurfacePresentationCoordinator,
 } from "@/features/preview";
 import {
   MAX_TERMINALS_PER_SCOPE,
@@ -83,6 +83,7 @@ export function reconcileWarmPreviewScopes(
 }
 import { SubagentsPanel } from "@/features/subagents";
 import { CoordinationPanel } from "./CoordinationPanel";
+import { ProjectEnvironmentPanel } from "@/features/projects/environment";
 
 const EMPTY_SCOPE_TERMINALS: readonly TerminalInstance[] = [];
 
@@ -100,6 +101,29 @@ const WarmPreviewSurface = memo(function WarmPreviewSurface({
   const automationHosted = useBrowserAutomationStore((state) =>
     state.hostedScopeIds.has(warmPreviewScopeKey(scope)),
   );
+  const anchorCleanupRef = useRef<(() => void) | null>(null);
+  const setAutomationAnchor = useCallback((element: HTMLDivElement | null): void => {
+    anchorCleanupRef.current?.();
+    anchorCleanupRef.current = element
+      ? browserSurfacePresentationCoordinator.registerAutomationAnchor(
+          scope.workspaceId,
+          scope.scopeId,
+          element,
+          visible,
+        )
+      : null;
+  }, [scope.scopeId, scope.workspaceId, visible]);
+  useEffect(() => () => {
+    anchorCleanupRef.current?.();
+    anchorCleanupRef.current = null;
+  }, []);
+  useEffect(() => {
+    browserSurfacePresentationCoordinator.setAutomationAnchorVisibility(
+      scope.workspaceId,
+      scope.scopeId,
+      visible,
+    );
+  }, [scope.scopeId, scope.workspaceId, visible]);
   return (
     <div
       data-preview-scope={scope.scopeId}
@@ -108,15 +132,15 @@ const WarmPreviewSurface = memo(function WarmPreviewSurface({
     >
       {automationHosted ? (
         <div
-          data-automation-preview-dock={scope.scopeId}
-          data-automation-preview-workspace={scope.workspaceId}
-          data-visible={visible ? "true" : "false"}
+          ref={setAutomationAnchor}
+          data-testid="automation-preview-dock"
           className="min-h-0 min-w-0 flex-1"
         />
       ) : (
         <PreviewPanel
           threadId={scope.scopeId}
           workspaceId={scope.workspaceId}
+          presentationActive={visible}
           coveredLeft={coveredLeft}
         />
       )}
@@ -169,22 +193,20 @@ export function RightPanel() {
   const maximized = useUiStore((s) => s.rightPanelMaximized);
   const toggleMaximized = useUiStore((s) => s.toggleRightPanelMaximized);
 
-  // Read the scope's effective panel record: the active thread's own once it has
-  // diverged, otherwise the workspace fallback (ADR-0012 copy-on-write). Both
-  // branches return a stable store reference, so the selector does not allocate.
-  const storedPanel = useDiffStore((s) =>
-    activeWorkspaceId
-      ? ((activeThreadId ? s.rightPanelByThread[activeThreadId] : undefined) ??
-        s.rightPanelFallbackByWorkspace[activeWorkspaceId])
+  // Select raw records by reference, then project the scope in useMemo. The
+  // projection removes workspace Terminal instances only for untouched
+  // threads (ADR-0020) while preserving thread-owned records.
+  const ownedPanel = useDiffStore((s) =>
+    activeWorkspaceId && activeThreadId
+      ? s.rightPanelByThread[activeThreadId]
       : undefined,
   );
-  /** Avoid a Zustand selector that allocates a fresh default object every evaluation. */
+  const fallbackPanel = useDiffStore((s) =>
+    activeWorkspaceId ? s.rightPanelFallbackByWorkspace[activeWorkspaceId] : undefined,
+  );
   const panelState = useMemo(
-    () =>
-      storedPanel
-        ? createRightPanelState(storedPanel)
-        : createDefaultRightPanelState(),
-    [storedPanel],
+    () => projectRightPanelForScope(ownedPanel, fallbackPanel, activeThreadId),
+    [activeThreadId, fallbackPanel, ownedPanel],
   );
   const {
     width: panelWidth,
@@ -211,6 +233,10 @@ export function RightPanel() {
   const panelScopeId = activeThreadId ?? activeWorkspaceId;
   const [warmPreviewScopes, setWarmPreviewScopes] = useState<readonly WarmPreviewScope[]>([]);
   const [activityRailExpanded, setActivityRailExpanded] = useState(false);
+
+  useEffect(() => () => {
+    browserSurfacePresentationCoordinator.setActivityRailOverlap(0);
+  }, []);
   const retainedPreviewScopeKeys = useMemo(
     () => new Set([
       ...(panelScopeId && activeWorkspaceId ? [browserAutomationScopeKey(activeWorkspaceId, panelScopeId)] : []),
@@ -641,7 +667,12 @@ export function RightPanel() {
                   ),
               });
           }}
-          onExpandedChange={setActivityRailExpanded}
+          onExpandedChange={(expanded) => {
+            setActivityRailExpanded(expanded);
+            browserSurfacePresentationCoordinator.setActivityRailOverlap(
+              expanded ? ACTIVITY_RAIL_FLOATING_OVERLAP_PX : 0,
+            );
+          }}
         />
 
         {/* Tab content — DiffPanel and terminal pool stay mounted (stacked) so
@@ -676,6 +707,15 @@ export function RightPanel() {
                 threadId={activeThreadId}
               />
             )}
+          {renderedActiveTab === "environment" &&
+            renderedOpenTabs.includes("environment") &&
+            activeWorkspaceId && (
+              <ProjectEnvironmentPanel
+                key={activeWorkspaceId}
+                workspaceId={activeWorkspaceId}
+                active
+              />
+            )}
           <div
             className={
               changesActive ? "flex flex-1 flex-col min-h-0" : "hidden"
@@ -692,11 +732,7 @@ export function RightPanel() {
                 key={warmPreviewScopeKey(scope)}
                 scope={scope}
                 visible={visible}
-                coveredLeft={
-                  visible && activityRailExpanded
-                    ? ACTIVITY_RAIL_FLOATING_OVERLAP_PX
-                    : 0
-                }
+                coveredLeft={visible && activityRailExpanded ? ACTIVITY_RAIL_FLOATING_OVERLAP_PX : 0}
               />
             );
           })}

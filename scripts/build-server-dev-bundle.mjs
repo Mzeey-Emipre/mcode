@@ -15,6 +15,7 @@ import {
   cpSync,
   existsSync,
   closeSync,
+  lstatSync,
   mkdirSync,
   openSync,
   readdirSync,
@@ -335,7 +336,7 @@ export function resolveCopilotSdkSources(serverPackageRoot, platform, arch) {
 }
 
 /** Compare two complete package trees without mutating either destination. */
-function copilotTreesMatch(sourceDir, destinationDir) {
+function copilotTreesMatch(sourceDir, destinationDir, skipDanglingOptional = true) {
   try {
     if (!statSync(destinationDir).isDirectory()) return false;
   } catch (error) {
@@ -343,7 +344,7 @@ function copilotTreesMatch(sourceDir, destinationDir) {
     return false;
   }
 
-  const sourceEntries = readdirSync(sourceDir, { withFileTypes: true });
+  const sourceEntries = copilotSourceEntries(sourceDir, skipDanglingOptional);
   let destinationEntries;
   try {
     destinationEntries = readdirSync(destinationDir, { withFileTypes: true });
@@ -356,17 +357,31 @@ function copilotTreesMatch(sourceDir, destinationDir) {
   const destinationByName = new Map(destinationEntries.map((entry) => [entry.name, entry]));
   for (const sourceEntry of sourceEntries) {
     const destinationEntry = destinationByName.get(sourceEntry.name);
-    if (!destinationEntry || sourceEntry.isDirectory() !== destinationEntry.isDirectory()) {
+    if (!destinationEntry) {
       return false;
     }
 
     const sourcePath = resolve(sourceDir, sourceEntry.name);
     const destinationPath = resolve(destinationDir, sourceEntry.name);
-    if (sourceEntry.isDirectory()) {
-      if (!copilotTreesMatch(sourcePath, destinationPath)) return false;
+    let destinationStat;
+    try {
+      destinationStat = lstatSync(destinationPath);
+    } catch (error) {
+      if (error?.code === "EACCES" || error?.code === "EPERM") return true;
+      throw error;
+    }
+    const destinationKind = destinationStat.isDirectory()
+      ? "directory"
+      : destinationStat.isFile()
+      ? "file"
+      : null;
+    if (sourceEntry.kind !== destinationKind) {
+      return false;
+    }
+    if (sourceEntry.kind === "directory") {
+      if (!copilotTreesMatch(sourcePath, destinationPath, skipDanglingOptional)) return false;
       continue;
     }
-    if (!sourceEntry.isFile() || !destinationEntry.isFile()) return false;
     try {
       if (!copilotFilesMatch(sourcePath, destinationPath)) return false;
     } catch (error) {
@@ -375,6 +390,46 @@ function copilotTreesMatch(sourceDir, destinationDir) {
     }
   }
   return true;
+}
+
+/**
+ * List source entries that are readable by the current runtime. Bun can expose
+ * dangling optional-package links in its directory listing even though their
+ * targets are unavailable; those entries must not abort staging.
+ */
+function copilotSourceEntries(sourceDir, skipDanglingOptional) {
+  const entries = [];
+  for (const entry of readdirSync(sourceDir, { withFileTypes: true })) {
+    const sourcePath = resolve(sourceDir, entry.name);
+    let sourceStat;
+    try {
+      sourceStat = statSync(sourcePath);
+    } catch (error) {
+      if (skipDanglingOptional && (error?.code === "ENOENT" || error?.code === "ENOTDIR")) continue;
+      throw error;
+    }
+    if (sourceStat.isDirectory()) {
+      entries.push({ name: entry.name, kind: "directory" });
+    } else if (sourceStat.isFile()) {
+      entries.push({ name: entry.name, kind: "file" });
+    }
+  }
+  return entries;
+}
+
+/** Copy a readable Copilot package tree while skipping unavailable optional links. */
+function copyCopilotTree(sourceDir, destinationDir, skipDanglingOptional) {
+  mkdirSync(destinationDir, { recursive: true });
+  for (const sourceEntry of copilotSourceEntries(sourceDir, skipDanglingOptional)) {
+    const sourcePath = resolve(sourceDir, sourceEntry.name);
+    const destinationPath = resolve(destinationDir, sourceEntry.name);
+    if (sourceEntry.kind === "directory") {
+      copyCopilotTree(sourcePath, destinationPath, skipDanglingOptional);
+      continue;
+    }
+    copyFileSync(sourcePath, destinationPath);
+    chmodSync(destinationPath, statSync(sourcePath).mode & 0o777);
+  }
 }
 
 /** Compare file contents in bounded chunks so equal-size files remain content-checked. */
@@ -444,11 +499,11 @@ export function copyCopilotSdkToDir({ destServerDir, serverPackageRoot, platform
   mkdirSync(githubDir, { recursive: true });
   if (!copilotTreesMatch(copilotPackageDir, copilotDst)) {
     rmSync(copilotDst, { recursive: true, force: true });
-    cpSync(copilotPackageDir, copilotDst, { recursive: true });
+    copyCopilotTree(copilotPackageDir, copilotDst, true);
   }
-  if (!copilotTreesMatch(platformPackageDir, platformDst)) {
+  if (!copilotTreesMatch(platformPackageDir, platformDst, false)) {
     rmSync(platformDst, { recursive: true, force: true });
-    cpSync(platformPackageDir, platformDst, { recursive: true });
+    copyCopilotTree(platformPackageDir, platformDst, false);
   }
   return { platformPkg, copilotDst, platformDst };
 }

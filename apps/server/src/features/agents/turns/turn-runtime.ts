@@ -18,7 +18,7 @@ export function isTurnScopedEvent(event: AgentEvent): boolean {
   return TURN_SCOPED_EVENT_TYPES.has(event.type);
 }
 
-type TerminalPhase = Extract<TurnRuntimePhase, "completed" | "errored" | "cancelled">;
+type TerminalPhase = Extract<TurnRuntimePhase, "completed" | "interrupted" | "errored" | "cancelled">;
 
 interface RuntimeState extends TurnRuntimeSnapshot {
   terminalized: boolean;

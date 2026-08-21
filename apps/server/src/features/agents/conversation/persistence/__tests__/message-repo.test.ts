@@ -29,7 +29,9 @@ function createTestDb(): Database.Database {
       source_thread_id TEXT,
       source_turn_id TEXT,
       source_provider_id TEXT,
-      is_internal INTEGER NOT NULL DEFAULT 0
+      is_internal INTEGER NOT NULL DEFAULT 0,
+      outcome TEXT,
+      outcome_execution_id TEXT
     );
     CREATE TABLE tool_call_records (
       id TEXT PRIMARY KEY,
@@ -114,6 +116,21 @@ describe("MessageRepo", () => {
 
     expect(message.id).toBe(messageId);
     expect(persisted?.id).toBe(messageId);
+  });
+
+  it("keeps legacy NULL outcomes unchanged and writes terminal outcome identity explicitly", () => {
+    const legacy = repo.create("thread-1", "assistant", "old", 1);
+    expect(repo.listByThread("thread-1", 10).messages[0]).toMatchObject({
+      id: legacy.id,
+      outcome: null,
+      outcomeExecutionId: null,
+    });
+
+    repo.setAssistantOutcome(legacy.id, "interrupted", "550e8400-e29b-41d4-a716-446655440000");
+    expect(repo.listByThread("thread-1", 10).messages[0]).toMatchObject({
+      outcome: "interrupted",
+      outcomeExecutionId: "550e8400-e29b-41d4-a716-446655440000",
+    });
   });
 
   describe("listByThread", () => {
@@ -238,6 +255,37 @@ ORDER BY page.sequence ASC`,
       expect(result.budget.truncatedMessages).toEqual([
         { id: anchor.id, originalBytes: 6, retainedBytes: 3 },
       ]);
+    });
+
+    it("preserves assistant outcome identity for full and truncated fork history", () => {
+      const full = repo.create("thread-1", "assistant", "complete", 1);
+      repo.setAssistantOutcome(full.id, "errored", "execution-full");
+
+      const fullResult = repo.listByThreadUpToSequenceBudgeted("thread-1", 1, {
+        maxBytes: 100,
+      });
+
+      expect(fullResult.messages).toHaveLength(1);
+      expect(fullResult.messages[0]).toMatchObject({
+        id: full.id,
+        outcome: "errored",
+        outcomeExecutionId: "execution-full",
+      });
+
+      const truncated = repo.create("thread-1", "assistant", "abcdef", 2);
+      repo.setAssistantOutcome(truncated.id, "interrupted", "execution-truncated");
+
+      const truncatedResult = repo.listByThreadUpToSequenceBudgeted("thread-1", 2, {
+        maxBytes: 3,
+      });
+
+      expect(truncatedResult.messages).toHaveLength(1);
+      expect(truncatedResult.messages[0]).toMatchObject({
+        id: truncated.id,
+        content: "abc",
+        outcome: "interrupted",
+        outcomeExecutionId: "execution-truncated",
+      });
     });
 
     it("caps retained history by row count as well as bytes", () => {

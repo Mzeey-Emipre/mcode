@@ -22,6 +22,7 @@ import { ThoughtSegmentRepo as RealThoughtSegmentRepo } from "../../conversation
 import { HookExecutionRepo as RealHookExecutionRepo } from "../../events/persistence/hook-execution-repo.js";
 import { AgentService } from "../agent-service.js";
 import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/canonical-agent-event-sink-stub.js";
+import { CanonicalAgentEventSink } from "../../canonical/canonical-agent-event-sink.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
 import { PlanQuestionService } from "../../planning/plan-question-service.js";
 import { broadcast } from "../../../../application/transport/push.js";
@@ -40,6 +41,8 @@ import type { ThreadService } from "../../../thread-control/index.js";
 import type { ProviderAvailabilityService } from "../../../providers/availability/provider-availability-service.js";
 import type { PlanQuestionAnswersRepo } from "../../planning/persistence/plan-question-answers-repo.js";
 import { ThreadControlMutationReservationService } from "../../../thread-control/index.js";
+import { publishParentProviderEvent } from "../../events/provider-event-publication.js";
+import { TurnRecoveryService } from "../../recovery/turn-recovery-service.js";
 
 vi.mock("../../../../application/transport/push.js", () => ({ broadcast: vi.fn() }));
 
@@ -203,6 +206,7 @@ function buildService(
         content: input.content,
       };
     }),
+    setAssistantOutcome: vi.fn(),
   } as unknown as MessageRepo;
 
   const gitService = {
@@ -670,7 +674,7 @@ describe("AgentService turn cleanup", () => {
     expect(provider.stopSession).toHaveBeenCalledTimes(2);
   });
 
-  it("does not duplicate finalization when completion wins during stop", async () => {
+  it("does not let completion race overwrite an explicit stop", async () => {
     const { service, providerEmitter } = buildService();
     service.init();
     await service.sendMessage({
@@ -709,8 +713,8 @@ describe("AgentService turn cleanup", () => {
     releaseStop();
     const result = await stopping;
     expect(provider.stopSession).toHaveBeenCalledTimes(1);
-    expect(result.status).toBe("already-terminal");
-    expect(result.snapshot).toMatchObject({ threadId: THREAD_ID, phase: "completed" });
+    expect(result.status).toBe("cancelled");
+    expect(result.snapshot).toMatchObject({ threadId: THREAD_ID, phase: "cancelled" });
   });
 
   it("persists preview annotation snapshots as visible provider attachments", async () => {
@@ -1161,7 +1165,12 @@ describe("AgentService Ended finalization", () => {
   let threadRepo: RealThreadRepo;
   let workspaceRepo: RealWorkspaceRepo;
   let messageRepo: RealMessageRepo;
-  let providerEmitter: EventEmitter & { sendTurn: ReturnType<typeof vi.fn>; stopSession: ReturnType<typeof vi.fn> };
+  let providerEmitter: EventEmitter & {
+    sendTurn: ReturnType<typeof vi.fn>;
+    stopSession: ReturnType<typeof vi.fn>;
+    interruptChildTurn: ReturnType<typeof vi.fn>;
+  };
+  let canonicalSink: CanonicalAgentEventSink;
   let service: AgentService;
 
   beforeEach(() => {
@@ -1174,8 +1183,12 @@ describe("AgentService Ended finalization", () => {
     const thoughtSegmentRepo = new RealThoughtSegmentRepo(db);
     const hookExecutionRepo = new RealHookExecutionRepo(db);
     providerEmitter = Object.assign(new EventEmitter(), {
+      descriptor: {
+        capabilities: [{ name: "child-cancellation", support: "supported" }],
+      },
       sendTurn: vi.fn(() => Promise.resolve()),
       stopSession: vi.fn(),
+      interruptChildTurn: vi.fn(() => Promise.resolve()),
       shutdown: vi.fn(),
     });
 
@@ -1215,6 +1228,7 @@ describe("AgentService Ended finalization", () => {
       listAnsweredForThread: vi.fn(() => []),
     } as unknown as PlanQuestionAnswersRepo;
 
+    canonicalSink = new CanonicalAgentEventSink(db, vi.fn());
     service = new AgentService(
       threadRepo,
       workspaceRepo,
@@ -1240,9 +1254,316 @@ describe("AgentService Ended finalization", () => {
       undefined,
       undefined,
       undefined,
-      createCanonicalAgentEventSinkStub(db),
+      canonicalSink,
     );
-    service.init();
+    service.init((event) => {
+      publishParentProviderEvent(event, event, {
+        publishAgentEvent: vi.fn(),
+        updateThreadStatus: (threadId, status) => threadRepo.updateStatus(threadId, status),
+        publishThreadStatus: (payload) => broadcast("thread.status", payload),
+      });
+    });
+  });
+
+  it.each(["error", "turnComplete", "ended"] as const)(
+    "keeps an explicit stop authoritative when provider emits %s synchronously",
+    async (terminalType) => {
+      const workspace = workspaceRepo.create("Test", process.cwd());
+      const thread = threadRepo.create(workspace.id, `Stop ${terminalType}`, "direct", "main", true, "codex");
+
+      await service.sendMessage({
+        threadId: thread.id,
+        content: "stop this turn",
+        permissionMode: "default",
+        model: "gpt-5",
+        attachments: [],
+        provider: "codex",
+      });
+      const executionId = activeExecutionId(service, thread.id);
+      providerEmitter.stopSession.mockImplementation(() => {
+        if (terminalType === "error") {
+          providerEmitter.emit("event", {
+            type: AgentEventType.Error,
+            threadId: thread.id,
+            turnExecutionId: executionId,
+            error: "provider stopped",
+          } satisfies AgentEvent);
+        } else if (terminalType === "turnComplete") {
+          providerEmitter.emit("event", {
+            type: AgentEventType.TurnComplete,
+            threadId: thread.id,
+            turnExecutionId: executionId,
+            reason: "stopped",
+            costUsd: null,
+            tokensIn: 0,
+            tokensOut: 0,
+          } satisfies AgentEvent);
+        } else {
+          providerEmitter.emit("event", {
+            type: AgentEventType.Ended,
+            threadId: thread.id,
+            turnExecutionId: executionId,
+          } satisfies AgentEvent);
+        }
+      });
+
+      await expect(service.stopSession(thread.id)).resolves.toMatchObject({
+        status: "cancelled",
+        turnExecutionId: executionId,
+      });
+      expect(canonicalSink.loadCheckpoint(executionId)).toMatchObject({
+        phase: "cancelled",
+        terminalOutcome: "cancelled",
+      });
+      expect(threadRepo.findById(thread.id)?.status).toBe("paused");
+      expect(broadcast).not.toHaveBeenCalledWith("thread.status", {
+        threadId: thread.id,
+        status: "completed",
+      });
+      expect(broadcast).not.toHaveBeenCalledWith("thread.status", {
+        threadId: thread.id,
+        status: "errored",
+      });
+      expect(broadcast).not.toHaveBeenCalledWith("thread.status", {
+        threadId: thread.id,
+        status: "interrupted",
+      });
+    },
+  );
+
+  it("stops every running canonical descendant through the public parent stop seam", async () => {
+    const workspace = workspaceRepo.create("Test", process.cwd());
+    const thread = threadRepo.create(workspace.id, "Parent thread", "direct", "main", true, "codex");
+
+    await service.sendMessage({
+      threadId: thread.id,
+      content: "delegate nested work",
+      permissionMode: "default",
+      model: "gpt-5",
+      attachments: [],
+      provider: "codex",
+    });
+    const executionId = activeExecutionId(service, thread.id);
+    const parentTurn = canonicalSink.loadTurnByExecution(executionId);
+    expect(parentTurn).not.toBeNull();
+
+    const direct = canonicalSink.startCodexChildDelegation({
+      parentThreadId: thread.id,
+      parentTurnId: parentTurn!.id,
+      parentExecutionId: executionId,
+      parentItemId: "toolCall:direct-child",
+      receiverThreadIds: ["native-direct-thread"],
+      providerIdentities: [],
+    });
+    const directTurn = canonicalSink.startCodexChildTurn({
+      parentThreadId: thread.id,
+      parentTurnId: parentTurn!.id,
+      parentExecutionId: executionId,
+      parentItemId: "toolCall:direct-child",
+      nativeThreadId: "native-direct-thread",
+      nativeTurnId: "native-direct-turn",
+    });
+    const nested = canonicalSink.startCodexChildDelegation({
+      parentThreadId: direct.childThread.id,
+      parentTurnId: directTurn.id,
+      parentExecutionId: canonicalSink.loadExecutionIdForTurn(directTurn.id),
+      parentItemId: "toolCall:nested-child",
+      receiverThreadIds: ["native-nested-thread"],
+      providerIdentities: [],
+    });
+    canonicalSink.startCodexChildTurn({
+      parentThreadId: direct.childThread.id,
+      parentTurnId: directTurn.id,
+      parentExecutionId: canonicalSink.loadExecutionIdForTurn(directTurn.id),
+      parentItemId: "toolCall:nested-child",
+      nativeThreadId: "native-nested-thread",
+      nativeTurnId: "native-nested-turn",
+    });
+    const sibling = canonicalSink.startCodexChildDelegation({
+      parentThreadId: thread.id,
+      parentTurnId: parentTurn!.id,
+      parentExecutionId: executionId,
+      parentItemId: "toolCall:completed-sibling",
+      receiverThreadIds: ["native-sibling-thread"],
+      providerIdentities: [],
+    });
+    canonicalSink.startCodexChildTurn({
+      parentThreadId: thread.id,
+      parentTurnId: parentTurn!.id,
+      parentExecutionId: executionId,
+      parentItemId: "toolCall:completed-sibling",
+      nativeThreadId: "native-sibling-thread",
+      nativeTurnId: "native-sibling-turn",
+    });
+    canonicalSink.finishCodexChildTurn({
+      childThreadId: sibling.childThread.id,
+      nativeTurnId: "native-sibling-turn",
+      outcome: "completed",
+    });
+
+    expect(canonicalSink.loadCanonicalChildStopTargets(thread.id).map((target) => [
+      target.childThread.id,
+      target.latestTurn?.status,
+    ])).toEqual(expect.arrayContaining([
+      [direct.childThread.id, "Running"],
+      [nested.childThread.id, "Running"],
+    ]));
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === thread.id))
+      .toMatchObject({ phase: "running", turnExecutionId: executionId });
+
+    service.handleExitPlanMode(thread.id, "# plan\n\n## Stop-safe cleanup");
+    const pendingPlanOutputs = (service as unknown as {
+      pendingExitPlanMarkdown: Map<string, string>;
+    }).pendingExitPlanMarkdown;
+    expect(pendingPlanOutputs.has(thread.id)).toBe(true);
+
+    providerEmitter.interruptChildTurn.mockRejectedValueOnce(new Error("child interrupt unavailable"));
+    providerEmitter.stopSession.mockImplementation(() => {
+      providerEmitter.emit("event", {
+        type: AgentEventType.Ended,
+        threadId: thread.id,
+        turnExecutionId: activeExecutionId(service, thread.id),
+      } satisfies AgentEvent);
+    });
+    const result = await service.stopSession(thread.id);
+
+    expect(result.status).toBe("cancelled");
+    expect(providerEmitter.interruptChildTurn).toHaveBeenCalledTimes(2);
+    expect(providerEmitter.interruptChildTurn).toHaveBeenCalledWith(
+      `mcode-${thread.id}`,
+      "native-nested-thread",
+      "native-nested-turn",
+    );
+    expect(providerEmitter.interruptChildTurn).toHaveBeenCalledWith(
+      `mcode-${thread.id}`,
+      "native-direct-thread",
+      "native-direct-turn",
+    );
+    expect(providerEmitter.stopSession).toHaveBeenCalledOnce();
+    expect(Math.max(...providerEmitter.interruptChildTurn.mock.invocationCallOrder))
+      .toBeLessThan(providerEmitter.stopSession.mock.invocationCallOrder[0]!);
+    expect(canonicalSink.loadCanonicalChildStopTarget({
+      owningParentThreadId: thread.id,
+      childThreadId: direct.childThread.id,
+    })?.latestTurn?.status).toBe("Interrupted");
+    expect(canonicalSink.loadCanonicalChildStopTarget({
+      owningParentThreadId: thread.id,
+      childThreadId: nested.childThread.id,
+    })?.latestTurn?.status).toBe("Interrupted");
+    expect(canonicalSink.loadCanonicalChildStopTarget({
+      owningParentThreadId: thread.id,
+      childThreadId: sibling.childThread.id,
+    })?.latestTurn?.status).toBe("Completed");
+    expect(service.activeThreadIds()).not.toContain(thread.id);
+    expect(threadRepo.findById(thread.id)?.status).toBe("paused");
+    expect(broadcast).not.toHaveBeenCalledWith("thread.status", {
+      threadId: thread.id,
+      status: "interrupted",
+    });
+    expect(canonicalSink.loadCheckpoint(executionId)).toMatchObject({
+      phase: "cancelled",
+      terminalOutcome: "cancelled",
+    });
+    expect(canonicalSink.loadTurnByExecution(executionId)?.status).toBe("Cancelled");
+    expect(pendingPlanOutputs.has(thread.id)).toBe(false);
+  });
+
+  it("terminalizes a running canonical child when parent stop has no native identity", async () => {
+    const workspace = workspaceRepo.create("Test", process.cwd());
+    const thread = threadRepo.create(workspace.id, "Parent thread", "direct", "main", true, "codex");
+
+    await service.sendMessage({
+      threadId: thread.id,
+      content: "delegate work without provider identity",
+      permissionMode: "default",
+      model: "gpt-5",
+      attachments: [],
+      provider: "codex",
+    });
+    const executionId = activeExecutionId(service, thread.id);
+    const parentTurn = canonicalSink.loadTurnByExecution(executionId);
+    expect(parentTurn).not.toBeNull();
+    const child = canonicalSink.startCodexChildDelegation({
+      parentThreadId: thread.id,
+      parentTurnId: parentTurn!.id,
+      parentExecutionId: executionId,
+      parentItemId: "toolCall:missing-identity",
+      receiverThreadIds: ["native-missing-thread"],
+      providerIdentities: [],
+    });
+    const childTurn = canonicalSink.startCodexChildTurn({
+      parentThreadId: thread.id,
+      parentTurnId: parentTurn!.id,
+      parentExecutionId: executionId,
+      parentItemId: "toolCall:missing-identity",
+      nativeThreadId: "native-missing-thread",
+      nativeTurnId: "native-missing-turn",
+    });
+    db.prepare("UPDATE canonical_agent_threads SET provider_identities_json = '[]' WHERE id = ?")
+      .run(child.childThread.id);
+    db.prepare("UPDATE canonical_agent_turns SET provider_identities_json = '[]' WHERE id = ?")
+      .run(childTurn.id);
+
+    expect(canonicalSink.loadCanonicalChildStopTarget({
+      owningParentThreadId: thread.id,
+      childThreadId: child.childThread.id,
+    })).toMatchObject({ latestTurn: { status: "Running" }, nativeThreadId: null, nativeTurnId: null });
+
+    const result = await service.stopSession(thread.id);
+
+    expect(result.status).toBe("cancelled");
+    expect(providerEmitter.interruptChildTurn).not.toHaveBeenCalled();
+    expect(canonicalSink.loadCanonicalChildStopTarget({
+      owningParentThreadId: thread.id,
+      childThreadId: child.childThread.id,
+    })?.latestTurn?.status).toBe("Interrupted");
+  });
+
+  it("terminalizes canonical descendants during graceful stopAll", async () => {
+    const workspace = workspaceRepo.create("Test", process.cwd());
+    const thread = threadRepo.create(workspace.id, "Parent thread", "direct", "main", true, "codex");
+
+    await service.sendMessage({
+      threadId: thread.id,
+      content: "delegate work before shutdown",
+      permissionMode: "default",
+      model: "gpt-5",
+      attachments: [],
+      provider: "codex",
+    });
+    const executionId = activeExecutionId(service, thread.id);
+    const parentTurn = canonicalSink.loadTurnByExecution(executionId);
+    expect(parentTurn).not.toBeNull();
+    const child = canonicalSink.startCodexChildDelegation({
+      parentThreadId: thread.id,
+      parentTurnId: parentTurn!.id,
+      parentExecutionId: executionId,
+      parentItemId: "toolCall:shutdown-child",
+      receiverThreadIds: ["native-shutdown-thread"],
+      providerIdentities: [],
+    });
+    canonicalSink.startCodexChildTurn({
+      parentThreadId: thread.id,
+      parentTurnId: parentTurn!.id,
+      parentExecutionId: executionId,
+      parentItemId: "toolCall:shutdown-child",
+      nativeThreadId: "native-shutdown-thread",
+      nativeTurnId: "native-shutdown-turn",
+    });
+
+    await service.stopAll();
+
+    expect(canonicalSink.loadCanonicalChildStopTarget({
+      owningParentThreadId: thread.id,
+      childThreadId: child.childThread.id,
+    })?.latestTurn?.status).toBe("Interrupted");
+    expect(threadRepo.findById(thread.id)?.status).toBe("interrupted");
+    expect(broadcast).toHaveBeenCalledWith("thread.status", {
+      threadId: thread.id,
+      status: "interrupted",
+    });
+    expect(service.activeThreadIds()).not.toContain(thread.id);
+    expect(providerEmitter.stopSession).toHaveBeenCalledWith(`mcode-${thread.id}`);
   });
 
   it("persists partial assistant text when a running turn ends with only Ended", async () => {
@@ -1276,13 +1597,100 @@ describe("AgentService Ended finalization", () => {
     const { messages } = messageRepo.listByThread(thread.id, 10);
     const assistant = messages.find((message) => message.role === "assistant");
     expect(assistant?.content).toBe("partial answer before the provider stopped");
+    expect(assistant?.outcome).toBe("interrupted");
     expect(broadcast).toHaveBeenCalledWith("turn.persisted", expect.objectContaining({
       threadId: thread.id,
       messageId: assistant?.id,
+      outcome: "interrupted",
+      executionId,
     }));
   });
 
-  it("does not infer cancellation from a bare Ended event for non-Codex providers", async () => {
+  it("makes a matching outcome-less Ended recoverable as Interrupted", async () => {
+    const workspace = workspaceRepo.create("Test", process.cwd());
+    const thread = threadRepo.create(workspace.id, "Recovery thread", "direct", "main", true, "codex");
+
+    await service.sendMessage({
+      threadId: thread.id,
+      content: "retry this turn",
+      permissionMode: "default",
+      model: "gpt-5",
+      attachments: [],
+      provider: "codex",
+    });
+    const executionId = activeExecutionId(service, thread.id);
+    providerEmitter.emit("event", {
+      type: AgentEventType.Ended,
+      threadId: thread.id,
+      turnExecutionId: executionId,
+    } satisfies AgentEvent);
+
+    await vi.waitFor(() => {
+      expect(canonicalSink.loadCheckpoint(executionId)).toMatchObject({
+        phase: "interrupted",
+        terminalOutcome: "interrupted",
+      });
+    });
+    expect(threadRepo.findById(thread.id)?.status).toBe("interrupted");
+
+    const recovery = new TurnRecoveryService(canonicalSink, threadRepo, {
+      persist: vi.fn(() => Promise.resolve({ stored: [], persisted: [] })),
+      prepareRetryAttachments: vi.fn(() => []),
+    } as unknown as AttachmentService);
+    const dispatch = vi.fn(async () => undefined);
+    await recovery.retry(executionId, dispatch);
+    expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({
+      threadId: thread.id,
+      retryOfExecutionId: executionId,
+      forceFreshSession: true,
+    }));
+
+    await expect(service.sendMessage({
+      threadId: thread.id,
+      content: "start a fresh turn after recovery",
+      permissionMode: "default",
+      model: "gpt-5",
+      attachments: [],
+      provider: "codex",
+    })).resolves.toBeUndefined();
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === thread.id))
+      .toMatchObject({ phase: "running" });
+  });
+
+  it("maps provider-cancelled Ended to the recoverable interrupted outcome", async () => {
+    const workspace = workspaceRepo.create("Test", process.cwd());
+    const thread = threadRepo.create(workspace.id, "Cancelled provider thread", "direct", "main", true, "codex");
+
+    await service.sendMessage({
+      threadId: thread.id,
+      content: "cancel this turn",
+      permissionMode: "default",
+      model: "gpt-5",
+      attachments: [],
+      provider: "codex",
+    });
+    const executionId = activeExecutionId(service, thread.id);
+    providerEmitter.emit("event", {
+      type: AgentEventType.Ended,
+      threadId: thread.id,
+      turnExecutionId: executionId,
+      outcome: "cancelled",
+    } satisfies AgentEvent);
+
+    await vi.waitFor(() => {
+      expect(canonicalSink.loadCheckpoint(executionId)).toMatchObject({
+        phase: "interrupted",
+        terminalOutcome: "interrupted",
+      });
+    });
+    expect(threadRepo.findById(thread.id)?.status).toBe("interrupted");
+    expect(broadcast).toHaveBeenCalledWith("thread.status", {
+      threadId: thread.id,
+      status: "interrupted",
+    });
+  });
+
+  it("does not infer completion from a full-looking response without terminal proof", async () => {
     const workspace = workspaceRepo.create("Test", process.cwd());
     const thread = threadRepo.create(workspace.id, "Test thread", "direct", "main", true, "cursor");
 
@@ -1294,23 +1702,67 @@ describe("AgentService Ended finalization", () => {
       attachments: [],
       provider: "cursor",
     });
+    const executionId = activeExecutionId(service, thread.id);
     providerEmitter.emit("event", {
       type: AgentEventType.TextDelta,
       threadId: thread.id,
-      delta: "partial cursor text",
-      isFinalResponse: false,
+      turnExecutionId: executionId,
+      delta: "This is a complete-looking final response.",
+      isFinalResponse: true,
     } satisfies AgentEvent);
 
     providerEmitter.emit("event", {
       type: AgentEventType.Ended,
       threadId: thread.id,
+      turnExecutionId: executionId,
     } satisfies AgentEvent);
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await vi.waitFor(() => {
+      const assistant = messageRepo.listByThread(thread.id, 10).messages
+        .find((message) => message.role === "assistant");
+      expect(assistant).toMatchObject({ outcome: "interrupted" });
+    });
 
     const { messages } = messageRepo.listByThread(thread.id, 10);
-    expect(messages.some((message) =>
-      message.role === "assistant" && message.content === "partial cursor text",
-    )).toBe(false);
-    expect(broadcast).not.toHaveBeenCalledWith("turn.persisted", expect.anything());
+    const assistant = messages.find((message) => message.role === "assistant");
+    expect(assistant).toMatchObject({ outcome: "interrupted" });
+    expect(broadcast).toHaveBeenCalledWith("turn.persisted", expect.objectContaining({
+      outcome: "interrupted",
+    }));
+  });
+
+  it("persists a known provider Error as an errored turn outcome", async () => {
+    const workspace = workspaceRepo.create("Test", process.cwd());
+    const thread = threadRepo.create(workspace.id, "Test thread", "direct", "main", true, "codex");
+
+    await service.sendMessage({
+      threadId: thread.id,
+      content: "please investigate",
+      permissionMode: "default",
+      model: "gpt-5",
+      attachments: [],
+      provider: "codex",
+    });
+    const executionId = activeExecutionId(service, thread.id);
+    providerEmitter.emit("event", {
+      type: AgentEventType.Message,
+      threadId: thread.id,
+      turnExecutionId: executionId,
+      content: "partial answer before failure",
+      tokens: null,
+    } satisfies AgentEvent);
+    providerEmitter.emit("event", {
+      type: AgentEventType.Error,
+      threadId: thread.id,
+      turnExecutionId: executionId,
+      error: "provider failed",
+    } satisfies AgentEvent);
+    await vi.waitFor(() => expect(canonicalSink.loadCheckpoint(executionId)?.terminalOutcome).toBe("errored"));
+
+    const { messages } = messageRepo.listByThread(thread.id, 10);
+    expect(messages.find((message) => message.role === "assistant")).toMatchObject({
+      outcome: "errored",
+      outcomeExecutionId: executionId,
+    });
+    expect(canonicalSink.loadTurnByExecution(executionId)?.status).toBe("Errored");
   });
 });

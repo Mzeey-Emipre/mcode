@@ -846,7 +846,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     // install message via the existing error seam (mirrors Codex's abort-before-spawn).
     if (this.lastResolution?.source === "not-found") {
       emitTurnEvent({ type: "error", threadId, error: this.lastResolution.message } satisfies AgentEvent);
-      emitTurnEvent({ type: "ended", threadId } satisfies AgentEvent);
+      emitTurnEvent({ type: "ended", threadId, turnExecutionId } satisfies AgentEvent);
       return;
     }
 
@@ -1089,11 +1089,13 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
       if (this.pendingStops.has(sessionId)) {
         logger.info("Pending stop consumed, tearing down new Copilot session", { sessionId });
         session.disconnect().catch(() => {});
-        this.emit("event", {
-          type: AgentEventType.Ended,
-          threadId,
-          ...(stagedExecutionId ? { turnExecutionId: stagedExecutionId } : {}),
-        } satisfies AgentEvent);
+        if (stagedExecutionId) {
+          this.emit("event", {
+            type: AgentEventType.Ended,
+            threadId,
+            turnExecutionId: stagedExecutionId,
+          } satisfies AgentEvent);
+        }
       }
 
       return { state, pids: [] };
@@ -1434,6 +1436,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
             emitTurnEvent({
         type: "ended",
         threadId,
+        turnExecutionId,
       } satisfies AgentEvent);
     }
   }

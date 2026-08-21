@@ -21,7 +21,7 @@ import {
 import { autoUpdater } from "electron-updater";
 import { existsSync } from "fs";
 import { mkdir, writeFile } from "fs/promises";
-import { join } from "path";
+import { isAbsolute, join } from "path";
 import { getLogPath, getMcodeDir, getRecentLogs, logger } from "@mcode/shared";
 
 import {
@@ -62,7 +62,11 @@ import { shouldPrintVersion } from "./cli-args.js";
 // a black renderer. Server data is already split via getMcodeDir(), but
 // Electron's userData is derived from app.getName() and must be set here,
 // before app.whenReady() and any other path-dependent call.
-if (!app.isPackaged) {
+const harnessUserDataDir = process.env.MCODE_ELECTRON_USER_DATA_DIR?.trim();
+const harnessCapabilityPath = process.env.MCODE_RELIABILITY_CAPABILITY_PATH?.trim();
+if (harnessUserDataDir && harnessCapabilityPath && isAbsolute(harnessUserDataDir)) {
+  app.setPath("userData", harnessUserDataDir);
+} else if (!app.isPackaged) {
   const agentUserDataDir =
     process.env.MCODE_AGENT_RUNTIME === "1"
       ? process.env.MCODE_ELECTRON_USER_DATA_DIR?.trim()
@@ -282,6 +286,7 @@ const serverRuntime = new ServerRuntime({
   powerMonitor,
   powerSaveBlocker,
   getCookieStore: () => session.defaultSession.cookies,
+  reliabilityHarnessCapabilityPath: process.env.MCODE_RELIABILITY_CAPABILITY_PATH,
 });
 
 // ---------------------------------------------------------------------------

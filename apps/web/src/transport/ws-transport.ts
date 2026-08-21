@@ -22,6 +22,7 @@ import type {
   TerminalPreferencesResult,
   TerminalProfileList,
   TerminalWorkspacePreference,
+  WorkspaceEnvironmentReadResult,
 } from "./types";
 import { TurnRuntimeSnapshotSchema } from "@mcode/contracts";
 import { TerminalErrorCodeSchema } from "@mcode/contracts";
@@ -658,6 +659,14 @@ export function createWsTransport(
     listWorkspaces: () => rpc<Workspace[]>("workspace.list", {}),
     createWorkspace: (name, path) => rpc<Workspace>("workspace.create", { name, path }),
     renameWorkspace: (id, name) => rpc<Workspace>("workspace.rename", { id, name }),
+    readWorkspaceEnvironment: (workspaceId) =>
+      rpc<WorkspaceEnvironmentReadResult>("workspace.environment.read", { workspaceId }),
+    saveWorkspaceEnvironment: (workspaceId, document, sourceRevision) =>
+      rpc<WorkspaceEnvironmentReadResult>("workspace.environment.save", {
+        workspaceId,
+        document,
+        sourceRevision,
+      }),
     deleteWorkspace: (id) => rpc<boolean>("workspace.delete", { id }),
     touchLastOpened: (id) => rpc<void>("workspace.touchLastOpened", { id }),
     reorderWorkspace: (id, newIndex) =>
@@ -697,6 +706,10 @@ export function createWsTransport(
       rpc<boolean>("thread.delete", { threadId, cleanupWorktree }),
     completeThread: (threadId) => rpc<Thread>("thread.complete", { threadId }),
     reopenThread: (threadId) => rpc<Thread>("thread.reopen", { threadId }),
+    countBlockedThreadCleanupCandidates: () =>
+      rpc<{ count: number }>("thread.cleanupBlockedCount", {}),
+    retryThreadCleanup: (threadId) =>
+      rpc<Thread>("thread.retryCleanup", { threadId }),
     updateThreadTitle: (threadId, title) =>
       rpc<boolean>("thread.updateTitle", { threadId, title }),
     updateThreadSettings: (threadId, settings) =>

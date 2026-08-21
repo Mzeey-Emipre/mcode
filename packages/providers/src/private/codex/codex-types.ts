@@ -64,7 +64,13 @@ export interface ThreadStartResult {
   /** Top-level threadId (some versions). */
   threadId?: string;
   /** Nested thread object (codex app-server >= 0.104.0). The session ID is at `thread.id`. */
-  thread?: { id: string; [key: string]: unknown };
+  thread?: {
+    id: string;
+    name?: string | null;
+    agentNickname?: string | null;
+    agentRole?: string | null;
+    [key: string]: unknown;
+  };
 }
 
 /** Parameters for the `thread/resume` RPC method. */
@@ -86,11 +92,34 @@ export interface ThreadResumeResult {
   /** Top-level threadId (some versions). */
   threadId?: string;
   /** Nested thread object (codex app-server >= 0.104.0). The session ID is at `thread.id`. */
-  thread?: { id: string; [key: string]: unknown };
+  thread?: {
+    id: string;
+    name?: string | null;
+    agentNickname?: string | null;
+    agentRole?: string | null;
+    [key: string]: unknown;
+  };
   /** Effective model selected for the resumed thread. */
   model?: string | null;
   /** Effective reasoning effort selected for the resumed thread. */
   reasoningEffort?: ReasoningEffort | null;
+}
+
+/** Parameters for the read-only `thread/read` RPC method. */
+export interface ThreadReadParams {
+  threadId: string;
+  includeTurns?: boolean;
+}
+
+/** Result returned by the read-only `thread/read` RPC method. */
+export interface ThreadReadResult {
+  thread: {
+    id: string;
+    name?: string | null;
+    agentNickname?: string | null;
+    agentRole?: string | null;
+    [key: string]: unknown;
+  };
 }
 
 // Turn RPCs

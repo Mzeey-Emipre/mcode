@@ -391,7 +391,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
           | { kind: "initial"; address?: string }
           | { kind: "restored" | "address"; address: string }
           | { kind: "back" | "forward" | "reload" | "force-reload" };
-      }): Promise<{ ok: true } | { ok: false; error: string }> {
+      }): Promise<{ ok: true } | { ok: false; error: string; errorCode?: string | number }> {
         return ipcRenderer.invoke("preview.surface.navigate", payload);
       },
       /** Subscribes to opener-free popup requests for exact adopted surfaces. */
@@ -448,6 +448,12 @@ contextBridge.exposeInMainWorld("desktopBridge", {
         ipcRenderer.send("preview:automation.subscribe");
         ipcRenderer.on("preview:automation.controller", listener);
         return () => ipcRenderer.removeListener("preview:automation.controller", listener);
+      },
+      onHostHeartbeat(callback: () => void): () => void {
+        const listener = () => callback();
+        ipcRenderer.on("preview:automation.heartbeat", listener);
+        ipcRenderer.send("preview:automation.heartbeat.subscribe");
+        return () => ipcRenderer.removeListener("preview:automation.heartbeat", listener);
       },
     },
     /** Design mode operations applied to the adopted Browser guest. */

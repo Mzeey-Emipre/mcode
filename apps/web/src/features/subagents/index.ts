@@ -10,4 +10,4 @@ export type {
 } from "./lifecycle/SubagentLifecycleStatus";
 export { SubagentStopControl } from "./lifecycle/SubagentStopControl";
 export { SubagentChangeSummary } from "./detail/SubagentChangeSummary";
-export { openSubagentsPanel, openSubagentDetail } from "./detail/open-subagent-detail";
+export { openSubagentsPanel, openSubagentsRoster, openSubagentDetail } from "./detail/open-subagent-detail";

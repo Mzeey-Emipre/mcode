@@ -100,6 +100,7 @@ describe("TurnFinalizer.finalize — turn outcome → tool-call status", () => {
     { outcome: "completed", expected: "completed" },
     { outcome: "errored", expected: "failed" },
     { outcome: "cancelled", expected: "cancelled" },
+    { outcome: "interrupted", expected: "failed" },
   ];
 
   for (const { outcome, expected } of cases) {
@@ -125,6 +126,8 @@ describe("TurnFinalizer.finalize — turn outcome → tool-call status", () => {
       messageId: "m1",
       toolCallCount: 1,
       filesChanged: [],
+      outcome: "completed",
+      executionId: null,
     });
   });
 
@@ -145,6 +148,19 @@ describe("TurnFinalizer.finalize — turn outcome → tool-call status", () => {
     await finalizer.finalize(THREAD, "cancelled");
     expect(toolRepo.listByMessage("m2")[0].status).toBe("cancelled");
   });
+
+  it.each(["completed", "cancelled", "interrupted", "errored"] as const)(
+    "persists the %s outcome on the assistant compatibility row",
+    async (outcome) => {
+      insertMessage(db, "m1", "assistant", "body", 1);
+      narrativeStore.beginTurn(THREAD);
+      narrativeStore.resetTurnCounters(THREAD);
+      finalizer.bufferAssistantBody(THREAD, "body", null);
+      await finalizer.finalize(THREAD, outcome);
+
+      expect(new MessageRepo(db).listByThread(THREAD, 10).messages[0]).toMatchObject({ outcome });
+    },
+  );
 
   it("materializes an assistant row for a buffered tool call when no Message event fired", async () => {
     // A turn that buffered a tool call but never emitted a provider Message
@@ -546,6 +562,7 @@ describe("TurnFinalizer.finalize — git snapshot write", () => {
         messages: [{ id: "msg-1", role: "assistant", sequence: 2, content: "" }],
       })),
       create: vi.fn(),
+      setAssistantOutcome: vi.fn(),
     } as unknown as MessageRepo;
     const threadRepo = { findById: vi.fn(() => ({ model: null })) } as unknown as ThreadRepo;
     const narrativeStore = {
@@ -624,6 +641,7 @@ describe("TurnFinalizer.finalize — git snapshot write", () => {
         messages: [{ id: "msg-1", role: "assistant", sequence: 2, content: "" }],
       })),
       create: vi.fn(),
+      setAssistantOutcome: vi.fn(),
     } as unknown as MessageRepo;
     const threadRepo = { findById: vi.fn(() => ({ model: null })) } as unknown as ThreadRepo;
     const narrativeStore = {

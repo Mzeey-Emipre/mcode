@@ -302,6 +302,20 @@
       "when": 1786530667263,
       "tag": "0041_index_completed_thread_cleanup",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "6",
+      "when": 1787171578143,
+      "tag": "0042_supreme_terrax",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "6",
+      "when": 1787233172781,
+      "tag": "0043_massive_dazzler",
+      "breakpoints": true
     }
   ]
 }

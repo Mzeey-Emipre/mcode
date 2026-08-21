@@ -31,7 +31,7 @@ import {
   recallScrollPosition,
   type ThreadScrollPosition,
 } from "@/components/chat/scrollPositionMemory";
-import { NarrativeFlow } from "../narrative";
+import { NarrativeFlow, type SubagentRosterTarget } from "../narrative";
 import { PersistedNarrative } from "../narrative/PersistedNarrative";
 import { PersistedTurnFooter } from "../narrative/PersistedTurnFooter";
 import { NarrativeIndicator } from "../narrative/NarrativeIndicator";
@@ -43,6 +43,7 @@ import { PRIMARY_CONTENT_RAIL_CLASS } from "@/lib/layout-rails";
 import { shouldShowStickyUserMessage, type StickyVisibilityVirtualizer } from "@/components/chat/sticky-user-message-visibility";
 import { resolveUserMessagePreview } from "@/components/chat/user-message-preview";
 import { isConversationVisible } from "../residency/conversation-residency";
+import { projectCanonicalMessageList } from "./canonical-message-projection";
 
 const EMPTY_TOOL_CALLS: ToolCall[] = [];
 const EMPTY_TURN_MAP: Record<string, string> = {};
@@ -106,16 +107,26 @@ const VirtualItemRenderer = memo(function VirtualItemRenderer({
   onBranch,
   onReply,
   onSubagentSelect,
+  onOpenSubagents,
+  onContinue,
+  onRetry,
   onScrollToMessage,
   currentTurnMessageIdByThread,
+  threadId,
+  showParentAgentProvenance,
 }: {
   item: ChatVirtualItem;
   turnExpandRef?: React.RefObject<Map<string, boolean>>;
   onBranch?: (messageId: string) => void;
   onReply?: (messageId: string, content: string, role: "user" | "assistant") => void;
-  onSubagentSelect?: (id: string) => void;
+  onSubagentSelect?: (id: string, target: SubagentRosterTarget) => void;
+  onOpenSubagents?: (target: SubagentRosterTarget) => void;
+  onContinue?: () => void | Promise<void>;
+  onRetry?: (executionId: string) => void | Promise<void>;
   onScrollToMessage?: (messageId: string) => void;
   currentTurnMessageIdByThread: Record<string, string>;
+  threadId: string | null | undefined;
+  showParentAgentProvenance: boolean;
 }) {
   switch (item.type) {
     case "message": {
@@ -132,6 +143,7 @@ const VirtualItemRenderer = memo(function VirtualItemRenderer({
             onScrollToMessage={onScrollToMessage}
             assistantStreaming={item.assistantState?.isStreaming}
             assistantActionsVisible={item.assistantState?.actionsVisible}
+            showParentAgentProvenance={showParentAgentProvenance}
           />
         </div>
       );
@@ -180,14 +192,31 @@ const VirtualItemRenderer = memo(function VirtualItemRenderer({
           startTime={item.startTime}
           committedAssistantBody={item.committedAssistantBody}
           onSubagentSelect={onSubagentSelect}
+          onOpenSubagents={onOpenSubagents}
         />
       );
     case "persisted-narrative":
-      return <PersistedNarrative messageId={item.messageId} messageContent={item.messageContent} />;
+      return (
+        <PersistedNarrative
+          threadId={threadId}
+          messageId={item.messageId}
+          messageContent={item.messageContent}
+          onSubagentSelect={onSubagentSelect}
+          onOpenSubagents={onOpenSubagents}
+        />
+      );
     case "persisted-late-hooks":
-      return <PersistedLateHooks messageId={item.messageId} />;
+      return <PersistedLateHooks threadId={threadId} messageId={item.messageId} />;
     case "persisted-turn-footer":
-      return <PersistedTurnFooter messageId={item.messageId} />;
+      return (
+        <PersistedTurnFooter
+          threadId={threadId}
+          messageId={item.messageId}
+          summary={item.summary}
+          onContinue={onContinue}
+          onRetry={onRetry}
+        />
+      );
     case "narrative-indicator":
       return (
         <NarrativeIndicator
@@ -206,8 +235,13 @@ const VirtualItemRenderer = memo(function VirtualItemRenderer({
   && prev.onBranch === next.onBranch
   && prev.onReply === next.onReply
   && prev.onSubagentSelect === next.onSubagentSelect
+  && prev.onOpenSubagents === next.onOpenSubagents
+  && prev.onContinue === next.onContinue
+  && prev.onRetry === next.onRetry
   && prev.onScrollToMessage === next.onScrollToMessage
-  && prev.currentTurnMessageIdByThread === next.currentTurnMessageIdByThread,
+  && prev.currentTurnMessageIdByThread === next.currentTurnMessageIdByThread
+  && prev.threadId === next.threadId
+  && prev.showParentAgentProvenance === next.showParentAgentProvenance,
 );
 
 /** Props for {@link ScrollToBottomButton}. */
@@ -250,11 +284,28 @@ export interface MessageListProps {
   /** Called when the user clicks the reply button or selects text in a message. */
   onReply?: (messageId: string, content: string, role: "user" | "assistant") => void;
   /** Opens a selected canonical child through the composition root. */
-  onSubagentSelect?: (id: string) => void;
+  onSubagentSelect?: (id: string, target: SubagentRosterTarget) => void;
+  /** Opens the owning thread's Subagents roster for aggregate activity. */
+  onOpenSubagents?: (target: SubagentRosterTarget) => void;
+  /** Prefills the composer with `Continue` for an interrupted turn. */
+  onContinue?: () => void | Promise<void>;
+  /** Retries one turn with its exact persisted execution identity. */
+  onRetry?: (executionId: string) => void | Promise<void>;
+  /** Whether child prompts display their parent-agent provenance label. */
+  showParentAgentProvenance?: boolean;
 }
 
 /** Virtualized list of chat messages, tool calls, and streaming indicators. */
-export function MessageList({ displayThreadId, onBranch, onReply, onSubagentSelect }: MessageListProps) {
+export function MessageList({
+  displayThreadId,
+  onBranch,
+  onReply,
+  onSubagentSelect,
+  onOpenSubagents,
+  onContinue,
+  onRetry,
+  showParentAgentProvenance = true,
+}: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   /** Survives virtualizer remounts: remembers manual expand/collapse toggles by messageId. */
   const turnExpandRef = useRef<Map<string, boolean>>(new Map());
@@ -347,14 +398,40 @@ export function MessageList({ displayThreadId, onBranch, onReply, onSubagentSele
   const isRenderedConversationVisible = displayThreadId
     ? isConversationVisible(displayThreadId)
     : renderedThreadId === activeThreadId;
-  const messages = useThreadRecord(renderedThreadId, (r) => r.messages);
+  const legacyMessages = useThreadRecord(renderedThreadId, (r) => r.messages);
   const loading = useThreadRecord(renderedThreadId, (r) => r.loading);
-  const isAgentRunning = useThreadStore((s) =>
+  const legacyIsAgentRunning = useThreadStore((s) =>
     renderedThreadId ? s.runningThreadIds.has(renderedThreadId) : false,
   );
-  const agentStartTime = useThreadRecord(renderedThreadId, (r) => r.agentStartTime);
+  const legacyAgentStartTime = useThreadRecord(renderedThreadId, (r) => r.agentStartTime);
   const streamingText = useThreadRecord(renderedThreadId, (r) => r.streaming);
-  const toolCallsRaw = useThreadRecord(renderedThreadId, (r) => r.toolCalls);
+  const legacyToolCalls = useThreadRecord(renderedThreadId, (r) => r.toolCalls);
+  const legacyThoughtSegments = useThreadRecord(renderedThreadId, (r) => r.thoughtSegments);
+  const canonicalAgentState = useThreadRecord(renderedThreadId, (r) => r.canonicalAgent.state);
+  const canonicalProjection = useMemo(
+    () => displayThreadId && renderedThreadId
+      ? projectCanonicalMessageList({
+          threadId: renderedThreadId,
+          state: canonicalAgentState,
+          messages: legacyMessages,
+          toolCalls: legacyToolCalls,
+          thoughtSegments: legacyThoughtSegments,
+        })
+      : undefined,
+    [
+      canonicalAgentState,
+      displayThreadId,
+      legacyMessages,
+      legacyThoughtSegments,
+      legacyToolCalls,
+      renderedThreadId,
+    ],
+  );
+  const messages = canonicalProjection?.messages ?? legacyMessages;
+  const isAgentRunning = canonicalProjection?.isAgentRunning ?? legacyIsAgentRunning;
+  const agentStartTime = canonicalProjection?.agentStartTime ?? legacyAgentStartTime;
+  const toolCalls = canonicalProjection?.toolCalls ?? legacyToolCalls ?? EMPTY_TOOL_CALLS;
+  const thoughtSegments = canonicalProjection?.thoughtSegments ?? legacyThoughtSegments;
   const persistedFilesChanged = useThreadStore(
     useShallow((s) => {
       if (!renderedThreadId) return EMPTY_FILES_CHANGED;
@@ -381,20 +458,21 @@ export function MessageList({ displayThreadId, onBranch, onReply, onSubagentSele
   const transcriptThreadId = messages[0]?.thread_id ?? null;
   const permissions = useThreadRecord(renderedThreadId, (r) => r.permissions);
   const hooks = useThreadRecord(renderedThreadId, (r) => r.hooks);
-  const thoughtSegments = useThreadRecord(renderedThreadId, (r) => r.thoughtSegments);
   const persistedNarrativeByMessage = useThreadRecord(renderedThreadId, (r) => r.narrativeByMessage);
   const loadNarrativeForMessage = useThreadStore((s) => s.loadNarrativeForMessage);
-  const currentTurnMessageId = useThreadRecord(renderedThreadId, (r) => r.currentTurnMessageId);
-  const currentTurnResponseKey = useThreadRecord(renderedThreadId, (r) => r.currentTurnResponseKey);
-  const assistantResponseKeys = useThreadRecord(renderedThreadId, (r) => r.assistantResponseKeys);
+  const isNarrativeLoaded = useThreadStore((s) => s.isNarrativeLoaded);
+  const legacyCurrentTurnMessageId = useThreadRecord(renderedThreadId, (r) => r.currentTurnMessageId);
+  const legacyCurrentTurnResponseKey = useThreadRecord(renderedThreadId, (r) => r.currentTurnResponseKey);
+  const legacyAssistantResponseKeys = useThreadRecord(renderedThreadId, (r) => r.assistantResponseKeys);
+  const currentTurnMessageId = canonicalProjection?.currentTurnMessageId ?? legacyCurrentTurnMessageId;
+  const currentTurnResponseKey = canonicalProjection?.currentTurnResponseKey ?? legacyCurrentTurnResponseKey;
+  const assistantResponseKeys = canonicalProjection?.assistantResponseKeys ?? legacyAssistantResponseKeys;
   const currentTurnMessageIdByThread = useMemo(
     () => (renderedThreadId && currentTurnMessageId
       ? { [renderedThreadId]: currentTurnMessageId }
       : EMPTY_TURN_MAP),
     [renderedThreadId, currentTurnMessageId],
   );
-
-  const toolCalls = toolCallsRaw ?? EMPTY_TOOL_CALLS;
 
   useLayoutEffect(() => {
     isPositionedRef.current = isPositioned;
@@ -643,10 +721,10 @@ export function MessageList({ displayThreadId, onBranch, onReply, onSubagentSele
   useEffect(() => {
     for (const message of messages) {
       if (message.role !== "assistant") continue;
-      if (persistedNarrativeByMessage[message.id] !== undefined) continue;
+      if (renderedThreadId && isNarrativeLoaded(renderedThreadId, message.id)) continue;
       void loadNarrativeForMessage(message.id, renderedThreadId ?? undefined);
     }
-  }, [messages, persistedNarrativeByMessage, loadNarrativeForMessage, renderedThreadId]);
+  }, [messages, persistedNarrativeByMessage, isNarrativeLoaded, loadNarrativeForMessage, renderedThreadId]);
 
   const stableItems = useMemo(
     () => buildStableItems(messages, persistedFilesChanged, latestTurnWithChanges, {
@@ -654,7 +732,7 @@ export function MessageList({ displayThreadId, onBranch, onReply, onSubagentSele
       messageId: currentTurnMessageId || undefined,
       responseKey: currentTurnResponseKey || undefined,
       responseKeysByMessageId: assistantResponseKeys,
-    }, persistedNarrativeByMessage),
+    }, persistedNarrativeByMessage, canonicalProjection?.turnSummariesByMessageId),
     [
       messages,
       persistedFilesChanged,
@@ -664,6 +742,7 @@ export function MessageList({ displayThreadId, onBranch, onReply, onSubagentSele
       currentTurnResponseKey,
       assistantResponseKeys,
       persistedNarrativeByMessage,
+      canonicalProjection?.turnSummariesByMessageId,
     ],
   );
 
@@ -1517,7 +1596,7 @@ export function MessageList({ displayThreadId, onBranch, onReply, onSubagentSele
                 style={{ transform: `translateY(${vi.start}px)` }}
               >
                 <div className={cn(PRIMARY_CONTENT_RAIL_CLASS, "min-w-0 overflow-x-hidden")}>
-                  <VirtualItemRenderer item={item} turnExpandRef={turnExpandRef} onBranch={onBranch} onReply={onReply} onSubagentSelect={onSubagentSelect} onScrollToMessage={scrollToMessage} currentTurnMessageIdByThread={currentTurnMessageIdByThread} />
+                  <VirtualItemRenderer item={item} turnExpandRef={turnExpandRef} onBranch={onBranch} onReply={onReply} onSubagentSelect={onSubagentSelect} onOpenSubagents={onOpenSubagents} onContinue={onContinue} onRetry={onRetry} onScrollToMessage={scrollToMessage} currentTurnMessageIdByThread={currentTurnMessageIdByThread} threadId={renderedThreadId} showParentAgentProvenance={showParentAgentProvenance} />
                 </div>
               </div>
             );

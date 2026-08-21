@@ -14,6 +14,7 @@ import {
 } from "../state/window-session.js";
 import { resolvePreviewNavigationTarget } from "../navigation/resolve-target.js";
 import { trustMainProcessFileNavigation } from "../navigation/local-file.js";
+import { loadPreviewGuestUrl } from "../navigation/guest-navigation.js";
 import {
   registerPreviewClipboardGuest,
   unregisterPreviewClipboardGuest,
@@ -52,7 +53,12 @@ export type PreviewSurfaceNavigation =
 /** Result returned by a typed Preview surface operation. */
 export type PreviewSurfaceResult =
   | { readonly ok: true }
-  | { readonly ok: false; readonly error: string; readonly nextGeneration?: number };
+  | {
+      readonly ok: false;
+      readonly error: string;
+      readonly errorCode?: string | number;
+      readonly nextGeneration?: number;
+    };
 
 /** Pending or adopted exact Preview guest held by Electron main. */
 export interface AdoptedPreviewSurface {
@@ -203,8 +209,8 @@ function findPendingGuest(sender: WebContents, adoptionToken: string): WebConten
   return guests.length === 1 ? guests[0]! : null;
 }
 
-function errorResult(error: string): PreviewSurfaceResult {
-  return { ok: false, error };
+function errorResult(error: string, errorCode?: string | number): PreviewSurfaceResult {
+  return { ok: false, error, ...(errorCode === undefined ? {} : { errorCode }) };
 }
 
 function staleGenerationResult(currentGeneration: number): PreviewSurfaceResult {
@@ -467,8 +473,10 @@ async function navigateSurface(event: IpcMainInvokeEvent, inputValue: unknown): 
         const current = resolveAdoptedPreviewSurfaceForWindow(win.id, surface, event.sender);
         if (!current || current.webContents !== guest) return errorResult("stale-generation");
         trustMainProcessFileNavigation(getSession(win), resolved.url);
-        await guest.loadURL(resolved.url);
-        return { ok: true };
+        const result = await loadPreviewGuestUrl(guest, resolved.url);
+        return result.status === "committed"
+          ? { ok: true }
+          : errorResult("navigation-failed", result.errorCode ?? result.errorNumber);
       }
       case "back":
         if (!guest.canGoBack()) return errorResult("history-unavailable");

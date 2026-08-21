@@ -1,4 +1,5 @@
 import type { AgentEvent } from "@mcode/contracts";
+import type { ToolCallRecord } from "@/transport/types";
 import {
   activateTestConversation,
   resetThreadStoreForTests,
@@ -62,6 +63,112 @@ await activateTestConversation("t1");
     expect(getTestActiveMessages()).toEqual(fakeMessages);
     expect(getCachedRecord("t1")).toBeDefined();
     expect(getCachedRecord("t1")?.messages).toEqual(fakeMessages);
+  });
+
+  it("refreshes a partial embedded narrative with the authoritative list response", async () => {
+    const assistant = createMockMessage({
+      id: "assistant-agent",
+      thread_id: "t1",
+      role: "assistant",
+      content: "Child result",
+    });
+    const command: ToolCallRecord = {
+      id: "command-1",
+      message_id: assistant.id,
+      parent_tool_call_id: null,
+      tool_name: "command_execution",
+      input_summary: "pwd",
+      output_summary: "/workspace",
+      status: "completed" as const,
+      started_at: "2026-08-20T10:00:00.000Z",
+      completed_at: "2026-08-20T10:00:01.000Z",
+      sort_order: 1,
+    };
+    const agent: ToolCallRecord = {
+      ...command,
+      id: "agent-1",
+      tool_name: "Agent",
+      input_summary: "delegate",
+      output_summary: "done",
+      sort_order: 2,
+    };
+    (mockTransport.loadConversationPage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: [assistant],
+      hasMore: false,
+      narrativeByMessage: {
+        [assistant.id]: { tools: [command], thoughts: [], hooks: [] },
+      },
+    });
+    (mockTransport.listNarrative as ReturnType<typeof vi.fn>).mockResolvedValue({
+      tools: [command, agent],
+      thoughts: [],
+      hooks: [],
+    });
+
+    await activateTestConversation("t1");
+    expect(useThreadStore.getState().isNarrativeLoaded("t1", assistant.id)).toBe(false);
+
+    await useThreadStore.getState().loadNarrativeForMessage(assistant.id, "t1");
+
+    const narrative = getThreadRecord(
+      useThreadStore.getState().records,
+      "t1",
+    ).narrativeByMessage[assistant.id];
+    expect(mockTransport.listNarrative).toHaveBeenCalledWith(assistant.id);
+    expect(narrative?.tools.map((record) => record.id)).toEqual(["command-1", "agent-1"]);
+    expect(useThreadStore.getState().isNarrativeLoaded("t1", assistant.id)).toBe(true);
+  });
+
+  it("keeps refreshing a partial list response until the persisted tool count is satisfied", async () => {
+    const assistant = createMockMessage({
+      id: "assistant-retry",
+      thread_id: "t1",
+      role: "assistant",
+      content: "Child result",
+      tool_call_count: 2,
+    });
+    const command: ToolCallRecord = {
+      id: "command-retry",
+      message_id: assistant.id,
+      parent_tool_call_id: null,
+      tool_name: "command_execution",
+      input_summary: "pwd",
+      output_summary: "/workspace",
+      status: "completed" as const,
+      started_at: "2026-08-20T10:00:00.000Z",
+      completed_at: "2026-08-20T10:00:01.000Z",
+      sort_order: 1,
+    };
+    const agent: ToolCallRecord = {
+      ...command,
+      id: "agent-retry",
+      tool_name: "Agent",
+      input_summary: "delegate",
+      output_summary: "done",
+      sort_order: 2,
+    };
+    (mockTransport.loadConversationPage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      messages: [assistant],
+      hasMore: false,
+      narrativeByMessage: {},
+    });
+    (mockTransport.listNarrative as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({ tools: [command], thoughts: [], hooks: [] })
+      .mockResolvedValueOnce({ tools: [command, agent], thoughts: [], hooks: [] });
+
+    await activateTestConversation("t1");
+    await useThreadStore.getState().loadNarrativeForMessage(assistant.id, "t1");
+
+    expect(mockTransport.listNarrative).toHaveBeenCalledTimes(1);
+    expect(useThreadStore.getState().isNarrativeLoaded("t1", assistant.id)).toBe(false);
+
+    await useThreadStore.getState().loadNarrativeForMessage(assistant.id, "t1");
+
+    expect(mockTransport.listNarrative).toHaveBeenCalledTimes(2);
+    expect(useThreadStore.getState().isNarrativeLoaded("t1", assistant.id)).toBe(true);
+    expect(getThreadRecord(useThreadStore.getState().records, "t1")
+      .narrativeByMessage[assistant.id]?.tools.map((record) => record.id))
+      .toEqual(["command-retry", "agent-retry"]);
   });
 
   it("on cache hit, does not call conversation.page and renders from cache", async () => {

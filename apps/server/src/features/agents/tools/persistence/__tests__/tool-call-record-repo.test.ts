@@ -61,6 +61,7 @@ describe("V7 migration", () => {
       "output_artifact_path",
       "exit_code",
       "provider_agent_key",
+      "subagent_identity_key",
     ]));
 
     db.close();
@@ -85,6 +86,7 @@ describe("ToolCallRecordRepo", () => {
       toolName: "Read",
       displayName: "Explorer",
       providerAgentKey: "/root/explorer",
+      subagentIdentityKey: "native-explorer",
       model: "gpt-5.3-codex",
       reasoningEffort: "high",
       inputSummary: "file.ts",
@@ -104,6 +106,7 @@ describe("ToolCallRecordRepo", () => {
     expect(record.tool_name).toBe("Read");
     expect(record.display_name).toBe("Explorer");
     expect(record.provider_agent_key).toBe("/root/explorer");
+    expect(record.subagent_identity_key).toBe("native-explorer");
     expect(record.model).toBe("gpt-5.3-codex");
     expect(record.reasoning_effort).toBe("high");
     expect(record.input_summary).toBe("file.ts");
@@ -122,6 +125,7 @@ describe("ToolCallRecordRepo", () => {
     expect(records[0]!.id).toBe(record.id);
     expect(records[0]!.display_name).toBe("Explorer");
     expect(records[0]!.provider_agent_key).toBe("/root/explorer");
+    expect(records[0]!.subagent_identity_key).toBe("native-explorer");
     expect(records[0]!.model).toBe("gpt-5.3-codex");
     expect(records[0]!.reasoning_effort).toBe("high");
     expect(records[0]!.output_truncated).toBe(1);
@@ -176,6 +180,38 @@ describe("ToolCallRecordRepo", () => {
     const records = repo.listByMessage(messageId);
     expect(records).toHaveLength(3);
     expect(records.map((r) => r.tool_name)).toEqual(["Read", "Edit", "Bash"]);
+  });
+
+  it("returns command execution and Agent records sharing one assistant message", () => {
+    repo.bulkCreate([
+      {
+        toolCallId: "command-1",
+        messageId,
+        toolName: "command_execution",
+        inputSummary: "pwd",
+        outputSummary: "/workspace",
+        status: "completed",
+        sortOrder: 1,
+      },
+      {
+        toolCallId: "agent-1",
+        messageId,
+        toolName: "Agent",
+        inputSummary: "delegate",
+        outputSummary: "done",
+        status: "completed",
+        sortOrder: 2,
+      },
+    ]);
+
+    expect(repo.listByMessage(messageId).map((record) => record.tool_name)).toEqual([
+      "command_execution",
+      "Agent",
+    ]);
+    expect(repo.listByMessages([messageId]).get(messageId)?.map((record) => record.tool_name)).toEqual([
+      "command_execution",
+      "Agent",
+    ]);
   });
 
   it("preserves explicit lifecycle timestamps for each bulk-created record", () => {

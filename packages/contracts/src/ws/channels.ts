@@ -16,6 +16,7 @@ import {
   BrowserAutomationRequestSchema,
 } from "../models/browser-automation.js";
 import { TurnFileEffectSummarySchema } from "../models/file-effect.js";
+import { TurnOutcomeSchema } from "../models/turn-outcome.js";
 import { ProviderCatalogChangeSchema } from "../providers/capability-catalog.js";
 import { ThreadObservedStateSchema } from "../thread-control.js";
 import { LegacyTerminalChannels } from "./terminal-legacy.js";
@@ -143,6 +144,8 @@ export const WS_CHANNELS = {
     toolCallCount: z.number(),
     filesChanged: z.array(z.string()),
     fileEffects: TurnFileEffectSummarySchema().optional(),
+    outcome: TurnOutcomeSchema.optional(),
+    executionId: z.string().nullable().optional(),
   }),
   /** Live net file effects attributed to explicit agent mutation tools. */
   "turn.fileEffectsUpdated": z.object({

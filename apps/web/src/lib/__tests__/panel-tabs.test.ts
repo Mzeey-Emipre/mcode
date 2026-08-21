@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ListChecks } from "lucide-react";
+import { Layers, ListChecks } from "lucide-react";
 import {
   PANEL_TAB_TYPES,
   creatableTypes,
@@ -13,12 +13,13 @@ function ids(types: readonly { id: PanelTabTypeId }[]): PanelTabTypeId[] {
 }
 
 describe("PANEL_TAB_TYPES catalog", () => {
-  it("declares the seven revamp tab types in prototype order", () => {
+  it("declares the revamp tab types in prototype order", () => {
     expect(ids(PANEL_TAB_TYPES)).toEqual([
       "preview",
       "terminal",
       "files",
       "changes",
+      "environment",
       "tasks",
       "subagents",
       "coordination",
@@ -58,6 +59,11 @@ describe("PANEL_TAB_TYPES catalog", () => {
     expect(plan?.blurb).toBe("Read saved plans");
     expect(plan?.icon).toBe(ListChecks);
   });
+
+  it("uses Layers for the Subagents panel tab", () => {
+    const subagents = PANEL_TAB_TYPES.find((type) => type.id === "subagents");
+    expect(subagents?.icon).toBe(Layers);
+  });
 });
 
 describe("shownTabTypes — scope filter", () => {
@@ -67,6 +73,7 @@ describe("shownTabTypes — scope filter", () => {
       "terminal",
       "files",
       "changes",
+      "environment",
     ]);
   });
 
@@ -76,6 +83,7 @@ describe("shownTabTypes — scope filter", () => {
       "terminal",
       "files",
       "changes",
+      "environment",
       "tasks",
       "subagents",
       "coordination",
@@ -89,12 +97,13 @@ describe("shownTabTypes — cardinality filter", () => {
       "terminal",
       "files",
       "changes",
+      "environment",
     ]);
   });
 
   it("keeps Terminal creatable after other singleton tools are open", () => {
     expect(
-      ids(shownTabTypes("thread", ["preview", "terminal", "changes", "tasks", "subagents", "coordination"])),
+      ids(shownTabTypes("thread", ["preview", "terminal", "changes", "environment", "tasks", "subagents", "coordination"])),
     ).toEqual(["terminal", "files"]);
   });
 
@@ -106,6 +115,7 @@ describe("shownTabTypes — cardinality filter", () => {
       "terminal",
       "files",
       "changes",
+      "environment",
     ]);
   });
 });
@@ -116,6 +126,7 @@ describe("creatableTypes — coming-soon exclusion", () => {
       "preview",
       "terminal",
       "changes",
+      "environment",
     ]);
   });
 
@@ -124,6 +135,7 @@ describe("creatableTypes — coming-soon exclusion", () => {
       "preview",
       "terminal",
       "changes",
+      "environment",
       "tasks",
       "subagents",
       "coordination",
@@ -144,12 +156,13 @@ describe("creatableTypes — combined scope + cardinality", () => {
     expect(ids(creatableTypes("threadless", ["preview"]))).toEqual([
       "terminal",
       "changes",
+      "environment",
     ]);
   });
 
   it("keeps Terminal creatable when every singleton tool is open", () => {
     expect(
-      ids(creatableTypes("thread", ["preview", "terminal", "changes", "tasks", "subagents", "coordination"])),
+      ids(creatableTypes("thread", ["preview", "terminal", "changes", "environment", "tasks", "subagents", "coordination"])),
     ).toEqual(["terminal"]);
   });
 
@@ -174,6 +187,7 @@ describe("creatableTypes / shownTabTypes — purity", () => {
     expect(ids(creatableTypes("thread", ["tasks", "preview"]))).toEqual([
       "terminal",
       "changes",
+      "environment",
       "subagents",
       "coordination",
     ]);

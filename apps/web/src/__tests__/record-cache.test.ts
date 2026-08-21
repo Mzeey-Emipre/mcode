@@ -456,7 +456,11 @@ describe("selective cache updates in handleAgentEvent", () => {
     cacheRecord(THREAD_ID, makeRecord(THREAD_ID));
     expect(getCachedRecord(THREAD_ID)).toBeDefined();
 
-    useThreadStore.getState().handleAgentEvent({ type: "ended", threadId: THREAD_ID } satisfies AgentEvent);
+    useThreadStore.getState().handleAgentEvent({
+      type: "ended",
+      threadId: THREAD_ID,
+      turnExecutionId: "exec-1",
+    } satisfies AgentEvent);
 
     expect(getCachedRecord(THREAD_ID)).toBeUndefined();
   });

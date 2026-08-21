@@ -6,6 +6,11 @@ import { ServerManager } from "./process/manager.js";
 import { ServerCrashRecovery } from "./recovery/crash-recovery.js";
 import { ServerHealthRecovery } from "./recovery/health-recovery.js";
 import { ServerNotifications } from "./recovery/notifications.js";
+import {
+  ReliabilityHarnessControlPlane,
+  readReliabilityHarnessCapability,
+  type ReliabilityHarnessCommand,
+} from "./reliability-harness/control.js";
 
 interface ServerRuntimeWebContents {
   isDestroyed(): boolean;
@@ -33,6 +38,7 @@ interface ServerRuntimeManager {
   start(): Promise<{ port: number; authToken: string }>;
   isHealthy(): Promise<boolean>;
   restart(): Promise<void>;
+  restartPlanned?(): Promise<void>;
   forceReplace(): Promise<void>;
 }
 
@@ -92,6 +98,7 @@ interface ServerRuntimeDependencies {
       sameSite: "strict";
     }): Promise<void> | void;
   };
+  reliabilityHarnessCapabilityPath?: string;
 }
 
 /** Owns server process, connection, recovery, power, and window-transport behavior. */
@@ -103,11 +110,20 @@ export class ServerRuntime {
   private readonly serverBusyBlocker: BusyBlocker;
   private readonly dependencies: ServerRuntimeDependencies;
   private readonly relayStarter: ServerRuntimeRelayStarter;
+  private readonly reliabilityHarnessControlPlane: ReliabilityHarnessControlPlane | null;
 
   constructor(dependencies: ServerRuntimeDependencies) {
     this.dependencies = dependencies;
     this.serverManager = dependencies.manager ?? new ServerManager();
     this.relayStarter = dependencies.relayStarter ?? startIpcRelay;
+    const capabilityPath = dependencies.reliabilityHarnessCapabilityPath;
+    const capability = capabilityPath ? readReliabilityHarnessCapability(capabilityPath) : null;
+    this.reliabilityHarnessControlPlane = capability && capabilityPath
+      ? new ReliabilityHarnessControlPlane(capabilityPath, {
+        plannedRestart: () => this.restartPlanned(),
+        serverFault: (command, token) => this.forwardServerFault(command, token),
+      })
+      : null;
     this.serverNotifications = new ServerNotifications({
       getMainWindow: dependencies.getMainWindow,
       dialog: dependencies.dialog,
@@ -139,6 +155,7 @@ export class ServerRuntime {
   /** Start the server and return its listening port. */
   async start(): Promise<number> {
     const { port } = await this.serverManager.start();
+    await this.reliabilityHarnessControlPlane?.start();
     return port;
   }
 
@@ -191,6 +208,32 @@ export class ServerRuntime {
   /** Force-replace the server before an application update or performance cleanup. */
   async forceReplace(): Promise<void> {
     await this.serverManager.forceReplace();
+  }
+
+  /** Restart the server under an explicit harness command without crash recovery. */
+  async restartPlanned(): Promise<void> {
+    if (this.serverManager.restartPlanned) {
+      await this.serverManager.restartPlanned();
+      return;
+    }
+    await this.serverManager.restart();
+  }
+
+  private async forwardServerFault(command: ReliabilityHarnessCommand, token: string): Promise<void> {
+    if (!this.serverManager.port || !this.serverManager.authToken) {
+      throw new Error("Server is not ready for reliability control");
+    }
+    const response = await fetch(`http://127.0.0.1:${this.serverManager.port}/__mcode/reliability`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.serverManager.authToken}`,
+        "X-Mcode-Reliability-Token": token,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(command),
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!response.ok) throw new Error(`Reliability server control failed with HTTP ${response.status}`);
   }
 
   /** Return the server port used by close confirmation health checks. */

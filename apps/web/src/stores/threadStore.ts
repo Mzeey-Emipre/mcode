@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { Message, ToolCall, HookExecution, PermissionMode, InteractionMode, AttachmentMeta, StoredAttachment, ToolCallRecord, ThoughtSegmentRecord } from "@/transport";
-import type { AgentEvent, CanonicalAgentEventEnvelope, CanonicalAgentReconnectRecovery, ContextWindowMode, MessageMention, ReasoningLevel, OrchestrationMode, PlanQuestion, PlanAnswer, QuotaCategory, ProviderBillingMode, ProviderUsageInfo, GoalLookupResult, GoalState, PreviewAnnotationBundle, TurnFileEffectSummary, TurnRuntimeSnapshot } from "@mcode/contracts";
+import type { AgentEvent, CanonicalAgentEventEnvelope, CanonicalAgentReconnectRecovery, ContextWindowMode, MessageMention, ReasoningLevel, OrchestrationMode, PlanQuestion, PlanAnswer, QuotaCategory, ProviderBillingMode, ProviderUsageInfo, GoalLookupResult, GoalState, PreviewAnnotationBundle, TurnFileEffectSummary, TurnRuntimeSnapshot, TurnOutcome } from "@mcode/contracts";
 import type { PermissionRequest, PermissionDecision } from "@mcode/contracts";
 import type { ThoughtSegment } from "@/features/conversation/narrative/types";
 import {
@@ -11,6 +11,8 @@ import {
   isGoalOpen,
   previewAnnotationSnapshotStoredAttachments,
   CONVERSATION_HISTORY_PAGE_MAX_BYTES,
+  createSubagentPresentation,
+  mergeSubagentPresentation,
 } from "@mcode/contracts";
 import { getTransport } from "@/transport";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
@@ -292,9 +294,12 @@ interface ThreadState {
    * Fetch the persisted narrative (tools, thoughts, hooks) for an assistant
    * message and cache it under `narrativeByMessage[messageId]`. Returns the
    * existing in-flight promise on concurrent calls to avoid duplicate RPCs.
-   * Idempotent: returns immediately if the message is already cached.
+   * Idempotent after a dedicated list response has supplied every persisted
+   * tool row expected by the message; partial responses remain refreshable.
    */
   loadNarrativeForMessage: (messageId: string, threadId?: string) => Promise<void>;
+  /** Return whether a complete narrative payload has been loaded for a message. */
+  isNarrativeLoaded: (threadId: string, messageId: string) => boolean;
   /** Drop the cached narrative for a message - call from edit/delete paths. */
   evictNarrativeForMessage: (messageId: string) => void;
 
@@ -303,6 +308,8 @@ interface ThreadState {
     threadId: string;
     messageId: string;
     turnId?: string | null;
+    executionId?: string | null;
+    outcome?: TurnOutcome | null;
     toolCallCount: number;
     filesChanged: string[];
     fileEffects?: TurnFileEffectSummary;
@@ -358,6 +365,19 @@ const dequeueTimers = new Map<string, ReturnType<typeof setTimeout>>();
  * without triggering re-renders for the inflight bookkeeping.
  */
 const narrativeInflight = new Map<string, Promise<void>>();
+/** Message narratives returned by a complete conversation-page read. */
+const narrativeLoaded = new Set<string>();
+
+function narrativeKey(threadId: string, messageId: string): string {
+  return `${threadId}\u0000${messageId}`;
+}
+
+function clearNarrativeLoadState(threadId: string): void {
+  const prefix = `${threadId}\u0000`;
+  for (const key of narrativeLoaded) {
+    if (key.startsWith(prefix)) narrativeLoaded.delete(key);
+  }
+}
 const USAGE_STALE_TTL_MS = 24 * 60 * 60 * 1000;
 const providerUsageSnapshots = new Map<string, ProviderUsageInfo>();
 
@@ -1326,6 +1346,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
       generation,
       isCurrent: () => conversationResidency.isDisplayLeaseCurrent(threadId, generation),
     }),
+    onDisplayConversationMounted: (threadId) => promoteDeferredNarrativeEvents(threadId),
     refreshDisplayConversation: (threadId, generation) => threadHydrator.hydrateResident(threadId, {
       generation,
       force: true,
@@ -2267,6 +2288,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
 
   clearThreadState: (threadId) => {
     conversationResidency.invalidateConversation(threadId);
+    clearNarrativeLoadState(threadId);
     clearDequeueTimer(threadId);
     invalidateDeferredNarrativeEvents(threadId);
     threadHydrator.forgetThread(threadId);
@@ -2296,6 +2318,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
 
     for (const threadId of threadIds) {
       conversationResidency.invalidateConversation(threadId);
+      clearNarrativeLoadState(threadId);
       clearDequeueTimer(threadId);
       invalidateDeferredNarrativeEvents(threadId);
       threadHydrator.forgetThread(threadId);
@@ -2557,14 +2580,25 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
   loadNarrativeForMessage: async (messageId, explicitThreadId) => {
     const currentId = explicitThreadId ?? get().currentThreadId;
     if (!currentId) return;
-    const rec = getRec(currentId);
-    if (rec.narrativeByMessage[messageId]) return;
+    const cacheKey = narrativeKey(currentId, messageId);
+    if (narrativeLoaded.has(cacheKey)) return;
     const existing = narrativeInflight.get(messageId);
     if (existing) return existing;
     const p = getTransport()
       .listNarrative(messageId)
       .then((res) => {
-        if (!conversationResidency.isConversationVisible(currentId)) return;
+        // The request is started by a rendered message. Keep its result when
+        // navigation briefly drops the visibility lease during hydration or
+        // an Electron restart; otherwise the one-shot request is lost and the
+        // persisted timeline never gets another chance to render. The message
+        // membership check still prevents a deleted or retired placeholder
+        // from being recreated by a late response.
+        const current = get().records.get(currentId);
+        if (!current || !current.messages.some((message) => message.id === messageId)) return;
+        const expectedToolCount = current.persistedToolCallCounts[messageId] ?? 0;
+        if (res.tools.length >= expectedToolCount) {
+          narrativeLoaded.add(cacheKey);
+        }
         patchRec(currentId, (r) => ({
           narrativeByMessage: selectConversationNarrative(
             { ...r.narrativeByMessage, [messageId]: res },
@@ -2586,9 +2620,12 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     return p;
   },
 
+  isNarrativeLoaded: (threadId, messageId) => narrativeLoaded.has(narrativeKey(threadId, messageId)),
+
   evictNarrativeForMessage: (messageId) => {
     const currentId = get().currentThreadId;
     if (!currentId) return;
+    narrativeLoaded.delete(narrativeKey(currentId, messageId));
     patchRec(currentId, (rec) => {
       if (!(messageId in rec.narrativeByMessage)) return {};
       const next = { ...rec.narrativeByMessage };
@@ -2643,6 +2680,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     // only known conversation. Once running sessions are known, null selection
     // must keep background narrative deferred.
     const isActiveThread = currentThreadId === threadId
+      || conversationResidency?.isDisplayConversationLeased(threadId) === true
       || (currentThreadId === null && get().runningThreadIds.size === 0);
     const isLifecycleExit = event.type === "turnComplete" || event.type === "ended" || event.type === "error";
     const startsNewInstance = event.type === "turnStarted";
@@ -3047,15 +3085,19 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
         if (existing) {
           // Providers may emit a sparse running ToolUse first, then a richer
           // ToolUse with the same id when the completion payload arrives.
-          const shouldMergeDuplicate =
-            !existing.isComplete
-            && (
+          const isAgentEnrichment = existing.toolName === "Agent" && toolName === "Agent";
+          const shouldMergeDuplicate = isAgentEnrichment || (
+            !existing.isComplete && (
               Object.keys(existing.toolInput ?? {}).length === 0
               || existing.toolName !== toolName
-              || (existing.toolName === "Agent" && toolName === "Agent")
-            );
+            ));
           if (shouldMergeDuplicate) {
             const mergedInput = { ...existing.toolInput, ...incomingInput };
+            const incomingPresentation = event.subagentPresentation
+              ?? (toolName === "Agent" ? createSubagentPresentation(incomingInput, toolCallId) : undefined);
+            const subagentPresentation = incomingPresentation
+              ? mergeSubagentPresentation(existing.subagentPresentation, incomingPresentation, toolCallId)
+              : existing.subagentPresentation;
             const resolvedParentToolCallId = existing.parentToolCallId ?? parentToolCallId;
             set((state) => {
               const calls = getThreadRecord(state.records, threadId).toolCalls;
@@ -3065,6 +3107,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
                       ...tc,
                       toolName,
                       toolInput: mergedInput,
+                      subagentPresentation,
                       parentToolCallId: tc.parentToolCallId ?? resolvedParentToolCallId,
                     }
                   : tc,
@@ -3093,10 +3136,17 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
       applyTaskUpdate(incomingInput, parentToolCallId);
       applyUpdatePlanTasks(incomingInput, parentToolCallId);
 
+      const resolvedToolCallId = toolCallId || crypto.randomUUID();
       const toolCall: ToolCall = {
-        id: toolCallId || crypto.randomUUID(),
+        id: resolvedToolCallId,
         toolName,
         toolInput: incomingInput,
+        ...(toolName === "Agent"
+          ? {
+              subagentPresentation: event.subagentPresentation
+                ?? createSubagentPresentation(incomingInput, resolvedToolCallId),
+            }
+          : {}),
         output: null,
         isError: false,
         isComplete: false,
@@ -3179,6 +3229,9 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
         let matched = false;
         const completeCall = (tc: ToolCall): ToolCall => {
           const mergedInput = { ...tc.toolInput, ...incomingInput };
+          const subagentPresentation = event.subagentPresentation
+            ? mergeSubagentPresentation(tc.subagentPresentation, event.subagentPresentation, tc.id)
+            : tc.subagentPresentation;
           const fromInput = mergedInput.durationMs;
           const durationMs =
             typeof fromInput === "number" && Number.isFinite(fromInput)
@@ -3189,6 +3242,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
           return {
             ...tc,
             toolInput: mergedInput,
+            subagentPresentation,
             output,
             isError,
             isComplete: true,
@@ -3434,6 +3488,20 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
       const costUsd = turnComplete?.costUsd ?? null;
       const tokensIn = turnComplete?.tokensIn ?? 0;
       const tokensOut = turnComplete?.tokensOut ?? 0;
+      const terminalPhase: ThreadRecord["runtimePhase"] = event.type === "turnComplete"
+        ? "completed"
+        : event.outcome === "completed"
+          ? "completed"
+          : event.outcome === "errored"
+            ? "errored"
+            : event.outcome === "cancelled"
+              ? "cancelled"
+              : "interrupted";
+      const terminalStatus: "completed" | "errored" | "interrupted" = terminalPhase === "completed"
+        ? "completed"
+        : terminalPhase === "errored"
+          ? "errored"
+          : "interrupted";
 
       // Commit any remaining streaming content and stop the agent,
       // Tool calls remain in-place and collapse into a summary.
@@ -3500,7 +3568,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
           const basePatch = {
             streaming: "",
             streamingPreview: "",
-            runtimePhase: "completed" as const,
+            runtimePhase: terminalPhase,
             currentTurnMessageId: message.id,
             ...queuePendingTurnPersistMessage(rec, message.id),
             currentTurnResponseKey: nextLiveKey,
@@ -3545,7 +3613,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
           const basePatch = {
             streaming: "",
             streamingPreview: "",
-            runtimePhase: "completed" as const,
+            runtimePhase: terminalPhase,
             toolCalls: completedCalls,
             permissions: [] as StoredPermission[],
             rateLimit: undefined,
@@ -3625,8 +3693,8 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
       // a collapsed summary in-place. When turn.persisted fires, the DB-backed
       // summary replaces them and tool calls are cleared.
 
-      // Sync the thread's status in workspaceStore so the sidebar shows
-      // the green "Completed" badge without waiting for a full thread reload.
+      // Sync the thread's status in workspaceStore so the sidebar reflects the
+      // terminal outcome without waiting for a full thread reload.
       // If the user is already viewing this thread, skip the badge and
       // immediately mark viewed so the DB transitions to "paused".
       const isActiveThread = useWorkspaceStore.getState().activeThreadId === threadId;
@@ -3635,7 +3703,7 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
       } else {
         useWorkspaceStore.setState((ws) => ({
           threads: ws.threads.map((t) =>
-            t.id === threadId ? { ...t, status: "completed" as const } : t,
+            t.id === threadId ? { ...t, status: terminalStatus } : t,
           ),
         }));
       }
@@ -4063,18 +4131,30 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
       }
 
       const localMsgId = resolveTurnPersistLocalMessageId(rec, payload.messageId);
-      const ownsLiveFileEffects = payload.turnId != null
-        && payload.turnId === rec.fileEffectTurnId
-        && (localMsgId === rec.currentTurnMessageId
-          || rec.pendingTurnPersistMessageIds.includes(localMsgId));
       const ensuredMessages =
         payload.filesChanged.length > 0 || payload.toolCallCount > 0
           ? ensureAssistantMessageForTurnPersist(rec, payload.threadId, localMsgId)
           : undefined;
-
+      const outcomeMessages = payload.outcome !== undefined
+        ? (ensuredMessages ?? rec.messages).map((message) => {
+            if (message.id !== localMsgId) return message;
+            return {
+              ...message,
+              outcome: payload.outcome,
+              ...(payload.executionId !== undefined
+                ? { outcomeExecutionId: payload.executionId }
+                : {}),
+            };
+          })
+        : undefined;
+      const ownsLiveFileEffects = payload.turnId != null
+        && payload.turnId === rec.fileEffectTurnId
+        && (localMsgId === rec.currentTurnMessageId
+          || rec.pendingTurnPersistMessageIds.includes(localMsgId));
       return {
         records: patchThreadRecord(state.records, payload.threadId, {
-          ...(ensuredMessages ? { messages: ensuredMessages } : {}),
+          ...(outcomeMessages ? { messages: outcomeMessages } : {}),
+          ...(outcomeMessages ? {} : ensuredMessages ? { messages: ensuredMessages } : {}),
           persistedToolCallCounts: {
             ...rec.persistedToolCallCounts,
             [localMsgId]: payload.toolCallCount,

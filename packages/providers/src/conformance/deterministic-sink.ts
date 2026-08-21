@@ -8,6 +8,7 @@ import type { DeterministicSinkSnapshot } from "./types.js";
 
 const TERMINAL_TYPES = new Set([
   "turn.completed",
+  "turn.cancelled",
   "turn.interrupted",
   "turn.errored",
   "ingest.overflow",

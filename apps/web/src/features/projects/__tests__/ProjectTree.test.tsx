@@ -1,6 +1,35 @@
 import { render, screen, act, fireEvent, within } from "@testing-library/react";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { useLayoutEffect, useState } from "react";
 import type { Thread } from "@/transport/types";
+
+const sortableMockState = vi.hoisted(() => ({
+  transform: null as {
+    x: number;
+    y: number;
+    scaleX: number;
+    scaleY: number;
+  } | null,
+  isDragging: false,
+}));
+
+vi.mock("@dnd-kit/sortable", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@dnd-kit/sortable")>();
+  return {
+    ...actual,
+    useSortable: (
+      options: Parameters<typeof actual.useSortable>[0],
+    ) => {
+      const sortable = actual.useSortable(options);
+      if (!sortableMockState.transform) return sortable;
+      return {
+        ...sortable,
+        transform: sortableMockState.transform,
+        isDragging: sortableMockState.isDragging,
+      };
+    },
+  };
+});
 
 // VirtualizedThreadList is not exported, so we exercise double-click behaviour
 // through the exported ProjectTree. Stores and the virtualizer are mocked so
@@ -103,25 +132,52 @@ vi.mock("@tanstack/react-virtual", () => ({
   useVirtualizer: ({
     count,
     getItemKey,
+    getScrollElement,
+    initialOffset,
   }: {
     count: number;
     getItemKey?: (index: number) => string | number;
-  }) => ({
-    getTotalSize: () => count * 32,
-    getVirtualItems: () => {
-      const keys = Array.from({ length: count }, (_, i) =>
-        getItemKey ? getItemKey(i) : i,
-      );
-      virtualizerKeyHistory.push(keys);
-      return keys.map((key, i) => ({
-        index: i,
-        start: i * 32,
-        size: 32,
-        key,
-      }));
-    },
-  }),
+    getScrollElement?: () => HTMLElement | null;
+    initialOffset?: number | (() => number);
+  }) => {
+    const [hasMounted, setHasMounted] = useState(false);
+    // TanStack resolves the initial offset when it attaches to a scroll
+    // element. A follow-up render models the nested virtualizer update that
+    // can happen after the parent restores its pending scroll position.
+    useLayoutEffect(() => {
+      const scrollElement = getScrollElement?.();
+      if (!scrollElement) return;
+
+      const offset =
+        typeof initialOffset === "function"
+          ? initialOffset()
+          : (initialOffset ?? 0);
+      scrollElement.scrollTop = offset;
+      if (!hasMounted) setHasMounted(true);
+    });
+
+    return {
+      getTotalSize: () => count * 32,
+      getVirtualItems: () => {
+        const keys = Array.from({ length: count }, (_, i) =>
+          getItemKey ? getItemKey(i) : i,
+        );
+        virtualizerKeyHistory.push(keys);
+        return keys.map((key, i) => ({
+          index: i,
+          start: i * 32,
+          size: 32,
+          key,
+        }));
+      },
+    };
+  },
 }));
+
+afterEach(() => {
+  sortableMockState.transform = null;
+  sortableMockState.isDragging = false;
+});
 
 // Import after mocks are registered.
 import { useWorkspaceStore } from "../state/workspaceStore";
@@ -197,6 +253,7 @@ function setupStoreMocks({
   updateThreadTitle = vi.fn(),
   completeThread = vi.fn().mockResolvedValue(undefined),
   reopenThread = vi.fn().mockResolvedValue(undefined),
+  retryThreadCleanup = vi.fn().mockResolvedValue(undefined),
 }: {
   thread?: Thread | null;
   threads?: Thread[];
@@ -207,6 +264,7 @@ function setupStoreMocks({
   updateThreadTitle?: ReturnType<typeof vi.fn>;
   completeThread?: ReturnType<typeof vi.fn>;
   reopenThread?: ReturnType<typeof vi.fn>;
+  retryThreadCleanup?: ReturnType<typeof vi.fn>;
 } = {}) {
   const state = {
     workspaces,
@@ -223,6 +281,7 @@ function setupStoreMocks({
     deleteThread: vi.fn(),
     completeThread,
     reopenThread,
+    retryThreadCleanup,
     beginNewThread,
     updateThreadTitle,
     loadWorktrees: vi.fn(),
@@ -280,6 +339,31 @@ describe("ProjectTree thread interactions", () => {
     expect(beginNewThread).toHaveBeenCalledWith("ws-1");
     expect(useUiStore.getState().primarySurface).toBe("chat");
     expect(state.loadThreads).not.toHaveBeenCalled();
+  });
+
+  it("keeps long project names clear until the project row is engaged", () => {
+    const longName = "A project name long enough to reach the row controls";
+    setupStoreMocks({ workspaces: [{ ...WORKSPACE, name: longName }] });
+
+    render(<ProjectTree />);
+
+    const projectRow = screen.getByTestId("project-row-ws-1");
+    const projectName = within(projectRow).getByText(longName);
+    const className = projectName.getAttribute("class") ?? "";
+    const fade =
+      "linear-gradient(to_right,black_calc(100%_-_1.5rem),transparent)";
+    const classes = className.split(/\s+/);
+
+    expect((projectName as HTMLElement).style.maskImage).toBe("");
+    expect(projectName.getAttribute("style") ?? "").not.toMatch(/mask-image/i);
+    expect(classes).not.toContain(`[mask-image:${fade}]`);
+    expect(classes).not.toContain(`[-webkit-mask-image:${fade}]`);
+    expect(className).toContain(`group-hover/ws:[mask-image:${fade}]`);
+    expect(className).toContain(`group-focus-within/ws:[mask-image:${fade}]`);
+    expect(className).toContain(`group-hover/ws:[-webkit-mask-image:${fade}]`);
+    expect(className).toContain(
+      `group-focus-within/ws:[-webkit-mask-image:${fade}]`,
+    );
   });
 
   it("expands a project from its folder without opening a new composer", () => {
@@ -606,6 +690,71 @@ describe("ProjectTree thread interactions", () => {
     vi.useFakeTimers();
   });
 
+  it("shows retry cleanup and reopen controls for a blocked completed thread", async () => {
+    vi.useRealTimers();
+    const retryThreadCleanup = vi.fn().mockResolvedValue(undefined);
+    const reopenThread = vi.fn().mockResolvedValue(undefined);
+    setupStoreMocks({
+      thread: makeThread({
+        title: "Blocked work",
+        user_completed_at: "2026-08-12T08:00:00.000Z",
+        cleanup_state: "blocked",
+        cleanup_reason: "The worktree has uncommitted changes.",
+      }),
+      retryThreadCleanup,
+      reopenThread,
+    });
+
+    render(<ProjectTree />);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "View 1 completed thread for Test Project",
+      }),
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Retry cleanup for Blocked work" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Reopen Blocked work" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry cleanup for Blocked work" }));
+    await Promise.resolve();
+    expect(retryThreadCleanup).toHaveBeenCalledWith("thread-1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Reopen Blocked work" }));
+    await Promise.resolve();
+    expect(reopenThread).toHaveBeenCalledWith("thread-1");
+    vi.useFakeTimers();
+  });
+
+  it("shows a manual retry failure inline while the thread remains blocked", async () => {
+    vi.useRealTimers();
+    try {
+      const retryThreadCleanup = vi.fn().mockRejectedValue(new Error("still blocked"));
+      setupStoreMocks({
+        thread: makeThread({
+          title: "Blocked work",
+          user_completed_at: "2026-08-12T08:00:00.000Z",
+          cleanup_state: "blocked",
+          cleanup_reason: "The worktree has uncommitted changes.",
+        }),
+        retryThreadCleanup,
+      });
+
+      render(<ProjectTree />);
+      fireEvent.click(
+        screen.getByRole("button", {
+          name: "View 1 completed thread for Test Project",
+        }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Retry cleanup for Blocked work" }));
+
+      expect(await screen.findByText("Cleanup retry failed: Error: still blocked")).toBeInTheDocument();
+    } finally {
+      vi.useFakeTimers();
+    }
+  });
+
   it("keeps expanded threads mounted when a project drag starts", () => {
     localStorage.setItem(
       "mcode-expanded-projects",
@@ -627,6 +776,46 @@ describe("ProjectTree thread interactions", () => {
     fireEvent.keyDown(projectRow, { key: " " });
   });
 
+  it("applies only translation while a project is dragged", () => {
+    sortableMockState.transform = { x: 12, y: 34, scaleX: 1.5, scaleY: 0.5 };
+    sortableMockState.isDragging = true;
+
+    setupStoreMocks();
+    render(<ProjectTree />);
+
+    const shell = screen.getByTestId("project-row-ws-1").parentElement
+      ?.parentElement;
+    expect(shell).not.toBeNull();
+    expect(shell).toHaveStyle({ transform: "translate3d(12px, 34px, 0)" });
+  });
+
+  it("restores the project viewport across repeated disclosure cycles", () => {
+    localStorage.setItem(
+      "mcode-expanded-projects",
+      JSON.stringify({ "ws-1": false }),
+    );
+    setupStoreMocks();
+    render(<ProjectTree />);
+
+    const viewport = document.querySelector<HTMLElement>(
+      '[data-slot="scroll-area-viewport"]',
+    );
+    expect(viewport).not.toBeNull();
+    viewport!.scrollTop = 240;
+
+    const disclosure = () =>
+      screen.getByRole("button", { name: "Toggle threads for Test Project" });
+
+    fireEvent.click(disclosure());
+    expect(viewport).toHaveProperty("scrollTop", 240);
+
+    fireEvent.click(disclosure());
+    expect(viewport).toHaveProperty("scrollTop", 240);
+
+    fireEvent.click(disclosure());
+    expect(viewport).toHaveProperty("scrollTop", 240);
+  });
+
   it("reveals project actions when the project row is hovered or focused", () => {
     setupStoreMocks();
 
@@ -645,6 +834,76 @@ describe("ProjectTree thread interactions", () => {
       "opacity-0",
       "group-hover/ws:opacity-100",
       "group-focus-within/ws:opacity-100",
+    );
+  });
+
+  it("keeps the thread count trailing and swaps it for an overlaid action group", () => {
+    setupStoreMocks();
+
+    render(<ProjectTree />);
+
+    const projectRow = screen.getByTestId("project-row-ws-1");
+    const threadCount = within(projectRow).getByTestId(
+      "project-thread-count-ws-1",
+    );
+    const actions = within(projectRow).getByTestId("project-row-actions-ws-1");
+    const projectName = screen.getByRole("button", {
+      name: "Open project Test Project",
+    });
+
+    expect(threadCount).toHaveTextContent("1");
+    expect(threadCount).toHaveClass(
+      "ml-auto",
+      "h-4",
+      "items-center",
+      "text-xs",
+      "leading-4",
+      "group-hover/ws:opacity-0",
+      "group-focus-within/ws:opacity-0",
+    );
+    expect(projectName).toHaveClass(
+      "group-hover/ws:pr-24",
+      "group-focus-within/ws:pr-24",
+    );
+    expect(threadCount.nextElementSibling).toBe(actions);
+    expect(actions).toHaveClass(
+      "absolute",
+      "right-1.5",
+      "bg-transparent",
+      "pointer-events-none",
+      "group-hover/ws:pointer-events-auto",
+      "group-focus-within/ws:pointer-events-auto",
+    );
+    expect(actions).toContainElement(
+      screen.getByRole("button", { name: "Toggle threads for Test Project" }),
+    );
+    expect(actions).toContainElement(
+      screen.getByRole("button", { name: "Project options for Test Project" }),
+    );
+    expect(actions).toContainElement(
+      screen.getByRole("button", { name: "New thread in Test Project" }),
+    );
+  });
+
+  it("exposes the full project name from the focused project control", () => {
+    const projectName =
+      "A project name that stays available when the sidebar is narrow";
+    setupStoreMocks({
+      workspaces: [{ ...WORKSPACE, name: projectName }],
+    });
+
+    render(<ProjectTree />);
+
+    const projectButton = screen.getByRole("button", {
+      name: `Open project ${projectName}`,
+    });
+    act(() => {
+      projectButton.focus();
+      vi.runAllTimers();
+    });
+
+    expect(document.querySelector('[data-slot="tooltip-content"]')).toHaveTextContent(
+      projectName,
     );
   });
 
@@ -1072,6 +1331,34 @@ describe("ProjectTree action-required indicator", () => {
     // CI "failing" would normally paint bg-red-500; the ring must suppress it.
     expect(indicator.className).not.toContain("bg-red-500");
     expect(screen.queryByTestId("thread-pr-ci-thread-pending")).toBeNull();
+  });
+
+  it("hides project status metadata when row actions appear", () => {
+    currentChecks = {
+      "thread-pending": {
+        aggregate: "pending",
+        runs: [{ name: "ci", status: "in_progress", conclusion: null }],
+      },
+    };
+    installWorkspaceMock();
+    threadStoreOverrides.runningThreadIds = new Set(["thread-pending"]);
+
+    render(<ProjectTree />);
+
+    const projectRow = screen.getByTestId("project-row-ws-1");
+    const ciRollup = within(projectRow).getByLabelText(
+      "1 thread with checks running",
+    );
+    const activeAgent = projectRow.querySelector(".status-pulse");
+
+    expect(ciRollup).toHaveClass(
+      "group-hover/ws:opacity-0",
+      "group-focus-within/ws:opacity-0",
+    );
+    expect(activeAgent).toHaveClass(
+      "group-hover/ws:opacity-0",
+      "group-focus-within/ws:opacity-0",
+    );
   });
 
   it("does not dim row chrome when the thread row is a client scaffold", () => {

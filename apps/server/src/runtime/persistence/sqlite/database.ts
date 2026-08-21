@@ -3,7 +3,7 @@
  */
 
 import Database from "better-sqlite3";
-import { existsSync, mkdirSync, realpathSync } from "fs";
+import { existsSync, mkdirSync, realpathSync, readdirSync, readFileSync } from "fs";
 import { createRequire } from "module";
 import { dirname, isAbsolute, join, resolve } from "path";
 import { fileURLToPath } from "url";
@@ -144,6 +144,13 @@ export function resolveElectronNativeBinding(): string {
   return canonicalBinding;
 }
 
+function hasSubagentIdentityMigration(migrationsDir: string | undefined): boolean {
+  if (!migrationsDir || !existsSync(migrationsDir)) return false;
+  return readdirSync(migrationsDir)
+    .filter((name) => name.endsWith(".sql"))
+    .some((name) => readFileSync(join(migrationsDir, name), "utf8").includes("subagent_identity_key"));
+}
+
 /**
  * Adds columns that were retrofitted into migration 0000 after some databases
  * were already created. `bootstrapDrizzle` marks 0000 as done for any DB that
@@ -154,9 +161,10 @@ export function resolveElectronNativeBinding(): string {
  * already exists. Safe under concurrent startup: if two processes both pass the
  * PRAGMA check and race to ALTER TABLE, the second will receive a
  * "duplicate column name" error which is swallowed — any other error is
- * rethrown.
+ * rethrown. The optional migration directory lets a staged migration apply
+ * through Drizzle before the legacy fallback runs.
  */
-export function applySchemaPatches(db: Database.Database): void {
+export function applySchemaPatches(db: Database.Database, migrationsDir?: string): void {
   const cols = (
     db.prepare("PRAGMA table_info(workspaces)").all() as Array<{ name: string }>
   ).map((r) => r.name);
@@ -247,6 +255,15 @@ export function applySchemaPatches(db: Database.Database): void {
   if (toolCols.length > 0 && !toolCols.includes("provider_agent_key")) {
     addToolCallColumn("provider_agent_key TEXT");
   }
+  if (
+    toolCols.length > 0
+    && !toolCols.includes("subagent_identity_key")
+    && !hasSubagentIdentityMigration(migrationsDir)
+  ) {
+    // Use the legacy fallback only when the generated migration is unavailable;
+    // staged certification runs defer to Drizzle when that artifact is present.
+    addToolCallColumn("subagent_identity_key TEXT");
+  }
   if (toolCols.length > 0 && !toolCols.includes("model")) {
     addToolCallColumn("model TEXT");
   }
@@ -277,7 +294,7 @@ function runMigrations(db: Database.Database): void {
   reconcileMigrations(db, dir);
   const d = drizzle(db);
   migrate(d, { migrationsFolder: migrationsFolderForDrizzle(dir) });
-  applySchemaPatches(db);
+  applySchemaPatches(db, dir);
 }
 
 function readSchemaVersion(db: Database.Database): number {

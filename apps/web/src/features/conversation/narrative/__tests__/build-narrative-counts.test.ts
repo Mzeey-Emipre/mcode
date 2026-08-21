@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildNarrativeItems } from "../build-narrative";
+import { collapseSubagentCalls } from "../subagent-lifecycle";
 import type { ToolCall } from "@/transport/types";
 import type { ThoughtSegment } from "../types";
 
@@ -11,6 +12,7 @@ function mkTool(partial: Partial<ToolCall> & { id: string; toolName: string }): 
     isComplete: partial.isComplete ?? true,
     isError: partial.isError ?? false,
     output: partial.output,
+    ...(partial.isCancelled ? { isCancelled: true } : {}),
     parentToolCallId: partial.parentToolCallId ?? null,
     startedAt: partial.startedAt ?? 1000,
   } as ToolCall;
@@ -50,6 +52,117 @@ describe("buildNarrativeItems counts", () => {
     expect(counts.steps).toBe(3);
     expect(counts.subagents).toBe(1);
     expect(counts.thoughts).toBe(0);
+  });
+
+  it("renders one logical child when live and completion events use different call ids", () => {
+    const tools: ToolCall[] = [
+      mkTool({
+        id: "child-start",
+        toolName: "Agent",
+        toolInput: { codexCollabKind: "spawnAgent", agentPath: "/root/worker" },
+        isComplete: true,
+        output: "Interrupted",
+        isCancelled: true,
+        startedAt: 1000,
+      }),
+      mkTool({
+        id: "child-completion",
+        toolName: "Agent",
+        toolInput: { codexCollabKind: "spawnAgent", agentPath: "/root/worker" },
+        isComplete: false,
+        parentToolCallId: undefined,
+        startedAt: 1100,
+      }),
+    ];
+
+    const { items, counts } = buildNarrativeItems({
+      toolCalls: tools,
+      hooks: [],
+      thoughtSegments: [],
+      streamingText: "",
+      isAgentRunning: false,
+    });
+
+    expect(counts.subagents).toBe(1);
+    expect(items.filter((item) => item.type === "subagent")).toHaveLength(1);
+    const item = items.find((candidate) => candidate.type === "subagent");
+    expect(item).toMatchObject({ type: "subagent" });
+    if (item?.type === "subagent") {
+      expect(item.toolCall).toMatchObject({ isComplete: true, isCancelled: true });
+    }
+  });
+
+  it("keeps distinct receiver identities separate when provider paths match", () => {
+    const calls: ToolCall[] = [
+      mkTool({
+        id: "direct-child",
+        toolName: "Agent",
+        toolInput: {
+          codexCollabKind: "spawnAgent",
+          agentPath: "/root/worker",
+          receiverThreadIds: ["native-direct"],
+        },
+        startedAt: 1000,
+      }),
+      mkTool({
+        id: "nested-child",
+        toolName: "Agent",
+        toolInput: {
+          codexCollabKind: "spawnAgent",
+          agentPath: "/root/worker",
+          receiverThreadIds: ["native-nested"],
+        },
+        parentToolCallId: "direct-child",
+        startedAt: 1100,
+      }),
+    ];
+
+    const collapsed = collapseSubagentCalls(calls);
+
+    expect(collapsed.map((call) => [call.id, call.parentToolCallId])).toEqual([
+      ["direct-child", undefined],
+      ["nested-child", "direct-child"],
+    ]);
+  });
+
+  it("rebases lifecycle marker source ids when a duplicate Agent call is collapsed", () => {
+    const calls = [
+      mkTool({
+        id: "agent-canonical",
+        toolName: "Agent",
+        toolInput: { codexCollabKind: "spawnAgent", agentPath: "/root/worker" },
+        startedAt: 1000,
+      }),
+      mkTool({
+        id: "agent-alias",
+        toolName: "Agent",
+        toolInput: { codexCollabKind: "spawnAgent", agentPath: "/root/worker" },
+        parentToolCallId: "agent-canonical",
+        startedAt: 1100,
+      }),
+      mkTool({
+        id: "marker",
+        toolName: "__McodeSubagentLifecycle",
+        toolInput: { lifecycle: "updated", sourceAgentToolCallId: "agent-alias" },
+        parentToolCallId: "agent-canonical",
+        startedAt: 1200,
+      }),
+    ];
+    const collapsed = collapseSubagentCalls(calls);
+    expect(collapsed.find((call) => call.id === "marker")?.toolInput.sourceAgentToolCallId)
+      .toBe("agent-canonical");
+
+    const { items } = buildNarrativeItems({
+      toolCalls: calls,
+      hooks: [],
+      thoughtSegments: [],
+      streamingText: "",
+      isAgentRunning: false,
+    });
+
+    const row = items.find((item) => item.type === "subagent");
+    expect(row?.type === "subagent" ? row.participants.map((participant) => participant.id) : [])
+      .toEqual(["agent-canonical"]);
   });
 
   it("counts thought segments", () => {

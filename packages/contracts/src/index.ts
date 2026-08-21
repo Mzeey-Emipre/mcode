@@ -32,8 +32,37 @@ export {
 } from "./models/attachment.js";
 export type { AttachmentMeta, StoredAttachment } from "./models/attachment.js";
 
+export { TurnOutcomeSchema } from "./models/turn-outcome.js";
+export type { TurnOutcome } from "./models/turn-outcome.js";
+
 export { WorkspaceSchema, WorkspaceEnrichmentSchema } from "./models/workspace.js";
 export type { Workspace, WorkspaceEnrichment } from "./models/workspace.js";
+
+export {
+  WORKSPACE_ENVIRONMENT_VERSION,
+  WORKSPACE_ENVIRONMENT_SCRIPT_MAX_BYTES,
+  WORKSPACE_ENVIRONMENT_COMMAND_MAX_BYTES,
+  WORKSPACE_ENVIRONMENT_DOCUMENT_MAX_BYTES,
+  WorkspaceEnvironmentValidationReasonSchema,
+  WorkspaceEnvironmentValidationIssueSchema,
+  WorkspaceEnvironmentCommandSchema,
+  WorkspaceEnvironmentActionSchema,
+  WorkspaceEnvironmentDocumentSchema,
+  DEFAULT_WORKSPACE_ENVIRONMENT_DOCUMENT,
+  WorkspaceEnvironmentReadResultSchema,
+  WorkspaceEnvironmentSaveInputSchema,
+  WorkspaceEnvironmentErrorSchema,
+  workspaceEnvironmentValidationIssues,
+} from "./models/workspace-environment.js";
+export type {
+  WorkspaceEnvironmentValidationReason,
+  WorkspaceEnvironmentValidationIssue,
+  WorkspaceEnvironmentCommand,
+  WorkspaceEnvironmentAction,
+  WorkspaceEnvironmentDocument,
+  WorkspaceEnvironmentReadResult,
+  WorkspaceEnvironmentSaveInput,
+} from "./models/workspace-environment.js";
 
 export {
   TurnExecutionIdSchema,
@@ -310,14 +339,21 @@ export {
   ToolCallStatusSchema,
   PROVIDER_AGENT_KEY_MAX_LENGTH,
   SUBAGENT_DISPLAY_NAME_MAX_LENGTH,
+  SUBAGENT_IDENTITY_KEY_MAX_LENGTH,
   SUBAGENT_METADATA_MAX_LENGTH,
+  SubagentPresentationSchema,
+  createSubagentPresentation,
+  formatSubagentDisplayName,
+  mergeSubagentPresentation,
   resolveProviderAgentKey,
+  resolveSubagentExactIdentity,
   resolveSubagentDisplayName,
   resolveSubagentMetadata,
 } from "./models/tool-call-record.js";
 export type {
   ToolCallRecord,
   ToolCallStatus,
+  SubagentPresentation,
 } from "./models/tool-call-record.js";
 
 export { ThoughtSegmentRecordSchema } from "./models/thought-segment.js";
@@ -363,6 +399,7 @@ export {
   UpdateCheckIntervalSchema,
   UpdateReleaseLineSchema,
   CompletedThreadRetentionDaysSchema,
+  UnsafeWorktreePolicySchema,
   GRACE_PERIOD_DEFAULT_SECONDS,
   SERVER_HEAP_DEFAULT_MB,
   SERVER_HEAP_MIN_MB,
@@ -381,6 +418,7 @@ export type {
   UpdateCheckInterval,
   UpdateReleaseLine,
   CompletedThreadRetentionDays,
+  UnsafeWorktreePolicy,
 } from "./models/settings.js";
 
 export {
@@ -1087,6 +1125,7 @@ export {
   TERMINAL_MIN_SCROLLBACK_LINES,
   TERMINAL_MAX_SCROLLBACK_LINES,
   TERMINAL_DEFAULT_SCROLLBACK_LINES,
+  TERMINAL_DEFAULT_FONT_FAMILY,
   TerminalPresentationSettingsSchema,
   TerminalBehaviorSettingsSchema,
   TerminalAccessibilitySettingsSchema,

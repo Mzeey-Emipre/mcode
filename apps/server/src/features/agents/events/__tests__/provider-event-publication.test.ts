@@ -45,6 +45,7 @@ describe("provider event publication ownership", () => {
       {
         type: AgentEventType.Ended,
         threadId: "parent-thread",
+        turnExecutionId: "00000000-0000-4000-8000-000000000001",
         codexChild: childEvidence,
       },
     ];
@@ -109,6 +110,29 @@ describe("provider event publication ownership", () => {
     expect(deps.publishThreadStatus).toHaveBeenCalledWith({
       threadId: "parent-thread",
       status: "errored",
+    });
+  });
+
+  it.each([
+    [undefined, "interrupted"],
+    ["interrupted", "interrupted"],
+    ["cancelled", "interrupted"],
+    ["completed", "completed"],
+    ["errored", "errored"],
+  ] as const)("publishes Ended outcome %s as thread status %s", (outcome, status) => {
+    const deps = buildPublicationDeps();
+    const event: AgentEvent = {
+      type: AgentEventType.Ended,
+      threadId: "parent-thread",
+      turnExecutionId: "00000000-0000-4000-8000-000000000001",
+      ...(outcome ? { outcome } : {}),
+    };
+
+    expect(publishParentProviderEvent(event, event, deps)).toBe(true);
+    expect(deps.updateThreadStatus).toHaveBeenCalledWith("parent-thread", status);
+    expect(deps.publishThreadStatus).toHaveBeenCalledWith({
+      threadId: "parent-thread",
+      status,
     });
   });
 });

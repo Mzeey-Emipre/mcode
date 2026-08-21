@@ -23,6 +23,7 @@ import {
   GitWatcherService,
   WorkspaceEnricher,
   WorkspaceService,
+  WorkspaceEnvironmentService,
 } from "../../features/projects";
 import {
   HandoffCheckoutService,
@@ -105,6 +106,7 @@ import type Database from "better-sqlite3";
 import type { JobObject } from "../../runtime/process/containment/job-object.js";
 import { resolveWebAutomationFlag } from "../../runtime/startup/startup-policy.js";
 import { listenWithPortRetry } from "../../runtime/http/http-listener.js";
+import { createReliabilityHarnessAdapter } from "../../runtime/reliability-harness/control.js";
 
 /** Start the server runtime and install its shutdown handlers. */
 export async function startServer(): Promise<void> {
@@ -266,6 +268,7 @@ browserAutomationCredentials.onRemoved((revocation) => {
 
 // Resolve services
 const workspaceService = container.resolve(WorkspaceService);
+const workspaceEnvironmentService = container.resolve(WorkspaceEnvironmentService);
 const threadService = container.resolve(ThreadService);
 const agentService = container.resolve(AgentService);
 const agentPermissionService = container.resolve(AgentPermissionService);
@@ -367,6 +370,7 @@ const recapService = container.resolve(RecapService);
 const handoffStorage = container.resolve(HandoffStorage);
 const handoffCheckoutService = container.resolve(HandoffCheckoutService);
 const db = container.resolve<Database.Database>("Database");
+const reliabilityHarness = createReliabilityHarnessAdapter(db);
 const jobObject = container.resolve<JobObject>("JobObject");
 
 const portPush = new PortPush();
@@ -592,6 +596,7 @@ codexCatalogService.onSkillsChanged((cwd) => {
 // Create and start HTTP + WS server
 const { httpServer, wss } = createWsServer({
   workspaceService,
+  workspaceEnvironmentService,
   threadService,
   agentService,
   agentPermissionService,
@@ -644,6 +649,7 @@ const { httpServer, wss } = createWsServer({
   threadCompletionService,
   browserAutomationBroker,
   browserAutomationMcpHandler,
+  reliabilityHarness,
   authToken: AUTH_TOKEN,
   singleInstance: SINGLE_INSTANCE,
   instanceToken: INSTANCE_TOKEN,

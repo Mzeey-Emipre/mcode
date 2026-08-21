@@ -33,6 +33,7 @@ import {
   SquarePen,
   Circle,
   Check,
+  RefreshCw,
 } from "lucide-react";
 import {
   Tooltip,
@@ -244,6 +245,7 @@ export function ProjectTree() {
   const deleteThread = useWorkspaceStore((s) => s.deleteThread);
   const completeThread = useWorkspaceStore((s) => s.completeThread);
   const reopenThread = useWorkspaceStore((s) => s.reopenThread);
+  const retryThreadCleanup = useWorkspaceStore((s) => s.retryThreadCleanup);
   const beginNewThread = useWorkspaceStore((s) => s.beginNewThread);
   const setPrimarySurface = useUiStore((s) => s.setPrimarySurface);
   const updateThreadTitle = useWorkspaceStore((s) => s.updateThreadTitle);
@@ -333,6 +335,9 @@ export function ProjectTree() {
     setThreadListExpanded(threadListExpanded);
   }, [threadListExpanded]);
 
+  const scrollViewportRef = useRef<HTMLDivElement>(null);
+  const pendingScrollTopRef = useRef<number | null>(null);
+
   const checksById = useWorkspaceStore(useShallow((s) => s.checksById));
 
   const toggleThreadList = useCallback((wsId: string) => {
@@ -391,6 +396,7 @@ export function ProjectTree() {
 
   const toggleExpand = useCallback(
     (wsId: string) => {
+      pendingScrollTopRef.current = scrollViewportRef.current?.scrollTop ?? null;
       setExpanded((prev) => {
         const isExpanding = !prev[wsId];
         const next = { ...prev, [wsId]: isExpanding };
@@ -558,7 +564,15 @@ export function ProjectTree() {
     setActiveDragId(null);
   }, []);
 
-  const scrollViewportRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const previousScrollTop = pendingScrollTopRef.current;
+    if (previousScrollTop === null) return;
+
+    pendingScrollTopRef.current = null;
+    if (scrollViewportRef.current) {
+      scrollViewportRef.current.scrollTop = previousScrollTop;
+    }
+  }, [expanded]);
 
   /**
    * Only the project list viewport may autoscroll during drag so outer sidebar
@@ -641,6 +655,7 @@ export function ProjectTree() {
                     onToggleLifecycleView={toggleLifecycleView}
                     onCompleteThread={completeThread}
                     onReopenThread={reopenThread}
+                    onRetryThreadCleanup={retryThreadCleanup}
                     pendingPermissionThreadIds={pendingPermissionThreadIds}
                     isThreadListExpanded={threadListExpanded[ws.id] ?? false}
                     checksById={checksById}
@@ -928,6 +943,7 @@ interface VirtualizedThreadListProps {
   onThreadContextMenu: (e: React.MouseEvent, thread: Thread) => void;
   onCompleteThread: (threadId: string) => Promise<void>;
   onReopenThread: (threadId: string) => Promise<void>;
+  onRetryThreadCleanup: (threadId: string) => Promise<void>;
 }
 
 interface ThreadRowProps {
@@ -954,6 +970,7 @@ interface ThreadRowProps {
   onThreadContextMenu: (e: React.MouseEvent, thread: Thread) => void;
   onCompleteThread: (threadId: string) => Promise<void>;
   onReopenThread: (threadId: string) => Promise<void>;
+  onRetryThreadCleanup: (threadId: string) => Promise<void>;
 }
 
 /** Renders one sidebar thread row and subscribes only to its own active and running state. */
@@ -977,6 +994,7 @@ const ThreadRow = memo(function ThreadRow({
   onThreadContextMenu,
   onCompleteThread,
   onReopenThread,
+  onRetryThreadCleanup,
 }: ThreadRowProps) {
   const isActive = useWorkspaceStore((s) => s.activeThreadId === thread.id);
   const isRunning = useThreadStore((s) => s.runningThreadIds.has(thread.id));
@@ -1019,7 +1037,10 @@ const ThreadRow = memo(function ThreadRow({
   const providerMeta = getProviderMeta(thread.provider);
   const RowProviderIcon = providerMeta.icon;
   const [isLifecyclePending, setIsLifecyclePending] = useState(false);
+  const [isCleanupRetryPending, setIsCleanupRetryPending] = useState(false);
+  const [cleanupRetryError, setCleanupRetryError] = useState<string | null>(null);
   const isUserCompleted = thread.user_completed_at !== null;
+  const cleanupBlocked = isUserCompleted && thread.cleanup_state === "blocked";
   const showEndMarker =
     marker.kind !== "time" &&
     (!showPrCi || marker.kind !== "ci");
@@ -1050,6 +1071,29 @@ const ThreadRow = memo(function ThreadRow({
       thread.id,
     ],
   );
+  const handleCleanupRetry = useCallback(
+    async (event: React.MouseEvent) => {
+      event.stopPropagation();
+      if (!cleanupBlocked || isCleanupRetryPending) return;
+      setCleanupRetryError(null);
+      setIsCleanupRetryPending(true);
+      try {
+        await onRetryThreadCleanup(thread.id);
+      } catch (cause: unknown) {
+        setCleanupRetryError(String(cause));
+      } finally {
+        setIsCleanupRetryPending(false);
+      }
+    },
+    [cleanupBlocked, isCleanupRetryPending, onRetryThreadCleanup, thread.id],
+  );
+  const cleanupStatusLabel = cleanupRetryError
+    ? `Cleanup retry failed: ${cleanupRetryError}`
+    : thread.cleanup_state === "queued"
+      ? "Cleanup queued"
+      : thread.cleanup_state === "retrying"
+        ? "Retrying cleanup"
+        : null;
   const row = (
     <div
       role="button"
@@ -1230,7 +1274,43 @@ const ThreadRow = memo(function ThreadRow({
             </TooltipContent>
           </Tooltip>
         )}
+        {!isEditing && cleanupStatusLabel ? (
+          <span
+            role="status"
+            className="shrink-0 truncate text-xs text-muted-foreground"
+          >
+            {cleanupStatusLabel}
+          </span>
+        ) : null}
       </div>
+      {!isEditing && cleanupBlocked ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                aria-label={`Retry cleanup for ${thread.title}`}
+                disabled={isCleanupRetryPending}
+                onPointerDown={(event) => event.stopPropagation()}
+                onKeyDown={(event) => event.stopPropagation()}
+                onClick={handleCleanupRetry}
+                className="size-6 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:bg-transparent hover:text-foreground group-hover/row:opacity-100 group-focus-visible/row:opacity-100 focus-visible:opacity-100"
+              >
+                {isCleanupRetryPending ? (
+                  <Spinner size={12} />
+                ) : (
+                  <RefreshCw size={13} aria-hidden />
+                )}
+              </Button>
+            }
+          />
+          <TooltipContent side="right" className="text-xs">
+            Retry cleanup
+          </TooltipContent>
+        </Tooltip>
+      ) : null}
       {!isEditing && prable && thread.pr_number != null ? (
         <ThreadPrIndicator
           threadId={thread.id}
@@ -1316,7 +1396,7 @@ const WorkspaceCiRollupChip = memo(function WorkspaceCiRollupChip({
       title={label}
       aria-label={label}
       className={cn(
-        "shrink-0 inline-flex items-center gap-0.5 px-1 h-4 rounded-[3px] border",
+        "shrink-0 inline-flex items-center gap-0.5 px-1 h-4 rounded-[3px] border transition-opacity duration-150 group-hover/ws:opacity-0 group-focus-within/ws:opacity-0 motion-reduce:transition-none",
         "text-[10px] font-medium tabular-nums leading-none",
         chromeClass,
       )}
@@ -1388,6 +1468,14 @@ function SidebarThreadPreview({
             {thread.cleanup_state === "blocked" ? (
               <div className="text-xs text-destructive" role="status">
                 Cleanup blocked: {thread.cleanup_reason ?? "User action is required."}
+              </div>
+            ) : thread.cleanup_state === "queued" ? (
+              <div className="text-xs text-muted-foreground" role="status">
+                Cleanup queued
+              </div>
+            ) : thread.cleanup_state === "retrying" ? (
+              <div className="text-xs text-muted-foreground" role="status">
+                Retrying cleanup
               </div>
             ) : (
               <div className="text-xs text-muted-foreground">
@@ -1505,6 +1593,7 @@ function VirtualizedThreadList({
   onThreadContextMenu,
   onCompleteThread,
   onReopenThread,
+  onRetryThreadCleanup,
 }: VirtualizedThreadListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [scrollMargin, setScrollMargin] = useState(0);
@@ -1584,6 +1673,7 @@ function VirtualizedThreadList({
     count: treeItems.length,
     getItemKey: (index) => treeItems[index].thread.id,
     getScrollElement: () => scrollElementRef.current,
+    initialOffset: () => scrollElementRef.current?.scrollTop ?? 0,
     estimateSize: () => 32,
     overscan: 5,
     scrollMargin,
@@ -1636,6 +1726,7 @@ function VirtualizedThreadList({
               onThreadContextMenu={onThreadContextMenu}
               onCompleteThread={onCompleteThread}
               onReopenThread={onReopenThread}
+              onRetryThreadCleanup={onRetryThreadCleanup}
             />
           </div>
         );
@@ -1685,6 +1776,7 @@ interface ProjectNodeProps {
   onToggleLifecycleView: (workspaceId: string) => void;
   onCompleteThread: (threadId: string) => Promise<void>;
   onReopenThread: (threadId: string) => Promise<void>;
+  onRetryThreadCleanup: (threadId: string) => Promise<void>;
 }
 
 /** Renders a collapsible workspace row with its virtualized thread list. */
@@ -1715,6 +1807,7 @@ const ProjectNode = memo(function ProjectNode({
   onToggleLifecycleView,
   onCompleteThread,
   onReopenThread,
+  onRetryThreadCleanup,
 }: ProjectNodeProps) {
   const hasRunning = useThreadStore((s) =>
     threads.some((thread) => s.runningThreadIds.has(thread.id)),
@@ -1896,19 +1989,30 @@ const ProjectNode = memo(function ProjectNode({
             {lifecycleLabel}
           </TooltipContent>
         </Tooltip>
-        <Button
-          type="button"
-          variant="ghost"
-          size="xs"
-          aria-label={`Open project ${workspace.name}`}
-          onKeyDown={(event) => event.stopPropagation()}
-          onClick={handleOpenProject}
-          className="h-auto min-w-0 justify-start rounded-sm p-0 text-left hover:bg-transparent dark:hover:bg-transparent"
-        >
-          <span className="truncate font-medium tracking-tight">
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                aria-label={`Open project ${workspace.name}`}
+                onKeyDown={(event) => event.stopPropagation()}
+                onClick={handleOpenProject}
+                className="h-auto min-w-0 flex-1 shrink justify-start rounded-sm p-0 text-left hover:bg-transparent group-hover/ws:pr-24 group-focus-within/ws:pr-24 dark:hover:bg-transparent"
+              >
+                <span
+                  className="min-w-0 flex-1 overflow-hidden whitespace-nowrap font-medium tracking-tight group-hover/ws:[mask-image:linear-gradient(to_right,black_calc(100%_-_1.5rem),transparent)] group-focus-within/ws:[mask-image:linear-gradient(to_right,black_calc(100%_-_1.5rem),transparent)] group-hover/ws:[-webkit-mask-image:linear-gradient(to_right,black_calc(100%_-_1.5rem),transparent)] group-focus-within/ws:[-webkit-mask-image:linear-gradient(to_right,black_calc(100%_-_1.5rem),transparent)]"
+                >
+                  {workspace.name}
+                </span>
+              </Button>
+            }
+          />
+          <TooltipContent side="right" className="text-xs">
             {workspace.name}
-          </span>
-        </Button>
+          </TooltipContent>
+        </Tooltip>
 
         {!workspace.is_git_repo && (
           <Tooltip>
@@ -1928,30 +2032,6 @@ const ProjectNode = memo(function ProjectNode({
           </Tooltip>
         )}
 
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          aria-label={`Toggle threads for ${workspace.name}`}
-          aria-expanded={isExpanded}
-          onKeyDown={(event) => event.stopPropagation()}
-          onClick={(event) => {
-            event.stopPropagation();
-            handleToggle();
-          }}
-          className="size-6 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:bg-transparent hover:text-muted-foreground dark:hover:bg-transparent group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 focus:opacity-100"
-        >
-          <ChevronRight
-            size={14}
-            className={cn(
-              "transition-transform duration-150 motion-reduce:transition-none",
-              isExpanded && "rotate-90",
-            )}
-          />
-        </Button>
-
-        <span className="flex-1" />
-
         <WorkspaceCiRollupChip threads={visibleThreads} checksById={checksById} />
 
         {hasRunning && (
@@ -1960,7 +2040,7 @@ const ProjectNode = memo(function ProjectNode({
               render={
                 <span
                   aria-hidden="true"
-                  className="shrink-0 h-1.5 w-1.5 rounded-full bg-primary status-pulse"
+                  className="shrink-0 h-1.5 w-1.5 rounded-full bg-primary status-pulse transition-opacity duration-150 group-hover/ws:opacity-0 group-focus-within/ws:opacity-0 motion-reduce:transition-none"
                 />
               }
             />
@@ -1971,55 +2051,85 @@ const ProjectNode = memo(function ProjectNode({
         )}
 
         {visibleThreads.length > 0 && (
-          <span className="shrink-0 font-mono text-[9.5px] leading-none tabular-nums text-muted-foreground/40">
+          <span
+            data-testid={`project-thread-count-${workspace.id}`}
+            className="ml-auto flex h-4 min-w-3 shrink-0 items-center justify-end font-mono text-xs leading-4 tabular-nums text-muted-foreground/45 transition-opacity duration-150 group-hover/ws:opacity-0 group-focus-within/ws:opacity-0 motion-reduce:transition-none"
+          >
             {visibleThreads.length}
           </span>
         )}
 
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            aria-label={`Project options for ${workspace.name}`}
-            onClick={(event) => event.stopPropagation()}
-            className="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground opacity-0 outline-none transition-colors hover:bg-background/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/70 group-hover/ws:opacity-100 group-focus-within/ws:opacity-100"
-          >
-            <MoreHorizontal size={13} />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" sideOffset={4} className="min-w-40">
-            <DropdownMenuItem
-              onClick={handleOpenInExplorer}
-              className="flex cursor-pointer items-center gap-2"
-            >
-              <FolderOpen size={13} />
-              Open in Explorer
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={handleRename}
-              className="flex cursor-pointer items-center gap-2"
-            >
-              <Pencil size={13} />
-              Rename project
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              onClick={handleDelete}
-              className="flex cursor-pointer items-center gap-2 text-destructive focus:text-destructive"
-            >
-              <Trash2 size={13} />
-              Delete project
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          aria-label={`New thread in ${workspace.name}`}
-          title={`New thread in ${workspace.name}`}
-          onKeyDown={(event) => event.stopPropagation()}
-          onClick={handleCreateThreadClick}
-          className="opacity-0 text-muted-foreground hover:bg-background/60 hover:text-foreground group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 focus:opacity-100"
+        <div
+          data-testid={`project-row-actions-${workspace.id}`}
+          className="pointer-events-none absolute inset-y-0 right-1.5 z-10 flex items-center justify-end gap-1 bg-transparent px-0.5 opacity-0 transition-opacity duration-150 group-hover/ws:pointer-events-auto group-hover/ws:opacity-100 group-focus-within/ws:pointer-events-auto group-focus-within/ws:opacity-100 motion-reduce:transition-none"
         >
-          <SquarePen className="size-[1.4rem]" />
-        </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            aria-label={`Toggle threads for ${workspace.name}`}
+            aria-expanded={isExpanded}
+            onKeyDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              handleToggle();
+            }}
+            className="size-6 shrink-0 text-muted-foreground opacity-0 transition-opacity hover:bg-transparent hover:text-muted-foreground dark:hover:bg-transparent group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 focus:opacity-100"
+          >
+            <ChevronRight
+              size={14}
+              className={cn(
+                "transition-transform duration-150 motion-reduce:transition-none",
+                isExpanded && "rotate-90",
+              )}
+            />
+          </Button>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              aria-label={`Project options for ${workspace.name}`}
+              onClick={(event) => event.stopPropagation()}
+              className="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 outline-none transition-colors hover:bg-background/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/70 group-hover/ws:opacity-100 group-focus-within/ws:opacity-100"
+            >
+              <MoreHorizontal size={13} />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" sideOffset={4} className="min-w-40">
+              <DropdownMenuItem
+                onClick={handleOpenInExplorer}
+                className="flex cursor-pointer items-center gap-2"
+              >
+                <FolderOpen size={13} />
+                Open in Explorer
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={handleRename}
+                className="flex cursor-pointer items-center gap-2"
+              >
+                <Pencil size={13} />
+                Rename project
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onClick={handleDelete}
+                className="flex cursor-pointer items-center gap-2 text-destructive focus:text-destructive"
+              >
+                <Trash2 size={13} />
+                Delete project
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label={`New thread in ${workspace.name}`}
+            title={`New thread in ${workspace.name}`}
+            onKeyDown={(event) => event.stopPropagation()}
+            onClick={handleCreateThreadClick}
+            className="opacity-0 text-muted-foreground hover:bg-background/60 hover:text-foreground group-hover/ws:opacity-100 group-focus-within/ws:opacity-100 focus:opacity-100"
+          >
+            <SquarePen className="size-[1.4rem]" />
+          </Button>
+        </div>
       </div>
 
       {/* Threads (when expanded) — indented, no guide rail. */}
@@ -2041,6 +2151,7 @@ const ProjectNode = memo(function ProjectNode({
             onThreadContextMenu={handleThreadContextMenu}
             onCompleteThread={onCompleteThread}
             onReopenThread={onReopenThread}
+            onRetryThreadCleanup={onRetryThreadCleanup}
           />
 
           {needsCap && !forceExpand && (
@@ -2087,7 +2198,7 @@ const SortableProjectShell = memo(function SortableProjectShell(
     id: sortableId,
   });
   const style: CSSProperties = {
-    transform: CSS.Transform.toString(transform),
+    transform: transform ? CSS.Translate.toString(transform) : undefined,
     transition,
     ...(isDragging ? { opacity: 0.92, zIndex: 2 } : {}),
   };

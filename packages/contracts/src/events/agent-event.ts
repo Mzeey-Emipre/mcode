@@ -3,8 +3,8 @@ import { lazySchema } from "../utils/lazySchema.js";
 import { ProviderBillingModeSchema, QuotaCategorySchema } from "../providers/usage.js";
 import { StoredAttachmentSchema } from "../models/attachment.js";
 import { GoalStateSchema } from "../models/goal.js";
-
-const TurnOutcomeSchema = z.enum(["completed", "errored", "cancelled"]);
+import { SubagentPresentationSchema } from "../models/tool-call-record.js";
+import { TurnOutcomeSchema } from "../models/turn-outcome.js";
 
 const CodexChildEvidenceSchema = z
   .object({
@@ -114,6 +114,7 @@ const AgentEventPayloadSchema = z.discriminatedUnion("type", [
       toolInput: z.record(z.unknown()),
       parentToolCallId: z.string().optional(),
       codexChild: CodexChildEvidenceSchema.optional(),
+      subagentPresentation: SubagentPresentationSchema().optional(),
     }),
     z.object({
       type: z.literal(AgentEventType.ToolResult),
@@ -131,6 +132,8 @@ const AgentEventPayloadSchema = z.discriminatedUnion("type", [
       outputArtifactPath: z.string().optional(),
       /** Optional late-arriving metadata merged into the matching tool call input. */
       toolInput: z.record(z.unknown()).optional(),
+      /** Provider-neutral Agent presentation when this result enriches a sub-agent row. */
+      subagentPresentation: SubagentPresentationSchema().optional(),
       codexChild: CodexChildEvidenceSchema.optional(),
     }),
     z.object({
@@ -159,6 +162,8 @@ const AgentEventPayloadSchema = z.discriminatedUnion("type", [
     z.object({
       type: z.literal(AgentEventType.Ended),
       threadId: z.string(),
+      /** Ended is turn-scoped and must identify the execution it terminates. */
+      turnExecutionId: z.string().uuid(),
       outcome: TurnOutcomeSchema.optional(),
       reason: z.string().optional(),
       codexChild: CodexChildEvidenceSchema.optional(),

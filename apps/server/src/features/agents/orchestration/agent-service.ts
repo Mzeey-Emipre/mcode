@@ -13,6 +13,7 @@ import { logger, validateBranchName } from "@mcode/shared";
 import {
   AgentEventType,
   CanonicalSubagentRosterSchema,
+  createSubagentPresentation,
   isChildTurnCancellable,
   isGoalCapable,
   isGoalOpen,
@@ -95,7 +96,11 @@ import { TurnErrorPolicy } from "../turns/turn-error-policy.js";
 import { TurnRuntimeRegistry } from "../turns/turn-runtime.js";
 import type { TurnOutcome } from "../turns/turn-outcome.js";
 import { BrowserNarrativeEventSanitizer } from "../../browser-automation/index.js";
-import { CanonicalAgentEventSink } from "../canonical/canonical-agent-event-sink.js";
+import {
+  CanonicalAgentEventSink,
+  type CanonicalChildStopTarget,
+} from "../canonical/canonical-agent-event-sink.js";
+import { isExplicitMcodeThreadRequest } from "@mcode/thread-orchestration";
 
 /**
  * Escape special XML characters in a string to prevent injection into
@@ -356,6 +361,8 @@ export class AgentService {
       sourceTurnId: string;
       resolvedProvider: import("@mcode/contracts").IAgentProvider;
       effectiveProvider: ProviderId;
+      /** Immutable authorization decision from the original user request. */
+      threadControlEligible: boolean;
       turnRequest: TurnRequest;
       /** Shared mutation token required for every provider dispatch and release. */
       mutationReservationToken: string;
@@ -606,6 +613,8 @@ export class AgentService {
     // Use the thread's stored provider as authoritative fallback; only override
     // when the caller explicitly supplies a provider (new thread or explicit switch).
     const effectiveProvider: ProviderId = provider ?? (thread.provider as ProviderId) ?? "claude";
+    const threadControlEligible = usesInternalThreadControlMcp(effectiveProvider)
+      && isExplicitMcodeThreadRequest(content);
     // Fall back to the thread's persisted Copilot agent when the caller doesn't supply one.
     // Converts null (DB "cleared") to undefined (provider ignores it) so the SDK defaults.
     const effectiveCopilotAgent = copilotAgent ?? (thread.copilot_agent ?? undefined);
@@ -1080,17 +1089,21 @@ export class AgentService {
       reasoningLevel,
       ...(effectiveBudget > 0 && { maxBudgetUsd: effectiveBudget }),
       ...(effectiveTurns > 0 && { maxTurns: effectiveTurns }),
+      threadControlEligible,
       resumeFrom: attemptResumeFrom,
       providerOptions,
     } as TurnRequest;
-    if (usesInternalThreadControlMcp(effectiveProvider)) {
+    if (usesInternalThreadControlMcp(effectiveProvider) && threadControlEligible) {
       this.threadControlMcp?.activate({
         sessionId: sessionName,
         sourceThreadId: threadId,
         sourceTurnId,
         sourceProviderId: effectiveProvider,
         permissionMode: permissionMode === "full" ? "full" : "supervised",
+        eligible: true,
       });
+    } else if (usesInternalThreadControlMcp(effectiveProvider)) {
+      this.threadControlMcp?.revoke(sessionName);
     }
     if (!this.mutationReservations.owns(threadId, reservationToken, "activeTurn")) {
       return;
@@ -1104,6 +1117,7 @@ export class AgentService {
       sourceTurnId,
       resolvedProvider,
       effectiveProvider,
+      threadControlEligible,
       turnRequest: baseTurnRequest,
       pendingRollback,
       mutationReservationToken: reservationToken,
@@ -1886,13 +1900,53 @@ export class AgentService {
     const finished = this.canonicalSink.finishCodexChildTurn({
       childThreadId: request.childThreadId,
       nativeTurnId: target.nativeTurnId,
-      outcome: "cancelled",
+      outcome: "interrupted",
       error: "Interrupted by user",
     });
     return {
       childThreadId: request.childThreadId,
       status: finished.status === "Interrupted" ? "interrupted" : "already-terminal",
     };
+  }
+
+  /** Interrupt and terminalize every active descendant before the parent turn settles. */
+  private stopCanonicalDescendants(owningParentThreadId: string): Promise<void> | undefined {
+    const targets = this.canonicalSink.loadCanonicalChildStopTargets(owningParentThreadId)
+      .filter((target) => target.latestTurn?.status === "Running");
+    if (targets.length === 0) return undefined;
+    return Promise.allSettled(targets.map((target) => (
+      target.nativeThreadId !== null && target.nativeTurnId !== null
+        ? this.stopCanonicalChild({
+            owningParentThreadId,
+            childThreadId: target.childThread.id,
+          })
+        : Promise.resolve({
+            childThreadId: target.childThread.id,
+            status: "unsupported" as const,
+            message: "The active child turn does not have an exact provider identity.",
+          })
+    ))).then((results) => {
+      results.forEach((result) => {
+        if (result.status === "rejected") {
+          logger.warn("Canonical descendant interruption failed", {
+            owningParentThreadId,
+            error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+          });
+        }
+      });
+      this.reconcileCanonicalDescendants(targets);
+    });
+  }
+
+  /** Persist cancellation for every still-running descendant by canonical thread identity. */
+  private reconcileCanonicalDescendants(targets: readonly CanonicalChildStopTarget[]): void {
+    for (const target of targets) {
+      this.canonicalSink.finishCanonicalChildTurn({
+        childThreadId: target.childThread.id,
+        outcome: "interrupted",
+        error: "Interrupted by parent stop",
+      });
+    }
   }
 
   /** Stop exact active turn, preserving provider failure as retryable RPC error. */
@@ -1935,6 +1989,8 @@ export class AgentService {
       };
     }
 
+    const descendantStop = this.stopCanonicalDescendants(threadId);
+    if (descendantStop) await descendantStop;
     if (dispatchState !== "not-dispatched") {
       try {
         const provider = this.providerRegistry.resolve(providerId);
@@ -1992,6 +2048,7 @@ export class AgentService {
     const finalize = this.finalizeTerminalTurn(threadId, "cancelled", "user stop");
     this.disarmTurnRetryWindow(threadId);
     await (finalize ?? Promise.resolve());
+    this.clearTurnEndedState(threadId);
     this.threadRepo.updateStatus(threadId, "paused");
     broadcast("thread.status", { threadId, status: "paused" });
     if (this.activeSessionIds.has(threadId)) {
@@ -2377,9 +2434,28 @@ export class AgentService {
       return this.preparedProviderEvents.get(event as object);
     }
     const normalizedEvent = this.turnRuntime.normalizeEvent(event);
-    const normalized = normalizedEvent
+    const sanitized = normalizedEvent
       ? this.browserNarrativeEventSanitizer.sanitize(normalizedEvent)
       : undefined;
+    let normalized = sanitized;
+    if (sanitized?.type === AgentEventType.ToolUse && sanitized.toolName === "Agent") {
+      normalized = {
+        ...sanitized,
+        subagentPresentation: createSubagentPresentation(sanitized.toolInput, sanitized.toolCallId),
+      };
+    } else if (sanitized?.type === AgentEventType.ToolResult && sanitized.toolInput) {
+      const bufferedAgent = this.narrativeStore.getBufferedToolCalls(sanitized.threadId)
+        .find((toolCall) => toolCall.toolCallId === sanitized.toolCallId && toolCall.toolName === "Agent");
+      if (bufferedAgent) {
+        normalized = {
+          ...sanitized,
+          subagentPresentation: createSubagentPresentation({
+            ...(bufferedAgent._rawToolInput ?? {}),
+            ...sanitized.toolInput,
+          }, sanitized.toolCallId),
+        };
+      }
+    }
     this.preparedProviderEvents.set(event as object, normalized);
     return normalized;
   }
@@ -2418,6 +2494,17 @@ export class AgentService {
     }
     const reservationToken = this.turnRetryDispatchByThread.get(threadId)?.mutationReservationToken;
     this.releaseMutationReservation(threadId, reservationToken);
+  }
+
+  /** Clear resources that belong to a turn after terminal handling owns the outcome. */
+  private clearTurnEndedState(threadId: string): void {
+    this.threadControlMcp?.revoke(`mcode-${threadId}`);
+    this.scopedPreGrant.clear(threadId);
+    this.planParsers.delete(threadId);
+    this.planOutputParsers.delete(threadId);
+    this.pendingPlanOutputs.delete(threadId);
+    this.pendingExitPlanMarkdown.delete(threadId);
+    this.planCapturedThisTurn.delete(threadId);
   }
 
   /** Release the shared mutation token without forcing provider-session teardown. */
@@ -2484,22 +2571,15 @@ export class AgentService {
 
   /**
    * Whether a provider-emitted `Ended` for `threadId` should be swallowed because
-   * it trails a just-suppressed transient `Error` from a failed attempt. Keeps
-   * the failed attempt's teardown (spinner off, partial-stream commit) from
-   * flashing before the retry re-arms the running state. The flag is one retry
-   * window wide: cleared before each re-dispatch and on the loop's final exit, so
-   * the retry's own (or the give-up's) `Ended` still reaches the UI. Consulted by
-   * the composition root before broadcasting and by the `Ended` cleanup path.
-   *
-   * Only the transient-retry flags gate this. A bare `Ended` with no in-flight
-   * retry means the stream genuinely ended and must reach the cleanup path, or
-   * the thread leaks in the running state. Internal session recreation
-   * (context-window / permission-mode handoff) suppresses the superseded
-   * session's `Ended` at the provider layer (`suppressEndedQueries`), so it never
-   * needs a broad gate here.
+   * it trails a just-suppressed transient `Error` or an explicit user stop. Keeps
+   * a failed attempt's teardown from flashing before retry, and keeps a provider
+   * stop's synchronous teardown event from terminalizing the turn as interrupted
+   * before stopSession can durably record cancelled. Consulted by the composition
+   * root before broadcasting and by the `Ended` cleanup path.
    */
   shouldSuppressTurnEnded(threadId: string): boolean {
     if (this.endedSuppressionThreads.has(threadId)) return true;
+    if (this.mutationReservations.get(threadId)?.state === "stopping") return true;
     // Swallow `Ended` emitted while a re-dispatch is mid-flight (e.g. the pooled
     // session's eviction `Ended` during a transient retry).
     const dispatch = this.turnRetryDispatchByThread.get(threadId);
@@ -2513,6 +2593,12 @@ export class AgentService {
    */
   shouldSuppressTurnComplete(threadId: string): boolean {
     return this.endedSuppressionThreads.has(threadId);
+  }
+
+  /** Suppress a matching provider terminal event while an explicit stop owns the turn. */
+  private shouldSuppressStoppingTerminal(threadId: string, turnExecutionId?: string | null): boolean {
+    if (this.mutationReservations.get(threadId)?.state !== "stopping") return false;
+    return this.turnRuntime.snapshot(threadId)?.turnExecutionId === turnExecutionId;
   }
 
   /**
@@ -2629,14 +2715,17 @@ export class AgentService {
         });
       }
       if (!this.getCurrentRetryDispatch(threadId, identity)) return false;
-      if (usesInternalThreadControlMcp(dispatch.effectiveProvider)) {
+      if (usesInternalThreadControlMcp(dispatch.effectiveProvider) && dispatch.threadControlEligible) {
         this.threadControlMcp?.activate({
           sessionId: dispatch.sessionName,
           sourceThreadId: threadId,
           sourceTurnId: dispatch.sourceTurnId,
           sourceProviderId: dispatch.effectiveProvider,
           permissionMode: dispatch.turnRequest.permissionMode === "full" ? "full" : "supervised",
+          eligible: true,
         });
+      } else if (usesInternalThreadControlMcp(dispatch.effectiveProvider)) {
+        this.threadControlMcp?.revoke(dispatch.sessionName);
       }
       try {
         this.threadRepo.clearSdkSessionId(threadId);
@@ -2799,22 +2888,24 @@ export class AgentService {
           )
         ));
       });
-      const handleNormalizedEvent = (event: AgentEvent): void => {
+      const handleNormalizedEvent = (event: AgentEvent): boolean | undefined => {
         if (
-          event.type === AgentEventType.ToolUse
-          && event.toolName === "Agent"
-          && event.toolInput.codexCollabKind === "spawnAgent"
+          (event.type === AgentEventType.ToolUse || event.type === AgentEventType.ToolResult)
+          && (event.type !== AgentEventType.ToolUse || event.toolName === "Agent")
+          && event.toolInput?.codexCollabKind === "spawnAgent"
           && !event.codexChild
           && event.turnExecutionId
         ) {
           this.startCodexChildFromProviderEvent(event);
-          // The child turn owns delegated input; the parent narrative keeps only its compact Agent reference.
-          event = {
-            ...event,
-            toolInput: Object.fromEntries(
-              Object.entries(event.toolInput).filter(([key]) => key !== "prompt"),
-            ),
-          };
+          if (event.type === AgentEventType.ToolUse) {
+            // The child turn owns delegated input; the parent narrative keeps only its compact Agent reference.
+            event = {
+              ...event,
+              toolInput: Object.fromEntries(
+                Object.entries(event.toolInput).filter(([key]) => key !== "prompt"),
+              ),
+            };
+          }
         }
         if (event.type === AgentEventType.ToolUse || event.type === AgentEventType.ToolResult) {
           if (!("codexChild" in event && event.codexChild)) {
@@ -2945,7 +3036,6 @@ export class AgentService {
             this.finalResponseExecutionByThread.set(event.threadId, event.turnExecutionId);
           }
           let isPostTurnGoalReceipt = false;
-          let messagePersisted = false;
           try {
             // Record the thread's active model on the message so the UI can
             // display which provider/model produced the response, even if the
@@ -3000,7 +3090,6 @@ export class AgentService {
               }
               this.turnFinalizer.resetStreamingText(event.threadId);
             }
-            messagePersisted = true;
           } catch (err) {
             logger.error("Failed to persist assistant message", {
               threadId: event.threadId,
@@ -3088,36 +3177,6 @@ export class AgentService {
             }
           }
 
-          const runtime = this.turnRuntime.snapshot(event.threadId);
-          if (messagePersisted
-            && !isPostTurnGoalReceipt
-            && !this.compactionInProgressByThread.has(event.threadId)
-            && event.turnExecutionId
-            && runtime?.turnExecutionId === event.turnExecutionId
-            && (runtime.phase === "running" || runtime.phase === "finalizing")
-            && !this.turnCompleteSeenByThread.has(event.threadId)) {
-            const completionEvent: AgentEvent = {
-              type: AgentEventType.TurnComplete,
-              threadId: event.threadId,
-              turnExecutionId: event.turnExecutionId,
-              reason: "message_received",
-              costUsd: null,
-              tokensIn: 0,
-              tokensOut: 0,
-              providerId: this.threadRepo.findById(event.threadId)?.provider,
-            };
-            queueMicrotask(() => {
-              const current = this.turnRuntime.snapshot(event.threadId);
-              if (!current || current.turnExecutionId !== event.turnExecutionId) {
-                return;
-              }
-              if ((current.phase === "running" || current.phase === "finalizing")
-                && !this.compactionInProgressByThread.has(event.threadId)
-                && !this.turnCompleteSeenByThread.has(event.threadId)) {
-                this.emitProviderEvent(provider, completionEvent);
-              }
-            });
-          }
         }
 
         if (event.type === AgentEventType.AssistantMessageBoundary) {
@@ -3337,18 +3396,24 @@ export class AgentService {
         }
 
         if (event.type === AgentEventType.TurnComplete) {
+          if (this.shouldSuppressStoppingTerminal(event.threadId, event.turnExecutionId)) {
+            return false;
+          }
           // Swallow a failed attempt's `TurnComplete` during a retry so the UI
           // running state survives until the fresh attempt streams.
           if (this.shouldSuppressTurnComplete(event.threadId)) {
-            return;
+            return false;
           }
+          const compactionInProgress = this.compactionInProgressByThread.has(event.threadId);
+          const terminalized = !compactionInProgress
+            && this.turnRuntime.terminalize(event.threadId, event.turnExecutionId!, "completed");
+          if (!compactionInProgress && !terminalized) return false;
           // Mark that the turn result has been seen so any hooks that arrive
           // after this point (Stop / SessionEnd / PreCompact) are routed through
           // flushLateHook instead of the normal mid-turn buffer.
           this.turnCompleteSeenByThread.add(event.threadId);
 
-          if (!this.compactionInProgressByThread.has(event.threadId)
-            && this.turnRuntime.terminalize(event.threadId, event.turnExecutionId!, "completed")) {
+          if (terminalized) {
             void this.finalizeTerminalTurn(event.threadId, "completed", "turnComplete");
           }
 
@@ -3357,7 +3422,7 @@ export class AgentService {
           // Skip during compaction: the SDK fires a synthetic TurnComplete
           // before the compaction API call, but the session continues
           // automatically.
-          if (!this.compactionInProgressByThread.has(event.threadId)) {
+          if (!compactionInProgress) {
             this.threadControlMcp?.revoke(`mcode-${event.threadId}`);
             this.trackSessionEnded(event.threadId);
             this.disarmTurnRetryWindow(event.threadId);
@@ -3368,7 +3433,7 @@ export class AgentService {
           // Skip during compaction: the compaction API call emits a turnComplete
           // with the pre-compaction token count. Persisting it would cause cold
           // reloads to resurrect the wrong (near-100%) context fill.
-          if (event.tokensIn > 0 && !this.compactionInProgressByThread.has(event.threadId)) {
+          if (event.tokensIn > 0 && !compactionInProgress) {
             try {
               // Always persist tokensIn. contextWindow is only written when the
               // SDK reports it — providers that don't expose a context window
@@ -3388,9 +3453,13 @@ export class AgentService {
           if (event.contextWindow) {
             this.lastContextWindowByThread.set(event.threadId, event.contextWindow);
           }
+          return terminalized;
         }
 
         if (event.type === AgentEventType.Error) {
+          if (this.shouldSuppressStoppingTerminal(event.threadId, event.turnExecutionId)) {
+            return false;
+          }
           // Hide a transient failure that is about to be retried: skip the
           // errored finalize so the failed attempt does not persist a partial
           // turn or clear per-turn state mid-retry. The fresh attempt owns the
@@ -3406,16 +3475,20 @@ export class AgentService {
             if (streamDispatch && !streamDispatch.sendTurnInFlight) {
               this.scheduleTransientStreamRetry(event.threadId, event.error ?? "");
             }
-            return;
+            return false;
           }
           // The finalizer discards the buffered turn when no assistant row
           // exists (e.g. a pre-turn CLI-not-found failure) rather than
           // broadcasting turn.persisted against the wrong (user) message id.
-          this.disarmTurnRetryWindow(event.threadId);
-          if (this.turnRuntime.terminalize(event.threadId, event.turnExecutionId!, "errored")) {
-            void this.finalizeTerminalTurn(event.threadId, "errored", "error");
-          }
+          const terminalized = this.turnRuntime.terminalize(
+            event.threadId,
+            event.turnExecutionId!,
+            "errored",
+          );
+          if (!terminalized) return false;
+          void this.finalizeTerminalTurn(event.threadId, "errored", "error");
           this.trackSessionEnded(event.threadId);
+          this.disarmTurnRetryWindow(event.threadId);
           this.releaseMutationReservation(event.threadId);
           // Turn-scoped cleanup of any one-shot handoff Read grant when the
           // first Turn errors out before completing normally.
@@ -3425,6 +3498,7 @@ export class AgentService {
           this.pendingPlanOutputs.delete(event.threadId);
           this.pendingExitPlanMarkdown.delete(event.threadId);
           this.planCapturedThisTurn.delete(event.threadId);
+          return true;
         }
 
         if (event.type === AgentEventType.Compacting && event.active) {
@@ -3507,98 +3581,74 @@ export class AgentService {
         }
 
         if (event.type === AgentEventType.Ended) {
-          // Swallow the failed attempt's trailing `Ended` during a retry so the
-          // UI's running state survives until the fresh attempt streams. Skip the
-          // teardown/cleanup below; the retry (or give-up) owns the real `Ended`.
-          if (this.shouldSuppressTurnEnded(event.threadId)) {
-            return;
+          if (this.shouldSuppressStoppingTerminal(event.threadId, event.turnExecutionId)) {
+            return false;
           }
-          const thread = this.threadRepo.findById(event.threadId);
+          // Swallow retry teardown and provider stop's synchronous `Ended` so the
+          // turn stays live until retry or stopSession owns terminalization.
+          if (this.shouldSuppressTurnEnded(event.threadId)) {
+            return false;
+          }
           const runtime = this.turnRuntime.snapshot(event.threadId);
           const activeExecution = runtime != null
             && runtime.turnExecutionId === event.turnExecutionId
             && (runtime.phase === "running" || runtime.phase === "finalizing");
           const activeExecutionId = runtime?.turnExecutionId;
-          if (event.outcome == null && activeExecution && activeExecutionId
-            && !this.turnCompleteSeenByThread.has(event.threadId)) {
-            const hasFinalResponse = this.finalResponseExecutionByThread.get(event.threadId)
-              === activeExecutionId;
-            this.emitProviderEvent(provider, hasFinalResponse
-              ? {
-                  type: AgentEventType.TurnComplete,
-                  threadId: event.threadId,
-                  turnExecutionId: activeExecutionId,
-                  reason: "provider_stream_exhausted",
-                  costUsd: null,
-                  tokensIn: 0,
-                  tokensOut: 0,
-                  providerId: thread?.provider,
-                }
-              : {
-                  type: AgentEventType.Error,
-                  threadId: event.threadId,
-                  turnExecutionId: activeExecutionId,
-                  error: "Provider stream ended before terminal event",
-                });
-          }
-          const shouldInferCodexCancellation = event.outcome == null
-            && !activeExecution
-            && thread?.provider === "codex"
-            && this.activeSessionIds.has(event.threadId);
-          const outcome = event.outcome
-            ?? (shouldInferCodexCancellation ? "cancelled" : undefined);
-          if (outcome) {
-            if (shouldInferCodexCancellation) {
-              const finalText = this.narrativeStore.takeOpenThought(event.threadId);
-              if (finalText) {
-                this.turnFinalizer.appendStreamingText(event.threadId, finalText);
-              }
-            }
-            const phase = outcome === "cancelled" ? "cancelled" : outcome === "errored" ? "errored" : "completed";
-            if (this.turnRuntime.terminalize(event.threadId, event.turnExecutionId!, phase)) {
-              void this.finalizeTerminalTurn(event.threadId, outcome, "ended");
-            }
-          }
+          if (!activeExecution || !activeExecutionId) return false;
+          const outcome = event.outcome === "completed"
+            ? "completed"
+            : event.outcome === "errored"
+              ? "errored"
+              : "interrupted";
+          if (!this.turnRuntime.terminalize(event.threadId, activeExecutionId, outcome)) return false;
+          void this.finalizeTerminalTurn(event.threadId, outcome, "ended");
           this.trackSessionEnded(event.threadId);
-          this.threadControlMcp?.revoke(`mcode-${event.threadId}`);
-          // Turn-scoped cleanup of any one-shot handoff Read grant. No-op on
-          // later turns since the grant is already gone (consumed or cleared).
-          this.scopedPreGrant.clear(event.threadId);
-          this.planParsers.delete(event.threadId);
-          this.planOutputParsers.delete(event.threadId);
-          this.pendingPlanOutputs.delete(event.threadId);
-          this.pendingExitPlanMarkdown.delete(event.threadId);
-          this.planCapturedThisTurn.delete(event.threadId);
+          this.disarmTurnRetryWindow(event.threadId);
+          this.clearTurnEndedState(event.threadId);
+          return true;
         }
       };
       const handleEvent = (event: AgentEvent, publish = true): void => {
         const normalizedEvent = this.prepareProviderEvent(event);
         if (!normalizedEvent) return;
-        handleNormalizedEvent(normalizedEvent);
-        if (publish) onProviderEvent?.(normalizedEvent);
+        const accepted = handleNormalizedEvent(normalizedEvent);
+        const terminalEvent = normalizedEvent.type === AgentEventType.TurnComplete
+          || normalizedEvent.type === AgentEventType.Error
+          || normalizedEvent.type === AgentEventType.Ended;
+        if (terminalEvent && accepted !== true) return;
+        if (publish) {
+          const publishedEvent = normalizedEvent.type === AgentEventType.Ended
+            && normalizedEvent.outcome === "cancelled"
+            ? { ...normalizedEvent, outcome: "interrupted" as const }
+            : normalizedEvent;
+          onProviderEvent?.(publishedEvent);
+        }
       };
       provider.on("event", handleEvent);
     }
   }
 
   private startCodexChildFromProviderEvent(
-    event: Extract<AgentEvent, { type: typeof AgentEventType.ToolUse }>,
+    event: Extract<AgentEvent, {
+      type: typeof AgentEventType.ToolUse | typeof AgentEventType.ToolResult;
+    }>,
   ): void {
     const executionId = event.turnExecutionId;
-    if (!executionId) return;
+    const toolInput = event.toolInput;
+    if (!executionId || !toolInput) return;
     const parentTurn = this.canonicalSink.loadTurnByExecution(executionId);
     const parentThread = this.canonicalSink.loadThread(event.threadId);
     if (!parentTurn || !parentThread) return;
-    const description = typeof event.toolInput.description === "string"
-      ? event.toolInput.description
+    const description = typeof toolInput.description === "string"
+      ? toolInput.description
       : undefined;
-    const prompt = typeof event.toolInput.prompt === "string" ? event.toolInput.prompt : undefined;
-    const identity = typeof event.toolInput.agentName === "string"
-      ? event.toolInput.agentName
+    const prompt = typeof toolInput.prompt === "string" ? toolInput.prompt : undefined;
+    const identity = typeof toolInput.agentName === "string"
+      ? toolInput.agentName
       : undefined;
-    const model = typeof event.toolInput.model === "string" ? event.toolInput.model : undefined;
-    const reasoningEffort = typeof event.toolInput.reasoningEffort === "string"
-      ? event.toolInput.reasoningEffort
+    const model = typeof toolInput.model === "string" ? toolInput.model : undefined;
+    const reasoningEffort = typeof toolInput.reasoningEffort === "string"
+      ? toolInput.reasoningEffort
       : undefined;
     try {
       this.canonicalSink.startCodexChildDelegation({
@@ -3606,8 +3656,8 @@ export class AgentService {
         parentTurnId: parentTurn.id,
         parentExecutionId: executionId,
         parentItemId: `toolCall:${event.toolCallId}`,
-        receiverThreadIds: Array.isArray(event.toolInput.receiverThreadIds)
-          ? event.toolInput.receiverThreadIds.filter((value): value is string => (
+        receiverThreadIds: Array.isArray(toolInput.receiverThreadIds)
+          ? toolInput.receiverThreadIds.filter((value): value is string => (
               typeof value === "string" && value.trim().length > 0
             )).map((value) => value.trim().slice(0, 512)).slice(0, 32)
           : [],
@@ -4040,7 +4090,9 @@ export class AgentService {
         this.canonicalSink.finishCodexChildTurn({
           childThreadId: childThread.id,
           nativeTurnId: evidence.nativeTurnId,
-          outcome: evidence.outcome ?? "completed",
+          outcome: event.type === AgentEventType.Ended
+            ? evidence.outcome ?? "interrupted"
+            : evidence.outcome ?? "completed",
         });
         return true;
       }
@@ -4390,6 +4442,7 @@ ${userMessage}`;
       toolName: string;
       toolInput: Record<string, unknown>;
       parentToolCallId?: string;
+      subagentPresentation?: import("@mcode/contracts").SubagentPresentation;
     },
   ): void {
     const parentToolCallId = this.narrativeStore.bufferToolCall(threadId, event);
@@ -4522,14 +4575,17 @@ ${userMessage}`;
   async stopAll(): Promise<void> {
     const ids = [...this.activeSessionIds];
     await Promise.all(
-      ids.map((threadId) => {
+      ids.map(async (threadId) => {
+        const descendantStop = this.stopCanonicalDescendants(threadId);
+        if (descendantStop) await descendantStop;
         const runtime = this.turnRuntime.snapshot(threadId);
         const terminalized = runtime?.turnExecutionId
-          ? this.turnRuntime.terminalize(threadId, runtime.turnExecutionId, "cancelled")
+          ? this.turnRuntime.terminalize(threadId, runtime.turnExecutionId, "interrupted")
           : false;
-        return (terminalized || runtime?.phase === "cancelled")
-          ? this.finalizeTerminalTurn(threadId, "cancelled", "shutdown") ?? Promise.resolve()
-          : Promise.resolve();
+        if (!terminalized && runtime?.phase !== "interrupted") return;
+        await (this.finalizeTerminalTurn(threadId, "interrupted", "shutdown") ?? Promise.resolve());
+        this.threadRepo.updateStatus(threadId, "interrupted");
+        broadcast("thread.status", { threadId, status: "interrupted" });
       }),
     );
     for (const threadId of ids) {

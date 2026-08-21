@@ -350,6 +350,114 @@ describe("ServerManager", () => {
     expect(onCrash).not.toHaveBeenCalled();
   });
 
+  it("suppresses only the planned old child during a planned restart", async () => {
+    const onCrash = vi.fn();
+    manager.onUnexpectedExit = onCrash;
+    const oldChild = {
+      on: vi.fn((event: string, callback: (code: number | null) => void) => {
+        if (event === "exit") oldChild.exit = callback;
+      }),
+      unref: vi.fn(),
+      pid: 54321,
+      exit: undefined as ((code: number | null) => void) | undefined,
+    };
+    const newChild = {
+      on: vi.fn((event: string, callback: (code: number | null) => void) => {
+        if (event === "exit") newChild.exit = callback;
+      }),
+      unref: vi.fn(),
+      pid: 54322,
+      exit: undefined as ((code: number | null) => void) | undefined,
+    };
+    vi.mocked(spawn)
+      .mockImplementationOnce(() => oldChild as never)
+      .mockImplementationOnce(() => newChild as never);
+    await manager.start();
+
+    const restart = vi.spyOn(manager, "restart").mockImplementation(async () => {
+      oldChild.exit?.(0);
+      vi.mocked(readFile).mockResolvedValueOnce(LOCK_FILE_JSON as never);
+      await manager.start();
+      newChild.exit?.(1);
+    });
+
+    await manager.restartPlanned();
+
+    expect(restart).toHaveBeenCalledOnce();
+    expect(onCrash).toHaveBeenCalledOnce();
+    expect(onCrash).toHaveBeenCalledWith(1);
+  });
+
+  it("coalesces concurrent planned restart requests", async () => {
+    const restart = vi.spyOn(manager, "restart").mockImplementation(
+      () => new Promise<void>((resolve) => setImmediate(resolve)),
+    );
+
+    const first = manager.restartPlanned();
+    const second = manager.restartPlanned();
+
+    expect(restart).toHaveBeenCalledOnce();
+    await expect(Promise.all([first, second])).resolves.toEqual([undefined, undefined]);
+  });
+
+  it("rejects a planned restart when the server is unowned", async () => {
+    const restart = vi.spyOn(manager, "restart");
+    (manager as unknown as { _reusedExisting: boolean })._reusedExisting = true;
+
+    await expect(manager.restartPlanned()).rejects.toThrow("unowned server");
+    expect(restart).not.toHaveBeenCalled();
+  });
+
+  it("does not suppress an old child after a planned restart fails", async () => {
+    const onCrash = vi.fn();
+    manager.onUnexpectedExit = onCrash;
+    const oldChild = {
+      on: vi.fn((event: string, callback: (code: number | null) => void) => {
+        if (event === "exit") oldChild.exit = callback;
+      }),
+      unref: vi.fn(),
+      pid: 54323,
+      exit: undefined as ((code: number | null) => void) | undefined,
+    };
+    vi.mocked(spawn).mockImplementationOnce(() => oldChild as never);
+    await manager.start();
+    vi.spyOn(manager, "restart").mockRejectedValue(new Error("planned restart failed"));
+
+    await expect(manager.restartPlanned()).rejects.toThrow("planned restart failed");
+    oldChild.exit?.(9);
+
+    expect(onCrash).toHaveBeenCalledWith(9);
+  });
+
+  it("clears a late planned old-child exit marker without touching the replacement", async () => {
+    const onCrash = vi.fn();
+    manager.onUnexpectedExit = onCrash;
+    const oldChild = {
+      on: vi.fn((event: string, callback: (code: number | null) => void) => {
+        if (event === "exit") oldChild.exit = callback;
+      }),
+      unref: vi.fn(),
+      pid: 54324,
+      exit: undefined as ((code: number | null) => void) | undefined,
+    };
+    const replacement = {
+      on: vi.fn(),
+      unref: vi.fn(),
+      pid: 54325,
+    };
+    vi.mocked(spawn)
+      .mockImplementationOnce(() => oldChild as never)
+      .mockImplementationOnce(() => replacement as never);
+    await manager.start();
+    vi.mocked(readFile).mockResolvedValueOnce(LOCK_FILE_JSON as never);
+    vi.spyOn(manager, "restart").mockImplementation(() => manager.start().then(() => undefined));
+
+    await manager.restartPlanned();
+    oldChild.exit?.(4);
+
+    expect(onCrash).not.toHaveBeenCalled();
+  });
+
   // -----------------------------------------------------------------------
   // Heap size configuration
   // -----------------------------------------------------------------------

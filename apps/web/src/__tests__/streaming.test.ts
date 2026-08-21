@@ -95,16 +95,59 @@ describe("Agent Message Flow", () => {
     resetThreadStoreForTests({
       runningThreadIds: new Set([threadId]),
       records: new Map<string, ThreadRecord>([
-        [threadId, { ...createEmptyThreadRecord(), streaming: "partial content" }],
+        [threadId, {
+          ...createEmptyThreadRecord(),
+          runtimePhase: "running",
+          turnExecutionId: "exec-1",
+          streaming: "partial content",
+        }],
       ]),
     });
 
-    useThreadStore.getState().handleAgentEvent({ type: "ended", threadId: threadId } satisfies AgentEvent);
+    useThreadStore.getState().handleAgentEvent({
+      type: "ended",
+      threadId,
+      turnExecutionId: "exec-1",
+    } satisfies AgentEvent);
     vi.runAllTimers();
 
     const state = useThreadStore.getState();
     expect(state.runningThreadIds.has(threadId)).toBe(false);
     expect(getTestThreadStreaming(threadId)).toBeUndefined();
+  });
+
+  it.each([
+    [undefined, "interrupted", "interrupted"],
+    ["cancelled", "cancelled", "interrupted"],
+    ["completed", "completed", "completed"],
+    ["errored", "errored", "errored"],
+  ] as const)("projects Ended outcome %s into runtime and workspace status", (outcome, runtimePhase, workspaceStatus) => {
+    const threadId = "thread-1";
+    resetThreadStoreForTests({
+      currentThreadId: "thread-a",
+      runningThreadIds: new Set([threadId]),
+      records: new Map<string, ThreadRecord>([
+        ["thread-a", createEmptyThreadRecord()],
+        [threadId, {
+          ...createEmptyThreadRecord(),
+          runtimePhase: "running",
+          turnExecutionId: "exec-1",
+          streaming: "partial content",
+        }],
+      ]),
+    });
+
+    useThreadStore.getState().handleAgentEvent({
+      type: "ended",
+      threadId,
+      turnExecutionId: "exec-1",
+      ...(outcome === undefined ? {} : { outcome }),
+    } satisfies AgentEvent);
+    vi.runAllTimers();
+
+    expect(readThreadField(threadId, (record) => record.runtimePhase)).toBe(runtimePhase);
+    expect(useWorkspaceStore.getState().threads.find((thread) => thread.id === threadId)?.status)
+      .toBe(workspaceStatus);
   });
 
   it("turnComplete without streaming content clears running state", () => {

@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EventEmitter } from "events";
 import type { Thread, IProviderRegistry, TurnRequest } from "@mcode/contracts";
 import { AgentService } from "../agent-service.js";
+import { publishParentProviderEvent } from "../../events/provider-event-publication.js";
 import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/canonical-agent-event-sink-stub.js";
 import { ThreadControlMutationReservationService } from "../../../thread-control/index.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
@@ -72,6 +73,7 @@ function buildService(): {
   waitForSessionExit: ReturnType<typeof vi.fn>;
   threadControlMcp: { activate: ReturnType<typeof vi.fn> };
   providerEmitter: EventEmitter;
+  messageRepo: MessageRepo;
   mutationReservations: ThreadControlMutationReservationService;
   threadRepo: ThreadRepo & { clearSdkSessionId: ReturnType<typeof vi.fn>; updateStatus: ReturnType<typeof vi.fn> };
 } {
@@ -119,8 +121,15 @@ function buildService(): {
     listByThread: vi.fn(() => ({ messages: [{ id: "m0", sequence: 1, role: "user", content: "prev" }] })),
     getLatestSequenceIncludingInternal: vi.fn(() => latestSequence),
     create: createMessage,
+    createAssistantIdempotent: vi.fn((input: Parameters<MessageRepo["createAssistantIdempotent"]>[0]) => ({
+      id: input.id,
+      thread_id: input.threadId,
+      role: "assistant",
+      content: input.content,
+    }) as ReturnType<MessageRepo["createAssistantIdempotent"]>),
     findByIdInThread: vi.fn(),
     listByThreadUpToSequence: vi.fn(() => []),
+    setAssistantOutcome: vi.fn(),
   } as unknown as MessageRepo;
 
   const gitService = {
@@ -215,6 +224,7 @@ function buildService(): {
     discardSession,
     waitForSessionExit,
     providerEmitter,
+    messageRepo,
     threadRepo,
     threadControlMcp,
     mutationReservations,
@@ -265,7 +275,7 @@ describe("AgentService transient-failure auto-retry", () => {
 
     await service.sendMessage({
       threadId: THREAD_ID,
-      content: "hello",
+      content: "Create one Mcode thread named leaf_probe",
       permissionMode: "full",
       model: "claude-sonnet-4-6",
       attachments: [],
@@ -365,6 +375,7 @@ describe("AgentService transient-failure auto-retry", () => {
     expect(terminalEvents[1]?.turnExecutionId).toBe(terminalEvents[0]?.turnExecutionId);
     expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("errored");
     expect(threadRepo.updateStatus).toHaveBeenCalledWith(THREAD_ID, "errored");
+    expect(threadRepo.updateStatus).not.toHaveBeenCalledWith(THREAD_ID, "interrupted");
   });
 
   it("swallows the failed attempt's trailing Ended so the UI's running state survives the retry", async () => {
@@ -410,6 +421,56 @@ describe("AgentService transient-failure auto-retry", () => {
       tokensOut: 0,
     });
     expect(service.shouldSuppressTurnEnded(THREAD_ID)).toBe(false);
+  });
+
+  it("does not publish an interrupted status for suppressed retry teardown", async () => {
+    const { service, sendTurn, providerEmitter, threadRepo } = buildService();
+    service.init((event) => {
+      publishParentProviderEvent(event, event, {
+        publishAgentEvent: vi.fn(),
+        updateThreadStatus: threadRepo.updateStatus,
+        publishThreadStatus: vi.fn(),
+      });
+    });
+    sendTurn
+      .mockImplementationOnce((request: TurnRequest) => {
+        providerEmitter.emit("event", {
+          type: "error",
+          threadId: THREAD_ID,
+          turnExecutionId: request.turnExecutionId,
+          error: "read ECONNRESET",
+        });
+        providerEmitter.emit("event", {
+          type: "ended",
+          threadId: THREAD_ID,
+          turnExecutionId: request.turnExecutionId,
+        });
+        return Promise.reject(new Error("read ECONNRESET"));
+      })
+      .mockImplementationOnce((request: TurnRequest) => {
+        providerEmitter.emit("event", {
+          type: "turnComplete",
+          threadId: THREAD_ID,
+          turnExecutionId: request.turnExecutionId,
+          reason: "end_turn",
+          costUsd: null,
+          tokensIn: 0,
+          tokensOut: 0,
+        });
+        return Promise.resolve();
+      });
+
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "retry without a visible interruption",
+      permissionMode: "default",
+      model: "claude-sonnet-4-6",
+      attachments: [],
+      provider: "claude",
+    });
+
+    expect(threadRepo.updateStatus).toHaveBeenCalledWith(THREAD_ID, "completed");
+    expect(threadRepo.updateStatus).not.toHaveBeenCalledWith(THREAD_ID, "interrupted");
   });
 
   it("does not arm Ended suppression for a fatal error (the spinner tears down)", async () => {
@@ -459,8 +520,8 @@ describe("AgentService transient-failure auto-retry", () => {
     expect(service.shouldSuppressTransientTurnError(THREAD_ID, "read ECONNRESET")).toBe(false);
   });
 
-  it("synthesizes completion when a matching provider stream ends after a final response", async () => {
-    const { service, sendTurn, providerEmitter } = buildService();
+  it("persists a full-looking response as interrupted when the provider ends without terminal proof", async () => {
+    const { service, sendTurn, providerEmitter, messageRepo } = buildService();
     const events: Array<Record<string, unknown>> = [];
     providerEmitter.on("event", (event: Record<string, unknown>) => events.push(event));
     service.init();
@@ -490,13 +551,20 @@ describe("AgentService transient-failure auto-retry", () => {
     });
 
     const executionId = (sendTurn.mock.calls[0][0] as TurnRequest).turnExecutionId;
-    expect(synthesizedTurnCompleteEvents(events)).toHaveLength(1);
-    expect(events.find((event) => event.type === "turnComplete")?.turnExecutionId).toBe(executionId);
-    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("completed");
+    await vi.waitFor(() => {
+      expect(messageRepo.setAssistantOutcome).toHaveBeenCalledWith(expect.any(String), "interrupted", executionId);
+    });
+    expect(synthesizedTurnCompleteEvents(events)).toHaveLength(0);
+    expect(events.filter((event) => event.type === "turnComplete")).toHaveLength(0);
+    expect(events.filter((event) => event.type === "ended")).toHaveLength(1);
+    expect(messageRepo.createAssistantIdempotent).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "done" }),
+    );
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("interrupted");
   });
 
-  it("does not synthesize a second terminal event after an explicit completion", async () => {
-    const { service, sendTurn, providerEmitter } = buildService();
+  it("does not synthesize a terminal event after an explicit completion", async () => {
+    const { service, sendTurn, providerEmitter, messageRepo } = buildService();
     const events: Array<Record<string, unknown>> = [];
     providerEmitter.on("event", (event: Record<string, unknown>) => events.push(event));
     service.init();
@@ -520,6 +588,9 @@ describe("AgentService transient-failure auto-retry", () => {
       provider: "claude",
     });
 
+    // A provider body alone is not terminal proof and must remain buffered.
+    expect(messageRepo.createAssistantIdempotent).not.toHaveBeenCalled();
+
     providerEmitter.emit("event", {
       type: "turnComplete",
       threadId: THREAD_ID,
@@ -535,13 +606,18 @@ describe("AgentService transient-failure auto-retry", () => {
       turnExecutionId: (sendTurn.mock.calls[0][0] as TurnRequest).turnExecutionId,
     });
 
-    expect(synthesizedTurnCompleteEvents(events)).toHaveLength(1);
+    const executionId = (sendTurn.mock.calls[0][0] as TurnRequest).turnExecutionId;
+    await vi.waitFor(() => {
+      expect(messageRepo.setAssistantOutcome).toHaveBeenCalledWith(expect.any(String), "completed", executionId);
+    });
+    expect(synthesizedTurnCompleteEvents(events)).toHaveLength(0);
+    expect(events.filter((event) => event.type === "turnComplete")).toHaveLength(1);
     expect(events.filter((event) => event.type === "ended")).toHaveLength(1);
     expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("completed");
   });
 
   it("fences child Ended events and clears the final-response marker for the next turn", async () => {
-    const { service, sendTurn, providerEmitter } = buildService();
+    const { service, sendTurn, providerEmitter, messageRepo } = buildService();
     const events: Array<Record<string, unknown>> = [];
     providerEmitter.on("event", (event: Record<string, unknown>) => events.push(event));
     service.init();
@@ -577,11 +653,21 @@ describe("AgentService transient-failure auto-retry", () => {
       provider: "claude" as const,
     };
     await service.sendMessage(command);
+    const firstExecutionId = (sendTurn.mock.calls[0][0] as TurnRequest).turnExecutionId;
     await service.sendMessage(command);
 
-    expect(events.filter((event) => event.type === "turnComplete")).toHaveLength(1);
-    expect(events.filter((event) => event.type === "error")).toHaveLength(1);
-    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("errored");
+    await vi.waitFor(() => {
+      expect(messageRepo.setAssistantOutcome).toHaveBeenCalledWith(expect.any(String), "interrupted", firstExecutionId);
+    });
+    expect(synthesizedTurnCompleteEvents(events)).toHaveLength(0);
+    expect(events.filter((event) => event.type === "turnComplete")).toHaveLength(0);
+    expect(events.filter((event) => event.type === "error")).toHaveLength(0);
+    // The raw provider stream includes the fenced child Ended plus one Ended
+    // for each root execution; only the matching root Ended terminalizes.
+    expect(events.filter((event) => event.type === "ended")).toHaveLength(3);
+    await vi.waitFor(() => {
+      expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("interrupted");
+    });
   });
 
   it("keeps a stream that reports an error on the error path", async () => {
@@ -637,8 +723,8 @@ describe("AgentService transient-failure auto-retry", () => {
     expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("cancelled");
   });
 
-  it("ignores stale Message events and completes only the matching execution", async () => {
-    const { service, sendTurn, providerEmitter } = buildService();
+  it("ignores stale Message events and interrupts only the matching execution", async () => {
+    const { service, sendTurn, providerEmitter, messageRepo } = buildService();
     const events: Array<Record<string, unknown>> = [];
     providerEmitter.on("event", (event: Record<string, unknown>) => events.push(event));
     service.init();
@@ -671,12 +757,28 @@ describe("AgentService transient-failure auto-retry", () => {
       tokens: null,
     });
     await Promise.resolve();
-    expect(synthesizedTurnCompleteEvents(events)).toHaveLength(1);
-    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("completed");
+    expect(synthesizedTurnCompleteEvents(events)).toHaveLength(0);
+    expect(messageRepo.createAssistantIdempotent).not.toHaveBeenCalled();
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("running");
+
+    providerEmitter.emit("event", {
+      type: "ended",
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+    });
+    await vi.waitFor(() => {
+      expect(messageRepo.setAssistantOutcome).toHaveBeenCalledWith(expect.any(String), "interrupted", executionId);
+    });
+    expect(synthesizedTurnCompleteEvents(events)).toHaveLength(0);
+    expect(events.filter((event) => event.type === "turnComplete")).toHaveLength(0);
+    expect(messageRepo.createAssistantIdempotent).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "root" }),
+    );
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("interrupted");
   });
 
   it("does not treat a post-turn goal receipt as a new completion", async () => {
-    const { service, sendTurn, providerEmitter } = buildService();
+    const { service, sendTurn, providerEmitter, messageRepo } = buildService();
     const events: Array<Record<string, unknown>> = [];
     providerEmitter.on("event", (event: Record<string, unknown>) => events.push(event));
     service.init();
@@ -707,8 +809,23 @@ describe("AgentService transient-failure auto-retry", () => {
       tokens: null,
     });
 
-    expect(synthesizedTurnCompleteEvents(events)).toHaveLength(1);
-    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("completed");
+    expect(synthesizedTurnCompleteEvents(events)).toHaveLength(0);
+    expect(events.filter((event) => event.type === "turnComplete")).toHaveLength(0);
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("running");
+
+    providerEmitter.emit("event", {
+      type: "ended",
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+    });
+    await vi.waitFor(() => {
+      expect(messageRepo.setAssistantOutcome).toHaveBeenCalledWith(expect.any(String), "interrupted", executionId);
+    });
+    expect(synthesizedTurnCompleteEvents(events)).toHaveLength(0);
+    expect(messageRepo.createAssistantIdempotent).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "Goal achieved in 1s." }),
+    );
+    expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.phase).toBe("interrupted");
   });
 
   it("leaves compaction-owned messages running until compaction finishes", async () => {
@@ -763,7 +880,13 @@ describe("AgentService transient-failure auto-retry", () => {
     discardSession.mockImplementation(() => {
       queueMicrotask(() => {
         endedSuppressedWhenDiscardUnwinds = service.shouldSuppressTurnEnded(THREAD_ID);
-        providerEmitter.emit("event", { type: "ended", threadId: THREAD_ID });
+        const executionId = service.runtimeSnapshots().find((snapshot) => snapshot.threadId === THREAD_ID)?.turnExecutionId;
+        if (!executionId) return;
+        providerEmitter.emit("event", {
+          type: "ended",
+          threadId: THREAD_ID,
+          turnExecutionId: executionId,
+        });
       });
     });
     waitForSessionExit.mockImplementation(async () => {

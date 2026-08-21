@@ -12,6 +12,7 @@ import { createInterface } from "readline";
 import { EventEmitter } from "events";
 import { isAbsolute } from "path";
 import which from "which";
+import { resolveSubagentDisplayName } from "@mcode/contracts";
 import { logger } from "@mcode/shared";
 import { CodexRpcClient } from "./codex-rpc-client.js";
 import { mapDecisionToCodexResponse } from "./codex-permission-mapper.js";
@@ -20,6 +21,8 @@ import type {
   ThreadStartResult,
   ThreadResumeParams,
   ThreadResumeResult,
+  ThreadReadParams,
+  ThreadReadResult,
   TurnInputPart,
   CodexTurnOptions,
   TurnStartParams,
@@ -481,10 +484,11 @@ const RECOVERABLE_RESUME_ERROR_PHRASES = [
 
 const CHILD_THREAD_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
-/** Authoritative model configuration returned for a native sub-agent thread. */
+/** Authoritative display identity and model configuration for a native sub-agent thread. */
 export interface CodexChildThreadMetadata {
-  model: string;
-  reasoningEffort: ReasoningEffort;
+  identity?: string;
+  model?: string;
+  reasoningEffort?: ReasoningEffort;
 }
 
 /**
@@ -1050,19 +1054,22 @@ export class CodexAppServer extends EventEmitter {
     return turnId;
   }
 
-  /** Reads a child thread's effective model settings without changing this server's active thread. */
+  /** Reads a child thread's identity without changing or blocking the active thread. */
   async getChildThreadMetadata(childThreadId: string): Promise<CodexChildThreadMetadata | null> {
     if (!CHILD_THREAD_ID_PATTERN.test(childThreadId)) return null;
 
-    const result = await this.rpc.sendRequest<ThreadResumeParams, ThreadResumeResult>(
-      "thread/resume",
-      { threadId: childThreadId },
+    const readResult = await this.rpc.sendRequest<ThreadReadParams, ThreadReadResult>(
+      "thread/read",
+      { threadId: childThreadId, includeTurns: false },
       10_000,
     );
-    const model = typeof result.model === "string" ? result.model.trim() : "";
-    const reasoningEffort = result.reasoningEffort;
-    if (!model || !reasoningEffort) return null;
-    return { model, reasoningEffort };
+    const identity = resolveSubagentDisplayName({
+      agentName: readResult.thread.name,
+      subagentName: readResult.thread.agentNickname,
+      subagentType: readResult.thread.agentRole,
+    });
+
+    return identity ? { identity } : null;
   }
 
   /** Set or update the native Codex thread goal. */

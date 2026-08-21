@@ -20,6 +20,8 @@ export function createCanonicalAgentEventSinkStub(
       };
     },
     loadTurnByExecution: () => null,
+    loadCanonicalChildStopTargets: () => [],
+    finishCanonicalChildTurn: () => null,
     recordProviderDiagnostic: () => undefined,
     recordCodexChildRoutingDiagnostic: () => false,
   } as unknown as CanonicalAgentEventSink;

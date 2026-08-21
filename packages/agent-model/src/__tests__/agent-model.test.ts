@@ -157,6 +157,7 @@ describe("canonical agent model", () => {
     const eventTypes = [
       { type: "turn.started", startedAt: timestamps.createdAt },
       { type: "turn.completed", endedAt: timestamps.updatedAt },
+      { type: "turn.cancelled", endedAt: timestamps.updatedAt, reason: "user stop" },
       { type: "turn.interrupted", endedAt: timestamps.updatedAt, reason: "restart" },
       { type: "turn.errored", endedAt: timestamps.updatedAt, error: "provider failed" },
       {
@@ -234,6 +235,46 @@ describe("canonical agent model", () => {
 
     expect(lateError.outcome).toBe("terminal-outcome-confirmed");
     expect(lateError.state.turns["turn-1"]?.status).toBe("Completed");
+  });
+
+  it("reduces an explicit cancellation to the Cancelled terminal status", () => {
+    const initialState = createAgentModelState();
+    const thread = threadRecordedEvent("event-1", 1);
+    const created = AgentEventEnvelopeSchema(CanonicalAgentEventSchema).parse({
+      ...thread,
+      eventId: "event-2",
+      acceptedSequence: 2,
+      routing: { threadId: "thread-1", turnId: "turn-1", executionId },
+      payload: {
+        type: "turn.created",
+        turn: {
+          id: "turn-1",
+          threadId: "thread-1",
+          status: "Pending",
+          trigger: { kind: "user" },
+          permissionMode: "full",
+          providerIdentities: [],
+          startedAt: null,
+          endedAt: null,
+          ...timestamps,
+        },
+      },
+    });
+    const cancelled = AgentEventEnvelopeSchema(CanonicalAgentEventSchema).parse({
+      ...created,
+      eventId: "event-3",
+      acceptedSequence: 3,
+      payload: {
+        type: "turn.cancelled",
+        endedAt: timestamps.updatedAt,
+        reason: "user stop",
+      },
+    });
+
+    const result = reduceAgentEventBatch(initialState, [thread, created, cancelled]);
+
+    expect(result.outcome).toBe("applied");
+    expect(result.state.turns["turn-1"]?.status).toBe("Cancelled");
   });
 
   it("marks a saturated turn interrupted and its thread idle", () => {

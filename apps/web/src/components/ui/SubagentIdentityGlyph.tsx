@@ -19,6 +19,8 @@ export interface SubagentIdentityGlyphProps extends ComponentProps<"span"> {
   identity: string;
   /** Whether the identity came from explicit provider or persisted metadata. */
   hasExplicitIdentity: boolean;
+  /** Stable per-agent key used to keep anonymous and repeated identities distinct. */
+  paletteSeed?: string;
   /** Whether the stacked-layers silhouette should animate for active work. */
   animated?: boolean;
   /** Pixel size of the stacked-layers silhouette. */
@@ -29,14 +31,16 @@ export interface SubagentIdentityGlyphProps extends ComponentProps<"span"> {
 export function SubagentIdentityGlyph({
   identity,
   hasExplicitIdentity,
+  paletteSeed,
   animated = false,
   size = 14,
   className,
   style,
   ...props
 }: SubagentIdentityGlyphProps) {
-  const paletteIndex = hasExplicitIdentity
-    ? getSubagentIdentityPaletteIndex(identity)
+  const resolvedPaletteSeed = paletteSeed ?? (hasExplicitIdentity ? identity : undefined);
+  const paletteIndex = resolvedPaletteSeed
+    ? getSubagentIdentityPaletteIndex(resolvedPaletteSeed)
     : undefined;
   return (
     <span
@@ -44,12 +48,12 @@ export function SubagentIdentityGlyph({
       data-subagent-palette={paletteIndex}
       className={cn(
         "flex shrink-0 items-center justify-center rounded-md",
-        hasExplicitIdentity
+        paletteIndex !== undefined
           ? "subagent-identity-glyph"
           : "bg-muted/65 text-muted-foreground ring-1 ring-inset ring-border/60",
         className,
       )}
-      style={hasExplicitIdentity
+      style={paletteIndex !== undefined
         ? {
             "--subagent-identity-color": `var(--subagent-identity-${paletteIndex! + 1})`,
             ...style,

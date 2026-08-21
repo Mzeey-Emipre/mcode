@@ -1,6 +1,6 @@
 import { memo } from "react";
 import type { ToolCall } from "@/transport/types";
-import type { NarrativeItem } from "./types";
+import type { NarrativeItem, SubagentRosterTarget } from "./types";
 import { ThoughtBlock } from "./ThoughtBlock";
 import { ToolSummaryLine } from "./ToolSummaryLine";
 import { HookRow } from "./HookRow";
@@ -18,7 +18,9 @@ export interface NarrativeRowProps {
   /** Full turn graph retained for the sub-agent detail contract. */
   allToolCalls: readonly ToolCall[];
   /** Opens a selected canonical child through the composition root. */
-  onSubagentSelect?: (id: string) => void;
+  onSubagentSelect?: (id: string, target: SubagentRosterTarget) => void;
+  /** Opens the owning thread's Subagents roster for aggregate activity. */
+  onOpenSubagents?: (target: SubagentRosterTarget) => void;
 }
 
 function sameItems<T>(left: readonly T[], right: readonly T[]): boolean {
@@ -42,6 +44,7 @@ export function areNarrativeRowPropsEqual(
 ): boolean {
   if (left.rowId !== right.rowId || left.item.type !== right.item.type) return false;
   if (left.onSubagentSelect !== right.onSubagentSelect) return false;
+  if (left.onOpenSubagents !== right.onOpenSubagents) return false;
   if (left.item === right.item) return true;
 
   switch (right.item.type) {
@@ -58,7 +61,8 @@ export function areNarrativeRowPropsEqual(
       return left.item.type === "hook" && left.item.hook === right.item.hook;
     case "subagent":
       return left.item.type === "subagent"
-        && sameVisibleSubagentState(left.item, right.item);
+        && sameVisibleSubagentState(left.item, right.item)
+        && left.item.activities === right.item.activities;
     case "active-tool":
       return left.item.type === "active-tool"
         && left.item.toolCall === right.item.toolCall;
@@ -70,7 +74,8 @@ export function areNarrativeRowPropsEqual(
 function renderItem(
   item: NarrativeItem,
   allToolCalls: readonly ToolCall[],
-  onSubagentSelect?: (id: string) => void,
+  onSubagentSelect?: (id: string, target: SubagentRosterTarget) => void,
+  onOpenSubagents?: (target: SubagentRosterTarget) => void,
 ): React.ReactNode {
   switch (item.type) {
     case "thought":
@@ -94,6 +99,8 @@ function renderItem(
           children={item.children}
           hooks={item.hooks}
           allToolCalls={allToolCalls}
+          activities={item.activities}
+          onOpenSubagents={onOpenSubagents}
           onSubagentSelect={onSubagentSelect}
         />
       );
@@ -110,10 +117,11 @@ export const NarrativeRow = memo(function NarrativeRow({
   item,
   allToolCalls,
   onSubagentSelect,
+  onOpenSubagents,
 }: NarrativeRowProps) {
   return (
     <NarrativePerformanceRow rowId={rowId}>
-      {renderItem(item, allToolCalls, onSubagentSelect)}
+      {renderItem(item, allToolCalls, onSubagentSelect, onOpenSubagents)}
     </NarrativePerformanceRow>
   );
 }, areNarrativeRowPropsEqual);

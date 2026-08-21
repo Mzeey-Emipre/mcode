@@ -53,6 +53,41 @@ describe("InternalThreadControlMcpAuthority", () => {
     expect(authority.authorize(lease.credential, "call-1")).toBeUndefined();
   });
 
+  it("denies an ineligible turn from the start without inheriting a prior grant", () => {
+    const authority = new InternalThreadControlMcpAuthority();
+    const ineligible = authority.activate({
+      sessionId: "mcode-source",
+      sourceThreadId: "source",
+      sourceTurnId: "child-turn",
+      sourceProviderId: "codex",
+      permissionMode: "supervised",
+      eligible: false,
+    });
+    expect(authority.authorize(ineligible.credential, "child-mcp-call")).toBeUndefined();
+
+    const eligible = authority.activate({
+      sessionId: "mcode-source",
+      sourceThreadId: "source",
+      sourceTurnId: "explicit-turn",
+      sourceProviderId: "codex",
+      permissionMode: "supervised",
+      eligible: true,
+    });
+    expect(authority.authorize(eligible.credential, "parent-mcp-call")).toMatchObject({
+      sourceTurnId: "explicit-turn",
+    });
+
+    const nextIneligible = authority.activate({
+      sessionId: "mcode-source",
+      sourceThreadId: "source",
+      sourceTurnId: "next-child-turn",
+      sourceProviderId: "codex",
+      permissionMode: "supervised",
+      eligible: false,
+    });
+    expect(authority.authorize(nextIneligible.credential, "next-child-mcp-call")).toBeUndefined();
+  });
+
   it("rejects unequal credential lengths before constant-time comparison", () => {
     expect(constantTimeCredentialEqual("credential", "credential")).toBe(true);
     expect(constantTimeCredentialEqual("credential", "credential-extra")).toBe(false);

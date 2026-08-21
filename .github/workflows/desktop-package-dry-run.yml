@@ -40,7 +40,7 @@ jobs:
             runner: blacksmith-2vcpu-ubuntu-2404
             platform: linux
             arch: x64
-            build-args: ""
+            build-args: --config.deb.compression=gz
           - target-id: macos-arm64
             runner: blacksmith-6vcpu-macos-26
             platform: macos

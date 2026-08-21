@@ -10,6 +10,12 @@ describe("thread completion transport", () => {
     expect(WS_METHODS()["thread.reopen"].params.parse({ threadId: "thread-1" })).toEqual({
       threadId: "thread-1",
     });
+    expect(WS_METHODS()["thread.cleanupBlockedCount"].params.parse({})).toEqual({});
+    expect(WS_METHODS()["thread.cleanupBlockedCount"].result.parse({ count: 2 })).toEqual({ count: 2 });
+    expect(WS_METHODS()["thread.retryCleanup"].params.parse({ threadId: "thread-1" })).toEqual({
+      threadId: "thread-1",
+    });
+    expect(WS_METHODS()["thread.cleanupBlockedCount"].result.safeParse({ count: -1 }).success).toBe(false);
   });
 
   it("validates the full persisted thread in lifecycle pushes", () => {

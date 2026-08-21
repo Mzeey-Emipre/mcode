@@ -22,7 +22,7 @@ Per-setting reference for Mcode's `settings.json`. For schema conventions and st
 | `meta.schemaVersion` | string | `"0.0.1"` | `"0.0.1"` | - | Version of the persisted settings document. A malformed or newer version blocks writes until repair or reset. |
 | `terminal.defaultProfileId` | profile ID | `"automatic"` | `"automatic"`, a certified profile ID, or a configured custom profile ID | - | Profile selection for new Terminal sessions when the workspace has no explicit override. |
 | `terminal.profiles` | array | `[]` | Up to 32 custom profiles | - | Custom profile definitions. Each profile contains a stable ID, name, executable, and argument list. |
-| `terminal.presentation.fontFamily` | string | `"mcodeMono"` | 1-128 characters | - | Terminal font family. |
+| `terminal.presentation.fontFamily` | string | `"JetBrains Mono Variable", "JetBrains Mono", "SF Mono", "Cascadia Code", "Consolas", monospace` | 1-128 characters | - | Terminal font family. |
 | `terminal.presentation.fontSize` | enum | `"sm"` | `"xs"` \| `"sm"` \| `"md"` \| `"lg"` \| `"xl"` | - | Terminal font size. |
 | `terminal.presentation.lineHeight` | enum | `"normal"` | `"compact"` \| `"normal"` \| `"relaxed"` | - | Terminal line spacing. |
 | `terminal.presentation.cursorStyle` | enum | `"block"` | `"block"` \| `"underline"` \| `"bar"` | - | Terminal cursor shape. |
@@ -36,6 +36,7 @@ Per-setting reference for Mcode's `settings.json`. For schema conventions and st
 | `terminal.accessibility.screenReaderMode` | enum | `"off"` | `"off"` \| `"auto"` \| `"on"` | - | Terminal screen reader mode. |
 | `notifications.enabled` | boolean | `true` | - | - | Whether desktop notifications are enabled |
 | `thread.completion.retentionDays` | number \| null | `3` | 1 | 365 | Days to retain completed threads. Use `null` to disable automatic deletion. |
+| `thread.completion.unsafeWorktreePolicy` | enum | `"block"` | `"block"` \| `"delete"` | - | Handling for owned canonical worktrees with dirty files or unique branchless commits. `"block"` preserves the worktree for manual retry; `"delete"` bypasses only those two unsafe-state checks. |
 | `updates.channel` | enum | `"stable"` | `"stable"` \| `"nightly"` | - | Desktop auto-update release line. Stable uses normal GitHub releases; nightly uses the maintainers' prerelease channel when CI publishes it. **Channel switch behavior:** Stable to Nightly, electron-updater checks the latest per-build nightly release and offers it as an available update with `allowPrerelease` enabled. Nightly to Stable, if the running version is newer than the latest stable, the app shows a confirmation dialog. Confirming triggers a one-shot downgrade install. Cancelling leaves you on nightly. Per-build nightly releases are tagged `v<version>-nightly.<YYYYMMDD>.<runNumber>` and marked as GitHub prereleases. The "Latest" badge on the repo always points to the most recent stable. |
 | `updates.autoDownload` | boolean | `true` | - | - | Download updates automatically when available |
 | `updates.autoInstallOnQuit` | boolean | `true` | - | - | Install downloaded updates when the app quits |

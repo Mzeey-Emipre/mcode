@@ -12,7 +12,11 @@ describe("turn event sink", () => {
     const emitB = createTurnEventSink(emitter, "00000000-0000-4000-8000-00000000000b");
 
     emitB({ type: AgentEventType.TurnStarted, threadId: "thread-1" });
-    emitA({ type: AgentEventType.Ended, threadId: "thread-1" });
+    emitA({
+      type: AgentEventType.Ended,
+      threadId: "thread-1",
+      turnExecutionId: "00000000-0000-4000-8000-00000000000a",
+    });
     emitB({ type: AgentEventType.TextDelta, threadId: "thread-1", delta: "B" });
 
     expect(events.map((event) => event.turnExecutionId)).toEqual([

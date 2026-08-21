@@ -96,6 +96,7 @@ vi.mock("@/hooks/useThreadGitActions", () => ({
 vi.mock("@/features/subagents", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/features/subagents")>()),
   openSubagentsPanel: vi.fn(),
+  openSubagentsRoster: vi.fn(),
 }));
 vi.mock("@/stores/composerDraftStore", () => ({
   useComposerDraftStore: vi.fn((selector: (state: { setPendingPrefill: () => void }) => unknown) =>

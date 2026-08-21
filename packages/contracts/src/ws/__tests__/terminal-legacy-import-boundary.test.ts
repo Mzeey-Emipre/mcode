@@ -10,7 +10,7 @@ const SOURCE_ROOTS = [
   "packages/contracts/src",
 ] as const;
 const ALLOWED_LEGACY_IMPORTERS = new Set([
-  "apps/server/src/container.ts",
+  "apps/server/src/features/terminal/composition/register-terminal.ts",
   "apps/server/src/features/terminal/backends/__tests__/terminal-backend-selector.test.ts",
   "apps/server/src/features/terminal/backends/terminal-backend-selector.ts",
   "apps/web/src/features/terminal/adapters/__tests__/legacy-terminal-client.test.ts",

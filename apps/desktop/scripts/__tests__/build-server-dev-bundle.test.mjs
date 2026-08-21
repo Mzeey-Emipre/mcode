@@ -188,9 +188,17 @@ describe("Copilot SDK staging", () => {
     try {
       const serverCjs = path.join(tmpDir, "server.cjs");
       const dev = copyCopilotSdkNextTo(serverCjs, serverRoot);
+      // Bun may list unavailable optional native links while traversing this package.
+      // Reaching these assertions proves they did not abort staging.
       expect(findCopilotSdkPath(serverCjs, process.platform, process.arch)).toBe(dev.copilotDst + path.sep + "index.js");
       expect((await lstat(dev.copilotDst)).isSymbolicLink()).toBe(false);
       expect((await lstat(dev.platformDst)).isSymbolicLink()).toBe(false);
+      await access(path.join(dev.copilotDst, "package.json"), constants.R_OK);
+      await access(path.join(dev.platformDst, "package.json"), constants.R_OK);
+      await access(
+        path.join(dev.platformDst, process.platform === "win32" ? "copilot.exe" : "copilot"),
+        constants.R_OK,
+      );
 
       const stagedIndex = path.join(dev.copilotDst, "index.js");
       const originalIndex = await readFile(stagedIndex);

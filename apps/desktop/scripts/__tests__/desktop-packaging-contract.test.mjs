@@ -242,10 +242,10 @@ describe("desktop packaging workflow contract", () => {
       "utf8",
     );
     const unsignedBlock = workflow.match(
-      /- name: Package unsigned target\n([\s\S]*?)(?=\n      - name:)/,
+      /- name: Package unsigned target\r?\n([\s\S]*?)(?=\r?\n      - name:)/,
     )?.[1];
     const signedBlock = workflow.match(
-      /- name: Package and sign target\n([\s\S]*?)(?=\n      - name:)/,
+      /- name: Package and sign target\r?\n([\s\S]*?)(?=\r?\n      - name:)/,
     )?.[1];
 
     expect(unsignedBlock).toBeDefined();
@@ -287,6 +287,28 @@ describe("desktop packaging workflow contract", () => {
     }
     expect(source).toContain("needs: package");
     expect(source).toContain("--channel pull-request");
+  });
+
+  it("uses gzip only for the Linux PR package", () => {
+    const source = readFileSync(
+      path.join(repoRoot, ".github/workflows/desktop-package-dry-run.yml"),
+      "utf8",
+    );
+    const buildArgsFor = (targetId) => {
+      const targetBlock = source.match(
+        new RegExp(
+          `- target-id: ${targetId}\\r?\\n(?<body>[\\s\\S]*?)(?=\\r?\\n\\s+- target-id:|\\r?\\n\\s+uses:)`,
+        ),
+      )?.groups?.body;
+      expect(targetBlock).toBeDefined();
+      return targetBlock.match(/^\s+build-args:\s*(?<value>[^\r\n]*)$/m)?.groups
+        ?.value.trim();
+    };
+
+    expect(buildArgsFor("linux-x64")).toBe("--config.deb.compression=gz");
+    expect(buildArgsFor("windows-x64")).toBe('""');
+    expect(buildArgsFor("macos-arm64")).toBe("--mac --arm64");
+    expect(buildArgsFor("macos-x64")).toBe("--mac --x64");
   });
 
   it("keeps Terminal attestation out of afterPack", () => {

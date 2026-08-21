@@ -1,5 +1,13 @@
 import { z } from "zod";
 import { WorkspaceSchema, WorkspaceEnrichmentSchema } from "../models/workspace.js";
+import {
+  WorkspaceEnvironmentReadResultSchema,
+  WorkspaceEnvironmentSaveInputSchema,
+} from "../models/workspace-environment.js";
+import type {
+  WorkspaceEnvironmentReadResult,
+  WorkspaceEnvironmentSaveInput,
+} from "../models/workspace-environment.js";
 import { ThreadSchema, RecentThreadSchema } from "../models/thread.js";
 import { ThreadModeSchema, PermissionModeSchema, InteractionModeSchema, OrchestrationModeSchema } from "../models/enums.js";
 import { PaginatedMessagesSchema } from "../models/message.js";
@@ -414,6 +422,24 @@ const terminalV1SessionMethods = (): Record<TerminalV1WsMethodName, { params: z.
   } satisfies Record<string, { params: z.ZodTypeAny; result: z.ZodTypeAny }>;
 };
 
+type ThreadCleanupWsMethodName = "thread.cleanupBlockedCount" | "thread.retryCleanup";
+
+const threadCleanupLifecycleMethods = (): Record<
+  ThreadCleanupWsMethodName,
+  { params: z.ZodTypeAny; result: z.ZodTypeAny }
+> => ({
+  /** Return the number of completed retention candidates currently blocked. */
+  "thread.cleanupBlockedCount": {
+    params: z.object({}).strict(),
+    result: z.object({ count: z.number().int().nonnegative() }).strict(),
+  },
+  /** Requeue one blocked completed thread for retention cleanup. */
+  "thread.retryCleanup": {
+    params: z.object({ threadId: z.string() }).strict(),
+    result: ThreadSchema(),
+  },
+});
+
 /** All RPC method definitions keyed by method name with params and result schemas. */
 export const WS_METHODS = lazySchema(() => ({
   /** Registers this WebSocket as a visible-browser automation host. */
@@ -488,6 +514,14 @@ export const WS_METHODS = lazySchema(() => ({
       name: z.string().trim().min(1).max(120),
     }),
     result: WorkspaceSchema(),
+  },
+  "workspace.environment.read": {
+    params: z.object({ workspaceId: z.string().min(1).max(256) }).strict() as z.ZodType<{ workspaceId: string }>,
+    result: WorkspaceEnvironmentReadResultSchema() as z.ZodType<WorkspaceEnvironmentReadResult>,
+  },
+  "workspace.environment.save": {
+    params: WorkspaceEnvironmentSaveInputSchema() as z.ZodType<WorkspaceEnvironmentSaveInput>,
+    result: WorkspaceEnvironmentReadResultSchema() as z.ZodType<WorkspaceEnvironmentReadResult>,
   },
   "workspace.delete": {
     params: z.object({ id: z.string() }),
@@ -567,6 +601,7 @@ export const WS_METHODS = lazySchema(() => ({
     params: z.object({ threadId: z.string() }),
     result: ThreadSchema(),
   },
+  ...threadCleanupLifecycleMethods(),
   "thread.updateTitle": {
     params: z.object({ threadId: z.string(), title: z.string() }),
     result: z.boolean(),

@@ -8,7 +8,7 @@ import {
 } from "react";
 import { Sidebar } from "@/components/sidebar/Sidebar";
 import { ChatView } from "@/features/conversation";
-import { openSubagentDetail } from "@/features/subagents";
+import { openSubagentDetail, openSubagentsRoster } from "@/features/subagents";
 import { ConnectionBanner } from "@/components/ConnectionBanner";
 import { useUpdateStore } from "@/stores/updateStore";
 import { useToastStore } from "@/stores/toastStore";
@@ -18,7 +18,7 @@ import { useCommandPaletteStore } from "@/stores/commandPaletteStore";
 import { ShortcutHelpDialog } from "@/components/ShortcutHelpDialog";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
-import { COMPOSER_MIN_WIDTH } from "@/stores/diffStore";
+import { COMPOSER_MIN_WIDTH, useDiffStore } from "@/stores/diffStore";
 import {
   usePreviewDesignModeStore,
   usePreviewFocusStore,
@@ -31,7 +31,7 @@ import { setContext } from "@/lib/context-tracker";
 import { startPushListeners, stopPushListeners } from "@/transport/ws-events";
 import { useIdleReclamation } from "@/hooks/useIdleReclamation";
 import { useComposerLayoutGuard } from "@/hooks/useComposerLayoutGuard";
-import { toggleRightPanelAdaptive } from "@/lib/right-panel-layout";
+import { showRightPanelAdaptive, toggleRightPanelAdaptive } from "@/lib/right-panel-layout";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ToastContainer } from "@/components/Toast";
 import type { SettingsSection } from "@/components/settings/settings-nav";
@@ -466,6 +466,17 @@ export function App() {
         },
       }),
       registerCommand({
+        id: "projectEnvironment.open",
+        title: "Open Project Settings",
+        category: "Project",
+        handler: () => {
+          const { activeWorkspaceId, activeThreadId } = useWorkspaceStore.getState();
+          if (!activeWorkspaceId) return;
+          showRightPanelAdaptive(activeWorkspaceId, activeThreadId);
+          useDiffStore.getState().setRightPanelTab(activeWorkspaceId, activeThreadId, "environment");
+        },
+      }),
+      registerCommand({
         id: "terminal.toggle",
         title: "Toggle Terminal",
         category: "View",
@@ -709,7 +720,10 @@ export function App() {
                       />
                     </Suspense>
                   ) : (
-                    <ChatView onSubagentSelect={(id) => openSubagentDetail(id)} />
+                    <ChatView
+                      onSubagentSelect={openSubagentDetail}
+                      onOpenSubagents={openSubagentsRoster}
+                    />
                   )}
                 </main>
               )}

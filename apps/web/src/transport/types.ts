@@ -2,6 +2,8 @@
 import type {
   Workspace,
   WorkspaceEnrichment,
+  WorkspaceEnvironmentDocument,
+  WorkspaceEnvironmentReadResult,
   Thread,
   RecentThread,
   PaginatedMessages,
@@ -102,6 +104,8 @@ export type { PlanAction } from "@mcode/contracts";
 export type {
   Workspace,
   WorkspaceEnrichment,
+  WorkspaceEnvironmentDocument,
+  WorkspaceEnvironmentReadResult,
   Thread,
   RecentThread,
   Message,
@@ -178,6 +182,8 @@ export interface ToolCall {
   id: string;
   toolName: string;
   toolInput: Record<string, unknown>;
+  /** Provider-neutral presentation consumed by sub-agent surfaces. */
+  subagentPresentation?: import("@mcode/contracts").SubagentPresentation;
   output: string | null;
   isError: boolean;
   isComplete: boolean;
@@ -282,6 +288,14 @@ export interface McodeTransport {
   listWorkspaces(): Promise<Workspace[]>;
   /** Rename a workspace without changing its filesystem path. */
   renameWorkspace(id: string, name: string): Promise<Workspace>;
+  /** Read the private workspace environment document and revision. */
+  readWorkspaceEnvironment(workspaceId: string): Promise<WorkspaceEnvironmentReadResult>;
+  /** Save the private workspace environment document against its source revision. */
+  saveWorkspaceEnvironment(
+    workspaceId: string,
+    document: WorkspaceEnvironmentDocument,
+    sourceRevision: string | null,
+  ): Promise<WorkspaceEnvironmentReadResult>;
   deleteWorkspace(id: string): Promise<boolean>;
   /** Record workspace as last-opened for recency ordering in the project selector. */
   touchLastOpened(id: string): Promise<void>;
@@ -324,6 +338,10 @@ export interface McodeTransport {
   completeThread(threadId: string): Promise<Thread>;
   /** Reopen a completed thread and cancel its pending automatic deletion. */
   reopenThread(threadId: string): Promise<Thread>;
+  /** Count completed threads that are blocked by the unsafe-worktree policy. */
+  countBlockedThreadCleanupCandidates(): Promise<{ count: number }>;
+  /** Retry cleanup for one blocked completed thread. */
+  retryThreadCleanup(threadId: string): Promise<Thread>;
 
   // Git branch commands
   listBranches(workspaceId: string): Promise<GitBranch[]>;

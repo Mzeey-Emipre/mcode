@@ -190,6 +190,38 @@ describe("CleanupJobRepo", () => {
     });
   });
 
+  describe("blocked retention candidates", () => {
+    it("requeues bounded pages and reports whether another page remains", () => {
+      const now = "2026-08-12T10:00:00.000Z";
+      db.prepare(
+        `INSERT INTO workspaces (id, name, path, created_at, updated_at)
+         VALUES ('workspace-blocked', 'Project', '/repo', ?, ?)`,
+      ).run(now, now);
+      const insert = db.prepare(
+        `INSERT INTO threads
+          (id, workspace_id, title, branch, mode, status, user_completed_at,
+           scheduled_deletion_at, cleanup_state, created_at, updated_at)
+         VALUES (?, 'workspace-blocked', ?, 'main', 'direct', 'active', ?, ?, 'blocked', ?, ?)`,
+      );
+      for (let index = 0; index < 21; index += 1) {
+        insert.run(`blocked-${index}`, `Blocked ${index}`, now, now, now, now);
+      }
+
+      expect(repo.countBlockedRetentionCandidates()).toBe(21);
+      const first = repo.requeueBlockedRetentionBatch(20);
+      expect(first.threadIds).toHaveLength(20);
+      expect(first.hasMore).toBe(true);
+      expect(repo.countBlockedRetentionCandidates()).toBe(1);
+      expect(repo.count()).toBe(20);
+
+      const second = repo.requeueBlockedRetentionBatch(20);
+      expect(second.threadIds).toHaveLength(1);
+      expect(second.hasMore).toBe(false);
+      expect(repo.countBlockedRetentionCandidates()).toBe(0);
+      expect(repo.count()).toBe(21);
+    });
+  });
+
   describe("recordFailure", () => {
     it("increments attempts and applies exponential backoff", () => {
       const before = Date.now();

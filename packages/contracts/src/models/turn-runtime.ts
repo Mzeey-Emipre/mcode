@@ -12,6 +12,7 @@ export const TurnRuntimePhaseSchema = z.enum([
   "running",
   "finalizing",
   "completed",
+  "interrupted",
   "errored",
   "cancelled",
 ]);

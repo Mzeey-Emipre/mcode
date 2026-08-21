@@ -455,6 +455,38 @@ describe("mcode side-effect dispatch", () => {
 });
 
 describe("IPC cache", () => {
+  it("eagerly loads and opens the workspace catalog without a thread or cwd", async () => {
+    const mockCatalog = catalogMock([{
+      name: "workspace-command",
+      description: "Workspace command",
+    }]);
+    vi.mocked(getTransport).mockReturnValue({ getProviderCatalog: mockCatalog } as never);
+
+    const ref = makeAnchor();
+    const { result } = renderHook(() => useSlashCommand({
+      anchorRef: ref,
+      providerId: "codex",
+      workspaceId: "workspace-1",
+      includeBuiltins: false,
+    }));
+
+    await act(async () => {});
+    expect(mockCatalog).toHaveBeenCalledTimes(1);
+    expect(mockCatalog).toHaveBeenCalledWith({
+      providerId: "codex",
+      workspaceId: "workspace-1",
+    });
+
+    await act(async () => {
+      result.current.onInputChange("/");
+    });
+    expect(mockCatalog).toHaveBeenLastCalledWith({
+      providerId: "codex",
+      workspaceId: "workspace-1",
+    });
+    expect(result.current.items.map((item) => item.name)).toContain("workspace-command");
+  });
+
   it("calls provider.catalog only once across multiple trigger openings", async () => {
     const mockCatalog = catalogMock([{ name: "commit", description: "Create a git commit" }]);
     vi.mocked(getTransport).mockReturnValue({ getProviderCatalog: mockCatalog } as never);

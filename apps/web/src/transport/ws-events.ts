@@ -409,7 +409,9 @@ export function startPushListeners(): void {
       const payload = data as {
         threadId: string;
         turnId?: string | null;
+        executionId?: string | null;
         messageId: string;
+        outcome?: "completed" | "cancelled" | "interrupted" | "errored" | null;
         toolCallCount: number;
         filesChanged: string[];
         fileEffects?: TurnFileEffectSummary;

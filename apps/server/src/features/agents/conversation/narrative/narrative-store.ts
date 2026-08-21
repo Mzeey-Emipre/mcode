@@ -41,9 +41,12 @@ import {
   resolveProviderAgentKey,
   resolveSubagentDisplayName,
   resolveSubagentMetadata,
+  createSubagentPresentation,
+  resolveSubagentExactIdentity,
   type Message,
   type NarrativeEntry,
   type TurnRange,
+  type SubagentPresentation,
 } from "@mcode/contracts";
 import { MessageRepo } from "../persistence/message-repo.js";
 import {
@@ -93,6 +96,7 @@ export interface BufferToolCallEvent {
   toolName: string;
   toolInput: Record<string, unknown>;
   parentToolCallId?: string;
+  subagentPresentation?: SubagentPresentation;
 }
 
 /** Result of persisting a turn's narrative rows. */
@@ -378,19 +382,34 @@ export class NarrativeStore {
 
     const existing = buffer.find((tc) => tc.toolCallId === event.toolCallId);
     if (existing) {
-      const shouldMergeDuplicate =
-        existing.status === "running"
-        && (
+      const isAgentEnrichment = existing.toolName === "Agent" && event.toolName === "Agent";
+      const shouldMergeDuplicate = isAgentEnrichment || (
+        existing.status === "running" && (
           Object.keys(existing._rawToolInput ?? {}).length === 0
           || existing.toolName !== event.toolName
-          || (existing.toolName === "Agent" && event.toolName === "Agent")
-        );
+        ));
       if (shouldMergeDuplicate) {
         existing.toolName = event.toolName;
-        existing._rawToolInput = {
+        const mergedToolInput = {
           ...(existing._rawToolInput ?? {}),
           ...event.toolInput,
         };
+        existing._rawToolInput = mergedToolInput;
+        if (event.toolName === "Agent") {
+          const presentation = createSubagentPresentation(mergedToolInput, event.toolCallId);
+          existing.displayName = presentation.hasExplicitIdentity ? presentation.displayName : undefined;
+          existing.providerAgentKey = presentation.providerAgentKey;
+          existing.subagentIdentityKey = resolveSubagentExactIdentity(mergedToolInput);
+          if (existing.messageId && existing.subagentIdentityKey) {
+            this.toolCallRecordRepo.updateSubagentIdentity(
+              existing.toolCallId!,
+              existing.messageId,
+              existing.subagentIdentityKey,
+            );
+          }
+          existing.model = presentation.model;
+          existing.reasoningEffort = presentation.reasoningEffort;
+        }
       }
       if (event.parentToolCallId) {
         existing.parentToolCallId = event.parentToolCallId;
@@ -406,22 +425,21 @@ export class NarrativeStore {
       this.agentCallStack.set(threadId, stack);
     }
 
+    const presentation = event.toolName === "Agent"
+      ? event.subagentPresentation ?? createSubagentPresentation(event.toolInput, event.toolCallId)
+      : undefined;
+
     buffer.push({
       toolCallId: event.toolCallId,
       messageId: "",
       toolName: event.toolName,
-      displayName: event.toolName === "Agent"
-        ? resolveSubagentDisplayName(event.toolInput)
+      displayName: presentation?.hasExplicitIdentity ? presentation.displayName : undefined,
+      providerAgentKey: presentation?.providerAgentKey,
+      subagentIdentityKey: event.toolName === "Agent"
+        ? resolveSubagentExactIdentity(event.toolInput)
         : undefined,
-      providerAgentKey: event.toolName === "Agent"
-        ? resolveProviderAgentKey(event.toolInput)
-        : undefined,
-      model: event.toolName === "Agent"
-        ? resolveSubagentMetadata(event.toolInput.model)
-        : undefined,
-      reasoningEffort: event.toolName === "Agent"
-        ? resolveSubagentMetadata(event.toolInput.reasoningEffort)
-        : undefined,
+      model: presentation?.model,
+      reasoningEffort: presentation?.reasoningEffort,
       inputSummary: "", // Deferred to persistNarrative
       outputSummary: "",
       status: "running",
@@ -724,7 +742,7 @@ export class NarrativeStore {
     for (const toolCall of toolCalls) {
       toolCall.toolCallId ??= randomUUID();
       if (toolCall.status === "running") {
-        toolCall.status = outcome === "errored"
+        toolCall.status = outcome === "errored" || outcome === "interrupted"
           ? "failed"
           : outcome === "cancelled"
             ? "cancelled"
@@ -736,6 +754,7 @@ export class NarrativeStore {
         if (toolCall.toolName === "Agent") {
           toolCall.displayName = resolveSubagentDisplayName(toolCall._rawToolInput);
           toolCall.providerAgentKey = resolveProviderAgentKey(toolCall._rawToolInput);
+          toolCall.subagentIdentityKey = resolveSubagentExactIdentity(toolCall._rawToolInput);
           toolCall.model = resolveSubagentMetadata(toolCall._rawToolInput.model);
           toolCall.reasoningEffort = resolveSubagentMetadata(toolCall._rawToolInput.reasoningEffort);
         }

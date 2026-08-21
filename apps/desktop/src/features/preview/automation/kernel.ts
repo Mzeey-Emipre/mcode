@@ -25,6 +25,8 @@ import {
   type BrowserAutomationControllerState,
 } from "@mcode/contracts";
 import { findAdoptedWebContentsForWindow } from "../surfaces/registry.js";
+import { resolveActivePreviewWebContentsForWindow } from "../surfaces/active-web-contents.js";
+import { loadPreviewGuestUrl } from "../navigation/guest-navigation.js";
 import { PREVIEW_GUEST_AGENT_INPUT_CHANNEL } from "../contracts/guest-input.js";
 import { getSession, getThreadTabSet } from "../state/window-session.js";
 import {
@@ -151,23 +153,6 @@ function assertShortId(value: unknown, name: string): string {
 
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
-}
-
-function isCommittedAbortedNavigation(
-  cause: unknown,
-  webContents: WebContents,
-  requestedUrl: string,
-  previousUrl: string,
-): boolean {
-  const error = asRecord(cause);
-  if (error.code !== "ERR_ABORTED" && error.errno !== -3) return false;
-  const committedUrl = webContents.getURL();
-  if (!committedUrl || committedUrl.startsWith("about:") || committedUrl.startsWith("chrome-error:")) {
-    return false;
-  }
-  // Redirecting pages can reject loadURL after Chromium has already committed
-  // the requested page. A still-unchanged page is a real aborted navigation.
-  return committedUrl === requestedUrl || committedUrl !== previousUrl;
 }
 
 function createAbortPromise(signal: AbortSignal): Promise<never> {
@@ -642,15 +627,17 @@ export class BrowserAutomationKernel {
   async execute(event: IpcMainInvokeEvent, input: unknown): Promise<BrowserAutomationResponse> {
     let request: BrowserAutomationRequest | null = null;
     let cancellation: { cancel: () => void } | null = null;
+    let resolved: ResolvedTarget | null = null;
     try {
       const parsedInput = this.parseInput(input);
       request = parsedInput.request;
       if (this.cancellations.has(request.requestId)) {
         throw new KernelError("INVALID_REQUEST", "Browser request id is already active", false);
       }
-      const resolved = this.resolveTarget(event, parsedInput.request.threadId, parsedInput.target);
-      const scheduled = this.scheduler.enqueue(resolved.state.key, (signal) =>
-        this.runOperation(resolved, parsedInput.request, signal),
+      const target = this.resolveTarget(event, parsedInput.request.threadId, parsedInput.target);
+      resolved = target;
+      const scheduled = this.scheduler.enqueue(target.state.key, (signal) =>
+        this.runOperation(target, parsedInput.request, signal),
       );
       cancellation = { cancel: scheduled.cancel };
       this.cancellations.set(request.requestId, cancellation);
@@ -676,6 +663,7 @@ export class BrowserAutomationKernel {
         const active = this.cancellations.get(request.requestId);
         if (active === cancellation) this.cancellations.delete(request.requestId);
       }
+      if (resolved) this.restoreActivePreviewGuestFocus(resolved);
     }
   }
 
@@ -829,6 +817,7 @@ export class BrowserAutomationKernel {
       state.controller.providerSessionId !== providerSessionId
     ) return false;
     this.emitController(state, "none");
+    this.restoreActivePreviewGuestFocus({ state, webContents: state.webContents, window: win });
     return true;
   }
 
@@ -1053,6 +1042,14 @@ export class BrowserAutomationKernel {
       this.evictTargetGenerationTombstones();
     }
     return { state, webContents, window: win };
+  }
+
+  private restoreActivePreviewGuestFocus(resolved: ResolvedTarget): void {
+    const { webContents, window } = resolved;
+    if (window.isDestroyed() || !window.isFocused() || webContents.isDestroyed() || !webContents.isFocused()) return;
+    const activeWebContents = resolveActivePreviewWebContentsForWindow(window.id, getSession(window));
+    if (!activeWebContents || activeWebContents.id === webContents.id) return;
+    activeWebContents.focus();
   }
 
   private createTargetState(
@@ -1296,7 +1293,6 @@ export class BrowserAutomationKernel {
       case "navigate": {
         const url = request.operation === "navigate" ? request.args.url : request.args.url;
         if (url) {
-          const previousUrl = webContents.getURL();
           const navigationSequence = ++state.navigationSequence;
           const stopNavigation = () => {
             if (state.navigationSequence !== navigationSequence) return;
@@ -1306,11 +1302,14 @@ export class BrowserAutomationKernel {
           signal.addEventListener("abort", stopNavigation, { once: true });
           state.automationNavigationDepth += 1;
           try {
-            const navigation = webContents.loadURL(url);
+            const navigation = loadPreviewGuestUrl(webContents, url);
             markEffect();
-            await boundedRace(navigation, signal, request.deadline);
+            const result = await boundedRace(navigation, signal, request.deadline);
             if (signal.aborted || state.navigationSequence !== navigationSequence) {
               throw new BrowserAutomationCancelledError("Browser navigation was cancelled");
+            }
+            if (result.status === "failed") {
+              throw new KernelError("NAVIGATION_FAILED", "Browser navigation failed", true);
             }
           } catch (cause) {
             if (
@@ -1322,9 +1321,7 @@ export class BrowserAutomationKernel {
               throw cause;
             }
             if (cause instanceof KernelError) throw cause;
-            if (!isCommittedAbortedNavigation(cause, webContents, url, previousUrl)) {
-              throw new KernelError("NAVIGATION_FAILED", "Browser navigation failed", true);
-            }
+            throw new KernelError("NAVIGATION_FAILED", "Browser navigation failed", true);
           } finally {
             signal.removeEventListener("abort", stopNavigation);
             state.automationNavigationDepth -= 1;

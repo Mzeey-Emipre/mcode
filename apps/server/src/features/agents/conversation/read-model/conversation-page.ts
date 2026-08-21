@@ -27,6 +27,28 @@ export interface ConversationTailDeps {
   messageRepo: MessageRepo;
 }
 
+/** Merge canonical and compatibility narrative rows without dropping append-only records. */
+function mergeNarrativeBatch(
+  persisted: ConversationNarrativeBatch | undefined,
+  canonical: ConversationNarrativeBatch,
+): ConversationNarrativeBatch {
+  const mergeRecords = <T extends { id: string; sort_order: number }>(
+    persistedRecords: readonly T[],
+    canonicalRecords: readonly T[],
+  ): T[] => {
+    const byId = new Map(persistedRecords.map((record) => [record.id, record]));
+    for (const record of canonicalRecords) byId.set(record.id, record);
+    return [...byId.values()].sort((left, right) =>
+      left.sort_order - right.sort_order || left.id.localeCompare(right.id));
+  };
+
+  return {
+    tools: mergeRecords(persisted?.tools ?? [], canonical.tools),
+    thoughts: mergeRecords(persisted?.thoughts ?? [], canonical.thoughts),
+    hooks: mergeRecords(persisted?.hooks ?? [], canonical.hooks),
+  };
+}
+
 /** Groups flat narrative entries into the legacy per-message payload shape. */
 export function groupNarrativeEntriesByMessage(
   entries: readonly NarrativeEntry[],
@@ -89,7 +111,10 @@ export function loadConversationPage(
   for (const message of canonicalPage?.messages ?? []) {
     const canonicalNarrative = canonicalPage?.narrativeByMessage[message.id];
     if (canonicalNarrative && messageIds.has(message.id)) {
-      narrativeByMessage[message.id] = canonicalNarrative;
+      narrativeByMessage[message.id] = mergeNarrativeBatch(
+        narrativeByMessage[message.id],
+        canonicalNarrative,
+      );
     }
   }
 
@@ -231,7 +256,10 @@ export function loadNewerConversationPage(
   for (const message of canonicalPage?.messages ?? []) {
     const canonicalNarrative = canonicalPage?.narrativeByMessage[message.id];
     if (canonicalNarrative && messages.some((candidate) => candidate.id === message.id)) {
-      page.narrativeByMessage[message.id] = canonicalNarrative;
+      page.narrativeByMessage[message.id] = mergeNarrativeBatch(
+        page.narrativeByMessage[message.id],
+        canonicalNarrative,
+      );
     }
   }
   let retainedMessages = messages;

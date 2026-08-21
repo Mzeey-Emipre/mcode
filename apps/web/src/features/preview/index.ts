@@ -19,7 +19,20 @@ export type {
   BrowserAutomationPendingAgentOpen,
 } from "./automation/browserAutomationStore";
 export type { BrowserSessionLifecycleTab } from "./automation/services/browserSessionDriver";
-export { BrowserSurfaceHostRoot, browserSurfaceHost } from "./surfaces/BrowserSurfaceHostRoot";
+export {
+  BrowserSurfaceHostRoot,
+  browserSurfaceHost,
+  browserSurfacePresentationCoordinator,
+} from "./surfaces/BrowserSurfaceHostRoot";
+export {
+  BrowserSurfacePresentationCoordinator,
+} from "./surfaces/BrowserSurfacePresentationCoordinator";
+export type {
+  BrowserSurfacePresentationIntent,
+  BrowserSurfacePresentationRegistration,
+  BrowserSurfacePresentationRect,
+  BrowserSurfacePresentationSource,
+} from "./surfaces/BrowserSurfacePresentationCoordinator";
 export {
   PREVIEW_WEBVIEW_FALLBACK_TAB_ID,
   WEB_RUNTIME_PREVIEW_TAB_ID,

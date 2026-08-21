@@ -1,13 +1,22 @@
 import { useEffect, useMemo, useRef } from "react";
 import { useThreadStore } from "@/stores/threadStore";
-import { useActiveThreadRecord } from "@/stores/thread-selectors";
+import { useThreadRecord } from "@/stores/thread-selectors";
 import { TurnFooter } from "./TurnFooter";
-import type { NarrativeCounts } from "./types";
+import { collapseSubagentRecords } from "./subagent-lifecycle";
+import type { NarrativeCounts, TurnFooterSummary } from "./types";
 
 /** Props for {@link PersistedTurnFooter}. */
 export interface PersistedTurnFooterProps {
+  /** Thread whose resident narrative cache owns this assistant message. */
+  threadId?: string | null;
   /** Assistant message id this footer belongs to. */
   messageId: string;
+  /** Canonical summary used when this message has no legacy narrative cache. */
+  summary?: TurnFooterSummary;
+  /** Prefills the existing composer with `Continue` for an interrupted turn. */
+  onContinue?: () => void | Promise<void>;
+  /** Calls the existing retry command with the summary's exact execution ID. */
+  onRetry?: (executionId: string) => void | Promise<void>;
 }
 
 /**
@@ -19,24 +28,29 @@ export interface PersistedTurnFooterProps {
  * the answer they led to. Putting the footer at the end keeps the reading
  * order: actions → response → wrap-up.
  *
- * Lazy-loads the same narrative records as `PersistedNarrative` via the
- * threadStore cache. Returns `null` until records arrive so the layout does
- * not jump.
+ * Uses a supplied canonical summary or lazily loads the same narrative records
+ * as `PersistedNarrative` through the threadStore cache.
  */
-export function PersistedTurnFooter({ messageId }: PersistedTurnFooterProps) {
-  const records = useActiveThreadRecord((r) => r.narrativeByMessage[messageId]);
+export function PersistedTurnFooter({
+  threadId,
+  messageId,
+  summary,
+  onContinue,
+  onRetry,
+}: PersistedTurnFooterProps) {
+  const records = useThreadRecord(threadId, (r) => r.narrativeByMessage[messageId]);
   const load = useThreadStore((s) => s.loadNarrativeForMessage);
   const triggered = useRef(false);
 
   useEffect(() => {
-    if (records || triggered.current) return;
+    if (summary || records || triggered.current) return;
     triggered.current = true;
-    void load(messageId);
-  }, [messageId, records, load]);
+    void load(messageId, threadId ?? undefined);
+  }, [messageId, records, load, summary, threadId]);
 
-  const summary = useMemo(() => {
+  const persistedSummary = useMemo<TurnFooterSummary | null>(() => {
     if (!records) return null;
-    const topLevel = records.tools.filter((t) => t.parent_tool_call_id == null);
+    const topLevel = collapseSubagentRecords(records.tools).filter((t) => t.parent_tool_call_id == null);
     const counts: NarrativeCounts = {
       steps: topLevel.length,
       thoughts: records.thoughts.length,
@@ -69,9 +83,25 @@ export function PersistedTurnFooter({ messageId }: PersistedTurnFooterProps) {
     return { counts, durationMs };
   }, [records]);
 
-  if (!records || !summary) return null;
-  // Suppress entirely when the turn had zero structured activity.
-  if (summary.counts.steps === 0 && summary.counts.subagents === 0) return null;
+  const resolvedSummary = summary ?? persistedSummary;
+  if (!resolvedSummary) return null;
+  // Legacy narrative rows do not establish a complete turn boundary. A
+  // canonical summary does, so its elapsed time still closes a tool-free turn.
+  if (
+    !summary
+    && resolvedSummary.counts.steps === 0
+    && resolvedSummary.counts.subagents === 0
+    && resolvedSummary.outcome == null
+  ) return null;
 
-  return <TurnFooter counts={summary.counts} durationMs={summary.durationMs} />;
+  return (
+    <TurnFooter
+      counts={resolvedSummary.counts}
+      durationMs={resolvedSummary.durationMs}
+      outcome={resolvedSummary.outcome}
+      outcomeExecutionId={resolvedSummary.outcomeExecutionId}
+      onContinue={onContinue}
+      onRetry={onRetry}
+    />
+  );
 }

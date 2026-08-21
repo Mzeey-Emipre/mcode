@@ -7,6 +7,8 @@ import {
 import { TOOL_LABELS, resolveToolName } from "@/components/chat/tool-renderers/constants";
 import {
   resolveProviderAgentKey,
+  createSubagentPresentation,
+  resolveSubagentExactIdentity,
   resolveSubagentDisplayName,
   type FileEffect,
   type TurnFileEffectSummary,
@@ -61,6 +63,8 @@ interface SubagentRow {
   readonly memberCallIds: readonly string[];
   /** Explicit provider identity used only for safe logical grouping. */
   readonly providerAgentKey?: string;
+  /** Exact receiver/native identity when provider paths are shared by parallel children. */
+  readonly logicalIdentityKey?: string;
   /** Best surviving display identity for the delegated agent. */
   readonly identity: string;
   /** Whether the identity came from explicit provider or persisted metadata. */
@@ -118,6 +122,17 @@ function subagentIdentity(agent: ToolCall): { identity: string; hasExplicitIdent
   };
 }
 
+function exactIdentityForCall(call: ToolCall, providerKey: string | undefined): string | undefined {
+  const inputIdentity = resolveSubagentExactIdentity(call.toolInput);
+  if (inputIdentity) return inputIdentity;
+  const presentationIdentity = call.subagentPresentation?.identityKey;
+  return presentationIdentity
+    && presentationIdentity !== providerKey
+    && presentationIdentity !== call.id
+    ? presentationIdentity
+    : undefined;
+}
+
 function hydratedTask(record: ToolCallRecord): string {
   return boundedDisplayText(nonEmptyString(record.input_summary) ?? "Subagent task", MAX_TASK_LENGTH);
 }
@@ -133,6 +148,16 @@ function hydratedIdentity(record: ToolCallRecord): { identity: string; hasExplic
 function persistedRecordToToolCall(record: ToolCallRecord, rootId: string): ToolCall {
   const startedAt = parsedTimestamp(record.started_at) ?? 0;
   const completedAt = parsedTimestamp(record.completed_at);
+  const subagentPresentation = record.tool_name === "Agent"
+    ? createSubagentPresentation({
+        ...(record.display_name ? { agentName: record.display_name } : {}),
+        ...(record.provider_agent_key
+          ? { codexCollabKind: "spawnAgent", agentPath: record.provider_agent_key }
+          : {}),
+        ...(record.model ? { model: record.model } : {}),
+        ...(record.reasoning_effort ? { reasoningEffort: record.reasoning_effort } : {}),
+      }, record.provider_agent_key ?? record.id)
+    : undefined;
   return {
     id: record.id,
     toolName: record.tool_name,
@@ -142,6 +167,13 @@ function persistedRecordToToolCall(record: ToolCallRecord, rootId: string): Tool
         ? { agentName: record.display_name }
         : {}),
     },
+    ...(subagentPresentation
+      ? {
+          subagentPresentation: record.subagent_identity_key
+            ? { ...subagentPresentation, identityKey: record.subagent_identity_key }
+            : subagentPresentation,
+        }
+      : {}),
     output: nonEmptyString(record.output_summary) ?? null,
     isError: record.status === "failed",
     isComplete: record.status !== "running",
@@ -292,6 +324,7 @@ export function projectSubagents(
     const startedAt = agent.startedAt ?? now;
     const status = liveStatus(agent);
     const providerAgentKey = resolveProviderAgentKey(agent.toolInput);
+    const logicalIdentityKey = exactIdentityForCall(agent, providerAgentKey);
     const latestActivity = latestCall.id === agent.id
       ? status === "running"
         ? "Working"
@@ -308,6 +341,7 @@ export function projectSubagents(
           id: agent.id,
           memberCallIds: [agent.id],
           providerAgentKey,
+          logicalIdentityKey,
           ...subagentIdentity(agent),
           task: boundedDisplayText(extractSubagentDescription(agent), MAX_TASK_LENGTH),
           startedAt,
@@ -327,6 +361,7 @@ export function projectSubagents(
         id: agent.id,
         memberCallIds: [agent.id],
         providerAgentKey,
+        logicalIdentityKey,
         ...subagentIdentity(agent),
         task: boundedDisplayText(extractSubagentDescription(agent), MAX_TASK_LENGTH),
         startedAt,
@@ -356,6 +391,11 @@ export function projectSubagents(
       const startedAt = parsedTimestamp(record.started_at) ?? 0;
       const completedAt = parsedTimestamp(record.completed_at) ?? startedAt;
       const task = hydratedTask(record);
+      const liveRow = liveRows.get(record.id)?.row;
+      const persistedIdentity = hydratedIdentity(record);
+      const identity = persistedIdentity.hasExplicitIdentity || !liveRow?.hasExplicitIdentity
+        ? persistedIdentity
+        : { identity: liveRow.identity, hasExplicitIdentity: true };
       const persistedVisited = new Set<string>([record.id]);
       const persistedActivity: SubagentDetailActivity[] = [];
       const persistedTranscript: ToolCall[] = [];
@@ -394,13 +434,14 @@ export function projectSubagents(
         id: record.id,
         memberCallIds: [record.id],
         providerAgentKey: nonEmptyString(record.provider_agent_key),
-        ...hydratedIdentity(record),
+        logicalIdentityKey: record.subagent_identity_key ?? undefined,
+        ...identity,
         task,
         startedAt,
         activity: boundedDisplayText(nonEmptyString(record.output_summary) ?? task, MAX_ACTIVITY_LENGTH),
         activityAt: record.status === "running" ? startedAt : completedAt,
         elapsedSeconds: elapsedSeconds(startedAt, record.status === "running" ? now : completedAt),
-        detail: liveRows.get(record.id)?.row.detail ?? {
+        detail: liveRow?.detail ?? {
           model: nonEmptyString(record.model),
           reasoningEffort: nonEmptyString(record.reasoning_effort),
           stepCount: persistedStepCount,
@@ -427,10 +468,33 @@ export function projectSubagents(
   const active: Array<LiveSubagentRow & { index: number; orderAt: number }> = [];
   const finished: Array<FinishedSubagentRow & { index: number; orderAt: number }> = [];
   const logicalGroups = new Map<string, Array<{ row: LiveSubagentRow | FinishedSubagentRow; index: number }>>();
+  const providerGroupKeys = new Map<string, string>();
+  const exactGroupKeys = new Map<string, string>();
+  const groupsWithExactIdentity = new Set<string>();
   for (const member of liveRows.values()) {
-    const groupKey = member.row.providerAgentKey
-      ? `provider:${member.row.providerAgentKey}`
-      : `call:${member.row.id}`;
+    const providerKey = member.row.providerAgentKey;
+    const exactIdentity = member.row.logicalIdentityKey;
+    let groupKey = exactIdentity ? exactGroupKeys.get(exactIdentity) : undefined;
+    if (!groupKey && providerKey) {
+      const providerGroup = providerGroupKeys.get(providerKey);
+      if (providerGroup && (!exactIdentity || !groupsWithExactIdentity.has(providerGroup))) {
+        groupKey = providerGroup;
+      }
+    }
+    if (!groupKey) {
+      groupKey = exactIdentity
+        ? `identity:${exactIdentity}`
+        : providerKey
+          ? `provider:${providerKey}`
+          : `call:${member.row.id}`;
+    }
+    if (exactIdentity) {
+      exactGroupKeys.set(exactIdentity, groupKey);
+      groupsWithExactIdentity.add(groupKey);
+    }
+    if (providerKey && !providerGroupKeys.has(providerKey)) {
+      providerGroupKeys.set(providerKey, groupKey);
+    }
     const group = logicalGroups.get(groupKey) ?? [];
     group.push(member);
     logicalGroups.set(groupKey, group);
@@ -475,6 +539,7 @@ export function projectSubagents(
       id: representative.row.id,
       memberCallIds: members.map(({ row }) => row.id),
       providerAgentKey: representative.row.providerAgentKey,
+      logicalIdentityKey: representative.row.logicalIdentityKey,
       identity: representative.row.identity,
       hasExplicitIdentity: representative.row.hasExplicitIdentity,
       task: representative.row.task,

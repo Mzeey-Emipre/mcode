@@ -1342,13 +1342,21 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const selectedCatalogWorktreePath = useWorkspaceStore(
     (state) => state.selectedWorktree?.path,
   );
-  const catalogCwd = isNewThread && composerMode === "existing-worktree"
-    ? selectedCatalogWorktreePath
-    : activeThread?.worktree_path ?? undefined;
+  // Optimistic thread rows are client-only shells. Provider discovery and file
+  // listing must stay at workspace scope until the server row replaces them;
+  // otherwise the placeholder ID/path can leak into eager catalog requests.
+  const catalogThreadId = activeThread?.clientPreparing || isNewThread
+    ? undefined
+    : threadId;
+  const catalogCwd = activeThread?.clientPreparing
+    ? undefined
+    : isNewThread && composerMode === "existing-worktree"
+      ? selectedCatalogWorktreePath
+      : activeThread?.worktree_path ?? undefined;
 
   const fileAutocomplete = useFileAutocomplete({
     workspaceId,
-    threadId,
+    threadId: catalogThreadId,
     providerId: effectiveProviderId,
     cwd: catalogCwd,
   });
@@ -1527,7 +1535,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const slashCommand = useSlashCommand({
     anchorRef: composerContainerRef,
     workspaceId: workspaceId ?? undefined,
-    threadId: !isNewThread ? threadId : undefined,
+    threadId: catalogThreadId,
     providerId: effectiveProviderId,
     modelId,
     onMcodeCommand: (action) => {

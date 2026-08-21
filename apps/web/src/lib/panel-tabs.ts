@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { Bot, Globe, Terminal, Files, Diff, ListChecks, Network } from "lucide-react";
+import { Globe, Terminal, Files, Diff, ListChecks, Layers, Network, SlidersHorizontal } from "lucide-react";
 import type { RightPanelTab } from "@/stores/diffStore";
 
 /**
@@ -84,6 +84,14 @@ export const PANEL_TAB_TYPES: readonly PanelTabType[] = [
     commandId: "changes.toggle",
   },
   {
+    id: "environment",
+    label: "Project settings",
+    icon: SlidersHorizontal,
+    blurb: "Edit Project environment",
+    needsThread: false,
+    commandId: "projectEnvironment.open",
+  },
+  {
     id: "tasks",
     label: "Plan",
     icon: ListChecks,
@@ -94,7 +102,7 @@ export const PANEL_TAB_TYPES: readonly PanelTabType[] = [
   {
     id: "subagents",
     label: "Subagents",
-    icon: Bot,
+    icon: Layers,
     blurb: "Follow delegated work",
     needsThread: true,
   },

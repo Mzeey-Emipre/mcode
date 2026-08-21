@@ -39,6 +39,7 @@ export const CanonicalSubagentStopRequestSchema = lazySchema(() =>
 /** Exact terminal state represented in the canonical turn model. */
 export const CanonicalSubagentTerminalOutcomeSchema = z.enum([
   "Completed",
+  "Cancelled",
   "Interrupted",
   "Errored",
 ]);
@@ -116,6 +117,8 @@ export function canonicalSubagentTerminalOutcome(
       return "Completed";
     case "Interrupted":
       return "Interrupted";
+    case "Cancelled":
+      return "Cancelled";
     case "Errored":
       return "Errored";
     default:

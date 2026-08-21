@@ -396,7 +396,7 @@ describe("CanonicalAgentEventSink", () => {
     expect(sink.loadTurn(TURN_ID)).toMatchObject({ status: "Interrupted" });
     expect(sink.loadCheckpoint(EXECUTION_ID)).toMatchObject({
       phase: "interrupted",
-      terminalOutcome: "cancelled",
+      terminalOutcome: "interrupted",
       lastAcceptedSequence: 6,
       lastDurableSequence: 6,
       nativeCursor: identity(),
@@ -1287,6 +1287,43 @@ describe("CanonicalAgentEventSink", () => {
     });
   });
 
+  it("enriches an existing delegation when authoritative child metadata arrives later", () => {
+    startCanonicalParent(sink, db);
+    const input = {
+      parentThreadId: THREAD_ID,
+      parentTurnId: TURN_ID,
+      parentExecutionId: EXECUTION_ID,
+      parentItemId: "toolCall:spawn-late-roster-metadata",
+      receiverThreadIds: ["native-late-roster-metadata"],
+      providerIdentities: [] as ProviderIdentity[],
+    };
+    const delegation = sink.startCodexChildDelegation(input);
+
+    const enriched = sink.startCodexChildDelegation({
+      ...input,
+      description: "Inspect late metadata",
+      identity: "Worker",
+      model: "gpt-5.6-terra",
+      reasoningEffort: "medium",
+      providerIdentities: [identity()],
+    });
+    const roster = sink.loadSubagentRoster({
+      owningParentThreadId: THREAD_ID,
+      limit: CANONICAL_SUBAGENT_ROSTER_MAX_CHILDREN,
+    });
+
+    expect(enriched.childThread.id).toBe(delegation.childThread.id);
+    expect(roster.active).toHaveLength(1);
+    expect(roster.active[0]).toMatchObject({
+      id: delegation.childThread.id,
+      task: "Inspect late metadata",
+      identity: "Worker",
+      model: "gpt-5.6-terra",
+      reasoning: "medium",
+      sourceProviderIdentities: [identity()],
+    });
+  });
+
   it("bounds hostile roster metadata before canonical persistence", () => {
     startCanonicalParent(sink, db);
     const description = "d".repeat(CANONICAL_SUBAGENT_TASK_MAX_LENGTH + 1);
@@ -1412,7 +1449,7 @@ describe("CanonicalAgentEventSink", () => {
     sink.finishCodexChildTurn({
       childThreadId: interrupted.childThread.id,
       nativeTurnId: "native-turn-interrupted",
-      outcome: "cancelled",
+      outcome: "interrupted",
     });
 
     db.prepare("UPDATE canonical_agent_turns SET started_at = ?, updated_at = ? WHERE id = ?")
@@ -1456,6 +1493,50 @@ describe("CanonicalAgentEventSink", () => {
     const bounded = sink.loadSubagentRoster({ owningParentThreadId: THREAD_ID, limit: 1 });
     expect(bounded.active).toHaveLength(1);
     expect(bounded.done).toHaveLength(0);
+  });
+
+  it("loads every descendant stop target once with nested children first", () => {
+    startCanonicalParent(sink, db);
+    const direct = sink.startCodexChildDelegation({
+      parentThreadId: THREAD_ID,
+      parentTurnId: TURN_ID,
+      parentExecutionId: EXECUTION_ID,
+      parentItemId: "toolCall:spawn-stop-direct",
+      receiverThreadIds: ["native-stop-direct"],
+      providerIdentities: [],
+    });
+    const directTurn = sink.startCodexChildTurn({
+      parentThreadId: THREAD_ID,
+      parentTurnId: TURN_ID,
+      parentExecutionId: EXECUTION_ID,
+      parentItemId: "toolCall:spawn-stop-direct",
+      nativeThreadId: "native-stop-direct",
+      nativeTurnId: "native-turn-stop-direct",
+    });
+    const nested = sink.startCodexChildDelegation({
+      parentThreadId: direct.childThread.id,
+      parentTurnId: directTurn.id,
+      parentExecutionId: executionIdForTurn(db, directTurn.id),
+      parentItemId: "toolCall:spawn-stop-nested",
+      receiverThreadIds: ["native-stop-nested"],
+      providerIdentities: [],
+    });
+    sink.startCodexChildTurn({
+      parentThreadId: direct.childThread.id,
+      parentTurnId: directTurn.id,
+      parentExecutionId: executionIdForTurn(db, directTurn.id),
+      parentItemId: "toolCall:spawn-stop-nested",
+      nativeThreadId: "native-stop-nested",
+      nativeTurnId: "native-turn-stop-nested",
+    });
+
+    const targets = sink.loadCanonicalChildStopTargets(THREAD_ID);
+
+    expect(targets.map((target) => target.childThread.id)).toEqual([
+      nested.childThread.id,
+      direct.childThread.id,
+    ]);
+    expect(targets.every((target) => target.latestTurn?.status === "Running")).toBe(true);
   });
 
   it("retains a newer active descendant when older done rows exceed the roster bound", () => {

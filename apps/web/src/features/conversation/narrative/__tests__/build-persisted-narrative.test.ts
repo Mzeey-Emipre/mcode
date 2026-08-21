@@ -4,6 +4,7 @@ import {
   recordToHookExecution,
   recordToToolCall,
 } from "../build-persisted-narrative";
+import { collapseSubagentRecords } from "../subagent-lifecycle";
 import type {
   ToolCallRecord,
   ThoughtSegmentRecord,
@@ -60,12 +61,141 @@ describe("buildPersistedNarrativeItems", () => {
     const call = recordToToolCall(makeTool({
       tool_name: "Agent",
       display_name: "Explorer",
+      provider_agent_key: "/root/explorer",
+      model: "gpt-5.6-luna",
+      reasoning_effort: "medium",
       input_summary: "Inspect the private task",
     }));
 
     expect(call.toolInput).toEqual({
       _summary: "Inspect the private task",
       agentName: "Explorer",
+    });
+    expect(call.subagentPresentation).toEqual({
+      displayName: "Explorer",
+      hasExplicitIdentity: true,
+      identityKey: "/root/explorer",
+      providerAgentKey: "/root/explorer",
+      model: "gpt-5.6-luna",
+      reasoningEffort: "medium",
+    });
+  });
+
+  it("keeps one hydrated card when a provider identity appears in multiple records", () => {
+    const items = buildPersistedNarrativeItems({
+      tools: [
+        makeTool({
+          id: "agent-start",
+          tool_name: "Agent",
+          provider_agent_key: "/root/worker",
+          subagent_identity_key: "native-worker",
+          display_name: "Worker",
+          status: "cancelled",
+          output_summary: "Interrupted by user",
+          sort_order: 1,
+        }),
+        makeTool({
+          id: "agent-completion",
+          tool_name: "Agent",
+          provider_agent_key: "/root/worker",
+          subagent_identity_key: "native-worker",
+          display_name: "Worker",
+          status: "completed",
+          sort_order: 2,
+        }),
+        makeTool({
+          id: "nested-read",
+          tool_name: "Read",
+          parent_tool_call_id: "agent-completion",
+          sort_order: 3,
+        }),
+        makeTool({
+          id: "lifecycle-marker",
+          tool_name: "__McodeSubagentLifecycle",
+          input_summary: JSON.stringify({ lifecycle: "updated", sourceAgentToolCallId: "agent-completion" }),
+          parent_tool_call_id: "agent-start",
+          sort_order: 4,
+        }),
+      ],
+      thoughts: [],
+      hooks: [],
+    });
+
+    const cards = items.filter((item) => item.type === "subagent");
+    expect(cards).toHaveLength(1);
+    expect(cards[0]?.type === "subagent" && cards[0].toolCall.isCancelled).toBe(true);
+    expect(cards[0]?.type === "subagent" && cards[0].children.map((child) => child.id)).toEqual(["nested-read"]);
+    const collapsed = collapseSubagentRecords([
+      makeTool({ id: "source", tool_name: "Agent", provider_agent_key: "/root/worker", subagent_identity_key: "native-worker", status: "cancelled" }),
+      makeTool({ id: "alias", tool_name: "Agent", provider_agent_key: "/root/worker", subagent_identity_key: "native-worker", status: "completed" }),
+      makeTool({
+        id: "marker",
+        tool_name: "__McodeSubagentLifecycle",
+        input_summary: JSON.stringify({ sourceAgentToolCallId: "alias" }),
+      }),
+    ]);
+    expect(JSON.parse(collapsed.find((record) => record.id === "marker")!.input_summary)
+      .sourceAgentToolCallId).toBe("source");
+  });
+
+  it("keeps distinct durable child identities and nested transcript records", () => {
+    const items = buildPersistedNarrativeItems({
+      tools: [
+        makeTool({
+          id: "direct",
+          tool_name: "Agent",
+          provider_agent_key: "/root/worker",
+          subagent_identity_key: "native-direct",
+          display_name: "Worker",
+          sort_order: 1,
+        }),
+        makeTool({
+          id: "nested",
+          tool_name: "Agent",
+          provider_agent_key: "/root/worker",
+          subagent_identity_key: "native-nested",
+          display_name: "Worker",
+          parent_tool_call_id: "direct",
+          sort_order: 2,
+        }),
+        makeTool({
+          id: "nested-read",
+          tool_name: "Read",
+          parent_tool_call_id: "nested",
+          sort_order: 3,
+        }),
+      ],
+      thoughts: [],
+      hooks: [],
+    });
+
+    const cards = items.filter((item) => item.type === "subagent");
+    expect(cards.map((item) => item.type === "subagent" ? item.toolCall.id : "")).toEqual([
+      "direct",
+      "nested",
+    ]);
+    const nestedCard = cards.find((item) => item.type === "subagent" && item.toolCall.id === "nested");
+    expect(nestedCard?.type === "subagent" && nestedCard.children.map((child) => child.id)).toContain("nested-read");
+  });
+
+  it("preserves an exact identity learned after a provisional provider-only record", () => {
+    const [canonical] = collapseSubagentRecords([
+      makeTool({
+        id: "provisional",
+        tool_name: "Agent",
+        provider_agent_key: "/root/worker",
+      }),
+      makeTool({
+        id: "exact",
+        tool_name: "Agent",
+        provider_agent_key: "/root/worker",
+        subagent_identity_key: "native-worker",
+      }),
+    ]);
+
+    expect(canonical).toMatchObject({
+      id: "provisional",
+      subagent_identity_key: "native-worker",
     });
   });
   it("empty input returns no items", () => {
@@ -249,7 +379,7 @@ describe("buildPersistedNarrativeItems", () => {
     }
   });
 
-  it("parallel sub-agents render as separate subagent rows", () => {
+  it("parallel sibling sub-agents render in one bounded activity row", () => {
     const items = buildPersistedNarrativeItems({
       tools: [
         makeTool({ id: "agent-1", tool_name: "Agent", sort_order: 1 }),
@@ -260,7 +390,11 @@ describe("buildPersistedNarrativeItems", () => {
       thoughts: [],
       hooks: [],
     });
-    expect(items.filter((i) => i.type === "subagent")).toHaveLength(2);
+    const rows = items.filter((i) => i.type === "subagent");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.type === "subagent"
+      ? rows[0].activities?.map((activity) => activity.toolCall.id)
+      : []).toEqual(["agent-1", "agent-2"]);
   });
 
   it("hydrates every persisted lifecycle update without exposing child activity", () => {
@@ -449,6 +583,23 @@ describe("buildPersistedNarrativeItems", () => {
       .map((i) => i.segment.text);
     expect(firstTexts).toEqual(["note"]);
     expect(secondTexts).toEqual(["BODY", "note"]);
+  });
+
+  it("memo cache invalidates when persisted tools change but thoughts reference is stable", () => {
+    const thoughts = [makeThought({ id: "th-tools-cache", text: "note" })];
+    const first = buildPersistedNarrativeItems({
+      tools: [],
+      thoughts,
+      hooks: [],
+    });
+    const second = buildPersistedNarrativeItems({
+      tools: [makeTool({ id: "agent-tools-cache", tool_name: "Agent", sort_order: 2 })],
+      thoughts,
+      hooks: [],
+    });
+
+    expect(first.some((item) => item.type === "subagent")).toBe(false);
+    expect(second.some((item) => item.type === "subagent")).toBe(true);
   });
 
   it("preserves unchanged row inputs when one persisted record changes", () => {

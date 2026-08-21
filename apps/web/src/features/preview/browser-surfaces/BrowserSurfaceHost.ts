@@ -34,6 +34,7 @@ export interface BrowserSurfacePageState {
   readonly favicon: string | null;
   readonly phase: BrowserSurfacePagePhase;
   readonly mainFrameError: string | null;
+  readonly mainFrameErrorCode: string | number | null;
   readonly navigation: BrowserSurfaceNavigationState | null;
   readonly documentAccess: BrowserSurfaceDocumentAccess;
 }
@@ -102,6 +103,10 @@ export interface BrowserSurfacePresentation {
   readonly zIndex?: number;
   /** Width hidden at the left edge while the full Browser viewport remains unchanged. */
   readonly coveredLeft?: number;
+  /** Whether the detached surface accepts pointer and keyboard input. */
+  readonly inputEnabled?: boolean;
+  /** Whether the detached surface is exposed to the accessibility tree. */
+  readonly accessible?: boolean;
 }
 
 /** Factory that creates the adapter for one complete identity and generation. */
@@ -223,6 +228,7 @@ function initialPageState(
     favicon: metadata?.favicon ?? null,
     phase: "loading",
     mainFrameError: null,
+    mainFrameErrorCode: null,
     navigation: null,
     documentAccess: "unknown",
   };
@@ -248,6 +254,12 @@ function boundPresentation(presentation: BrowserSurfacePresentation): BrowserSur
     ...(presentation.coveredLeft === undefined
       ? {}
       : { coveredLeft: boundedNumber(presentation.coveredLeft, 0, 0, width) }),
+    ...(presentation.inputEnabled === undefined
+      ? {}
+      : { inputEnabled: presentation.inputEnabled }),
+    ...(presentation.accessible === undefined
+      ? {}
+      : { accessible: presentation.accessible }),
   };
 }
 
@@ -542,6 +554,7 @@ export class BrowserSurfaceHost {
           pendingAddress: boundString(event.address, MAX_ADDRESS),
           phase: "loading",
           mainFrameError: null,
+          mainFrameErrorCode: null,
         });
       case "navigation-committed":
         if (!event.mainFrame) return state;
@@ -555,6 +568,7 @@ export class BrowserSurfaceHost {
           ...(event.address === undefined ? {} : { pendingAddress: boundString(event.address, MAX_ADDRESS) }),
           phase: "loading",
           mainFrameError: null,
+          mainFrameErrorCode: null,
         });
       case "load-failed":
         if (!event.mainFrame || eventIsExpectedAbort(event)) return state;
@@ -568,6 +582,7 @@ export class BrowserSurfaceHost {
           ...(event.address === undefined ? {} : { pendingAddress: boundString(event.address, MAX_ADDRESS) }),
           phase: "error",
           mainFrameError: boundString(event.error ?? (typeof event.errorCode === "number" ? String(event.errorCode) : event.errorCode), 500),
+          mainFrameErrorCode: event.errorCode ?? null,
         });
       case "load-stopped":
         if (!event.mainFrame || state.phase === "error") return state;

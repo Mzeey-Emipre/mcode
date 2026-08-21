@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import type { ToolCall, HookExecution } from "@/transport/types";
-import type { ThoughtSegment } from "./types";
+import type { SubagentRosterTarget, ThoughtSegment } from "./types";
 import { buildNarrativeItems } from "./build-narrative";
 import { NarrativeRows } from "./NarrativeRows";
 import { NarrativePerformanceBoundary } from "./NarrativePerformanceBoundary";
@@ -25,7 +25,9 @@ export interface NarrativeFlowProps {
    */
   committedAssistantBody?: string;
   /** Opens a selected canonical child through the composition root. */
-  onSubagentSelect?: (id: string) => void;
+  onSubagentSelect?: (id: string, target: SubagentRosterTarget) => void;
+  /** Opens the owning thread's Subagents roster for aggregate activity. */
+  onOpenSubagents?: (target: SubagentRosterTarget) => void;
 }
 
 /**
@@ -43,6 +45,7 @@ export function NarrativeFlow({
   isAgentRunning,
   committedAssistantBody,
   onSubagentSelect,
+  onOpenSubagents,
 }: NarrativeFlowProps) {
   const { items } = useMemo(
     () =>
@@ -83,6 +86,7 @@ export function NarrativeFlow({
           allToolCalls={toolCalls}
           animateEntry
           onSubagentSelect={onSubagentSelect}
+          onOpenSubagents={onOpenSubagents}
         />
       )}
 
