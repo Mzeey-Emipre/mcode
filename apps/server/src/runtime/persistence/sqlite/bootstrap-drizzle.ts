@@ -13,11 +13,40 @@ import type Database from "better-sqlite3";
 import { readFileSync } from "fs";
 import { join } from "path";
 
+const PREVIOUS_MIGRATION_TAG = "0041_index_completed_thread_cleanup";
+const SUBAGENT_IDENTITY_MIGRATION_TAG = "0042_supreme_terrax";
+
+type JournalEntry = {
+  tag: string;
+  when: number;
+};
+
+type MigrationJournal = {
+  entries: JournalEntry[];
+};
+
+function readJournal(drizzleDir: string): MigrationJournal {
+  const journalPath = join(drizzleDir, "meta", "_journal.json");
+  return JSON.parse(readFileSync(journalPath, "utf-8")) as MigrationJournal;
+}
+
+function migrationHash(drizzleDir: string, tag: string): string {
+  return createHash("sha256")
+    .update(readFileSync(join(drizzleDir, `${tag}.sql`), "utf-8"))
+    .digest("hex");
+}
+
 function tableExists(db: Database.Database, name: string): boolean {
   const row = db
     .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?")
     .get(name);
   return row !== undefined;
+}
+
+function hasSubagentIdentityKey(db: Database.Database): boolean {
+  return (
+    db.prepare("PRAGMA table_info(tool_call_records)").all() as Array<{ name: string }>
+  ).some((column) => column.name === "subagent_identity_key");
 }
 
 /**
@@ -145,4 +174,51 @@ export function reconcileMigrations(db: Database.Database, drizzleDir: string): 
       del.run(row.id);
     }
   })();
+}
+
+/** Reconciles the 0042 tracker entry for databases patched by the previous release. */
+export function reconcileSubagentIdentityMigration(
+  db: Database.Database,
+  drizzleDir: string,
+): void {
+  const journal = readJournal(drizzleDir);
+  const subagentIdentityMigration = journal.entries.find(
+    (entry) => entry.tag === SUBAGENT_IDENTITY_MIGRATION_TAG,
+  );
+  if (!subagentIdentityMigration) {
+    return;
+  }
+  const previousMigration = journal.entries.find(
+    (entry) => entry.tag === PREVIOUS_MIGRATION_TAG,
+  );
+  if (!previousMigration) {
+    throw new Error(`Drizzle journal has no entry for ${PREVIOUS_MIGRATION_TAG}`);
+  }
+
+  const previousMigrationHash = migrationHash(drizzleDir, PREVIOUS_MIGRATION_TAG);
+  const subagentIdentityMigrationHash = migrationHash(
+    drizzleDir,
+    SUBAGENT_IDENTITY_MIGRATION_TAG,
+  );
+  db.transaction(() => {
+    if (
+      !tableExists(db, "__drizzle_migrations")
+      || !hasSubagentIdentityKey(db)
+    ) {
+      return;
+    }
+    const latestMigration = db.prepare(
+      "SELECT hash, created_at FROM __drizzle_migrations ORDER BY created_at DESC LIMIT 1",
+    ).get() as { hash: string; created_at: number } | undefined;
+    if (
+      !latestMigration
+      || latestMigration.created_at !== previousMigration.when
+      || latestMigration.hash !== previousMigrationHash
+    ) {
+      return;
+    }
+    db.prepare(
+      `INSERT INTO __drizzle_migrations ("hash", "created_at") VALUES (?, ?)`,
+    ).run(subagentIdentityMigrationHash, subagentIdentityMigration.when);
+  }).immediate();
 }
