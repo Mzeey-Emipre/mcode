@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TerminalExecutableSchema, TerminalProfileArgumentsSchema } from "./terminal.js";
 import { lazySchema } from "../utils/lazySchema.js";
 
 /** Version of the private workspace environment document. */
@@ -9,6 +10,8 @@ export const WORKSPACE_ENVIRONMENT_SCRIPT_MAX_BYTES = 32 * 1024;
 export const WORKSPACE_ENVIRONMENT_COMMAND_MAX_BYTES = 64 * 1024;
 /** Maximum UTF-8 bytes accepted for the complete environment document. */
 export const WORKSPACE_ENVIRONMENT_DOCUMENT_MAX_BYTES = 128 * 1024;
+/** Maximum UTF-8 bytes retained from one manual Setup command. */
+export const WORKSPACE_ENVIRONMENT_SETUP_OUTPUT_MAX_BYTES = 512 * 1024;
 
 /** Stable validation reasons returned by the workspace environment boundary. */
 export const WorkspaceEnvironmentValidationReasonSchema = z.enum([
@@ -84,6 +87,161 @@ export const WorkspaceEnvironmentCommandSchema = lazySchema(() =>
 );
 export type WorkspaceEnvironmentCommand = z.infer<
   ReturnType<typeof WorkspaceEnvironmentCommandSchema>
+>;
+
+/** Operating systems that can select a Platform command override. */
+export const WorkspaceEnvironmentPlatformSchema = z.enum(["windows", "macos", "linux"]);
+export type WorkspaceEnvironmentPlatform = z.infer<typeof WorkspaceEnvironmentPlatformSchema>;
+
+/** Public lifecycle states for one manual Setup attempt. */
+export const WorkspaceEnvironmentSetupStatusSchema = z.enum([
+  "running",
+  "passed",
+  "failed",
+  "unavailable",
+]);
+export type WorkspaceEnvironmentSetupStatus = z.infer<
+  typeof WorkspaceEnvironmentSetupStatusSchema
+>;
+
+/** Stable terminal and configuration outcomes for manual Setup attempts. */
+export const WorkspaceEnvironmentSetupOutcomeSchema = z.enum([
+  "success",
+  "command_failure",
+  "launch_failure",
+  "configuration_failure",
+  "timeout",
+  "containment_failure",
+  "unavailable",
+]);
+export type WorkspaceEnvironmentSetupOutcome = z.infer<
+  typeof WorkspaceEnvironmentSetupOutcomeSchema
+>;
+
+const setupOutputSchema = z.string().superRefine((value, ctx) => {
+  if (new TextEncoder().encode(value).byteLength > WORKSPACE_ENVIRONMENT_SETUP_OUTPUT_MAX_BYTES) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `Setup output must be at most ${WORKSPACE_ENVIRONMENT_SETUP_OUTPUT_MAX_BYTES} bytes`,
+    });
+  }
+});
+
+/** Immutable launch details captured before a manual Setup process begins. */
+export const WorkspaceEnvironmentSetupLaunchSnapshotSchema = lazySchema(() =>
+  z.object({
+    platform: WorkspaceEnvironmentPlatformSchema,
+    script: scriptSchema.nullable(),
+    checkoutPath: z.string().min(1).max(32 * 1024).nullable(),
+    terminal: z.object({
+      executable: TerminalExecutableSchema(),
+      arguments: TerminalProfileArgumentsSchema(),
+    }).strict().nullable(),
+  }).strict(),
+);
+export type WorkspaceEnvironmentSetupLaunchSnapshot = z.infer<
+  ReturnType<typeof WorkspaceEnvironmentSetupLaunchSnapshotSchema>
+>;
+
+/** Immutable public result of a manual Setup command for one Thread. */
+export const WorkspaceEnvironmentSetupAttemptSchema = lazySchema(() =>
+  z.object({
+    id: z.string().min(1).max(256),
+    threadId: z.string().min(1).max(256),
+    workspaceId: z.string().min(1).max(256),
+    status: WorkspaceEnvironmentSetupStatusSchema,
+    outcome: WorkspaceEnvironmentSetupOutcomeSchema.nullable(),
+    snapshot: WorkspaceEnvironmentSetupLaunchSnapshotSchema(),
+    createdAt: z.string().datetime(),
+    startedAt: z.string().datetime().nullable(),
+    finishedAt: z.string().datetime().nullable(),
+    exitCode: z.number().int().nullable(),
+    output: setupOutputSchema,
+    outputTruncated: z.boolean(),
+    cleanupPending: z.boolean(),
+  }).strict().superRefine((attempt, ctx) => {
+    if (attempt.status === "running" && attempt.outcome !== null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["outcome"], message: "Running Setup attempts cannot have an outcome" });
+    }
+    if (attempt.status !== "running" && attempt.outcome === null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["outcome"], message: "Completed Setup attempts require an outcome" });
+    }
+    if (attempt.status === "passed" && attempt.outcome !== "success") {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["outcome"], message: "Passed Setup attempts require a success outcome" });
+    }
+    if (
+      attempt.status === "failed" &&
+      attempt.outcome !== "command_failure" &&
+      attempt.outcome !== "launch_failure" &&
+      attempt.outcome !== "configuration_failure" &&
+      attempt.outcome !== "timeout" &&
+      attempt.outcome !== "containment_failure"
+    ) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["outcome"], message: "Failed Setup attempts require a failure outcome" });
+    }
+    if (attempt.status === "unavailable" && attempt.outcome !== "unavailable") {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["outcome"], message: "Unavailable Setup attempts require an unavailable outcome" });
+    }
+    if (attempt.status === "running" && (attempt.startedAt === null || attempt.finishedAt !== null || attempt.exitCode !== null || attempt.cleanupPending)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Running Setup attempts require an active lifecycle" });
+    }
+    if (attempt.status !== "running" && attempt.finishedAt === null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["finishedAt"], message: "Completed Setup attempts require a finish time" });
+    }
+    if (
+      (attempt.status === "passed" ||
+        attempt.outcome === "command_failure" ||
+        attempt.outcome === "launch_failure" ||
+        attempt.outcome === "timeout" ||
+        attempt.outcome === "containment_failure") &&
+      attempt.startedAt === null
+    ) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["startedAt"], message: "This Setup outcome requires a start time" });
+    }
+    if (attempt.outcome === "success" && attempt.exitCode !== 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["exitCode"], message: "Successful Setup attempts require exit code zero" });
+    }
+    if (
+      (attempt.outcome === "launch_failure" ||
+        attempt.outcome === "configuration_failure" ||
+        attempt.outcome === "timeout" ||
+        attempt.outcome === "containment_failure" ||
+        attempt.outcome === "unavailable") &&
+      attempt.exitCode !== null
+    ) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["exitCode"], message: "This Setup outcome cannot include an exit code" });
+    }
+    if (attempt.cleanupPending && attempt.outcome !== "containment_failure") {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["cleanupPending"], message: "Only containment failures can require cleanup" });
+    }
+  }),
+);
+export type WorkspaceEnvironmentSetupAttempt = z.infer<
+  ReturnType<typeof WorkspaceEnvironmentSetupAttemptSchema>
+>;
+
+/** Request to start a manual Setup attempt for a Thread. */
+export const WorkspaceEnvironmentSetupStartInputSchema = lazySchema(() =>
+  z.object({ threadId: z.string().min(1).max(256) }).strict(),
+);
+export type WorkspaceEnvironmentSetupStartInput = z.infer<
+  ReturnType<typeof WorkspaceEnvironmentSetupStartInputSchema>
+>;
+
+/** Request to read the latest manual Setup attempt for a Thread. */
+export const WorkspaceEnvironmentSetupGetInputSchema = lazySchema(() =>
+  z.object({ threadId: z.string().min(1).max(256) }).strict(),
+);
+export type WorkspaceEnvironmentSetupGetInput = z.infer<
+  ReturnType<typeof WorkspaceEnvironmentSetupGetInputSchema>
+>;
+
+/** Result of reading the latest manual Setup attempt for a Thread. */
+export const WorkspaceEnvironmentSetupGetResultSchema = lazySchema(() =>
+  z.object({ attempt: WorkspaceEnvironmentSetupAttemptSchema().nullable() }).strict(),
+);
+export type WorkspaceEnvironmentSetupGetResult = z.infer<
+  ReturnType<typeof WorkspaceEnvironmentSetupGetResultSchema>
 >;
 
 /** A named workspace environment action with an opaque stable identity. */
@@ -176,6 +334,8 @@ export const WorkspaceEnvironmentErrorSchema = z.object({
     "WORKSPACE_ENVIRONMENT_UNSUPPORTED_VERSION",
     "WORKSPACE_ENVIRONMENT_STALE",
     "WORKSPACE_ENVIRONMENT_NOT_FOUND",
+    "WORKSPACE_ENVIRONMENT_SETUP_CAPACITY",
+    "WORKSPACE_ENVIRONMENT_SETUP_UNAVAILABLE",
   ]),
   message: z.string().min(1),
   issues: z.array(WorkspaceEnvironmentValidationIssueSchema).optional(),

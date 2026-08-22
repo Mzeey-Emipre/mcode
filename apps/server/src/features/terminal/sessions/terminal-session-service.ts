@@ -1,6 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, statSync } from "node:fs";
-import { isAbsolute } from "node:path";
 import {
   TERMINAL_V1_METHODS,
   TerminalLaunchSnapshotSchema,
@@ -16,6 +14,11 @@ import {
   type TerminalSessionSnapshot,
 } from "@mcode/contracts";
 import type { TerminalSessionRuntime } from "./terminal-session-runtime.js";
+import {
+  resolveTerminalScope,
+  TerminalScopeResolutionError,
+  type TerminalScopeResolverDependencies,
+} from "./terminal-scope.js";
 
 /** Profile-resolution seam consumed by Terminal product policy. */
 export interface TerminalSessionProfileResolver {
@@ -43,25 +46,14 @@ export interface TerminalLiveSettingsSink {
 }
 
 /** Product and runtime seams required by the Terminal session service. */
-export interface TerminalSessionServiceDependencies {
+export interface TerminalSessionServiceDependencies extends TerminalScopeResolverDependencies {
   readonly runtime: TerminalSessionRuntime;
   readonly profiles: TerminalSessionProfileResolver;
   readonly settings: TerminalSessionSettingsSource;
   readonly liveSettings: TerminalLiveSettingsSink;
   readonly env: { getEnv(): Record<string, string> };
-  readonly workspaces: { findById(id: string): { readonly id: string; readonly path: string } | null };
-  readonly threads: {
-    findById(id: string): {
-      readonly id: string;
-      readonly workspace_id: string;
-      readonly mode: string;
-      readonly worktree_path: string | null;
-    } | null;
-  };
-  readonly resolveWorkingDir: (workspacePath: string, mode: string, worktreePath: string | null) => string;
   readonly hostGeneration: () => string;
   readonly createSessionId?: () => string;
-  readonly validateWorkingDirectory?: (path: string) => boolean;
 }
 
 /** Typed product-policy failure raised before a Terminal runtime mutation. */
@@ -94,13 +86,11 @@ export class TerminalSessionService {
   private readonly closing = new Map<string, Promise<TerminalSessionSnapshot>>();
   private reservations = 0;
   private readonly createSessionId: () => string;
-  private readonly validateWorkingDirectory: (path: string) => boolean;
   private readonly unsubscribeSettings: () => void;
   private lastLiveSettingsKey = "";
 
   constructor(private readonly deps: TerminalSessionServiceDependencies) {
     this.createSessionId = deps.createSessionId ?? randomUUID;
-    this.validateWorkingDirectory = deps.validateWorkingDirectory ?? isExistingAbsoluteDirectory;
     this.applyLiveSettings(deps.settings.get());
     this.unsubscribeSettings = deps.settings.on("change", (settings) => this.applyLiveSettings(settings));
   }
@@ -221,21 +211,19 @@ export class TerminalSessionService {
   }
 
   private resolveScope(scope: TerminalScope): string {
-    const parsed = TerminalScopeSchema().parse(scope);
-    const workspace = this.deps.workspaces.findById(parsed.workspaceId);
-    if (!workspace) throw new TerminalSessionPolicyError("INVALID_SCOPE");
-    let cwd = workspace.path;
-    if (parsed.kind === "thread") {
-      const thread = this.deps.threads.findById(parsed.threadId);
-      if (!thread || thread.workspace_id !== parsed.workspaceId) {
+    try {
+      return resolveTerminalScope(scope, {
+        workspaces: this.deps.workspaces,
+        threads: this.deps.threads,
+        resolveWorkingDir: this.deps.resolveWorkingDir,
+        validateWorkingDirectory: this.deps.validateWorkingDirectory,
+      });
+    } catch (error) {
+      if (error instanceof TerminalScopeResolutionError) {
         throw new TerminalSessionPolicyError("INVALID_SCOPE");
       }
-      cwd = this.deps.resolveWorkingDir(workspace.path, thread.mode, thread.worktree_path);
+      throw error;
     }
-    if (!this.validateWorkingDirectory(cwd)) {
-      throw new TerminalSessionPolicyError("INVALID_SCOPE");
-    }
-    return cwd;
   }
 
   private requireTrackedSnapshot(sessionId: string): TerminalSessionSnapshot {
@@ -283,15 +271,6 @@ function scopesEqual(left: TerminalScope, right: TerminalScope): boolean {
 function scopeContains(container: TerminalScope, candidate: TerminalScope): boolean {
   if (container.kind === "workspace") return container.workspaceId === candidate.workspaceId;
   return scopesEqual(container, candidate);
-}
-
-function isExistingAbsoluteDirectory(path: string): boolean {
-  if (!isAbsolute(path) || !existsSync(path)) return false;
-  try {
-    return statSync(path).isDirectory();
-  } catch {
-    return false;
-  }
 }
 
 function snapshotEnvironment(env: Record<string, string>): ReadonlyArray<Readonly<{ name: string; value: string }>> {

@@ -17,6 +17,7 @@ import { AttachmentService } from "../../../attachments/storage/attachment-servi
 import { killDescendantsByName } from "../../../../runtime/process/containment/process-kill.js";
 import { getMcodeDir, logger } from "@mcode/shared";
 import { ThreadControlMutationReservationService } from "../../index.js";
+import type { WorkspaceEnvironmentService } from "../../../projects/environment/workspace-environment-service.js";
 
 vi.mock("../../../../runtime/process/containment/process-kill.js", () => ({
   killDescendantsByName: vi.fn().mockResolvedValue(undefined),
@@ -52,6 +53,7 @@ describe("CleanupWorker", () => {
   let mockHandoffStorage: HandoffStorage;
   let unsafeWorktreePolicy: "block" | "delete";
   let mutationReservations: ThreadControlMutationReservationService;
+  let mockWorkspaceEnvironmentService: WorkspaceEnvironmentService;
   let worker: CleanupWorker;
 
   beforeEach(() => {
@@ -97,7 +99,11 @@ describe("CleanupWorker", () => {
     } as unknown as GitService;
 
     mockAttachmentService = { removeForThread: vi.fn() } as unknown as AttachmentService;
-      mockHandoffStorage = { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as unknown as HandoffStorage;
+    mockHandoffStorage = { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as unknown as HandoffStorage;
+    mockWorkspaceEnvironmentService = {
+      beginThreadDeletion: vi.fn(() => vi.fn()),
+      cancelSetupForThread: vi.fn().mockResolvedValue(undefined),
+    } as unknown as WorkspaceEnvironmentService;
 
     worker = new CleanupWorker(
       db,
@@ -109,6 +115,7 @@ describe("CleanupWorker", () => {
       workspaceRepo,
       mockAttachmentService,
       mockHandoffStorage,
+      mockWorkspaceEnvironmentService,
       mutationReservations,
       { get: vi.fn(() => ({ thread: { completion: { unsafeWorktreePolicy } } })) } as unknown as SettingsService,
     );
@@ -200,6 +207,8 @@ describe("CleanupWorker", () => {
            VALUES ('retention-deferred-log', ?, 'Direct', 'main', 'direct', 'paused', 0, ?, ?, ?, ?)`,
         ).run(workspace.id, completedAt, completedAt, completedAt, completedAt);
         const token = mutationReservations.reserve("retention-deferred-log", "activeTurn");
+        const releaseBarrier = vi.fn();
+        vi.mocked(mockWorkspaceEnvironmentService.beginThreadDeletion).mockImplementationOnce(() => releaseBarrier);
 
         await worker.poll();
 
@@ -211,6 +220,7 @@ describe("CleanupWorker", () => {
           kind: "retention",
           reason: "mutation-reservation-unavailable",
         });
+        expect(releaseBarrier).toHaveBeenCalledOnce();
         mutationReservations.release("retention-deferred-log", token!);
 
         db.prepare(
@@ -665,8 +675,11 @@ describe("CleanupWorker", () => {
       });
     }, 15_000);
 
-    it("runs cleanup steps in correct order: session exit, terminal kill, SDK kill, worktree removal", async () => {
+    it("cancels Setup before cleanup steps and keeps the transition barrier through deletion", async () => {
       const callOrder: string[] = [];
+      vi.mocked(mockWorkspaceEnvironmentService.cancelSetupForThread).mockImplementation(async () => {
+        callOrder.push("cancelSetup");
+      });
       (mockClaudeProvider.waitForSessionExit as ReturnType<typeof vi.fn>).mockImplementation(async () => {
         callOrder.push("waitForSessionExit");
       });
@@ -692,7 +705,8 @@ describe("CleanupWorker", () => {
 
       await worker.poll();
 
-      expect(callOrder).toEqual(["waitForSessionExit", "killByThread", "killDescendants", "removeWorktree"]);
+      expect(callOrder).toEqual(["cancelSetup", "waitForSessionExit", "killByThread", "killDescendants", "removeWorktree"]);
+      expect(mockWorkspaceEnvironmentService.beginThreadDeletion).toHaveBeenCalledWith("t-1");
       expect(killDescendantsByName).toHaveBeenCalledWith(
         process.pid,
         expect.stringMatching(/claude/i),

@@ -18,6 +18,14 @@ function workspaceRequest(method: "workspace.delete" | "workspace.forceDelete"):
   });
 }
 
+function idempotentNoopRelease(): () => void {
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+  };
+}
+
 function threadDeps(): RouterDeps {
   return {
     ciWatcherService: {
@@ -34,6 +42,10 @@ function threadDeps(): RouterDeps {
     },
     threadTeardownService: { teardownThread: vi.fn().mockResolvedValue(undefined) },
     threadService: { delete: vi.fn().mockReturnValue(true) },
+    workspaceEnvironmentService: {
+      beginThreadDeletion: vi.fn(idempotentNoopRelease),
+      cancelSetupForThread: vi.fn().mockResolvedValue(undefined),
+    },
   } as unknown as RouterDeps;
 }
 
@@ -56,6 +68,10 @@ function workspaceDeps(): RouterDeps {
     workspaceService: {
       delete: vi.fn().mockReturnValue(true),
       forceDelete: vi.fn().mockReturnValue(true),
+    },
+    workspaceEnvironmentService: {
+      beginWorkspaceDeletion: vi.fn(idempotentNoopRelease),
+      cancelSetupForWorkspace: vi.fn().mockResolvedValue(undefined),
     },
   } as unknown as RouterDeps;
 }

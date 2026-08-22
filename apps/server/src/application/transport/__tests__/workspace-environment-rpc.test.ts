@@ -49,4 +49,60 @@ describe("workspace environment RPC", () => {
     expect(malformed.error?.code).toBe("WORKSPACE_ENVIRONMENT_VALIDATION");
     expect(malformed.error?.data).toEqual(expect.objectContaining({ issues: expect.any(Array) }));
   });
+
+  it("starts and reads the typed transient manual Setup attempt", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mcode-environment-rpc-"));
+    roots.push(root);
+    const workspaceEnvironmentService = new WorkspaceEnvironmentService({
+      mcodeDir: root,
+      threads: { findById: (id) => id === "thread-1" ? { id, workspace_id: "workspace-1", mode: "direct" } : null },
+      terminalCommands: {
+        prepare: async () => ({
+          kind: "ready" as const,
+          command: {
+            snapshot: {
+              checkoutPath: "C:\\workspace",
+              terminal: { executable: "pwsh.exe", arguments: ["-NoProfile", "-NonInteractive", "-Command", "setup"] },
+            },
+            start: async () => await new Promise<never>(() => undefined),
+            close: async () => ({ kind: "contained" as const }),
+            waitForRelease: async () => await new Promise<never>(() => undefined),
+          },
+        }),
+      },
+      platform: "windows",
+      createAttemptId: () => "attempt-1",
+      now: () => new Date("2026-08-22T12:00:00.000Z"),
+    });
+    await workspaceEnvironmentService.save({
+      workspaceId: "workspace-1",
+      sourceRevision: null,
+      document: { version: "0.0.1", setup: { windows: "setup" }, actions: [] },
+    });
+    const deps = {
+      workspaceService: { findById: (id: string) => id === "workspace-1" ? { id } : null },
+      workspaceEnvironmentService,
+    } as unknown as RouterDeps;
+
+    const started = await routeMessage(JSON.stringify({
+      id: "start",
+      method: "workspace.environment.setup.start",
+      params: { threadId: "thread-1" },
+    }), deps);
+    expect(started.error).toBeUndefined();
+    expect(started.result).toMatchObject({
+      id: "attempt-1",
+      status: "running",
+      outcome: null,
+      snapshot: { platform: "windows", script: "setup", checkoutPath: "C:\\workspace" },
+    });
+
+    const latest = await routeMessage(JSON.stringify({
+      id: "latest",
+      method: "workspace.environment.setup.get",
+      params: { threadId: "thread-1" },
+    }), deps);
+    expect(latest.error).toBeUndefined();
+    expect(latest.result).toMatchObject({ attempt: { id: "attempt-1", status: "running" } });
+  });
 });

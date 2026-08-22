@@ -2,12 +2,14 @@ import { ScrollArea as ScrollAreaPrimitive } from "@base-ui/react/scroll-area"
 
 import { cn } from "@/lib/utils"
 
+/** Renders a scrollable viewport with optional scrollbars. */
 function ScrollArea({
   className,
   children,
   viewportRef,
   viewportClassName,
   viewportProps,
+  horizontalScrollbar = false,
   ...props
 }: ScrollAreaPrimitive.Root.Props & {
   /** Ref forwarded to the scrollable viewport element. */
@@ -16,11 +18,13 @@ function ScrollArea({
   viewportClassName?: string;
   /** Optional semantics and event handlers applied to the scrollable viewport. */
   viewportProps?: Omit<ScrollAreaPrimitive.Viewport.Props, "className" | "ref">;
+  /** Whether to render a horizontal scrollbar below the viewport. */
+  horizontalScrollbar?: boolean;
 }) {
   return (
     <ScrollAreaPrimitive.Root
       data-slot="scroll-area"
-      className={cn("relative", className)}
+      className={cn("relative", horizontalScrollbar && "flex flex-col", className)}
       {...props}
     >
       <ScrollAreaPrimitive.Viewport
@@ -28,18 +32,27 @@ function ScrollArea({
         ref={viewportRef}
         data-slot="scroll-area-viewport"
         className={cn(
-          "size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1",
+          "rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1",
+          horizontalScrollbar ? "min-h-0 flex-1" : "size-full",
           viewportClassName,
         )}
       >
         {children}
       </ScrollAreaPrimitive.Viewport>
       <ScrollBar />
+      {horizontalScrollbar ? (
+        <ScrollBar
+          orientation="horizontal"
+          className="w-full shrink-0"
+          style={{ position: "relative", bottom: undefined, insetInlineEnd: undefined, insetInlineStart: undefined }}
+        />
+      ) : null}
       <ScrollAreaPrimitive.Corner />
     </ScrollAreaPrimitive.Root>
   )
 }
 
+/** Renders a scrollbar for a ScrollArea viewport. */
 function ScrollBar({
   className,
   orientation = "vertical",

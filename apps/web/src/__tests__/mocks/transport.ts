@@ -117,6 +117,8 @@ export const mockTransport: McodeTransport = {
     revision: "revision",
     status: "present",
   })),
+  startWorkspaceSetup: vi.fn(),
+  getWorkspaceSetupAttempt: vi.fn().mockResolvedValue(null),
   deleteWorkspace: vi.fn().mockResolvedValue(true),
   touchLastOpened: vi.fn().mockResolvedValue(undefined),
   reorderWorkspace: vi.fn().mockResolvedValue(undefined),
