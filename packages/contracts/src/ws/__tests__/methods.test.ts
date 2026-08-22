@@ -1,7 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { MAX_THREAD_SUBSCRIPTIONS, WS_METHODS } from "../methods.js";
+import { MAX_THREAD_SUBSCRIPTIONS, WS_METHODS, type WsMethodName } from "../methods.js";
+
+const automaticSetupMethod: WsMethodName = "workspace.environment.automaticSetup.get";
+// @ts-expect-error WebSocket method names remain a closed compile-time union.
+const unknownMethod: WsMethodName = "workspace.environment.automaticSetup.unknown";
+void automaticSetupMethod;
+void unknownMethod;
 
 describe("thread switching WebSocket contracts", () => {
+  it("keeps WebSocket methods closed at runtime", () => {
+    expect(WS_METHODS()).toHaveProperty("workspace.environment.automaticSetup.get");
+    expect(WS_METHODS()).not.toHaveProperty("workspace.environment.automaticSetup.unknown");
+  });
+
   it("requires an authoritative runtime snapshot for the first-turn result", () => {
     const method = WS_METHODS()["agent.createAndSend"];
     const thread = {

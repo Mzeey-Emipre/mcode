@@ -271,6 +271,9 @@ const workspaceService = container.resolve(WorkspaceService);
 const workspaceEnvironmentService = container.resolve(WorkspaceEnvironmentService);
 const threadService = container.resolve(ThreadService);
 const agentService = container.resolve(AgentService);
+workspaceEnvironmentService.setAutomaticSetupDispatcher({
+  dispatch: (submission) => agentService.dispatchQueuedAutomaticTurn(submission),
+});
 const agentPermissionService = container.resolve(AgentPermissionService);
 const turnRecoveryService = container.resolve(TurnRecoveryService);
 const threadControlService = container.resolve(ThreadControlService);
@@ -769,8 +772,9 @@ async function bootstrapServer(): Promise<void> {
   try {
     await threadControlService.recoverApprovals();
     externalThreadControlMcpRuntime.reconcileOnStartup();
+    await workspaceEnvironmentService.reconcileAutomaticSetup();
   } catch (err) {
-    logger.error("Thread-control approval recovery failed; refusing to accept work", {
+    logger.error("Startup recovery failed; refusing to accept work", {
       error: err instanceof Error ? err.message : String(err),
     });
     process.exit(1);

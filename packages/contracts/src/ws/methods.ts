@@ -7,6 +7,10 @@ import {
   WorkspaceEnvironmentSetupGetInputSchema,
   WorkspaceEnvironmentSetupGetResultSchema,
   WorkspaceEnvironmentSetupStartInputSchema,
+  WorkspaceEnvironmentAutomaticSetupSnapshotSchema,
+  WorkspaceEnvironmentAutomaticSetupGetInputSchema,
+  WorkspaceEnvironmentAutomaticSetupContinueInputSchema,
+  WorkspaceEnvironmentQueuedTurnCancelInputSchema,
 } from "../models/workspace-environment.js";
 import type {
   WorkspaceEnvironmentReadResult,
@@ -15,6 +19,10 @@ import type {
   WorkspaceEnvironmentSetupGetInput,
   WorkspaceEnvironmentSetupGetResult,
   WorkspaceEnvironmentSetupStartInput,
+  WorkspaceEnvironmentAutomaticSetupSnapshot,
+  WorkspaceEnvironmentAutomaticSetupGetInput,
+  WorkspaceEnvironmentAutomaticSetupContinueInput,
+  WorkspaceEnvironmentQueuedTurnCancelInput,
 } from "../models/workspace-environment.js";
 import { ThreadSchema, RecentThreadSchema } from "../models/thread.js";
 import { ThreadModeSchema, PermissionModeSchema, InteractionModeSchema, OrchestrationModeSchema } from "../models/enums.js";
@@ -450,7 +458,10 @@ const threadCleanupLifecycleMethods = (): Record<
 
 type WorkspaceEnvironmentSetupWsMethodName =
   | "workspace.environment.setup.start"
-  | "workspace.environment.setup.get";
+  | "workspace.environment.setup.get"
+  | "workspace.environment.automaticSetup.get"
+  | "workspace.environment.automaticSetup.continue"
+  | "workspace.environment.automaticSetup.cancelQueuedTurn";
 
 const workspaceEnvironmentSetupMethods = (): Record<
   WorkspaceEnvironmentSetupWsMethodName,
@@ -464,10 +475,23 @@ const workspaceEnvironmentSetupMethods = (): Record<
     params: WorkspaceEnvironmentSetupGetInputSchema() as z.ZodType<WorkspaceEnvironmentSetupGetInput>,
     result: WorkspaceEnvironmentSetupGetResultSchema() as z.ZodType<WorkspaceEnvironmentSetupGetResult>,
   },
+  "workspace.environment.automaticSetup.get": {
+    params: WorkspaceEnvironmentAutomaticSetupGetInputSchema() as z.ZodType<WorkspaceEnvironmentAutomaticSetupGetInput>,
+    result: WorkspaceEnvironmentAutomaticSetupSnapshotSchema() as z.ZodType<WorkspaceEnvironmentAutomaticSetupSnapshot>,
+  },
+  "workspace.environment.automaticSetup.continue": {
+    params: WorkspaceEnvironmentAutomaticSetupContinueInputSchema() as z.ZodType<WorkspaceEnvironmentAutomaticSetupContinueInput>,
+    result: WorkspaceEnvironmentAutomaticSetupSnapshotSchema() as z.ZodType<WorkspaceEnvironmentAutomaticSetupSnapshot>,
+  },
+  "workspace.environment.automaticSetup.cancelQueuedTurn": {
+    params: WorkspaceEnvironmentQueuedTurnCancelInputSchema() as z.ZodType<WorkspaceEnvironmentQueuedTurnCancelInput>,
+    result: WorkspaceEnvironmentAutomaticSetupSnapshotSchema() as z.ZodType<WorkspaceEnvironmentAutomaticSetupSnapshot>,
+  },
 });
 
-/** All RPC method definitions keyed by method name with params and result schemas. */
-export const WS_METHODS = lazySchema(() => ({
+type WsMethodDefinition = { params: z.ZodTypeAny; result: z.ZodTypeAny };
+
+const buildWsMethods = () => ({
   /** Registers this WebSocket as a visible-browser automation host. */
   "browserAutomation.host.register": {
     params: z.object({ registration: BrowserAutomationHostRegistrationSchema() }).strict(),
@@ -1381,7 +1405,12 @@ export const WS_METHODS = lazySchema(() => ({
       text: z.string(),
     }),
   },
-} as const));
+}) satisfies Record<string, WsMethodDefinition>;
+
+type WsMethods = ReturnType<typeof buildWsMethods>;
+
+/** All WebSocket methods with runtime-validating parameter and result schemas. */
+export const WS_METHODS = lazySchema<WsMethods>(buildWsMethods);
 
 /** Union of all RPC method names. */
 export type WsMethodName = keyof ReturnType<typeof WS_METHODS>;

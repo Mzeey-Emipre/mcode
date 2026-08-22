@@ -73,6 +73,8 @@ import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import {
   ProjectSetupAttemptCard,
   ProjectSetupMenu,
+  ProjectAutomaticSetupCard,
+  useProjectAutomaticSetup,
   useProjectSetupAttempt,
 } from "@/features/projects/environment";
 import { useOverviewStore } from "@/stores/overviewStore";
@@ -1759,6 +1761,10 @@ function CreateThreadBranchDialog({
  */
 export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps) {
   const projectSetup = useProjectSetupAttempt(thread.id);
+  const automaticSetup = useProjectAutomaticSetup(
+    thread.id,
+    thread.mode === "worktree" && thread.worktree_managed === true,
+  );
   const canRunManualSetup = thread.mode === "direct" || (
     thread.mode === "worktree" && thread.worktree_managed === false
   );
@@ -2212,6 +2218,13 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
         <p role="alert" className="mx-1.5 mt-1.5 text-xs text-destructive">{projectSetup.startError}</p>
       ) : null}
       {projectSetup.attempt ? <ProjectSetupAttemptCard attempt={projectSetup.attempt} /> : null}
+      <ProjectAutomaticSetupCard
+        snapshot={automaticSetup.snapshot}
+        busy={automaticSetup.busy}
+        error={automaticSetup.error}
+        onContinue={automaticSetup.continueWithoutSetup}
+        onCancel={automaticSetup.cancelQueuedTurn}
+      />
       <div className="p-1.5">
             <Button
               variant="ghost"

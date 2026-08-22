@@ -328,6 +328,52 @@ export const messages = sqliteTable(
   ],
 );
 
+/** Durable automatic Setup gate for the first Turn in each managed New worktree. */
+export const workspaceEnvironmentSetupGates = sqliteTable("workspace_environment_setup_gates", {
+  threadId: text("thread_id").primaryKey().notNull().references(() => threads.id, { onDelete: "cascade" }),
+  state: text("state").notNull(),
+  attemptId: text("attempt_id"),
+  createdAt: text("created_at").notNull().default(timestampDefault),
+  updatedAt: text("updated_at").notNull().default(timestampDefault),
+});
+
+/** Immutable result rows for automatic Setup attempts. */
+export const workspaceEnvironmentAutomaticSetupAttempts = sqliteTable(
+  "workspace_environment_automatic_setup_attempts",
+  {
+    id: text("id").primaryKey().notNull(),
+    threadId: text("thread_id").notNull().references(() => threads.id, { onDelete: "cascade" }),
+    state: text("state").notNull(),
+    reason: text("reason"),
+    launchSnapshotJson: text("launch_snapshot_json"),
+    outcome: text("outcome"),
+    createdAt: text("created_at").notNull().default(timestampDefault),
+    startedAt: text("started_at"),
+    finishedAt: text("finished_at"),
+    exitCode: integer("exit_code"),
+    output: text("output").notNull().default(""),
+    outputTruncated: integer("output_truncated", { mode: "boolean" }).notNull().default(false),
+  },
+  (table) => [index("idx_workspace_environment_automatic_setup_attempts_thread").on(table.threadId, desc(table.createdAt))],
+);
+
+/** Durable first-Turn payload and claim state while automatic Setup holds dispatch. */
+export const workspaceEnvironmentQueuedTurns = sqliteTable(
+  "workspace_environment_queued_turns",
+  {
+    id: text("id").primaryKey().notNull(),
+    threadId: text("thread_id").notNull().unique().references(() => threads.id, { onDelete: "cascade" }),
+    messageId: text("message_id").notNull(),
+    state: text("state").notNull(),
+    submissionJson: text("submission_json").notNull(),
+    createdAt: text("created_at").notNull().default(timestampDefault),
+    releasedAt: text("released_at"),
+    dispatchingAt: text("dispatching_at"),
+    dispatchedAt: text("dispatched_at"),
+  },
+  (table) => [index("idx_workspace_environment_queued_turns_state").on(table.state, table.createdAt)],
+);
+
 export const toolCallRecords = sqliteTable(
   "tool_call_records",
   {

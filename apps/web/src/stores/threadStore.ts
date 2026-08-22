@@ -227,6 +227,8 @@ interface ThreadState {
   loadOlderMessages: (threadId: string) => Promise<void>;
   loadNewerMessages: (threadId: string) => Promise<void>;
   sendMessage: (threadId: string, content: string, model?: string, permissionMode?: PermissionMode, attachments?: AttachmentMeta[], displayContent?: string, reasoningLevel?: ReasoningLevel, provider?: string, copilotAgent?: string, contextWindow?: ContextWindowMode, thinking?: boolean, codexFastMode?: boolean, replyToMessageId?: string, quotedText?: string, planAction?: import("@mcode/contracts").PlanAction, mentions?: MessageMention[], previewAnnotations?: PreviewAnnotationBundle, goalObjective?: string, orchestrationMode?: OrchestrationMode) => Promise<void>;
+  /** Remove one durably cancelled message from the resident thread transcript. */
+  removePersistedMessage: (threadId: string, messageId: string) => void;
   stopAgent: (threadId: string) => Promise<void>;
   /** Apply one authoritative runtime snapshot without replacing other running threads. */
   applyThreadRuntimeSnapshot: (snapshot: TurnRuntimeSnapshot) => void;
@@ -2136,6 +2138,19 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
       return {
         messages: capped,
         ...(evicted ? { hasMoreMessages: true } : {}),
+      };
+    });
+  },
+
+  removePersistedMessage: (threadId, messageId) => {
+    conversationResidency.invalidateConversation(threadId);
+    set((state) => {
+      const record = state.records.get(threadId);
+      if (!record || !record.messages.some((message) => message.id === messageId)) return state;
+      return {
+        records: patchThreadRecord(state.records, threadId, {
+          messages: record.messages.filter((message) => message.id !== messageId),
+        }),
       };
     });
   },

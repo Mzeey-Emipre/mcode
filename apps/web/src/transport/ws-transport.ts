@@ -675,6 +675,21 @@ export function createWsTransport(
         "workspace.environment.setup.get",
         { threadId },
       )).attempt,
+    getAutomaticSetup: (threadId) =>
+      rpc<import("@mcode/contracts").WorkspaceEnvironmentAutomaticSetupSnapshot>(
+        "workspace.environment.automaticSetup.get",
+        { threadId },
+      ),
+    continueAutomaticSetup: (threadId) =>
+      rpc<import("@mcode/contracts").WorkspaceEnvironmentAutomaticSetupSnapshot>(
+        "workspace.environment.automaticSetup.continue",
+        { threadId },
+      ),
+    cancelQueuedAutomaticTurn: (threadId) =>
+      rpc<import("@mcode/contracts").WorkspaceEnvironmentAutomaticSetupSnapshot>(
+        "workspace.environment.automaticSetup.cancelQueuedTurn",
+        { threadId },
+      ),
     deleteWorkspace: (id) => rpc<boolean>("workspace.delete", { id }),
     touchLastOpened: (id) => rpc<void>("workspace.touchLastOpened", { id }),
     reorderWorkspace: (id, newIndex) =>

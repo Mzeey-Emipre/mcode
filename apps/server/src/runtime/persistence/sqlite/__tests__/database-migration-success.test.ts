@@ -20,6 +20,7 @@ import { openDatabase, resolveElectronNativeBinding } from "../database.js";
 const MIGRATIONS_THROUGH_0041 = "0041_index_completed_thread_cleanup";
 const SUBAGENT_IDENTITY_MIGRATION = "0042_supreme_terrax";
 const MESSAGE_OUTCOME_MIGRATION = "0043_massive_dazzler";
+const AUTOMATIC_SETUP_MIGRATION = "0044_small_prodigy";
 
 type JournalEntry = {
   idx: number;
@@ -126,6 +127,30 @@ describe("successful database migration recovery", () => {
       (name) => name.startsWith("mcode.db.bak-") && !name.endsWith("-wal"),
     );
     expect(generations).toHaveLength(5);
+  });
+
+  it("creates the complete automatic Setup lifecycle in one migration", () => {
+    const database = openDatabase({ dbPath: databasePath });
+    try {
+      expect(readJournal(join(process.cwd(), "drizzle")).entries.filter(
+        (entry) => entry.tag.startsWith("0044_"),
+      )).toEqual([migrationEntry(join(process.cwd(), "drizzle"), AUTOMATIC_SETUP_MIGRATION)]);
+      expect(columnNames(database, "workspace_environment_automatic_setup_attempts")).toEqual(expect.arrayContaining([
+        "launch_snapshot_json",
+        "outcome",
+        "exit_code",
+        "output",
+        "output_truncated",
+      ]));
+      expect(columnNames(database, "workspace_environment_queued_turns")).toContain("dispatched_at");
+      expect(database.prepare("SELECT created_at FROM __drizzle_migrations WHERE hash = ?").all(
+        migrationHash(join(process.cwd(), "drizzle"), AUTOMATIC_SETUP_MIGRATION),
+      )).toEqual([{
+        created_at: migrationEntry(join(process.cwd(), "drizzle"), AUTOMATIC_SETUP_MIGRATION).when,
+      }]);
+    } finally {
+      database.close();
+    }
   });
 
   it("upgrades a 0041 database that the legacy fallback already patched", () => {

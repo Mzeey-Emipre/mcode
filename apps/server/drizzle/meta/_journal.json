@@ -316,6 +316,13 @@
       "when": 1787233172781,
       "tag": "0043_massive_dazzler",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "6",
+      "when": 1787415356033,
+      "tag": "0044_small_prodigy",
+      "breakpoints": true
     }
   ]
 }

@@ -244,6 +244,157 @@ export type WorkspaceEnvironmentSetupGetResult = z.infer<
   ReturnType<typeof WorkspaceEnvironmentSetupGetResultSchema>
 >;
 
+/** Durable gate states for the first Turn in a managed New worktree. */
+export const WorkspaceEnvironmentSetupGateStateSchema = z.enum([
+  "blocked",
+  "released-by-pass",
+  "released-by-continue",
+  "not-required",
+]);
+export type WorkspaceEnvironmentSetupGateState = z.infer<typeof WorkspaceEnvironmentSetupGateStateSchema>;
+
+/** Durable lifecycle states for an automatic Project Setup attempt. */
+export const WorkspaceEnvironmentAutomaticSetupAttemptStateSchema = z.enum([
+  "awaiting-approval",
+  "queued",
+  "running",
+  "passed",
+  "failed",
+  "interrupted",
+]);
+export type WorkspaceEnvironmentAutomaticSetupAttemptState = z.infer<
+  typeof WorkspaceEnvironmentAutomaticSetupAttemptStateSchema
+>;
+
+/** Durable lifecycle states for the first Turn queued behind automatic Setup. */
+export const WorkspaceEnvironmentQueuedTurnStateSchema = z.enum([
+  "queued",
+  "released",
+  "dispatching",
+  "dispatched",
+  "cancelled",
+]);
+export type WorkspaceEnvironmentQueuedTurnState = z.infer<
+  typeof WorkspaceEnvironmentQueuedTurnStateSchema
+>;
+
+/** Safe reasons rendered for an automatic Setup gate that remains blocked. */
+export const WorkspaceEnvironmentAutomaticSetupReasonSchema = z.enum([
+  "setup_not_configured",
+  "setup_configuration_invalid",
+  "setup_unavailable",
+  "setup_failed",
+  "setup_interrupted",
+]);
+export type WorkspaceEnvironmentAutomaticSetupReason = z.infer<
+  typeof WorkspaceEnvironmentAutomaticSetupReasonSchema
+>;
+
+/** Public durable result for one automatic Setup attempt. */
+export const WorkspaceEnvironmentAutomaticSetupAttemptSchema = lazySchema(() =>
+  z.object({
+    id: z.string().min(1).max(256),
+    state: WorkspaceEnvironmentAutomaticSetupAttemptStateSchema,
+    reason: WorkspaceEnvironmentAutomaticSetupReasonSchema.nullable(),
+    snapshot: WorkspaceEnvironmentSetupLaunchSnapshotSchema().nullable(),
+    outcome: WorkspaceEnvironmentSetupOutcomeSchema.nullable(),
+    createdAt: z.string().datetime(),
+    startedAt: z.string().datetime().nullable(),
+    finishedAt: z.string().datetime().nullable(),
+    exitCode: z.number().int().nullable(),
+    output: setupOutputSchema,
+    outputTruncated: z.boolean(),
+  }).strict().superRefine((attempt, ctx) => {
+    if ((attempt.state === "queued" || attempt.state === "awaiting-approval") &&
+      (attempt.startedAt !== null || attempt.finishedAt !== null || attempt.reason !== null ||
+        attempt.snapshot !== null || attempt.outcome !== null || attempt.exitCode !== null ||
+        attempt.output !== "" || attempt.outputTruncated)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Pending automatic Setup attempts cannot have a result" });
+    }
+    if (attempt.state === "running" &&
+      (attempt.startedAt === null || attempt.finishedAt !== null || attempt.reason !== null ||
+        attempt.snapshot === null || attempt.outcome !== null || attempt.exitCode !== null ||
+        attempt.output !== "" || attempt.outputTruncated)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Running automatic Setup attempts require an active lifecycle" });
+    }
+    if (attempt.state === "passed" &&
+      (attempt.startedAt === null || attempt.finishedAt === null || attempt.reason !== null ||
+        attempt.snapshot === null || attempt.outcome !== "success" || attempt.exitCode !== 0)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Passed automatic Setup attempts require start and finish times" });
+    }
+    if ((attempt.state === "failed" || attempt.state === "interrupted") &&
+      (attempt.finishedAt === null || attempt.reason === null)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Failed or interrupted automatic Setup attempts require a safe reason" });
+    }
+    if (attempt.state === "failed" && (attempt.snapshot === null || attempt.outcome === null || attempt.outcome === "success")) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Failed automatic Setup attempts require a launch snapshot and failure outcome" });
+    }
+    if (attempt.state === "interrupted" && (attempt.outcome !== null || attempt.exitCode !== null || attempt.output !== "" || attempt.outputTruncated)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Interrupted automatic Setup attempts cannot claim a terminal command result" });
+    }
+  }),
+);
+export type WorkspaceEnvironmentAutomaticSetupAttempt = z.infer<
+  ReturnType<typeof WorkspaceEnvironmentAutomaticSetupAttemptSchema>
+>;
+
+/** Public lifecycle record for the first Turn held behind automatic Setup. */
+export const WorkspaceEnvironmentQueuedTurnSchema = lazySchema(() =>
+  z.object({
+    id: z.string().min(1).max(256),
+    messageId: z.string().min(1).max(256),
+    state: WorkspaceEnvironmentQueuedTurnStateSchema,
+    createdAt: z.string().datetime(),
+    dispatchedAt: z.string().datetime().nullable(),
+  }).strict().superRefine((queuedTurn, ctx) => {
+    if (queuedTurn.state === "dispatched" && queuedTurn.dispatchedAt === null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Dispatched first Turns require a dispatch time" });
+    }
+    if (queuedTurn.state !== "dispatched" && queuedTurn.dispatchedAt !== null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Only dispatched first Turns have a dispatch time" });
+    }
+  }),
+);
+export type WorkspaceEnvironmentQueuedTurn = z.infer<
+  ReturnType<typeof WorkspaceEnvironmentQueuedTurnSchema>
+>;
+
+/** Reconnect-authoritative snapshot of the automatic Setup lifecycle for one Thread. */
+export const WorkspaceEnvironmentAutomaticSetupSnapshotSchema = lazySchema(() =>
+  z.object({
+    gate: WorkspaceEnvironmentSetupGateStateSchema,
+    attempt: WorkspaceEnvironmentAutomaticSetupAttemptSchema().nullable(),
+    queuedTurn: WorkspaceEnvironmentQueuedTurnSchema().nullable(),
+  }).strict(),
+);
+export type WorkspaceEnvironmentAutomaticSetupSnapshot = z.infer<
+  ReturnType<typeof WorkspaceEnvironmentAutomaticSetupSnapshotSchema>
+>;
+
+/** Request to read one automatic Setup lifecycle snapshot. */
+export const WorkspaceEnvironmentAutomaticSetupGetInputSchema = lazySchema(() =>
+  z.object({ threadId: z.string().min(1).max(256) }).strict(),
+);
+export type WorkspaceEnvironmentAutomaticSetupGetInput = z.infer<
+  ReturnType<typeof WorkspaceEnvironmentAutomaticSetupGetInputSchema>
+>;
+
+/** Request to release a queued first Turn without rerunning Setup. */
+export const WorkspaceEnvironmentAutomaticSetupContinueInputSchema = lazySchema(() =>
+  z.object({ threadId: z.string().min(1).max(256) }).strict(),
+);
+export type WorkspaceEnvironmentAutomaticSetupContinueInput = z.infer<
+  ReturnType<typeof WorkspaceEnvironmentAutomaticSetupContinueInputSchema>
+>;
+
+/** Request to cancel a first Turn that is still queued behind Setup. */
+export const WorkspaceEnvironmentQueuedTurnCancelInputSchema = lazySchema(() =>
+  z.object({ threadId: z.string().min(1).max(256) }).strict(),
+);
+export type WorkspaceEnvironmentQueuedTurnCancelInput = z.infer<
+  ReturnType<typeof WorkspaceEnvironmentQueuedTurnCancelInputSchema>
+>;
+
 /** A named workspace environment action with an opaque stable identity. */
 export const WorkspaceEnvironmentActionSchema = lazySchema(() =>
   z.object({

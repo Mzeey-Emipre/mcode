@@ -308,6 +308,16 @@ describe("loadMessages cache synchronization", () => {
     expect(getCachedRecord("t1")).toBeUndefined();
   });
 
+  it("removes a cancelled queued Turn from the live record and conversation cache", async () => {
+    await activateTestConversation("t1");
+    expect(getCachedRecord("t1")).toBeDefined();
+
+    useThreadStore.getState().removePersistedMessage("t1", "m1");
+
+    expect(getTestActiveMessages()).toEqual([]);
+    expect(getCachedRecord("t1")).toBeUndefined();
+  });
+
   it("evicts on clearThreadState", async () => {
     await activateTestConversation("t1");
     expect(getCachedRecord("t1")).toBeDefined();

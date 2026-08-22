@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { basename } from "node:path";
 import {
   type Settings,
@@ -20,6 +21,7 @@ import {
   TerminalProfileNotFoundError,
   TerminalProfileUnavailableError,
 } from "../profiles/terminal-profile-service.js";
+import type { PtyPidRegistry } from "../host/pty-pid-registry.js";
 
 const COMMAND_OUTPUT_CHUNK_MAX_BYTES = 65_536;
 const COMMAND_TIMEOUT_SETTLE_GRACE_MS = 1_000;
@@ -114,6 +116,8 @@ export interface TerminalCommandServiceDependencies extends TerminalScopeResolve
     },
   ) => TerminalCommandProcess;
   readonly killProcessTree?: (pid: number) => Promise<void>;
+  readonly pidRegistry?: Pick<PtyPidRegistry, "register" | "deregister">;
+  readonly createCommandId?: () => string;
   readonly setTimeout?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   readonly clearTimeout?: (timeout: ReturnType<typeof setTimeout>) => void;
 }
@@ -212,11 +216,17 @@ export class TerminalCommandService {
     let releaseResolve!: () => void;
     let released = false;
     let closedBeforeStart = false;
+    let registeredCommandId: string | null = null;
     const releasedPromise = new Promise<void>((resolve) => { releaseResolve = resolve; });
     const release = (): void => {
       if (released) return;
       released = true;
       releaseResolve();
+    };
+    const deregister = (): void => {
+      if (!registeredCommandId) return;
+      this.deps.pidRegistry?.deregister(registeredCommandId);
+      registeredCommandId = null;
     };
     const settle = (result: TerminalCommandCompletion): void => {
       if (completionSettled || !completionResolve) return;
@@ -253,6 +263,7 @@ export class TerminalCommandService {
           containmentInFlight = false;
           if (result.kind === "contained") {
             containmentFailed = false;
+            deregister();
             release();
             settle(timedOut
               ? { kind: "timeout", ...capture.result() }
@@ -308,6 +319,10 @@ export class TerminalCommandService {
           release();
           return startPromise;
         }
+        if (typeof child.pid === "number" && child.pid > 0 && this.deps.pidRegistry) {
+          registeredCommandId = `terminal-command:${this.deps.createCommandId?.() ?? randomUUID()}`;
+          this.deps.pidRegistry.register(registeredCommandId, child.pid, terminal.executable);
+        }
         if (!child.stdout || !child.stderr) {
           void close();
           return startPromise;
@@ -320,6 +335,7 @@ export class TerminalCommandService {
         }, timeoutMs);
         child.once("error", () => {
           if (containmentInFlight || containmentFailed) return;
+          deregister();
           release();
           settle(timedOut
             ? { kind: "timeout", ...capture.result() }
@@ -327,6 +343,7 @@ export class TerminalCommandService {
         });
         child.once("close", (exitCode) => {
           if (containmentInFlight || containmentFailed) return;
+          deregister();
           release();
           settle(timedOut
             ? { kind: "timeout", ...capture.result() }
