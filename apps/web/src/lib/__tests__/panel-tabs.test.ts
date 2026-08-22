@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { Layers, ListChecks } from "lucide-react";
+import { Layers, ListChecks, Settings } from "lucide-react";
 import {
   PANEL_TAB_TYPES,
   creatableTypes,
@@ -63,6 +63,11 @@ describe("PANEL_TAB_TYPES catalog", () => {
   it("uses Layers for the Subagents panel tab", () => {
     const subagents = PANEL_TAB_TYPES.find((type) => type.id === "subagents");
     expect(subagents?.icon).toBe(Layers);
+  });
+
+  it("uses Settings for the Project settings panel tab", () => {
+    const environment = PANEL_TAB_TYPES.find((type) => type.id === "environment");
+    expect(environment?.icon).toBe(Settings);
   });
 });
 

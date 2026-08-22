@@ -1,10 +1,10 @@
 import { useCallback } from "react";
-import { PanelRight, SlidersHorizontal } from "lucide-react";
+import { PanelRight } from "lucide-react";
 import { OpenInAppButton } from "./OpenInAppButton";
 import { ThreadOverview } from "./ThreadOverview";
 import { useDiffStore } from "@/stores/diffStore";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
-import { showRightPanelAdaptive, toggleRightPanelAdaptive } from "@/lib/right-panel-layout";
+import { toggleRightPanelAdaptive } from "@/lib/right-panel-layout";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { getKeybindingForCommand, formatKeybinding } from "@/lib/keybinding-manager";
@@ -38,11 +38,6 @@ export function HeaderActions({ thread, threadPaneWidth }: HeaderActionsProps) {
     toggleRightPanelAdaptive(thread.workspace_id, thread.id);
   }, [thread.workspace_id, thread.id]);
 
-  const openProjectSettings = useCallback(() => {
-    showRightPanelAdaptive(thread.workspace_id, thread.id);
-    useDiffStore.getState().setRightPanelTab(thread.workspace_id, thread.id, "environment");
-  }, [thread.workspace_id, thread.id]);
-
   // Live keycap for the right-panel toggle, shown in the button's tooltip.
   const panelShortcut = formatKeybinding(
     getKeybindingForCommand("rightPanel.toggle")?.key ?? "mod+alt+b",
@@ -62,24 +57,6 @@ export function HeaderActions({ thread, threadPaneWidth }: HeaderActionsProps) {
       <span className="mx-0.5 h-5 w-px bg-border" aria-hidden />
 
       <ThreadOverview thread={thread} threadPaneWidth={threadPaneWidth} />
-
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              onClick={openProjectSettings}
-              aria-label="Open Project settings"
-              data-testid="project-settings-toggle"
-              className="cursor-pointer text-foreground/70 hover:text-foreground hover:bg-muted/40"
-            >
-              <SlidersHorizontal size={14} aria-hidden />
-            </Button>
-          }
-        />
-        <TooltipContent side="bottom" className="text-xs">Project settings</TooltipContent>
-      </Tooltip>
 
       {/* Dedicated right-panel toggle for the workspace-global panel. */}
       <Tooltip>
