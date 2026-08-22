@@ -4,6 +4,7 @@ import {
   WORKSPACE_ENVIRONMENT_SCRIPT_MAX_BYTES,
   WorkspaceEnvironmentCommandSchema,
   WorkspaceEnvironmentDocumentSchema,
+  WorkspaceEnvironmentSetupAttemptSchema,
   workspaceEnvironmentValidationIssues,
 } from "../workspace-environment.js";
 
@@ -65,5 +66,85 @@ describe("workspace environment contracts", () => {
         }),
       ]));
     }
+  });
+
+  it("preserves a nonblank default when an OS override is blank", () => {
+    const command = WorkspaceEnvironmentCommandSchema().parse({
+      default: "  bun run setup  ",
+      windows: " \t ",
+    });
+
+    expect(command).toEqual({ default: "  bun run setup  ", windows: " \t " });
+  });
+
+  it("carries Terminal-bounded immutable manual Setup outcomes without environment values", () => {
+    const attempt = WorkspaceEnvironmentSetupAttemptSchema().parse({
+      id: "attempt-1",
+      threadId: "thread-1",
+      workspaceId: "workspace-1",
+      status: "failed",
+      outcome: "containment_failure",
+      snapshot: {
+        platform: "windows",
+        script: "bun run setup",
+        checkoutPath: "C:\\repo",
+        terminal: {
+          executable: "C:\\Program Files\\PowerShell\\pwsh.exe",
+          arguments: ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "bun run setup"],
+        },
+      },
+      createdAt: "2026-08-22T12:00:00.000Z",
+      startedAt: "2026-08-22T12:00:00.000Z",
+      finishedAt: "2026-08-22T12:00:05.000Z",
+      exitCode: null,
+      output: "Setup timed out",
+      outputTruncated: false,
+      cleanupPending: true,
+    });
+
+    expect(attempt.outcome).toBe("containment_failure");
+    expect(attempt.snapshot.terminal?.arguments).toContain("-NonInteractive");
+    expect(JSON.stringify(attempt)).not.toContain("SECRET_TOKEN");
+    expect(WorkspaceEnvironmentSetupAttemptSchema().safeParse({
+      ...attempt,
+      cleanupPending: false,
+      snapshot: {
+        ...attempt.snapshot,
+        terminal: {
+          executable: "x".repeat(1_025),
+          arguments: Array.from({ length: 33 }, () => "argument"),
+        },
+      },
+    }).success).toBe(false);
+    expect(WorkspaceEnvironmentSetupAttemptSchema().safeParse({
+      ...attempt,
+      status: "running",
+      outcome: null,
+      startedAt: null,
+      finishedAt: null,
+      cleanupPending: false,
+    }).success).toBe(false);
+    expect(WorkspaceEnvironmentSetupAttemptSchema().safeParse({
+      ...attempt,
+      status: "passed",
+      outcome: "success",
+      cleanupPending: false,
+      exitCode: 1,
+    }).success).toBe(false);
+    expect(WorkspaceEnvironmentSetupAttemptSchema().safeParse({
+      ...attempt,
+      status: "passed",
+      outcome: "success",
+      cleanupPending: false,
+      exitCode: 0,
+      startedAt: null,
+    }).success).toBe(false);
+    expect(WorkspaceEnvironmentSetupAttemptSchema().safeParse({
+      ...attempt,
+      status: "failed",
+      outcome: "success",
+      cleanupPending: false,
+      exitCode: 0,
+    }).success).toBe(false);
   });
 });

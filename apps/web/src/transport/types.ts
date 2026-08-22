@@ -4,6 +4,7 @@ import type {
   WorkspaceEnrichment,
   WorkspaceEnvironmentDocument,
   WorkspaceEnvironmentReadResult,
+  WorkspaceEnvironmentSetupAttempt,
   Thread,
   RecentThread,
   PaginatedMessages,
@@ -106,6 +107,7 @@ export type {
   WorkspaceEnrichment,
   WorkspaceEnvironmentDocument,
   WorkspaceEnvironmentReadResult,
+  WorkspaceEnvironmentSetupAttempt,
   Thread,
   RecentThread,
   Message,
@@ -296,6 +298,10 @@ export interface McodeTransport {
     document: WorkspaceEnvironmentDocument,
     sourceRevision: string | null,
   ): Promise<WorkspaceEnvironmentReadResult>;
+  /** Start a transient manual Setup attempt for one Thread. */
+  startWorkspaceSetup(threadId: string): Promise<WorkspaceEnvironmentSetupAttempt>;
+  /** Read the latest transient manual Setup attempt for one Thread. */
+  getWorkspaceSetupAttempt(threadId: string): Promise<WorkspaceEnvironmentSetupAttempt | null>;
   deleteWorkspace(id: string): Promise<boolean>;
   /** Record workspace as last-opened for recency ordering in the project selector. */
   touchLastOpened(id: string): Promise<void>;

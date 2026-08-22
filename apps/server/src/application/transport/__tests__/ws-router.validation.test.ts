@@ -12,6 +12,7 @@ import { ProviderCatalogSnapshotRepo } from "../../../features/providers/catalog
 import { openMemoryDatabase } from "../../../runtime/persistence/sqlite/database.js";
 import { ThreadRepo } from "../../../features/thread-control/persistence/thread-repo.js";
 import { WorkspaceRepo } from "../../../features/projects/persistence/workspace-repo.js";
+import { WorkspaceEnvironmentService } from "../../../features/projects/environment/workspace-environment-service.js";
 import { _resetForTest, addClient } from "../push.js";
 import {
   RECAP_MAX_MESSAGE_CONTENT_CHARS,
@@ -36,6 +37,16 @@ function fakeOpenSocket(received: Array<{ buf: Buffer; binary: boolean }>): WebS
     }) as WebSocket["send"],
   };
   return ws as WebSocket;
+}
+
+function deferred<T>(): { readonly promise: Promise<T>; readonly resolve: (value: T) => void; readonly reject: (reason: unknown) => void } {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((nextResolve, nextReject) => {
+    resolve = nextResolve;
+    reject = nextReject;
+  });
+  return { promise, resolve, reject };
 }
 
 describe("routeMessage result validation seam", () => {
@@ -1209,6 +1220,10 @@ describe("routeMessage workspace.delete watcher teardown", () => {
       workspaceService: {
         delete: deleteWorkspace,
       },
+      workspaceEnvironmentService: {
+        cancelSetupForWorkspace: vi.fn().mockResolvedValue(undefined),
+        beginWorkspaceDeletion: vi.fn(() => () => undefined),
+      },
     } as unknown as RouterDeps;
 
     const response = await routeMessage(
@@ -1228,6 +1243,7 @@ describe("routeMessage workspace.delete watcher teardown", () => {
   it("unwatches thread worktrees after all workspace thread teardowns succeed", async () => {
     const unwatchThreadWorktree = vi.fn();
     const teardownThread = vi.fn().mockResolvedValue(undefined);
+    const cancelSetupForWorkspace = vi.fn().mockResolvedValue(undefined);
     const deps = {
       threadRepo: {
         listAllByWorkspace: vi.fn().mockReturnValue([
@@ -1251,6 +1267,10 @@ describe("routeMessage workspace.delete watcher teardown", () => {
       workspaceService: {
         delete: vi.fn().mockReturnValue(true),
       },
+      workspaceEnvironmentService: {
+        cancelSetupForWorkspace,
+        beginWorkspaceDeletion: vi.fn(() => () => undefined),
+      },
     } as unknown as RouterDeps;
 
     const response = await routeMessage(
@@ -1267,6 +1287,9 @@ describe("routeMessage workspace.delete watcher teardown", () => {
     expect(unwatchThreadWorktree).toHaveBeenCalledWith("thread-2");
     expect(teardownThread.mock.invocationCallOrder[1]).toBeLessThan(
       unwatchThreadWorktree.mock.invocationCallOrder[0],
+    );
+    expect(cancelSetupForWorkspace.mock.invocationCallOrder[0]).toBeLessThan(
+      teardownThread.mock.invocationCallOrder[0],
     );
   });
 });
@@ -1329,6 +1352,7 @@ describe("routeMessage thread.delete watcher teardown", () => {
     const deleteThread = vi
       .fn()
       .mockImplementation(options.deleteThread ?? (() => Promise.resolve(true)));
+    const cancelSetupForThread = vi.fn().mockResolvedValue(undefined);
     const deps = {
       ciWatcherService: {
         teardownThread: vi.fn().mockResolvedValue(undefined),
@@ -1351,8 +1375,12 @@ describe("routeMessage thread.delete watcher teardown", () => {
       threadService: {
         delete: deleteThread,
       },
+      workspaceEnvironmentService: {
+        cancelSetupForThread,
+        beginThreadDeletion: vi.fn(() => () => undefined),
+      },
     } as unknown as RouterDeps;
-    return { deps, unwatchThreadWorktree, teardownThread, deleteThread };
+    return { deps, unwatchThreadWorktree, teardownThread, deleteThread, cancelSetupForThread };
   }
 
   it("keeps the thread worktree watcher when thread teardown fails", async () => {
@@ -1393,7 +1421,7 @@ describe("routeMessage thread.delete watcher teardown", () => {
   });
 
   it("unwatches the thread worktree after thread teardown and delete succeed", async () => {
-    const { deps, unwatchThreadWorktree, teardownThread, deleteThread } = createThreadDeleteDeps();
+    const { deps, unwatchThreadWorktree, teardownThread, deleteThread, cancelSetupForThread } = createThreadDeleteDeps();
 
     const response = await routeMessage(
       JSON.stringify({
@@ -1412,6 +1440,106 @@ describe("routeMessage thread.delete watcher teardown", () => {
     expect(deleteThread.mock.invocationCallOrder[0]).toBeLessThan(
       unwatchThreadWorktree.mock.invocationCallOrder[0],
     );
+    expect(cancelSetupForThread.mock.invocationCallOrder[0]).toBeLessThan(
+      teardownThread.mock.invocationCallOrder[0],
+    );
+  });
+});
+
+describe("routeMessage Setup deletion barriers", () => {
+  it("rejects Setup during a Thread deletion and releases the barrier after teardown fails", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mcode-setup-thread-delete-"));
+    const thread = { id: "thread-1", workspace_id: "ws-1", mode: "direct", worktree_managed: true };
+    const environment = new WorkspaceEnvironmentService({
+      mcodeDir: root,
+      threads: { findById: (threadId) => threadId === thread.id ? thread : null },
+    });
+    const teardownEntered = deferred<void>();
+    const teardown = deferred<void>();
+    const deps = {
+      ciWatcherService: { teardownThread: vi.fn().mockResolvedValue(undefined) },
+      githubService: { cancelForRepoPath: vi.fn().mockResolvedValue(undefined) },
+      threadRepo: { findById: vi.fn().mockReturnValue({ ...thread, worktree_path: null }) },
+      threadTeardownService: {
+        teardownThread: vi.fn(() => {
+          teardownEntered.resolve();
+          return teardown.promise;
+        }),
+      },
+      threadService: { delete: vi.fn().mockResolvedValue(true) },
+      workspaceEnvironmentService: environment,
+    } as unknown as RouterDeps;
+
+    try {
+      const deletion = routeMessage(JSON.stringify({
+        id: "thread-delete-barrier",
+        method: "thread.delete",
+        params: { threadId: thread.id, cleanupWorktree: false },
+      }), deps);
+      await teardownEntered.promise;
+
+      await expect(environment.startSetup({ threadId: thread.id })).rejects.toMatchObject({
+        code: "WORKSPACE_ENVIRONMENT_SETUP_UNAVAILABLE",
+      });
+
+      teardown.reject(new Error("teardown failed"));
+      await expect(deletion).resolves.toMatchObject({ error: { message: "teardown failed" } });
+      await expect(environment.startSetup({ threadId: thread.id })).resolves.toMatchObject({ status: "unavailable" });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects Setup during a workspace deletion and falls back to not found after deletion", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mcode-setup-workspace-delete-"));
+    const thread = { id: "thread-1", workspace_id: "ws-1", mode: "direct", worktree_managed: true };
+    let deleted = false;
+    const environment = new WorkspaceEnvironmentService({
+      mcodeDir: root,
+      threads: { findById: (threadId) => !deleted && threadId === thread.id ? thread : null },
+    });
+    const teardownEntered = deferred<void>();
+    const teardown = deferred<void>();
+    const deps = {
+      threadRepo: { listAllByWorkspace: vi.fn().mockReturnValue([{ ...thread, worktree_path: null }]) },
+      githubService: { cancelForRepoPath: vi.fn().mockResolvedValue(undefined) },
+      ciWatcherService: { teardownThread: vi.fn().mockResolvedValue(undefined) },
+      threadTeardownService: {
+        teardownThread: vi.fn(() => {
+          teardownEntered.resolve();
+          return teardown.promise;
+        }),
+      },
+      gitWatcherService: { unwatchThreadWorktree: vi.fn(), unwatchWorkspace: vi.fn() },
+      workspaceService: {
+        delete: vi.fn(() => {
+          deleted = true;
+          return true;
+        }),
+      },
+      workspaceEnvironmentService: environment,
+    } as unknown as RouterDeps;
+
+    try {
+      const deletion = routeMessage(JSON.stringify({
+        id: "workspace-delete-barrier",
+        method: "workspace.delete",
+        params: { id: "ws-1" },
+      }), deps);
+      await teardownEntered.promise;
+
+      await expect(environment.startSetup({ threadId: thread.id })).rejects.toMatchObject({
+        code: "WORKSPACE_ENVIRONMENT_SETUP_UNAVAILABLE",
+      });
+
+      teardown.resolve();
+      await expect(deletion).resolves.toMatchObject({ result: true });
+      await expect(environment.startSetup({ threadId: thread.id })).rejects.toMatchObject({
+        code: "WORKSPACE_ENVIRONMENT_NOT_FOUND",
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
 

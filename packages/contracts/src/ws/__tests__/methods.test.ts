@@ -137,4 +137,18 @@ describe("thread switching WebSocket contracts", () => {
     expect(WS_METHODS()["push.subscribeThread"]).toBeDefined();
     expect(WS_METHODS()["push.unsubscribeThread"]).toBeDefined();
   });
+
+  it("bounds deletion identifiers before lifecycle barriers retain them", () => {
+    for (const methodName of ["workspace.delete", "workspace.forceDelete"] as const) {
+      const method = WS_METHODS()[methodName];
+      expect(method.params.safeParse({ id: "workspace-1" }).success).toBe(true);
+      expect(method.params.safeParse({ id: "" }).success).toBe(false);
+      expect(method.params.safeParse({ id: "x".repeat(257) }).success).toBe(false);
+    }
+
+    const threadDelete = WS_METHODS()["thread.delete"];
+    expect(threadDelete.params.safeParse({ threadId: "thread-1", cleanupWorktree: false }).success).toBe(true);
+    expect(threadDelete.params.safeParse({ threadId: "", cleanupWorktree: false }).success).toBe(false);
+    expect(threadDelete.params.safeParse({ threadId: "x".repeat(257), cleanupWorktree: false }).success).toBe(false);
+  });
 });

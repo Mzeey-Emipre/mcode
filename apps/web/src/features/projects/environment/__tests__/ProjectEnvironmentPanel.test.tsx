@@ -59,6 +59,7 @@ describe("ProjectEnvironmentPanel", () => {
     expect(screen.getByText("Caravan")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Environment" })).toBeInTheDocument();
     expect(screen.getByText("This document is saved in Mcode’s user data on this computer.")).toBeInTheDocument();
+    expect(screen.getByText("Optional setup command configuration for this Project.")).toBeInTheDocument();
     expect(screen.queryByLabelText("Default command script")).not.toBeInTheDocument();
   });
 

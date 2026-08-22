@@ -284,7 +284,7 @@ export function ProjectEnvironmentPanel({ workspaceId, active = true }: { readon
               <div className="mb-4 flex items-center justify-between gap-3">
                 <div>
                   <h2 id="project-environment-setup-title" className="text-base font-semibold">Setup</h2>
-                  <p className="mt-1 text-xs text-muted-foreground">Optional command configuration for New worktrees.</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Optional setup command configuration for this Project.</p>
                 </div>
                 <Button ref={firstTaskRef} type="button" variant="outline" size="sm" onClick={() => setSetup(!setupEnabled)}>
                   {setupEnabled ? "Remove Setup" : "Add Setup"}

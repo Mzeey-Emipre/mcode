@@ -70,6 +70,11 @@ import type {
 import { useThreadStore } from "@/stores/threadStore";
 import { useThreadRecord } from "@/stores/thread-selectors";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
+import {
+  ProjectSetupAttemptCard,
+  ProjectSetupMenu,
+  useProjectSetupAttempt,
+} from "@/features/projects/environment";
 import { useOverviewStore } from "@/stores/overviewStore";
 import { usePlanStore } from "@/stores/planStore";
 import { executeCommand, registerCommand } from "@/lib/command-registry";
@@ -1753,6 +1758,10 @@ function CreateThreadBranchDialog({
  * thread: changed files, PR actions, and the thread's worktree mode.
  */
 export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps) {
+  const projectSetup = useProjectSetupAttempt(thread.id);
+  const canRunManualSetup = thread.mode === "direct" || (
+    thread.mode === "worktree" && thread.worktree_managed === false
+  );
   const [localOpen, setLocalOpen] = useState(false);
   const [branchOpen, setBranchOpen] = useState(false);
   const [createBranchOpen, setCreateBranchOpen] = useState(false);
@@ -2170,6 +2179,13 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
           data-testid="thread-overview-masthead-controls"
           className="ml-auto flex items-center gap-0.5"
         >
+          {canRunManualSetup ? (
+            <ProjectSetupMenu
+              attempt={projectSetup.attempt}
+              starting={projectSetup.starting}
+              onStart={projectSetup.start}
+            />
+          ) : null}
           <Tooltip>
             <TooltipTrigger
               render={
@@ -2192,6 +2208,10 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
         </div>
       </div>
       <Separator />
+      {projectSetup.startError ? (
+        <p role="alert" className="mx-1.5 mt-1.5 text-xs text-destructive">{projectSetup.startError}</p>
+      ) : null}
+      {projectSetup.attempt ? <ProjectSetupAttemptCard attempt={projectSetup.attempt} /> : null}
       <div className="p-1.5">
             <Button
               variant="ghost"

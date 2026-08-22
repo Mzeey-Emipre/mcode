@@ -401,6 +401,9 @@ describe("CleanupWorker - attachment cleanup and workspace finalization", () => 
       workspaceRepo,
       mockAttachmentService,
       mockHandoffStorage,
+      { beginThreadDeletion: () => () => undefined, cancelSetupForThread: vi.fn().mockResolvedValue(undefined) } as any,
+      undefined,
+      undefined,
     );
   });
 
@@ -523,6 +526,9 @@ describe("CleanupWorker - startup reconciliation", () => {
       workspaceRepo,
       mockAttachmentService,
       mockHandoffStorage,
+      { beginThreadDeletion: () => () => undefined, cancelSetupForThread: vi.fn().mockResolvedValue(undefined) } as any,
+      undefined,
+      undefined,
     );
   });
 
@@ -594,7 +600,7 @@ describe("CleanupWorker - shared branch protection", () => {
     mockAttachmentService = { removeForThread: vi.fn() } as unknown as AttachmentService;
     mockHandoffStorage = { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as unknown as HandoffStorage;
 
-    worker = new CleanupWorker(db, cleanupJobRepo, threadRepo, mockClaudeProvider, mockTerminalService, mockGitService, workspaceRepo, mockAttachmentService, mockHandoffStorage);
+    worker = new CleanupWorker(db, cleanupJobRepo, threadRepo, mockClaudeProvider, mockTerminalService, mockGitService, workspaceRepo, mockAttachmentService, mockHandoffStorage, { beginThreadDeletion: () => () => undefined, cancelSetupForThread: vi.fn().mockResolvedValue(undefined) } as any, undefined, undefined);
   });
 
   afterEach(() => { worker.dispose(); });
@@ -782,6 +788,9 @@ describe("CleanupWorker - exhausted retries", () => {
       workspaceRepo,
       { removeForThread: vi.fn() } as any,
       { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as any,
+      { beginThreadDeletion: () => () => undefined, cancelSetupForThread: vi.fn().mockResolvedValue(undefined) } as any,
+      undefined,
+      undefined,
     );
   });
 
@@ -838,7 +847,7 @@ describe("CleanupWorker - missing directory handling", () => {
     mockAttachmentService = { removeForThread: vi.fn() } as unknown as AttachmentService;
     mockHandoffStorage = { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as unknown as HandoffStorage;
 
-    worker = new CleanupWorker(db, cleanupJobRepo, threadRepo, mockClaudeProvider, mockTerminalService, mockGitService, workspaceRepo, mockAttachmentService, mockHandoffStorage);
+    worker = new CleanupWorker(db, cleanupJobRepo, threadRepo, mockClaudeProvider, mockTerminalService, mockGitService, workspaceRepo, mockAttachmentService, mockHandoffStorage, { beginThreadDeletion: () => () => undefined, cancelSetupForThread: vi.fn().mockResolvedValue(undefined) } as any, undefined, undefined);
   });
 
   afterEach(() => { worker.dispose(); });
@@ -922,7 +931,7 @@ describe("CleanupWorker - idempotent retry", () => {
     mockAttachmentService = { removeForThread: vi.fn() } as unknown as AttachmentService;
     mockHandoffStorage = { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as unknown as HandoffStorage;
 
-    worker = new CleanupWorker(db, cleanupJobRepo, threadRepo, mockClaudeProvider, mockTerminalService, mockGitService, workspaceRepo, mockAttachmentService, mockHandoffStorage);
+    worker = new CleanupWorker(db, cleanupJobRepo, threadRepo, mockClaudeProvider, mockTerminalService, mockGitService, workspaceRepo, mockAttachmentService, mockHandoffStorage, { beginThreadDeletion: () => () => undefined, cancelSetupForThread: vi.fn().mockResolvedValue(undefined) } as any, undefined, undefined);
   });
 
   afterEach(() => { worker.dispose(); });

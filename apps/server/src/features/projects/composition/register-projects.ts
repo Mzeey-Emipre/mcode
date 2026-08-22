@@ -11,6 +11,8 @@ import {
 } from "../index.js";
 import { WorkspaceRepo } from "../persistence/workspace-repo.js";
 import { WorktreeRepo } from "../persistence/worktree-repo.js";
+import { ThreadRepo } from "../../thread-control/persistence/thread-repo.js";
+import { TerminalCommandService } from "../../terminal/commands/terminal-command-service.js";
 
 /** Register the workspace repository and its string-keyed dependency alias. */
 export function registerWorkspaceRepository(container: DependencyContainer): void {
@@ -35,6 +37,7 @@ export function registerWorktreeRepository(container: DependencyContainer): void
 
 /** Register project lifecycle services and the GitService token alias. */
 export function registerProjectServices(container: DependencyContainer): void {
+  let workspaceEnvironmentService: WorkspaceEnvironmentService | undefined;
   container.register(
     WorkspaceService,
     { useClass: WorkspaceService },
@@ -57,7 +60,16 @@ export function registerProjectServices(container: DependencyContainer): void {
   );
   container.register(
     WorkspaceEnvironmentService,
-    { useFactory: () => new WorkspaceEnvironmentService() },
+    {
+      useFactory: (c) => {
+        if (workspaceEnvironmentService) return workspaceEnvironmentService;
+        workspaceEnvironmentService = new WorkspaceEnvironmentService({
+          threads: c.resolve(ThreadRepo),
+          terminalCommands: c.resolve(TerminalCommandService),
+        });
+        return workspaceEnvironmentService;
+      },
+    },
   );
   container.register("GitService", {
     useFactory: (c) => c.resolve(GitService),

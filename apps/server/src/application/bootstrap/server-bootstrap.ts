@@ -401,6 +401,16 @@ const ciWatcherService = new CiWatcherService(githubService, (channel, data) => 
 threadCompletionService.registerResourceOwner("ci-watcher", (threadId) =>
   ciWatcherService.teardownThread(threadId),
 );
+threadCompletionService.registerResourceOwner("workspace-environment", async (threadId) => {
+  const release = workspaceEnvironmentService.beginThreadDeletion(threadId);
+  try {
+    await workspaceEnvironmentService.cancelSetupForThread(threadId);
+    return release;
+  } catch (error) {
+    release();
+    throw error;
+  }
+});
 threadCompletionService.onDeadlineChanges((threads) => {
   for (const thread of threads) {
     const payload = { thread };
@@ -827,27 +837,40 @@ async function shutdown(): Promise<void> {
   // 5. Dispose settings file watcher
   settingsService.dispose();
 
-  // 6. Shutdown terminal service — enable graceful signal ladder for this path only
+  let shutdownFailure: unknown = null;
+  const captureCleanupFailure = async (cleanup: () => Promise<void> | void): Promise<void> => {
+    try {
+      await cleanup();
+    } catch (error) {
+      shutdownFailure ??= error;
+    }
+  };
+
+  // 6. Contain manual Setup commands before their Terminal dependency shuts down.
+  shutdownCoordinator.setPhase("shutdown Project Setup commands");
+  await captureCleanupFailure(() => workspaceEnvironmentService.dispose());
+
+  // 7. Shutdown terminal service — enable graceful signal ladder for this path only
   shutdownCoordinator.setPhase("shutdown terminal service");
   terminalService.setGracefulKill(true);
-  await terminalService.shutdown();
+  await captureCleanupFailure(() => terminalService.shutdown());
 
-  // 7. Dispose all git HEAD file watchers
-  gitWatcherService.dispose();
+  // 8. Dispose all git HEAD file watchers
+  await captureCleanupFailure(() => gitWatcherService.dispose());
 
-  // 7a. Stop all skill / plugin directory watchers
-  skillWatcherService.stopAll();
+  // 8a. Stop all skill / plugin directory watchers
+  await captureCleanupFailure(() => skillWatcherService.stopAll());
 
-  // 8. Dispose memory pressure timers
-  memoryPressureService.dispose();
+  // 9. Dispose memory pressure timers
+  await captureCleanupFailure(() => memoryPressureService.dispose());
 
-  // 8a. Dispose cleanup worker
+  // 9a. Dispose cleanup worker
   shutdownCoordinator.setPhase("shutdown cleanup worker");
-  await cleanupWorker.shutdown();
+  await captureCleanupFailure(() => cleanupWorker.shutdown());
 
-  // 8b. Dispose CI check watcher timers and in-flight GitHub CLI children
+  // 9b. Dispose CI check watcher timers and in-flight GitHub CLI children
   shutdownCoordinator.setPhase("shutdown CI watcher");
-  await ciWatcherService.dispose();
+  await captureCleanupFailure(() => ciWatcherService.dispose());
 
   // 9. Close all WebSocket clients and shut down the WS server
   for (const client of wss.clients) {
@@ -875,6 +898,13 @@ async function shutdown(): Promise<void> {
     // Already closed or other non-fatal error
   }
 
+  // Close the Windows Job Object. With KILL_ON_JOB_CLOSE, any child processes
+  // still alive are terminated atomically by the OS. No-op on non-Windows.
+  shutdownCoordinator.setPhase("close Windows Job Object");
+  await captureCleanupFailure(() => jobObject.close());
+
+  if (shutdownFailure) throw shutdownFailure;
+
   // 12. Write clean-shutdown breadcrumb BEFORE removing the lock file. If the
   // marker write fails, the lock file stays put so the next startup still
   // detects an unclean exit (missing marker + present lock = warn).
@@ -898,19 +928,6 @@ async function shutdown(): Promise<void> {
     unlinkSync(LOCK_FILE_PATH);
   } catch {
     // Lock file may already be gone
-  }
-
-  // Close the Windows Job Object. With KILL_ON_JOB_CLOSE, any child processes
-  // still alive are terminated atomically by the OS. No-op on non-Windows.
-  // Best-effort: an unexpected throw from the native handle must not abort
-  // the rest of shutdown.
-  try {
-    shutdownCoordinator.setPhase("close Windows Job Object");
-    jobObject.close();
-  } catch (err) {
-    logger.warn("JobObject close failed during shutdown", {
-      error: err instanceof Error ? err.message : String(err),
-    });
   }
 
   shutdownCoordinator.setPhase("complete shutdown");

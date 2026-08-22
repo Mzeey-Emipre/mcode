@@ -3,10 +3,18 @@ import { WorkspaceSchema, WorkspaceEnrichmentSchema } from "../models/workspace.
 import {
   WorkspaceEnvironmentReadResultSchema,
   WorkspaceEnvironmentSaveInputSchema,
+  WorkspaceEnvironmentSetupAttemptSchema,
+  WorkspaceEnvironmentSetupGetInputSchema,
+  WorkspaceEnvironmentSetupGetResultSchema,
+  WorkspaceEnvironmentSetupStartInputSchema,
 } from "../models/workspace-environment.js";
 import type {
   WorkspaceEnvironmentReadResult,
   WorkspaceEnvironmentSaveInput,
+  WorkspaceEnvironmentSetupAttempt,
+  WorkspaceEnvironmentSetupGetInput,
+  WorkspaceEnvironmentSetupGetResult,
+  WorkspaceEnvironmentSetupStartInput,
 } from "../models/workspace-environment.js";
 import { ThreadSchema, RecentThreadSchema } from "../models/thread.js";
 import { ThreadModeSchema, PermissionModeSchema, InteractionModeSchema, OrchestrationModeSchema } from "../models/enums.js";
@@ -440,6 +448,24 @@ const threadCleanupLifecycleMethods = (): Record<
   },
 });
 
+type WorkspaceEnvironmentSetupWsMethodName =
+  | "workspace.environment.setup.start"
+  | "workspace.environment.setup.get";
+
+const workspaceEnvironmentSetupMethods = (): Record<
+  WorkspaceEnvironmentSetupWsMethodName,
+  { params: z.ZodTypeAny; result: z.ZodTypeAny }
+> => ({
+  "workspace.environment.setup.start": {
+    params: WorkspaceEnvironmentSetupStartInputSchema() as z.ZodType<WorkspaceEnvironmentSetupStartInput>,
+    result: WorkspaceEnvironmentSetupAttemptSchema() as z.ZodType<WorkspaceEnvironmentSetupAttempt>,
+  },
+  "workspace.environment.setup.get": {
+    params: WorkspaceEnvironmentSetupGetInputSchema() as z.ZodType<WorkspaceEnvironmentSetupGetInput>,
+    result: WorkspaceEnvironmentSetupGetResultSchema() as z.ZodType<WorkspaceEnvironmentSetupGetResult>,
+  },
+});
+
 /** All RPC method definitions keyed by method name with params and result schemas. */
 export const WS_METHODS = lazySchema(() => ({
   /** Registers this WebSocket as a visible-browser automation host. */
@@ -523,13 +549,14 @@ export const WS_METHODS = lazySchema(() => ({
     params: WorkspaceEnvironmentSaveInputSchema() as z.ZodType<WorkspaceEnvironmentSaveInput>,
     result: WorkspaceEnvironmentReadResultSchema() as z.ZodType<WorkspaceEnvironmentReadResult>,
   },
+  ...workspaceEnvironmentSetupMethods(),
   "workspace.delete": {
-    params: z.object({ id: z.string() }),
+    params: z.object({ id: z.string().min(1).max(256) }),
     result: z.boolean(),
   },
   /** Hard-delete a workspace and all its data immediately, bypassing the cleanup queue. */
   "workspace.forceDelete": {
-    params: z.object({ id: z.string() }),
+    params: z.object({ id: z.string().min(1).max(256) }),
     result: z.boolean(),
   },
   /** Pin or unpin a workspace in the project selector. */
@@ -586,7 +613,7 @@ export const WS_METHODS = lazySchema(() => ({
   },
   "thread.delete": {
     params: z.object({
-      threadId: z.string(),
+      threadId: z.string().min(1).max(256),
       cleanupWorktree: z.boolean(),
     }),
     result: z.boolean(),

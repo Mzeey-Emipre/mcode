@@ -23,6 +23,7 @@ import type {
   TerminalProfileList,
   TerminalWorkspacePreference,
   WorkspaceEnvironmentReadResult,
+  WorkspaceEnvironmentSetupAttempt,
 } from "./types";
 import { TurnRuntimeSnapshotSchema } from "@mcode/contracts";
 import { TerminalErrorCodeSchema } from "@mcode/contracts";
@@ -667,6 +668,13 @@ export function createWsTransport(
         document,
         sourceRevision,
       }),
+    startWorkspaceSetup: (threadId) =>
+      rpc<WorkspaceEnvironmentSetupAttempt>("workspace.environment.setup.start", { threadId }),
+    getWorkspaceSetupAttempt: async (threadId) =>
+      (await rpc<{ attempt: WorkspaceEnvironmentSetupAttempt | null }>(
+        "workspace.environment.setup.get",
+        { threadId },
+      )).attempt,
     deleteWorkspace: (id) => rpc<boolean>("workspace.delete", { id }),
     touchLastOpened: (id) => rpc<void>("workspace.touchLastOpened", { id }),
     reorderWorkspace: (id, newIndex) =>

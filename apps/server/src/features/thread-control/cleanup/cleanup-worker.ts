@@ -24,6 +24,7 @@ import { HandoffStorage } from "../../handoff/index.js";
 import { pruneStaleToolOutputArtifacts } from "@mcode/providers";
 import { ThreadControlMutationReservationService } from "../index.js";
 import { SettingsService } from "../../settings/settings-service.js";
+import { WorkspaceEnvironmentService } from "../../projects/environment/workspace-environment-service.js";
 
 /** How often to check for due cleanup jobs (ms). */
 const POLL_INTERVAL_MS = 5_000;
@@ -70,6 +71,8 @@ export class CleanupWorker {
     @inject(WorkspaceRepo) private readonly workspaceRepo: WorkspaceRepo,
     @inject(AttachmentService) private readonly attachmentService: AttachmentService,
     @inject(HandoffStorage) private readonly handoffStorage: HandoffStorage,
+    @inject(WorkspaceEnvironmentService)
+    private readonly workspaceEnvironmentService: WorkspaceEnvironmentService,
     @inject(ThreadControlMutationReservationService, { isOptional: true })
     mutationReservations?: ThreadControlMutationReservationService,
     @inject(SettingsService, { isOptional: true })
@@ -180,6 +183,7 @@ export class CleanupWorker {
       attempt: job.attempts + 1,
     });
 
+    const releaseSetupBarrier = this.workspaceEnvironmentService.beginThreadDeletion(job.thread_id);
     const mutationToken = job.kind === "retention"
       ? this.mutationReservations.reserve(job.thread_id, "cleaning")
       : null;
@@ -190,10 +194,12 @@ export class CleanupWorker {
         kind: job.kind,
         reason: "mutation-reservation-unavailable",
       });
+      releaseSetupBarrier();
       return;
     }
 
     try {
+      await this.workspaceEnvironmentService.cancelSetupForThread(job.thread_id);
       const retentionThread = job.kind === "retention"
         ? this.threadRepo.claimRetentionCleanup(job.thread_id, new Date().toISOString())
         : null;
@@ -416,6 +422,7 @@ export class CleanupWorker {
         if (thread) broadcast("thread.lifecycleChanged", { thread });
       }
     } finally {
+      releaseSetupBarrier();
       if (mutationToken) this.mutationReservations.release(job.thread_id, mutationToken);
     }
   }

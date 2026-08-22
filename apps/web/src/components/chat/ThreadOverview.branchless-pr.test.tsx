@@ -17,12 +17,16 @@ import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 
 const {
   mockCreateBranch,
+  mockGetWorkspaceSetupAttempt,
   mockOpenSubagentsPanel,
+  mockStartWorkspaceSetup,
   mockThreadRecords,
   mockWorkspaceState,
 } = vi.hoisted(() => ({
   mockCreateBranch: vi.fn(),
+  mockGetWorkspaceSetupAttempt: vi.fn(),
   mockOpenSubagentsPanel: vi.fn(),
+  mockStartWorkspaceSetup: vi.fn(),
   mockThreadRecords: new Map<string, ThreadRecord>(),
   mockWorkspaceState: {
     workspaces: [{ id: "ws-1", path: "/repo" }],
@@ -44,6 +48,8 @@ vi.mock("@/transport", async (importOriginal) => {
       getWorkingTreeFiles: vi.fn().mockResolvedValue([]),
       getBranchComparison: vi.fn().mockResolvedValue(null),
       getRemoteUrl: vi.fn().mockResolvedValue({ label: "repo", webUrl: null }),
+      getWorkspaceSetupAttempt: mockGetWorkspaceSetupAttempt,
+      startWorkspaceSetup: mockStartWorkspaceSetup,
     }),
   };
 });
@@ -197,6 +203,8 @@ describe("ThreadOverview branchless Create PR", () => {
     mockWorkspaceState.checksById = {};
     mockWorkspaceState.worktreesLoadedForWorkspace = "ws-1";
     mockCreateBranch.mockReset().mockResolvedValue({ branch: "feat/issue-801" });
+    mockGetWorkspaceSetupAttempt.mockReset().mockResolvedValue(null);
+    mockStartWorkspaceSetup.mockReset();
     mockOpenSubagentsPanel.mockReset();
     mockThreadRecords.clear();
     useBrowserAutomationStore.setState({
@@ -332,6 +340,22 @@ describe("ThreadOverview branchless Create PR", () => {
 
     act(() => useBrowserAutomationStore.setState({ registered: false, status: "unavailable" }));
     expect(screen.queryByTestId("thread-overview-browser")).not.toBeInTheDocument();
+  });
+
+  it("places the manual Setup menu beside Project settings for an eligible Thread", () => {
+    render(<ThreadOverview thread={makeThread({ mode: "direct" })} threadPaneWidth={1400} />);
+
+    const controls = screen.getByTestId("thread-overview-masthead-controls");
+    expect(screen.getByRole("button", { name: "Project Setup actions" })).toBeInTheDocument();
+    expect(controls.querySelector('[aria-label="Project Setup actions"]')).toBeInTheDocument();
+    expect(controls.querySelector('[aria-label="Open Project settings"]')).toBeInTheDocument();
+  });
+
+  it("hides the manual Setup menu for a managed New worktree", () => {
+    render(<ThreadOverview thread={makeThread({ mode: "worktree", worktree_managed: true })} threadPaneWidth={1400} />);
+
+    expect(screen.queryByRole("button", { name: "Project Setup actions" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open Project settings" })).toBeInTheDocument();
   });
 
   it("shows a pending agent Browser page before target attachment finishes", () => {

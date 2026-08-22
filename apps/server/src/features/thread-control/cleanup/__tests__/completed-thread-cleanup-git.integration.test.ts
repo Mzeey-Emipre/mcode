@@ -16,6 +16,7 @@ import type { ClaudeProvider } from "../../../providers/adapters/claude/claude-p
 import type { TerminalBackend } from "../../../terminal/backends/terminal-backend.js";
 import type { AttachmentService } from "../../../attachments/storage/attachment-service.js";
 import type { HandoffStorage } from "../../../handoff/index.js";
+import type { WorkspaceEnvironmentService } from "../../../projects/environment/workspace-environment-service.js";
 
 vi.mock("../../../../runtime/process/containment/process-kill.js", () => ({
   killDescendantsByName: vi.fn().mockResolvedValue(undefined),
@@ -74,6 +75,12 @@ describe("completed thread cleanup Git safety", () => {
       workspaceRepo,
       { removeForThread: vi.fn() } as unknown as AttachmentService,
       { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as unknown as HandoffStorage,
+      {
+        beginThreadDeletion: () => () => undefined,
+        cancelSetupForThread: vi.fn().mockResolvedValue(undefined),
+      } as unknown as WorkspaceEnvironmentService,
+      undefined,
+      undefined,
     );
   }
 
