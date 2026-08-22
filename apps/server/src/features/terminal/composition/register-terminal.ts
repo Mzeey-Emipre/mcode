@@ -16,12 +16,29 @@ import { TerminalService as LegacyTerminalService } from "../backends/legacy/ter
 import { ModernTerminalBackend } from "../backends/modern/modern-terminal-backend.js";
 import { ModernTerminalSessionRuntime } from "../sessions/terminal-session-runtime.js";
 import { TerminalSessionService } from "../sessions/terminal-session-service.js";
+import { TerminalCommandService } from "../commands/terminal-command-service.js";
 import { TerminalDiagnosticsService } from "../diagnostics/terminal-diagnostics-service.js";
 import { TerminalProfileService } from "../profiles/terminal-profile-service.js";
 import { WorkspaceTerminalPreferencesService } from "../preferences/workspace-terminal-preferences-service.js";
 
 /** Register terminal backends, selector state, and backend diagnostics. */
 export function registerTerminalBackends(container: DependencyContainer): void {
+  let terminalCommandService: TerminalCommandService | undefined;
+  container.register(TerminalCommandService, {
+    useFactory: (c) => {
+      if (terminalCommandService) return terminalCommandService;
+      terminalCommandService = new TerminalCommandService({
+        profiles: c.resolve(TerminalProfileService),
+        env: c.resolve(EnvService),
+        settings: c.resolve(SettingsService),
+        workspaces: c.resolve(WorkspaceRepo),
+        threads: c.resolve(ThreadRepo),
+        resolveWorkingDir: (workspacePath, mode, worktreePath) =>
+          c.resolve(GitService).resolveWorkingDir(workspacePath, mode, worktreePath),
+      });
+      return terminalCommandService;
+    },
+  });
   container.register(
     LegacyTerminalService,
     { useClass: LegacyTerminalService },

@@ -391,7 +391,9 @@ export async function routeMessage(
   if (!paramsResult.success) {
     if (
       request.method === "workspace.environment.read" ||
-      request.method === "workspace.environment.save"
+      request.method === "workspace.environment.save" ||
+      request.method === "workspace.environment.setup.start" ||
+      request.method === "workspace.environment.setup.get"
     ) {
       const issues = workspaceEnvironmentValidationIssues(paramsResult.error);
       const unsupported = issues.some((candidate) => candidate.reason === "unsupported_version");
@@ -526,6 +528,7 @@ function watchReturnedThreadWorktree(deps: RouterDeps, thread: unknown): void {
 }
 
 async function teardownWorkspaceThreads(deps: RouterDeps, workspaceId: string): Promise<void> {
+  await deps.workspaceEnvironmentService.cancelSetupForWorkspace(workspaceId);
   const threads = deps.threadRepo.listAllByWorkspace(workspaceId);
   const results = await Promise.allSettled(
     threads.map(async (thread) => {
@@ -856,24 +859,38 @@ async function dispatch(
         );
       }
       return deps.workspaceEnvironmentService.save(params);
+    case "workspace.environment.setup.start":
+      return deps.workspaceEnvironmentService.startSetup(params);
+    case "workspace.environment.setup.get":
+      return deps.workspaceEnvironmentService.getSetupAttempt(params);
     case "workspace.delete": {
-      await teardownWorkspaceThreads(deps, params.id);
-      const result = deps.workspaceService.delete(params.id);
-      if (result) {
-        deps.gitWatcherService.unwatchWorkspace(params.id);
-        broadcast("workspace.orderChanged", {});
+      const releaseDeletionBarrier = deps.workspaceEnvironmentService.beginWorkspaceDeletion(params.id);
+      try {
+        await teardownWorkspaceThreads(deps, params.id);
+        const result = deps.workspaceService.delete(params.id);
+        if (result) {
+          deps.gitWatcherService.unwatchWorkspace(params.id);
+          broadcast("workspace.orderChanged", {});
+        }
+        return result;
+      } finally {
+        releaseDeletionBarrier();
       }
-      return result;
     }
     case "workspace.forceDelete": {
-      await teardownWorkspaceThreads(deps, params.id);
-      const result = deps.workspaceService.forceDelete(params.id);
-      if (result) {
-        deps.gitWatcherService.unwatchWorkspace(params.id);
-        broadcast("workspace.deleted", { workspaceId: params.id });
-        broadcast("workspace.orderChanged", {});
+      const releaseDeletionBarrier = deps.workspaceEnvironmentService.beginWorkspaceDeletion(params.id);
+      try {
+        await teardownWorkspaceThreads(deps, params.id);
+        const result = deps.workspaceService.forceDelete(params.id);
+        if (result) {
+          deps.gitWatcherService.unwatchWorkspace(params.id);
+          broadcast("workspace.deleted", { workspaceId: params.id });
+          broadcast("workspace.orderChanged", {});
+        }
+        return result;
+      } finally {
+        releaseDeletionBarrier();
       }
-      return result;
     }
     case "workspace.pin":
       deps.workspaceRepo.setPinned(params.id, params.pinned);
@@ -923,20 +940,26 @@ async function dispatch(
       return thread;
     }
     case "thread.delete": {
-      const thread = deps.threadRepo.findById(params.threadId);
-      if (thread?.worktree_path) {
-        await deps.githubService.cancelForRepoPath(thread.worktree_path);
+      const releaseDeletionBarrier = deps.workspaceEnvironmentService.beginThreadDeletion(params.threadId);
+      try {
+        const thread = deps.threadRepo.findById(params.threadId);
+        await deps.workspaceEnvironmentService.cancelSetupForThread(params.threadId);
+        if (thread?.worktree_path) {
+          await deps.githubService.cancelForRepoPath(thread.worktree_path);
+        }
+        await deps.ciWatcherService.teardownThread(params.threadId);
+        await deps.threadTeardownService.teardownThread(params.threadId);
+        const deleted = await deps.threadService.delete(
+          params.threadId,
+          params.cleanupWorktree,
+        );
+        if (deleted) {
+          deps.gitWatcherService?.unwatchThreadWorktree?.(params.threadId);
+        }
+        return deleted;
+      } finally {
+        releaseDeletionBarrier();
       }
-      await deps.ciWatcherService.teardownThread(params.threadId);
-      await deps.threadTeardownService.teardownThread(params.threadId);
-      const deleted = await deps.threadService.delete(
-        params.threadId,
-        params.cleanupWorktree,
-      );
-      if (deleted) {
-        deps.gitWatcherService?.unwatchThreadWorktree?.(params.threadId);
-      }
-      return deleted;
     }
     case "thread.complete": {
       let lifecyclePublished = false;

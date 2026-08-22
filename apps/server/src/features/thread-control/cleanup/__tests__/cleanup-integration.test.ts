@@ -23,6 +23,7 @@ import { ProjectWorktreeService, WorkspaceService } from "../../../projects/inde
 import type { AgentService } from "../../../agents/index.js";
 import { killDescendantsByName } from "../../../../runtime/process/containment/process-kill.js";
 import { getMcodeDir } from "@mcode/shared";
+import type { WorkspaceEnvironmentService } from "../../../projects/environment/workspace-environment-service.js";
 
 // Avoid real wmic/taskkill on Windows: unbounded wall time and Vitest's default
 // 5s test timeout (integration tests must not depend on the host process tree).
@@ -119,6 +120,12 @@ describe("Cleanup integration", () => {
       workspaceRepo,
       { removeForThread: vi.fn() } as unknown as AttachmentService,
       { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as unknown as HandoffStorage,
+      {
+        beginThreadDeletion: () => () => undefined,
+        cancelSetupForThread: vi.fn().mockResolvedValue(undefined),
+      } as unknown as WorkspaceEnvironmentService,
+      undefined,
+      undefined,
     );
 
     mockAgentService = { stopSession: vi.fn().mockResolvedValue(undefined) } as unknown as AgentService;

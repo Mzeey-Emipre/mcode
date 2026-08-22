@@ -13,6 +13,8 @@ const DAY_MS = 24 * 60 * 60 * 1_000;
 const OVERDUE_SAFETY_MS = DAY_MS;
 const RETENTION_RECALCULATION_BATCH_SIZE = 100;
 
+type ThreadResourceOwnerRelease = void | (() => void);
+
 function completionFailureMessage(result: PromiseRejectedResult): string {
   return result.reason instanceof Error ? result.reason.message : String(result.reason);
 }
@@ -20,7 +22,7 @@ function completionFailureMessage(result: PromiseRejectedResult): string {
 /** Owns durable user completion and reopen transitions for one thread. */
 @injectable()
 export class ThreadCompletionService {
-  private readonly resourceOwners = new Map<string, (threadId: string) => Promise<void>>();
+  private readonly resourceOwners = new Map<string, (threadId: string) => Promise<ThreadResourceOwnerRelease>>();
   private deadlineChangesListener: ((threads: readonly Thread[]) => void) | null = null;
   private lastRetentionDays: CompletedThreadRetentionDays | undefined;
   private lastUnsafeWorktreePolicy: UnsafeWorktreePolicy | undefined;
@@ -80,8 +82,8 @@ export class ThreadCompletionService {
     this.deadlineChangesListener = listener;
   }
 
-  /** Register an additional server-side owner of thread runtime resources. */
-  registerResourceOwner(name: string, release: (threadId: string) => Promise<void>): void {
+  /** Register a thread-owned resource release that may retain a lifecycle barrier through completion. */
+  registerResourceOwner(name: string, release: (threadId: string) => Promise<ThreadResourceOwnerRelease>): void {
     if (this.resourceOwners.has(name)) {
       throw new Error(`Thread resource owner is already registered: ${name}`);
     }
@@ -105,28 +107,34 @@ export class ThreadCompletionService {
 
       const completedAt = this.clock?.() ?? new Date();
       const retentionDays = this.retentionDays(this.settingsService.get());
-      const releases = [
+      const releases = await Promise.allSettled([
         this.teardownService.teardownThread(threadId),
         ...[...this.resourceOwners.values()].map((release) => release(threadId)),
-      ];
-      const failures = (await Promise.allSettled(releases)).filter(
+      ]);
+      const failures = releases.filter(
         (result): result is PromiseRejectedResult => result.status === "rejected",
       );
-      if (failures.length > 0) {
-        throw new Error(
-          `Thread completion failed for ${threadId}: ${failures.map(completionFailureMessage).join("; ")}`,
-        );
-      }
-
-      const completed = this.threadRepo.complete(
-        thread.id,
-        completedAt.toISOString(),
-        retentionDays === null
-          ? null
-          : new Date(completedAt.getTime() + retentionDays * DAY_MS).toISOString(),
+      const barriers = releases.flatMap((result) =>
+        result.status === "fulfilled" && typeof result.value === "function" ? [result.value] : [],
       );
-      if (!completed) throw new Error(`Thread not found: ${threadId}`);
-      return completed;
+      try {
+        if (failures.length > 0) {
+          throw new Error(
+            `Thread completion failed for ${threadId}: ${failures.map(completionFailureMessage).join("; ")}`,
+          );
+        }
+        const completed = this.threadRepo.complete(
+          thread.id,
+          completedAt.toISOString(),
+          retentionDays === null
+            ? null
+            : new Date(completedAt.getTime() + retentionDays * DAY_MS).toISOString(),
+        );
+        if (!completed) throw new Error(`Thread not found: ${threadId}`);
+        return completed;
+      } finally {
+        for (const release of barriers) release();
+      }
     } finally {
       this.mutationReservations.release(threadId, token);
     }

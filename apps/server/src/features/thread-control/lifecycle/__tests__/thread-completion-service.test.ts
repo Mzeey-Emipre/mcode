@@ -1,4 +1,7 @@
 import "reflect-metadata";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type Database from "better-sqlite3";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
@@ -12,6 +15,13 @@ import type { ThreadTeardownService } from "../thread-teardown-service.js";
 import { ThreadControlMutationReservationService } from "../../authority/thread-control-mutation-reservation-service.js";
 import { ThreadCompletionService } from "../thread-completion-service.js";
 import { CleanupJobRepo } from "../../cleanup/persistence/cleanup-job-repo.js";
+import { WorkspaceEnvironmentService } from "../../../projects/environment/workspace-environment-service.js";
+
+function deferred(): { readonly promise: Promise<void>; readonly resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((next) => { resolve = next; });
+  return { promise, resolve };
+}
 
 describe("ThreadCompletionService", () => {
   let db: Database.Database;
@@ -264,6 +274,105 @@ describe("ThreadCompletionService", () => {
 
     expect(releaseCiWatcher).toHaveBeenCalledOnce();
     expect(releaseCiWatcher).toHaveBeenCalledWith(threadId);
+  });
+
+  it("retains a resource-owner barrier through completion and releases it when persistence fails", async () => {
+    const releaseBarrier = vi.fn();
+    const releaseOwner = vi.fn().mockResolvedValue(releaseBarrier);
+    service.registerResourceOwner("workspace-environment", releaseOwner);
+    vi.spyOn(threadRepo, "complete").mockReturnValueOnce(null);
+
+    await expect(service.complete(threadId)).rejects.toThrow(`Thread not found: ${threadId}`);
+
+    expect(releaseOwner).toHaveBeenCalledWith(threadId);
+    expect(releaseBarrier).toHaveBeenCalledOnce();
+    expect(threadRepo.findById(threadId)?.user_completed_at).toBeNull();
+  });
+
+  it("releases a completed resource-owner barrier when another resource fails", async () => {
+    const releaseBarrier = vi.fn();
+    service.registerResourceOwner("workspace-environment", vi.fn().mockResolvedValue(releaseBarrier));
+    service.registerResourceOwner("broken-owner", vi.fn().mockRejectedValue(new Error("release failed")));
+
+    await expect(service.complete(threadId)).rejects.toThrow("release failed");
+
+    expect(releaseBarrier).toHaveBeenCalledOnce();
+    expect(threadRepo.findById(threadId)?.user_completed_at).toBeNull();
+  });
+
+  it("releases registered thread resources before completion becomes visible", async () => {
+    const cancelSetup = vi.fn().mockResolvedValue(undefined);
+    service.registerResourceOwner("workspace-environment", cancelSetup);
+
+    await service.complete(threadId);
+
+    expect(cancelSetup).toHaveBeenCalledWith(threadId);
+    expect(threadRepo.findById(threadId)?.user_completed_at).toBe(now.toISOString());
+  });
+
+  it("cancels running Setup and blocks a new attempt while completion is in progress", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mcode-completion-setup-"));
+    const teardownEntered = deferred();
+    const releaseTeardown = deferred();
+    const closeEntered = deferred();
+    const closeSetup = vi.fn(async () => {
+      closeEntered.resolve();
+      return { kind: "contained" as const };
+    });
+    vi.mocked(teardownService.teardownThread).mockImplementationOnce(async () => {
+      teardownEntered.resolve();
+      await releaseTeardown.promise;
+    });
+    const environment = new WorkspaceEnvironmentService({
+      mcodeDir: root,
+      threads: { findById: (id) => threadRepo.findById(id) },
+      terminalCommands: {
+        prepare: async () => ({
+          kind: "ready",
+          command: {
+            snapshot: { checkoutPath: "C:\\workspace", terminal: { executable: "pwsh.exe", arguments: ["-Command", "setup"] } },
+            start: async () => await new Promise<never>(() => undefined),
+            close: closeSetup,
+            waitForRelease: async () => await new Promise<never>(() => undefined),
+          },
+        }),
+      },
+      platform: "windows",
+    });
+    await environment.save({
+      workspaceId: threadRepo.findById(threadId)!.workspace_id,
+      sourceRevision: null,
+      document: { version: "0.0.1", setup: { windows: "setup" }, actions: [] },
+    });
+    await environment.startSetup({ threadId });
+    service.registerResourceOwner("workspace-environment", async (id) => {
+      const release = environment.beginThreadDeletion(id);
+      try {
+        await environment.cancelSetupForThread(id);
+        return release;
+      } catch (error) {
+        release();
+        throw error;
+      }
+    });
+
+    try {
+      const completion = service.complete(threadId);
+      await teardownEntered.promise;
+      await closeEntered.promise;
+      expect(closeSetup).toHaveBeenCalledOnce();
+
+      await expect(environment.startSetup({ threadId })).rejects.toMatchObject({
+        code: "WORKSPACE_ENVIRONMENT_SETUP_UNAVAILABLE",
+      });
+
+      releaseTeardown.resolve();
+      await completion;
+      await expect(environment.startSetup({ threadId })).resolves.toMatchObject({ status: "running" });
+      await environment.cancelSetupForThread(threadId);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it("does not expose completion while releasing runtime resources", async () => {

@@ -62,6 +62,8 @@ vi.mock("@/transport", async (importOriginal) => {
       getReviewDiffStats: vi.fn().mockResolvedValue({ additions: 0, deletions: 0 }),
       getBranchComparison: vi.fn().mockResolvedValue(null),
       getBranchFiles: vi.fn().mockResolvedValue([]),
+      getWorkspaceSetupAttempt: vi.fn().mockResolvedValue(null),
+      startWorkspaceSetup: vi.fn(),
       generateRecap: vi.fn().mockImplementation(async (
         _threadId: string,
         _messages: Array<{ role: "user" | "assistant"; content: string }>,
