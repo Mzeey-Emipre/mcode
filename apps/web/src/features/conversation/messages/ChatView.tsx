@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback, useSyncExternalStore } from "react";
 import { Bug, GitFork, Hammer, SearchCode, ScanSearch } from "lucide-react";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
+import { ProjectAutomaticSetupThreadBlock } from "@/features/projects/environment";
 import {
   useActiveWorkspaceThread,
   useParentThreadExists,
@@ -431,6 +432,15 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
 
   const workspaces = useWorkspaceStore((s) => s.workspaces);
   const activeThread = useActiveWorkspaceThread((t) => t);
+  const automaticSetupTranscriptBlock = useMemo(() => (
+    activeThread?.mode === "worktree" && activeThread.worktree_managed === true
+      ? (
+          <ProjectAutomaticSetupThreadBlock
+            threadId={activeThread.id}
+          />
+        )
+      : undefined
+  ), [activeThread?.id, activeThread?.mode, activeThread?.worktree_managed]);
   const parentThreadExists = useParentThreadExists(activeThread?.parent_thread_id);
   const sessionError = useActiveThreadRecord((r) => r.error);
   const [dismissedError, setDismissedError] = useState<string | null>(null);
@@ -1091,6 +1101,7 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
           </div>
         ) : (
           <MessageList
+            leadingContent={automaticSetupTranscriptBlock}
             onBranch={handleBranch}
             onReply={handleReply}
             onSubagentSelect={onSubagentSelect}

@@ -38,6 +38,7 @@ import type {
   Message,
   MessageMention,
   PreviewAnnotationBundle,
+  StoredAttachment,
   GoalState,
   GoalLookupResult,
   SendMessageInput,
@@ -64,7 +65,7 @@ import { TurnSnapshotRepo } from "../turns/persistence/turn-snapshot-repo.js";
 import type Database from "better-sqlite3";
 import { TaskRepo, type StoredTask } from "./persistence/task-repo.js";
 import { PlanQuestionAnswersRepo } from "../planning/persistence/plan-question-answers-repo.js";
-import { GitService } from "../../projects/index.js";
+import { GitService, WorkspaceEnvironmentService } from "../../projects/index.js";
 import { AttachmentService } from "../../attachments/storage/attachment-service.js";
 import { FileService } from "../../projects/files/file-service.js";
 import { SnapshotService } from "../../projects/diffs/snapshots/snapshot-service.js";
@@ -94,6 +95,7 @@ import { ScopedPreGrantService } from "../permissions/scoped-pre-grant.js";
 import { normalizeAgentProviderError } from "./provider-agent-error-normalize.js";
 import { TurnErrorPolicy } from "../turns/turn-error-policy.js";
 import { TurnRuntimeRegistry } from "../turns/turn-runtime.js";
+import type { WorkspaceEnvironmentQueuedTurnSubmission } from "../../projects/environment/workspace-environment-automatic-repository.js";
 import type { TurnOutcome } from "../turns/turn-outcome.js";
 import { BrowserNarrativeEventSanitizer } from "../../browser-automation/index.js";
 import {
@@ -146,6 +148,13 @@ export type SendMessageCommand = Omit<SendMessageInput, "permissionMode" | "prov
   forceFreshSession?: boolean;
   /** Interrupted execution consumed atomically when the replacement turn starts. */
   retryOfExecutionId?: string;
+  /** First-Turn message and attachment data already committed by the automatic Setup gate. */
+  persistedUserMessage?: {
+    readonly id: string;
+    readonly sequence: number;
+    readonly attachments: readonly StoredAttachment[];
+    readonly persistedAttachments: readonly AttachmentMeta[];
+  };
 };
 
 /** Command accepted by {@link AgentService.createAndSend}, including service defaults for model and permission mode. */
@@ -457,6 +466,8 @@ export class AgentService {
     mutationReservations?: ThreadControlMutationReservationService,
     @inject(CanonicalAgentEventSink)
     canonicalSink?: CanonicalAgentEventSink,
+    @inject(delay(() => WorkspaceEnvironmentService))
+    private readonly workspaceEnvironmentService?: WorkspaceEnvironmentService,
   ) {
     this.browserNarrativeEventSanitizer = new BrowserNarrativeEventSanitizer(
       (threadId, toolCallId) => this.narrativeStore.getBufferedToolCalls(threadId)
@@ -596,6 +607,7 @@ export class AgentService {
     onTurnStarted,
     forceFreshSession = false,
     retryOfExecutionId,
+    persistedUserMessage,
   }: SendMessageCommand): Promise<void> {
     const provenance = [originSourceThreadId, originSourceTurnId, originSourceProviderId];
     const hasAnyProvenance = provenance.some((value) => value !== undefined);
@@ -772,22 +784,25 @@ export class AgentService {
       this.memoryPressureService.assertCanStartTurn();
       this.memoryPressureService.markActive(threadId);
 
-      // Compute next sequence number and persist user message
-      const nextSeq = this.messageRepo.getLatestSequenceIncludingInternal(threadId) + 1;
+      // A released automatic Setup gate already committed the first user message.
+      const nextSeq = persistedUserMessage?.sequence ??
+        this.messageRepo.getLatestSequenceIncludingInternal(threadId) + 1;
 
       const persistedUserText = messageDisplayContent ?? content;
 
-      const previewAnnotationAttachments =
-        previewAnnotationSnapshotAttachments(previewAnnotations);
-      const attachmentsForPersistence =
-        previewAnnotationAttachments.length > 0
-          ? [...attachments, ...previewAnnotationAttachments]
-          : attachments;
-
-      const { stored, persisted } = await this.attachmentService.persist(
-        threadId,
-        attachmentsForPersistence,
-      );
+      const persistedAttachmentData = persistedUserMessage
+        ? {
+          stored: [...persistedUserMessage.attachments],
+          persisted: [...persistedUserMessage.persistedAttachments],
+        }
+        : await this.attachmentService.persist(
+          threadId,
+          [
+            ...attachments,
+            ...previewAnnotationSnapshotAttachments(previewAnnotations),
+          ],
+        );
+      const { stored, persisted } = persistedAttachmentData;
     // Persist the user message and (when answering plan questions) the
     // answered marker in a single transaction. If the marker insert fails
     // (e.g. FK rejects an unknown messageId) the user message is rolled
@@ -833,6 +848,11 @@ export class AgentService {
         if (wasUserCompleted) {
           reopenedThread = this.threadRepo.reopen(threadId);
           if (!reopenedThread) throw new Error(`Thread not found: ${threadId}`);
+        }
+        if (persistedUserMessage) {
+          const message = this.messageRepo.findByIdInThread(threadId, persistedUserMessage.id);
+          if (!message) throw new Error(`Queued first Turn message was not found: ${persistedUserMessage.id}`);
+          return message;
         }
         const args = [
           threadId,
@@ -1398,6 +1418,50 @@ export class AgentService {
     };
   }
 
+  /** Dispatch a first Turn that the automatic Setup lifecycle claimed after commit. */
+  async dispatchQueuedAutomaticTurn(submission: WorkspaceEnvironmentQueuedTurnSubmission): Promise<void> {
+    const queuedMessage = this.messageRepo.findByIdInThread(submission.threadId, submission.messageId);
+    if (!queuedMessage) throw new Error(`Queued first Turn message was not found for Thread: ${submission.threadId}`);
+    let resolveStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      resolveStarted = resolve;
+    });
+    const send = this.sendMessage({
+      threadId: submission.threadId,
+      content: submission.content,
+      displayContent: submission.displayContent,
+      model: submission.model,
+      permissionMode: submission.permissionMode,
+      attachments: [],
+      provider: submission.provider as ProviderId,
+      reasoningLevel: submission.reasoningLevel as ReasoningLevel | undefined,
+      interactionMode: submission.interactionMode as InteractionMode | undefined,
+      orchestrationMode: submission.orchestrationMode as OrchestrationMode | undefined,
+      maxBudgetUsd: submission.maxBudgetUsd,
+      maxTurns: submission.maxTurns,
+      copilotAgent: submission.copilotAgent,
+      contextWindow: submission.contextWindow as ContextWindowMode | undefined,
+      thinking: submission.thinking,
+      codexFastMode: submission.codexFastMode,
+      goalObjective: submission.goalObjective,
+      mentions: [...submission.mentions],
+      previewAnnotations: submission.previewAnnotations,
+      persistedUserMessage: {
+        id: queuedMessage.id,
+        sequence: queuedMessage.sequence,
+        attachments: submission.attachments,
+        persistedAttachments: submission.persistedAttachments,
+      },
+      onTurnStarted: resolveStarted,
+    });
+    await Promise.race([
+      started,
+      send.then(() => {
+        throw new Error(`Queued first Turn finished without runtime dispatch: ${submission.threadId}`);
+      }),
+    ]);
+  }
+
   async createAndSend({
     workspaceId,
     content,
@@ -1508,6 +1572,60 @@ export class AgentService {
         ? codexFastMode
         : thread.codex_fast_mode,
     };
+
+    if (thread.mode === "worktree" && thread.worktree_managed && this.workspaceEnvironmentService) {
+      const workspace = this.workspaceRepo.findById(thread.workspace_id);
+      if (!workspace) throw new Error(`Workspace not found: ${thread.workspace_id}`);
+      const validatedMentions = this.validateMessageMentions({
+        workspaceId: workspace.id,
+        threadId: thread.id,
+        content,
+        mentions,
+        provider,
+      });
+      const persistedAttachments = await this.attachmentService.persist(
+        thread.id,
+        [...attachments, ...previewAnnotationSnapshotAttachments(previewAnnotations)],
+      );
+      const messageId = randomUUID();
+      this.workspaceEnvironmentService.queueAutomaticFirstTurn({
+        threadId: thread.id,
+        messageId,
+        content: displayContent ?? content,
+        attachments: persistedAttachments.stored,
+        mentions: validatedMentions,
+        previewAnnotations,
+        submission: {
+          threadId: thread.id,
+          messageId,
+          content,
+          displayContent: displayContent ?? content,
+          model,
+          permissionMode,
+          attachments: persistedAttachments.stored,
+          persistedAttachments: persistedAttachments.persisted,
+          mentions: validatedMentions,
+          previewAnnotations,
+          provider,
+          reasoningLevel,
+          interactionMode,
+          orchestrationMode,
+          maxBudgetUsd,
+          maxTurns,
+          copilotAgent,
+          contextWindow: contextWindowMode,
+          thinking,
+          codexFastMode,
+          goalObjective,
+        },
+      });
+      const updated = this.threadRepo.findById(thread.id);
+      return {
+        ...(updated ?? thread),
+        runtimeSnapshot: { threadId: thread.id, turnExecutionId: null, phase: "idle" },
+        ...(threadWarnings?.length ? { warnings: threadWarnings } : {}),
+      };
+    }
 
     const runtimeSnapshot = await this.sendInitialMessageAndSnapshot({
       threadId: thread.id,
