@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { Globe, Terminal, Files, Diff, ListChecks, Layers, Network, SlidersHorizontal } from "lucide-react";
+import { Globe, Terminal, Files, Diff, ListChecks, Layers, Network, Settings } from "lucide-react";
 import type { RightPanelTab } from "@/stores/diffStore";
 
 /**
@@ -86,7 +86,7 @@ export const PANEL_TAB_TYPES: readonly PanelTabType[] = [
   {
     id: "environment",
     label: "Project settings",
-    icon: SlidersHorizontal,
+    icon: Settings,
     blurb: "Edit Project environment",
     needsThread: false,
     commandId: "projectEnvironment.open",
