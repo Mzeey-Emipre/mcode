@@ -9,11 +9,8 @@ import { getTransport } from "@/transport";
 import { cn } from "@/lib/utils";
 import { useThreadStore } from "@/stores/threadStore";
 
-const INITIAL_AUTOMATIC_SETUP_RETRY_DELAY_MS = 500;
-const INITIAL_AUTOMATIC_SETUP_RETRY_LIMIT = 10;
-
 /** Read and mutate the reconnect-authoritative automatic Setup lifecycle for one Thread. */
-export function useProjectAutomaticSetup(threadId: string, isManagedNewWorktree: boolean): {
+export function useProjectAutomaticSetup(threadId: string): {
   readonly snapshot: WorkspaceEnvironmentAutomaticSetupSnapshot;
   readonly busy: "continue" | "cancel" | null;
   readonly error: string | null;
@@ -42,29 +39,11 @@ export function useProjectAutomaticSetup(threadId: string, isManagedNewWorktree:
   }, [threadId]);
 
   useEffect(() => {
-    let disposed = false;
-    let retryCount = 0;
-    let retryTimeout: number | null = null;
     setSnapshot({ gate: "not-required", attempt: null, queuedTurn: null });
     setBusy(null);
     setError(null);
-    const hydrate = async (): Promise<void> => {
-      const next = await refresh();
-      if (
-        disposed
-        || !isManagedNewWorktree
-        || !isEmptyAutomaticSetupSnapshot(next)
-        || retryCount >= INITIAL_AUTOMATIC_SETUP_RETRY_LIMIT
-      ) return;
-      retryCount += 1;
-      retryTimeout = window.setTimeout(() => { void hydrate(); }, INITIAL_AUTOMATIC_SETUP_RETRY_DELAY_MS);
-    };
-    void hydrate();
-    return () => {
-      disposed = true;
-      if (retryTimeout !== null) window.clearTimeout(retryTimeout);
-    };
-  }, [isManagedNewWorktree, refresh]);
+    void refresh();
+  }, [refresh]);
 
   useEffect(() => {
     const awaitingSetup = snapshot.attempt?.state === "queued" || snapshot.attempt?.state === "running";
@@ -107,21 +86,13 @@ export function useProjectAutomaticSetup(threadId: string, isManagedNewWorktree:
   return { snapshot, busy, error, continueWithoutSetup, cancelQueuedTurn };
 }
 
-function isEmptyAutomaticSetupSnapshot(
-  snapshot: WorkspaceEnvironmentAutomaticSetupSnapshot | null,
-): boolean {
-  return snapshot?.gate === "not-required" && snapshot.attempt === null && snapshot.queuedTurn === null;
-}
-
 /** Renders automatic Setup lifecycle controls in the Thread transcript. */
 export function ProjectAutomaticSetupThreadBlock({
   threadId,
-  isManagedNewWorktree,
 }: {
   readonly threadId: string;
-  readonly isManagedNewWorktree: boolean;
 }) {
-  const automaticSetup = useProjectAutomaticSetup(threadId, isManagedNewWorktree);
+  const automaticSetup = useProjectAutomaticSetup(threadId);
   return (
     <ProjectAutomaticSetupCard
       snapshot={automaticSetup.snapshot}

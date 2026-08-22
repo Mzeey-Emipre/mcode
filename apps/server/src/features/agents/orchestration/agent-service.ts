@@ -1454,7 +1454,6 @@ export class AgentService {
       },
       onTurnStarted: resolveStarted,
     });
-    void send.catch(() => undefined);
     await Promise.race([
       started,
       send.then(() => {

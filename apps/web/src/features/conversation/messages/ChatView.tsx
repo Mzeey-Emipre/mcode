@@ -437,7 +437,6 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
       ? (
           <ProjectAutomaticSetupThreadBlock
             threadId={activeThread.id}
-            isManagedNewWorktree
           />
         )
       : undefined

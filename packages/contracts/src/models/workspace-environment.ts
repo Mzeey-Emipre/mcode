@@ -255,7 +255,6 @@ export type WorkspaceEnvironmentSetupGateState = z.infer<typeof WorkspaceEnviron
 
 /** Durable lifecycle states for an automatic Project Setup attempt. */
 export const WorkspaceEnvironmentAutomaticSetupAttemptStateSchema = z.enum([
-  "awaiting-approval",
   "queued",
   "running",
   "passed",
@@ -280,7 +279,6 @@ export type WorkspaceEnvironmentQueuedTurnState = z.infer<
 
 /** Safe reasons rendered for an automatic Setup gate that remains blocked. */
 export const WorkspaceEnvironmentAutomaticSetupReasonSchema = z.enum([
-  "setup_not_configured",
   "setup_configuration_invalid",
   "setup_unavailable",
   "setup_failed",
@@ -305,7 +303,7 @@ export const WorkspaceEnvironmentAutomaticSetupAttemptSchema = lazySchema(() =>
     output: setupOutputSchema,
     outputTruncated: z.boolean(),
   }).strict().superRefine((attempt, ctx) => {
-    if ((attempt.state === "queued" || attempt.state === "awaiting-approval") &&
+    if (attempt.state === "queued" &&
       (attempt.startedAt !== null || attempt.finishedAt !== null || attempt.reason !== null ||
         attempt.snapshot !== null || attempt.outcome !== null || attempt.exitCode !== null ||
         attempt.output !== "" || attempt.outputTruncated)) {

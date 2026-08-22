@@ -48,8 +48,8 @@ const blocked: WorkspaceEnvironmentAutomaticSetupSnapshot = {
   },
 };
 
-function AutomaticSetupState({ isManagedNewWorktree = true }: { readonly isManagedNewWorktree?: boolean }) {
-  const automaticSetup = useProjectAutomaticSetup("thread-1", isManagedNewWorktree);
+function AutomaticSetupState() {
+  const automaticSetup = useProjectAutomaticSetup("thread-1");
   return (
     <ProjectAutomaticSetupCard
       snapshot={automaticSetup.snapshot}
@@ -160,75 +160,4 @@ describe("ProjectAutomaticSetupControl", () => {
     }
   });
 
-  it("retries the initial managed-New hydration until the committed Setup gate becomes visible", async () => {
-    vi.useFakeTimers();
-    try {
-      const running: WorkspaceEnvironmentAutomaticSetupSnapshot = {
-        ...blocked,
-        attempt: {
-          id: "attempt-1",
-          state: "running",
-          reason: null,
-          snapshot: {
-            platform: "windows",
-            script: "bun run setup",
-            checkoutPath: "C:\\repo",
-            terminal: { executable: "pwsh.exe", arguments: ["-Command", "bun run setup"] },
-          },
-          outcome: null,
-          createdAt: "2026-08-22T12:00:00.000Z",
-          startedAt: "2026-08-22T12:00:00.000Z",
-          finishedAt: null,
-          exitCode: null,
-          output: "",
-          outputTruncated: false,
-        },
-      };
-      transport.getAutomaticSetup.mockReset();
-      transport.getAutomaticSetup
-        .mockResolvedValueOnce({ gate: "not-required", attempt: null, queuedTurn: null })
-        .mockResolvedValue(running);
-      render(<AutomaticSetupState />);
-
-      await act(async () => { await Promise.resolve(); await Promise.resolve(); });
-      expect(screen.queryByRole("button", { name: /Automatic Setup/i })).not.toBeInTheDocument();
-      await act(async () => { await vi.advanceTimersByTimeAsync(500); });
-
-      expect(screen.getByRole("button", { name: /Automatic Setup. Setup running/i })).toBeInTheDocument();
-      await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
-      expect(transport.getAutomaticSetup).toHaveBeenCalledTimes(3);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("stops initial retry after a bounded empty lifecycle window", async () => {
-    vi.useFakeTimers();
-    try {
-      transport.getAutomaticSetup.mockReset();
-      transport.getAutomaticSetup.mockResolvedValue({ gate: "not-required", attempt: null, queuedTurn: null });
-      render(<AutomaticSetupState />);
-
-      await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
-      expect(transport.getAutomaticSetup).toHaveBeenCalledTimes(11);
-      await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
-      expect(transport.getAutomaticSetup).toHaveBeenCalledTimes(11);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("does not retry a non-managed Thread with no automatic lifecycle", async () => {
-    vi.useFakeTimers();
-    try {
-      transport.getAutomaticSetup.mockReset();
-      transport.getAutomaticSetup.mockResolvedValue({ gate: "not-required", attempt: null, queuedTurn: null });
-      render(<AutomaticSetupState isManagedNewWorktree={false} />);
-
-      await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
-      expect(transport.getAutomaticSetup).toHaveBeenCalledOnce();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
 });
