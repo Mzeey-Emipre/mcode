@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactElement, ReactNode } from "react";
+import type { WorkspaceEnvironmentAutomaticSetupSnapshot } from "@mcode/contracts";
 import type { Thread } from "@/transport";
 import { useOverviewStore } from "@/stores/overviewStore";
 import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-record";
@@ -17,6 +18,7 @@ import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 
 const {
   mockCreateBranch,
+  mockGetAutomaticSetup,
   mockGetWorkspaceSetupAttempt,
   mockOpenSubagentsPanel,
   mockStartWorkspaceSetup,
@@ -24,6 +26,7 @@ const {
   mockWorkspaceState,
 } = vi.hoisted(() => ({
   mockCreateBranch: vi.fn(),
+  mockGetAutomaticSetup: vi.fn(),
   mockGetWorkspaceSetupAttempt: vi.fn(),
   mockOpenSubagentsPanel: vi.fn(),
   mockStartWorkspaceSetup: vi.fn(),
@@ -48,6 +51,7 @@ vi.mock("@/transport", async (importOriginal) => {
       getWorkingTreeFiles: vi.fn().mockResolvedValue([]),
       getBranchComparison: vi.fn().mockResolvedValue(null),
       getRemoteUrl: vi.fn().mockResolvedValue({ label: "repo", webUrl: null }),
+      getAutomaticSetup: mockGetAutomaticSetup,
       getWorkspaceSetupAttempt: mockGetWorkspaceSetupAttempt,
       startWorkspaceSetup: mockStartWorkspaceSetup,
     }),
@@ -203,6 +207,7 @@ describe("ThreadOverview branchless Create PR", () => {
     mockWorkspaceState.checksById = {};
     mockWorkspaceState.worktreesLoadedForWorkspace = "ws-1";
     mockCreateBranch.mockReset().mockResolvedValue({ branch: "feat/issue-801" });
+    mockGetAutomaticSetup.mockReset();
     mockGetWorkspaceSetupAttempt.mockReset().mockResolvedValue(null);
     mockStartWorkspaceSetup.mockReset();
     mockOpenSubagentsPanel.mockReset();
@@ -356,6 +361,28 @@ describe("ThreadOverview branchless Create PR", () => {
 
     expect(screen.queryByRole("button", { name: "Project Setup actions" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open Project settings" })).toBeInTheDocument();
+  });
+
+  it("keeps failed automatic Setup out of Thread Overview", async () => {
+    const failedSetup: WorkspaceEnvironmentAutomaticSetupSnapshot = {
+      gate: "blocked",
+      attempt: null,
+      queuedTurn: {
+        id: "submission-1",
+        messageId: "message-1",
+        state: "queued",
+        createdAt: "2026-08-22T12:00:00.000Z",
+        dispatchedAt: null,
+      },
+    };
+    mockGetAutomaticSetup.mockResolvedValue(failedSetup);
+
+    render(<ThreadOverview thread={makeThread({ mode: "worktree", worktree_managed: true })} threadPaneWidth={1400} />);
+
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+    expect(mockGetAutomaticSetup).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: /Automatic Setup/i })).not.toBeInTheDocument();
   });
 
   it("shows a pending agent Browser page before target attachment finishes", () => {

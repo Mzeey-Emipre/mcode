@@ -66,6 +66,7 @@ export function registerProjectServices(container: DependencyContainer): void {
         workspaceEnvironmentService = new WorkspaceEnvironmentService({
           threads: c.resolve(ThreadRepo),
           terminalCommands: c.resolve(TerminalCommandService),
+          database: c.isRegistered("Database") ? c.resolve("Database") : undefined,
         });
         return workspaceEnvironmentService;
       },

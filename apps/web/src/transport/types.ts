@@ -5,6 +5,7 @@ import type {
   WorkspaceEnvironmentDocument,
   WorkspaceEnvironmentReadResult,
   WorkspaceEnvironmentSetupAttempt,
+  WorkspaceEnvironmentAutomaticSetupSnapshot,
   Thread,
   RecentThread,
   PaginatedMessages,
@@ -108,6 +109,7 @@ export type {
   WorkspaceEnvironmentDocument,
   WorkspaceEnvironmentReadResult,
   WorkspaceEnvironmentSetupAttempt,
+  WorkspaceEnvironmentAutomaticSetupSnapshot,
   Thread,
   RecentThread,
   Message,
@@ -302,6 +304,12 @@ export interface McodeTransport {
   startWorkspaceSetup(threadId: string): Promise<WorkspaceEnvironmentSetupAttempt>;
   /** Read the latest transient manual Setup attempt for one Thread. */
   getWorkspaceSetupAttempt(threadId: string): Promise<WorkspaceEnvironmentSetupAttempt | null>;
+  /** Read the reconnect-authoritative automatic Setup gate for one Thread. */
+  getAutomaticSetup(threadId: string): Promise<WorkspaceEnvironmentAutomaticSetupSnapshot>;
+  /** Release the queued first Turn without rerunning automatic Setup. */
+  continueAutomaticSetup(threadId: string): Promise<WorkspaceEnvironmentAutomaticSetupSnapshot>;
+  /** Cancel only a first Turn that is still queued behind automatic Setup. */
+  cancelQueuedAutomaticTurn(threadId: string): Promise<WorkspaceEnvironmentAutomaticSetupSnapshot>;
   deleteWorkspace(id: string): Promise<boolean>;
   /** Record workspace as last-opened for recency ordering in the project selector. */
   touchLastOpened(id: string): Promise<void>;

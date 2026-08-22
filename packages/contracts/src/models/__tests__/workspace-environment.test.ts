@@ -5,6 +5,7 @@ import {
   WorkspaceEnvironmentCommandSchema,
   WorkspaceEnvironmentDocumentSchema,
   WorkspaceEnvironmentSetupAttemptSchema,
+  WorkspaceEnvironmentAutomaticSetupSnapshotSchema,
   workspaceEnvironmentValidationIssues,
 } from "../workspace-environment.js";
 
@@ -145,6 +146,76 @@ describe("workspace environment contracts", () => {
       outcome: "success",
       cleanupPending: false,
       exitCode: 0,
+    }).success).toBe(false);
+  });
+
+  it("accepts exact automatic gate lifecycle shapes and rejects unfinished results", () => {
+    const queued = WorkspaceEnvironmentAutomaticSetupSnapshotSchema().parse({
+      gate: "blocked",
+      attempt: {
+        id: "attempt-automatic-1",
+        state: "queued",
+        reason: null,
+        snapshot: null,
+        outcome: null,
+        createdAt: "2026-08-22T12:00:00.000Z",
+        startedAt: null,
+        finishedAt: null,
+        exitCode: null,
+        output: "",
+        outputTruncated: false,
+      },
+      queuedTurn: {
+        id: "submission-1",
+        messageId: "message-1",
+        state: "queued",
+        createdAt: "2026-08-22T12:00:00.000Z",
+        dispatchedAt: null,
+      },
+    });
+    expect(queued.gate).toBe("blocked");
+    expect(WorkspaceEnvironmentAutomaticSetupSnapshotSchema().safeParse({
+      ...queued,
+      attempt: { ...queued.attempt, state: "failed", reason: null, finishedAt: null },
+      extra: true,
+    }).success).toBe(false);
+
+    const dispatched = WorkspaceEnvironmentAutomaticSetupSnapshotSchema().parse({
+      gate: "released-by-pass",
+      attempt: {
+        id: "attempt-automatic-1",
+        state: "passed",
+        reason: null,
+        snapshot: {
+          platform: "linux",
+          script: "bun run setup",
+          checkoutPath: "/repo/.worktrees/first",
+          terminal: { executable: "sh", arguments: ["-c", "bun run setup"] },
+        },
+        outcome: "success",
+        createdAt: "2026-08-22T12:00:00.000Z",
+        startedAt: "2026-08-22T12:00:00.000Z",
+        finishedAt: "2026-08-22T12:00:01.000Z",
+        exitCode: 0,
+        output: "done",
+        outputTruncated: false,
+      },
+      queuedTurn: {
+        id: "submission-1",
+        messageId: "message-1",
+        state: "dispatched",
+        createdAt: "2026-08-22T12:00:00.000Z",
+        dispatchedAt: "2026-08-22T12:00:01.000Z",
+      },
+    });
+    expect(dispatched.queuedTurn?.state).toBe("dispatched");
+    expect(WorkspaceEnvironmentAutomaticSetupSnapshotSchema().safeParse({
+      ...dispatched,
+      attempt: { ...dispatched.attempt, exitCode: 1 },
+    }).success).toBe(false);
+    expect(WorkspaceEnvironmentAutomaticSetupSnapshotSchema().safeParse({
+      ...dispatched,
+      queuedTurn: { ...dispatched.queuedTurn, dispatchedAt: null },
     }).success).toBe(false);
   });
 });

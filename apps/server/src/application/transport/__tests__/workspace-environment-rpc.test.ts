@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { routeMessage, type RouterDeps } from "../ws-router.js";
 import { WorkspaceEnvironmentService } from "../../../features/projects/environment/workspace-environment-service.js";
+import { openMemoryDatabase } from "../../../runtime/persistence/sqlite/database.js";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -104,5 +105,46 @@ describe("workspace environment RPC", () => {
     }), deps);
     expect(latest.error).toBeUndefined();
     expect(latest.result).toMatchObject({ attempt: { id: "attempt-1", status: "running" } });
+  });
+
+  it("routes strict automatic Setup lifecycle reads and recovery mutations", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mcode-environment-rpc-"));
+    roots.push(root);
+    const workspaceEnvironmentService = new WorkspaceEnvironmentService({
+      mcodeDir: root,
+      database: openMemoryDatabase(),
+    });
+    const deps = {
+      workspaceService: { findById: () => null },
+      workspaceEnvironmentService,
+    } as unknown as RouterDeps;
+
+    const get = await routeMessage(JSON.stringify({
+      id: "automatic-get",
+      method: "workspace.environment.automaticSetup.get",
+      params: { threadId: "thread-1" },
+    }), deps);
+    expect(get.result).toEqual({ gate: "not-required", attempt: null, queuedTurn: null });
+
+    const continued = await routeMessage(JSON.stringify({
+      id: "automatic-continue",
+      method: "workspace.environment.automaticSetup.continue",
+      params: { threadId: "thread-1" },
+    }), deps);
+    expect(continued.result).toEqual({ gate: "not-required", attempt: null, queuedTurn: null });
+
+    const cancelled = await routeMessage(JSON.stringify({
+      id: "automatic-cancel",
+      method: "workspace.environment.automaticSetup.cancelQueuedTurn",
+      params: { threadId: "thread-1" },
+    }), deps);
+    expect(cancelled.result).toEqual({ gate: "not-required", attempt: null, queuedTurn: null });
+
+    const malformed = await routeMessage(JSON.stringify({
+      id: "automatic-bad",
+      method: "workspace.environment.automaticSetup.get",
+      params: { threadId: "thread-1", extra: true },
+    }), deps);
+    expect(malformed.error?.code).toBe("WORKSPACE_ENVIRONMENT_VALIDATION");
   });
 });

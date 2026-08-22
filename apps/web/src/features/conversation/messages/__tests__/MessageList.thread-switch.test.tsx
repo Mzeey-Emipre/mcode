@@ -214,6 +214,25 @@ describe("MessageList thread switch", () => {
     expect(queryByText("parent-only.ts")).toBeNull();
   });
 
+  it("renders leading transcript content before the queued user message", () => {
+    messagesValue = [{
+      id: "queued-first-turn",
+      sequence: 1,
+      thread_id: "thread-A",
+      role: "user",
+      content: "Build the feature",
+    }];
+
+    const { getByTestId } = render(
+      <MessageList leadingContent={<div data-testid="automatic-setup-block">Automatic Setup</div>} />,
+    );
+
+    const setupBlock = getByTestId("automatic-setup-block");
+    const queuedMessage = getByTestId("message-list").querySelector('[data-message-id="queued-first-turn"]');
+    expect(queuedMessage).not.toBeNull();
+    expect(setupBlock.compareDocumentPosition(queuedMessage!) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+  });
+
   it("hides the sticky user message when virtualizer geometry makes the bubble visible", async () => {
     messagesValue = [{
       id: "last-user",

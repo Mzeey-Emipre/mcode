@@ -393,7 +393,10 @@ export async function routeMessage(
       request.method === "workspace.environment.read" ||
       request.method === "workspace.environment.save" ||
       request.method === "workspace.environment.setup.start" ||
-      request.method === "workspace.environment.setup.get"
+      request.method === "workspace.environment.setup.get" ||
+      request.method === "workspace.environment.automaticSetup.get" ||
+      request.method === "workspace.environment.automaticSetup.continue" ||
+      request.method === "workspace.environment.automaticSetup.cancelQueuedTurn"
     ) {
       const issues = workspaceEnvironmentValidationIssues(paramsResult.error);
       const unsupported = issues.some((candidate) => candidate.reason === "unsupported_version");
@@ -863,6 +866,12 @@ async function dispatch(
       return deps.workspaceEnvironmentService.startSetup(params);
     case "workspace.environment.setup.get":
       return deps.workspaceEnvironmentService.getSetupAttempt(params);
+    case "workspace.environment.automaticSetup.get":
+      return deps.workspaceEnvironmentService.getAutomaticSetup(params);
+    case "workspace.environment.automaticSetup.continue":
+      return await deps.workspaceEnvironmentService.continueAutomaticSetup(params);
+    case "workspace.environment.automaticSetup.cancelQueuedTurn":
+      return deps.workspaceEnvironmentService.cancelQueuedAutomaticTurn(params);
     case "workspace.delete": {
       const releaseDeletionBarrier = deps.workspaceEnvironmentService.beginWorkspaceDeletion(params.id);
       try {

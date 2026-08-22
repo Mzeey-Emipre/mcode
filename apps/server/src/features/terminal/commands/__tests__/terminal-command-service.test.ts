@@ -91,6 +91,32 @@ describe("TerminalCommandService", () => {
     });
   });
 
+  it("records a one-shot command before it can run and removes the record after normal exit", async () => {
+    const pidRegistry = {
+      register: vi.fn(),
+      deregister: vi.fn(),
+    };
+    const { service: commands, spawned } = service({
+      pidRegistry,
+      createCommandId: () => "command-1",
+    });
+    const prepared = await commands.prepare({
+      scope: { kind: "thread", workspaceId, threadId },
+      script: "bun run setup",
+      timeoutMs: 1_000,
+    });
+    expect(prepared.kind).toBe("ready");
+    if (prepared.kind !== "ready") return;
+
+    const completion = prepared.command.start();
+    expect(pidRegistry.register).toHaveBeenCalledWith("terminal-command:command-1", 421, "pwsh.exe");
+    expect(pidRegistry.deregister).not.toHaveBeenCalled();
+    spawned.emit("close", 0);
+
+    await expect(completion).resolves.toMatchObject({ kind: "exited", exitCode: 0 });
+    expect(pidRegistry.deregister).toHaveBeenCalledWith("terminal-command:command-1");
+  });
+
   it("keeps unsupported shell construction in Terminal policy", async () => {
     expect(noninteractiveLaunch({ ...profile, executable: "custom-terminal.exe" }, "bun run setup")).toBeNull();
     const { service: commands } = service({
@@ -246,7 +272,15 @@ describe("TerminalCommandService", () => {
 
   it("cancels a running command once and waits for verified containment", async () => {
     const killProcessTree = vi.fn().mockResolvedValue(undefined);
-    const { service: commands } = service({ killProcessTree });
+    const pidRegistry = {
+      register: vi.fn(),
+      deregister: vi.fn(),
+    };
+    const { service: commands } = service({
+      killProcessTree,
+      pidRegistry,
+      createCommandId: () => "command-2",
+    });
     const prepared = await commands.prepare({
       scope: { kind: "thread", workspaceId, threadId },
       script: "bun run setup",
@@ -263,6 +297,7 @@ describe("TerminalCommandService", () => {
       { kind: "contained" },
     ]);
     expect(killProcessTree).toHaveBeenCalledTimes(1);
+    expect(pidRegistry.deregister).toHaveBeenCalledWith("terminal-command:command-2");
     await expect(completion).resolves.toEqual({
       kind: "launch_failure",
       output: "",

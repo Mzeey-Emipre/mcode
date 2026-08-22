@@ -8,6 +8,7 @@ import { SettingsService } from "../../settings/settings-service.js";
 import { EnvService } from "../../../runtime/environment/env-service.js";
 import { PtyHostCleanupLedger } from "../cleanup/terminal-cleanup-ledger.js";
 import { PtyHostSupervisor } from "../host/pty-host-supervisor.js";
+import { PtyPidRegistry } from "../host/pty-pid-registry.js";
 import { resolvePtyHostEntryPath, spawnPtyHostChild } from "../host/pty-host-child.js";
 import { TerminalBackend, TERMINAL_BACKEND_TOKEN } from "../backends/terminal-backend.js";
 import { TerminalBackendSelector } from "../backends/terminal-backend-selector.js";
@@ -33,6 +34,7 @@ export function registerTerminalBackends(container: DependencyContainer): void {
         settings: c.resolve(SettingsService),
         workspaces: c.resolve(WorkspaceRepo),
         threads: c.resolve(ThreadRepo),
+        pidRegistry: c.resolve<PtyPidRegistry>("PtyPidRegistry"),
         resolveWorkingDir: (workspacePath, mode, worktreePath) =>
           c.resolve(GitService).resolveWorkingDir(workspacePath, mode, worktreePath),
       });
