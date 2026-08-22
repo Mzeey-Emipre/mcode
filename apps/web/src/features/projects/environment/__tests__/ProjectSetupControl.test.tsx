@@ -89,21 +89,98 @@ describe("ProjectSetup controls", () => {
     expect(screen.getByText("Setup cleanup is still pending.")).toBeInTheDocument();
   });
 
+  it("renders the accepted icon-led Setup status states without a badge", async () => {
+    const passed = render(<ProjectSetupAttemptCard attempt={{ ...failedAttempt, status: "passed", outcome: "success", exitCode: 0 }} />);
+    await act(async () => { await Promise.resolve(); });
+    const passedHeader = screen.getByRole("button", { name: "Setup Passed. Show details" });
+    expect(passedHeader.querySelector(".lucide-circle-check")).toHaveClass("text-[var(--diff-add-strong)]");
+    expect(screen.queryByText("Passed")).not.toBeInTheDocument();
+    expect(passedHeader.querySelector("[class*='group/badge']")).toBeNull();
+    passed.unmount();
+
+    const running = render(<ProjectSetupAttemptCard attempt={{ ...failedAttempt, status: "running", outcome: null, finishedAt: null, exitCode: null }} />);
+    await act(async () => { await Promise.resolve(); });
+    const runningHeader = screen.getByRole("button", { name: "Setup Running. Hide details" });
+    expect(runningHeader.querySelector(".spinner-tail-fade")).toBeInTheDocument();
+    expect(screen.getByText("Setup running")).toHaveClass("sr-only");
+    expect(screen.queryByText(/^Running$/)).not.toBeInTheDocument();
+    expect(runningHeader.querySelector("[class*='group/badge']")).toBeNull();
+    running.unmount();
+
+    render(<ProjectSetupAttemptCard attempt={failedAttempt} />);
+    await act(async () => { await Promise.resolve(); });
+    const failedHeader = screen.getByRole("button", { name: "Setup Failed. Hide details" });
+    expect(failedHeader.querySelector(".lucide-octagon-x")).toBeInTheDocument();
+    expect(screen.getByText("failed")).toHaveClass("bg-[var(--diff-remove)]/15", "text-[var(--diff-remove)]");
+    expect(failedHeader.querySelector("[class*='group/badge']")).toBeNull();
+  });
+
   it("exposes status, command, output, exit code, and keyboard-expandable details", async () => {
     const user = userEvent.setup();
-    render(<ProjectSetupAttemptCard attempt={failedAttempt} />);
+    const tabularOutput = "Mode\tLastWriteTime\tLength\tName\n----\t-------------\t------\t----\nd----\t22/08/2026\t\tproject";
+    const originalResizeObserver = Object.getOwnPropertyDescriptor(globalThis, "ResizeObserver");
+    const originalGetAnimations = Object.getOwnPropertyDescriptor(Element.prototype, "getAnimations");
+    const clientWidth = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(284);
+    const scrollWidth = vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(function (this: HTMLElement) {
+      return this.getAttribute("aria-label") === "Setup output" ? 837 : 284;
+    });
+    const clientHeight = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(160);
+    const scrollHeight = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(160);
+    class ResizeObserverMock {
+      constructor(private readonly callback: ResizeObserverCallback) {}
+      observe() { this.callback([], this as unknown as ResizeObserver); }
+      disconnect() {}
+      unobserve() {}
+    }
+    Object.defineProperty(globalThis, "ResizeObserver", { configurable: true, value: ResizeObserverMock });
+    Object.defineProperty(Element.prototype, "getAnimations", { configurable: true, value: () => [] });
+    let unmount: (() => void) | undefined;
+    try {
+      ({ unmount } = render(<ProjectSetupAttemptCard attempt={{ ...failedAttempt, output: tabularOutput }} />));
 
-    const trigger = screen.getByRole("button", { name: "Setup Failed. Hide details" });
-    expect(trigger).toHaveAttribute("aria-expanded", "true");
-    expect(trigger).toHaveAttribute("aria-controls");
-    expect(screen.getByText("Failed")).toBeInTheDocument();
-    expect(screen.getByLabelText("Setup command")).toHaveTextContent("bun run setup");
-    expect(screen.getByLabelText("Setup output")).toHaveTextContent("missing dependency");
-    expect(screen.getByText("Exit code: 2")).toBeInTheDocument();
+      const trigger = screen.getByRole("button", { name: "Setup Failed. Hide details" });
+      expect(trigger).toHaveAttribute("aria-expanded", "true");
+      expect(trigger).toHaveAttribute("aria-controls");
+      expect(screen.getByText("failed")).toBeInTheDocument();
+      const command = screen.getByLabelText("Setup command");
+      const output = screen.getByLabelText("Setup output");
+      expect(command).toHaveTextContent("bun run setup");
+      expect(output.querySelector("pre")?.textContent).toBe(tabularOutput);
+      expect(command.querySelector("pre")).toHaveClass("whitespace-pre-wrap", "break-words");
+      expect(output.querySelector("pre")).toHaveClass("min-w-max", "whitespace-pre");
+      expect(output.querySelector("pre")).not.toHaveClass("whitespace-pre-wrap", "break-all");
+      const commandScrollArea = command.closest('[data-slot="scroll-area"]');
+      const outputScrollArea = output.closest('[data-slot="scroll-area"]');
+      expect(outputScrollArea).toHaveClass("overflow-hidden", "flex", "flex-col");
+      expect(outputScrollArea).not.toHaveClass("pb-2.5");
+      expect(outputScrollArea).not.toHaveClass("max-h-40");
+      expect(output).toHaveClass("min-h-0", "flex-1", "max-h-40");
+      expect(commandScrollArea).not.toHaveClass("flex", "flex-col");
+      expect(commandScrollArea).toHaveClass("max-h-40");
+      expect(command).toHaveClass("size-full");
+      expect(command).not.toHaveClass("max-h-40");
+      await waitFor(() => expect(outputScrollArea?.querySelector('[data-slot="scroll-area-scrollbar"][data-orientation="horizontal"]')).not.toBeNull());
+      const outputHorizontalScrollbar = outputScrollArea?.querySelector('[data-slot="scroll-area-scrollbar"][data-orientation="horizontal"]') as HTMLElement;
+      expect(outputHorizontalScrollbar).toHaveClass("data-horizontal:h-2.5", "w-full", "shrink-0");
+      expect(outputHorizontalScrollbar).toHaveStyle({ position: "relative" });
+      expect(outputHorizontalScrollbar.style.bottom).toBe("");
+      expect(commandScrollArea?.querySelector('[data-slot="scroll-area-scrollbar"][data-orientation="horizontal"]')).toBeNull();
+      expect(screen.getByText("Exit code: 2")).toBeInTheDocument();
 
-    trigger.focus();
-    await user.keyboard("{Enter}");
-    expect(trigger).toHaveAttribute("aria-expanded", "false");
+      trigger.focus();
+      await user.keyboard("{Enter}");
+      expect(trigger).toHaveAttribute("aria-expanded", "false");
+    } finally {
+      unmount?.();
+      clientWidth.mockRestore();
+      scrollWidth.mockRestore();
+      clientHeight.mockRestore();
+      scrollHeight.mockRestore();
+      if (originalResizeObserver) Object.defineProperty(globalThis, "ResizeObserver", originalResizeObserver);
+      else Reflect.deleteProperty(globalThis, "ResizeObserver");
+      if (originalGetAnimations) Object.defineProperty(Element.prototype, "getAnimations", originalGetAnimations);
+      else Reflect.deleteProperty(Element.prototype, "getAnimations");
+    }
   });
 
   it("does not let an initial load overwrite a newer start result", async () => {

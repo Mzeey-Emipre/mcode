@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { ChevronDown, MoreHorizontal } from "lucide-react";
+import { ChevronDown, CircleCheck, MoreHorizontal, OctagonX } from "lucide-react";
 import type { WorkspaceEnvironmentSetupAttempt } from "@mcode/contracts";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
@@ -144,7 +143,7 @@ export function ProjectSetupAttemptCard({ attempt }: ProjectSetupAttemptCardProp
   const [open, setOpen] = useState(attempt.status !== "passed");
   const contentId = useId();
   const headingId = useId();
-  const status = setupStatus(attempt.status);
+  const statusLabel = setupStatusLabel(attempt.status);
   const command = attempt.snapshot.script;
 
   useEffect(() => {
@@ -160,14 +159,13 @@ export function ProjectSetupAttemptCard({ attempt }: ProjectSetupAttemptCardProp
             type="button"
             variant="ghost"
             size="sm"
-            aria-label={`Setup ${status.label}. ${open ? "Hide" : "Show"} details`}
+            aria-label={`Setup ${statusLabel}. ${open ? "Hide" : "Show"} details`}
             aria-controls={contentId}
             className="h-8 w-full justify-between rounded-none px-2.5 text-xs motion-reduce:transition-none"
           >
             <span className="flex min-w-0 items-center gap-2">
-              {attempt.status === "running" ? <Spinner size={12} aria-hidden className="motion-reduce:animate-none" /> : null}
               <span className="font-medium text-foreground">Setup</span>
-              <Badge variant={status.variant} size="sm">{status.label}</Badge>
+              <SetupAttemptStatus status={attempt.status} />
             </span>
             <ChevronDown
               size={14}
@@ -178,7 +176,7 @@ export function ProjectSetupAttemptCard({ attempt }: ProjectSetupAttemptCardProp
         </CollapsibleTrigger>
         <CollapsibleContent id={contentId} role="region" aria-labelledby={headingId} forceMount>
           <div className={cn("border-t border-border/50 p-2.5", !open && "hidden")}>
-            {command ? <TerminalBlock label="Command" value={command} /> : null}
+            {command ? <TerminalBlock label="Command" value={command} wraps /> : null}
             <TerminalBlock label="Output" value={attempt.output || "No output"} />
             {attempt.exitCode !== null ? (
               <p className="mt-2 font-mono text-xs tabular-nums text-muted-foreground">Exit code: {attempt.exitCode}</p>
@@ -196,25 +194,57 @@ export function ProjectSetupAttemptCard({ attempt }: ProjectSetupAttemptCardProp
   );
 }
 
-function TerminalBlock({ label, value }: { readonly label: string; readonly value: string }) {
+function TerminalBlock({ label, value, wraps = false }: {
+  readonly label: string;
+  readonly value: string;
+  readonly wraps?: boolean;
+}) {
   return (
     <div className="mt-2 first:mt-0">
       <p className="mb-1 text-xs font-medium text-muted-foreground">{label}</p>
-      <ScrollArea className="max-h-40 rounded-md bg-background/60" viewportProps={{ tabIndex: 0, "aria-label": `Setup ${label.toLowerCase()}` }}>
-        <pre className="whitespace-pre-wrap break-all p-2 font-mono text-xs leading-5 text-foreground">{value}</pre>
+      <ScrollArea
+        className={cn("overflow-hidden rounded-md bg-background/60", wraps && "max-h-40")}
+        horizontalScrollbar={wraps ? undefined : true}
+        viewportClassName={wraps ? undefined : "max-h-40"}
+        viewportProps={{ tabIndex: 0, "aria-label": `Setup ${label.toLowerCase()}` }}
+      >
+        <pre className={cn(
+          "font-mono text-xs leading-5 text-foreground",
+          wraps ? "p-2 whitespace-pre-wrap break-words" : "min-w-max whitespace-pre p-2",
+        )}>{value}</pre>
       </ScrollArea>
     </div>
   );
 }
 
-function setupStatus(status: WorkspaceEnvironmentSetupAttempt["status"]): {
-  readonly label: string;
-  readonly variant: "secondary" | "destructive" | "outline";
-} {
+function SetupAttemptStatus({ status }: { readonly status: WorkspaceEnvironmentSetupAttempt["status"] }) {
   switch (status) {
-    case "running": return { label: "Running", variant: "secondary" };
-    case "passed": return { label: "Passed", variant: "secondary" };
-    case "failed": return { label: "Failed", variant: "destructive" };
-    case "unavailable": return { label: "Unavailable", variant: "outline" };
+    case "running":
+      return (
+        <>
+          <Spinner size={12} aria-hidden className="motion-reduce:animate-none" />
+          <span className="sr-only">Setup running</span>
+        </>
+      );
+    case "passed":
+      return <CircleCheck className="size-3.5 shrink-0 text-[var(--diff-add-strong)]" aria-hidden />;
+    case "failed":
+      return (
+        <span className="flex shrink-0 items-center gap-1.5 rounded-sm bg-[var(--diff-remove)]/15 px-1.5 py-px font-mono text-xs font-medium leading-4 text-[var(--diff-remove)]">
+          <OctagonX className="size-3" aria-hidden />
+          failed
+        </span>
+      );
+    case "unavailable":
+      return <span className="shrink-0 text-xs text-muted-foreground">Unavailable</span>;
+  }
+}
+
+function setupStatusLabel(status: WorkspaceEnvironmentSetupAttempt["status"]): string {
+  switch (status) {
+    case "running": return "Running";
+    case "passed": return "Passed";
+    case "failed": return "Failed";
+    case "unavailable": return "Unavailable";
   }
 }
