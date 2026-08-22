@@ -2,6 +2,8 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { Thread } from "@/transport/types";
+import type { ReactNode } from "react";
+import type { WorkspaceEnvironmentAutomaticSetupSnapshot } from "@mcode/contracts";
 
 // Store mocks must be declared before importing the component under test.
 
@@ -39,6 +41,9 @@ const {
       setThreadSubscriptions: vi.fn(),
       listTurnRecoveries: vi.fn(),
       retryTurn: vi.fn(),
+      getAutomaticSetup: vi.fn(),
+      continueAutomaticSetup: vi.fn(),
+      cancelQueuedAutomaticTurn: vi.fn(),
     },
     chatViewMessageListCallbacksRef,
     chatViewSetPendingPrefillMock: vi.fn(),
@@ -140,15 +145,22 @@ vi.mock("../../composer/Composer", () => ({
 vi.mock("../MessageList", () => ({
   MessageList: ({
     displayThreadId,
+    leadingContent,
     onContinue,
     onRetry,
   }: {
     displayThreadId?: string;
+    leadingContent?: ReactNode;
     onContinue?: () => void | Promise<void>;
     onRetry?: (executionId: string) => void | Promise<void>;
   }) => {
     chatViewMessageListCallbacksRef.current = { onContinue, onRetry };
-    return <div data-testid="message-list" data-display-thread-id={displayThreadId} />;
+    return (
+      <div data-testid="message-list" data-display-thread-id={displayThreadId}>
+        {leadingContent}
+        <div data-testid="queued-first-user-message">Build the feature</div>
+      </div>
+    );
   },
 }));
 
@@ -449,6 +461,55 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     expect(chatViewTransportMock.retryTurn).toHaveBeenCalledWith(
       "00000000-0000-4000-8000-000000000042",
     );
+  });
+
+  it("places failed automatic Setup before the queued first user message", async () => {
+    const thread = makeThread({ mode: "worktree", worktree_managed: true });
+    const activeRecord = createEmptyThreadRecord();
+    activeRecord.messages = [createMockMessage({
+      id: "message-1",
+      thread_id: thread.id,
+      role: "user",
+      content: "Build the feature",
+    })];
+    const failedSetup: WorkspaceEnvironmentAutomaticSetupSnapshot = {
+      gate: "blocked",
+      attempt: {
+        id: "attempt-1",
+        state: "failed",
+        reason: "setup_failed",
+        snapshot: {
+          platform: "windows",
+          script: "di",
+          checkoutPath: "C:\\repo",
+          terminal: { executable: "pwsh.exe", arguments: ["-Command", "di"] },
+        },
+        outcome: "command_failure",
+        createdAt: "2026-08-22T12:00:00.000Z",
+        startedAt: "2026-08-22T12:00:00.000Z",
+        finishedAt: "2026-08-22T12:00:01.000Z",
+        exitCode: 1,
+        output: "command not found",
+        outputTruncated: false,
+      },
+      queuedTurn: {
+        id: "submission-1",
+        messageId: "message-1",
+        state: "queued",
+        createdAt: "2026-08-22T12:00:00.000Z",
+        dispatchedAt: null,
+      },
+    };
+    chatViewTransportMock.getAutomaticSetup.mockResolvedValue(failedSetup);
+    setupWorkspaceMock(defaultWorkspaceState({ threads: [thread] }));
+    chatViewThreadMockRef.current = defaultThreadState({ activeRecord });
+
+    render(<ChatView />);
+
+    const setupBlock = await screen.findByRole("button", { name: /Automatic Setup. Setup failed/i });
+    const queuedMessage = screen.getByTestId("queued-first-user-message");
+    expect(setupBlock.compareDocumentPosition(queuedMessage) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+    expect(chatViewTransportMock.getAutomaticSetup).toHaveBeenCalledWith(thread.id);
   });
 
   it("enters edit mode on double click", async () => {

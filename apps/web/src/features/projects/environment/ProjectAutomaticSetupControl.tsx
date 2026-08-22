@@ -113,7 +113,27 @@ function isEmptyAutomaticSetupSnapshot(
   return snapshot?.gate === "not-required" && snapshot.attempt === null && snapshot.queuedTurn === null;
 }
 
-/** Render the accepted expandable Overview card for automatic Setup and first-Turn recovery. */
+/** Renders automatic Setup lifecycle controls in the Thread transcript. */
+export function ProjectAutomaticSetupThreadBlock({
+  threadId,
+  isManagedNewWorktree,
+}: {
+  readonly threadId: string;
+  readonly isManagedNewWorktree: boolean;
+}) {
+  const automaticSetup = useProjectAutomaticSetup(threadId, isManagedNewWorktree);
+  return (
+    <ProjectAutomaticSetupCard
+      snapshot={automaticSetup.snapshot}
+      busy={automaticSetup.busy}
+      error={automaticSetup.error}
+      onContinue={automaticSetup.continueWithoutSetup}
+      onCancel={automaticSetup.cancelQueuedTurn}
+    />
+  );
+}
+
+/** Renders the expandable automatic Setup command and recovery state. */
 export function ProjectAutomaticSetupCard({
   snapshot,
   busy,
@@ -136,7 +156,7 @@ export function ProjectAutomaticSetupCard({
   const canRecover = snapshot.gate === "blocked" && snapshot.queuedTurn?.state === "queued";
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
-      <section className="mx-1.5 mt-1.5 overflow-hidden rounded-lg border border-border/60 bg-muted/20">
+      <section className="mb-4 overflow-hidden rounded-lg border border-border/60 bg-muted/20">
         <CollapsibleTrigger asChild>
           <Button
             id={headingId}

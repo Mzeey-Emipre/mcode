@@ -1,4 +1,4 @@
-import { useRef, useEffect, useLayoutEffect, useMemo, useCallback, memo, useState, type WheelEvent } from "react";
+import { useRef, useEffect, useLayoutEffect, useMemo, useCallback, memo, useState, type ReactNode, type WheelEvent } from "react";
 import { useReplyStore } from "@/stores/replyStore";
 import { ArrowDown } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -279,6 +279,8 @@ export function ScrollToBottomButton({ hasNewContent, onScrollToBottom }: Scroll
 export interface MessageListProps {
   /** Thread whose resident transcript is rendered while the selected thread hydrates. */
   displayThreadId?: string;
+  /** Content that must appear before all persisted transcript messages. */
+  leadingContent?: ReactNode;
   /** Called when the user clicks the branch icon on a message. */
   onBranch?: (messageId: string) => void;
   /** Called when the user clicks the reply button or selects text in a message. */
@@ -295,9 +297,20 @@ export interface MessageListProps {
   showParentAgentProvenance?: boolean;
 }
 
+type MessageListItem = ChatVirtualItem | {
+  readonly key: "leading-content";
+  readonly type: "leading-content";
+  readonly content: ReactNode;
+};
+
+function estimateMessageListItemHeight(item: MessageListItem): number {
+  return item.type === "leading-content" ? DEFAULT_ITEM_HEIGHT : estimateItemHeight(item);
+}
+
 /** Virtualized list of chat messages, tool calls, and streaming indicators. */
 export function MessageList({
   displayThreadId,
+  leadingContent,
   onBranch,
   onReply,
   onSubagentSelect,
@@ -797,9 +810,15 @@ export function MessageList({
   ]);
 
   const hasToolCalls = toolCalls.length > 0;
-  const items = useMemo(
+  const virtualItems = useMemo(
     () => virtualItemsBuilderRef.current!(stableItems, volatileItems, hasToolCalls),
     [stableItems, volatileItems, hasToolCalls],
+  );
+  const items = useMemo<MessageListItem[]>(
+    () => leadingContent == null
+      ? virtualItems
+      : [{ key: "leading-content", type: "leading-content", content: leadingContent }, ...virtualItems],
+    [leadingContent, virtualItems],
   );
 
   const lastUserMessage = useMemo(() => {
@@ -894,7 +913,7 @@ export function MessageList({
     onChange: syncStickyUserMessageVisibility,
     estimateSize: (index) => {
       const item = items[index];
-      return item ? estimateItemHeight(item) : DEFAULT_ITEM_HEIGHT;
+      return item ? estimateMessageListItemHeight(item) : DEFAULT_ITEM_HEIGHT;
     },
     getItemKey: (index) => items[index]?.key ?? String(index),
     overscan: OVERSCAN,
@@ -1596,7 +1615,11 @@ export function MessageList({
                 style={{ transform: `translateY(${vi.start}px)` }}
               >
                 <div className={cn(PRIMARY_CONTENT_RAIL_CLASS, "min-w-0 overflow-x-hidden")}>
-                  <VirtualItemRenderer item={item} turnExpandRef={turnExpandRef} onBranch={onBranch} onReply={onReply} onSubagentSelect={onSubagentSelect} onOpenSubagents={onOpenSubagents} onContinue={onContinue} onRetry={onRetry} onScrollToMessage={scrollToMessage} currentTurnMessageIdByThread={currentTurnMessageIdByThread} threadId={renderedThreadId} showParentAgentProvenance={showParentAgentProvenance} />
+                  {item.type === "leading-content" ? (
+                    <div data-testid="message-list-leading-content">{item.content}</div>
+                  ) : (
+                    <VirtualItemRenderer item={item} turnExpandRef={turnExpandRef} onBranch={onBranch} onReply={onReply} onSubagentSelect={onSubagentSelect} onOpenSubagents={onOpenSubagents} onContinue={onContinue} onRetry={onRetry} onScrollToMessage={scrollToMessage} currentTurnMessageIdByThread={currentTurnMessageIdByThread} threadId={renderedThreadId} showParentAgentProvenance={showParentAgentProvenance} />
+                  )}
                 </div>
               </div>
             );

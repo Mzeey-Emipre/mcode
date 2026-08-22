@@ -6,8 +6,9 @@ export {
   ProjectSetupMenu,
   useProjectSetupAttempt,
 } from "./ProjectSetupControl";
-/** Automatic Project Setup gate controls rendered in the Thread Overview. */
+/** Automatic Project Setup gate controls rendered in the Thread transcript. */
 export {
   ProjectAutomaticSetupCard,
+  ProjectAutomaticSetupThreadBlock,
   useProjectAutomaticSetup,
 } from "./ProjectAutomaticSetupControl";
