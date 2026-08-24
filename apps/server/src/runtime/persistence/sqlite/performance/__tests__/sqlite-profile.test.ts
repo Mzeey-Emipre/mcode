@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import type Database from "better-sqlite3";
+import { afterEach, describe, expect, it } from "vitest";
+import { openMemoryDatabase } from "../../database.js";
 import {
   ACTIVE_TURN_WRITE_POLICY,
   SQLITE_PROFILE_WORKLOADS,
@@ -6,6 +8,7 @@ import {
   compareSQLiteProfileReports,
   parseSQLiteProfileBaseline,
   parseSQLiteProfileCliOptions,
+  runSQLiteCheckpointPolicyProfile,
   summarizeSQLiteProfileSamples,
   type SQLiteProfileAggregate,
   type SQLiteQueryPlan,
@@ -220,6 +223,83 @@ describe("runSQLiteProfile", () => {
         "canonical_agent_ingest_checkpoints.upsert",
       ],
       batchLimits: { maxRows: 64, maxBytes: 262_144, maxElapsedMs: 4 },
+    });
+  });
+});
+
+describe("checkpoint policy profile", () => {
+  let db: Database.Database | undefined;
+
+  afterEach(() => {
+    db?.close();
+    db = undefined;
+  });
+
+  it("executes exact one- and five-stream chunks and projects one-hour row growth", () => {
+    db = openMemoryDatabase();
+    const profile = runSQLiteCheckpointPolicyProfile(db);
+
+    expect(profile.providerModel).toMatchObject({
+      deltasPerSecond: 50,
+      shortRunDeltaBytes: 512,
+      oneHourProjectionDeltaBytes: 1,
+      maxChunkBytes: 16 * 1024,
+      retainedByteCapacityHorizon: {
+        maxRetainedBytes: 256 * 1024,
+        acceptedDeltas: 512,
+        virtualDurationMs: 10_240,
+      },
+    });
+    expect(profile.measuredWorkloads.map((workload) => ({
+      streams: workload.streams,
+      policies: workload.policies.map((policy) => ({
+        maxAgeMs: policy.maxAgeMs,
+        durableChunkCount: policy.durableChunkCount,
+        transactions: policy.transactions,
+        commits: policy.commits,
+        retainedRows: policy.retainedRows,
+        retainedBytes: policy.retainedBytes,
+      })),
+    }))).toEqual([
+      {
+        streams: 1,
+        policies: [
+          { maxAgeMs: 40, durableChunkCount: 25, transactions: 25, commits: 25, retainedRows: 25, retainedBytes: 25_600 },
+          { maxAgeMs: 100, durableChunkCount: 10, transactions: 10, commits: 10, retainedRows: 10, retainedBytes: 25_600 },
+          { maxAgeMs: 250, durableChunkCount: 4, transactions: 4, commits: 4, retainedRows: 4, retainedBytes: 25_600 },
+          { maxAgeMs: 500, durableChunkCount: 2, transactions: 2, commits: 2, retainedRows: 2, retainedBytes: 25_600 },
+          { maxAgeMs: 1000, durableChunkCount: 2, transactions: 2, commits: 2, retainedRows: 2, retainedBytes: 25_600 },
+        ],
+      },
+      {
+        streams: 5,
+        policies: [
+          { maxAgeMs: 40, durableChunkCount: 125, transactions: 125, commits: 125, retainedRows: 125, retainedBytes: 128_000 },
+          { maxAgeMs: 100, durableChunkCount: 50, transactions: 50, commits: 50, retainedRows: 50, retainedBytes: 128_000 },
+          { maxAgeMs: 250, durableChunkCount: 20, transactions: 20, commits: 20, retainedRows: 20, retainedBytes: 128_000 },
+          { maxAgeMs: 500, durableChunkCount: 10, transactions: 10, commits: 10, retainedRows: 10, retainedBytes: 128_000 },
+          { maxAgeMs: 1000, durableChunkCount: 10, transactions: 10, commits: 10, retainedRows: 10, retainedBytes: 128_000 },
+        ],
+      },
+    ]);
+    expect(profile.oneHourSimulation.policies.map((policy) => ({
+      maxAgeMs: policy.maxAgeMs,
+      durableChunkCount: policy.durableChunkCount,
+      transactions: policy.transactions,
+      commits: policy.commits,
+      retainedRows: policy.retainedRows,
+      retainedBytes: policy.retainedBytes,
+    }))).toEqual([
+      { maxAgeMs: 40, durableChunkCount: 90_000, transactions: 90_000, commits: 90_000, retainedRows: 90_000, retainedBytes: 180_000 },
+      { maxAgeMs: 100, durableChunkCount: 36_000, transactions: 36_000, commits: 36_000, retainedRows: 36_000, retainedBytes: 180_000 },
+      { maxAgeMs: 250, durableChunkCount: 13_847, transactions: 13_847, commits: 13_847, retainedRows: 13_847, retainedBytes: 180_000 },
+      { maxAgeMs: 500, durableChunkCount: 7_200, transactions: 7_200, commits: 7_200, retainedRows: 7_200, retainedBytes: 180_000 },
+      { maxAgeMs: 1000, durableChunkCount: 3_600, transactions: 3_600, commits: 3_600, retainedRows: 3_600, retainedBytes: 180_000 },
+    ]);
+    expect(profile.measuredWorkloads[0]!.policies.at(-1)).toMatchObject({
+      maxAgeMs: 1000,
+      deltasPerChunk: { max: 32 },
+      virtualChunkWindowMs: { max: 620 },
     });
   });
 });

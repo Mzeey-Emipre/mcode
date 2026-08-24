@@ -13,6 +13,10 @@ import { ToolCallRecordRepo } from "../../../../features/agents/tools/persistenc
 import { loadConversationPage } from "../../../../features/agents/conversation/read-model/conversation-page.js";
 import { NarrativeStore } from "../../../../features/agents/conversation/narrative/narrative-store.js";
 import { CanonicalAgentEventSink } from "../../../../features/agents/canonical/canonical-agent-event-sink.js";
+import {
+  PARENT_ASSISTANT_TEXT_RETAINED_LIMITS,
+  ParentAssistantTextCheckpointService,
+} from "../../../../features/agents/turns/parent-assistant-text-checkpoint-service.js";
 import { openDatabase } from "../database.js";
 import { ACTIVE_TURN_WRITE_BATCH_LIMITS } from "../bounded-write-batches.js";
 
@@ -137,6 +141,7 @@ export interface SQLiteProfileReport {
     assistantNarrativeRows: 1800;
     contentBytesPerMessage: number;
   };
+  checkpointPolicy: SQLiteCheckpointPolicyProfile;
   runtime: {
     platform: NodeJS.Platform;
     architecture: string;
@@ -150,6 +155,63 @@ export interface SQLiteProfileReport {
   comparison?: SQLiteProfileComparison;
 }
 
+/** Fixed final-response text traffic; tool activity is outside this checkpoint workload. */
+export interface SQLiteCheckpointProviderModel {
+  deltasPerSecond: number;
+  shortRunDeltaBytes: number;
+  oneHourProjectionDeltaBytes: number;
+  maxChunkBytes: number;
+  retainedByteCapacityHorizon: {
+    maxRetainedBytes: number;
+    acceptedDeltas: number;
+    virtualDurationMs: number;
+  };
+}
+
+/** Exact retained-data and timing evidence for one checkpoint age policy. */
+export interface SQLiteCheckpointPolicyMeasurement {
+  maxAgeMs: number;
+  durableChunkCount: number;
+  transactions: number;
+  commits: number;
+  retainedRows: number;
+  retainedBytes: number;
+  deltasPerChunk: SQLiteProfileDistribution;
+  virtualChunkWindowMs: SQLiteProfileDistribution;
+  elapsedDurationMs: number;
+  appendChunkLatencyMs: SQLiteProfileDistribution;
+}
+
+/** One SQLite-backed checkpoint policy workload with interleaved provider streams. */
+export interface SQLiteCheckpointPolicyWorkload {
+  streams: 1 | 5;
+  virtualDurationMs: number;
+  policies: SQLiteCheckpointPolicyMeasurement[];
+}
+
+/** One simulated long-duration checkpoint policy result with no wall-clock wait. */
+export interface SQLiteCheckpointPolicyProjection {
+  maxAgeMs: number;
+  durableChunkCount: number;
+  transactions: number;
+  commits: number;
+  retainedRows: number;
+  retainedBytes: number;
+  deltasPerChunk: SQLiteProfileDistribution;
+  virtualChunkWindowMs: SQLiteProfileDistribution;
+}
+
+/** Checkpoint-policy evidence included in the maintained SQLite profile report. */
+export interface SQLiteCheckpointPolicyProfile {
+  providerModel: SQLiteCheckpointProviderModel;
+  measuredWorkloads: SQLiteCheckpointPolicyWorkload[];
+  oneHourSimulation: {
+    streams: 1;
+    virtualDurationMs: number;
+    policies: SQLiteCheckpointPolicyProjection[];
+  };
+}
+
 const DEFAULT_SAMPLES = 20;
 const MIN_SAMPLES = 3;
 const MAX_SAMPLES = 50;
@@ -161,6 +223,21 @@ const FIXED_TIMESTAMP = "2026-01-01T00:00:00.000Z";
 const WORKSPACE_ID = "sqlite-profile-workspace";
 const THREAD_ID = "sqlite-profile-thread";
 const CONTENT = "Mcode deterministic SQLite profile content. ".repeat(8);
+const CHECKPOINT_PROVIDER_MODEL: SQLiteCheckpointProviderModel = {
+  deltasPerSecond: 50,
+  shortRunDeltaBytes: 512,
+  oneHourProjectionDeltaBytes: 1,
+  maxChunkBytes: 16 * 1024,
+  retainedByteCapacityHorizon: {
+    maxRetainedBytes: PARENT_ASSISTANT_TEXT_RETAINED_LIMITS.maxBytes,
+    acceptedDeltas: PARENT_ASSISTANT_TEXT_RETAINED_LIMITS.maxBytes / 512,
+    virtualDurationMs: (PARENT_ASSISTANT_TEXT_RETAINED_LIMITS.maxBytes / 512) * (1000 / 50),
+  },
+};
+const CHECKPOINT_POLICY_MAX_AGES_MS = [40, 100, 250, 500, 1000] as const;
+const CHECKPOINT_MEASURED_DURATION_MS = 1000;
+const CHECKPOINT_ONE_HOUR_MS = 60 * 60 * 1000;
+const CHECKPOINT_DELTA_TEXT = "x".repeat(CHECKPOINT_PROVIDER_MODEL.shortRunDeltaBytes);
 const ACTIVE_TURN_RETAINED_STATEMENTS = [
   "messages.create",
   "messages.createAssistantIdempotent",
@@ -437,11 +514,21 @@ export async function runSQLiteProfile(
     }
   }
 
+  const checkpointPolicyDatabase = createDatabase("active-turn-writes", 0);
+  let checkpointPolicy: SQLiteCheckpointPolicyProfile;
+  try {
+    sqliteVersion = readSQLiteVersion(checkpointPolicyDatabase.db);
+    checkpointPolicy = runSQLiteCheckpointPolicyProfile(checkpointPolicyDatabase.db);
+  } finally {
+    checkpointPolicyDatabase.db.close();
+  }
+
   return {
     schemaVersion: 2,
     createdAt: new Date().toISOString(),
     samplesPerWorkload,
     activeTurnWritePolicy: ACTIVE_TURN_WRITE_POLICY,
+    checkpointPolicy,
     seed: {
       messages: SEEDED_MESSAGE_COUNT,
       assistantNarrativeRows: SEEDED_NARRATIVE_ROWS,
@@ -550,6 +637,237 @@ function seedConversation(db: Database.Database): void {
       insertHook.run(`profile-hook-${sequence}`, messageId, "PreToolUse", "Read", "pre", "{}", 1, 0, FIXED_TIMESTAMP, FIXED_TIMESTAMP, 2);
     }
   })();
+}
+
+interface SimulatedCheckpointChunk {
+  stream: number;
+  firstSequence: number;
+  itemCount: number;
+}
+
+interface CheckpointSimulation {
+  durableChunkCount: number;
+  retainedBytes: number;
+  deltasPerChunk: number[];
+  virtualChunkWindowMs: number[];
+}
+
+interface PendingCheckpointChunk {
+  firstSequence: number;
+  itemCount: number;
+  byteLength: number;
+  startedAtMs: number;
+}
+
+/** Run final-response text checkpoint appends and project one-byte hourly row growth. */
+export function runSQLiteCheckpointPolicyProfile(db: Database.Database): SQLiteCheckpointPolicyProfile {
+  seedCheckpointProfileWorkspace(db);
+  return {
+    providerModel: CHECKPOINT_PROVIDER_MODEL,
+    measuredWorkloads: ([1, 5] as const).map((streams) => ({
+      streams,
+      virtualDurationMs: CHECKPOINT_MEASURED_DURATION_MS,
+      policies: CHECKPOINT_POLICY_MAX_AGES_MS.map((maxAgeMs) =>
+        measureCheckpointPolicy(db, streams, CHECKPOINT_MEASURED_DURATION_MS, maxAgeMs),
+      ),
+    })),
+    oneHourSimulation: {
+      streams: 1,
+      virtualDurationMs: CHECKPOINT_ONE_HOUR_MS,
+      policies: CHECKPOINT_POLICY_MAX_AGES_MS.map((maxAgeMs) => {
+        const simulation = simulateCheckpointPolicy(
+          1,
+          CHECKPOINT_ONE_HOUR_MS,
+          maxAgeMs,
+          CHECKPOINT_PROVIDER_MODEL.oneHourProjectionDeltaBytes,
+        );
+        return {
+          maxAgeMs,
+          durableChunkCount: simulation.durableChunkCount,
+          transactions: simulation.durableChunkCount,
+          commits: simulation.durableChunkCount,
+          retainedRows: simulation.durableChunkCount,
+          retainedBytes: simulation.retainedBytes,
+          deltasPerChunk: summarizeSQLiteProfileSamples(simulation.deltasPerChunk),
+          virtualChunkWindowMs: summarizeSQLiteProfileSamples(simulation.virtualChunkWindowMs),
+        };
+      }),
+    },
+  };
+}
+
+function seedCheckpointProfileWorkspace(db: Database.Database): void {
+  db.prepare(
+    "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+  ).run(WORKSPACE_ID, "SQLite checkpoint profile", "/mcode/sqlite-checkpoint-profile", FIXED_TIMESTAMP, FIXED_TIMESTAMP);
+}
+
+function measureCheckpointPolicy(
+  db: Database.Database,
+  streams: 1 | 5,
+  virtualDurationMs: number,
+  maxAgeMs: number,
+): SQLiteCheckpointPolicyMeasurement {
+  const executions = Array.from({ length: streams }, (_, stream) =>
+    seedCheckpointProfileExecution(db, streams, maxAgeMs, stream),
+  );
+  const checkpoints = new ParentAssistantTextCheckpointService(db);
+  const appendChunkLatenciesMs: number[] = [];
+  let transactions = 0;
+  let commits = 0;
+  const started = performance.now();
+  const simulation = simulateCheckpointPolicy(
+    streams,
+    virtualDurationMs,
+    maxAgeMs,
+    CHECKPOINT_PROVIDER_MODEL.shortRunDeltaBytes,
+    (chunk) => {
+      const execution = executions[chunk.stream]!;
+      const inputs = Array.from({ length: chunk.itemCount }, (_, offset) => ({
+        executionId: execution.executionId,
+        threadId: execution.threadId,
+        turnId: execution.turnId,
+        sequence: chunk.firstSequence + offset,
+        text: CHECKPOINT_DELTA_TEXT,
+      }));
+      const appendStarted = performance.now();
+      const result = checkpoints.appendChunk(inputs);
+      appendChunkLatenciesMs.push(performance.now() - appendStarted);
+      transactions += 1;
+      if (result.outcome !== "committed") {
+        throw new Error(`Checkpoint profile expected a durable commit, received ${result.outcome}.`);
+      }
+      commits += 1;
+    },
+  );
+  const elapsedDurationMs = performance.now() - started;
+  const retained = readCheckpointRetention(db, executions.map((execution) => execution.executionId));
+
+  if (transactions !== simulation.durableChunkCount || commits !== simulation.durableChunkCount) {
+    throw new Error("Checkpoint profile append calls did not match the simulated chunk count.");
+  }
+  if (retained.rows !== simulation.durableChunkCount || retained.bytes !== simulation.retainedBytes) {
+    throw new Error("Checkpoint profile SQLite retention did not match the simulated chunks.");
+  }
+
+  return {
+    maxAgeMs,
+    durableChunkCount: simulation.durableChunkCount,
+    transactions,
+    commits,
+    retainedRows: retained.rows,
+    retainedBytes: retained.bytes,
+    deltasPerChunk: summarizeSQLiteProfileSamples(simulation.deltasPerChunk),
+    virtualChunkWindowMs: summarizeSQLiteProfileSamples(simulation.virtualChunkWindowMs),
+    elapsedDurationMs,
+    appendChunkLatencyMs: summarizeSQLiteProfileSamples(appendChunkLatenciesMs),
+  };
+}
+
+function seedCheckpointProfileExecution(
+  db: Database.Database,
+  streams: number,
+  maxAgeMs: number,
+  stream: number,
+): { executionId: string; threadId: string; turnId: string } {
+  const identifier = `checkpoint-${streams}-${maxAgeMs}-${stream}`;
+  const threadId = `sqlite-profile-${identifier}-thread`;
+  const turnId = `sqlite-profile-${identifier}-turn`;
+  const executionId = `00000000-0000-4000-8000-${(streams * 10_000 + maxAgeMs * 10 + stream).toString().padStart(12, "0")}`;
+  db.prepare(
+    "INSERT INTO threads (id, workspace_id, title, branch, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+  ).run(threadId, WORKSPACE_ID, "SQLite checkpoint profile", "main", FIXED_TIMESTAMP, FIXED_TIMESTAMP);
+  const messages = new MessageRepo(db);
+  new CanonicalAgentEventSink(db, () => undefined).startParentTurn({
+    thread: {
+      id: threadId,
+      workspaceId: WORKSPACE_ID,
+      providerId: "profile",
+      createdAt: FIXED_TIMESTAMP,
+    },
+    turnId,
+    executionId,
+    permissionMode: "supervised",
+    providerIdentities: [],
+    projectUserMessage: () => messages.create(threadId, "user", CONTENT, 1),
+  });
+  return { executionId, threadId, turnId };
+}
+
+function readCheckpointRetention(
+  db: Database.Database,
+  executionIds: readonly string[],
+): { rows: number; bytes: number } {
+  const statement = db.prepare(`
+    SELECT COUNT(*) AS rows, COALESCE(SUM(byte_length), 0) AS bytes
+    FROM parent_assistant_text_checkpoint_chunks
+    WHERE execution_id = ?
+  `);
+  return executionIds.reduce((retained, executionId) => {
+    const row = statement.get(executionId) as { rows: number; bytes: number };
+    return { rows: retained.rows + row.rows, bytes: retained.bytes + row.bytes };
+  }, { rows: 0, bytes: 0 });
+}
+
+function simulateCheckpointPolicy(
+  streams: number,
+  virtualDurationMs: number,
+  maxAgeMs: number,
+  deltaBytes: number,
+  onChunk?: (chunk: SimulatedCheckpointChunk) => void,
+): CheckpointSimulation {
+  const deltasPerStream = (virtualDurationMs * CHECKPOINT_PROVIDER_MODEL.deltasPerSecond) / 1000;
+  if (!Number.isInteger(deltasPerStream)) {
+    throw new Error("Checkpoint profile duration must contain a whole number of provider deltas.");
+  }
+
+  const intervalMs = 1000 / CHECKPOINT_PROVIDER_MODEL.deltasPerSecond;
+  const pending: Array<PendingCheckpointChunk | undefined> = Array.from({ length: streams });
+  const deltasPerChunk: number[] = [];
+  const virtualChunkWindowMs: number[] = [];
+  let durableChunkCount = 0;
+  let retainedBytes = 0;
+  const commit = (stream: number, committedAtMs: number): void => {
+    const chunk = pending[stream];
+    if (!chunk) return;
+    pending[stream] = undefined;
+    durableChunkCount += 1;
+    retainedBytes += chunk.byteLength;
+    deltasPerChunk.push(chunk.itemCount);
+    virtualChunkWindowMs.push(committedAtMs - chunk.startedAtMs);
+    onChunk?.({
+      stream,
+      firstSequence: chunk.firstSequence,
+      itemCount: chunk.itemCount,
+    });
+  };
+
+  for (let deltaIndex = 0; deltaIndex < deltasPerStream; deltaIndex++) {
+    const nowMs = deltaIndex * intervalMs;
+    for (let stream = 0; stream < streams; stream++) {
+      const chunk = pending[stream];
+      if (chunk && nowMs >= chunk.startedAtMs + maxAgeMs) {
+        commit(stream, chunk.startedAtMs + maxAgeMs);
+      }
+    }
+    for (let stream = 0; stream < streams; stream++) {
+      const chunk = pending[stream] ?? {
+        firstSequence: deltaIndex + 1,
+        itemCount: 0,
+        byteLength: 0,
+        startedAtMs: nowMs,
+      };
+      chunk.itemCount += 1;
+      chunk.byteLength += deltaBytes;
+      pending[stream] = chunk;
+      if (chunk.byteLength >= CHECKPOINT_PROVIDER_MODEL.maxChunkBytes) {
+        commit(stream, nowMs);
+      }
+    }
+  }
+  for (let stream = 0; stream < streams; stream++) commit(stream, virtualDurationMs);
+
+  return { durableChunkCount, retainedBytes, deltasPerChunk, virtualChunkWindowMs };
 }
 
 async function writeActiveTurn(db: Database.Database): Promise<NonNullable<SQLiteProfileSample["activeTurnWrite"]>> {

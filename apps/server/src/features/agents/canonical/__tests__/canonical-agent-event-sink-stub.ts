@@ -19,6 +19,7 @@ export function createCanonicalAgentEventSinkStub(
         events: [],
       };
     },
+    loadCheckpoint: () => null,
     loadTurnByExecution: () => null,
     loadCanonicalChildStopTargets: () => [],
     finishCanonicalChildTurn: () => null,

@@ -4,6 +4,7 @@ import { isAbsolute, resolve } from "node:path";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type Database from "better-sqlite3";
 import type { WebSocketServer } from "ws";
+import { THREAD_CONTROL_OPAQUE_ID_MAX_LENGTH } from "@mcode/contracts";
 
 /** Controls exposed by the opt-in packaged reliability harness. */
 export const RELIABILITY_HARNESS_CONTROLS = [
@@ -11,6 +12,7 @@ export const RELIABILITY_HARNESS_CONTROLS = [
   "server-hang",
   "transport-loss",
   "persistence-failure",
+  "assistant-stream",
 ] as const;
 
 /** A reliability harness control name. */
@@ -27,6 +29,14 @@ export interface ReliabilityHarnessCapability {
 export interface ReliabilityHarnessCommand {
   readonly control: ReliabilityHarnessControl;
   readonly durationMs?: number;
+  readonly threadId?: string;
+}
+
+/** Published result from the private deterministic assistant-stream control. */
+export interface ReliabilityHarnessAssistantStream {
+  readonly threadId: string;
+  readonly executionId: string;
+  readonly text: string;
 }
 
 /** Runtime adapter for deterministic server faults in one isolated run. */
@@ -77,7 +87,10 @@ export function readReliabilityHarnessCapability(
 export function createReliabilityHarnessAdapter(
   database: Database.Database,
   capability = readReliabilityHarnessCapability(),
-  hooks: { readonly blockEventLoop?: (durationMs: number) => void } = {},
+  hooks: {
+    readonly blockEventLoop?: (durationMs: number) => void;
+    readonly streamAssistant?: (threadId: string) => ReliabilityHarnessAssistantStream;
+  } = {},
 ): ReliabilityHarnessAdapter {
   if (!capability) return { enabled: false, handleRequest: async () => false };
 
@@ -119,8 +132,24 @@ export function createReliabilityHarnessAdapter(
         return true;
       }
 
-      response.writeHead(202, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-      response.end(JSON.stringify({ accepted: true, control: body.control }));
+      let stream: ReliabilityHarnessAssistantStream | undefined;
+      try {
+        if (body.control === "assistant-stream") {
+          if (!hooks.streamAssistant) {
+            response.writeHead(409);
+            response.end("Assistant stream control is unavailable");
+            return true;
+          }
+          stream = hooks.streamAssistant(body.threadId!);
+        }
+
+        response.writeHead(202, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+        response.end(JSON.stringify({ accepted: true, control: body.control, ...(stream ? { stream } : {}) }));
+      } catch {
+        response.writeHead(500);
+        response.end("Reliability control failed");
+        return true;
+      }
 
       switch (body.control) {
         case "server-exit":
@@ -137,6 +166,8 @@ export function createReliabilityHarnessAdapter(
             database.pragma("query_only = ON");
             persistenceFailure = true;
           }
+          break;
+        case "assistant-stream":
           break;
       }
       return true;
@@ -167,9 +198,17 @@ async function readCommand(request: IncomingMessage): Promise<ReliabilityHarness
   if (value.durationMs !== undefined && (typeof value.durationMs !== "number" || !Number.isSafeInteger(value.durationMs) || value.durationMs < 1 || value.durationMs > MAX_HANG_MS)) {
     throw new Error(`Reliability hang duration must be between 1 and ${MAX_HANG_MS} milliseconds`);
   }
+  if (value.control === "assistant-stream" && (
+    typeof value.threadId !== "string"
+    || value.threadId.trim().length === 0
+    || value.threadId.trim().length > THREAD_CONTROL_OPAQUE_ID_MAX_LENGTH
+  )) {
+    throw new Error(`Reliability assistant stream requires a thread id up to ${THREAD_CONTROL_OPAQUE_ID_MAX_LENGTH} characters`);
+  }
   return {
     control: value.control as ReliabilityHarnessControl,
     ...(value.durationMs === undefined ? {} : { durationMs: value.durationMs as number }),
+    ...(value.control === "assistant-stream" ? { threadId: (value.threadId as string).trim() } : {}),
   };
 }
 

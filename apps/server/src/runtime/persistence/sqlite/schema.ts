@@ -601,6 +601,41 @@ export const canonicalAgentIngestCheckpoints = sqliteTable(
   (table) => [index("idx_canonical_agent_checkpoints_thread").on(table.threadId, table.updatedAt)],
 );
 
+/** Temporary durable text headers for unfinished parent assistant responses. */
+export const parentAssistantTextCheckpoints = sqliteTable(
+  "parent_assistant_text_checkpoints",
+  {
+    executionId: text("execution_id").primaryKey().notNull(),
+    threadId: text("thread_id").notNull().references(() => canonicalAgentThreads.id, { onDelete: "cascade" }),
+    turnId: text("turn_id").notNull().references(() => canonicalAgentTurns.id, { onDelete: "cascade" }),
+    lastSequence: integer("last_sequence").notNull(),
+    retainedBytes: integer("retained_bytes").notNull(),
+    retainedChunks: integer("retained_chunks").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [index("idx_parent_assistant_text_checkpoints_thread").on(table.threadId, table.updatedAt)],
+);
+
+/** Append-only durable text chunks for unfinished parent assistant responses. */
+export const parentAssistantTextCheckpointChunks = sqliteTable(
+  "parent_assistant_text_checkpoint_chunks",
+  {
+    executionId: text("execution_id")
+      .notNull()
+      .references(() => parentAssistantTextCheckpoints.executionId, { onDelete: "cascade" }),
+    firstSequence: integer("first_sequence").notNull(),
+    lastSequence: integer("last_sequence").notNull(),
+    text: text("text").notNull(),
+    byteLength: integer("byte_length").notNull(),
+  },
+  (table) => [
+    uniqueIndex("idx_parent_assistant_text_checkpoint_chunks_sequence").on(
+      table.executionId,
+      table.firstSequence,
+    ),
+  ],
+);
+
 /** Durable cursor for the bounded legacy parent-conversation migration. */
 export const canonicalLegacyMigrationCheckpoints = sqliteTable(
   "canonical_legacy_migration_checkpoints",

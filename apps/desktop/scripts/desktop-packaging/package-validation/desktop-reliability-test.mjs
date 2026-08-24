@@ -2,9 +2,9 @@
  * Packaged Desktop reliability scenario.
  *
  * Launches the packaged Desktop executable with an isolated data directory,
- * performs one authenticated settings write, injects an abnormal server exit,
- * then proves Desktop recovered the server and retained the write. The test
- * intentionally sends no mutation after the restart.
+ * performs one authenticated settings write, publishes a deterministic assistant
+ * prefix, injects an abnormal server exit, then proves Desktop restored both.
+ * The test intentionally sends no mutation after the restart.
  */
 
 import { spawn } from "node:child_process";
@@ -76,12 +76,38 @@ export async function runPackagedReliabilityScenario() {
 
   let mutationCount = 0;
   let ownedServerAuthToken = null;
+  let observer = null;
   try {
     const initialLock = await waitForServerLock(dataDir, STARTUP_TIMEOUT_MS);
     ownedServerAuthToken = initialLock.authToken;
     await waitForHealth(initialLock.port, STARTUP_TIMEOUT_MS);
     const rendezvous = await waitForDesktopRendezvous(runRoot, child.pid, token, STARTUP_TIMEOUT_MS);
     await rpc(initialLock, "settings.update", { appearance: { theme: "dark" } }, () => { mutationCount += 1; });
+    const workspace = (await rpc(initialLock, "workspace.create", {
+      name: "Reliability harness",
+      path: runRoot,
+    })).result;
+    const thread = (await rpc(initialLock, "thread.create", {
+      workspaceId: workspace.id,
+      title: "Restart recovery",
+      mode: "direct",
+      branch: "main",
+    })).result;
+    observer = await observeAgentText(initialLock, thread.id);
+    const streamed = await postDesktopFault(rendezvous.port, token, {
+      control: "assistant-stream",
+      threadId: thread.id,
+    });
+    const stream = streamed?.stream;
+    if (!stream || stream.threadId !== thread.id || typeof stream.executionId !== "string" || typeof stream.text !== "string") {
+      throw new Error("Reliability assistant stream did not return its durable identity");
+    }
+    const published = await observer.published;
+    if (published.delta !== stream.text) {
+      throw new Error("Published assistant prefix differed from the durable stream");
+    }
+    observer.close();
+    observer = null;
 
     await postDesktopFault(rendezvous.port, token, { control: "server-exit" });
     const recoveredLock = await waitForChangedServerLock(dataDir, initialLock, RECOVERY_TIMEOUT_MS);
@@ -92,17 +118,33 @@ export async function runPackagedReliabilityScenario() {
     if (persisted?.result?.appearance?.theme !== "dark") {
       throw new Error("Persisted settings sentinel was not retained after server recovery");
     }
+    const conversation = await rpc(recoveredLock, "message.list", { threadId: thread.id, limit: 10 });
+    const assistants = conversation?.result?.messages?.filter((message) => message.role === "assistant") ?? [];
+    if (assistants.length !== 1
+      || assistants[0].content !== stream.text
+      || assistants[0].outcome !== "interrupted"
+      || assistants[0].outcomeExecutionId !== stream.executionId) {
+      throw new Error("Recovered assistant prefix was not restored exactly once as Interrupted");
+    }
 
     return {
       initialServer: { pid: initialLock.pid, startedAt: initialLock.startedAt },
       recoveredServer: { pid: recoveredLock.pid, startedAt: recoveredLock.startedAt },
       persistedTheme: persisted.result.appearance.theme,
       mutationCount,
+      assistant: {
+        threadId: thread.id,
+        executionId: stream.executionId,
+        publishedPrefix: published.delta,
+        restoredPrefix: assistants[0].content,
+        outcome: assistants[0].outcome,
+      },
     };
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`${detail}\nPackaged Desktop output:\n${output.slice(-4_000)}`);
   } finally {
+    observer?.close();
     await cleanupOwnedRun(child, dataDir, runRoot, { expectedServerAuthToken: ownedServerAuthToken });
   }
 }
@@ -168,6 +210,59 @@ async function postDesktopFault(port, token, command) {
     signal: AbortSignal.timeout(5_000),
   });
   if (!response.ok) throw new Error(`Fault activation failed with HTTP ${response.status}`);
+  return response.json();
+}
+
+async function observeAgentText(lock, threadId) {
+  return new Promise((resolvePromise, reject) => {
+    const subscriptionId = randomUUID();
+    const ws = new WebSocket(`ws://127.0.0.1:${lock.port}/?token=${lock.authToken}`);
+    let resolved = false;
+    let receiveText;
+    const published = new Promise((resolveText, rejectText) => {
+      receiveText = resolveText;
+      const timeout = setTimeout(() => rejectText(new Error("Timed out waiting for published assistant text")), 10_000);
+      ws.addEventListener("close", () => clearTimeout(timeout), { once: true });
+    });
+    const timeout = setTimeout(() => {
+      ws.close();
+      reject(new Error("WebSocket subscription timed out"));
+    }, 10_000);
+    ws.addEventListener("open", () => {
+      ws.send(JSON.stringify({
+        id: subscriptionId,
+        method: "push.subscribeThread",
+        params: { threadId },
+      }));
+    });
+    ws.addEventListener("message", (event) => {
+      let message;
+      try {
+        message = JSON.parse(String(event.data));
+      } catch {
+        return;
+      }
+      if (message.id === subscriptionId) {
+        clearTimeout(timeout);
+        resolved = true;
+        resolvePromise({
+          published,
+          close: () => {
+            if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close();
+          },
+        });
+        return;
+      }
+      if (message.type === "push" && message.channel === "agent.event"
+        && message.data?.threadId === threadId && message.data?.type === "textDelta") {
+        receiveText({ delta: message.data.delta, sequence: message.data.sequence });
+      }
+    });
+    ws.addEventListener("error", () => {
+      clearTimeout(timeout);
+      if (!resolved) reject(new Error("WebSocket subscription failed"));
+    });
+  });
 }
 
 function rpc(lock, method, params, onMutation = () => undefined) {

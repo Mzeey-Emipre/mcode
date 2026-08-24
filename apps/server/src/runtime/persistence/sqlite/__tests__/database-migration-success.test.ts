@@ -21,6 +21,7 @@ const MIGRATIONS_THROUGH_0041 = "0041_index_completed_thread_cleanup";
 const SUBAGENT_IDENTITY_MIGRATION = "0042_supreme_terrax";
 const MESSAGE_OUTCOME_MIGRATION = "0043_massive_dazzler";
 const AUTOMATIC_SETUP_MIGRATION = "0044_small_prodigy";
+const ASSISTANT_TEXT_CHECKPOINT_MIGRATION = "0045_tiny_stardust";
 
 type JournalEntry = {
   idx: number;
@@ -150,6 +151,120 @@ describe("successful database migration recovery", () => {
       }]);
     } finally {
       database.close();
+    }
+  });
+
+  it("upgrades a production-shaped 0044 database without changing existing data", () => {
+    const currentMigrationsDirectory = join(process.cwd(), "drizzle");
+    const previousMigrationsDirectory = join(directory, "drizzle-through-0044");
+    copyMigrationsThrough(
+      currentMigrationsDirectory,
+      previousMigrationsDirectory,
+      AUTOMATIC_SETUP_MIGRATION,
+    );
+
+    const previousDatabase = new Database(databasePath, {
+      nativeBinding: resolveElectronNativeBinding(),
+    });
+    try {
+      migrate(drizzle(previousDatabase), {
+        migrationsFolder: migrationsFolderForDrizzle(previousMigrationsDirectory),
+      });
+      const timestamp = "2026-08-24T12:00:00.000Z";
+      previousDatabase.prepare(
+        "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+      ).run("workspace-production", "Production", "C:/production", timestamp, timestamp);
+      previousDatabase.prepare(
+        "INSERT INTO threads (id, workspace_id, title, branch, provider, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      ).run(
+        "thread-production",
+        "workspace-production",
+        "Existing thread",
+        "main",
+        "codex",
+        "active",
+        timestamp,
+        timestamp,
+      );
+      previousDatabase.prepare(
+        "INSERT INTO messages (id, thread_id, role, content, timestamp, sequence) VALUES (?, ?, ?, ?, ?, ?)",
+      ).run(
+        "message-production",
+        "thread-production",
+        "assistant",
+        "Existing production text",
+        timestamp,
+        1,
+      );
+    } finally {
+      previousDatabase.close();
+    }
+
+    process.env.MCODE_DRIZZLE_MIGRATIONS_DIR = currentMigrationsDirectory;
+    const upgradedDatabase = openDatabase({ dbPath: databasePath });
+    try {
+      expect(upgradedDatabase.prepare(`
+        SELECT id, thread_id, role, content, sequence
+        FROM messages
+        WHERE id = ?
+      `).get("message-production")).toEqual({
+        id: "message-production",
+        thread_id: "thread-production",
+        role: "assistant",
+        content: "Existing production text",
+        sequence: 1,
+      });
+      expect(columnNames(upgradedDatabase, "parent_assistant_text_checkpoints")).toEqual([
+        "execution_id",
+        "thread_id",
+        "turn_id",
+        "last_sequence",
+        "retained_bytes",
+        "retained_chunks",
+        "updated_at",
+      ]);
+      expect(columnNames(upgradedDatabase, "parent_assistant_text_checkpoint_chunks")).toEqual([
+        "execution_id",
+        "first_sequence",
+        "last_sequence",
+        "text",
+        "byte_length",
+      ]);
+      expect(upgradedDatabase.prepare(
+        "PRAGMA foreign_key_list(parent_assistant_text_checkpoint_chunks)",
+      ).all()).toEqual([
+        expect.objectContaining({
+          table: "parent_assistant_text_checkpoints",
+          from: "execution_id",
+          to: "execution_id",
+          on_delete: "CASCADE",
+        }),
+      ]);
+      const migration = migrationEntry(
+        currentMigrationsDirectory,
+        ASSISTANT_TEXT_CHECKPOINT_MIGRATION,
+      );
+      expect(upgradedDatabase.prepare(
+        "SELECT created_at FROM __drizzle_migrations WHERE hash = ?",
+      ).all(migrationHash(currentMigrationsDirectory, ASSISTANT_TEXT_CHECKPOINT_MIGRATION))).toEqual([
+        { created_at: migration.when },
+      ]);
+    } finally {
+      upgradedDatabase.close();
+    }
+
+    const reopenedDatabase = openDatabase({ dbPath: databasePath });
+    try {
+      expect(reopenedDatabase.prepare(
+        "SELECT COUNT(*) AS count FROM __drizzle_migrations WHERE hash = ?",
+      ).get(migrationHash(currentMigrationsDirectory, ASSISTANT_TEXT_CHECKPOINT_MIGRATION))).toEqual({
+        count: 1,
+      });
+      expect(reopenedDatabase.prepare(
+        "SELECT content FROM messages WHERE id = ?",
+      ).get("message-production")).toEqual({ content: "Existing production text" });
+    } finally {
+      reopenedDatabase.close();
     }
   });
 

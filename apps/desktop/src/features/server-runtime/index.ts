@@ -9,7 +9,9 @@ import { ServerNotifications } from "./recovery/notifications.js";
 import {
   ReliabilityHarnessControlPlane,
   readReliabilityHarnessCapability,
+  readReliabilityHarnessForwardResponse,
   type ReliabilityHarnessCommand,
+  type ReliabilityHarnessForwardResult,
 } from "./reliability-harness/control.js";
 
 interface ServerRuntimeWebContents {
@@ -219,7 +221,13 @@ export class ServerRuntime {
     await this.serverManager.restart();
   }
 
-  private async forwardServerFault(command: ReliabilityHarnessCommand, token: string): Promise<void> {
+  private async forwardServerFault(
+    command: ReliabilityHarnessCommand,
+    token: string,
+  ): Promise<ReliabilityHarnessForwardResult> {
+    if (command.control === "planned-restart") {
+      throw new Error("Planned restart is not a server fault");
+    }
     if (!this.serverManager.port || !this.serverManager.authToken) {
       throw new Error("Server is not ready for reliability control");
     }
@@ -234,6 +242,7 @@ export class ServerRuntime {
       signal: AbortSignal.timeout(5_000),
     });
     if (!response.ok) throw new Error(`Reliability server control failed with HTTP ${response.status}`);
+    return readReliabilityHarnessForwardResponse(response, command);
   }
 
   /** Return the server port used by close confirmation health checks. */

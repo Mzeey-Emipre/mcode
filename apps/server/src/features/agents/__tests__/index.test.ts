@@ -9,6 +9,7 @@ describe("agents feature boundary", () => {
       "AgentService",
       "CanonicalAgentEventSink",
       "DelegationTargetResolver",
+      "ParentAssistantTextCheckpointService",
       "TurnRecoveryService",
       "publishCanonicalAgentEvents",
       "startAgentOrchestration",

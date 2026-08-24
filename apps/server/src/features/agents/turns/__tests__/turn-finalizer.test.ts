@@ -8,7 +8,8 @@ import { ToolCallRecordRepo } from "../../tools/persistence/tool-call-record-rep
 import { ThoughtSegmentRepo } from "../../conversation/narrative/persistence/thought-segment-repo.js";
 import { HookExecutionRepo } from "../../events/persistence/hook-execution-repo.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
-import { TurnFinalizer, deriveTurnAssistantMessageId } from "../turn-finalizer.js";
+import { TurnFinalizer } from "../turn-finalizer.js";
+import { deriveTurnAssistantMessageId } from "../turn-assistant-message-id.js";
 import { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
 import type { SnapshotService } from "../../../projects/diffs/snapshots/snapshot-service.js";
 import { TurnSnapshotRepo } from "../persistence/turn-snapshot-repo.js";
@@ -16,6 +17,7 @@ import type { TurnOutcome } from "../turn-outcome.js";
 import type { TurnFileTracker } from "../turn-file-tracker.js";
 import { broadcast } from "../../../../application/transport/push.js";
 import { CanonicalAgentEventSink } from "../../canonical/canonical-agent-event-sink.js";
+import { ParentAssistantTextCheckpointService } from "../parent-assistant-text-checkpoint-service.js";
 
 vi.mock("../../../../application/transport/push.js", () => ({ broadcast: vi.fn() }));
 
@@ -365,6 +367,7 @@ describe("TurnFinalizer canonical commit recovery", () => {
       providerIdentities: [],
       projectUserMessage: () => messageRepo.create(THREAD, "user", "question", 1),
     });
+    const checkpoints = new ParentAssistantTextCheckpointService(db);
     const finalizer = new TurnFinalizer(
       messageRepo,
       threadRepo,
@@ -374,6 +377,7 @@ describe("TurnFinalizer canonical commit recovery", () => {
       db,
       undefined,
       sink,
+      checkpoints,
     );
     finalizer.bufferAssistantBody(THREAD, "answer", "claude-sonnet-4-6");
     narrativeStore.beginTurn(THREAD);
@@ -385,8 +389,24 @@ describe("TurnFinalizer canonical commit recovery", () => {
         toolInput: { path: `file-${index}.md` },
       });
     }
-    return { db, finalizer, messageRepo, sink };
+    return { db, finalizer, messageRepo, sink, checkpoints };
   }
+
+  it("retires provisional text only after the canonical terminal commit", async () => {
+    const { finalizer, sink, checkpoints } = buildCanonicalHarness();
+    checkpoints.appendChunk([{
+      executionId,
+      threadId: THREAD,
+      turnId,
+      sequence: 1,
+      text: "answer",
+    }]);
+
+    await finalizer.finalize(THREAD, "completed", Promise.resolve(), executionId);
+
+    expect(sink.loadCheckpoint(executionId)?.terminalOutcome).toBe("completed");
+    expect(checkpoints.restore(executionId)).toBe("");
+  });
 
   it("retains volatile buffers when the canonical transaction rolls back", async () => {
     const { db, finalizer, messageRepo, sink } = buildCanonicalHarness();

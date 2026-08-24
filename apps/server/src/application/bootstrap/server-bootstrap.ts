@@ -373,7 +373,9 @@ const recapService = container.resolve(RecapService);
 const handoffStorage = container.resolve(HandoffStorage);
 const handoffCheckoutService = container.resolve(HandoffCheckoutService);
 const db = container.resolve<Database.Database>("Database");
-const reliabilityHarness = createReliabilityHarnessAdapter(db);
+const reliabilityHarness = createReliabilityHarnessAdapter(db, undefined, {
+  streamAssistant: (threadId) => agentService.streamReliabilityAssistantText(threadId),
+});
 const jobObject = container.resolve<JobObject>("JobObject");
 
 const portPush = new PortPush();

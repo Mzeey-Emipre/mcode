@@ -35,6 +35,81 @@ describe("reliability harness server adapter", () => {
     expect(database.pragma).not.toHaveBeenCalled();
   });
 
+  it("publishes a deterministic assistant prefix only after capability authentication", async () => {
+    const streamAssistant = vi.fn(() => ({
+      threadId: "thread-reliability",
+      executionId: "00000000-0000-4000-8000-000000000001",
+      text: "Durable assistant prefix for restart recovery.",
+    }));
+    const adapter = createReliabilityHarnessAdapter(databaseStub(), {
+      version: 1,
+      token: "d".repeat(64),
+      runId: "run-4",
+    }, { streamAssistant });
+
+    await adapter.handleRequest(
+      requestStub(JSON.stringify({ control: "assistant-stream", threadId: "thread-reliability" }), "wrong-token"),
+      responseStub(),
+      new Set() as never,
+    );
+    expect(streamAssistant).not.toHaveBeenCalled();
+
+    const response = responseStub();
+    await adapter.handleRequest(
+      requestStub(JSON.stringify({ control: "assistant-stream", threadId: "thread-reliability" }), "d".repeat(64)),
+      response,
+      new Set() as never,
+    );
+
+    expect(streamAssistant).toHaveBeenCalledWith("thread-reliability");
+    expect(JSON.parse(response.end.mock.calls[0]![0])).toEqual({
+      accepted: true,
+      control: "assistant-stream",
+      stream: {
+        threadId: "thread-reliability",
+        executionId: "00000000-0000-4000-8000-000000000001",
+        text: "Durable assistant prefix for restart recovery.",
+      },
+    });
+  });
+
+  it("rejects malformed assistant stream commands before invocation", async () => {
+    const streamAssistant = vi.fn();
+    const adapter = createReliabilityHarnessAdapter(databaseStub(), {
+      version: 1,
+      token: "e".repeat(64),
+      runId: "run-5",
+    }, { streamAssistant });
+    const response = responseStub();
+
+    await adapter.handleRequest(
+      requestStub(JSON.stringify({ control: "assistant-stream", threadId: "" }), "e".repeat(64)),
+      response,
+      new Set() as never,
+    );
+
+    expect(response.writeHead).toHaveBeenCalledWith(400);
+    expect(streamAssistant).not.toHaveBeenCalled();
+  });
+
+  it("returns a bounded failure when assistant stream setup throws", async () => {
+    const adapter = createReliabilityHarnessAdapter(databaseStub(), {
+      version: 1,
+      token: "f".repeat(64),
+      runId: "run-6",
+    }, { streamAssistant: () => { throw new Error("internal detail"); } });
+    const response = responseStub();
+
+    await adapter.handleRequest(
+      requestStub(JSON.stringify({ control: "assistant-stream", threadId: "thread-reliability" }), "f".repeat(64)),
+      response,
+      new Set() as never,
+    );
+
+    expect(response.writeHead).toHaveBeenCalledWith(500);
+    expect(response.end).toHaveBeenCalledWith("Reliability control failed");
+  });
+
   it("activates persistence failure at the database boundary", async () => {
     const database = databaseStub();
     const adapter = createReliabilityHarnessAdapter(database, {

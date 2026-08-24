@@ -410,6 +410,50 @@ describe("CanonicalAgentEventSink", () => {
     ]);
   });
 
+  it("makes a staged recovered assistant message visible in the interruption commit", () => {
+    const messageRepo = new MessageRepo(db);
+    sink.startParentTurn({
+      thread: {
+        id: THREAD_ID,
+        workspaceId: "workspace-1",
+        providerId: "codex",
+        createdAt: NOW,
+      },
+      turnId: TURN_ID,
+      executionId: EXECUTION_ID,
+      permissionMode: "supervised",
+      providerIdentities: [identity()],
+      projectUserMessage: () => messageRepo.create(THREAD_ID, "user", "recover this", 1),
+    });
+    const staged = messageRepo.createAssistantIdempotent({
+      id: "staged-recovery-message",
+      threadId: THREAD_ID,
+      content: "first durable chunk, then second.",
+      sequence: 2,
+      isInternal: true,
+    });
+
+    sink.interruptUnfinishedExecution(
+      EXECUTION_ID,
+      "The provider could not prove that this execution was still active after restart.",
+      staged,
+    );
+
+    expect(messageRepo.findById(staged.id)).toMatchObject({
+      content: "first durable chunk, then second.",
+      is_internal: false,
+      outcome: "interrupted",
+      outcomeExecutionId: EXECUTION_ID,
+    });
+    expect(sink.loadTerminalProjection(TURN_ID).message).toMatchObject({
+      id: staged.id,
+      content: "first durable chunk, then second.",
+      is_internal: false,
+      outcome: "interrupted",
+      outcomeExecutionId: EXECUTION_ID,
+    });
+  });
+
   it.each([MAX_TURN_RECOVERIES - 1, MAX_TURN_RECOVERIES])(
     "loads %i unfinished checkpoints within the recovery bound",
     (count) => {
