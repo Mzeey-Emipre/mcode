@@ -25,6 +25,7 @@ import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/can
 import { CanonicalAgentEventSink } from "../../canonical/canonical-agent-event-sink.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
 import { PlanQuestionService } from "../../planning/plan-question-service.js";
+import { ParentAssistantTextCheckpointService } from "../../turns/parent-assistant-text-checkpoint-service.js";
 import { broadcast } from "../../../../application/transport/push.js";
 import type { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
 import type { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
@@ -320,6 +321,7 @@ function buildService(
       { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../events/persistence/hook-execution-repo.js").HookExecutionRepo,
       ),
       new PlanQuestionService(messageRepo, planQuestionAnswersRepo),
+      new ParentAssistantTextCheckpointService(db),
       undefined,
       undefined,
       mutationReservations,
@@ -1251,6 +1253,7 @@ describe("AgentService Ended finalization", () => {
       { issue: vi.fn(), tryConsume: vi.fn(() => false), clear: vi.fn(), hasActiveGrant: vi.fn(() => false) } as any,
       new NarrativeStore(messageRepo, toolCallRecordRepo, thoughtSegmentRepo, hookExecutionRepo),
       new PlanQuestionService(messageRepo, planQuestionAnswersRepo),
+      new ParentAssistantTextCheckpointService(db),
       undefined,
       undefined,
       undefined,
@@ -1636,7 +1639,7 @@ describe("AgentService Ended finalization", () => {
     const recovery = new TurnRecoveryService(canonicalSink, threadRepo, {
       persist: vi.fn(() => Promise.resolve({ stored: [], persisted: [] })),
       prepareRetryAttachments: vi.fn(() => []),
-    } as unknown as AttachmentService);
+    } as unknown as AttachmentService, new ParentAssistantTextCheckpointService(db), messageRepo);
     const dispatch = vi.fn(async () => undefined);
     await recovery.retry(executionId, dispatch);
     expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({

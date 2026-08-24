@@ -1,5 +1,8 @@
 import { inject, injectable } from "tsyringe";
 import { CanonicalAgentEventSink } from "../canonical/canonical-agent-event-sink.js";
+import { MessageRepo } from "../conversation/persistence/message-repo.js";
+import { ParentAssistantTextCheckpointService } from "../turns/parent-assistant-text-checkpoint-service.js";
+import { deriveTurnAssistantMessageId } from "../turns/turn-assistant-message-id.js";
 import { ThreadRepo } from "../../thread-control/persistence/thread-repo.js";
 import { AttachmentService } from "../../attachments/storage/attachment-service.js";
 import type { SendMessageCommand } from "../orchestration/agent-service.js";
@@ -15,21 +18,62 @@ export class TurnRecoveryService {
     @inject(CanonicalAgentEventSink) private readonly canonicalSink: CanonicalAgentEventSink,
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
     @inject(AttachmentService) private readonly attachmentService: AttachmentService,
+    @inject(ParentAssistantTextCheckpointService)
+    private readonly parentAssistantTextCheckpoints: ParentAssistantTextCheckpointService,
+    @inject(MessageRepo) private readonly messageRepo: MessageRepo,
   ) {}
 
   /** Interrupt executions for which no current provider can prove the exact live execution. */
   reconcileOnStartup(): { interrupted: string[] } {
+    this.parentAssistantTextCheckpoints.retireTerminalCheckpoints();
     const interrupted: string[] = [];
     for (const checkpoint of this.canonicalSink.listUnfinishedCheckpoints()) {
+      const checkpointChunks = this.parentAssistantTextCheckpoints.restoreChunks(checkpoint.executionId);
+      const canonicalAssistant = this.canonicalSink.loadTerminalProjection(checkpoint.turnId).message;
+      const recoveredText = canonicalAssistant
+        ? ""
+        : checkpointChunks.map((chunk) => chunk.text).join("");
+      const stagedAssistant = recoveredText.length > 0
+        ? this.stageRecoveredAssistantText(checkpoint.threadId, checkpoint.executionId, recoveredText)
+        : undefined;
       this.canonicalSink.markUnresolvedCodexChildDeliveriesUnknown(checkpoint.executionId);
       this.canonicalSink.interruptUnfinishedExecution(
         checkpoint.executionId,
         UNPROVED_EXECUTION_REASON,
+        stagedAssistant,
       );
+      if (checkpointChunks.length > 0 && !this.parentAssistantTextCheckpoints.retire(checkpoint.executionId)) {
+        throw new Error(`Recovered assistant text checkpoint was not retired: ${checkpoint.executionId}`);
+      }
       this.threadRepo.updateStatus(checkpoint.threadId, "interrupted");
       interrupted.push(checkpoint.executionId);
     }
     return { interrupted };
+  }
+
+  /** Stage exact recovered text before the canonical interruption makes it visible. */
+  private stageRecoveredAssistantText(threadId: string, executionId: string, content: string) {
+    const sequence = this.messageRepo.getLatestSequenceIncludingInternal(threadId) + 1;
+    const messageId = deriveTurnAssistantMessageId(
+      threadId,
+      `recovery:${executionId}`,
+    );
+    this.messageRepo.createAssistantIdempotent({
+      id: messageId,
+      threadId,
+      content,
+      sequence,
+      model: this.threadRepo.findById(threadId)?.model ?? null,
+      isInternal: true,
+    });
+    const staged = this.messageRepo
+      .listIncludingInternal(threadId)
+      .find((message) => message.id === messageId);
+    if (!staged) throw new Error(`Recovered assistant message was not staged: ${messageId}`);
+    if (staged.content !== content) {
+      throw new Error(`Recovered assistant text conflicts with staged message: ${messageId}`);
+    }
+    return staged;
   }
 
   /** List explicit actions for interrupted and errored executions. */

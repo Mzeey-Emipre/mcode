@@ -59,6 +59,11 @@ import { MessageRepo } from "../conversation/persistence/message-repo.js";
 import { HookExecutionRepo, type CreateHookExecutionInput } from "../events/persistence/hook-execution-repo.js";
 import { NarrativeStore } from "../conversation/narrative/narrative-store.js";
 import { TurnFinalizer } from "../turns/turn-finalizer.js";
+import {
+  ParentAssistantTextCheckpointQueue,
+  ParentAssistantTextCheckpointService,
+  PARENT_ASSISTANT_TEXT_QUEUE_POLICY,
+} from "../turns/parent-assistant-text-checkpoint-service.js";
 import { TurnFileTracker } from "../turns/turn-file-tracker.js";
 import { PlanQuestionService } from "../planning/plan-question-service.js";
 import { TurnSnapshotRepo } from "../turns/persistence/turn-snapshot-repo.js";
@@ -118,7 +123,6 @@ export function usesInternalThreadControlMcp(provider: string): provider is Prov
 }
 
 const FILE_INJECTION_SEPARATOR = "\n\n---\n";
-
 type RetryDispatchIdentity = Readonly<{
   mutationReservationToken: string;
   generation: number;
@@ -287,6 +291,8 @@ export class AgentService {
   private readonly activeSessionIds = new Set<string>();
   private readonly nativeGoalRefreshInFlight = new Set<string>();
   private initialized = false;
+  /** Production publication callback reused by the private reliability seam. */
+  private providerEventPublisher: ((event: AgentEvent) => void) | undefined;
   /** Running context token estimate, per thread. Reset on compaction start; overwritten on turnComplete. */
   private lastContextByThread = new Map<string, number>();
   /** Most recent SDK-reported context window size, per thread. */
@@ -426,6 +432,10 @@ export class AgentService {
   private readonly turnGenerations = new Map<string, number>();
   private readonly mutationReservations: ThreadControlMutationReservationService;
   private readonly canonicalSink: CanonicalAgentEventSink;
+  private readonly parentAssistantTextCheckpoints: ParentAssistantTextCheckpointService;
+  private readonly parentAssistantTextCheckpointQueue: ParentAssistantTextCheckpointQueue;
+  private readonly parentTextTurnIdByExecution = new Map<string, string>();
+  private readonly parentTextSequenceByExecution = new Map<string, number>();
 
   constructor(
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
@@ -459,6 +469,8 @@ export class AgentService {
     private readonly narrativeStore: NarrativeStore,
     @inject(PlanQuestionService)
     private readonly planQuestionService: PlanQuestionService,
+    @inject(ParentAssistantTextCheckpointService)
+    parentAssistantTextCheckpoints: ParentAssistantTextCheckpointService,
     @inject(FileService) private readonly fileService?: FileService,
     @inject(delay(() => InternalThreadControlMcpRuntime))
     private readonly threadControlMcp?: InternalThreadControlMcpRuntime,
@@ -476,6 +488,11 @@ export class AgentService {
     );
     this.mutationReservations = mutationReservations ?? new ThreadControlMutationReservationService();
     this.canonicalSink = canonicalSink ?? new CanonicalAgentEventSink(this.db);
+    this.parentAssistantTextCheckpoints = parentAssistantTextCheckpoints;
+    this.parentAssistantTextCheckpointQueue = new ParentAssistantTextCheckpointQueue(
+      this.parentAssistantTextCheckpoints,
+      PARENT_ASSISTANT_TEXT_QUEUE_POLICY,
+    );
     this.turnFileTracker = new TurnFileTracker(
       (cwd, ref, path) => this.snapshotService.getFileAtRef(cwd, ref, path),
       (threadId, turnId, summary) => {
@@ -491,6 +508,7 @@ export class AgentService {
       this.db,
       this.turnFileTracker,
       this.canonicalSink,
+      this.parentAssistantTextCheckpoints,
     );
     this.goalCommand = new GoalCommand(
       { messageRepo: this.messageRepo, db: this.db },
@@ -889,6 +907,8 @@ export class AgentService {
         return message;
       },
     });
+    this.parentTextTurnIdByExecution.set(turnExecutionId, sourceTurnId);
+    this.parentTextSequenceByExecution.set(turnExecutionId, 0);
 
     if (reopenedThread) {
       broadcast("thread.lifecycleChanged", { thread: reopenedThread });
@@ -2770,6 +2790,10 @@ export class AgentService {
       });
     this.fileTrackingFinalizationByThread.set(threadId, finalize);
     void finalize.finally(() => {
+      if (finalizedExecutionId) {
+        this.parentTextTurnIdByExecution.delete(finalizedExecutionId);
+        this.parentTextSequenceByExecution.delete(finalizedExecutionId);
+      }
       if (this.finalResponseExecutionByThread.get(threadId) === finalizedExecutionId) {
         this.finalResponseExecutionByThread.delete(threadId);
       }
@@ -2861,6 +2885,7 @@ export class AgentService {
       });
       dispatch.attempt += 1;
       dispatch.turnRequest = { ...dispatch.turnRequest, resumeFrom: undefined };
+      this.resetParentAssistantTextForRetry(threadId, dispatch.turnRequest.turnExecutionId);
       this.endedSuppressionThreads.delete(threadId);
       dispatch.sendTurnInFlight = true;
       try {
@@ -2989,6 +3014,7 @@ export class AgentService {
   init(onProviderEvent?: (event: AgentEvent) => void): void {
     if (this.initialized) return;
     this.initialized = true;
+    this.providerEventPublisher = onProviderEvent;
 
     this.memoryPressureService.onPressureChange((snapshot) => {
       this.handleMemoryPressure(snapshot);
@@ -3726,24 +3752,147 @@ export class AgentService {
           return true;
         }
       };
-      const handleEvent = (event: AgentEvent, publish = true): void => {
-        const normalizedEvent = this.prepareProviderEvent(event);
-        if (!normalizedEvent) return;
+      const publishEvent = (event: AgentEvent): void => {
+        const publishedEvent = event.type === AgentEventType.Ended
+          && event.outcome === "cancelled"
+          ? { ...event, outcome: "interrupted" as const }
+          : event;
+        onProviderEvent?.(publishedEvent);
+      };
+      const processNormalizedEvent = (normalizedEvent: AgentEvent, publish: boolean): void => {
         const accepted = handleNormalizedEvent(normalizedEvent);
         const terminalEvent = normalizedEvent.type === AgentEventType.TurnComplete
           || normalizedEvent.type === AgentEventType.Error
           || normalizedEvent.type === AgentEventType.Ended;
         if (terminalEvent && accepted !== true) return;
-        if (publish) {
-          const publishedEvent = normalizedEvent.type === AgentEventType.Ended
-            && normalizedEvent.outcome === "cancelled"
-            ? { ...normalizedEvent, outcome: "interrupted" as const }
-            : normalizedEvent;
-          onProviderEvent?.(publishedEvent);
+        if (publish) publishEvent(normalizedEvent);
+      };
+      const handleEvent = (event: AgentEvent, publish = true): void => {
+        const normalizedEvent = this.prepareProviderEvent(event);
+        if (!normalizedEvent) return;
+        if (publish
+          && onProviderEvent
+          && normalizedEvent.type === AgentEventType.TextDelta
+          && normalizedEvent.isFinalResponse !== false
+          && normalizedEvent.turnExecutionId) {
+          const queued = this.queueParentAssistantText(
+            normalizedEvent,
+            () => processNormalizedEvent(normalizedEvent, true),
+          );
+          if (queued !== undefined) return;
         }
+        if (publish && !this.parentAssistantTextCheckpointQueue.flushThread(normalizedEvent.threadId)) return;
+        processNormalizedEvent(normalizedEvent, publish);
       };
       provider.on("event", handleEvent);
     }
+  }
+
+  /** Publish one unfinished deterministic assistant prefix for the private reliability harness. */
+  streamReliabilityAssistantText(threadId: string): { threadId: string; executionId: string; text: string } {
+    if (!this.providerEventPublisher) {
+      throw new Error("Agent event publication is unavailable for reliability streaming");
+    }
+    const thread = this.threadRepo.findById(threadId);
+    if (!thread) throw new Error(`Reliability stream thread not found: ${threadId}`);
+    if (!this.reserveTurn(threadId)) throw new Error(`Thread ${threadId} already has an active agent session`);
+
+    const text = "Durable assistant prefix for restart recovery.";
+    const executionId = this.turnRuntime.start(threadId).turnExecutionId!;
+    try {
+      const sequence = this.messageRepo.getLatestSequenceIncludingInternal(threadId) + 1;
+      this.canonicalSink.startParentTurn({
+        thread: {
+          id: thread.id,
+          workspaceId: thread.workspace_id,
+          providerId: thread.provider,
+          createdAt: thread.created_at,
+        },
+        turnId: randomUUID(),
+        executionId,
+        permissionMode: "supervised",
+        providerIdentities: [],
+        projectUserMessage: () => this.messageRepo.create(
+          threadId,
+          "user",
+          "Reliability harness assistant stream",
+          sequence,
+        ),
+      });
+      const event: AgentEvent = {
+        type: AgentEventType.TextDelta,
+        threadId,
+        turnExecutionId: executionId,
+        delta: text,
+        isFinalResponse: true,
+      };
+      if (!this.queueParentAssistantText(event, () => {
+        this.turnFinalizer.appendStreamingText(threadId, text);
+        this.providerEventPublisher?.(event);
+      })) {
+        throw new Error("Reliability assistant text could not be queued");
+      }
+      if (!this.parentAssistantTextCheckpointQueue.flush(executionId)) {
+        throw new Error("Reliability assistant text could not be checkpointed");
+      }
+      return { threadId, executionId, text };
+    } catch (error) {
+      if (this.activeSessionIds.delete(threadId)) this.memoryPressureService.markIdle(threadId);
+      throw error;
+    }
+  }
+
+  /** Queue visible candidate response text until its durable chunk commits. */
+  private queueParentAssistantText(
+    event: Extract<AgentEvent, { type: typeof AgentEventType.TextDelta }>,
+    publish: () => void,
+  ): boolean | undefined {
+    const executionId = event.turnExecutionId;
+    if (!executionId || event.delta.length === 0) return undefined;
+    let turnId = this.parentTextTurnIdByExecution.get(executionId);
+    if (!turnId) {
+      turnId = this.canonicalSink.loadTurnByExecution(executionId)?.id;
+      if (!turnId) return undefined;
+      this.parentTextTurnIdByExecution.set(executionId, turnId);
+      const chunks = this.parentAssistantTextCheckpoints.restoreChunks(executionId);
+      this.parentTextSequenceByExecution.set(executionId, chunks.at(-1)?.lastSequence ?? 0);
+    }
+    const sequence = (this.parentTextSequenceByExecution.get(executionId) ?? 0) + 1;
+    this.parentTextSequenceByExecution.set(executionId, sequence);
+    return this.parentAssistantTextCheckpointQueue.enqueue({
+      input: {
+        executionId,
+        threadId: event.threadId,
+        turnId,
+        sequence,
+        text: event.delta,
+      },
+      publish,
+      fail: (reason) => this.interruptForParentAssistantTextCheckpointFailure(event, reason),
+    });
+  }
+
+  private resetParentAssistantTextForRetry(threadId: string, executionId: string): void {
+    this.parentAssistantTextCheckpointQueue.discard(executionId);
+    if (this.canonicalSink.loadCheckpoint(executionId)) {
+      this.parentAssistantTextCheckpoints.reset(executionId);
+    }
+    this.parentTextSequenceByExecution.set(executionId, 0);
+    this.turnFinalizer.resetStreamingText(threadId);
+  }
+
+  /** Stop a turn whose visible assistant text cannot be made durable. */
+  private interruptForParentAssistantTextCheckpointFailure(event: AgentEvent, reason: string): void {
+    const executionId = event.turnExecutionId;
+    if (!executionId || !this.turnRuntime.terminalize(event.threadId, executionId, "interrupted")) return;
+    logger.error("Parent assistant text checkpoint failed", {
+      threadId: event.threadId,
+      turnExecutionId: executionId,
+      reason,
+    });
+    void this.finalizeTerminalTurn(event.threadId, "interrupted", "assistant text checkpoint failure");
+    this.trackSessionEnded(event.threadId);
+    this.disarmTurnRetryWindow(event.threadId);
   }
 
   private startCodexChildFromProviderEvent(

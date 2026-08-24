@@ -13,6 +13,9 @@ export { publishCanonicalAgentEvents } from "./canonical/canonical-agent-event-s
 /** Reconciles unfinished agent turns after a server restart. */
 export { TurnRecoveryService } from "./recovery/turn-recovery-service.js";
 
+/** Persists temporary durable text for unfinished parent assistant responses. */
+export { ParentAssistantTextCheckpointService } from "./turns/parent-assistant-text-checkpoint-service.js";
+
 /** Starts agent execution and normalized provider-event publication. */
 export { startAgentOrchestration } from "./orchestration/start-agent-orchestration.js";
 

@@ -3,11 +3,12 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EventEmitter } from "events";
 import type Database from "better-sqlite3";
 import { AgentEventType } from "@mcode/contracts";
-import type { Thread, IProviderRegistry, Message } from "@mcode/contracts";
+import type { Thread, IProviderRegistry, Message, AgentEvent } from "@mcode/contracts";
 import { AgentService } from "../agent-service.js";
 import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/canonical-agent-event-sink-stub.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
 import { PlanQuestionService } from "../../planning/plan-question-service.js";
+import { ParentAssistantTextCheckpointService } from "../../turns/parent-assistant-text-checkpoint-service.js";
 import { CanonicalAgentEventSink } from "../../canonical/canonical-agent-event-sink.js";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { isTurnScopedEvent } from "../../turns/turn-runtime.js";
@@ -88,7 +89,11 @@ interface Built {
   narrativeStore: NarrativeStore;
 }
 
-function build(options: { db?: Database.Database; canonicalSink?: CanonicalAgentEventSink } = {}): Built {
+function build(options: {
+  db?: Database.Database;
+  canonicalSink?: CanonicalAgentEventSink;
+  onProviderEvent?: (event: AgentEvent) => void;
+} = {}): Built {
   const thread = makeThread();
   const providerEmitter = new EventEmitter();
   (providerEmitter as any).sendTurn = vi.fn(() => Promise.resolve());
@@ -223,12 +228,13 @@ function build(options: { db?: Database.Database; canonicalSink?: CanonicalAgent
       { issue: vi.fn(), tryConsume: vi.fn(() => false), clear: vi.fn(), hasActiveGrant: vi.fn(() => false) } as any,
       narrativeStore,
       new PlanQuestionService(messageRepo, planQuestionAnswersRepo),
+      new ParentAssistantTextCheckpointService(db),
       undefined,
       undefined,
       undefined,
       canonicalSink,
   );
-  service.init();
+  service.init(options.onProviderEvent);
   // Provider adapters always stamp turn-scoped events with the active execution
   // identity. Keep this fixture aligned with that production boundary while
   // leaving each test focused on the narrative payload it emits.
@@ -273,6 +279,130 @@ function build(options: { db?: Database.Database; canonicalSink?: CanonicalAgent
 describe("AgentService narrative persistence", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("keeps published response-candidate text durable after a non-final boundary", () => {
+    const db = openMemoryDatabase();
+    const now = "2026-08-24T10:00:00.000Z";
+    db.prepare(
+      "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    ).run("ws-1", "Workspace", "/workspace", now, now);
+    db.prepare(
+      "INSERT INTO threads (id, workspace_id, title, branch, provider, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(THREAD_ID, "ws-1", "Parent", "main", "claude", "active", now, now);
+    const canonicalSink = new CanonicalAgentEventSink(db, vi.fn());
+    const published: AgentEvent[] = [];
+    const { providerEmitter, service } = build({
+      db,
+      canonicalSink,
+      onProviderEvent: (event) => published.push(event),
+    });
+    const executionId = (service as unknown as {
+      turnRuntime: { snapshot: (threadId: string) => { turnExecutionId: string } | undefined };
+    }).turnRuntime.snapshot(THREAD_ID)!.turnExecutionId;
+    const messages = new SqliteMessageRepo(db);
+    canonicalSink.startParentTurn({
+      thread: { id: THREAD_ID, workspaceId: "ws-1", providerId: "claude", createdAt: now },
+      turnId: "turn-durable-text",
+      executionId,
+      permissionMode: "supervised",
+      providerIdentities: [],
+      projectUserMessage: () => messages.create(THREAD_ID, "user", "start", 1),
+    });
+
+    vi.useFakeTimers();
+    try {
+      providerEmitter.emit("event", {
+        type: AgentEventType.TextDelta,
+        threadId: THREAD_ID,
+        turnExecutionId: executionId,
+        delta: "durable ",
+      });
+      providerEmitter.emit("event", {
+        type: AgentEventType.TextDelta,
+        threadId: THREAD_ID,
+        turnExecutionId: executionId,
+        delta: "text",
+      });
+
+      expect(published).toEqual([]);
+      expect(db.prepare(
+        "SELECT text FROM parent_assistant_text_checkpoint_chunks WHERE execution_id = ?",
+      ).all(executionId)).toEqual([]);
+
+      providerEmitter.emit("event", {
+        type: AgentEventType.AssistantMessageBoundary,
+        threadId: THREAD_ID,
+        turnExecutionId: executionId,
+        isFinalResponse: false,
+      });
+
+      expect(published
+        .filter((event) => event.type === AgentEventType.TextDelta)
+        .map((event) => event.delta))
+        .toEqual(["durable ", "text"]);
+      expect(db.prepare(`
+        SELECT first_sequence, last_sequence, text
+        FROM parent_assistant_text_checkpoint_chunks
+        WHERE execution_id = ?
+      `).all(executionId)).toEqual([{
+        first_sequence: 1,
+        last_sequence: 2,
+        text: "durable text",
+      }]);
+      expect(db.prepare(
+        "SELECT retained_bytes FROM parent_assistant_text_checkpoints WHERE execution_id = ?",
+      ).get(executionId)).toEqual({ retained_bytes: 12 });
+    } finally {
+      vi.useRealTimers();
+      db.close();
+    }
+  });
+
+  it("commits and publishes the private unfinished reliability prefix", () => {
+    const db = openMemoryDatabase();
+    const now = "2026-08-24T10:00:00.000Z";
+    db.prepare(
+      "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    ).run("ws-1", "Workspace", "/workspace", now, now);
+    db.prepare(
+      "INSERT INTO threads (id, workspace_id, title, branch, provider, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(THREAD_ID, "ws-1", "Parent", "main", "claude", "active", now, now);
+    const canonicalSink = new CanonicalAgentEventSink(db, vi.fn());
+    const published: AgentEvent[] = [];
+    const { service } = build({
+      db,
+      canonicalSink,
+      onProviderEvent: (event) => published.push(event),
+    });
+    (service as unknown as { messageRepo: MessageRepo }).messageRepo = new SqliteMessageRepo(db);
+
+    try {
+      const stream = service.streamReliabilityAssistantText(THREAD_ID);
+
+      expect(stream).toMatchObject({
+        threadId: THREAD_ID,
+        text: "Durable assistant prefix for restart recovery.",
+      });
+      expect(published).toEqual([{
+        type: AgentEventType.TextDelta,
+        threadId: THREAD_ID,
+        turnExecutionId: stream.executionId,
+        delta: stream.text,
+        isFinalResponse: true,
+      }]);
+      expect(db.prepare(`
+        SELECT first_sequence, last_sequence, text
+        FROM parent_assistant_text_checkpoint_chunks
+        WHERE execution_id = ?
+      `).all(stream.executionId)).toEqual([{
+        first_sequence: 1,
+        last_sequence: 1,
+        text: stream.text,
+      }]);
+    } finally {
+      db.close();
+    }
   });
 
   it("persists TaskCreate at result time keyed by the harness-assigned id", () => {

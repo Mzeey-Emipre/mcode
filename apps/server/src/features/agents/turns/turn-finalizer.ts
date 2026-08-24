@@ -17,7 +17,6 @@
  * the delegation methods below and reads it back through
  * {@link getLastPersistedMessageId}.
  */
-import { createHash } from "crypto";
 import { logger } from "@mcode/shared";
 import { AgentEventType } from "@mcode/contracts";
 import type { AgentEvent, StoredAttachment } from "@mcode/contracts";
@@ -32,6 +31,8 @@ import type { TurnOutcome } from "./turn-outcome.js";
 import type { TurnFileTracker } from "./turn-file-tracker.js";
 import type { TurnFileEffectSummary } from "@mcode/contracts";
 import type { CanonicalAgentEventSink } from "../canonical/canonical-agent-event-sink.js";
+import type { ParentAssistantTextCheckpointService } from "./parent-assistant-text-checkpoint-service.js";
+import { deriveTurnAssistantMessageId } from "./turn-assistant-message-id.js";
 
 /** Pre-turn git ref captured at send time, used to diff the turn's file changes. */
 interface TurnRef {
@@ -45,22 +46,6 @@ interface BufferedBody {
   content: string;
   model: string | null;
   attachments: StoredAttachment[];
-}
-
-/**
- * Derive the deterministic id for a turn's synthesized assistant message from
- * the turn's anchor — the id of the message immediately preceding the assistant
- * turn (normally the user message the assistant responds to), or a positional
- * `seq:N` fallback when the thread has no prior message. Re-running the flush
- * for the same turn collapses onto this id, so the
- * {@link MessageRepo.createAssistantIdempotent} write is a no-op rather than a
- * duplicate row — matching the `INSERT OR IGNORE` identity the narrative tables
- * already key on.
- */
-export function deriveTurnAssistantMessageId(threadId: string, anchorId: string): string {
-  return createHash("sha256")
-    .update(`${threadId}\u0000${anchorId}\u0000assistant`)
-    .digest("hex");
 }
 
 /** Owns the single fixed end-of-turn order shared by the completion, error, and cancellation paths. */
@@ -93,6 +78,7 @@ export class TurnFinalizer {
     private readonly db: Database.Database,
     private readonly turnFileTracker?: TurnFileTracker,
     private readonly canonicalSink?: CanonicalAgentEventSink,
+    private readonly parentAssistantTextCheckpoints?: ParentAssistantTextCheckpointService,
   ) {}
 
   /** Append a streaming assistant-text delta for the current turn. */
@@ -415,9 +401,11 @@ export class TurnFinalizer {
     }
     if (!materialized) {
       this.lastPersistedMessageIdByThread.delete(threadId);
+      this.parentAssistantTextCheckpoints?.retire(executionId);
       this.clearTurn(threadId, turnRef);
       return;
     }
+    this.parentAssistantTextCheckpoints?.retire(executionId);
     this.commitAssistantMaterialization(threadId);
 
     const messageId = materialized.id;

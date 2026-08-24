@@ -6,6 +6,7 @@ import { AgentService } from "../agent-service.js";
 import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/canonical-agent-event-sink-stub.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
 import { PlanQuestionService } from "../../planning/plan-question-service.js";
+import { ParentAssistantTextCheckpointService } from "../../turns/parent-assistant-text-checkpoint-service.js";
 import type { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
 import type { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
 import type { MessageRepo } from "../../conversation/persistence/message-repo.js";
@@ -159,6 +160,7 @@ function minimalService(): AgentService {
       { issue: vi.fn(), tryConsume: vi.fn(() => false), clear: vi.fn(), hasActiveGrant: vi.fn(() => false) } as any,
       narrativeStore,
       new PlanQuestionService(messageRepo, planQuestionAnswersRepo),
+      new ParentAssistantTextCheckpointService(db),
       undefined,
       undefined,
       undefined,

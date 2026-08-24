@@ -14,6 +14,7 @@ import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/can
 import type { GitService } from "../../../projects/index.js";
 import type { ThreadService } from "../../../thread-control/index.js";
 import type { TurnRuntimeSnapshot } from "@mcode/contracts";
+import { ParentAssistantTextCheckpointService } from "../../turns/parent-assistant-text-checkpoint-service.js";
 
 const roots: string[] = [];
 
@@ -80,6 +81,7 @@ function createAgentServiceHarness(automaticSetup?:
     {} as never,
     {} as never,
     {} as never,
+    new ParentAssistantTextCheckpointService(db),
     {} as never,
     undefined,
     undefined,
