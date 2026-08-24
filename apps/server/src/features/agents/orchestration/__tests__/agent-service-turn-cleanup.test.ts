@@ -1639,7 +1639,8 @@ describe("AgentService Ended finalization", () => {
     const recovery = new TurnRecoveryService(canonicalSink, threadRepo, {
       persist: vi.fn(() => Promise.resolve({ stored: [], persisted: [] })),
       prepareRetryAttachments: vi.fn(() => []),
-    } as unknown as AttachmentService, new ParentAssistantTextCheckpointService(db), messageRepo);
+    } as unknown as AttachmentService, new ParentAssistantTextCheckpointService(db), messageRepo,
+    (service as unknown as { narrativeStore: NarrativeStore }).narrativeStore);
     const dispatch = vi.fn(async () => undefined);
     await recovery.retry(executionId, dispatch);
     expect(dispatch).toHaveBeenCalledWith(expect.objectContaining({

@@ -7,6 +7,7 @@ import { ToolCallRecordRepo } from "../../../tools/persistence/tool-call-record-
 import { ThoughtSegmentRepo } from "../persistence/thought-segment-repo.js";
 import { HookExecutionRepo } from "../../../events/persistence/hook-execution-repo.js";
 import { NarrativeStore } from "../narrative-store.js";
+import { ACTIVE_TURN_WRITE_BATCH_LIMITS } from "../../../../../runtime/persistence/sqlite/bounded-write-batches.js";
 
 /** Seed a workspace + thread so message/record foreign keys are satisfied. */
 function seedThread(db: Database.Database): string {
@@ -406,6 +407,24 @@ describe("NarrativeStore write seam (server-side traps)", () => {
     expect(persisted.map((record) => record.id)).toEqual(
       Array.from({ length: 130 }, (_, index) => `tool-${index}`),
     );
+  });
+
+  it("rejects oversized recovery snapshots before building a complete projection", () => {
+    store.beginTurn(THREAD);
+    store.resetTurnCounters(THREAD);
+    for (let index = 0; index < ACTIVE_TURN_WRITE_BATCH_LIMITS.maxRows - 1; index += 1) {
+      store.bufferToolCall(THREAD, toolUse(`tool-${index}`, "Read"));
+    }
+
+    expect(store.recoverySnapshot(THREAD)).toHaveLength(ACTIVE_TURN_WRITE_BATCH_LIMITS.maxRows - 1);
+    store.bufferToolCall(THREAD, toolUse("overflow", "Read"));
+    expect(() => store.recoverySnapshot(THREAD)).toThrow("active-turn row limit");
+
+    store.beginTurn(THREAD);
+    store.resetTurnCounters(THREAD);
+    store.openOrExtendThought(THREAD, "x".repeat(ACTIVE_TURN_WRITE_BATCH_LIMITS.maxBytes));
+
+    expect(() => store.recoverySnapshot(THREAD)).toThrow("active-turn byte limit");
   });
 
   it("drains a hook that arrives while a bounded narrative write yields", async () => {

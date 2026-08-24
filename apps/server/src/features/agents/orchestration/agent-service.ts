@@ -65,6 +65,7 @@ import {
   PARENT_ASSISTANT_TEXT_QUEUE_POLICY,
 } from "../turns/parent-assistant-text-checkpoint-service.js";
 import { TurnFileTracker } from "../turns/turn-file-tracker.js";
+import { ParentNarrativeRecoveryCoordinator } from "../turns/parent-narrative-recovery-coordinator.js";
 import { PlanQuestionService } from "../planning/plan-question-service.js";
 import { TurnSnapshotRepo } from "../turns/persistence/turn-snapshot-repo.js";
 import type Database from "better-sqlite3";
@@ -321,7 +322,7 @@ export class AgentService {
   /** Pre-turn Git capture that may continue after an auto-resumed tracker becomes ready. */
   private readonly fileTrackingRefCaptureByThread = new Map<string, Promise<void>>();
   /** Prevents a resumed turn from replacing the prior generation before persistence. */
-  private readonly fileTrackingFinalizationByThread = new Map<string, Promise<void>>();
+  private readonly fileTrackingFinalizationByThread = new Map<string, Promise<boolean>>();
   /** Holds a resumed provider event stream until the preceding turn is persisted. */
   private readonly providerEventBarrierByThread = new Map<string, Promise<void>>();
   /** Provider events whose file-tracking portion ran before deferred narrative handling. */
@@ -407,7 +408,7 @@ export class AgentService {
    * Set when `TurnComplete` is handled; cleared on `TurnStarted` so the
    * per-thread flag resets between turns.
    * Hooks that arrive while this flag is set are treated as post-turn (Stop /
-   * SessionEnd / PreCompact) and flushed directly via `flushLateHook`.
+   * SessionEnd / PreCompact) and persist only after the terminal projection verifies.
    */
   private turnCompleteSeenByThread = new Set<string>();
   /** Execution identity that produced the last assistant Message for each thread. */
@@ -434,8 +435,11 @@ export class AgentService {
   private readonly canonicalSink: CanonicalAgentEventSink;
   private readonly parentAssistantTextCheckpoints: ParentAssistantTextCheckpointService;
   private readonly parentAssistantTextCheckpointQueue: ParentAssistantTextCheckpointQueue;
+  private readonly parentNarrativeRecovery: ParentNarrativeRecoveryCoordinator;
   private readonly parentTextTurnIdByExecution = new Map<string, string>();
   private readonly parentTextSequenceByExecution = new Map<string, number>();
+  /** First sidecar sequence for text awaiting an authoritative message boundary. */
+  private readonly unclassifiedAssistantTextStartByExecution = new Map<string, number>();
 
   constructor(
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
@@ -492,6 +496,10 @@ export class AgentService {
     this.parentAssistantTextCheckpointQueue = new ParentAssistantTextCheckpointQueue(
       this.parentAssistantTextCheckpoints,
       PARENT_ASSISTANT_TEXT_QUEUE_POLICY,
+    );
+    this.parentNarrativeRecovery = new ParentNarrativeRecoveryCoordinator(
+      this.canonicalSink,
+      this.narrativeStore,
     );
     this.turnFileTracker = new TurnFileTracker(
       (cwd, ref, path) => this.snapshotService.getFileAtRef(cwd, ref, path),
@@ -2763,7 +2771,7 @@ export class AgentService {
     threadId: string,
     outcome: TurnOutcome,
     source: string,
-  ): Promise<void> | null {
+  ): Promise<boolean> | null {
     if (this.terminalFinalizedThreads.has(threadId)) return null;
     this.terminalFinalizedThreads.add(threadId);
     const finalizedExecutionId = this.turnRuntime.snapshot(threadId)?.turnExecutionId;
@@ -2779,20 +2787,25 @@ export class AgentService {
       outcome,
       prerequisite,
       finalizedExecutionId ?? undefined,
-    )
-      .catch((err) => {
-      logger.error("finalize failed on terminal event", {
-        threadId,
-        outcome,
-        source,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      });
+    ).then(
+      () => true,
+      (err) => {
+        logger.error("finalize failed on terminal event", {
+          threadId,
+          outcome,
+          source,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return false;
+      },
+    );
     this.fileTrackingFinalizationByThread.set(threadId, finalize);
     void finalize.finally(() => {
       if (finalizedExecutionId) {
         this.parentTextTurnIdByExecution.delete(finalizedExecutionId);
         this.parentTextSequenceByExecution.delete(finalizedExecutionId);
+        this.unclassifiedAssistantTextStartByExecution.delete(finalizedExecutionId);
+        this.parentNarrativeRecovery.clear(finalizedExecutionId);
       }
       if (this.finalResponseExecutionByThread.get(threadId) === finalizedExecutionId) {
         this.finalResponseExecutionByThread.delete(threadId);
@@ -3006,9 +3019,8 @@ export class AgentService {
    * Keeps assistant message persistence inside the service rather than
    * leaking it into the composition root.
    * The optional publication callback runs after the synchronous internal pass
-   * for every normalized event, including events that take an internal
-   * early-return path. A deferred file-tracking replay handles the event
-   * internally but does not publish it again.
+   * when that event owns renderer publication. Terminal events and paired
+   * post-turn hooks wait for their durable projection first.
    * Idempotent: subsequent calls are no-ops.
    */
   init(onProviderEvent?: (event: AgentEvent) => void): void {
@@ -3032,6 +3044,7 @@ export class AgentService {
           )
         ));
       });
+      const ownedLateHookCompletions = new WeakSet<object>();
       const handleNormalizedEvent = (event: AgentEvent): boolean | undefined => {
         if (
           (event.type === AgentEventType.ToolUse || event.type === AgentEventType.ToolResult)
@@ -3102,7 +3115,9 @@ export class AgentService {
           this.earlyFileTrackingEvents.add(event);
         }
         const barrier = existingBarrier
-          ?? (event.type === AgentEventType.TurnStarted ? priorFinalization : undefined);
+          ?? (event.type === AgentEventType.TurnStarted
+            ? priorFinalization?.then(() => undefined)
+            : undefined);
         if (barrier) {
           if (!existingBarrier) this.providerEventBarrierByThread.set(event.threadId, barrier);
           void barrier.then(() => {
@@ -3136,13 +3151,20 @@ export class AgentService {
           // Unknown/non-final deltas belong to NarrativeStore until the
           // authoritative boundary either closes them as thoughts or transfers
           // them into TurnFinalizer.
-          if (event.isFinalResponse) {
+          if (event.isFinalResponse === true) {
             this.turnFinalizer.appendStreamingText(event.threadId, event.delta);
-          } else {
+          } else if (event.isFinalResponse === false) {
             // Open or extend the current thought segment. NarrativeStore allocates
             // the sort order lazily on the first delta so consecutive deltas keep
             // the same slot, taken BEFORE any following tool call's sort order.
             this.narrativeStore.openOrExtendThought(event.threadId, event.delta);
+          } else {
+            const executionId = event.turnExecutionId;
+            const sequence = executionId ? this.parentTextSequenceByExecution.get(executionId) : undefined;
+            if (executionId && sequence && !this.unclassifiedAssistantTextStartByExecution.has(executionId)) {
+              this.unclassifiedAssistantTextStartByExecution.set(executionId, sequence);
+            }
+            this.turnFinalizer.appendStreamingText(event.threadId, event.delta);
           }
           const parser = this.planParsers.get(event.threadId);
           if (parser) {
@@ -3330,14 +3352,14 @@ export class AgentService {
           // persists as a thought row or lives in two server-side buffers.
           // Otherwise the message ended with a non-finalizing stop_reason such
           // as `tool_use`; close the thought so it persists as preamble.
-          if (event.isFinalResponse) {
+          if (event.isFinalResponse === true) {
             const finalText = this.narrativeStore.takeOpenThought(event.threadId);
             if (finalText) {
               this.turnFinalizer.appendStreamingText(event.threadId, finalText);
             }
-          } else {
-            this.narrativeStore.closeOpenThought(event.threadId);
-            this.turnFinalizer.resetStreamingText(event.threadId);
+            if (event.turnExecutionId) this.unclassifiedAssistantTextStartByExecution.delete(event.turnExecutionId);
+          } else if (event.isFinalResponse === false) {
+            if (!this.classifyUnclassifiedAssistantTextAsNarration(event)) return false;
           }
         }
 
@@ -3358,8 +3380,8 @@ export class AgentService {
         }
 
         if (event.type === AgentEventType.HookStarted) {
-          // Late hooks (TurnComplete already seen) bypass the in-turn buffer.
-          // They will be persisted directly in the paired HookCompleted handler.
+          // Late hooks remain in the NarrativeStore until their durable parent
+          // terminal projection verifies, so a crash can restore their lifecycle.
           if (this.turnCompleteSeenByThread.has(event.threadId)) {
             const sortOrder = this.narrativeStore.nextSortOrder(event.threadId);
             // Use the open-hook map as a scratch pad so HookCompleted can still
@@ -3392,35 +3414,24 @@ export class AgentService {
           const open = this.narrativeStore.peekOpenHook(event.threadId, event.hookName);
           if (open) {
             const endedAt = new Date().toISOString();
-            // Late hook: persist immediately to the last message row and
-            // broadcast a HookCompleted event with persistedMessageId.
+            const completedHook = {
+              id: open.id,
+              hookName: open.hookName,
+              toolName: open.toolName,
+              phase: open.phase,
+              payload: open.payload,
+              durationMs: event.durationMs,
+              didBlock: event.didBlock,
+              startedAt: open.startedAt,
+              endedAt,
+              sortOrder: open.sortOrder,
+            };
             if (this.turnCompleteSeenByThread.has(event.threadId)) {
-              this.flushLateHook(event.threadId, {
-                id: open.id,
-                hookName: open.hookName,
-                toolName: open.toolName,
-                phase: open.phase,
-                payload: open.payload,
-                durationMs: event.durationMs,
-                didBlock: event.didBlock,
-                startedAt: open.startedAt,
-                endedAt,
-                sortOrder: open.sortOrder,
-              });
+              this.narrativeStore.pushClosedHook(event.threadId, { ...completedHook, messageId: "" });
+              ownedLateHookCompletions.add(event);
+              this.persistVerifiedLateHook(event.threadId, completedHook);
             } else {
-              this.narrativeStore.pushClosedHook(event.threadId, {
-                id: open.id,
-                messageId: "",
-                hookName: open.hookName,
-                toolName: open.toolName,
-                phase: open.phase,
-                payload: open.payload,
-                durationMs: event.durationMs,
-                didBlock: event.didBlock,
-                startedAt: open.startedAt,
-                endedAt,
-                sortOrder: open.sortOrder,
-              });
+              this.narrativeStore.pushClosedHook(event.threadId, { ...completedHook, messageId: "" });
             }
             this.narrativeStore.removeOpenHook(event.threadId, event.hookName);
           }
@@ -3553,8 +3564,8 @@ export class AgentService {
             && this.turnRuntime.terminalize(event.threadId, event.turnExecutionId!, "completed");
           if (!compactionInProgress && !terminalized) return false;
           // Mark that the turn result has been seen so any hooks that arrive
-          // after this point (Stop / SessionEnd / PreCompact) are routed through
-          // flushLateHook instead of the normal mid-turn buffer.
+          // after this point (Stop / SessionEnd / PreCompact) are retained for
+          // verified post-turn persistence instead of normal mid-turn finalization.
           this.turnCompleteSeenByThread.add(event.threadId);
 
           if (terminalized) {
@@ -3761,10 +3772,38 @@ export class AgentService {
       };
       const processNormalizedEvent = (normalizedEvent: AgentEvent, publish: boolean): void => {
         const accepted = handleNormalizedEvent(normalizedEvent);
+        const ownedLateHookCompletion = normalizedEvent.type === AgentEventType.HookCompleted
+          && ownedLateHookCompletions.delete(normalizedEvent);
         const terminalEvent = normalizedEvent.type === AgentEventType.TurnComplete
           || normalizedEvent.type === AgentEventType.Error
           || normalizedEvent.type === AgentEventType.Ended;
+        if (accepted === false) return;
         if (terminalEvent && accepted !== true) return;
+        if (publish) {
+          try {
+            this.parentNarrativeRecovery.checkpoint(normalizedEvent);
+          } catch (error) {
+            this.interruptForNarrativeRecoveryCheckpointFailure(normalizedEvent, error);
+            return;
+          }
+        }
+        const lateHook = this.turnCompleteSeenByThread.has(normalizedEvent.threadId)
+          && (normalizedEvent.type === AgentEventType.HookStarted
+            || normalizedEvent.type === AgentEventType.HookCompleted);
+        if (publish && ownedLateHookCompletion) {
+          // The completion handler owns this event: it waits for the verified
+          // finalizer, persists the hook, then publishes its durable identity.
+          return;
+        }
+        if (publish && (terminalEvent || lateHook)) {
+          const finalization = this.fileTrackingFinalizationByThread.get(normalizedEvent.threadId);
+          if (finalization) {
+            void finalization.then((persisted) => {
+              if (persisted) publishEvent(normalizedEvent);
+            });
+            return;
+          }
+        }
         if (publish) publishEvent(normalizedEvent);
       };
       const handleEvent = (event: AgentEvent, publish = true): void => {
@@ -3878,7 +3917,86 @@ export class AgentService {
       this.parentAssistantTextCheckpoints.reset(executionId);
     }
     this.parentTextSequenceByExecution.set(executionId, 0);
+    this.unclassifiedAssistantTextStartByExecution.delete(executionId);
     this.turnFinalizer.resetStreamingText(threadId);
+  }
+
+  /** Move provisional assistant text to narration without leaving two durable recovery owners. */
+  private classifyUnclassifiedAssistantTextAsNarration(
+    event: Extract<AgentEvent, { type: typeof AgentEventType.AssistantMessageBoundary }>,
+  ): boolean {
+    const executionId = event.turnExecutionId;
+    if (!executionId) {
+      this.narrativeStore.closeOpenThought(event.threadId);
+      this.turnFinalizer.resetStreamingText(event.threadId);
+      return true;
+    }
+    const firstSequence = this.unclassifiedAssistantTextStartByExecution.get(executionId);
+    if (!firstSequence) {
+      this.narrativeStore.closeOpenThought(event.threadId);
+      this.turnFinalizer.resetStreamingText(event.threadId);
+      return true;
+    }
+    const text = this.parentAssistantTextCheckpoints.restoreChunks(executionId)
+      .filter((chunk) => chunk.lastSequence >= firstSequence)
+      .map((chunk) => chunk.text)
+      .join("");
+    const stagedNarration = this.narrativeStore.stageNarrationSegment(event.threadId, text);
+    let confirmRecoveryCheckpoint: (() => void) | undefined;
+    try {
+      this.db.transaction(() => {
+        const recoveryCheckpoint = this.parentNarrativeRecovery.prepareCheckpoint(
+          event,
+          stagedNarration
+            ? this.narrativeStore.recoverySnapshotWithStagedNarration(event.threadId, stagedNarration)
+            : undefined,
+        );
+        recoveryCheckpoint?.persist();
+        if (!this.parentAssistantTextCheckpoints.resetInTransaction(executionId)) {
+          throw new Error(`Unclassified assistant text checkpoint was not reset: ${executionId}`);
+        }
+        confirmRecoveryCheckpoint = recoveryCheckpoint?.confirm;
+      })();
+    } catch (error) {
+      this.interruptForNarrativeRecoveryCheckpointFailure(event, error);
+      return false;
+    }
+    confirmRecoveryCheckpoint?.();
+    if (stagedNarration) this.narrativeStore.applyStagedNarrationSegment(event.threadId, stagedNarration);
+    this.parentTextSequenceByExecution.set(executionId, 0);
+    this.unclassifiedAssistantTextStartByExecution.delete(executionId);
+    this.turnFinalizer.resetStreamingText(event.threadId);
+    return true;
+  }
+
+  /** Persist one post-terminal hook only after its parent turn's finalizer verified durability. */
+  private persistVerifiedLateHook(
+    threadId: string,
+    hook: Omit<CreateHookExecutionInput, "messageId">,
+  ): void {
+    const persist = () => {
+      const messageId = this.turnFinalizer.getLastPersistedMessageId(threadId);
+      if (!messageId) return;
+      this.hookExecutionRepo.bulkCreate([{ ...hook, messageId }]);
+      broadcast("agent.event", {
+        type: AgentEventType.HookCompleted,
+        threadId,
+        hookName: hook.hookName,
+        exitCode: 0,
+        durationMs: hook.durationMs ?? 0,
+        didBlock: hook.didBlock,
+        persistedMessageId: messageId,
+        persistedHookId: hook.id,
+      } satisfies AgentEvent);
+    };
+    const finalization = this.fileTrackingFinalizationByThread.get(threadId);
+    if (finalization) {
+      void finalization.then((persisted) => {
+        if (persisted) persist();
+      });
+      return;
+    }
+    persist();
   }
 
   /** Stop a turn whose visible assistant text cannot be made durable. */
@@ -3891,6 +4009,20 @@ export class AgentService {
       reason,
     });
     void this.finalizeTerminalTurn(event.threadId, "interrupted", "assistant text checkpoint failure");
+    this.trackSessionEnded(event.threadId);
+    this.disarmTurnRetryWindow(event.threadId);
+  }
+
+  /** Stop publication when a visible structured narrative record cannot commit. */
+  private interruptForNarrativeRecoveryCheckpointFailure(event: AgentEvent, error: unknown): void {
+    const executionId = event.turnExecutionId;
+    if (!executionId || !this.turnRuntime.terminalize(event.threadId, executionId, "interrupted")) return;
+    logger.error("Parent narrative recovery checkpoint failed", {
+      threadId: event.threadId,
+      turnExecutionId: executionId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    void this.finalizeTerminalTurn(event.threadId, "interrupted", "narrative recovery checkpoint failure");
     this.trackSessionEnded(event.threadId);
     this.disarmTurnRetryWindow(event.threadId);
   }
@@ -4787,55 +4919,6 @@ ${userMessage}`;
         });
       }
     }
-  }
-
-  /**
-   * Persist a single late hook (Stop / SessionEnd / PreCompact) that arrived
-   * after the turn was finalized and the in-turn buffers were cleared.
-   * Writes the row directly to SQLite and broadcasts a `HookCompleted` event
-   * with `persistedMessageId` set so the client can route it into the correct
-   * persisted narrative cache entry rather than the volatile hook list.
-   *
-   * If the finalizer recorded no persisted message id (e.g. the turn never
-   * produced an assistant message), the hook is silently discarded — there is
-   * no row to attach it to.
-   */
-  private flushLateHook(
-    threadId: string,
-    hook: Omit<CreateHookExecutionInput, "messageId">,
-  ): void {
-    const messageId = this.turnFinalizer.getLastPersistedMessageId(threadId);
-    if (!messageId) {
-      logger.warn("flushLateHook: no persisted message id for thread; discarding late hook", {
-        threadId,
-        hookName: hook.hookName,
-      });
-      return;
-    }
-    try {
-      this.hookExecutionRepo.bulkCreate([{ ...hook, messageId }]);
-    } catch (err) {
-      logger.error("flushLateHook: failed to persist late hook", {
-        threadId,
-        hookName: hook.hookName,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      return;
-    }
-    // Broadcast with persistedMessageId so the client can attach this hook
-    // to the already-persisted narrative cache entry instead of appending it
-    // to the volatile hooksByThread list (which is cleared on turn end).
-    broadcast("agent.event", {
-      type: AgentEventType.HookCompleted,
-      threadId,
-      hookName: hook.hookName,
-      exitCode: 0,
-      durationMs: hook.durationMs ?? 0,
-      didBlock: hook.didBlock,
-      persistedMessageId: messageId,
-      // Stable DB row id so the client can dedupe redelivered broadcasts.
-      persistedHookId: hook.id,
-    } satisfies AgentEvent);
   }
 
   /** Stop all active agent sessions (for graceful shutdown). */

@@ -384,6 +384,11 @@ export class TurnFinalizer {
       },
     });
 
+    const verifiedTerminal = this.canonicalSink.loadCheckpoint(executionId);
+    if (verifiedTerminal?.terminalOutcome !== outcome) {
+      throw new Error(`Canonical terminal outcome was not verified: ${executionId}`);
+    }
+
     let materialized = projection.materialized;
     const replayedTerminal = !materialized
       && commitResult.outcome === "terminal-outcome-confirmed";

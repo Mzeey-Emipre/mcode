@@ -401,6 +401,8 @@ export type { HookExecutionRecord } from "./models/hook-execution.js";
 
 export { NarrativeEntrySchema, TurnRangeSchema } from "./models/narrative-entry.js";
 export type { NarrativeEntry, TurnRange } from "./models/narrative-entry.js";
+export { ParentNarrativeRecoveryItemSchema } from "./models/narrative-recovery.js";
+export type { ParentNarrativeRecoveryItem } from "./models/narrative-recovery.js";
 
 export { TurnSnapshotSchema } from "./models/turn-snapshot.js";
 export type { TurnSnapshot } from "./models/turn-snapshot.js";

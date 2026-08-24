@@ -471,7 +471,9 @@ describe("AgentService transient-failure auto-retry", () => {
       provider: "claude",
     });
 
-    expect(threadRepo.updateStatus).toHaveBeenCalledWith(THREAD_ID, "completed");
+    await vi.waitFor(() => {
+      expect(threadRepo.updateStatus).toHaveBeenCalledWith(THREAD_ID, "completed");
+    });
     expect(threadRepo.updateStatus).not.toHaveBeenCalledWith(THREAD_ID, "interrupted");
   });
 

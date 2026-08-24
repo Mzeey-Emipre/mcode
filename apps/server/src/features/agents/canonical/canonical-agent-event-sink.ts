@@ -39,7 +39,9 @@ import {
   type ConversationNarrativeBatch,
   type Message,
   type NarrativeEntry,
+  ParentNarrativeRecoveryItemSchema,
   type ProviderIdentity,
+  type ParentNarrativeRecoveryItem,
   type TurnOutcome,
   ToolCallRecordSchema,
   ThoughtSegmentRecordSchema,
@@ -141,6 +143,13 @@ export interface CanonicalParentTurnFinishInput {
   error?: string;
   projectTurn: () => CanonicalParentTurnProjection;
   finalizeCompatibility?: () => void;
+}
+
+/** One checked structured narrative snapshot accepted before its visible event. */
+export interface ParentNarrativeRecoveryCommitInput {
+  executionId: string;
+  items: readonly ParentNarrativeRecoveryItem[];
+  discardedItemIds?: readonly string[];
 }
 
 /** Input used to provision one Codex provider-native child thread. */
@@ -735,6 +744,75 @@ export class CanonicalAgentEventSink {
       LIMIT ?
     `).all(MAX_TURN_RECOVERIES + 1) as Record<string, unknown>[];
     return this.boundedCheckpointRows(rows, "unfinished");
+  }
+
+  /** List terminal checkpoints that can be reopened because their terminal commit lacks a projection. */
+  listUnmaterializedTerminalCheckpoints(): CanonicalAgentCheckpoint[] {
+    const rows = this.db.prepare(`
+      SELECT checkpoint.*
+      FROM canonical_agent_ingest_checkpoints checkpoint
+      JOIN canonical_agent_turns turn ON turn.id = checkpoint.turn_id
+      WHERE checkpoint.terminal_outcome IS NOT NULL
+        AND turn.status IN ('Completed', 'Cancelled', 'Interrupted', 'Errored')
+        AND NOT EXISTS (
+          SELECT 1
+          FROM canonical_agent_items item
+          WHERE item.turn_id = checkpoint.turn_id
+            AND item.kind = 'message'
+            AND json_extract(item.payload_json, '$.projection') = 'message'
+            AND json_extract(item.payload_json, '$.message.role') = 'assistant'
+        )
+        AND NOT EXISTS (
+          SELECT 1
+          FROM canonical_agent_events event
+          WHERE event.execution_id = checkpoint.execution_id
+            AND json_extract(event.envelope_json, '$.payload.type') IN (
+              'turn.completed', 'turn.cancelled', 'turn.interrupted', 'turn.errored'
+            )
+        )
+      ORDER BY checkpoint.updated_at ASC, checkpoint.execution_id ASC
+      LIMIT ?
+    `).all(MAX_TURN_RECOVERIES + 1) as Record<string, unknown>[];
+    return this.boundedCheckpointRows(rows, "unmaterialized terminal");
+  }
+
+  /** Reopen an unmaterialized terminal checkpoint so ordinary interruption recovery can finish it. */
+  reopenUnmaterializedTerminalCheckpoint(executionId: string): boolean {
+    return this.db.transaction(() => {
+      const checkpoint = this.loadCheckpoint(executionId);
+      const turn = this.loadTurnByExecution(executionId);
+      if (!checkpoint || !turn || !checkpoint.terminalOutcome) return false;
+      const assistantProjection = this.loadTerminalProjection(turn.id).message;
+      if (assistantProjection) return false;
+      const terminalEvent = this.db.prepare(`
+        SELECT 1
+        FROM canonical_agent_events
+        WHERE execution_id = ?
+          AND json_extract(envelope_json, '$.payload.type') IN (
+            'turn.completed', 'turn.cancelled', 'turn.interrupted', 'turn.errored'
+          )
+        LIMIT 1
+      `).get(executionId);
+      if (terminalEvent) return false;
+      const now = new Date().toISOString();
+      const reopenedTurn = this.db.prepare(`
+        UPDATE canonical_agent_turns
+        SET status = 'Running', ended_at = NULL, updated_at = ?
+        WHERE id = ?
+          AND status IN ('Completed', 'Cancelled', 'Interrupted', 'Errored')
+      `).run(now, turn.id);
+      if (reopenedTurn.changes !== 1) return false;
+      const reopenedCheckpoint = this.db.prepare(`
+        UPDATE canonical_agent_ingest_checkpoints
+        SET phase = 'running', terminal_outcome = NULL, error = NULL, updated_at = ?
+        WHERE execution_id = ?
+          AND terminal_outcome IS NOT NULL
+      `).run(now, executionId);
+      if (reopenedCheckpoint.changes !== 1) {
+        throw new Error(`Unmaterialized terminal checkpoint was not reopened: ${executionId}`);
+      }
+      return true;
+    })();
   }
 
   /** Load interrupted checkpoints that permit an explicit recovery action. */
@@ -2096,6 +2174,102 @@ export class CanonicalAgentEventSink {
     return item;
   }
 
+  /**
+   * Upsert the current structured parent narrative recovery projection before
+   * its corresponding provider event reaches the renderer.
+   */
+  recordParentNarrativeRecovery(
+    input: ParentNarrativeRecoveryCommitInput,
+  ): boolean {
+    const turn = this.loadTurnByExecution(input.executionId);
+    if (!turn) return false;
+    const thread = this.loadThread(turn.threadId);
+    if (!thread) throw new Error(`Canonical parent thread not found: ${turn.threadId}`);
+    const items = input.items;
+    if (items.length === 0 && (input.discardedItemIds?.length ?? 0) === 0) return true;
+    const now = new Date().toISOString();
+    const transaction = this.db.transaction(() => {
+      const checkpoint = this.loadCheckpoint(input.executionId);
+      if (!checkpoint) throw new Error(`Canonical parent checkpoint was not found: ${input.executionId}`);
+      if (checkpoint.terminalOutcome) return;
+      for (const item of items) {
+        const itemId = item.kind === "toolCall"
+          ? `toolCall:${item.record.id}`
+          : `${item.kind}:${item.record.id}`;
+        const parentItemId = item.kind === "toolCall" && item.record.parent_tool_call_id
+          ? `toolCall:${item.record.parent_tool_call_id}`
+          : undefined;
+        const existingPayload = this.loadItem(itemId)?.payload ?? {};
+        const subagentMetadata = item.kind === "toolCall" ? {
+          ...(typeof existingPayload.description === "string"
+            ? { description: existingPayload.description }
+            : {}),
+          ...(typeof existingPayload.identity === "string"
+            ? { identity: existingPayload.identity }
+            : {}),
+          ...(typeof existingPayload.model === "string"
+            ? { model: existingPayload.model }
+            : {}),
+          ...(typeof existingPayload.reasoningEffort === "string"
+            ? { reasoningEffort: existingPayload.reasoningEffort }
+            : {}),
+        } : {};
+        const itemPayload = {
+          projection: "narrativeRecovery",
+          narrative: item,
+          ...subagentMetadata,
+        };
+        this.persistItem({
+          id: itemId,
+          threadId: thread.id,
+          turnId: turn.id,
+          ...(parentItemId ? { parentItemId } : {}),
+          kind: item.kind === "toolCall"
+            ? "tool-call"
+            : item.kind === "narrationSegment"
+              ? "reasoning"
+              : "system",
+          providerIdentities: turn.providerIdentities,
+          payload: itemPayload,
+          createdAt: item.record.started_at,
+          updatedAt: now,
+        });
+      }
+      for (const itemId of input.discardedItemIds ?? []) {
+        const existing = this.loadItem(itemId);
+        if (!existing || existing.threadId !== thread.id || existing.turnId !== turn.id) {
+          throw new Error(`Canonical narrative recovery item was not found: ${itemId}`);
+        }
+        const projection = typeof existing.payload.projection === "string"
+          ? existing.payload.projection
+          : null;
+        if (projection === "narrativeRecovery" || projection === "narrativeRecoveryDiscarded") {
+          this.db.prepare("DELETE FROM canonical_agent_items WHERE id = ?").run(itemId);
+        }
+      }
+    });
+    transaction();
+    return true;
+  }
+
+  /** Load the newest durable structured narrative snapshot for an unfinished parent turn. */
+  loadParentNarrativeRecovery(turnId: string): ParentNarrativeRecoveryItem[] {
+    const rows = this.db.prepare(`
+      SELECT payload_json
+      FROM canonical_agent_items
+      WHERE turn_id = ?
+        AND json_extract(payload_json, '$.projection') = 'narrativeRecovery'
+      ORDER BY created_at ASC, id ASC
+    `).all(turnId) as Array<{ payload_json: string }>;
+    return rows.map((row) => (
+      ParentNarrativeRecoveryItemSchema().parse(
+        (JSON.parse(row.payload_json) as { narrative: unknown }).narrative,
+      )
+    )).sort((left, right) => (
+      left.record.sort_order - right.record.sort_order || left.record.id.localeCompare(right.record.id)
+    ));
+  }
+
   /** Persist one child terminal outcome while preserving the first terminal state. */
   finishCodexChildTurn(input: CodexChildTurnFinishInput): AgentTurn {
     const turn = this.loadCodexChildTurn(input.childThreadId, input.nativeTurnId);
@@ -2224,6 +2398,11 @@ export class CanonicalAgentEventSink {
     executionId: string,
     reason: string,
     stagedAssistant?: Message,
+    finalizeCompatibility?: (
+      assistant: Message,
+      narrative: readonly ParentNarrativeRecoveryItem[],
+    ) => void,
+    recoveredNarrative: readonly ParentNarrativeRecoveryItem[] = [],
   ): CanonicalAgentCommitResult {
     const checkpoint = this.loadCheckpoint(executionId);
     const turn = this.loadTurnByExecution(executionId);
@@ -2251,6 +2430,16 @@ export class CanonicalAgentEventSink {
           outcomeExecutionId: executionId,
         }
       : null;
+    const interruptedNarrative = recoveryProjection
+      ? this.reconcileInterruptedNarrative(
+          recoveredNarrative,
+          recoveryProjection.id,
+          endedAt,
+        )
+      : [];
+    if (recoveredNarrative.length > 0 && !recoveryProjection) {
+      throw new Error(`Recovered narrative has no assistant projection: ${executionId}`);
+    }
     return this.commit({
       threadId: checkpoint.threadId,
       turnId: checkpoint.turnId,
@@ -2269,6 +2458,7 @@ export class CanonicalAgentEventSink {
         if (stagedAssistant && updated.changes !== 1) {
           throw new Error(`Recovered assistant message was not staged: ${stagedAssistant.id}`);
         }
+        finalizeCompatibility?.(recoveryProjection!, interruptedNarrative);
       },
       events: () => [
         {
@@ -2309,6 +2499,13 @@ export class CanonicalAgentEventSink {
             },
           },
         }] : []),
+        ...this.interruptedNarrativeProjectionEvents({
+          checkpoint,
+          thread,
+          executionId,
+          narrative: interruptedNarrative,
+          endedAt,
+        }),
         {
           eventId: `${executionId}:recovery-interrupted`,
           routing: {
@@ -2324,12 +2521,95 @@ export class CanonicalAgentEventSink {
     });
   }
 
+  /** Convert unfinished recovery records into their durable interrupted projections. */
+  private reconcileInterruptedNarrative(
+    items: readonly ParentNarrativeRecoveryItem[],
+    messageId: string,
+    endedAt: string,
+  ): ParentNarrativeRecoveryItem[] {
+    return items.map((item) => {
+      const recovered = item;
+      if (recovered.kind === "toolCall") {
+        return {
+          kind: "toolCall" as const,
+          record: {
+            ...recovered.record,
+            message_id: messageId,
+            ...(recovered.record.status === "running"
+              ? { status: "failed" as const, completed_at: endedAt }
+              : {}),
+          },
+        };
+      }
+      if (recovered.kind === "hook") {
+        const durationMs = recovered.record.ended_at
+          ? recovered.record.duration_ms
+          : Math.max(0, Date.parse(endedAt) - Date.parse(recovered.record.started_at));
+        return {
+          kind: "hook" as const,
+          record: {
+            ...recovered.record,
+            message_id: messageId,
+            duration_ms: durationMs,
+            ended_at: recovered.record.ended_at ?? endedAt,
+          },
+        };
+      }
+      return {
+        kind: "narrationSegment" as const,
+        record: { ...recovered.record, message_id: messageId },
+      };
+    });
+  }
+
+  /** Replace recovery items with canonical terminal narrative records in the interruption transaction. */
+  private interruptedNarrativeProjectionEvents(input: {
+    checkpoint: CanonicalAgentCheckpoint;
+    thread: AgentThread;
+    executionId: string;
+    narrative: readonly ParentNarrativeRecoveryItem[];
+    endedAt: string;
+  }): CanonicalAgentEventDraft[] {
+    const turn = this.loadTurn(input.checkpoint.turnId);
+    if (!turn) throw new Error(`Canonical turn not found: ${input.checkpoint.turnId}`);
+    return input.narrative.map((item) => {
+      const itemId = item.kind === "toolCall"
+        ? `toolCall:${item.record.id}`
+        : `${item.kind}:${item.record.id}`;
+      const parentItemId = item.kind === "toolCall" && item.record.parent_tool_call_id
+        ? `toolCall:${item.record.parent_tool_call_id}`
+        : undefined;
+      const projection = item.kind === "toolCall"
+        ? "toolCall"
+        : item.kind === "narrationSegment"
+          ? "narrationSegment"
+          : "hook";
+      return this.itemDraft(input.executionId, input.thread, turn, {
+        id: itemId,
+        threadId: input.thread.id,
+        turnId: turn.id,
+        ...(parentItemId ? { parentItemId } : {}),
+        kind: item.kind === "toolCall"
+          ? "tool-call"
+          : item.kind === "narrationSegment"
+            ? "reasoning"
+            : "system",
+        providerIdentities: turn.providerIdentities,
+        payload: { projection, record: item.record },
+        createdAt: item.record.started_at,
+        updatedAt: input.endedAt,
+      }, `${input.executionId}:recovery-narrative:${itemId}`);
+    });
+  }
+
   /** Persist a terminal parent turn in bounded transactions and confirm it only in the final batch. */
   async finishParentTurnBatched(
     input: CanonicalParentTurnFinishInput,
   ): Promise<CanonicalAgentBatchedCommitResult> {
     const checkpoint = this.loadCheckpoint(input.executionId);
     if (checkpoint?.terminalOutcome) {
+      const retire = this.db.transaction(() => this.retireParentNarrativeRecovery(checkpoint.turnId));
+      retire();
       const thread = this.loadThread(input.threadId);
       return {
         outcome: "terminal-outcome-confirmed",
@@ -2481,6 +2761,7 @@ export class CanonicalAgentEventSink {
           error: batchTerminal ? input.error ?? null : null,
           updatedAt: batchAcceptedAt,
         });
+        if (batchTerminal) this.retireParentNarrativeRecovery(input.turnId);
         const thread = batchState.threads[input.threadId];
         latest = {
           outcome: !batchChanged && batchIgnoredTerminal
@@ -2512,6 +2793,15 @@ export class CanonicalAgentEventSink {
       events: published,
       writeBatches,
     };
+  }
+
+  /** Remove the unfinished-turn recovery representation once a terminal projection is durable. */
+  private retireParentNarrativeRecovery(turnId: string): void {
+    this.db.prepare(`
+      DELETE FROM canonical_agent_items
+      WHERE turn_id = ?
+        AND json_extract(payload_json, '$.projection') IN ('narrativeRecovery', 'narrativeRecoveryDiscarded')
+    `).run(turnId);
   }
 
   /** Load canonical message and narrative items for one paginated conversation page. */
@@ -2899,7 +3189,6 @@ export class CanonicalAgentEventSink {
           : "system" as const;
       const recordId = record.id;
       const projectedItemId = `${entry.kind}:${recordId}`;
-      if (entry.kind === "toolCall" && this.loadItem(projectedItemId)) continue;
       const createdAt = entry.kind === "toolCall"
         ? record.started_at
         : entry.kind === "narrationSegment"
@@ -3888,7 +4177,7 @@ export class CanonicalAgentEventSink {
 
   private boundedCheckpointRows(
     rows: Record<string, unknown>[],
-    phase: "unfinished" | "interrupted",
+    phase: "unfinished" | "interrupted" | "unmaterialized terminal",
   ): CanonicalAgentCheckpoint[] {
     if (rows.length > MAX_TURN_RECOVERIES) {
       throw new Error(
