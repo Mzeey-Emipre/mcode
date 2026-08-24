@@ -357,13 +357,14 @@ export const workspaceEnvironmentAutomaticSetupAttempts = sqliteTable(
   (table) => [index("idx_workspace_environment_automatic_setup_attempts_thread").on(table.threadId, desc(table.createdAt))],
 );
 
-/** Durable first-Turn payload and claim state while automatic Setup holds dispatch. */
+/** Durable Turn payload and claim state while automatic Setup holds dispatch. */
 export const workspaceEnvironmentQueuedTurns = sqliteTable(
   "workspace_environment_queued_turns",
   {
     id: text("id").primaryKey().notNull(),
-    threadId: text("thread_id").notNull().unique().references(() => threads.id, { onDelete: "cascade" }),
+    threadId: text("thread_id").notNull().references(() => threads.id, { onDelete: "cascade" }),
     messageId: text("message_id").notNull(),
+    queuePosition: integer("queue_position").notNull().default(0),
     state: text("state").notNull(),
     submissionJson: text("submission_json").notNull(),
     createdAt: text("created_at").notNull().default(timestampDefault),
@@ -371,7 +372,10 @@ export const workspaceEnvironmentQueuedTurns = sqliteTable(
     dispatchingAt: text("dispatching_at"),
     dispatchedAt: text("dispatched_at"),
   },
-  (table) => [index("idx_workspace_environment_queued_turns_state").on(table.state, table.createdAt)],
+  (table) => [
+    index("idx_workspace_environment_queued_turns_state").on(table.state, table.createdAt),
+    index("idx_workspace_environment_queued_turns_thread_state_position").on(table.threadId, table.state, table.queuePosition),
+  ],
 );
 
 export const toolCallRecords = sqliteTable(

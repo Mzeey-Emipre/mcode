@@ -367,13 +367,13 @@ describe("ThreadOverview branchless Create PR", () => {
     const failedSetup: WorkspaceEnvironmentAutomaticSetupSnapshot = {
       gate: "blocked",
       attempt: null,
-      queuedTurn: {
+      queuedTurns: [{
         id: "submission-1",
         messageId: "message-1",
         state: "queued",
         createdAt: "2026-08-22T12:00:00.000Z",
         dispatchedAt: null,
-      },
+      }],
     };
     mockGetAutomaticSetup.mockResolvedValue(failedSetup);
 

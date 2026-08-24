@@ -437,10 +437,11 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
       ? (
           <ProjectAutomaticSetupThreadBlock
             threadId={activeThread.id}
+            workspaceId={activeThread.workspace_id}
           />
         )
       : undefined
-  ), [activeThread?.id, activeThread?.mode, activeThread?.worktree_managed]);
+  ), [activeThread?.id, activeThread?.mode, activeThread?.workspace_id, activeThread?.worktree_managed]);
   const parentThreadExists = useParentThreadExists(activeThread?.parent_thread_id);
   const sessionError = useActiveThreadRecord((r) => r.error);
   const [dismissedError, setDismissedError] = useState<string | null>(null);

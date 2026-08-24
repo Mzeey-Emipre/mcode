@@ -492,13 +492,13 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
         output: "command not found",
         outputTruncated: false,
       },
-      queuedTurn: {
+      queuedTurns: [{
         id: "submission-1",
         messageId: "message-1",
         state: "queued",
         createdAt: "2026-08-22T12:00:00.000Z",
         dispatchedAt: null,
-      },
+      }],
     };
     chatViewTransportMock.getAutomaticSetup.mockResolvedValue(failedSetup);
     setupWorkspaceMock(defaultWorkspaceState({ threads: [thread] }));

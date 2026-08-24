@@ -270,6 +270,42 @@ describe("TerminalCommandService", () => {
     expect(released).toBe(true);
   });
 
+  it("waits for the normal containment verifier instead of timing a close independently", async () => {
+    const containment = deferred<void>();
+    const scheduled: Array<{ readonly callback: () => void; readonly delay: number }> = [];
+    const killProcessTree = vi.fn(() => containment.promise);
+    const { service: commands } = service({
+      killProcessTree,
+      setTimeout: vi.fn((callback, delay) => {
+        scheduled.push({ callback, delay });
+        return scheduled.length as unknown as ReturnType<typeof setTimeout>;
+      }),
+      clearTimeout: vi.fn(),
+    });
+    const prepared = await commands.prepare({
+      scope: { kind: "thread", workspaceId, threadId },
+      script: "bun -e \"await Bun.sleep(120000)\"",
+      timeoutMs: 120_000,
+    });
+    expect(prepared.kind).toBe("ready");
+    if (prepared.kind !== "ready") return;
+
+    const completion = prepared.command.start();
+    const closing = prepared.command.close();
+    await Promise.resolve();
+
+    expect(killProcessTree).toHaveBeenCalledWith(421);
+    expect(scheduled.map(({ delay }) => delay)).toEqual([120_000]);
+
+    containment.resolve();
+    await expect(closing).resolves.toEqual({ kind: "contained" });
+    await expect(completion).resolves.toEqual({
+      kind: "launch_failure",
+      output: "",
+      outputTruncated: false,
+    });
+  });
+
   it("cancels a running command once and waits for verified containment", async () => {
     const killProcessTree = vi.fn().mockResolvedValue(undefined);
     const pidRegistry = {
