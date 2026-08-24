@@ -73,6 +73,62 @@ describe("BrowserSurfaceHostRoot", () => {
     delete window.desktopBridge;
   });
 
+  it("leaves page input to the hosted Browser surface", () => {
+    render(<BrowserSurfaceHostRoot />);
+
+    expect(document.querySelector("[data-browser-surface-host]")).toHaveClass(
+      "size-0",
+    );
+    expect(document.querySelector("[data-browser-surface-host]")).not.toHaveClass(
+      "pointer-events-none",
+    );
+  });
+
+  it("shows the edge blur above the hosted Browser surface only during agent control", () => {
+    render(<BrowserSurfaceHostRoot />);
+    browserSurfaceHost.create(IDENTITY, {
+      address: "https://example.test/controlled",
+    });
+    browserSurfaceHost.present(IDENTITY, {
+      left: 10,
+      top: 20,
+      width: 640,
+      height: 480,
+      zIndex: 31,
+    });
+
+    const frame = screen.getByTestId("web-runtime-preview-iframe");
+    const indicator = screen.getByTestId("browser-surface-control-indicator");
+    expect(indicator).toHaveStyle({ visibility: "hidden" });
+
+    act(() => {
+      useBrowserAutomationStore.getState().registerTarget("workspace-1", "thread-1", "web-preview");
+      useBrowserAutomationStore.getState().setControllerForTarget(
+        "workspace-1",
+        "thread-1",
+        "web-preview",
+        { tabId: "web-preview", controller: "agent", controlEpoch: 1 },
+      );
+    });
+
+    expect(indicator).toHaveStyle({ visibility: "visible", pointerEvents: "none" });
+    expect(Number(indicator.style.zIndex)).toBeGreaterThan(Number(frame.style.zIndex));
+    expect(indicator.style.backgroundImage).toContain("transparent 32px");
+    expect(indicator.style.boxShadow).toContain("inset 0 0 40px");
+    expect(indicator.style.boxShadow).toContain("0 0 24px");
+
+    act(() => {
+      useBrowserAutomationStore.getState().setControllerForTarget(
+        "workspace-1",
+        "thread-1",
+        "web-preview",
+        { tabId: "web-preview", controller: "none", controlEpoch: 1 },
+      );
+    });
+
+    expect(indicator).toHaveStyle({ visibility: "hidden" });
+  });
+
   it("discards only the exact current generation selected by Memory Saver", () => {
     let onDiscardRequested: ((request: PreviewSurfaceDiscardRequest) => void) | null = null;
     const stopDiscardRequests = vi.fn();

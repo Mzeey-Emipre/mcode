@@ -80,6 +80,8 @@ export interface BrowserSurfaceAdapter {
   create?(): void;
   /** Presents the resource in its host container. */
   present(presentation?: BrowserSurfacePresentation): void;
+  /** Updates the visible agent-control indicator without changing page input. */
+  setControlled?(controlled: boolean): void;
   /** Occludes the resource without releasing it. */
   hide(): void;
   /** Starts navigation to a validated address. */
@@ -344,6 +346,7 @@ export class BrowserSurfaceHost {
     record.stopAdapter = adapter.subscribe((event) => this.handleEvent(event));
     for (const listener of [...this.materializedListeners]) listener(identity, generation);
     adapter.create?.();
+    adapter.setControlled?.(record.controlled);
     if (address !== undefined) void adapter.navigate(address);
     if (record.visible && record.presentation) adapter.present(record.presentation);
     if (record.publicationPending) this.schedulePublication(record);
@@ -469,6 +472,7 @@ export class BrowserSurfaceHost {
     const record = this.records.get(surfaceKey(identity));
     if (!record || !sameIdentity(record.identity, identity)) return;
     record.controlled = controlled;
+    record.adapter?.setControlled?.(controlled);
   }
 
   /** Pins a generation while an automation operation is in flight. */

@@ -1571,7 +1571,7 @@ describe("BrowserSessionDriver", () => {
     expect(projections.at(-1)).toEqual([]);
   });
 
-  it("closes omitted agent tabs at finalization and preserves deliverables across session cleanup", async () => {
+  it("closes omitted agent tabs, preserves deliverables, and activates handoffs", async () => {
     const liveTargets = new Map<string, BrowserAutomationHostDispatch["target"]>();
     const execute = vi.fn(async (value: BrowserAutomationHostDispatch) => {
       if (value.request.operation === "open") liveTargets.set(value.target.tabId, value.target);
@@ -1585,9 +1585,10 @@ describe("BrowserSessionDriver", () => {
     const close = vi.fn(async (target: BrowserAutomationHostDispatchTarget) => {
       liveTargets.delete(target.tabId);
     });
+    const activate = vi.fn(async () => undefined);
     const driver = new BrowserSessionDriver({
       web: { execute }, electron: { execute }, isElectron: () => false,
-      webTabs: { list: async () => [...liveTargets.values()], close },
+      webTabs: { list: async () => [...liveTargets.values()], close, activate },
     });
     const open = (tabId: string, key: string) => ({
       connection: { connectionGeneration: 1, capabilityRevision: 1 },
@@ -1634,12 +1635,83 @@ describe("BrowserSessionDriver", () => {
     const finalized = await driver.execute({ ...open("tab-1", "finalize"), request: {
       ...open("tab-1", "finalize").request,
       operation: "tabs",
-      args: { action: "finalize", idempotencyKey: "finalize-key", observationRef: refreshedObservationRef, dispositions: [{ tabId: "tab-1", disposition: "deliverable" }] },
+      args: {
+        action: "finalize",
+        idempotencyKey: "finalize-key",
+        observationRef: refreshedObservationRef,
+        dispositions: [
+          { tabId: "tab-1", disposition: "handoff" },
+          { tabId: "tab-2", disposition: "deliverable" },
+        ],
+      },
     } } as BrowserAutomationHostDispatch, new AbortController().signal);
-    expect(finalized).toMatchObject({ ok: true, result: { tabs: [{ tabId: "tab-1", disposition: "deliverable", ownership: "released" }] } });
-    expect(close.mock.calls.map(([target]) => target.tabId).sort()).toEqual(["tab-2", "tab-3"]);
+    expect(finalized).toMatchObject({
+      ok: true,
+      result: {
+        tabs: [
+          { tabId: "tab-1", disposition: "handoff", ownership: "released" },
+          { tabId: "tab-2", disposition: "deliverable", ownership: "released" },
+        ],
+      },
+    });
+    expect(close.mock.calls.map(([target]) => target.tabId)).toEqual(["tab-3"]);
+    expect(activate).toHaveBeenCalledOnce();
+    expect(activate).toHaveBeenCalledWith(expect.objectContaining({ tabId: "tab-1" }), "workspace");
     await driver.releaseProviderSession("session");
-    expect(close).toHaveBeenCalledTimes(2);
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it("reports a preserved failure when a handed-off tab cannot be activated", async () => {
+    const target = browserTarget("tab-handoff");
+    const liveTargets = new Map([[target.tabId, target]]);
+    const execute = vi.fn(async (dispatch: BrowserAutomationHostDispatch) => ({
+      contractVersion: 1,
+      requestId: dispatch.request.requestId,
+      sequence: dispatch.request.sequence,
+      ok: true,
+      result: dispatch.request.operation === "inspect"
+        ? { operation: "inspect", tabs: [target] }
+        : { operation: "open", url: "https://example.test", title: "Example", controlEpoch: 0 },
+    }) as BrowserAutomationResponse);
+    const close = vi.fn(async () => undefined);
+    const driver = new BrowserSessionDriver({
+      web: { execute },
+      electron: { execute },
+      isElectron: () => false,
+      webTabs: {
+        list: async () => [...liveTargets.values()],
+        close,
+        activate: vi.fn(async () => {
+          throw new Error("activation failed");
+        }),
+      },
+    });
+
+    await driver.execute(openTabDispatch(target, "open", 1), new AbortController().signal);
+    const inspected = await driver.execute(
+      inspectTabDispatch(target, "inspect", 2),
+      new AbortController().signal,
+    );
+    const observationRef = (inspected as { result: { observationRef: string } }).result.observationRef;
+    const finalized = await driver.execute(
+      tabsDispatch(target, "finalize", 3, observationRef, {
+        action: "finalize",
+        dispositions: [{ tabId: target.tabId, disposition: "handoff" }],
+      }),
+      new AbortController().signal,
+    );
+
+    expect(finalized).toMatchObject({
+      ok: false,
+      error: {
+        code: "TAB_UNAVAILABLE",
+        retryable: true,
+        stage: "effect",
+        effect: "preserved",
+        recovery: "inspect",
+      },
+    });
+    expect(close).not.toHaveBeenCalled();
   });
 
   it("normalizes web and Electron ownership outcomes while using runtime-specific cleanup", async () => {

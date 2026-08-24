@@ -824,7 +824,30 @@ describe("BrowserAutomationHost", () => {
     );
     await act(async () => usePreviewTabsStore.getState().activatePage("workspace-1", "thread-1", tabId));
     await waitFor(() => expect(usePreviewTabsStore.getState().tabSetByScope[previewTabsScopeKey("workspace-1", "thread-1")]?.activeTabId).toBe(tabId));
-    expect(document.querySelector('[data-automation-persistent-scope="thread-1"]')).toHaveAttribute("aria-hidden", "false");
+    const surface = document.querySelector<HTMLElement>('[data-automation-persistent-scope="thread-1"]');
+    expect(surface).toHaveAttribute("aria-hidden", "false");
+    act(() => useBrowserAutomationStore.getState().setControllerForTarget(
+      "workspace-1",
+      "thread-1",
+      tabId,
+      {
+        tabId,
+        controller: "agent",
+        controlEpoch: 0,
+      },
+    ));
+    await waitFor(() => expect(surface?.style.zIndex).toBe("30"));
+    act(() => useBrowserAutomationStore.getState().setControllerForTarget(
+      "workspace-1",
+      "thread-1",
+      tabId,
+      {
+        tabId,
+        controller: "none",
+        controlEpoch: 1,
+      },
+    ));
+    await waitFor(() => expect(surface?.style.zIndex).toBe(""));
     act(() => {
       browserSurfacePresentationCoordinator.setActivityRailOverlap(112);
     });
@@ -1434,6 +1457,160 @@ describe("BrowserAutomationHost", () => {
     view.unmount();
   });
 
+  it("does not cancel an in-flight tab handoff while activation transfers control", async () => {
+    const executing = deferred<BrowserAutomationResponse>();
+    let executionSignal: AbortSignal | undefined;
+    const executeTabs = vi.spyOn(BrowserSessionDriver.prototype, "execute").mockImplementationOnce(
+      (_dispatch, signal) => {
+        executionSignal = signal;
+        return executing.promise;
+      },
+    );
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    const handoffDispatch = dispatch(1, 25);
+    handoffDispatch.request = {
+      ...handoffDispatch.request,
+      operation: "tabs",
+      args: {
+        action: "finalize",
+        observationRef: "observation-1",
+        idempotencyKey: "handoff-1",
+        dispositions: [{ tabId: "tab-1", disposition: "handoff" }],
+      },
+    };
+    act(() => harness.emit("browserAutomation.request", {
+      hostId,
+      generation: 1,
+      dispatch: handoffDispatch,
+    }));
+    await waitFor(() => expect(useBrowserAutomationStore.getState().activeRequests).toHaveLength(1));
+
+    act(() => useBrowserAutomationStore.getState().refreshTarget("workspace-1", "thread-1", "tab-1"));
+    await waitFor(() => expect(executionSignal).toBeDefined());
+    expect(executionSignal?.aborted).toBe(false);
+
+    act(() => controllerChanged?.({
+      tabId: "tab-1",
+      controller: "human",
+      controlEpoch: 1,
+    }));
+    expect(interrupt).not.toHaveBeenCalled();
+    await act(async () => {
+      interruptBrowserAutomationTarget(
+        "workspace-1",
+        "thread-1",
+        "tab-1",
+        "human-interrupted",
+      );
+      await Promise.resolve();
+    });
+    expect(interrupt).toHaveBeenCalledOnce();
+    expect(harness.transport.cancelBrowserAutomationRequest).not.toHaveBeenCalled();
+    const completedResponse = {
+      contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
+      requestId: handoffDispatch.request.requestId,
+      sequence: handoffDispatch.request.sequence,
+      ok: true,
+      result: {
+        operation: "tabs",
+        action: "finalize",
+        tabs: [{
+          tabId: "tab-1",
+          provenance: "agent-created",
+          ownership: "released",
+          disposition: "handoff",
+        }],
+      },
+    } satisfies BrowserAutomationResponse;
+    executing.resolve(completedResponse);
+    await act(async () => executing.promise);
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledWith(
+      hostId,
+      1,
+      completedResponse,
+      handoffDispatch.target,
+    ));
+    executeTabs.mockRestore();
+    view.unmount();
+  });
+
+  it("releases agent control before reporting a successful Browser handoff", async () => {
+    useThreadStore.setState({ runningThreadIds: new Set(["thread-1"]) });
+    const executing = deferred<BrowserAutomationResponse>();
+    const executeTabs = vi.spyOn(BrowserSessionDriver.prototype, "execute").mockReturnValueOnce(executing.promise);
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    await waitFor(() => expect(controllerChanged).not.toBeNull());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    const handoffDispatch = dispatch(1, 26);
+    handoffDispatch.request = {
+      ...handoffDispatch.request,
+      operation: "tabs",
+      args: {
+        action: "finalize",
+        observationRef: "observation-1",
+        idempotencyKey: "handoff-release-1",
+        dispositions: [{ tabId: "tab-1", disposition: "handoff" }],
+      },
+    };
+    act(() => controllerChanged?.({
+      tabId: "tab-1",
+      controller: "agent",
+      controlEpoch: 0,
+      providerSessionId: "provider-session",
+    }));
+
+    act(() => harness.emit("browserAutomation.request", {
+      hostId,
+      generation: 1,
+      dispatch: handoffDispatch,
+    }));
+    await waitFor(() => expect(useBrowserAutomationStore.getState().activeRequests).toHaveLength(1));
+
+    const completedResponse = {
+      contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
+      requestId: handoffDispatch.request.requestId,
+      sequence: handoffDispatch.request.sequence,
+      ok: true,
+      result: {
+        operation: "tabs",
+        action: "finalize",
+        tabs: [{
+          tabId: "tab-1",
+          provenance: "agent-created",
+          ownership: "released",
+          disposition: "handoff",
+        }],
+      },
+    } satisfies BrowserAutomationResponse;
+    executing.resolve(completedResponse);
+    await act(async () => executing.promise);
+
+    await waitFor(() => expect(releaseAgentControl).toHaveBeenCalledWith({
+      threadId: "thread-1",
+      tabId: "tab-1",
+      controlEpoch: 0,
+      providerSessionId: "provider-session",
+    }));
+    expect(useBrowserAutomationStore.getState().controllers.get(
+      browserAutomationTargetKey("workspace-1", "thread-1", "tab-1"),
+    )).toMatchObject({ controller: "none", controlEpoch: 0 });
+    expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledWith(
+      hostId,
+      1,
+      completedResponse,
+      handoffDispatch.target,
+    );
+    expect(releaseAgentControl.mock.invocationCallOrder[0]).toBeLessThan(
+      harness.transport.respondToBrowserAutomationRequest.mock.invocationCallOrder[0]!,
+    );
+
+    executeTabs.mockRestore();
+    view.unmount();
+  });
+
   it("interrupts only the exact thread and tab selected by the human", async () => {
     const first = deferred<BrowserAutomationResponse>();
     const second = deferred<BrowserAutomationResponse>();
@@ -1992,6 +2169,80 @@ describe("BrowserAutomationHost", () => {
       });
     }
     expect(createTab).toHaveBeenCalledTimes(2);
+    view.unmount();
+  });
+
+  it("keeps an in-flight Browser open alive when the user switches Projects", async () => {
+    useBrowserAutomationStore.setState({ liveTargets: new Map() });
+    useWorkspaceStore.setState({
+      activeWorkspaceId: "workspace-1",
+      activeThreadId: "thread-1",
+      workspaces: [{ id: "workspace-1" }, { id: "workspace-2" }] as never,
+    });
+    useThreadStore.setState({ runningThreadIds: new Set(["thread-1"]) });
+    createTab.mockImplementation(async (threadId: string) => {
+      useWorkspaceStore.setState({
+        activeWorkspaceId: "workspace-2",
+        activeThreadId: "thread-2",
+      });
+      useBrowserAutomationStore.getState().registerTarget("workspace-1", threadId, "background-tab");
+      return {
+        ok: true,
+        data: {
+          tabId: "background-tab",
+          tabs: { threadId, activeTabId: "background-tab", tabs: [{ id: "background-tab", threadId, url: null, title: null, faviconUrl: null, warm: true }] },
+        },
+      };
+    });
+    describeTarget.mockImplementation(async ({ threadId, tabId }: { threadId: string; tabId: string }) => ({
+      ok: true,
+      target: { windowId: 7, threadId, tabId, targetGeneration: 1, active: true, focused: false, lastUsedAt: 50 },
+    }));
+    const execution = deferred<BrowserAutomationResponse>();
+    execute.mockReturnValue(execution.promise);
+
+    const view = render(<BrowserAutomationHost />);
+    await waitFor(() => expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce());
+    const hostId = sessionStorage.getItem("mcode.browserAutomation.hostId");
+    const base = dispatch(1, 17).request;
+    const openRequest = {
+      ...base,
+      operation: "open" as const,
+      args: { url: "https://example.com/", activate: false },
+    };
+    act(() => harness.emit("browserAutomation.bootstrap", { hostId, generation: 1, request: openRequest }));
+
+    await waitFor(() => expect(execute).toHaveBeenCalledOnce());
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(harness.transport.registerBrowserAutomationHost).toHaveBeenCalledOnce();
+    expect(harness.transport.cancelBrowserAutomationRequest).not.toHaveBeenCalledWith(
+      hostId,
+      1,
+      openRequest.requestId,
+      openRequest.sequence,
+      "host-shutdown",
+    );
+
+    execution.resolve({
+      contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
+      requestId: openRequest.requestId,
+      sequence: openRequest.sequence,
+      ok: true,
+      result: { operation: "open", url: "https://example.com/", title: "Example", controlEpoch: 0 },
+    });
+    await waitFor(() => expect(harness.transport.respondToBrowserAutomationRequest).toHaveBeenCalledWith(
+      hostId,
+      1,
+      expect.objectContaining({ ok: true }),
+      expect.objectContaining({ tabId: "background-tab" }),
+    ));
+    expect(useWorkspaceStore.getState()).toMatchObject({
+      activeWorkspaceId: "workspace-2",
+      activeThreadId: "thread-2",
+    });
     view.unmount();
   });
 

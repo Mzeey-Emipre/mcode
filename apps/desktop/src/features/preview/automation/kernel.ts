@@ -816,7 +816,7 @@ export class BrowserAutomationKernel {
       state.controlEpoch !== input.controlEpoch ||
       state.controller.providerSessionId !== providerSessionId
     ) return false;
-    this.emitController(state, "none");
+    this.revokeAgentCapability(state);
     this.restoreActivePreviewGuestFocus({ state, webContents: state.webContents, window: win });
     return true;
   }
@@ -1142,13 +1142,27 @@ export class BrowserAutomationKernel {
 
   private humanInterrupt(state: TargetState): void {
     if (state.controller.controller === "human") return;
+    this.revokeAgentCapability(state, "human");
+  }
+
+  private revokeAgentCapability(
+    state: TargetState,
+    nextController: "none" | "human" = "none",
+  ): void {
     state.controlEpoch += 1;
     this.scheduler.cancelTarget(
       state.key,
-      new KernelError("HUMAN_INTERRUPTED", "Human input took control of the browser", true),
+      nextController === "human"
+        ? new KernelError("HUMAN_INTERRUPTED", "Human input took control of the browser", true)
+        : new KernelError("STALE_CONTROL_EPOCH", "Agent browser capability was revoked", true),
     );
-    state.actions.push({ timestamp: Date.now(), operation: "status", outcome: "interrupted", detail: "Human input took control" });
-    this.emitController(state, "human");
+    state.actions.push({
+      timestamp: Date.now(),
+      operation: "status",
+      outcome: "interrupted",
+      detail: nextController === "human" ? "Human input took control" : "Agent browser capability was revoked",
+    });
+    this.emitController(state, nextController);
   }
 
   private emitController(

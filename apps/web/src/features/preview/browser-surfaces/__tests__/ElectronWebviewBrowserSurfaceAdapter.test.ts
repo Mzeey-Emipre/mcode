@@ -2,10 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 import {
   createElectronWebviewBrowserSurfaceAdapterFactory,
   ElectronWebviewBrowserSurfaceAdapter,
+  normalizeElectronWebviewSurfaceAddress,
 } from "../ElectronWebviewBrowserSurfaceAdapter";
-import type {
-  BrowserSurfaceIdentity,
-  BrowserSurfaceAdapterEvent,
+import {
+  BrowserSurfaceHost,
+  type BrowserSurfaceAdapterEvent,
+  type BrowserSurfaceIdentity,
 } from "../BrowserSurfaceHost";
 import type { PreviewSurfaceBridge } from "@/transport/desktop-bridge";
 import { runBrowserSurfaceContract } from "./browserSurfaceContract";
@@ -38,6 +40,38 @@ runBrowserSurfaceContract(
 );
 
 describe("ElectronWebviewBrowserSurfaceAdapter", () => {
+  it("does not retain its private adoption URL when a cold tab is restored", () => {
+    const adapters: ElectronWebviewBrowserSurfaceAdapter[] = [];
+    const host = new BrowserSurfaceHost({
+      adapterFactory: (identity, generation) => {
+        const adapter = new ElectronWebviewBrowserSurfaceAdapter(identity, generation, {
+          root: document.body,
+          bridge: bridge(),
+        });
+        adapters.push(adapter);
+        return adapter;
+      },
+      normalizeAddress: normalizeElectronWebviewSurfaceAddress,
+    });
+
+    const first = host.create(IDENTITY);
+    const inertAddress = adapters[0]!.element.getAttribute("src")!;
+    adapters[0]!.element.dispatchEvent(Object.assign(new Event("did-navigate"), {
+      url: inertAddress,
+      isMainFrame: true,
+    }));
+    adapters[0]!.element.dispatchEvent(Object.assign(new Event("did-stop-loading"), {
+      url: inertAddress,
+      isMainFrame: true,
+    }));
+
+    expect(host.inspect(IDENTITY)?.recoveryAddress).toBeNull();
+    expect(host.discard(IDENTITY, first.generation)).toBe(true);
+    expect(() => host.ensure(IDENTITY)).not.toThrow();
+    expect(adapters).toHaveLength(2);
+    host.disposeHost();
+  });
+
   it("starts inert, adopts with an opaque complete identity, and navigates through the typed bridge", async () => {
     const surfaceBridge = bridge();
     const adapter = new ElectronWebviewBrowserSurfaceAdapter(IDENTITY, 7, {
@@ -142,6 +176,31 @@ describe("ElectronWebviewBrowserSurfaceAdapter", () => {
     expect(adapter.element.style.pointerEvents).toBe("auto");
     expect(adapter.element).toHaveAttribute("aria-hidden", "false");
     adapter.dispose();
+  });
+
+  it("places the agent-control edge blur above the webview without catching input", () => {
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const adapter = new ElectronWebviewBrowserSurfaceAdapter(IDENTITY, 9, {
+      root,
+      bridge: bridge(),
+    });
+    adapter.present({ left: 10, top: 20, width: 640, height: 480, zIndex: 31 });
+
+    adapter.setControlled(true);
+
+    const indicator = root.querySelector<HTMLElement>(
+      "[data-testid='browser-surface-control-indicator']",
+    );
+    expect(indicator).not.toBeNull();
+    expect(indicator).toHaveStyle({ visibility: "visible", pointerEvents: "none" });
+    expect(Number(indicator!.style.zIndex)).toBeGreaterThan(Number(adapter.element.style.zIndex));
+
+    adapter.setControlled(false);
+
+    expect(indicator).toHaveStyle({ visibility: "hidden" });
+    adapter.dispose();
+    root.remove();
   });
 
   it("publishes renderer history state after address, history, and in-page commits", () => {
