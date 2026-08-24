@@ -621,7 +621,7 @@ describe("BrowserAutomationKernel", () => {
     });
   });
 
-  it("retains agent control between Browser calls until the renderer releases the turn", async () => {
+  it("revokes the agent command epoch when the renderer releases the turn", async () => {
     await expect(kernel.execute(event(), payload(request("press", {
       key: "A",
       modifiers: [],
@@ -644,7 +644,14 @@ describe("BrowserAutomationKernel", () => {
       requestId: "status-after-agent-turn",
     })))).resolves.toMatchObject({
       ok: true,
-      result: { controller: { controller: "none", controlEpoch: 0 } },
+      result: { controller: { controller: "none", controlEpoch: 1 } },
+    });
+    await expect(kernel.execute(event(), payload(request("press", {
+      key: "B",
+      modifiers: [],
+    }, { requestId: "stale-agent-after-release" })))).resolves.toMatchObject({
+      ok: false,
+      error: { code: "STALE_CONTROL_EPOCH" },
     });
   });
 

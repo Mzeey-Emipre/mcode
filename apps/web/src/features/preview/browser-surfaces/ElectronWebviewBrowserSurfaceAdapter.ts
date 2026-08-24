@@ -14,6 +14,7 @@ import type {
   BrowserSurfaceIdentity,
   BrowserSurfacePresentation,
 } from "./BrowserSurfaceHost";
+import { BrowserSurfaceControlIndicator } from "./BrowserSurfaceControlIndicator";
 
 const MAX_ADDRESS = BROWSER_TAB_INFO_STRING_MAX.url;
 const MAX_TITLE = BROWSER_TAB_INFO_STRING_MAX.title;
@@ -87,7 +88,8 @@ function bounded(value: unknown, max: number): string | null {
 }
 
 function eventAddress(event: WebviewEvent): string | null {
-  return bounded(event.url, MAX_ADDRESS) ?? bounded(event.validatedURL, MAX_ADDRESS);
+  const address = bounded(event.url, MAX_ADDRESS) ?? bounded(event.validatedURL, MAX_ADDRESS);
+  return address?.startsWith(INERT_URL_PREFIX) ? null : address;
 }
 
 function mainFrame(event: WebviewEvent): boolean {
@@ -117,6 +119,7 @@ export class ElectronWebviewBrowserSurfaceAdapter implements BrowserSurfaceAdapt
   private adopted = false;
   private disposed = false;
   private readonly frame: ElectronWebviewElement;
+  private readonly controlIndicator: BrowserSurfaceControlIndicator;
   private readonly onHumanInput?: ElectronWebviewBrowserSurfaceAdapterOptions["onHumanInput"];
 
   /** Creates and mounts a blank Electron webview for one identity and generation. */
@@ -169,7 +172,9 @@ export class ElectronWebviewBrowserSurfaceAdapter implements BrowserSurfaceAdapt
       surface: this.surface,
       adoptionToken: this.adoptionToken,
     })).catch(() => ({ ok: false as const, error: "Surface preparation failed" }));
-    (options.root ?? this.documentRef.body)?.appendChild(this.frame);
+    const root = options.root ?? this.documentRef.body;
+    root?.appendChild(this.frame);
+    this.controlIndicator = new BrowserSurfaceControlIndicator(this.documentRef, root);
   }
 
   /** Returns the owned webview for host placement and lifecycle integration. */
@@ -209,6 +214,13 @@ export class ElectronWebviewBrowserSurfaceAdapter implements BrowserSurfaceAdapt
     this.frame.style.visibility = "visible";
     this.frame.style.pointerEvents = presentation.inputEnabled === false ? "none" : "auto";
     this.frame.setAttribute("aria-hidden", presentation.accessible === false ? "true" : "false");
+    this.controlIndicator.present(presentation);
+  }
+
+  /** Updates the click-through edge indicator for agent control. */
+  public setControlled(controlled: boolean): void {
+    if (this.disposed) return;
+    this.controlIndicator.setControlled(controlled);
   }
 
   /** Hides the webview without changing its guest document. */
@@ -217,6 +229,7 @@ export class ElectronWebviewBrowserSurfaceAdapter implements BrowserSurfaceAdapt
     this.frame.style.visibility = "hidden";
     this.frame.style.pointerEvents = "none";
     this.frame.setAttribute("aria-hidden", "true");
+    this.controlIndicator.hide();
   }
 
   /** Requests main-process navigation after trusted adoption. */
@@ -257,6 +270,7 @@ export class ElectronWebviewBrowserSurfaceAdapter implements BrowserSurfaceAdapt
     this.frame.removeEventListener("render-process-gone", this.onRenderProcessGone);
     this.listeners.clear();
     void Promise.resolve(this.bridge.release({ surface: this.surface, reason })).catch(() => undefined);
+    this.controlIndicator.dispose();
     this.frame.remove();
   }
 

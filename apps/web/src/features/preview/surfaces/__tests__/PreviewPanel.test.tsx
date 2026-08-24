@@ -933,6 +933,8 @@ describe("PreviewPanel: full panel state", () => {
       expect(webview).toHaveAttribute("data-tab-id", PREVIEW_WEBVIEW_FALLBACK_TAB_ID);
       expect(webview).toHaveAttribute("src", "https://example.com");
       expect(webview).toHaveClass("absolute", "inset-0", "z-0", "h-full", "w-full");
+      expect(screen.getByTestId("preview-panel")).toHaveClass("pointer-events-none");
+      expect(screen.getByTestId("preview-surface")).toHaveClass("pointer-events-none");
       expect(screen.queryByTestId("browser-local-ports")).not.toBeInTheDocument();
       expect(screen.getByTestId("electron-browser-surface-webview")).toHaveStyle({
         visibility: "visible",
@@ -1059,7 +1061,9 @@ describe("PreviewPanel: full panel state", () => {
 
     const { rerender } = render(<PreviewPanel threadId="thread-1" />);
     expect(screen.getAllByTestId("preview-webview")).toHaveLength(2);
-    expect(screen.getByTestId("preview-webview-surface")).toContainElement(
+    const webviewSurface = screen.getByTestId("preview-webview-surface");
+    expect(webviewSurface).toHaveClass("pointer-events-none");
+    expect(webviewSurface).toContainElement(
       screen.getAllByTestId("preview-webview")[0]!,
     );
 

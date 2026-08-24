@@ -8,6 +8,7 @@ import {
 } from "../browser-surfaces";
 import {
   invalidateBrowserAutomationTargetObservation,
+  interruptBrowserAutomationTarget,
   parseBrowserAutomationScopeKey,
   parseBrowserAutomationTargetKey,
   useBrowserAutomationStore,
@@ -30,6 +31,12 @@ export const browserSurfaceHost = new BrowserSurfaceHost({
         title: "Electron browser preview",
         onHumanInput: (surfaceIdentity) => {
           if (surfaceIdentity.scope.kind !== "thread") return;
+          interruptBrowserAutomationTarget(
+            surfaceIdentity.workspaceId,
+            surfaceIdentity.scope.id,
+            surfaceIdentity.tabId,
+            "human-interrupted",
+          );
           invalidateBrowserAutomationTargetObservation(
             surfaceIdentity.workspaceId,
             surfaceIdentity.scope.id,
@@ -198,7 +205,7 @@ export function BrowserSurfaceHostRoot() {
     <div
       ref={setRoot}
       data-browser-surface-host=""
-      className="pointer-events-none fixed inset-0 z-30"
+      className="fixed left-0 top-0 z-30 size-0"
     />
   );
 }

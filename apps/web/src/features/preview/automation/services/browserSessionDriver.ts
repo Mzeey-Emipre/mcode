@@ -171,6 +171,7 @@ export interface BrowserSessionRuntimeAdapter {
 export interface BrowserSessionTabLifecycleAdapter {
   list(dispatch: BrowserAutomationHostDispatch): Promise<readonly BrowserAutomationHostDispatchTarget[]>;
   close(target: BrowserAutomationHostDispatchTarget, workspaceId: string): Promise<void>;
+  activate?(target: BrowserAutomationHostDispatchTarget, workspaceId: string): Promise<void>;
 }
 
 /** Renderer-side adapter that forwards Browser v2 commands to Electron preload. */
@@ -894,6 +895,12 @@ export class BrowserSessionDriver {
       type Disposition = "close" | "release" | "handoff" | "deliverable";
       const entries = request.args.dispositions as Array<{ tabId: string; disposition: Disposition }>;
       const dispositions = new Map<string, Disposition>(entries.map((entry) => [entry.tabId, entry.disposition]));
+      const currentHandoff = session.current && dispositions.get(session.current.tabId) === "handoff"
+        ? session.tabs.get(session.current.tabId)
+        : undefined;
+      const handoff = currentHandoff ?? [...session.tabs.values()].find(
+        (controlled) => dispositions.get(controlled.tabId) === "handoff",
+      );
       for (const [tabId, controlled] of [...session.tabs]) {
         const requested = dispositions.get(tabId);
         const disposition = controlled.provenance === "claimed-user"
@@ -911,6 +918,20 @@ export class BrowserSessionDriver {
         }
       }
       session.current = null;
+      if (handoff) {
+        if (!adapter?.activate) {
+          return this.tabHandoffFailure(
+            dispatch,
+            new Error("Browser tab activation is unavailable"),
+            signal,
+          );
+        }
+        try {
+          await adapter.activate(handoff.target, session.workspaceId);
+        } catch (cause) {
+          return this.tabHandoffFailure(dispatch, cause, signal);
+        }
+      }
     }
 
     if (signal.aborted) {
@@ -1094,6 +1115,31 @@ export class BrowserSessionDriver {
         retryable: true,
         stage: "effect",
         effect,
+        recovery: "inspect",
+      },
+    };
+  }
+
+  private tabHandoffFailure(
+    dispatch: BrowserAutomationHostDispatch,
+    cause: unknown,
+    signal: AbortSignal,
+  ): BrowserAutomationResponse {
+    if (signal.aborted || this.isCancellation(cause)) {
+      return this.tabCancellation(dispatch, "Browser tab mutation was interrupted while handing off the tab", "preserved");
+    }
+    const detail = sanitizePublicDetail(cause instanceof Error ? cause.message : cause);
+    return {
+      contractVersion: dispatch.request.contractVersion,
+      requestId: dispatch.request.requestId,
+      sequence: dispatch.request.sequence,
+      ok: false,
+      error: {
+        code: "TAB_UNAVAILABLE",
+        message: detail ? `Browser tab handoff failed: ${detail}` : "Browser tab handoff failed",
+        retryable: true,
+        stage: "effect",
+        effect: "preserved",
         recovery: "inspect",
       },
     };

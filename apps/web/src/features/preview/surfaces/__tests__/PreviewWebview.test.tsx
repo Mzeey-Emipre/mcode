@@ -27,8 +27,9 @@ describe("PreviewWebview", () => {
     delete window.desktopBridge;
   });
 
-  it("invalidates exact tab observations only for the trusted guest input channel", () => {
+  it("transfers exact tab control and invalidates observations only for trusted guest input", () => {
     const invalidate = vi.fn();
+    const interrupt = vi.fn().mockResolvedValue(true);
     window.desktopBridge = {
       preview: {
         surface: {
@@ -37,6 +38,7 @@ describe("PreviewWebview", () => {
           navigate: vi.fn().mockResolvedValue({ ok: true }),
           release: vi.fn().mockResolvedValue({ ok: true }),
         },
+        automation: { interrupt },
       },
     } as unknown as NonNullable<typeof window.desktopBridge>;
     const unsubscribe = onBrowserAutomationObservationInvalidation(invalidate);
@@ -68,6 +70,8 @@ describe("PreviewWebview", () => {
     unsubscribe();
     expect(invalidate).toHaveBeenCalledOnce();
     expect(invalidate).toHaveBeenCalledWith("workspace-1", "thread-1", "tab-1");
+    expect(interrupt).toHaveBeenCalledOnce();
+    expect(interrupt).toHaveBeenCalledWith({ threadId: "thread-1", tabId: "tab-1" });
   });
 
   it("routes history through the exact generation-bound main bridge", async () => {

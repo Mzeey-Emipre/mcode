@@ -13,6 +13,6 @@ Apply this guide when the user asks to open, inspect, test, debug, or interact w
 8. Interruptions: user input invalidates the observation. Stop or Take control interrupts execution. Release held input, keep completed effects, and yield to the user.
 9. Recover: inspect the receipt and effect before retrying. An applied receipt proves the action effect, not the intended outcome. Effects do not roll back. Never replay mutations automatically. Follow exactly one recovery instruction: inspect, reopen, wait, yield_to_user, or do_not_retry.
 10. Evidence: request includeScreenshot only for visual evidence or when the user asks. Verify every success claim against current page evidence.
-11. Finish: use browser_tabs finalize. Release claimed user tabs. Close agent-created tabs unless the user needs a handoff.
+11. Finish: call browser_tabs finalize before replying. Release claimed tabs. Close agent tabs by default. For a tab the user wants open or usable, set disposition handoff and verify success.
 12. Evaluate: use browser_evaluate only when the live capability advertises it. Apply the same observation, idempotency, interruption, receipt, effect, and recovery rules.
 `;

@@ -46,8 +46,11 @@ describe("BrowserViewportCanvas", () => {
       "bottom-right",
       "bottom-left",
     ]) {
-      expect(screen.getByRole("separator", { name: `Resize viewport from ${position}` })).toBeInTheDocument();
+      expect(screen.getByRole("separator", { name: `Resize viewport from ${position}` })).toHaveClass(
+        "pointer-events-auto",
+      );
     }
+    expect(screen.getByTestId("browser-viewport-stage")).toHaveClass("pointer-events-none");
 
     await user.click(screen.getByRole("separator", { name: "Resize viewport from right" }));
     await user.keyboard("{ArrowRight}");

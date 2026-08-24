@@ -103,9 +103,11 @@ import {
   getOrCreateViewportCoordinator,
   waitForViewportLayout,
 } from "../automation/services/viewportCoordinatorFactory";
-import type {
-  BrowserSurfaceIdentity,
-  BrowserSurfacePageState,
+import {
+  BROWSER_CONTROL_EDGE_BACKGROUND_IMAGE,
+  BROWSER_CONTROL_EDGE_BOX_SHADOW,
+  type BrowserSurfaceIdentity,
+  type BrowserSurfacePageState,
 } from "../browser-surfaces";
 import {
   browserSurfaceHost,
@@ -3044,10 +3046,13 @@ export function PreviewPanel({
   return (
     <div
       data-testid="preview-panel"
-      className="flex h-full min-h-0 min-w-0 flex-1 basis-0 flex-col overflow-hidden"
+      className={cn(
+        "flex h-full min-h-0 min-w-0 flex-1 basis-0 flex-col overflow-hidden",
+        webviewLayerInteractive && "pointer-events-none",
+      )}
     >
       <div
-        className={cn(showWebviewPreview && "relative z-20")}
+        className={cn(showWebviewPreview && "pointer-events-auto relative z-20")}
         style={coveredLeft ? { clipPath: `inset(0 0 0 ${coveredLeft}px)` } : undefined}
       >
         {showAnnotationCommandBar ? (
@@ -3174,6 +3179,7 @@ export function PreviewPanel({
                 responsiveViewportSize ? "overflow-auto bg-muted/20" : "overflow-hidden",
               )
             : "mx-2 mb-2 mt-1 rounded-md border border-border/40 bg-muted/10",
+          webviewLayerInteractive && "pointer-events-none",
           showLocalPorts && "overflow-y-auto",
         )}
       >
@@ -3217,10 +3223,7 @@ export function PreviewPanel({
         {hasWebviewLayer ? (
           <div
             data-testid="preview-webview-surface"
-            className={cn(
-              "absolute inset-0 z-0 overflow-hidden rounded-tl-md",
-              !webviewLayerInteractive && "pointer-events-none",
-            )}
+            className="pointer-events-none absolute inset-0 z-0 overflow-hidden rounded-tl-md"
           >
           <BrowserViewportCanvas
             coordinator={activeViewportCoordinator}
@@ -3240,16 +3243,8 @@ export function PreviewPanel({
             className="pointer-events-none absolute inset-0 z-20 rounded-tl-md"
             style={{
               clipPath: coveredLeft ? `inset(0 0 0 ${coveredLeft}px)` : undefined,
-              backgroundImage: [
-                "linear-gradient(to right, color-mix(in oklab, var(--primary) 26%, transparent), transparent 32px)",
-                "linear-gradient(to left, color-mix(in oklab, var(--primary) 26%, transparent), transparent 32px)",
-                "linear-gradient(to bottom, color-mix(in oklab, var(--primary) 26%, transparent), transparent 32px)",
-                "linear-gradient(to top, color-mix(in oklab, var(--primary) 26%, transparent), transparent 32px)",
-              ].join(", "),
-              boxShadow: [
-                "inset 0 0 40px color-mix(in oklab, var(--primary) 30%, transparent)",
-                "0 0 24px color-mix(in oklab, var(--primary) 28%, transparent)",
-              ].join(", "),
+              backgroundImage: BROWSER_CONTROL_EDGE_BACKGROUND_IMAGE,
+              boxShadow: BROWSER_CONTROL_EDGE_BOX_SHADOW,
             }}
           >
             <span className="sr-only" role="status" aria-live="polite">
@@ -3282,7 +3277,7 @@ export function PreviewPanel({
                     data-testid="preview-annotation-marker"
                     variant="ghost"
                     size="icon-sm"
-                    className="group/marker absolute z-20 flex size-8 items-center justify-center rounded-full bg-transparent p-0 hover:bg-transparent focus-visible:bg-transparent"
+                    className="pointer-events-auto group/marker absolute z-20 flex size-8 items-center justify-center rounded-full bg-transparent p-0 hover:bg-transparent focus-visible:bg-transparent"
                     style={{
                       left: Math.max(
                         16,
@@ -3366,7 +3361,7 @@ export function PreviewPanel({
           <div
             aria-hidden
             data-testid="preview-annotation-discard-overlay"
-            className="absolute inset-0 z-20 bg-transparent"
+            className="pointer-events-auto absolute inset-0 z-20 bg-transparent"
           />
         ) : null}
         {visibleOpenBubbleBase ? (
@@ -3377,7 +3372,7 @@ export function PreviewPanel({
               // overflow-hidden clips the rounded corners against child backgrounds;
               // the bubble is intentionally dark (BUBBLE_SURFACE) so it stays
               // readable over any user webpage regardless of the app theme.
-              "absolute z-30 w-[min(20.5rem,calc(100%-1rem))] overflow-hidden rounded-[1.55rem] border shadow-xl transition-[border-color,box-shadow] duration-150",
+              "pointer-events-auto absolute z-30 w-[min(20.5rem,calc(100%-1rem))] overflow-hidden rounded-[1.55rem] border shadow-xl transition-[border-color,box-shadow] duration-150",
               outsideWarned
                 ? "animate-preview-annotation-shake border-destructive/80"
                 : bubbleInputFocused

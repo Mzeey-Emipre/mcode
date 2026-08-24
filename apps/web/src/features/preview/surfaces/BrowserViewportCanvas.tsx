@@ -207,7 +207,7 @@ function BrowserViewportDragHandle({
       aria-valuetext={axis === "both" ? `${state.confirmed.width} by ${state.confirmed.height} pixels` : undefined}
       data-position={position}
       className={cn(
-        "absolute z-30 flex touch-none select-none items-center justify-center text-muted-foreground opacity-75 outline-none transition-colors hover:bg-accent/70 hover:text-foreground hover:opacity-100 focus-visible:bg-accent/70 focus-visible:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring",
+        "pointer-events-auto absolute z-30 flex touch-none select-none items-center justify-center text-muted-foreground opacity-75 outline-none transition-colors hover:bg-accent/70 hover:text-foreground hover:opacity-100 focus-visible:bg-accent/70 focus-visible:text-foreground focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-ring",
         position === "top" && "inset-x-8 -top-4 h-8 cursor-ns-resize",
         position === "right" && "inset-y-8 -right-4 w-8 cursor-ew-resize",
         position === "bottom" && "inset-x-8 -bottom-4 h-8 cursor-ns-resize",
@@ -273,7 +273,7 @@ export function BrowserViewportCanvas({
     <div
       data-testid="browser-viewport-stage"
       className={cn(
-        "relative h-full min-h-0",
+        "pointer-events-none relative h-full min-h-0",
         responsive && "bg-muted/30",
         responsive && currentState.presentation === "actual" ? "overflow-auto" : "overflow-hidden",
         className,

@@ -76,6 +76,111 @@ function requestRemovesBrowserTarget(dispatch: BrowserAutomationHostDispatch): b
     (dispatch.request.args.action === "close" || dispatch.request.args.action === "finalize");
 }
 
+function handoffFailureResponse(
+  request: BrowserAutomationRequest,
+  message: string,
+): BrowserAutomationResponse {
+  return {
+    contractVersion: BROWSER_AUTOMATION_CONTRACT_VERSION,
+    requestId: request.requestId,
+    sequence: request.sequence,
+    ok: false,
+    error: {
+      code: "TAB_UNAVAILABLE",
+      message,
+      retryable: true,
+      stage: "effect",
+      effect: "preserved",
+      recovery: "inspect",
+      correlationId: globalThis.crypto.randomUUID(),
+    },
+  };
+}
+
+async function releaseHandedOffBrowserControl(
+  dispatch: BrowserAutomationHostDispatch,
+  response: BrowserAutomationResponse,
+): Promise<BrowserAutomationResponse> {
+  if (
+    !response.ok ||
+    response.result.operation !== "tabs" ||
+    response.result.action !== "finalize"
+  ) return response;
+  const handoff = response.result.tabs.find(
+    (tab) => tab.disposition === "handoff" && tab.ownership === "released",
+  );
+  if (!handoff) return response;
+
+  const store = useBrowserAutomationStore.getState();
+  const controller = store.controllers.get(browserAutomationTargetKey(
+    dispatch.scope.workspaceId,
+    dispatch.target.threadId,
+    handoff.tabId,
+  ));
+  if (controller?.controller !== "agent") return response;
+  if (
+    controller.controlEpoch !== dispatch.request.expectedControlEpoch ||
+    controller.providerSessionId !== dispatch.request.providerSessionId
+  ) {
+    return handoffFailureResponse(
+      dispatch.request,
+      "Browser control changed before handoff completed",
+    );
+  }
+
+  const bridge = window.desktopBridge?.preview?.automation;
+  if (bridge) {
+    let released: boolean;
+    try {
+      released = await bridge.releaseAgentControl({
+        threadId: dispatch.target.threadId,
+        tabId: handoff.tabId,
+        controlEpoch: controller.controlEpoch,
+        providerSessionId: controller.providerSessionId,
+      });
+    } catch {
+      return handoffFailureResponse(dispatch.request, "Browser handoff could not release agent control");
+    }
+    return released
+      ? response
+      : handoffFailureResponse(dispatch.request, "Browser handoff could not release agent control");
+  }
+
+  store.setControllerForTarget(
+    dispatch.scope.workspaceId,
+    dispatch.target.threadId,
+    handoff.tabId,
+    {
+      tabId: handoff.tabId,
+      controller: "none",
+      controlEpoch: controller.controlEpoch,
+    },
+  );
+  return response;
+}
+
+function isBrowserTabHandoffInFlight(
+  dispatches: Iterable<BrowserAutomationHostDispatch>,
+  workspaceId: string,
+  threadId: string,
+  tabId: string,
+): boolean {
+  for (const dispatch of dispatches) {
+    if (
+      dispatch.scope.workspaceId !== workspaceId ||
+      dispatch.target.threadId !== threadId ||
+      dispatch.target.tabId !== tabId ||
+      dispatch.request.operation !== "tabs" ||
+      dispatch.request.args.action !== "finalize"
+    ) continue;
+    if (dispatch.request.args.dispositions.some(
+      (entry: { tabId: string; disposition: "close" | "release" | "handoff" | "deliverable" }) =>
+        entry.tabId === tabId && entry.disposition === "handoff",
+    )) return true;
+  }
+  return false;
+}
+
 function escapeWebSelector(value: string): string {
   const escape = (globalThis as { CSS?: { escape?: (input: string) => string } }).CSS?.escape;
   return escape ? escape(value) : value.replace(/[^a-zA-Z0-9_-]/g, (character) => `\\${character}`);
@@ -676,6 +781,17 @@ function PersistentAutomationPreviewSurface({
 }: {
   readonly scope: BackgroundBrowserScope;
 }) {
+  const agentControlsScope = useBrowserAutomationStore((state) => {
+    for (const [targetKey, controller] of state.controllers) {
+      if (controller.controller !== "agent") continue;
+      const target = state.liveTargets.get(targetKey);
+      if (
+        target?.workspaceId === scope.workspaceId &&
+        target.threadId === scope.threadId
+      ) return true;
+    }
+    return false;
+  });
   const [layout, setLayout] = useState<PersistentSurfaceLayout>({
     visible: false,
     left: -20_000,
@@ -723,6 +839,10 @@ function PersistentAutomationPreviewSurface({
     };
   }, [scope.threadId, scope.workspaceId]);
 
+  let surfaceZIndex: number | undefined;
+  if (!layout.visible) surfaceZIndex = -1;
+  else if (agentControlsScope) surfaceZIndex = 30;
+
   return (
     <div
       data-automation-persistent-scope={scope.threadId}
@@ -736,7 +856,7 @@ function PersistentAutomationPreviewSurface({
         width: layout.width,
         height: layout.height,
         overflow: "hidden",
-        zIndex: layout.visible ? 30 : -1,
+        zIndex: surfaceZIndex,
         pointerEvents: layout.visible ? "auto" : "none",
       }}
     >
@@ -823,6 +943,21 @@ export function BrowserAutomationHost() {
   };
   const sessionDriverRef = useRef<BrowserSessionDriver | null>(null);
   if (!sessionDriverRef.current) {
+    const activateLifecycleTarget = async (
+      target: BrowserAutomationHostDispatchTarget,
+      workspaceId: string,
+    ): Promise<void> => {
+      await usePreviewTabsStore.getState().activatePage(workspaceId, target.threadId, target.tabId);
+      const tabSet = usePreviewTabsStore.getState().tabSetByScope[
+        previewTabsScopeKey(workspaceId, target.threadId)
+      ];
+      if (tabSet?.activeTabId !== target.tabId) {
+        throw new Error("Browser tab could not be activated");
+      }
+      const diff = useDiffStore.getState();
+      diff.showRightPanel(workspaceId, target.threadId);
+      diff.setRightPanelTab(workspaceId, target.threadId, "preview");
+    };
     const webAdapter = new WebBrowserSessionAdapter({
       resolveDocument: (dispatch) => {
         const selector = webIframeSelector(
@@ -867,6 +1002,7 @@ export function BrowserAutomationHost() {
       supportedActOperations: getBrowserAutomationRuntimeActOperations(executorDescriptor.runtime),
       webTabs: {
         list: listLifecycleTargets,
+        activate: activateLifecycleTarget,
         close: async (target, workspaceId) => {
           const matches = [...persistentWebTabsRef.current.values()].filter(
             (candidate) =>
@@ -880,6 +1016,7 @@ export function BrowserAutomationHost() {
       },
       electronTabs: {
         list: listLifecycleTargets,
+        activate: activateLifecycleTarget,
         close: async (target, workspaceId) => {
           const matches = [...useBrowserAutomationStore.getState().liveTargets.values()]
             .filter((candidate) =>
@@ -932,7 +1069,7 @@ export function BrowserAutomationHost() {
     activeWorkspaceId,
     liveTargets.values(),
   ), [activeWorkspaceId, liveTargets, workspaces]);
-  const workspaceSignature = JSON.stringify(workspaceIds);
+  const workspaceSignature = JSON.stringify([...workspaceIds].sort());
 
   const cancelHostedRequest = useCallback((
     key: string,
@@ -1167,6 +1304,12 @@ export function BrowserAutomationHost() {
     for (const [key, target] of liveTargets) {
       const previousRevision = priorRevisions.get(key);
       if (previousRevision === undefined || previousRevision === target.revision) continue;
+      if (isBrowserTabHandoffInFlight(
+        inFlightRef.current.values(),
+        target.workspaceId,
+        target.threadId,
+        target.tabId,
+      )) continue;
       for (const [requestKey, dispatch] of inFlightRef.current) {
         if (browserAutomationTargetKey(dispatch.scope.workspaceId, dispatch.target.threadId, dispatch.target.tabId) !== key) continue;
         const navigation = webNavigationRef.current.get(requestKey);
@@ -1402,19 +1545,23 @@ export function BrowserAutomationHost() {
       void guardedOperation.then(async (response) => {
         if (leaseRef.current !== lease || cancelledRef.current.has(key)) return;
         const completedResponse = await completeViewportControlRun(dispatch, response);
-        const responseTarget = sessionDriverRef.current!.responseTarget(dispatch, completedResponse);
-          return webDispatch || webNavigateRequest || dispatch.request.operation === "tabs" || (!bridge && webAutomationEnabled && dispatch.request.operation === "screenshot")
-            ? getTransport().respondToBrowserAutomationRequest(
-              lease.hostId,
-              lease.generation,
-              completedResponse,
-              responseTarget,
-            )
-            : getTransport().respondToBrowserAutomationRequest(
-              lease.hostId,
-              lease.generation,
-              completedResponse,
-            );
+        const settledResponse = await releaseHandedOffBrowserControl(dispatch, completedResponse);
+        const responseTarget = sessionDriverRef.current!.responseTarget(dispatch, settledResponse);
+        const includeResponseTarget = webDispatch || webNavigateRequest ||
+          dispatch.request.operation === "tabs" ||
+          (!bridge && webAutomationEnabled && dispatch.request.operation === "screenshot");
+        return includeResponseTarget
+          ? getTransport().respondToBrowserAutomationRequest(
+            lease.hostId,
+            lease.generation,
+            settledResponse,
+            responseTarget,
+          )
+          : getTransport().respondToBrowserAutomationRequest(
+            lease.hostId,
+            lease.generation,
+            settledResponse,
+          );
       }).catch(() => undefined).finally(() => {
         webObserverRef.current.get(key)?.();
         webObserverRef.current.delete(key);
@@ -1808,6 +1955,12 @@ export function BrowserAutomationHost() {
       store.setController(controller);
       if (controller.controller !== "human") return;
       if (!target) return;
+      if (isBrowserTabHandoffInFlight(
+        inFlightRef.current.values(),
+        target.workspaceId,
+        target.threadId,
+        target.tabId,
+      )) return;
       recorderRef.current.disposeTarget(target.workspaceId, target.threadId, target.tabId);
       for (const dispatch of inFlightRef.current.values()) {
         if (dispatch.scope.workspaceId !== target.workspaceId || dispatch.target.threadId !== target.threadId || dispatch.target.tabId !== target.tabId) continue;
@@ -1845,6 +1998,9 @@ export function BrowserAutomationHost() {
   }, [runningThreadIds]);
 
   useEffect(() => onBrowserAutomationInterruption((workspaceId, threadId, tabId, reason) => {
+    if (isBrowserTabHandoffInFlight(inFlightRef.current.values(), workspaceId, threadId, tabId)) {
+      return;
+    }
     recorderRef.current.disposeTarget(workspaceId, threadId, tabId);
     for (const dispatch of inFlightRef.current.values()) {
       if (dispatch.scope.workspaceId !== workspaceId || dispatch.target.threadId !== threadId || dispatch.target.tabId !== tabId) continue;
