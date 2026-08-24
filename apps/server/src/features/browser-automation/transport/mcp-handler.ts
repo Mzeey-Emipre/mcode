@@ -156,7 +156,12 @@ const tabsMutationProperties = {
   ...commonProperties,
 } as const;
 
-/** Describes Browser tab actions without a top-level JSON Schema union. */
+/**
+ * Do not restore a top-level `oneOf`: fresh Cursor sessions failed to index or
+ * discover `browser_tabs` when its MCP schema used a top-level `oneOf`. The flat
+ * MCP schema is for indexing; the contracts Zod union remains authoritative for
+ * action-dependent validation.
+ */
 const tabsInputSchema = {
   type: "object",
   properties: {
