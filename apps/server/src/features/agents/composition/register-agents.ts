@@ -4,6 +4,7 @@ import {
   AgentPermissionService,
   AgentService,
   CanonicalAgentEventSink,
+  ParentAssistantTextCheckpointService,
   publishCanonicalAgentEvents,
   TurnRecoveryService,
 } from "../index.js";
@@ -27,6 +28,11 @@ export function registerAgentServices(container: DependencyContainer): void {
   container.register(
     CanonicalAgentEventSink,
     { useClass: CanonicalAgentEventSink },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    ParentAssistantTextCheckpointService,
+    { useClass: ParentAssistantTextCheckpointService },
     { lifecycle: Lifecycle.Singleton },
   );
   container.register(

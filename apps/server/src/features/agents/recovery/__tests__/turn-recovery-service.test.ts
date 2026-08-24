@@ -8,6 +8,7 @@ import {
   CanonicalAgentEventSink,
   type CanonicalAgentEventPublisher,
 } from "../../canonical/canonical-agent-event-sink.js";
+import { ParentAssistantTextCheckpointService } from "../../turns/parent-assistant-text-checkpoint-service.js";
 import { TurnRecoveryService } from "../turn-recovery-service.js";
 import { AttachmentService } from "../../../attachments/storage/attachment-service.js";
 import type { SendMessageCommand } from "../../orchestration/agent-service.js";
@@ -21,6 +22,8 @@ describe("TurnRecoveryService", () => {
   let db: Database.Database;
   let sink: CanonicalAgentEventSink;
   let threadRepo: ThreadRepo;
+  let messageRepo: MessageRepo;
+  let defaultCheckpoints: ParentAssistantTextCheckpointService;
   let published: ReturnType<typeof vi.fn<CanonicalAgentEventPublisher>>;
 
   beforeEach(() => {
@@ -34,7 +37,8 @@ describe("TurnRecoveryService", () => {
     published = vi.fn();
     sink = new CanonicalAgentEventSink(db, published);
     threadRepo = new ThreadRepo(db);
-    const messageRepo = new MessageRepo(db);
+    messageRepo = new MessageRepo(db);
+    defaultCheckpoints = new ParentAssistantTextCheckpointService(db);
     sink.startParentTurn({
       thread: {
         id: THREAD_ID,
@@ -56,7 +60,13 @@ describe("TurnRecoveryService", () => {
   });
 
   it("interrupts every execution that lacks exact provider proof at startup", () => {
-    const service = new TurnRecoveryService(sink, threadRepo, new AttachmentService());
+    const service = new TurnRecoveryService(
+      sink,
+      threadRepo,
+      new AttachmentService(),
+      defaultCheckpoints,
+      messageRepo,
+    );
 
     const result = service.reconcileOnStartup();
 
@@ -70,7 +80,6 @@ describe("TurnRecoveryService", () => {
   });
 
   it("marks an existing assistant projection interrupted with its original execution identity", () => {
-    const messageRepo = new MessageRepo(db);
     const assistant = messageRepo.createAssistantIdempotent({
       id: "assistant-recovery",
       threadId: THREAD_ID,
@@ -111,8 +120,21 @@ describe("TurnRecoveryService", () => {
         },
       }],
     });
+    defaultCheckpoints.appendChunk([{
+      executionId: EXECUTION_ID,
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      sequence: 1,
+      text: "stale checkpoint must not replace canonical text",
+    }]);
 
-    const service = new TurnRecoveryService(sink, threadRepo, new AttachmentService());
+    const service = new TurnRecoveryService(
+      sink,
+      threadRepo,
+      new AttachmentService(),
+      defaultCheckpoints,
+      messageRepo,
+    );
     service.reconcileOnStartup();
 
     expect(messageRepo.findById(assistant.id)).toMatchObject({
@@ -122,10 +144,122 @@ describe("TurnRecoveryService", () => {
     });
     expect(sink.loadTerminalProjection(TURN_ID).message).toMatchObject({
       id: assistant.id,
+      content: "A full-looking response",
       is_internal: false,
       outcome: "interrupted",
       outcomeExecutionId: EXECUTION_ID,
     });
+    expect(defaultCheckpoints.restore(EXECUTION_ID)).toBe("");
+  });
+
+  it("restores exact checkpoint text in order, interrupts it, and retires the checkpoint", () => {
+    const checkpoints = new ParentAssistantTextCheckpointService(db);
+    checkpoints.appendChunk([{
+      executionId: EXECUTION_ID,
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      sequence: 1,
+      text: "First durable ",
+    }]);
+    checkpoints.appendChunk([
+      {
+        executionId: EXECUTION_ID,
+        threadId: THREAD_ID,
+        turnId: TURN_ID,
+        sequence: 2,
+        text: "second durable ",
+      },
+      {
+        executionId: EXECUTION_ID,
+        threadId: THREAD_ID,
+        turnId: TURN_ID,
+        sequence: 3,
+        text: "third durable.",
+      },
+    ]);
+    const service = new TurnRecoveryService(
+      sink,
+      threadRepo,
+      new AttachmentService(),
+      checkpoints,
+      messageRepo,
+    );
+
+    expect(service.reconcileOnStartup()).toEqual({ interrupted: [EXECUTION_ID] });
+    expect(messageRepo.listByThread(THREAD_ID, 10).messages).toEqual([
+      expect.objectContaining({ role: "user", content: "repeat only when asked" }),
+      expect.objectContaining({
+        role: "assistant",
+        content: "First durable second durable third durable.",
+        is_internal: false,
+        outcome: "interrupted",
+        outcomeExecutionId: EXECUTION_ID,
+      }),
+    ]);
+    expect(sink.loadTerminalProjection(TURN_ID).message).toMatchObject({
+      content: "First durable second durable third durable.",
+      outcome: "interrupted",
+      outcomeExecutionId: EXECUTION_ID,
+    });
+    expect(checkpoints.restore(EXECUTION_ID)).toBe("");
+
+    expect(service.reconcileOnStartup()).toEqual({ interrupted: [] });
+    expect(messageRepo.listByThread(THREAD_ID, 10).messages).toHaveLength(2);
+  });
+
+  it("removes a stale checkpoint when a completed canonical message already exists", () => {
+    const checkpoints = new ParentAssistantTextCheckpointService(db);
+    checkpoints.appendChunk([{
+      executionId: EXECUTION_ID,
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      sequence: 1,
+      text: "stale checkpoint text",
+    }]);
+    const completed = messageRepo.createAssistantIdempotent({
+      id: "completed-canonical-message",
+      threadId: THREAD_ID,
+      content: "canonical completed text",
+      sequence: 2,
+    });
+    sink.finishParentTurn({
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      executionId: EXECUTION_ID,
+      providerId: "codex",
+      providerIdentities: [],
+      outcome: "completed",
+      projectTurn: () => ({
+        message: {
+          ...completed,
+          outcome: "completed",
+          outcomeExecutionId: EXECUTION_ID,
+        },
+        narrative: [],
+      }),
+    });
+    const service = new TurnRecoveryService(
+      sink,
+      threadRepo,
+      new AttachmentService(),
+      checkpoints,
+      messageRepo,
+    );
+
+    expect(service.reconcileOnStartup()).toEqual({ interrupted: [] });
+    expect(messageRepo.listByThread(THREAD_ID, 10).messages).toEqual([
+      expect.objectContaining({ role: "user", content: "repeat only when asked" }),
+      expect.objectContaining({
+        id: "completed-canonical-message",
+        content: "canonical completed text",
+      }),
+    ]);
+    expect(sink.loadTerminalProjection(TURN_ID).message).toMatchObject({
+      id: "completed-canonical-message",
+      content: "canonical completed text",
+      outcome: "completed",
+    });
+    expect(checkpoints.restore(EXECUTION_ID)).toBe("");
   });
 
   it("marks an unresolved child delivery unknown before interrupting its parent execution", () => {
@@ -140,7 +274,13 @@ describe("TurnRecoveryService", () => {
       providerIdentities: [],
     });
     published.mockClear();
-    const service = new TurnRecoveryService(sink, threadRepo, new AttachmentService());
+    const service = new TurnRecoveryService(
+      sink,
+      threadRepo,
+      new AttachmentService(),
+      defaultCheckpoints,
+      messageRepo,
+    );
 
     service.reconcileOnStartup();
 
@@ -161,7 +301,13 @@ describe("TurnRecoveryService", () => {
   });
 
   it("offers Retry but never Resume for an unproved native cursor", () => {
-    const service = new TurnRecoveryService(sink, threadRepo, new AttachmentService());
+    const service = new TurnRecoveryService(
+      sink,
+      threadRepo,
+      new AttachmentService(),
+      defaultCheckpoints,
+      messageRepo,
+    );
     service.reconcileOnStartup();
 
     expect(service.listRecoveries()).toEqual([{
@@ -176,7 +322,13 @@ describe("TurnRecoveryService", () => {
   });
 
   it("dispatches an explicit Retry as a fresh execution with the accepted user input", async () => {
-    const service = new TurnRecoveryService(sink, threadRepo, new AttachmentService());
+    const service = new TurnRecoveryService(
+      sink,
+      threadRepo,
+      new AttachmentService(),
+      defaultCheckpoints,
+      messageRepo,
+    );
     service.reconcileOnStartup();
     const dispatched: SendMessageCommand[] = [];
     const dispatch = vi.fn(async (command: SendMessageCommand) => {
@@ -231,7 +383,13 @@ describe("TurnRecoveryService", () => {
     });
     threadRepo.updateStatus(THREAD_ID, "errored");
 
-    const service = new TurnRecoveryService(sink, threadRepo, new AttachmentService());
+    const service = new TurnRecoveryService(
+      sink,
+      threadRepo,
+      new AttachmentService(),
+      defaultCheckpoints,
+      messageRepo,
+    );
     expect(service.listRecoveries()).toEqual([expect.objectContaining({
       executionId: EXECUTION_ID,
       phase: "errored",

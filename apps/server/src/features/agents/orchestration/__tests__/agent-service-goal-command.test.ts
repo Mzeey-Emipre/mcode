@@ -15,6 +15,7 @@ import { AgentService } from "../agent-service.js";
 import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/canonical-agent-event-sink-stub.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
 import { PlanQuestionService } from "../../planning/plan-question-service.js";
+import { ParentAssistantTextCheckpointService } from "../../turns/parent-assistant-text-checkpoint-service.js";
 import { ProviderAvailabilityService } from "../../../providers/availability/provider-availability-service.js";
 import { isTurnScopedEvent } from "../../turns/turn-runtime.js";
 import type { GitService } from "../../../projects/index.js";
@@ -159,6 +160,7 @@ function buildService(db: Database.Database) {
       { issue: vi.fn(), tryConsume: vi.fn(() => false), clear: vi.fn(), hasActiveGrant: vi.fn(() => false) } as any,
       container.resolve(NarrativeStore),
       container.resolve(PlanQuestionService),
+      new ParentAssistantTextCheckpointService(db),
       undefined,
       undefined,
       undefined,

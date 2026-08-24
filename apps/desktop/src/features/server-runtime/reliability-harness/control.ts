@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { lstatSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { AddressInfo } from "node:net";
+import { THREAD_CONTROL_OPAQUE_ID_MAX_LENGTH } from "@mcode/contracts";
 
 /** Controls exposed by the opt-in packaged reliability harness. */
 export const RELIABILITY_HARNESS_CONTROLS = [
@@ -10,6 +11,7 @@ export const RELIABILITY_HARNESS_CONTROLS = [
   "server-hang",
   "transport-loss",
   "persistence-failure",
+  "assistant-stream",
 ] as const;
 
 /** A reliability harness control name. */
@@ -26,6 +28,96 @@ export interface ReliabilityHarnessCapability {
 export interface ReliabilityHarnessCommand {
   readonly control: ReliabilityHarnessControl | "planned-restart";
   readonly durationMs?: number;
+  readonly threadId?: string;
+}
+
+/** Published result forwarded from the server-only reliability control. */
+export interface ReliabilityHarnessForwardResult {
+  readonly accepted: true;
+  readonly control: ReliabilityHarnessControl;
+  readonly stream?: {
+    readonly threadId: string;
+    readonly executionId: string;
+    readonly text: string;
+  };
+}
+
+const RELIABILITY_FORWARD_RESPONSE_MAX_BYTES = 16 * 1024;
+const RELIABILITY_STREAM_TEXT_MAX_LENGTH = 4 * 1024;
+
+/** Read and validate the bounded response from the private server reliability endpoint. */
+export async function readReliabilityHarnessForwardResponse(
+  response: Response,
+  command: ReliabilityHarnessCommand,
+): Promise<ReliabilityHarnessForwardResult> {
+  if (command.control === "planned-restart") {
+    throw new Error("Planned restart is not a server fault");
+  }
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("Reliability server control returned an empty response");
+  const chunks: Uint8Array[] = [];
+  let byteLength = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      byteLength += value.byteLength;
+      if (byteLength > RELIABILITY_FORWARD_RESPONSE_MAX_BYTES) {
+        throw new Error("Reliability server control response is too large");
+      }
+      chunks.push(value);
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => undefined);
+    throw error;
+  }
+  const body = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(new TextDecoder().decode(body));
+  } catch {
+    throw new Error("Reliability server control returned invalid JSON");
+  }
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("Reliability server control returned an invalid response");
+  }
+  const result = parsed as Record<string, unknown>;
+  if (result.accepted !== true || result.control !== command.control) {
+    throw new Error("Reliability server control returned an invalid response");
+  }
+  if (command.control !== "assistant-stream") {
+    return { accepted: true, control: command.control };
+  }
+  const stream = result.stream;
+  if (!stream || typeof stream !== "object") {
+    throw new Error("Reliability assistant stream returned an invalid response");
+  }
+  const value = stream as Record<string, unknown>;
+  if (
+    value.threadId !== command.threadId
+    || typeof value.executionId !== "string"
+    || value.executionId.length === 0
+    || value.executionId.length > THREAD_CONTROL_OPAQUE_ID_MAX_LENGTH
+    || typeof value.text !== "string"
+    || value.text.length === 0
+    || value.text.length > RELIABILITY_STREAM_TEXT_MAX_LENGTH
+  ) {
+    throw new Error("Reliability assistant stream returned an invalid response");
+  }
+  return {
+    accepted: true,
+    control: command.control,
+    stream: {
+      threadId: command.threadId!,
+      executionId: value.executionId,
+      text: value.text,
+    },
+  };
 }
 
 /** Rendezvous data written without the capability token. */
@@ -38,7 +130,7 @@ export interface ReliabilityHarnessRendezvous {
 /** Narrow callbacks used by the Desktop reliability control plane. */
 export interface ReliabilityHarnessControlPlaneCallbacks {
   readonly plannedRestart: () => Promise<void>;
-  readonly serverFault: (command: ReliabilityHarnessCommand, token: string) => Promise<void>;
+  readonly serverFault: (command: ReliabilityHarnessCommand, token: string) => Promise<ReliabilityHarnessForwardResult | void>;
 }
 
 /** Local-only, opt-in Desktop control plane for packaged reliability runs. */
@@ -119,13 +211,19 @@ export class ReliabilityHarnessControlPlane {
     }
     try {
       const command = await readCommand(request);
+      let result: ReliabilityHarnessForwardResult | void = undefined;
       if (command.control === "planned-restart") {
         await this.callbacks.plannedRestart();
       } else {
-        await this.callbacks.serverFault(command, this.capability.token);
+        result = await this.callbacks.serverFault(command, this.capability.token);
+        if (command.control === "assistant-stream" && (
+          !result?.stream || result.stream.threadId !== command.threadId
+        )) {
+          throw new Error("Assistant stream control did not return its requested thread");
+        }
       }
       response.writeHead(202, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-      response.end(JSON.stringify({ accepted: true, control: command.control }));
+      response.end(JSON.stringify({ accepted: true, control: command.control, ...(result?.stream ? { stream: result.stream } : {}) }));
     } catch (error) {
       if (!response.headersSent) response.writeHead(400);
       if (!response.writableEnded) response.end(error instanceof Error ? error.message : "Invalid command");
@@ -176,9 +274,17 @@ async function readCommand(request: IncomingMessage): Promise<ReliabilityHarness
   if (value.durationMs !== undefined && (typeof value.durationMs !== "number" || !Number.isSafeInteger(value.durationMs) || value.durationMs < 1 || value.durationMs > 30_000)) {
     throw new Error("Reliability hang duration is out of bounds");
   }
+  if (value.control === "assistant-stream" && (
+    typeof value.threadId !== "string"
+    || value.threadId.trim().length === 0
+    || value.threadId.trim().length > THREAD_CONTROL_OPAQUE_ID_MAX_LENGTH
+  )) {
+    throw new Error(`Reliability assistant stream requires a thread id up to ${THREAD_CONTROL_OPAQUE_ID_MAX_LENGTH} characters`);
+  }
   return {
     control: value.control as ReliabilityHarnessCommand["control"],
     ...(value.durationMs === undefined ? {} : { durationMs: value.durationMs as number }),
+    ...(value.control === "assistant-stream" ? { threadId: (value.threadId as string).trim() } : {}),
   };
 }
 

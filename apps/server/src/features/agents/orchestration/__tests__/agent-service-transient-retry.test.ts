@@ -8,6 +8,7 @@ import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/can
 import { ThreadControlMutationReservationService } from "../../../thread-control/index.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
 import { PlanQuestionService } from "../../planning/plan-question-service.js";
+import { ParentAssistantTextCheckpointService } from "../../turns/parent-assistant-text-checkpoint-service.js";
 import type { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
 import type { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
 import type { MessageRepo } from "../../conversation/persistence/message-repo.js";
@@ -212,6 +213,7 @@ function buildService(): {
       { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../events/persistence/hook-execution-repo.js").HookExecutionRepo,
     ),
     new PlanQuestionService(messageRepo, planQuestionAnswersRepo),
+    new ParentAssistantTextCheckpointService(db),
     undefined,
     threadControlMcp as never,
     mutationReservations,

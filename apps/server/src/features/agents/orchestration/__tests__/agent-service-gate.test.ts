@@ -5,6 +5,7 @@ import { AgentService, usesInternalThreadControlMcp } from "../agent-service.js"
 import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/canonical-agent-event-sink-stub.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
 import { PlanQuestionService } from "../../planning/plan-question-service.js";
+import { ParentAssistantTextCheckpointService } from "../../turns/parent-assistant-text-checkpoint-service.js";
 import { ProviderAvailabilityService } from "../../../providers/availability/provider-availability-service.js";
 import { ProviderDisabledError } from "../../../providers/availability/provider-availability-errors.js";
 import type { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
@@ -220,6 +221,7 @@ function buildService({
         { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../events/persistence/hook-execution-repo.js").HookExecutionRepo,
       ),
       new PlanQuestionService(messageRepo, planQuestionAnswersRepo),
+      new ParentAssistantTextCheckpointService(db),
       undefined,
       threadControlMcp as never,
       undefined,

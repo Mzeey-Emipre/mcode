@@ -2223,6 +2223,7 @@ export class CanonicalAgentEventSink {
   interruptUnfinishedExecution(
     executionId: string,
     reason: string,
+    stagedAssistant?: Message,
   ): CanonicalAgentCommitResult {
     const checkpoint = this.loadCheckpoint(executionId);
     const turn = this.loadTurnByExecution(executionId);
@@ -2234,8 +2235,14 @@ export class CanonicalAgentEventSink {
     }
     const thread = this.loadThread(checkpoint.threadId);
     if (!thread) throw new Error(`Canonical thread not found: ${checkpoint.threadId}`);
+    if (
+      stagedAssistant
+      && (stagedAssistant.thread_id !== checkpoint.threadId || stagedAssistant.role !== "assistant")
+    ) {
+      throw new Error(`Recovered assistant projection does not belong to execution: ${executionId}`);
+    }
     const endedAt = new Date().toISOString();
-    const projectedAssistant = this.loadTerminalProjection(checkpoint.turnId).message;
+    const projectedAssistant = stagedAssistant ?? this.loadTerminalProjection(checkpoint.turnId).message;
     const recoveryProjection = projectedAssistant
       ? {
           ...projectedAssistant,
@@ -2254,11 +2261,14 @@ export class CanonicalAgentEventSink {
       nativeCursor: checkpoint.nativeCursor ?? undefined,
       projectCompatibility: () => {
         if (!projectedAssistant) return;
-        this.db.prepare(`
+        const updated = this.db.prepare(`
           UPDATE messages
           SET is_internal = 0, outcome = ?, outcome_execution_id = ?
           WHERE id = ? AND role = 'assistant'
         `).run("interrupted", executionId, projectedAssistant.id);
+        if (stagedAssistant && updated.changes !== 1) {
+          throw new Error(`Recovered assistant message was not staged: ${stagedAssistant.id}`);
+        }
       },
       events: () => [
         {
