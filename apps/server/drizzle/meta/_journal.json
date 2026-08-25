@@ -344,6 +344,13 @@
       "when": 1787656799029,
       "tag": "0047_conscious_tusk",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "6",
+      "when": 1787663823354,
+      "tag": "0048_loose_human_robot",
+      "breakpoints": true
     }
   ]
 }

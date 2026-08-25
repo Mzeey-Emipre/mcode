@@ -14,6 +14,7 @@ import {
   type TerminalSessionSnapshot,
 } from "@mcode/contracts";
 import type { TerminalSessionRuntime } from "./terminal-session-runtime.js";
+import type { PreparedTerminalCommandExpectation } from "../backends/terminal-backend.js";
 import { noninteractiveLaunch } from "../commands/terminal-command-service.js";
 import {
   resolveTerminalScope,
@@ -71,6 +72,14 @@ export class PreparedTerminalSessionLaunchError extends Error {
   ) {
     super("Prepared terminal session creation failed");
     this.name = "PreparedTerminalSessionLaunchError";
+  }
+}
+
+/** Typed pre-spawn failure raised when an approved launch plan no longer matches the current Terminal profile. */
+export class PreparedTerminalSessionApprovalMismatchError extends Error {
+  constructor(readonly plan: PreparedTerminalSessionLaunchPlan) {
+    super("Prepared terminal session approval no longer matches the launch plan");
+    this.name = "PreparedTerminalSessionApprovalMismatchError";
   }
 }
 
@@ -195,6 +204,7 @@ export class TerminalSessionService {
   async createPreparedSession(input: {
     readonly scope: TerminalScope;
     readonly script: string;
+    readonly expectedLaunch?: PreparedTerminalCommandExpectation;
   }): Promise<PreparedTerminalSession> {
     const scope = TerminalScopeSchema().parse(input.scope);
     const cwd = this.resolveScope(scope);
@@ -237,6 +247,9 @@ export class TerminalSessionService {
         }),
         environmentNames: Object.freeze(protectedEnv.map(({ name }) => name)),
       });
+      if (!matchesExpectedPreparedLaunch(plan, input.expectedLaunch)) {
+        throw new PreparedTerminalSessionApprovalMismatchError(plan);
+      }
       let created: TerminalSessionSnapshot;
       try {
         created = await this.deps.runtime.createSession({
@@ -382,6 +395,22 @@ export class TerminalSessionService {
       // Keep the session tracked so list and explicit close can reconcile a failed compensation.
     }
   }
+}
+
+function matchesExpectedPreparedLaunch(
+  plan: PreparedTerminalSessionLaunchPlan,
+  expected: PreparedTerminalCommandExpectation | undefined,
+): boolean {
+  if (!expected) return true;
+  return expected.terminal?.executable === plan.terminal.executable
+    && expected.terminal.arguments.length === plan.terminal.arguments.length
+    && expected.terminal.arguments.every(
+      (argument, index) => normalizeLaunchArgument(argument) === normalizeLaunchArgument(plan.terminal.arguments[index] ?? ""),
+    );
+}
+
+function normalizeLaunchArgument(value: string): string {
+  return value.replace(/\r\n?/g, "\n");
 }
 
 function scopesEqual(left: TerminalScope, right: TerminalScope): boolean {

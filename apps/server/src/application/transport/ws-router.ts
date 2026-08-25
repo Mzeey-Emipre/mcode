@@ -395,6 +395,9 @@ export async function routeMessage(
     if (
       request.method === "workspace.environment.read" ||
       request.method === "workspace.environment.save" ||
+      request.method === "workspace.environment.storage.set" ||
+      request.method === "workspace.environment.command.approve" ||
+      request.method === "workspace.environment.command.clearApprovals" ||
       request.method === "workspace.environment.setup.start" ||
       request.method === "workspace.environment.setup.get" ||
       request.method === "workspace.environment.automaticSetup.get" ||
@@ -847,6 +850,7 @@ async function dispatch(
       return deps.workspaceService.list();
     case "workspace.create": {
       const workspace = await deps.workspaceService.create(params.name, params.path);
+      await deps.workspaceEnvironmentService.read(workspace.id);
       try {
         deps.gitWatcherService.watchWorkspace(workspace.id, workspace.path);
       } catch (err) {
@@ -866,7 +870,7 @@ async function dispatch(
           `Workspace not found: ${params.workspaceId}`,
         );
       }
-      return deps.workspaceEnvironmentService.read(params.workspaceId);
+      return deps.workspaceEnvironmentService.read(params.workspaceId, params.threadId);
     case "workspace.environment.save":
       if (!deps.workspaceService.findById(params.workspaceId)) {
         throw new WorkspaceEnvironmentServiceError(
@@ -875,6 +879,25 @@ async function dispatch(
         );
       }
       return deps.workspaceEnvironmentService.save(params);
+    case "workspace.environment.storage.set":
+      if (!deps.workspaceService.findById(params.workspaceId)) {
+        throw new WorkspaceEnvironmentServiceError(
+          "WORKSPACE_ENVIRONMENT_NOT_FOUND",
+          `Workspace not found: ${params.workspaceId}`,
+        );
+      }
+      return deps.workspaceEnvironmentService.setStorageMode(params);
+    case "workspace.environment.command.approve":
+      return await deps.workspaceEnvironmentService.approveCommand(params);
+    case "workspace.environment.command.clearApprovals":
+      if (!deps.workspaceService.findById(params.workspaceId)) {
+        throw new WorkspaceEnvironmentServiceError(
+          "WORKSPACE_ENVIRONMENT_NOT_FOUND",
+          `Workspace not found: ${params.workspaceId}`,
+        );
+      }
+      deps.workspaceEnvironmentService.clearApprovals(params.workspaceId);
+      return;
     case "workspace.environment.setup.start":
       return deps.workspaceEnvironmentService.startSetup(params);
     case "workspace.environment.setup.get":
@@ -908,6 +931,7 @@ async function dispatch(
         await teardownWorkspaceThreads(deps, params.id);
         const result = deps.workspaceService.delete(params.id);
         if (result) {
+          deps.workspaceEnvironmentService.clearApprovals(params.id);
           deps.gitWatcherService.unwatchWorkspace(params.id);
           broadcast("workspace.orderChanged", {});
         }
@@ -924,6 +948,7 @@ async function dispatch(
         await teardownWorkspaceThreads(deps, params.id);
         const result = deps.workspaceService.forceDelete(params.id);
         if (result) {
+          deps.workspaceEnvironmentService.clearApprovals(params.id);
           deps.gitWatcherService.unwatchWorkspace(params.id);
           broadcast("workspace.deleted", { workspaceId: params.id });
           broadcast("workspace.orderChanged", {});

@@ -22,6 +22,7 @@ import type {
 } from "../../sessions/terminal-session-runtime.js";
 import {
   PreparedTerminalSessionLaunchError,
+  PreparedTerminalSessionApprovalMismatchError,
   type PreparedTerminalSession,
   type TerminalSessionService,
 } from "../../sessions/terminal-session-service.js";
@@ -29,6 +30,7 @@ import {
   TerminalBackend,
   TerminalBackendError,
   PreparedTerminalCommandStartError,
+  PreparedTerminalCommandApprovalMismatchError,
   type TerminalBackendSender,
   type PreparedTerminalCommandRequest,
   type PreparedTerminalCommandSession,
@@ -540,8 +542,21 @@ export class ModernTerminalBackend extends TerminalBackend {
       created = await this.sessions.createPreparedSession({
         scope: { kind: "thread", workspaceId, threadId: input.threadId },
         script: input.script,
+        expectedLaunch: input.expectedLaunch,
       });
     } catch (error) {
+      if (error instanceof PreparedTerminalSessionApprovalMismatchError) {
+        throw new PreparedTerminalCommandApprovalMismatchError({
+          platform: process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : "linux",
+          script: input.script,
+          checkoutPath: error.plan.checkoutPath,
+          terminal: {
+            executable: error.plan.terminal.executable,
+            arguments: [...error.plan.terminal.arguments],
+          },
+          environmentNames: [...error.plan.environmentNames],
+        });
+      }
       if (error instanceof PreparedTerminalSessionLaunchError) {
         throw new PreparedTerminalCommandStartError({
           platform: process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : "linux",

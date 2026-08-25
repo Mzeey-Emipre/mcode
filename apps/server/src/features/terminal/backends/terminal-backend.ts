@@ -65,10 +65,27 @@ export class PreparedTerminalCommandStartError extends Error {
   }
 }
 
+/** Exact launch facts that a shared-command approval bound before the backend starts a session. */
+export interface PreparedTerminalCommandExpectation {
+  readonly terminal: {
+    readonly executable: string;
+    readonly arguments: readonly string[];
+  } | null;
+}
+
+/** Typed pre-spawn failure raised when the Terminal profile changed after shared-command approval. */
+export class PreparedTerminalCommandApprovalMismatchError extends Error {
+  constructor(readonly snapshot: WorkspaceEnvironmentActionLaunchSnapshot) {
+    super("Prepared command approval no longer matches the Terminal launch");
+    this.name = "PreparedTerminalCommandApprovalMismatchError";
+  }
+}
+
 /** Exact noninteractive command request owned by a Project Action slot. */
 export interface PreparedTerminalCommandRequest {
   readonly threadId: string;
   readonly script: string;
+  readonly expectedLaunch?: PreparedTerminalCommandExpectation;
 }
 
 /** Boot-selected Terminal backend used by server orchestration and transport. */

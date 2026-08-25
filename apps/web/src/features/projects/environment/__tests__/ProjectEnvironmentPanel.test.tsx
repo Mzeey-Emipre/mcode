@@ -18,6 +18,8 @@ const { transport, MockRpcError } = vi.hoisted(() => {
     transport: {
       readWorkspaceEnvironment: vi.fn(),
       saveWorkspaceEnvironment: vi.fn(),
+      setWorkspaceEnvironmentStorageMode: vi.fn(),
+      clearWorkspaceEnvironmentApprovals: vi.fn(),
       listWorkspaceActionRuns: vi.fn(),
     },
   };
@@ -68,18 +70,63 @@ describe("ProjectEnvironmentPanel", () => {
       revision: "revision-1",
       status: "present",
     }));
+    transport.setWorkspaceEnvironmentStorageMode.mockResolvedValue({
+      ...initialResult,
+      storageMode: "shared",
+    });
+    transport.clearWorkspaceEnvironmentApprovals.mockResolvedValue(undefined);
   });
 
-  it("shows the active project and private environment storage before setup is added", async () => {
+  it("shows the active project and system environment storage before setup is added", async () => {
     render(<ProjectEnvironmentPanel workspaceId="workspace-1" />);
 
     await screen.findByRole("button", { name: "Add Setup" });
     expect(screen.getByRole("heading", { name: "Project settings" })).toBeInTheDocument();
     expect(screen.getByText("Caravan")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Environment" })).toBeInTheDocument();
-    expect(screen.getByText("This document is saved in Mcode’s user data on this computer.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Environment storage" })).toBeInTheDocument();
+    expect(screen.getByText("Only available on this computer.")).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
     expect(screen.getByText("Optional setup command configuration for this Project.")).toBeInTheDocument();
     expect(screen.queryByLabelText("Default command script")).not.toBeInTheDocument();
+  });
+
+  it("requires confirmation before selecting shared storage and then exposes approval clearing", async () => {
+    const user = userEvent.setup();
+    render(<ProjectEnvironmentPanel workspaceId="workspace-1" />);
+
+    await screen.findByRole("radio", { name: "Shared storage" });
+    await user.click(screen.getByRole("radio", { name: "Shared storage" }));
+    expect(transport.setWorkspaceEnvironmentStorageMode).not.toHaveBeenCalled();
+    expect(screen.getByRole("heading", { name: "Share this Project environment?" })).toBeInTheDocument();
+    expect(screen.getByText("Before a Setup command or Project action runs from this file, Mcode asks for your approval.")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Close dialog" }));
+    expect(screen.getByRole("radio", { name: "System storage" })).toHaveAttribute("aria-checked", "true");
+    expect(transport.setWorkspaceEnvironmentStorageMode).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("radio", { name: "Shared storage" }));
+    await user.click(screen.getByRole("button", { name: "Share environment" }));
+
+    await waitFor(() => expect(transport.setWorkspaceEnvironmentStorageMode).toHaveBeenCalledWith("workspace-1", "shared"));
+    expect(screen.getByRole("radio", { name: "Shared storage" })).toHaveAttribute("aria-checked", "true");
+    await user.click(screen.getByRole("button", { name: "Clear shared command approvals" }));
+    await waitFor(() => expect(transport.clearWorkspaceEnvironmentApprovals).toHaveBeenCalledWith("workspace-1"));
+  });
+
+  it("reads and saves the selected worktree environment scope", async () => {
+    const user = userEvent.setup();
+    render(<ProjectEnvironmentPanel workspaceId="workspace-1" threadId="thread-1" />);
+
+    await screen.findByRole("button", { name: "Add Setup" });
+    expect(transport.readWorkspaceEnvironment).toHaveBeenCalledWith("workspace-1", "thread-1");
+    await user.click(screen.getByRole("button", { name: "Add Setup" }));
+    await user.type(screen.getByLabelText("Default command script"), "bun run setup");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(transport.saveWorkspaceEnvironment).toHaveBeenCalledWith(
+      "workspace-1",
+      { version: "0.0.1", setup: { default: "bun run setup" }, actions: [] },
+      null,
+      "thread-1",
+    ));
   });
 
   it("edits setup and named actions, preserves action identity, and saves", async () => {

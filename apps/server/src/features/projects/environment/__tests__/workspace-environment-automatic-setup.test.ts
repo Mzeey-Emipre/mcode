@@ -1,5 +1,5 @@
 import "reflect-metadata";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -162,6 +162,64 @@ describe("automatic Project Setup", () => {
       attempt: null,
       queuedTurns: [{ state: "dispatched", dispatchedAt: expect.any(String) }],
     });
+  });
+
+  it("re-resolves an approval-waiting shared Setup when the command is removed", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mcode-automatic-approval-"));
+    roots.push(root);
+    const baseCheckout = join(root, "base");
+    const worktreeCheckout = join(root, "worktree");
+    await mkdir(worktreeCheckout, { recursive: true });
+    const db = openMemoryDatabase();
+    db.prepare("INSERT INTO workspaces (id, name, path, provider_config) VALUES ('workspace-1', 'Project', '/project', '{}')").run();
+    db.prepare("INSERT INTO threads (id, workspace_id, title, mode, branch, worktree_managed, provider) VALUES ('thread-1', 'workspace-1', 'First Turn', 'worktree', 'main', 1, 'claude')").run();
+    const prepare = vi.fn(async () => ({
+      kind: "ready" as const,
+      command: {
+        snapshot: { checkoutPath: worktreeCheckout, terminal: { executable: "sh", arguments: ["-c", "bun run setup"] } },
+        start: async () => await new Promise<never>(() => undefined),
+        close: async () => ({ kind: "contained" as const }),
+        waitForRelease: async () => undefined,
+      },
+    }));
+    const service = new WorkspaceEnvironmentService({
+      mcodeDir: root,
+      database: db,
+      workspaces: { findById: (id) => id === "workspace-1" ? { id, path: baseCheckout } : null },
+      threads: { findById: (id) => id === "thread-1" ? {
+        id,
+        workspace_id: "workspace-1",
+        mode: "worktree",
+        worktree_managed: true,
+        worktree_path: worktreeCheckout,
+      } : null },
+      terminalCommands: { prepare },
+      platform: "linux",
+    });
+    service.setAutomaticSetupDispatcher({ dispatch: vi.fn().mockResolvedValue({ completion: Promise.resolve() }) });
+    await service.setStorageMode({ workspaceId: "workspace-1", threadId: "thread-1", storageMode: "shared" });
+    const configured = await service.save({
+      workspaceId: "workspace-1",
+      threadId: "thread-1",
+      sourceRevision: null,
+      document: { version: "0.0.1", setup: { linux: "bun run setup" }, actions: [] },
+    });
+    service.queueAutomaticFirstTurn(queuedInput());
+    await eventually(() => expect(service.getAutomaticSetup({ threadId: "thread-1" }).attempt?.state).toBe("awaiting-approval"));
+    const approval = service.getAutomaticSetup({ threadId: "thread-1" }).attempt?.snapshot?.approval;
+    if (!approval) throw new Error("Expected shared Setup approval");
+    await service.save({
+      workspaceId: "workspace-1",
+      threadId: "thread-1",
+      sourceRevision: configured.revision,
+      document: { version: "0.0.1", actions: [] },
+    });
+
+    await expect(service.approveCommand({ threadId: "thread-1", ...approval })).rejects.toMatchObject({
+      code: "WORKSPACE_ENVIRONMENT_APPROVAL_NOT_REQUIRED",
+    });
+    await eventually(() => expect(service.getAutomaticSetup({ threadId: "thread-1" }).gate).toBe("not-required"));
+    expect(prepare).toHaveBeenCalledOnce();
   });
 
   it("cancels only the targeted queued Turn and leaves the Setup command running", async () => {
@@ -531,7 +589,7 @@ describe("automatic Project Setup", () => {
 
   it("classifies read and preparation failures without leaving a queued attempt unresolved", async () => {
     const readFailure = await automaticHarness();
-    vi.spyOn(readFailure.service, "read").mockRejectedValue(new Error("filesystem unavailable"));
+    vi.spyOn(readFailure.service as never, "readForThread").mockRejectedValue(new Error("filesystem unavailable"));
     readFailure.service.queueAutomaticFirstTurn(queuedInput());
     await eventually(() => expect(readFailure.service.getAutomaticSetup({ threadId: "thread-1" }).attempt?.state).toBe("failed"));
     expect(readFailure.service.getAutomaticSetup({ threadId: "thread-1" })).toMatchObject({

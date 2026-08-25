@@ -249,6 +249,26 @@ export class WorkspaceEnvironmentAutomaticRepository {
     return input.attemptId;
   }
 
+  /** Hold the current automatic Setup attempt until the exact shared command is approved. */
+  awaitApproval(input: {
+    readonly threadId: string;
+    readonly attemptId: string;
+    readonly snapshot: WorkspaceEnvironmentSetupLaunchSnapshot;
+  }): boolean {
+    const result = this.db.prepare(
+      "UPDATE workspace_environment_automatic_setup_attempts SET state = 'awaiting-approval', reason = 'setup_approval_required', launch_snapshot_json = ? WHERE id = ? AND thread_id = ? AND state = 'queued' AND id = (SELECT attempt_id FROM workspace_environment_setup_gates WHERE thread_id = ?)",
+    ).run(JSON.stringify(input.snapshot), input.attemptId, input.threadId, input.threadId);
+    return result.changes === 1;
+  }
+
+  /** Requeue an approval-waiting automatic Setup attempt after its exact command is approved. */
+  resumeAwaitingApproval(threadId: string): boolean {
+    const result = this.db.prepare(
+      "UPDATE workspace_environment_automatic_setup_attempts SET state = 'queued', reason = NULL, launch_snapshot_json = NULL WHERE thread_id = ? AND state = 'awaiting-approval' AND id = (SELECT attempt_id FROM workspace_environment_setup_gates WHERE thread_id = ?)",
+    ).run(threadId, threadId);
+    return result.changes === 1;
+  }
+
   /** Complete one automatic attempt and atomically release its queued Turns after a pass. */
   completeAttempt(input: {
     threadId: string;
@@ -370,7 +390,7 @@ export class WorkspaceEnvironmentAutomaticRepository {
       ).get(threadId) as { attempt_id: string | null } | undefined;
       if (!gate?.attempt_id) return null;
       const result = this.db.prepare(
-        "UPDATE workspace_environment_automatic_setup_attempts SET state = 'interrupted', reason = 'setup_interrupted', outcome = NULL, exit_code = NULL, output = '', output_truncated = 0, finished_at = ? WHERE id = ? AND state IN ('queued', 'running')",
+      "UPDATE workspace_environment_automatic_setup_attempts SET state = 'interrupted', reason = 'setup_interrupted', outcome = NULL, exit_code = NULL, output = '', output_truncated = 0, finished_at = ? WHERE id = ? AND state IN ('awaiting-approval', 'queued', 'running')",
       ).run(now, gate.attempt_id);
       if (result.changes !== 1) return null;
       this.db.prepare(
@@ -401,7 +421,7 @@ export class WorkspaceEnvironmentAutomaticRepository {
     const now = this.now();
     this.db.transaction(() => {
       this.db.prepare(
-        "UPDATE workspace_environment_automatic_setup_attempts SET state = 'interrupted', reason = 'setup_interrupted', outcome = NULL, exit_code = NULL, output = '', output_truncated = 0, finished_at = ? WHERE state IN ('queued', 'running')",
+        "UPDATE workspace_environment_automatic_setup_attempts SET state = 'interrupted', reason = 'setup_interrupted', outcome = NULL, exit_code = NULL, output = '', output_truncated = 0, finished_at = ? WHERE state IN ('awaiting-approval', 'queued', 'running')",
       ).run(now);
       this.db.prepare(
         "UPDATE workspace_environment_setup_gates SET state = 'blocked', updated_at = ? WHERE state = 'blocked' AND attempt_id IN (SELECT id FROM workspace_environment_automatic_setup_attempts WHERE state = 'interrupted')",

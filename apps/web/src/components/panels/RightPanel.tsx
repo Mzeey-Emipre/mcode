@@ -733,8 +733,9 @@ export function RightPanel() {
             renderedOpenTabs.includes("environment") &&
             activeWorkspaceId && (
               <ProjectEnvironmentPanel
-                key={activeWorkspaceId}
+                key={`${activeWorkspaceId}:${activeThreadId ?? "base"}`}
                 workspaceId={activeWorkspaceId}
+                threadId={activeThreadId ?? undefined}
                 active
               />
             )}

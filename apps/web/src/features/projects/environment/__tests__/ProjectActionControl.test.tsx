@@ -164,6 +164,53 @@ describe("ProjectAction controls", () => {
     expect(await screen.findByRole("status")).toHaveTextContent("Project Action could not start.");
   });
 
+  it("re-resolves a configured Action awaiting approval before showing the command to review", async () => {
+    const user = userEvent.setup();
+    const staleRun: WorkspaceEnvironmentActionRun = {
+      ...completedRun,
+      status: "awaiting-approval",
+      terminalSessionId: null,
+      finishedAt: null,
+      exitCode: null,
+      snapshot: {
+        ...completedRun.snapshot,
+        script: "bun run stale-build",
+        approval: {
+          target: { kind: "action", actionId: "build" },
+          fingerprint: "stale-fingerprint",
+        },
+      },
+    };
+    const refreshedRun: WorkspaceEnvironmentActionRun = {
+      ...staleRun,
+      snapshot: {
+        ...staleRun.snapshot,
+        script: "bun run build --fresh",
+        approval: {
+          target: { kind: "action", actionId: "build" },
+          fingerprint: "fresh-fingerprint",
+        },
+      },
+    };
+    const start = vi.fn().mockResolvedValue(refreshedRun);
+    render(
+      <ProjectActionMenu
+        actions={[action]}
+        runsByActionId={new Map([["build", staleRun]])}
+        onStart={start}
+        onFocus={vi.fn()}
+        onEdit={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Project Actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: /Build/ }));
+
+    expect(start).toHaveBeenCalledWith("build");
+    expect(await screen.findByText("bun run build --fresh")).toBeInTheDocument();
+    expect(screen.queryByText("bun run stale-build")).not.toBeInTheDocument();
+  });
+
   it("keeps a deleted Action row available for retained result inspection", async () => {
     const user = userEvent.setup();
     const focus = vi.fn();

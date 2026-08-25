@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CircleCheck, CircleSlash, CircleStop, CircleX, MoreHorizontal, Pencil, Play, RotateCcw } from "lucide-react";
-import type { WorkspaceEnvironmentAction, WorkspaceEnvironmentActionRun } from "@mcode/contracts";
+import type { WorkspaceEnvironmentAction, WorkspaceEnvironmentActionRun, WorkspaceEnvironmentCommandApproval } from "@mcode/contracts";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -14,13 +15,15 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { getTransport } from "@/transport";
 import { useProjectActionStore } from "./state/project-action-store";
+import { isProjectCommandApprovalInvalid, ProjectCommandApprovalDialog } from "./ProjectCommandApprovalDialog";
 
 const ACTION_RESULT_DISPLAY_MS = 2_000;
 
 interface ProjectActionMenuProps {
   readonly actions: readonly WorkspaceEnvironmentAction[];
   readonly runsByActionId: ReadonlyMap<string, WorkspaceEnvironmentActionRun>;
-  readonly onStart: (actionId: string) => Promise<void>;
+  readonly onStart: (actionId: string) => Promise<void | WorkspaceEnvironmentActionRun>;
+  readonly onApprove?: (actionId: string, approval: WorkspaceEnvironmentCommandApproval) => Promise<void | WorkspaceEnvironmentActionRun>;
   readonly onFocus: (actionId: string) => void;
   readonly onEdit: () => void;
   readonly setupMenuItem?: ReactNode;
@@ -55,22 +58,25 @@ interface LoadedSetupAvailability {
 }
 
 /** Renders Project Actions and the eligible manual Setup command beside Project settings. */
-export function ProjectActionMenu({ actions, runsByActionId, onStart, onFocus, onEdit, setupMenuItem, loadError = null }: ProjectActionMenuProps) {
+export function ProjectActionMenu({ actions, runsByActionId, onStart, onApprove, onFocus, onEdit, setupMenuItem, loadError = null }: ProjectActionMenuProps) {
   const [open, setOpen] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
+  const [approvalRun, setApprovalRun] = useState<WorkspaceEnvironmentActionRun | null>(null);
   const pointerActivation = useRef<ProjectActionPointerActivation | null>(null);
   const keyboardActivation = useRef<ProjectActionActivation | null>(null);
   const configuredActionIds = useMemo(() => new Set(actions.map((action) => action.id)), [actions]);
   const rows = useMemo(() => [
     ...actions.map((action) => ({ actionId: action.id, actionName: action.name, configured: true })),
     ...[...runsByActionId.values()]
-      .filter((run) => !configuredActionIds.has(run.actionId))
+      .filter((run) => !configuredActionIds.has(run.actionId) && run.status !== "awaiting-approval")
       .map((run) => ({ actionId: run.actionId, actionName: run.actionName, configured: false })),
   ], [actions, configuredActionIds, runsByActionId]);
   const startAction = useCallback((actionId: string) => {
     setStartError(null);
     void onStart(actionId).then(
-      () => undefined,
+      (run) => {
+        if (run?.status === "awaiting-approval") setApprovalRun(run);
+      },
       () => setStartError("Project Action could not start."),
     );
   }, [onStart]);
@@ -151,6 +157,10 @@ export function ProjectActionMenu({ actions, runsByActionId, onStart, onFocus, o
               }}
               onClick={() => {
                 const keyboard = keyboardActivation.current;
+                if (run?.status === "awaiting-approval") {
+                  startAction(row.actionId);
+                  return;
+                }
                 if (keyboard?.actionId === row.actionId) {
                   if (keyboard.handled) return;
                   keyboard.handled = true;
@@ -187,6 +197,26 @@ export function ProjectActionMenu({ actions, runsByActionId, onStart, onFocus, o
         {hasActionGroup && hasSetup ? <DropdownMenuSeparator /> : null}
         {setupMenuItem}
       </DropdownMenuContent>
+      {approvalRun ? (
+        <ProjectCommandApprovalDialog
+          approval={approvalRun.snapshot.approval ?? null}
+          script={approvalRun.snapshot.script}
+          onApprove={async () => {
+            try {
+              const approval = approvalRun.snapshot.approval;
+              if (!approval || !onApprove) return false;
+              const run = await onApprove(approvalRun.actionId, approval);
+              setApprovalRun(run?.status === "awaiting-approval" ? run : null);
+              return run?.status !== "awaiting-approval";
+            } catch (error) {
+              setApprovalRun(null);
+              setStartError("Project Action could not start.");
+              throw error;
+            }
+          }}
+          onCancel={() => setApprovalRun(null)}
+        />
+      ) : null}
     </DropdownMenu>
   );
 }
@@ -319,6 +349,7 @@ export function useProjectActions(workspaceId: string, threadId: string): {
   readonly hasSetup: boolean;
   readonly runsByActionId: ReadonlyMap<string, WorkspaceEnvironmentActionRun>;
   readonly start: (actionId: string) => Promise<WorkspaceEnvironmentActionRun>;
+  readonly approve: (actionId: string, approval: WorkspaceEnvironmentCommandApproval) => Promise<WorkspaceEnvironmentActionRun>;
   readonly loadError: string | null;
 } {
   const [actions, setActions] = useState<readonly WorkspaceEnvironmentAction[]>([]);
@@ -354,7 +385,7 @@ export function useProjectActions(workspaceId: string, threadId: string): {
     setSetupAvailability(null);
     setLoadError(null);
     void Promise.all([
-      getTransport().readWorkspaceEnvironment(workspaceId),
+      getTransport().readWorkspaceEnvironment(workspaceId, threadId),
       getTransport().listWorkspaceActionRuns(threadId),
     ]).then(
       ([environment, runs]) => {
@@ -383,7 +414,17 @@ export function useProjectActions(workspaceId: string, threadId: string): {
     return run;
   }, [applyRun, threadId]);
 
-  return { actions, hasSetup, runsByActionId, start, loadError };
+  const approve = useCallback(async (actionId: string, approval: WorkspaceEnvironmentCommandApproval) => {
+    try {
+      await getTransport().approveWorkspaceEnvironmentCommand(threadId, approval.target, approval.fingerprint);
+      return await start(actionId);
+    } catch (error) {
+      if (isProjectCommandApprovalInvalid(error)) return await start(actionId);
+      throw error;
+    }
+  }, [start, threadId]);
+
+  return { actions, hasSetup, runsByActionId, start, approve, loadError };
 }
 
 function ProjectActionTerminalTranscript({ transcript }: { readonly transcript: string }) {
@@ -457,6 +498,9 @@ function ActionStatus({
   }, [finishedAt, status]);
   if (status === "running") {
     return <span role="status" aria-label="Running" className="ml-2 flex shrink-0 text-amber-600 dark:text-amber-400"><Spinner size={12} aria-hidden className="motion-reduce:animate-none" /></span>;
+  }
+  if (status === "awaiting-approval") {
+    return <Badge role="status" aria-label="Approval required" variant="secondary" size="sm" className="ml-2 shrink-0">Approval</Badge>;
   }
   if (status === "completed" && showRecentResult) {
     return <span role="status" aria-label="Completed" className="ml-2 flex shrink-0"><CircleCheck className="size-3.5 text-[var(--diff-add-strong)]" aria-hidden /></span>;
