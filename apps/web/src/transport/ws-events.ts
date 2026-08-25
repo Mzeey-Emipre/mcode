@@ -21,6 +21,7 @@ import { usePlanStore } from "@/stores/planStore";
 import { clearFileListCache } from "@/components/chat/useFileAutocomplete";
 import { emitPtyData, emitPtyExit } from "@/features/terminal/adapters/pty-data-registry";
 import { useThreadControlStore } from "@/stores/threadControlStore";
+import { useProjectActionStore } from "@/features/projects/environment/state/project-action-store";
 
 /** Unsubscribe handles for all push listeners. */
 let unsubs: (() => void)[] = [];
@@ -54,6 +55,7 @@ function approxBase64DecodedBytes(encoded: string): number {
  * - `thread.status` -- thread status changes reflected in threadStore
  * - `thread.lifecycleChanged` -- completion, reopen, or cleanup state persisted by the server
  * - `thread.deleted` -- successful automatic retention cleanup
+ * - `workspace.environment.action.updated` -- retained Project Action lifecycle and output updates
  * - `thread.prLinked` -- PR detected for a thread, updates pr_number/pr_status
  * - `thread.checksUpdated` -- CI check status polled for a thread's PR, updates checksById
  * - `thread.modelUpdated` -- thread model and provider synced after a message send (multi-client)
@@ -260,6 +262,15 @@ export function startPushListeners(): void {
       const parsed = WS_CHANNELS["thread.deleted"].safeParse(data);
       if (!parsed.success) return;
       useWorkspaceStore.getState().applyThreadDeleted(parsed.data.threadId);
+      useProjectActionStore.getState().clearThread(parsed.data.threadId);
+    }),
+  );
+
+  unsubs.push(
+    pushEmitter.on("workspace.environment.action.updated", (data) => {
+      const parsed = WS_CHANNELS["workspace.environment.action.updated"].safeParse(data);
+      if (!parsed.success) return;
+      useProjectActionStore.getState().applyRun(parsed.data.run);
     }),
   );
 

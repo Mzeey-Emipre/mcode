@@ -24,6 +24,7 @@ import {
   WorkspaceEnricher,
   WorkspaceService,
   WorkspaceEnvironmentService,
+  ProjectActionService,
 } from "../../features/projects";
 import {
   HandoffCheckoutService,
@@ -269,6 +270,7 @@ browserAutomationCredentials.onRemoved((revocation) => {
 // Resolve services
 const workspaceService = container.resolve(WorkspaceService);
 const workspaceEnvironmentService = container.resolve(WorkspaceEnvironmentService);
+const projectActionService = container.resolve(ProjectActionService);
 const threadService = container.resolve(ThreadService);
 const agentService = container.resolve(AgentService);
 workspaceEnvironmentService.setAutomaticSetupDispatcher({
@@ -415,6 +417,20 @@ threadCompletionService.registerResourceOwner("workspace-environment", async (th
     release();
     throw error;
   }
+});
+threadCompletionService.registerResourceOwner("project-actions", async (threadId) => {
+  const release = await projectActionService.beginThreadTeardown(threadId);
+  try {
+    await projectActionService.stopForThread(threadId);
+    return release;
+  } catch (error) {
+    release();
+    throw error;
+  }
+});
+projectActionService.onUpdate((update) => {
+  broadcast("workspace.environment.action.updated", update);
+  portPush.send("workspace.environment.action.updated", update);
 });
 threadCompletionService.onDeadlineChanges((threads) => {
   for (const thread of threads) {
@@ -612,6 +628,7 @@ codexCatalogService.onSkillsChanged((cwd) => {
 const { httpServer, wss } = createWsServer({
   workspaceService,
   workspaceEnvironmentService,
+  projectActionService,
   threadService,
   agentService,
   agentPermissionService,
@@ -769,6 +786,7 @@ killOrphanedServer({ lockFilePath: LOCK_FILE_PATH, logger });
 // killOrphanedServer so the server process tree is clean before we inspect PTY PIDs.
 const pidRegistry = container.resolve<PtyPidRegistry>("PtyPidRegistry");
 reapOrphanedPtys(pidRegistry, logger);
+projectActionService.recoverStaleRuns();
 
 async function bootstrapServer(): Promise<void> {
   try {
@@ -852,8 +870,9 @@ async function shutdown(): Promise<void> {
     }
   };
 
-  // 6. Contain manual Setup commands before their Terminal dependency shuts down.
-  shutdownCoordinator.setPhase("shutdown Project Setup commands");
+  // 6. Contain Project command sessions before their Terminal dependency shuts down.
+  shutdownCoordinator.setPhase("shutdown Project commands");
+  await captureCleanupFailure(() => projectActionService.dispose());
   await captureCleanupFailure(() => workspaceEnvironmentService.dispose());
 
   // 7. Shutdown terminal service — enable graceful signal ladder for this path only

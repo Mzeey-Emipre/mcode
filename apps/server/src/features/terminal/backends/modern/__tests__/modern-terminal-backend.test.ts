@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import {
   TERMINAL_CHECKPOINT_CHUNK_BYTES,
+  WORKSPACE_ENVIRONMENT_ACTION_TRANSCRIPT_MAX_BYTES,
   TerminalDiagnosticsBundleSchema,
   decodeTerminalFrame,
   encodeTerminalFrame,
@@ -16,11 +17,19 @@ import type {
 } from "../../../host/pty-host-adapter.js";
 import type {
   TerminalRuntimeDeliveryEvent,
+  TerminalRuntimeHeadlessEvent,
   TerminalSessionRuntime,
 } from "../../../sessions/terminal-session-runtime.js";
 import type { TerminalHydration } from "../../../sessions/terminal-replay-buffer.js";
-import type { TerminalSessionService } from "../../../sessions/terminal-session-service.js";
-import { TerminalBackendError, type TerminalBackendSender } from "../../terminal-backend.js";
+import {
+  PreparedTerminalSessionLaunchError,
+  type TerminalSessionService,
+} from "../../../sessions/terminal-session-service.js";
+import {
+  PreparedTerminalCommandStartError,
+  TerminalBackendError,
+  type TerminalBackendSender,
+} from "../../terminal-backend.js";
 import { ModernTerminalBackend } from "../modern-terminal-backend.js";
 
 const sessionId = "00000000-0000-4000-8000-000000000001";
@@ -439,5 +448,200 @@ describe("ModernTerminalBackend", () => {
       totalBytes: data.byteLength,
       sha256,
     }, harness.client)).rejects.toMatchObject({ code: "CHECKPOINT_REJECTED" });
+  });
+
+  it("replays a fast prepared Action exit and retains the exact launch facts", async () => {
+    let publishHeadless: ((event: TerminalRuntimeHeadlessEvent) => void) | undefined;
+    const runtime = {
+      subscribeDelivery: vi.fn(() => () => undefined),
+      subscribeHeadless: vi.fn((listener: (event: TerminalRuntimeHeadlessEvent) => void) => {
+        publishHeadless = listener;
+        return () => undefined;
+      }),
+      readHeadlessReplay: vi.fn(() => ({
+        output: [new TextEncoder().encode("fast output")],
+        exitCode: 0,
+      })),
+    } as unknown as TerminalSessionRuntime;
+    const snapshot = {
+      ...makeSnapshot(),
+      scope: { kind: "thread" as const, workspaceId: "workspace-1", threadId: "thread-1" },
+      launch: {
+        ...makeSnapshot().launch,
+        resolvedProfile: { ...makeSnapshot().launch.resolvedProfile, executable: "pwsh" },
+        arguments: ["-NoProfile", "-Command", "Write-Output fast"],
+      },
+    };
+    const releasePreparedSession = vi.fn();
+    const sessions = {
+      createPreparedSession: vi.fn(async () => ({
+        session: snapshot,
+        checkoutPath: "C:/repo/.worktrees/thread-1",
+        environmentNames: ["HOME", "PATH"],
+      })),
+      releasePreparedSession,
+      closeSession: vi.fn(async () => snapshot),
+      dispose: vi.fn(),
+    } as unknown as TerminalSessionService;
+    const host = {
+      start: vi.fn(async () => ({ hostGeneration, state: "healthy" as const })),
+      health: vi.fn(() => ({ hostGeneration, state: "healthy" as const })),
+      diagnostics: vi.fn(() => ({ lastHeartbeatMsAgo: 0, queueBytes: 0, eventLoopLagMs: 0, hostRssBytes: "0" })),
+    } as unknown as PtyHostAdapter & { health(): PtyHostHealth; diagnostics(): PtyHostDiagnostics };
+    const backend = new ModernTerminalBackend(sessions, runtime, host, () => 20, undefined, () => "workspace-1");
+
+    const prepared = await backend.startPreparedCommand({ threadId: "thread-1", script: "Write-Output fast" });
+    const output = vi.fn();
+    const exit = vi.fn();
+    prepared.onOutput(output);
+    prepared.onExit(exit);
+    publishHeadless?.({ kind: "exit", sessionId, exitCode: 0 });
+
+    expect(new TextDecoder().decode(output.mock.calls[0]?.[0])).toBe("fast output");
+    expect(output).toHaveBeenCalledTimes(1);
+    expect(exit).toHaveBeenCalledTimes(1);
+    expect(releasePreparedSession).toHaveBeenCalledOnce();
+    await expect(prepared.stop()).resolves.toBeUndefined();
+    expect(sessions.closeSession).not.toHaveBeenCalled();
+    expect(prepared.snapshot).toMatchObject({
+      checkoutPath: "C:/repo/.worktrees/thread-1",
+      environmentNames: ["HOME", "PATH"],
+      terminal: { executable: "pwsh", arguments: ["-NoProfile", "-Command", "Write-Output fast"] },
+    });
+  });
+
+  it.each(["live", "late"] as const)(
+    "releases a prepared Action from a nullable host-crash exit delivered %s",
+    async (delivery) => {
+      let publishHeadless: ((event: TerminalRuntimeHeadlessEvent) => void) | undefined;
+      const runtime = {
+        subscribeDelivery: vi.fn(() => () => undefined),
+        subscribeHeadless: vi.fn((listener: (event: TerminalRuntimeHeadlessEvent) => void) => {
+          publishHeadless = listener;
+          return () => undefined;
+        }),
+        readHeadlessReplay: vi.fn(() => ({
+          output: [],
+          exitCode: delivery === "late" ? null : undefined,
+        })),
+      } as unknown as TerminalSessionRuntime;
+      const snapshot = {
+        ...makeSnapshot(),
+        scope: { kind: "thread" as const, workspaceId: "workspace-1", threadId: "thread-1" },
+      };
+      const releasePreparedSession = vi.fn();
+      const sessions = {
+        createPreparedSession: vi.fn(async () => ({
+          session: snapshot,
+          checkoutPath: "C:/repo/.worktrees/thread-1",
+          environmentNames: ["PATH"],
+        })),
+        releasePreparedSession,
+        closeSession: vi.fn(async () => snapshot),
+        dispose: vi.fn(),
+      } as unknown as TerminalSessionService;
+      const host = {
+        start: vi.fn(async () => ({ hostGeneration, state: "healthy" as const })),
+        health: vi.fn(() => ({ hostGeneration, state: "healthy" as const })),
+        diagnostics: vi.fn(() => ({ lastHeartbeatMsAgo: 0, queueBytes: 0, eventLoopLagMs: 0, hostRssBytes: "0" })),
+      } as unknown as PtyHostAdapter & { health(): PtyHostHealth; diagnostics(): PtyHostDiagnostics };
+      const backend = new ModernTerminalBackend(sessions, runtime, host, () => 20, undefined, () => "workspace-1");
+
+      const prepared = await backend.startPreparedCommand({ threadId: "thread-1", script: "Write-Output crash" });
+      const exit = vi.fn();
+      prepared.onExit(exit);
+      if (delivery === "live") {
+        publishHeadless?.({ kind: "exit", sessionId, exitCode: null });
+        publishHeadless?.({ kind: "exit", sessionId, exitCode: null });
+      }
+
+      expect(exit).toHaveBeenCalledExactlyOnceWith({ exitCode: null });
+      expect(releasePreparedSession).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("bounds noisy prepared output received before its Action owner attaches", async () => {
+    let publishHeadless: ((event: TerminalRuntimeHeadlessEvent) => void) | undefined;
+    const runtime = {
+      subscribeDelivery: vi.fn(() => () => undefined),
+      subscribeHeadless: vi.fn((listener: (event: TerminalRuntimeHeadlessEvent) => void) => {
+        publishHeadless = listener;
+        return () => undefined;
+      }),
+      readHeadlessReplay: vi.fn(() => ({ output: [], exitCode: undefined })),
+    } as unknown as TerminalSessionRuntime;
+    const snapshot = {
+      ...makeSnapshot(),
+      scope: { kind: "thread" as const, workspaceId: "workspace-1", threadId: "thread-1" },
+    };
+    const sessions = {
+      createPreparedSession: vi.fn(async () => ({
+        session: snapshot,
+        checkoutPath: "C:/repo/.worktrees/thread-1",
+        environmentNames: ["PATH"],
+      })),
+      releasePreparedSession: vi.fn(),
+      closeSession: vi.fn(async () => snapshot),
+      dispose: vi.fn(),
+    } as unknown as TerminalSessionService;
+    const host = {
+      start: vi.fn(async () => ({ hostGeneration, state: "healthy" as const })),
+      health: vi.fn(() => ({ hostGeneration, state: "healthy" as const })),
+      diagnostics: vi.fn(() => ({ lastHeartbeatMsAgo: 0, queueBytes: 0, eventLoopLagMs: 0, hostRssBytes: "0" })),
+    } as unknown as PtyHostAdapter & { health(): PtyHostHealth; diagnostics(): PtyHostDiagnostics };
+    const backend = new ModernTerminalBackend(sessions, runtime, host, () => 20, undefined, () => "workspace-1");
+
+    const prepared = await backend.startPreparedCommand({ threadId: "thread-1", script: "Write-Output noisy" });
+    publishHeadless?.({
+      kind: "output",
+      sessionId,
+      data: new Uint8Array(WORKSPACE_ENVIRONMENT_ACTION_TRANSCRIPT_MAX_BYTES).fill(65),
+    });
+    publishHeadless?.({ kind: "output", sessionId, data: Uint8Array.of(90) });
+    const output = vi.fn();
+    prepared.onOutput(output);
+    const retained = Buffer.concat(output.mock.calls.map(([data]) => Buffer.from(data)));
+
+    expect(retained).toHaveLength(WORKSPACE_ENVIRONMENT_ACTION_TRANSCRIPT_MAX_BYTES);
+    expect(retained[0]).toBe(65);
+    expect(retained.at(-1)).toBe(90);
+  });
+
+  it("preserves resolved launch metadata in a failed Action start without a terminal identity", async () => {
+    const runtime = {
+      subscribeDelivery: vi.fn(() => () => undefined),
+    } as unknown as TerminalSessionRuntime;
+    const plan = {
+      checkoutPath: "C:/repo/.worktrees/thread-1",
+      terminal: { executable: "pwsh", arguments: ["-NoProfile", "-Command", "Write-Output failed"] },
+      environmentNames: ["PATH"],
+    };
+    const sessions = {
+      createPreparedSession: vi.fn(async () => {
+        throw new PreparedTerminalSessionLaunchError(plan, new Error("host unavailable"));
+      }),
+      dispose: vi.fn(),
+    } as unknown as TerminalSessionService;
+    const host = {
+      start: vi.fn(async () => ({ hostGeneration, state: "healthy" as const })),
+      health: vi.fn(() => ({ hostGeneration, state: "healthy" as const })),
+      diagnostics: vi.fn(() => ({ lastHeartbeatMsAgo: 0, queueBytes: 0, eventLoopLagMs: 0, hostRssBytes: "0" })),
+    } as unknown as PtyHostAdapter & { health(): PtyHostHealth; diagnostics(): PtyHostDiagnostics };
+    const backend = new ModernTerminalBackend(sessions, runtime, host, () => 20, undefined, () => "workspace-1");
+
+    const failure = await backend.startPreparedCommand({
+      threadId: "thread-1",
+      script: "Write-Output failed",
+    }).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(PreparedTerminalCommandStartError);
+    expect(failure).toMatchObject({
+      snapshot: {
+        script: "Write-Output failed",
+        checkoutPath: plan.checkoutPath,
+        terminal: plan.terminal,
+        environmentNames: plan.environmentNames,
+      },
+    });
   });
 });

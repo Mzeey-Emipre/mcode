@@ -2,6 +2,12 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { WorkspaceEnvironmentSetupAttempt } from "@mcode/contracts";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 const { transport } = vi.hoisted(() => ({
   transport: {
@@ -14,7 +20,7 @@ vi.mock("@/transport", () => ({ getTransport: () => transport }));
 
 import {
   ProjectSetupAttemptCard,
-  ProjectSetupMenu,
+  ProjectSetupMenuItem,
   useProjectSetupAttempt,
 } from "../ProjectSetupControl";
 
@@ -59,13 +65,28 @@ function SetupState({ threadId }: { readonly threadId: string }) {
   );
 }
 
+function SetupMenu({ attempt, starting, onStart }: {
+  readonly attempt: WorkspaceEnvironmentSetupAttempt | null;
+  readonly starting: boolean;
+  readonly onStart: () => Promise<void>;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger render={<Button type="button">Project Actions</Button>} />
+      <DropdownMenuContent>
+        <ProjectSetupMenuItem attempt={attempt} starting={starting} onStart={onStart} />
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 describe("ProjectSetup controls", () => {
-  it("starts Setup through the overview menu", async () => {
+  it("starts Setup through the Project Actions menu", async () => {
     const user = userEvent.setup();
     const onStart = vi.fn().mockResolvedValue(undefined);
-    render(<ProjectSetupMenu attempt={null} starting={false} onStart={onStart} />);
+    render(<SetupMenu attempt={null} starting={false} onStart={onStart} />);
 
-    const trigger = screen.getByRole("button", { name: "Project Setup actions" });
+    const trigger = screen.getByRole("button", { name: "Project Actions" });
     await user.click(trigger);
     await user.click(await screen.findByRole("menuitem", { name: "Run Setup" }));
     expect(onStart).toHaveBeenCalledTimes(1);
@@ -73,18 +94,18 @@ describe("ProjectSetup controls", () => {
 
   it("disables Run Setup while an attempt is running", async () => {
     const user = userEvent.setup();
-    render(<ProjectSetupMenu attempt={{ ...failedAttempt, status: "running", outcome: null, finishedAt: null }} starting={false} onStart={vi.fn()} />);
+    render(<SetupMenu attempt={{ ...failedAttempt, status: "running", outcome: null, finishedAt: null }} starting={false} onStart={vi.fn()} />);
 
-    await user.click(screen.getByRole("button", { name: "Project Setup actions" }));
+    await user.click(screen.getByRole("button", { name: "Project Actions" }));
     expect(await screen.findByRole("menuitem", { name: "Run Setup" })).toHaveAttribute("aria-disabled", "true");
   });
 
   it("disables Run Setup while containment cleanup remains active", async () => {
     const user = userEvent.setup();
     const attempt = { ...failedAttempt, outcome: "containment_failure" as const, cleanupPending: true };
-    render(<><ProjectSetupMenu attempt={attempt} starting={false} onStart={vi.fn()} /><ProjectSetupAttemptCard attempt={attempt} /></>);
+    render(<><SetupMenu attempt={attempt} starting={false} onStart={vi.fn()} /><ProjectSetupAttemptCard attempt={attempt} /></>);
 
-    await user.click(screen.getByRole("button", { name: "Project Setup actions" }));
+    await user.click(screen.getByRole("button", { name: "Project Actions" }));
     expect(await screen.findByRole("menuitem", { name: "Run Setup" })).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByText("Setup cleanup is still pending.")).toBeInTheDocument();
   });

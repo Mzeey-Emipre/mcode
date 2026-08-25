@@ -12,6 +12,8 @@ export const WORKSPACE_ENVIRONMENT_COMMAND_MAX_BYTES = 64 * 1024;
 export const WORKSPACE_ENVIRONMENT_DOCUMENT_MAX_BYTES = 128 * 1024;
 /** Maximum UTF-8 bytes retained from one manual Setup command. */
 export const WORKSPACE_ENVIRONMENT_SETUP_OUTPUT_MAX_BYTES = 512 * 1024;
+/** Maximum UTF-8 bytes retained from one Project Action terminal transcript. */
+export const WORKSPACE_ENVIRONMENT_ACTION_TRANSCRIPT_MAX_BYTES = 512 * 1024;
 
 /** Stable validation reasons returned by the workspace environment boundary. */
 export const WorkspaceEnvironmentValidationReasonSchema = z.enum([
@@ -123,6 +125,15 @@ const setupOutputSchema = z.string().superRefine((value, ctx) => {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: `Setup output must be at most ${WORKSPACE_ENVIRONMENT_SETUP_OUTPUT_MAX_BYTES} bytes`,
+    });
+  }
+});
+
+const actionTranscriptSchema = z.string().superRefine((value, ctx) => {
+  if (new TextEncoder().encode(value).byteLength > WORKSPACE_ENVIRONMENT_ACTION_TRANSCRIPT_MAX_BYTES) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `Action transcripts must be at most ${WORKSPACE_ENVIRONMENT_ACTION_TRANSCRIPT_MAX_BYTES} bytes`,
     });
   }
 });
@@ -242,6 +253,117 @@ export const WorkspaceEnvironmentSetupGetResultSchema = lazySchema(() =>
 );
 export type WorkspaceEnvironmentSetupGetResult = z.infer<
   ReturnType<typeof WorkspaceEnvironmentSetupGetResultSchema>
+>;
+
+/** Public lifecycle states for one retained Project Action run. */
+export const WorkspaceEnvironmentActionRunStatusSchema = z.enum([
+  "running",
+  "completed",
+  "failed",
+  "interrupted",
+  "unavailable",
+]);
+/** Public lifecycle state for one retained Project Action run. */
+export type WorkspaceEnvironmentActionRunStatus = z.infer<
+  typeof WorkspaceEnvironmentActionRunStatusSchema
+>;
+
+/** Immutable launch details retained for one Project Action run. */
+export const WorkspaceEnvironmentActionLaunchSnapshotSchema = lazySchema(() =>
+  z.object({
+    platform: WorkspaceEnvironmentPlatformSchema,
+    script: scriptSchema.nullable(),
+    checkoutPath: z.string().min(1).max(32 * 1024).nullable(),
+    terminal: z.object({
+      executable: TerminalExecutableSchema(),
+      arguments: TerminalProfileArgumentsSchema(),
+    }).strict().nullable(),
+    environmentNames: z.array(z.string().min(1).max(256)).max(512),
+  }).strict(),
+);
+/** Immutable public launch details retained for one Project Action run. */
+export type WorkspaceEnvironmentActionLaunchSnapshot = z.infer<
+  ReturnType<typeof WorkspaceEnvironmentActionLaunchSnapshotSchema>
+>;
+
+/** Latest retained result for the stable {threadId, actionId} Project Action slot. */
+export const WorkspaceEnvironmentActionRunSchema = lazySchema(() =>
+  z.object({
+    threadId: z.string().min(1).max(256),
+    workspaceId: z.string().min(1).max(256),
+    actionId: z.string().min(1).max(256),
+    runId: z.string().min(1).max(256),
+    revision: z.number().int().nonnegative().max(2_147_483_647),
+    terminalSessionId: z.string().min(1).max(256).nullable(),
+    actionName: z.string().min(1).max(256),
+    status: WorkspaceEnvironmentActionRunStatusSchema,
+    snapshot: WorkspaceEnvironmentActionLaunchSnapshotSchema(),
+    createdAt: z.string().datetime(),
+    startedAt: z.string().datetime().nullable(),
+    finishedAt: z.string().datetime().nullable(),
+    exitCode: z.number().int().nullable(),
+    transcript: actionTranscriptSchema,
+    transcriptTruncated: z.boolean(),
+  }).strict().superRefine((run, ctx) => {
+    if (run.status === "running" && (run.startedAt === null || run.finishedAt !== null || run.exitCode !== null)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Running Action runs require an active lifecycle" });
+    }
+    if (run.status !== "running" && run.finishedAt === null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["finishedAt"], message: "Completed Action runs require a finish time" });
+    }
+    if (run.status === "completed" && run.exitCode !== 0) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["exitCode"], message: "Completed Action runs require exit code zero" });
+    }
+    if ((run.status === "interrupted" || run.status === "unavailable") && run.exitCode !== null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["exitCode"], message: "Interrupted and unavailable Action runs cannot include an exit code" });
+    }
+    if ((run.status === "failed" || run.status === "completed") && run.startedAt === null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["startedAt"], message: "Exited Action runs require a start time" });
+    }
+  }),
+);
+/** Latest retained result for one stable Project Action slot. */
+export type WorkspaceEnvironmentActionRun = z.infer<
+  ReturnType<typeof WorkspaceEnvironmentActionRunSchema>
+>;
+
+/** Request to list the retained Project Action results for one Thread. */
+export const WorkspaceEnvironmentActionListInputSchema = lazySchema(() =>
+  z.object({ threadId: z.string().min(1).max(256) }).strict(),
+);
+/** Request to list retained Project Action results for one Thread. */
+export type WorkspaceEnvironmentActionListInput = z.infer<
+  ReturnType<typeof WorkspaceEnvironmentActionListInputSchema>
+>;
+
+/** Bounded retained Project Action results for one Thread. */
+export const WorkspaceEnvironmentActionListResultSchema = lazySchema(() =>
+  z.object({ runs: z.array(WorkspaceEnvironmentActionRunSchema()).max(256) }).strict(),
+);
+/** Bounded retained Project Action results for one Thread. */
+export type WorkspaceEnvironmentActionListResult = z.infer<
+  ReturnType<typeof WorkspaceEnvironmentActionListResultSchema>
+>;
+
+/** Request to start, stop, or inspect the retained Action slot. */
+export const WorkspaceEnvironmentActionSlotInputSchema = lazySchema(() =>
+  z.object({
+    threadId: z.string().min(1).max(256),
+    actionId: z.string().min(1).max(256),
+  }).strict(),
+);
+/** Request targeting one stable Project Action slot. */
+export type WorkspaceEnvironmentActionSlotInput = z.infer<
+  ReturnType<typeof WorkspaceEnvironmentActionSlotInputSchema>
+>;
+
+/** Result for one retained Project Action slot request. */
+export const WorkspaceEnvironmentActionGetResultSchema = lazySchema(() =>
+  z.object({ run: WorkspaceEnvironmentActionRunSchema().nullable() }).strict(),
+);
+/** Result for one retained Project Action slot request. */
+export type WorkspaceEnvironmentActionGetResult = z.infer<
+  ReturnType<typeof WorkspaceEnvironmentActionGetResultSchema>
 >;
 
 /** Durable gate states for Turns in a managed New worktree. */
@@ -523,6 +645,8 @@ export const WorkspaceEnvironmentErrorSchema = z.object({
     "WORKSPACE_ENVIRONMENT_NOT_FOUND",
     "WORKSPACE_ENVIRONMENT_SETUP_CAPACITY",
     "WORKSPACE_ENVIRONMENT_SETUP_UNAVAILABLE",
+    "WORKSPACE_ENVIRONMENT_ACTION_RUNNING",
+    "WORKSPACE_ENVIRONMENT_ACTION_NOT_FOUND",
   ]),
   message: z.string().min(1),
   issues: z.array(WorkspaceEnvironmentValidationIssueSchema).optional(),

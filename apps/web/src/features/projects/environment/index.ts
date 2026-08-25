@@ -3,9 +3,15 @@ export { ProjectEnvironmentPanel } from "./ProjectEnvironmentPanel";
 /** Manual Project Setup controls rendered in the Thread Overview. */
 export {
   ProjectSetupAttemptCard,
-  ProjectSetupMenu,
+  ProjectSetupMenuItem,
   useProjectSetupAttempt,
 } from "./ProjectSetupControl";
+/** Project Action controls and retained terminal-style output. */
+export {
+  ProjectActionMenu,
+  ProjectActionTerminalView,
+  useProjectActions,
+} from "./ProjectActionControl";
 /** Automatic Project Setup gate controls rendered in the Thread transcript. */
 export {
   ProjectAutomaticSetupCard,

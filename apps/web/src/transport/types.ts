@@ -7,6 +7,7 @@ import type {
   WorkspaceEnvironmentSetupAttempt,
   WorkspaceEnvironmentAutomaticSetupSnapshot,
   WorkspaceEnvironmentAutomaticSetupTerminal,
+  WorkspaceEnvironmentActionRun,
   Thread,
   RecentThread,
   PaginatedMessages,
@@ -112,6 +113,7 @@ export type {
   WorkspaceEnvironmentSetupAttempt,
   WorkspaceEnvironmentAutomaticSetupSnapshot,
   WorkspaceEnvironmentAutomaticSetupTerminal,
+  WorkspaceEnvironmentActionRun,
   Thread,
   RecentThread,
   Message,
@@ -318,6 +320,16 @@ export interface McodeTransport {
   retryAutomaticSetup(threadId: string): Promise<WorkspaceEnvironmentAutomaticSetupSnapshot>;
   /** Create one interactive recovery Terminal for the current Thread checkout. */
   openAutomaticSetupTerminal(threadId: string): Promise<WorkspaceEnvironmentAutomaticSetupTerminal>;
+  /** Lists retained Project Action results for the current Thread. */
+  listWorkspaceActionRuns(threadId: string): Promise<WorkspaceEnvironmentActionRun[]>;
+  /** Starts one configured Project Action in its private terminal session. */
+  startWorkspaceAction(threadId: string, actionId: string): Promise<WorkspaceEnvironmentActionRun>;
+  /** Stops one running Project Action after its terminal close barrier completes. */
+  stopWorkspaceAction(threadId: string, actionId: string): Promise<WorkspaceEnvironmentActionRun | null>;
+  /** Restarts one Project Action only after its prior terminal fully closes. */
+  restartWorkspaceAction(threadId: string, actionId: string): Promise<WorkspaceEnvironmentActionRun>;
+  /** Reads the retained result for one Project Action slot. */
+  getWorkspaceActionRun(threadId: string, actionId: string): Promise<WorkspaceEnvironmentActionRun | null>;
   deleteWorkspace(id: string): Promise<boolean>;
   /** Record workspace as last-opened for recency ordering in the project selector. */
   touchLastOpened(id: string): Promise<void>;

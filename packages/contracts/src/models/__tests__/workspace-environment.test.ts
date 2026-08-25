@@ -4,6 +4,8 @@ import {
   WORKSPACE_ENVIRONMENT_SCRIPT_MAX_BYTES,
   WorkspaceEnvironmentCommandSchema,
   WorkspaceEnvironmentDocumentSchema,
+  WorkspaceEnvironmentActionRunSchema,
+  WorkspaceEnvironmentErrorSchema,
   WorkspaceEnvironmentSetupAttemptSchema,
   WorkspaceEnvironmentAutomaticSetupSnapshotSchema,
   WorkspaceEnvironmentQueuedTurnCancelInputSchema,
@@ -152,6 +154,56 @@ describe("workspace environment contracts", () => {
       cleanupPending: false,
       exitCode: 0,
     }).success).toBe(false);
+  });
+
+  it("accepts the retained latest Action result and rejects an unbounded transcript", () => {
+    const run = WorkspaceEnvironmentActionRunSchema().parse({
+      threadId: "thread-1",
+      workspaceId: "workspace-1",
+      actionId: "build",
+      runId: "run-1",
+      revision: 1,
+      terminalSessionId: "terminal-1",
+      actionName: "Build",
+      status: "completed",
+      snapshot: {
+        platform: "windows",
+        script: "bun run build",
+        checkoutPath: "C:\\repo",
+        terminal: {
+          executable: "C:\\Program Files\\PowerShell\\pwsh.exe",
+          arguments: ["-NoLogo", "-NonInteractive", "-Command", "bun run build"],
+        },
+        environmentNames: ["PATH", "TEMP"],
+      },
+      createdAt: "2026-08-22T12:00:00.000Z",
+      startedAt: "2026-08-22T12:00:00.000Z",
+      finishedAt: "2026-08-22T12:00:05.000Z",
+      exitCode: 0,
+      transcript: "done",
+      transcriptTruncated: false,
+    });
+
+    expect(run.status).toBe("completed");
+    expect(WorkspaceEnvironmentActionRunSchema().safeParse({
+      ...run,
+      transcript: "x".repeat(WORKSPACE_ENVIRONMENT_COMMAND_MAX_BYTES * 9),
+    }).success).toBe(false);
+    expect(WorkspaceEnvironmentActionRunSchema().safeParse({
+      ...run,
+      revision: -1,
+    }).success).toBe(false);
+  });
+
+  it("accepts the Action lifecycle errors returned by the RPC boundary", () => {
+    expect(WorkspaceEnvironmentErrorSchema.parse({
+      code: "WORKSPACE_ENVIRONMENT_ACTION_RUNNING",
+      message: "This Project Action is already running for this Thread",
+    }).code).toBe("WORKSPACE_ENVIRONMENT_ACTION_RUNNING");
+    expect(WorkspaceEnvironmentErrorSchema.parse({
+      code: "WORKSPACE_ENVIRONMENT_ACTION_NOT_FOUND",
+      message: "Project Action not found",
+    }).code).toBe("WORKSPACE_ENVIRONMENT_ACTION_NOT_FOUND");
   });
 
   it("accepts exact automatic gate lifecycle shapes and rejects unfinished results", () => {

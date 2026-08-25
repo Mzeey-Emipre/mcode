@@ -334,6 +334,35 @@ describe("ActivityRail expansion", () => {
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
   });
 
+  it("keeps an Action terminal selectable and closeable after another tab becomes active", () => {
+    render(
+      <ActivityRail
+        tabInstances={[
+          { id: "action-terminal:build", type: "action-terminal" },
+          { id: rightPanelSingletonId("preview"), type: "preview" },
+        ]}
+        workspaceId={workspaceId}
+        activeTabId={rightPanelSingletonId("preview")}
+        scope="thread"
+        scopeProgress={{ done: 0, total: 0 }}
+        changesCount={0}
+        changesFresh={false}
+        browserTabSet={null}
+        maximized={false}
+        terminalLabels={{ "action-terminal:build": "Build" }}
+        {...handlers}
+      />,
+    );
+
+    const actionTerminal = screen.getByRole("button", { name: "Build" });
+    fireEvent.click(actionTerminal);
+    expect(handlers.onSelect).toHaveBeenCalledWith("action-terminal:build");
+
+    fireEvent.focus(actionTerminal);
+    fireEvent.click(screen.getByRole("button", { name: "Close Build" }));
+    expect(handlers.onClose).toHaveBeenCalledWith("action-terminal:build");
+  });
+
   it("uses the amber pointer while an agent-created page is still opening", () => {
     const page = browserTabSet.tabs[0]!;
     useBrowserAutomationStore.setState({

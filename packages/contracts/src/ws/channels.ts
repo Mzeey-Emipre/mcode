@@ -19,6 +19,7 @@ import { TurnFileEffectSummarySchema } from "../models/file-effect.js";
 import { TurnOutcomeSchema } from "../models/turn-outcome.js";
 import { ProviderCatalogChangeSchema } from "../providers/capability-catalog.js";
 import { ThreadObservedStateSchema } from "../thread-control.js";
+import { WorkspaceEnvironmentActionRunSchema } from "../models/workspace-environment.js";
 import { LegacyTerminalChannels } from "./terminal-legacy.js";
 
 /** Maximum canonical semantic events published in one durable batch. */
@@ -76,6 +77,13 @@ export const WS_CHANNELS = {
     threadId: z.string(),
     status: ThreadStatusSchema,
   }),
+  /** Publishes the latest retained result for one Project Action slot. */
+  "workspace.environment.action.updated": z.object({
+    threadId: z.string().min(1).max(256),
+    actionId: z.string().min(1).max(256),
+    runId: z.string().min(1).max(256),
+    run: WorkspaceEnvironmentActionRunSchema(),
+  }).strict(),
   /** Synchronizes durable user completion or reopen changes across clients. */
   "thread.lifecycleChanged": z.object({
     thread: ThreadSchema(),

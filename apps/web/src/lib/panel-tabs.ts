@@ -33,6 +33,8 @@ export interface PanelTabType {
   readonly needsThread: boolean;
   /** Shown as a disabled teaser and excluded from the creatable set (Files). */
   readonly comingSoon?: boolean;
+  /** Opened only by a product workflow and therefore omitted from creation surfaces. */
+  readonly systemManaged?: boolean;
   /**
    * Command id whose keybinding renders as the card's keycap. Absent for
    * coming-soon types, which have no binding yet.
@@ -63,6 +65,14 @@ export const PANEL_TAB_TYPES: readonly PanelTabType[] = [
     blurb: "Start a shell",
     needsThread: false,
     commandId: "terminal.toggle",
+  },
+  {
+    id: "action-terminal",
+    label: "Project Action",
+    icon: Terminal,
+    blurb: "View Action output",
+    needsThread: true,
+    systemManaged: true,
   },
   {
     id: "files",
@@ -128,7 +138,7 @@ export function shownTabTypes(
 ): readonly PanelTabType[] {
   return PANEL_TAB_TYPES.filter((type) => {
     const allowedInScope = scope === "thread" || !type.needsThread;
-    return allowedInScope && (type.id === "terminal" || !openTabs.includes(type.id));
+    return !type.systemManaged && allowedInScope && (type.id === "terminal" || !openTabs.includes(type.id));
   });
 }
 

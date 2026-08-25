@@ -14,6 +14,7 @@ import {
   type TerminalSessionSnapshot,
 } from "@mcode/contracts";
 import type { TerminalSessionRuntime } from "./terminal-session-runtime.js";
+import { noninteractiveLaunch } from "../commands/terminal-command-service.js";
 import {
   resolveTerminalScope,
   TerminalScopeResolutionError,
@@ -43,6 +44,34 @@ export interface TerminalLiveSettingsSink {
     readonly scrollback: number;
     readonly flowControl: TerminalSettings["flowControl"];
   }): void;
+}
+
+/** Exact prepared-session launch facts retained by a headless lifecycle owner. */
+export interface PreparedTerminalSession {
+  readonly session: TerminalSessionSnapshot;
+  readonly checkoutPath: string;
+  readonly environmentNames: readonly string[];
+}
+
+/** Resolved private launch facts available before a prepared command reaches the terminal host. */
+export interface PreparedTerminalSessionLaunchPlan {
+  readonly checkoutPath: string;
+  readonly terminal: {
+    readonly executable: string;
+    readonly arguments: readonly string[];
+  };
+  readonly environmentNames: readonly string[];
+}
+
+/** Typed prepared-session failure that retains only resolved launch metadata, never environment values. */
+export class PreparedTerminalSessionLaunchError extends Error {
+  constructor(
+    readonly plan: PreparedTerminalSessionLaunchPlan,
+    readonly original: unknown,
+  ) {
+    super("Prepared terminal session creation failed");
+    this.name = "PreparedTerminalSessionLaunchError";
+  }
 }
 
 /** Product and runtime seams required by the Terminal session service. */
@@ -83,6 +112,7 @@ const SAFE_ENVIRONMENT_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 /** Applies product policy before work enters the deep Terminal session runtime. */
 export class TerminalSessionService {
   private readonly sessionIds = new Set<string>();
+  private readonly preparedSessionIds = new Set<string>();
   private readonly closing = new Map<string, Promise<TerminalSessionSnapshot>>();
   private reservations = 0;
   private readonly createSessionId: () => string;
@@ -161,6 +191,84 @@ export class TerminalSessionService {
     }
   }
 
+  /** Creates one private noninteractive command session under the same app-wide capacity policy. */
+  async createPreparedSession(input: {
+    readonly scope: TerminalScope;
+    readonly script: string;
+  }): Promise<PreparedTerminalSession> {
+    const scope = TerminalScopeSchema().parse(input.scope);
+    const cwd = this.resolveScope(scope);
+    const limit = this.deps.settings.get().terminal.behavior.sessionLimit;
+    if (this.sessionIds.size + this.reservations >= limit) {
+      throw new TerminalSessionPolicyError("SLOT_LIMIT_REACHED");
+    }
+    this.reservations += 1;
+    try {
+      const profile = await this.deps.profiles.resolveLaunchProfile({ workspaceId: scope.workspaceId });
+      const preparedLaunch = noninteractiveLaunch(profile.resolvedProfile, input.script);
+      if (!preparedLaunch) {
+        const protectedEnv = snapshotEnvironment(this.deps.env.getEnv());
+        throw new PreparedTerminalSessionLaunchError(Object.freeze({
+          checkoutPath: cwd,
+          terminal: Object.freeze({
+            executable: profile.resolvedProfile.executable,
+            arguments: Object.freeze([...profile.resolvedProfile.arguments]),
+          }),
+          environmentNames: Object.freeze(protectedEnv.map(({ name }) => name)),
+        }), new Error("The current Terminal profile does not support noninteractive Project Actions"));
+      }
+      const launch = freezeLaunchSnapshot({
+        requestedProfileId: profile.requestedProfileId,
+        resolvedProfile: {
+          ...profile.resolvedProfile,
+          executable: preparedLaunch.executable,
+          arguments: [...preparedLaunch.arguments],
+        },
+        scope,
+        arguments: [...preparedLaunch.arguments],
+      });
+      const sessionId = this.createSessionId();
+      const protectedEnv = snapshotEnvironment(this.deps.env.getEnv());
+      const plan: PreparedTerminalSessionLaunchPlan = Object.freeze({
+        checkoutPath: cwd,
+        terminal: Object.freeze({
+          executable: launch.resolvedProfile.executable,
+          arguments: Object.freeze([...launch.arguments]),
+        }),
+        environmentNames: Object.freeze(protectedEnv.map(({ name }) => name)),
+      });
+      let created: TerminalSessionSnapshot;
+      try {
+        created = await this.deps.runtime.createSession({
+          sessionId,
+          scope,
+          launch,
+          hostGeneration: TerminalU64Schema().parse(this.deps.hostGeneration()),
+          cwd,
+          protectedEnv,
+        });
+      } catch (error) {
+        throw new PreparedTerminalSessionLaunchError(plan, error);
+      }
+      this.sessionIds.add(sessionId);
+      this.preparedSessionIds.add(sessionId);
+      try {
+        return Object.freeze({
+          session: freezeSessionSnapshot(
+            TERMINAL_V1_METHODS["terminal.session.create"].result.parse(created),
+          ),
+          checkoutPath: plan.checkoutPath,
+          environmentNames: plan.environmentNames,
+        });
+      } catch (error) {
+        await this.rollbackCreatedSession(sessionId);
+        throw new PreparedTerminalSessionLaunchError(plan, error);
+      }
+    } finally {
+      this.reservations -= 1;
+    }
+  }
+
   /** Lists tracked runtime snapshots in creation order, with an optional scope filter. */
   listSessions(scope?: TerminalScope): TerminalSessionSnapshot[] {
     const parsedScope = scope ? TerminalScopeSchema().parse(scope) : undefined;
@@ -169,6 +277,7 @@ export class TerminalSessionService {
       const current = this.deps.runtime.getSnapshot(sessionId);
       if (!current) {
         this.sessionIds.delete(sessionId);
+        this.preparedSessionIds.delete(sessionId);
         continue;
       }
       if (!parsedScope || scopesEqual(current.scope, parsedScope)) {
@@ -201,8 +310,20 @@ export class TerminalSessionService {
     reason: "scope-reset" | "workspace-delete",
   ): Promise<void> {
     const parsed = TerminalScopeSchema().parse(scope);
-    const matching = this.listSessions().filter((session) => scopeContains(parsed, session.scope));
+    const matching = this.listSessions()
+      .filter((session) => !this.preparedSessionIds.has(session.sessionId))
+      .filter((session) => scopeContains(parsed, session.scope));
     await Promise.all(matching.map((session) => this.closeSession(session.sessionId, reason)));
+  }
+
+  /** Releases a finished private command after its Action owner retained the bounded outcome. */
+  releasePreparedSession(sessionId: string): void {
+    if (!this.preparedSessionIds.delete(sessionId)) return;
+    if (!this.deps.runtime.discardExitedSession(sessionId)) {
+      this.preparedSessionIds.add(sessionId);
+      return;
+    }
+    this.sessionIds.delete(sessionId);
   }
 
   /** Releases the settings listener without changing runtime session state. */
@@ -250,6 +371,7 @@ export class TerminalSessionService {
     const closed = await this.deps.runtime.close({ sessionId, reason });
     const validated = freezeSessionSnapshot(TerminalSessionSnapshotSchema().parse(closed));
     this.sessionIds.delete(sessionId);
+    this.preparedSessionIds.delete(sessionId);
     return validated;
   }
 
@@ -267,6 +389,7 @@ function scopesEqual(left: TerminalScope, right: TerminalScope): boolean {
     && left.workspaceId === right.workspaceId
     && (left.kind === "workspace" || (right.kind === "thread" && left.threadId === right.threadId));
 }
+
 
 function scopeContains(container: TerminalScope, candidate: TerminalScope): boolean {
   if (container.kind === "workspace") return container.workspaceId === candidate.workspaceId;

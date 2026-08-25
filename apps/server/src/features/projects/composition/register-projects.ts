@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { Lifecycle, type DependencyContainer } from "tsyringe";
 
 import {
@@ -8,7 +9,13 @@ import {
   WorkspaceEnricher,
   WorkspaceService,
   WorkspaceEnvironmentService,
+  ProjectActionService,
+  PROJECT_ACTION_CLOCK_TOKEN,
+  PROJECT_ACTION_RUN_ID_FACTORY_TOKEN,
+  type ProjectActionClock,
+  type ProjectActionRunIdFactory,
 } from "../index.js";
+import { ProjectActionRunRepo } from "../environment/persistence/project-action-run-repo.js";
 import { WorkspaceRepo } from "../persistence/workspace-repo.js";
 import { WorktreeRepo } from "../persistence/worktree-repo.js";
 import { ThreadRepo } from "../../thread-control/persistence/thread-repo.js";
@@ -78,6 +85,10 @@ export function registerProjectServices(container: DependencyContainer): void {
       },
     },
   );
+  container.register(ProjectActionRunRepo, { useClass: ProjectActionRunRepo }, { lifecycle: Lifecycle.Singleton });
+  container.register<ProjectActionClock>(PROJECT_ACTION_CLOCK_TOKEN, { useValue: () => new Date() });
+  container.register<ProjectActionRunIdFactory>(PROJECT_ACTION_RUN_ID_FACTORY_TOKEN, { useValue: randomUUID });
+  container.register(ProjectActionService, { useClass: ProjectActionService }, { lifecycle: Lifecycle.Singleton });
   container.register("GitService", {
     useFactory: (c) => c.resolve(GitService),
   });

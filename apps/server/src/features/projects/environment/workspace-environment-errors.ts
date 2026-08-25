@@ -9,7 +9,9 @@ export class WorkspaceEnvironmentServiceError extends Error {
       | "WORKSPACE_ENVIRONMENT_STALE"
       | "WORKSPACE_ENVIRONMENT_NOT_FOUND"
       | "WORKSPACE_ENVIRONMENT_SETUP_CAPACITY"
-      | "WORKSPACE_ENVIRONMENT_SETUP_UNAVAILABLE",
+      | "WORKSPACE_ENVIRONMENT_SETUP_UNAVAILABLE"
+      | "WORKSPACE_ENVIRONMENT_ACTION_RUNNING"
+      | "WORKSPACE_ENVIRONMENT_ACTION_NOT_FOUND",
     message: string,
     readonly issues?: readonly WorkspaceEnvironmentValidationIssue[],
   ) {

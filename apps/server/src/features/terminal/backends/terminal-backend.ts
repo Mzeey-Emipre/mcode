@@ -3,6 +3,7 @@ import type {
   TerminalErrorCode,
   TerminalProfileInUseData,
   TerminalRetryClass,
+  WorkspaceEnvironmentActionLaunchSnapshot,
 } from "@mcode/contracts";
 import type { WebSocket } from "ws";
 
@@ -39,6 +40,37 @@ export type TerminalReattachResult =
   | { mode: "checkpoint"; checkpoint: string; checkpointThrough: number }
   | { mode: "reset"; discardThrough: number };
 
+/** Exit observation for a private prepared terminal command session. */
+export interface PreparedTerminalCommandExit {
+  readonly exitCode: number | null;
+}
+
+/** Headless private command session retained by a Project Action lifecycle owner. */
+export interface PreparedTerminalCommandSession {
+  readonly terminalSessionId: string;
+  readonly snapshot: WorkspaceEnvironmentActionLaunchSnapshot;
+  onOutput(listener: (data: Uint8Array) => void): () => void;
+  onExit(listener: (exit: PreparedTerminalCommandExit) => void): () => void;
+  stop(): Promise<void>;
+}
+
+/** Typed pre-spawn failure that preserves resolved Action launch facts without environment values. */
+export class PreparedTerminalCommandStartError extends Error {
+  constructor(
+    readonly snapshot: WorkspaceEnvironmentActionLaunchSnapshot,
+    readonly original: unknown,
+  ) {
+    super("Prepared command session creation failed");
+    this.name = "PreparedTerminalCommandStartError";
+  }
+}
+
+/** Exact noninteractive command request owned by a Project Action slot. */
+export interface PreparedTerminalCommandRequest {
+  readonly threadId: string;
+  readonly script: string;
+}
+
 /** Boot-selected Terminal backend used by server orchestration and transport. */
 export abstract class TerminalBackend {
   abstract capabilities(): TerminalBackendCapabilities;
@@ -60,6 +92,11 @@ export abstract class TerminalBackend {
   abstract checkpoint(ptyId: string, seq: number, data: string): { accepted: boolean };
   abstract listActiveSessions(): Array<{ ptyId: string; threadId: string }>;
   abstract hasChildren(ptyId: string): Promise<{ hasChildren: boolean }>;
+
+  /** Starts one headless exact command session using this selected backend's capacity and tracking. */
+  startPreparedCommand(_input: PreparedTerminalCommandRequest): Promise<PreparedTerminalCommandSession> {
+    return Promise.reject(new Error("Prepared command sessions are unavailable"));
+  }
 
   /** Routes one strict Terminal v1 management operation for the owning client. */
   routeV1(_method: string, _params: unknown, _client: WebSocket): Promise<unknown> {
