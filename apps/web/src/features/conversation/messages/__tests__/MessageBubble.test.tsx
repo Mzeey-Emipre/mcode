@@ -142,6 +142,31 @@ describe("MessageBubble user messages", () => {
     });
   });
 
+  it("renders persisted selected-text comments as read-only transcript cards", () => {
+    const message: Message = {
+      ...makeMessage("Please explain this."),
+      selectedTextComments: [{
+        id: "550e8400-e29b-41d4-a716-446655440003",
+        displayNumber: 1,
+        source: {
+          threadId: "thread-1",
+          messageId: "assistant-1",
+          sourceRole: "assistant",
+          start: 3,
+          end: 8,
+          quote: "focus",
+        },
+        note: "Explain this choice.",
+        mentions: [],
+      }],
+    };
+
+    const { getByLabelText, getByText } = render(<MessageBubble message={message} />);
+
+    expect(getByLabelText("Selected text comment 1")).toHaveTextContent("focus");
+    expect(getByText("Explain this choice.")).toBeInTheDocument();
+  });
+
   it("preserves selected entity identity in the sent user bubble", () => {
     const content = "Use /impeccable with @reviewer_qa on @src/App.ts";
     const commandStart = content.indexOf("/impeccable");

@@ -67,12 +67,14 @@ let messagesValue: {
   thread_id?: string;
   role?: "user" | "assistant";
   content?: string;
+  eligible?: boolean;
 }[] = [{ id: "m1", sequence: 1 }];
 let hasMoreMessagesValue = false;
 let hasNewerMessagesValue = false;
 let runningThreadIdsValue = new Set<string>();
 let handoffStatusByThread: Record<string, "generating" | "ready" | "fallback" | "error"> = {};
 let recordOverridesByThread: Record<string, Record<string, unknown>> = {};
+const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
 
 function buildMockRecord(threadId = currentThreadIdValue) {
   return {
@@ -144,8 +146,25 @@ vi.mock("@/features/projects/state/workspaceStore", () => ({
 
 // Stub heavy children.
 vi.mock("../MessageBubble", () => ({
-  MessageBubble: ({ message }: { message: { id: string; content: string } }) => (
-    <div data-message-id={message.id}>{message.content}</div>
+  MessageBubble: ({ message }: { message: {
+    id: string;
+    content: string;
+    role?: "user" | "assistant";
+    thread_id?: string;
+    eligible?: boolean;
+  } }) => (
+    <div
+      data-message-id={message.id}
+      data-message-role={message.role ?? "assistant"}
+      data-thread-id={message.thread_id ?? "thread-A"}
+    >
+      <div
+        data-selected-text-content
+        data-selected-text-eligible={message.eligible === false ? "false" : "true"}
+      >
+        {message.content}
+      </div>
+    </div>
   ),
 }));
 vi.mock("@/components/chat/ToolCallCard", () => ({ ToolCallCard: () => null }));
@@ -178,6 +197,9 @@ beforeEach(() => {
   loadOlderMessagesSpy.mockClear();
   loadNewerMessagesSpy.mockClear();
   loadNarrativeForMessageSpy.mockClear();
+  loadingValue = false;
+  activeThreadIdValue = "thread-A";
+  messagesValue = [{ id: "m1", sequence: 1 }];
   totalSizeValue = 0;
   hasMoreMessagesValue = false;
   hasNewerMessagesValue = false;
@@ -190,9 +212,190 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers();
+  document.getSelection()?.removeAllRanges();
+  if (originalClipboard) Object.defineProperty(navigator, "clipboard", originalClipboard);
+  else Reflect.deleteProperty(navigator, "clipboard");
 });
 
 describe("MessageList thread switch", () => {
+  it("opens the pointer context menu in Copy then Add comment order, then closes it for the editor", () => {
+    messagesValue = [{
+      id: "assistant-1",
+      sequence: 1,
+      thread_id: "thread-A",
+      role: "assistant",
+      content: "Select this phrase",
+    }];
+    const onSelectedTextComment = vi.fn();
+    const { getByRole, getByText } = render(
+      <MessageList onSelectedTextComment={onSelectedTextComment} />,
+    );
+    const content = getByText("Select this phrase");
+    const text = content.firstChild!;
+    const selection = document.getSelection()!;
+    const range = document.createRange();
+    range.setStart(text, 0);
+    range.setEnd(text, 6);
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    fireEvent.contextMenu(content, { clientX: 24, clientY: 24 });
+
+    const copy = getByRole("button", { name: "Copy" });
+    const addComment = getByRole("button", { name: "Add comment" });
+    expect(copy.compareDocumentPosition(addComment) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+
+    fireEvent.click(addComment);
+    expect(() => getByRole("button", { name: "Copy" })).toThrow();
+    expect(getByRole("dialog", { name: "Comment on selected text" })).toBeInTheDocument();
+    fireEvent.change(getByRole("textbox", { name: "Comment note" }), {
+      target: { value: "Explain this." },
+    });
+    fireEvent.click(getByRole("button", { name: "Add comment" }));
+
+    expect(onSelectedTextComment).toHaveBeenCalledWith({
+      id: expect.any(String),
+      displayNumber: 1,
+      source: {
+        threadId: "thread-A",
+        messageId: "assistant-1",
+        sourceRole: "assistant",
+        start: 0,
+        end: 6,
+        quote: "Select",
+      },
+      note: "Explain this.",
+      mentions: [],
+    });
+    selection.removeAllRanges();
+  });
+
+  it("focuses the selected-text note editor and closes it on Escape", async () => {
+    messagesValue = [{
+      id: "assistant-1",
+      sequence: 1,
+      thread_id: "thread-A",
+      role: "assistant",
+      content: "Select this phrase",
+    }];
+    const { getByRole, getByText, queryByRole } = render(<MessageList />);
+    const content = getByText("Select this phrase");
+    const range = document.createRange();
+    range.setStart(content.firstChild!, 0);
+    range.setEnd(content.firstChild!, 6);
+    const selection = document.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    fireEvent.contextMenu(content, { clientX: 24, clientY: 24 });
+    fireEvent.click(getByRole("button", { name: "Add comment" }));
+
+    const noteInput = getByRole("textbox", { name: "Comment note" });
+    await vi.waitFor(() => expect(noteInput).toHaveFocus());
+    fireEvent.keyDown(noteInput, { key: "Escape" });
+
+    await vi.waitFor(() => {
+      expect(queryByRole("dialog", { name: "Comment on selected text" })).not.toBeInTheDocument();
+    });
+  });
+
+  it("announces the exact successful selected-text copy result", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    messagesValue = [{
+      id: "assistant-1",
+      sequence: 1,
+      thread_id: "thread-A",
+      role: "assistant",
+      content: "Select this phrase",
+    }];
+    const { getByRole, getByText } = render(<MessageList />);
+    const content = getByText("Select this phrase");
+    const range = document.createRange();
+    range.setStart(content.firstChild!, 0);
+    range.setEnd(content.firstChild!, 6);
+    const selection = document.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    fireEvent.contextMenu(content, { clientX: 24, clientY: 24 });
+    fireEvent.click(getByRole("button", { name: "Copy" }));
+
+    await vi.waitFor(() => {
+      expect(getByRole("status")).toHaveTextContent("Selected text copied.");
+    });
+    expect(writeText).toHaveBeenCalledWith("Select");
+  });
+
+  it("announces the exact failed selected-text copy result while retaining the fixed quote", async () => {
+    const writeText = vi.fn().mockRejectedValue(new Error("clipboard denied"));
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    messagesValue = [{
+      id: "assistant-1",
+      sequence: 1,
+      thread_id: "thread-A",
+      role: "assistant",
+      content: "Select this phrase",
+    }];
+    const { getByRole, getByText } = render(<MessageList />);
+    const content = getByText("Select this phrase");
+    const range = document.createRange();
+    range.setStart(content.firstChild!, 0);
+    range.setEnd(content.firstChild!, 6);
+    const selection = document.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+
+    fireEvent.contextMenu(content, { clientX: 24, clientY: 24 });
+    fireEvent.click(getByRole("button", { name: "Copy" }));
+
+    await vi.waitFor(() => {
+      expect(getByRole("status")).toHaveTextContent("Could not copy selected text.");
+    });
+    expect(writeText).toHaveBeenCalledWith("Select");
+  });
+
+  it("does not open the selected-text menu for cross-message or ineligible selections", () => {
+    messagesValue = [
+      {
+        id: "assistant-1",
+        sequence: 1,
+        thread_id: "thread-A",
+        role: "assistant",
+        content: "First message",
+      },
+      {
+        id: "assistant-2",
+        sequence: 2,
+        thread_id: "thread-A",
+        role: "assistant",
+        content: "Streaming message",
+        eligible: false,
+      },
+    ];
+    const { getByText, queryByRole } = render(<MessageList />);
+    const first = getByText("First message");
+    const streaming = getByText("Streaming message");
+    const selection = document.getSelection()!;
+    const crossMessageRange = document.createRange();
+    crossMessageRange.setStart(first.firstChild!, 0);
+    crossMessageRange.setEnd(streaming.firstChild!, 3);
+    selection.removeAllRanges();
+    selection.addRange(crossMessageRange);
+
+    fireEvent.contextMenu(first, { clientX: 24, clientY: 24 });
+    expect(queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
+
+    const ineligibleRange = document.createRange();
+    ineligibleRange.setStart(streaming.firstChild!, 0);
+    ineligibleRange.setEnd(streaming.firstChild!, 9);
+    selection.removeAllRanges();
+    selection.addRange(ineligibleRange);
+
+    fireEvent.contextMenu(streaming, { clientX: 24, clientY: 24 });
+    expect(queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
+  });
+
   it("shows file changes from only the displayed child thread", () => {
     activeThreadIdValue = "thread-A";
     recordOverridesByThread = {
@@ -778,7 +981,7 @@ describe("MessageList thread switch", () => {
     }));
     totalSizeValue = 1_600;
     const { getByTestId } = render(<MessageList />);
-    const scrollEl = getByTestId("message-list").firstElementChild as HTMLDivElement;
+    const scrollEl = getByTestId("message-list").querySelector(".overflow-y-auto") as HTMLDivElement;
     Object.defineProperty(scrollEl, "scrollHeight", { configurable: true, value: 1_600 });
     Object.defineProperty(scrollEl, "clientHeight", { configurable: true, value: 400 });
     Object.defineProperty(scrollEl, "scrollTop", {

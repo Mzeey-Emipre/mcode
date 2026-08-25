@@ -11,7 +11,13 @@ import type {
   WorkspaceEnvironmentSetupLaunchSnapshot,
   WorkspaceEnvironmentSetupOutcome,
 } from "@mcode/contracts";
-import { MessageMentionsSchema, SendMessageSchema, StoredAttachmentSchema, WorkspaceEnvironmentSetupLaunchSnapshotSchema } from "@mcode/contracts";
+import {
+  MessageMentionsSchema,
+  SelectedTextCommentsSchema,
+  SendMessageSchema,
+  StoredAttachmentSchema,
+  WorkspaceEnvironmentSetupLaunchSnapshotSchema,
+} from "@mcode/contracts";
 import { z } from "zod";
 
 const MAX_ACTIVE_QUEUED_TURNS_PER_THREAD = 64;
@@ -34,42 +40,13 @@ const QueuedTurnSubmissionSchema = z.object({
   model: z.string(),
   attachments: z.array(StoredAttachmentSchema),
   mentions: MessageMentionsSchema,
+  selectedTextComments: SelectedTextCommentsSchema().optional(),
   permissionMode: z.enum(["default", "full", "supervised"]),
   provider: z.string().min(1),
 }).strict();
 
 /** Persisted Turn data required to dispatch after automatic Setup releases it. */
-export interface WorkspaceEnvironmentQueuedTurnSubmission {
-  readonly threadId: string;
-  readonly messageId: string;
-  readonly content: string;
-  readonly displayContent: string;
-  readonly model: string;
-  readonly permissionMode: "default" | "full" | "supervised";
-  readonly attachments: readonly StoredAttachment[];
-  readonly persistedAttachments: readonly { id: string; name: string; mimeType: string; sizeBytes: number; sourcePath: string }[];
-  readonly mentions: readonly MessageMention[];
-  readonly previewAnnotations?: PreviewAnnotationBundle;
-  readonly provider: string;
-  readonly reasoningLevel?: string;
-  readonly interactionMode?: string;
-  readonly orchestrationMode?: string;
-  readonly maxBudgetUsd?: number;
-  readonly maxTurns?: number;
-  readonly copilotAgent?: string;
-  readonly contextWindow?: string;
-  readonly thinking?: boolean;
-  readonly codexFastMode?: boolean;
-  readonly goalObjective?: string;
-  readonly replyToMessageId?: string;
-  readonly quotedText?: string;
-  readonly planAction?: "revise" | "implement";
-  readonly markPlanAnswerForMessageId?: string;
-  readonly sourceTurnId?: string;
-  readonly sourceThreadId?: string;
-  readonly sourceProviderId?: string;
-  readonly originSourceTurnId?: string;
-}
+export type WorkspaceEnvironmentQueuedTurnSubmission = z.infer<typeof QueuedTurnSubmissionSchema>;
 
 /** Atomic input for queuing a Turn before automatic Setup releases the gate. */
 export interface WorkspaceEnvironmentQueueFirstTurnInput {
@@ -172,7 +149,7 @@ export class WorkspaceEnvironmentAutomaticRepository {
           }
         : null;
       this.db.prepare(
-        "INSERT INTO messages (id, thread_id, role, content, timestamp, sequence, attachments, preview_annotations, mentions, reply_to_message_id, quoted_text, origin_type, source_thread_id, source_turn_id, source_provider_id, is_internal) VALUES (?, ?, 'user', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
+        "INSERT INTO messages (id, thread_id, role, content, timestamp, sequence, attachments, preview_annotations, mentions, selected_text_comments, reply_to_message_id, quoted_text, origin_type, source_thread_id, source_turn_id, source_provider_id, is_internal) VALUES (?, ?, 'user', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)",
       ).run(
         input.messageId,
         input.threadId,
@@ -182,6 +159,9 @@ export class WorkspaceEnvironmentAutomaticRepository {
         input.attachments.length > 0 ? JSON.stringify(input.attachments) : null,
         input.previewAnnotations ? JSON.stringify(input.previewAnnotations) : null,
         input.mentions.length > 0 ? JSON.stringify(input.mentions) : null,
+        input.submission.selectedTextComments?.length
+          ? JSON.stringify(SelectedTextCommentsSchema().parse(input.submission.selectedTextComments))
+          : null,
         input.submission.replyToMessageId ?? null,
         input.submission.quotedText ?? null,
         origin ? "thread" : "composer",

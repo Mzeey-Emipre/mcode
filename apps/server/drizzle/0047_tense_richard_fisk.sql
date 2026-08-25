@@ -1,0 +1,1 @@
+ALTER TABLE `messages` ADD `selected_text_comments` text;

@@ -147,6 +147,37 @@ describe("automatic Project Setup", () => {
     });
   });
 
+  it("persists selected-text comments unchanged while automatic Setup queues the Turn", async () => {
+    const { db, service } = await automaticHarness();
+    const selectedTextComments = [{
+      id: "76da3c6e-6b42-4c01-aaf2-3ad0b29a4756",
+      displayNumber: 1 as const,
+      source: {
+        threadId: "thread-1",
+        messageId: "assistant-1",
+        sourceRole: "assistant" as const,
+        start: 0,
+        end: 11,
+        quote: "Select this",
+      },
+      note: "Explain this.",
+      mentions: [],
+    }];
+    const input = queuedInput();
+
+    service.queueAutomaticFirstTurn({
+      ...input,
+      submission: { ...input.submission, selectedTextComments },
+    });
+
+    expect(JSON.parse((db.prepare(
+      "SELECT selected_text_comments FROM messages WHERE id = 'message-1'",
+    ).get() as { selected_text_comments: string }).selected_text_comments)).toEqual(selectedTextComments);
+    expect(JSON.parse((db.prepare(
+      "SELECT submission_json FROM workspace_environment_queued_turns WHERE message_id = 'message-1'",
+    ).get() as { submission_json: string }).submission_json).selectedTextComments).toEqual(selectedTextComments);
+  });
+
   it("releases a managed New worktree without Setup and dispatches without launching Terminal Setup", async () => {
     const { service, start, prepare } = await automaticHarness({ setup: false });
     const dispatch = vi.fn().mockResolvedValue({ completion: Promise.resolve() });

@@ -278,6 +278,17 @@ export {
   MAX_MESSAGE_MENTIONS,
 } from "./models/mention.js";
 export type { MessageMention } from "./models/mention.js";
+export {
+  MAX_SELECTED_TEXT_COMMENTS,
+  MAX_SELECTED_TEXT_COMMENT_TEXT_CHARS,
+  SelectedTextCommentSourceSchema,
+  SelectedTextCommentSchema,
+  SelectedTextCommentsSchema,
+} from "./models/selected-text-comment.js";
+export type {
+  SelectedTextCommentSource,
+  SelectedTextComment,
+} from "./models/selected-text-comment.js";
 
 export {
   GoalControlsSchema,

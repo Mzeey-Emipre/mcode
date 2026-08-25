@@ -36,6 +36,7 @@ import { ThreadSchema, RecentThreadSchema } from "../models/thread.js";
 import { ThreadModeSchema, PermissionModeSchema, InteractionModeSchema, OrchestrationModeSchema } from "../models/enums.js";
 import { PaginatedMessagesSchema } from "../models/message.js";
 import { MessageMentionsSchema } from "../models/mention.js";
+import { SelectedTextCommentsSchema } from "../models/selected-text-comment.js";
 import { ConversationPageSchema } from "../models/conversation-page.js";
 import {
   ConversationOlderPageRequestSchema,
@@ -268,9 +269,7 @@ export const CreateThreadSchema = lazySchema(() =>
   }),
 );
 
-/** Schema for sending a message to an existing thread. */
-export const SendMessageSchema = lazySchema(() =>
-  z.object({
+const buildSendMessageSchema = () => z.object({
     threadId: z.string(),
     content: z.string(),
     /** Client identity for the optimistic user row, when the sender has one. */
@@ -287,6 +286,8 @@ export const SendMessageSchema = lazySchema(() =>
     previewAnnotations: PreviewAnnotationBundleSchema().optional(),
     /** Typed metadata for selected composer mentions. Plain @text is omitted. */
     mentions: MessageMentionsSchema.optional(),
+    /** One selected-text comment sent with the current composer draft. */
+    selectedTextComments: SelectedTextCommentsSchema().optional(),
     reasoningLevel: ReasoningLevelSchema.optional(),
     provider: ProviderIdSchema.optional(),
     /** When "plan", the server wraps the message with the plan-mode question prompt. */
@@ -320,11 +321,17 @@ export const SendMessageSchema = lazySchema(() =>
     planAction: PlanActionSchema().optional(),
     /** Objective installed as a provider goal immediately before this turn dispatches. */
     goalObjective: GoalObjectiveSchema().optional(),
-  }),
-);
+});
 
 /** Validated command for sending a message to an existing thread. */
-export type SendMessageInput = z.infer<ReturnType<typeof SendMessageSchema>>;
+export type SendMessageInput = z.infer<ReturnType<typeof buildSendMessageSchema>>;
+
+type SendMessageZodSchema = ReturnType<typeof buildSendMessageSchema>;
+
+/** Schema for sending a message to an existing thread. */
+export const SendMessageSchema: () => SendMessageZodSchema = lazySchema(
+  buildSendMessageSchema,
+);
 
 /** Schema for creating a thread and sending a message in one call. */
 export const CreateAndSendSchema = lazySchema(() =>
@@ -928,7 +935,7 @@ const buildWsMethods = () => ({
     result: ReviewComparisonSchema(),
   },
   "agent.send": {
-    params: SendMessageSchema(),
+    params: SendMessageSchema() as z.ZodType<SendMessageInput>,
     result: z.void(),
   },
   /** List interrupted executions and their capability-safe user actions. */
@@ -1433,7 +1440,7 @@ const buildWsMethods = () => ({
 type WsMethods = ReturnType<typeof buildWsMethods>;
 
 /** All WebSocket methods with runtime-validating parameter and result schemas. */
-export const WS_METHODS = lazySchema<WsMethods>(buildWsMethods);
+export const WS_METHODS: () => WsMethods = lazySchema(buildWsMethods);
 
 /** Union of all RPC method names. */
 export type WsMethodName = keyof ReturnType<typeof WS_METHODS>;

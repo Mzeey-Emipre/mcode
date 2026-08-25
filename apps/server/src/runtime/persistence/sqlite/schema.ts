@@ -296,6 +296,7 @@ export const messages = sqliteTable(
     attachments: text("attachments"),
     previewAnnotations: text("preview_annotations"),
     mentions: text("mentions"),
+    selectedTextComments: text("selected_text_comments"),
     replyToMessageId: text("reply_to_message_id").references((): AnySQLiteColumn => messages.id, { onDelete: "set null" }),
     quotedText: text("quoted_text"),
     /**

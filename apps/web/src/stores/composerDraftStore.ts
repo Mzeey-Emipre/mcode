@@ -1,11 +1,18 @@
 import { create } from "zustand";
 import type { PendingAttachment } from "@/components/chat/AttachmentPreview";
-import type { ContextWindowMode, MessageMention, ReasoningLevel } from "@mcode/contracts";
+import type {
+  ContextWindowMode,
+  MessageMention,
+  ReasoningLevel,
+  SelectedTextComment,
+} from "@mcode/contracts";
 
 /** Draft state for a single composer instance, keyed by thread ID. */
 export interface ComposerDraft {
   input: string;
   mentions?: MessageMention[];
+  /** One selected-text comment awaiting persistence with this draft. */
+  selectedTextComments?: SelectedTextComment[];
   attachments: PendingAttachment[];
   modelId: string;
   /** Provider ID stored alongside the model because multiple providers share model IDs. */
@@ -35,7 +42,7 @@ interface ComposerDraftState {
   /** Prefill text set by the empty-state prompt chips, consumed once by the Composer. */
   pendingPrefill: string | null;
 
-  /** Save a draft for a thread. Skips storage if both input and attachments are empty. */
+  /** Save a draft for a thread. Skips storage only when it has no sendable content. */
   saveDraft: (threadId: string, draft: ComposerDraft) => void;
 
   /** Retrieve the saved draft for a thread, or undefined if none exists. */
@@ -57,7 +64,10 @@ export const useComposerDraftStore = create<ComposerDraftState>((set, get) => ({
   pendingPrefill: null,
 
   saveDraft: (threadId, draft) => {
-    const isEmpty = draft.input.trim() === "" && draft.attachments.length === 0;
+    const isEmpty =
+      draft.input.trim() === ""
+      && draft.attachments.length === 0
+      && (draft.selectedTextComments?.length ?? 0) === 0;
     if (isEmpty) {
       // Don't store empty drafts; clean up if one existed
       const existing = get().drafts[threadId];

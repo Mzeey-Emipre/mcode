@@ -1,6 +1,11 @@
 import type { PendingAttachment } from "@/components/chat/AttachmentPreview";
 import type { ComposerDraft } from "@/stores/composerDraftStore";
-import type { ContextWindowMode, MessageMention, ReasoningLevel } from "@mcode/contracts";
+import type {
+  ContextWindowMode,
+  MessageMention,
+  ReasoningLevel,
+  SelectedTextComment,
+} from "@mcode/contracts";
 import type { PermissionMode } from "@/transport";
 import { INTERACTION_MODES, type InteractionMode } from "@/transport";
 import type { WorkspaceThread } from "@/lib/workspace-thread";
@@ -16,6 +21,7 @@ import {
 export interface ComposerSession {
   input: string;
   mentions: MessageMention[];
+  selectedTextComments: SelectedTextComment[];
   attachments: PendingAttachment[];
   modelId: string;
   provider: string;
@@ -55,6 +61,14 @@ export function snapshotComposerDraft(draft: ComposerDraft): ComposerDraft {
       ...mention,
       range: { ...mention.range },
     })),
+    selectedTextComments: draft.selectedTextComments?.map((comment) => ({
+      ...comment,
+      source: { ...comment.source },
+      mentions: comment.mentions.map((mention) => ({
+        ...mention,
+        range: { ...mention.range },
+      })),
+    })),
     attachments: draft.attachments.map((attachment) => ({ ...attachment })),
   };
 }
@@ -71,6 +85,7 @@ export function resolveComposerSession(input: ResolveComposerSessionInput): Comp
     return {
       input: "",
       mentions: [],
+      selectedTextComments: [],
       attachments: [],
       modelId,
       provider: getDefaultProviderId(),
@@ -92,6 +107,14 @@ export function resolveComposerSession(input: ResolveComposerSessionInput): Comp
     return {
       input: saved.input,
       mentions: saved.mentions ?? [],
+      selectedTextComments: saved.selectedTextComments?.map((comment) => ({
+        ...comment,
+        source: { ...comment.source },
+        mentions: comment.mentions.map((mention) => ({
+          ...mention,
+          range: { ...mention.range },
+        })),
+      })) ?? [],
       attachments: saved.attachments.map((attachment) => ({ ...attachment })),
       modelId: saved.modelId,
       provider: saved.provider ?? getDefaultProviderId(),
@@ -112,6 +135,7 @@ export function resolveComposerSession(input: ResolveComposerSessionInput): Comp
   return {
     input: "",
     mentions: [],
+    selectedTextComments: [],
     attachments: [],
     modelId: resolvedModelId,
     provider: (threadRow?.provider as string | undefined) ?? getDefaultProviderId(),

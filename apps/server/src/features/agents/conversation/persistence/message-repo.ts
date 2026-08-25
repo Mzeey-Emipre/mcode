@@ -11,10 +11,15 @@ import type {
   MessageMention,
   MessageRole,
   PreviewAnnotationBundle,
+  SelectedTextComment,
   StoredAttachment,
   TurnOutcome,
 } from "@mcode/contracts";
-import { PreviewAnnotationBundleSchema, THREAD_GET_TRANSCRIPT_MAX_BYTES } from "@mcode/contracts";
+import {
+  PreviewAnnotationBundleSchema,
+  SelectedTextCommentsSchema,
+  THREAD_GET_TRANSCRIPT_MAX_BYTES,
+} from "@mcode/contracts";
 
 interface MessageRow {
   id: string;
@@ -30,6 +35,7 @@ interface MessageRow {
   attachments: string | null;
   preview_annotations: string | null;
   mentions: string | null;
+  selected_text_comments: string | null;
   reply_to_message_id: string | null;
   quoted_text: string | null;
   model: string | null;
@@ -121,6 +127,19 @@ function serializePreviewAnnotations(
   return JSON.stringify(PreviewAnnotationBundleSchema().parse(previewAnnotations));
 }
 
+function parseSelectedTextComments(value: string | null): SelectedTextComment[] | null {
+  const parsed = parseJsonField(value);
+  if (parsed === null) return null;
+  return SelectedTextCommentsSchema().parse(parsed);
+}
+
+function serializeSelectedTextComments(
+  selectedTextComments: SelectedTextComment[] | undefined,
+): string | null {
+  if (!selectedTextComments || selectedTextComments.length === 0) return null;
+  return JSON.stringify(SelectedTextCommentsSchema().parse(selectedTextComments));
+}
+
 function rowToMessage(row: MessageRow): Message {
   const msg: Message = {
     id: row.id,
@@ -138,6 +157,7 @@ function rowToMessage(row: MessageRow): Message {
       | null,
     previewAnnotations: parsePreviewAnnotations(row.preview_annotations),
     mentions: parseJsonField(row.mentions) as MessageMention[] | null,
+    selectedTextComments: parseSelectedTextComments(row.selected_text_comments),
     reply_to_message_id: row.reply_to_message_id,
     quoted_text: row.quoted_text,
     model: row.model,
@@ -164,10 +184,10 @@ function rowToMessage(row: MessageRow): Message {
 }
 
 const MESSAGE_COLUMNS =
-  "id, thread_id, role, content, tool_calls, files_changed, cost_usd, tokens_used, timestamp, sequence, attachments, preview_annotations, mentions, reply_to_message_id, quoted_text, model, provider, origin_type, source_thread_id, source_turn_id, source_provider_id, is_internal, outcome, outcome_execution_id";
+  "id, thread_id, role, content, tool_calls, files_changed, cost_usd, tokens_used, timestamp, sequence, attachments, preview_annotations, mentions, selected_text_comments, reply_to_message_id, quoted_text, model, provider, origin_type, source_thread_id, source_turn_id, source_provider_id, is_internal, outcome, outcome_execution_id";
 
 const MESSAGE_COLUMNS_PREFIXED =
-  "m.id, m.thread_id, m.role, m.content, m.tool_calls, m.files_changed, m.cost_usd, m.tokens_used, m.timestamp, m.sequence, m.attachments, m.preview_annotations, m.mentions, m.reply_to_message_id, m.quoted_text, m.model, m.provider, m.origin_type, m.source_thread_id, m.source_turn_id, m.source_provider_id, m.is_internal, m.outcome, m.outcome_execution_id";
+  "m.id, m.thread_id, m.role, m.content, m.tool_calls, m.files_changed, m.cost_usd, m.tokens_used, m.timestamp, m.sequence, m.attachments, m.preview_annotations, m.mentions, m.selected_text_comments, m.reply_to_message_id, m.quoted_text, m.model, m.provider, m.origin_type, m.source_thread_id, m.source_turn_id, m.source_provider_id, m.is_internal, m.outcome, m.outcome_execution_id";
 
 /**
  * Pre-aggregates tool call counts for the selected page only.
@@ -232,7 +252,7 @@ export class MessageRepo {
 
   private getCreateStatement(): Database.Statement {
     return this.createStatement ??= this.db.prepare(
-      "INSERT INTO messages (id, thread_id, role, content, timestamp, sequence, attachments, preview_annotations, mentions, reply_to_message_id, quoted_text, model, origin_type, source_thread_id, source_turn_id, source_provider_id, is_internal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT INTO messages (id, thread_id, role, content, timestamp, sequence, attachments, preview_annotations, mentions, reply_to_message_id, quoted_text, model, origin_type, source_thread_id, source_turn_id, source_provider_id, is_internal, selected_text_comments) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
   }
 
@@ -271,6 +291,7 @@ export class MessageRepo {
     previewAnnotations?: PreviewAnnotationBundle,
     origin: MessageOriginInput = { type: "composer" },
     messageId?: string,
+    selectedTextComments?: SelectedTextComment[],
   ): Message {
     const id = messageId ?? randomUUID();
     const now = new Date().toISOString();
@@ -283,6 +304,7 @@ export class MessageRepo {
         ? JSON.stringify(mentions)
         : null;
     const previewAnnotationsJson = serializePreviewAnnotations(previewAnnotations);
+    const selectedTextCommentsJson = serializeSelectedTextComments(selectedTextComments);
     const modelValue = model ?? null;
     const isInternalValue = isInternal ? 1 : 0;
     const sourceThreadId = origin.type === "thread" ? origin.sourceThreadId : null;
@@ -291,7 +313,7 @@ export class MessageRepo {
 
     this.getCreateStatement().run(
         id, threadId, role, content, now, sequence,
-        attachmentsJson, previewAnnotationsJson, mentionsJson, replyToMessageId ?? null, quotedText ?? null, modelValue, origin.type, sourceThreadId, sourceTurnId, sourceProviderId, isInternalValue,
+        attachmentsJson, previewAnnotationsJson, mentionsJson, replyToMessageId ?? null, quotedText ?? null, modelValue, origin.type, sourceThreadId, sourceTurnId, sourceProviderId, isInternalValue, selectedTextCommentsJson,
       );
 
     return {
@@ -308,6 +330,7 @@ export class MessageRepo {
       attachments: attachments ?? null,
       previewAnnotations: previewAnnotations ?? null,
       mentions: mentions ?? null,
+      selectedTextComments: selectedTextComments ?? null,
       reply_to_message_id: replyToMessageId ?? null,
       quoted_text: quotedText ?? null,
       model: modelValue,
@@ -387,6 +410,7 @@ export class MessageRepo {
       sequence: input.sequence,
       attachments,
       mentions: input.mentions ?? null,
+      selectedTextComments: null,
       reply_to_message_id: null,
       quoted_text: null,
       model: modelValue,
@@ -655,6 +679,7 @@ ORDER BY m.sequence ASC`,
     length(CAST(COALESCE(m.files_changed, '') AS BLOB)) +
     length(CAST(COALESCE(m.attachments, '') AS BLOB)) +
     length(CAST(COALESCE(m.mentions, '') AS BLOB)) +
+    length(CAST(COALESCE(m.selected_text_comments, '') AS BLOB)) +
     length(CAST(COALESCE(m.quoted_text, '') AS BLOB))
   ) AS metadata_bytes
 FROM messages m
@@ -773,7 +798,7 @@ LIMIT ?`,
       `SELECT
   m.id, m.thread_id, m.role, m.content, NULL AS tool_calls,
   m.files_changed, m.cost_usd, m.tokens_used, m.timestamp, m.sequence,
-  m.attachments, m.preview_annotations, m.mentions, m.reply_to_message_id, m.quoted_text, m.model, m.is_internal,
+  m.attachments, m.preview_annotations, m.mentions, m.selected_text_comments, m.reply_to_message_id, m.quoted_text, m.model, m.is_internal,
   m.outcome, m.outcome_execution_id,
   ${toolCallCountSql}
 FROM messages m
@@ -783,7 +808,7 @@ WHERE m.id = ?`,
       `SELECT
   m.id, m.thread_id, m.role, substr(m.content, 1, ?) AS content, NULL AS tool_calls,
   m.files_changed, m.cost_usd, m.tokens_used, m.timestamp, m.sequence,
-  m.attachments, m.preview_annotations, m.mentions, m.reply_to_message_id, m.quoted_text, m.model, m.is_internal,
+  m.attachments, m.preview_annotations, m.mentions, m.selected_text_comments, m.reply_to_message_id, m.quoted_text, m.model, m.is_internal,
   m.outcome, m.outcome_execution_id,
   ${toolCallCountSql}
 FROM messages m
