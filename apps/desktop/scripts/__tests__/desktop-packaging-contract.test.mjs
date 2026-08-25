@@ -289,32 +289,54 @@ describe("desktop packaging workflow contract", () => {
     expect(source).toContain("--channel pull-request");
   });
 
-  it("uses store for Windows PR and gzip for Linux PR", () => {
+  it("uses store and four vCPUs for Windows PR and gzip for Linux PR", () => {
     const source = readFileSync(
       path.join(repoRoot, ".github/workflows/desktop-package-dry-run.yml"),
       "utf8",
     );
-    const buildArgsFor = (targetId) => {
-      const targetBlock = source.match(
-        new RegExp(
-          `- target-id: ${targetId}\\r?\\n(?<body>[\\s\\S]*?)(?=\\r?\\n\\s+- target-id:|\\r?\\n\\s+uses:)`,
-        ),
-      )?.groups?.body;
-      expect(targetBlock).toBeDefined();
-      return targetBlock.match(/^\s+build-args:\s*(?<value>[^\r\n]*)$/m)?.groups
-        ?.value.trim();
+    const targetFieldFor = (workflowSource, targetId, fieldName) => {
+      const targets = [...workflowSource.matchAll(
+        /^ {10}- (?<firstName>[\w-]+):\s*(?<firstValue>[^\r\n]*)\r?\n(?<body>(?: {12}[\w-]+:\s*[^\r\n]*\r?\n?)*)/gm,
+      )].map(({ groups }) => {
+        const target = { [groups.firstName]: groups.firstValue.trim() };
+        for (const field of groups.body.matchAll(
+          /^ {12}(?<name>[\w-]+):\s*(?<value>[^\r\n]*)$/gm,
+        )) {
+          target[field.groups.name] = field.groups.value.trim();
+        }
+        return target;
+      });
+      const target = targets.find(
+        (candidate) =>
+          candidate["target-id"] === targetId ||
+          [candidate.platform, candidate.arch].join("-") === targetId,
+      );
+      expect(target).toBeDefined();
+      return target?.[fieldName];
     };
 
-    expect(buildArgsFor("windows-x64")).toBe("--config.compression=store");
-    expect(buildArgsFor("linux-x64")).toBe("--config.deb.compression=gz");
-    expect(buildArgsFor("macos-arm64")).toBe("--mac --arm64");
-    expect(buildArgsFor("macos-x64")).toBe("--mac --x64");
+    expect(targetFieldFor(source, "windows-x64", "build-args")).toBe(
+      "--config.compression=store",
+    );
+    expect(targetFieldFor(source, "windows-x64", "runner")).toBe(
+      "blacksmith-4vcpu-windows-2025",
+    );
+    expect(targetFieldFor(source, "linux-x64", "build-args")).toBe(
+      "--config.deb.compression=gz",
+    );
+    expect(targetFieldFor(source, "macos-arm64", "build-args")).toBe(
+      "--mac --arm64",
+    );
+    expect(targetFieldFor(source, "macos-x64", "build-args")).toBe("--mac --x64");
     for (const workflow of [
       ".github/workflows/nightly-desktop.yml",
       ".github/workflows/build-release.yml",
     ]) {
       const releaseSource = readFileSync(path.join(repoRoot, workflow), "utf8");
       expect(releaseSource).not.toContain("--config.compression=store");
+      expect(targetFieldFor(releaseSource, "windows-x64", "runner")).toBe(
+        "blacksmith-2vcpu-windows-2025",
+      );
     }
   });
 
