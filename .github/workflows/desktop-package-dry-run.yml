@@ -32,7 +32,7 @@ jobs:
       matrix:
         include:
           - target-id: windows-x64
-            runner: blacksmith-4vcpu-windows-2025
+            runner: blacksmith-2vcpu-windows-2025
             platform: windows
             arch: x64
             build-args: --config.compression=store
