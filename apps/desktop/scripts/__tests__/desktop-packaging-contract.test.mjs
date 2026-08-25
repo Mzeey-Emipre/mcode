@@ -277,6 +277,30 @@ describe("desktop packaging workflow contract", () => {
     expect(signedBlock).toContain("--config.mac.notarize=true");
   });
 
+  it("caches npm downloads only for Windows PR packaging", () => {
+    const workflow = readFileSync(
+      path.join(repoRoot, ".github/workflows/desktop-package-target.yml"),
+      "utf8",
+    );
+    const cacheBlock = workflow.match(
+      /- name: Cache Windows PR npm downloads\r?\n([\s\S]*?)(?=\r?\n      - name:)/,
+    )?.[1];
+
+    expect(cacheBlock).toBeDefined();
+    expect(cacheBlock).toContain("uses: actions/cache@v4");
+    expect(cacheBlock).toContain(
+      "if: inputs.channel == 'pull-request' && inputs.target-platform == 'windows'",
+    );
+    expect(cacheBlock).toContain("path: ~\\AppData\\Local\\npm-cache");
+    expect(cacheBlock).toContain(
+      "key: ${{ runner.os }}-${{ inputs.target-arch }}-npm-downloads-${{ hashFiles('package.json', 'apps/desktop/package.json', 'bun.lock') }}",
+    );
+    expect(cacheBlock).toMatch(
+      /restore-keys: \|\r?\n            \$\{\{ runner\.os \}\}-\$\{\{ inputs\.target-arch \}\}-npm-downloads-/,
+    );
+    expect(cacheBlock).not.toContain("node_modules");
+  });
+
   it("requires the complete four-target matrix in PR dry-run", () => {
     const source = readFileSync(
       path.join(repoRoot, ".github/workflows/desktop-package-dry-run.yml"),

@@ -187,6 +187,16 @@ jobs:
         with:
           node-version: 24.18.0
 
+      - name: Cache Windows PR npm downloads
+        if: inputs.channel == 'pull-request' && inputs.target-platform == 'windows'
+        uses: actions/cache@v4
+        continue-on-error: true
+        with:
+          path: ~\AppData\Local\npm-cache
+          key: ${{ runner.os }}-${{ inputs.target-arch }}-npm-downloads-${{ hashFiles('package.json', 'apps/desktop/package.json', 'bun.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ inputs.target-arch }}-npm-downloads-
+
       - name: Package unsigned target
         if: inputs.signing-required == false
         shell: bash
