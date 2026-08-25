@@ -8,6 +8,7 @@ import type {
 import { getDefaultSettings } from "@mcode/contracts";
 import type { TerminalSessionRuntime } from "../terminal-session-runtime.js";
 import {
+  PreparedTerminalSessionLaunchError,
   TerminalSessionPolicyError,
   TerminalSessionService,
 } from "../terminal-session-service.js";
@@ -69,6 +70,7 @@ function setup(
       return closed;
     }),
     getSnapshot: vi.fn((sessionId: string) => sessions.get(sessionId) ?? null),
+    discardExitedSession: vi.fn((sessionId: string) => sessions.delete(sessionId)),
     shutdown: vi.fn(async () => undefined),
   } as unknown as TerminalSessionRuntime;
   const settings = getDefaultSettings();
@@ -246,6 +248,51 @@ describe("TerminalSessionService", () => {
     await service.closeSession(exited.sessionId, "user");
     await expect(service.createSession({ scope: THREAD_SCOPE })).resolves.toMatchObject({
       scope: THREAD_SCOPE,
+    });
+  });
+
+  it("releases an exited prepared Action from capacity after it retains its result", async () => {
+    const { service, sessions, runtime } = setup(1);
+    const prepared = await service.createPreparedSession({ scope: THREAD_SCOPE, script: "Write-Output done" });
+    sessions.set(prepared.session.sessionId, {
+      ...prepared.session,
+      state: "exited",
+      exit: { code: 0, signal: null, reason: "natural" },
+      tombstone: true,
+    });
+
+    await expect(service.createPreparedSession({ scope: THREAD_SCOPE, script: "Write-Output again" })).rejects.toMatchObject({
+      code: "SLOT_LIMIT_REACHED",
+    });
+    service.releasePreparedSession(prepared.session.sessionId);
+
+    await expect(service.createPreparedSession({ scope: THREAD_SCOPE, script: "Write-Output again" })).resolves.toMatchObject({
+      checkoutPath: "C:\\workspace-tree",
+    });
+    expect(runtime.discardExitedSession).toHaveBeenCalledWith(prepared.session.sessionId);
+  });
+
+  it("retains resolved prepared launch facts when the terminal host rejects creation", async () => {
+    const { service, runtime } = setup();
+    const hostFailure = new Error("host unavailable");
+    vi.mocked(runtime.createSession).mockRejectedValueOnce(hostFailure);
+
+    const failure = await service.createPreparedSession({
+      scope: THREAD_SCOPE,
+      script: "Write-Output failed",
+    }).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(PreparedTerminalSessionLaunchError);
+    expect(failure).toMatchObject({
+      original: hostFailure,
+      plan: {
+        checkoutPath: "C:\\workspace-tree",
+        terminal: {
+          executable: "pwsh.exe",
+          arguments: ["-NoLogo", "-NoLogo", "-NonInteractive", "-Command", "Write-Output failed"],
+        },
+        environmentNames: ["PATH", "SECRET"],
+      },
     });
   });
 

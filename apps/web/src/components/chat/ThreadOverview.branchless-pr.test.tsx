@@ -2,7 +2,10 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactElement, ReactNode } from "react";
-import type { WorkspaceEnvironmentAutomaticSetupSnapshot } from "@mcode/contracts";
+import type {
+  WorkspaceEnvironmentActionRun,
+  WorkspaceEnvironmentAutomaticSetupSnapshot,
+} from "@mcode/contracts";
 import type { Thread } from "@/transport";
 import { useOverviewStore } from "@/stores/overviewStore";
 import { createEmptyThreadRecord, type ThreadRecord } from "@/stores/thread-record";
@@ -13,14 +16,20 @@ import {
 } from "@/features/preview";
 import { previewTabsScopeKey, usePreviewTabsStore } from "@/features/preview/state/previewTabsStore";
 import type { BrowserSessionLifecycleTab } from "@/features/preview";
-import { useDiffStore } from "@/stores/diffStore";
+import { createRightPanelState, useDiffStore } from "@/stores/diffStore";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
+import { useProjectActionStore } from "@/features/projects/environment/state/project-action-store";
+import { setLayoutMeasurements } from "@/lib/composer-layout";
 
 const {
   mockCreateBranch,
   mockGetAutomaticSetup,
   mockGetWorkspaceSetupAttempt,
+  mockListWorkspaceActionRuns,
   mockOpenSubagentsPanel,
+  mockReadWorkspaceEnvironment,
+  mockSaveWorkspaceEnvironment,
+  mockStartWorkspaceAction,
   mockStartWorkspaceSetup,
   mockThreadRecords,
   mockWorkspaceState,
@@ -28,7 +37,11 @@ const {
   mockCreateBranch: vi.fn(),
   mockGetAutomaticSetup: vi.fn(),
   mockGetWorkspaceSetupAttempt: vi.fn(),
+  mockListWorkspaceActionRuns: vi.fn(),
   mockOpenSubagentsPanel: vi.fn(),
+  mockReadWorkspaceEnvironment: vi.fn(),
+  mockSaveWorkspaceEnvironment: vi.fn(),
+  mockStartWorkspaceAction: vi.fn(),
   mockStartWorkspaceSetup: vi.fn(),
   mockThreadRecords: new Map<string, ThreadRecord>(),
   mockWorkspaceState: {
@@ -53,6 +66,10 @@ vi.mock("@/transport", async (importOriginal) => {
       getRemoteUrl: vi.fn().mockResolvedValue({ label: "repo", webUrl: null }),
       getAutomaticSetup: mockGetAutomaticSetup,
       getWorkspaceSetupAttempt: mockGetWorkspaceSetupAttempt,
+      readWorkspaceEnvironment: mockReadWorkspaceEnvironment,
+      saveWorkspaceEnvironment: mockSaveWorkspaceEnvironment,
+      listWorkspaceActionRuns: mockListWorkspaceActionRuns,
+      startWorkspaceAction: mockStartWorkspaceAction,
       startWorkspaceSetup: mockStartWorkspaceSetup,
     }),
   };
@@ -154,6 +171,7 @@ vi.mock("./CreatePrDialog", () => ({
 
 import { getThreadOverviewBrowserTabs, ThreadOverview, canStartBranchlessCreatePr } from "./ThreadOverview";
 import { getSubagentIdentityPaletteIndex } from "@/features/subagents";
+import { ProjectEnvironmentPanel } from "@/features/projects/environment";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
@@ -199,6 +217,32 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
   };
 }
 
+function runningActionRun(): WorkspaceEnvironmentActionRun {
+  return {
+    threadId: "thread-1",
+    workspaceId: "ws-1",
+    actionId: "success",
+    runId: "run-1",
+    revision: 0,
+    terminalSessionId: "terminal-1",
+    actionName: "Success",
+    status: "running",
+    snapshot: {
+      platform: "windows",
+      script: "bun run success",
+      checkoutPath: "C:\\repo",
+      terminal: { executable: "powershell.exe", arguments: ["-Command", "bun run success"] },
+      environmentNames: ["PATH"],
+    },
+    createdAt: "2026-08-22T12:00:00.000Z",
+    startedAt: "2026-08-22T12:00:00.000Z",
+    finishedAt: null,
+    exitCode: null,
+    transcript: "",
+    transcriptTruncated: false,
+  };
+}
+
 describe("ThreadOverview branchless Create PR", () => {
   beforeEach(() => {
     const thread = makeThread();
@@ -209,6 +253,16 @@ describe("ThreadOverview branchless Create PR", () => {
     mockCreateBranch.mockReset().mockResolvedValue({ branch: "feat/issue-801" });
     mockGetAutomaticSetup.mockReset();
     mockGetWorkspaceSetupAttempt.mockReset().mockResolvedValue(null);
+    mockListWorkspaceActionRuns.mockReset().mockResolvedValue([]);
+    mockReadWorkspaceEnvironment.mockReset().mockResolvedValue({
+      document: {
+        version: "0.0.1",
+        setup: { default: "bun run setup" },
+        actions: [{ id: "success", name: "Success", command: { default: "bun run success" } }],
+      },
+    });
+    mockSaveWorkspaceEnvironment.mockReset();
+    mockStartWorkspaceAction.mockReset().mockResolvedValue(runningActionRun());
     mockStartWorkspaceSetup.mockReset();
     mockOpenSubagentsPanel.mockReset();
     mockThreadRecords.clear();
@@ -219,6 +273,82 @@ describe("ThreadOverview branchless Create PR", () => {
     });
     usePreviewTabsStore.setState({ tabSetByScope: {}, liveChromeByScope: {}, persistentTabIdsByScope: {} });
     useOverviewStore.setState({ reserveSpace: false, requestedThreadId: null });
+    useDiffStore.setState({ rightPanelByThread: {}, rightPanelFallbackByWorkspace: {} });
+    useProjectActionStore.setState({ runsByThread: {} });
+    setLayoutMeasurements(1200, 1200);
+  });
+
+  it("launches an idle Action in the background, then focuses its retained terminal", async () => {
+    const user = userEvent.setup();
+    useDiffStore.setState({
+      rightPanelByThread: {
+        "thread-1": createRightPanelState({
+          visible: true,
+          width: 380,
+          tabInstances: [{ id: "singleton:preview", type: "preview" }],
+          activeTabId: "singleton:preview",
+        }),
+      },
+    });
+
+    render(<ThreadOverview thread={makeThread({ mode: "direct" })} threadPaneWidth={1400} />);
+
+    await user.click(screen.getByRole("button", { name: "Project Actions" }));
+    const action = await screen.findByTestId("project-action-success");
+    await user.click(action);
+
+    await waitFor(() => expect(mockStartWorkspaceAction).toHaveBeenCalledWith("thread-1", "success"));
+    await waitFor(() => expect(useDiffStore.getState().getRightPanel("ws-1", "thread-1")).toMatchObject({
+      visible: true,
+      activeTabId: "singleton:preview",
+      tabInstances: expect.arrayContaining([{ id: "action-terminal:success", type: "action-terminal" }]),
+    }));
+
+    await user.click(action);
+
+    await waitFor(() => expect(useDiffStore.getState().getRightPanel("ws-1", "thread-1")).toMatchObject({
+      visible: true,
+      activeTabId: "action-terminal:success",
+      width: 600,
+    }));
+  });
+
+  it("refreshes the mounted Action menu after Project settings save", async () => {
+    const user = userEvent.setup();
+    let persisted = {
+      document: {
+        version: "0.0.1" as const,
+        actions: [{ id: "success", name: "Success", command: { default: "bun run success" } }],
+      },
+      revision: "revision-1",
+      status: "present" as const,
+    };
+    mockReadWorkspaceEnvironment.mockImplementation(async () => persisted);
+    mockSaveWorkspaceEnvironment.mockImplementation(async (
+      _workspaceId: string,
+      document: typeof persisted.document,
+    ) => {
+      persisted = { document, revision: "revision-2", status: "present" };
+      return persisted;
+    });
+
+    render(<><ThreadOverview thread={makeThread({ mode: "direct" })} threadPaneWidth={1400} /><ProjectEnvironmentPanel workspaceId="ws-1" /></>);
+
+    await screen.findByLabelText("Action name for Success");
+    await user.click(screen.getByRole("button", { name: "Project Actions" }));
+    expect(await screen.findByRole("menuitem", { name: /Success/ })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+
+    const actionName = screen.getByLabelText("Action name for Success");
+    await user.clear(actionName);
+    await user.type(actionName, "Renamed Action");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(mockSaveWorkspaceEnvironment).toHaveBeenCalledOnce());
+    await waitFor(() => expect(mockReadWorkspaceEnvironment).toHaveBeenCalledTimes(3));
+
+    await user.click(screen.getByRole("button", { name: "Project Actions" }));
+    expect(await screen.findByRole("menuitem", { name: /Renamed Action/ })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: /Success/ })).not.toBeInTheDocument();
   });
 
   it("renders navigated live Browser rows and reveals the exact tab without navigation", async () => {
@@ -347,19 +477,40 @@ describe("ThreadOverview branchless Create PR", () => {
     expect(screen.queryByTestId("thread-overview-browser")).not.toBeInTheDocument();
   });
 
-  it("places the manual Setup menu beside Project settings for an eligible Thread", () => {
-    render(<ThreadOverview thread={makeThread({ mode: "direct" })} threadPaneWidth={1400} />);
+  it.each([
+    ["a Direct Thread", { mode: "direct" }],
+    ["an unmanaged Existing worktree", { mode: "worktree", worktree_managed: false }],
+  ] as const)("shows and starts configured manual Setup from Project Actions for %s", async (_label, thread) => {
+    const user = userEvent.setup();
+    render(<ThreadOverview thread={makeThread(thread)} threadPaneWidth={1400} />);
 
-    const controls = screen.getByTestId("thread-overview-masthead-controls");
-    expect(screen.getByRole("button", { name: "Project Setup actions" })).toBeInTheDocument();
-    expect(controls.querySelector('[aria-label="Project Setup actions"]')).toBeInTheDocument();
-    expect(controls.querySelector('[aria-label="Open Project settings"]')).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Project Actions" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Run Setup" }));
+
+    await waitFor(() => expect(mockStartWorkspaceSetup).toHaveBeenCalledWith("thread-1"));
   });
 
-  it("hides the manual Setup menu for a managed New worktree", () => {
+  it("hides Run Setup for an eligible Thread without a saved Setup command", async () => {
+    const user = userEvent.setup();
+    mockReadWorkspaceEnvironment.mockResolvedValue({
+      document: {
+        version: "0.0.1",
+        actions: [{ id: "success", name: "Success", command: { default: "bun run success" } }],
+      },
+    });
+    render(<ThreadOverview thread={makeThread({ mode: "direct" })} threadPaneWidth={1400} />);
+
+    await user.click(screen.getByRole("button", { name: "Project Actions" }));
+    await screen.findByRole("menuitem", { name: /Success/ });
+    expect(screen.queryByRole("menuitem", { name: "Run Setup" })).not.toBeInTheDocument();
+  });
+
+  it("keeps Project Actions but hides configured Run Setup for a managed New worktree", async () => {
+    const user = userEvent.setup();
     render(<ThreadOverview thread={makeThread({ mode: "worktree", worktree_managed: true })} threadPaneWidth={1400} />);
 
-    expect(screen.queryByRole("button", { name: "Project Setup actions" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Project Actions" }));
+    expect(screen.queryByRole("menuitem", { name: "Run Setup" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open Project settings" })).toBeInTheDocument();
   });
 

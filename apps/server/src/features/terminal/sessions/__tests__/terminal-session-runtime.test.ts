@@ -14,6 +14,7 @@ import { InMemoryPtyHostAdapter } from "../../testing/in-memory-pty-host-adapter
 import {
   ModernTerminalSessionRuntime,
   TerminalSessionRuntimeError,
+  type TerminalRuntimeHeadlessEvent,
 } from "../terminal-session-runtime.js";
 
 const SESSION_ID = "00000000-0000-4000-8000-000000000001";
@@ -243,6 +244,8 @@ describe("ModernTerminalSessionRuntime", () => {
 
   it("preserves a protocol-failure tombstone from invalid startup output", async () => {
     const { host, runtime } = setup();
+    const observed: TerminalRuntimeHeadlessEvent[] = [];
+    runtime.subscribeHeadless((event) => observed.push(event));
     host.createAction = (input) => {
       host.emit({
         contractVersion: 1,
@@ -251,6 +254,14 @@ describe("ModernTerminalSessionRuntime", () => {
         hostGeneration: input.hostGeneration,
         outputSeq: "2",
         dataBase64: Buffer.from("invalid startup output").toString("base64"),
+      });
+      host.emit({
+        contractVersion: 1,
+        kind: "failure",
+        hostGeneration: input.hostGeneration,
+        boundary: "shutdown",
+        recoverable: true,
+        code: "HOST_UNHEALTHY",
       });
     };
 
@@ -265,6 +276,9 @@ describe("ModernTerminalSessionRuntime", () => {
       exit: { reason: "protocol-failure" },
       tombstone: true,
     });
+    expect(observed.filter((event) => event.kind === "exit")).toEqual([
+      { kind: "exit", sessionId: SESSION_ID, exitCode: null },
+    ]);
   });
 
   it("removes a starting session when host creation fails", async () => {
@@ -316,6 +330,47 @@ describe("ModernTerminalSessionRuntime", () => {
         outputSeq: "1",
         data: Uint8Array.from(Buffer.from("initial output")),
       },
+    ]);
+  });
+
+  it("retains an exit emitted before host creation resolves for a prepared observer", async () => {
+    const { host, runtime } = setup();
+    const observed: TerminalRuntimeHeadlessEvent[] = [];
+    runtime.subscribeHeadless((event) => observed.push(event));
+    let releaseCreate: (() => void) | undefined;
+    const createGate = new Promise<void>((resolve) => { releaseCreate = resolve; });
+    host.createAction = () => createGate;
+
+    const creating = createRunningSession(runtime);
+    await vi.waitFor(() => expect(host.creates).toHaveLength(1));
+    host.emit({
+      contractVersion: 1,
+      kind: "output",
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      outputSeq: "1",
+      dataBase64: Buffer.from("fast output").toString("base64"),
+    });
+    host.emit({
+      contractVersion: 1,
+      kind: "exit",
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      finalOutputSeq: "1",
+      code: 0,
+      signal: null,
+      reason: "natural",
+    });
+    releaseCreate?.();
+
+    await expect(creating).resolves.toMatchObject({
+      state: "exited",
+      exit: { code: 0, signal: null, reason: "natural" },
+      tombstone: true,
+    });
+    expect(runtime.getSnapshot(SESSION_ID)).toMatchObject({ state: "exited" });
+    expect(observed.filter((event) => event.kind === "exit")).toEqual([
+      { kind: "exit", sessionId: SESSION_ID, exitCode: 0 },
     ]);
   });
 
@@ -913,6 +968,8 @@ describe("ModernTerminalSessionRuntime", () => {
   it("fails a natural exit when the final renderer write stalls", async () => {
     vi.useFakeTimers();
     const { host, runtime } = setup();
+    const observed: TerminalRuntimeHeadlessEvent[] = [];
+    runtime.subscribeHeadless((event) => observed.push(event));
     await createRunningSession(runtime);
     await attach(runtime);
     host.emit({
@@ -941,6 +998,35 @@ describe("ModernTerminalSessionRuntime", () => {
       exit: { code: null, signal: null, reason: "protocol-failure" },
       tombstone: true,
     });
+    expect(observed.filter((event) => event.kind === "exit")).toEqual([
+      { kind: "exit", sessionId: SESSION_ID, exitCode: null },
+    ]);
+  });
+
+  it("notifies a prepared owner when a final exit omits buffered output", async () => {
+    const { host, runtime } = setup();
+    const observed: TerminalRuntimeHeadlessEvent[] = [];
+    runtime.subscribeHeadless((event) => observed.push(event));
+    await createRunningSession(runtime);
+
+    host.emit({
+      contractVersion: 1,
+      kind: "exit",
+      sessionId: SESSION_ID,
+      hostGeneration: "7",
+      finalOutputSeq: "1",
+      code: 0,
+      signal: null,
+      reason: "natural",
+    });
+
+    expect(runtime.getSnapshot(SESSION_ID)).toMatchObject({
+      state: "failed",
+      exit: { code: null, signal: null, reason: "protocol-failure" },
+    });
+    expect(observed.filter((event) => event.kind === "exit")).toEqual([
+      { kind: "exit", sessionId: SESSION_ID, exitCode: null },
+    ]);
   });
 
   it("finishes a natural exit headlessly when its Terminal tab closes", async () => {
@@ -976,8 +1062,26 @@ describe("ModernTerminalSessionRuntime", () => {
     expect(host.closes).toHaveLength(0);
   });
 
-  it("fails live sessions without recreating them when their host crashes", async () => {
+  it("notifies a prepared owner once when the host close returns without an exit", async () => {
+    const { runtime } = setup();
+    const observed: TerminalRuntimeHeadlessEvent[] = [];
+    runtime.subscribeHeadless((event) => observed.push(event));
+    await createRunningSession(runtime);
+
+    await expect(runtime.close({ sessionId: SESSION_ID, reason: "user" })).rejects.toMatchObject({
+      code: "EXIT_FLUSH_FAILED",
+      retry: "REATTACH",
+    });
+
+    expect(observed.filter((event) => event.kind === "exit")).toEqual([
+      { kind: "exit", sessionId: SESSION_ID, exitCode: null },
+    ]);
+  });
+
+  it("publishes a nullable exit to live prepared owners when their host crashes", async () => {
     const { host, runtime } = setup();
+    const observed: TerminalRuntimeHeadlessEvent[] = [];
+    runtime.subscribeHeadless((event) => observed.push(event));
     await createRunningSession(runtime);
     host.emit({
       contractVersion: 1,
@@ -1003,6 +1107,9 @@ describe("ModernTerminalSessionRuntime", () => {
       exit: { code: null, signal: null, reason: "host-crash" },
       tombstone: true,
     });
+    expect(observed.filter((event) => event.kind === "exit")).toEqual([
+      { kind: "exit", sessionId: SESSION_ID, exitCode: null },
+    ]);
     host.emit({
       contractVersion: 1,
       kind: "output",
@@ -1013,6 +1120,25 @@ describe("ModernTerminalSessionRuntime", () => {
     });
     expect(runtime.getSnapshot(SESSION_ID)?.lastOutputSeq).toBe("1");
     expect(host.creates).toHaveLength(1);
+  });
+
+  it("retains a nullable crash exit for a prepared owner that subscribes late", async () => {
+    const { host, runtime } = setup();
+    await createRunningSession(runtime);
+
+    host.emit({
+      contractVersion: 1,
+      kind: "failure",
+      hostGeneration: "7",
+      boundary: "shutdown",
+      recoverable: true,
+      code: "HOST_UNHEALTHY",
+    });
+
+    expect(runtime.readHeadlessReplay(SESSION_ID)).toEqual({
+      output: [],
+      exitCode: null,
+    });
   });
 
   it("keeps a host-crash tombstone when the close barrier rejects", async () => {

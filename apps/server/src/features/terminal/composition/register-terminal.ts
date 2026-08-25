@@ -85,6 +85,8 @@ export function registerTerminalBackends(container: DependencyContainer): void {
         runtime,
         host,
         () => settings.get().terminal.behavior.sessionLimit,
+        undefined,
+        (threadId) => c.resolve(ThreadRepo).findById(threadId)?.workspace_id ?? null,
       );
       return modernTerminalBackend;
     },

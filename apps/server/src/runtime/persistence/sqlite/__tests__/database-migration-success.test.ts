@@ -23,6 +23,7 @@ const MESSAGE_OUTCOME_MIGRATION = "0043_massive_dazzler";
 const AUTOMATIC_SETUP_MIGRATION = "0044_small_prodigy";
 const ASSISTANT_TEXT_CHECKPOINT_MIGRATION = "0045_tiny_stardust";
 const QUEUED_TURNS_FIFO_MIGRATION = "0046_queued_turns_fifo";
+const PROJECT_ACTION_RUNS_MIGRATION = "0047_conscious_tusk";
 
 type JournalEntry = {
   idx: number;
@@ -149,6 +150,43 @@ describe("successful database migration recovery", () => {
         migrationHash(join(process.cwd(), "drizzle"), AUTOMATIC_SETUP_MIGRATION),
       )).toEqual([{
         created_at: migrationEntry(join(process.cwd(), "drizzle"), AUTOMATIC_SETUP_MIGRATION).when,
+      }]);
+    } finally {
+      database.close();
+    }
+  });
+
+  it("creates the retained Project Action slot table after automatic Setup migrations", () => {
+    const database = openDatabase({ dbPath: databasePath });
+    try {
+      expect(readJournal(join(process.cwd(), "drizzle")).entries.filter(
+        (entry) => entry.tag.startsWith("0047_"),
+      )).toEqual([migrationEntry(join(process.cwd(), "drizzle"), PROJECT_ACTION_RUNS_MIGRATION)]);
+      expect(columnNames(database, "project_action_runs")).toEqual([
+        "thread_id",
+        "action_id",
+        "workspace_id",
+        "run_id",
+        "revision",
+        "terminal_session_id",
+        "action_name",
+        "status",
+        "snapshot_json",
+        "created_at",
+        "started_at",
+        "finished_at",
+        "exit_code",
+        "transcript",
+        "transcript_truncated",
+      ]);
+      expect(database.prepare("PRAGMA index_list(project_action_runs)").all()).toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: "idx_project_action_runs_slot", unique: 1 }),
+        expect.objectContaining({ name: "idx_project_action_runs_thread", unique: 0 }),
+      ]));
+      expect(database.prepare("SELECT created_at FROM __drizzle_migrations WHERE hash = ?").all(
+        migrationHash(join(process.cwd(), "drizzle"), PROJECT_ACTION_RUNS_MIGRATION),
+      )).toEqual([{
+        created_at: migrationEntry(join(process.cwd(), "drizzle"), PROJECT_ACTION_RUNS_MIGRATION).when,
       }]);
     } finally {
       database.close();

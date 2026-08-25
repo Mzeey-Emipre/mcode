@@ -50,6 +50,30 @@ afterEach(() => {
 });
 
 describe("agent command transport", () => {
+  it("sends bounded Project Action stop and restart commands through their typed RPC methods", async () => {
+    const transport = createWsTransport("ws://localhost:1234");
+    mockWs.simulateOpen();
+
+    const stopPending = transport.stopWorkspaceAction("thread-1", "build");
+    const restartPending = transport.restartWorkspaceAction("thread-1", "build");
+    await vi.waitFor(() => {
+      const methods = mockWs.sent.map((row) => (JSON.parse(row) as { method: string }).method);
+      expect(methods).toContain("workspace.environment.action.stop");
+      expect(methods).toContain("workspace.environment.action.restart");
+    });
+    const requests = mockWs.sent.map((row) => JSON.parse(row) as { id: string; method: string; params: unknown });
+    const stopRequest = requests.find((request) => request.method === "workspace.environment.action.stop");
+    const restartRequest = requests.find((request) => request.method === "workspace.environment.action.restart");
+
+    expect(stopRequest?.params).toEqual({ threadId: "thread-1", actionId: "build" });
+    expect(restartRequest?.params).toEqual({ threadId: "thread-1", actionId: "build" });
+    mockWs.respond(stopRequest!.id, { run: null });
+    mockWs.respond(restartRequest!.id, { runId: "run-2" });
+    await expect(stopPending).resolves.toBeNull();
+    await expect(restartPending).resolves.toMatchObject({ runId: "run-2" });
+    transport.close();
+  });
+
   it("sends completed-thread cleanup count and retry commands", async () => {
     const transport = createWsTransport("ws://localhost:1234");
     mockWs.simulateOpen();

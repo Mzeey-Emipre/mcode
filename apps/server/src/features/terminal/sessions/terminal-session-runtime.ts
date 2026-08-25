@@ -124,8 +124,23 @@ export interface TerminalSessionRuntime {
   close(input: CloseRuntimeSession): Promise<TerminalSessionSnapshot>;
   getSnapshot(sessionId: string): TerminalSessionSnapshot | null;
   subscribeDelivery?(listener: (event: TerminalRuntimeDeliveryEvent) => void): () => void;
+  subscribeHeadless(listener: (event: TerminalRuntimeHeadlessEvent) => void): () => void;
+  readHeadlessReplay(sessionId: string): TerminalRuntimeHeadlessReplay | null;
+  /** Discards a headless session after it reaches a final runtime state. */
+  discardExitedSession(sessionId: string): boolean;
   applySettings?(settings: { readonly scrollback: number }): void;
   shutdown(): Promise<void>;
+}
+
+/** Output and exit events observed without a renderer attachment for private command sessions. */
+export type TerminalRuntimeHeadlessEvent =
+  | { readonly kind: "output"; readonly sessionId: string; readonly data: Uint8Array }
+  | { readonly kind: "exit"; readonly sessionId: string; readonly exitCode: number | null };
+
+/** Bounded output and optional exit retained before a headless owner attaches. */
+export interface TerminalRuntimeHeadlessReplay {
+  readonly output: readonly Uint8Array[];
+  readonly exitCode: number | null | undefined;
 }
 
 /** Generation-bound runtime event ready for the public attachment transport. */
@@ -235,6 +250,7 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
   private readonly initialDimensions: { readonly cols: number; readonly rows: number };
   private readonly unsubscribeHost: () => void;
   private readonly deliveryListeners = new Set<(event: TerminalRuntimeDeliveryEvent) => void>();
+  private readonly headlessListeners = new Set<(event: TerminalRuntimeHeadlessEvent) => void>();
 
   constructor(private readonly options: ModernTerminalSessionRuntimeOptions) {
     this.now = options.now ?? (() => new Date());
@@ -322,6 +338,7 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
       }
       if (record.state !== "starting") return this.snapshot(record);
       record.state = "running";
+      this.applyPendingExit(record);
       return this.snapshot(record);
     } catch (error) {
       this.sessions.delete(sessionId);
@@ -539,12 +556,7 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
       throw this.mapHostError(error, "HOST_UNHEALTHY", "SAFE_RETRY");
     }
     if (!record.exit) {
-      record.state = "failed";
-      record.exit = {
-        code: null,
-        signal: null,
-        reason: "protocol-failure",
-      };
+      this.failSession(record, "protocol-failure");
       throw this.error("EXIT_FLUSH_FAILED", "REATTACH");
     }
     const closed = this.snapshot(record);
@@ -564,6 +576,37 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
     return () => this.deliveryListeners.delete(listener);
   }
 
+  /** Subscribes to output and exit events that must not require a renderer attachment. */
+  subscribeHeadless(listener: (event: TerminalRuntimeHeadlessEvent) => void): () => void {
+    this.headlessListeners.add(listener);
+    return () => this.headlessListeners.delete(listener);
+  }
+
+  /** Returns bounded output and exit retained before a headless owner subscribes. */
+  readHeadlessReplay(sessionId: string): TerminalRuntimeHeadlessReplay | null {
+    const record = this.sessions.get(sessionId);
+    if (!record) return null;
+    const hydration = record.replay.hydrate({
+      hydrationId: this.createHydrationId(),
+      requestedAfterSeq: 0n,
+      checkpointSeq: null,
+    });
+    return Object.freeze({
+      output: Object.freeze(hydration.output.map(({ data }) => Uint8Array.from(data))),
+      exitCode: record.exit ? record.exit.code : record.pendingExit?.code,
+    });
+  }
+
+  /** Releases a finished headless terminal after its owner retained the bounded outcome. */
+  discardExitedSession(sessionId: string): boolean {
+    const record = this.sessions.get(sessionId);
+    if (!record || (record.state !== "exited" && record.state !== "failed")) return false;
+    this.clearInputStallTimer(record);
+    this.clearExitFlushTimer(record);
+    this.sessions.delete(sessionId);
+    return true;
+  }
+
   /** Applies the live replay bound without replacing active PTYs. */
   applySettings(settings: { readonly scrollback: number }): void {
     const capacity = replayBytesForScrollback(settings.scrollback);
@@ -574,6 +617,7 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
   async shutdown(): Promise<void> {
     this.unsubscribeHost();
     this.deliveryListeners.clear();
+    this.headlessListeners.clear();
     for (const record of this.sessions.values()) {
       this.clearInputStallTimer(record);
       this.clearExitFlushTimer(record);
@@ -680,6 +724,7 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
         const data = Buffer.from(event.dataBase64, "base64");
         record.replay.append(sequence, data);
         record.receivedOutputSeq = sequence;
+        this.publishHeadless({ kind: "output", sessionId: record.sessionId, data: Uint8Array.from(data) });
         if (record.attachment) {
           this.publishDelivery({
             kind: "output",
@@ -691,51 +736,70 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
           });
         }
       } catch {
-        record.state = "failed";
-        record.exit = Object.freeze({
-          code: null,
-          signal: null,
-          reason: "protocol-failure",
-        });
+        this.failSession(record, "protocol-failure");
       }
       return;
     }
-    if (event.kind === "exit" && (record.state === "running" || record.state === "exiting")) {
-      const finalOutputSeq = BigInt(event.finalOutputSeq);
-      if (finalOutputSeq !== record.receivedOutputSeq) {
-        this.failExitBarrier(record);
+    if (event.kind === "exit") {
+      if (record.state === "starting") {
+        this.queueExit(record, event);
         return;
       }
-      record.state = "exiting";
-      record.pendingExit = Object.freeze({
-        finalOutputSeq,
-        code: event.code,
-        signal: event.signal,
-        reason: event.reason,
-      });
-      if (record.attachment) {
-        this.publishDelivery({
-          kind: "exitBarrier",
-          sessionId: record.sessionId,
-          hostGeneration: record.hostGeneration,
-          attachmentEpoch: record.attachment.epoch.toString(),
-          finalOutputSeq: event.finalOutputSeq,
-          acknowledgedOutputSeq: record.attachment.acknowledgedOutputSeq.toString(),
-          exit: Object.freeze({ code: event.code, signal: event.signal, reason: event.reason }),
-        });
-      }
-      this.completeExitBarrier(record);
-      if (record.pendingExit && !record.exitFlushTimer) {
-        record.exitFlushTimer = setTimeout(() => {
-          record.exitFlushTimer = null;
-          if (record.pendingExit) this.failExitBarrier(record);
-        }, EXIT_FLUSH_TIMEOUT_MS);
+      if (record.state === "running" || (record.state === "exiting" && !record.pendingExit)) {
+        this.queueExit(record, event);
+        this.applyPendingExit(record);
       }
     }
   }
 
   private publishDelivery(event: TerminalRuntimeDeliveryEvent): void {
     for (const listener of this.deliveryListeners) listener(event);
+  }
+
+  private publishHeadless(event: TerminalRuntimeHeadlessEvent): void {
+    for (const listener of this.headlessListeners) listener(event);
+  }
+
+  private queueExit(record: RuntimeSession, event: Extract<PtyHostEvent, { kind: "exit" }>): void {
+    if (record.pendingExit || record.exit) return;
+    record.pendingExit = Object.freeze({
+      finalOutputSeq: BigInt(event.finalOutputSeq),
+      code: event.code,
+      signal: event.signal,
+      reason: event.reason,
+    });
+  }
+
+  private applyPendingExit(record: RuntimeSession): void {
+    const pendingExit = record.pendingExit;
+    if (!pendingExit) return;
+    if (pendingExit.finalOutputSeq !== record.receivedOutputSeq) {
+      this.failExitBarrier(record);
+      return;
+    }
+    record.state = "exiting";
+    if (record.attachment) {
+      this.publishDelivery({
+        kind: "exitBarrier",
+        sessionId: record.sessionId,
+        hostGeneration: record.hostGeneration,
+        attachmentEpoch: record.attachment.epoch.toString(),
+        finalOutputSeq: pendingExit.finalOutputSeq.toString(),
+        acknowledgedOutputSeq: record.attachment.acknowledgedOutputSeq.toString(),
+        exit: Object.freeze({
+          code: pendingExit.code,
+          signal: pendingExit.signal,
+          reason: pendingExit.reason,
+        }),
+      });
+    }
+    this.completeExitBarrier(record);
+    if (record.pendingExit && !record.exitFlushTimer) {
+      record.exitFlushTimer = setTimeout(() => {
+        record.exitFlushTimer = null;
+        if (record.pendingExit) this.failExitBarrier(record);
+      }, EXIT_FLUSH_TIMEOUT_MS);
+    }
   }
 
   private completeExitBarrier(record: RuntimeSession): void {
@@ -759,17 +823,24 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
       signal: pendingExit.signal,
       reason: pendingExit.reason,
     });
+    this.publishHeadless({ kind: "exit", sessionId: record.sessionId, exitCode: record.exit.code });
   }
 
   private failExitBarrier(record: RuntimeSession): void {
     record.pendingExit = null;
     this.clearExitFlushTimer(record);
+    this.failSession(record, "protocol-failure");
+  }
+
+  private failSession(record: RuntimeSession, reason: "host-crash" | "protocol-failure"): void {
+    if (record.state === "exited" || record.state === "failed") return;
     record.state = "failed";
     record.exit = Object.freeze({
       code: null,
       signal: null,
-      reason: "protocol-failure",
+      reason,
     });
+    this.publishHeadless({ kind: "exit", sessionId: record.sessionId, exitCode: null });
   }
 
   private failSessionForHostCrash(record: RuntimeSession): void {
@@ -777,12 +848,7 @@ export class ModernTerminalSessionRuntime implements TerminalSessionRuntime {
     record.pendingExit = null;
     this.clearInputStallTimer(record);
     this.clearExitFlushTimer(record);
-    record.state = "failed";
-    record.exit = Object.freeze({
-      code: null,
-      signal: null,
-      reason: "host-crash",
-    });
+    this.failSession(record, "host-crash");
   }
 
   private applyCommandAcknowledgement(

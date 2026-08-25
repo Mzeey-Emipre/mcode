@@ -9,7 +9,7 @@ describe("TerminalBackendSelector", () => {
   it("keeps one legacy backend selected for capability reporting and Terminal work", () => {
     const create = vi.fn(() => ({ ptyId: "pty-1", shell: "pwsh" }));
     const service = { create } as unknown as TerminalService;
-    const legacyBackend = new LegacyTerminalBackend(service);
+    const legacyBackend = new LegacyTerminalBackend(service, {} as never, {} as never);
     const selector = new TerminalBackendSelector(legacyBackend);
 
     const selected = selector.getSelectedBackend();
@@ -26,7 +26,7 @@ describe("TerminalBackendSelector", () => {
   });
 
   it("selects the modern backend only for the protected boot value", () => {
-    const legacyBackend = new LegacyTerminalBackend({} as TerminalService);
+    const legacyBackend = new LegacyTerminalBackend({} as TerminalService, {} as never, {} as never);
     const modernBackend = { capabilities: vi.fn() } as unknown as TerminalBackend;
 
     expect(

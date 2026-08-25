@@ -4,6 +4,7 @@ import {
   TERMINAL_CHECKPOINT_CHUNK_BYTES,
   TERMINAL_CHECKPOINT_EXPIRES_AFTER_MS,
   TERMINAL_V1_METHODS,
+  WORKSPACE_ENVIRONMENT_ACTION_TRANSCRIPT_MAX_BYTES,
   decodeTerminalFrame,
   encodeTerminalFrame,
   type TerminalBackendCapabilities,
@@ -19,11 +20,18 @@ import type {
   TerminalRuntimeDeliveryEvent,
   TerminalSessionRuntime,
 } from "../../sessions/terminal-session-runtime.js";
-import type { TerminalSessionService } from "../../sessions/terminal-session-service.js";
+import {
+  PreparedTerminalSessionLaunchError,
+  type PreparedTerminalSession,
+  type TerminalSessionService,
+} from "../../sessions/terminal-session-service.js";
 import {
   TerminalBackend,
   TerminalBackendError,
+  PreparedTerminalCommandStartError,
   type TerminalBackendSender,
+  type PreparedTerminalCommandRequest,
+  type PreparedTerminalCommandSession,
   type TerminalReattachResult,
 } from "../terminal-backend.js";
 import { TerminalDiagnosticsService } from "../../diagnostics/terminal-diagnostics-service.js";
@@ -78,6 +86,7 @@ export class ModernTerminalBackend extends TerminalBackend {
     },
     private readonly sessionLimit: () => number,
     diagnostics?: TerminalDiagnosticsService,
+    private readonly workspaceForThread?: (threadId: string) => string | null,
   ) {
     super();
     this.diagnostics = diagnostics ?? new TerminalDiagnosticsService({
@@ -509,13 +518,129 @@ export class ModernTerminalBackend extends TerminalBackend {
   write(): never { throw new Error("Use Terminal v1 input frames"); }
   resize(): never { throw new Error("Use Terminal v1 resize frames"); }
   kill(): Promise<void> { return Promise.reject(new Error("Use terminal.session.close")); }
-  killByThread(): Promise<void> { return Promise.reject(new Error("Use terminal.session.close")); }
+  async killByThread(threadId: string): Promise<void> {
+    const workspaceId = this.workspaceForThread?.(threadId);
+    if (!workspaceId) throw new Error("Terminal Thread is unavailable");
+    await this.sessions.closeScope({ kind: "thread", workspaceId, threadId }, "scope-reset");
+  }
   async shutdown(): Promise<void> { this.unsubscribeDelivery(); this.sessions.dispose(); await this.runtime.shutdown(); }
   setGracefulKill(): void {}
   reattach(): TerminalReattachResult { throw new Error("Use terminal.session.attach"); }
   checkpoint(): { accepted: boolean } { throw new Error("Use Terminal v1 checkpoint methods"); }
   listActiveSessions(): Array<{ ptyId: string; threadId: string }> { throw new Error("Use terminal.session.list"); }
   hasChildren(): Promise<{ hasChildren: boolean }> { return Promise.reject(new Error("Use terminal.session.hasChildren")); }
+
+  /** Starts an exact hidden command through the modern host session and its app-wide capacity guard. */
+  async startPreparedCommand(input: PreparedTerminalCommandRequest): Promise<PreparedTerminalCommandSession> {
+    const workspaceId = this.workspaceForThread?.(input.threadId);
+    if (!workspaceId) throw new Error("Prepared command Thread is unavailable");
+    await this.startPromise;
+    let created: PreparedTerminalSession;
+    try {
+      created = await this.sessions.createPreparedSession({
+        scope: { kind: "thread", workspaceId, threadId: input.threadId },
+        script: input.script,
+      });
+    } catch (error) {
+      if (error instanceof PreparedTerminalSessionLaunchError) {
+        throw new PreparedTerminalCommandStartError({
+          platform: process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : "linux",
+          script: input.script,
+          checkoutPath: error.plan.checkoutPath,
+          terminal: {
+            executable: error.plan.terminal.executable,
+            arguments: [...error.plan.terminal.arguments],
+          },
+          environmentNames: [...error.plan.environmentNames],
+        }, error);
+      }
+      throw error;
+    }
+    const outputListeners = new Set<(data: Uint8Array) => void>();
+    const exitListeners = new Set<(exit: { readonly exitCode: number | null }) => void>();
+    let retainedOutput: Uint8Array[] = [];
+    let retainedOutputBytes = 0;
+    const retainOutput = (data: Uint8Array) => {
+      const copy = Uint8Array.from(data);
+      if (copy.byteLength === 0) return;
+      if (copy.byteLength >= WORKSPACE_ENVIRONMENT_ACTION_TRANSCRIPT_MAX_BYTES) {
+        retainedOutput = [copy.slice(copy.byteLength - WORKSPACE_ENVIRONMENT_ACTION_TRANSCRIPT_MAX_BYTES)];
+        retainedOutputBytes = WORKSPACE_ENVIRONMENT_ACTION_TRANSCRIPT_MAX_BYTES;
+        return;
+      }
+      let discard = Math.max(
+        0,
+        retainedOutputBytes + copy.byteLength - WORKSPACE_ENVIRONMENT_ACTION_TRANSCRIPT_MAX_BYTES,
+      );
+      while (discard > 0 && retainedOutput.length > 0) {
+        const first = retainedOutput[0]!;
+        if (first.byteLength <= discard) {
+          retainedOutput.shift();
+          retainedOutputBytes -= first.byteLength;
+          discard -= first.byteLength;
+        } else {
+          retainedOutput[0] = first.subarray(discard);
+          retainedOutputBytes -= discard;
+          discard = 0;
+        }
+      }
+      retainedOutput.push(copy);
+      retainedOutputBytes += copy.byteLength;
+    };
+    let exited = false;
+    let retainedExit: number | null | undefined;
+    let unsubscribe: () => void = () => undefined;
+    const publishExit = (exitCode: number | null) => {
+      if (exited) return;
+      exited = true;
+      retainedExit = exitCode;
+      unsubscribe();
+      this.sessions.releasePreparedSession(created.session.sessionId);
+      for (const listener of exitListeners) listener({ exitCode });
+    };
+    unsubscribe = this.runtime.subscribeHeadless((event) => {
+      if (event.sessionId !== created.session.sessionId) return;
+      if (event.kind === "output") {
+        retainOutput(event.data);
+        for (const listener of outputListeners) listener(event.data);
+      } else {
+        publishExit(event.exitCode);
+      }
+    });
+    const replay = this.runtime.readHeadlessReplay(created.session.sessionId);
+    if (replay) {
+      for (const output of replay.output) retainOutput(output);
+      if (replay.exitCode !== undefined) publishExit(replay.exitCode);
+    }
+    return {
+      terminalSessionId: created.session.sessionId,
+      snapshot: {
+        platform: process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : "linux",
+        script: input.script,
+        checkoutPath: created.checkoutPath,
+        terminal: {
+          executable: created.session.launch.resolvedProfile.executable,
+          arguments: created.session.launch.arguments,
+        },
+        environmentNames: [...created.environmentNames],
+      },
+      onOutput: (listener) => {
+        outputListeners.add(listener);
+        for (const data of retainedOutput) listener(data);
+        return () => outputListeners.delete(listener);
+      },
+      onExit: (listener) => {
+        exitListeners.add(listener);
+        if (retainedExit !== undefined) listener({ exitCode: retainedExit });
+        return () => exitListeners.delete(listener);
+      },
+      stop: async () => {
+        if (exited) return;
+        const closed = await this.sessions.closeSession(created.session.sessionId, "user");
+        publishExit(closed.exit?.code ?? null);
+      },
+    };
+  }
 }
 
 function jsonBytes(value: unknown): Uint8Array {

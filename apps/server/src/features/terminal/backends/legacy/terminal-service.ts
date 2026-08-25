@@ -55,6 +55,8 @@ const MAX_PTYS_PER_THREAD = 4;
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
 const TERM_NAME = "xterm-256color";
+const NOOP_DISPOSABLE: IDisposable = { dispose: () => undefined };
+const MAX_PREPARED_ENVIRONMENT_NAMES = 512;
 
 function describeError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -67,13 +69,27 @@ interface PtySession {
   readonly shell: string;
   readonly cwd: string;
   readonly pty: IPty;
-  readonly dataDisposable: IDisposable;
-  readonly exitDisposable: IDisposable;
+  dataDisposable: IDisposable;
+  exitDisposable: IDisposable;
   status: "running" | "closing";
   pendingExit: { readonly exitCode: number; readonly signal?: number } | null;
   closePromise: Promise<void> | null;
   readonly processScope: WindowsProcessScope;
   readonly processScopeReady: Promise<boolean>;
+  readonly headless: boolean;
+  readonly outputListeners: Set<(data: Uint8Array) => void>;
+  readonly exitListeners: Set<(exitCode: number | null) => void>;
+  headlessOutput: Uint8Array[];
+  headlessExit: number | null | undefined;
+  readonly closeBarrier: Promise<void>;
+  readonly resolveCloseBarrier: () => void;
+}
+
+interface LegacyTerminalLaunch {
+  readonly executable: string;
+  readonly arguments: string[];
+  readonly headless: boolean;
+  readonly environment?: Record<string, string>;
 }
 
 /** Callbacks for streaming PTY output and exit events to connected clients. */
@@ -105,6 +121,7 @@ const SHELL_BASENAMES = new Set([
 @injectable()
 export class TerminalService {
   private sessions = new Map<string, PtySession>();
+  private readonly completedHeadlessSessions = new Map<string, PtySession>();
   private threadIndex = new Map<string, Set<string>>();
   private sender: PtySender | null = null;
   private flowControls = new Map<string, TerminalFlowControl>();
@@ -165,7 +182,7 @@ export class TerminalService {
    * @param scopeId - A thread id, or a workspace id for the threadless shell.
    * @returns The unique PTY session ID.
    */
-  create(scopeId: string): { ptyId: string; shell: string } {
+  create(scopeId: string, launch?: LegacyTerminalLaunch): { ptyId: string; shell: string } {
     const thread = this.threadRepo.findById(scopeId);
 
     let cwd: string;
@@ -204,20 +221,24 @@ export class TerminalService {
         `Maximum PTY limit (${MAX_PTYS_PER_THREAD}) reached for scope ${scopeId}`,
       );
     }
+    const globalLimit = this.settingsService.get().terminal.behavior.sessionLimit;
+    if (launch?.headless && this.sessions.size >= globalLimit) {
+      throw new Error("The app-wide Terminal session limit is reached");
+    }
 
     const id = uuid();
-    const shell = defaultShell();
+    const shell = launch?.executable ?? defaultShell();
 
     logger.info("Spawning PTY", { id, scopeId, shell, cwd });
 
     let pty: IPty;
     try {
-      pty = getSpawn()(shell, [], {
+      pty = getSpawn()(shell, launch?.arguments ?? [], {
         name: TERM_NAME,
         cols: DEFAULT_COLS,
         rows: DEFAULT_ROWS,
         cwd,
-        env: this.envService.getEnv(),
+        env: launch?.environment ?? this.envService.getEnv(),
         // The bundled ConPTY DLL closes the pseudo console directly. Native
         // Windows ConPTY makes node-pty fork a console-list helper on kill;
         // that helper can fail AttachConsole and crash the server process.
@@ -247,7 +268,7 @@ export class TerminalService {
     // its mcode:pty-data listener. Without this, the shell can emit its first
     // prompt before the view exists, leaving a newly-opened terminal blank
     // until some later output happens to arrive.
-    fc.pause("client-request");
+    if (!launch?.headless) fc.pause("client-request");
     this.flowControls.set(id, fc);
 
     // Size server-side retention from terminal.scrollback (the same knob that
@@ -308,42 +329,28 @@ export class TerminalService {
     }
     this.jobObject.setDescription(pty.pid, `Mcode Terminal: ${shellBasename(shell)}`);
 
-    const dataDisposable = pty.onData((data: string) => {
-      // Re-encode to bytes so multi-byte sequences that straddle a node-pty
-      // read boundary remain intact on the wire. Seq is assigned here, before
-      // the ring-buffer decides whether to buffer or drop the chunk, so
-      // evicted bytes leave a gap in the client's seq stream.
-      const bytes = Buffer.from(data, "utf8");
-      const currentSeq = seq++;
-      // Record in replay buffer before flow control so replayed data matches
-      // what was actually transmitted (replay buffer is not affected by pauses).
-      replayBuffer.record(currentSeq, bytes);
-      fc.push(currentSeq, bytes);
-    });
-
-    const exitDisposable = pty.onExit(({ exitCode, signal }) => {
-      const current = this.sessions.get(id);
-      if (!current) return;
-      if (current.status === "closing") {
-        current.pendingExit = { exitCode, signal };
-        return;
-      }
-      this.handleNaturalExit(current, { exitCode, signal });
-    });
-
+    let resolveCloseBarrier!: () => void;
+    const closeBarrier = new Promise<void>((resolve) => { resolveCloseBarrier = resolve; });
     const session: PtySession = {
       id,
       threadId: scopeId,
       shell,
       cwd,
       pty,
-      dataDisposable,
-      exitDisposable,
+      dataDisposable: NOOP_DISPOSABLE,
+      exitDisposable: NOOP_DISPOSABLE,
       status: "running",
       pendingExit: null,
       closePromise: null,
       processScope,
       processScopeReady,
+      headless: launch?.headless ?? false,
+      outputListeners: new Set(),
+      exitListeners: new Set(),
+      headlessOutput: [],
+      headlessExit: undefined,
+      closeBarrier,
+      resolveCloseBarrier,
     };
     this.sessions = new Map([...this.sessions, [id, session]]);
 
@@ -354,7 +361,107 @@ export class TerminalService {
       [scopeId, updatedSet],
     ]);
 
+    const dataDisposable = pty.onData((data: string) => {
+      // Re-encode to bytes so multi-byte sequences that straddle a node-pty
+      // read boundary remain intact on the wire. Seq is assigned here, before
+      // the ring-buffer decides whether to buffer or drop the chunk, so
+      // evicted bytes leave a gap in the client's seq stream.
+      const bytes = Buffer.from(data, "utf8");
+      const currentSeq = seq++;
+      // Record in replay buffer before flow control so replayed data matches
+      // what was actually transmitted (replay buffer is not affected by pauses).
+      replayBuffer.record(currentSeq, bytes);
+      if (launch?.headless) {
+        appendHeadlessOutput(session, bytes, replayCapBytesForScrollback(terminalSettings.behavior.scrollback));
+        for (const listener of session.outputListeners) listener(bytes);
+      } else {
+        fc.push(currentSeq, bytes);
+      }
+    });
+
+    if (this.sessions.has(id)) session.dataDisposable = dataDisposable;
+    else dataDisposable.dispose();
+    const exitDisposable = pty.onExit(({ exitCode, signal }) => {
+      const current = this.sessions.get(id);
+      if (!current) return;
+      if (current.status === "closing") {
+        current.pendingExit = { exitCode, signal };
+        return;
+      }
+      this.handleNaturalExit(current, { exitCode, signal });
+    });
+    if (this.sessions.has(id)) session.exitDisposable = exitDisposable;
+    else exitDisposable.dispose();
+
     return { ptyId: id, shell: shellBasename(shell) };
+  }
+
+  /** Starts a private noninteractive PTY command that shares legacy capacity and process tracking. */
+  startPreparedCommand(threadId: string, launch: { readonly executable: string; readonly arguments: readonly string[] }): {
+    readonly terminalSessionId: string;
+    readonly checkoutPath: string;
+    readonly executable: string;
+    readonly arguments: string[];
+    readonly environmentNames: string[];
+    onOutput(listener: (data: Uint8Array) => void): () => void;
+    onExit(listener: (exitCode: number | null) => void): () => void;
+    stop(): Promise<void>;
+  } {
+    const environment = this.envService.getEnv();
+    const environmentNames = Object.keys(environment).sort();
+    if (environmentNames.length > MAX_PREPARED_ENVIRONMENT_NAMES) {
+      throw new Error("Prepared terminal environment exceeds the Action snapshot limit");
+    }
+    const created = this.create(threadId, {
+      executable: launch.executable,
+      arguments: [...launch.arguments],
+      headless: true,
+      environment,
+    });
+    const session = this.sessions.get(created.ptyId) ?? this.completedHeadlessSessions.get(created.ptyId);
+    if (!session) throw new Error("Prepared terminal session was not retained");
+    return {
+      terminalSessionId: session.id,
+      checkoutPath: session.cwd,
+      executable: launch.executable,
+      arguments: [...launch.arguments],
+      environmentNames,
+      onOutput: (listener) => {
+        session.outputListeners.add(listener);
+        for (const data of session.headlessOutput) listener(data);
+        return () => session.outputListeners.delete(listener);
+      },
+      onExit: (listener) => {
+        session.exitListeners.add(listener);
+        if (session.headlessExit !== undefined) {
+          listener(session.headlessExit);
+          if (!this.sessions.has(session.id)) this.completedHeadlessSessions.delete(session.id);
+        }
+        return () => session.exitListeners.delete(listener);
+      },
+      stop: async () => {
+        if (this.completedHeadlessSessions.delete(session.id)) return;
+        await this.stopPreparedCommand(session.id);
+      },
+    };
+  }
+
+  /** Requests a graceful Ctrl-C close, then force-closes after the Action five-second barrier. */
+  private async stopPreparedCommand(ptyId: string): Promise<void> {
+    const session = this.sessions.get(ptyId);
+    if (!session) return;
+    try {
+      session.pty.write("\u0003");
+    } catch {
+      await this.kill(ptyId);
+      return;
+    }
+    const closed = await Promise.race([
+      session.closeBarrier.then(() => true),
+      new Promise<false>((resolve) => setTimeout(() => resolve(false), 5_000)),
+    ]);
+    if (!closed) await this.kill(ptyId);
+    await session.closeBarrier;
   }
 
   /**
@@ -461,7 +568,9 @@ export class TerminalService {
     const ptys = this.threadIndex.get(threadId);
     if (!ptys || ptys.size === 0) return;
     // Kill all PTYs concurrently: each killProcessTree is independent.
-    await Promise.all([...ptys].map((ptyId) => this.kill(ptyId)));
+    await Promise.all([...ptys]
+      .filter((ptyId) => !this.sessions.get(ptyId)?.headless)
+      .map((ptyId) => this.kill(ptyId)));
     logger.info("All PTYs killed for thread", { threadId });
   }
 
@@ -471,6 +580,7 @@ export class TerminalService {
     await Promise.all(
       [...this.sessions.keys()].map((ptyId) => this.kill(ptyId, "app-shutdown")),
     );
+    this.completedHeadlessSessions.clear();
     this.pidRegistry.clear();
   }
 
@@ -541,10 +651,12 @@ export class TerminalService {
    * Used by reconnecting clients to discover which PTYs to reattach.
    */
   listActiveSessions(): Array<{ ptyId: string; threadId: string }> {
-    return [...this.sessions.entries()].map(([ptyId, session]) => ({
-      ptyId,
-      threadId: session.threadId,
-    }));
+    return [...this.sessions.entries()]
+      .filter(([, session]) => !session.headless)
+      .map(([ptyId, session]) => ({
+        ptyId,
+        threadId: session.threadId,
+      }));
   }
 
   /**
@@ -692,11 +804,27 @@ export class TerminalService {
         });
       }
     }
-    if (exitCode !== undefined) {
+    if (exitCode !== undefined && !session.headless) {
       this.sender?.json("terminal.exit", { ptyId: session.id, code: exitCode });
     }
+    if (session.headless) session.headlessExit = exitCode ?? null;
+    const awaitOwnerAttachment = session.headless && session.exitListeners.size === 0;
+    for (const listener of session.exitListeners) {
+      try {
+        listener(exitCode ?? null);
+      } catch (err) {
+        logger.warn("Headless terminal exit listener failed during PTY finalization", {
+          id: session.id,
+          pid: session.pty.pid,
+          threadId: session.threadId,
+          error: describeError(err),
+        });
+      }
+    }
     this.removePty(session.id);
+    if (awaitOwnerAttachment) this.completedHeadlessSessions.set(session.id, session);
     session.processScope.close();
+    session.resolveCloseBarrier();
   }
 
   private removePty(ptyId: string): void {
@@ -724,4 +852,12 @@ export class TerminalService {
     this.replayBuffers.delete(ptyId);
     this.pidRegistry.deregister(ptyId);
   }
+}
+
+function appendHeadlessOutput(session: PtySession, data: Uint8Array, maxBytes: number): void {
+  const retained = Buffer.concat([...session.headlessOutput, Buffer.from(data)]);
+  const bounded = retained.byteLength > maxBytes
+    ? retained.subarray(retained.byteLength - maxBytes)
+    : retained;
+  session.headlessOutput = [bounded];
 }

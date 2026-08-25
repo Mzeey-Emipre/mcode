@@ -15,6 +15,7 @@ import { useThreadStore } from "@/stores/threadStore";
 import { useThreadControlStore } from "@/stores/threadControlStore";
 import { useTerminalStore } from "@/features/terminal/state/terminalStore";
 import { onPtyExit } from "@/features/terminal/adapters/pty-data-registry";
+import { useProjectActionStore } from "@/features/projects/environment/state/project-action-store";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
@@ -92,6 +93,43 @@ describe("ws-events thread.lifecycleChanged", () => {
     pushEmitter.emit("thread.deleted", { threadId: "thread-1" });
 
     expect(applyThreadDeleted).toHaveBeenCalledWith("thread-1");
+  });
+});
+
+describe("ws-events Project Actions", () => {
+  afterEach(() => stopPushListeners());
+
+  it("applies retained Action output outside Thread Overview and clears it on Thread deletion", () => {
+    const run = {
+      threadId: "thread-1",
+      workspaceId: "ws-1",
+      actionId: "build",
+      runId: "run-1",
+      revision: 1,
+      terminalSessionId: "terminal-1",
+      actionName: "Build",
+      status: "completed" as const,
+      snapshot: { platform: "windows" as const, script: "bun run build", checkoutPath: "C:\\repo", terminal: null, environmentNames: [] },
+      createdAt: "2026-08-22T12:00:00.000Z",
+      startedAt: "2026-08-22T12:00:00.000Z",
+      finishedAt: "2026-08-22T12:00:01.000Z",
+      exitCode: 0,
+      transcript: "done",
+      transcriptTruncated: false,
+    };
+    useProjectActionStore.setState({ runsByThread: {} });
+    startPushListeners();
+
+    pushEmitter.emit("workspace.environment.action.updated", {
+      threadId: run.threadId,
+      actionId: run.actionId,
+      runId: run.runId,
+      run,
+    });
+    expect(useProjectActionStore.getState().runsByThread["thread-1"]?.build?.transcript).toBe("done");
+
+    pushEmitter.emit("thread.deleted", { threadId: "thread-1" });
+    expect(useProjectActionStore.getState().runsByThread["thread-1"]).toBeUndefined();
   });
 });
 

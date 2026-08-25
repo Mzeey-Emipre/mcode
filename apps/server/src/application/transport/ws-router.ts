@@ -43,6 +43,7 @@ import type {
   WorkspaceEnricher,
   WorkspaceService,
   WorkspaceEnvironmentService,
+  ProjectActionService,
 } from "../../features/projects/index.js";
 import { WorkspaceEnvironmentServiceError } from "../../features/projects/environment/workspace-environment-errors.js";
 import type { HandoffCheckoutService, HandoffStorage } from "../../features/handoff/index.js";
@@ -251,6 +252,8 @@ export interface RouterDeps {
   workspaceService: WorkspaceService;
   /** Owns private workspace environment document reads and revision-checked saves. */
   workspaceEnvironmentService: WorkspaceEnvironmentService;
+  /** Owns configured Project Action runs and their retained terminal results. */
+  projectActionService: ProjectActionService;
   threadService: ThreadService;
   agentService: AgentService;
   /** Routes provider permission decisions through the Agents feature boundary. */
@@ -399,7 +402,8 @@ export async function routeMessage(
       request.method === "workspace.environment.automaticSetup.cancelQueuedTurn" ||
       request.method === "workspace.environment.automaticSetup.stop" ||
       request.method === "workspace.environment.automaticSetup.retry" ||
-      request.method === "workspace.environment.automaticSetup.openTerminal"
+      request.method === "workspace.environment.automaticSetup.openTerminal" ||
+      request.method.startsWith("workspace.environment.action.")
     ) {
       const issues = workspaceEnvironmentValidationIssues(paramsResult.error);
       const unsupported = issues.some((candidate) => candidate.reason === "unsupported_version");
@@ -538,11 +542,17 @@ async function teardownWorkspaceThreads(deps: RouterDeps, workspaceId: string): 
   const threads = deps.threadRepo.listAllByWorkspace(workspaceId);
   const results = await Promise.allSettled(
     threads.map(async (thread) => {
-      if (thread.worktree_path) {
-        await deps.githubService.cancelForRepoPath(thread.worktree_path);
+      const releaseActionAdmission = await deps.projectActionService.beginThreadTeardown(thread.id);
+      try {
+        await deps.projectActionService.stopForThread(thread.id);
+        if (thread.worktree_path) {
+          await deps.githubService.cancelForRepoPath(thread.worktree_path);
+        }
+        await deps.ciWatcherService.teardownThread(thread.id);
+        await deps.threadTeardownService.teardownThread(thread.id);
+      } finally {
+        releaseActionAdmission();
       }
-      await deps.ciWatcherService.teardownThread(thread.id);
-      await deps.threadTeardownService.teardownThread(thread.id);
     }),
   );
   const failures = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
@@ -881,8 +891,19 @@ async function dispatch(
       return await deps.workspaceEnvironmentService.retryAutomaticSetup(params);
     case "workspace.environment.automaticSetup.openTerminal":
       return await deps.workspaceEnvironmentService.openAutomaticSetupTerminal(params);
+    case "workspace.environment.action.list":
+      return { runs: deps.projectActionService.list(params.threadId) };
+    case "workspace.environment.action.get":
+      return { run: deps.projectActionService.get(params) };
+    case "workspace.environment.action.start":
+      return deps.projectActionService.start(params);
+    case "workspace.environment.action.stop":
+      return { run: await deps.projectActionService.stop(params) };
+    case "workspace.environment.action.restart":
+      return deps.projectActionService.restart(params);
     case "workspace.delete": {
       const releaseDeletionBarrier = deps.workspaceEnvironmentService.beginWorkspaceDeletion(params.id);
+      const releaseActionAdmission = await deps.projectActionService.beginWorkspaceTeardown(params.id);
       try {
         await teardownWorkspaceThreads(deps, params.id);
         const result = deps.workspaceService.delete(params.id);
@@ -892,11 +913,13 @@ async function dispatch(
         }
         return result;
       } finally {
+        releaseActionAdmission();
         releaseDeletionBarrier();
       }
     }
     case "workspace.forceDelete": {
       const releaseDeletionBarrier = deps.workspaceEnvironmentService.beginWorkspaceDeletion(params.id);
+      const releaseActionAdmission = await deps.projectActionService.beginWorkspaceTeardown(params.id);
       try {
         await teardownWorkspaceThreads(deps, params.id);
         const result = deps.workspaceService.forceDelete(params.id);
@@ -907,6 +930,7 @@ async function dispatch(
         }
         return result;
       } finally {
+        releaseActionAdmission();
         releaseDeletionBarrier();
       }
     }
@@ -959,9 +983,11 @@ async function dispatch(
     }
     case "thread.delete": {
       const releaseDeletionBarrier = deps.workspaceEnvironmentService.beginThreadDeletion(params.threadId);
+      const releaseActionAdmission = await deps.projectActionService.beginThreadTeardown(params.threadId);
       try {
         const thread = deps.threadRepo.findById(params.threadId);
         await deps.workspaceEnvironmentService.cancelSetupForThread(params.threadId);
+        await deps.projectActionService.stopForThread(params.threadId);
         if (thread?.worktree_path) {
           await deps.githubService.cancelForRepoPath(thread.worktree_path);
         }
@@ -976,6 +1002,7 @@ async function dispatch(
         }
         return deleted;
       } finally {
+        releaseActionAdmission();
         releaseDeletionBarrier();
       }
     }
@@ -996,6 +1023,7 @@ async function dispatch(
     }
     case "thread.reopen": {
       const reopened = deps.threadCompletionService.reopen(params.threadId);
+      deps.projectActionService.reopenThread(params.threadId);
       broadcast("thread.lifecycleChanged", { thread: reopened });
       return reopened;
     }

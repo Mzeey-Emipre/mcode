@@ -164,6 +164,11 @@ describe("TerminalService Windows teardown", () => {
         close: vi.fn(),
       },
       processScopeReady: Promise.resolve(false),
+      headless: false,
+      outputListeners: new Set(),
+      exitListeners: new Set(),
+      closeBarrier: Promise.resolve(),
+      resolveCloseBarrier: vi.fn(),
     };
     const internals = service as unknown as {
       sessions: Map<string, typeof session>;
@@ -251,6 +256,122 @@ describe("TerminalService Windows teardown", () => {
     expect(service.listActiveSessions()).toEqual([]);
     expect(dataDispose).toHaveBeenCalledOnce();
     expect(exitDispose).toHaveBeenCalledOnce();
+  });
+
+  it("replays fast headless output and exit exactly once after its owner attaches", () => {
+    const service = createService();
+    const prepared = service.startPreparedCommand("thread-1", {
+      executable: "powershell.exe",
+      arguments: ["-Command", "Write-Output fast"],
+    });
+
+    onData?.("fast output");
+    onExit?.({ exitCode: 0, signal: 0 });
+    const output = vi.fn();
+    const exit = vi.fn();
+    prepared.onOutput(output);
+    prepared.onExit(exit);
+
+    expect(output).toHaveBeenCalledTimes(1);
+    expect(new TextDecoder().decode(output.mock.calls[0]?.[0])).toBe("fast output");
+    expect(exit).toHaveBeenCalledTimes(1);
+    expect(exit).toHaveBeenCalledWith(0);
+  });
+
+  it("completes headless terminal cleanup when an Action exit listener fails", async () => {
+    const service = createService();
+    const prepared = service.startPreparedCommand("thread-1", {
+      executable: "powershell.exe",
+      arguments: ["-Command", "Write-Output complete"],
+    });
+    prepared.onExit(() => { throw new Error("retained run persistence failed"); });
+
+    expect(() => onExit?.({ exitCode: 0, signal: 0 })).not.toThrow();
+    expect(service.listActiveSessions()).toEqual([]);
+    expect(dataDispose).toHaveBeenCalledOnce();
+    expect(exitDispose).toHaveBeenCalledOnce();
+    await expect(prepared.stop()).resolves.toBeUndefined();
+  });
+
+  it("retains a synchronous headless exit until the Action owner attaches", () => {
+    spawnPty.mockImplementationOnce(() => ({
+      pid: 10_001,
+      onData: (callback: (data: string) => void) => {
+        callback("synchronous output");
+        return { dispose: dataDispose };
+      },
+      onExit: (callback: (event: { exitCode: number; signal: number }) => void) => {
+        callback({ exitCode: 0, signal: 0 });
+        return { dispose: exitDispose };
+      },
+      kill: vi.fn(),
+    }));
+    const service = createService();
+
+    const prepared = service.startPreparedCommand("thread-1", {
+      executable: "powershell.exe",
+      arguments: ["-Command", "Write-Output synchronous"],
+    });
+    const output = vi.fn();
+    const exit = vi.fn();
+    prepared.onOutput(output);
+    prepared.onExit(exit);
+
+    expect(new TextDecoder().decode(output.mock.calls[0]?.[0])).toBe("synchronous output");
+    expect(output).toHaveBeenCalledOnce();
+    expect(exit).toHaveBeenCalledWith(0);
+  });
+
+  it("leaves a prepared Action session to its graceful lifecycle owner during generic thread teardown", async () => {
+    const service = createService();
+    service.startPreparedCommand("thread-1", {
+      executable: "powershell.exe",
+      arguments: ["-Command", "Start-Sleep 1"],
+    });
+
+    await service.killByThread("thread-1");
+
+    expect(killProcessTree).not.toHaveBeenCalled();
+  });
+
+  it("applies the app-wide Action capacity across threads", () => {
+    const service = createService(undefined, undefined, 1);
+    service.startPreparedCommand("thread-1", {
+      executable: "powershell.exe",
+      arguments: ["-Command", "Start-Sleep 1"],
+    });
+
+    expect(() => service.startPreparedCommand("thread-2", {
+      executable: "powershell.exe",
+      arguments: ["-Command", "Start-Sleep 1"],
+    })).toThrow();
+    expect(spawnPty).toHaveBeenCalledOnce();
+  });
+
+  it("uses one bounded EnvService snapshot for the prepared process and retained names", () => {
+    const environment = { PATH: "C:\\bin", MCODE_PORT: "19400" };
+    const service = createService(undefined, undefined, 20, environment);
+
+    const prepared = service.startPreparedCommand("thread-1", {
+      executable: "powershell.exe",
+      arguments: ["-Command", "Write-Output environment"],
+    });
+
+    expect(spawnPty.mock.calls[0]?.[2]).toMatchObject({ env: environment });
+    expect(prepared.environmentNames).toEqual(["MCODE_PORT", "PATH"]);
+  });
+
+  it("rejects an Action environment that cannot fit its retained launch snapshot", () => {
+    const environment = Object.fromEntries(
+      Array.from({ length: 513 }, (_, index) => [`KEY_${index}`, "value"]),
+    );
+    const service = createService(undefined, undefined, 20, environment);
+
+    expect(() => service.startPreparedCommand("thread-1", {
+      executable: "powershell.exe",
+      arguments: ["-Command", "Write-Output environment"],
+    })).toThrow();
+    expect(spawnPty).not.toHaveBeenCalled();
   });
 
   it("publishes a raced natural exit once when termination fails", async () => {
@@ -499,6 +620,8 @@ describe("TerminalService Windows teardown", () => {
   function createService(
     jobObject: object = { assign: vi.fn(), setDescription: vi.fn() },
     processScopeFactory?: object,
+    sessionLimit = 20,
+    environment: Record<string, string> = {},
   ): TerminalService {
     const cwd = process.cwd();
     return new TerminalService(
@@ -508,13 +631,13 @@ describe("TerminalService Windows teardown", () => {
       {
         get: () => ({
           terminal: {
-            behavior: { scrollback: 1_000 },
+            behavior: { scrollback: 1_000, sessionLimit },
             flowControl: { serverHighBytes: 1_024, serverLowBytes: 512 },
           },
         }),
         on: () => vi.fn(),
       } as never,
-      { getEnv: () => ({}) } as never,
+      { getEnv: () => environment } as never,
       { register: vi.fn(), deregister: vi.fn(), clear: vi.fn() } as never,
       jobObject as never,
       processScopeFactory as never,

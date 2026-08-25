@@ -21,6 +21,7 @@ import { useQueueStore } from "@/stores/queueStore";
 import { useTaskStore } from "@/stores/taskStore";
 import { useComposerDraftStore } from "@/stores/composerDraftStore";
 import { useDiffStore } from "@/stores/diffStore";
+import { useProjectActionStore } from "@/features/projects/environment/state/project-action-store";
 import { usePreviewReferenceQueueStore } from "@/features/preview/state/previewReferenceQueueStore";
 import { usePreviewTabsStore } from "@/features/preview/state/previewTabsStore";
 import {
@@ -1158,6 +1159,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
         useComposerDraftStore.getState().clearDraft(threadId);
         useTaskStore.getState().clearTasks(threadId);
         useDiffStore.getState().clearThread(threadId);
+        useProjectActionStore.getState().clearThread(threadId);
         const didClearActiveThread = get().activeThreadId === threadId;
         set((state) => {
           const remainingUrls = Object.fromEntries(
@@ -1189,6 +1191,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
       useComposerDraftStore.getState().clearDraft(threadId);
       useTaskStore.getState().clearTasks(threadId);
       useDiffStore.getState().clearThread(threadId);
+      useProjectActionStore.getState().clearThread(threadId);
       const didClearActiveThread = get().activeThreadId === threadId;
       // Remove from threads[] FIRST so any in-flight dequeue timer callback's
       // threadExists guard sees the thread as deleted before clearThreadState
@@ -1278,6 +1281,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => {
     useComposerDraftStore.getState().clearDraft(threadId);
     useTaskStore.getState().clearTasks(threadId);
     useDiffStore.getState().clearThread(threadId);
+    useProjectActionStore.getState().clearThread(threadId);
     const didClearActiveThread = get().activeThreadId === threadId;
     set((state) => ({
       threads: state.threads.filter((thread) => thread.id !== threadId),

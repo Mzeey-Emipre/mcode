@@ -17,6 +17,7 @@ describe("PANEL_TAB_TYPES catalog", () => {
     expect(ids(PANEL_TAB_TYPES)).toEqual([
       "preview",
       "terminal",
+      "action-terminal",
       "files",
       "changes",
       "environment",
@@ -33,14 +34,14 @@ describe("PANEL_TAB_TYPES catalog", () => {
 
   it("marks coordination tools as thread-only (Review is dual-scope)", () => {
     const threadOnly = PANEL_TAB_TYPES.filter((t) => t.needsThread).map((t) => t.id);
-    expect(threadOnly).toEqual(["tasks", "subagents", "coordination"]);
+    expect(threadOnly).toEqual(["action-terminal", "tasks", "subagents", "coordination"]);
   });
 
   it("gives every shortcut-enabled type a commandId", () => {
     for (const type of PANEL_TAB_TYPES) {
       if (type.comingSoon) {
         expect(type.commandId).toBeUndefined();
-      } else if (type.id !== "subagents" && type.id !== "coordination") {
+      } else if (!type.systemManaged && type.id !== "subagents" && type.id !== "coordination") {
         expect(type.commandId).toBeTruthy();
       }
     }
@@ -93,6 +94,11 @@ describe("shownTabTypes — scope filter", () => {
       "subagents",
       "coordination",
     ]);
+  });
+
+  it("keeps system-managed Action terminals out of create surfaces", () => {
+    expect(ids(shownTabTypes("thread", []))).not.toContain("action-terminal");
+    expect(ids(creatableTypes("thread", []))).not.toContain("action-terminal");
   });
 });
 

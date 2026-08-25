@@ -18,6 +18,7 @@ const { transport, MockRpcError } = vi.hoisted(() => {
     transport: {
       readWorkspaceEnvironment: vi.fn(),
       saveWorkspaceEnvironment: vi.fn(),
+      listWorkspaceActionRuns: vi.fn(),
     },
   };
 });
@@ -28,7 +29,9 @@ vi.mock("@/features/projects/state/workspaceStore", () => ({
     selector({ workspaces: [{ id: "workspace-1", name: "Caravan" }] }),
 }));
 
+import { ProjectActionMenu, useProjectActions } from "../ProjectActionControl";
 import { ProjectEnvironmentPanel } from "../ProjectEnvironmentPanel";
+import { useProjectActionStore } from "../state/project-action-store";
 
 const initialResult: WorkspaceEnvironmentReadResult = {
   document: { version: "0.0.1", actions: [] },
@@ -36,10 +39,26 @@ const initialResult: WorkspaceEnvironmentReadResult = {
   status: "absent",
 };
 
+function MountedProjectActionMenu() {
+  const projectActions = useProjectActions("workspace-1", "thread-1");
+  return (
+    <ProjectActionMenu
+      actions={projectActions.actions}
+      runsByActionId={projectActions.runsByActionId}
+      loadError={projectActions.loadError}
+      onStart={async () => undefined}
+      onFocus={() => undefined}
+      onEdit={() => undefined}
+    />
+  );
+}
+
 describe("ProjectEnvironmentPanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    useProjectActionStore.setState({ runsByThread: {}, configurationEpochByWorkspace: {} });
     transport.readWorkspaceEnvironment.mockResolvedValue(initialResult);
+    transport.listWorkspaceActionRuns.mockResolvedValue([]);
     transport.saveWorkspaceEnvironment.mockImplementation(async (
       _workspaceId: string,
       document: WorkspaceEnvironmentDocument,
@@ -88,6 +107,44 @@ describe("ProjectEnvironmentPanel", () => {
     expect(savedDocument.actions[0].name).toBe("Build");
     expect(savedDocument.actions[0].id).toEqual(expect.any(String));
     expect(screen.getByRole("status")).toHaveTextContent("Environment saved");
+  });
+
+  it("refreshes a mounted Action menu after saving renamed Project configuration", async () => {
+    const user = userEvent.setup();
+    let persisted: WorkspaceEnvironmentReadResult = {
+      document: {
+        version: "0.0.1",
+        actions: [{ id: "build", name: "Build", command: { default: "bun run build" } }],
+      },
+      revision: "revision-1",
+      status: "present",
+    };
+    transport.readWorkspaceEnvironment.mockImplementation(async () => persisted);
+    transport.saveWorkspaceEnvironment.mockImplementation(async (
+      _workspaceId: string,
+      document: WorkspaceEnvironmentDocument,
+    ) => {
+      persisted = { document, revision: "revision-2", status: "present" };
+      return persisted;
+    });
+
+    render(<><ProjectEnvironmentPanel workspaceId="workspace-1" /><MountedProjectActionMenu /></>);
+
+    await screen.findByLabelText("Action name for Build");
+    await user.click(screen.getByRole("button", { name: "Project Actions" }));
+    expect(await screen.findByRole("menuitem", { name: /Build/ })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+
+    const actionName = screen.getByLabelText("Action name for Build");
+    await user.clear(actionName);
+    await user.type(actionName, "Test");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(transport.saveWorkspaceEnvironment).toHaveBeenCalledOnce());
+    await waitFor(() => expect(transport.readWorkspaceEnvironment).toHaveBeenCalledTimes(3));
+
+    await user.click(screen.getByRole("button", { name: "Project Actions" }));
+    expect(await screen.findByRole("menuitem", { name: /Test/ })).toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: /Build/ })).not.toBeInTheDocument();
   });
 
   it("uses the prototype platform order and moves between editors with keyboard tabs", async () => {

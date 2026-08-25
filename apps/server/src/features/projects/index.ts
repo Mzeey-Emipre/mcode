@@ -38,4 +38,14 @@ export { ProjectWorktreeService } from "./worktrees/project-worktree-service.js"
 export {
   WorkspaceEnvironmentService,
 } from "./environment/workspace-environment-service.js";
+/** Owns retained Project Action execution and lifecycle. */
+export {
+  ProjectActionService,
+  PROJECT_ACTION_CLOCK_TOKEN,
+  PROJECT_ACTION_RUN_ID_FACTORY_TOKEN,
+} from "./environment/project-action-service.js";
+export type {
+  ProjectActionClock,
+  ProjectActionRunIdFactory,
+} from "./environment/project-action-service.js";
 export { WorkspaceEnvironmentServiceError } from "./environment/workspace-environment-errors.js";
