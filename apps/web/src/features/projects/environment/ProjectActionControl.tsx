@@ -264,25 +264,25 @@ export function ProjectActionTerminalView({ threadId, actionId }: ProjectActionT
     >
       <div className="flex h-9 items-center gap-2 border-b border-border/50 px-3 text-xs">
         <span className="min-w-0 flex-1 truncate font-medium text-foreground">{run.actionName}</span>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                aria-label={`Restart ${run.actionName}`}
+                disabled={command !== null}
+                onClick={restartAction}
+              >
+                {command === "restart" ? <Spinner size={14} aria-hidden /> : <RotateCcw size={14} aria-hidden />}
+              </Button>
+            }
+          />
+          <TooltipContent>Restart Action</TooltipContent>
+        </Tooltip>
         {run.status === "running" ? (
           <>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label={`Restart ${run.actionName}`}
-                    disabled={command !== null}
-                    onClick={restartAction}
-                  >
-                    {command === "restart" ? <Spinner size={14} aria-hidden /> : <RotateCcw size={14} aria-hidden />}
-                  </Button>
-                }
-              />
-              <TooltipContent>Restart Action</TooltipContent>
-            </Tooltip>
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -302,7 +302,7 @@ export function ProjectActionTerminalView({ threadId, actionId }: ProjectActionT
             </Tooltip>
           </>
         ) : null}
-        <ActionStatus status={run.status} finishedAt={run.finishedAt} />
+        <ActionStatus status={run.status} finishedAt={run.finishedAt} showIdlePlay={false} />
       </div>
       {commandError ? <p role="status" className="border-b border-border/50 px-3 py-2 text-xs text-destructive">{commandError}</p> : null}
       <ScrollArea className="min-h-0 flex-1" viewportProps={{ tabIndex: 0, "aria-label": `${run.actionName} output` }}>
@@ -441,9 +441,11 @@ function ansiColor(sequence: string): string | undefined {
 function ActionStatus({
   status,
   finishedAt,
+  showIdlePlay = true,
 }: {
   readonly status: WorkspaceEnvironmentActionRun["status"] | null;
   readonly finishedAt: string | null;
+  readonly showIdlePlay?: boolean;
 }) {
   const [showRecentResult, setShowRecentResult] = useState(() => isRecentResult(status, finishedAt));
   useEffect(() => {
@@ -468,7 +470,7 @@ function ActionStatus({
   if (status === "unavailable") {
     return <span role="status" aria-label="Unavailable" className="ml-2 flex shrink-0 text-muted-foreground"><CircleSlash className="size-3.5" aria-hidden /></span>;
   }
-  return <Play className="ml-2 size-3.5 shrink-0 text-muted-foreground" aria-label="Play" />;
+  return showIdlePlay ? <Play className="ml-2 size-3.5 shrink-0 text-muted-foreground" aria-label="Play" /> : null;
 }
 
 function isRecentResult(status: WorkspaceEnvironmentActionRun["status"] | null, finishedAt: string | null): boolean {
