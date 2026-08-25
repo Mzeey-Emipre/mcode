@@ -35,7 +35,7 @@ jobs:
             runner: blacksmith-2vcpu-windows-2025
             platform: windows
             arch: x64
-            build-args: ""
+            build-args: --config.compression=store
           - target-id: linux-x64
             runner: blacksmith-2vcpu-ubuntu-2404
             platform: linux

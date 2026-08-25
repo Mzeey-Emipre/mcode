@@ -289,7 +289,7 @@ describe("desktop packaging workflow contract", () => {
     expect(source).toContain("--channel pull-request");
   });
 
-  it("uses gzip only for the Linux PR package", () => {
+  it("uses store for Windows PR and gzip for Linux PR", () => {
     const source = readFileSync(
       path.join(repoRoot, ".github/workflows/desktop-package-dry-run.yml"),
       "utf8",
@@ -305,10 +305,17 @@ describe("desktop packaging workflow contract", () => {
         ?.value.trim();
     };
 
+    expect(buildArgsFor("windows-x64")).toBe("--config.compression=store");
     expect(buildArgsFor("linux-x64")).toBe("--config.deb.compression=gz");
-    expect(buildArgsFor("windows-x64")).toBe('""');
     expect(buildArgsFor("macos-arm64")).toBe("--mac --arm64");
     expect(buildArgsFor("macos-x64")).toBe("--mac --x64");
+    for (const workflow of [
+      ".github/workflows/nightly-desktop.yml",
+      ".github/workflows/build-release.yml",
+    ]) {
+      const releaseSource = readFileSync(path.join(repoRoot, workflow), "utf8");
+      expect(releaseSource).not.toContain("--config.compression=store");
+    }
   });
 
   it("keeps Terminal attestation out of afterPack", () => {
