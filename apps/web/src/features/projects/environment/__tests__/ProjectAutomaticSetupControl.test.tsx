@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { WorkspaceEnvironmentAutomaticSetupSnapshot } from "@mcode/contracts";
@@ -83,6 +83,10 @@ function AutomaticSetupState() {
   );
 }
 
+async function showAutomaticSetupDetails() {
+  fireEvent.click(await screen.findByRole("button", { name: /Show details/i }));
+}
+
 describe("ProjectAutomaticSetupControl", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -92,6 +96,7 @@ describe("ProjectAutomaticSetupControl", () => {
   it("renders ordered queued Turns and joined keyboard-accessible recovery controls", async () => {
     const retry = vi.fn();
     const terminal = vi.fn();
+    const user = userEvent.setup();
     render(
       <ProjectAutomaticSetupCard
         snapshot={blocked}
@@ -105,7 +110,14 @@ describe("ProjectAutomaticSetupControl", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: /Automatic Setup. Setup failed. Hide details/i })).toBeInTheDocument();
+    const disclosure = screen.getByRole("button", { name: /Automatic Setup. Setup failed. Show details/i });
+    expect(disclosure).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByRole("region").firstElementChild).toHaveClass("hidden");
+
+    await user.click(disclosure);
+
+    expect(screen.getByRole("button", { name: /Automatic Setup. Setup failed. Hide details/i })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("region").firstElementChild).not.toHaveClass("hidden");
     expect(screen.getByRole("status")).toHaveTextContent("2 queued Turns remain blocked");
     expect(screen.getByLabelText("Automatic Setup command")).toHaveTextContent("bun run setup");
     expect(screen.getByRole("button", { name: "Retry setup" })).toBeEnabled();
@@ -113,7 +125,6 @@ describe("ProjectAutomaticSetupControl", () => {
     expect(screen.getByRole("button", { name: "Cancel queued Turn 1" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Cancel queued Turn 2" })).toBeEnabled();
 
-    const user = userEvent.setup();
     screen.getByRole("button", { name: "More automatic Setup recovery options" }).focus();
     await user.keyboard("{Enter}");
     const openTerminal = await screen.findByRole("menuitem", { name: "Open terminal" });
@@ -130,6 +141,7 @@ describe("ProjectAutomaticSetupControl", () => {
       queuedTurns: [{ ...blocked.queuedTurns[0]!, state: "cancelled" }, blocked.queuedTurns[1]!],
     });
     render(<AutomaticSetupState />);
+    await showAutomaticSetupDetails();
 
     await user.click(await screen.findByRole("button", { name: "Cancel queued Turn 1" }));
 
@@ -147,6 +159,7 @@ describe("ProjectAutomaticSetupControl", () => {
       queuedTurns: [{ ...blocked.queuedTurns[0]!, state: "released" }, blocked.queuedTurns[1]!],
     });
     render(<AutomaticSetupState />);
+    await showAutomaticSetupDetails();
 
     await user.click(await screen.findByRole("button", { name: "Cancel queued Turn 1" }));
 
@@ -166,6 +179,7 @@ describe("ProjectAutomaticSetupControl", () => {
       attempt: { ...blocked.attempt!, state: "interrupted", reason: "setup_interrupted", outcome: null, exitCode: null, output: "", outputTruncated: false },
     });
     render(<AutomaticSetupState />);
+    await showAutomaticSetupDetails();
 
     await user.click(await screen.findByRole("button", { name: "Stop setup" }));
 
@@ -187,6 +201,7 @@ describe("ProjectAutomaticSetupControl", () => {
       attempt: { ...blocked.attempt!, state: "interrupted", reason: "setup_interrupted", outcome: null, exitCode: null, output: "", outputTruncated: false },
     });
     render(<AutomaticSetupState />);
+    await showAutomaticSetupDetails();
 
     await user.click(await screen.findByRole("button", { name: "Stop setup" }));
 
@@ -211,6 +226,7 @@ describe("ProjectAutomaticSetupControl", () => {
         onOpenTerminal={async () => { terminal(); }}
       />,
     );
+    await showAutomaticSetupDetails();
 
     await user.click(screen.getByRole("button", { name: "Retry setup" }));
     await user.click(screen.getByRole("button", { name: "More automatic Setup recovery options" }));
@@ -227,6 +243,7 @@ describe("ProjectAutomaticSetupControl", () => {
     const user = userEvent.setup();
     transport.openAutomaticSetupTerminal.mockResolvedValue({ ptyId: "recovery-pty", shell: "pwsh" });
     render(<AutomaticSetupState />);
+    await showAutomaticSetupDetails();
 
     await user.click(await screen.findByRole("button", { name: "More automatic Setup recovery options" }));
     await user.click(await screen.findByRole("menuitem", { name: "Open terminal" }));
@@ -238,7 +255,7 @@ describe("ProjectAutomaticSetupControl", () => {
     expect(transport.continueAutomaticSetup).not.toHaveBeenCalled();
   });
 
-  it("keeps an uncertain no-Setup dispatch visible without offering recovery controls", () => {
+  it("keeps an uncertain no-Setup dispatch visible without offering recovery controls", async () => {
     render(
       <ProjectAutomaticSetupCard
         snapshot={{
@@ -261,12 +278,13 @@ describe("ProjectAutomaticSetupControl", () => {
         onOpenTerminal={async () => undefined}
       />,
     );
+    await showAutomaticSetupDetails();
 
     expect(screen.getByRole("status")).toHaveTextContent("claimed for dispatch");
     expect(screen.queryByRole("button", { name: "Retry setup" })).not.toBeInTheDocument();
   });
 
-  it("keeps a continued gate distinct from Setup success after every Turn dispatches", () => {
+  it("keeps a continued gate distinct from Setup success after every Turn dispatches", async () => {
     render(
       <ProjectAutomaticSetupCard
         snapshot={{
@@ -287,6 +305,7 @@ describe("ProjectAutomaticSetupControl", () => {
         onOpenTerminal={async () => undefined}
       />,
     );
+    await showAutomaticSetupDetails();
 
     expect(screen.getByRole("button", { name: /Automatic Setup. Continued/i })).toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("Queued Turns were released without recording that Setup passed.");
@@ -311,6 +330,7 @@ describe("ProjectAutomaticSetupControl", () => {
       render(<AutomaticSetupState />);
 
       await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+      fireEvent.click(screen.getByRole("button", { name: /Show details/i }));
       expect(screen.getByRole("status")).toHaveTextContent("claimed for dispatch");
       await act(async () => { await vi.advanceTimersByTimeAsync(1_000); });
 

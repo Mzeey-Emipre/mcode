@@ -8,6 +8,7 @@ import type { Thread } from "@/transport/types";
 /** Compact state model shared by thread rows outside the chat transcript. */
 export type ThreadStateMarkerModel =
   | { kind: "action"; label: "Action required" }
+  | { kind: "setup"; label: "Setup running" }
   | { kind: "running"; label: "Running" }
   | { kind: "ci"; label: string; aggregate: "failing" | "pending" }
   | { kind: "completed"; label: "Completed" }
@@ -22,14 +23,17 @@ export function getThreadStateMarker({
   thread,
   checks,
   isRunning,
+  isSetupRunning = false,
   hasPendingPermission,
 }: {
   thread: Pick<Thread, "status" | "updated_at">;
   checks: ChecksStatus | undefined;
   isRunning: boolean;
+  isSetupRunning?: boolean;
   hasPendingPermission: boolean;
 }): ThreadStateMarkerModel {
   if (hasPendingPermission) return { kind: "action", label: "Action required" };
+  if (isSetupRunning) return { kind: "setup", label: "Setup running" };
   if (isRunning) return { kind: "running", label: "Running" };
   if (checks?.aggregate === "failing" || checks?.aggregate === "pending") {
     return {
@@ -66,8 +70,13 @@ export function ThreadStateMarker({
     );
   }
 
-  if (marker.kind === "running") {
-    return <Spinner aria-label={marker.label} className={cn("text-primary", dim && "opacity-[0.72]")} />;
+  if (marker.kind === "setup" || marker.kind === "running") {
+    return (
+      <Spinner
+        aria-label={marker.label}
+        className={cn(marker.kind === "setup" ? "text-white" : "text-primary", dim && "opacity-[0.72]")}
+      />
+    );
   }
 
   if (marker.kind === "ci") {

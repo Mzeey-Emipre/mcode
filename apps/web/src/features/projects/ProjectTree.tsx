@@ -998,10 +998,17 @@ const ThreadRow = memo(function ThreadRow({
 }: ThreadRowProps) {
   const isActive = useWorkspaceStore((s) => s.activeThreadId === thread.id);
   const isRunning = useThreadStore((s) => s.runningThreadIds.has(thread.id));
+  const isSetupRunning = useThreadStore((s) => {
+    const record = s.records.get(thread.id);
+    return s.runningThreadIds.has(thread.id)
+      && record?.runtimePhase === "running"
+      && record.turnExecutionId === null;
+  });
   const marker = getThreadStateMarker({
     thread,
     checks,
     isRunning,
+    isSetupRunning,
     hasPendingPermission,
   });
   const prable = isPrable(thread);
@@ -1011,6 +1018,7 @@ const ThreadRow = memo(function ThreadRow({
       checks &&
       checks.aggregate !== "no_checks" &&
       marker.kind !== "action" &&
+      marker.kind !== "setup" &&
       marker.kind !== "running",
   );
   const isStaleWorktree =
