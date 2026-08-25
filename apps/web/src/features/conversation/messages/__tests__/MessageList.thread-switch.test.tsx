@@ -218,7 +218,7 @@ afterEach(() => {
 });
 
 describe("MessageList thread switch", () => {
-  it("opens selected-text actions after a valid pointer selection without a right-click", () => {
+  it("opens selected-text actions after mouseup without a contextmenu event", () => {
     messagesValue = [{
       id: "assistant-1",
       sequence: 1,
@@ -231,6 +231,8 @@ describe("MessageList thread switch", () => {
       <MessageList onSelectedTextComment={onSelectedTextComment} />,
     );
     const content = getByText("Select this phrase");
+    const contextMenuSpy = vi.fn();
+    content.addEventListener("contextmenu", contextMenuSpy);
     const text = content.firstChild!;
     const selection = document.getSelection()!;
     const range = document.createRange();
@@ -239,8 +241,9 @@ describe("MessageList thread switch", () => {
     selection.removeAllRanges();
     selection.addRange(range);
 
-    fireEvent.pointerUp(content, { button: 0, clientX: 24, clientY: 24 });
+    fireEvent.mouseUp(content, { button: 0, clientX: 24, clientY: 24 });
 
+    expect(contextMenuSpy).not.toHaveBeenCalled();
     const copy = getByRole("button", { name: "Copy" });
     const addComment = getByRole("button", { name: "Add comment" });
     expect(copy.compareDocumentPosition(addComment) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
@@ -268,6 +271,7 @@ describe("MessageList thread switch", () => {
       mentions: [],
     });
     selection.removeAllRanges();
+    content.removeEventListener("contextmenu", contextMenuSpy);
   });
 
   it("does not open selected-text actions for a collapsed pointer selection", () => {
@@ -287,13 +291,13 @@ describe("MessageList thread switch", () => {
     selection.removeAllRanges();
     selection.addRange(range);
 
-    fireEvent.pointerUp(content, { button: 0, clientX: 24, clientY: 24 });
+    fireEvent.mouseUp(content, { button: 0, clientX: 24, clientY: 24 });
 
     expect(queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
     expect(queryByRole("button", { name: "Add comment" })).not.toBeInTheDocument();
   });
 
-  it("does not open selected-text actions after a secondary pointer-up", () => {
+  it("does not open selected-text actions after a secondary mouseup", () => {
     messagesValue = [{
       id: "assistant-1",
       sequence: 1,
@@ -310,7 +314,7 @@ describe("MessageList thread switch", () => {
     selection.removeAllRanges();
     selection.addRange(range);
 
-    fireEvent.pointerUp(content, { button: 2, clientX: 24, clientY: 24 });
+    fireEvent.mouseUp(content, { button: 2, clientX: 24, clientY: 24 });
 
     expect(queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
     expect(queryByRole("button", { name: "Add comment" })).not.toBeInTheDocument();
@@ -333,7 +337,7 @@ describe("MessageList thread switch", () => {
     selection.removeAllRanges();
     selection.addRange(range);
 
-    fireEvent.pointerUp(content, { button: 0, clientX: 24, clientY: 24 });
+    fireEvent.mouseUp(content, { button: 0, clientX: 24, clientY: 24 });
     fireEvent.click(getByRole("button", { name: "Add comment" }));
 
     const noteInput = getByRole("textbox", { name: "Comment note" });
@@ -364,7 +368,7 @@ describe("MessageList thread switch", () => {
     selection.removeAllRanges();
     selection.addRange(range);
 
-    fireEvent.pointerUp(content, { button: 0, clientX: 24, clientY: 24 });
+    fireEvent.mouseUp(content, { button: 0, clientX: 24, clientY: 24 });
     fireEvent.click(getByRole("button", { name: "Copy" }));
 
     await vi.waitFor(() => {
@@ -392,7 +396,7 @@ describe("MessageList thread switch", () => {
     selection.removeAllRanges();
     selection.addRange(range);
 
-    fireEvent.pointerUp(content, { button: 0, clientX: 24, clientY: 24 });
+    fireEvent.mouseUp(content, { button: 0, clientX: 24, clientY: 24 });
     fireEvent.click(getByRole("button", { name: "Copy" }));
 
     await vi.waitFor(() => {
@@ -429,7 +433,7 @@ describe("MessageList thread switch", () => {
     selection.removeAllRanges();
     selection.addRange(crossMessageRange);
 
-    fireEvent.pointerUp(first, { button: 0, clientX: 24, clientY: 24 });
+    fireEvent.mouseUp(first, { button: 0, clientX: 24, clientY: 24 });
     expect(queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
 
     const ineligibleRange = document.createRange();
@@ -438,7 +442,7 @@ describe("MessageList thread switch", () => {
     selection.removeAllRanges();
     selection.addRange(ineligibleRange);
 
-    fireEvent.pointerUp(streaming, { button: 0, clientX: 24, clientY: 24 });
+    fireEvent.mouseUp(streaming, { button: 0, clientX: 24, clientY: 24 });
     expect(queryByRole("button", { name: "Copy" })).not.toBeInTheDocument();
   });
 
