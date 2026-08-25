@@ -4,18 +4,19 @@ import { logger } from "@mcode/shared";
 import {
   WORKSPACE_ENVIRONMENT_ACTION_TRANSCRIPT_MAX_BYTES,
   type WorkspaceEnvironmentActionRun,
+  type WorkspaceEnvironmentActionLaunchSnapshot,
   type WorkspaceEnvironmentActionSlotInput,
 } from "@mcode/contracts";
 import type { ThreadRepo } from "../../thread-control/persistence/thread-repo.js";
 import {
   TERMINAL_BACKEND_TOKEN,
+  PreparedTerminalCommandApprovalMismatchError,
   PreparedTerminalCommandStartError,
   type PreparedTerminalCommandSession,
   type TerminalBackend,
 } from "../../terminal/backends/terminal-backend.js";
 import {
   WorkspaceEnvironmentService,
-  selectWorkspaceEnvironmentScript,
 } from "./workspace-environment-service.js";
 import { WorkspaceEnvironmentServiceError } from "./workspace-environment-errors.js";
 import { ProjectActionRunRepo } from "./persistence/project-action-run-repo.js";
@@ -129,20 +130,41 @@ export class ProjectActionService {
     let releaseAdmission: (() => void) | null = null;
     try {
       releaseAdmission = this.reserveThreadStart(thread.id, thread.workspace_id);
-      const document = await this.environment.read(thread.workspace_id);
+      const resolved = await this.environment.resolveActionCommand(thread.id, input.actionId);
       this.assertThreadCanStart(thread);
-      const action = document.document.actions.find((candidate) => candidate.id === input.actionId);
-      if (!action) {
-        throw new WorkspaceEnvironmentServiceError("WORKSPACE_ENVIRONMENT_ACTION_NOT_FOUND", "Project Action not found");
+      const action = resolved.action;
+      if (!action) throw new WorkspaceEnvironmentServiceError("WORKSPACE_ENVIRONMENT_ACTION_NOT_FOUND", "Project Action not found");
+      if (resolved.kind !== "ready") {
+        if (resolved.kind === "unavailable") return this.persistAndPublish(
+          this.createUnavailableRun(thread.id, thread.workspace_id, action.id, action.name, actionSnapshot(resolved.snapshot)),
+        );
+        return this.persistAndPublish(
+          this.createFailedRun(thread.id, thread.workspace_id, action.id, action.name, null, actionSnapshot(resolved.snapshot)),
+        );
       }
-      const script = selectWorkspaceEnvironmentScript(action.command, platform());
-      if (script === null) return this.persistAndPublish(
-        this.createUnavailableRun(thread.id, thread.workspace_id, action.id, action.name),
-      );
+      const ready = resolved;
+      if (ready.approval) {
+        await ready.command.close();
+        return this.persistAndPublish(this.createAwaitingApprovalRun(
+          thread.id,
+          thread.workspace_id,
+          action.id,
+          action.name,
+          actionSnapshot(ready.snapshot),
+        ));
+      }
+      await ready.command.close();
+      const script = ready.script;
 
       let session: PreparedTerminalCommandSession | null = null;
       try {
-        session = await this.terminal.startPreparedCommand({ threadId: thread.id, script });
+        session = await this.terminal.startPreparedCommand({
+          threadId: thread.id,
+          script,
+          expectedLaunch: {
+            terminal: ready.snapshot.terminal,
+          },
+        });
         const timestamp = this.timestamp();
         const active: ActiveProjectAction = {
           state: "running",
@@ -176,6 +198,22 @@ export class ProjectActionService {
         reservation.resolve(this.active.get(slot) === active ? active : null);
         return active.run;
       } catch (error) {
+        if (error instanceof PreparedTerminalCommandApprovalMismatchError) {
+          const refreshed = await this.environment.resolveActionCommand(thread.id, action.id);
+          try {
+            if (refreshed.kind === "ready" && refreshed.approval && refreshed.action) {
+              return this.persistAndPublish(this.createAwaitingApprovalRun(
+                thread.id,
+                thread.workspace_id,
+                refreshed.action.id,
+                refreshed.action.name,
+                actionSnapshot(refreshed.snapshot),
+              ));
+            }
+          } finally {
+            if (refreshed.kind === "ready") await refreshed.command.close();
+          }
+        }
         if (session) {
           const active = this.active.get(slot);
           if (active?.state === "running") {
@@ -199,7 +237,7 @@ export class ProjectActionService {
           action.id,
           action.name,
           script,
-          error instanceof PreparedTerminalCommandStartError ? error.snapshot : null,
+          error instanceof PreparedTerminalCommandStartError ? error.snapshot : actionSnapshot(ready.snapshot),
         ));
       }
     } finally {
@@ -379,6 +417,7 @@ export class ProjectActionService {
     workspaceId: string,
     actionId: string,
     actionName: string,
+    snapshot: WorkspaceEnvironmentActionLaunchSnapshot,
   ): WorkspaceEnvironmentActionRun {
     const timestamp = this.timestamp();
     return {
@@ -390,13 +429,7 @@ export class ProjectActionService {
       terminalSessionId: null,
       actionName,
       status: "unavailable",
-      snapshot: {
-        platform: platform(),
-        script: null,
-        checkoutPath: null,
-        terminal: null,
-        environmentNames: [],
-      },
+      snapshot,
       createdAt: timestamp,
       startedAt: null,
       finishedAt: timestamp,
@@ -411,7 +444,7 @@ export class ProjectActionService {
     workspaceId: string,
     actionId: string,
     actionName: string,
-    script: string,
+    script: string | null,
     plannedSnapshot: WorkspaceEnvironmentActionRun["snapshot"] | null,
   ): WorkspaceEnvironmentActionRun {
     const timestamp = this.timestamp();
@@ -434,6 +467,33 @@ export class ProjectActionService {
       createdAt: timestamp,
       startedAt: timestamp,
       finishedAt: timestamp,
+      exitCode: null,
+      transcript: "",
+      transcriptTruncated: false,
+    };
+  }
+
+  private createAwaitingApprovalRun(
+    threadId: string,
+    workspaceId: string,
+    actionId: string,
+    actionName: string,
+    snapshot: WorkspaceEnvironmentActionLaunchSnapshot,
+  ): WorkspaceEnvironmentActionRun {
+    const timestamp = this.timestamp();
+    return {
+      threadId,
+      workspaceId,
+      actionId,
+      runId: this.createRunId(),
+      revision: 0,
+      terminalSessionId: null,
+      actionName,
+      status: "awaiting-approval",
+      snapshot,
+      createdAt: timestamp,
+      startedAt: null,
+      finishedAt: null,
       exitCode: null,
       transcript: "",
       transcriptTruncated: false,
@@ -538,6 +598,17 @@ function slotKey(threadId: string, actionId: string): string {
 function platform(): "windows" | "macos" | "linux" {
   if (process.platform === "win32") return "windows";
   return process.platform === "darwin" ? "macos" : "linux";
+}
+
+function actionSnapshot(snapshot: import("@mcode/contracts").WorkspaceEnvironmentSetupLaunchSnapshot): WorkspaceEnvironmentActionLaunchSnapshot {
+  return {
+    platform: snapshot.platform,
+    script: snapshot.script,
+    checkoutPath: snapshot.checkoutPath,
+    terminal: snapshot.terminal,
+    environmentNames: [],
+    approval: snapshot.approval ?? null,
+  };
 }
 
 function appendTranscript(

@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "f8a2be17-d417-46aa-a4b3-e0acc9c9edf2",
-  "prevId": "cda6715a-316f-4e06-9c51-3c62054c8119",
+  "id": "cd905367-49fa-4940-b996-4488244d61ed",
+  "prevId": "f8a2be17-d417-46aa-a4b3-e0acc9c9edf2",
   "tables": {
     "canonical_agent_events": {
       "name": "canonical_agent_events",
@@ -1476,6 +1476,13 @@
         },
         "mentions": {
           "name": "mentions",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "selected_text_comments": {
+          "name": "selected_text_comments",
           "type": "text",
           "primaryKey": false,
           "notNull": false,

@@ -54,7 +54,7 @@ describe("WorkspaceEnvironmentService", () => {
   it("reads an absent default and saves at projects/<workspace-id>/environment.json", async () => {
     const { root, instance } = await service();
     const absent = await instance.read(workspaceId);
-    expect(absent).toEqual({ document: { version: "0.0.1", actions: [] }, revision: null, status: "absent" });
+    expect(absent).toEqual({ document: { version: "0.0.1", actions: [] }, revision: null, status: "absent", storageMode: "system" });
     const saved = await instance.save({ workspaceId, sourceRevision: absent.revision, document });
     expect(saved.document).toEqual(document);
     expect(saved.revision).toBeTruthy();
@@ -89,6 +89,128 @@ describe("WorkspaceEnvironmentService", () => {
     const persisted = await instance.read(workspaceId);
     expect(persisted.document).toEqual(successes[0]?.value.document);
     expect(await readFile(join(root, "projects", workspaceId, "environment.json"), "utf8")).toContain(persisted.document.actions[0]?.name);
+  });
+
+  it("reads and writes the selected worktree checkout without accepting a revision from another storage scope", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mcode-environment-worktree-"));
+    roots.push(root);
+    const baseCheckout = join(root, "base");
+    const worktreeCheckout = join(root, "worktree");
+    await mkdir(worktreeCheckout, { recursive: true });
+    const instance = new WorkspaceEnvironmentService({
+      mcodeDir: root,
+      workspaces: { findById: (id) => id === workspaceId ? { id, path: baseCheckout } : null },
+      threads: {
+        findById: (id) => id === "worktree"
+          ? { id, workspace_id: workspaceId, mode: "worktree", worktree_path: worktreeCheckout }
+          : null,
+      },
+    });
+
+    await instance.setStorageMode({ workspaceId, threadId: "worktree", storageMode: "shared" });
+    const worktreeRead = await instance.read(workspaceId, "worktree");
+    const worktreeSaved = await instance.save({
+      workspaceId,
+      threadId: "worktree",
+      sourceRevision: worktreeRead.revision,
+      document,
+    });
+    const baseSaved = await instance.save({ workspaceId, sourceRevision: null, document });
+
+    expect(await readFile(join(worktreeCheckout, ".mcode", "environment.json"), "utf8")).toContain('"bun run dev"');
+    await expect(instance.save({
+      workspaceId,
+      threadId: "worktree",
+      sourceRevision: baseSaved.revision,
+      document: { ...document, actions: [] },
+    })).rejects.toMatchObject({ code: "WORKSPACE_ENVIRONMENT_STALE" });
+    expect(worktreeSaved.revision).not.toBe(baseSaved.revision);
+  });
+
+  it("requires approval for the exact shared Setup command and never falls back from a worktree checkout", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mcode-environment-shared-"));
+    roots.push(root);
+    const baseCheckout = join(root, "base");
+    const worktreeCheckout = join(root, "worktree");
+    await mkdir(join(baseCheckout, ".mcode"), { recursive: true });
+    await mkdir(worktreeCheckout, { recursive: true });
+    await writeFile(join(baseCheckout, ".mcode", "environment.json"), JSON.stringify({
+      version: "0.0.1",
+      setup: { default: "bun run setup" },
+      actions: [{ id: "build", name: "Build", command: { default: "bun run build" } }],
+    }));
+    const start = vi.fn(async () => ({ kind: "exited" as const, exitCode: 0, output: "ready", outputTruncated: false }));
+    const close = vi.fn(async () => ({ kind: "contained" as const }));
+    const prepare = vi.fn(async () => ({
+      kind: "ready" as const,
+      command: {
+        snapshot: {
+          checkoutPath: baseCheckout,
+          terminal: { executable: "pwsh.exe", arguments: ["-Command", "bun run setup"] },
+        },
+        start,
+        close,
+        waitForRelease: async () => undefined,
+      },
+    }));
+    const instance = new WorkspaceEnvironmentService({
+      mcodeDir: root,
+      workspaces: { findById: (id) => id === workspaceId ? { id, path: baseCheckout } : null },
+      threads: {
+        findById: (id) => id === "direct"
+          ? { id, workspace_id: workspaceId, mode: "direct" }
+          : id === "worktree"
+            ? { id, workspace_id: workspaceId, mode: "worktree", worktree_managed: false, worktree_path: worktreeCheckout }
+            : null,
+      },
+      terminalCommands: { prepare },
+    });
+
+    expect((await instance.read(workspaceId)).storageMode).toBe("shared");
+    const pending = await instance.startSetup({ threadId: "direct" });
+    expect(pending.status).toBe("awaiting-approval");
+    expect(pending.snapshot.script).toBe("bun run setup");
+    expect(start).not.toHaveBeenCalled();
+    const approval = pending.snapshot.approval;
+    expect(approval).not.toBeNull();
+    if (!approval) throw new Error("Expected a shared command approval");
+
+    await expect(instance.approveCommand({ ...approval, threadId: "direct", fingerprint: "0".repeat(64) }))
+      .rejects.toMatchObject({ code: "WORKSPACE_ENVIRONMENT_APPROVAL_STALE" });
+    await instance.approveCommand({ ...approval, threadId: "direct" });
+    expect((await instance.startSetup({ threadId: "direct" })).status).toBe("running");
+    await waitFor(() => expect(instance.getSetupAttempt({ threadId: "direct" }).attempt?.status).toBe("passed"));
+    expect(start).toHaveBeenCalledOnce();
+
+    const actionResolution = await instance.resolveActionCommand("direct", "build");
+    expect(actionResolution.kind).toBe("ready");
+    if (actionResolution.kind !== "ready" || !actionResolution.approval) throw new Error("Expected Action approval");
+    await instance.approveCommand({ threadId: "direct", ...actionResolution.approval });
+    const approvedAction = await instance.resolveActionCommand("direct", "build");
+    expect(approvedAction.kind === "ready" && approvedAction.approval).toBeNull();
+    if (approvedAction.kind === "ready") await approvedAction.command.close();
+    instance.clearApprovals(workspaceId);
+    const clearedAction = await instance.resolveActionCommand("direct", "build");
+    expect(clearedAction.kind === "ready" && clearedAction.approval?.target).toEqual({ kind: "action", actionId: "build" });
+    if (clearedAction.kind === "ready") await clearedAction.command.close();
+
+    const worktreeAttempt = await instance.startSetup({ threadId: "worktree" });
+    expect(worktreeAttempt.status).toBe("unavailable");
+
+    await writeFile(join(baseCheckout, ".mcode", "environment.json"), JSON.stringify({
+      version: "0.0.1",
+      setup: { default: "echo first\r\necho second" },
+      actions: [],
+    }));
+    const crlfFingerprint = (await instance.startSetup({ threadId: "direct" })).snapshot.approval?.fingerprint;
+    await writeFile(join(baseCheckout, ".mcode", "environment.json"), JSON.stringify({
+      version: "0.0.1",
+      setup: { default: "echo first\necho second" },
+      actions: [],
+    }));
+    const lfFingerprint = (await instance.startSetup({ threadId: "direct" })).snapshot.approval?.fingerprint;
+    expect(lfFingerprint).toBe(crlfFingerprint);
+    expect(prepare).toHaveBeenCalledTimes(10);
   });
 
   it("rejects oversized persisted bytes before parsing and preserves the file", async () => {

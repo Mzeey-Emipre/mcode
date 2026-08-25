@@ -379,6 +379,25 @@ export const workspaceEnvironmentQueuedTurns = sqliteTable(
   ],
 );
 
+/** System-local storage choice for one Project environment document. */
+export const workspaceEnvironmentStorageSettings = sqliteTable("workspace_environment_storage_settings", {
+  workspaceId: text("workspace_id").primaryKey().notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  storageMode: text("storage_mode").notNull(),
+  updatedAt: text("updated_at").notNull().default(timestampDefault),
+});
+
+/** Content-bound approvals for shared Project Setup and Action commands. */
+export const workspaceEnvironmentCommandApprovals = sqliteTable(
+  "workspace_environment_command_approvals",
+  {
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    commandId: text("command_id").notNull(),
+    fingerprint: text("fingerprint").notNull(),
+    approvedAt: text("approved_at").notNull().default(timestampDefault),
+  },
+  (table) => [uniqueIndex("idx_workspace_environment_command_approvals_command").on(table.workspaceId, table.commandId)],
+);
+
 /** Latest retained Project Action result for each stable Thread and Action slot. */
 export const projectActionRuns = sqliteTable(
   "project_action_runs",

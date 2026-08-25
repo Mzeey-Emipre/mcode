@@ -4,8 +4,11 @@ import type {
   WorkspaceEnvironmentAction,
   WorkspaceEnvironmentCommand,
   WorkspaceEnvironmentDocument,
+  WorkspaceEnvironmentReadResult,
+  WorkspaceEnvironmentStorageMode,
 } from "@mcode/contracts";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
@@ -157,55 +160,68 @@ function ActionEditor({ action, onChange, onRemove, nameRef }: ActionEditorProps
   );
 }
 
-/** Right-panel editor for one private workspace Project environment document. */
-export function ProjectEnvironmentPanel({ workspaceId, active = true }: { readonly workspaceId: string; readonly active?: boolean }) {
+/** Right-panel editor for one Project environment document. */
+export function ProjectEnvironmentPanel({ workspaceId, threadId, active = true }: {
+  readonly workspaceId: string;
+  readonly threadId?: string;
+  readonly active?: boolean;
+}) {
   const projectName = useWorkspaceStore((state) =>
     state.workspaces.find((workspace) => workspace.id === workspaceId)?.name ?? "Unknown project",
   );
   const [draft, setDraft] = useState<WorkspaceEnvironmentDocument>(EMPTY_DOCUMENT);
   const [revision, setRevision] = useState<string | null>(null);
-  const [loadedWorkspaceId, setLoadedWorkspaceId] = useState<string | null>(null);
+  const [storageMode, setStorageMode] = useState<WorkspaceEnvironmentStorageMode>("system");
+  const scopeId = `${workspaceId}:${threadId ?? "base"}`;
+  const systemStorageDescriptionId = `${scopeId}-system-storage-description`;
+  const sharedStorageDescriptionId = `${scopeId}-shared-storage-description`;
+  const [loadedScopeId, setLoadedScopeId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string[] | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [setupEnabled, setSetupEnabled] = useState(false);
+  const [confirmSharedStorage, setConfirmSharedStorage] = useState(false);
   const draftRef = useRef(draft);
   const focusAfterRead = useRef(false);
   const firstTaskRef = useRef<HTMLButtonElement | null>(null);
   const firstActionNameRef = useRef<HTMLInputElement | null>(null);
 
-  const applyRead = useCallback((result: { document: WorkspaceEnvironmentDocument; revision: string | null }) => {
+  const applyRead = useCallback((result: WorkspaceEnvironmentReadResult) => {
     draftRef.current = result.document;
     setDraft(result.document);
     setSetupEnabled(Boolean(result.document.setup));
     setRevision(result.revision);
-    setLoadedWorkspaceId(workspaceId);
+    setStorageMode(result.storageMode ?? "system");
+    setLoadedScopeId(scopeId);
     setError(null);
     focusAfterRead.current = true;
-  }, [workspaceId]);
+  }, [scopeId]);
 
   useEffect(() => {
     draftRef.current = draft;
   }, [draft]);
 
-  const reload = useCallback(async () => {
+  const reload = useCallback(async (announce = false) => {
     setLoading(true);
     setStatus(null);
     try {
-      const result = await getTransport().readWorkspaceEnvironment(workspaceId);
+      const transport = getTransport();
+      const result = threadId
+        ? await transport.readWorkspaceEnvironment(workspaceId, threadId)
+        : await transport.readWorkspaceEnvironment(workspaceId);
       applyRead(result);
-      setStatus("Environment reloaded");
+      if (announce) setStatus("Environment reloaded");
     } catch (nextError) {
       setError(issueText(nextError));
     } finally {
       setLoading(false);
     }
-  }, [applyRead, workspaceId]);
+  }, [applyRead, threadId, workspaceId]);
 
   useEffect(() => {
-    if (loadedWorkspaceId !== workspaceId) void reload();
-  }, [loadedWorkspaceId, reload, workspaceId]);
+    if (loadedScopeId !== scopeId) void reload();
+  }, [loadedScopeId, reload, scopeId]);
 
   useEffect(() => {
     if (!active || loading || !focusAfterRead.current) return;
@@ -219,13 +235,48 @@ export function ProjectEnvironmentPanel({ workspaceId, active = true }: { readon
     setSaving(true);
     setStatus(null);
     try {
-      const result = await getTransport().saveWorkspaceEnvironment(workspaceId, submittedDraft, revision);
+      const transport = getTransport();
+      const result = threadId
+        ? await transport.saveWorkspaceEnvironment(workspaceId, submittedDraft, revision, threadId)
+        : await transport.saveWorkspaceEnvironment(workspaceId, submittedDraft, revision);
       setRevision(result.revision);
-      setLoadedWorkspaceId(workspaceId);
+      setLoadedScopeId(scopeId);
       if (JSON.stringify(draftRef.current) === submittedDraftJson) applyRead(result);
       useProjectActionStore.getState().invalidateWorkspaceConfiguration(workspaceId);
       setStatus("Environment saved");
       requestAnimationFrame(() => firstTaskRef.current?.focus());
+    } catch (nextError) {
+      setError(issueText(nextError));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const changeStorageMode = async (nextStorageMode: WorkspaceEnvironmentStorageMode) => {
+    setSaving(true);
+    setStatus(null);
+    try {
+      const transport = getTransport();
+      const result = threadId
+        ? await transport.setWorkspaceEnvironmentStorageMode(workspaceId, nextStorageMode, threadId)
+        : await transport.setWorkspaceEnvironmentStorageMode(workspaceId, nextStorageMode);
+      applyRead(result);
+      useProjectActionStore.getState().invalidateWorkspaceConfiguration(workspaceId);
+      setStatus(nextStorageMode === "shared" ? "Shared environment enabled" : "System environment enabled");
+    } catch (nextError) {
+      setError(issueText(nextError));
+    } finally {
+      setSaving(false);
+      setConfirmSharedStorage(false);
+    }
+  };
+
+  const clearApprovals = async () => {
+    setSaving(true);
+    setStatus(null);
+    try {
+      await getTransport().clearWorkspaceEnvironmentApprovals(workspaceId);
+      setStatus("Shared command approvals cleared");
     } catch (nextError) {
       setError(issueText(nextError));
     } finally {
@@ -263,10 +314,10 @@ export function ProjectEnvironmentPanel({ workspaceId, active = true }: { readon
   return (
     <section className="flex min-h-0 flex-1 flex-col overflow-hidden" aria-labelledby="project-environment-title">
       <div className="min-h-0 flex-1 overflow-y-auto px-5 pt-5 pb-32">
-        <div className="space-y-8">
-          <header>
+        <div className="space-y-7">
+          <header className="space-y-1">
             <h1 id="project-environment-title" className="text-base font-semibold">Project settings</h1>
-            <p className="mt-1 text-xs text-muted-foreground">{projectName}</p>
+            <p className="text-xs text-muted-foreground">{projectName}</p>
           </header>
           {error ? (
             <div className="max-h-32 overflow-y-auto rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs" role="alert" tabIndex={0} aria-label="Project environment errors">
@@ -276,14 +327,53 @@ export function ProjectEnvironmentPanel({ workspaceId, active = true }: { readon
           {status ? <p className="text-xs text-muted-foreground" role="status">{status}</p> : null}
           {loading ? <p className="text-xs text-muted-foreground">Loading environment...</p> : (
             <>
-            <section aria-labelledby="project-environment-storage-title">
-              <h2 id="project-environment-storage-title" className="text-sm font-semibold">Environment</h2>
-              <div className="mt-3 px-1 py-4">
-                <p className="text-xs text-muted-foreground">This document is saved in Mcode’s user data on this computer.</p>
+            <section aria-labelledby="project-environment-storage-title" className="space-y-3">
+              <div className="space-y-1">
+                <h2 id="project-environment-storage-title" className="text-sm font-semibold">Environment storage</h2>
+                <p className="text-xs text-muted-foreground">Choose where Mcode saves this Project’s Setup and actions.</p>
+              </div>
+              <div role="radiogroup" aria-label="Environment storage" className="mt-3 grid gap-2">
+                <Button
+                  type="button"
+                  role="radio"
+                  aria-checked={storageMode === "system"}
+                  aria-label="System storage"
+                  aria-describedby={systemStorageDescriptionId}
+                  variant={storageMode === "system" ? "secondary" : "outline"}
+                  disabled={saving}
+                  className="h-auto justify-start px-3 py-3 text-left"
+                  onClick={() => { if (storageMode !== "system") void changeStorageMode("system"); }}
+                >
+                  <span className="flex min-w-0 flex-col gap-1">
+                    <span>System storage</span>
+                    <span id={systemStorageDescriptionId} className="text-xs font-normal text-muted-foreground">Only available on this computer.</span>
+                  </span>
+                </Button>
+                <Button
+                  type="button"
+                  role="radio"
+                  aria-checked={storageMode === "shared"}
+                  aria-label="Shared storage"
+                  aria-describedby={sharedStorageDescriptionId}
+                  variant={storageMode === "shared" ? "secondary" : "outline"}
+                  disabled={saving}
+                  className="h-auto justify-start px-3 py-3 text-left"
+                  onClick={() => { if (storageMode !== "shared") setConfirmSharedStorage(true); }}
+                >
+                  <span className="flex min-w-0 flex-col gap-1">
+                    <span>Shared storage</span>
+                    <span id={sharedStorageDescriptionId} className="text-xs font-normal text-muted-foreground">Save in .mcode/environment.json for this Project.</span>
+                  </span>
+                </Button>
+                {storageMode === "shared" ? (
+                  <Button type="button" variant="ghost" size="sm" className="w-fit" disabled={saving} onClick={() => { void clearApprovals(); }}>
+                    Clear shared command approvals
+                  </Button>
+                ) : null}
               </div>
             </section>
-            <section aria-labelledby="project-environment-setup-title" className="space-y-4 pt-4">
-              <div className="mb-4 flex items-center justify-between gap-3">
+            <section aria-labelledby="project-environment-setup-title" className="space-y-3 border-t border-border/60 pt-6">
+              <div className="flex items-center justify-between gap-3">
                 <div>
                   <h2 id="project-environment-setup-title" className="text-base font-semibold">Setup</h2>
                   <p className="mt-1 text-xs text-muted-foreground">Optional setup command configuration for this Project.</p>
@@ -301,8 +391,8 @@ export function ProjectEnvironmentPanel({ workspaceId, active = true }: { readon
                 />
                 ) : null}
             </section>
-            <section aria-labelledby="project-environment-actions-title" className="space-y-4 pt-4">
-              <div className="mb-4 flex items-center justify-between gap-3">
+            <section aria-labelledby="project-environment-actions-title" className="space-y-3 border-t border-border/60 pt-6">
+              <div className="flex items-center justify-between gap-3">
                 <div>
                   <h2 id="project-environment-actions-title" className="text-base font-semibold">Project actions</h2>
                   <p className="mt-1 text-xs text-muted-foreground">Save named commands for this Project.</p>
@@ -330,13 +420,32 @@ export function ProjectEnvironmentPanel({ workspaceId, active = true }: { readon
         </div>
       </div>
       <footer className="flex shrink-0 justify-end gap-2 border-t border-border/60 px-3 py-2">
-        <Button type="button" variant="ghost" size="sm" onClick={() => void reload()} disabled={loading || saving}>
+        <Button type="button" variant="ghost" size="sm" onClick={() => void reload(true)} disabled={loading || saving}>
           <RefreshCw size={14} aria-hidden /> Reload
         </Button>
         <Button type="button" size="sm" onClick={() => void save()} disabled={loading || saving}>
           <Save size={14} aria-hidden /> {saving ? "Saving..." : "Save"}
         </Button>
       </footer>
+      <Dialog open={confirmSharedStorage} onOpenChange={setConfirmSharedStorage}>
+        <DialogContent showCloseButton={!saving}>
+          <DialogHeader>
+            <DialogTitle>Share this Project environment?</DialogTitle>
+            <DialogDescription className="space-y-4">
+              <p>
+                Save this Project environment in <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs text-foreground">.mcode/environment.json</code> in the {threadId ? "current checkout" : "base checkout"}.
+              </p>
+              <p>Before a Setup command or Project action runs from this file, Mcode asks for your approval.</p>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" disabled={saving} onClick={() => setConfirmSharedStorage(false)}>Cancel</Button>
+            <Button type="button" disabled={saving} onClick={() => { void changeStorageMode("shared"); }}>
+              {saving ? "Sharing..." : "Share environment"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

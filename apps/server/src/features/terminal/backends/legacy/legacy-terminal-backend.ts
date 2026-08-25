@@ -2,6 +2,7 @@ import { inject, injectable } from "tsyringe";
 import type { TerminalBackendCapabilities } from "@mcode/contracts";
 import {
   TerminalBackend,
+  PreparedTerminalCommandApprovalMismatchError,
   type TerminalBackendSender,
   type PreparedTerminalCommandRequest,
   type PreparedTerminalCommandSession,
@@ -120,6 +121,16 @@ export class LegacyTerminalBackend extends TerminalBackend {
     const profile = await this.profiles.resolveLaunchProfile({ workspaceId: thread.workspace_id });
     const launch = noninteractiveLaunch(profile.resolvedProfile, input.script);
     if (!launch) throw new Error("The current Terminal profile does not support noninteractive Project Actions");
+    const checkoutPath = this.terminalService.resolveWorkingDirectory(input.threadId);
+    if (!matchesExpectedPreparedLaunch(launch, input.expectedLaunch)) {
+      throw new PreparedTerminalCommandApprovalMismatchError({
+        platform: process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : "linux",
+        script: input.script,
+        checkoutPath,
+        terminal: { executable: launch.executable, arguments: [...launch.arguments] },
+        environmentNames: [],
+      });
+    }
     const session = this.terminalService.startPreparedCommand(input.threadId, {
       executable: launch.executable,
       arguments: launch.arguments,
@@ -138,4 +149,20 @@ export class LegacyTerminalBackend extends TerminalBackend {
       stop: session.stop,
     };
   }
+}
+
+function matchesExpectedPreparedLaunch(
+  launch: { readonly executable: string; readonly arguments: readonly string[] },
+  expected: PreparedTerminalCommandRequest["expectedLaunch"],
+): boolean {
+  if (!expected) return true;
+  return expected.terminal?.executable === launch.executable
+    && expected.terminal.arguments.length === launch.arguments.length
+    && expected.terminal.arguments.every(
+      (argument, index) => normalizeLaunchArgument(argument) === normalizeLaunchArgument(launch.arguments[index] ?? ""),
+    );
+}
+
+function normalizeLaunchArgument(value: string): string {
+  return value.replace(/\r\n?/g, "\n");
 }

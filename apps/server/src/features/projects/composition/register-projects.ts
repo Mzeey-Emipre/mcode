@@ -74,6 +74,7 @@ export function registerProjectServices(container: DependencyContainer): void {
         if (workspaceEnvironmentService) return workspaceEnvironmentService;
         workspaceEnvironmentService = new WorkspaceEnvironmentService({
           threads: c.resolve(ThreadRepo),
+          workspaces: c.resolve(WorkspaceRepo),
           terminalCommands: c.resolve(TerminalCommandService),
           terminalRecovery: c.isRegistered(TERMINAL_BACKEND_TOKEN)
             ? c.resolve<TerminalBackend>(TERMINAL_BACKEND_TOKEN)

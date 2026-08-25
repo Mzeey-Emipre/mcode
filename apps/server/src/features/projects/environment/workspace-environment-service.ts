@@ -3,11 +3,17 @@ import { mkdir, open, rename, unlink, writeFile } from "fs/promises";
 import { dirname, join } from "path";
 import {
   DEFAULT_WORKSPACE_ENVIRONMENT_DOCUMENT,
+  WORKSPACE_ENVIRONMENT_APPROVAL_CONTRACT_VERSION,
   WORKSPACE_ENVIRONMENT_DOCUMENT_MAX_BYTES,
   WORKSPACE_ENVIRONMENT_SETUP_OUTPUT_MAX_BYTES,
   WorkspaceEnvironmentDocumentSchema,
   workspaceEnvironmentValidationIssues,
   type WorkspaceEnvironmentPlatform,
+  type WorkspaceEnvironmentStorageMode,
+  type WorkspaceEnvironmentCommandTarget,
+  type WorkspaceEnvironmentCommandApproval,
+  type WorkspaceEnvironmentCommandApproveInput,
+  type WorkspaceEnvironmentStorageSetInput,
   type WorkspaceEnvironmentCommand,
   type WorkspaceEnvironmentReadResult,
   type WorkspaceEnvironmentSaveInput,
@@ -15,6 +21,7 @@ import {
   type WorkspaceEnvironmentSetupGetInput,
   type WorkspaceEnvironmentSetupGetResult,
   type WorkspaceEnvironmentSetupLaunchSnapshot,
+  type WorkspaceEnvironmentAction,
   type WorkspaceEnvironmentSetupOutcome,
   type WorkspaceEnvironmentAutomaticSetupReason,
   type WorkspaceEnvironmentSetupStartInput,
@@ -38,6 +45,7 @@ import type {
   PreparedTerminalCommand,
 } from "../../terminal/commands/terminal-command-service.js";
 import { WorkspaceEnvironmentServiceError } from "./workspace-environment-errors.js";
+import { WorkspaceEnvironmentConfigurationRepo } from "./persistence/workspace-environment-configuration-repo.js";
 import {
   WorkspaceEnvironmentAutomaticRepository,
   WorkspaceEnvironmentAutomaticQueueCapacityError,
@@ -75,8 +83,15 @@ export interface WorkspaceEnvironmentSetupThread {
   readonly workspace_id: string;
   readonly mode: string;
   readonly worktree_managed?: boolean;
+  readonly worktree_path?: string | null;
   readonly deleted_at?: string | null;
   readonly cleanup_state?: string | null;
+}
+
+/** Workspace fields used to resolve the base checkout for shared Project configuration. */
+export interface WorkspaceEnvironmentWorkspace {
+  readonly id: string;
+  readonly path: string;
 }
 
 class SetupStartCancelledError extends Error {
@@ -121,6 +136,9 @@ export interface WorkspaceEnvironmentServiceOptions {
   readonly threads?: {
     findById(id: string): WorkspaceEnvironmentSetupThread | null;
   };
+  readonly workspaces?: {
+    findById(id: string): WorkspaceEnvironmentWorkspace | null;
+  };
   readonly terminalCommands?: WorkspaceEnvironmentTerminalCommandExecutor;
   readonly terminalRecovery?: WorkspaceEnvironmentTerminalRecoveryExecutor;
   readonly attachmentStorage?: WorkspaceEnvironmentAttachmentStorage;
@@ -134,6 +152,23 @@ export interface WorkspaceEnvironmentServiceOptions {
   readonly database?: Database.Database;
 }
 
+/** Resolved command facts shared by Setup approval and Project Action orchestration. */
+export type WorkspaceEnvironmentCommandResolution =
+  | {
+    readonly kind: "ready";
+    readonly command: PreparedTerminalCommand;
+    readonly script: string;
+    readonly snapshot: WorkspaceEnvironmentSetupLaunchSnapshot;
+    readonly approval: WorkspaceEnvironmentCommandApproval | null;
+    readonly action: WorkspaceEnvironmentAction | null;
+  }
+  | {
+    readonly kind: "unavailable" | "configuration";
+    readonly output: string;
+    readonly snapshot: WorkspaceEnvironmentSetupLaunchSnapshot;
+    readonly action: WorkspaceEnvironmentAction | null;
+  };
+
 function issue(
   path: (string | number)[],
   code: string,
@@ -143,8 +178,18 @@ function issue(
   return { path, code, reason, message };
 }
 
-function revisionFor(bytes: Uint8Array): string {
-  return createHash("sha256").update(bytes).digest("hex");
+function revisionFor(
+  bytes: Uint8Array,
+  storageMode: WorkspaceEnvironmentStorageMode,
+  filePath: string,
+): string {
+  return createHash("sha256")
+    .update(storageMode)
+    .update("\0")
+    .update(filePath)
+    .update("\0")
+    .update(bytes)
+    .digest("hex");
 }
 
 function validationError(error: ZodError): WorkspaceEnvironmentServiceError {
@@ -171,6 +216,9 @@ export class WorkspaceEnvironmentService {
   private readonly deletingThreadCounts = new Map<string, number>();
   private readonly deletingWorkspaceCounts = new Map<string, number>();
   private readonly options: WorkspaceEnvironmentServiceOptions;
+  private readonly configuration: WorkspaceEnvironmentConfigurationRepo | null;
+  private readonly inMemoryStorageModes = new Map<string, WorkspaceEnvironmentStorageMode>();
+  private readonly inMemoryApprovals = new Map<string, string>();
   private readonly schedule: NonNullable<WorkspaceEnvironmentServiceOptions["schedule"]>;
   private readonly cancelScheduled: NonNullable<WorkspaceEnvironmentServiceOptions["cancelScheduled"]>;
   private readonly automaticRepository: WorkspaceEnvironmentAutomaticRepository | null;
@@ -191,6 +239,9 @@ export class WorkspaceEnvironmentService {
     this.cancelScheduled = this.options.cancelScheduled ?? clearTimeout;
     this.automaticRepository = this.options.database
       ? new WorkspaceEnvironmentAutomaticRepository(this.options.database, () => this.now())
+      : null;
+    this.configuration = this.options.database
+      ? new WorkspaceEnvironmentConfigurationRepo(this.options.database)
       : null;
   }
 
@@ -371,15 +422,118 @@ export class WorkspaceEnvironmentService {
     return join(this.mcodeDir, "projects", workspaceId, "environment.json");
   }
 
-  /** Read and validate the current document, returning an absent default when no file exists. */
-  async read(workspaceId: string): Promise<WorkspaceEnvironmentReadResult> {
-    const filePath = this.filePath(workspaceId);
+  /** Select the exclusive storage location and return its current document. */
+  async setStorageMode(input: WorkspaceEnvironmentStorageSetInput): Promise<WorkspaceEnvironmentReadResult> {
+    return this.enqueueSave(input.workspaceId, async () => {
+      const thread = input.threadId ? this.requireSetupThread(input.threadId) : null;
+      if (thread) {
+        if (thread.workspace_id !== input.workspaceId) {
+          throw new WorkspaceEnvironmentServiceError(
+            "WORKSPACE_ENVIRONMENT_NOT_FOUND",
+            "Thread does not belong to this Project",
+          );
+        }
+      }
+      if (input.storageMode === "shared") this.requireWorkspace(input.workspaceId);
+      const filePath = thread
+        ? this.filePathForThread(thread, input.storageMode)
+        : this.filePathForWorkspace(input.workspaceId, input.storageMode);
+      const result = await this.readAt(filePath, input.storageMode);
+      this.persistStorageMode(input.workspaceId, input.storageMode);
+      return result;
+    });
+  }
+
+  /** Clear every persisted shared-command approval for one Project. */
+  clearApprovals(workspaceId: string): void {
+    this.configuration?.clearApprovals(workspaceId);
+    for (const key of this.inMemoryApprovals.keys()) {
+      if (key.startsWith(`${workspaceId}:`)) this.inMemoryApprovals.delete(key);
+    }
+  }
+
+  /** Approve the current shared command only when it still matches the script the user reviewed. */
+  async approveCommand(input: WorkspaceEnvironmentCommandApproveInput): Promise<void> {
+    const thread = this.requireSetupThread(input.threadId);
+    this.assertApprovalAllowed(thread);
+    let resolved: WorkspaceEnvironmentCommandResolution;
+    try {
+      resolved = await this.resolveCommand(thread, input.target);
+    } catch (error) {
+      this.restartAutomaticApproval(thread, input.target);
+      throw error;
+    }
+    try {
+      if (resolved.kind !== "ready") {
+        this.restartAutomaticApproval(thread, input.target);
+        throw new WorkspaceEnvironmentServiceError(
+          "WORKSPACE_ENVIRONMENT_APPROVAL_NOT_REQUIRED",
+          "This Project command does not require shared-command approval",
+        );
+      }
+      const approval = resolved.approval;
+      if (approval === null) {
+        this.restartAutomaticApproval(thread, input.target);
+        throw new WorkspaceEnvironmentServiceError(
+          "WORKSPACE_ENVIRONMENT_APPROVAL_NOT_REQUIRED",
+          "This Project command does not require shared-command approval",
+        );
+      }
+      if (approval.fingerprint !== input.fingerprint) {
+        this.restartAutomaticApproval(thread, input.target);
+        throw new WorkspaceEnvironmentServiceError(
+          "WORKSPACE_ENVIRONMENT_APPROVAL_STALE",
+          "The shared Project command changed before approval",
+        );
+      }
+      this.assertApprovalAllowed(thread);
+      this.persistApproval(thread.workspace_id, approval);
+    } finally {
+      if (resolved.kind === "ready") await this.closeUnstartedCommand(resolved.command);
+    }
+
+    this.restartAutomaticApproval(thread, input.target);
+  }
+
+  /** Resolve one Action command and its approval state without starting a process. */
+  async resolveActionCommand(threadId: string, actionId: string): Promise<WorkspaceEnvironmentCommandResolution> {
+    return await this.resolveCommand(this.requireSetupThread(threadId), { kind: "action", actionId });
+  }
+
+  /** Read and validate the selected Project environment document for the base checkout or one Thread checkout. */
+  async read(workspaceId: string, threadId?: string): Promise<WorkspaceEnvironmentReadResult> {
+    if (threadId) {
+      const thread = this.requireSetupThread(threadId);
+      if (thread.workspace_id !== workspaceId) {
+        throw new WorkspaceEnvironmentServiceError(
+          "WORKSPACE_ENVIRONMENT_NOT_FOUND",
+          "Thread does not belong to this Project",
+        );
+      }
+      return await this.readForThread(thread);
+    }
+    const storageMode = await this.storageMode(workspaceId);
+    const filePath = this.filePathForWorkspace(workspaceId, storageMode);
+    return await this.readAt(filePath, storageMode);
+  }
+
+  private async readForThread(thread: WorkspaceEnvironmentSetupThread): Promise<WorkspaceEnvironmentReadResult> {
+    const storageMode = await this.storageMode(thread.workspace_id);
+    const filePath = this.filePathForThread(thread, storageMode);
+    return await this.readAt(filePath, storageMode);
+  }
+
+  private async readAt(
+    filePath: string,
+    storageMode: WorkspaceEnvironmentStorageMode,
+  ): Promise<WorkspaceEnvironmentReadResult> {
     const bounded = await this.readBounded(filePath);
     if (bounded.kind === "absent") {
       return {
         document: DEFAULT_WORKSPACE_ENVIRONMENT_DOCUMENT,
         revision: null,
         status: "absent",
+        storageMode,
       };
     }
     if (bounded.kind === "too_large") {
@@ -405,9 +559,162 @@ export class WorkspaceEnvironmentService {
     if (!parsed.success) throw validationError(parsed.error);
     return {
       document: parsed.data,
-      revision: revisionFor(bytes),
+      revision: revisionFor(bytes, storageMode, filePath),
       status: "present",
+      storageMode,
     };
+  }
+
+  private filePathForWorkspace(workspaceId: string, storageMode: WorkspaceEnvironmentStorageMode): string {
+    if (storageMode === "system") return this.filePath(workspaceId);
+    return join(this.requireWorkspace(workspaceId).path, ".mcode", "environment.json");
+  }
+
+  private filePathForThread(
+    thread: WorkspaceEnvironmentSetupThread,
+    storageMode: WorkspaceEnvironmentStorageMode,
+  ): string {
+    if (storageMode === "system") return this.filePath(thread.workspace_id);
+    const checkoutPath = thread.mode === "worktree" ? thread.worktree_path : this.requireWorkspace(thread.workspace_id).path;
+    if (!checkoutPath) {
+      throw new WorkspaceEnvironmentServiceError(
+        "WORKSPACE_ENVIRONMENT_NOT_FOUND",
+        "The shared Project environment checkout is unavailable",
+      );
+    }
+    return join(checkoutPath, ".mcode", "environment.json");
+  }
+
+  private requireWorkspace(workspaceId: string): WorkspaceEnvironmentWorkspace {
+    const workspace = this.options.workspaces?.findById(workspaceId);
+    if (workspace) return workspace;
+    throw new WorkspaceEnvironmentServiceError(
+      "WORKSPACE_ENVIRONMENT_NOT_FOUND",
+      "Workspace was not found for shared Project configuration",
+    );
+  }
+
+  private async storageMode(workspaceId: string): Promise<WorkspaceEnvironmentStorageMode> {
+    const stored = this.configuration?.storageMode(workspaceId) ?? this.inMemoryStorageModes.get(workspaceId);
+    if (stored) return stored;
+    const workspace = this.options.workspaces?.findById(workspaceId);
+    const storageMode = workspace && await this.hasValidSharedDocument(join(workspace.path, ".mcode", "environment.json"))
+      ? "shared"
+      : "system";
+    this.persistStorageMode(workspaceId, storageMode);
+    return storageMode;
+  }
+
+  private persistStorageMode(workspaceId: string, storageMode: WorkspaceEnvironmentStorageMode): void {
+    if (this.configuration) this.configuration.setStorageMode(workspaceId, storageMode);
+    else this.inMemoryStorageModes.set(workspaceId, storageMode);
+  }
+
+  private async hasValidSharedDocument(filePath: string): Promise<boolean> {
+    const bounded = await this.readBounded(filePath);
+    if (bounded.kind !== "present") return false;
+    try {
+      const value: unknown = JSON.parse(new TextDecoder().decode(bounded.bytes));
+      return WorkspaceEnvironmentDocumentSchema().safeParse(value).success;
+    } catch {
+      return false;
+    }
+  }
+
+  private async resolveCommand(
+    thread: WorkspaceEnvironmentSetupThread,
+    target: WorkspaceEnvironmentCommandTarget,
+    canContinue?: () => boolean,
+  ): Promise<WorkspaceEnvironmentCommandResolution> {
+    const platform = this.options.platform ?? platformForCurrentProcess();
+    const environment = await this.readForThread(thread);
+    if (canContinue && !canContinue()) throw new SetupStartCancelledError();
+    const action = target.kind === "action"
+      ? environment.document.actions.find((candidate) => candidate.id === target.actionId) ?? null
+      : null;
+    if (target.kind === "action" && !action) {
+      throw new WorkspaceEnvironmentServiceError("WORKSPACE_ENVIRONMENT_ACTION_NOT_FOUND", "Project Action not found");
+    }
+    const command = target.kind === "setup" ? environment.document.setup : action?.command;
+    const script = command ? selectWorkspaceEnvironmentScript(command, platform) : null;
+    if (!script) {
+      return {
+        kind: "unavailable",
+        output: "This Project command is not available on this system",
+        snapshot: unavailableSnapshot(platform, null),
+        action,
+      };
+    }
+    const terminalCommands = this.options.terminalCommands;
+    if (!terminalCommands) {
+      throw new WorkspaceEnvironmentServiceError(
+        "WORKSPACE_ENVIRONMENT_SETUP_UNAVAILABLE",
+        "Project command execution is unavailable for this Thread",
+      );
+    }
+    const preparation = await terminalCommands.prepare({
+      scope: { kind: "thread", workspaceId: thread.workspace_id, threadId: thread.id },
+      script,
+      timeoutMs: this.options.manualSetupTimeoutMs ?? DEFAULT_MANUAL_SETUP_TIMEOUT_MS,
+      outputMaxBytes: WORKSPACE_ENVIRONMENT_SETUP_OUTPUT_MAX_BYTES,
+    });
+    if (canContinue && !canContinue()) {
+      if (preparation.kind === "ready") await this.closeUnstartedCommand(preparation.command);
+      throw new SetupStartCancelledError();
+    }
+    if (preparation.kind !== "ready") {
+      return {
+        kind: preparation.kind,
+        output: preparation.output,
+        snapshot: snapshotForPreparation(platform, script, preparation),
+        action,
+      };
+    }
+    const approval = environment.storageMode === "shared"
+      ? this.pendingApproval(thread.workspace_id, target, platform, script, preparation.command.snapshot)
+      : null;
+    return {
+      kind: "ready",
+      command: preparation.command,
+      script,
+      snapshot: snapshotForPreparation(platform, script, preparation, approval),
+      approval,
+      action,
+    };
+  }
+
+  private pendingApproval(
+    workspaceId: string,
+    target: WorkspaceEnvironmentCommandTarget,
+    platform: WorkspaceEnvironmentPlatform,
+    script: string,
+    snapshot: PreparedTerminalCommand["snapshot"],
+  ): WorkspaceEnvironmentCommandApproval | null {
+    const terminal = snapshot.terminal;
+    if (!terminal) return null;
+    const fingerprint = approvalFingerprint({ workspaceId, target, platform, script, terminal });
+    return this.hasApproval(workspaceId, commandIdentity(target), fingerprint)
+      ? null
+      : { target, fingerprint };
+  }
+
+  private hasApproval(workspaceId: string, commandId: string, fingerprint: string): boolean {
+    return this.configuration?.hasApproval(workspaceId, commandId, fingerprint)
+      ?? this.inMemoryApprovals.get(`${workspaceId}:${commandId}`) === fingerprint;
+  }
+
+  private restartAutomaticApproval(
+    thread: WorkspaceEnvironmentSetupThread,
+    target: WorkspaceEnvironmentCommandTarget,
+  ): void {
+    if (target.kind !== "setup" || !this.automaticRepository?.resumeAwaitingApproval(thread.id)) return;
+    void this.startAutomaticSetup(thread);
+  }
+
+  private persistApproval(workspaceId: string, approval: WorkspaceEnvironmentCommandApproval): void {
+    const commandId = commandIdentity(approval.target);
+    if (this.configuration) this.configuration.approve(workspaceId, commandId, approval.fingerprint);
+    else this.inMemoryApprovals.set(`${workspaceId}:${commandId}`, approval.fingerprint);
   }
 
   private async readBounded(filePath: string): Promise<
@@ -419,7 +726,8 @@ export class WorkspaceEnvironmentService {
     try {
       handle = await open(filePath, "r");
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return { kind: "absent" };
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || code === "ENOTDIR") return { kind: "absent" };
       throw error;
     }
     const bytes = new Uint8Array(WORKSPACE_ENVIRONMENT_DOCUMENT_MAX_BYTES + 1);
@@ -440,12 +748,11 @@ export class WorkspaceEnvironmentService {
 
   /** Validate and atomically replace the workspace environment when its revision is current. */
   async save(input: WorkspaceEnvironmentSaveInput): Promise<WorkspaceEnvironmentReadResult> {
-    const filePath = this.filePath(input.workspaceId);
     const parsed = WorkspaceEnvironmentDocumentSchema().safeParse(input.document);
     if (!parsed.success) throw validationError(parsed.error);
 
     return this.enqueueSave(input.workspaceId, async () => {
-      const current = await this.read(input.workspaceId);
+      const current = await this.read(input.workspaceId, input.threadId);
       if (current.revision !== input.sourceRevision) {
         throw new WorkspaceEnvironmentServiceError(
           "WORKSPACE_ENVIRONMENT_STALE",
@@ -453,6 +760,16 @@ export class WorkspaceEnvironmentService {
         );
       }
 
+      const thread = input.threadId ? this.requireSetupThread(input.threadId) : null;
+      if (thread && thread.workspace_id !== input.workspaceId) {
+        throw new WorkspaceEnvironmentServiceError(
+          "WORKSPACE_ENVIRONMENT_NOT_FOUND",
+          "Thread does not belong to this Project",
+        );
+      }
+      const filePath = thread
+        ? this.filePathForThread(thread, current.storageMode ?? "system")
+        : this.filePathForWorkspace(input.workspaceId, current.storageMode ?? "system");
       const directory = dirname(filePath);
       await mkdir(directory, { recursive: true });
       const temporaryPath = join(directory, `.environment.${randomUUID()}.tmp`);
@@ -471,8 +788,9 @@ export class WorkspaceEnvironmentService {
 
       return {
         document: parsed.data,
-        revision: revisionFor(encoded),
+        revision: revisionFor(encoded, current.storageMode ?? "system", filePath),
         status: "present",
+        storageMode: current.storageMode,
       };
     });
   }
@@ -649,9 +967,11 @@ export class WorkspaceEnvironmentService {
     const queuedAttemptId = snapshot.attempt.id;
     const platform = this.options.platform ?? platformForCurrentProcess();
     let script: string | null;
+    let storageMode: WorkspaceEnvironmentStorageMode;
     try {
-      const environment = await this.read(thread.workspace_id);
+      const environment = await this.readForThread(thread);
       script = environment.document.setup ? selectWorkspaceEnvironmentScript(environment.document.setup, platform) : null;
+      storageMode = environment.storageMode ?? "system";
     } catch (error) {
       if (error instanceof WorkspaceEnvironmentServiceError) {
         repository.failQueuedAttempt({
@@ -715,6 +1035,24 @@ export class WorkspaceEnvironmentService {
         reason: preparation.kind === "unavailable" ? "setup_unavailable" : "setup_configuration_invalid",
         snapshot: snapshotForPreparation(platform, script, preparation),
         outcome: preparation.kind === "unavailable" ? "unavailable" : "configuration_failure",
+      });
+      return;
+    }
+    const approval = storageMode === "shared"
+      ? this.pendingApproval(
+        thread.workspace_id,
+        { kind: "setup" },
+        platform,
+        script,
+        preparation.command.snapshot,
+      )
+      : null;
+    if (approval) {
+      await this.closeUnstartedCommand(preparation.command);
+      repository.awaitApproval({
+        threadId: thread.id,
+        attemptId: queuedAttemptId,
+        snapshot: snapshotForPreparation(platform, script, preparation, approval),
       });
       return;
     }
@@ -979,9 +1317,9 @@ export class WorkspaceEnvironmentService {
     generation: number,
   ): Promise<WorkspaceEnvironmentSetupAttempt> {
     const platform = this.options.platform ?? platformForCurrentProcess();
-    let environment: WorkspaceEnvironmentReadResult;
+    let resolved: WorkspaceEnvironmentCommandResolution;
     try {
-      environment = await this.read(thread.workspace_id);
+      resolved = await this.resolveCommand(thread, { kind: "setup" }, () => this.isStartCurrent(thread.id, generation));
     } catch (error) {
       this.ensureStartCurrent(thread.id, generation);
       if (
@@ -1004,46 +1342,48 @@ export class WorkspaceEnvironmentService {
       throw error;
     }
     this.ensureStartCurrent(thread.id, generation);
-    const script = environment.document.setup
-      ? selectWorkspaceEnvironmentScript(environment.document.setup, platform)
-      : null;
-    if (!script) {
+    if (resolved.kind === "unavailable") {
       return this.recordFinishedAttempt({
         threadId: thread.id,
         workspaceId: thread.workspace_id,
         status: "unavailable",
         outcome: "unavailable",
-        snapshot: unavailableSnapshot(platform, null),
+        snapshot: resolved.snapshot,
         startedAt: null,
         exitCode: null,
-        output: "Setup is not available on this system",
+        output: resolved.output,
         outputTruncated: false,
       });
     }
-    const terminalCommands = this.options.terminalCommands;
-    if (!terminalCommands) {
-      throw new Error("Workspace Environment manual Setup requires the Terminal command service");
-    }
-    const preparation = await terminalCommands.prepare({
-      scope: { kind: "thread", workspaceId: thread.workspace_id, threadId: thread.id },
-      script,
-      timeoutMs: this.options.manualSetupTimeoutMs ?? DEFAULT_MANUAL_SETUP_TIMEOUT_MS,
-      outputMaxBytes: WORKSPACE_ENVIRONMENT_SETUP_OUTPUT_MAX_BYTES,
-    });
     if (!this.isStartCurrent(thread.id, generation)) {
-      if (preparation.kind === "ready") await this.closeUnstartedCommand(preparation.command);
+      if (resolved.kind === "ready") await this.closeUnstartedCommand(resolved.command);
       throw new SetupStartCancelledError();
     }
-    if (preparation.kind !== "ready") {
+    if (resolved.kind !== "ready") {
       return this.recordFinishedAttempt({
         threadId: thread.id,
         workspaceId: thread.workspace_id,
-        status: preparation.kind === "unavailable" ? "unavailable" : "failed",
-        outcome: preparation.kind === "unavailable" ? "unavailable" : "configuration_failure",
-        snapshot: snapshotForPreparation(platform, script, preparation),
+        status: "failed",
+        outcome: "configuration_failure",
+        snapshot: resolved.snapshot,
         startedAt: null,
         exitCode: null,
-        output: preparation.output,
+        output: resolved.output,
+        outputTruncated: false,
+      });
+    }
+    const ready = resolved;
+    if (ready.approval) {
+      await this.closeUnstartedCommand(ready.command);
+      return this.recordAwaitingApprovalAttempt({
+        threadId: thread.id,
+        workspaceId: thread.workspace_id,
+        status: "awaiting-approval",
+        outcome: null,
+        snapshot: ready.snapshot,
+        startedAt: null,
+        exitCode: null,
+        output: "",
         outputTruncated: false,
       });
     }
@@ -1054,7 +1394,7 @@ export class WorkspaceEnvironmentService {
       workspaceId: thread.workspace_id,
       status: "running",
       outcome: null,
-      snapshot: snapshotForPreparation(platform, script, preparation),
+      snapshot: ready.snapshot,
       createdAt,
       startedAt: createdAt,
       finishedAt: null,
@@ -1064,10 +1404,10 @@ export class WorkspaceEnvironmentService {
       cleanupPending: false,
     });
     this.latestSetupAttempts.set(thread.id, running);
-    this.activeSetupResources.set(thread.id, { attempt: running, command: preparation.command });
-    void preparation.command.waitForRelease().then(() => this.releaseActiveResource(thread.id, running.id));
+    this.activeSetupResources.set(thread.id, { attempt: running, command: ready.command });
+    void ready.command.waitForRelease().then(() => this.releaseActiveResource(thread.id, running.id));
     void Promise.resolve()
-      .then(() => preparation.command.start())
+      .then(() => ready.command.start())
       .then((completion) => this.finishRunningAttempt(running, completion))
       .catch(() => this.finishRunningAttempt(running, {
         kind: "launch_failure",
@@ -1182,6 +1522,29 @@ export class WorkspaceEnvironmentService {
     return attempt;
   }
 
+  private assertApprovalAllowed(thread: WorkspaceEnvironmentSetupThread): void {
+    if (
+      thread.deleted_at !== null && thread.deleted_at !== undefined ||
+      thread.cleanup_state !== null && thread.cleanup_state !== undefined ||
+      this.deletingThreadCounts.has(thread.id) ||
+      this.deletingWorkspaceCounts.has(thread.workspace_id)
+    ) {
+      throw this.setupUnavailableError();
+    }
+  }
+
+  private recordAwaitingApprovalAttempt(input: Omit<WorkspaceEnvironmentSetupAttempt, "id" | "createdAt" | "finishedAt" | "cleanupPending">): WorkspaceEnvironmentSetupAttempt {
+    const attempt = freezeSetupAttempt({
+      ...input,
+      id: this.createAttemptId(),
+      createdAt: this.now(),
+      finishedAt: null,
+      cleanupPending: false,
+    });
+    this.latestSetupAttempts.set(attempt.threadId, attempt);
+    return attempt;
+  }
+
   private releaseActiveResource(threadId: string, attemptId: string): void {
     const active = this.activeSetupResources.get(threadId);
     if (!active || active.attempt.id !== attemptId) return;
@@ -1252,6 +1615,32 @@ export class WorkspaceEnvironmentService {
   }
 }
 
+function commandIdentity(target: WorkspaceEnvironmentCommandTarget): string {
+  return target.kind === "setup" ? "setup" : `action:${target.actionId}`;
+}
+
+function normalizeLineEndings(value: string): string {
+  return value.replace(/\r\n|\r/g, "\n");
+}
+
+function approvalFingerprint(input: {
+  readonly workspaceId: string;
+  readonly target: WorkspaceEnvironmentCommandTarget;
+  readonly platform: WorkspaceEnvironmentPlatform;
+  readonly script: string;
+  readonly terminal: NonNullable<PreparedTerminalCommand["snapshot"]["terminal"]>;
+}): string {
+  return createHash("sha256").update(JSON.stringify({
+    contractVersion: WORKSPACE_ENVIRONMENT_APPROVAL_CONTRACT_VERSION,
+    projectIdentity: input.workspaceId,
+    commandIdentity: commandIdentity(input.target),
+    operatingSystem: input.platform,
+    resolvedScript: normalizeLineEndings(input.script),
+    terminalExecutable: input.terminal.executable,
+    terminalArguments: input.terminal.arguments.map(normalizeLineEndings),
+  })).digest("hex");
+}
+
 function platformForCurrentProcess(): WorkspaceEnvironmentPlatform {
   return process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : "linux";
 }
@@ -1271,13 +1660,14 @@ function unavailableSnapshot(
   platform: WorkspaceEnvironmentPlatform,
   script: string | null,
 ): WorkspaceEnvironmentSetupLaunchSnapshot {
-  return { platform, script, checkoutPath: null, terminal: null };
+  return { platform, script, checkoutPath: null, terminal: null, approval: null };
 }
 
 function snapshotForPreparation(
   platform: WorkspaceEnvironmentPlatform,
   script: string,
   preparation: TerminalCommandPreparation,
+  approval: WorkspaceEnvironmentCommandApproval | null = null,
 ): WorkspaceEnvironmentSetupLaunchSnapshot {
   const snapshot = preparation.kind === "ready" ? preparation.command.snapshot : preparation.snapshot;
   return {
@@ -1287,6 +1677,7 @@ function snapshotForPreparation(
     terminal: snapshot.terminal
       ? { executable: snapshot.terminal.executable, arguments: [...snapshot.terminal.arguments] }
       : null,
+    approval,
   };
 }
 
@@ -1357,6 +1748,14 @@ function freezeSetupAttempt(attempt: WorkspaceEnvironmentSetupAttempt): Workspac
         ? Object.freeze({
           executable: attempt.snapshot.terminal.executable,
           arguments: Object.freeze([...attempt.snapshot.terminal.arguments]),
+        })
+        : null,
+      approval: attempt.snapshot.approval
+        ? Object.freeze({
+          target: attempt.snapshot.approval.target.kind === "setup"
+            ? Object.freeze({ kind: "setup" as const })
+            : Object.freeze({ kind: "action" as const, actionId: attempt.snapshot.approval.target.actionId }),
+          fingerprint: attempt.snapshot.approval.fingerprint,
         })
         : null,
     }),

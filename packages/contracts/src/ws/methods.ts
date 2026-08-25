@@ -2,7 +2,11 @@ import { z } from "zod";
 import { WorkspaceSchema, WorkspaceEnrichmentSchema } from "../models/workspace.js";
 import {
   WorkspaceEnvironmentReadResultSchema,
+  WorkspaceEnvironmentReadInputSchema,
   WorkspaceEnvironmentSaveInputSchema,
+  WorkspaceEnvironmentStorageSetInputSchema,
+  WorkspaceEnvironmentCommandApproveInputSchema,
+  WorkspaceEnvironmentCommandApprovalClearInputSchema,
   WorkspaceEnvironmentSetupAttemptSchema,
   WorkspaceEnvironmentSetupGetInputSchema,
   WorkspaceEnvironmentSetupGetResultSchema,
@@ -23,7 +27,11 @@ import {
 } from "../models/workspace-environment.js";
 import type {
   WorkspaceEnvironmentReadResult,
+  WorkspaceEnvironmentReadInput,
   WorkspaceEnvironmentSaveInput,
+  WorkspaceEnvironmentStorageSetInput,
+  WorkspaceEnvironmentCommandApproveInput,
+  WorkspaceEnvironmentCommandApprovalClearInput,
   WorkspaceEnvironmentSetupAttempt,
   WorkspaceEnvironmentSetupGetInput,
   WorkspaceEnvironmentSetupGetResult,
@@ -482,6 +490,9 @@ const threadCleanupLifecycleMethods = (): Record<
 });
 
 type WorkspaceEnvironmentSetupWsMethodName =
+  | "workspace.environment.storage.set"
+  | "workspace.environment.command.approve"
+  | "workspace.environment.command.clearApprovals"
   | "workspace.environment.setup.start"
   | "workspace.environment.setup.get"
   | "workspace.environment.automaticSetup.get"
@@ -495,6 +506,18 @@ const workspaceEnvironmentSetupMethods = (): Record<
   WorkspaceEnvironmentSetupWsMethodName,
   { params: z.ZodTypeAny; result: z.ZodTypeAny }
 > => ({
+  "workspace.environment.storage.set": {
+    params: WorkspaceEnvironmentStorageSetInputSchema() as z.ZodType<WorkspaceEnvironmentStorageSetInput>,
+    result: WorkspaceEnvironmentReadResultSchema() as z.ZodType<WorkspaceEnvironmentReadResult>,
+  },
+  "workspace.environment.command.approve": {
+    params: WorkspaceEnvironmentCommandApproveInputSchema() as z.ZodType<WorkspaceEnvironmentCommandApproveInput>,
+    result: z.void(),
+  },
+  "workspace.environment.command.clearApprovals": {
+    params: WorkspaceEnvironmentCommandApprovalClearInputSchema() as z.ZodType<WorkspaceEnvironmentCommandApprovalClearInput>,
+    result: z.void(),
+  },
   "workspace.environment.setup.start": {
     params: WorkspaceEnvironmentSetupStartInputSchema() as z.ZodType<WorkspaceEnvironmentSetupStartInput>,
     result: WorkspaceEnvironmentSetupAttemptSchema() as z.ZodType<WorkspaceEnvironmentSetupAttempt>,
@@ -639,7 +662,7 @@ const buildWsMethods = () => ({
     result: WorkspaceSchema(),
   },
   "workspace.environment.read": {
-    params: z.object({ workspaceId: z.string().min(1).max(256) }).strict() as z.ZodType<{ workspaceId: string }>,
+    params: WorkspaceEnvironmentReadInputSchema() as z.ZodType<WorkspaceEnvironmentReadInput>,
     result: WorkspaceEnvironmentReadResultSchema() as z.ZodType<WorkspaceEnvironmentReadResult>,
   },
   "workspace.environment.save": {

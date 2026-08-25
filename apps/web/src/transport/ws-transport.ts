@@ -661,14 +661,21 @@ export function createWsTransport(
     listWorkspaces: () => rpc<Workspace[]>("workspace.list", {}),
     createWorkspace: (name, path) => rpc<Workspace>("workspace.create", { name, path }),
     renameWorkspace: (id, name) => rpc<Workspace>("workspace.rename", { id, name }),
-    readWorkspaceEnvironment: (workspaceId) =>
-      rpc<WorkspaceEnvironmentReadResult>("workspace.environment.read", { workspaceId }),
-    saveWorkspaceEnvironment: (workspaceId, document, sourceRevision) =>
+    readWorkspaceEnvironment: (workspaceId, threadId) =>
+      rpc<WorkspaceEnvironmentReadResult>("workspace.environment.read", { workspaceId, threadId }),
+    saveWorkspaceEnvironment: (workspaceId, document, sourceRevision, threadId) =>
       rpc<WorkspaceEnvironmentReadResult>("workspace.environment.save", {
         workspaceId,
+        threadId,
         document,
         sourceRevision,
       }),
+    setWorkspaceEnvironmentStorageMode: (workspaceId, storageMode, threadId) =>
+      rpc<WorkspaceEnvironmentReadResult>("workspace.environment.storage.set", { workspaceId, storageMode, threadId }),
+    approveWorkspaceEnvironmentCommand: (threadId, target, fingerprint) =>
+      rpc<void>("workspace.environment.command.approve", { threadId, target, fingerprint }),
+    clearWorkspaceEnvironmentApprovals: (workspaceId) =>
+      rpc<void>("workspace.environment.command.clearApprovals", { workspaceId }),
     startWorkspaceSetup: (threadId) =>
       rpc<WorkspaceEnvironmentSetupAttempt>("workspace.environment.setup.start", { threadId }),
     getWorkspaceSetupAttempt: async (threadId) =>
