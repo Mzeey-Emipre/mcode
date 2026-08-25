@@ -77,17 +77,27 @@ vi.mock("@/features/conversation", async (importOriginal) => ({
 const threadStoreOverrides: {
   permissionsByThread?: Record<string, Array<{ settled: boolean }>>;
   runningThreadIds?: Set<string>;
+  runtimeByThread?: Record<string, { runtimePhase: string; turnExecutionId: string | null }>;
 } = {};
 
 function buildMockThreadStoreState() {
   const records = new Map<
     string,
-    { permissions: Array<{ settled: boolean }> }
+    {
+      permissions: Array<{ settled: boolean }>;
+      runtimePhase?: string;
+      turnExecutionId?: string | null;
+    }
   >();
-  for (const [id, perms] of Object.entries(
-    threadStoreOverrides.permissionsByThread ?? {},
-  )) {
-    records.set(id, { permissions: perms });
+  const recordIds = new Set([
+    ...Object.keys(threadStoreOverrides.permissionsByThread ?? {}),
+    ...Object.keys(threadStoreOverrides.runtimeByThread ?? {}),
+  ]);
+  for (const id of recordIds) {
+    records.set(id, {
+      permissions: threadStoreOverrides.permissionsByThread?.[id] ?? [],
+      ...(threadStoreOverrides.runtimeByThread?.[id] ?? {}),
+    });
   }
   return {
     records,
@@ -1111,6 +1121,7 @@ describe("ProjectTree action-required indicator", () => {
   beforeEach(() => {
     threadStoreOverrides.permissionsByThread = undefined;
     threadStoreOverrides.runningThreadIds = undefined;
+    threadStoreOverrides.runtimeByThread = undefined;
     currentThread = makeThread({ id: "thread-pending", status: "active" });
     currentChecks = {};
     installWorkspaceMock();
@@ -1191,6 +1202,9 @@ describe("ProjectTree action-required indicator", () => {
 
   it("renders the running marker from the matching thread row state", () => {
     threadStoreOverrides.runningThreadIds = new Set(["thread-pending"]);
+    threadStoreOverrides.runtimeByThread = {
+      "thread-pending": { runtimePhase: "running", turnExecutionId: "turn-1" },
+    };
     render(<ProjectTree />);
 
     const spinner = screen.getByLabelText("Running");
@@ -1212,6 +1226,28 @@ describe("ProjectTree action-required indicator", () => {
     expect(
       title.compareDocumentPosition(spinner) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+  });
+
+  it("changes the white Setup spinner to the primary running spinner after the provider Turn starts", () => {
+    threadStoreOverrides.runningThreadIds = new Set(["thread-pending"]);
+    threadStoreOverrides.runtimeByThread = {
+      "thread-pending": { runtimePhase: "running", turnExecutionId: null },
+    };
+    const { rerender } = render(<ProjectTree />);
+
+    const setupSpinner = screen.getByLabelText("Setup running");
+    expect(setupSpinner).toHaveClass("text-white");
+    expect(setupSpinner).not.toHaveClass("text-primary");
+
+    threadStoreOverrides.runtimeByThread = {
+      "thread-pending": { runtimePhase: "running", turnExecutionId: "turn-1" },
+    };
+    rerender(<ProjectTree />);
+
+    const runningSpinner = screen.getByLabelText("Running");
+    expect(runningSpinner).toHaveClass("text-primary");
+    expect(runningSpinner).not.toHaveClass("text-white");
+    expect(screen.queryByLabelText("Setup running")).not.toBeInTheDocument();
   });
 
   it.each([
@@ -1434,6 +1470,7 @@ describe("ProjectTree PR-ability gating by mode", () => {
   beforeEach(() => {
     threadStoreOverrides.permissionsByThread = undefined;
     threadStoreOverrides.runningThreadIds = undefined;
+    threadStoreOverrides.runtimeByThread = undefined;
     window.localStorage.setItem(
       "mcode-expanded-projects",
       JSON.stringify({ "ws-1": true }),

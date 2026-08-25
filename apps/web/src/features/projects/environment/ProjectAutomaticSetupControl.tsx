@@ -195,7 +195,7 @@ export function ProjectAutomaticSetupCard({
   readonly onRetry: () => Promise<void>;
   readonly onOpenTerminal: () => Promise<void>;
 }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const contentId = useId();
   const headingId = useId();
   const uncertainDispatch = snapshot.queuedTurns.some((queuedTurn) =>
