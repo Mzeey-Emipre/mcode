@@ -1,4 +1,4 @@
-import { useRef, useEffect, useLayoutEffect, useMemo, useCallback, memo, useState, type ReactNode, type WheelEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { useRef, useEffect, useLayoutEffect, useMemo, useCallback, memo, useState, type ReactNode, type WheelEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { ArrowDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -1525,12 +1525,12 @@ export function MessageList({
     scrollToBottom(false);
   }, [streamingText, renderedThreadId, scrollToBottom]);
 
-  const handleTranscriptContextMenu = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
+  const handleTranscriptPointerUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
     const selection = window.getSelection();
     if (!selection) return;
     const source = createSelectedTextCommentSource(selection, event.target);
     if (!source) return;
-    event.preventDefault();
     setSelectedTextContextMenu({ source, x: event.clientX, y: event.clientY });
   }, []);
 
@@ -1613,7 +1613,7 @@ export function MessageList({
   }, [effectiveStickyTopInset, isPositioned]);
 
   return (
-    <div className="relative h-full" data-testid="message-list" onContextMenu={handleTranscriptContextMenu}>
+    <div className="relative h-full" data-testid="message-list" onPointerUp={handleTranscriptPointerUp}>
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
         {selectedTextCopyAnnouncement}
       </div>
