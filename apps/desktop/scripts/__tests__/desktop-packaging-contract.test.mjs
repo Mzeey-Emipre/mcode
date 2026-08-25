@@ -285,13 +285,26 @@ describe("desktop packaging workflow contract", () => {
     const cacheBlock = workflow.match(
       /- name: Cache Windows PR npm downloads\r?\n([\s\S]*?)(?=\r?\n      - name:)/,
     )?.[1];
+    const windowsPrPackageBlock = workflow.match(
+      /- name: Package Windows PR target\r?\n([\s\S]*?)(?=\r?\n      - name:)/,
+    )?.[1];
 
     expect(cacheBlock).toBeDefined();
+    expect(windowsPrPackageBlock).toBeDefined();
+    expect(workflow).not.toContain("Resolve Windows PR npm cache path");
     expect(cacheBlock).toContain("uses: actions/cache@v4");
     expect(cacheBlock).toContain(
       "if: inputs.channel == 'pull-request' && inputs.target-platform == 'windows'",
     );
-    expect(cacheBlock).toContain("path: ~\\AppData\\Local\\npm-cache");
+    expect(cacheBlock).toContain(
+      "path: ${{ runner.temp }}/npm-cache",
+    );
+    expect(windowsPrPackageBlock).toContain(
+      "if: inputs.signing-required == false && inputs.channel == 'pull-request' && inputs.target-platform == 'windows'",
+    );
+    expect(windowsPrPackageBlock).toContain(
+      "NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache",
+    );
     expect(cacheBlock).toContain(
       "key: ${{ runner.os }}-${{ inputs.target-arch }}-npm-downloads-${{ hashFiles('package.json', 'apps/desktop/package.json', 'bun.lock') }}",
     );
@@ -299,6 +312,7 @@ describe("desktop packaging workflow contract", () => {
       /restore-keys: \|\r?\n            \$\{\{ runner\.os \}\}-\$\{\{ inputs\.target-arch \}\}-npm-downloads-/,
     );
     expect(cacheBlock).not.toContain("node_modules");
+    expect(workflow.match(/NPM_CONFIG_CACHE/g)).toHaveLength(1);
   });
 
   it("requires the complete four-target matrix in PR dry-run", () => {

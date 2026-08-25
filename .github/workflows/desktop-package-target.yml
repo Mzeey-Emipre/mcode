@@ -192,13 +192,21 @@ jobs:
         uses: actions/cache@v4
         continue-on-error: true
         with:
-          path: ~\AppData\Local\npm-cache
+          path: ${{ runner.temp }}/npm-cache
           key: ${{ runner.os }}-${{ inputs.target-arch }}-npm-downloads-${{ hashFiles('package.json', 'apps/desktop/package.json', 'bun.lock') }}
           restore-keys: |
             ${{ runner.os }}-${{ inputs.target-arch }}-npm-downloads-
 
+      - name: Package Windows PR target
+        if: inputs.signing-required == false && inputs.channel == 'pull-request' && inputs.target-platform == 'windows'
+        shell: bash
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          NPM_CONFIG_CACHE: ${{ runner.temp }}/npm-cache
+        run: bun apps/desktop/scripts/desktop-packaging/target-package/ci-package.mjs ${{ inputs.build-args }}
+
       - name: Package unsigned target
-        if: inputs.signing-required == false
+        if: inputs.signing-required == false && (inputs.channel != 'pull-request' || inputs.target-platform != 'windows')
         shell: bash
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
