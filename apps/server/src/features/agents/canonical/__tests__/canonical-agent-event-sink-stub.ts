@@ -21,6 +21,7 @@ export function createCanonicalAgentEventSinkStub(
     },
     loadCheckpoint: () => null,
     loadTurnByExecution: () => null,
+    loadCodexChildDelegationByReceiverThreadId: () => null,
     loadCanonicalChildStopTargets: () => [],
     finishCanonicalChildTurn: () => null,
     recordProviderDiagnostic: () => undefined,

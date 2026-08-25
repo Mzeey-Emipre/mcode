@@ -1057,6 +1057,39 @@ export class CanonicalAgentEventSink {
     return { childThread, parentItem, collaborationAction };
   }
 
+  /** Load the one Codex child delegation registered for an exact native receiver thread. */
+  loadCodexChildDelegationByReceiverThreadId(nativeThreadId: string): CodexChildDelegation | null {
+    const receiver = this.codexReceiverIdentity(nativeThreadId);
+    const actionRows = this.db.prepare(`
+      SELECT action.*
+      FROM canonical_collaboration_actions AS action
+      JOIN json_each(action.provider_identities_json) AS provider_identity
+        ON json_extract(provider_identity.value, '$.providerId') = ?
+       AND json_extract(provider_identity.value, '$.scope') = ?
+       AND json_extract(provider_identity.value, '$.value') = ?
+       AND json_extract(provider_identity.value, '$.provenance') = ?
+      WHERE action.kind = 'delegate'
+      LIMIT 2
+    `).all(
+      receiver.providerId,
+      receiver.scope,
+      receiver.value,
+      receiver.provenance,
+    ) as Record<string, unknown>[];
+    if (actionRows.length > 1) {
+      throw new Error(`Codex receiver identity is ambiguous: ${nativeThreadId}`);
+    }
+    const actionRow = actionRows[0];
+    if (!actionRow) return null;
+    const collaborationAction = this.actionFromRow(actionRow);
+    const childThread = this.loadThread(collaborationAction.target.threadId);
+    const parentItem = this.loadItem(collaborationAction.source.itemId);
+    if (!childThread || !parentItem) {
+      throw new Error(`Codex receiver delegation is incomplete: ${nativeThreadId}`);
+    }
+    return { childThread, parentItem, collaborationAction };
+  }
+
   /** Load one canonical collaboration action. */
   loadCollaborationAction(actionId: string): CollaborationAction | null {
     const row = this.db.prepare("SELECT * FROM canonical_collaboration_actions WHERE id = ?")

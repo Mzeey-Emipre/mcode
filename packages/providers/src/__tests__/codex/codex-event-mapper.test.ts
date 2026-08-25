@@ -3415,6 +3415,187 @@ describe("CodexEventMapper", () => {
     expect(mainCompleted.filter((event) => event.type === "turnComplete")).toHaveLength(1);
   });
 
+  it("attributes nested spawn completion to its emitting child thread", () => {
+    mapper = new CodexEventMapper("test-thread", "main-codex-thread");
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "main-codex-thread",
+        item: {
+          type: "collabAgentToolCall",
+          id: "root-spawn",
+          tool: "spawnAgent",
+          receiverThreadIds: ["direct-child"],
+        },
+      },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/started",
+      params: { threadId: "direct-child", turn: { id: "direct-turn" } },
+    });
+    const nestedSpawn = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "direct-child",
+        item: {
+          type: "collabAgentToolCall",
+          id: "nested-spawn",
+          tool: "spawnAgent",
+          receiverThreadIds: ["nested-child"],
+        },
+      },
+    });
+    expect(nestedSpawn).toContainEqual(expect.objectContaining({
+      type: "toolUse",
+      toolCallId: "nested-spawn",
+      codexChild: expect.objectContaining({
+        nativeThreadId: "direct-child",
+        nativeTurnId: "direct-turn",
+        parentCollaborationItemId: "root-spawn",
+        nativeItemId: "nested-spawn",
+        itemEventKey: "started",
+      }),
+    }));
+    expect(mapper.applyChildThreadMetadata("nested-child", {
+      model: "gpt-5.6-sol",
+      reasoningEffort: "medium",
+    })).toContainEqual(expect.objectContaining({
+      type: "toolUse",
+      toolCallId: "nested-spawn",
+      toolInput: expect.objectContaining({ model: "gpt-5.6-sol", reasoningEffort: "medium" }),
+      codexChild: expect.objectContaining({
+        nativeThreadId: "direct-child",
+        nativeTurnId: "direct-turn",
+        parentCollaborationItemId: "root-spawn",
+        nativeItemId: "nested-spawn",
+        itemEventKey: "started",
+      }),
+    }));
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/started",
+      params: { threadId: "nested-child", turn: { id: "nested-turn" } },
+    });
+
+    const completion = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/completed",
+      params: { threadId: "nested-child", turn: { id: "nested-turn", status: "completed" } },
+    });
+
+    expect(completion).toContainEqual(expect.objectContaining({
+      type: "toolResult",
+      toolCallId: "nested-spawn",
+      toolInput: expect.objectContaining({
+        codexCollabKind: "spawnAgent",
+        receiverThreadIds: ["nested-child"],
+      }),
+      codexChild: expect.objectContaining({
+        nativeThreadId: "direct-child",
+        nativeTurnId: "direct-turn",
+        parentCollaborationItemId: "root-spawn",
+        nativeItemId: "nested-spawn",
+        itemEventKey: "completed",
+      }),
+    }));
+
+    const metadataReplay = mapper.applyChildThreadMetadata("nested-child", {
+      model: "gpt-5.6-sol",
+      reasoningEffort: "medium",
+    });
+
+    expect(metadataReplay).toContainEqual(expect.objectContaining({
+      type: "toolResult",
+      toolCallId: "nested-spawn",
+      toolInput: expect.objectContaining({ model: "gpt-5.6-sol", reasoningEffort: "medium" }),
+      codexChild: expect.objectContaining({
+        nativeThreadId: "direct-child",
+        nativeTurnId: "direct-turn",
+        parentCollaborationItemId: "root-spawn",
+        nativeItemId: "nested-spawn",
+        itemEventKey: "completed",
+      }),
+    }));
+  });
+
+  it("attributes buffered nested completion and cached replays to the emitting child", () => {
+    mapper = new CodexEventMapper("test-thread", "main-codex-thread");
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "main-codex-thread",
+        item: {
+          type: "collabAgentToolCall",
+          id: "root-spawn",
+          tool: "spawnAgent",
+          receiverThreadIds: ["direct-child"],
+        },
+      },
+    });
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/started",
+      params: { threadId: "direct-child", turn: { id: "direct-turn" } },
+    });
+    expect(mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/completed",
+      params: { threadId: "nested-child", turn: { id: "nested-turn", status: "completed" } },
+    })).toEqual([]);
+
+    const nestedSpawn = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "direct-child",
+        turnId: "direct-turn",
+        item: {
+          type: "collabAgentToolCall",
+          id: "nested-spawn",
+          tool: "spawnAgent",
+          receiverThreadIds: ["nested-child"],
+        },
+      },
+    });
+    const directChildCompletion = expect.objectContaining({
+      type: "toolResult",
+      toolCallId: "nested-spawn",
+      codexChild: expect.objectContaining({
+        nativeThreadId: "direct-child",
+        nativeTurnId: "direct-turn",
+        parentCollaborationItemId: "root-spawn",
+        nativeItemId: "nested-spawn",
+        itemEventKey: "completed",
+      }),
+    });
+    expect(nestedSpawn).toContainEqual(directChildCompletion);
+
+    expect(mapper.applyChildThreadMetadata("nested-child", {
+      model: "gpt-5.6-sol",
+      reasoningEffort: "medium",
+    })).toContainEqual(directChildCompletion);
+    expect(mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: {
+        threadId: "direct-child",
+        turnId: "direct-turn",
+        item: {
+          type: "collabAgentToolCall",
+          id: "nested-spawn",
+          tool: "spawnAgent",
+          receiverThreadIds: ["nested-child"],
+          model: "gpt-5.6-sol",
+          reasoningEffort: "medium",
+        },
+      },
+    })).toEqual([]);
+  });
+
   it("still maps child-thread tools under the registered sub-agent row", () => {
     mapper = new CodexEventMapper("test-thread", "main-codex-thread");
     mapper.mapNotification({
