@@ -244,7 +244,7 @@ export type WorkspaceEnvironmentSetupGetResult = z.infer<
   ReturnType<typeof WorkspaceEnvironmentSetupGetResultSchema>
 >;
 
-/** Durable gate states for the first Turn in a managed New worktree. */
+/** Durable gate states for Turns in a managed New worktree. */
 export const WorkspaceEnvironmentSetupGateStateSchema = z.enum([
   "blocked",
   "released-by-pass",
@@ -265,7 +265,7 @@ export type WorkspaceEnvironmentAutomaticSetupAttemptState = z.infer<
   typeof WorkspaceEnvironmentAutomaticSetupAttemptStateSchema
 >;
 
-/** Durable lifecycle states for the first Turn queued behind automatic Setup. */
+/** Durable lifecycle states for a Turn queued behind automatic Setup. */
 export const WorkspaceEnvironmentQueuedTurnStateSchema = z.enum([
   "queued",
   "released",
@@ -336,7 +336,7 @@ export type WorkspaceEnvironmentAutomaticSetupAttempt = z.infer<
   ReturnType<typeof WorkspaceEnvironmentAutomaticSetupAttemptSchema>
 >;
 
-/** Public lifecycle record for the first Turn held behind automatic Setup. */
+/** Public lifecycle record for one Turn held behind automatic Setup. */
 export const WorkspaceEnvironmentQueuedTurnSchema = lazySchema(() =>
   z.object({
     id: z.string().min(1).max(256),
@@ -346,10 +346,10 @@ export const WorkspaceEnvironmentQueuedTurnSchema = lazySchema(() =>
     dispatchedAt: z.string().datetime().nullable(),
   }).strict().superRefine((queuedTurn, ctx) => {
     if (queuedTurn.state === "dispatched" && queuedTurn.dispatchedAt === null) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Dispatched first Turns require a dispatch time" });
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Dispatched queued Turns require a dispatch time" });
     }
     if (queuedTurn.state !== "dispatched" && queuedTurn.dispatchedAt !== null) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Only dispatched first Turns have a dispatch time" });
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Only dispatched queued Turns have a dispatch time" });
     }
   }),
 );
@@ -362,7 +362,7 @@ export const WorkspaceEnvironmentAutomaticSetupSnapshotSchema = lazySchema(() =>
   z.object({
     gate: WorkspaceEnvironmentSetupGateStateSchema,
     attempt: WorkspaceEnvironmentAutomaticSetupAttemptSchema().nullable(),
-    queuedTurn: WorkspaceEnvironmentQueuedTurnSchema().nullable(),
+    queuedTurns: z.array(WorkspaceEnvironmentQueuedTurnSchema()),
   }).strict(),
 );
 export type WorkspaceEnvironmentAutomaticSetupSnapshot = z.infer<
@@ -377,7 +377,7 @@ export type WorkspaceEnvironmentAutomaticSetupGetInput = z.infer<
   ReturnType<typeof WorkspaceEnvironmentAutomaticSetupGetInputSchema>
 >;
 
-/** Request to release a queued first Turn without rerunning Setup. */
+/** Request to release queued Turns without rerunning Setup. */
 export const WorkspaceEnvironmentAutomaticSetupContinueInputSchema = lazySchema(() =>
   z.object({ threadId: z.string().min(1).max(256) }).strict(),
 );
@@ -385,12 +385,50 @@ export type WorkspaceEnvironmentAutomaticSetupContinueInput = z.infer<
   ReturnType<typeof WorkspaceEnvironmentAutomaticSetupContinueInputSchema>
 >;
 
-/** Request to cancel a first Turn that is still queued behind Setup. */
+/** Request to cancel one Turn that is still queued behind Setup. */
 export const WorkspaceEnvironmentQueuedTurnCancelInputSchema = lazySchema(() =>
-  z.object({ threadId: z.string().min(1).max(256) }).strict(),
+  z.object({
+    threadId: z.string().min(1).max(256),
+    queuedTurnId: z.string().min(1).max(256),
+  }).strict(),
 );
 export type WorkspaceEnvironmentQueuedTurnCancelInput = z.infer<
   ReturnType<typeof WorkspaceEnvironmentQueuedTurnCancelInputSchema>
+>;
+
+/** Request to stop the active automatic Setup attempt for one Thread. */
+export const WorkspaceEnvironmentAutomaticSetupStopInputSchema = lazySchema(() =>
+  z.object({ threadId: z.string().min(1).max(256) }).strict(),
+);
+export type WorkspaceEnvironmentAutomaticSetupStopInput = z.infer<
+  ReturnType<typeof WorkspaceEnvironmentAutomaticSetupStopInputSchema>
+>;
+
+/** Request to create one new automatic Setup attempt from the current Project environment. */
+export const WorkspaceEnvironmentAutomaticSetupRetryInputSchema = lazySchema(() =>
+  z.object({ threadId: z.string().min(1).max(256) }).strict(),
+);
+export type WorkspaceEnvironmentAutomaticSetupRetryInput = z.infer<
+  ReturnType<typeof WorkspaceEnvironmentAutomaticSetupRetryInputSchema>
+>;
+
+/** Request to open one interactive recovery Terminal for a managed Thread. */
+export const WorkspaceEnvironmentAutomaticSetupTerminalInputSchema = lazySchema(() =>
+  z.object({ threadId: z.string().min(1).max(256) }).strict(),
+);
+export type WorkspaceEnvironmentAutomaticSetupTerminalInput = z.infer<
+  ReturnType<typeof WorkspaceEnvironmentAutomaticSetupTerminalInputSchema>
+>;
+
+/** Interactive recovery Terminal created for one automatic Setup gate. */
+export const WorkspaceEnvironmentAutomaticSetupTerminalSchema = lazySchema(() =>
+  z.object({
+    ptyId: z.string().min(1).max(256),
+    shell: z.string().min(1).max(1024),
+  }).strict(),
+);
+export type WorkspaceEnvironmentAutomaticSetupTerminal = z.infer<
+  ReturnType<typeof WorkspaceEnvironmentAutomaticSetupTerminalSchema>
 >;
 
 /** A named workspace environment action with an opaque stable identity. */

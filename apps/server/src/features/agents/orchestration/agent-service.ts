@@ -72,6 +72,7 @@ import type Database from "better-sqlite3";
 import { TaskRepo, type StoredTask } from "./persistence/task-repo.js";
 import { PlanQuestionAnswersRepo } from "../planning/persistence/plan-question-answers-repo.js";
 import { GitService, WorkspaceEnvironmentService } from "../../projects/index.js";
+import type { WorkspaceEnvironmentAutomaticSetupDispatch } from "../../projects/environment/workspace-environment-service.js";
 import { AttachmentService } from "../../attachments/storage/attachment-service.js";
 import { FileService } from "../../projects/files/file-service.js";
 import { SnapshotService } from "../../projects/diffs/snapshots/snapshot-service.js";
@@ -101,7 +102,7 @@ import { ScopedPreGrantService } from "../permissions/scoped-pre-grant.js";
 import { normalizeAgentProviderError } from "./provider-agent-error-normalize.js";
 import { TurnErrorPolicy } from "../turns/turn-error-policy.js";
 import { TurnRuntimeRegistry } from "../turns/turn-runtime.js";
-import type { WorkspaceEnvironmentQueuedTurnSubmission } from "../../projects/environment/workspace-environment-automatic-repository.js";
+import type { WorkspaceEnvironmentQueuedTurnSubmission, WorkspaceEnvironmentQueueAdmission } from "../../projects/environment/workspace-environment-automatic-repository.js";
 import type { TurnOutcome } from "../turns/turn-outcome.js";
 import { BrowserNarrativeEventSanitizer } from "../../browser-automation/index.js";
 import {
@@ -160,6 +161,13 @@ export type SendMessageCommand = Omit<SendMessageInput, "permissionMode" | "prov
     readonly attachments: readonly StoredAttachment[];
     readonly persistedAttachments: readonly AttachmentMeta[];
   };
+  /** Attachment records already persisted before a concurrent automatic-gate release. */
+  persistedAttachmentData?: {
+    readonly stored: readonly StoredAttachment[];
+    readonly persisted: readonly AttachmentMeta[];
+  };
+  /** Whether a handled native command must clean pre-persisted automatic-gate attachments. */
+  cleanupPersistedAttachmentsOnHandledCommand?: boolean;
 };
 
 /** Command accepted by {@link AgentService.createAndSend}, including service defaults for model and permission mode. */
@@ -357,6 +365,8 @@ export class AgentService {
   private readonly endedSuppressionThreads = new Set<string>();
   /** Threads that have already entered the finalizer for the current turn. */
   private readonly terminalFinalizedThreads = new Set<string>();
+  /** Resolves queued automatic dispatches only after their authoritative runtime releases its active slot. */
+  private readonly automaticQueuedTurnCompletionResolvers = new Map<string, () => void>();
   /**
    * Per-thread dispatch state for transient retries. Fire-and-forget providers
    * (Claude) can return from `sendTurn` before the stream ends, so the retry
@@ -634,6 +644,8 @@ export class AgentService {
     forceFreshSession = false,
     retryOfExecutionId,
     persistedUserMessage,
+    persistedAttachmentData: suppliedPersistedAttachmentData,
+    cleanupPersistedAttachmentsOnHandledCommand = false,
   }: SendMessageCommand): Promise<void> {
     const provenance = [originSourceThreadId, originSourceTurnId, originSourceProviderId];
     const hasAnyProvenance = provenance.some((value) => value !== undefined);
@@ -694,6 +706,77 @@ export class AgentService {
       mentions,
       provider: effectiveProvider,
     });
+    let automaticPersistedAttachments: { stored: StoredAttachment[]; persisted: AttachmentMeta[] } | null = suppliedPersistedAttachmentData
+      ? { stored: [...suppliedPersistedAttachmentData.stored], persisted: [...suppliedPersistedAttachmentData.persisted] }
+      : null;
+    let handledCommandAttachmentCleanup = cleanupPersistedAttachmentsOnHandledCommand && suppliedPersistedAttachmentData
+      ? [...suppliedPersistedAttachmentData.stored]
+      : null;
+
+    if (
+      thread.mode === "worktree" &&
+      thread.worktree_managed === true &&
+      this.workspaceEnvironmentService &&
+      !persistedUserMessage &&
+      this.workspaceEnvironmentService.getAutomaticSetup({ threadId }).gate === "blocked"
+    ) {
+      const persistedAttachments = await this.attachmentService.persist(
+        threadId,
+        [...attachments, ...previewAnnotationSnapshotAttachments(previewAnnotations)],
+      );
+      const queuedMessageId = messageId ?? randomUUID();
+      let admission: WorkspaceEnvironmentQueueAdmission;
+      try {
+        admission = this.workspaceEnvironmentService.admitAutomaticTurn({
+          threadId,
+          messageId: queuedMessageId,
+          content: messageDisplayContent ?? content,
+          attachments: persistedAttachments.stored,
+          mentions: validatedMentions,
+          previewAnnotations,
+          submission: {
+          threadId,
+          messageId: queuedMessageId,
+          content,
+          displayContent: messageDisplayContent ?? content,
+          model,
+          permissionMode,
+          attachments: persistedAttachments.stored,
+          persistedAttachments: persistedAttachments.persisted,
+          mentions: validatedMentions,
+          previewAnnotations,
+          provider: effectiveProvider,
+          reasoningLevel,
+          interactionMode,
+          orchestrationMode,
+          maxBudgetUsd,
+          maxTurns,
+          copilotAgent,
+          contextWindow: contextWindowMode,
+          thinking,
+          codexFastMode,
+          goalObjective,
+          replyToMessageId,
+          quotedText,
+          planAction,
+          markPlanAnswerForMessageId,
+          sourceTurnId: requestedSourceTurnId,
+          sourceThreadId: originSourceThreadId,
+          sourceProviderId: originSourceProviderId,
+          originSourceTurnId,
+          },
+        });
+      } catch (error) {
+        await this.attachmentService.removeStoredAttachments(threadId, persistedAttachments.stored);
+        throw error;
+      }
+      if (admission.queued) return;
+      automaticPersistedAttachments = {
+        stored: [...persistedAttachments.stored],
+        persisted: [...persistedAttachments.persisted],
+      };
+      handledCommandAttachmentCleanup = [...persistedAttachments.stored];
+    }
 
     // Route the message through the mcode-native command namespace before it
     // reaches the provider. The router probes each command's required
@@ -725,6 +808,9 @@ export class AgentService {
       ? await this.goalCommand.prepareSet(commandContext, goalObjective)
       : await this.commandRouter.route(commandContext);
     if (commandOutcome.kind === "handled") {
+      if (handledCommandAttachmentCleanup) {
+        await this.attachmentService.removeStoredAttachments(threadId, handledCommandAttachmentCleanup);
+      }
       logger.info("Handled mcode-native command", { threadId });
       return;
     }
@@ -821,7 +907,7 @@ export class AgentService {
           stored: [...persistedUserMessage.attachments],
           persisted: [...persistedUserMessage.persistedAttachments],
         }
-        : await this.attachmentService.persist(
+        : automaticPersistedAttachments ?? await this.attachmentService.persist(
           threadId,
           [
             ...attachments,
@@ -875,33 +961,34 @@ export class AgentService {
           reopenedThread = this.threadRepo.reopen(threadId);
           if (!reopenedThread) throw new Error(`Thread not found: ${threadId}`);
         }
-        if (persistedUserMessage) {
-          const message = this.messageRepo.findByIdInThread(threadId, persistedUserMessage.id);
-          if (!message) throw new Error(`Queued first Turn message was not found: ${persistedUserMessage.id}`);
-          return message;
-        }
-        const args = [
-          threadId,
-          "user" as const,
-          persistedUserText,
-          nextSeq,
-          stored.length > 0 ? stored : undefined,
-          replyToMessageId,
-          quotedText,
-          undefined,
-          undefined,
-          validatedMentions.length > 0 ? validatedMentions : undefined,
-          previewAnnotations,
-        ] as const;
         let message: Message;
-        if (messageId === undefined && origin === undefined) {
-          message = this.messageRepo.create(...args);
-        } else if (messageId === undefined && origin !== undefined) {
-          message = this.messageRepo.create(...args, origin);
-        } else if (origin === undefined) {
-          message = this.messageRepo.create(...args, undefined, messageId);
+        if (persistedUserMessage) {
+          const queuedMessage = this.messageRepo.findByIdInThread(threadId, persistedUserMessage.id);
+          if (!queuedMessage) throw new Error(`Queued Turn message was not found: ${persistedUserMessage.id}`);
+          message = queuedMessage;
         } else {
-          message = this.messageRepo.create(...args, origin, messageId);
+          const args = [
+            threadId,
+            "user" as const,
+            persistedUserText,
+            nextSeq,
+            stored.length > 0 ? stored : undefined,
+            replyToMessageId,
+            quotedText,
+            undefined,
+            undefined,
+            validatedMentions.length > 0 ? validatedMentions : undefined,
+            previewAnnotations,
+          ] as const;
+          if (messageId === undefined && origin === undefined) {
+            message = this.messageRepo.create(...args);
+          } else if (messageId === undefined && origin !== undefined) {
+            message = this.messageRepo.create(...args, origin);
+          } else if (origin === undefined) {
+            message = this.messageRepo.create(...args, undefined, messageId);
+          } else {
+            message = this.messageRepo.create(...args, origin, messageId);
+          }
         }
         if (markPlanAnswerForMessageId) {
           // INSERT OR IGNORE inside the repo skips PK collisions (idempotent
@@ -1228,6 +1315,7 @@ export class AgentService {
       if (this.turnRuntime.terminalize(threadId, turnExecutionId, "errored")) {
         await (this.finalizeTerminalTurn(threadId, "errored", "send setup failure") ?? Promise.resolve());
         this.disarmTurnRetryWindow(threadId);
+        this.trackSessionEnded(threadId, turnExecutionId);
       }
       releaseReservedSlot();
       await rollbackCommand();
@@ -1446,13 +1534,19 @@ export class AgentService {
     };
   }
 
-  /** Dispatch a first Turn that the automatic Setup lifecycle claimed after commit. */
-  async dispatchQueuedAutomaticTurn(submission: WorkspaceEnvironmentQueuedTurnSubmission): Promise<void> {
+  /** Dispatch a queued Turn that the automatic Setup lifecycle claimed after commit. */
+  async dispatchQueuedAutomaticTurn(
+    submission: WorkspaceEnvironmentQueuedTurnSubmission,
+  ): Promise<WorkspaceEnvironmentAutomaticSetupDispatch> {
     const queuedMessage = this.messageRepo.findByIdInThread(submission.threadId, submission.messageId);
-    if (!queuedMessage) throw new Error(`Queued first Turn message was not found for Thread: ${submission.threadId}`);
+    if (!queuedMessage) throw new Error(`Queued Turn message was not found for Thread: ${submission.threadId}`);
     let resolveStarted!: () => void;
     const started = new Promise<void>((resolve) => {
       resolveStarted = resolve;
+    });
+    let resolveCompletion!: () => void;
+    const completion = new Promise<void>((resolve) => {
+      resolveCompletion = resolve;
     });
     const send = this.sendMessage({
       threadId: submission.threadId,
@@ -1472,6 +1566,14 @@ export class AgentService {
       thinking: submission.thinking,
       codexFastMode: submission.codexFastMode,
       goalObjective: submission.goalObjective,
+      replyToMessageId: submission.replyToMessageId,
+      quotedText: submission.quotedText,
+      planAction: submission.planAction,
+      markPlanAnswerForMessageId: submission.markPlanAnswerForMessageId,
+      sourceTurnId: submission.sourceTurnId,
+      sourceThreadId: submission.sourceThreadId,
+      sourceProviderId: submission.sourceProviderId as ProviderId | undefined,
+      originSourceTurnId: submission.originSourceTurnId,
       mentions: [...submission.mentions],
       previewAnnotations: submission.previewAnnotations,
       persistedUserMessage: {
@@ -1480,14 +1582,18 @@ export class AgentService {
         attachments: submission.attachments,
         persistedAttachments: submission.persistedAttachments,
       },
-      onTurnStarted: resolveStarted,
+      onTurnStarted: (runtime) => {
+        this.automaticQueuedTurnCompletionResolvers.set(runtime.turnExecutionId!, resolveCompletion);
+        resolveStarted();
+      },
     });
     await Promise.race([
       started,
       send.then(() => {
-        throw new Error(`Queued first Turn finished without runtime dispatch: ${submission.threadId}`);
+        throw new Error(`Queued Turn finished without runtime dispatch: ${submission.threadId}`);
       }),
     ]);
+    return { completion };
   }
 
   async createAndSend({
@@ -1616,14 +1722,16 @@ export class AgentService {
         [...attachments, ...previewAnnotationSnapshotAttachments(previewAnnotations)],
       );
       const messageId = randomUUID();
-      this.workspaceEnvironmentService.queueAutomaticFirstTurn({
-        threadId: thread.id,
-        messageId,
-        content: displayContent ?? content,
-        attachments: persistedAttachments.stored,
-        mentions: validatedMentions,
-        previewAnnotations,
-        submission: {
+      let admission: WorkspaceEnvironmentQueueAdmission;
+      try {
+        admission = this.workspaceEnvironmentService.admitAutomaticTurn({
+          threadId: thread.id,
+          messageId,
+          content: displayContent ?? content,
+          attachments: persistedAttachments.stored,
+          mentions: validatedMentions,
+          previewAnnotations,
+          submission: {
           threadId: thread.id,
           messageId,
           content,
@@ -1645,8 +1753,47 @@ export class AgentService {
           thinking,
           codexFastMode,
           goalObjective,
-        },
-      });
+          },
+        });
+      } catch (error) {
+        await this.attachmentService.removeStoredAttachments(thread.id, persistedAttachments.stored);
+        throw error;
+      }
+      if (!admission.queued) {
+        const runtimeSnapshot = await this.sendInitialMessageAndSnapshot({
+          threadId: thread.id,
+          content,
+          permissionMode,
+          model,
+          attachments: [],
+          reasoningLevel,
+          provider,
+          interactionMode,
+          maxBudgetUsd,
+          maxTurns,
+          copilotAgent,
+          contextWindow: contextWindowMode,
+          thinking,
+          displayContent,
+          mentions,
+          previewAnnotations,
+          goalObjective,
+          orchestrationMode,
+          persistedAttachmentData: persistedAttachments,
+          cleanupPersistedAttachmentsOnHandledCommand: true,
+        }, (err) => {
+          logger.error("createAndSend automatic release send failed", {
+            threadId: thread.id,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        });
+        const updated = this.threadRepo.findById(thread.id);
+        return {
+          ...(updated ?? thread),
+          runtimeSnapshot,
+          ...(threadWarnings?.length ? { warnings: threadWarnings } : {}),
+        };
+      }
       const updated = this.threadRepo.findById(thread.id);
       return {
         ...(updated ?? thread),
@@ -2197,11 +2344,7 @@ export class AgentService {
     this.clearTurnEndedState(threadId);
     this.threadRepo.updateStatus(threadId, "paused");
     broadcast("thread.status", { threadId, status: "paused" });
-    if (this.activeSessionIds.has(threadId)) {
-      this.activeSessionIds.delete(threadId);
-      this.memoryPressureService.markIdle(threadId);
-    }
-    this.releaseMutationReservation(threadId, reservationToken);
+    this.trackSessionEnded(threadId, runtimeBefore.turnExecutionId);
     const snapshot = this.turnRuntime.snapshot(threadId) ?? idleSnapshot;
     return {
       threadId,
@@ -2634,9 +2777,16 @@ export class AgentService {
    * Track that a session has ended. No-ops if the session was not active.
    * If this was the last active session, signals idle to MemoryPressureService.
    */
-  private trackSessionEnded(threadId: string): void {
+  private trackSessionEnded(threadId: string, executionId?: string | null): void {
     if (this.activeSessionIds.delete(threadId)) {
       this.memoryPressureService.markIdle(threadId);
+    }
+    if (executionId) {
+      const resolve = this.automaticQueuedTurnCompletionResolvers.get(executionId);
+      if (resolve) {
+        this.automaticQueuedTurnCompletionResolvers.delete(executionId);
+        resolve();
+      }
     }
     const reservationToken = this.turnRetryDispatchByThread.get(threadId)?.mutationReservationToken;
     this.releaseMutationReservation(threadId, reservationToken);
@@ -3579,7 +3729,7 @@ export class AgentService {
           // automatically.
           if (!compactionInProgress) {
             this.threadControlMcp?.revoke(`mcode-${event.threadId}`);
-            this.trackSessionEnded(event.threadId);
+            this.trackSessionEnded(event.threadId, event.turnExecutionId);
             this.disarmTurnRetryWindow(event.threadId);
             void this.refreshNativeClaudeGoalAfterTurn(event.threadId);
           }
@@ -3642,7 +3792,7 @@ export class AgentService {
           );
           if (!terminalized) return false;
           void this.finalizeTerminalTurn(event.threadId, "errored", "error");
-          this.trackSessionEnded(event.threadId);
+          this.trackSessionEnded(event.threadId, event.turnExecutionId);
           this.disarmTurnRetryWindow(event.threadId);
           this.releaseMutationReservation(event.threadId);
           // Turn-scoped cleanup of any one-shot handoff Read grant when the
@@ -3757,7 +3907,7 @@ export class AgentService {
               : "interrupted";
           if (!this.turnRuntime.terminalize(event.threadId, activeExecutionId, outcome)) return false;
           void this.finalizeTerminalTurn(event.threadId, outcome, "ended");
-          this.trackSessionEnded(event.threadId);
+          this.trackSessionEnded(event.threadId, activeExecutionId);
           this.disarmTurnRetryWindow(event.threadId);
           this.clearTurnEndedState(event.threadId);
           return true;
@@ -4009,7 +4159,7 @@ export class AgentService {
       reason,
     });
     void this.finalizeTerminalTurn(event.threadId, "interrupted", "assistant text checkpoint failure");
-    this.trackSessionEnded(event.threadId);
+    this.trackSessionEnded(event.threadId, executionId);
     this.disarmTurnRetryWindow(event.threadId);
   }
 
@@ -4934,6 +5084,7 @@ ${userMessage}`;
           : false;
         if (!terminalized && runtime?.phase !== "interrupted") return;
         await (this.finalizeTerminalTurn(threadId, "interrupted", "shutdown") ?? Promise.resolve());
+        this.trackSessionEnded(threadId, runtime?.turnExecutionId);
         this.threadRepo.updateStatus(threadId, "interrupted");
         broadcast("thread.status", { threadId, status: "interrupted" });
       }),

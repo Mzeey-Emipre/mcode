@@ -13,6 +13,8 @@ import { WorkspaceRepo } from "../persistence/workspace-repo.js";
 import { WorktreeRepo } from "../persistence/worktree-repo.js";
 import { ThreadRepo } from "../../thread-control/persistence/thread-repo.js";
 import { TerminalCommandService } from "../../terminal/commands/terminal-command-service.js";
+import { TERMINAL_BACKEND_TOKEN, type TerminalBackend } from "../../terminal/backends/terminal-backend.js";
+import { AttachmentService } from "../../attachments/storage/attachment-service.js";
 
 /** Register the workspace repository and its string-keyed dependency alias. */
 export function registerWorkspaceRepository(container: DependencyContainer): void {
@@ -66,6 +68,10 @@ export function registerProjectServices(container: DependencyContainer): void {
         workspaceEnvironmentService = new WorkspaceEnvironmentService({
           threads: c.resolve(ThreadRepo),
           terminalCommands: c.resolve(TerminalCommandService),
+          terminalRecovery: c.isRegistered(TERMINAL_BACKEND_TOKEN)
+            ? c.resolve<TerminalBackend>(TERMINAL_BACKEND_TOKEN)
+            : undefined,
+          attachmentStorage: c.resolve(AttachmentService),
           database: c.isRegistered("Database") ? c.resolve("Database") : undefined,
         });
         return workspaceEnvironmentService;

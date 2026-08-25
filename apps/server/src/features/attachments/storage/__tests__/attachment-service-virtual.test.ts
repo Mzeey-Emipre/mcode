@@ -63,3 +63,30 @@ describe("AttachmentService.persistGeneratedImageFromPath", () => {
     }
   });
 });
+
+describe("AttachmentService.removeStoredAttachments", () => {
+  it("removes only the requested stored file and leaves another queued attachment available", async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), "mcode-attachment-cleanup-"));
+    const firstSource = join(tempDir, "first.png");
+    const secondSource = join(tempDir, "second.png");
+    writeFileSync(firstSource, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    writeFileSync(secondSource, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+    const service = new AttachmentService();
+    const threadId = "thread-unit-test-selective-cleanup";
+
+    try {
+      const { stored, persisted } = await service.persist(threadId, [
+        { id: "queued-attachment-1", name: "first.png", mimeType: "image/png", sizeBytes: 4, sourcePath: firstSource },
+        { id: "queued-attachment-2", name: "second.png", mimeType: "image/png", sizeBytes: 4, sourcePath: secondSource },
+      ]);
+
+      await service.removeStoredAttachments(threadId, [stored[0]!]);
+
+      expect(existsSync(persisted[0]!.sourcePath)).toBe(false);
+      expect(existsSync(persisted[1]!.sourcePath)).toBe(true);
+    } finally {
+      service.removeForThread(threadId);
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+});

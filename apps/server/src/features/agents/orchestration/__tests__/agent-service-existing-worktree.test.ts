@@ -43,7 +43,7 @@ function deferred<T>(): { readonly promise: Promise<T>; readonly resolve: (value
 }
 
 function createAgentServiceHarness(automaticSetup?:
-  | { queueAutomaticFirstTurn: ReturnType<typeof vi.fn> }
+  | { queueAutomaticFirstTurn: ReturnType<typeof vi.fn>; admitAutomaticTurn?: ReturnType<typeof vi.fn> }
   | ((deps: { readonly db: Database.Database; readonly threadRepo: ThreadRepo }) => WorkspaceEnvironmentService),
 ) {
   const db: Database.Database = openMemoryDatabase();
@@ -56,6 +56,15 @@ function createAgentServiceHarness(automaticSetup?:
   const threadService = {
     create: vi.fn(),
   } as unknown as ThreadService;
+  const availability = { assertUsable: vi.fn() };
+  const providerRegistry = {
+    resolve: vi.fn(() => ({ id: "claude" })),
+    resolveAll: vi.fn(() => []),
+  };
+  const attachmentService = {
+    persist: vi.fn(async () => ({ stored: [], persisted: [] })),
+    removeStoredAttachments: vi.fn(async () => undefined),
+  };
   const resolvedAutomaticSetup = typeof automaticSetup === "function"
     ? automaticSetup({ db, threadRepo })
     : automaticSetup;
@@ -64,8 +73,8 @@ function createAgentServiceHarness(automaticSetup?:
     workspaceRepo,
     messageRepo,
     gitService,
-    { persist: vi.fn(async () => ({ stored: [], persisted: [] })) } as never,
-    {} as never,
+    attachmentService as never,
+    providerRegistry as never,
     threadService,
     {} as never,
     {} as never,
@@ -74,7 +83,7 @@ function createAgentServiceHarness(automaticSetup?:
     {} as never,
     {} as never,
     {} as never,
-    {} as never,
+    availability as never,
     {} as never,
     {} as never,
     {} as never,
@@ -90,12 +99,12 @@ function createAgentServiceHarness(automaticSetup?:
   );
   vi.spyOn(service, "sendMessage").mockResolvedValue(undefined);
 
-  return { db, threadRepo, workspaceRepo, messageRepo, gitService, threadService, service, automaticSetup: resolvedAutomaticSetup };
+  return { db, threadRepo, workspaceRepo, messageRepo, gitService, threadService, service, availability, attachmentService, automaticSetup: resolvedAutomaticSetup };
 }
 
 describe("AgentService.createAndSend defaults", () => {
   it("queues only the first Turn for a managed New worktree before AgentService reserves runtime state", async () => {
-    const automaticSetup = { queueAutomaticFirstTurn: vi.fn() };
+    const automaticSetup = { queueAutomaticFirstTurn: vi.fn(), admitAutomaticTurn: vi.fn(() => ({ queued: true })) };
     const { threadRepo, workspaceRepo, threadService, service } = createAgentServiceHarness(automaticSetup);
     const workspace = workspaceRepo.create("Repo", "/repo");
     const managed = threadRepo.create(workspace.id, "Managed first Turn", "worktree", "feature/managed", true, "claude");
@@ -108,7 +117,7 @@ describe("AgentService.createAndSend defaults", () => {
       branch: "feature/managed",
     });
 
-    expect(automaticSetup.queueAutomaticFirstTurn).toHaveBeenCalledWith(expect.objectContaining({
+    expect(automaticSetup.admitAutomaticTurn).toHaveBeenCalledWith(expect.objectContaining({
       threadId: managed.id,
       content: "Queue this first Turn",
       submission: expect.objectContaining({ messageId: expect.any(String) }),
@@ -153,13 +162,367 @@ describe("AgentService.createAndSend defaults", () => {
     expect(environment.getAutomaticSetup({ threadId: managed.id })).toMatchObject({
       gate: "not-required",
       attempt: null,
-      queuedTurn: { state: "dispatched", dispatchedAt: expect.any(String) },
+      queuedTurns: [{ state: "dispatched", dispatchedAt: expect.any(String) }],
     });
     providerCompletion.resolve();
   });
 
+  it("persists each later Turn sent while automatic Setup remains blocked", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mcode-agent-queued-turn-"));
+    roots.push(root);
+    const { db, threadRepo, workspaceRepo, service, automaticSetup } = createAgentServiceHarness(({ db, threadRepo: threads }) =>
+      new WorkspaceEnvironmentService({
+        mcodeDir: root,
+        database: db,
+        threads: { findById: (id) => threads.findById(id) },
+        terminalCommands: {
+          prepare: async () => ({
+            kind: "ready" as const,
+            command: {
+              snapshot: { checkoutPath: "/repo/.worktrees/managed", terminal: { executable: "sh", arguments: ["-c", "bun run setup"] } },
+              start: async () => await new Promise<never>(() => undefined),
+              close: async () => ({ kind: "contained" as const }),
+              waitForRelease: async () => await new Promise<never>(() => undefined),
+            },
+          }),
+        },
+        platform: "linux",
+      }),
+    );
+    const workspace = workspaceRepo.create("Repo", "/repo");
+    const managed = threadRepo.create(workspace.id, "Managed", "worktree", "feature/managed", true, "claude");
+    const environment = automaticSetup as WorkspaceEnvironmentService;
+    await environment.save({
+      workspaceId: workspace.id,
+      sourceRevision: null,
+      document: { version: "0.0.1", setup: { linux: "bun run setup" }, actions: [] },
+    });
+    environment.queueAutomaticFirstTurn({
+      threadId: managed.id,
+      messageId: "message-first",
+      content: "First blocked Turn",
+      attachments: [],
+      mentions: [],
+      submission: {
+        threadId: managed.id,
+        messageId: "message-first",
+        content: "First blocked Turn",
+        displayContent: "First blocked Turn",
+        model: "claude-sonnet-4-6",
+        permissionMode: "default",
+        attachments: [],
+        persistedAttachments: [],
+        mentions: [],
+        provider: "claude",
+      },
+    });
+    vi.mocked(service.sendMessage).mockRestore();
+
+    await service.sendMessage({ threadId: managed.id, content: "Second blocked Turn" });
+
+    expect(environment.getAutomaticSetup({ threadId: managed.id }).queuedTurns).toHaveLength(2);
+    expect(environment.getAutomaticSetup({ threadId: managed.id }).queuedTurns).toEqual(expect.arrayContaining([
+      expect.objectContaining({ messageId: "message-first", state: "queued" }),
+      expect.objectContaining({ state: "queued" }),
+    ]));
+    expect(db.prepare("SELECT content FROM messages WHERE thread_id = ? ORDER BY sequence").all(managed.id)).toEqual([
+      { content: "First blocked Turn" },
+      { content: "Second blocked Turn" },
+    ]);
+  });
+
+  it("removes newly persisted attachments when the automatic queue is at capacity", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mcode-agent-queued-turn-capacity-"));
+    roots.push(root);
+    const { threadRepo, workspaceRepo, service, attachmentService, automaticSetup } = createAgentServiceHarness(({ db, threadRepo: threads }) =>
+      new WorkspaceEnvironmentService({
+        mcodeDir: root,
+        database: db,
+        threads: { findById: (id) => threads.findById(id) },
+        terminalCommands: { prepare: vi.fn() },
+        platform: "linux",
+      }),
+    );
+    const workspace = workspaceRepo.create("Repo", "/repo");
+    const managed = threadRepo.create(workspace.id, "Managed", "worktree", "feature/managed", true, "claude");
+    const environment = automaticSetup as WorkspaceEnvironmentService;
+    await environment.save({
+      workspaceId: workspace.id,
+      sourceRevision: null,
+      document: { version: "0.0.1", setup: { linux: "bun run setup" }, actions: [] },
+    });
+    for (let index = 1; index <= 64; index += 1) {
+      environment.queueAutomaticFirstTurn({
+        threadId: managed.id,
+        messageId: `queued-capacity-${index}`,
+        content: `Queued Turn ${index}`,
+        attachments: [],
+        mentions: [],
+        submission: {
+          threadId: managed.id,
+          messageId: `queued-capacity-${index}`,
+          content: `Queued Turn ${index}`,
+          displayContent: `Queued Turn ${index}`,
+          model: "claude-sonnet-4-6",
+          permissionMode: "default",
+          attachments: [],
+          persistedAttachments: [],
+          mentions: [],
+          provider: "claude",
+        },
+      });
+    }
+    const stored = { id: "attachment-capacity", name: "capacity.png", mimeType: "image/png", sizeBytes: 4 };
+    attachmentService.persist.mockResolvedValue({
+      stored: [stored],
+      persisted: [{ ...stored, sourcePath: "/tmp/capacity.png" }],
+    });
+    vi.mocked(service.sendMessage).mockRestore();
+
+    await expect(service.sendMessage({
+      threadId: managed.id,
+      content: "Overflow queued Turn",
+      attachments: [{ ...stored, sourcePath: "/tmp/source-capacity.png" }],
+    })).rejects.toMatchObject({ code: "WORKSPACE_ENVIRONMENT_SETUP_CAPACITY" });
+
+    expect(attachmentService.removeStoredAttachments).toHaveBeenCalledWith(managed.id, [stored]);
+  });
+
+  it("removes newly persisted attachments when Thread deletion rejects automatic admission", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mcode-agent-queued-turn-deletion-"));
+    roots.push(root);
+    const { threadRepo, workspaceRepo, service, attachmentService, automaticSetup } = createAgentServiceHarness(({ db, threadRepo: threads }) =>
+      new WorkspaceEnvironmentService({
+        mcodeDir: root,
+        database: db,
+        threads: { findById: (id) => threads.findById(id) },
+        terminalCommands: { prepare: vi.fn() },
+        platform: "linux",
+      }),
+    );
+    const workspace = workspaceRepo.create("Repo", "/repo");
+    const managed = threadRepo.create(workspace.id, "Managed", "worktree", "feature/managed", true, "claude");
+    const environment = automaticSetup as WorkspaceEnvironmentService;
+    await environment.save({
+      workspaceId: workspace.id,
+      sourceRevision: null,
+      document: { version: "0.0.1", setup: { linux: "bun run setup" }, actions: [] },
+    });
+    environment.queueAutomaticFirstTurn({
+      threadId: managed.id,
+      messageId: "queued-deletion-1",
+      content: "First blocked Turn",
+      attachments: [],
+      mentions: [],
+      submission: {
+        threadId: managed.id,
+        messageId: "queued-deletion-1",
+        content: "First blocked Turn",
+        displayContent: "First blocked Turn",
+        model: "claude-sonnet-4-6",
+        permissionMode: "default",
+        attachments: [],
+        persistedAttachments: [],
+        mentions: [],
+        provider: "claude",
+      },
+    });
+    const stored = { id: "attachment-deletion", name: "deletion.png", mimeType: "image/png", sizeBytes: 4 };
+    attachmentService.persist.mockResolvedValue({
+      stored: [stored],
+      persisted: [{ ...stored, sourcePath: "/tmp/deletion.png" }],
+    });
+    const releaseDeletion = environment.beginThreadDeletion(managed.id);
+    vi.mocked(service.sendMessage).mockRestore();
+
+    await expect(service.sendMessage({
+      threadId: managed.id,
+      content: "Rejected by deletion",
+      attachments: [{ ...stored, sourcePath: "/tmp/source-deletion.png" }],
+    })).rejects.toMatchObject({ code: "WORKSPACE_ENVIRONMENT_SETUP_UNAVAILABLE" });
+
+    expect(attachmentService.removeStoredAttachments).toHaveBeenCalledWith(managed.id, [stored]);
+    releaseDeletion();
+  });
+
+  it("cleans released-gate attachments when a native command handles the send without persisting a Turn", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mcode-agent-queued-turn-handled-"));
+    roots.push(root);
+    const { threadRepo, workspaceRepo, messageRepo, service, attachmentService, automaticSetup } = createAgentServiceHarness(({ db, threadRepo: threads }) =>
+      new WorkspaceEnvironmentService({
+        mcodeDir: root,
+        database: db,
+        threads: { findById: (id) => threads.findById(id) },
+        terminalCommands: { prepare: async () => { throw new Error("setup unavailable"); } },
+        platform: "linux",
+      }),
+    );
+    const workspace = workspaceRepo.create("Repo", "/repo");
+    const managed = threadRepo.create(workspace.id, "Managed", "worktree", "feature/managed", true, "claude");
+    const environment = automaticSetup as WorkspaceEnvironmentService;
+    await environment.save({
+      workspaceId: workspace.id,
+      sourceRevision: null,
+      document: { version: "0.0.1", setup: { linux: "bun run setup" }, actions: [] },
+    });
+    environment.queueAutomaticFirstTurn({
+      threadId: managed.id,
+      messageId: "message-first",
+      content: "First blocked Turn",
+      attachments: [],
+      mentions: [],
+      submission: {
+        threadId: managed.id,
+        messageId: "message-first",
+        content: "First blocked Turn",
+        displayContent: "First blocked Turn",
+        model: "claude-sonnet-4-6",
+        permissionMode: "default",
+        attachments: [],
+        persistedAttachments: [],
+        mentions: [],
+        provider: "claude",
+      },
+    });
+    await eventually(() => expect(environment.getAutomaticSetup({ threadId: managed.id }).attempt?.state).toBe("failed"));
+    const stored = { id: "attachment-handled", name: "handled.png", mimeType: "image/png", sizeBytes: 4 };
+    attachmentService.persist.mockImplementationOnce(async () => {
+      await environment.continueAutomaticSetup({ threadId: managed.id });
+      return { stored: [stored], persisted: [{ ...stored, sourcePath: "/tmp/handled.png" }] };
+    });
+    const commandRouter = (service as unknown as {
+      commandRouter: { route: ReturnType<typeof vi.fn> };
+    }).commandRouter;
+    vi.spyOn(commandRouter, "route").mockResolvedValueOnce({ kind: "handled" });
+    vi.mocked(service.sendMessage).mockRestore();
+
+    await service.sendMessage({
+      threadId: managed.id,
+      content: "handled command after release",
+      model: "claude-sonnet-4-6",
+      permissionMode: "default",
+      provider: "claude",
+      attachments: [{ ...stored, sourcePath: "/tmp/source-handled.png" }],
+    });
+
+    expect(attachmentService.removeStoredAttachments).toHaveBeenCalledWith(managed.id, [stored]);
+    expect(messageRepo.listByThread(managed.id, 100).messages.map((message) => message.content)).not.toContain("handled command after release");
+  });
+
+  it("replays a blocked reply with its plan and provenance fields exactly as queued", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mcode-agent-queued-turn-fidelity-"));
+    roots.push(root);
+    const { db, threadRepo, workspaceRepo, messageRepo, service, automaticSetup } = createAgentServiceHarness(({ db, threadRepo: threads }) =>
+      new WorkspaceEnvironmentService({
+        mcodeDir: root,
+        database: db,
+        threads: { findById: (id) => threads.findById(id) },
+        terminalCommands: { prepare: vi.fn() },
+        platform: "linux",
+      }),
+    );
+    const workspace = workspaceRepo.create("Repo", "/repo");
+    const managed = threadRepo.create(workspace.id, "Managed", "worktree", "feature/managed", true, "claude");
+    const replyTarget = messageRepo.create(managed.id, "assistant", "Prior answer", 1);
+    const environment = automaticSetup as WorkspaceEnvironmentService;
+    await environment.save({
+      workspaceId: workspace.id,
+      sourceRevision: null,
+      document: { version: "0.0.1", setup: { linux: "bun run setup" }, actions: [] },
+    });
+    environment.queueAutomaticFirstTurn({
+      threadId: managed.id,
+      messageId: "message-first",
+      content: "First blocked Turn",
+      attachments: [],
+      mentions: [],
+      submission: {
+        threadId: managed.id,
+        messageId: "message-first",
+        content: "First blocked Turn",
+        displayContent: "First blocked Turn",
+        model: "claude-sonnet-4-6",
+        permissionMode: "default",
+        attachments: [],
+        persistedAttachments: [],
+        mentions: [],
+        provider: "claude",
+      },
+    });
+    vi.mocked(service.sendMessage).mockRestore();
+
+    await service.sendMessage({
+      threadId: managed.id,
+      content: "Queued reply",
+      model: "claude-sonnet-4-6",
+      permissionMode: "default",
+      provider: "claude",
+      attachments: [],
+      replyToMessageId: replyTarget.id,
+      quotedText: "The precise quoted passage",
+      planAction: "implement",
+      markPlanAnswerForMessageId: "00000000-0000-4000-8000-000000000001",
+      sourceTurnId: "00000000-0000-4000-8000-000000000002",
+      sourceThreadId: "source-thread",
+      sourceProviderId: "codex",
+      originSourceTurnId: "00000000-0000-4000-8000-000000000003",
+    });
+
+    const queued = db.prepare(
+      "SELECT q.submission_json, m.id, m.reply_to_message_id, m.quoted_text, m.origin_type, m.source_thread_id, m.source_turn_id, m.source_provider_id FROM workspace_environment_queued_turns q JOIN messages m ON m.id = q.message_id WHERE q.thread_id = ? AND m.content = ?",
+    ).get(managed.id, "Queued reply") as {
+      submission_json: string;
+      id: string;
+      reply_to_message_id: string | null;
+      quoted_text: string | null;
+      origin_type: string;
+      source_thread_id: string | null;
+      source_turn_id: string | null;
+      source_provider_id: string | null;
+    };
+    expect(queued).toMatchObject({
+      reply_to_message_id: replyTarget.id,
+      quoted_text: "The precise quoted passage",
+      origin_type: "thread",
+      source_thread_id: "source-thread",
+      source_turn_id: "00000000-0000-4000-8000-000000000003",
+      source_provider_id: "codex",
+    });
+    const persisted = JSON.parse(queued.submission_json) as Record<string, unknown>;
+    expect(persisted).toMatchObject({
+      replyToMessageId: replyTarget.id,
+      quotedText: "The precise quoted passage",
+      planAction: "implement",
+      markPlanAnswerForMessageId: "00000000-0000-4000-8000-000000000001",
+      sourceTurnId: "00000000-0000-4000-8000-000000000002",
+      sourceThreadId: "source-thread",
+      sourceProviderId: "codex",
+      originSourceTurnId: "00000000-0000-4000-8000-000000000003",
+    });
+
+    const replayed = vi.fn(async ({ onTurnStarted, ...command }: Parameters<AgentService["sendMessage"]>[0]) => {
+      onTurnStarted?.({ threadId: managed.id, turnExecutionId: "queued-execution", phase: "running" });
+      return command;
+    });
+    vi.spyOn(service, "sendMessage").mockImplementation(replayed);
+    const accepted = await service.dispatchQueuedAutomaticTurn(persisted as never);
+
+    expect(replayed).toHaveBeenCalledWith(expect.objectContaining({
+      threadId: managed.id,
+      replyToMessageId: replyTarget.id,
+      quotedText: "The precise quoted passage",
+      planAction: "implement",
+      markPlanAnswerForMessageId: "00000000-0000-4000-8000-000000000001",
+      sourceTurnId: "00000000-0000-4000-8000-000000000002",
+      sourceThreadId: "source-thread",
+      sourceProviderId: "codex",
+      originSourceTurnId: "00000000-0000-4000-8000-000000000003",
+    }));
+    void accepted.completion;
+  });
+
   it("keeps Direct and Existing worktree first Turns on immediate dispatch", async () => {
-    const automaticSetup = { queueAutomaticFirstTurn: vi.fn() };
+    const automaticSetup = { queueAutomaticFirstTurn: vi.fn(), admitAutomaticTurn: vi.fn(() => ({ queued: true })) };
     const { workspaceRepo, gitService, service } = createAgentServiceHarness(automaticSetup);
     const workspace = workspaceRepo.create("Repo", "/repo");
     vi.mocked(gitService.listWorktrees).mockResolvedValue([

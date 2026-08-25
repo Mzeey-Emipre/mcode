@@ -6,6 +6,7 @@ import type {
   WorkspaceEnvironmentReadResult,
   WorkspaceEnvironmentSetupAttempt,
   WorkspaceEnvironmentAutomaticSetupSnapshot,
+  WorkspaceEnvironmentAutomaticSetupTerminal,
   Thread,
   RecentThread,
   PaginatedMessages,
@@ -110,6 +111,7 @@ export type {
   WorkspaceEnvironmentReadResult,
   WorkspaceEnvironmentSetupAttempt,
   WorkspaceEnvironmentAutomaticSetupSnapshot,
+  WorkspaceEnvironmentAutomaticSetupTerminal,
   Thread,
   RecentThread,
   Message,
@@ -306,10 +308,16 @@ export interface McodeTransport {
   getWorkspaceSetupAttempt(threadId: string): Promise<WorkspaceEnvironmentSetupAttempt | null>;
   /** Read the reconnect-authoritative automatic Setup gate for one Thread. */
   getAutomaticSetup(threadId: string): Promise<WorkspaceEnvironmentAutomaticSetupSnapshot>;
-  /** Release the queued first Turn without rerunning automatic Setup. */
+  /** Release queued Turns without rerunning automatic Setup. */
   continueAutomaticSetup(threadId: string): Promise<WorkspaceEnvironmentAutomaticSetupSnapshot>;
-  /** Cancel only a first Turn that is still queued behind automatic Setup. */
-  cancelQueuedAutomaticTurn(threadId: string): Promise<WorkspaceEnvironmentAutomaticSetupSnapshot>;
+  /** Cancel one Turn that is still queued behind automatic Setup. */
+  cancelQueuedAutomaticTurn(threadId: string, queuedTurnId: string): Promise<WorkspaceEnvironmentAutomaticSetupSnapshot>;
+  /** Stop the active automatic Setup attempt without releasing its gate. */
+  stopAutomaticSetup(threadId: string): Promise<WorkspaceEnvironmentAutomaticSetupSnapshot>;
+  /** Start one new automatic Setup attempt from the current Project environment. */
+  retryAutomaticSetup(threadId: string): Promise<WorkspaceEnvironmentAutomaticSetupSnapshot>;
+  /** Create one interactive recovery Terminal for the current Thread checkout. */
+  openAutomaticSetupTerminal(threadId: string): Promise<WorkspaceEnvironmentAutomaticSetupTerminal>;
   deleteWorkspace(id: string): Promise<boolean>;
   /** Record workspace as last-opened for recency ordering in the project selector. */
   touchLastOpened(id: string): Promise<void>;

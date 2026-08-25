@@ -24,7 +24,6 @@ import {
 import type { PtyPidRegistry } from "../host/pty-pid-registry.js";
 
 const COMMAND_OUTPUT_CHUNK_MAX_BYTES = 65_536;
-const COMMAND_TIMEOUT_SETTLE_GRACE_MS = 1_000;
 
 /** Resolves the active Terminal profile for a one-shot command. */
 export interface TerminalCommandProfileResolver {
@@ -255,11 +254,9 @@ export class TerminalCommandService {
       containmentInFlight = true;
       containmentPromise = new Promise((resolve) => {
         let closeSettled = false;
-        let fallback: ReturnType<typeof setTimeout> | null = null;
         const finish = (result: TerminalCommandCloseResult): void => {
           if (closeSettled) return;
           closeSettled = true;
-          if (fallback) this.cancel(fallback);
           containmentInFlight = false;
           if (result.kind === "contained") {
             containmentFailed = false;
@@ -274,18 +271,8 @@ export class TerminalCommandService {
           }
           resolve(result);
         };
-        fallback = this.schedule(() => finish({ kind: "containment_failure" }), COMMAND_TIMEOUT_SETTLE_GRACE_MS);
         void Promise.resolve().then(() => this.kill(pid)).then(
-          () => {
-            if (closeSettled) {
-              if (containmentFailed) {
-                containmentFailed = false;
-                release();
-              }
-              return;
-            }
-            finish({ kind: "contained" });
-          },
+          () => finish({ kind: "contained" }),
           () => finish({ kind: "containment_failure" }),
         );
       });

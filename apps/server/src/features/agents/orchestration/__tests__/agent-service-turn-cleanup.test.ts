@@ -155,6 +155,7 @@ function buildService(
   providerEmitter: EventEmitter;
   attachmentService: AttachmentService;
   messageRepo: MessageRepo;
+  planQuestionAnswersRepo: { markAnswered: ReturnType<typeof vi.fn> };
   memoryPressureService: { markActive: ReturnType<typeof vi.fn>; markIdle: ReturnType<typeof vi.fn> };
   snapshotService: { captureRef: ReturnType<typeof vi.fn> };
   turnSnapshotRepo: { create: ReturnType<typeof vi.fn> };
@@ -162,7 +163,6 @@ function buildService(
 } {
   const thread = makeThread();
   const providerEmitter = new EventEmitter();
-
   // sendTurn() is called on the resolved provider
   (providerEmitter as any).sendTurn = vi.fn(() => Promise.resolve());
   (providerEmitter as any).stopSession = vi.fn(() => Promise.resolve());
@@ -227,6 +227,7 @@ function buildService(
         persisted: attachments,
       }),
     ),
+    removeStoredAttachments: vi.fn(async () => undefined),
   } as unknown as AttachmentService;
 
   // The provider must be an EventEmitter so init() can subscribe via
@@ -333,6 +334,7 @@ function buildService(
     providerEmitter,
     attachmentService,
     messageRepo,
+    planQuestionAnswersRepo: planQuestionAnswersRepo as { markAnswered: ReturnType<typeof vi.fn> },
     memoryPressureService: memoryPressureService as MemoryPressureService & { markActive: ReturnType<typeof vi.fn>; markIdle: ReturnType<typeof vi.fn> },
     snapshotService: snapshotService as SnapshotService & { captureRef: ReturnType<typeof vi.fn> },
     turnSnapshotRepo: turnSnapshotRepo as TurnSnapshotRepo & { create: ReturnType<typeof vi.fn> },
@@ -503,6 +505,138 @@ describe("AgentService turn cleanup", () => {
     // Thread should no longer be active
     expect(service.activeThreadIds()).not.toContain(THREAD_ID);
     expect(memoryPressureService.markIdle).toHaveBeenCalled();
+  });
+
+  it("keeps an automatic queued dispatch pending after an early provider send until TurnComplete releases the active Turn", async () => {
+    const { service, providerEmitter, messageRepo } = buildService();
+    service.init();
+    vi.mocked(messageRepo.findByIdInThread).mockReturnValue({ id: "queued-message", sequence: 1 } as never);
+
+    const accepted = await service.dispatchQueuedAutomaticTurn({
+      threadId: THREAD_ID,
+      messageId: "queued-message",
+      content: "Queued work",
+      displayContent: "Queued work",
+      model: "claude-sonnet-4-6",
+      permissionMode: "default",
+      attachments: [],
+      persistedAttachments: [],
+      mentions: [],
+      provider: "claude",
+    });
+
+    expect(service.activeThreadIds()).toContain(THREAD_ID);
+    let completed = false;
+    void accepted.completion.then(() => { completed = true; });
+    await Promise.resolve();
+    expect(completed).toBe(false);
+
+    const executionId = activeExecutionId(service);
+    providerEmitter.emit("event", {
+      type: AgentEventType.TurnComplete,
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      reason: "end_turn",
+      costUsd: null,
+      tokensIn: 0,
+      tokensOut: 0,
+      providerId: "claude",
+    } satisfies AgentEvent);
+
+    await expect(accepted.completion).resolves.toBeUndefined();
+    expect(completed).toBe(true);
+  });
+
+  it("releases a stopped queued dispatch so the next FIFO Turn can reserve the active slot", async () => {
+    const { service, messageRepo } = buildService();
+    vi.mocked(messageRepo.findByIdInThread).mockImplementation((_threadId, messageId) => ({ id: messageId, sequence: 1 } as never));
+
+    const first = await service.dispatchQueuedAutomaticTurn({
+      threadId: THREAD_ID,
+      messageId: "queued-message-1",
+      content: "First queued work",
+      displayContent: "First queued work",
+      model: "claude-sonnet-4-6",
+      permissionMode: "default",
+      attachments: [],
+      persistedAttachments: [],
+      mentions: [],
+      provider: "claude",
+    });
+    await expect(service.stopSession(THREAD_ID)).resolves.toMatchObject({ status: "cancelled" });
+    await expect(first.completion).resolves.toBeUndefined();
+
+    await expect(service.dispatchQueuedAutomaticTurn({
+      threadId: THREAD_ID,
+      messageId: "queued-message-2",
+      content: "Second queued work",
+      displayContent: "Second queued work",
+      model: "claude-sonnet-4-6",
+      permissionMode: "default",
+      attachments: [],
+      persistedAttachments: [],
+      mentions: [],
+      provider: "claude",
+    })).resolves.toMatchObject({ completion: expect.any(Promise) });
+  });
+
+  it("marks a replayed queued plan answer after projecting its persisted user message", async () => {
+    const { service, messageRepo, planQuestionAnswersRepo } = buildService();
+    vi.mocked(messageRepo.findByIdInThread).mockReturnValue({ id: "queued-plan-answer", sequence: 1 } as never);
+
+    await service.dispatchQueuedAutomaticTurn({
+      threadId: THREAD_ID,
+      messageId: "queued-plan-answer",
+      content: "Implement the approved plan",
+      displayContent: "Implement the approved plan",
+      model: "claude-sonnet-4-6",
+      permissionMode: "default",
+      attachments: [],
+      persistedAttachments: [],
+      mentions: [],
+      provider: "claude",
+      markPlanAnswerForMessageId: "00000000-0000-4000-8000-000000000101",
+    });
+
+    expect(planQuestionAnswersRepo.markAnswered).toHaveBeenCalledOnce();
+    expect(planQuestionAnswersRepo.markAnswered).toHaveBeenCalledWith(
+      "00000000-0000-4000-8000-000000000101",
+      THREAD_ID,
+    );
+  });
+
+  it("retains pre-persisted automatic-gate attachments when the command falls through to a normal Turn", async () => {
+    const { service, attachmentService, messageRepo } = buildService();
+    const stored = { id: "attachment-normal", name: "normal.png", mimeType: "image/png", sizeBytes: 4 };
+
+    await service.sendMessage({
+      threadId: THREAD_ID,
+      content: "Normal fallback Turn",
+      model: "claude-sonnet-4-6",
+      permissionMode: "default",
+      provider: "claude",
+      attachments: [],
+      persistedAttachmentData: {
+        stored: [stored],
+        persisted: [{ ...stored, sourcePath: "/tmp/normal.png" }],
+      },
+      cleanupPersistedAttachmentsOnHandledCommand: true,
+    });
+
+    expect((attachmentService.removeStoredAttachments as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    expect(messageRepo.create).toHaveBeenCalledWith(
+      THREAD_ID,
+      "user",
+      "Normal fallback Turn",
+      1,
+      [stored],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    );
   });
 
   it("ignores a late TurnStarted after stop instead of auto-resuming the thread", async () => {

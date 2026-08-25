@@ -179,6 +179,23 @@ export class AttachmentService {
     };
   }
 
+  /** Remove only the Mcode-owned files for the specified stored attachments. */
+  async removeStoredAttachments(threadId: string, attachments: readonly StoredAttachment[]): Promise<void> {
+    assertSafeId("thread ID", threadId);
+    const baseDir = join(getAttachmentsDir(), threadId);
+    await Promise.all(attachments.map(async (attachment) => {
+      assertSafeId("attachment ID", attachment.id);
+      if (shouldPersistAttachmentWithoutFile({ ...attachment, sourcePath: "" })) return;
+      const storedPath = resolveStoredAttachmentPath(baseDir, attachment.id, attachment.mimeType);
+      try {
+        await unlink(storedPath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+        throw error;
+      }
+    }));
+  }
+
   /** Copy a Codex-generated image into Mcode-managed attachment storage. */
   persistGeneratedImageFromPath(threadId: string, sourcePath: string): StoredAttachment {
     assertSafeId("thread ID", threadId);

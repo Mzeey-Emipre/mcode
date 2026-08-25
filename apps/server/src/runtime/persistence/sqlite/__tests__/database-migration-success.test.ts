@@ -22,6 +22,7 @@ const SUBAGENT_IDENTITY_MIGRATION = "0042_supreme_terrax";
 const MESSAGE_OUTCOME_MIGRATION = "0043_massive_dazzler";
 const AUTOMATIC_SETUP_MIGRATION = "0044_small_prodigy";
 const ASSISTANT_TEXT_CHECKPOINT_MIGRATION = "0045_tiny_stardust";
+const QUEUED_TURNS_FIFO_MIGRATION = "0046_queued_turns_fifo";
 
 type JournalEntry = {
   idx: number;
@@ -265,6 +266,68 @@ describe("successful database migration recovery", () => {
       ).get("message-production")).toEqual({ content: "Existing production text" });
     } finally {
       reopenedDatabase.close();
+    }
+  });
+
+  it("upgrades the queued Turn table with durable FIFO positions and a non-unique per-Thread index", () => {
+    const currentMigrationsDirectory = join(process.cwd(), "drizzle");
+    const previousMigrationsDirectory = join(directory, "drizzle-through-0045");
+    copyMigrationsThrough(
+      currentMigrationsDirectory,
+      previousMigrationsDirectory,
+      ASSISTANT_TEXT_CHECKPOINT_MIGRATION,
+    );
+
+    const previousDatabase = new Database(databasePath, {
+      nativeBinding: resolveElectronNativeBinding(),
+    });
+    try {
+      migrate(drizzle(previousDatabase), {
+        migrationsFolder: migrationsFolderForDrizzle(previousMigrationsDirectory),
+      });
+      const timestamp = "2026-08-24T12:00:00.000Z";
+      previousDatabase.prepare(
+        "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+      ).run("workspace-queued", "Queued", "C:/queued", timestamp, timestamp);
+      previousDatabase.prepare(
+        "INSERT INTO threads (id, workspace_id, title, branch, provider, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      ).run("thread-queued", "workspace-queued", "Queued", "main", "codex", "active", timestamp, timestamp);
+      previousDatabase.prepare(
+        "INSERT INTO messages (id, thread_id, role, content, timestamp, sequence) VALUES (?, ?, ?, ?, ?, ?)",
+      ).run("message-queued-1", "thread-queued", "user", "First blocked Turn", timestamp, 1);
+      previousDatabase.prepare(
+        "INSERT INTO workspace_environment_queued_turns (id, thread_id, message_id, state, submission_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+      ).run("queued-1", "thread-queued", "message-queued-1", "queued", "{}", timestamp);
+    } finally {
+      previousDatabase.close();
+    }
+
+    process.env.MCODE_DRIZZLE_MIGRATIONS_DIR = currentMigrationsDirectory;
+    const upgradedDatabase = openDatabase({ dbPath: databasePath });
+    try {
+      upgradedDatabase.prepare(
+        "INSERT INTO messages (id, thread_id, role, content, timestamp, sequence) VALUES (?, ?, ?, ?, ?, ?)",
+      ).run("message-queued-2", "thread-queued", "user", "Second blocked Turn", "2026-08-24T12:00:01.000Z", 2);
+      expect(() => upgradedDatabase.prepare(
+        "INSERT INTO workspace_environment_queued_turns (id, thread_id, message_id, queue_position, state, submission_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      ).run("queued-2", "thread-queued", "message-queued-2", 2, "queued", "{}", "2026-08-24T12:00:00.000Z")).not.toThrow();
+      expect(upgradedDatabase.prepare(
+        "SELECT id, message_id, queue_position FROM workspace_environment_queued_turns WHERE thread_id = ? ORDER BY queue_position",
+      ).all("thread-queued")).toEqual([
+        { id: "queued-1", message_id: "message-queued-1", queue_position: 1 },
+        { id: "queued-2", message_id: "message-queued-2", queue_position: 2 },
+      ]);
+      expect(columnNames(upgradedDatabase, "workspace_environment_queued_turns")).toContain("queue_position");
+      expect(upgradedDatabase.prepare("PRAGMA index_list(workspace_environment_queued_turns)").all()).toEqual(expect.arrayContaining([
+        expect.objectContaining({ name: "idx_workspace_environment_queued_turns_thread_state_position", unique: 0 }),
+      ]));
+      expect(upgradedDatabase.prepare(
+        "SELECT created_at FROM __drizzle_migrations WHERE hash = ?",
+      ).all(migrationHash(currentMigrationsDirectory, QUEUED_TURNS_FIFO_MIGRATION))).toEqual([{
+        created_at: migrationEntry(currentMigrationsDirectory, QUEUED_TURNS_FIFO_MIGRATION).when,
+      }]);
+    } finally {
+      upgradedDatabase.close();
     }
   });
 

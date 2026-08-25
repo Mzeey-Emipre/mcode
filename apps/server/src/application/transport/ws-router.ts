@@ -396,7 +396,10 @@ export async function routeMessage(
       request.method === "workspace.environment.setup.get" ||
       request.method === "workspace.environment.automaticSetup.get" ||
       request.method === "workspace.environment.automaticSetup.continue" ||
-      request.method === "workspace.environment.automaticSetup.cancelQueuedTurn"
+      request.method === "workspace.environment.automaticSetup.cancelQueuedTurn" ||
+      request.method === "workspace.environment.automaticSetup.stop" ||
+      request.method === "workspace.environment.automaticSetup.retry" ||
+      request.method === "workspace.environment.automaticSetup.openTerminal"
     ) {
       const issues = workspaceEnvironmentValidationIssues(paramsResult.error);
       const unsupported = issues.some((candidate) => candidate.reason === "unsupported_version");
@@ -871,7 +874,13 @@ async function dispatch(
     case "workspace.environment.automaticSetup.continue":
       return await deps.workspaceEnvironmentService.continueAutomaticSetup(params);
     case "workspace.environment.automaticSetup.cancelQueuedTurn":
-      return deps.workspaceEnvironmentService.cancelQueuedAutomaticTurn(params);
+      return await deps.workspaceEnvironmentService.cancelQueuedAutomaticTurn(params);
+    case "workspace.environment.automaticSetup.stop":
+      return await deps.workspaceEnvironmentService.stopAutomaticSetup(params);
+    case "workspace.environment.automaticSetup.retry":
+      return await deps.workspaceEnvironmentService.retryAutomaticSetup(params);
+    case "workspace.environment.automaticSetup.openTerminal":
+      return await deps.workspaceEnvironmentService.openAutomaticSetupTerminal(params);
     case "workspace.delete": {
       const releaseDeletionBarrier = deps.workspaceEnvironmentService.beginWorkspaceDeletion(params.id);
       try {

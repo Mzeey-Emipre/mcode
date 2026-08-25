@@ -19,6 +19,10 @@ import {
   type WorkspaceEnvironmentAutomaticSetupReason,
   type WorkspaceEnvironmentSetupStartInput,
   type WorkspaceEnvironmentAutomaticSetupSnapshot,
+  type WorkspaceEnvironmentAutomaticSetupStopInput,
+  type WorkspaceEnvironmentAutomaticSetupRetryInput,
+  type WorkspaceEnvironmentAutomaticSetupTerminalInput,
+  type WorkspaceEnvironmentAutomaticSetupTerminal,
   type StoredAttachment,
   type MessageMention,
   type PreviewAnnotationBundle,
@@ -36,7 +40,9 @@ import type {
 import { WorkspaceEnvironmentServiceError } from "./workspace-environment-errors.js";
 import {
   WorkspaceEnvironmentAutomaticRepository,
+  WorkspaceEnvironmentAutomaticQueueCapacityError,
   type WorkspaceEnvironmentQueuedTurnSubmission,
+  type WorkspaceEnvironmentQueueAdmission,
 } from "./workspace-environment-automatic-repository.js";
 
 export { WorkspaceEnvironmentServiceError } from "./workspace-environment-errors.js";
@@ -55,6 +61,7 @@ interface ActiveSetupResource {
 interface ActiveAutomaticSetupResource {
   readonly attemptId: string;
   readonly command: PreparedTerminalCommand;
+  cleanupPending: boolean;
 }
 
 interface StartingSetupAttempt {
@@ -88,9 +95,24 @@ export interface WorkspaceEnvironmentTerminalCommandExecutor {
   }): Promise<TerminalCommandPreparation>;
 }
 
-/** Post-commit boundary that resolves once a claimed first Turn has started a runtime. */
+/** Interactive Terminal boundary used for automatic Setup recovery. */
+export interface WorkspaceEnvironmentTerminalRecoveryExecutor {
+  create(threadId: string): WorkspaceEnvironmentAutomaticSetupTerminal | Promise<WorkspaceEnvironmentAutomaticSetupTerminal>;
+}
+
+/** Attachment storage boundary for automatic queued Turn cleanup. */
+export interface WorkspaceEnvironmentAttachmentStorage {
+  removeStoredAttachments(threadId: string, attachments: readonly StoredAttachment[]): Promise<void>;
+}
+
+/** Accepted automatic Turn dispatch whose completion releases the Thread's provider slot. */
+export interface WorkspaceEnvironmentAutomaticSetupDispatch {
+  readonly completion: Promise<void>;
+}
+
+/** Post-commit boundary that resolves once a claimed queued Turn has started a runtime. */
 export interface WorkspaceEnvironmentAutomaticSetupDispatcher {
-  dispatch(submission: WorkspaceEnvironmentQueuedTurnSubmission): Promise<void>;
+  dispatch(submission: WorkspaceEnvironmentQueuedTurnSubmission): Promise<WorkspaceEnvironmentAutomaticSetupDispatch>;
 }
 
 /** Dependencies that add transient manual Setup execution to environment persistence. */
@@ -100,6 +122,8 @@ export interface WorkspaceEnvironmentServiceOptions {
     findById(id: string): WorkspaceEnvironmentSetupThread | null;
   };
   readonly terminalCommands?: WorkspaceEnvironmentTerminalCommandExecutor;
+  readonly terminalRecovery?: WorkspaceEnvironmentTerminalRecoveryExecutor;
+  readonly attachmentStorage?: WorkspaceEnvironmentAttachmentStorage;
   readonly platform?: WorkspaceEnvironmentPlatform;
   readonly manualSetupTimeoutMs?: number;
   readonly setupCancellationWaitMs?: number;
@@ -151,6 +175,11 @@ export class WorkspaceEnvironmentService {
   private readonly cancelScheduled: NonNullable<WorkspaceEnvironmentServiceOptions["cancelScheduled"]>;
   private readonly automaticRepository: WorkspaceEnvironmentAutomaticRepository | null;
   private readonly activeAutomaticSetupResources = new Map<string, ActiveAutomaticSetupResource>();
+  private readonly startingAutomaticSetupPromises = new Map<string, Promise<void>>();
+  private readonly automaticStopPromises = new Map<string, Promise<void>>();
+  private readonly automaticRecoveryOperationTails = new Map<string, Promise<void>>();
+  private readonly automaticStopGenerations = new Map<string, number>();
+  private readonly automaticDrainLoops = new Map<string, Promise<void>>();
   private automaticDispatcher: WorkspaceEnvironmentAutomaticSetupDispatcher | null = null;
   private disposePromise: Promise<void> | null = null;
   private disposed = false;
@@ -170,7 +199,7 @@ export class WorkspaceEnvironmentService {
     this.automaticDispatcher = dispatcher;
   }
 
-  /** Queue the first Turn for a managed New worktree and launch Setup after persistence commits. */
+  /** Queue one Turn for a managed New worktree and launch Setup after persistence commits. */
   queueAutomaticFirstTurn(input: {
     readonly threadId: string;
     readonly messageId: string;
@@ -180,10 +209,34 @@ export class WorkspaceEnvironmentService {
     readonly previewAnnotations?: PreviewAnnotationBundle;
     readonly submission: WorkspaceEnvironmentQueuedTurnSubmission;
   }): WorkspaceEnvironmentAutomaticSetupSnapshot {
+    return this.admitAutomaticTurn(input).snapshot;
+  }
+
+  /** Admit one automatic Turn and report whether a concurrent release requires normal dispatch. */
+  admitAutomaticTurn(input: {
+    readonly threadId: string;
+    readonly messageId: string;
+    readonly content: string;
+    readonly attachments: readonly StoredAttachment[];
+    readonly mentions: readonly MessageMention[];
+    readonly previewAnnotations?: PreviewAnnotationBundle;
+    readonly submission: WorkspaceEnvironmentQueuedTurnSubmission;
+  }): WorkspaceEnvironmentQueueAdmission {
     const thread = this.requireAutomaticSetupThread(input.threadId);
-    const snapshot = this.requireAutomaticRepository().queueFirstTurn(input);
-    if (snapshot.attempt?.state === "queued") void this.startAutomaticSetup(thread);
-    return snapshot;
+    let admission: WorkspaceEnvironmentQueueAdmission;
+    try {
+      admission = this.requireAutomaticRepository().queueFirstTurn(input);
+    } catch (error) {
+      if (error instanceof WorkspaceEnvironmentAutomaticQueueCapacityError) {
+        throw new WorkspaceEnvironmentServiceError(
+          "WORKSPACE_ENVIRONMENT_SETUP_CAPACITY",
+          "Automatic Setup queue capacity reached for this Thread",
+        );
+      }
+      throw error;
+    }
+    if (admission.queued && admission.snapshot.attempt?.state === "queued") void this.startAutomaticSetup(thread);
+    return admission;
   }
 
   /** Return the reconnect-authoritative automatic Setup lifecycle for one Thread. */
@@ -191,17 +244,113 @@ export class WorkspaceEnvironmentService {
     return this.requireAutomaticRepository().snapshot(input.threadId);
   }
 
-  /** Release a first Turn without rerunning Setup, then claim it for post-commit dispatch. */
+  /** Release queued Turns without rerunning Setup, then claim them for post-commit dispatch. */
   async continueAutomaticSetup(input: { readonly threadId: string }): Promise<WorkspaceEnvironmentAutomaticSetupSnapshot> {
+    this.requireAutomaticSetupThread(input.threadId);
     const repository = this.requireAutomaticRepository();
-    repository.continueWithoutSetup(input.threadId);
+    const current = repository.snapshot(input.threadId);
+    if (current.attempt?.state !== "failed" && current.attempt?.state !== "interrupted") {
+      throw new WorkspaceEnvironmentServiceError(
+        "WORKSPACE_ENVIRONMENT_SETUP_UNAVAILABLE",
+        "Automatic Setup can continue only after Setup failed or was interrupted",
+      );
+    }
+    if (!repository.continueWithoutSetup(input.threadId)) return repository.snapshot(input.threadId);
     await this.drainReleasedAutomaticTurn(input.threadId);
+    this.requireAutomaticSetupThread(input.threadId);
     return repository.snapshot(input.threadId);
   }
 
-  /** Cancel only a first Turn that remains queued behind automatic Setup. */
-  cancelQueuedAutomaticTurn(input: { readonly threadId: string }): WorkspaceEnvironmentAutomaticSetupSnapshot {
-    return this.requireAutomaticRepository().cancelQueuedTurn(input.threadId);
+  /** Cancel only the requested Turn that remains queued behind automatic Setup. */
+  async cancelQueuedAutomaticTurn(input: {
+    readonly threadId: string;
+    readonly queuedTurnId: string;
+  }): Promise<WorkspaceEnvironmentAutomaticSetupSnapshot> {
+    const cancelled = this.requireAutomaticRepository().cancelQueuedTurn(input);
+    if (cancelled.attachments.length > 0) {
+      await this.options.attachmentStorage?.removeStoredAttachments(input.threadId, cancelled.attachments);
+    }
+    return cancelled.snapshot;
+  }
+
+  /** Interrupt the active automatic Setup attempt without releasing the blocked gate. */
+  async stopAutomaticSetup(input: WorkspaceEnvironmentAutomaticSetupStopInput): Promise<WorkspaceEnvironmentAutomaticSetupSnapshot> {
+    this.requireAutomaticSetupThread(input.threadId);
+    this.invalidateAutomaticRetry(input.threadId);
+    const stopping = this.automaticStopPromises.get(input.threadId);
+    if (stopping) {
+      await stopping;
+      return this.requireAutomaticRepository().snapshot(input.threadId);
+    }
+    const repository = this.requireAutomaticRepository();
+    const attemptId = repository.interruptCurrentAttempt(input.threadId);
+    const starting = this.startingAutomaticSetupPromises.get(input.threadId);
+    const resource = this.activeAutomaticSetupResources.get(input.threadId);
+    const resourceAttemptId = attemptId ?? resource?.attemptId ?? null;
+    if (resourceAttemptId && (resource?.attemptId === resourceAttemptId || starting)) {
+      const closing = Promise.resolve().then(async () => {
+        const closeResource = async (candidate: ActiveAutomaticSetupResource | undefined): Promise<void> => {
+          if (!candidate || candidate.attemptId !== resourceAttemptId) return;
+          await this.closeActiveAutomaticSetupResource(input.threadId, candidate);
+        };
+        await closeResource(resource);
+        if (starting) {
+          await starting.catch((error: unknown) => {
+            if (!(error instanceof SetupStartCancelledError)) throw error;
+          });
+        }
+        await closeResource(this.activeAutomaticSetupResources.get(input.threadId));
+      });
+      this.automaticStopPromises.set(input.threadId, closing);
+      let contained = false;
+      try {
+        await closing;
+        contained = true;
+      } finally {
+        if (contained && this.automaticStopPromises.get(input.threadId) === closing) {
+          this.automaticStopPromises.delete(input.threadId);
+          this.clearAutomaticRecoveryGeneration(input.threadId);
+        }
+      }
+    }
+    this.clearAutomaticRecoveryGeneration(input.threadId);
+    return repository.snapshot(input.threadId);
+  }
+
+  /** Re-resolve the current Project environment and start one new automatic Setup attempt. */
+  async retryAutomaticSetup(input: WorkspaceEnvironmentAutomaticSetupRetryInput): Promise<WorkspaceEnvironmentAutomaticSetupSnapshot> {
+    const stopGeneration = this.automaticStopGenerations.get(input.threadId) ?? 0;
+    return await this.runAutomaticRecoveryOperation(input.threadId, async () => {
+      this.requireAutomaticSetupThread(input.threadId);
+      const stopping = this.automaticStopPromises.get(input.threadId);
+      if (stopping) await stopping;
+      this.requireAutomaticSetupThread(input.threadId);
+      if ((this.automaticStopGenerations.get(input.threadId) ?? 0) !== stopGeneration) {
+        return this.requireAutomaticRepository().snapshot(input.threadId);
+      }
+      const thread = this.requireAutomaticSetupThread(input.threadId);
+      this.requireAutomaticResourceReleased(input.threadId);
+      if (this.requireAutomaticRepository().retryCurrentAttempt(input.threadId)) {
+        await this.startAutomaticSetup(thread);
+        this.requireAutomaticSetupThread(input.threadId);
+      }
+      return this.requireAutomaticRepository().snapshot(input.threadId);
+    });
+  }
+
+  /** Create one separate interactive recovery Terminal without changing automatic Setup state. */
+  async openAutomaticSetupTerminal(
+    input: WorkspaceEnvironmentAutomaticSetupTerminalInput,
+  ): Promise<WorkspaceEnvironmentAutomaticSetupTerminal> {
+    this.requireAutomaticSetupThread(input.threadId);
+    const terminalRecovery = this.options.terminalRecovery;
+    if (!terminalRecovery) {
+      throw new WorkspaceEnvironmentServiceError(
+        "WORKSPACE_ENVIRONMENT_SETUP_UNAVAILABLE",
+        "Recovery Terminal is unavailable for this Thread",
+      );
+    }
+    return await terminalRecovery.create(input.threadId);
   }
 
   /** Mark interrupted automatic attempts at startup and drain only committed release claims. */
@@ -376,6 +525,9 @@ export class WorkspaceEnvironmentService {
 
   /** Cancels and clears manual Setup state for one Thread. */
   async cancelSetupForThread(threadId: string): Promise<void> {
+    if (this.hasAutomaticSetupForThread(threadId)) {
+      await this.cancelAutomaticSetupForThread(threadId);
+    }
     this.setupGenerations.set(threadId, (this.setupGenerations.get(threadId) ?? 0) + 1);
     const starting = this.startingSetupAttempts.get(threadId);
     if (starting && !(await this.waitForStartingAttempt(starting.promise))) {
@@ -402,6 +554,13 @@ export class WorkspaceEnvironmentService {
   /** Cancels and clears manual Setup state for every Thread in one workspace. */
   async cancelSetupForWorkspace(workspaceId: string): Promise<void> {
     const threadIds = new Set<string>();
+    for (const threadId of [
+      ...this.activeAutomaticSetupResources.keys(),
+      ...this.startingAutomaticSetupPromises.keys(),
+      ...this.automaticDrainLoops.keys(),
+    ]) {
+      if (this.options.threads?.findById(threadId)?.workspace_id === workspaceId) threadIds.add(threadId);
+    }
     for (const [threadId, resource] of this.activeSetupResources) {
       if (resource.attempt.workspaceId === workspaceId) threadIds.add(threadId);
     }
@@ -446,7 +605,15 @@ export class WorkspaceEnvironmentService {
 
   private requireAutomaticSetupThread(threadId: string): WorkspaceEnvironmentSetupThread {
     const thread = this.requireSetupThread(threadId);
-    if (thread.mode !== "worktree" || thread.worktree_managed !== true) {
+    if (
+      this.disposed ||
+      thread.mode !== "worktree" ||
+      thread.worktree_managed !== true ||
+      thread.deleted_at !== null && thread.deleted_at !== undefined ||
+      thread.cleanup_state !== null && thread.cleanup_state !== undefined ||
+      this.deletingThreadCounts.has(thread.id) ||
+      this.deletingWorkspaceCounts.has(thread.workspace_id)
+    ) {
       throw new WorkspaceEnvironmentServiceError(
         "WORKSPACE_ENVIRONMENT_SETUP_UNAVAILABLE",
         "Automatic Setup is unavailable for this Thread",
@@ -455,10 +622,31 @@ export class WorkspaceEnvironmentService {
     return thread;
   }
 
-  private async startAutomaticSetup(thread: WorkspaceEnvironmentSetupThread): Promise<void> {
+  private startAutomaticSetup(thread: WorkspaceEnvironmentSetupThread): Promise<void> {
+    const existing = this.startingAutomaticSetupPromises.get(thread.id);
+    if (existing) return existing;
+    const starting = this.startAutomaticSetupAttempt(thread);
+    this.startingAutomaticSetupPromises.set(thread.id, starting);
+    void starting.then(
+      () => {
+        if (this.startingAutomaticSetupPromises.get(thread.id) === starting) {
+          this.startingAutomaticSetupPromises.delete(thread.id);
+        }
+      },
+      () => {
+        if (this.startingAutomaticSetupPromises.get(thread.id) === starting) {
+          this.startingAutomaticSetupPromises.delete(thread.id);
+        }
+      },
+    );
+    return starting;
+  }
+
+  private async startAutomaticSetupAttempt(thread: WorkspaceEnvironmentSetupThread): Promise<void> {
     const repository = this.requireAutomaticRepository();
     const snapshot = repository.snapshot(thread.id);
     if (snapshot.attempt?.state !== "queued") return;
+    const queuedAttemptId = snapshot.attempt.id;
     const platform = this.options.platform ?? platformForCurrentProcess();
     let script: string | null;
     try {
@@ -468,6 +656,7 @@ export class WorkspaceEnvironmentService {
       if (error instanceof WorkspaceEnvironmentServiceError) {
         repository.failQueuedAttempt({
           threadId: thread.id,
+          attemptId: queuedAttemptId,
           reason: "setup_configuration_invalid",
           snapshot: unavailableSnapshot(platform, null),
           outcome: "configuration_failure",
@@ -476,14 +665,17 @@ export class WorkspaceEnvironmentService {
       }
       repository.failQueuedAttempt({
         threadId: thread.id,
+        attemptId: queuedAttemptId,
         reason: "setup_unavailable",
         snapshot: unavailableSnapshot(platform, null),
         outcome: "unavailable",
       });
       return;
     }
+    if (!this.isAutomaticAttemptQueued(repository, thread.id, queuedAttemptId)
+      || !this.isAutomaticSetupAdmissionAllowed(thread.id)) return;
     if (!script) {
-      repository.releaseWithoutSetup(thread.id);
+      repository.releaseWithoutSetup(thread.id, queuedAttemptId);
       await this.drainReleasedAutomaticTurn(thread.id);
       return;
     }
@@ -491,6 +683,7 @@ export class WorkspaceEnvironmentService {
     if (!terminalCommands) {
       repository.failQueuedAttempt({
         threadId: thread.id,
+        attemptId: queuedAttemptId,
         reason: "setup_unavailable",
         snapshot: unavailableSnapshot(platform, script),
         outcome: "unavailable",
@@ -508,6 +701,7 @@ export class WorkspaceEnvironmentService {
     } catch {
       repository.failQueuedAttempt({
         threadId: thread.id,
+        attemptId: queuedAttemptId,
         reason: "setup_unavailable",
         snapshot: unavailableSnapshot(platform, script),
         outcome: "launch_failure",
@@ -517,24 +711,34 @@ export class WorkspaceEnvironmentService {
     if (preparation.kind !== "ready") {
       repository.failQueuedAttempt({
         threadId: thread.id,
+        attemptId: queuedAttemptId,
         reason: preparation.kind === "unavailable" ? "setup_unavailable" : "setup_configuration_invalid",
         snapshot: snapshotForPreparation(platform, script, preparation),
         outcome: preparation.kind === "unavailable" ? "unavailable" : "configuration_failure",
       });
       return;
     }
+    if (!this.isAutomaticSetupAdmissionAllowed(thread.id)) {
+      await this.closeUnstartedCommand(preparation.command);
+      return;
+    }
     const attemptId = repository.beginAttempt({
       threadId: thread.id,
+      attemptId: queuedAttemptId,
       snapshot: snapshotForPreparation(platform, script, preparation),
     });
     if (!attemptId) {
       await this.closeUnstartedCommand(preparation.command);
       return;
     }
-    this.activeAutomaticSetupResources.set(thread.id, { attemptId, command: preparation.command });
+    const resource: ActiveAutomaticSetupResource = { attemptId, command: preparation.command, cleanupPending: false };
+    this.activeAutomaticSetupResources.set(thread.id, resource);
     void preparation.command.waitForRelease().then(() => {
-      const active = this.activeAutomaticSetupResources.get(thread.id);
-      if (active?.attemptId === attemptId) this.activeAutomaticSetupResources.delete(thread.id);
+      if (this.activeAutomaticSetupResources.get(thread.id) === resource) {
+        this.activeAutomaticSetupResources.delete(thread.id);
+        this.automaticStopPromises.delete(thread.id);
+        this.clearAutomaticRecoveryGeneration(thread.id);
+      }
     });
     void Promise.resolve()
       .then(() => preparation.command.start())
@@ -545,6 +749,9 @@ export class WorkspaceEnvironmentService {
           attemptId,
           ...result,
         });
+        if (result.outcome === "containment_failure" && this.activeAutomaticSetupResources.get(thread.id) === resource) {
+          resource.cleanupPending = true;
+        }
         if (completed && result.state === "passed") await this.drainReleasedAutomaticTurn(thread.id);
       })
       .catch(async () => {
@@ -565,34 +772,191 @@ export class WorkspaceEnvironmentService {
     const repository = this.automaticRepository;
     if (!repository) return;
     repository.interruptUnfinishedAttempts();
+    const settling = await Promise.allSettled([
+      ...this.startingAutomaticSetupPromises.values(),
+      ...this.automaticStopPromises.values(),
+    ]);
+    const settlingFailure = settling.find((result): result is PromiseRejectedResult => result.status === "rejected");
+    if (settlingFailure) throw settlingFailure.reason;
     const results = await Promise.allSettled(
-      [...this.activeAutomaticSetupResources.values()].map(async (resource) => {
-        const result = await resource.command.close();
-        if (result.kind === "containment_failure") {
-          throw new Error("Automatic Project Setup process containment failed");
-        }
-      }),
+      [...this.activeAutomaticSetupResources.entries()].map(async ([threadId, resource]) =>
+        await this.closeActiveAutomaticSetupResource(threadId, resource)),
     );
-    this.activeAutomaticSetupResources.clear();
     const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
     if (failure) throw failure.reason;
+    this.activeAutomaticSetupResources.clear();
+    await Promise.allSettled([...this.automaticDrainLoops.values()]);
+  }
+
+  private isAutomaticAttemptQueued(
+    repository: WorkspaceEnvironmentAutomaticRepository,
+    threadId: string,
+    attemptId: string,
+  ): boolean {
+    const snapshot = repository.snapshot(threadId);
+    return snapshot.gate === "blocked"
+      && snapshot.attempt?.id === attemptId
+      && snapshot.attempt.state === "queued";
+  }
+
+  private isAutomaticSetupAdmissionAllowed(threadId: string): boolean {
+    try {
+      this.requireAutomaticSetupThread(threadId);
+      return true;
+    } catch (error) {
+      if (error instanceof WorkspaceEnvironmentServiceError) return false;
+      throw error;
+    }
+  }
+
+  private hasAutomaticSetupForThread(threadId: string): boolean {
+    if (!this.automaticRepository) return false;
+    return this.automaticRepository.snapshot(threadId).gate === "blocked"
+      || this.activeAutomaticSetupResources.has(threadId)
+      || this.startingAutomaticSetupPromises.has(threadId)
+      || this.automaticDrainLoops.has(threadId);
+  }
+
+  private async cancelAutomaticSetupForThread(threadId: string): Promise<void> {
+    const repository = this.automaticRepository;
+    if (!repository) return;
+    const stopping = this.automaticStopPromises.get(threadId);
+    if (stopping) await stopping;
+    repository.interruptCurrentAttempt(threadId);
+    const starting = this.startingAutomaticSetupPromises.get(threadId);
+    const close = async (): Promise<void> => {
+      const resource = this.activeAutomaticSetupResources.get(threadId);
+      if (resource) await this.closeActiveAutomaticSetupResource(threadId, resource);
+    };
+    await close();
+    if (starting) await starting.catch((error: unknown) => {
+      if (!(error instanceof SetupStartCancelledError)) throw error;
+    });
+    await close();
+    const drain = this.automaticDrainLoops.get(threadId);
+    if (drain) await drain;
   }
 
   private async drainReleasedAutomaticTurn(threadId?: string): Promise<void> {
     const dispatcher = this.automaticDispatcher;
     if (!dispatcher) return;
     const repository = this.requireAutomaticRepository();
+    if (threadId) {
+      await this.startAutomaticDrain(threadId, repository, dispatcher);
+      return;
+    }
+    await Promise.all(repository.releasedThreadIds().map((releasedThreadId) =>
+      this.startAutomaticDrain(releasedThreadId, repository, dispatcher),
+    ));
+  }
+
+  private startAutomaticDrain(
+    threadId: string,
+    repository: WorkspaceEnvironmentAutomaticRepository,
+    dispatcher: WorkspaceEnvironmentAutomaticSetupDispatcher,
+  ): Promise<void> {
+    const existing = this.automaticDrainLoops.get(threadId);
+    if (existing) {
+      void existing.then(() => this.drainReleasedAutomaticTurn(threadId));
+      return Promise.resolve();
+    }
+    let resolveFirstDispatch!: () => void;
+    const firstDispatch = new Promise<void>((resolve) => { resolveFirstDispatch = resolve; });
+    const loop = this.drainAutomaticThread(threadId, repository, dispatcher, resolveFirstDispatch);
+    this.automaticDrainLoops.set(threadId, loop);
+    void loop.then(
+      () => {
+        if (this.automaticDrainLoops.get(threadId) === loop) this.automaticDrainLoops.delete(threadId);
+      },
+      () => {
+        if (this.automaticDrainLoops.get(threadId) === loop) this.automaticDrainLoops.delete(threadId);
+      },
+    );
+    return firstDispatch;
+  }
+
+  private async drainAutomaticThread(
+    threadId: string,
+    repository: WorkspaceEnvironmentAutomaticRepository,
+    dispatcher: WorkspaceEnvironmentAutomaticSetupDispatcher,
+    resolveFirstDispatch: () => void,
+  ): Promise<void> {
+    let firstDispatchResolved = false;
+    const resolveWhenResponsive = () => {
+      if (firstDispatchResolved) return;
+      firstDispatchResolved = true;
+      resolveFirstDispatch();
+    };
     for (;;) {
-      const claimed = repository.claimReleasedTurn(threadId);
-      if (!claimed) return;
       try {
-        await dispatcher.dispatch(claimed.submission);
+        if (!this.isAutomaticSetupAdmissionAllowed(threadId)) {
+          resolveWhenResponsive();
+          return;
+        }
+        const claimed = repository.claimReleasedTurn(threadId);
+        if (!claimed) {
+          resolveWhenResponsive();
+          return;
+        }
+        const accepted = await dispatcher.dispatch(claimed.submission);
+        repository.markDispatched(claimed.id);
+        resolveWhenResponsive();
+        await accepted.completion.catch(() => undefined);
       } catch {
-        // A claimed dispatch may have reached the provider. Preserve the uncertain claim and never retry it automatically.
+        // A malformed or provider-uncertain claim must never be replayed automatically.
+        resolveWhenResponsive();
         return;
       }
-      repository.markDispatched(claimed.id);
-      if (threadId) return;
+    }
+  }
+
+  private invalidateAutomaticRetry(threadId: string): void {
+    this.automaticStopGenerations.set(threadId, (this.automaticStopGenerations.get(threadId) ?? 0) + 1);
+  }
+
+  private runAutomaticRecoveryOperation<T>(threadId: string, operation: () => Promise<T>): Promise<T> {
+    const previous = this.automaticRecoveryOperationTails.get(threadId) ?? Promise.resolve();
+    let release!: () => void;
+    const tail = new Promise<void>((resolve) => { release = resolve; });
+    this.automaticRecoveryOperationTails.set(threadId, tail);
+    return previous
+      .catch(() => undefined)
+      .then(operation)
+      .finally(() => {
+        release();
+        if (this.automaticRecoveryOperationTails.get(threadId) === tail) {
+          this.automaticRecoveryOperationTails.delete(threadId);
+        }
+        this.clearAutomaticRecoveryGeneration(threadId);
+      });
+  }
+
+  private requireAutomaticResourceReleased(threadId: string): void {
+    if (this.activeAutomaticSetupResources.get(threadId)?.cleanupPending) {
+      throw new WorkspaceEnvironmentServiceError(
+        "WORKSPACE_ENVIRONMENT_SETUP_UNAVAILABLE",
+        "Automatic Setup is still waiting for the prior command to release",
+      );
+    }
+  }
+
+  private clearAutomaticRecoveryGeneration(threadId: string): void {
+    if (!this.automaticRecoveryOperationTails.has(threadId) && !this.automaticStopPromises.has(threadId)) {
+      this.automaticStopGenerations.delete(threadId);
+    }
+  }
+
+  private async closeActiveAutomaticSetupResource(
+    threadId: string,
+    resource: ActiveAutomaticSetupResource,
+  ): Promise<void> {
+    const result = await resource.command.close();
+    if (result.kind === "containment_failure") {
+      resource.cleanupPending = true;
+      throw new Error("Automatic Project Setup process containment failed");
+    }
+    if (this.activeAutomaticSetupResources.get(threadId) === resource) {
+      this.activeAutomaticSetupResources.delete(threadId);
     }
   }
 

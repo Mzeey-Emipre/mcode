@@ -6,6 +6,11 @@ import {
   WorkspaceEnvironmentDocumentSchema,
   WorkspaceEnvironmentSetupAttemptSchema,
   WorkspaceEnvironmentAutomaticSetupSnapshotSchema,
+  WorkspaceEnvironmentQueuedTurnCancelInputSchema,
+  WorkspaceEnvironmentAutomaticSetupStopInputSchema,
+  WorkspaceEnvironmentAutomaticSetupRetryInputSchema,
+  WorkspaceEnvironmentAutomaticSetupTerminalInputSchema,
+  WorkspaceEnvironmentAutomaticSetupTerminalSchema,
   workspaceEnvironmentValidationIssues,
 } from "../workspace-environment.js";
 
@@ -165,13 +170,19 @@ describe("workspace environment contracts", () => {
         output: "",
         outputTruncated: false,
       },
-      queuedTurn: {
+      queuedTurns: [{
         id: "submission-1",
         messageId: "message-1",
         state: "queued",
         createdAt: "2026-08-22T12:00:00.000Z",
         dispatchedAt: null,
-      },
+      }, {
+        id: "submission-2",
+        messageId: "message-2",
+        state: "queued",
+        createdAt: "2026-08-22T12:00:01.000Z",
+        dispatchedAt: null,
+      }],
     });
     expect(queued.gate).toBe("blocked");
     expect(WorkspaceEnvironmentAutomaticSetupSnapshotSchema().safeParse({
@@ -200,22 +211,33 @@ describe("workspace environment contracts", () => {
         output: "done",
         outputTruncated: false,
       },
-      queuedTurn: {
+      queuedTurns: [{
         id: "submission-1",
         messageId: "message-1",
         state: "dispatched",
         createdAt: "2026-08-22T12:00:00.000Z",
         dispatchedAt: "2026-08-22T12:00:01.000Z",
-      },
+      }],
     });
-    expect(dispatched.queuedTurn?.state).toBe("dispatched");
+    expect(dispatched.queuedTurns).toHaveLength(1);
+    expect(dispatched.queuedTurns[0]?.state).toBe("dispatched");
     expect(WorkspaceEnvironmentAutomaticSetupSnapshotSchema().safeParse({
       ...dispatched,
       attempt: { ...dispatched.attempt, exitCode: 1 },
     }).success).toBe(false);
     expect(WorkspaceEnvironmentAutomaticSetupSnapshotSchema().safeParse({
       ...dispatched,
-      queuedTurn: { ...dispatched.queuedTurn, dispatchedAt: null },
+      queuedTurns: [{ ...dispatched.queuedTurns[0]!, dispatchedAt: null }],
     }).success).toBe(false);
+  });
+
+  it("validates strict targeted automatic Setup recovery inputs and Terminal results", () => {
+    expect(WorkspaceEnvironmentQueuedTurnCancelInputSchema().safeParse({ threadId: "thread-1" }).success).toBe(false);
+    expect(WorkspaceEnvironmentQueuedTurnCancelInputSchema().parse({ threadId: "thread-1", queuedTurnId: "queued-1" })).toEqual({ threadId: "thread-1", queuedTurnId: "queued-1" });
+    expect(WorkspaceEnvironmentQueuedTurnCancelInputSchema().safeParse({ threadId: "thread-1", queuedTurnId: "queued-1", extra: true }).success).toBe(false);
+    expect(WorkspaceEnvironmentAutomaticSetupStopInputSchema().safeParse({ threadId: "" }).success).toBe(false);
+    expect(WorkspaceEnvironmentAutomaticSetupRetryInputSchema().safeParse({ threadId: "thread-1", extra: true }).success).toBe(false);
+    expect(WorkspaceEnvironmentAutomaticSetupTerminalInputSchema().parse({ threadId: "thread-1" })).toEqual({ threadId: "thread-1" });
+    expect(WorkspaceEnvironmentAutomaticSetupTerminalSchema().safeParse({ ptyId: "pty-1", shell: "pwsh", extra: true }).success).toBe(false);
   });
 });

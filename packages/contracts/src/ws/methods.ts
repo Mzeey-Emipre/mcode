@@ -11,6 +11,10 @@ import {
   WorkspaceEnvironmentAutomaticSetupGetInputSchema,
   WorkspaceEnvironmentAutomaticSetupContinueInputSchema,
   WorkspaceEnvironmentQueuedTurnCancelInputSchema,
+  WorkspaceEnvironmentAutomaticSetupStopInputSchema,
+  WorkspaceEnvironmentAutomaticSetupRetryInputSchema,
+  WorkspaceEnvironmentAutomaticSetupTerminalInputSchema,
+  WorkspaceEnvironmentAutomaticSetupTerminalSchema,
 } from "../models/workspace-environment.js";
 import type {
   WorkspaceEnvironmentReadResult,
@@ -23,6 +27,10 @@ import type {
   WorkspaceEnvironmentAutomaticSetupGetInput,
   WorkspaceEnvironmentAutomaticSetupContinueInput,
   WorkspaceEnvironmentQueuedTurnCancelInput,
+  WorkspaceEnvironmentAutomaticSetupStopInput,
+  WorkspaceEnvironmentAutomaticSetupRetryInput,
+  WorkspaceEnvironmentAutomaticSetupTerminalInput,
+  WorkspaceEnvironmentAutomaticSetupTerminal,
 } from "../models/workspace-environment.js";
 import { ThreadSchema, RecentThreadSchema } from "../models/thread.js";
 import { ThreadModeSchema, PermissionModeSchema, InteractionModeSchema, OrchestrationModeSchema } from "../models/enums.js";
@@ -461,7 +469,10 @@ type WorkspaceEnvironmentSetupWsMethodName =
   | "workspace.environment.setup.get"
   | "workspace.environment.automaticSetup.get"
   | "workspace.environment.automaticSetup.continue"
-  | "workspace.environment.automaticSetup.cancelQueuedTurn";
+  | "workspace.environment.automaticSetup.cancelQueuedTurn"
+  | "workspace.environment.automaticSetup.stop"
+  | "workspace.environment.automaticSetup.retry"
+  | "workspace.environment.automaticSetup.openTerminal";
 
 const workspaceEnvironmentSetupMethods = (): Record<
   WorkspaceEnvironmentSetupWsMethodName,
@@ -486,6 +497,18 @@ const workspaceEnvironmentSetupMethods = (): Record<
   "workspace.environment.automaticSetup.cancelQueuedTurn": {
     params: WorkspaceEnvironmentQueuedTurnCancelInputSchema() as z.ZodType<WorkspaceEnvironmentQueuedTurnCancelInput>,
     result: WorkspaceEnvironmentAutomaticSetupSnapshotSchema() as z.ZodType<WorkspaceEnvironmentAutomaticSetupSnapshot>,
+  },
+  "workspace.environment.automaticSetup.stop": {
+    params: WorkspaceEnvironmentAutomaticSetupStopInputSchema() as z.ZodType<WorkspaceEnvironmentAutomaticSetupStopInput>,
+    result: WorkspaceEnvironmentAutomaticSetupSnapshotSchema() as z.ZodType<WorkspaceEnvironmentAutomaticSetupSnapshot>,
+  },
+  "workspace.environment.automaticSetup.retry": {
+    params: WorkspaceEnvironmentAutomaticSetupRetryInputSchema() as z.ZodType<WorkspaceEnvironmentAutomaticSetupRetryInput>,
+    result: WorkspaceEnvironmentAutomaticSetupSnapshotSchema() as z.ZodType<WorkspaceEnvironmentAutomaticSetupSnapshot>,
+  },
+  "workspace.environment.automaticSetup.openTerminal": {
+    params: WorkspaceEnvironmentAutomaticSetupTerminalInputSchema() as z.ZodType<WorkspaceEnvironmentAutomaticSetupTerminalInput>,
+    result: WorkspaceEnvironmentAutomaticSetupTerminalSchema() as z.ZodType<WorkspaceEnvironmentAutomaticSetupTerminal>,
   },
 });
 
