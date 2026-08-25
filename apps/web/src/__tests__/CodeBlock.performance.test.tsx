@@ -33,9 +33,8 @@ describe("CodeBlock performance boundary", () => {
       grammarLoadMs: 3,
       codeToHtmlMs: 4,
       responseBytes: 42,
-      workerPostTimeMs: requestStartedAtMs,
-      workerTimeOriginMs: performance.timeOrigin,
-    }, requestStartedAtMs + 1);
+      workerPostedAtEpochMs: Date.now(),
+    }, requestStartedAtMs + 1, Date.now() + 1);
     vi.mocked(highlighterModule.useHighlighter).mockReturnValue({
       html: '<pre class="shiki"><code>highlighted</code></pre>',
       measurementId: "hl-1",
