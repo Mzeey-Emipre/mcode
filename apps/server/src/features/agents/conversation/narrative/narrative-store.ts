@@ -45,6 +45,7 @@ import {
   resolveSubagentExactIdentity,
   type Message,
   type NarrativeEntry,
+  type ParentNarrativeRecoveryItem,
   type TurnRange,
   type SubagentPresentation,
 } from "@mcode/contracts";
@@ -62,6 +63,7 @@ import {
   type CreateHookExecutionInput,
 } from "../../events/persistence/hook-execution-repo.js";
 import type { TurnOutcome } from "../../turns/turn-outcome.js";
+import { ACTIVE_TURN_WRITE_BATCH_LIMITS } from "../../../../runtime/persistence/sqlite/bounded-write-batches.js";
 
 /** Default number of recent messages hydrated when no range is supplied. */
 const DEFAULT_LOAD_LIMIT = 200;
@@ -88,6 +90,16 @@ export interface OpenHook {
   payload: string;
   startedAt: string;
   sortOrder: number;
+}
+
+/** One narration record staged for a durable ownership transfer. */
+export interface StagedNarrationSegment {
+  id: string;
+  text: string;
+  startedAt: string;
+  endedAt: string;
+  sortOrder: number;
+  openThoughtId?: string;
 }
 
 /** Tool-use event shape consumed by {@link NarrativeStore.bufferToolCall}. */
@@ -528,6 +540,267 @@ export class NarrativeStore {
   /** Snapshot of the thread's buffered tool calls (read-only inspection). */
   getBufferedToolCalls(threadId: string): readonly BufferedToolCall[] {
     return this.turnToolCalls.get(threadId) ?? [];
+  }
+
+  /**
+   * Snapshot the visible structured narrative for an unfinished turn without
+   * retaining provider protocol traffic or private raw tool input.
+   */
+  recoverySnapshot(threadId: string): ParentNarrativeRecoveryItem[] {
+    const snapshot: ParentNarrativeRecoveryItem[] = [];
+    let bytes = 0;
+    const append = (item: ParentNarrativeRecoveryItem): void => {
+      if (snapshot.length >= ACTIVE_TURN_WRITE_BATCH_LIMITS.maxRows - 1) {
+        throw new Error(`Parent narrative recovery exceeds the active-turn row limit: ${threadId}`);
+      }
+      const nextBytes = Buffer.byteLength(JSON.stringify(item), "utf8");
+      if (bytes + nextBytes > ACTIVE_TURN_WRITE_BATCH_LIMITS.maxBytes) {
+        throw new Error(`Parent narrative recovery exceeds the active-turn byte limit: ${threadId}`);
+      }
+      bytes += nextBytes;
+      snapshot.push(item);
+    };
+
+    for (const toolCall of this.turnToolCalls.get(threadId) ?? []) {
+      append({
+        kind: "toolCall",
+        record: {
+          id: this.requireRecoveryString(toolCall.toolCallId, "tool call id"),
+          message_id: this.requireRecoveryString(toolCall.messageId, "tool call message id"),
+          parent_tool_call_id: toolCall.parentToolCallId ?? null,
+          tool_name: toolCall.toolName,
+          display_name: toolCall.displayName ?? null,
+          provider_agent_key: toolCall.providerAgentKey ?? null,
+          subagent_identity_key: toolCall.subagentIdentityKey ?? null,
+          model: toolCall.model ?? null,
+          reasoning_effort: toolCall.reasoningEffort ?? null,
+          input_summary: toolCall.inputSummary || this.summarizeInput(
+            toolCall.toolName,
+            toolCall._rawToolInput ?? {},
+          ),
+          output_summary: toolCall.outputSummary,
+          ...(toolCall.outputTruncated ? { output_truncated: 1 } : {}),
+          output_total_bytes: toolCall.outputTotalBytes ?? null,
+          output_artifact_path: toolCall.outputArtifactPath ?? null,
+          exit_code: toolCall.exitCode ?? null,
+          status: toolCall.status,
+          started_at: this.requireRecoveryString(toolCall.startedAt, "tool call start time"),
+          completed_at: toolCall.completedAt ?? null,
+          sort_order: toolCall.sortOrder,
+        },
+      });
+    }
+    for (const thought of this.turnThoughts.get(threadId) ?? []) {
+      append({
+        kind: "narrationSegment",
+        record: {
+          id: this.requireRecoveryString(thought.id, "thought id"),
+          message_id: this.requireRecoveryString(thought.messageId, "thought message id"),
+          text: this.requireRecoveryString(thought.text, "thought text"),
+          started_at: this.requireRecoveryString(thought.startedAt, "thought start time"),
+          ended_at: thought.endedAt ?? null,
+          sort_order: thought.sortOrder,
+          ...(thought.isFinalResponse ? { is_final_response: thought.isFinalResponse } : {}),
+        },
+      });
+    }
+    const openThought = this.turnOpenThought.get(threadId);
+    if (openThought) {
+      append({
+        kind: "narrationSegment",
+        record: {
+          id: openThought.id,
+          message_id: "",
+          text: openThought.text,
+          started_at: openThought.startedAt,
+          ended_at: null,
+          sort_order: openThought.sortOrder,
+        },
+      });
+    }
+    for (const hook of this.turnHooks.get(threadId) ?? []) {
+      append({
+        kind: "hook",
+        record: {
+          id: this.requireRecoveryString(hook.id, "hook id"),
+          message_id: this.requireRecoveryString(hook.messageId, "hook message id"),
+          hook_name: hook.hookName,
+          tool_name: hook.toolName,
+          phase: hook.phase,
+          payload: hook.payload,
+          duration_ms: hook.durationMs ?? null,
+          did_block: hook.didBlock,
+          started_at: this.requireRecoveryString(hook.startedAt, "hook start time"),
+          ended_at: hook.endedAt ?? null,
+          sort_order: hook.sortOrder,
+        },
+      });
+    }
+    for (const hook of this.turnOpenHooks.get(threadId)?.values() ?? []) {
+      append({
+        kind: "hook",
+        record: {
+          id: hook.id,
+          message_id: "",
+          hook_name: hook.hookName,
+          tool_name: hook.toolName,
+          phase: hook.phase,
+          payload: hook.payload,
+          duration_ms: null,
+          did_block: false,
+          started_at: hook.startedAt,
+          ended_at: null,
+          sort_order: hook.sortOrder,
+        },
+      });
+    }
+
+    return snapshot.sort((left, right) => (
+      left.record.sort_order - right.record.sort_order || left.record.id.localeCompare(right.record.id)
+    ));
+  }
+
+  /** Stage narration for recovery without mutating the active turn buffer. */
+  stageNarrationSegment(threadId: string, text: string): StagedNarrationSegment | null {
+    const open = this.turnOpenThought.get(threadId);
+    const endedAt = new Date().toISOString();
+    if (open) {
+      return {
+        id: open.id,
+        text: `${open.text}${text}`,
+        startedAt: open.startedAt,
+        endedAt,
+        sortOrder: open.sortOrder,
+        openThoughtId: open.id,
+      };
+    }
+    if (!text) return null;
+    return {
+      id: randomUUID(),
+      text,
+      startedAt: endedAt,
+      endedAt,
+      sortOrder: this.turnSortCounters.get(threadId) ?? 0,
+    };
+  }
+
+  /** Add staged narration to a recovery snapshot without mutating the active turn buffer. */
+  recoverySnapshotWithStagedNarration(
+    threadId: string,
+    staged: StagedNarrationSegment,
+  ): ParentNarrativeRecoveryItem[] {
+    const snapshot = this.recoverySnapshot(threadId).filter((item) => (
+      item.kind !== "narrationSegment" || item.record.id !== staged.id
+    ));
+    snapshot.push({
+      kind: "narrationSegment",
+      record: {
+        id: staged.id,
+        message_id: "",
+        text: staged.text,
+        started_at: staged.startedAt,
+        ended_at: staged.endedAt,
+        sort_order: staged.sortOrder,
+      },
+    });
+    let bytes = 0;
+    for (const item of snapshot) {
+      if (bytes > ACTIVE_TURN_WRITE_BATCH_LIMITS.maxBytes - Buffer.byteLength(JSON.stringify(item), "utf8")) {
+        throw new Error(`Parent narrative recovery exceeds the active-turn byte limit: ${threadId}`);
+      }
+      bytes += Buffer.byteLength(JSON.stringify(item), "utf8");
+    }
+    if (snapshot.length > ACTIVE_TURN_WRITE_BATCH_LIMITS.maxRows - 1) {
+      throw new Error(`Parent narrative recovery exceeds the active-turn row limit: ${threadId}`);
+    }
+    return snapshot.sort((left, right) => (
+      left.record.sort_order - right.record.sort_order || left.record.id.localeCompare(right.record.id)
+    ));
+  }
+
+  /** Apply a narration record only after its recovery projection is durable. */
+  applyStagedNarrationSegment(threadId: string, staged: StagedNarrationSegment): void {
+    if (staged.openThoughtId) {
+      const open = this.turnOpenThought.get(threadId);
+      if (!open || open.id !== staged.openThoughtId) {
+        throw new Error(`Staged narration no longer matches the open thought: ${staged.id}`);
+      }
+      this.turnOpenThought.set(threadId, null);
+    } else {
+      const nextSortOrder = this.turnSortCounters.get(threadId) ?? 0;
+      if (nextSortOrder <= staged.sortOrder) {
+        this.turnSortCounters.set(threadId, staged.sortOrder + 1);
+      }
+    }
+    const thoughts = this.turnThoughts.get(threadId) ?? [];
+    thoughts.push({
+      id: staged.id,
+      messageId: "",
+      text: staged.text,
+      startedAt: staged.startedAt,
+      endedAt: staged.endedAt,
+      sortOrder: staged.sortOrder,
+    });
+    this.turnThoughts.set(threadId, thoughts);
+  }
+
+  private requireRecoveryString(value: string | undefined, field: string): string {
+    if (value === undefined) throw new Error(`Narrative recovery is missing ${field}`);
+    return value;
+  }
+
+  /** Persist a durable semantic snapshot against its recovered assistant row. */
+  persistRecoveredNarrative(
+    messageId: string,
+    items: readonly ParentNarrativeRecoveryItem[],
+  ): void {
+    const tools: CreateToolCallRecordInput[] = items.flatMap((item) => item.kind === "toolCall" ? [{
+      toolCallId: item.record.id,
+      messageId,
+      toolName: item.record.tool_name,
+      displayName: item.record.display_name ?? undefined,
+      providerAgentKey: item.record.provider_agent_key ?? undefined,
+      subagentIdentityKey: item.record.subagent_identity_key ?? undefined,
+      model: item.record.model ?? undefined,
+      reasoningEffort: item.record.reasoning_effort ?? undefined,
+      inputSummary: item.record.input_summary,
+      outputSummary: item.record.output_summary,
+      ...(item.record.output_truncated ? { outputTruncated: true } : {}),
+      ...(item.record.output_total_bytes != null ? { outputTotalBytes: item.record.output_total_bytes } : {}),
+      ...(item.record.output_artifact_path ? { outputArtifactPath: item.record.output_artifact_path } : {}),
+      ...(item.record.exit_code != null ? { exitCode: item.record.exit_code } : {}),
+      status: item.record.status,
+      startedAt: item.record.started_at,
+      completedAt: item.record.completed_at ?? undefined,
+      sortOrder: item.record.sort_order,
+      parentToolCallId: item.record.parent_tool_call_id ?? undefined,
+    }] : []);
+    const thoughts: CreateThoughtSegmentInput[] = items.flatMap((item) => item.kind === "narrationSegment" ? [{
+      id: item.record.id,
+      messageId,
+      text: item.record.text,
+      startedAt: item.record.started_at,
+      endedAt: item.record.ended_at,
+      sortOrder: item.record.sort_order,
+      ...(item.record.is_final_response ? { isFinalResponse: item.record.is_final_response } : {}),
+    }] : []);
+    const hooks: CreateHookExecutionInput[] = items.flatMap((item) => item.kind === "hook" ? [{
+      id: item.record.id,
+      messageId,
+      hookName: item.record.hook_name,
+      toolName: item.record.tool_name,
+      phase: item.record.phase,
+      payload: item.record.payload,
+      durationMs: item.record.duration_ms,
+      didBlock: item.record.did_block,
+      startedAt: item.record.started_at,
+      endedAt: item.record.ended_at,
+      sortOrder: item.record.sort_order,
+    }] : []);
+
+    if (tools.length > 0) this.toolCallRecordRepo.bulkCreate(tools);
+    if (thoughts.length > 0) this.thoughtSegmentRepo.bulkCreate(thoughts);
+    if (hooks.length > 0) this.hookExecutionRepo.bulkCreate(hooks);
   }
 
   /**

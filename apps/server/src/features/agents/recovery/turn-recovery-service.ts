@@ -2,6 +2,7 @@ import { inject, injectable } from "tsyringe";
 import { CanonicalAgentEventSink } from "../canonical/canonical-agent-event-sink.js";
 import { MessageRepo } from "../conversation/persistence/message-repo.js";
 import { ParentAssistantTextCheckpointService } from "../turns/parent-assistant-text-checkpoint-service.js";
+import { NarrativeStore } from "../conversation/narrative/narrative-store.js";
 import { deriveTurnAssistantMessageId } from "../turns/turn-assistant-message-id.js";
 import { ThreadRepo } from "../../thread-control/persistence/thread-repo.js";
 import { AttachmentService } from "../../attachments/storage/attachment-service.js";
@@ -21,26 +22,42 @@ export class TurnRecoveryService {
     @inject(ParentAssistantTextCheckpointService)
     private readonly parentAssistantTextCheckpoints: ParentAssistantTextCheckpointService,
     @inject(MessageRepo) private readonly messageRepo: MessageRepo,
+    @inject(NarrativeStore) private readonly narrativeStore: NarrativeStore,
   ) {}
 
   /** Interrupt executions for which no current provider can prove the exact live execution. */
   reconcileOnStartup(): { interrupted: string[] } {
+    for (const checkpoint of this.canonicalSink.listUnmaterializedTerminalCheckpoints()) {
+      const checkpointChunks = this.parentAssistantTextCheckpoints.restoreChunks(checkpoint.executionId);
+      const recoveredNarrative = this.canonicalSink.loadParentNarrativeRecovery(checkpoint.turnId);
+      if (checkpointChunks.length === 0 && recoveredNarrative.length === 0) continue;
+      if (!this.canonicalSink.reopenUnmaterializedTerminalCheckpoint(checkpoint.executionId)) {
+        throw new Error(`Unmaterialized terminal checkpoint was not recoverable: ${checkpoint.executionId}`);
+      }
+    }
     this.parentAssistantTextCheckpoints.retireTerminalCheckpoints();
     const interrupted: string[] = [];
     for (const checkpoint of this.canonicalSink.listUnfinishedCheckpoints()) {
       const checkpointChunks = this.parentAssistantTextCheckpoints.restoreChunks(checkpoint.executionId);
       const canonicalAssistant = this.canonicalSink.loadTerminalProjection(checkpoint.turnId).message;
+      const recoveredNarrative = this.canonicalSink.loadParentNarrativeRecovery(checkpoint.turnId);
       const recoveredText = canonicalAssistant
         ? ""
         : checkpointChunks.map((chunk) => chunk.text).join("");
-      const stagedAssistant = recoveredText.length > 0
-        ? this.stageRecoveredAssistantText(checkpoint.threadId, checkpoint.executionId, recoveredText)
+      const stagedAssistant = !canonicalAssistant && (recoveredText.length > 0 || recoveredNarrative.length > 0)
+        ? this.stageRecoveredAssistantProjection(checkpoint.threadId, checkpoint.executionId, recoveredText)
         : undefined;
       this.canonicalSink.markUnresolvedCodexChildDeliveriesUnknown(checkpoint.executionId);
       this.canonicalSink.interruptUnfinishedExecution(
         checkpoint.executionId,
         UNPROVED_EXECUTION_REASON,
         stagedAssistant,
+        (assistant, interruptedNarrative) => {
+          if (recoveredNarrative.length > 0) {
+            this.narrativeStore.persistRecoveredNarrative(assistant.id, interruptedNarrative);
+          }
+        },
+        recoveredNarrative,
       );
       if (checkpointChunks.length > 0 && !this.parentAssistantTextCheckpoints.retire(checkpoint.executionId)) {
         throw new Error(`Recovered assistant text checkpoint was not retired: ${checkpoint.executionId}`);
@@ -51,8 +68,8 @@ export class TurnRecoveryService {
     return { interrupted };
   }
 
-  /** Stage exact recovered text before the canonical interruption makes it visible. */
-  private stageRecoveredAssistantText(threadId: string, executionId: string, content: string) {
+  /** Stage recovered visible content before the canonical interruption makes it visible. */
+  private stageRecoveredAssistantProjection(threadId: string, executionId: string, content: string) {
     const sequence = this.messageRepo.getLatestSequenceIncludingInternal(threadId) + 1;
     const messageId = deriveTurnAssistantMessageId(
       threadId,

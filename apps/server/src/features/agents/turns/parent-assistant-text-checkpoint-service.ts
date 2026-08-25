@@ -178,7 +178,12 @@ export class ParentAssistantTextCheckpointService {
 
   /** Discard provisional text for an unfinished execution before a fresh retry. */
   reset(executionId: string): boolean {
-    return this.db.transaction(() => this.db.prepare(`
+    return this.db.transaction(() => this.resetInTransaction(executionId))();
+  }
+
+  /** Discard provisional text while the caller owns the surrounding SQLite transaction. */
+  resetInTransaction(executionId: string): boolean {
+    return this.db.prepare(`
       DELETE FROM parent_assistant_text_checkpoints
       WHERE execution_id = ?
         AND EXISTS (
@@ -186,7 +191,7 @@ export class ParentAssistantTextCheckpointService {
           WHERE execution_id = parent_assistant_text_checkpoints.execution_id
             AND terminal_outcome IS NULL
         )
-    `).run(executionId).changes === 1)();
+    `).run(executionId).changes === 1;
   }
 
   /** Retire provisional text only after the canonical execution is terminal. */

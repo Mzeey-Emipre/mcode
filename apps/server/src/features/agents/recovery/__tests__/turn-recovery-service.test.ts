@@ -9,6 +9,10 @@ import {
   type CanonicalAgentEventPublisher,
 } from "../../canonical/canonical-agent-event-sink.js";
 import { ParentAssistantTextCheckpointService } from "../../turns/parent-assistant-text-checkpoint-service.js";
+import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
+import { ToolCallRecordRepo } from "../../tools/persistence/tool-call-record-repo.js";
+import { ThoughtSegmentRepo } from "../../conversation/narrative/persistence/thought-segment-repo.js";
+import { HookExecutionRepo } from "../../events/persistence/hook-execution-repo.js";
 import { TurnRecoveryService } from "../turn-recovery-service.js";
 import { AttachmentService } from "../../../attachments/storage/attachment-service.js";
 import type { SendMessageCommand } from "../../orchestration/agent-service.js";
@@ -24,6 +28,7 @@ describe("TurnRecoveryService", () => {
   let threadRepo: ThreadRepo;
   let messageRepo: MessageRepo;
   let defaultCheckpoints: ParentAssistantTextCheckpointService;
+  let narrativeStore: NarrativeStore;
   let published: ReturnType<typeof vi.fn<CanonicalAgentEventPublisher>>;
 
   beforeEach(() => {
@@ -39,6 +44,12 @@ describe("TurnRecoveryService", () => {
     threadRepo = new ThreadRepo(db);
     messageRepo = new MessageRepo(db);
     defaultCheckpoints = new ParentAssistantTextCheckpointService(db);
+    narrativeStore = new NarrativeStore(
+      messageRepo,
+      new ToolCallRecordRepo(db),
+      new ThoughtSegmentRepo(db),
+      new HookExecutionRepo(db),
+    );
     sink.startParentTurn({
       thread: {
         id: THREAD_ID,
@@ -66,6 +77,7 @@ describe("TurnRecoveryService", () => {
       new AttachmentService(),
       defaultCheckpoints,
       messageRepo,
+      narrativeStore,
     );
 
     const result = service.reconcileOnStartup();
@@ -134,6 +146,7 @@ describe("TurnRecoveryService", () => {
       new AttachmentService(),
       defaultCheckpoints,
       messageRepo,
+      narrativeStore,
     );
     service.reconcileOnStartup();
 
@@ -183,6 +196,7 @@ describe("TurnRecoveryService", () => {
       new AttachmentService(),
       checkpoints,
       messageRepo,
+      narrativeStore,
     );
 
     expect(service.reconcileOnStartup()).toEqual({ interrupted: [EXECUTION_ID] });
@@ -205,6 +219,176 @@ describe("TurnRecoveryService", () => {
 
     expect(service.reconcileOnStartup()).toEqual({ interrupted: [] });
     expect(messageRepo.listByThread(THREAD_ID, 10).messages).toHaveLength(2);
+  });
+
+  it("restores ordered narration, interrupted tools, completed hooks, and explicit parallel parents", () => {
+    narrativeStore.beginTurn(THREAD_ID);
+    narrativeStore.resetTurnCounters(THREAD_ID);
+    narrativeStore.openOrExtendThought(THREAD_ID, "I will inspect both children.");
+    narrativeStore.closeOpenThought(THREAD_ID);
+    narrativeStore.bufferToolCall(THREAD_ID, {
+      toolCallId: "agent-a",
+      toolName: "Agent",
+      toolInput: { description: "first" },
+    });
+    narrativeStore.bufferToolCall(THREAD_ID, {
+      toolCallId: "agent-b",
+      toolName: "Agent",
+      toolInput: { description: "second" },
+    });
+    narrativeStore.bufferToolCall(THREAD_ID, {
+      toolCallId: "read-a",
+      toolName: "Read",
+      toolInput: { path: "a.ts" },
+      parentToolCallId: "agent-a",
+    });
+    narrativeStore.updateBufferedToolCallOutput(THREAD_ID, "read-a", "contents", false);
+    narrativeStore.bufferToolCall(THREAD_ID, {
+      toolCallId: "agent-a-child",
+      toolName: "Agent",
+      toolInput: { description: "nested" },
+      parentToolCallId: "agent-a",
+    });
+    const hookId = narrativeStore.openHook(THREAD_ID, {
+      hookName: "PreToolUse",
+      toolName: "Read",
+      phase: "preToolUse",
+      payload: "{\"hookType\":\"preToolUse\"}",
+      sortOrder: narrativeStore.nextSortOrder(THREAD_ID),
+    });
+    narrativeStore.pushClosedHook(THREAD_ID, {
+      id: hookId,
+      messageId: "",
+      hookName: "PreToolUse",
+      toolName: "Read",
+      phase: "preToolUse",
+      payload: "{\"hookType\":\"preToolUse\"}",
+      durationMs: 12,
+      didBlock: false,
+      startedAt: NOW,
+      endedAt: NOW,
+      sortOrder: 5,
+    });
+    narrativeStore.removeOpenHook(THREAD_ID, "PreToolUse");
+    narrativeStore.openHook(THREAD_ID, {
+      hookName: "PostToolUse",
+      toolName: "Read",
+      phase: "postToolUse",
+      payload: "{\"hookType\":\"postToolUse\"}",
+      sortOrder: narrativeStore.nextSortOrder(THREAD_ID),
+    });
+
+    sink.recordParentNarrativeRecovery({
+      executionId: EXECUTION_ID,
+      items: narrativeStore.recoverySnapshot(THREAD_ID),
+    });
+    const service = new TurnRecoveryService(
+      sink,
+      threadRepo,
+      new AttachmentService(),
+      defaultCheckpoints,
+      messageRepo,
+      narrativeStore,
+    );
+
+    expect(service.reconcileOnStartup()).toEqual({ interrupted: [EXECUTION_ID] });
+    const assistant = messageRepo.listByThread(THREAD_ID, 10).messages.at(-1)!;
+    expect(assistant).toMatchObject({ role: "assistant", content: "", outcome: "interrupted" });
+    const recovered = narrativeStore.loadForMessages([assistant]);
+    expect(recovered.map((entry) => entry.kind)).toEqual([
+      "narrationSegment",
+      "toolCall",
+      "toolCall",
+      "toolCall",
+      "toolCall",
+      "hook",
+      "hook",
+      "assistantMessage",
+    ]);
+    const recoveredRead = recovered.find((entry) => entry.kind === "toolCall" && entry.record.id === "read-a");
+    expect(recoveredRead).toMatchObject({
+      record: {
+        parent_tool_call_id: "agent-a",
+        status: "completed",
+        output_summary: "contents",
+      },
+    });
+    expect(recovered.find((entry) => entry.kind === "toolCall" && entry.record.id === "agent-a"))
+      .toMatchObject({ record: { status: "failed", completed_at: expect.any(String) } });
+    expect(recovered.find((entry) => entry.kind === "toolCall" && entry.record.id === "agent-a-child"))
+      .toMatchObject({ record: { parent_tool_call_id: "agent-a", status: "failed" } });
+    expect(recovered.find((entry) => entry.kind === "hook")).toMatchObject({
+      record: { hook_name: "PreToolUse", duration_ms: 12, ended_at: NOW },
+    });
+    expect(recovered.find((entry) => entry.kind === "hook" && entry.record.hook_name === "PostToolUse"))
+      .toMatchObject({ record: { phase: "postToolUse", ended_at: expect.any(String) } });
+    const canonicalPayload = db.prepare(`
+      SELECT payload_json FROM canonical_agent_items
+      WHERE id = 'toolCall:read-a'
+    `).get() as { payload_json: string };
+    expect(canonicalPayload.payload_json).not.toContain("toolInput");
+    expect(canonicalPayload.payload_json).toContain('"projection":"toolCall"');
+    expect(sink.loadParentNarrativeRecovery(TURN_ID)).toEqual([]);
+  });
+
+  it("repairs a terminal checkpoint whose assistant projection was not materialized before process loss", () => {
+    narrativeStore.beginTurn(THREAD_ID);
+    narrativeStore.resetTurnCounters(THREAD_ID);
+    narrativeStore.openOrExtendThought(THREAD_ID, "I will run the command.");
+    narrativeStore.closeOpenThought(THREAD_ID);
+    narrativeStore.bufferToolCall(THREAD_ID, {
+      toolCallId: "shell-live-1523",
+      toolName: "Bash",
+      toolInput: { command: "git status --short" },
+    });
+    narrativeStore.updateBufferedToolCallOutput(THREAD_ID, "shell-live-1523", "clean", false);
+    sink.recordParentNarrativeRecovery({
+      executionId: EXECUTION_ID,
+      items: narrativeStore.recoverySnapshot(THREAD_ID),
+    });
+    defaultCheckpoints.appendChunk([{
+      executionId: EXECUTION_ID,
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      sequence: 1,
+      text: "LIVE-NARRATION-1523 final answer",
+    }]);
+    db.prepare(`
+      UPDATE canonical_agent_turns
+      SET status = 'Completed', ended_at = ?
+      WHERE id = ?
+    `).run(NOW, TURN_ID);
+    db.prepare(`
+      UPDATE canonical_agent_ingest_checkpoints
+      SET phase = 'completed', terminal_outcome = 'completed'
+      WHERE execution_id = ?
+    `).run(EXECUTION_ID);
+    const service = new TurnRecoveryService(
+      sink,
+      threadRepo,
+      new AttachmentService(),
+      defaultCheckpoints,
+      messageRepo,
+      narrativeStore,
+    );
+
+    expect(service.reconcileOnStartup()).toEqual({ interrupted: [EXECUTION_ID] });
+    const projection = sink.loadConversationProjection(THREAD_ID, 10);
+    expect(projection.messages).toEqual([
+      expect.objectContaining({ role: "user", content: "repeat only when asked" }),
+      expect.objectContaining({
+        role: "assistant",
+        content: "LIVE-NARRATION-1523 final answer",
+        outcome: "interrupted",
+        outcomeExecutionId: EXECUTION_ID,
+      }),
+    ]);
+    const assistant = projection.messages.at(-1)!;
+    expect(projection.narrativeByMessage[assistant.id]).toMatchObject({
+      thoughts: [expect.objectContaining({ text: "I will run the command." })],
+      tools: [expect.objectContaining({ id: "shell-live-1523", status: "completed" })],
+    });
+    expect(defaultCheckpoints.restore(EXECUTION_ID)).toBe("");
   });
 
   it("removes a stale checkpoint when a completed canonical message already exists", () => {
@@ -244,6 +428,7 @@ describe("TurnRecoveryService", () => {
       new AttachmentService(),
       checkpoints,
       messageRepo,
+      narrativeStore,
     );
 
     expect(service.reconcileOnStartup()).toEqual({ interrupted: [] });
@@ -280,6 +465,7 @@ describe("TurnRecoveryService", () => {
       new AttachmentService(),
       defaultCheckpoints,
       messageRepo,
+      narrativeStore,
     );
 
     service.reconcileOnStartup();
@@ -307,6 +493,7 @@ describe("TurnRecoveryService", () => {
       new AttachmentService(),
       defaultCheckpoints,
       messageRepo,
+      narrativeStore,
     );
     service.reconcileOnStartup();
 
@@ -328,6 +515,7 @@ describe("TurnRecoveryService", () => {
       new AttachmentService(),
       defaultCheckpoints,
       messageRepo,
+      narrativeStore,
     );
     service.reconcileOnStartup();
     const dispatched: SendMessageCommand[] = [];
@@ -389,6 +577,7 @@ describe("TurnRecoveryService", () => {
       new AttachmentService(),
       defaultCheckpoints,
       messageRepo,
+      narrativeStore,
     );
     expect(service.listRecoveries()).toEqual([expect.objectContaining({
       executionId: EXECUTION_ID,

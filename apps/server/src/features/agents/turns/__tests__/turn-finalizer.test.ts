@@ -389,7 +389,7 @@ describe("TurnFinalizer canonical commit recovery", () => {
         toolInput: { path: `file-${index}.md` },
       });
     }
-    return { db, finalizer, messageRepo, sink, checkpoints };
+    return { db, finalizer, messageRepo, sink, checkpoints, narrativeStore };
   }
 
   it("retires provisional text only after the canonical terminal commit", async () => {
@@ -408,8 +408,21 @@ describe("TurnFinalizer canonical commit recovery", () => {
     expect(checkpoints.restore(executionId)).toBe("");
   });
 
-  it("retains volatile buffers when the canonical transaction rolls back", async () => {
-    const { db, finalizer, messageRepo, sink } = buildCanonicalHarness();
+  it("retains recovery data and withholds completion when canonical finalization rolls back", async () => {
+    const { db, finalizer, messageRepo, sink, checkpoints, narrativeStore } = buildCanonicalHarness();
+    checkpoints.appendChunk([{
+      executionId,
+      threadId: THREAD,
+      turnId,
+      sequence: 1,
+      text: "answer",
+    }]);
+    narrativeStore.openOrExtendThought(THREAD, "answer");
+    sink.recordParentNarrativeRecovery({
+      executionId,
+      items: narrativeStore.recoverySnapshot(THREAD),
+    });
+    vi.mocked(broadcast).mockClear();
     db.exec(`
       CREATE TRIGGER reject_canonical_tool
       BEFORE INSERT ON tool_call_records
@@ -424,6 +437,14 @@ describe("TurnFinalizer canonical commit recovery", () => {
       Promise.resolve(),
       executionId,
     )).rejects.toThrow("forced narrative failure");
+    expect(broadcast).not.toHaveBeenCalledWith("turn.persisted", expect.anything());
+    expect(checkpoints.restore(executionId)).toBe("answer");
+    expect(sink.loadParentNarrativeRecovery(turnId)).toHaveLength(2);
+    expect(db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM canonical_agent_events
+      WHERE json_extract(envelope_json, '$.payload.item.payload.projection') = 'narrativeRecovery'
+    `).get()).toEqual({ count: 0 });
     db.exec("DROP TRIGGER reject_canonical_tool");
 
     await finalizer.finalize(THREAD, "completed", Promise.resolve(), executionId);
@@ -436,6 +457,15 @@ describe("TurnFinalizer canonical commit recovery", () => {
       message: expect.objectContaining({ content: "answer" }),
       toolCallCount: 1,
     });
+    expect(sink.loadParentNarrativeRecovery(turnId)).toEqual([]);
+    expect(sink.loadItem("toolCall:tool-0")?.payload).toMatchObject({
+      projection: "toolCall",
+    });
+    expect(db.prepare(`
+      SELECT COUNT(*) AS count
+      FROM canonical_agent_events
+      WHERE json_extract(envelope_json, '$.payload.item.payload.projection') = 'narrativeRecovery'
+    `).get()).toEqual({ count: 0 });
   });
 
   it("replays terminal post-commit effects from the canonical projection", async () => {

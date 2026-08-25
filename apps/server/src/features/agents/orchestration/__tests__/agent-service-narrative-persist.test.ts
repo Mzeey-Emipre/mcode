@@ -11,6 +11,7 @@ import { PlanQuestionService } from "../../planning/plan-question-service.js";
 import { ParentAssistantTextCheckpointService } from "../../turns/parent-assistant-text-checkpoint-service.js";
 import { CanonicalAgentEventSink } from "../../canonical/canonical-agent-event-sink.js";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
+import { broadcast } from "../../../../application/transport/push.js";
 import { isTurnScopedEvent } from "../../turns/turn-runtime.js";
 import type { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
 import type { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
@@ -281,7 +282,7 @@ describe("AgentService narrative persistence", () => {
     vi.clearAllMocks();
   });
 
-  it("keeps published response-candidate text durable after a non-final boundary", () => {
+  it("moves unclassified text to narration and clears its assistant checkpoint at a false boundary", () => {
     const db = openMemoryDatabase();
     const now = "2026-08-24T10:00:00.000Z";
     db.prepare(
@@ -345,18 +346,139 @@ describe("AgentService narrative persistence", () => {
         SELECT first_sequence, last_sequence, text
         FROM parent_assistant_text_checkpoint_chunks
         WHERE execution_id = ?
-      `).all(executionId)).toEqual([{
-        first_sequence: 1,
-        last_sequence: 2,
-        text: "durable text",
-      }]);
-      expect(db.prepare(
-        "SELECT retained_bytes FROM parent_assistant_text_checkpoints WHERE execution_id = ?",
-      ).get(executionId)).toEqual({ retained_bytes: 12 });
+      `).all(executionId)).toEqual([]);
     } finally {
       vi.useRealTimers();
       db.close();
     }
+  });
+
+  it("retains provisional text and withholds the boundary when narration recovery fails", () => {
+    const db = openMemoryDatabase();
+    const now = "2026-08-24T10:00:00.000Z";
+    db.prepare(
+      "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    ).run("ws-1", "Workspace", "/workspace", now, now);
+    db.prepare(
+      "INSERT INTO threads (id, workspace_id, title, branch, provider, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(THREAD_ID, "ws-1", "Parent", "main", "claude", "active", now, now);
+    const canonicalSink = new CanonicalAgentEventSink(db, vi.fn());
+    const published: AgentEvent[] = [];
+    const { providerEmitter, service, thoughtBulk, narrativeStore } = build({
+      db,
+      canonicalSink,
+      onProviderEvent: (event) => published.push(event),
+    });
+    const executionId = (service as unknown as {
+      turnRuntime: { snapshot: (threadId: string) => { turnExecutionId: string } | undefined };
+    }).turnRuntime.snapshot(THREAD_ID)!.turnExecutionId;
+    const messages = new SqliteMessageRepo(db);
+    canonicalSink.startParentTurn({
+      thread: { id: THREAD_ID, workspaceId: "ws-1", providerId: "claude", createdAt: now },
+      turnId: "turn-rejected-narration",
+      executionId,
+      permissionMode: "supervised",
+      providerIdentities: [],
+      projectUserMessage: () => messages.create(THREAD_ID, "user", "start", 1),
+    });
+
+    vi.useFakeTimers();
+    try {
+      providerEmitter.emit("event", {
+        type: AgentEventType.TextDelta,
+        threadId: THREAD_ID,
+        turnExecutionId: executionId,
+        delta: "provisional text",
+      });
+      vi.advanceTimersByTime(250);
+      expect(published).toHaveLength(1);
+      published.length = 0;
+      db.exec(`
+        CREATE TRIGGER reject_narration_recovery
+        BEFORE INSERT ON canonical_agent_items
+        WHEN json_extract(NEW.payload_json, '$.projection') = 'narrativeRecovery'
+        BEGIN
+          SELECT RAISE(ABORT, 'forced narration recovery failure');
+        END;
+      `);
+
+      providerEmitter.emit("event", {
+        type: AgentEventType.AssistantMessageBoundary,
+        threadId: THREAD_ID,
+        turnExecutionId: executionId,
+        isFinalResponse: false,
+      });
+
+      expect(published).toEqual([]);
+      expect(db.prepare(`
+        SELECT text FROM parent_assistant_text_checkpoint_chunks
+        WHERE execution_id = ?
+      `).all(executionId)).toEqual([{ text: "provisional text" }]);
+      expect(canonicalSink.loadParentNarrativeRecovery("turn-rejected-narration")).toEqual([]);
+      expect(narrativeStore.recoverySnapshot(THREAD_ID)).toEqual([]);
+      expect(thoughtBulk).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+      db.close();
+    }
+  });
+
+  it("commits narration classification before it publishes the covered text delta", () => {
+    const db = openMemoryDatabase();
+    const now = "2026-08-24T10:00:00.000Z";
+    db.prepare(
+      "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    ).run("ws-1", "Workspace", "/workspace", now, now);
+    db.prepare(
+      "INSERT INTO threads (id, workspace_id, title, branch, provider, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(THREAD_ID, "ws-1", "Parent", "main", "claude", "active", now, now);
+    const canonicalSink = new CanonicalAgentEventSink(db, vi.fn());
+    const observed: Array<{ type: string; persisted: string | undefined }> = [];
+    const { providerEmitter, service } = build({
+      db,
+      canonicalSink,
+      onProviderEvent: (event) => {
+        const row = db.prepare(`
+          SELECT payload_json FROM canonical_agent_items
+          WHERE json_extract(payload_json, '$.projection') = 'narrativeRecovery'
+          ORDER BY updated_at DESC
+          LIMIT 1
+        `).get() as { payload_json: string } | undefined;
+        observed.push({ type: event.type, persisted: row?.payload_json });
+      },
+    });
+    const executionId = (service as unknown as {
+      turnRuntime: { snapshot: (threadId: string) => { turnExecutionId: string } | undefined };
+    }).turnRuntime.snapshot(THREAD_ID)!.turnExecutionId;
+    const messages = new SqliteMessageRepo(db);
+    canonicalSink.startParentTurn({
+      thread: { id: THREAD_ID, workspaceId: "ws-1", providerId: "claude", createdAt: now },
+      turnId: "turn-narration-before-publish",
+      executionId,
+      permissionMode: "supervised",
+      providerIdentities: [],
+      projectUserMessage: () => messages.create(THREAD_ID, "user", "start", 1),
+    });
+
+    providerEmitter.emit("event", {
+      type: AgentEventType.TextDelta,
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      delta: "I will inspect the child.",
+    });
+    providerEmitter.emit("event", {
+      type: AgentEventType.AssistantMessageBoundary,
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      isFinalResponse: false,
+    });
+
+    expect(observed.at(-1)).toMatchObject({
+      type: AgentEventType.AssistantMessageBoundary,
+      persisted: expect.stringContaining("I will inspect the child."),
+    });
+    expect(observed.at(-1)?.persisted).not.toContain("turnExecutionId");
+    db.close();
   });
 
   it("commits and publishes the private unfinished reliability prefix", () => {
@@ -684,8 +806,8 @@ describe("AgentService narrative persistence", () => {
   it("segments thoughts split by tool calls with strictly-ordered sortOrder", async () => {
     const { providerEmitter, thoughtBulk, toolBulk } = build();
 
-    providerEmitter.emit("event", { type: AgentEventType.TextDelta, threadId: THREAD_ID, delta: "I will " });
-    providerEmitter.emit("event", { type: AgentEventType.TextDelta, threadId: THREAD_ID, delta: "read." });
+    providerEmitter.emit("event", { type: AgentEventType.TextDelta, threadId: THREAD_ID, delta: "I will ", isFinalResponse: false });
+    providerEmitter.emit("event", { type: AgentEventType.TextDelta, threadId: THREAD_ID, delta: "read.", isFinalResponse: false });
     providerEmitter.emit("event", {
       type: AgentEventType.ToolUse,
       threadId: THREAD_ID,
@@ -693,7 +815,7 @@ describe("AgentService narrative persistence", () => {
       toolName: "Read",
       toolInput: { file_path: "/a" },
     });
-    providerEmitter.emit("event", { type: AgentEventType.TextDelta, threadId: THREAD_ID, delta: "Now respond." });
+    providerEmitter.emit("event", { type: AgentEventType.TextDelta, threadId: THREAD_ID, delta: "Now respond.", isFinalResponse: false });
     providerEmitter.emit("event", {
       type: AgentEventType.TurnComplete,
       threadId: THREAD_ID,
@@ -824,6 +946,218 @@ describe("AgentService narrative persistence", () => {
     expect(lateHooks[0].durationMs).toBe(42);
   });
 
+  it("publishes each late hook once after the terminal projection is durable", async () => {
+    const published: AgentEvent[] = [];
+    const publicationOrder: string[] = [];
+    vi.mocked(broadcast).mockReset();
+    const { service, providerEmitter, hookBulk } = build({
+      onProviderEvent: (event) => {
+        published.push(event);
+        if (event.type === AgentEventType.HookStarted || event.type === AgentEventType.HookCompleted) {
+          publicationOrder.push(`provider:${event.type}`);
+        }
+      },
+    });
+    const finalizer = (service as unknown as {
+      turnFinalizer: {
+        finalize: (...args: unknown[]) => Promise<void>;
+        getLastPersistedMessageId: (threadId: string) => string | undefined;
+      };
+    }).turnFinalizer;
+    let completeFinalization!: () => void;
+    vi.spyOn(finalizer, "finalize").mockReturnValue(new Promise<void>((resolve) => {
+      completeFinalization = resolve;
+    }));
+    vi.spyOn(finalizer, "getLastPersistedMessageId").mockReturnValue(MSG_ID);
+    vi.mocked(broadcast).mockImplementation(((channel: string, payload: unknown) => {
+      if (channel === "agent.event"
+        && typeof payload === "object"
+        && payload !== null
+        && (payload as { type?: string }).type === AgentEventType.HookCompleted) {
+        publicationOrder.push("broadcast:hookCompleted");
+      }
+    }) as typeof broadcast);
+
+    providerEmitter.emit("event", {
+      type: AgentEventType.TurnComplete,
+      threadId: THREAD_ID,
+      tokensIn: 0,
+      tokensOut: 0,
+      contextWindow: 0,
+    });
+    providerEmitter.emit("event", {
+      type: AgentEventType.HookStarted,
+      threadId: THREAD_ID,
+      hookName: "Stop",
+      hookType: "stop",
+    });
+    providerEmitter.emit("event", {
+      type: AgentEventType.HookCompleted,
+      threadId: THREAD_ID,
+      hookName: "Stop",
+      exitCode: 0,
+      durationMs: 42,
+      didBlock: false,
+    });
+
+    expect(published.filter((event) => (
+      event.type === AgentEventType.HookStarted || event.type === AgentEventType.HookCompleted
+    ))).toEqual([]);
+    expect(hookBulk).not.toHaveBeenCalled();
+
+    completeFinalization();
+
+    await vi.waitFor(() => {
+      expect(hookBulk).toHaveBeenCalledOnce();
+      expect(publicationOrder).toEqual([
+        "provider:hookStarted",
+        "broadcast:hookCompleted",
+      ]);
+    });
+    expect(published.filter((event) => event.type === AgentEventType.HookCompleted)).toEqual([]);
+    const completedBroadcasts = vi.mocked(broadcast).mock.calls.filter(([channel, payload]) => (
+      channel === "agent.event"
+      && typeof payload === "object"
+      && payload !== null
+      && (payload as { type?: string }).type === AgentEventType.HookCompleted
+    ));
+    expect(completedBroadcasts).toHaveLength(1);
+    expect(completedBroadcasts[0]?.[1]).toMatchObject({
+      persistedMessageId: MSG_ID,
+      persistedHookId: expect.any(String),
+    });
+  });
+
+  it("retains an owned completed late hook when terminal finalization fails", async () => {
+    const db = openMemoryDatabase();
+    const now = "2026-08-24T10:00:00.000Z";
+    db.prepare(
+      "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    ).run("ws-1", "Workspace", "/workspace", now, now);
+    db.prepare(
+      "INSERT INTO threads (id, workspace_id, title, branch, provider, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(THREAD_ID, "ws-1", "Parent", "main", "claude", "active", now, now);
+    const canonicalSink = new CanonicalAgentEventSink(db, vi.fn());
+    const published: AgentEvent[] = [];
+    const { service, providerEmitter, hookBulk, narrativeStore } = build({
+      db,
+      canonicalSink,
+      onProviderEvent: (event) => published.push(event),
+    });
+    const executionId = (service as unknown as {
+      turnRuntime: { snapshot: (threadId: string) => { turnExecutionId: string } | undefined };
+    }).turnRuntime.snapshot(THREAD_ID)!.turnExecutionId;
+    const messages = new SqliteMessageRepo(db);
+    canonicalSink.startParentTurn({
+      thread: { id: THREAD_ID, workspaceId: "ws-1", providerId: "claude", createdAt: now },
+      turnId: "turn-late-hook-failure",
+      executionId,
+      permissionMode: "supervised",
+      providerIdentities: [],
+      projectUserMessage: () => messages.create(THREAD_ID, "user", "start", 1),
+    });
+    const finalizer = (service as unknown as {
+      turnFinalizer: { finalize: (...args: unknown[]) => Promise<void> };
+    }).turnFinalizer;
+    vi.spyOn(finalizer, "finalize").mockRejectedValue(new Error("forced terminal failure"));
+
+    providerEmitter.emit("event", {
+      type: AgentEventType.TurnComplete,
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      tokensIn: 0,
+      tokensOut: 0,
+      contextWindow: 0,
+    });
+    providerEmitter.emit("event", {
+      type: AgentEventType.HookStarted,
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      hookName: "Stop",
+      hookType: "stop",
+    });
+    providerEmitter.emit("event", {
+      type: AgentEventType.HookCompleted,
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      hookName: "Stop",
+      exitCode: 0,
+      durationMs: 42,
+      didBlock: false,
+    });
+
+    await vi.waitFor(() => {
+      expect(canonicalSink.loadParentNarrativeRecovery("turn-late-hook-failure")).toEqual([
+        expect.objectContaining({
+          kind: "hook",
+          record: expect.objectContaining({
+            hook_name: "Stop",
+            ended_at: expect.any(String),
+            duration_ms: 42,
+          }),
+        }),
+      ]);
+    });
+    expect(narrativeStore.recoverySnapshot(THREAD_ID)).toEqual([
+      expect.objectContaining({ kind: "hook", record: expect.objectContaining({ hook_name: "Stop" }) }),
+    ]);
+    expect(hookBulk).not.toHaveBeenCalled();
+    expect(published.filter((event) => (
+      event.type === AgentEventType.HookStarted || event.type === AgentEventType.HookCompleted
+    ))).toEqual([]);
+    db.close();
+  });
+
+  it("publishes an unmatched late completion through the normal event publisher", async () => {
+    const published: AgentEvent[] = [];
+    vi.mocked(broadcast).mockReset();
+    const { service, providerEmitter } = build({ onProviderEvent: (event) => published.push(event) });
+    const finalizer = (service as unknown as {
+      turnFinalizer: { finalize: (...args: unknown[]) => Promise<void> };
+    }).turnFinalizer;
+    let completeFinalization!: () => void;
+    vi.spyOn(finalizer, "finalize").mockReturnValue(new Promise<void>((resolve) => {
+      completeFinalization = resolve;
+    }));
+
+    providerEmitter.emit("event", {
+      type: AgentEventType.TurnComplete,
+      threadId: THREAD_ID,
+      tokensIn: 0,
+      tokensOut: 0,
+      contextWindow: 0,
+    });
+    providerEmitter.emit("event", {
+      type: AgentEventType.HookCompleted,
+      threadId: THREAD_ID,
+      hookName: "UnmatchedStop",
+      exitCode: 0,
+      durationMs: 1,
+      didBlock: false,
+    });
+
+    expect(published.filter((event) => event.type === AgentEventType.HookCompleted)).toEqual([]);
+    completeFinalization();
+
+    await vi.waitFor(() => {
+      expect(published.filter((event) => event.type === AgentEventType.HookCompleted)).toEqual([
+        expect.objectContaining({
+          hookName: "UnmatchedStop",
+          durationMs: 1,
+        }),
+      ]);
+    });
+    expect("persistedHookId" in published.find((event) => (
+      event.type === AgentEventType.HookCompleted
+    ))!).toBe(false);
+    expect(vi.mocked(broadcast).mock.calls.filter(([channel, payload]) => (
+      channel === "agent.event"
+      && typeof payload === "object"
+      && payload !== null
+      && (payload as { type?: string }).type === AgentEventType.HookCompleted
+    ))).toHaveLength(0);
+  });
+
   it("discards a late hook when the turn produced no recordable activity (no row to attach)", async () => {
     const { providerEmitter, hookBulk } = build();
 
@@ -882,7 +1216,7 @@ describe("AgentService narrative persistence", () => {
       hasMore: false,
     }));
 
-    providerEmitter.emit("event", { type: AgentEventType.TextDelta, threadId: THREAD_ID, delta: body });
+    providerEmitter.emit("event", { type: AgentEventType.TextDelta, threadId: THREAD_ID, delta: body, isFinalResponse: false });
     providerEmitter.emit("event", {
       type: AgentEventType.TurnComplete,
       threadId: THREAD_ID,
@@ -999,6 +1333,7 @@ describe("AgentService narrative persistence", () => {
       type: AgentEventType.TextDelta,
       threadId: THREAD_ID,
       delta: "Let me check that file.",
+      isFinalResponse: false,
     });
     providerEmitter.emit("event", {
       type: AgentEventType.AssistantMessageBoundary,
@@ -1511,5 +1846,25 @@ describe("AgentService narrative persistence", () => {
       },
     })).toThrow("Codex child routing invariant failed");
     expect(diagnostic).toHaveBeenCalledTimes(1);
+  });
+
+  it("withholds terminal provider publication when final durability fails", async () => {
+    const published: AgentEvent[] = [];
+    const { service, providerEmitter } = build({ onProviderEvent: (event) => published.push(event) });
+    (service as unknown as { turnFinalizer: { finalize: () => Promise<void> } }).turnFinalizer.finalize =
+      vi.fn(() => Promise.reject(new Error("terminal write failed")));
+
+    providerEmitter.emit("event", {
+      type: AgentEventType.TurnComplete,
+      threadId: THREAD_ID,
+      tokensIn: 0,
+      tokensOut: 0,
+      contextWindow: 0,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(published).not.toContainEqual(expect.objectContaining({
+      type: AgentEventType.TurnComplete,
+    }));
   });
 });
