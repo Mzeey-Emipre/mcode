@@ -4,6 +4,8 @@ import { lazySchema } from "../utils/lazySchema.js";
 
 /** Version of the private workspace environment document. */
 export const WORKSPACE_ENVIRONMENT_VERSION = "0.0.1" as const;
+/** Version of the canonical payload that binds an approval to a shared command. */
+export const WORKSPACE_ENVIRONMENT_APPROVAL_CONTRACT_VERSION = "0.0.1" as const;
 /** Maximum UTF-8 bytes accepted for one platform script. */
 export const WORKSPACE_ENVIRONMENT_SCRIPT_MAX_BYTES = 32 * 1024;
 /** Maximum UTF-8 bytes accepted for one platform command object. */
@@ -95,8 +97,35 @@ export type WorkspaceEnvironmentCommand = z.infer<
 export const WorkspaceEnvironmentPlatformSchema = z.enum(["windows", "macos", "linux"]);
 export type WorkspaceEnvironmentPlatform = z.infer<typeof WorkspaceEnvironmentPlatformSchema>;
 
+/** The persisted location selected for one Project environment document. */
+export const WorkspaceEnvironmentStorageModeSchema = z.enum(["system", "shared"]);
+export type WorkspaceEnvironmentStorageMode = z.infer<typeof WorkspaceEnvironmentStorageModeSchema>;
+
+/** Identifies either the Project Setup command or one stable Project Action command. */
+export const WorkspaceEnvironmentCommandTargetSchema = lazySchema(() =>
+  z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("setup") }).strict(),
+    z.object({ kind: z.literal("action"), actionId: z.string().min(1).max(256) }).strict(),
+  ]),
+);
+export type WorkspaceEnvironmentCommandTarget = z.infer<
+  ReturnType<typeof WorkspaceEnvironmentCommandTargetSchema>
+>;
+
+/** Exact shared command facts that require the user's approval before execution. */
+export const WorkspaceEnvironmentCommandApprovalSchema = lazySchema(() =>
+  z.object({
+    target: WorkspaceEnvironmentCommandTargetSchema(),
+    fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  }).strict(),
+);
+export type WorkspaceEnvironmentCommandApproval = z.infer<
+  ReturnType<typeof WorkspaceEnvironmentCommandApprovalSchema>
+>;
+
 /** Public lifecycle states for one manual Setup attempt. */
 export const WorkspaceEnvironmentSetupStatusSchema = z.enum([
+  "awaiting-approval",
   "running",
   "passed",
   "failed",
@@ -148,6 +177,7 @@ export const WorkspaceEnvironmentSetupLaunchSnapshotSchema = lazySchema(() =>
       executable: TerminalExecutableSchema(),
       arguments: TerminalProfileArgumentsSchema(),
     }).strict().nullable(),
+    approval: WorkspaceEnvironmentCommandApprovalSchema().nullable().optional(),
   }).strict(),
 );
 export type WorkspaceEnvironmentSetupLaunchSnapshot = z.infer<
@@ -171,10 +201,10 @@ export const WorkspaceEnvironmentSetupAttemptSchema = lazySchema(() =>
     outputTruncated: z.boolean(),
     cleanupPending: z.boolean(),
   }).strict().superRefine((attempt, ctx) => {
-    if (attempt.status === "running" && attempt.outcome !== null) {
+    if ((attempt.status === "running" || attempt.status === "awaiting-approval") && attempt.outcome !== null) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["outcome"], message: "Running Setup attempts cannot have an outcome" });
     }
-    if (attempt.status !== "running" && attempt.outcome === null) {
+    if (attempt.status !== "running" && attempt.status !== "awaiting-approval" && attempt.outcome === null) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["outcome"], message: "Completed Setup attempts require an outcome" });
     }
     if (attempt.status === "passed" && attempt.outcome !== "success") {
@@ -196,7 +226,11 @@ export const WorkspaceEnvironmentSetupAttemptSchema = lazySchema(() =>
     if (attempt.status === "running" && (attempt.startedAt === null || attempt.finishedAt !== null || attempt.exitCode !== null || attempt.cleanupPending)) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Running Setup attempts require an active lifecycle" });
     }
-    if (attempt.status !== "running" && attempt.finishedAt === null) {
+    if (attempt.status === "awaiting-approval" &&
+      (attempt.startedAt !== null || attempt.finishedAt !== null || attempt.exitCode !== null || attempt.cleanupPending || attempt.snapshot.approval === null || attempt.snapshot.approval === undefined)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Approval-waiting Setup attempts require an approved command snapshot" });
+    }
+    if (attempt.status !== "running" && attempt.status !== "awaiting-approval" && attempt.finishedAt === null) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["finishedAt"], message: "Completed Setup attempts require a finish time" });
     }
     if (
@@ -257,6 +291,7 @@ export type WorkspaceEnvironmentSetupGetResult = z.infer<
 
 /** Public lifecycle states for one retained Project Action run. */
 export const WorkspaceEnvironmentActionRunStatusSchema = z.enum([
+  "awaiting-approval",
   "running",
   "completed",
   "failed",
@@ -279,6 +314,7 @@ export const WorkspaceEnvironmentActionLaunchSnapshotSchema = lazySchema(() =>
       arguments: TerminalProfileArgumentsSchema(),
     }).strict().nullable(),
     environmentNames: z.array(z.string().min(1).max(256)).max(512),
+    approval: WorkspaceEnvironmentCommandApprovalSchema().nullable().optional(),
   }).strict(),
 );
 /** Immutable public launch details retained for one Project Action run. */
@@ -308,7 +344,11 @@ export const WorkspaceEnvironmentActionRunSchema = lazySchema(() =>
     if (run.status === "running" && (run.startedAt === null || run.finishedAt !== null || run.exitCode !== null)) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Running Action runs require an active lifecycle" });
     }
-    if (run.status !== "running" && run.finishedAt === null) {
+    if (run.status === "awaiting-approval" &&
+      (run.startedAt !== null || run.finishedAt !== null || run.exitCode !== null || run.snapshot.approval === null || run.snapshot.approval === undefined)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Approval-waiting Action runs require an approved command snapshot" });
+    }
+    if (run.status !== "running" && run.status !== "awaiting-approval" && run.finishedAt === null) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["finishedAt"], message: "Completed Action runs require a finish time" });
     }
     if (run.status === "completed" && run.exitCode !== 0) {
@@ -377,6 +417,7 @@ export type WorkspaceEnvironmentSetupGateState = z.infer<typeof WorkspaceEnviron
 
 /** Durable lifecycle states for an automatic Project Setup attempt. */
 export const WorkspaceEnvironmentAutomaticSetupAttemptStateSchema = z.enum([
+  "awaiting-approval",
   "queued",
   "running",
   "passed",
@@ -402,6 +443,7 @@ export type WorkspaceEnvironmentQueuedTurnState = z.infer<
 /** Safe reasons rendered for an automatic Setup gate that remains blocked. */
 export const WorkspaceEnvironmentAutomaticSetupReasonSchema = z.enum([
   "setup_configuration_invalid",
+  "setup_approval_required",
   "setup_unavailable",
   "setup_failed",
   "setup_interrupted",
@@ -430,6 +472,12 @@ export const WorkspaceEnvironmentAutomaticSetupAttemptSchema = lazySchema(() =>
         attempt.snapshot !== null || attempt.outcome !== null || attempt.exitCode !== null ||
         attempt.output !== "" || attempt.outputTruncated)) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Pending automatic Setup attempts cannot have a result" });
+    }
+    if (attempt.state === "awaiting-approval" &&
+      (attempt.startedAt !== null || attempt.finishedAt !== null || attempt.reason !== "setup_approval_required" ||
+        attempt.snapshot === null || attempt.snapshot.approval === null || attempt.snapshot.approval === undefined ||
+        attempt.outcome !== null || attempt.exitCode !== null || attempt.output !== "" || attempt.outputTruncated)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Approval-waiting automatic Setup attempts require the exact shared command snapshot" });
     }
     if (attempt.state === "running" &&
       (attempt.startedAt === null || attempt.finishedAt !== null || attempt.reason !== null ||
@@ -618,6 +666,7 @@ export const WorkspaceEnvironmentReadResultSchema = lazySchema(() =>
     document: WorkspaceEnvironmentDocumentSchema(),
     revision: z.string().nullable(),
     status: z.enum(["present", "absent"]),
+    storageMode: WorkspaceEnvironmentStorageModeSchema.optional(),
   }).strict(),
 );
 export type WorkspaceEnvironmentReadResult = z.infer<
@@ -625,15 +674,59 @@ export type WorkspaceEnvironmentReadResult = z.infer<
 >;
 
 /** Request for replacing a workspace environment document. */
+export const WorkspaceEnvironmentReadInputSchema = lazySchema(() =>
+  z.object({
+    workspaceId: z.string().min(1).max(256),
+    threadId: z.string().min(1).max(256).optional(),
+  }).strict(),
+);
+export type WorkspaceEnvironmentReadInput = z.infer<
+  ReturnType<typeof WorkspaceEnvironmentReadInputSchema>
+>;
+
+/** Request for replacing a workspace environment document. */
 export const WorkspaceEnvironmentSaveInputSchema = lazySchema(() =>
   z.object({
     workspaceId: z.string().min(1).max(256),
+    threadId: z.string().min(1).max(256).optional(),
     sourceRevision: z.string().nullable(),
     document: WorkspaceEnvironmentDocumentSchema(),
   }).strict(),
 );
 export type WorkspaceEnvironmentSaveInput = z.infer<
   ReturnType<typeof WorkspaceEnvironmentSaveInputSchema>
+>;
+
+/** Request to select the exclusive persisted location for one Project environment. */
+export const WorkspaceEnvironmentStorageSetInputSchema = lazySchema(() =>
+  z.object({
+    workspaceId: z.string().min(1).max(256),
+    threadId: z.string().min(1).max(256).optional(),
+    storageMode: WorkspaceEnvironmentStorageModeSchema,
+  }).strict(),
+);
+export type WorkspaceEnvironmentStorageSetInput = z.infer<
+  ReturnType<typeof WorkspaceEnvironmentStorageSetInputSchema>
+>;
+
+/** Request to approve the exact shared command that the user reviewed. */
+export const WorkspaceEnvironmentCommandApproveInputSchema = lazySchema(() =>
+  z.object({
+    threadId: z.string().min(1).max(256),
+    target: WorkspaceEnvironmentCommandTargetSchema(),
+    fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  }).strict(),
+);
+export type WorkspaceEnvironmentCommandApproveInput = z.infer<
+  ReturnType<typeof WorkspaceEnvironmentCommandApproveInputSchema>
+>;
+
+/** Request to clear all stored shared-command approvals for one Project. */
+export const WorkspaceEnvironmentCommandApprovalClearInputSchema = lazySchema(() =>
+  z.object({ workspaceId: z.string().min(1).max(256) }).strict(),
+);
+export type WorkspaceEnvironmentCommandApprovalClearInput = z.infer<
+  ReturnType<typeof WorkspaceEnvironmentCommandApprovalClearInputSchema>
 >;
 
 /** Structured errors exposed by the workspace environment lifecycle boundary. */
@@ -647,6 +740,8 @@ export const WorkspaceEnvironmentErrorSchema = z.object({
     "WORKSPACE_ENVIRONMENT_SETUP_UNAVAILABLE",
     "WORKSPACE_ENVIRONMENT_ACTION_RUNNING",
     "WORKSPACE_ENVIRONMENT_ACTION_NOT_FOUND",
+    "WORKSPACE_ENVIRONMENT_APPROVAL_STALE",
+    "WORKSPACE_ENVIRONMENT_APPROVAL_NOT_REQUIRED",
   ]),
   message: z.string().min(1),
   issues: z.array(WorkspaceEnvironmentValidationIssueSchema).optional(),

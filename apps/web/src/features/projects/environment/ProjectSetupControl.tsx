@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { ChevronDown, CircleCheck, OctagonX } from "lucide-react";
 import type { WorkspaceEnvironmentSetupAttempt } from "@mcode/contracts";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
@@ -10,6 +11,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
 import { getTransport } from "@/transport";
 import { cn } from "@/lib/utils";
+import { isProjectCommandApprovalInvalid, ProjectCommandApprovalDialog } from "./ProjectCommandApprovalDialog";
 
 interface ProjectSetupMenuItemProps {
   readonly attempt: WorkspaceEnvironmentSetupAttempt | null;
@@ -19,6 +21,7 @@ interface ProjectSetupMenuItemProps {
 
 interface ProjectSetupAttemptCardProps {
   readonly attempt: WorkspaceEnvironmentSetupAttempt;
+  readonly onApprove?: () => Promise<void>;
 }
 
 /** Loads and starts the transient Setup attempt shown for one Thread Overview. */
@@ -27,6 +30,7 @@ export function useProjectSetupAttempt(threadId: string): {
   readonly starting: boolean;
   readonly startError: string | null;
   readonly start: () => Promise<void>;
+  readonly approve: () => Promise<void>;
 } {
   const [attempt, setAttempt] = useState<WorkspaceEnvironmentSetupAttempt | null>(null);
   const [starting, setStarting] = useState(false);
@@ -83,7 +87,7 @@ export function useProjectSetupAttempt(threadId: string): {
   }, [attempt?.cleanupPending, attempt?.status, refresh]);
 
   const start = useCallback(async () => {
-    if (visibleStarting || visibleAttempt?.status === "running" || visibleAttempt?.cleanupPending) return;
+    if (visibleStarting || visibleAttempt?.status === "running" || visibleAttempt?.status === "awaiting-approval" || visibleAttempt?.cleanupPending) return;
     const generation = requestGeneration.current + 1;
     requestGeneration.current = generation;
     requestSequence.current += 1;
@@ -99,17 +103,42 @@ export function useProjectSetupAttempt(threadId: string): {
     }
   }, [isCurrent, threadId, visibleAttempt?.cleanupPending, visibleAttempt?.status, visibleStarting]);
 
+  const approve = useCallback(async () => {
+    const approval = visibleAttempt?.snapshot.approval;
+    if (!approval || visibleStarting) return;
+    const generation = requestGeneration.current + 1;
+    requestGeneration.current = generation;
+    requestSequence.current += 1;
+    setStarting(true);
+    setStartError(null);
+    try {
+      await getTransport().approveWorkspaceEnvironmentCommand(threadId, approval.target, approval.fingerprint);
+      const next = await getTransport().startWorkspaceSetup(threadId);
+      if (isCurrent(threadId, generation)) setAttempt(next);
+    } catch (error) {
+      if (isProjectCommandApprovalInvalid(error)) {
+        const next = await getTransport().startWorkspaceSetup(threadId);
+        if (isCurrent(threadId, generation)) setAttempt(next);
+      }
+      if (isCurrent(threadId, generation)) setStartError("Setup could not be approved");
+      throw error;
+    } finally {
+      if (isCurrent(threadId, generation)) setStarting(false);
+    }
+  }, [isCurrent, threadId, visibleAttempt?.snapshot.approval, visibleStarting]);
+
   return {
     attempt: visibleAttempt,
     starting: visibleStarting,
     startError: visibleStartError,
     start,
+    approve,
   };
 }
 
 /** Renders the manual Setup command within the Project Actions menu. */
 export function ProjectSetupMenuItem({ attempt, starting, onStart }: ProjectSetupMenuItemProps) {
-  const disabled = attempt?.status === "running" || attempt?.cleanupPending === true;
+  const disabled = attempt?.status === "running" || attempt?.status === "awaiting-approval" || attempt?.cleanupPending === true;
   return (
     <DropdownMenuItem disabled={disabled || starting} onClick={() => { void onStart(); }}>
       {starting ? <Spinner size={13} aria-hidden /> : null}
@@ -119,8 +148,9 @@ export function ProjectSetupMenuItem({ attempt, starting, onStart }: ProjectSetu
 }
 
 /** Renders the compact expandable terminal-style card for a manual Setup attempt. */
-export function ProjectSetupAttemptCard({ attempt }: ProjectSetupAttemptCardProps) {
+export function ProjectSetupAttemptCard({ attempt, onApprove }: ProjectSetupAttemptCardProps) {
   const [open, setOpen] = useState(attempt.status !== "passed");
+  const [approvalOpen, setApprovalOpen] = useState(true);
   const contentId = useId();
   const headingId = useId();
   const statusLabel = setupStatusLabel(attempt.status);
@@ -128,6 +158,10 @@ export function ProjectSetupAttemptCard({ attempt }: ProjectSetupAttemptCardProp
 
   useEffect(() => {
     if (attempt.status !== "passed") setOpen(true);
+  }, [attempt.id, attempt.status]);
+
+  useEffect(() => {
+    setApprovalOpen(attempt.status === "awaiting-approval");
   }, [attempt.id, attempt.status]);
 
   return (
@@ -167,9 +201,23 @@ export function ProjectSetupAttemptCard({ attempt }: ProjectSetupAttemptCardProp
             {attempt.cleanupPending ? (
               <p className="mt-2 text-xs text-muted-foreground">Setup cleanup is still pending.</p>
             ) : null}
+            {attempt.status === "awaiting-approval" && !approvalOpen ? (
+              <Button type="button" size="sm" className="mt-2" onClick={() => setApprovalOpen(true)}>Review shared command</Button>
+            ) : null}
           </div>
         </CollapsibleContent>
       </section>
+      {approvalOpen ? (
+        <ProjectCommandApprovalDialog
+          approval={attempt.status === "awaiting-approval" ? attempt.snapshot.approval ?? null : null}
+          script={attempt.snapshot.script}
+          onApprove={async () => {
+            await (onApprove ?? (async () => undefined))();
+            return true;
+          }}
+          onCancel={() => setApprovalOpen(false)}
+        />
+      ) : null}
     </Collapsible>
   );
 }
@@ -206,6 +254,8 @@ function SetupAttemptStatus({ status }: { readonly status: WorkspaceEnvironmentS
           <span className="sr-only">Setup running</span>
         </>
       );
+    case "awaiting-approval":
+      return <Badge variant="secondary" size="sm" className="shrink-0">Approval required</Badge>;
     case "passed":
       return <CircleCheck className="size-3.5 shrink-0 text-[var(--diff-add-strong)]" aria-hidden />;
     case "failed":
@@ -223,6 +273,7 @@ function SetupAttemptStatus({ status }: { readonly status: WorkspaceEnvironmentS
 function setupStatusLabel(status: WorkspaceEnvironmentSetupAttempt["status"]): string {
   switch (status) {
     case "running": return "Running";
+    case "awaiting-approval": return "Approval required";
     case "passed": return "Passed";
     case "failed": return "Failed";
     case "unavailable": return "Unavailable";

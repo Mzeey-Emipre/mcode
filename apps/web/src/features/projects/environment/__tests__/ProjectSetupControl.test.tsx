@@ -110,6 +110,34 @@ describe("ProjectSetup controls", () => {
     expect(screen.getByText("Setup cleanup is still pending.")).toBeInTheDocument();
   });
 
+  it("shows the exact shared Setup command and approves only after review", async () => {
+    const user = userEvent.setup();
+    const onApprove = vi.fn().mockResolvedValue(undefined);
+    const attempt: WorkspaceEnvironmentSetupAttempt = {
+      ...failedAttempt,
+      status: "awaiting-approval",
+      outcome: null,
+      startedAt: null,
+      finishedAt: null,
+      exitCode: null,
+      output: "",
+      snapshot: {
+        ...failedAttempt.snapshot,
+        approval: {
+          target: { kind: "setup" },
+          fingerprint: "a".repeat(64),
+        },
+      },
+    };
+
+    render(<ProjectSetupAttemptCard attempt={attempt} onApprove={onApprove} />);
+
+    expect(await screen.findByRole("heading", { name: "Approve shared command" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Resolved shared command")).toHaveTextContent("bun run setup");
+    await user.click(screen.getByRole("button", { name: "Approve and run" }));
+    await waitFor(() => expect(onApprove).toHaveBeenCalledOnce());
+  });
+
   it("renders the accepted icon-led Setup status states without a badge", async () => {
     const passed = render(<ProjectSetupAttemptCard attempt={{ ...failedAttempt, status: "passed", outcome: "success", exitCode: 0 }} />);
     await act(async () => { await Promise.resolve(); });

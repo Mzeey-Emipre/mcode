@@ -51,6 +51,43 @@ describe("workspace environment RPC", () => {
     expect(malformed.error?.data).toEqual(expect.objectContaining({ issues: expect.any(Array) }));
   });
 
+  it("routes storage selection and approval clearing through the workspace environment boundary", async () => {
+    const root = await mkdtemp(join(tmpdir(), "mcode-environment-rpc-"));
+    roots.push(root);
+    const baseCheckout = join(root, "base");
+    const workspace = { id: "workspace-1", path: baseCheckout };
+    const workspaceEnvironmentService = new WorkspaceEnvironmentService({
+      mcodeDir: root,
+      workspaces: { findById: (id) => id === workspace.id ? workspace : null },
+    });
+    const deps = {
+      workspaceService: { findById: (id: string) => id === workspace.id ? workspace : null },
+      workspaceEnvironmentService,
+    } as unknown as RouterDeps;
+
+    const selected = await routeMessage(JSON.stringify({
+      id: "storage",
+      method: "workspace.environment.storage.set",
+      params: { workspaceId: workspace.id, storageMode: "shared" },
+    }), deps);
+    expect(selected.result).toMatchObject({ status: "absent", storageMode: "shared" });
+
+    const cleared = await routeMessage(JSON.stringify({
+      id: "clear",
+      method: "workspace.environment.command.clearApprovals",
+      params: { workspaceId: workspace.id },
+    }), deps);
+    expect(cleared.error).toBeUndefined();
+    expect(cleared.result).toBeUndefined();
+
+    const malformed = await routeMessage(JSON.stringify({
+      id: "clear-invalid",
+      method: "workspace.environment.command.clearApprovals",
+      params: { workspaceId: workspace.id, extra: true },
+    }), deps);
+    expect(malformed.error?.code).toBe("WORKSPACE_ENVIRONMENT_VALIDATION");
+  });
+
   it("starts and reads the typed transient manual Setup attempt", async () => {
     const root = await mkdtemp(join(tmpdir(), "mcode-environment-rpc-"));
     roots.push(root);

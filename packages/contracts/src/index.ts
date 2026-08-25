@@ -40,6 +40,7 @@ export type { Workspace, WorkspaceEnrichment } from "./models/workspace.js";
 
 export {
   WORKSPACE_ENVIRONMENT_VERSION,
+  WORKSPACE_ENVIRONMENT_APPROVAL_CONTRACT_VERSION,
   WORKSPACE_ENVIRONMENT_SCRIPT_MAX_BYTES,
   WORKSPACE_ENVIRONMENT_COMMAND_MAX_BYTES,
   WORKSPACE_ENVIRONMENT_DOCUMENT_MAX_BYTES,
@@ -49,6 +50,9 @@ export {
   WorkspaceEnvironmentValidationIssueSchema,
   WorkspaceEnvironmentCommandSchema,
   WorkspaceEnvironmentPlatformSchema,
+  WorkspaceEnvironmentStorageModeSchema,
+  WorkspaceEnvironmentCommandTargetSchema,
+  WorkspaceEnvironmentCommandApprovalSchema,
   WorkspaceEnvironmentSetupStatusSchema,
   WorkspaceEnvironmentSetupOutcomeSchema,
   WorkspaceEnvironmentSetupLaunchSnapshotSchema,
@@ -81,7 +85,11 @@ export {
   WorkspaceEnvironmentDocumentSchema,
   DEFAULT_WORKSPACE_ENVIRONMENT_DOCUMENT,
   WorkspaceEnvironmentReadResultSchema,
+  WorkspaceEnvironmentReadInputSchema,
   WorkspaceEnvironmentSaveInputSchema,
+  WorkspaceEnvironmentStorageSetInputSchema,
+  WorkspaceEnvironmentCommandApproveInputSchema,
+  WorkspaceEnvironmentCommandApprovalClearInputSchema,
   WorkspaceEnvironmentErrorSchema,
   workspaceEnvironmentValidationIssues,
 } from "./models/workspace-environment.js";
@@ -90,6 +98,9 @@ export type {
   WorkspaceEnvironmentValidationIssue,
   WorkspaceEnvironmentCommand,
   WorkspaceEnvironmentPlatform,
+  WorkspaceEnvironmentStorageMode,
+  WorkspaceEnvironmentCommandTarget,
+  WorkspaceEnvironmentCommandApproval,
   WorkspaceEnvironmentSetupStatus,
   WorkspaceEnvironmentSetupOutcome,
   WorkspaceEnvironmentSetupLaunchSnapshot,
@@ -121,7 +132,11 @@ export type {
   WorkspaceEnvironmentAction,
   WorkspaceEnvironmentDocument,
   WorkspaceEnvironmentReadResult,
+  WorkspaceEnvironmentReadInput,
   WorkspaceEnvironmentSaveInput,
+  WorkspaceEnvironmentStorageSetInput,
+  WorkspaceEnvironmentCommandApproveInput,
+  WorkspaceEnvironmentCommandApprovalClearInput,
 } from "./models/workspace-environment.js";
 
 export {

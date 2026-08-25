@@ -2,6 +2,7 @@ import "reflect-metadata";
 import { describe, expect, it, vi } from "vitest";
 import type { WorkspaceEnvironmentActionRun } from "@mcode/contracts";
 import {
+  PreparedTerminalCommandApprovalMismatchError,
   PreparedTerminalCommandStartError,
   type PreparedTerminalCommandSession,
 } from "../../../terminal/backends/terminal-backend.js";
@@ -62,7 +63,94 @@ function deferred<T>(): { readonly promise: Promise<T>; resolve(value: T): void 
   return { promise, resolve };
 }
 
+function projectActionEnvironment(read: () => Promise<{
+  readonly document: {
+    readonly actions: readonly { readonly id: string; readonly name: string; readonly command: { readonly default?: string; readonly windows?: string } }[];
+  };
+}>) {
+  return {
+    async resolveActionCommand(_threadId: string, actionId: string) {
+      const document = (await read()).document;
+      const action = document.actions.find((candidate) => candidate.id === actionId);
+      if (!action) throw new Error("Project Action not found");
+      const script = action.command.windows ?? action.command.default;
+      if (!script) throw new Error("Project Action is unavailable");
+      return {
+        kind: "ready" as const,
+        action,
+        script,
+        command: { close: async () => ({ kind: "contained" as const }) },
+        snapshot: {
+          platform: "windows" as const,
+          script,
+          checkoutPath: "C:\\repo",
+          terminal: { executable: "powershell.exe", arguments: ["-Command", script] },
+          approval: null,
+        },
+        approval: null,
+      };
+    },
+  };
+}
+
 describe("ProjectActionService", () => {
+  it("requires a fresh shared-command review when the Terminal launch changes after approval", async () => {
+    const runs = new Runs();
+    let resolutionCount = 0;
+    const environment = {
+      async resolveActionCommand() {
+        resolutionCount += 1;
+        const script = resolutionCount === 1 ? "bun run build" : "bun run build --fresh";
+        const approval = resolutionCount === 1
+          ? null
+          : { target: { kind: "action" as const, actionId: "build" }, fingerprint: "b".repeat(64) };
+        return {
+          kind: "ready" as const,
+          action: { id: "build", name: "Build", command: { default: script } },
+          script,
+          command: { close: async () => ({ kind: "contained" as const }) },
+          snapshot: {
+            platform: "windows" as const,
+            script,
+            checkoutPath: "C:\\repo",
+            terminal: { executable: "powershell.exe", arguments: ["-Command", script] },
+            approval,
+          },
+          approval,
+        };
+      },
+    };
+    const startPreparedCommand = vi.fn(async () => {
+      throw new PreparedTerminalCommandApprovalMismatchError({
+        platform: "windows",
+        script: "bun run build --fresh",
+        checkoutPath: "C:\\repo",
+        terminal: { executable: "pwsh.exe", arguments: ["-Command", "bun run build --fresh"] },
+        environmentNames: [],
+      });
+    });
+    const service = new ProjectActionService(
+      runs as never,
+      environment as never,
+      { findById: () => ({ id: "thread-1", workspace_id: "workspace-1", deleted_at: null, user_completed_at: null }) } as never,
+      { startPreparedCommand } as never,
+      () => new Date("2026-08-22T12:00:00.000Z"),
+      () => "run-1",
+    );
+
+    const run = await service.start({ threadId: "thread-1", actionId: "build" });
+
+    expect(startPreparedCommand).toHaveBeenCalledWith(expect.objectContaining({
+      expectedLaunch: {
+        terminal: { executable: "powershell.exe", arguments: ["-Command", "bun run build"] },
+      },
+    }));
+    expect(run).toMatchObject({
+      status: "awaiting-approval",
+      snapshot: { script: "bun run build --fresh", approval: { fingerprint: "b".repeat(64) } },
+    });
+  });
+
   it("excludes one slot, allows a second Action, preserves its immutable snapshot, and ignores stale output", async () => {
     const runs = new Runs();
     const first = session("terminal-1");
@@ -70,10 +158,10 @@ describe("ProjectActionService", () => {
     const sessions = [first, second];
     const service = new ProjectActionService(
       runs as never,
-      { read: async () => ({ document: { version: "0.0.1", actions: [
+      projectActionEnvironment(async () => ({ document: { version: "0.0.1", actions: [
         { id: "build", name: "Build", command: { default: "bun run build" } },
         { id: "test", name: "Test", command: { default: "bun test" } },
-      ] } }) } as never,
+      ] } })),
       { findById: () => ({ id: "thread-1", workspace_id: "workspace-1", deleted_at: null, user_completed_at: null }) } as never,
       { startPreparedCommand: async () => sessions.shift()! } as never,
       () => new Date("2026-08-22T12:00:00.000Z"),
@@ -100,7 +188,7 @@ describe("ProjectActionService", () => {
     const startPreparedCommand = vi.fn(async () => session("terminal-1"));
     const service = new ProjectActionService(
       runs as never,
-      { read: vi.fn(() => environmentRead.promise) } as never,
+      projectActionEnvironment(() => environmentRead.promise),
       { findById: () => ({ id: "thread-1", workspace_id: "workspace-1", deleted_at: null, user_completed_at: null }) } as never,
       { startPreparedCommand } as never,
       () => new Date("2026-08-22T12:00:00.000Z"),
@@ -127,10 +215,10 @@ describe("ProjectActionService", () => {
     const prepared = session("terminal-1");
     const service = new ProjectActionService(
       runs as never,
-      { read: async () => ({ document: { version: "0.0.1", actions: [
+      projectActionEnvironment(async () => ({ document: { version: "0.0.1", actions: [
         { id: "build", name: "Build", command: { default: "bun run build" } },
         { id: "test", name: "Test", command: { default: "bun test" } },
-      ] } }) } as never,
+      ] } })),
       { findById: () => ({ id: "thread-1", workspace_id: "workspace-1", deleted_at: null, user_completed_at: null }) } as never,
       {
         startPreparedCommand: () => {
@@ -166,9 +254,9 @@ describe("ProjectActionService", () => {
       .mockResolvedValueOnce(second);
     const service = new ProjectActionService(
       runs as never,
-      { read: async () => ({ document: { version: "0.0.1", actions: [
+      projectActionEnvironment(async () => ({ document: { version: "0.0.1", actions: [
         { id: "build", name: "Build", command: { default: "bun run build" } },
-      ] } }) } as never,
+      ] } })),
       { findById: () => ({ id: "thread-1", workspace_id: "workspace-1", deleted_at: null, user_completed_at: null }) } as never,
       { startPreparedCommand } as never,
       () => new Date("2026-08-22T12:00:00.000Z"),
@@ -191,9 +279,9 @@ describe("ProjectActionService", () => {
     const fast = session("terminal-1", { output: "fast output", exitCode: 0 });
     const service = new ProjectActionService(
       runs as never,
-      { read: async () => ({ document: { version: "0.0.1", actions: [
+      projectActionEnvironment(async () => ({ document: { version: "0.0.1", actions: [
         { id: "build", name: "Build", command: { default: "bun run build" } },
-      ] } }) } as never,
+      ] } })),
       { findById: () => ({ id: "thread-1", workspace_id: "workspace-1", deleted_at: null, user_completed_at: null }) } as never,
       { startPreparedCommand: async () => fast } as never,
       () => new Date("2026-08-22T12:00:00.000Z"),
@@ -216,9 +304,9 @@ describe("ProjectActionService", () => {
     const prepared = session("terminal-1");
     const service = new ProjectActionService(
       runs as never,
-      { read: async () => ({ document: { version: "0.0.1", actions: [
+      projectActionEnvironment(async () => ({ document: { version: "0.0.1", actions: [
         { id: "build", name: "Build", command: { default: "bun run build" } },
-      ] } }) } as never,
+      ] } })),
       { findById: () => ({ id: "thread-1", workspace_id: "workspace-1", deleted_at: null, user_completed_at: null }) } as never,
       { startPreparedCommand: () => { enteredBackend.resolve(); return startup.promise; } } as never,
       () => new Date("2026-08-22T12:00:00.000Z"),
@@ -245,9 +333,9 @@ describe("ProjectActionService", () => {
     const prepared = session("terminal-1");
     const service = new ProjectActionService(
       runs as never,
-      { read: async () => ({ document: { version: "0.0.1", actions: [
+      projectActionEnvironment(async () => ({ document: { version: "0.0.1", actions: [
         { id: "build", name: "Build", command: { default: "bun run build" } },
-      ] } }) } as never,
+      ] } })),
       { findById: () => ({ id: "thread-1", workspace_id: "workspace-1", deleted_at: null, user_completed_at: null }) } as never,
       { startPreparedCommand: async () => prepared } as never,
       () => new Date("2026-08-22T12:00:00.000Z"),
@@ -271,9 +359,9 @@ describe("ProjectActionService", () => {
     const prepared = session("terminal-1");
     const service = new ProjectActionService(
       runs as never,
-      { read: async () => ({ document: { version: "0.0.1", actions: [
+      projectActionEnvironment(async () => ({ document: { version: "0.0.1", actions: [
         { id: "build", name: "Build", command: { default: "bun run build" } },
-      ] } }) } as never,
+      ] } })),
       { findById: () => thread } as never,
       { startPreparedCommand: async () => prepared } as never,
       () => new Date("2026-08-22T12:00:00.000Z"),
@@ -298,9 +386,9 @@ describe("ProjectActionService", () => {
     const stop = vi.spyOn(prepared, "stop");
     const service = new ProjectActionService(
       runs as never,
-      { read: async () => ({ document: { version: "0.0.1", actions: [
+      projectActionEnvironment(async () => ({ document: { version: "0.0.1", actions: [
         { id: "build", name: "Build", command: { default: "bun run build" } },
-      ] } }) } as never,
+      ] } })),
       { findById: () => ({ id: "thread-1", workspace_id: "workspace-1", deleted_at: null, user_completed_at: null }) } as never,
       { startPreparedCommand: async () => prepared } as never,
       () => new Date("2026-08-22T12:00:00.000Z"),
@@ -324,10 +412,10 @@ describe("ProjectActionService", () => {
     const prepared = session("terminal-1");
     const service = new ProjectActionService(
       runs as never,
-      { read: async () => ({ document: { version: "0.0.1", actions: [
+      projectActionEnvironment(async () => ({ document: { version: "0.0.1", actions: [
         { id: "build", name: "Build", command: { default: "bun run build" } },
         { id: "test", name: "Test", command: { default: "bun test" } },
-      ] } }) } as never,
+      ] } })),
       { findById: () => ({ id: "thread-1", workspace_id: "workspace-1", deleted_at: null, user_completed_at: null }) } as never,
       { startPreparedCommand: () => { enteredBackend.resolve(); return startup.promise; } } as never,
       () => new Date("2026-08-22T12:00:00.000Z"),
@@ -351,10 +439,10 @@ describe("ProjectActionService", () => {
     const successful = session("terminal-1");
     const service = new ProjectActionService(
       runs as never,
-      { read: async () => ({ document: { version: "0.0.1", actions: [
+      projectActionEnvironment(async () => ({ document: { version: "0.0.1", actions: [
         { id: "build", name: "Build", command: { default: "bun run build" } },
         { id: "test", name: "Test", command: { default: "bun test" } },
-      ] } }) } as never,
+      ] } })),
       { findById: () => ({ id: "thread-1", workspace_id: "workspace-1", deleted_at: null, user_completed_at: null }) } as never,
       {
         startPreparedCommand: vi.fn()
@@ -372,7 +460,11 @@ describe("ProjectActionService", () => {
       status: "failed",
       terminalSessionId: null,
       startedAt: "2026-08-22T12:00:00.001Z",
-      snapshot: { script: "bun test", terminal: null, environmentNames: [] },
+      snapshot: {
+        script: "bun test",
+        terminal: { executable: "powershell.exe", arguments: ["-Command", "bun test"] },
+        environmentNames: [],
+      },
     });
     expect(runs.get("thread-1", "build")?.status).toBe("running");
   });
@@ -388,9 +480,9 @@ describe("ProjectActionService", () => {
     };
     const service = new ProjectActionService(
       runs as never,
-      { read: async () => ({ document: { version: "0.0.1", actions: [
+      projectActionEnvironment(async () => ({ document: { version: "0.0.1", actions: [
         { id: "build", name: "Build", command: { default: "bun run build" } },
-      ] } }) } as never,
+      ] } })),
       { findById: () => ({ id: "thread-1", workspace_id: "workspace-1", deleted_at: null, user_completed_at: null }) } as never,
       { startPreparedCommand: async () => { throw new PreparedTerminalCommandStartError(plannedSnapshot, new Error("host unavailable")); } } as never,
       () => new Date("2026-08-22T12:00:00.000Z"),
@@ -412,9 +504,9 @@ describe("ProjectActionService", () => {
     const persistenceFailure = new Error("database unavailable");
     const service = new ProjectActionService(
       { get: () => null, list: () => [], replace: () => { throw persistenceFailure; }, updateIfCurrent: () => false, interruptRunning: () => [] } as never,
-      { read: async () => ({ document: { version: "0.0.1", actions: [
+      projectActionEnvironment(async () => ({ document: { version: "0.0.1", actions: [
         { id: "build", name: "Build", command: { default: "bun run build" } },
-      ] } }) } as never,
+      ] } })),
       { findById: () => ({ id: "thread-1", workspace_id: "workspace-1", deleted_at: null, user_completed_at: null }) } as never,
       { startPreparedCommand: async () => prepared } as never,
       () => new Date("2026-08-22T12:00:00.000Z"),
@@ -438,9 +530,9 @@ describe("ProjectActionService", () => {
         updateIfCurrent,
         interruptRunning: () => [],
       } as never,
-      { read: async () => ({ document: { version: "0.0.1", actions: [
+      projectActionEnvironment(async () => ({ document: { version: "0.0.1", actions: [
         { id: "build", name: "Build", command: { default: "bun run build" } },
-      ] } }) } as never,
+      ] } })),
       { findById: () => ({ id: "thread-1", workspace_id: "workspace-1", deleted_at: null, user_completed_at: null }) } as never,
       { startPreparedCommand: async () => prepared } as never,
       () => new Date("2026-08-22T12:00:00.000Z"),
@@ -471,9 +563,9 @@ describe("ProjectActionService", () => {
       .mockImplementationOnce(() => { throw persistenceFailure; });
     const service = new ProjectActionService(
       runs as never,
-      { read: async () => ({ document: { version: "0.0.1", actions: [
+      projectActionEnvironment(async () => ({ document: { version: "0.0.1", actions: [
         { id: "build", name: "Build", command: { default: "bun run build" } },
-      ] } }) } as never,
+      ] } })),
       { findById: () => ({ id: "thread-1", workspace_id: "workspace-1", deleted_at: null, user_completed_at: null }) } as never,
       { startPreparedCommand: vi.fn().mockResolvedValueOnce(prepared).mockResolvedValueOnce(replacement) } as never,
       () => new Date("2026-08-22T12:00:00.000Z"),
@@ -507,9 +599,9 @@ describe("ProjectActionService", () => {
       .mockImplementation((run) => persist(run));
     const service = new ProjectActionService(
       runs as never,
-      { read: async () => ({ document: { version: "0.0.1", actions: [
+      projectActionEnvironment(async () => ({ document: { version: "0.0.1", actions: [
         { id: "build", name: "Build", command: { default: "bun run build" } },
-      ] } }) } as never,
+      ] } })),
       { findById: () => ({ id: "thread-1", workspace_id: "workspace-1", deleted_at: null, user_completed_at: null }) } as never,
       { startPreparedCommand: vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(second) } as never,
       () => new Date("2026-08-22T12:00:00.000Z"),
@@ -556,9 +648,9 @@ describe("ProjectActionService", () => {
       .mockImplementation((run) => persist(run));
     const service = new ProjectActionService(
       runs as never,
-      { read: async () => ({ document: { version: "0.0.1", actions: [
+      projectActionEnvironment(async () => ({ document: { version: "0.0.1", actions: [
         { id: "build", name: "Build", command: { default: "bun run build" } },
-      ] } }) } as never,
+      ] } })),
       { findById: () => ({ id: "thread-1", workspace_id: "workspace-1", deleted_at: null, user_completed_at: null }) } as never,
       { startPreparedCommand: vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(second) } as never,
       () => new Date("2026-08-22T12:00:00.000Z"),
@@ -590,9 +682,9 @@ describe("ProjectActionService", () => {
       .mockImplementation((run) => persist(run));
     const service = new ProjectActionService(
       runs as never,
-      { read: async () => ({ document: { version: "0.0.1", actions: [
+      projectActionEnvironment(async () => ({ document: { version: "0.0.1", actions: [
         { id: "build", name: "Build", command: { default: "bun run build" } },
-      ] } }) } as never,
+      ] } })),
       { findById: () => ({ id: "thread-1", workspace_id: "workspace-1", deleted_at: null, user_completed_at: null }) } as never,
       { startPreparedCommand: async () => prepared } as never,
       () => new Date("2026-08-22T12:00:00.000Z"),
@@ -626,9 +718,9 @@ describe("ProjectActionService", () => {
     const second = session("terminal-2");
     const service = new ProjectActionService(
       runs as never,
-      { read: async () => ({ document: { version: "0.0.1", actions: [
+      projectActionEnvironment(async () => ({ document: { version: "0.0.1", actions: [
         { id: "build", name: "Build", command: { default: "bun run build" } },
-      ] } }) } as never,
+      ] } })),
       { findById: () => ({ id: "thread-1", workspace_id: "workspace-1", deleted_at: null, user_completed_at: null }) } as never,
       { startPreparedCommand: vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(second) } as never,
       () => new Date("2026-08-22T12:00:00.000Z"),
@@ -657,9 +749,9 @@ describe("ProjectActionService", () => {
       .mockImplementation((run) => persist(run));
     const service = new ProjectActionService(
       runs as never,
-      { read: async () => ({ document: { version: "0.0.1", actions: [
+      projectActionEnvironment(async () => ({ document: { version: "0.0.1", actions: [
         { id: "build", name: "Build", command: { default: "bun run build" } },
-      ] } }) } as never,
+      ] } })),
       { findById: () => ({ id: "thread-1", workspace_id: "workspace-1", deleted_at: null, user_completed_at: null }) } as never,
       { startPreparedCommand: async () => prepared } as never,
       () => new Date("2026-08-22T12:00:00.000Z"),

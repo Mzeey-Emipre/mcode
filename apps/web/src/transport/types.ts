@@ -4,6 +4,8 @@ import type {
   WorkspaceEnrichment,
   WorkspaceEnvironmentDocument,
   WorkspaceEnvironmentReadResult,
+  WorkspaceEnvironmentStorageMode,
+  WorkspaceEnvironmentCommandTarget,
   WorkspaceEnvironmentSetupAttempt,
   WorkspaceEnvironmentAutomaticSetupSnapshot,
   WorkspaceEnvironmentAutomaticSetupTerminal,
@@ -296,14 +298,29 @@ export interface McodeTransport {
   listWorkspaces(): Promise<Workspace[]>;
   /** Rename a workspace without changing its filesystem path. */
   renameWorkspace(id: string, name: string): Promise<Workspace>;
-  /** Read the private workspace environment document and revision. */
-  readWorkspaceEnvironment(workspaceId: string): Promise<WorkspaceEnvironmentReadResult>;
-  /** Save the private workspace environment document against its source revision. */
+  /** Read the selected workspace environment document and revision. */
+  readWorkspaceEnvironment(workspaceId: string, threadId?: string): Promise<WorkspaceEnvironmentReadResult>;
+  /** Save the selected workspace environment document against its source revision. */
   saveWorkspaceEnvironment(
     workspaceId: string,
     document: WorkspaceEnvironmentDocument,
     sourceRevision: string | null,
+    threadId?: string,
   ): Promise<WorkspaceEnvironmentReadResult>;
+  /** Select system or shared storage for one Project environment. */
+  setWorkspaceEnvironmentStorageMode(
+    workspaceId: string,
+    storageMode: WorkspaceEnvironmentStorageMode,
+    threadId?: string,
+  ): Promise<WorkspaceEnvironmentReadResult>;
+  /** Approve one exact shared command before it starts. */
+  approveWorkspaceEnvironmentCommand(
+    threadId: string,
+    target: WorkspaceEnvironmentCommandTarget,
+    fingerprint: string,
+  ): Promise<void>;
+  /** Clear every stored approval for one Project. */
+  clearWorkspaceEnvironmentApprovals(workspaceId: string): Promise<void>;
   /** Start a transient manual Setup attempt for one Thread. */
   startWorkspaceSetup(threadId: string): Promise<WorkspaceEnvironmentSetupAttempt>;
   /** Read the latest transient manual Setup attempt for one Thread. */

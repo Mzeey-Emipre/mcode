@@ -1769,6 +1769,12 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
       thread.id,
       run.actionId,
     );
+    return run;
+  }, [projectActions, thread.id, thread.workspace_id]);
+  const approveProjectAction = useCallback(async (actionId: string, approval: import("@mcode/contracts").WorkspaceEnvironmentCommandApproval) => {
+    const run = await projectActions.approve(actionId, approval);
+    useDiffStore.getState().ensureRightPanelActionTerminalTab(thread.workspace_id, thread.id, run.actionId);
+    return run;
   }, [projectActions, thread.id, thread.workspace_id]);
   const focusProjectAction = useCallback((actionId: string) => {
     const panels = useDiffStore.getState();
@@ -2205,6 +2211,7 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
             runsByActionId={projectActions.runsByActionId}
             loadError={projectActions.loadError}
             onStart={startProjectAction}
+            onApprove={approveProjectAction}
             onFocus={focusProjectAction}
             onEdit={openProjectSettings}
             setupMenuItem={canRunManualSetup && projectActions.hasSetup ? (
@@ -2240,7 +2247,7 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
       {projectSetup.startError ? (
         <p role="alert" className="mx-1.5 mt-1.5 text-xs text-destructive">{projectSetup.startError}</p>
       ) : null}
-      {projectSetup.attempt ? <ProjectSetupAttemptCard attempt={projectSetup.attempt} /> : null}
+      {projectSetup.attempt ? <ProjectSetupAttemptCard attempt={projectSetup.attempt} onApprove={projectSetup.approve} /> : null}
       <div className="p-1.5">
             <Button
               variant="ghost"

@@ -4,6 +4,7 @@ import { container } from "tsyringe";
 import { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
 import { TERMINAL_BACKEND_TOKEN, type TerminalBackend } from "../../../terminal/backends/terminal-backend.js";
 import { TerminalCommandService } from "../../../terminal/commands/terminal-command-service.js";
+import { WorkspaceRepo } from "../../persistence/workspace-repo.js";
 import { ProjectActionService } from "../../environment/project-action-service.js";
 import { WorkspaceEnvironmentService } from "../../environment/workspace-environment-service.js";
 import { registerProjectServices } from "../register-projects.js";
@@ -12,6 +13,7 @@ describe("registerProjectServices", () => {
   it("registers one stateful workspace environment lifecycle service", () => {
     const projectContainer = container.createChildContainer();
     projectContainer.register(ThreadRepo, { useValue: {} as ThreadRepo });
+    projectContainer.register(WorkspaceRepo, { useValue: {} as WorkspaceRepo });
     projectContainer.register(TerminalCommandService, { useValue: {} as TerminalCommandService });
 
     registerProjectServices(projectContainer);

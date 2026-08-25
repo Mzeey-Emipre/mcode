@@ -1317,6 +1317,7 @@ describe("routeMessage workspace.delete watcher teardown", () => {
       workspaceEnvironmentService: {
         cancelSetupForWorkspace,
         beginWorkspaceDeletion: vi.fn(() => () => undefined),
+        clearApprovals: vi.fn(),
       },
       projectActionService: projectActions.service,
     } as unknown as RouterDeps;

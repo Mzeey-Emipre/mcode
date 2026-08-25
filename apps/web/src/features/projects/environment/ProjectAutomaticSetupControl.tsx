@@ -12,8 +12,9 @@ import { showRightPanelAdaptive } from "@/lib/right-panel-layout";
 import { useDiffStore } from "@/stores/diffStore";
 import { useThreadStore } from "@/stores/threadStore";
 import { useTerminalStore } from "@/features/terminal/state/terminalStore";
+import { ProjectCommandApprovalDialog } from "./ProjectCommandApprovalDialog";
 
-type AutomaticSetupBusyAction = "continue" | "cancel" | "stop" | "retry" | "terminal";
+type AutomaticSetupBusyAction = "approve" | "continue" | "cancel" | "stop" | "retry" | "terminal";
 
 /** Read and mutate the reconnect-authoritative automatic Setup lifecycle for one Thread. */
 export function useProjectAutomaticSetup(threadId: string, workspaceId: string): {
@@ -24,6 +25,7 @@ export function useProjectAutomaticSetup(threadId: string, workspaceId: string):
   readonly cancelQueuedTurn: (queuedTurnId: string) => Promise<void>;
   readonly stopSetup: () => Promise<void>;
   readonly retrySetup: () => Promise<void>;
+  readonly approveSetup: () => Promise<void>;
   readonly openRecoveryTerminal: () => Promise<void>;
 } {
   const [snapshot, setSnapshot] = useState<WorkspaceEnvironmentAutomaticSetupSnapshot>({
@@ -124,6 +126,23 @@ export function useProjectAutomaticSetup(threadId: string, workspaceId: string):
     );
   }, [run, threadId]);
 
+  const approveSetup = useCallback(async () => {
+    const approval = snapshot.attempt?.snapshot?.approval;
+    if (!approval || busy) return;
+    setBusy("approve");
+    setError(null);
+    try {
+      await getTransport().approveWorkspaceEnvironmentCommand(threadId, approval.target, approval.fingerprint);
+      await refresh();
+    } catch (error) {
+      await refresh();
+      setError("Automatic Setup could not be approved");
+      throw error;
+    } finally {
+      setBusy(null);
+    }
+  }, [busy, refresh, snapshot.attempt?.snapshot?.approval, threadId]);
+
   const openRecoveryTerminal = useCallback(async () => {
     if (busy) return;
     setBusy("terminal");
@@ -148,6 +167,7 @@ export function useProjectAutomaticSetup(threadId: string, workspaceId: string):
     cancelQueuedTurn,
     stopSetup,
     retrySetup,
+    approveSetup,
     openRecoveryTerminal,
   };
 }
@@ -170,6 +190,7 @@ export function ProjectAutomaticSetupThreadBlock({
       onCancel={automaticSetup.cancelQueuedTurn}
       onStop={automaticSetup.stopSetup}
       onRetry={automaticSetup.retrySetup}
+      onApprove={automaticSetup.approveSetup}
       onOpenTerminal={automaticSetup.openRecoveryTerminal}
     />
   );
@@ -184,6 +205,7 @@ export function ProjectAutomaticSetupCard({
   onCancel,
   onStop,
   onRetry,
+  onApprove,
   onOpenTerminal,
 }: {
   readonly snapshot: WorkspaceEnvironmentAutomaticSetupSnapshot;
@@ -193,14 +215,19 @@ export function ProjectAutomaticSetupCard({
   readonly onCancel: (queuedTurnId: string) => Promise<void>;
   readonly onStop: () => Promise<void>;
   readonly onRetry: () => Promise<void>;
+  readonly onApprove?: () => Promise<void>;
   readonly onOpenTerminal: () => Promise<void>;
 }) {
   const [open, setOpen] = useState(false);
+  const [approvalOpen, setApprovalOpen] = useState(true);
   const contentId = useId();
   const headingId = useId();
   const uncertainDispatch = snapshot.queuedTurns.some((queuedTurn) =>
     queuedTurn.state === "released" || queuedTurn.state === "dispatching",
   );
+  useEffect(() => {
+    setApprovalOpen(snapshot.attempt?.state === "awaiting-approval");
+  }, [snapshot.attempt?.id, snapshot.attempt?.state]);
   if (snapshot.gate === "not-required" && !uncertainDispatch) return null;
   const status = automaticSetupStatus(snapshot);
   const canRecover = snapshot.gate === "blocked" &&
@@ -296,6 +323,9 @@ export function ProjectAutomaticSetupCard({
                 </Button>
               </div>
             ) : null}
+            {snapshot.attempt?.state === "awaiting-approval" && !approvalOpen ? (
+              <Button type="button" size="sm" className="mt-2" onClick={() => setApprovalOpen(true)}>Review shared command</Button>
+            ) : null}
             {snapshot.queuedTurns.filter((queuedTurn) => queuedTurn.state === "queued").map((queuedTurn, index) => (
               <div key={queuedTurn.id} className="mt-2 flex items-center justify-between gap-2">
                 <p className="min-w-0 truncate text-xs text-muted-foreground">Queued Turn {index + 1}</p>
@@ -315,6 +345,17 @@ export function ProjectAutomaticSetupCard({
           </div>
         </CollapsibleContent>
       </section>
+      {approvalOpen ? (
+        <ProjectCommandApprovalDialog
+          approval={snapshot.attempt?.state === "awaiting-approval" ? snapshot.attempt.snapshot?.approval ?? null : null}
+          script={snapshot.attempt?.snapshot?.script ?? null}
+          onApprove={async () => {
+            await (onApprove ?? (async () => undefined))();
+            return true;
+          }}
+          onCancel={() => setApprovalOpen(false)}
+        />
+      ) : null}
     </Collapsible>
   );
 }
@@ -362,6 +403,7 @@ function automaticSetupStatus(snapshot: WorkspaceEnvironmentAutomaticSetupSnapsh
   if (snapshot.attempt?.state === "failed") return { label: "Setup failed", detail: `${queuedCount} queued ${queuedCount === 1 ? "Turn remains" : "Turns remain"} blocked until you retry, continue, or cancel.` };
   if (snapshot.attempt?.state === "interrupted") return { label: "Setup interrupted", detail: `${queuedCount} queued ${queuedCount === 1 ? "Turn remains" : "Turns remain"} blocked until you retry, continue, or cancel.` };
   if (snapshot.attempt?.state === "running") return { label: "Setup running", detail: `${queuedCount} queued ${queuedCount === 1 ? "Turn is" : "Turns are"} waiting for Setup.` };
+  if (snapshot.attempt?.state === "awaiting-approval") return { label: "Approval required", detail: "Review and approve the exact shared Setup command before queued Turns can continue." };
   return { label: "Waiting for Setup", detail: `${queuedCount} queued ${queuedCount === 1 ? "Turn is" : "Turns are"} waiting for Setup.` };
 }
 

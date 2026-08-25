@@ -183,27 +183,7 @@ export class TerminalService {
    * @returns The unique PTY session ID.
    */
   create(scopeId: string, launch?: LegacyTerminalLaunch): { ptyId: string; shell: string } {
-    const thread = this.threadRepo.findById(scopeId);
-
-    let cwd: string;
-    if (thread) {
-      const workspace = this.workspaceRepo.findById(thread.workspace_id);
-      if (!workspace) {
-        throw new Error(`Workspace not found: ${thread.workspace_id}`);
-      }
-      cwd = this.gitService.resolveWorkingDir(
-        workspace.path,
-        thread.mode,
-        thread.worktree_path,
-      );
-    } else {
-      // Threadless shell: the scope is a workspace, so anchor at its local root.
-      const workspace = this.workspaceRepo.findById(scopeId);
-      if (!workspace) {
-        throw new Error(`Thread or workspace not found: ${scopeId}`);
-      }
-      cwd = workspace.path;
-    }
+    const cwd = this.resolveWorkingDirectory(scopeId);
 
     if (
       !isAbsolute(cwd) ||
@@ -394,6 +374,19 @@ export class TerminalService {
     else exitDisposable.dispose();
 
     return { ptyId: id, shell: shellBasename(shell) };
+  }
+
+  /** Resolves the checkout path used by a thread or workspace terminal session. */
+  resolveWorkingDirectory(scopeId: string): string {
+    const thread = this.threadRepo.findById(scopeId);
+    if (thread) {
+      const workspace = this.workspaceRepo.findById(thread.workspace_id);
+      if (!workspace) throw new Error(`Workspace not found: ${thread.workspace_id}`);
+      return this.gitService.resolveWorkingDir(workspace.path, thread.mode, thread.worktree_path);
+    }
+    const workspace = this.workspaceRepo.findById(scopeId);
+    if (!workspace) throw new Error(`Thread or workspace not found: ${scopeId}`);
+    return workspace.path;
   }
 
   /** Starts a private noninteractive PTY command that shares legacy capacity and process tracking. */
