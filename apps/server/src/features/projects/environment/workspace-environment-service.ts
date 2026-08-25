@@ -651,7 +651,7 @@ export class WorkspaceEnvironmentService {
     let script: string | null;
     try {
       const environment = await this.read(thread.workspace_id);
-      script = environment.document.setup ? scriptForPlatform(environment.document.setup, platform) : null;
+      script = environment.document.setup ? selectWorkspaceEnvironmentScript(environment.document.setup, platform) : null;
     } catch (error) {
       if (error instanceof WorkspaceEnvironmentServiceError) {
         repository.failQueuedAttempt({
@@ -1005,7 +1005,7 @@ export class WorkspaceEnvironmentService {
     }
     this.ensureStartCurrent(thread.id, generation);
     const script = environment.document.setup
-      ? scriptForPlatform(environment.document.setup, platform)
+      ? selectWorkspaceEnvironmentScript(environment.document.setup, platform)
       : null;
     if (!script) {
       return this.recordFinishedAttempt({
@@ -1256,7 +1256,8 @@ function platformForCurrentProcess(): WorkspaceEnvironmentPlatform {
   return process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : "linux";
 }
 
-function scriptForPlatform(
+/** Selects the non-empty platform override or the non-empty default command. */
+export function selectWorkspaceEnvironmentScript(
   command: WorkspaceEnvironmentCommand,
   platform: WorkspaceEnvironmentPlatform,
 ): string | null {

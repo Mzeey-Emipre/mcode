@@ -15,6 +15,11 @@ import {
   WorkspaceEnvironmentAutomaticSetupRetryInputSchema,
   WorkspaceEnvironmentAutomaticSetupTerminalInputSchema,
   WorkspaceEnvironmentAutomaticSetupTerminalSchema,
+  WorkspaceEnvironmentActionGetResultSchema,
+  WorkspaceEnvironmentActionListInputSchema,
+  WorkspaceEnvironmentActionListResultSchema,
+  WorkspaceEnvironmentActionRunSchema,
+  WorkspaceEnvironmentActionSlotInputSchema,
 } from "../models/workspace-environment.js";
 import type {
   WorkspaceEnvironmentReadResult,
@@ -31,6 +36,11 @@ import type {
   WorkspaceEnvironmentAutomaticSetupRetryInput,
   WorkspaceEnvironmentAutomaticSetupTerminalInput,
   WorkspaceEnvironmentAutomaticSetupTerminal,
+  WorkspaceEnvironmentActionGetResult,
+  WorkspaceEnvironmentActionListInput,
+  WorkspaceEnvironmentActionListResult,
+  WorkspaceEnvironmentActionRun,
+  WorkspaceEnvironmentActionSlotInput,
 } from "../models/workspace-environment.js";
 import { ThreadSchema, RecentThreadSchema } from "../models/thread.js";
 import { ThreadModeSchema, PermissionModeSchema, InteractionModeSchema, OrchestrationModeSchema } from "../models/enums.js";
@@ -519,6 +529,39 @@ const workspaceEnvironmentSetupMethods = (): Record<
   },
 });
 
+type WorkspaceEnvironmentActionWsMethodName =
+  | "workspace.environment.action.list"
+  | "workspace.environment.action.get"
+  | "workspace.environment.action.start"
+  | "workspace.environment.action.stop"
+  | "workspace.environment.action.restart";
+
+const workspaceEnvironmentActionMethods = (): Record<
+  WorkspaceEnvironmentActionWsMethodName,
+  { params: z.ZodTypeAny; result: z.ZodTypeAny }
+> => ({
+  "workspace.environment.action.list": {
+    params: WorkspaceEnvironmentActionListInputSchema() as z.ZodType<WorkspaceEnvironmentActionListInput>,
+    result: WorkspaceEnvironmentActionListResultSchema() as z.ZodType<WorkspaceEnvironmentActionListResult>,
+  },
+  "workspace.environment.action.get": {
+    params: WorkspaceEnvironmentActionSlotInputSchema() as z.ZodType<WorkspaceEnvironmentActionSlotInput>,
+    result: WorkspaceEnvironmentActionGetResultSchema() as z.ZodType<WorkspaceEnvironmentActionGetResult>,
+  },
+  "workspace.environment.action.start": {
+    params: WorkspaceEnvironmentActionSlotInputSchema() as z.ZodType<WorkspaceEnvironmentActionSlotInput>,
+    result: WorkspaceEnvironmentActionRunSchema() as z.ZodType<WorkspaceEnvironmentActionRun>,
+  },
+  "workspace.environment.action.stop": {
+    params: WorkspaceEnvironmentActionSlotInputSchema() as z.ZodType<WorkspaceEnvironmentActionSlotInput>,
+    result: WorkspaceEnvironmentActionGetResultSchema() as z.ZodType<WorkspaceEnvironmentActionGetResult>,
+  },
+  "workspace.environment.action.restart": {
+    params: WorkspaceEnvironmentActionSlotInputSchema() as z.ZodType<WorkspaceEnvironmentActionSlotInput>,
+    result: WorkspaceEnvironmentActionRunSchema() as z.ZodType<WorkspaceEnvironmentActionRun>,
+  },
+});
+
 type WsMethodDefinition = { params: z.ZodTypeAny; result: z.ZodTypeAny };
 
 const buildWsMethods = () => ({
@@ -604,6 +647,7 @@ const buildWsMethods = () => ({
     result: WorkspaceEnvironmentReadResultSchema() as z.ZodType<WorkspaceEnvironmentReadResult>,
   },
   ...workspaceEnvironmentSetupMethods(),
+  ...workspaceEnvironmentActionMethods(),
   "workspace.delete": {
     params: z.object({ id: z.string().min(1).max(256) }),
     result: z.boolean(),

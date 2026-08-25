@@ -820,7 +820,11 @@ export function ActivityRail({
           <ReorderableRailItem key={instanceId} instanceId={instanceId} onReorder={onReorder}>
             <RailTab
               id={id}
-              label={id === "terminal" ? terminalLabels?.[instanceId] ?? "Terminal" : undefined}
+              label={
+                id === "terminal" || id === "action-terminal"
+                  ? terminalLabels?.[instanceId] ?? (id === "terminal" ? "Terminal" : "Project Action")
+                  : undefined
+              }
               active={instanceId === activeTabId}
               expanded={expanded}
               scope={scopeProgress}

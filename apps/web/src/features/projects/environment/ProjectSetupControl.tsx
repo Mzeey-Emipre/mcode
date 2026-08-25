@@ -1,20 +1,17 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { ChevronDown, CircleCheck, MoreHorizontal, OctagonX } from "lucide-react";
+import { ChevronDown, CircleCheck, OctagonX } from "lucide-react";
 import type { WorkspaceEnvironmentSetupAttempt } from "@mcode/contracts";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
 import { getTransport } from "@/transport";
 import { cn } from "@/lib/utils";
 
-interface ProjectSetupMenuProps {
+interface ProjectSetupMenuItemProps {
   readonly attempt: WorkspaceEnvironmentSetupAttempt | null;
   readonly starting: boolean;
   readonly onStart: () => Promise<void>;
@@ -110,31 +107,14 @@ export function useProjectSetupAttempt(threadId: string): {
   };
 }
 
-/** Renders the Setup-only actions menu beside the Project settings control. */
-export function ProjectSetupMenu({ attempt, starting, onStart }: ProjectSetupMenuProps) {
+/** Renders the manual Setup command within the Project Actions menu. */
+export function ProjectSetupMenuItem({ attempt, starting, onStart }: ProjectSetupMenuItemProps) {
   const disabled = attempt?.status === "running" || attempt?.cleanupPending === true;
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            aria-label="Project Setup actions"
-            className="text-muted-foreground hover:bg-muted/40 hover:text-foreground"
-          >
-            <MoreHorizontal size={14} aria-hidden />
-          </Button>
-        }
-      />
-      <DropdownMenuContent align="end" sideOffset={4} className="min-w-36">
-        <DropdownMenuItem disabled={disabled || starting} onClick={() => { void onStart(); }}>
-          {starting ? <Spinner size={13} aria-hidden /> : null}
-          Run Setup
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <DropdownMenuItem disabled={disabled || starting} onClick={() => { void onStart(); }}>
+      {starting ? <Spinner size={13} aria-hidden /> : null}
+      Run Setup
+    </DropdownMenuItem>
   );
 }
 

@@ -61,6 +61,12 @@ vi.mock("@/transport", async (importOriginal) => {
       getWorkingTreeFiles: vi.fn().mockResolvedValue([]),
       getBranchComparison: vi.fn().mockResolvedValue(null),
       getRemoteUrl: vi.fn().mockResolvedValue({ label: "repo", webUrl: null }),
+      readWorkspaceEnvironment: vi.fn().mockResolvedValue({
+        document: { version: "0.0.1", actions: [] },
+        revision: null,
+        status: "absent",
+      }),
+      listWorkspaceActionRuns: vi.fn().mockResolvedValue([]),
       getWorkspaceSetupAttempt: vi.fn().mockResolvedValue(null),
       startWorkspaceSetup: vi.fn(),
     }),

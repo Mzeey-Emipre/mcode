@@ -230,7 +230,6 @@ function CanonicalDetailView({
         {displayLeaseAcquired && (
           <MessageList
             displayThreadId={row.id}
-            showParentAgentProvenance={false}
             onSubagentSelect={openSubagentDetail}
             onOpenSubagents={openSubagentsRoster}
           />

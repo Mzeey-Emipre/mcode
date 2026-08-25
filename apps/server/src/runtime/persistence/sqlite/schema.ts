@@ -379,6 +379,32 @@ export const workspaceEnvironmentQueuedTurns = sqliteTable(
   ],
 );
 
+/** Latest retained Project Action result for each stable Thread and Action slot. */
+export const projectActionRuns = sqliteTable(
+  "project_action_runs",
+  {
+    threadId: text("thread_id").notNull().references(() => threads.id, { onDelete: "cascade" }),
+    actionId: text("action_id").notNull(),
+    workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+    runId: text("run_id").notNull(),
+    revision: integer("revision").notNull().default(0),
+    terminalSessionId: text("terminal_session_id"),
+    actionName: text("action_name").notNull(),
+    status: text("status").notNull(),
+    snapshotJson: text("snapshot_json").notNull(),
+    createdAt: text("created_at").notNull(),
+    startedAt: text("started_at"),
+    finishedAt: text("finished_at"),
+    exitCode: integer("exit_code"),
+    transcript: text("transcript").notNull().default(""),
+    transcriptTruncated: integer("transcript_truncated", { mode: "boolean" }).notNull().default(false),
+  },
+  (table) => [
+    uniqueIndex("idx_project_action_runs_slot").on(table.threadId, table.actionId),
+    index("idx_project_action_runs_thread").on(table.threadId),
+  ],
+);
+
 export const toolCallRecords = sqliteTable(
   "tool_call_records",
   {

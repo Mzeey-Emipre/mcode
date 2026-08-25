@@ -62,6 +62,12 @@ vi.mock("@/transport", async (importOriginal) => {
       getReviewDiffStats: vi.fn().mockResolvedValue({ additions: 0, deletions: 0 }),
       getBranchComparison: vi.fn().mockResolvedValue(null),
       getBranchFiles: vi.fn().mockResolvedValue([]),
+      readWorkspaceEnvironment: vi.fn().mockResolvedValue({
+        document: { version: "0.0.1", actions: [] },
+        revision: null,
+        status: "absent",
+      }),
+      listWorkspaceActionRuns: vi.fn().mockResolvedValue([]),
       getWorkspaceSetupAttempt: vi.fn().mockResolvedValue(null),
       startWorkspaceSetup: vi.fn(),
       generateRecap: vi.fn().mockImplementation(async (
@@ -450,17 +456,20 @@ describe("HeaderActions - consolidated header", () => {
     expect(screen.getByTestId("thread-overview-ci-green")).toBeInTheDocument();
   });
 
-  it("places the sole Project settings control last in the Overview masthead controls", () => {
+  it("places one Project Actions control before Project settings in the Overview masthead", () => {
     renderHeaderActions();
 
     const masthead = screen.getByTestId("thread-overview-masthead");
     const controls = within(masthead).getByTestId("thread-overview-masthead-controls");
+    const projectActions = within(masthead).getAllByRole("button", { name: "Project Actions" });
     const projectSettings = within(masthead).getByRole("button", {
       name: "Open Project settings",
     });
 
+    expect(projectActions).toHaveLength(1);
     expect(screen.getAllByRole("button", { name: "Open Project settings" })).toHaveLength(1);
     expect(controls).toHaveClass("ml-auto");
+    expect(Boolean(projectActions[0].compareDocumentPosition(projectSettings) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
     expect(controls.lastElementChild).toBe(projectSettings);
   });
 

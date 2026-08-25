@@ -24,6 +24,7 @@ import type {
   TerminalWorkspacePreference,
   WorkspaceEnvironmentReadResult,
   WorkspaceEnvironmentSetupAttempt,
+  WorkspaceEnvironmentActionRun,
 } from "./types";
 import { TurnRuntimeSnapshotSchema } from "@mcode/contracts";
 import { TerminalErrorCodeSchema } from "@mcode/contracts";
@@ -705,6 +706,25 @@ export function createWsTransport(
         "workspace.environment.automaticSetup.openTerminal",
         { threadId },
       ),
+    listWorkspaceActionRuns: async (threadId) =>
+      (await rpc<{ runs: WorkspaceEnvironmentActionRun[] }>(
+        "workspace.environment.action.list",
+        { threadId },
+      )).runs,
+    startWorkspaceAction: (threadId, actionId) =>
+      rpc<WorkspaceEnvironmentActionRun>("workspace.environment.action.start", { threadId, actionId }),
+    stopWorkspaceAction: async (threadId, actionId) =>
+      (await rpc<{ run: WorkspaceEnvironmentActionRun | null }>(
+        "workspace.environment.action.stop",
+        { threadId, actionId },
+      )).run,
+    restartWorkspaceAction: (threadId, actionId) =>
+      rpc<WorkspaceEnvironmentActionRun>("workspace.environment.action.restart", { threadId, actionId }),
+    getWorkspaceActionRun: async (threadId, actionId) =>
+      (await rpc<{ run: WorkspaceEnvironmentActionRun | null }>(
+        "workspace.environment.action.get",
+        { threadId, actionId },
+      )).run,
     deleteWorkspace: (id) => rpc<boolean>("workspace.delete", { id }),
     touchLastOpened: (id) => rpc<void>("workspace.touchLastOpened", { id }),
     reorderWorkspace: (id, newIndex) =>

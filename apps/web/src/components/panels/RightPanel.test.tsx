@@ -4,12 +4,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const {
   activatePreviewPage,
   closePreviewPage,
+  terminalKill,
   previewPanelRender,
   previewTabSet,
   previewTabsBridge,
 } = vi.hoisted(() => ({
   activatePreviewPage: vi.fn(),
   closePreviewPage: vi.fn(),
+  terminalKill: vi.fn(),
   previewPanelRender: vi.fn(),
   previewTabSet: { current: null as {
     threadId: string;
@@ -37,13 +39,17 @@ vi.mock("./ActivityRail", () => ({
     tabInstances,
     activeTabId,
     terminalLabels,
+    onClose,
+    onSelect,
     onCloseBrowserPage,
     onExpandedChange,
     onTogglePanel,
   }: {
-    tabInstances: Array<{ type: string }>;
+    tabInstances: Array<{ id: string; type: string }>;
     activeTabId: string | null;
     terminalLabels?: Record<string, string>;
+    onClose?: (instanceId: string) => void;
+    onSelect?: (instanceId: string) => void;
     onCloseBrowserPage?: (pageId: string) => void;
     onExpandedChange?: (expanded: boolean) => void;
     onTogglePanel?: () => void;
@@ -59,6 +65,12 @@ vi.mock("./ActivityRail", () => ({
       {tabInstances.some((instance) => instance.type === "preview") && onCloseBrowserPage && (
         <button type="button" data-testid="close-browser-page" onClick={() => onCloseBrowserPage("browser-tab-1")} />
       )}
+      {tabInstances.filter((instance) => instance.type === "action-terminal").map((instance) => (
+        <button key={instance.id} type="button" data-testid={`select-${instance.id}`} onClick={() => onSelect?.(instance.id)} />
+      ))}
+      {tabInstances.filter((instance) => instance.type === "action-terminal").map((instance) => (
+        <button key={`close-${instance.id}`} type="button" data-testid={`close-${instance.id}`} onClick={() => onClose?.(instance.id)} />
+      ))}
     </div>
   ),
 }));
@@ -123,13 +135,16 @@ vi.mock("@/features/preview/state/previewTabsStore", () => ({
 }));
 vi.mock("@/lib/ensure-terminal", () => ({ createTerminalForScope: vi.fn() }));
 vi.mock("@/lib/right-panel-layout", () => ({ toggleRightPanelAdaptive: vi.fn() }));
-vi.mock("@/transport", () => ({ getTransport: () => ({ terminalKill: vi.fn() }) }));
+vi.mock("@/transport", () => ({ getTransport: () => ({ terminalKill, getWorkspaceActionRun: vi.fn() }) }));
 
 import { reconcileWarmPreviewScopes, RightPanel } from "./RightPanel";
 import { createRightPanelState, useDiffStore } from "@/stores/diffStore";
 import { useTerminalStore } from "@/features/terminal/state/terminalStore";
 import { useUiStore } from "@/stores/uiStore";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
+import { useProjectActionStore } from "@/features/projects/environment/state/project-action-store";
+import type { WorkspaceEnvironmentActionRun } from "@mcode/contracts";
+import { setLayoutMeasurements } from "@/lib/composer-layout";
 import {
   browserAutomationScopeKey,
   browserSurfacePresentationCoordinator,
@@ -141,6 +156,7 @@ describe("RightPanel", () => {
     previewTabSet.current = null;
     activatePreviewPage.mockReset();
     closePreviewPage.mockReset();
+    terminalKill.mockReset();
     previewPanelRender.mockReset();
     previewTabsBridge.list.mockReset();
     previewTabsBridge.list.mockResolvedValue({ ok: true, data: null });
@@ -175,7 +191,9 @@ describe("RightPanel", () => {
       rightPanelFallbackByWorkspace: {},
       snapshotsByThread: {},
     });
+    useProjectActionStore.setState({ runsByThread: {} });
     useUiStore.setState({ rightPanelMaximized: false });
+    setLayoutMeasurements(1200, 1200);
   });
 
   afterEach(() => cleanup());
@@ -190,6 +208,112 @@ describe("RightPanel", () => {
       "The result of getSnapshot should be cached",
     );
     error.mockRestore();
+  });
+
+  it("renders a retained Action terminal and closes its view without stopping the Action", () => {
+    const completedRun: WorkspaceEnvironmentActionRun = {
+      threadId: "thread-1",
+      workspaceId: "workspace-1",
+      actionId: "build",
+      runId: "run-1",
+      revision: 1,
+      terminalSessionId: "terminal-1",
+      actionName: "Build",
+      status: "completed",
+      snapshot: { platform: "windows", script: "bun run build", checkoutPath: "C:\\repo", terminal: null, environmentNames: [] },
+      createdAt: "2026-08-22T12:00:00.000Z",
+      startedAt: "2026-08-22T12:00:00.000Z",
+      finishedAt: "2026-08-22T12:00:01.000Z",
+      exitCode: 0,
+      transcript: "done",
+      transcriptTruncated: false,
+    };
+    useWorkspaceStore.setState({ activeThreadId: "thread-1" });
+    useProjectActionStore.getState().applyRun(completedRun);
+    useDiffStore.setState({
+      rightPanelByThread: {
+        "thread-1": createRightPanelState({
+          visible: true,
+          width: 520,
+          tabInstances: [{ id: "action-terminal:build", type: "action-terminal" }],
+          activeTabId: "action-terminal:build",
+        }),
+      },
+    });
+
+    render(<RightPanel />);
+
+    expect(screen.getByTestId("action-terminal:build")).toHaveTextContent("done");
+    fireEvent.click(screen.getByTestId("close-action-terminal:build"));
+
+    expect(terminalKill).not.toHaveBeenCalled();
+    expect(useDiffStore.getState().getRightPanel("workspace-1", "thread-1").tabInstances).toEqual([]);
+    expect(useProjectActionStore.getState().runsByThread["thread-1"]?.build?.status).toBe("completed");
+  });
+
+  it.each([
+    {
+      name: "a hidden default panel",
+      panel: createRightPanelState({
+        visible: false,
+        width: 520,
+        tabInstances: [{ id: "action-terminal:build", type: "action-terminal" }],
+        activeTabId: null,
+      }),
+      activeTabId: null,
+    },
+    {
+      name: "a visible panel with another active tab",
+      panel: createRightPanelState({
+        visible: true,
+        width: 520,
+        tabInstances: [
+          { id: "singleton:preview", type: "preview" },
+          { id: "action-terminal:build", type: "action-terminal" },
+        ],
+        activeTabId: "singleton:preview",
+      }),
+      activeTabId: "singleton:preview",
+    },
+  ])("keeps $name on its current surface until its retained Action tab is selected", ({ panel, activeTabId }) => {
+    const runningRun: WorkspaceEnvironmentActionRun = {
+      threadId: "thread-1",
+      workspaceId: "workspace-1",
+      actionId: "build",
+      runId: "run-1",
+      revision: 0,
+      terminalSessionId: "terminal-1",
+      actionName: "Build",
+      status: "running",
+      snapshot: { platform: "windows", script: "bun run build", checkoutPath: "C:\\repo", terminal: null, environmentNames: [] },
+      createdAt: "2026-08-22T12:00:00.000Z",
+      startedAt: "2026-08-22T12:00:00.000Z",
+      finishedAt: null,
+      exitCode: null,
+      transcript: "running output",
+      transcriptTruncated: false,
+    };
+    useWorkspaceStore.setState({ activeThreadId: "thread-1" });
+    useProjectActionStore.getState().applyRun(runningRun);
+    useDiffStore.setState({ rightPanelByThread: { "thread-1": panel } });
+
+    render(<RightPanel />);
+
+    const activityRail = screen.getByTestId("activity-rail");
+    if (activeTabId === null) {
+      expect(activityRail).not.toHaveAttribute("data-active-tab-id");
+    } else {
+      expect(activityRail).toHaveAttribute("data-active-tab-id", activeTabId);
+    }
+    expect(screen.queryByTestId("action-terminal:build")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("select-action-terminal:build"));
+
+    expect(screen.getByTestId("activity-rail")).toHaveAttribute(
+      "data-active-tab-id",
+      "action-terminal:build",
+    );
+    expect(screen.getByTestId("action-terminal:build")).toHaveTextContent("running output");
   });
 
   it("projects workspace panel state without Terminal instances when switching to an untouched thread", () => {

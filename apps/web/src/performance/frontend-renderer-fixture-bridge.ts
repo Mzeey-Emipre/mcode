@@ -4,11 +4,21 @@ import { useThreadStore } from "@/stores/threadStore";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { resetWorkerForPerformance } from "@/lib/shiki-worker-client";
 import { resetChatHighlightCoordinator } from "@/lib/chat-highlight-coordinator";
+import { clearRecordCache } from "@/features/conversation/hydration/record-cache";
+import {
+  clearScrollMemory,
+  forgetScrollTop,
+  recallScrollPosition,
+} from "@/components/chat/scrollPositionMemory";
 import {
   drainShikiPerformanceObservations,
   resetShikiPerformanceObservations,
   setShikiPerformanceCapture,
 } from "./shiki-performance";
+import {
+  drainMessageListPerformanceObservations,
+  resetMessageListPerformanceObservations,
+} from "./message-list-performance";
 
 function resetShikiPerformanceWorker(): void {
   resetWorkerForPerformance();
@@ -28,6 +38,18 @@ declare global {
         readonly setCapture: typeof setShikiPerformanceCapture;
         readonly resetWorker: typeof resetShikiPerformanceWorker;
       };
+      readonly messageListPerformance: {
+        readonly drain: typeof drainMessageListPerformanceObservations;
+        readonly reset: typeof resetMessageListPerformanceObservations;
+      };
+      readonly recordCache: {
+        readonly clear: typeof clearRecordCache;
+      };
+      readonly scrollMemory: {
+        readonly clear: typeof clearScrollMemory;
+        readonly forget: typeof forgetScrollTop;
+        readonly recall: typeof recallScrollPosition;
+      };
     };
   }
 }
@@ -44,6 +66,18 @@ export function installFrontendRendererFixtureBridge(): void {
       reset: resetShikiPerformanceObservations,
       setCapture: setShikiPerformanceCapture,
       resetWorker: resetShikiPerformanceWorker,
+    },
+    messageListPerformance: {
+      drain: drainMessageListPerformanceObservations,
+      reset: resetMessageListPerformanceObservations,
+    },
+    recordCache: {
+      clear: clearRecordCache,
+    },
+    scrollMemory: {
+      clear: clearScrollMemory,
+      forget: forgetScrollTop,
+      recall: recallScrollPosition,
     },
   };
 }

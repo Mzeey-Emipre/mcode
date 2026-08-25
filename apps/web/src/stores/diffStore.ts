@@ -5,7 +5,7 @@ import { defaultReviewView, type ReviewChangeState } from "@/lib/review-views";
 export type { GitCommit, BranchComparison };
 
 /** Active tab in the right panel. */
-export type RightPanelTab = "tasks" | "changes" | "preview" | "terminal" | "subagents" | "coordination" | "environment";
+export type RightPanelTab = "tasks" | "changes" | "preview" | "terminal" | "action-terminal" | "subagents" | "coordination" | "environment";
 
 /** Selected roster view within a thread's Subagents panel. */
 export type SubagentRosterTab = "active" | "finished";
@@ -167,6 +167,11 @@ export function rightPanelSingletonId(type: RightPanelTab): string {
 /** Stable rail identity for one PTY-backed Terminal tab. */
 export function rightPanelTerminalId(ptyId: string): string {
   return `terminal:${ptyId}`;
+}
+
+/** Stable rail identity for one retained Project Action terminal slot. */
+export function rightPanelActionTerminalId(actionId: string): string {
+  return `action-terminal:${actionId}`;
 }
 
 /** Resolve ordered instances from current or legacy in-memory panel state. */
@@ -572,6 +577,12 @@ interface DiffState {
     threadId: string | null | undefined,
     ptyId: string,
   ) => void;
+  /** Retain one Project Action terminal tab without changing the active surface. */
+  ensureRightPanelActionTerminalTab: (
+    workspaceId: string,
+    threadId: string,
+    actionId: string,
+  ) => void;
   /** Move one tab instance by one bounded position in its scope. */
   reorderRightPanelTab: (
     workspaceId: string,
@@ -789,6 +800,18 @@ export const useDiffStore = create<DiffState>((set, get) => ({
         ...current,
         tabInstances: [...tabInstances, { id: instanceId, type: "terminal" }],
         activeTabId: instanceId,
+      });
+    }),
+
+  ensureRightPanelActionTerminalTab: (workspaceId, threadId, actionId) =>
+    set((state) => {
+      const current = effectiveRightPanel(state, workspaceId, threadId);
+      const instanceId = rightPanelActionTerminalId(actionId);
+      const tabInstances = rightPanelTabInstances(current);
+      if (tabInstances.some((instance) => instance.id === instanceId)) return {};
+      return writeRightPanel(state, workspaceId, threadId, {
+        ...current,
+        tabInstances: [...tabInstances, { id: instanceId, type: "action-terminal" }],
       });
     }),
 

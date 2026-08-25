@@ -17,6 +17,16 @@ import type {
 
 type ToolResultAgentEvent = Extract<AgentEvent, { type: typeof AgentEventType.ToolResult }>;
 
+type CodexChildEvidence = {
+  nativeThreadId: string;
+  nativeTurnId?: string;
+  parentCollaborationItemId: string;
+  prompt?: string;
+  nativeItemId?: string;
+  itemEventKey?: string;
+  outcome?: "completed" | "errored" | "interrupted" | "cancelled";
+};
+
 /** Notification methods that produce no agent events (module-level to avoid per-call allocation). */
 const SILENCED_METHODS = new Set([
   "turn/diff/updated",
@@ -132,6 +142,8 @@ export class CodexEventMapper {
   private childThreadMetadataById = new Map<string, Record<string, string>>();
   /** Parent Agent rows for nested native sub-agents, keyed by child Agent row id. */
   private parentAgentToolCallIdById = new Map<string, string>();
+  /** Native evidence for nested spawn Agent rows, used when their receiver turn completes. */
+  private readonly childSpawnEvidenceByCollabId = new Map<string, CodexChildEvidence>();
   /** Private assistant text streamed by Codex child threads, keyed by child thread id. */
   private childAssistantTextByThreadId = new Map<string, BoundedToolOutputBuffer>();
   /** Native assistant item ids used to give completed child messages structural identity. */
@@ -302,23 +314,52 @@ export class CodexEventMapper {
 
   private withChildEvidence(
     events: AgentEvent[],
-    evidence: {
-      nativeThreadId: string;
-      nativeTurnId?: string;
-      parentCollaborationItemId: string;
-      prompt?: string;
-      nativeItemId?: string;
-      itemEventKey?: string;
-      outcome?: "completed" | "errored" | "interrupted" | "cancelled";
-    },
+    evidence: CodexChildEvidence,
   ): AgentEvent[] {
-    return events.map((event) => ({
+    const attributed = events.map((event) => ({
       ...event,
       codexChild: {
         ...evidence,
         nativeEventId: this.childNativeEventId(event.type, evidence),
       },
     } as AgentEvent));
+    for (const event of attributed) {
+      if (
+        event.type === AgentEventType.ToolUse
+        && event.toolName === "Agent"
+        && event.toolInput?.codexCollabKind === "spawnAgent"
+      ) {
+        this.rememberChildSpawnEvidence(event.toolCallId, evidence);
+      }
+    }
+    return attributed;
+  }
+
+  /** Captures nested spawn attribution before receiver registration can replay buffered child events. */
+  private rememberChildSpawnEvidence(collabId: string, evidence: CodexChildEvidence | undefined): void {
+    if (evidence) this.childSpawnEvidenceByCollabId.set(collabId, evidence);
+  }
+
+  /** Derives nested spawn attribution from the exact native child receiver that emitted it. */
+  private childSpawnEvidenceFromNotification(
+    notification: CodexNotification | undefined,
+    nativeItemId: string,
+    itemEventKey: string,
+  ): CodexChildEvidence | undefined {
+    if (!notification) return undefined;
+    const nativeThreadId = this.notificationThreadId(notification);
+    const parentCollaborationItemId = nativeThreadId
+      ? this.collabReceiverThreadToCollabId.get(nativeThreadId)
+      : undefined;
+    if (!nativeThreadId || !parentCollaborationItemId) return undefined;
+    const nativeTurnId = this.bufferedChildTurnId(nativeThreadId) ?? this.nativeTurnId(notification);
+    return {
+      nativeThreadId,
+      ...(nativeTurnId ? { nativeTurnId } : {}),
+      parentCollaborationItemId,
+      nativeItemId,
+      itemEventKey,
+    };
   }
 
   private childNativeEventId(
@@ -592,8 +633,15 @@ export class CodexEventMapper {
         if (this.isWaitCollab(item)) return [];
         this.rememberPendingChildPrompt(item);
         this.collabToolUseFromStartIds.add(itemId);
-        if (this.isSpawnAgentCollab(item) && this.registerCollabReceiverThreads(itemId, item, true) > 0) {
+        if (this.isSpawnAgentCollab(item)) {
+          this.rememberChildSpawnEvidence(
+            itemId,
+            this.childSpawnEvidenceFromNotification(notification, itemId, "started"),
+          );
           this.openSpawnAgentIds.add(itemId);
+        }
+        if (this.isSpawnAgentCollab(item) && this.registerCollabReceiverThreads(itemId, item, true) === 0) {
+          this.openSpawnAgentIds.delete(itemId);
         }
         if (this.emittedAgentToolUseIds.has(itemId)) return [];
         this.emittedAgentToolUseIds.add(itemId);
@@ -680,6 +728,7 @@ export class CodexEventMapper {
           ? (this.childAssistantTextByThreadId.get(childThreadId) ?? turn?.error?.message ?? "")
           : (turn?.error?.message ?? "");
       const completion = this.completeSpawnAgent(collabId, output, status === "failed");
+      if (collabId) this.childSpawnEvidenceByCollabId.delete(collabId);
       if (!childThreadId || !collabId || !nativeTurnId) return completion;
       const childOutput = output instanceof BoundedToolOutputBuffer
         ? output.retainedText()
@@ -1031,8 +1080,16 @@ export class CodexEventMapper {
     };
     this.spawnAgentToolInputById.set(toolCallId, toolInput);
     if (sourceAgentToolCallId) this.parentAgentToolCallIdById.set(toolCallId, sourceAgentToolCallId);
-    this.registerReceiverThread(toolCallId, agentThreadId);
+    this.rememberChildSpawnEvidence(
+      toolCallId,
+      this.childSpawnEvidenceFromNotification(
+        notification,
+        toolCallId,
+        includeInteractions ? "started" : "completed",
+      ),
+    );
     this.openSpawnAgentIds.add(toolCallId);
+    this.registerReceiverThread(toolCallId, agentThreadId);
     if (this.emittedAgentToolUseIds.has(toolCallId)) return [];
 
     this.collabToolUseFromStartIds.add(toolCallId);
@@ -1093,7 +1150,7 @@ export class CodexEventMapper {
     const completedResult = this.completedSpawnAgentResults.get(toolCallId);
     if (completedResult) return [{ ...completedResult, toolInput }];
 
-    return [{
+    const toolUse: AgentEvent = {
       type: AgentEventType.ToolUse,
       threadId: this.threadId,
       toolCallId,
@@ -1102,7 +1159,9 @@ export class CodexEventMapper {
       ...(this.parentAgentToolCallIdById.get(toolCallId)
         ? { parentToolCallId: this.parentAgentToolCallIdById.get(toolCallId) }
         : {}),
-    }];
+    };
+    const evidence = this.childSpawnEvidenceByCollabId.get(toolCallId);
+    return evidence ? this.withChildEvidence([toolUse], evidence) : [toolUse];
   }
 
   /** Accumulates private child-thread final text without emitting it into the parent reply. */
@@ -1143,6 +1202,7 @@ export class CodexEventMapper {
     collabId: string | undefined,
     output: string | BoundedToolOutputBuffer | undefined,
     isError = false,
+    childEvidence?: CodexChildEvidence,
   ): AgentEvent[] {
     if (!collabId || this.completedSpawnAgentIds.has(collabId)) return [];
     if (!this.openSpawnAgentIds.has(collabId)) return [];
@@ -1150,7 +1210,11 @@ export class CodexEventMapper {
     this.openSpawnAgentIds.delete(collabId);
     this.popCollabFromScopeStack(collabId);
     const toolInput = this.spawnAgentToolInputById.get(collabId);
-    const result = this.toolResultEvent({ toolCallId: collabId, output, isError, toolInput });
+    const rawResult = this.toolResultEvent({ toolCallId: collabId, output, isError, toolInput });
+    const evidence = childEvidence ?? this.childSpawnEvidenceByCollabId.get(collabId);
+    const result = evidence
+      ? this.withChildEvidence([rawResult], { ...evidence, itemEventKey: "completed" })[0] as ToolResultAgentEvent
+      : rawResult;
     this.completedSpawnAgentResults.set(collabId, result);
     return [result];
   }
@@ -1858,6 +1922,7 @@ export class CodexEventMapper {
     this.spawnAgentToolInputById.clear();
     this.childThreadMetadataById.clear();
     this.parentAgentToolCallIdById.clear();
+    this.childSpawnEvidenceByCollabId.clear();
     this.childAssistantTextByThreadId.clear();
     this.childAssistantItemIdByThreadId.clear();
     this.pendingChildPromptByThreadId.clear();
@@ -2023,12 +2088,20 @@ export class CodexEventMapper {
         isError: typeof item.error === "string" && item.error.length > 0,
         output: out || `Collaboration (${kind})`,
       });
+      if (isSpawn && route === "child") {
+        this.rememberChildSpawnEvidence(
+          toolCallId,
+          this.childSpawnEvidenceFromNotification(notification, toolCallId, "completed"),
+        );
+        this.openSpawnAgentIds.add(toolCallId);
+      }
       const receiverCount = isSpawn ? this.registerCollabReceiverThreads(toolCallId, item) : 0;
       const mergedToolInput = isSpawn
         ? this.mergeSpawnAgentToolInput(toolCallId, item)
         : undefined;
       if (isSpawn) {
-        if (receiverCount > 0) this.openSpawnAgentIds.add(toolCallId);
+        if (receiverCount === 0) this.openSpawnAgentIds.delete(toolCallId);
+        else if (route !== "child") this.openSpawnAgentIds.add(toolCallId);
       }
       if (this.collabToolUseFromStartIds.has(toolCallId)) {
         this.collabToolUseFromStartIds.delete(toolCallId);

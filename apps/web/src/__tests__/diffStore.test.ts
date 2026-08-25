@@ -467,6 +467,30 @@ describe("diffStore", () => {
         activeTabId: "terminal:pty-1",
       });
     });
+
+    it("retains one Action terminal identity in the background until its running Action is selected", () => {
+      const {
+        ensureRightPanelActionTerminalTab,
+        setRightPanelTab,
+        setRightPanelTabInstance,
+        getRightPanel,
+      } = useDiffStore.getState();
+      setRightPanelTab("ws-1", "thread-1", "preview");
+
+      ensureRightPanelActionTerminalTab("ws-1", "thread-1", "build");
+      ensureRightPanelActionTerminalTab("ws-1", "thread-1", "build");
+
+      expect(getRightPanel("ws-1", "thread-1")).toMatchObject({
+        activeTabId: "singleton:preview",
+        tabInstances: [
+          { id: "singleton:preview", type: "preview" },
+          { id: "action-terminal:build", type: "action-terminal" },
+        ],
+      });
+
+      setRightPanelTabInstance("ws-1", "thread-1", "action-terminal:build");
+      expect(getRightPanel("ws-1", "thread-1").activeTabId).toBe("action-terminal:build");
+    });
     it("preserves an explicit canonical null over a stale compatibility active tab", () => {
       const panel = createRightPanelState({
         visible: true,

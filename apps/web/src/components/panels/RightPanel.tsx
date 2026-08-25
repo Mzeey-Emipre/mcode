@@ -83,9 +83,11 @@ export function reconcileWarmPreviewScopes(
 }
 import { SubagentsPanel } from "@/features/subagents";
 import { CoordinationPanel } from "./CoordinationPanel";
-import { ProjectEnvironmentPanel } from "@/features/projects/environment";
+import { ProjectActionTerminalView, ProjectEnvironmentPanel } from "@/features/projects/environment";
+import { useProjectActionStore } from "@/features/projects/environment/state/project-action-store";
 
 const EMPTY_SCOPE_TERMINALS: readonly TerminalInstance[] = [];
+const EMPTY_PROJECT_ACTION_RUNS: Readonly<Record<string, import("@mcode/contracts").WorkspaceEnvironmentActionRun>> = {};
 
 interface WarmPreviewSurfaceProps {
   readonly scope: WarmPreviewScope;
@@ -322,6 +324,9 @@ export function RightPanel() {
       return [`terminal:${terminal.id}`, label];
     }));
   }, [scopeTerminals]);
+  const actionRunsByActionId = useProjectActionStore((state) =>
+    activeThreadId ? state.runsByThread[activeThreadId] ?? EMPTY_PROJECT_ACTION_RUNS : EMPTY_PROJECT_ACTION_RUNS,
+  );
 
   // The Browser tab's open pages drive the rail's page switcher. The store is
   // seeded by the mounted PreviewPanel; reading it here lets the rail render
@@ -476,6 +481,23 @@ export function RightPanel() {
   const previewActive = renderedActiveTab === "preview" && renderedTabInstances.some((instance) => instance.type === "preview");
   const terminalActive =
     renderedActiveTab === "terminal" && renderedTabInstances.some((instance) => instance.type === "terminal");
+  const actionTerminalActive =
+    renderedActiveTab === "action-terminal" &&
+    renderedTabInstances.some((instance) => instance.type === "action-terminal");
+  const activeActionId = actionTerminalActive && renderedActiveTabId?.startsWith("action-terminal:")
+    ? renderedActiveTabId.slice("action-terminal:".length)
+    : null;
+  const railTerminalLabels = useMemo(() => ({
+    ...terminalLabels,
+    ...Object.fromEntries(
+      renderedTabInstances
+        .filter((instance) => instance.type === "action-terminal")
+        .map((instance) => [
+          instance.id,
+          actionRunsByActionId[instance.id.slice("action-terminal:".length)]?.actionName ?? "Project Action",
+        ]),
+    ),
+  }), [actionRunsByActionId, renderedTabInstances, terminalLabels]);
   const subagentsActive =
     renderedActiveTab === "subagents" && renderedTabInstances.some((instance) => instance.type === "subagents");
 
@@ -635,7 +657,7 @@ export function RightPanel() {
             )
           }
           terminalCapReached={scopeTerminals.length >= MAX_TERMINALS_PER_SCOPE}
-          terminalLabels={terminalLabels}
+          terminalLabels={railTerminalLabels}
           onCreate={(id) => {
             if (id === "terminal" && panelScopeId) {
               createTerminalForScope(panelScopeId);
@@ -716,6 +738,13 @@ export function RightPanel() {
                 active
               />
             )}
+          {actionTerminalActive && activeThreadId && activeActionId && (
+            <ProjectActionTerminalView
+              key={`${activeThreadId}:${activeActionId}`}
+              threadId={activeThreadId}
+              actionId={activeActionId}
+            />
+          )}
           <div
             className={
               changesActive ? "flex flex-1 flex-col min-h-0" : "hidden"

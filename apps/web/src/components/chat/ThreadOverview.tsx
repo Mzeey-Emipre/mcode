@@ -62,7 +62,7 @@ import {
   getCiOverviewSummaryLabel,
   getCiSummaryHeadline,
 } from "@/lib/ci-status";
-import { useDiffStore } from "@/stores/diffStore";
+import { rightPanelActionTerminalId, useDiffStore } from "@/stores/diffStore";
 import type {
   BrowserAutomationLiveTarget,
   BrowserAutomationPendingAgentOpen,
@@ -72,7 +72,9 @@ import { useThreadRecord } from "@/stores/thread-selectors";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import {
   ProjectSetupAttemptCard,
-  ProjectSetupMenu,
+  ProjectActionMenu,
+  ProjectSetupMenuItem,
+  useProjectActions,
   useProjectSetupAttempt,
 } from "@/features/projects/environment";
 import { useOverviewStore } from "@/stores/overviewStore";
@@ -1759,6 +1761,25 @@ function CreateThreadBranchDialog({
  */
 export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps) {
   const projectSetup = useProjectSetupAttempt(thread.id);
+  const projectActions = useProjectActions(thread.workspace_id, thread.id);
+  const startProjectAction = useCallback(async (actionId: string) => {
+    const run = await projectActions.start(actionId);
+    useDiffStore.getState().ensureRightPanelActionTerminalTab(
+      thread.workspace_id,
+      thread.id,
+      run.actionId,
+    );
+  }, [projectActions, thread.id, thread.workspace_id]);
+  const focusProjectAction = useCallback((actionId: string) => {
+    const panels = useDiffStore.getState();
+    panels.ensureRightPanelActionTerminalTab(thread.workspace_id, thread.id, actionId);
+    showRightPanelAdaptive(thread.workspace_id, thread.id);
+    panels.setRightPanelTabInstance(
+      thread.workspace_id,
+      thread.id,
+      rightPanelActionTerminalId(actionId),
+    );
+  }, [thread.id, thread.workspace_id]);
   const canRunManualSetup = thread.mode === "direct" || (
     thread.mode === "worktree" && thread.worktree_managed === false
   );
@@ -2179,13 +2200,21 @@ export function ThreadOverview({ thread, threadPaneWidth }: ThreadOverviewProps)
           data-testid="thread-overview-masthead-controls"
           className="ml-auto flex items-center gap-0.5"
         >
-          {canRunManualSetup ? (
-            <ProjectSetupMenu
-              attempt={projectSetup.attempt}
-              starting={projectSetup.starting}
-              onStart={projectSetup.start}
-            />
-          ) : null}
+          <ProjectActionMenu
+            actions={projectActions.actions}
+            runsByActionId={projectActions.runsByActionId}
+            loadError={projectActions.loadError}
+            onStart={startProjectAction}
+            onFocus={focusProjectAction}
+            onEdit={openProjectSettings}
+            setupMenuItem={canRunManualSetup && projectActions.hasSetup ? (
+              <ProjectSetupMenuItem
+                attempt={projectSetup.attempt}
+                starting={projectSetup.starting}
+                onStart={projectSetup.start}
+              />
+            ) : null}
+          />
           <Tooltip>
             <TooltipTrigger
               render={

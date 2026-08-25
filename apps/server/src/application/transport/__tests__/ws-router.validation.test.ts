@@ -12,6 +12,7 @@ import { ProviderCatalogSnapshotRepo } from "../../../features/providers/catalog
 import { openMemoryDatabase } from "../../../runtime/persistence/sqlite/database.js";
 import { ThreadRepo } from "../../../features/thread-control/persistence/thread-repo.js";
 import { WorkspaceRepo } from "../../../features/projects/persistence/workspace-repo.js";
+import type { ProjectActionService } from "../../../features/projects/environment/project-action-service.js";
 import { WorkspaceEnvironmentService } from "../../../features/projects/environment/workspace-environment-service.js";
 import { _resetForTest, addClient } from "../push.js";
 import {
@@ -47,6 +48,49 @@ function deferred<T>(): { readonly promise: Promise<T>; readonly resolve: (value
     reject = nextReject;
   });
   return { promise, resolve, reject };
+}
+
+function createIdempotentRelease(): () => void {
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+  };
+}
+
+function createProjectActionServiceMock() {
+  const beginWorkspaceTeardown = vi.fn(async () => createIdempotentRelease());
+  const beginThreadTeardown = vi.fn(async () => createIdempotentRelease());
+  const stopForThread = vi.fn(async () => undefined);
+  const service = {
+    onUpdate: vi.fn(() => () => undefined),
+    list: vi.fn(() => []),
+    get: vi.fn(() => null),
+    start: vi.fn(async () => { throw new Error("Project Action start was not configured for this router test"); }),
+    stop: vi.fn(async () => null),
+    restart: vi.fn(async () => { throw new Error("Project Action restart was not configured for this router test"); }),
+    stopForThread,
+    beginThreadTeardown,
+    beginWorkspaceTeardown,
+    reopenThread: vi.fn(),
+    dispose: vi.fn(async () => undefined),
+    recoverStaleRuns: vi.fn(() => []),
+  } satisfies Pick<
+    ProjectActionService,
+    | "onUpdate"
+    | "list"
+    | "get"
+    | "start"
+    | "stop"
+    | "restart"
+    | "stopForThread"
+    | "beginThreadTeardown"
+    | "beginWorkspaceTeardown"
+    | "reopenThread"
+    | "dispose"
+    | "recoverStaleRuns"
+  >;
+  return { service, beginWorkspaceTeardown, beginThreadTeardown, stopForThread };
 }
 
 describe("routeMessage result validation seam", () => {
@@ -1195,6 +1239,7 @@ describe("routeMessage workspace.delete watcher teardown", () => {
   it("keeps thread worktree watchers when any workspace thread teardown fails", async () => {
     const unwatchThreadWorktree = vi.fn();
     const deleteWorkspace = vi.fn();
+    const projectActions = createProjectActionServiceMock();
     const deps = {
       threadRepo: {
         listAllByWorkspace: vi.fn().mockReturnValue([
@@ -1224,6 +1269,7 @@ describe("routeMessage workspace.delete watcher teardown", () => {
         cancelSetupForWorkspace: vi.fn().mockResolvedValue(undefined),
         beginWorkspaceDeletion: vi.fn(() => () => undefined),
       },
+      projectActionService: projectActions.service,
     } as unknown as RouterDeps;
 
     const response = await routeMessage(
@@ -1244,6 +1290,7 @@ describe("routeMessage workspace.delete watcher teardown", () => {
     const unwatchThreadWorktree = vi.fn();
     const teardownThread = vi.fn().mockResolvedValue(undefined);
     const cancelSetupForWorkspace = vi.fn().mockResolvedValue(undefined);
+    const projectActions = createProjectActionServiceMock();
     const deps = {
       threadRepo: {
         listAllByWorkspace: vi.fn().mockReturnValue([
@@ -1271,6 +1318,7 @@ describe("routeMessage workspace.delete watcher teardown", () => {
         cancelSetupForWorkspace,
         beginWorkspaceDeletion: vi.fn(() => () => undefined),
       },
+      projectActionService: projectActions.service,
     } as unknown as RouterDeps;
 
     const response = await routeMessage(
@@ -1289,6 +1337,12 @@ describe("routeMessage workspace.delete watcher teardown", () => {
       unwatchThreadWorktree.mock.invocationCallOrder[0],
     );
     expect(cancelSetupForWorkspace.mock.invocationCallOrder[0]).toBeLessThan(
+      teardownThread.mock.invocationCallOrder[0],
+    );
+    expect(projectActions.beginWorkspaceTeardown).toHaveBeenCalledWith("ws-1");
+    expect(projectActions.beginThreadTeardown).toHaveBeenCalledWith("thread-1");
+    expect(projectActions.beginThreadTeardown).toHaveBeenCalledWith("thread-2");
+    expect(projectActions.stopForThread.mock.invocationCallOrder[0]).toBeLessThan(
       teardownThread.mock.invocationCallOrder[0],
     );
   });
@@ -1353,6 +1407,7 @@ describe("routeMessage thread.delete watcher teardown", () => {
       .fn()
       .mockImplementation(options.deleteThread ?? (() => Promise.resolve(true)));
     const cancelSetupForThread = vi.fn().mockResolvedValue(undefined);
+    const projectActions = createProjectActionServiceMock();
     const deps = {
       ciWatcherService: {
         teardownThread: vi.fn().mockResolvedValue(undefined),
@@ -1379,8 +1434,16 @@ describe("routeMessage thread.delete watcher teardown", () => {
         cancelSetupForThread,
         beginThreadDeletion: vi.fn(() => () => undefined),
       },
+      projectActionService: projectActions.service,
     } as unknown as RouterDeps;
-    return { deps, unwatchThreadWorktree, teardownThread, deleteThread, cancelSetupForThread };
+    return {
+      deps,
+      unwatchThreadWorktree,
+      teardownThread,
+      deleteThread,
+      cancelSetupForThread,
+      projectActions,
+    };
   }
 
   it("keeps the thread worktree watcher when thread teardown fails", async () => {
@@ -1421,7 +1484,14 @@ describe("routeMessage thread.delete watcher teardown", () => {
   });
 
   it("unwatches the thread worktree after thread teardown and delete succeed", async () => {
-    const { deps, unwatchThreadWorktree, teardownThread, deleteThread, cancelSetupForThread } = createThreadDeleteDeps();
+    const {
+      deps,
+      unwatchThreadWorktree,
+      teardownThread,
+      deleteThread,
+      cancelSetupForThread,
+      projectActions,
+    } = createThreadDeleteDeps();
 
     const response = await routeMessage(
       JSON.stringify({
@@ -1443,6 +1513,10 @@ describe("routeMessage thread.delete watcher teardown", () => {
     expect(cancelSetupForThread.mock.invocationCallOrder[0]).toBeLessThan(
       teardownThread.mock.invocationCallOrder[0],
     );
+    expect(projectActions.beginThreadTeardown).toHaveBeenCalledWith("thread-1");
+    expect(projectActions.stopForThread.mock.invocationCallOrder[0]).toBeLessThan(
+      teardownThread.mock.invocationCallOrder[0],
+    );
   });
 });
 
@@ -1456,6 +1530,7 @@ describe("routeMessage Setup deletion barriers", () => {
     });
     const teardownEntered = deferred<void>();
     const teardown = deferred<void>();
+    const projectActions = createProjectActionServiceMock();
     const deps = {
       ciWatcherService: { teardownThread: vi.fn().mockResolvedValue(undefined) },
       githubService: { cancelForRepoPath: vi.fn().mockResolvedValue(undefined) },
@@ -1468,6 +1543,7 @@ describe("routeMessage Setup deletion barriers", () => {
       },
       threadService: { delete: vi.fn().mockResolvedValue(true) },
       workspaceEnvironmentService: environment,
+      projectActionService: projectActions.service,
     } as unknown as RouterDeps;
 
     try {
@@ -1500,6 +1576,7 @@ describe("routeMessage Setup deletion barriers", () => {
     });
     const teardownEntered = deferred<void>();
     const teardown = deferred<void>();
+    const projectActions = createProjectActionServiceMock();
     const deps = {
       threadRepo: { listAllByWorkspace: vi.fn().mockReturnValue([{ ...thread, worktree_path: null }]) },
       githubService: { cancelForRepoPath: vi.fn().mockResolvedValue(undefined) },
@@ -1518,6 +1595,7 @@ describe("routeMessage Setup deletion barriers", () => {
         }),
       },
       workspaceEnvironmentService: environment,
+      projectActionService: projectActions.service,
     } as unknown as RouterDeps;
 
     try {

@@ -1,11 +1,16 @@
-import { injectable } from "tsyringe";
+import { inject, injectable } from "tsyringe";
 import type { TerminalBackendCapabilities } from "@mcode/contracts";
 import {
   TerminalBackend,
   type TerminalBackendSender,
+  type PreparedTerminalCommandRequest,
+  type PreparedTerminalCommandSession,
   type TerminalReattachResult,
 } from "../terminal-backend.js";
 import { TerminalService } from "./terminal-service.js";
+import type { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
+import { TerminalProfileService } from "../../profiles/terminal-profile-service.js";
+import { noninteractiveLaunch } from "../../commands/terminal-command-service.js";
 
 const LEGACY_CAPABILITIES = Object.freeze({
   contractVersion: 0,
@@ -17,7 +22,11 @@ const LEGACY_CAPABILITIES = Object.freeze({
 /** Adapts the frozen version 0 Terminal service to the boot-selected backend seam. */
 @injectable()
 export class LegacyTerminalBackend extends TerminalBackend {
-  constructor(private readonly terminalService: TerminalService) {
+  constructor(
+    private readonly terminalService: TerminalService,
+    @inject("ThreadRepo") private readonly threads: ThreadRepo,
+    @inject(TerminalProfileService) private readonly profiles: TerminalProfileService,
+  ) {
     super();
   }
 
@@ -102,5 +111,31 @@ export class LegacyTerminalBackend extends TerminalBackend {
   /** Reports whether one legacy PTY owns child processes. */
   hasChildren(ptyId: string): Promise<{ hasChildren: boolean }> {
     return this.terminalService.hasChildren(ptyId);
+  }
+
+  /** Starts one exact hidden command using the legacy PTY's existing capacity and ownership tracking. */
+  async startPreparedCommand(input: PreparedTerminalCommandRequest): Promise<PreparedTerminalCommandSession> {
+    const thread = this.threads.findById(input.threadId);
+    if (!thread || thread.deleted_at !== null) throw new Error("Prepared command Thread is unavailable");
+    const profile = await this.profiles.resolveLaunchProfile({ workspaceId: thread.workspace_id });
+    const launch = noninteractiveLaunch(profile.resolvedProfile, input.script);
+    if (!launch) throw new Error("The current Terminal profile does not support noninteractive Project Actions");
+    const session = this.terminalService.startPreparedCommand(input.threadId, {
+      executable: launch.executable,
+      arguments: launch.arguments,
+    });
+    return {
+      terminalSessionId: session.terminalSessionId,
+      snapshot: {
+        platform: process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : "linux",
+        script: input.script,
+        checkoutPath: session.checkoutPath,
+        terminal: { executable: session.executable, arguments: session.arguments },
+        environmentNames: session.environmentNames,
+      },
+      onOutput: session.onOutput,
+      onExit: (listener) => session.onExit((exitCode) => listener({ exitCode })),
+      stop: session.stop,
+    };
   }
 }

@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import { getTransport, RpcError } from "@/transport";
+import { useProjectActionStore } from "./state/project-action-store";
 
 const PLATFORMS = [
   ["default", "Default"],
@@ -222,6 +223,7 @@ export function ProjectEnvironmentPanel({ workspaceId, active = true }: { readon
       setRevision(result.revision);
       setLoadedWorkspaceId(workspaceId);
       if (JSON.stringify(draftRef.current) === submittedDraftJson) applyRead(result);
+      useProjectActionStore.getState().invalidateWorkspaceConfiguration(workspaceId);
       setStatus("Environment saved");
       requestAnimationFrame(() => firstTaskRef.current?.focus());
     } catch (nextError) {

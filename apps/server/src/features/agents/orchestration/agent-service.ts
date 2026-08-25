@@ -4186,12 +4186,20 @@ export class AgentService {
     event: Extract<AgentEvent, {
       type: typeof AgentEventType.ToolUse | typeof AgentEventType.ToolResult;
     }>,
+    parent?: {
+      threadId: string;
+      turnId: string;
+      executionId: string;
+      itemId: string;
+    },
   ): void {
-    const executionId = event.turnExecutionId;
+    const executionId = parent?.executionId ?? event.turnExecutionId;
     const toolInput = event.toolInput;
     if (!executionId || !toolInput) return;
-    const parentTurn = this.canonicalSink.loadTurnByExecution(executionId);
-    const parentThread = this.canonicalSink.loadThread(event.threadId);
+    const parentTurn = parent
+      ? this.canonicalSink.loadTurn(parent.turnId)
+      : this.canonicalSink.loadTurnByExecution(executionId);
+    const parentThread = this.canonicalSink.loadThread(parent?.threadId ?? event.threadId);
     if (!parentTurn || !parentThread) return;
     const description = typeof toolInput.description === "string"
       ? toolInput.description
@@ -4209,7 +4217,7 @@ export class AgentService {
         parentThreadId: parentThread.id,
         parentTurnId: parentTurn.id,
         parentExecutionId: executionId,
-        parentItemId: `toolCall:${event.toolCallId}`,
+        parentItemId: parent?.itemId ?? `toolCall:${event.toolCallId}`,
         receiverThreadIds: Array.isArray(toolInput.receiverThreadIds)
           ? toolInput.receiverThreadIds.filter((value): value is string => (
               typeof value === "string" && value.trim().length > 0
@@ -4480,24 +4488,40 @@ export class AgentService {
   private handleCodexChildProviderEvent(event: AgentEvent): boolean {
     if (!("codexChild" in event)) return false;
     const evidence = event.codexChild;
-    const parentExecutionId = event.turnExecutionId;
-    const parentTurn = parentExecutionId
-      ? this.canonicalSink.loadTurnByExecution(parentExecutionId)
+    const fallbackExecutionId = event.turnExecutionId;
+    const fallbackParentTurn = fallbackExecutionId
+      ? this.canonicalSink.loadTurnByExecution(fallbackExecutionId)
       : null;
-    const parentItemId = evidence ? `toolCall:${evidence.parentCollaborationItemId}` : "";
-    const provisionalDelegation = parentTurn && parentItemId
-      ? this.canonicalSink.loadCodexChildDelegation(event.threadId, parentItemId)
+    const fallbackParentItemId = evidence ? `toolCall:${evidence.parentCollaborationItemId}` : "";
+    const receiverDelegation = evidence
+      ? this.canonicalSink.loadCodexChildDelegationByReceiverThreadId(evidence.nativeThreadId)
       : null;
+    const provisionalDelegation = receiverDelegation ?? (
+      fallbackParentTurn && fallbackParentItemId
+        ? this.canonicalSink.loadCodexChildDelegation(event.threadId, fallbackParentItemId)
+        : null
+    );
+    const parentThread = provisionalDelegation
+      ? this.canonicalSink.loadThread(provisionalDelegation.collaborationAction.source.threadId)
+      : null;
+    const parentTurn = provisionalDelegation
+      ? this.canonicalSink.loadTurn(provisionalDelegation.collaborationAction.source.turnId)
+      : null;
+    const parentExecutionId = parentTurn
+      ? this.canonicalSink.loadExecutionIdForTurn(parentTurn.id)
+      : null;
+    const parentItemId = provisionalDelegation?.collaborationAction.source.itemId ?? "";
     if (event.type === AgentEventType.ToolResult
       && event.isError
       && evidence
       && parentExecutionId
+      && parentThread
       && parentTurn
       && provisionalDelegation
       && !provisionalDelegation.collaborationAction.target.turnId) {
       try {
         this.canonicalSink.markCodexChildDeliveryRejected({
-          parentThreadId: event.threadId,
+          parentThreadId: parentThread.id,
           parentTurnId: parentTurn.id,
           parentExecutionId,
           parentItemId,
@@ -4515,22 +4539,16 @@ export class AgentService {
       this.recordCodexChildRoutingFailure(event, "missing-native-turn");
       return true;
     }
-    if (!parentExecutionId) {
-      this.recordCodexChildRoutingFailure(event, "missing-parent-execution");
-      return true;
-    }
-    if (!parentTurn) {
-      this.recordCodexChildRoutingFailure(event, "parent-turn-not-found");
-      return true;
-    }
-    const delegation = this.canonicalSink.loadCodexChildDelegation(event.threadId, parentItemId);
-    if (!delegation) {
-      this.recordCodexChildRoutingFailure(event, "delegation-not-found");
+    if (!provisionalDelegation || !parentThread || !parentTurn || !parentExecutionId) {
+      this.recordCodexChildRoutingFailure(
+        event,
+        fallbackExecutionId ? "delegation-not-found" : "missing-parent-execution",
+      );
       return true;
     }
     try {
       this.canonicalSink.registerCodexReceiverThreadIds({
-        parentThreadId: event.threadId,
+        parentThreadId: parentThread.id,
         parentTurnId: parentTurn.id,
         parentExecutionId,
         parentItemId,
@@ -4539,7 +4557,7 @@ export class AgentService {
       });
       if (event.type === AgentEventType.TurnStarted) {
         this.canonicalSink.startCodexChildTurn({
-          parentThreadId: event.threadId,
+          parentThreadId: parentThread.id,
           parentTurnId: parentTurn.id,
           parentExecutionId,
           parentItemId,
@@ -4550,7 +4568,7 @@ export class AgentService {
         return true;
       }
       const childThread = this.canonicalSink.bindCodexChildIdentity({
-        parentThreadId: event.threadId,
+        parentThreadId: parentThread.id,
         parentTurnId: parentTurn.id,
         parentExecutionId,
         parentItemId,
@@ -4572,6 +4590,23 @@ export class AgentService {
         return true;
       }
       if (event.type === AgentEventType.ToolUse) {
+        const existingNestedDelegation = event.toolName === "Agent"
+          && event.toolInput?.codexCollabKind === "spawnAgent"
+          ? this.canonicalSink.loadCodexChildDelegation(
+              childThread.id,
+              `toolCall:${event.toolCallId}`,
+            )
+          : null;
+        if (existingNestedDelegation) {
+          const source = existingNestedDelegation.collaborationAction.source;
+          this.startCodexChildFromProviderEvent(event, {
+            threadId: childThread.id,
+            turnId: source.turnId,
+            executionId: this.canonicalSink.loadExecutionIdForTurn(source.turnId),
+            itemId: source.itemId,
+          });
+          return true;
+        }
         const childItem = this.canonicalSink.recordCodexChildItem({
           childThreadId: childThread.id,
           nativeTurnId: evidence.nativeTurnId,
@@ -4584,6 +4619,24 @@ export class AgentService {
             toolInput: event.toolInput,
           },
         });
+        if (event.toolName === "Agent" && event.toolInput?.codexCollabKind === "spawnAgent") {
+          const childTurn = this.canonicalSink.loadTurnByProviderIdentity(childThread.id, {
+            providerId: "codex",
+            scope: "turn",
+            value: evidence.nativeTurnId,
+            provenance: "native",
+          });
+          if (!childTurn) {
+            this.recordCodexChildRoutingFailure(event, "emitting-child-turn-not-found");
+            return true;
+          }
+          this.startCodexChildFromProviderEvent(event, {
+            threadId: childThread.id,
+            turnId: childTurn.id,
+            executionId: this.canonicalSink.loadExecutionIdForTurn(childTurn.id),
+            itemId: `toolCall:${event.toolCallId}`,
+          });
+        }
         this.recordCodexCollaborationAction(event, childItem.id);
         return true;
       }

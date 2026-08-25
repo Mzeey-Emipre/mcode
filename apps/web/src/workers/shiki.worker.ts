@@ -338,8 +338,7 @@ self.onmessage = async (e: MessageEvent<WorkerRequest>) => {
             grammarLoadMs,
             codeToHtmlMs,
             responseBytes: responseBytes(html),
-            workerPostTimeMs: performance.now(),
-            workerTimeOriginMs: performance.timeOrigin,
+            workerPostedAtEpochMs: Date.now(),
           }
         : undefined;
 

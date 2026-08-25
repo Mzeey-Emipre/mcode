@@ -54,6 +54,10 @@ import {
   MAX_SELECTED_TEXT_COMMENT_TEXT_CHARS,
   type SelectedTextComment,
 } from "@mcode/contracts";
+import {
+  isMessageListPerformanceBuild,
+  measureMessageListPerformance,
+} from "@/performance/message-list-performance";
 
 const EMPTY_TOOL_CALLS: ToolCall[] = [];
 const EMPTY_TURN_MAP: Record<string, string> = {};
@@ -755,18 +759,19 @@ export function MessageList({
   useEffect(() => {
     for (const message of messages) {
       if (message.role !== "assistant") continue;
+      if (isMessageListPerformanceBuild() && persistedNarrativeByMessage[message.id]) continue;
       if (renderedThreadId && isNarrativeLoaded(renderedThreadId, message.id)) continue;
       void loadNarrativeForMessage(message.id, renderedThreadId ?? undefined);
     }
   }, [messages, persistedNarrativeByMessage, isNarrativeLoaded, loadNarrativeForMessage, renderedThreadId]);
 
   const stableItems = useMemo(
-    () => buildStableItems(messages, persistedFilesChanged, latestTurnWithChanges, {
+    () => measureMessageListPerformance("narrativeItemProjection", () => buildStableItems(messages, persistedFilesChanged, latestTurnWithChanges, {
       threadId: renderedThreadId ?? "",
       messageId: currentTurnMessageId || undefined,
       responseKey: currentTurnResponseKey || undefined,
       responseKeysByMessageId: assistantResponseKeys,
-    }, persistedNarrativeByMessage, canonicalProjection?.turnSummariesByMessageId),
+    }, persistedNarrativeByMessage, canonicalProjection?.turnSummariesByMessageId)),
     [
       messages,
       persistedFilesChanged,
@@ -949,6 +954,10 @@ export function MessageList({
   });
   virtualizerRef.current = virtualizer;
   const virtualTotalSize = virtualizer.getTotalSize();
+  const virtualRows = measureMessageListPerformance(
+    "tanstackVirtualItems",
+    () => virtualizer.getVirtualItems(),
+  );
 
   // Pinned to tail: always compensate for size changes so the viewport tracks
   // the bottom as rows measure. Adjusting by +delta when at scrollOffset = oldMaxScroll
@@ -1639,13 +1648,16 @@ export function MessageList({
           className="relative w-full"
           style={{ height: virtualTotalSize + historyAnchorTrailingSpace }}
         >
-          {virtualizer.getVirtualItems().map((vi) => {
+          {virtualRows.map((vi) => {
             const item = items[vi.index];
             return (
               <div
                 key={vi.key}
                 ref={virtualizer.measureElement}
                 data-index={vi.index}
+                data-performance-virtual-item-key={
+                  isMessageListPerformanceBuild() ? item.key : undefined
+                }
                 className="absolute left-0 w-full px-4 py-2 sm:px-8"
                 style={{ transform: `translateY(${vi.start}px)` }}
               >
