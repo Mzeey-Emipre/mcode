@@ -81,6 +81,7 @@ function workspaceDeps(): RouterDeps {
     workspaceEnvironmentService: {
       beginWorkspaceDeletion: vi.fn(idempotentNoopRelease),
       cancelSetupForWorkspace: vi.fn().mockResolvedValue(undefined),
+      clearApprovals: vi.fn(),
     },
   } as unknown as RouterDeps;
 }
