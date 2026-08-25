@@ -1529,6 +1529,265 @@ describe("AgentService narrative persistence", () => {
     expect(canonicalSink.loadTurn(child.collaborationAction.target.turnId!)?.status).toBe("Interrupted");
   });
 
+  it("registers a nested Codex child under its emitting canonical child and binds its native turn", () => {
+    const db = openMemoryDatabase();
+    const now = new Date().toISOString();
+    db.prepare(
+      "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    ).run("ws-nested", "Workspace", "/workspace", now, now);
+    db.prepare(
+      "INSERT INTO threads (id, workspace_id, title, branch, provider, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    ).run(THREAD_ID, "ws-nested", "Parent", "main", "codex", now, now);
+    const canonicalSink = new CanonicalAgentEventSink(db, vi.fn());
+    const { providerEmitter, service } = build({ db, canonicalSink });
+    const executionId = (service as unknown as {
+      turnRuntime: { snapshot: (threadId: string) => { turnExecutionId: string } | undefined };
+    }).turnRuntime.snapshot(THREAD_ID)!.turnExecutionId;
+    const messages = new SqliteMessageRepo(db);
+    const userMessage = messages.create(THREAD_ID, "user", "delegate", 1);
+    canonicalSink.startParentTurn({
+      thread: { id: THREAD_ID, workspaceId: "ws-nested", providerId: "codex", createdAt: now },
+      turnId: "turn-nested-parent",
+      executionId,
+      permissionMode: "supervised",
+      providerIdentities: [],
+      projectUserMessage: () => userMessage,
+    });
+
+    providerEmitter.emit("event", {
+      type: AgentEventType.ToolUse,
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      toolCallId: "root-spawn",
+      toolName: "Agent",
+      toolInput: {
+        codexCollabKind: "spawnAgent",
+        agentName: "Direct child",
+        receiverThreadIds: ["native-direct-child"],
+      },
+    });
+    providerEmitter.emit("event", {
+      type: AgentEventType.TurnStarted,
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      codexChild: {
+        nativeThreadId: "native-direct-child",
+        nativeTurnId: "native-direct-turn",
+        parentCollaborationItemId: "root-spawn",
+      },
+    });
+
+    const directChild = canonicalSink.loadThreadByProviderIdentity({
+      providerId: "codex",
+      scope: "thread",
+      value: "native-direct-child",
+      provenance: "native",
+    });
+    const directTurn = directChild
+      ? canonicalSink.loadTurnByProviderIdentity(directChild.id, {
+          providerId: "codex",
+          scope: "turn",
+          value: "native-direct-turn",
+          provenance: "native",
+        })
+      : null;
+    expect(directChild).toBeTruthy();
+    expect(directTurn).toMatchObject({ threadId: directChild!.id });
+
+    providerEmitter.emit("event", {
+      type: AgentEventType.ToolUse,
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      toolCallId: "nested-spawn",
+      toolName: "Agent",
+      toolInput: {
+        codexCollabKind: "spawnAgent",
+        agentName: "Nested child",
+        receiverThreadIds: ["native-nested-child"],
+      },
+      codexChild: {
+        nativeThreadId: "native-direct-child",
+        nativeTurnId: "native-direct-turn",
+        parentCollaborationItemId: "root-spawn",
+        nativeItemId: "nested-spawn",
+        itemEventKey: "started",
+      },
+    });
+    providerEmitter.emit("event", {
+      type: AgentEventType.ToolUse,
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      toolCallId: "nested-spawn",
+      toolName: "Agent",
+      toolInput: {
+        codexCollabKind: "spawnAgent",
+        agentName: "Nested child",
+        receiverThreadIds: ["native-nested-child"],
+        model: "gpt-5.6-sol",
+        reasoningEffort: "medium",
+      },
+      codexChild: {
+        nativeThreadId: "native-direct-child",
+        nativeTurnId: "native-direct-turn",
+        parentCollaborationItemId: "root-spawn",
+        nativeItemId: "nested-spawn",
+        itemEventKey: "started",
+      },
+    });
+    providerEmitter.emit("event", {
+      type: AgentEventType.TurnStarted,
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      codexChild: {
+        nativeThreadId: "native-nested-child",
+        nativeTurnId: "native-nested-turn",
+        parentCollaborationItemId: "nested-spawn",
+      },
+    });
+    providerEmitter.emit("event", {
+      type: AgentEventType.TurnComplete,
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      reason: "completed",
+      costUsd: null,
+      tokensIn: 0,
+      tokensOut: 0,
+      codexChild: {
+        nativeThreadId: "native-nested-child",
+        nativeTurnId: "native-nested-turn",
+        parentCollaborationItemId: "nested-spawn",
+        nativeItemId: "native-nested-turn",
+        itemEventKey: "completed",
+        outcome: "completed",
+      },
+    });
+    providerEmitter.emit("event", {
+      type: AgentEventType.ToolResult,
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      toolCallId: "nested-spawn",
+      output: "",
+      isError: false,
+      toolInput: {
+        codexCollabKind: "spawnAgent",
+        agentName: "Nested child",
+        receiverThreadIds: ["native-nested-child"],
+      },
+      codexChild: {
+        nativeThreadId: "native-direct-child",
+        nativeTurnId: "native-direct-turn",
+        parentCollaborationItemId: "root-spawn",
+        nativeItemId: "nested-spawn",
+        itemEventKey: "completed",
+      },
+    });
+    providerEmitter.emit("event", {
+      type: AgentEventType.Message,
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      content: "direct child continues after nested spawn",
+      tokens: null,
+      codexChild: {
+        nativeThreadId: "native-direct-child",
+        nativeTurnId: "native-direct-turn",
+        parentCollaborationItemId: "root-spawn",
+        nativeItemId: "direct-child-follow-up",
+        itemEventKey: "completed",
+      },
+    });
+
+    const directItems = db.prepare(
+      "SELECT payload_json FROM canonical_agent_items WHERE thread_id = ? AND kind = 'tool-call'",
+    ).all(directChild!.id) as Array<{ payload_json: string }>;
+    const directItemPayloads = directItems.map((row) => JSON.parse(row.payload_json));
+    expect(directItemPayloads).toContainEqual(expect.objectContaining({
+      projection: "codexChildToolCall",
+      toolName: "Agent",
+      toolInput: expect.objectContaining({ codexCollabKind: "spawnAgent" }),
+    }));
+    expect(directItemPayloads.filter((payload) => (
+      payload.projection === "codexChildToolCall" && payload.nativeItemId === "nested-spawn"
+    ))).toHaveLength(1);
+
+    const nestedChild = canonicalSink.loadThreadByProviderIdentity({
+      providerId: "codex",
+      scope: "thread",
+      value: "native-nested-child",
+      provenance: "native",
+    });
+    const nestedTurn = nestedChild
+      ? canonicalSink.loadTurnByProviderIdentity(nestedChild.id, {
+          providerId: "codex",
+          scope: "turn",
+          value: "native-nested-turn",
+          provenance: "native",
+        })
+      : null;
+    expect(nestedChild).toBeTruthy();
+    expect(nestedTurn).toMatchObject({
+      threadId: nestedChild!.id,
+      trigger: {
+        kind: "child",
+        sourceThreadId: directChild!.id,
+        sourceTurnId: directTurn!.id,
+      },
+    });
+    const directPayloads = db.prepare(
+      "SELECT payload_json FROM canonical_agent_items WHERE thread_id = ?",
+    ).all(directChild!.id) as Array<{ payload_json: string }>;
+    const nestedPayloads = db.prepare(
+      "SELECT payload_json FROM canonical_agent_items WHERE thread_id = ?",
+    ).all(nestedChild!.id) as Array<{ payload_json: string }>;
+    const directChildContinuation = {
+      projection: "message",
+      message: { content: "direct child continues after nested spawn" },
+    };
+    const nestedSpawnResult = {
+      projection: "codexChildToolResult",
+      output: "",
+      isError: false,
+    };
+    expect(directPayloads.map((row) => JSON.parse(row.payload_json))).toContainEqual(
+      expect.objectContaining({
+        projection: directChildContinuation.projection,
+        message: expect.objectContaining(directChildContinuation.message),
+      }),
+    );
+    expect(directPayloads.map((row) => JSON.parse(row.payload_json))).toContainEqual(
+      expect.objectContaining(nestedSpawnResult),
+    );
+    expect(nestedPayloads.map((row) => JSON.parse(row.payload_json))).not.toContainEqual(
+      expect.objectContaining({
+        projection: directChildContinuation.projection,
+        message: expect.objectContaining(directChildContinuation.message),
+      }),
+    );
+    expect(nestedPayloads.map((row) => JSON.parse(row.payload_json))).not.toContainEqual(
+      expect.objectContaining(nestedSpawnResult),
+    );
+
+    const roster = canonicalSink.loadSubagentRoster({ owningParentThreadId: THREAD_ID });
+    const rosterRows = [...roster.active, ...roster.done];
+    const nestedRow = rosterRows.find((row) => row.id === nestedChild!.id);
+    expect(nestedRow).toMatchObject({
+      id: nestedChild!.id,
+      parentThreadId: directChild!.id,
+      lineage: [THREAD_ID, directChild!.id, nestedChild!.id],
+      model: "gpt-5.6-sol",
+      reasoning: "medium",
+    });
+    expect(rosterRows.filter((row) => row.parentThreadId === THREAD_ID).map((row) => row.id))
+      .toEqual([directChild!.id]);
+    expect(rosterRows.filter((row) => row.parentThreadId === directChild!.id).map((row) => row.id))
+      .toEqual([nestedChild!.id]);
+    const parentItemPayloads = db.prepare(
+      "SELECT payload_json FROM canonical_agent_items WHERE thread_id = ?",
+    ).all(THREAD_ID) as Array<{ payload_json: string }>;
+    expect(parentItemPayloads.map((row) => JSON.parse(row.payload_json)).filter((payload) => (
+      payload.projection === "codexChildRoutingFailure"
+    ))).toHaveLength(0);
+  });
+
   it("persists an actionable parent failure record when child persistence fails", () => {
     const db = openMemoryDatabase();
     const now = new Date().toISOString();

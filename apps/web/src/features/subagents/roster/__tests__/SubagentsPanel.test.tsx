@@ -25,7 +25,7 @@ vi.mock("@/transport", async () => ({
 vi.mock("@/features/conversation", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/features/conversation")>()),
   getConversationResidency: () => harness.residency,
-  MessageList: ({ displayThreadId, showParentAgentProvenance }: { displayThreadId?: string; showParentAgentProvenance?: boolean }) => (
+  MessageList: ({ displayThreadId, showParentAgentProvenance = true }: { displayThreadId?: string; showParentAgentProvenance?: boolean }) => (
     <div data-testid="shared-message-list" data-display-thread-id={displayThreadId} data-show-parent-provenance={showParentAgentProvenance} />
   ),
 }));
@@ -393,7 +393,7 @@ describe("SubagentsPanel", () => {
     expect(await screen.findByTestId("subagent-stop-control")).toBeInTheDocument();
   });
 
-  it("keeps lifecycle controls out of the detail header", async () => {
+  it("keeps lifecycle controls out of the detail header and preserves parent-agent provenance", async () => {
     const child = canonicalRow({
       id: "detail-layout-child",
       identity: "Detail layout child",
@@ -422,7 +422,7 @@ describe("SubagentsPanel", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Active");
     expect(screen.getByRole("status")).toHaveClass("sr-only");
     expect(screen.getByTestId("subagent-detail-actions")).toContainElement(stop);
-    expect(screen.getByTestId("shared-message-list")).toHaveAttribute("data-show-parent-provenance", "false");
+    expect(screen.getByTestId("shared-message-list")).toHaveAttribute("data-show-parent-provenance", "true");
     expect(header?.contains(stop)).toBe(false);
   });
 
