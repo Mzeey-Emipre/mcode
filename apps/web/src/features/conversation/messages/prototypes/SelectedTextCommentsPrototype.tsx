@@ -7,9 +7,6 @@ import { ContextMenu } from "@/components/ui/context-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
-/** The keyboard variants used by the selected-text comments prototype. */
-export type SelectedTextPrototypeVariant = "A" | "B" | "C";
-
 /** A text range in an actual rendered conversation message. */
 export interface SelectedTextSource {
   messageId: string;
@@ -33,24 +30,13 @@ interface PrototypeMenu {
   source: SelectedTextSource;
 }
 
-interface ExplicitSelection {
-  messageId: string;
-  threadId: string;
-  anchor: number;
-  focus: number;
-}
-
 interface SelectedTextPrototypeState {
-  variant: SelectedTextPrototypeVariant;
   menu: PrototypeMenu | null;
   drafts: PrototypeDraft[];
   editorId: number | null;
   warningMethod: "escape" | "outside" | null;
-  explicitSelection: ExplicitSelection | null;
   nextId: number;
-  setVariant: (variant: SelectedTextPrototypeVariant) => void;
   setMenu: (menu: PrototypeMenu | null) => void;
-  setExplicitSelection: (selection: ExplicitSelection | null) => void;
   addDraft: (source: SelectedTextSource) => number;
   openDraft: (id: number) => void;
   closeEditor: () => void;
@@ -60,32 +46,18 @@ interface SelectedTextPrototypeState {
   setWarningMethod: (method: "escape" | "outside" | null) => void;
 }
 
-function readVariant(): SelectedTextPrototypeVariant {
-  const value = new URLSearchParams(window.location.search).get("variant");
-  return value === "B" || value === "C" ? value : "A";
-}
-
 /** Returns whether the dev-only selected-text comments prototype is active. */
 export function isSelectedTextCommentsPrototypeEnabled(): boolean {
   return import.meta.env.DEV && new URLSearchParams(window.location.search).get("prototype") === "selected-text-comments";
 }
 
-/** Returns the active prototype variant from the URL. */
-export function getSelectedTextPrototypeVariant(): SelectedTextPrototypeVariant {
-  return readVariant();
-}
-
 const useSelectedTextPrototypeStore = create<SelectedTextPrototypeState>((set) => ({
-  variant: typeof window === "undefined" ? "A" : readVariant(),
   menu: null,
   drafts: [],
   editorId: null,
   warningMethod: null,
-  explicitSelection: null,
   nextId: 1,
-  setVariant: (variant) => set({ variant, menu: null, explicitSelection: null }),
   setMenu: (menu) => set({ menu }),
-  setExplicitSelection: (explicitSelection) => set({ explicitSelection }),
   addDraft: (source) => {
     let id = 0;
     set((state) => {
@@ -183,13 +155,6 @@ function sourceFromSelection(root: HTMLElement, selection: Selection): SelectedT
   return { messageId, threadId, start: low, end: high, quote: root.textContent?.slice(low, high) ?? selection.toString() };
 }
 
-function sourceFromElement(root: HTMLElement, start = 0, end = root.textContent?.length ?? 0): SelectedTextSource | null {
-  const messageId = root.dataset.messageId;
-  const threadId = root.dataset.threadId;
-  const quote = root.textContent?.slice(start, end) ?? "";
-  return messageId && threadId && end > start ? { messageId, threadId, start, end, quote } : null;
-}
-
 function rangeForSource(source: SelectedTextSource): Range | null {
   const root = findSourceElement(source);
   if (!root) return null;
@@ -215,51 +180,10 @@ function clampPosition(value: number, low: number, high: number): number {
   return Math.max(low, Math.min(value, high));
 }
 
-function updateUrlVariant(variant: SelectedTextPrototypeVariant): void {
-  const url = new URL(window.location.href);
-  url.searchParams.set("prototype", "selected-text-comments");
-  url.searchParams.set("variant", variant);
-  window.history.replaceState(window.history.state, "", url);
-}
-
 function sourceRootFromTarget(element: Element | null): HTMLElement | null {
   return element?.closest<HTMLElement>("[data-prototype-source]")
     ?? element?.querySelector<HTMLElement>("[data-prototype-source]")
     ?? null;
-}
-
-function sourceForFocusedElement(element: Element | null, variant: SelectedTextPrototypeVariant, explicit: ExplicitSelection | null): SelectedTextSource | null {
-  const root = sourceRootFromTarget(element);
-  if (!root) return null;
-  if (variant === "C") return sourceFromElement(root);
-  if (variant === "B" && explicit && explicit.messageId === root.dataset.messageId) {
-    return sourceFromElement(root, Math.min(explicit.anchor, explicit.focus), Math.max(explicit.anchor, explicit.focus));
-  }
-  const selection = window.getSelection();
-  return selection ? sourceFromSelection(root, selection) : null;
-}
-
-function extendNativeSelection(root: HTMLElement, key: "ArrowLeft" | "ArrowRight"): boolean {
-  const selection = window.getSelection();
-  const length = root.textContent?.length ?? 0;
-  if (!selection || length === 0) return false;
-  let anchor: number | null = null;
-  let focus: number | null = null;
-  if (selection.anchorNode && selection.focusNode && root.contains(selection.anchorNode) && root.contains(selection.focusNode)) {
-    anchor = offsetForPoint(root, selection.anchorNode, selection.anchorOffset);
-    focus = offsetForPoint(root, selection.focusNode, selection.focusOffset);
-  }
-  if (anchor == null || focus == null) {
-    anchor = key === "ArrowLeft" ? length : 0;
-    focus = anchor;
-  }
-  const nextFocus = clampPosition(focus + (key === "ArrowLeft" ? -1 : 1), 0, length);
-  const anchorPoint = pointForOffset(root, anchor);
-  const focusPoint = pointForOffset(root, nextFocus);
-  if (!anchorPoint || !focusPoint) return false;
-  selection.removeAllRanges();
-  selection.setBaseAndExtent(anchorPoint[0], anchorPoint[1], focusPoint[0], focusPoint[1]);
-  return true;
 }
 
 function prototypeDraftIsDirty(draft: PrototypeDraft): boolean {
@@ -424,17 +348,12 @@ function NumberedCommentIcon({ displayNumber, className }: { displayNumber: numb
 function PrototypeOverlay({ containerRef }: { containerRef: RefObject<HTMLDivElement | null> }) {
   const drafts = useSelectedTextPrototypeStore((state) => state.drafts);
   const editorId = useSelectedTextPrototypeStore((state) => state.editorId);
-  const explicitSelection = useSelectedTextPrototypeStore((state) => state.explicitSelection);
   const [version, setVersion] = useState(0);
   const container = containerRef.current;
   const outer = container ? rootRect(container) : null;
   const viewportRect = container?.getBoundingClientRect() ?? null;
   const activeDraft = drafts.find((draft) => draft.id === editorId) ?? null;
   const savedDrafts = drafts.filter((draft) => draft.savedNote.trim());
-  const explicitRoot = explicitSelection ? findSourceElement(explicitSelection) : null;
-  const activeSource = explicitRoot && explicitSelection
-    ? sourceFromElement(explicitRoot, Math.min(explicitSelection.anchor, explicitSelection.focus), Math.max(explicitSelection.anchor, explicitSelection.focus))
-    : null;
   useEffect(() => {
     const update = () => setVersion((current) => current + 1);
     const viewport = containerRef.current;
@@ -456,7 +375,6 @@ function PrototypeOverlay({ containerRef }: { containerRef: RefObject<HTMLDivEle
   };
   const allRanges = [
     ...drafts.map((draft) => ({ key: `draft-${draft.id}`, source: draft.source, className: draft.id === editorId ? "bg-primary/25 ring-1 ring-primary/40" : "bg-primary/15" })),
-    ...(activeSource ? [{ key: "active-selection", source: activeSource, className: "bg-primary/20 ring-1 ring-primary/50" }] : []),
   ];
   const badges = savedDrafts.reduce<Array<{ draft: PrototypeDraft; top: number; left: number; displayNumber: number }>>((result, draft) => {
     const source = findSourceElement(draft.source);
@@ -536,50 +454,10 @@ function PrototypeOverlay({ containerRef }: { containerRef: RefObject<HTMLDivEle
   );
 }
 
-const VARIANT_DETAILS: Record<SelectedTextPrototypeVariant, { name: string; instruction: string }> = {
-  A: { name: "Native range", instruction: "Shift+Arrow, then Shift+F10" },
-  B: { name: "Range mode", instruction: "B, then Shift+Arrow" },
-  C: { name: "Whole message", instruction: "Focus, then Shift+F10" },
-};
-
-function PrototypeSwitcher() {
-  const variant = useSelectedTextPrototypeStore((state) => state.variant);
-  const setVariant = useSelectedTextPrototypeStore((state) => state.setVariant);
-  const details = VARIANT_DETAILS[variant];
-  return (
-    <div className="absolute bottom-3 left-1/2 z-50 flex max-w-[calc(100%-1rem)] -translate-x-1/2 items-center gap-1 rounded-md border border-border/50 bg-background/85 p-1 text-xs shadow-sm backdrop-blur-sm">
-      <span className="min-w-0 flex-1 truncate px-1.5" title={`${details.name}: ${details.instruction}`}>
-        <span className="font-medium text-foreground">{details.name}</span>
-        <span className="ml-1 text-muted-foreground">{details.instruction}</span>
-      </span>
-      {(["A", "B", "C"] as const).map((value) => (
-        <Button
-          key={value}
-          type="button"
-          size="icon-xs"
-          className="shrink-0"
-          variant={variant === value ? "default" : "ghost"}
-          aria-label={`Use keyboard variant ${value}`}
-          aria-pressed={variant === value}
-          onClick={() => {
-            updateUrlVariant(value);
-            setVariant(value);
-          }}
-        >
-          {value}
-        </Button>
-      ))}
-    </div>
-  );
-}
-
 /** Dev-only selected-text comments interaction layer for the real message list. */
 export function SelectedTextCommentsPrototype({ containerRef }: { containerRef: RefObject<HTMLDivElement | null> }) {
-  const variant = useSelectedTextPrototypeStore((state) => state.variant);
   const menu = useSelectedTextPrototypeStore((state) => state.menu);
   const setMenu = useSelectedTextPrototypeStore((state) => state.setMenu);
-  const setExplicitSelection = useSelectedTextPrototypeStore((state) => state.setExplicitSelection);
-  const explicitSelection = useSelectedTextPrototypeStore((state) => state.explicitSelection);
   const editorId = useSelectedTextPrototypeStore((state) => state.editorId);
   const drafts = useSelectedTextPrototypeStore((state) => state.drafts);
   const setWarningMethod = useSelectedTextPrototypeStore((state) => state.setWarningMethod);
@@ -620,49 +498,6 @@ export function SelectedTextCommentsPrototype({ containerRef }: { containerRef: 
       event.preventDefault();
       openMenu(event, source, event.target as Element | null);
     };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      const target = event.target as Element | null;
-      if (target?.closest("[role=menu], textarea, input")) return;
-      const root = sourceRootFromTarget(target);
-      if (root && variant === "B") {
-        const messageId = root.dataset.messageId;
-        const threadId = root.dataset.threadId;
-        if (!messageId || !threadId) return;
-        const length = root.textContent?.length ?? 0;
-        const current = explicitSelection?.messageId === messageId ? explicitSelection : { messageId, threadId, anchor: 0, focus: 0 };
-        if (event.key.toLowerCase() === "b") {
-          event.preventDefault();
-          setExplicitSelection({ messageId, threadId, anchor: 0, focus: 0 });
-          return;
-        }
-        if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
-          event.preventDefault();
-          const direction = event.key === "ArrowRight" ? 1 : -1;
-          const focus = clampPosition(current.focus + direction, 0, length);
-          setExplicitSelection({ ...current, focus: event.shiftKey ? focus : focus, anchor: event.shiftKey ? current.anchor : focus });
-          return;
-        }
-      }
-      if (root && variant === "A" && event.shiftKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
-        if (extendNativeSelection(root, event.key)) event.preventDefault();
-        return;
-      }
-      if (event.key !== "F10" && event.key !== "ContextMenu") return;
-      if (!event.shiftKey && event.key === "F10") return;
-      const source = sourceForFocusedElement(target, variant, explicitSelection);
-      if (!source) return;
-      event.preventDefault();
-      const focusedRoot = sourceRootFromTarget(target);
-      const focusedRect = focusedRoot?.getBoundingClientRect();
-      openMenu(
-        {
-          clientX: focusedRect?.left ?? 16,
-          clientY: focusedRect?.bottom ?? 16,
-        },
-        source,
-        target,
-      );
-    };
     const handleDocumentPointerDown = (event: PointerEvent) => {
       if (!editorId || (event.target as Element | null)?.closest("[data-prototype-editor], [role=menu]")) return;
       const draft = drafts.find((item) => item.id === editorId);
@@ -676,18 +511,15 @@ export function SelectedTextCommentsPrototype({ containerRef }: { containerRef: 
       }
     };
     document.addEventListener("contextmenu", handleContextMenu);
-    document.addEventListener("keydown", handleKeyDown);
     document.addEventListener("pointerdown", handleDocumentPointerDown);
     return () => {
       document.removeEventListener("contextmenu", handleContextMenu);
-      document.removeEventListener("keydown", handleKeyDown);
       document.removeEventListener("pointerdown", handleDocumentPointerDown);
     };
-  }, [closeEditor, deleteDraft, drafts, editorId, explicitSelection, setExplicitSelection, setMenu, setWarningMethod, variant]);
+  }, [closeEditor, deleteDraft, drafts, editorId, setMenu, setWarningMethod]);
 
   return (
     <>
-      <PrototypeSwitcher />
       <PrototypeOverlay containerRef={containerRef} />
       <PrototypeContextMenu />
     </>
