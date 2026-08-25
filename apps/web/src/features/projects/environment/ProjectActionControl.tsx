@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { CircleCheck, CircleSlash, CircleStop, CircleX, MoreHorizontal, Pencil, Play } from "lucide-react";
+import { CircleCheck, CircleSlash, CircleStop, CircleX, MoreHorizontal, Pencil, Play, RotateCcw } from "lucide-react";
 import type { WorkspaceEnvironmentAction, WorkspaceEnvironmentActionRun } from "@mcode/contracts";
 import { Button } from "@/components/ui/button";
 import {
@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { getTransport } from "@/transport";
 import { useProjectActionStore } from "./state/project-action-store";
 
@@ -30,6 +31,8 @@ interface ProjectActionTerminalViewProps {
   readonly threadId: string;
   readonly actionId: string;
 }
+
+type ProjectActionCommand = "stop" | "restart";
 
 interface ProjectActionActivation {
   readonly actionId: string;
@@ -195,6 +198,33 @@ export function ProjectActionTerminalView({ threadId, actionId }: ProjectActionT
   );
   const applyRun = useProjectActionStore.getState().applyRun;
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [command, setCommand] = useState<ProjectActionCommand | null>(null);
+  const [commandError, setCommandError] = useState<string | null>(null);
+
+  const stopAction = useCallback(async () => {
+    setCommandError(null);
+    setCommand("stop");
+    try {
+      const stopped = await getTransport().stopWorkspaceAction(threadId, actionId);
+      if (stopped) applyRun(stopped);
+    } catch {
+      setCommandError("Project Action could not stop.");
+    } finally {
+      setCommand(null);
+    }
+  }, [actionId, applyRun, threadId]);
+
+  const restartAction = useCallback(async () => {
+    setCommandError(null);
+    setCommand("restart");
+    try {
+      applyRun(await getTransport().restartWorkspaceAction(threadId, actionId));
+    } catch {
+      setCommandError("Project Action could not restart.");
+    } finally {
+      setCommand(null);
+    }
+  }, [actionId, applyRun, threadId]);
 
   useEffect(() => {
     if (run) {
@@ -234,8 +264,47 @@ export function ProjectActionTerminalView({ threadId, actionId }: ProjectActionT
     >
       <div className="flex h-9 items-center gap-2 border-b border-border/50 px-3 text-xs">
         <span className="min-w-0 flex-1 truncate font-medium text-foreground">{run.actionName}</span>
+        {run.status === "running" ? (
+          <>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label={`Restart ${run.actionName}`}
+                    disabled={command !== null}
+                    onClick={restartAction}
+                  >
+                    {command === "restart" ? <Spinner size={14} aria-hidden /> : <RotateCcw size={14} aria-hidden />}
+                  </Button>
+                }
+              />
+              <TooltipContent>Restart Action</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    aria-label={`Stop ${run.actionName}`}
+                    disabled={command !== null}
+                    onClick={stopAction}
+                  >
+                    {command === "stop" ? <Spinner size={14} aria-hidden /> : <CircleStop size={14} aria-hidden />}
+                  </Button>
+                }
+              />
+              <TooltipContent>Stop Action</TooltipContent>
+            </Tooltip>
+          </>
+        ) : null}
         <ActionStatus status={run.status} finishedAt={run.finishedAt} />
       </div>
+      {commandError ? <p role="status" className="border-b border-border/50 px-3 py-2 text-xs text-destructive">{commandError}</p> : null}
       <ScrollArea className="min-h-0 flex-1" viewportProps={{ tabIndex: 0, "aria-label": `${run.actionName} output` }}>
         <ProjectActionTerminalTranscript transcript={run.transcript} />
       </ScrollArea>
