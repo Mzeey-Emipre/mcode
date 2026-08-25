@@ -151,6 +151,41 @@ describe("ProjectActionService", () => {
     expect(runs.get("thread-1", "build")?.status).toBe("interrupted");
   });
 
+  it("starts a replacement only after the prior Action stop barrier closes", async () => {
+    const runs = new Runs();
+    const stopBarrier = deferred<void>();
+    let first!: ReturnType<typeof session>;
+    const stop = vi.fn(async () => {
+      await stopBarrier.promise;
+      first.exit(null);
+    });
+    first = session("terminal-1", undefined, stop);
+    const second = session("terminal-2");
+    const startPreparedCommand = vi.fn()
+      .mockResolvedValueOnce(first)
+      .mockResolvedValueOnce(second);
+    const service = new ProjectActionService(
+      runs as never,
+      { read: async () => ({ document: { version: "0.0.1", actions: [
+        { id: "build", name: "Build", command: { default: "bun run build" } },
+      ] } }) } as never,
+      { findById: () => ({ id: "thread-1", workspace_id: "workspace-1", deleted_at: null, user_completed_at: null }) } as never,
+      { startPreparedCommand } as never,
+      () => new Date("2026-08-22T12:00:00.000Z"),
+      (() => { let value = 0; return () => `run-${++value}`; })(),
+    );
+    await service.start({ threadId: "thread-1", actionId: "build" });
+
+    const restarting = service.restart({ threadId: "thread-1", actionId: "build" });
+    await Promise.resolve();
+    expect(stop).toHaveBeenCalledOnce();
+    expect(startPreparedCommand).toHaveBeenCalledOnce();
+
+    stopBarrier.resolve(undefined);
+    await expect(restarting).resolves.toMatchObject({ runId: "run-2", terminalSessionId: "terminal-2" });
+    expect(startPreparedCommand).toHaveBeenCalledTimes(2);
+  });
+
   it("persists a fast replayed exit as completed after the initial Action row exists", async () => {
     const runs = new Runs();
     const fast = session("terminal-1", { output: "fast output", exitCode: 0 });

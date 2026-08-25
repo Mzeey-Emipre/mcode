@@ -10,6 +10,8 @@ const { transport } = vi.hoisted(() => ({
   transport: {
     readWorkspaceEnvironment: vi.fn(),
     listWorkspaceActionRuns: vi.fn(),
+    restartWorkspaceAction: vi.fn(),
+    stopWorkspaceAction: vi.fn(),
   },
 }));
 
@@ -202,7 +204,7 @@ describe("ProjectAction controls", () => {
     expect(running.querySelector(".spinner-tail-fade")).toHaveClass("motion-reduce:animate-none");
   });
 
-  it("keeps the completed icon for two seconds, then exposes Play", () => {
+  it("keeps the completed icon for two seconds, then exposes Restart", () => {
     vi.useFakeTimers();
     try {
       vi.setSystemTime(new Date("2026-08-22T12:00:01.000Z"));
@@ -213,7 +215,7 @@ describe("ProjectAction controls", () => {
       expect(completed.closest("[class*='group/badge']")).toBeNull();
       expect(completed.querySelector(".lucide-circle-check")).toBeInTheDocument();
       act(() => { vi.advanceTimersByTime(2_000); });
-      expect(screen.getByLabelText("Play")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Restart Build" })).toBeInTheDocument();
       expect(screen.getByText("done")).toBeInTheDocument();
     } finally {
       vi.useRealTimers();
@@ -232,14 +234,83 @@ describe("ProjectAction controls", () => {
       act(() => { vi.advanceTimersByTime(2_000); });
 
       render(<ProjectActionTerminalView threadId="thread-1" actionId="build" />);
-      expect(screen.getByLabelText("Play")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Restart Build" })).toBeInTheDocument();
       expect(screen.queryByRole("status", { name: "Completed" })).not.toBeInTheDocument();
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("keeps the failed icon for two seconds, then exposes Play", () => {
+  it("restarts a running Action from its retained terminal after the server stop barrier", async () => {
+    const user = userEvent.setup();
+    const running = { ...completedRun, status: "running" as const, finishedAt: null, exitCode: null };
+    const restarted = {
+      ...running,
+      runId: "run-2",
+      revision: 0,
+      terminalSessionId: "terminal-2",
+      createdAt: "2026-08-22T12:00:02.000Z",
+      startedAt: "2026-08-22T12:00:02.000Z",
+    };
+    transport.restartWorkspaceAction.mockResolvedValue(restarted);
+    act(() => useProjectActionStore.getState().applyRun(running));
+
+    render(<ProjectActionTerminalView threadId="thread-1" actionId="build" />);
+    await user.click(screen.getByRole("button", { name: "Restart Build" }));
+
+    await waitFor(() => expect(transport.restartWorkspaceAction).toHaveBeenCalledWith("thread-1", "build"));
+    expect(useProjectActionStore.getState().runsByThread["thread-1"]?.build).toMatchObject({
+      runId: "run-2",
+      terminalSessionId: "terminal-2",
+      status: "running",
+    });
+  });
+
+  it("restarts a completed Action from its retained terminal header", async () => {
+    const user = userEvent.setup();
+    const restarted = {
+      ...completedRun,
+      runId: "run-2",
+      revision: 0,
+      terminalSessionId: "terminal-2",
+      status: "running" as const,
+      exitCode: null,
+      finishedAt: null,
+      createdAt: "2026-08-22T12:00:02.000Z",
+      startedAt: "2026-08-22T12:00:02.000Z",
+    };
+    transport.restartWorkspaceAction.mockResolvedValue(restarted);
+    act(() => useProjectActionStore.getState().applyRun(completedRun));
+
+    render(<ProjectActionTerminalView threadId="thread-1" actionId="build" />);
+    await user.click(screen.getByRole("button", { name: "Restart Build" }));
+
+    await waitFor(() => expect(transport.restartWorkspaceAction).toHaveBeenCalledWith("thread-1", "build"));
+    expect(useProjectActionStore.getState().runsByThread["thread-1"]?.build).toMatchObject({
+      runId: "run-2",
+      terminalSessionId: "terminal-2",
+      status: "running",
+    });
+  });
+
+  it("reports a failed stop without removing the running Action result", async () => {
+    const user = userEvent.setup();
+    const running = { ...completedRun, status: "running" as const, finishedAt: null, exitCode: null };
+    transport.stopWorkspaceAction.mockRejectedValue(new Error("cleanup failed"));
+    act(() => useProjectActionStore.getState().applyRun(running));
+
+    render(<ProjectActionTerminalView threadId="thread-1" actionId="build" />);
+    await user.click(screen.getByRole("button", { name: "Stop Build" }));
+
+    await waitFor(() => expect(transport.stopWorkspaceAction).toHaveBeenCalledWith("thread-1", "build"));
+    expect(await screen.findByText("Project Action could not stop.")).toBeInTheDocument();
+    expect(useProjectActionStore.getState().runsByThread["thread-1"]?.build).toMatchObject({
+      runId: "run-1",
+      status: "running",
+    });
+  });
+
+  it("keeps the failed icon for two seconds, then exposes Restart", () => {
     vi.useFakeTimers();
     try {
       vi.setSystemTime(new Date("2026-08-22T12:00:01.000Z"));
@@ -250,7 +321,7 @@ describe("ProjectAction controls", () => {
       expect(failed).not.toHaveTextContent("Failed");
       expect(failed.querySelector(".lucide-circle-x")).toBeInTheDocument();
       act(() => { vi.advanceTimersByTime(2_000); });
-      expect(screen.getByLabelText("Play")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Restart Build" })).toBeInTheDocument();
       expect(screen.queryByRole("status", { name: "Failed" })).not.toBeInTheDocument();
     } finally {
       vi.useRealTimers();
