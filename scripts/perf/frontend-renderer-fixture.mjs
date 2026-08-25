@@ -10,9 +10,48 @@ export const FRONTEND_RENDERER_WORKLOADS = Object.freeze([
   "message1000",
   "threadSwitch",
   "streaming",
+  "messageListBehavior",
   "denseNarrative",
   "markdownShiki",
   "panelTransitions",
+]);
+
+/** Paired runtime names supported by the frontend performance worker. */
+export const FRONTEND_RENDERER_RUNTIMES = Object.freeze([
+  "standalone-web",
+  "electron",
+]);
+
+/** Normalizes the optional comma-separated workload filter for the paired runner. */
+export function normalizeFrontendRendererWorkloads(value) {
+  if (value == null) return [...FRONTEND_RENDERER_WORKLOADS];
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error("--workload must name one or more frontend renderer workloads");
+  }
+  const requested = value.split(",");
+  if (requested.some((workload) => !FRONTEND_RENDERER_WORKLOADS.includes(workload))) {
+    throw new Error(`--workload must use known workloads: ${FRONTEND_RENDERER_WORKLOADS.join(", ")}`);
+  }
+  return FRONTEND_RENDERER_WORKLOADS.filter((workload) => requested.includes(workload));
+}
+
+/** Normalizes the optional comma-separated runtime filter for the paired runner. */
+export function normalizeFrontendRendererRuntimes(value) {
+  if (value == null) return [...FRONTEND_RENDERER_RUNTIMES];
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error("--runtime must name one or more frontend renderer runtimes");
+  }
+  const requested = value.split(",");
+  if (requested.some((runtime) => !FRONTEND_RENDERER_RUNTIMES.includes(runtime))) {
+    throw new Error(`--runtime must use known runtimes: ${FRONTEND_RENDERER_RUNTIMES.join(", ")}`);
+  }
+  return FRONTEND_RENDERER_RUNTIMES.filter((runtime) => requested.includes(runtime));
+}
+
+/** Performance-build MessageList timing stages that are intentionally narrower than whole React commits. */
+export const MESSAGE_LIST_PERFORMANCE_STAGE_NAMES = Object.freeze([
+  "narrativeItemProjection",
+  "tanstackVirtualItems",
 ]);
 
 /** The worker contract is the producer; runner validation mirrors this serialized boundary. */
@@ -52,6 +91,12 @@ const SHIKI_RENDERER_STAGES = Object.freeze([
 const MAX_SHIKI_STAGE_OBSERVATIONS = 1_000;
 const MAX_SHIKI_DURATION_MS = 60_000;
 const MAX_SHIKI_RESPONSE_BYTES = 64 * 1024 * 1024;
+const PERFORMANCE_VIEWPORT_HEIGHT_PX = 1_000;
+const MIN_MESSAGE_ROW_HEIGHT_PX = 21;
+const MESSAGE_LIST_OVERSCAN = 8;
+const MAX_MOUNTED_MESSAGE_ROWS = Math.ceil(
+  PERFORMANCE_VIEWPORT_HEIGHT_PX / MIN_MESSAGE_ROW_HEIGHT_PX,
+) + MESSAGE_LIST_OVERSCAN * 2;
 
 function isPlainObject(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
@@ -82,6 +127,56 @@ function assertBoundedResponseBytes(value) {
       `Shiki response bytes must be finite non-negative safe integers at most ${MAX_SHIKI_RESPONSE_BYTES}`,
     );
   }
+}
+
+/** Returns failures for bounded, performance-only MessageList timing observations. */
+export function validateMessageListPerformanceAttribution(observations) {
+  if (!Array.isArray(observations)) return ["expected MessageList performance observations"];
+  const stages = new Set();
+  for (const observation of observations) {
+    if (!isPlainObject(observation)) return ["MessageList performance observation is not an object"];
+    if (!MESSAGE_LIST_PERFORMANCE_STAGE_NAMES.includes(observation.stage)) {
+      return ["MessageList performance observation has an unknown stage"];
+    }
+    if (!Number.isFinite(observation.durationMs) || observation.durationMs < 0 || observation.durationMs > 60_000) {
+      return ["MessageList performance observation has an invalid duration"];
+    }
+    stages.add(observation.stage);
+  }
+  return MESSAGE_LIST_PERFORMANCE_STAGE_NAMES
+    .filter((stage) => !stages.has(stage))
+    .map((stage) => `missing MessageList performance stage: ${stage}`);
+}
+
+/** Aggregates accepted MessageList timings by narrow, named stage. */
+export function aggregateMessageListPerformanceAttribution(observationSamples) {
+  if (!Array.isArray(observationSamples)) {
+    throw new TypeError("MessageList performance samples must be an array");
+  }
+  const durationsByStage = Object.fromEntries(
+    MESSAGE_LIST_PERFORMANCE_STAGE_NAMES.map((stage) => [stage, []]),
+  );
+  for (const observations of observationSamples) {
+    if (!Array.isArray(observations)) {
+      throw new TypeError("Each MessageList performance sample must be an array");
+    }
+    for (const observation of observations) {
+      if (!isPlainObject(observation)
+        || !MESSAGE_LIST_PERFORMANCE_STAGE_NAMES.includes(observation.stage)
+        || !Number.isFinite(observation.durationMs)
+        || observation.durationMs < 0
+        || observation.durationMs > MAX_SHIKI_DURATION_MS) {
+        throw new TypeError("MessageList performance observation is invalid");
+      }
+      durationsByStage[observation.stage].push(observation.durationMs);
+    }
+  }
+  return Object.fromEntries(
+    MESSAGE_LIST_PERFORMANCE_STAGE_NAMES.map((stage) => [
+      stage,
+      summarizeDurationSamples(durationsByStage[stage]),
+    ]),
+  );
 }
 
 /** Returns every finite Chromium long task over 50ms with its captured sample index. */
@@ -384,6 +479,12 @@ async function installFixtureRuntime(page) {
       ),
     );
 
+    const emptyNarrativeByMessage = (messages) => Object.fromEntries(
+      messages
+        .filter((item) => item.role === "assistant")
+        .map((item) => [item.id, { tools: [], thoughts: [], hooks: [] }]),
+    );
+
     const activate = (threadId, title, messages, patch = {}) => {
       const thread = baseThread(threadId, title);
       workspaceStore.setState((state) => ({
@@ -392,17 +493,36 @@ async function installFixtureRuntime(page) {
         activeThreadId: threadId,
         threads: [thread, ...state.threads.filter((item) => item.id !== threadId)],
       }));
+      const { narrativeByMessage = {}, ...recordPatch } = patch;
       const record = {
         ...modules.createEmptyThreadRecord(),
         messages,
         oldestLoadedSequence: messages[0]?.sequence ?? 0,
-        ...patch,
+        ...recordPatch,
+        narrativeByMessage: {
+          ...emptyNarrativeByMessage(messages),
+          ...narrativeByMessage,
+        },
       };
       threadStore.setState((state) => ({
         ...state,
         currentThreadId: threadId,
         records: new Map(state.records).set(threadId, record),
       }));
+    };
+    let snapshot = null;
+    const takeSnapshot = () => {
+      snapshot = {
+        workspace: workspaceStore.getState(),
+        thread: threadStore.getState(),
+        diff: diffStore.getState(),
+      };
+    };
+    const resetSnapshot = () => {
+      if (!snapshot) throw new Error("The frontend performance fixture has no snapshot.");
+      workspaceStore.setState(snapshot.workspace, true);
+      threadStore.setState(snapshot.thread, true);
+      diffStore.setState(snapshot.diff, true);
     };
 
     window.__issue1240 = {
@@ -414,9 +534,35 @@ async function installFixtureRuntime(page) {
       baseThread,
       message,
       makeMessages,
+      emptyNarrativeByMessage,
       activate,
+      snapshot: takeSnapshot,
+      reset: resetSnapshot,
       revision: 0,
     };
+  });
+}
+
+async function snapshotFixtureRuntime(page) {
+  await page.evaluate(() => {
+    const fixture = window.__issue1240;
+    if (!fixture) throw new Error("The frontend performance fixture is unavailable.");
+    fixture.snapshot();
+  });
+}
+
+async function resetFixtureRuntime(page) {
+  await page.evaluate(() => {
+    const fixture = window.__issue1240;
+    if (!fixture) throw new Error("The frontend performance fixture is unavailable.");
+    fixture.reset();
+  });
+  await waitForFrames(page);
+  await page.evaluate(() => {
+    const modules = window.__mcodeFrontendPerformanceModules;
+    if (!modules) throw new Error("The compiled performance fixture bridge is unavailable.");
+    modules.recordCache.clear();
+    modules.scrollMemory.clear();
   });
 }
 
@@ -425,7 +571,18 @@ async function timeFixture(page, sampleCount, operation, modeCollector, options 
   const checks = [];
   const attributions = [];
   const captureShiki = options.captureShiki === true;
-  await operation(-1);
+  const captureMessageListAttribution = options.captureMessageListAttribution !== false;
+  await snapshotFixtureRuntime(page);
+  try {
+    await operation(-1);
+  } finally {
+    await resetFixtureRuntime(page);
+  }
+  if (captureMessageListAttribution) {
+    await page.evaluate(() => {
+      window.__mcodeFrontendPerformanceModules?.messageListPerformance.reset();
+    });
+  }
   if (captureShiki) {
     await page.evaluate(() => {
       const bridge = window.__mcodeFrontendPerformanceModules?.shikiPerformance;
@@ -435,6 +592,12 @@ async function timeFixture(page, sampleCount, operation, modeCollector, options 
     });
   }
   for (let index = 0; index < sampleCount; index += 1) {
+    await snapshotFixtureRuntime(page);
+    if (captureMessageListAttribution) {
+      await page.evaluate(() => {
+        window.__mcodeFrontendPerformanceModules?.messageListPerformance.reset();
+      });
+    }
     if (captureShiki) {
       await page.evaluate(() => {
         const bridge = window.__mcodeFrontendPerformanceModules?.shikiPerformance;
@@ -443,37 +606,50 @@ async function timeFixture(page, sampleCount, operation, modeCollector, options 
         bridge?.setCapture(true);
       });
     }
-    const { result, attribution } = await modeCollector.measure(
-      () => operation(index),
-      getShikiTraceOptions(captureShiki, options.buildMode),
-    );
-    if (captureShiki) {
-      result.check.buildMode = options.buildMode ?? "profiling";
-      result.check.shikiAttribution = await page.evaluate(() => {
-        const bridge = window.__mcodeFrontendPerformanceModules?.shikiPerformance;
-        bridge?.setCapture(false);
-        return bridge?.drain() ?? [];
-      });
-      const trace = attribution.chromium;
-      if (Number.isFinite(trace?.styleMs) && trace.styleMs >= 0 && trace.styleMs <= MAX_SHIKI_DURATION_MS) {
-        result.check.shikiAttribution.push({
-          phase: "workload",
-          stage: "style",
-          durationMs: trace.styleMs,
+    let result;
+    let attribution;
+    try {
+      ({ result, attribution } = await modeCollector.measure(
+        () => operation(index),
+        getShikiTraceOptions(captureShiki, options.buildMode),
+      ));
+      if (captureShiki) {
+        result.check.buildMode = options.buildMode ?? "profiling";
+        result.check.shikiAttribution = await page.evaluate(() => {
+          const bridge = window.__mcodeFrontendPerformanceModules?.shikiPerformance;
+          bridge?.setCapture(false);
+          return bridge?.drain() ?? [];
         });
+        const trace = attribution.chromium;
+        if (Number.isFinite(trace?.styleMs) && trace.styleMs >= 0 && trace.styleMs <= MAX_SHIKI_DURATION_MS) {
+          result.check.shikiAttribution.push({
+            phase: "workload",
+            stage: "style",
+            durationMs: trace.styleMs,
+          });
+        }
+        if (Number.isFinite(trace?.layoutMs) && trace.layoutMs >= 0 && trace.layoutMs <= MAX_SHIKI_DURATION_MS) {
+          result.check.shikiAttribution.push({
+            phase: "workload",
+            stage: "layout",
+            durationMs: trace.layoutMs,
+          });
+        }
+        result.check.shikiLongTasksOver50Ms = extractShikiLongTasks(trace?.longTasksMs ?? [], index);
       }
-      if (Number.isFinite(trace?.layoutMs) && trace.layoutMs >= 0 && trace.layoutMs <= MAX_SHIKI_DURATION_MS) {
-        result.check.shikiAttribution.push({
-          phase: "workload",
-          stage: "layout",
-          durationMs: trace.layoutMs,
-        });
+      if (captureMessageListAttribution) {
+        attribution.messageList = await page.evaluate(() =>
+          window.__mcodeFrontendPerformanceModules?.messageListPerformance.drain() ?? [],
+        );
       }
-      result.check.shikiLongTasksOver50Ms = extractShikiLongTasks(trace?.longTasksMs ?? [], index);
+      samples.push(result.durationMs);
+      checks.push(result.check);
+      attributions.push(attribution);
+    } finally {
+      if (index !== sampleCount - 1 || options.deferFinalReset !== true) {
+        await resetFixtureRuntime(page);
+      }
     }
-    samples.push(result.durationMs);
-    checks.push(result.check);
-    attributions.push(attribution);
   }
   return { samples, checks, attributions };
 }
@@ -497,6 +673,10 @@ export function validateWorkloadCheck(workload, check, buildMode = check?.buildM
       requireCheck(check.totalMessages === expectedCount, `expected ${expectedCount} messages`);
       requireCheck(check.mountedMessages > 0, "expected visible message rows");
       requireCheck(
+        check.mountedMessages <= MAX_MOUNTED_MESSAGE_ROWS,
+        `virtualized message rows exceeded ${MAX_MOUNTED_MESSAGE_ROWS}`,
+      );
+      requireCheck(
         check.activeThreadId === check.currentThreadId &&
           check.currentThreadId === check.visibleThreadId,
         "selected and visible thread identities differ",
@@ -513,6 +693,32 @@ export function validateWorkloadCheck(workload, check, buildMode = check?.buildM
       break;
     case "streaming":
       requireCheck(check.streamingText === check.expectedText, "streamed response text differs");
+      requireCheck(check.storeUpdateCommits === 200, "streaming updates were batched before the store commit");
+      requireCheck(check.visibleStreamingUpdates === 200, "streaming did not visibly commit 200 updates");
+      requireCheck(check.visualStreamingCommitted === true, "streaming content did not commit to the rendered response");
+      requireCheck(check.tailFollowed === true, "streaming did not keep the tail in view");
+      requireCheck(check.userAwayPreserved === true, "streaming moved a user who left the tail");
+      break;
+    case "messageListBehavior":
+      requireCheck(check.longThreadScroll === true, "long-thread scroll did not change the visible range");
+      requireCheck(check.dynamicHeightSettled === true, "dynamic row height did not settle at the tail");
+      requireCheck(check.olderHistoryLoaded === true, "older history did not load a page");
+      requireCheck(check.olderHistoryAnchor === true, "older history changed the reading anchor");
+      requireCheck(check.newerHistoryLoaded === true, "newer history did not load a page");
+      requireCheck(check.newerHistoryAnchor === true, "newer history changed the reading anchor");
+      requireCheck(check.cacheHitThreadIdentity === true, "cache-hit switch did not change the visible thread");
+      requireCheck(check.cacheHitRestored === true, "cache-hit switch did not restore the reading position");
+      requireCheck(check.cacheMissThreadIdentity === true, "cache-miss switch did not change the visible thread");
+      requireCheck(check.cacheMissLoadingObserved === true, "cache-miss did not hold the outgoing transcript while empty");
+      requireCheck(check.cacheMissRestored === true, "cache-miss did not render the restored client record");
+      requireCheck(check.cacheMissTailPositioned === true, "cache-miss did not position the restored transcript at the tail");
+      requireCheck(check.stickyAbsentWhenUserVisible === true, "sticky user message remained visible beside its transcript row");
+      requireCheck(check.stickyVisible === true, "sticky user message did not appear");
+      requireCheck(check.stickyTargetWasUnmountedBeforeJump === true, "sticky user target stayed mounted before jump");
+      requireCheck(check.stickyUserJumped === true, "sticky user message did not jump to its transcript row");
+      requireCheck(check.focusPreserved === true, "sticky user-message control did not receive focus");
+      requireCheck(check.interactiveControl === true, "sticky user-message control did not expand");
+      requireCheck(check.liveToPersistedIdentity === true, "live response did not retain its persisted row identity");
       break;
     case "denseNarrative":
       requireCheck(check.sourceRows === 90, "dense narrative fixture row count differs");
@@ -580,17 +786,20 @@ export function validateNarrativeRowIsolation(reactAttribution) {
 }
 
 /** Run the shared frontend renderer matrix against one Playwright page. */
-export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "production") {
+export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "production", options = {}) {
   if (!Number.isSafeInteger(sampleCount) || sampleCount < 1 || sampleCount > 50) {
     throw new Error("sampleCount must be an integer from 1 through 50");
   }
+  const workloads = normalizeFrontendRendererWorkloads(options.workload ?? null);
+  const selectedWorkloads = new Set(workloads);
   const expectedPageUrl = page.url();
   await page.bringToFront();
   await installFixtureRuntime(page);
   const signalCollector = await createPageSignalCollector(page);
   const modeCollector = await createModeSignalCollector(page, mode);
 
-  const message100 = await timeFixture(page, sampleCount, async (sample) => {
+  const message100 = selectedWorkloads.has("message100")
+    ? await timeFixture(page, sampleCount, async (sample) => {
     const result = await page.evaluate(async (sampleIndex) => {
       const fixture = window.__issue1240;
       const revision = ++fixture.revision;
@@ -618,9 +827,11 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
       };
     }, sample);
     return result;
-  }, modeCollector);
+    }, modeCollector)
+    : null;
 
-  const message1000 = await timeFixture(page, sampleCount, async (sample) => {
+  const message1000 = selectedWorkloads.has("message1000")
+    ? await timeFixture(page, sampleCount, async (sample) => {
     return page.evaluate(async (sampleIndex) => {
       const fixture = window.__issue1240;
       const revision = ++fixture.revision;
@@ -647,9 +858,11 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
         },
       };
     }, sample);
-  }, modeCollector);
+    }, modeCollector)
+    : null;
 
-  const threadSwitch = await timeFixture(page, sampleCount, async (sample) => {
+  const threadSwitch = selectedWorkloads.has("threadSwitch")
+    ? await timeFixture(page, sampleCount, async (sample) => {
     return page.evaluate(async (sampleIndex) => {
       const fixture = window.__issue1240;
       const revision = ++fixture.revision;
@@ -657,10 +870,12 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
       const rightId = `perf-switch-right-${revision}`;
       fixture.activate(leftId, "Switch left", fixture.makeMessages(leftId, 1000, "left"));
       const rightThread = fixture.baseThread(rightId, "Switch right");
+      const rightMessages = fixture.makeMessages(rightId, 1000, "right");
       const rightRecord = {
         ...fixture.recordModule.createEmptyThreadRecord(),
-        messages: fixture.makeMessages(rightId, 1000, "right"),
+        messages: rightMessages,
         oldestLoadedSequence: 1,
+        narrativeByMessage: fixture.emptyNarrativeByMessage(rightMessages),
       };
       fixture.workspaceStore.setState((state) => ({
         ...state,
@@ -672,7 +887,14 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
       }));
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       const startedAt = performance.now();
-      fixture.workspaceStore.getState().setActiveThread(rightId);
+      fixture.workspaceStore.setState((state) => ({
+        ...state,
+        activeThreadId: rightId,
+      }));
+      fixture.threadStore.setState((state) => ({
+        ...state,
+        currentThreadId: rightId,
+      }));
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       return {
         durationMs: performance.now() - startedAt,
@@ -684,41 +906,629 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
         },
       };
     }, sample);
-  }, modeCollector);
+    }, modeCollector)
+    : null;
 
-  const streaming = await timeFixture(page, sampleCount, async (sample) => {
+  const streaming = selectedWorkloads.has("streaming")
+    ? await timeFixture(page, sampleCount, async (sample) => {
     return page.evaluate(async (sampleIndex) => {
       const fixture = window.__issue1240;
       const revision = ++fixture.revision;
       const threadId = `perf-stream-${revision}`;
       fixture.activate(threadId, "Streaming fixture", fixture.makeMessages(threadId, 100, "stream"));
+      fixture.threadStore.getState().handleAgentEvent({
+        type: "turnStarted",
+        threadId,
+        fileEffectTurnId: `stream-${revision}`,
+      });
+      const nextFrame = () => new Promise((resolve) => requestAnimationFrame(resolve));
+      const waitForStreamingCommit = async (expectedText, maxFrames = 8) => {
+        for (let frame = 0; frame < maxFrames; frame += 1) {
+          if (fixture.threadStore.getState().records.get(threadId)?.streaming === expectedText) return true;
+          await nextFrame();
+        }
+        return fixture.threadStore.getState().records.get(threadId)?.streaming === expectedText;
+      };
+      const responseKey = fixture.threadStore.getState().records.get(threadId)?.currentTurnResponseKey;
+      const waitForVisibleStreamingUpdate = async (expectedToken, maxFrames = 8) => {
+        if (typeof responseKey !== "string" || responseKey.length === 0) return false;
+        for (let frame = 0; frame < maxFrames; frame += 1) {
+          const message = document.querySelector(`[data-message-id="${responseKey}"]`);
+          if (message?.textContent?.includes(expectedToken)) return true;
+          await nextFrame();
+        }
+        return document.querySelector(`[data-message-id="${responseKey}"]`)
+          ?.textContent?.includes(expectedToken) ?? false;
+      };
+      let storeUpdateCommits = 0;
+      let visibleStreamingUpdates = 0;
+      const unsubscribe = fixture.threadStore.subscribe((state, previousState) => {
+        const currentText = state.records.get(threadId)?.streaming;
+        const previousText = previousState.records.get(threadId)?.streaming;
+        if (currentText !== previousText) storeUpdateCommits += 1;
+      });
       const startedAt = performance.now();
+      let expectedText = "";
       for (let index = 0; index < 200; index += 1) {
+        const delta = `token-${index} `;
+        expectedText += delta;
         fixture.threadStore.getState().handleAgentEvent({
           type: "textDelta",
           threadId,
-          delta: `token-${index} `,
+          delta,
           isFinalResponse: true,
         });
+        await waitForStreamingCommit(expectedText);
+        if (await waitForVisibleStreamingUpdate(delta)) visibleStreamingUpdates += 1;
       }
+      const visualStreamingCommitted = await waitForStreamingCommit(expectedText)
+        && typeof responseKey === "string"
+        && responseKey.length > 0
+        && await (async () => {
+          for (let frame = 0; frame < 8; frame += 1) {
+            const message = document.querySelector(`[data-message-id="${responseKey}"]`);
+            if (message?.textContent?.includes("token-199")) return true;
+            await nextFrame();
+          }
+          return false;
+        })();
+      unsubscribe();
+      const list = document.querySelector('[data-testid="message-list"]')?.firstElementChild;
+      const tailFollowed = list instanceof HTMLElement
+        && Math.abs(list.scrollHeight - list.scrollTop - list.clientHeight) <= 4;
+      const awayTop = list instanceof HTMLElement
+        ? Math.max(0, list.scrollHeight - list.clientHeight - 400)
+        : 0;
+      if (list instanceof HTMLElement) {
+        list.scrollTop = awayTop;
+        list.dispatchEvent(new Event("scroll", { bubbles: true }));
+      }
+      fixture.threadStore.getState().handleAgentEvent({
+        type: "textDelta",
+        threadId,
+        delta: "away-token ",
+        isFinalResponse: true,
+      });
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       const record = fixture.threadStore.getState().records.get(threadId);
-      const expectedText = Array.from(
-        { length: 200 },
-        (_, index) => `token-${index} `,
-      ).join("");
       return {
         durationMs: performance.now() - startedAt,
         check: {
           expectedText,
-          streamingText: record?.streaming ?? "",
+          streamingText: (record?.streaming ?? "").replace(/away-token $/, ""),
+          storeUpdateCommits,
+          visibleStreamingUpdates,
+          visualStreamingCommitted,
+          tailFollowed,
+          userAwayPreserved: list instanceof HTMLElement
+            && list.scrollTop <= awayTop + 2
+            && document.querySelector('button[aria-label="New messages below"]') !== null,
           sampleIndex,
         },
       };
     }, sample);
-  }, modeCollector);
+    }, modeCollector)
+    : null;
 
-  const denseNarrative = await timeFixture(page, sampleCount, async (sample) => {
+  const messageListBehavior = selectedWorkloads.has("messageListBehavior")
+    ? await timeFixture(page, sampleCount, async (sample) => {
+    return page.evaluate(async (sampleIndex) => {
+      const fixture = window.__issue1240;
+      const revision = ++fixture.revision;
+      const frames = async (count = 2) => {
+        for (let index = 0; index < count; index += 1) {
+          await new Promise((resolve) => requestAnimationFrame(resolve));
+        }
+      };
+      const waitFor = async (predicate, maxFrames = 60) => {
+        for (let index = 0; index < maxFrames; index += 1) {
+          if (predicate()) return true;
+          await frames(1);
+        }
+        return predicate();
+      };
+      const waitForDuration = async (predicate, timeoutMs) => {
+        const deadline = performance.now() + timeoutMs;
+        while (performance.now() < deadline) {
+          if (predicate()) return true;
+          await frames(1);
+        }
+        return predicate();
+      };
+      const waitForConsecutiveFrames = async (predicate, requiredFrames, maxFrames = 60) => {
+        let consecutiveFrames = 0;
+        for (let index = 0; index < maxFrames; index += 1) {
+          consecutiveFrames = predicate() ? consecutiveFrames + 1 : 0;
+          if (consecutiveFrames >= requiredFrames) return true;
+          await frames(1);
+        }
+        return false;
+      };
+      const waitForStableScrollHeight = async (element, requiredFrames, maxFrames = 120) => {
+        let previousHeight = null;
+        let consecutiveFrames = 0;
+        for (let index = 0; index < maxFrames; index += 1) {
+          const scrollHeight = element instanceof HTMLElement ? element.scrollHeight : null;
+          consecutiveFrames = scrollHeight !== null && scrollHeight === previousHeight
+            ? consecutiveFrames + 1
+            : 0;
+          if (consecutiveFrames >= requiredFrames) return true;
+          previousHeight = scrollHeight;
+          await frames(1);
+        }
+        return false;
+      };
+      const list = () => document.querySelector('[data-testid="message-list"]')?.firstElementChild;
+      const scroll = (element) => element?.dispatchEvent(new Event("scroll", { bubbles: true }));
+      const visibleAnchor = (element) => {
+        if (!(element instanceof HTMLElement)) return null;
+        const viewportTop = element.getBoundingClientRect().top;
+        return [...element.querySelectorAll("[data-message-id]")]
+          .find((node) => node.getBoundingClientRect().bottom > viewportTop + 2) ?? null;
+      };
+      const replaceMessages = (threadId, messages, patch = {}) => {
+        fixture.threadStore.setState((state) => {
+          const records = new Map(state.records);
+          const record = records.get(threadId);
+          if (!record) return state;
+          const retainedNarrative = Object.fromEntries(
+            messages
+              .filter((message) => message.role === "assistant")
+              .flatMap((message) => record.narrativeByMessage[message.id]
+                ? [[message.id, record.narrativeByMessage[message.id]]]
+                : []),
+          );
+          records.set(threadId, {
+            ...record,
+            ...patch,
+            messages,
+            narrativeByMessage: {
+              ...fixture.emptyNarrativeByMessage(messages),
+              ...retainedNarrative,
+            },
+          });
+          return { ...state, records };
+        });
+      };
+      const addThread = (threadId, title, messages, patch = {}) => {
+        const thread = fixture.baseThread(threadId, title);
+        const { narrativeByMessage = {}, ...recordPatch } = patch;
+        fixture.workspaceStore.setState((state) => ({
+          ...state,
+          threads: [thread, ...state.threads.filter((item) => item.id !== threadId)],
+        }));
+        fixture.threadStore.setState((state) => ({
+          ...state,
+          records: new Map(state.records).set(threadId, {
+            ...fixture.recordModule.createEmptyThreadRecord(),
+            messages,
+            oldestLoadedSequence: messages[0]?.sequence ?? 0,
+            ...recordPatch,
+            narrativeByMessage: {
+              ...fixture.emptyNarrativeByMessage(messages),
+              ...narrativeByMessage,
+            },
+          }),
+        }));
+      };
+      const visibleThreadId = () => document.querySelector("[data-message-id]")?.getAttribute("data-thread-id") ?? null;
+      const threadSwitchIdentity = (threadId, previous) => {
+        const activeThreadId = fixture.workspaceStore.getState().activeThreadId;
+        const currentThreadId = fixture.threadStore.getState().currentThreadId;
+        return activeThreadId === threadId
+          && currentThreadId === threadId
+          && visibleThreadId() === threadId
+          && (previous.activeThreadId !== threadId
+            || previous.currentThreadId !== threadId
+            || previous.visibleThreadId !== threadId);
+      };
+      const switchThread = async (threadId, waitForVisible = true) => {
+        const previous = {
+          activeThreadId: fixture.workspaceStore.getState().activeThreadId,
+          currentThreadId: fixture.threadStore.getState().currentThreadId,
+          visibleThreadId: visibleThreadId(),
+        };
+        fixture.workspaceStore.setState((state) => ({
+          ...state,
+          activeThreadId: threadId,
+        }));
+        fixture.threadStore.setState((state) => ({
+          ...state,
+          currentThreadId: threadId,
+        }));
+        return waitFor(() => {
+          const activeThreadId = fixture.workspaceStore.getState().activeThreadId;
+          const currentThreadId = fixture.threadStore.getState().currentThreadId;
+          const changed = previous.activeThreadId !== threadId
+            || previous.currentThreadId !== threadId
+            || previous.visibleThreadId !== threadId;
+          return activeThreadId === threadId
+            && currentThreadId === threadId
+            && changed
+            && (!waitForVisible || visibleThreadId() === threadId);
+        });
+      };
+      const startedAt = performance.now();
+      const threadId = `perf-message-list-behavior-${revision}`;
+      const user = fixture.message(
+        threadId,
+        0,
+        `Last user prompt ${"detail ".repeat(160)}`,
+        "user",
+      );
+      const messages = [
+        user,
+        ...Array.from({ length: 1_000 }, (_, index) => fixture.message(
+          threadId,
+          index + 1,
+          `Assistant fixture ${index} ${"word ".repeat(30)}`,
+          "assistant",
+        )),
+      ];
+      let olderLoadCalls = 0;
+      let olderExpectedMessageId = null;
+      let newerLoadCalls = 0;
+      let newerExpectedMessageId = null;
+      fixture.threadStore.setState((state) => ({
+        ...state,
+        loadOlderMessages: async (requestedThreadId) => {
+          olderLoadCalls += 1;
+          const olderMessages = Array.from({ length: 120 }, (_, index) => fixture.message(
+            requestedThreadId,
+            index - 120,
+            `Older history ${index} ${"word ".repeat(30)}`,
+            "assistant",
+          ));
+          olderExpectedMessageId = olderMessages[0]?.id ?? null;
+          const current = fixture.threadStore.getState().records.get(requestedThreadId);
+          if (current) replaceMessages(requestedThreadId, [...olderMessages, ...current.messages], {
+            hasMoreMessages: false,
+          });
+        },
+        loadNewerMessages: async (requestedThreadId) => {
+          newerLoadCalls += 1;
+          const current = fixture.threadStore.getState().records.get(requestedThreadId);
+          const start = current?.messages.length ?? 0;
+          const newerMessages = Array.from({ length: 120 }, (_, index) => fixture.message(
+            requestedThreadId,
+            start + index,
+            `Newer history ${index} ${"word ".repeat(30)}`,
+            "assistant",
+          ));
+          newerExpectedMessageId = newerMessages.at(-1)?.id ?? null;
+          if (current) replaceMessages(requestedThreadId, [...current.messages, ...newerMessages], {
+            hasNewerMessages: false,
+          });
+        },
+      }));
+      fixture.activate(threadId, "MessageList behavior fixture", messages, {
+        hasMoreMessages: true,
+        hasNewerMessages: true,
+      });
+      await frames(12);
+
+      const longScrollElement = list();
+      const tailMessageId = messages.at(-1)?.id ?? null;
+      if (longScrollElement instanceof HTMLElement) {
+        longScrollElement.scrollTop = longScrollElement.scrollHeight / 2;
+        scroll(longScrollElement);
+      }
+      await frames(4);
+      const longScrollAnchor = visibleAnchor(longScrollElement);
+      const longThreadScroll = Boolean(longScrollAnchor)
+        && longScrollAnchor?.getAttribute("data-message-id") !== tailMessageId;
+
+      if (longScrollElement instanceof HTMLElement) {
+        longScrollElement.scrollTop = longScrollElement.scrollHeight;
+        scroll(longScrollElement);
+      }
+      await frames(3);
+      const dynamicMessageId = tailMessageId;
+      const dynamicBefore = dynamicMessageId
+        ? document.querySelector(`[data-message-id="${dynamicMessageId}"]`)?.getBoundingClientRect().height ?? 0
+        : 0;
+      replaceMessages(threadId, messages.map((message) =>
+        message.id === dynamicMessageId
+          ? { ...message, content: `${message.content}\n\n${"dynamic height ".repeat(1_000)}` }
+          : message,
+      ));
+      const dynamicHeightSettled = await waitFor(() => {
+        const element = dynamicMessageId
+          ? document.querySelector(`[data-message-id="${dynamicMessageId}"]`)
+          : null;
+        const scroller = list();
+        return element instanceof HTMLElement
+          && scroller instanceof HTMLElement
+          && element.getBoundingClientRect().height > dynamicBefore
+          && Math.abs(scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight) <= 4;
+      });
+
+      const olderScroller = list();
+      if (olderScroller instanceof HTMLElement) {
+        olderScroller.scrollTop = 120;
+        scroll(olderScroller);
+      }
+      await frames(3);
+      const olderAnchor = visibleAnchor(olderScroller);
+      const olderAnchorId = olderAnchor?.getAttribute("data-message-id") ?? null;
+      const olderAnchorTop = olderAnchor?.getBoundingClientRect().top ?? null;
+      if (olderScroller instanceof HTMLElement) {
+        olderScroller.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: -100 }));
+      }
+      const olderHistoryLoaded = await waitFor(() => {
+        const current = fixture.threadStore.getState().records.get(threadId);
+        return olderLoadCalls > 0
+          && olderExpectedMessageId !== null
+          && current?.messages.some((message) => message.id === olderExpectedMessageId) === true;
+      });
+      const olderHistoryAnchor = olderHistoryLoaded && await waitForConsecutiveFrames(() => {
+        const anchor = olderAnchorId
+          ? document.querySelector(`[data-message-id="${olderAnchorId}"]`)
+          : null;
+        return anchor instanceof HTMLElement
+          && olderAnchorTop !== null
+          && Math.abs(anchor.getBoundingClientRect().top - olderAnchorTop) <= 2;
+      }, 3);
+      const olderHistoryHeightSettled = olderHistoryAnchor
+        && await waitForStableScrollHeight(olderScroller, 4);
+
+      const newerScroller = list();
+      const newerPaginationGap = 96;
+      if (olderHistoryHeightSettled && newerScroller instanceof HTMLElement) {
+        newerScroller.scrollTop = Math.max(
+          0,
+          newerScroller.scrollHeight - newerScroller.clientHeight - newerPaginationGap,
+        );
+        scroll(newerScroller);
+      }
+      const newerPaginationPositioned = olderHistoryHeightSettled && await waitForConsecutiveFrames(() => {
+        if (!(newerScroller instanceof HTMLElement)) return false;
+        const gap = newerScroller.scrollHeight - newerScroller.scrollTop - newerScroller.clientHeight;
+        return Math.abs(gap - newerPaginationGap) <= 2;
+      }, 3);
+      const newerAnchor = visibleAnchor(newerScroller);
+      const newerAnchorId = newerAnchor?.getAttribute("data-message-id") ?? null;
+      const newerAnchorTop = newerAnchor?.getBoundingClientRect().top ?? null;
+      if (newerPaginationPositioned && newerScroller instanceof HTMLElement) {
+        newerScroller.dispatchEvent(new WheelEvent("wheel", { bubbles: true, deltaY: 100 }));
+      }
+      const newerHistoryLoaded = newerPaginationPositioned && await waitFor(() => {
+        const current = fixture.threadStore.getState().records.get(threadId);
+        return newerLoadCalls > 0
+          && newerExpectedMessageId !== null
+          && current?.messages.some((message) => message.id === newerExpectedMessageId) === true;
+      });
+      const newerHistoryAnchor = newerHistoryLoaded && await waitFor(() => {
+        const anchor = newerAnchorId
+          ? document.querySelector(`[data-message-id="${newerAnchorId}"]`)
+          : null;
+        return anchor instanceof HTMLElement
+          && newerAnchorTop !== null
+          && Math.abs(anchor.getBoundingClientRect().top - newerAnchorTop) <= 2;
+      });
+
+      const cacheThreadId = `perf-message-list-cache-${revision}`;
+      const cacheMessages = fixture.makeMessages(cacheThreadId, 1_000, "cache");
+      addThread(cacheThreadId, "Cache behavior fixture", cacheMessages);
+      const cacheInitialSwitchIdentity = await switchThread(cacheThreadId);
+      const cacheScroller = list();
+      let cacheAnchorId = null;
+      let cacheAnchorTop = null;
+      if (cacheScroller instanceof HTMLElement) {
+        cacheScroller.scrollTop = cacheScroller.scrollHeight / 2;
+        scroll(cacheScroller);
+      }
+      const cacheReaderPositioned = await waitForConsecutiveFrames(() => {
+        if (!(cacheScroller instanceof HTMLElement)) return false;
+        const targetScrollTop = cacheScroller.scrollHeight / 2;
+        cacheScroller.scrollTop = targetScrollTop;
+        scroll(cacheScroller);
+        const anchor = visibleAnchor(cacheScroller);
+        cacheAnchorId = anchor?.getAttribute("data-message-id") ?? null;
+        cacheAnchorTop = anchor?.getBoundingClientRect().top ?? null;
+        return cacheAnchorId !== null
+          && cacheAnchorTop !== null
+          && Math.abs(cacheScroller.scrollTop - targetScrollTop) <= 2;
+      }, 3, 180);
+      const cachePositionRemembered = cacheReaderPositioned && cacheAnchorId !== null && await waitFor(() => {
+        if (cacheScroller instanceof HTMLElement) scroll(cacheScroller);
+        const position = window.__mcodeFrontendPerformanceModules?.scrollMemory.recall(cacheThreadId);
+        return position?.anchorMessageId === cacheAnchorId
+          && position.anchorTop != null
+          && cacheAnchorTop !== null
+          && Math.abs(position.anchorTop - cacheAnchorTop) <= 2;
+      });
+      const cacheHitAwaySwitchIdentity = await switchThread(threadId);
+      const cacheHitReturnSwitchIdentity = await switchThread(cacheThreadId);
+      const cacheHitThreadIdentity = cacheInitialSwitchIdentity
+        && cacheHitAwaySwitchIdentity
+        && cacheHitReturnSwitchIdentity
+        && threadSwitchIdentity(cacheThreadId, {
+          activeThreadId: threadId,
+          currentThreadId: threadId,
+          visibleThreadId: threadId,
+        });
+      const cacheHitRestored = cachePositionRemembered && cacheHitThreadIdentity && await waitFor(() => {
+        const anchor = cacheAnchorId
+          ? document.querySelector(`[data-message-id="${cacheAnchorId}"]`)
+          : null;
+        return anchor instanceof HTMLElement
+          && cacheAnchorTop !== null
+          && Math.abs(anchor.getBoundingClientRect().top - cacheAnchorTop) <= 8;
+      }, 180);
+
+      const cacheMissAwaySwitchIdentity = await switchThread(threadId);
+      window.__mcodeFrontendPerformanceModules?.scrollMemory.forget(cacheThreadId);
+      replaceMessages(cacheThreadId, [], { loading: true });
+      const cacheMissLoadingSwitchIdentity = await switchThread(cacheThreadId, false);
+      const cacheMissLoadingObserved = cacheMissLoadingSwitchIdentity && await waitFor(() => {
+        const activeRecord = fixture.threadStore.getState().records.get(cacheThreadId);
+        const heldMessage = document.querySelector("[data-message-id]");
+        return activeRecord?.loading === true
+          && activeRecord.messages.length === 0
+          && document.querySelector('[data-testid="conversation-hold-overlay"]') !== null
+          && heldMessage?.getAttribute("data-thread-id") === threadId;
+      });
+      replaceMessages(cacheThreadId, cacheMessages, { loading: false });
+      const cacheMissVisibleIdentity = await waitFor(() =>
+        threadSwitchIdentity(cacheThreadId, {
+          activeThreadId: threadId,
+          currentThreadId: threadId,
+          visibleThreadId: threadId,
+        }));
+      const cacheMissThreadIdentity = cacheMissAwaySwitchIdentity
+        && cacheMissLoadingSwitchIdentity
+        && cacheMissLoadingObserved
+        && cacheMissVisibleIdentity;
+      const cacheMissRestored = cacheMissThreadIdentity && await waitFor(() => {
+        const record = fixture.threadStore.getState().records.get(cacheThreadId);
+        return record?.loading === false
+          && record.messages.length === cacheMessages.length
+          && document.querySelector('[data-testid="conversation-hold-overlay"]') === null
+          && visibleThreadId() === cacheThreadId;
+      }, 180);
+      const cacheMissTailPositioned = cacheMissRestored && await waitFor(() => {
+        const scroller = list();
+        return scroller instanceof HTMLElement
+          && Math.abs(scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight) <= 4;
+      }, 180);
+
+      const stickyThreadId = `perf-message-list-sticky-${revision}`;
+      const stickyUser = fixture.message(
+        stickyThreadId,
+        0,
+        `Sticky user message ${"detail ".repeat(160)}`,
+        "user",
+      );
+      const stickyMessages = [
+        stickyUser,
+        ...Array.from({ length: 80 }, (_, index) => fixture.message(
+          stickyThreadId,
+          index + 1,
+          `Sticky assistant ${index}`,
+          "assistant",
+        )),
+      ];
+      fixture.activate(stickyThreadId, "Sticky behavior fixture", stickyMessages);
+      await frames(12);
+      const stickyScroller = list();
+      if (stickyScroller instanceof HTMLElement) {
+        stickyScroller.scrollTop = 0;
+        scroll(stickyScroller);
+      }
+      const stickyAbsentWhenUserVisible = await waitFor(() => {
+        const userRow = document.querySelector(`[data-message-id="${stickyUser.id}"]`);
+        return userRow instanceof HTMLElement
+          && document.querySelector('[data-testid="sticky-user-message"]') === null;
+      });
+      if (stickyScroller instanceof HTMLElement) {
+        stickyScroller.scrollTop = stickyScroller.scrollHeight - stickyScroller.clientHeight;
+        scroll(stickyScroller);
+      }
+      const stickyVisible = stickyAbsentWhenUserVisible && await waitFor(() =>
+        document.querySelector('[data-testid="sticky-user-message"]') !== null,
+      );
+      const stickyPreview = document.querySelector('button[aria-label="Expand your last message"]');
+      stickyPreview?.focus();
+      const focusPreserved = document.activeElement === stickyPreview;
+      stickyPreview?.click();
+      const interactiveControl = await waitFor(() => document.querySelector(
+        'button[aria-label="Collapse your last message"]',
+      ) !== null);
+      const stickyTargetWasUnmountedBeforeJump = document.querySelector(
+        `[data-message-id="${stickyUser.id}"]`,
+      ) === null;
+      const stickyJump = document.querySelector('button[aria-label="Jump to your last message"]');
+      stickyJump?.click();
+      const stickyUserJumped = stickyVisible && stickyTargetWasUnmountedBeforeJump && stickyJump !== null && await waitForDuration(() => {
+        const stickyRow = document.querySelector(`[data-message-id="${stickyUser.id}"]`);
+        const scroller = list();
+        if (!(stickyRow instanceof HTMLElement) || !(scroller instanceof HTMLElement)) return false;
+        const rowRect = stickyRow.getBoundingClientRect();
+        const scrollerRect = scroller.getBoundingClientRect();
+        const rowIntersectsViewport = rowRect.bottom > scrollerRect.top && rowRect.top < scrollerRect.bottom;
+        const rowCenter = (rowRect.top + rowRect.bottom) / 2;
+        const scrollerCenter = (scrollerRect.top + scrollerRect.bottom) / 2;
+        const targetCentered = Math.abs(rowCenter - scrollerCenter) <= scroller.clientHeight / 2;
+        const stickyDismissed = document.querySelector('[data-testid="sticky-user-message"]') === null;
+        return rowIntersectsViewport && (stickyDismissed || targetCentered);
+      }, 3_600);
+
+      const identityThreadId = `perf-message-list-identity-${revision}`;
+      const persistedId = `${identityThreadId}-persisted-response`;
+      fixture.activate(identityThreadId, "Rendered identity fixture", [
+        fixture.message(identityThreadId, 0, "Identity prompt", "user"),
+      ], {
+        narrativeByMessage: {
+          [persistedId]: { tools: [], thoughts: [], hooks: [] },
+        },
+      });
+      fixture.threadStore.getState().handleAgentEvent({
+        type: "turnStarted",
+        threadId: identityThreadId,
+        fileEffectTurnId: `identity-${revision}`,
+      });
+      const responseKey = fixture.threadStore.getState().records.get(identityThreadId)?.currentTurnResponseKey;
+      fixture.threadStore.getState().handleAgentEvent({
+        type: "textDelta",
+        threadId: identityThreadId,
+        delta: "Live answer",
+        isFinalResponse: true,
+      });
+      const liveNodeReady = typeof responseKey === "string" && responseKey.length > 0 && await waitFor(() =>
+        document.querySelector(`[data-performance-virtual-item-key="${responseKey}"]`) !== null,
+      );
+      const liveNode = liveNodeReady
+        ? document.querySelector(`[data-performance-virtual-item-key="${responseKey}"]`)
+        : null;
+      fixture.threadStore.getState().handleAgentEvent({
+        type: "message",
+        threadId: identityThreadId,
+        messageId: persistedId,
+        content: "Persisted answer",
+      });
+      const persistedNodeReady = typeof responseKey === "string" && await waitFor(() => {
+        const node = document.querySelector(`[data-performance-virtual-item-key="${responseKey}"]`);
+        return node !== null && node.querySelector(`[data-message-id="${persistedId}"]`) !== null;
+      });
+      const persistedNode = persistedNodeReady && typeof responseKey === "string"
+        ? document.querySelector(`[data-performance-virtual-item-key="${responseKey}"]`)
+        : null;
+      const liveToPersistedIdentity = liveNode !== null
+        && liveNode === persistedNode
+        && persistedNode?.querySelector(`[data-message-id="${persistedId}"]`) !== null;
+
+      return {
+        durationMs: performance.now() - startedAt,
+        check: {
+          longThreadScroll,
+          dynamicHeightSettled,
+          olderHistoryLoaded,
+          olderHistoryAnchor,
+          newerHistoryLoaded,
+          newerHistoryAnchor,
+          cacheHitThreadIdentity,
+          cacheHitRestored,
+          cacheMissThreadIdentity,
+          cacheMissLoadingObserved,
+          cacheMissRestored,
+          cacheMissTailPositioned,
+          stickyAbsentWhenUserVisible,
+          stickyVisible,
+          stickyTargetWasUnmountedBeforeJump,
+          stickyUserJumped,
+          focusPreserved,
+          interactiveControl,
+          liveToPersistedIdentity,
+          sampleIndex,
+        },
+      };
+    }, sample);
+    }, modeCollector)
+    : null;
+
+  const denseNarrative = selectedWorkloads.has("denseNarrative")
+    ? await timeFixture(page, sampleCount, async (sample) => {
     return page.evaluate(async ({ sampleIndex, profileUpdate }) => {
       const fixture = window.__issue1240;
       const revision = ++fixture.revision;
@@ -834,46 +1644,55 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
         },
       };
     }, { sampleIndex: sample, profileUpdate: mode === "profiling" && sample >= 0 });
-  }, modeCollector);
+    }, modeCollector, { deferFinalReset: true })
+    : null;
 
-  const denseDisclosureCheck = await page.evaluate(async () => {
-    const list = document.querySelector('[data-testid="message-list"]');
-    const expand = [...document.querySelectorAll("button")].find((button) =>
-      button.textContent?.startsWith("Browse all "),
-    );
-    expand?.click();
-    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-    let browseDescendants = list?.querySelectorAll("*").length ?? 0;
-    let pageCount = 0;
-    while (pageCount < 20) {
-      pageCount += 1;
-      const next = [...document.querySelectorAll("button")].find((button) =>
-        button.textContent === "Next" && !button.disabled,
-      );
-      if (!next) break;
-      next.click();
-      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-      browseDescendants = Math.max(
-        browseDescendants,
-        list?.querySelectorAll("*").length ?? 0,
-      );
-    }
-    const summary = [...document.querySelectorAll("button")].find((button) =>
-      button.textContent === "Summary",
-    );
-    summary?.click();
-    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-    return {
-      browsed: pageCount > 1,
-      returnedToSummary: [...document.querySelectorAll("button")].some((button) =>
+  if (denseNarrative) {
+    let denseDisclosureCheck;
+    try {
+      denseDisclosureCheck = await page.evaluate(async () => {
+      const list = document.querySelector('[data-testid="message-list"]');
+      const expand = [...document.querySelectorAll("button")].find((button) =>
         button.textContent?.startsWith("Browse all "),
-      ),
-      browseDescendants,
-    };
-  });
-  for (const check of denseNarrative.checks) Object.assign(check, denseDisclosureCheck);
+      );
+      expand?.click();
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      let browseDescendants = list?.querySelectorAll("*").length ?? 0;
+      let pageCount = 0;
+      while (pageCount < 20) {
+        pageCount += 1;
+        const next = [...document.querySelectorAll("button")].find((button) =>
+          button.textContent === "Next" && !button.disabled,
+        );
+        if (!next) break;
+        next.click();
+        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        browseDescendants = Math.max(
+          browseDescendants,
+          list?.querySelectorAll("*").length ?? 0,
+        );
+      }
+      const summary = [...document.querySelectorAll("button")].find((button) =>
+        button.textContent === "Summary",
+      );
+      summary?.click();
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      return {
+        browsed: pageCount > 1,
+        returnedToSummary: [...document.querySelectorAll("button")].some((button) =>
+          button.textContent?.startsWith("Browse all "),
+        ),
+        browseDescendants,
+      };
+      });
+    } finally {
+      await resetFixtureRuntime(page);
+    }
+    for (const check of denseNarrative.checks) Object.assign(check, denseDisclosureCheck);
+  }
 
-  const markdownShiki = await timeFixture(page, sampleCount, async (sample) => {
+  const markdownShiki = selectedWorkloads.has("markdownShiki")
+    ? await timeFixture(page, sampleCount, async (sample) => {
     return page.evaluate(async (sampleIndex) => {
       const fixture = window.__issue1240;
       const revision = ++fixture.revision;
@@ -944,13 +1763,19 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
         },
       };
     }, sample);
-  }, modeCollector, { captureShiki: true, buildMode: mode });
+    }, modeCollector, { captureShiki: true, buildMode: mode })
+    : null;
 
-  const panelTransitions = await timeFixture(page, sampleCount, async (sample) => {
+  const panelTransitions = selectedWorkloads.has("panelTransitions")
+    ? await timeFixture(page, sampleCount, async (sample) => {
     return page.evaluate(async (sampleIndex) => {
       const fixture = window.__issue1240;
-      const threadId = fixture.threadStore.getState().currentThreadId;
-      if (!threadId) throw new Error("The panel fixture needs an active thread.");
+      const revision = ++fixture.revision;
+      const threadId = `perf-panel-${revision}`;
+      fixture.activate(threadId, "Panel transition fixture", [
+        fixture.message(threadId, 0, "Panel fixture prompt", "user"),
+      ]);
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
       const startedAt = performance.now();
       fixture.diffStore.getState().showRightPanel(fixture.workspaceId, threadId);
       fixture.diffStore.getState().setRightPanelTab(fixture.workspaceId, threadId, "preview");
@@ -970,7 +1795,8 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
         },
       };
     }, sample);
-  }, modeCollector);
+    }, modeCollector)
+    : null;
 
   await waitForFrames(page);
   const observations = await signalCollector.read();
@@ -999,10 +1825,11 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
       message1000,
       threadSwitch,
       streaming,
+      messageListBehavior,
       denseNarrative,
       markdownShiki,
       panelTransitions,
-    }).map(([name, result]) => {
+    }).filter(([, result]) => result !== null).map(([name, result]) => {
       const rawSamples = result.samples.map((durationMs, sampleIndex) => {
         const observed = result.checks[sampleIndex];
         const attribution = result.attributions[sampleIndex];
@@ -1021,9 +1848,13 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
         const rowIsolationFailures = name === "denseNarrative"
           ? validateNarrativeRowIsolation(attribution.react)
           : [];
+        const messageListAttributionFailures = name === "messageListBehavior"
+          ? validateMessageListPerformanceAttribution(attribution.messageList)
+          : [];
         const failures = [
           ...validateWorkloadCheck(name, observed, mode),
           ...rowIsolationFailures,
+          ...messageListAttributionFailures,
           ...pageFailures,
         ];
         return {
@@ -1057,6 +1888,14 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
               .flatMap((sample) => sample.correctness.observed.shikiLongTasksOver50Ms ?? []),
           };
         })(),
+        messageListAttribution: (() => {
+          const acceptedMessageListSamples = rawSamples
+            .filter((sample) => sample.correctness.passed)
+            .map((sample) => sample.attribution.messageList ?? []);
+          return acceptedMessageListSamples.length > 0
+            ? aggregateMessageListPerformanceAttribution(acceptedMessageListSamples)
+            : null;
+        })(),
         correctness: {
           passed: rawSamples.every((sample) => sample.correctness.passed),
           rejectedSamples: rawSamples.filter((sample) => !sample.correctness.passed).length,
@@ -1076,6 +1915,15 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
     runtime,
     buildMode: mode,
     sampleCount,
+    workloads,
+    attributionSignals: {
+      tanstackVirtualItems: "Duration of TanStack Virtual getVirtualItems(), not total virtualizer cost.",
+      narrativeItemProjection: "Duration of MessageList buildStableItems(), including narrative-item construction, not total narrative rendering.",
+      resizeObserverCallbackTraceMs: "Chromium trace duration for ResizeObserver-named events; null when Chromium does not expose them.",
+      gcTraceMs: "Chromium trace duration for GC-named events; null when Chromium does not expose them.",
+      endToEndDuration: "Workload duration includes predicate-based frames needed to observe settled UI behavior; it is not CPU-only cost.",
+      cacheRestoration: "Cache hits restore the saved reading anchor. Cache misses preserve the outgoing transcript until the client record arrives, then position the restored transcript at the tail. Neither path measures server transport or hydration.",
+    },
     metrics,
     observations,
     correctness,

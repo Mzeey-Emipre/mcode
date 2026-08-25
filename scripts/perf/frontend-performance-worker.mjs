@@ -4,7 +4,8 @@ import { dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { collectRunEnvironment } from "./frontend-performance-collectors.mjs";
 import {
-  FRONTEND_RENDERER_WORKLOADS,
+  normalizeFrontendRendererRuntimes,
+  normalizeFrontendRendererWorkloads,
   runRendererMatrix,
 } from "./frontend-renderer-fixture.mjs";
 
@@ -32,6 +33,14 @@ function parseMode() {
   return mode;
 }
 
+function parseWorkloads() {
+  return normalizeFrontendRendererWorkloads(readArgument("--workload"));
+}
+
+function parseRuntimes() {
+  return normalizeFrontendRendererRuntimes(readArgument("--runtime"));
+}
+
 function parseWebUrl() {
   const value = readArgument("--web-url");
   if (!value) throw new Error("--web-url is required");
@@ -42,8 +51,9 @@ function parseWebUrl() {
   return url.origin;
 }
 
-function parseElectronSessionFile() {
+function parseElectronSessionFile(required) {
   const value = readArgument("--electron-session-file");
+  if (!required && value == null) return null;
   if (!value || !/^electron-[a-z0-9-]+\.json$/.test(value)) {
     throw new Error("--electron-session-file must be a safe session file name");
   }
@@ -110,8 +120,10 @@ async function run() {
   const repoRoot = process.cwd();
   const sampleCount = parseSampleCount();
   const mode = parseMode();
+  const workloads = parseWorkloads();
+  const runtimes = parseRuntimes();
   const webUrl = parseWebUrl();
-  const electronSessionFile = parseElectronSessionFile();
+  const electronSessionFile = parseElectronSessionFile(runtimes.includes("electron"));
   const { outputFile, outputRoot } = resolveOutputFile(repoRoot);
   await mkdir(outputRoot, { recursive: true });
 
@@ -143,70 +155,80 @@ async function run() {
   let browser;
   let electronSession;
   try {
-    browser = await playwright.chromium.launch({ headless: true });
-    const context = await browser.newContext({ viewport: VIEWPORT });
-    await context.addCookies([
-      {
-        name: ports.seedLogin.cookieName,
-        value: ports.seedLogin.token,
-        url: webUrl,
-      },
-    ]);
-    const webPage = await context.newPage();
-    await webPage.goto(webUrl, { waitUntil: "domcontentloaded" });
-    await webPage.bringToFront();
-
-    electronSession = await electronHelper.connectElectronSession({
-      playwright,
-      repoRoot,
-      sessionFileName: electronSessionFile,
-    });
-    await electronSession.page.setViewportSize(VIEWPORT);
-
-    const electronStartupMetrics = await electronSession.page.evaluate(async () =>
-      window.desktopBridge?.performance?.getMetrics?.() ?? null,
-    );
-    if (!electronStartupMetrics) {
-      throw new Error("Electron performance metrics are unavailable");
-    }
-    if (mode === "production" && electronStartupMetrics.devToolsOpen) {
-      throw new Error("Production performance mode must run without open DevTools");
+    let webResult;
+    if (runtimes.includes("standalone-web")) {
+      browser = await playwright.chromium.launch({ headless: true });
+      const context = await browser.newContext({ viewport: VIEWPORT });
+      await context.addCookies([
+        {
+          name: ports.seedLogin.cookieName,
+          value: ports.seedLogin.token,
+          url: webUrl,
+        },
+      ]);
+      const webPage = await context.newPage();
+      await webPage.goto(webUrl, { waitUntil: "domcontentloaded" });
+      await webPage.bringToFront();
+      webResult = decorateRuntimeResult(
+        await runRendererMatrix(webPage, "standalone-web", sampleCount, mode, {
+          workload: workloads.join(","),
+        }),
+        runEnvironment,
+        await collectPageEnvironment(webPage),
+        mode,
+        null,
+      );
     }
 
-    const webResult = decorateRuntimeResult(
-      await runRendererMatrix(webPage, "standalone-web", sampleCount, mode),
-      runEnvironment,
-      await collectPageEnvironment(webPage),
-      mode,
-      null,
-    );
-    await electronSession.page.bringToFront();
-    const electronResult = decorateRuntimeResult(
-      await runRendererMatrix(electronSession.page, "electron", sampleCount, mode),
-      runEnvironment,
-      await collectPageEnvironment(electronSession.page),
-      mode,
-      electronStartupMetrics.accelerationMode === "default",
-    );
+    let electronResult;
+    if (runtimes.includes("electron")) {
+      electronSession = await electronHelper.connectElectronSession({
+        playwright,
+        repoRoot,
+        sessionFileName: electronSessionFile,
+      });
+      await electronSession.page.setViewportSize(VIEWPORT);
+      const electronStartupMetrics = await electronSession.page.evaluate(async () =>
+        window.desktopBridge?.performance?.getMetrics?.() ?? null,
+      );
+      if (!electronStartupMetrics) {
+        throw new Error("Electron performance metrics are unavailable");
+      }
+      if (mode === "production" && electronStartupMetrics.devToolsOpen) {
+        throw new Error("Production performance mode must run without open DevTools");
+      }
+      await electronSession.page.bringToFront();
+      electronResult = decorateRuntimeResult(
+        await runRendererMatrix(electronSession.page, "electron", sampleCount, mode, {
+          workload: workloads.join(","),
+        }),
+        runEnvironment,
+        await collectPageEnvironment(electronSession.page),
+        mode,
+        electronStartupMetrics.accelerationMode === "default",
+      );
+    }
     const result = {
       schemaVersion: 2,
       recordedAt: new Date().toISOString(),
       buildMode: mode,
       comparisonContract: {
         viewport: VIEWPORT,
-        workloadOrder: FRONTEND_RENDERER_WORKLOADS,
+        workloadOrder: workloads,
         warmupCount: WARMUP_COUNT,
         sampleCount,
       },
       correctness: {
-        passed: webResult.correctness.passed && electronResult.correctness.passed,
-        rejectedSamples:
-          webResult.correctness.rejectedSamples + electronResult.correctness.rejectedSamples,
+        passed: [webResult, electronResult].every((runtime) => runtime?.correctness.passed),
+        rejectedSamples: [webResult, electronResult].reduce(
+          (total, runtime) => total + (runtime?.correctness.rejectedSamples ?? 0),
+          0,
+        ),
       },
-      runtimes: {
-        standaloneWeb: webResult,
-        electron: electronResult,
-      },
+      runtimes: Object.fromEntries([
+        ["standaloneWeb", webResult],
+        ["electron", electronResult],
+      ].filter(([, runtime]) => runtime !== undefined)),
     };
     await writeFile(outputFile, `${JSON.stringify(result, null, 2)}\n`, "utf8");
     process.stdout.write(`${JSON.stringify({

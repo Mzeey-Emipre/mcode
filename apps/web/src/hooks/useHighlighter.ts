@@ -103,7 +103,12 @@ export function useHighlighter(
         if (!result || result.type !== "highlight") return;
         let responseMeasured = false;
         if (measurePerformance && result.timing) {
-          responseMeasured = recordShikiWorkerTiming(id, result.timing, performance.now());
+          responseMeasured = recordShikiWorkerTiming(
+            id,
+            result.timing,
+            performance.now(),
+            Date.now(),
+          );
         }
         if (result.error) console.warn("[shiki-worker]", result.error);
         measurementIdRef.current = responseMeasured ? id : null;
@@ -145,7 +150,12 @@ export function useHighlighter(
         if (currentRequestTokenRef.current !== requestToken) return;
         let responseMeasured = false;
         if (measurementId && timing) {
-          responseMeasured = recordShikiWorkerTiming(measurementId, timing, performance.now());
+          responseMeasured = recordShikiWorkerTiming(
+            measurementId,
+            timing,
+            performance.now(),
+            Date.now(),
+          );
         }
         measurementIdRef.current = responseMeasured ? measurementId : null;
         setHtml(result);

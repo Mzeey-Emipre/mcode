@@ -1,5 +1,6 @@
 import {
   MAX_SHIKI_PERFORMANCE_DURATION_MS,
+  MAX_SHIKI_PERFORMANCE_EPOCH_MS,
   MAX_SHIKI_PERFORMANCE_MEASUREMENTS,
   MAX_SHIKI_PERFORMANCE_RESPONSE_BYTES,
   type ShikiPerformanceObservation,
@@ -14,7 +15,6 @@ const performanceBuild =
 
 interface PendingShikiMeasurement {
   readonly requestStartedAtMs: number;
-  responseReceivedAtMs: number | null;
   phase: ShikiPerformancePhase | null;
   completed: boolean;
 }
@@ -35,16 +35,19 @@ function boundedResponseBytes(value: number): number | null {
     : null;
 }
 
-/** Computes message-boundary delivery from absolute renderer and worker clocks. */
+function validEpochTimestamp(value: number): boolean {
+  return Number.isSafeInteger(value) && value >= 0 && value <= MAX_SHIKI_PERFORMANCE_EPOCH_MS;
+}
+
+/** Computes worker-to-renderer delivery from the shared wall-clock boundary. */
 export function calculateWorkerDeliveryDuration(
-  rendererTimeOriginMs: number,
-  responseReceivedAtMs: number,
-  workerTimeOriginMs: number,
-  workerPostedAtMs: number,
+  responseReceivedAtEpochMs: number,
+  workerPostedAtEpochMs: number,
 ): number | null {
-  return boundedDuration(
-    rendererTimeOriginMs + responseReceivedAtMs - workerTimeOriginMs - workerPostedAtMs,
-  );
+  if (!validEpochTimestamp(responseReceivedAtEpochMs) || !validEpochTimestamp(workerPostedAtEpochMs)) {
+    return null;
+  }
+  return boundedDuration(responseReceivedAtEpochMs - workerPostedAtEpochMs);
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -65,9 +68,8 @@ function parseWorkerTiming(value: unknown): ShikiWorkerTiming | null {
     "highlighterCreationMs",
     "phase",
     "responseBytes",
-    "workerPostTimeMs",
+    "workerPostedAtEpochMs",
     "workerStartupMs",
-    "workerTimeOriginMs",
   ];
   const actualKeys = Object.keys(value).sort();
   if (
@@ -89,15 +91,7 @@ function parseWorkerTiming(value: unknown): ShikiWorkerTiming | null {
   if (typeof value.responseBytes !== "number" || boundedResponseBytes(value.responseBytes) === null) {
     return null;
   }
-  if (
-    typeof value.workerPostTimeMs !== "number" ||
-    !Number.isFinite(value.workerPostTimeMs) ||
-    value.workerPostTimeMs < 0 ||
-    value.workerPostTimeMs > 1_000_000_000 ||
-    typeof value.workerTimeOriginMs !== "number" ||
-    !Number.isFinite(value.workerTimeOriginMs) ||
-    value.workerTimeOriginMs < 0
-  ) {
+  if (typeof value.workerPostedAtEpochMs !== "number" || !validEpochTimestamp(value.workerPostedAtEpochMs)) {
     return null;
   }
   return value as unknown as ShikiWorkerTiming;
@@ -146,7 +140,6 @@ export function startShikiMeasurement(requestId: string, requestStartedAtMs: num
   }
   pendingMeasurements.set(requestId, {
     requestStartedAtMs,
-    responseReceivedAtMs: null,
     phase: null,
     completed: false,
   });
@@ -157,20 +150,23 @@ export function recordShikiWorkerTiming(
   requestId: string,
   value: unknown,
   responseReceivedAtMs: number,
+  responseReceivedAtEpochMs: number,
 ): boolean {
   if (!shouldMeasureShiki()) return false;
   const measurement = pendingMeasurements.get(requestId);
   const timing = parseWorkerTiming(value);
-  if (!measurement || !timing || !Number.isFinite(responseReceivedAtMs)) return false;
+  if (
+    !measurement
+    || !timing
+    || !Number.isFinite(responseReceivedAtMs)
+    || !validEpochTimestamp(responseReceivedAtEpochMs)
+  ) return false;
 
   const deliveryDuration = calculateWorkerDeliveryDuration(
-    performance.timeOrigin,
-    responseReceivedAtMs,
-    timing.workerTimeOriginMs,
-    timing.workerPostTimeMs,
+    responseReceivedAtEpochMs,
+    timing.workerPostedAtEpochMs,
   );
 
-  measurement.responseReceivedAtMs = responseReceivedAtMs;
   measurement.phase = timing.phase;
   if (timing.phase === "cold") {
     pushObservation({ phase: timing.phase, stage: "workerStartup", durationMs: timing.workerStartupMs });

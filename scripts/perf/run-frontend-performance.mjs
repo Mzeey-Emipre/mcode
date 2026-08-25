@@ -6,6 +6,10 @@ import { readPortsFile } from "../agent/runtime-contract.mjs";
 import { ensurePlaywright } from "../../.codex/skills/electorn-live-testing/scripts/ensure-playwright.mjs";
 import { startElectron } from "../../.codex/skills/electorn-live-testing/scripts/start-electron.mjs";
 import { stopElectron } from "../../.codex/skills/electorn-live-testing/scripts/stop-electron.mjs";
+import {
+  normalizeFrontendRendererRuntimes,
+  normalizeFrontendRendererWorkloads,
+} from "./frontend-renderer-fixture.mjs";
 
 const POLL_INTERVAL_MS = 250;
 
@@ -29,6 +33,16 @@ export function parsePerformanceMode() {
     throw new Error("--mode must be profiling or production");
   }
   return value;
+}
+
+/** Parses the optional frontend workload filter. */
+export function parseFrontendPerformanceWorkloads() {
+  return normalizeFrontendRendererWorkloads(readArgument("--workload"));
+}
+
+/** Parses the optional frontend runtime filter. */
+export function parseFrontendPerformanceRuntimes() {
+  return normalizeFrontendRendererRuntimes(readArgument("--runtime"));
 }
 
 function resolveOutputFile(repoRoot) {
@@ -202,6 +216,8 @@ export async function runFrontendPerformance(repoRoot = process.cwd()) {
   const root = resolve(repoRoot);
   const sampleCount = parseSampleCount();
   const mode = parsePerformanceMode();
+  const workloads = parseFrontendPerformanceWorkloads();
+  const runtimes = parseFrontendPerformanceRuntimes();
   const outputFile = resolveOutputFile(root);
   const completionFile = `${outputFile}.complete`;
   const failureFile = resolve(
@@ -240,32 +256,41 @@ export async function runFrontendPerformance(repoRoot = process.cwd()) {
       runtimeContract.computeDeterministicPort(root, 44_000),
     );
     rendererServer = await startBuiltRendererServer(root, webPort);
-    const performanceSessionFile = join(root, ".dev", sessionFileName);
-    if (existsSync(performanceSessionFile)) {
-      stopElectron(root, { sessionFileName });
-    }
-    const electronRecord = await startElectron(root, {
-      performanceMode: mode,
-      rendererUrl: null,
-      sessionFileName,
-    });
-    startedElectron = true;
-
-    const worker = spawn(
-      electronRecord.executablePath,
-      [
-        join(root, "scripts", "perf", "frontend-performance-worker.mjs"),
-        "--sample-count",
-        String(sampleCount),
-        "--mode",
-        mode,
-        "--web-url",
-        rendererServer.url,
-        "--electron-session-file",
+    let electronRecord;
+    if (runtimes.includes("electron")) {
+      const performanceSessionFile = join(root, ".dev", sessionFileName);
+      if (existsSync(performanceSessionFile)) {
+        stopElectron(root, { sessionFileName });
+      }
+      electronRecord = await startElectron(root, {
+        performanceMode: mode,
+        rendererUrl: null,
         sessionFileName,
-        "--output",
-        outputFile,
-      ],
+      });
+      startedElectron = true;
+    }
+
+    const workerArguments = [
+      join(root, "scripts", "perf", "frontend-performance-worker.mjs"),
+      "--sample-count",
+      String(sampleCount),
+      "--mode",
+      mode,
+      "--workload",
+      workloads.join(","),
+      "--runtime",
+      runtimes.join(","),
+      "--web-url",
+      rendererServer.url,
+      "--output",
+      outputFile,
+    ];
+    if (runtimes.includes("electron")) {
+      workerArguments.push("--electron-session-file", sessionFileName);
+    }
+    const worker = spawn(
+      electronRecord?.executablePath ?? process.execPath,
+      workerArguments,
       {
         cwd: root,
         env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },

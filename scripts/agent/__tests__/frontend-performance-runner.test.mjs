@@ -1,16 +1,24 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { summarizeDurationSamples } from "../../perf/frontend-performance-collectors.mjs";
 import {
+  summarizeDurationSamples,
+  summarizeTrace,
+} from "../../perf/frontend-performance-collectors.mjs";
+import {
+  aggregateMessageListPerformanceAttribution,
   aggregateShikiStageAttribution,
   extractShikiLongTasks,
   FRONTEND_RENDERER_WORKLOADS,
   getShikiTraceOptions,
+  MESSAGE_LIST_PERFORMANCE_STAGE_NAMES,
   SHIKI_STAGE_NAMES,
+  validateMessageListPerformanceAttribution,
   validateNarrativeRowIsolation,
   validateWorkloadCheck,
 } from "../../perf/frontend-renderer-fixture.mjs";
 import {
+  parseFrontendPerformanceRuntimes,
+  parseFrontendPerformanceWorkloads,
   parsePerformanceMode,
   runFrontendPerformance,
 } from "../../perf/run-frontend-performance.mjs";
@@ -47,6 +55,7 @@ describe("frontend performance runner", () => {
       "message1000",
       "threadSwitch",
       "streaming",
+      "messageListBehavior",
       "denseNarrative",
       "markdownShiki",
       "panelTransitions",
@@ -79,6 +88,11 @@ describe("frontend performance runner", () => {
     assert.deepEqual(validateWorkloadCheck("streaming", {
       expectedText: "complete response",
       streamingText: "partial response",
+      storeUpdateCommits: 200,
+      visibleStreamingUpdates: 200,
+      visualStreamingCommitted: true,
+      tailFollowed: true,
+      userAwayPreserved: true,
     }), ["streamed response text differs"]);
     assert.deepEqual(validateWorkloadCheck("markdownShiki", {
       codeBlocks: 10,
@@ -127,6 +141,124 @@ describe("frontend performance runner", () => {
       terminalShell: true,
       visible: true,
     }), ["Terminal is not the active panel"]);
+  });
+
+  it("rejects a message-list behavior sample when a cache-miss does not render the restored record", () => {
+    const accepted = {
+      longThreadScroll: true,
+      dynamicHeightSettled: true,
+      olderHistoryAnchor: true,
+      newerHistoryAnchor: true,
+      olderHistoryLoaded: true,
+      newerHistoryLoaded: true,
+      cacheHitThreadIdentity: true,
+      cacheHitRestored: true,
+      cacheMissThreadIdentity: true,
+      cacheMissLoadingObserved: true,
+      cacheMissRestored: true,
+      cacheMissTailPositioned: true,
+      stickyAbsentWhenUserVisible: true,
+      stickyVisible: true,
+      stickyTargetWasUnmountedBeforeJump: true,
+      stickyUserJumped: true,
+      focusPreserved: true,
+      interactiveControl: true,
+      liveToPersistedIdentity: true,
+    };
+    assert.deepEqual(validateWorkloadCheck("messageListBehavior", accepted), []);
+    assert.deepEqual(validateWorkloadCheck("messageListBehavior", {
+      ...accepted,
+      cacheMissRestored: false,
+    }), ["cache-miss did not render the restored client record"]);
+    assert.deepEqual(validateWorkloadCheck("messageListBehavior", {
+      ...accepted,
+      olderHistoryLoaded: false,
+    }), ["older history did not load a page"]);
+    assert.deepEqual(validateWorkloadCheck("messageListBehavior", {
+      ...accepted,
+      cacheMissLoadingObserved: false,
+    }), ["cache-miss did not hold the outgoing transcript while empty"]);
+    assert.deepEqual(validateWorkloadCheck("messageListBehavior", {
+      ...accepted,
+      cacheMissTailPositioned: false,
+    }), ["cache-miss did not position the restored transcript at the tail"]);
+    assert.deepEqual(validateWorkloadCheck("messageListBehavior", {
+      ...accepted,
+      stickyTargetWasUnmountedBeforeJump: false,
+    }), ["sticky user target stayed mounted before jump"]);
+    assert.deepEqual(validateWorkloadCheck("messageListBehavior", {
+      ...accepted,
+      stickyUserJumped: false,
+    }), ["sticky user message did not jump to its transcript row"]);
+  });
+
+  it("rejects a streaming sample when one update never reaches the live response", () => {
+    assert.deepEqual(validateWorkloadCheck("streaming", {
+      expectedText: "complete response",
+      streamingText: "complete response",
+      storeUpdateCommits: 200,
+      visibleStreamingUpdates: 199,
+      visualStreamingCommitted: true,
+      tailFollowed: true,
+      userAwayPreserved: true,
+    }), ["streaming did not visibly commit 200 updates"]);
+  });
+
+  it("rejects an unvirtualized long-thread mount", () => {
+    assert.deepEqual(validateWorkloadCheck("message100", {
+      activeThreadId: "thread-100",
+      currentThreadId: "thread-100",
+      visibleThreadId: "thread-100",
+      mountedMessages: 65,
+      totalMessages: 100,
+    }), ["virtualized message rows exceeded 64"]);
+  });
+
+  it("rejects missing MessageList timing stages before a virtualizer attribution becomes incomplete", () => {
+    assert.deepEqual(MESSAGE_LIST_PERFORMANCE_STAGE_NAMES, [
+      "narrativeItemProjection",
+      "tanstackVirtualItems",
+    ]);
+    assert.deepEqual(validateMessageListPerformanceAttribution([
+      { stage: "narrativeItemProjection", durationMs: 0.5 },
+      { stage: "tanstackVirtualItems", durationMs: 0.25 },
+    ]), []);
+    assert.deepEqual(validateMessageListPerformanceAttribution([
+      { stage: "narrativeItemProjection", durationMs: 0.5 },
+    ]), ["missing MessageList performance stage: tanstackVirtualItems"]);
+    assert.deepEqual(aggregateMessageListPerformanceAttribution([
+      [
+        { stage: "narrativeItemProjection", durationMs: 4 },
+        { stage: "tanstackVirtualItems", durationMs: 1 },
+      ],
+      [
+        { stage: "narrativeItemProjection", durationMs: 2 },
+        { stage: "tanstackVirtualItems", durationMs: 3 },
+      ],
+    ]), {
+      narrativeItemProjection: {
+        sampleCount: 2,
+        minMs: 2,
+        medianMs: 2,
+        p95Ms: 4,
+        maxMs: 4,
+      },
+      tanstackVirtualItems: {
+        sampleCount: 2,
+        minMs: 1,
+        medianMs: 1,
+        p95Ms: 3,
+        maxMs: 3,
+      },
+    });
+  });
+
+  it("recognizes MinorGC and MajorGC trace events", () => {
+    assert.equal(summarizeTrace([
+      { ph: "X", name: "MinorGC", dur: 1_000 },
+      { ph: "X", name: "MajorGC", dur: 2_000 },
+      { ph: "X", name: "Logic", dur: 5_000 },
+    ]).gcTraceMs, 3);
   });
 
   it("aggregates known Shiki stages by cold and warm phase", () => {
@@ -211,6 +343,15 @@ describe("frontend performance runner", () => {
         "production",
       ),
       /workload style/,
+    );
+  });
+
+  it("rejects a Shiki sample that lacks the measured worker delivery boundary", () => {
+    assert.throws(
+      () => aggregateShikiStageAttribution(
+        completeShikiObservations.filter(({ stage }) => stage !== "workerDelivery"),
+      ),
+      /workerDelivery/,
     );
   });
 
@@ -302,6 +443,33 @@ describe("frontend performance runner", () => {
       assert.equal(parsePerformanceMode(), "profiling");
       process.argv.splice(0, process.argv.length, ...originalArguments, "--mode", "development");
       assert.throws(parsePerformanceMode, /profiling or production/);
+    } finally {
+      process.argv.splice(0, process.argv.length, ...originalArguments);
+    }
+  });
+
+  it("filters runtime probes without changing their fixed workload order", () => {
+    const originalArguments = [...process.argv];
+    try {
+      process.argv.push("--workload", "markdownShiki,messageListBehavior", "--runtime", "electron");
+      assert.deepEqual(parseFrontendPerformanceWorkloads(), ["messageListBehavior", "markdownShiki"]);
+      assert.deepEqual(parseFrontendPerformanceRuntimes(), ["electron"]);
+      process.argv.splice(
+        0,
+        process.argv.length,
+        ...originalArguments,
+        "--workload",
+        "unknown",
+      );
+      assert.throws(parseFrontendPerformanceWorkloads, /known workloads/);
+      process.argv.splice(
+        0,
+        process.argv.length,
+        ...originalArguments,
+        "--runtime",
+        "browser",
+      );
+      assert.throws(parseFrontendPerformanceRuntimes, /known runtimes/);
     } finally {
       process.argv.splice(0, process.argv.length, ...originalArguments);
     }

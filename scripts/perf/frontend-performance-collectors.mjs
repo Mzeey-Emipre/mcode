@@ -161,19 +161,26 @@ function summarizeFrames(frameTimes) {
   };
 }
 
-function summarizeTrace(events) {
-  const durationMs = (names) => {
+/** Summarizes selected Chromium trace event durations. */
+export function summarizeTrace(events) {
+  const durationMs = (predicate) => {
     const matching = events.filter(
-      (event) => event.ph === "X" && names.has(event.name) && Number.isFinite(event.dur),
+      (event) => event.ph === "X" && predicate(event) && Number.isFinite(event.dur),
     );
     return matching.length > 0
       ? matching.reduce((total, event) => total + event.dur / 1_000, 0)
       : null;
   };
+  const named = (names) => durationMs((event) => names.has(event.name));
   return {
-    styleMs: durationMs(new Set(["RecalculateStyles", "UpdateLayoutTree"])),
-    layoutMs: durationMs(new Set(["Layout"])),
-    paintMs: durationMs(new Set(["Paint", "PaintImage", "CompositeLayers"])),
+    styleMs: named(new Set(["RecalculateStyles", "UpdateLayoutTree"])),
+    layoutMs: named(new Set(["Layout"])),
+    paintMs: named(new Set(["Paint", "PaintImage", "CompositeLayers"])),
+    resizeObserverCallbackTraceMs: durationMs((event) =>
+      typeof event.name === "string" && /resizeobserver/i.test(event.name)),
+    gcTraceMs: durationMs((event) =>
+      typeof event.name === "string"
+        && /(?:^|[^a-z])(?:minor|major)?gc(?:$|[^a-z])|garbage.?collect/i.test(event.name)),
     traceEventCount: events.length,
   };
 }
@@ -255,7 +262,10 @@ export async function createModeSignalCollector(page, mode) {
           electronProcess: processBefore && processAfter
             ? { before: processBefore, after: processAfter }
             : null,
-          gpu: null,
+          gpu: {
+            status: "unavailable",
+            signal: "OS GPU counters are not available in the paired un-packaged runner",
+          },
         },
       };
     },
