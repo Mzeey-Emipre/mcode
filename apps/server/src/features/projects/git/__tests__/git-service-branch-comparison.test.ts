@@ -1,7 +1,8 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { WorkspaceRepo } from "../../persistence/workspace-repo.js";
-import { GitService } from "../git-service.js";
+import { GitComparisonService } from "../git-comparison-service.js";
+import { GitRepositoryService } from "../git-repository-service.js";
 import { createMockGitExecutor } from "../execution/__tests__/mock-git-executor.js";
 
 const { mockLogger } = vi.hoisted(() => ({
@@ -44,15 +45,20 @@ function branchListOutput(
 
 const REPO = "/repo";
 
-describe("GitService.resolveBranchComparison", () => {
-  let gitService: GitService;
+describe("GitComparisonService.resolveBranchComparison", () => {
+  let gitService: GitComparisonService;
   let execFn: Mock<(args: string[], opts?: GitExecOptions) => Promise<GitExecResult>>;
 
   beforeEach(() => {
     vi.resetAllMocks();
     const mock = createMockGitExecutor();
     execFn = mock.execFn;
-    gitService = new GitService({} as WorkspaceRepo, mock.executor);
+    const workspaceRepo = {} as WorkspaceRepo;
+    gitService = new GitComparisonService(
+      workspaceRepo,
+      mock.executor,
+      new GitRepositoryService(workspaceRepo, mock.executor),
+    );
   });
 
   /**
@@ -323,20 +329,25 @@ describe("GitService.resolveBranchComparison", () => {
   });
 });
 
-describe("GitService.branchFiles / branchDiff ranges", () => {
-  let gitService: GitService;
+describe("GitComparisonService branch comparison ranges", () => {
+  let gitService: GitComparisonService;
   let execFn: Mock<(args: string[], opts?: GitExecOptions) => Promise<GitExecResult>>;
 
   beforeEach(() => {
     vi.resetAllMocks();
     const mock = createMockGitExecutor();
     execFn = mock.execFn;
-    gitService = new GitService({} as WorkspaceRepo, mock.executor);
+    const workspaceRepo = {} as WorkspaceRepo;
+    gitService = new GitComparisonService(
+      workspaceRepo,
+      mock.executor,
+      new GitRepositoryService(workspaceRepo, mock.executor),
+    );
     execFn.mockResolvedValue({ stdout: "a.ts\nb.ts", stderr: "" });
   });
 
   it("diffs an explicit pair three-dot for branchFiles", async () => {
-    const files = await gitService.branchFiles("ws", "main", "feat/x", REPO);
+    const files = await gitService.listBranchComparisonChangedFiles("ws", "main", "feat/x", REPO);
 
     expect(files).toEqual(["a.ts", "b.ts"]);
     expect(execFn).toHaveBeenCalledWith(
@@ -346,7 +357,7 @@ describe("GitService.branchFiles / branchDiff ranges", () => {
   });
 
   it("diffs an explicit pair three-dot for branchDiff with renames", async () => {
-    await gitService.branchDiff("ws", "main", "origin/main", "a.ts", undefined, REPO);
+    await gitService.readBranchComparisonDiff("ws", "main", "origin/main", "a.ts", undefined, REPO);
 
     expect(execFn).toHaveBeenCalledWith(
       ["-C", REPO, "diff", "--find-renames", "main...origin/main", "--", "a.ts"],
@@ -356,10 +367,10 @@ describe("GitService.branchFiles / branchDiff ranges", () => {
 
   it("rejects a ref that could smuggle a git flag (argument injection)", async () => {
     await expect(
-      gitService.branchFiles("ws", "--output=/tmp/pwned", "HEAD", REPO),
+      gitService.listBranchComparisonChangedFiles("ws", "--output=/tmp/pwned", "HEAD", REPO),
     ).rejects.toThrow(/unsafe git ref/i);
     await expect(
-      gitService.branchDiff("ws", "main", "-rf", undefined, undefined, REPO),
+      gitService.readBranchComparisonDiff("ws", "main", "-rf", undefined, undefined, REPO),
     ).rejects.toThrow(/unsafe git ref/i);
     expect(execFn).not.toHaveBeenCalled();
   });
@@ -371,7 +382,7 @@ describe("GitService.branchFiles / branchDiff ranges", () => {
       return { stdout: "a.ts", stderr: "" };
     });
 
-    await gitService.branchFiles("ws", undefined, undefined, REPO);
+    await gitService.listBranchComparisonChangedFiles("ws", undefined, undefined, REPO);
 
     expect(execFn).toHaveBeenCalledWith(
       ["-C", REPO, "diff", "--name-only", "main...HEAD"],
@@ -387,7 +398,7 @@ describe("GitService.branchFiles / branchDiff ranges", () => {
       return { stdout: "a.ts", stderr: "" };
     });
 
-    const files = await gitService.branchFiles("ws", undefined, undefined, REPO);
+    const files = await gitService.listBranchComparisonChangedFiles("ws", undefined, undefined, REPO);
 
     expect(files).toEqual([]);
     expect(execFn).not.toHaveBeenCalledWith(

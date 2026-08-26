@@ -9,7 +9,11 @@ import { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
 import { ThreadRepo } from "../../persistence/thread-repo.js";
 import { CleanupJobRepo, MAX_CLEANUP_ATTEMPTS } from "../persistence/cleanup-job-repo.js";
 import { CleanupWorker } from "../cleanup-worker.js";
-import { GitService } from "../../../projects/index.js";
+import {
+  GitRepositoryService,
+  GitWorktreeService,
+  WorktreeSafetyService,
+} from "../../../projects/index.js";
 import { RepositoryGitMutationLock } from "../../../projects/git/repository-git-mutation-lock.js";
 import { RealGitExecutor } from "../../../projects/git/execution/real-git-executor.js";
 import { getMcodeDir } from "@mcode/shared";
@@ -27,7 +31,8 @@ describe("completed thread cleanup Git safety", () => {
   let database: Database.Database;
   let repositoryPath: string;
   let worktreePath: string;
-  let service: GitService;
+  let gitWorktrees: GitWorktreeService;
+  let worktreeSafety: WorktreeSafetyService;
   let workspaceRepo: WorkspaceRepo;
   let threadRepo: ThreadRepo;
   let cleanupJobRepo: CleanupJobRepo;
@@ -53,7 +58,10 @@ describe("completed thread cleanup Git safety", () => {
     cleanupJobRepo = new CleanupJobRepo(database);
     externalTargetPath = null;
     escapingLinkContainerPath = null;
-    service = new GitService(workspaceRepo, new RealGitExecutor());
+    const executor = new RealGitExecutor();
+    const gitRepository = new GitRepositoryService(workspaceRepo, executor);
+    gitWorktrees = new GitWorktreeService(workspaceRepo, executor, undefined, undefined, gitRepository);
+    worktreeSafety = new WorktreeSafetyService(executor);
     worker = createWorker();
   }, 30_000);
 
@@ -72,8 +80,8 @@ describe("completed thread cleanup Git safety", () => {
       threadRepo,
       { waitForSessionExit: vi.fn().mockResolvedValue(undefined) } as unknown as ClaudeProvider,
       { killByThread: vi.fn().mockResolvedValue(undefined) } as unknown as TerminalBackend,
-      service,
-      service,
+      gitWorktrees,
+      worktreeSafety,
       new RepositoryGitMutationLock(),
       workspaceRepo,
       { removeForThread: vi.fn() } as unknown as AttachmentService,
@@ -122,7 +130,7 @@ describe("completed thread cleanup Git safety", () => {
   }
 
   it("accepts a clean branchless worktree with no unique commits", async () => {
-    await expect(service.assessBranchlessWorktreeRemoval(worktreePath, "main")).resolves.toEqual({
+    await expect(worktreeSafety.assessBranchlessWorktreeRemoval(worktreePath, "main")).resolves.toEqual({
       safe: true,
       reason: "clean",
     });
@@ -131,7 +139,7 @@ describe("completed thread cleanup Git safety", () => {
   it("rejects a worktree with uncommitted changes", async () => {
     writeFileSync(join(worktreePath, "tracked.txt"), "changed\n");
 
-    await expect(service.assessBranchlessWorktreeRemoval(worktreePath, "main")).resolves.toEqual({
+    await expect(worktreeSafety.assessBranchlessWorktreeRemoval(worktreePath, "main")).resolves.toEqual({
       safe: false,
       reason: "dirty",
     });
@@ -142,7 +150,7 @@ describe("completed thread cleanup Git safety", () => {
     execFileSync("git", ["-C", worktreePath, "add", "unique.txt"]);
     execFileSync("git", ["-C", worktreePath, "commit", "-m", "unique"]);
 
-    await expect(service.assessBranchlessWorktreeRemoval(worktreePath, "main")).resolves.toEqual({
+    await expect(worktreeSafety.assessBranchlessWorktreeRemoval(worktreePath, "main")).resolves.toEqual({
       safe: false,
       reason: "unique_commits",
     });
@@ -274,7 +282,7 @@ describe("completed thread cleanup Git safety", () => {
     expect(existsSync(externalTargetPath)).toBe(true);
   }, 30_000);
 
-  it("rejects an escaping link at the GitService removal boundary", async ({ skip }) => {
+  it("rejects an escaping link at the worktree removal boundary", async ({ skip }) => {
     externalTargetPath = mkdtempSync(join(getMcodeDir(), "mcode-external-git-service-"));
     escapingLinkContainerPath = mkdtempSync(join(getMcodeDir(), "worktrees", "mcode-git-service-link-"));
     const escapingLink = join(escapingLinkContainerPath, "worktree");
@@ -286,7 +294,7 @@ describe("completed thread cleanup Git safety", () => {
     }
 
     await expect(
-      service.removeWorktree(repositoryPath, "escaping", {
+      gitWorktrees.removeWorktree(repositoryPath, "escaping", {
         deleteBranch: false,
         worktreePath: escapingLink,
         managedCanonicalOnly: true,

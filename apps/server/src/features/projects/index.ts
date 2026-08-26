@@ -8,9 +8,7 @@ export { WorkspaceEnricher } from "./lifecycle/workspace-enricher.js";
 export { FilesystemBrowser } from "./lifecycle/filesystem-browser.js";
 
 /** Provides project Git and worktree operations. */
-export {
-  GitService,
-} from "./git/git-service.js";
+export type { GitService } from "./git/git-service.js";
 /** Serializes Git worktree mutations for one repository. */
 export { RepositoryGitMutationLock } from "./git/repository-git-mutation-lock.js";
 /** Performs repository-level Git commands and remote identity normalization. */
