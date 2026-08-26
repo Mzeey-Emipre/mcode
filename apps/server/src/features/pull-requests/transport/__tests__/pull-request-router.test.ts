@@ -340,11 +340,11 @@ describe("pull request WebSocket routing", () => {
           },
         }),
       },
-      gitService: {
+      gitRepository: {
         push,
-        pushPullRequestReviewBranch,
         getCurrentBranchAt: vi.fn().mockResolvedValue("mcode/pr-42"),
       },
+      pullRequestReviews: { pushPullRequestReviewBranch },
       ciWatcherService: {
         findByWorkspaceBranch: vi.fn().mockReturnValue([]),
         scheduleBumpAfterPush: vi.fn(),
@@ -381,7 +381,7 @@ describe("pull request WebSocket routing", () => {
       reviewWorktreeService: {
         resolvePushTarget: vi.fn().mockReturnValue({ kind: "invalid_review" }),
       },
-      gitService: { push },
+      gitRepository: { push },
     } as unknown as RouterDeps;
 
     const response = await routeMessage(JSON.stringify({
@@ -413,10 +413,8 @@ describe("pull request WebSocket routing", () => {
           },
         }),
       },
-      gitService: {
-        getCurrentBranchAt: vi.fn().mockResolvedValue("other-branch"),
-        pushPullRequestReviewBranch,
-      },
+      gitRepository: { getCurrentBranchAt: vi.fn().mockResolvedValue("other-branch") },
+      pullRequestReviews: { pushPullRequestReviewBranch },
     } as unknown as RouterDeps;
 
     const response = await routeMessage(JSON.stringify({

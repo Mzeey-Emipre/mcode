@@ -330,7 +330,7 @@ describe("completed thread cleanup Git safety", () => {
 
   it("preserves retry state across worker restart and blocks after exhaustion", async () => {
     const thread = addCompletedThread({ title: "Retry" });
-    vi.spyOn(service, "removeWorktree").mockRejectedValue(new Error("transient lock"));
+    vi.spyOn(gitWorktrees, "removeWorktree").mockRejectedValue(new Error("transient lock"));
 
     await worker.poll();
     expect(cleanupJobRepo.findByThreadId(thread.id)).toMatchObject({ attempts: 1 });

@@ -1730,18 +1730,20 @@ describe("AgentService Ended finalization", () => {
       threadId: thread.id,
       turnExecutionId: executionId,
     } satisfies AgentEvent);
-    await new Promise((resolve) => setTimeout(resolve, 0));
 
-    const { messages } = messageRepo.listByThread(thread.id, 10);
-    const assistant = messages.find((message) => message.role === "assistant");
-    expect(assistant?.content).toBe("partial answer before the provider stopped");
-    expect(assistant?.outcome).toBe("interrupted");
-    expect(broadcast).toHaveBeenCalledWith("turn.persisted", expect.objectContaining({
-      threadId: thread.id,
-      messageId: assistant?.id,
-      outcome: "interrupted",
-      executionId,
-    }));
+    await vi.waitFor(() => {
+      const { messages } = messageRepo.listByThread(thread.id, 10);
+      const assistant = messages.find((message) => message.role === "assistant");
+
+      expect(assistant?.content).toBe("partial answer before the provider stopped");
+      expect(assistant?.outcome).toBe("interrupted");
+      expect(broadcast).toHaveBeenCalledWith("turn.persisted", expect.objectContaining({
+        threadId: thread.id,
+        messageId: assistant?.id,
+        outcome: "interrupted",
+        executionId,
+      }));
+    });
   });
 
   it("makes a matching outcome-less Ended recoverable as Interrupted", async () => {

@@ -6,8 +6,11 @@ import { ThreadRepo } from "../../persistence/thread-repo.js";
 import { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
 import { CleanupJobRepo } from "../../cleanup/persistence/cleanup-job-repo.js";
 import { ThreadService } from "../thread-service.js";
-import { ProjectWorktreeService } from "../../../projects/index.js";
-import type { GitService } from "../../../projects/index.js";
+import {
+  ProjectWorktreeService,
+  type GitWorktreeService,
+  type WorktreeSafetyService,
+} from "../../../projects/index.js";
 import type { AttachmentService } from "../../../attachments/storage/attachment-service.js";
 import type { HandoffStorage } from "../../../handoff/index.js";
 
@@ -16,7 +19,8 @@ describe("ThreadService.delete", () => {
   let threadRepo: ThreadRepo;
   let workspaceRepo: WorkspaceRepo;
   let cleanupJobRepo: CleanupJobRepo;
-  let mockGitService: GitService;
+  let mockGitWorktreeService: GitWorktreeService;
+  let mockWorktreeSafetyService: WorktreeSafetyService;
   let mockAttachmentService: AttachmentService;
   let mockHandoffStorage: HandoffStorage;
   let threadService: ThreadService;
@@ -27,7 +31,7 @@ describe("ThreadService.delete", () => {
     threadRepo = new ThreadRepo(db);
     workspaceRepo = new WorkspaceRepo(db);
     cleanupJobRepo = new CleanupJobRepo(db);
-    mockGitService = {
+    mockGitWorktreeService = {
       removeWorktree: vi.fn().mockResolvedValue(true),
       createWorktree: vi.fn(),
       createBranch: vi.fn(),
@@ -38,10 +42,8 @@ describe("ThreadService.delete", () => {
       listWorktrees: vi.fn(),
       fetchBranch: vi.fn(),
       getCurrentBranchAt: vi.fn(),
-      withReviewWorktreeMutationLock: vi.fn(async (
-        _repoPath: string,
-        work: () => Promise<unknown>,
-      ) => work()),
+    } as unknown as GitWorktreeService;
+    mockWorktreeSafetyService = {
       assessWorktreeRemovalSafety: vi.fn(async (
         worktreePath: string,
         siblingPaths: readonly string[],
@@ -53,7 +55,7 @@ describe("ThreadService.delete", () => {
           ? { safe: false, reason: "shared" as const }
           : { safe: true, reason: "exclusive" as const };
       }),
-    } as unknown as GitService;
+    } as unknown as WorktreeSafetyService;
     mockAttachmentService = { removeForThread: vi.fn() } as unknown as AttachmentService;
     mockHandoffStorage = {
       deleteThreadFiles: vi.fn().mockResolvedValue(undefined),
@@ -62,7 +64,8 @@ describe("ThreadService.delete", () => {
       threadRepo,
       workspaceRepo,
       cleanupJobRepo,
-      mockGitService,
+      mockGitWorktreeService,
+      mockWorktreeSafetyService,
     );
     threadService = new ThreadService(
       threadRepo,
@@ -110,26 +113,23 @@ describe("ThreadService.delete", () => {
     expect(jobs[0].workspace_path).toBe("/tmp/test");
     expect(jobs[0].worktree_path).toBe("/tmp/wt/my-worktree");
     expect(jobs[0].branch).toBe("feat/test");
-    expect(mockGitService.withReviewWorktreeMutationLock).not.toHaveBeenCalled();
-    expect(mockGitService.assessWorktreeRemovalSafety).toHaveBeenCalledWith(
+    expect(mockWorktreeSafetyService.assessWorktreeRemovalSafety).toHaveBeenCalledWith(
       "/tmp/wt/my-worktree",
       [],
       false,
     );
   });
 
-  it("queues cleanup without waiting for the repository mutation lock", async () => {
+  it("queues cleanup without waiting for filesystem work", async () => {
     const ws = workspaceRepo.create("test", "/tmp/test");
     insertWorktreeThread("t-busy", ws.id, "feat/busy", "/tmp/wt/busy");
-    (mockGitService.withReviewWorktreeMutationLock as ReturnType<typeof vi.fn>)
-      .mockImplementation(() => new Promise(() => {}));
 
     const deletion = threadService.delete("t-busy", true);
     await Promise.resolve();
 
     expect(threadRepo.findById("t-busy")?.status).toBe("deleted");
     expect(cleanupJobRepo.findByThreadId("t-busy")).not.toBeNull();
-    expect(mockGitService.withReviewWorktreeMutationLock).not.toHaveBeenCalled();
+    expect(mockGitWorktreeService.removeWorktree).not.toHaveBeenCalled();
     await expect(deletion).resolves.toBe(true);
   });
 
@@ -141,7 +141,7 @@ describe("ThreadService.delete", () => {
 
     expect(cleanupJobRepo.count()).toBe(0);
     expect(threadRepo.findById("t-unmanaged")).toBeNull();
-    expect(mockGitService.removeWorktree).not.toHaveBeenCalled();
+    expect(mockGitWorktreeService.removeWorktree).not.toHaveBeenCalled();
   });
 
   it("keeps a managed worktree while another active thread shares its path", async () => {
@@ -191,7 +191,7 @@ describe("ThreadService.delete", () => {
 
     await threadService.delete("t-5", true);
 
-    expect(mockGitService.removeWorktree).not.toHaveBeenCalled();
+    expect(mockGitWorktreeService.removeWorktree).not.toHaveBeenCalled();
   });
 
   it("hard-deletes the thread when the workspace has been deleted", async () => {
@@ -229,7 +229,7 @@ describe("ThreadService.delete", () => {
   it("rollback during create does not delete an existing non-mcode branch", async () => {
     const ws = workspaceRepo.create("test", "/tmp/test");
     vi.spyOn(threadRepo, "updateWorktreePath").mockReturnValue(false);
-    (mockGitService.createWorktree as ReturnType<typeof vi.fn>).mockReturnValue({
+    (mockGitWorktreeService.createWorktree as ReturnType<typeof vi.fn>).mockReturnValue({
       name: "feat-custom-rollback",
       path: "/tmp/wt/feat-custom-rollback",
       branch: "feat/custom",
@@ -241,8 +241,8 @@ describe("ThreadService.delete", () => {
       threadService.create(ws.id, "Rollback Thread", "worktree", "feat/custom"),
     ).rejects.toThrow("Failed to persist worktree path");
 
-    const worktreeName = (mockGitService.createWorktree as ReturnType<typeof vi.fn>).mock.calls[0][1];
-    expect(mockGitService.removeWorktree).toHaveBeenCalledWith(
+    const worktreeName = (mockGitWorktreeService.createWorktree as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(mockGitWorktreeService.removeWorktree).toHaveBeenCalledWith(
       "/tmp/test",
       worktreeName,
       { deleteBranch: false },
@@ -252,7 +252,7 @@ describe("ThreadService.delete", () => {
   it("rollback during create deletes a newly-created branch", async () => {
     const ws = workspaceRepo.create("test", "/tmp/test");
     vi.spyOn(threadRepo, "updateWorktreePath").mockReturnValue(false);
-    (mockGitService.createWorktree as ReturnType<typeof vi.fn>).mockReturnValue({
+    (mockGitWorktreeService.createWorktree as ReturnType<typeof vi.fn>).mockReturnValue({
       name: "feat-new-rollback",
       path: "/tmp/wt/feat-new-rollback",
       branch: "feat/new",
@@ -264,8 +264,8 @@ describe("ThreadService.delete", () => {
       threadService.create(ws.id, "Rollback Thread", "worktree", "feat/new"),
     ).rejects.toThrow("Failed to persist worktree path");
 
-    const worktreeName = (mockGitService.createWorktree as ReturnType<typeof vi.fn>).mock.calls[0][1];
-    expect(mockGitService.removeWorktree).toHaveBeenCalledWith(
+    const worktreeName = (mockGitWorktreeService.createWorktree as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    expect(mockGitWorktreeService.removeWorktree).toHaveBeenCalledWith(
       "/tmp/test",
       worktreeName,
       { branchName: "feat/new" },
@@ -281,7 +281,7 @@ describe("ThreadService.delete", () => {
       { baseRef: "main", branchName: "codex/issue-960" },
     )).resolves.toBe(true);
 
-    expect(mockGitService.removeWorktree).toHaveBeenCalledWith(
+    expect(mockGitWorktreeService.removeWorktree).toHaveBeenCalledWith(
       "/tmp/test",
       "codex-issue-960-12345678",
       { deleteBranch: false },
