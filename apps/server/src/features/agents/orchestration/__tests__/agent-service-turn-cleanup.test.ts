@@ -290,6 +290,7 @@ function buildService(
   } as unknown as PlanQuestionAnswersRepo;
 
   const db = {
+    name: ":memory:",
     // better-sqlite3's transaction() returns a wrapped function; calling it executes the callback
     transaction: vi.fn((fn: Function) => fn),
     prepare: vi.fn(() => ({ run: vi.fn() })),

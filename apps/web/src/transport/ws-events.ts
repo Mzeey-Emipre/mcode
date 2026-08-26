@@ -414,6 +414,14 @@ export function startPushListeners(): void {
     }),
   );
 
+  unsubs.push(
+    pushEmitter.on("turn.savingStatus", (data) => {
+      const parsed = WS_CHANNELS["turn.savingStatus"].safeParse(data);
+      if (!parsed.success) return;
+      useThreadStore.getState().setTurnSavingStatus(parsed.data);
+    }),
+  );
+
   // turn.persisted: server has persisted tool calls for a completed turn
   unsubs.push(
     pushEmitter.on("turn.persisted", (data) => {

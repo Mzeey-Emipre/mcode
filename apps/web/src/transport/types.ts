@@ -409,6 +409,8 @@ export interface McodeTransport {
   retryTurn(executionId: string): Promise<void>;
   createAndSendMessage(input: CreateAndSendInput): Promise<CreateAndSendResult>;
   stopAgent(threadId: string): Promise<AgentStopResult>;
+  /** Continue an active turn after the user accepts that its remaining text will not be saved. */
+  continueWithoutSaving(executionId: string): Promise<void>;
   /** Respond to a tool permission request from the agent. */
   respondToPermission(requestId: string, decision: PermissionDecision): Promise<void>;
   /** List pending permission requests for a thread (used to re-hydrate after reconnect). */

@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { MessageList } from "./MessageList";
+import { SavingDelayedDialog } from "./SavingDelayedDialog";
 import type { SubagentRosterTarget } from "../narrative";
 import { ConversationHoldOverlay } from "@/components/chat/ConversationHoldOverlay";
 import { Composer } from "../composer/Composer";
@@ -377,6 +378,7 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
       .join("\u0000")
   );
   const hydratedThreadId = useThreadStore((s) => s.currentThreadId);
+  const savingStatus = useActiveThreadRecord((record) => record.savingStatus);
   const messageCount = useActiveThreadRecord((r) => r.messages.length);
   const residentContent = useActiveThreadRecord(hasResidentContent);
   const historyLoading = useActiveThreadRecord((r) => r.loading);
@@ -534,6 +536,16 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
   const handleRetryTurn = useCallback((executionId: string) => {
     void getTransport().retryTurn(executionId);
   }, []);
+
+  const handleStopSafely = useCallback(async () => {
+    if (!activeThreadId) return;
+    await useThreadStore.getState().stopAgent(activeThreadId);
+  }, [activeThreadId]);
+
+  const handleContinueWithoutSaving = useCallback(async () => {
+    if (savingStatus?.mode !== "saving-delayed") return;
+    await getTransport().continueWithoutSaving(savingStatus.executionId);
+  }, [savingStatus]);
 
   /** Activates inline fork mode on the composer for the given message. */
   const handleBranch = useCallback((messageId: string) => {
@@ -1064,6 +1076,12 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
       {/* Fallback handoff banner: shown when the fork's handoff was produced
           locally because the AI provider was unavailable. */}
       <HandoffFallbackBanner threadId={activeThread.id} />
+
+      <SavingDelayedDialog
+        open={savingStatus?.mode === "saving-delayed"}
+        onStopSafely={handleStopSafely}
+        onContinueWithoutSaving={handleContinueWithoutSaving}
+      />
 
       {/* Messages, tool calls, and streaming — all in one scrollable area.
           No `key` here: forcing remount on thread switch would destroy the

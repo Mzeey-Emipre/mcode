@@ -14,6 +14,7 @@ const {
   chatViewConnectionStatusRef,
   chatViewGetTransportMock,
   chatViewTransportMock,
+  chatViewStopAgentMock,
   chatViewMessageListCallbacksRef,
   chatViewSetPendingPrefillMock,
   chatViewThreadStoreSetStateMock,
@@ -41,10 +42,13 @@ const {
       setThreadSubscriptions: vi.fn(),
       listTurnRecoveries: vi.fn(),
       retryTurn: vi.fn(),
+      continueWithoutSaving: vi.fn(),
+      stopAgent: vi.fn(),
       getAutomaticSetup: vi.fn(),
       continueAutomaticSetup: vi.fn(),
       cancelQueuedAutomaticTurn: vi.fn(),
     },
+    chatViewStopAgentMock: vi.fn(),
     chatViewMessageListCallbacksRef,
     chatViewSetPendingPrefillMock: vi.fn(),
     chatViewThreadStoreSetStateMock: vi.fn(),
@@ -328,6 +332,7 @@ function defaultThreadState(overrides: Partial<{
     deactivateConversation: vi.fn(),
     setForkMode: vi.fn(),
     sendMessage: vi.fn(),
+    stopAgent: chatViewStopAgentMock,
   };
 }
 
@@ -342,6 +347,8 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     chatViewTransportMock.unsubscribeThread.mockClear();
     chatViewTransportMock.listTurnRecoveries.mockClear();
     chatViewTransportMock.retryTurn.mockClear();
+    chatViewTransportMock.continueWithoutSaving.mockClear();
+    chatViewStopAgentMock.mockClear();
     chatViewMessageListCallbacksRef.current = null;
     chatViewSetPendingPrefillMock.mockClear();
     chatViewGetTransportMock.mockReset();
@@ -461,6 +468,39 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     expect(chatViewTransportMock.retryTurn).toHaveBeenCalledWith(
       "00000000-0000-4000-8000-000000000042",
     );
+  });
+
+  it("requires the user to choose before it continues without saving", async () => {
+    const executionId = "00000000-0000-4000-8000-000000000043";
+    const activeRecord = createEmptyThreadRecord();
+    activeRecord.savingStatus = { threadId: "thread-1", executionId, mode: "saving-delayed" };
+    chatViewThreadMockRef.current = defaultThreadState({ activeRecord });
+    const user = userEvent.setup();
+
+    render(<ChatView />);
+
+    expect(screen.getByText(/a restart can lose it/i)).toBeInTheDocument();
+    expect(chatViewTransportMock.continueWithoutSaving).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: /continue without saving/i }));
+
+    expect(chatViewTransportMock.continueWithoutSaving).toHaveBeenCalledWith(executionId);
+  });
+
+  it("stops the active agent when the user chooses Stop safely", async () => {
+    const activeRecord = createEmptyThreadRecord();
+    activeRecord.savingStatus = {
+      threadId: "thread-1",
+      executionId: "00000000-0000-4000-8000-000000000044",
+      mode: "saving-delayed",
+    };
+    chatViewThreadMockRef.current = defaultThreadState({ activeRecord });
+    const user = userEvent.setup();
+
+    render(<ChatView />);
+    await user.click(screen.getByRole("button", { name: /stop safely/i }));
+
+    expect(chatViewStopAgentMock).toHaveBeenCalledWith("thread-1");
+    expect(chatViewTransportMock.continueWithoutSaving).not.toHaveBeenCalled();
   });
 
   it("places failed automatic Setup before the queued first user message", async () => {

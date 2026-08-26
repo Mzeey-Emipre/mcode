@@ -87,6 +87,11 @@ export class TurnFinalizer {
     this.streamingAssistantTextByThread.set(threadId, prev + delta);
   }
 
+  /** Return the unmaterialized assistant text for the active turn. */
+  getStreamingText(threadId: string): string {
+    return this.streamingAssistantTextByThread.get(threadId) ?? "";
+  }
+
   /** Drop accumulated streaming text (a real assistant row now exists, or a new turn began). */
   resetStreamingText(threadId: string): void {
     this.streamingAssistantTextByThread.delete(threadId);

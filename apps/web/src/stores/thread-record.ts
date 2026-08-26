@@ -10,6 +10,7 @@ import type {
   GoalState,
   TurnFileEffectSummary,
   TurnRuntimePhase,
+  TurnSavingStatus,
 } from "@mcode/contracts";
 import type { PermissionRequest, PermissionDecision } from "@mcode/contracts";
 import { PERMISSION_MODES, INTERACTION_MODES } from "@mcode/contracts";
@@ -90,6 +91,8 @@ export interface ThreadRecord {
   turnExecutionId: string | null;
   /** Authoritative lifecycle phase restored from server runtime snapshots. */
   runtimePhase: TurnRuntimePhase;
+  /** Active assistant-text durability status. This is transient and server-authoritative. */
+  savingStatus: TurnSavingStatus | null;
   messages: Message[];
   loading: boolean;
   oldestLoadedSequence: number;
@@ -189,6 +192,7 @@ export function createEmptyThreadRecord(): ThreadRecord {
     canonicalAgent: createCanonicalAgentReplica(),
     turnExecutionId: null,
     runtimePhase: "idle",
+    savingStatus: null,
     messages: [],
     loading: false,
     oldestLoadedSequence: 0,

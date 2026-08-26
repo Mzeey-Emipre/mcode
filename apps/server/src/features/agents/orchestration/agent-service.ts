@@ -63,6 +63,7 @@ import {
   ParentAssistantTextCheckpointQueue,
   ParentAssistantTextCheckpointService,
   PARENT_ASSISTANT_TEXT_QUEUE_POLICY,
+  PARENT_ASSISTANT_TEXT_RETAINED_LIMITS,
 } from "../turns/parent-assistant-text-checkpoint-service.js";
 import { TurnFileTracker } from "../turns/turn-file-tracker.js";
 import { ParentNarrativeRecoveryCoordinator } from "../turns/parent-narrative-recovery-coordinator.js";
@@ -217,6 +218,85 @@ const FORK_HISTORY_MAX_MESSAGES = 500;
 const GOAL_ACHIEVED_RECEIPT_RE = /^Goal achieved in \d+s\.$/;
 const DIRECT_RESPONSE_GOAL_RE = /^\s*(?:say|reply|respond|answer)(?:\s+with)?\s+(.+?)\s*$/i;
 type AgentMessageEvent = Extract<AgentEvent, { type: "message" }>;
+
+interface QueuedProviderEvent {
+  event: AgentEvent;
+  publish: boolean;
+  byteLength: number;
+}
+
+function boundedProviderEventByteLength(event: AgentEvent, maximumBytes: number): number {
+  let byteLength = 0;
+  const visited = new WeakSet<object>();
+  const addText = (value: string): void => {
+    const remaining = maximumBytes - byteLength;
+    if (value.length > remaining) {
+      byteLength = maximumBytes + 1;
+      return;
+    }
+    byteLength += Buffer.byteLength(value, "utf8");
+  };
+  const addFixed = (bytes: number): void => {
+    byteLength += bytes;
+  };
+  const pending: unknown[] = [event];
+
+  while (pending.length > 0 && byteLength <= maximumBytes) {
+    const value = pending.pop();
+    if (value === null) {
+      addFixed(4);
+      continue;
+    }
+    if (typeof value === "string") {
+      addText(value);
+      continue;
+    }
+    if (typeof value === "number" || typeof value === "boolean") {
+      addText(String(value));
+      continue;
+    }
+    if (typeof value === "undefined") {
+      addFixed(9);
+      continue;
+    }
+    if (typeof value === "bigint" || typeof value === "symbol" || typeof value === "function") {
+      byteLength = maximumBytes + 1;
+      continue;
+    }
+    if (visited.has(value)) {
+      byteLength = maximumBytes + 1;
+      continue;
+    }
+    visited.add(value);
+    if (Array.isArray(value)) {
+      const minimumBytes = value.length === 0 ? 2 : 2 + value.length - 1 + value.length * 4;
+      if (minimumBytes > maximumBytes - byteLength) {
+        byteLength = maximumBytes + 1;
+        continue;
+      }
+      addFixed(value.length === 0 ? 2 : 2 + value.length - 1);
+      for (let index = value.length - 1; index >= 0; index -= 1) pending.push(value[index]);
+      continue;
+    }
+    const record = value as Record<string, unknown>;
+    try {
+      addFixed(2);
+      let propertyCount = 0;
+      for (const key in record) {
+        if (!Object.hasOwn(record, key)) continue;
+        if (propertyCount > 0) addFixed(1);
+        addFixed(3);
+        addText(key);
+        if (byteLength > maximumBytes) break;
+        pending.push(record[key]);
+        propertyCount += 1;
+      }
+    } catch {
+      byteLength = maximumBytes + 1;
+    }
+  };
+  return byteLength;
+}
 
 interface ClaudeNativeGoalProvider {
   hasNativeGoalCommand(sessionId: string): boolean;
@@ -450,6 +530,12 @@ export class AgentService {
   private readonly parentTextSequenceByExecution = new Map<string, number>();
   /** First sidecar sequence for text awaiting an authoritative message boundary. */
   private readonly unclassifiedAssistantTextStartByExecution = new Map<string, number>();
+  /** Provider events held at the first semantic boundary behind delayed assistant text. */
+  private readonly queuedProviderEventsByThread = new Map<string, QueuedProviderEvent[]>();
+  /** Prevents re-entrant delivery while a provider event queue is draining. */
+  private readonly pumpingProviderEventThreads = new Set<string>();
+  /** Per-thread queue pumps resumed when a stronger assistant-text tier becomes available. */
+  private readonly resumeProviderEventPumpsByThread = new Map<string, () => void>();
 
   constructor(
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
@@ -506,6 +592,13 @@ export class AgentService {
     this.parentAssistantTextCheckpointQueue = new ParentAssistantTextCheckpointQueue(
       this.parentAssistantTextCheckpoints,
       PARENT_ASSISTANT_TEXT_QUEUE_POLICY,
+      undefined,
+      {
+        onDurabilityChange: (update) => {
+          broadcast("turn.savingStatus", update);
+          queueMicrotask(() => this.resumeProviderEventPumpsByThread.get(update.threadId)?.());
+        },
+      },
     );
     this.parentNarrativeRecovery = new ParentNarrativeRecoveryCoordinator(
       this.canonicalSink,
@@ -2282,6 +2375,26 @@ export class AgentService {
       };
     }
 
+    if (!this.parentAssistantTextCheckpointQueue.finish(runtimeBefore.turnExecutionId!)) {
+      if (!this.parentAssistantTextCheckpointQueue.hasStoppedForStorageFailure(runtimeBefore.turnExecutionId!)) {
+        this.interruptForParentAssistantTextCheckpointFailure({
+          type: AgentEventType.TextDelta,
+          threadId,
+          turnExecutionId: runtimeBefore.turnExecutionId!,
+          delta: "",
+          isFinalResponse: true,
+        }, "Assistant text recovery remained unavailable during a user stop");
+      }
+      const snapshot = this.turnRuntime.snapshot(threadId) ?? runtimeBefore;
+      return {
+        threadId,
+        turnExecutionId: snapshot.turnExecutionId,
+        snapshot,
+        status: "already-terminal",
+        dispatchState,
+      };
+    }
+
     const descendantStop = this.stopCanonicalDescendants(threadId);
     if (descendantStop) await descendantStop;
     if (dispatchState !== "not-dispatched") {
@@ -2714,7 +2827,19 @@ export class AgentService {
 
   /** Return authoritative per-thread runtime snapshots for reconnect hydration. */
   runtimeSnapshots(): TurnRuntimeSnapshot[] {
-    return this.turnRuntime.snapshots();
+    return this.turnRuntime.snapshots().map((snapshot) => ({
+      ...snapshot,
+      savingStatus: snapshot.turnExecutionId
+        ? this.parentAssistantTextCheckpointQueue.durabilityMode(snapshot.turnExecutionId)
+        : null,
+    }));
+  }
+
+  /** Continue one active response after the user accepts that subsequent text is not recoverable. */
+  continueWithoutSaving(executionId: string): void {
+    if (!this.parentAssistantTextCheckpointQueue.continueWithoutSaving(executionId)) {
+      throw new Error("Unsaved continuation is unavailable for this execution");
+    }
   }
 
   /** Normalize one provider event once at the production provider boundary. */
@@ -2952,9 +3077,12 @@ export class AgentService {
     this.fileTrackingFinalizationByThread.set(threadId, finalize);
     void finalize.finally(() => {
       if (finalizedExecutionId) {
+        this.parentAssistantTextCheckpointQueue.discard(finalizedExecutionId);
         this.parentTextTurnIdByExecution.delete(finalizedExecutionId);
         this.parentTextSequenceByExecution.delete(finalizedExecutionId);
         this.unclassifiedAssistantTextStartByExecution.delete(finalizedExecutionId);
+        this.queuedProviderEventsByThread.delete(threadId);
+        this.resumeProviderEventPumpsByThread.delete(threadId);
         this.parentNarrativeRecovery.clear(finalizedExecutionId);
       }
       if (this.finalResponseExecutionByThread.get(threadId) === finalizedExecutionId) {
@@ -3048,7 +3176,7 @@ export class AgentService {
       });
       dispatch.attempt += 1;
       dispatch.turnRequest = { ...dispatch.turnRequest, resumeFrom: undefined };
-      this.resetParentAssistantTextForRetry(threadId, dispatch.turnRequest.turnExecutionId);
+      if (!this.resetParentAssistantTextForRetry(threadId, dispatch.turnRequest.turnExecutionId)) return false;
       this.endedSuppressionThreads.delete(threadId);
       dispatch.sendTurnInFlight = true;
       try {
@@ -3183,6 +3311,7 @@ export class AgentService {
     });
 
     for (const provider of this.providerRegistry.resolveAll()) {
+      let handleEvent: (event: AgentEvent, publish?: boolean) => void;
       provider.on("file_mutation_start", (event: ProviderFileMutationStart) => {
         void this.ensureTurnFileTracking(event.threadId);
         this.queueTurnFileTracking(event.threadId, () => (
@@ -3921,15 +4050,29 @@ export class AgentService {
         onProviderEvent?.(publishedEvent);
       };
       const processNormalizedEvent = (normalizedEvent: AgentEvent, publish: boolean): void => {
-        const accepted = handleNormalizedEvent(normalizedEvent);
-        const ownedLateHookCompletion = normalizedEvent.type === AgentEventType.HookCompleted
-          && ownedLateHookCompletions.delete(normalizedEvent);
         const terminalEvent = normalizedEvent.type === AgentEventType.TurnComplete
           || normalizedEvent.type === AgentEventType.Error
           || normalizedEvent.type === AgentEventType.Ended;
+        const volatileUnsavedNarrationBoundary = normalizedEvent.type === AgentEventType.AssistantMessageBoundary
+          && normalizedEvent.isFinalResponse === false
+          && normalizedEvent.turnExecutionId !== undefined
+          && this.parentAssistantTextCheckpointQueue.durabilityMode(normalizedEvent.turnExecutionId) === "unsaved";
+        if (publish && terminalEvent && normalizedEvent.turnExecutionId
+          && !this.parentAssistantTextCheckpointQueue.finish(normalizedEvent.turnExecutionId)) {
+          if (!this.parentAssistantTextCheckpointQueue.hasStoppedForStorageFailure(normalizedEvent.turnExecutionId)) {
+            this.interruptForParentAssistantTextCheckpointFailure(
+              normalizedEvent,
+              "Assistant text recovery remained unavailable at turn finalization",
+            );
+          }
+          return;
+        }
+        const accepted = handleNormalizedEvent(normalizedEvent);
+        const ownedLateHookCompletion = normalizedEvent.type === AgentEventType.HookCompleted
+          && ownedLateHookCompletions.delete(normalizedEvent);
         if (accepted === false) return;
         if (terminalEvent && accepted !== true) return;
-        if (publish) {
+        if (publish && !volatileUnsavedNarrationBoundary) {
           try {
             this.parentNarrativeRecovery.checkpoint(normalizedEvent);
           } catch (error) {
@@ -3956,9 +4099,7 @@ export class AgentService {
         }
         if (publish) publishEvent(normalizedEvent);
       };
-      const handleEvent = (event: AgentEvent, publish = true): void => {
-        const normalizedEvent = this.prepareProviderEvent(event);
-        if (!normalizedEvent) return;
+      const processQueuedEvent = (normalizedEvent: AgentEvent, publish: boolean): boolean => {
         if (publish
           && onProviderEvent
           && normalizedEvent.type === AgentEventType.TextDelta
@@ -3968,10 +4109,54 @@ export class AgentService {
             normalizedEvent,
             () => processNormalizedEvent(normalizedEvent, true),
           );
-          if (queued !== undefined) return;
+          if (queued === "blocked") return false;
+          if (queued !== undefined) return true;
         }
-        if (publish && !this.parentAssistantTextCheckpointQueue.flushThread(normalizedEvent.threadId)) return;
+        if (publish && !this.parentAssistantTextCheckpointQueue.prepareSemanticBoundary(normalizedEvent.threadId)) {
+          return this.parentAssistantTextCheckpointQueue.hasThreadStoppedForStorageFailure(normalizedEvent.threadId);
+        }
         processNormalizedEvent(normalizedEvent, publish);
+        return true;
+      };
+      const pumpProviderEvents = (threadId: string): void => {
+        if (this.pumpingProviderEventThreads.has(threadId)) return;
+        this.pumpingProviderEventThreads.add(threadId);
+        try {
+          const queue = this.queuedProviderEventsByThread.get(threadId);
+          while (queue && queue.length > 0) {
+            const next = queue[0]!;
+            if (!processQueuedEvent(next.event, next.publish)) return;
+            queue.shift();
+          }
+          if (queue?.length === 0) this.queuedProviderEventsByThread.delete(threadId);
+        } finally {
+          this.pumpingProviderEventThreads.delete(threadId);
+        }
+      };
+      handleEvent = (event: AgentEvent, publish = true): void => {
+        const normalizedEvent = this.prepareProviderEvent(event);
+        if (!normalizedEvent) return;
+        const queue = this.queuedProviderEventsByThread.get(normalizedEvent.threadId) ?? [];
+        const byteLength = boundedProviderEventByteLength(
+          normalizedEvent,
+          PARENT_ASSISTANT_TEXT_RETAINED_LIMITS.maxBytes,
+        );
+        const queuedBytes = queue.reduce((total, pending) => total + pending.byteLength, 0);
+        if (queue.length >= PARENT_ASSISTANT_TEXT_QUEUE_POLICY.maxQueuedEvents
+          || queuedBytes + byteLength > PARENT_ASSISTANT_TEXT_RETAINED_LIMITS.maxBytes) {
+          this.interruptForParentAssistantTextCheckpointFailure(
+            normalizedEvent,
+            "Assistant text event ordering capacity reached",
+          );
+          return;
+        }
+        queue.push({ event: normalizedEvent, publish, byteLength });
+        this.queuedProviderEventsByThread.set(normalizedEvent.threadId, queue);
+        this.resumeProviderEventPumpsByThread.set(
+          normalizedEvent.threadId,
+          () => pumpProviderEvents(normalizedEvent.threadId),
+        );
+        pumpProviderEvents(normalizedEvent.threadId);
       };
       provider.on("event", handleEvent);
     }
@@ -4035,20 +4220,35 @@ export class AgentService {
   private queueParentAssistantText(
     event: Extract<AgentEvent, { type: typeof AgentEventType.TextDelta }>,
     publish: () => void,
-  ): boolean | undefined {
+  ): boolean | "blocked" | undefined {
     const executionId = event.turnExecutionId;
     if (!executionId || event.delta.length === 0) return undefined;
     let turnId = this.parentTextTurnIdByExecution.get(executionId);
     if (!turnId) {
       turnId = this.canonicalSink.loadTurnByExecution(executionId)?.id;
       if (!turnId) return undefined;
-      this.parentTextTurnIdByExecution.set(executionId, turnId);
-      const chunks = this.parentAssistantTextCheckpoints.restoreChunks(executionId);
-      this.parentTextSequenceByExecution.set(executionId, chunks.at(-1)?.lastSequence ?? 0);
     }
-    const sequence = (this.parentTextSequenceByExecution.get(executionId) ?? 0) + 1;
+    if (!this.parentTextSequenceByExecution.has(executionId)) {
+      let durableThrough: number | null;
+      try {
+        durableThrough = this.parentAssistantTextCheckpointQueue.initializeExecution(
+          executionId,
+          event.threadId,
+          (reason) => this.interruptForParentAssistantTextCheckpointFailure(event, reason),
+        );
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        this.interruptForParentAssistantTextCheckpointFailure(event, reason);
+        return false;
+      }
+      if (durableThrough === null) return "blocked";
+      this.parentTextTurnIdByExecution.set(executionId, turnId);
+      this.parentTextSequenceByExecution.set(executionId, durableThrough);
+    }
+    const previousSequence = this.parentTextSequenceByExecution.get(executionId) ?? 0;
+    const sequence = previousSequence + 1;
     this.parentTextSequenceByExecution.set(executionId, sequence);
-    return this.parentAssistantTextCheckpointQueue.enqueue({
+    const queued = this.parentAssistantTextCheckpointQueue.enqueue({
       input: {
         executionId,
         threadId: event.threadId,
@@ -4059,16 +4259,28 @@ export class AgentService {
       publish,
       fail: (reason) => this.interruptForParentAssistantTextCheckpointFailure(event, reason),
     });
+    if (!queued) this.parentTextSequenceByExecution.set(executionId, previousSequence);
+    return queued;
   }
 
-  private resetParentAssistantTextForRetry(threadId: string, executionId: string): void {
-    this.parentAssistantTextCheckpointQueue.discard(executionId);
+  private resetParentAssistantTextForRetry(threadId: string, executionId: string): boolean {
     if (this.canonicalSink.loadCheckpoint(executionId)) {
-      this.parentAssistantTextCheckpoints.reset(executionId);
+      try {
+        if (!this.parentAssistantTextCheckpoints.resetForRetry(executionId)) return false;
+      } catch (error) {
+        logger.warn("Assistant text checkpoint could not reset before retry", {
+          threadId,
+          turnExecutionId: executionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return false;
+      }
     }
+    this.parentAssistantTextCheckpointQueue.discard(executionId);
     this.parentTextSequenceByExecution.set(executionId, 0);
     this.unclassifiedAssistantTextStartByExecution.delete(executionId);
     this.turnFinalizer.resetStreamingText(threadId);
+    return true;
   }
 
   /** Move provisional assistant text to narration without leaving two durable recovery owners. */
@@ -4084,6 +4296,17 @@ export class AgentService {
     const firstSequence = this.unclassifiedAssistantTextStartByExecution.get(executionId);
     if (!firstSequence) {
       this.narrativeStore.closeOpenThought(event.threadId);
+      this.turnFinalizer.resetStreamingText(event.threadId);
+      return true;
+    }
+    if (this.parentAssistantTextCheckpointQueue.durabilityMode(executionId) === "unsaved") {
+      const stagedNarration = this.narrativeStore.stageNarrationSegment(
+        event.threadId,
+        this.turnFinalizer.getStreamingText(event.threadId),
+      );
+      if (stagedNarration) this.narrativeStore.applyStagedNarrationSegment(event.threadId, stagedNarration);
+      this.parentTextSequenceByExecution.set(executionId, 0);
+      this.unclassifiedAssistantTextStartByExecution.delete(executionId);
       this.turnFinalizer.resetStreamingText(event.threadId);
       return true;
     }
@@ -4111,6 +4334,8 @@ export class AgentService {
       this.interruptForNarrativeRecoveryCheckpointFailure(event, error);
       return false;
     }
+    this.parentAssistantTextCheckpoints.discardRecoveryJournal(executionId);
+    this.parentAssistantTextCheckpointQueue.discard(executionId);
     confirmRecoveryCheckpoint?.();
     if (stagedNarration) this.narrativeStore.applyStagedNarrationSegment(event.threadId, stagedNarration);
     this.parentTextSequenceByExecution.set(executionId, 0);
@@ -4158,6 +4383,17 @@ export class AgentService {
       turnExecutionId: executionId,
       reason,
     });
+    const providerId = this.threadRepo.findById(event.threadId)?.provider as ProviderId | undefined;
+    if (providerId) {
+      const provider = this.providerRegistry.resolve(providerId);
+      void Promise.resolve(provider.stopSession(`mcode-${event.threadId}`)).catch((error) => {
+        logger.warn("Provider stop failed after assistant text checkpoint failure", {
+          threadId: event.threadId,
+          turnExecutionId: executionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+    }
     void this.finalizeTerminalTurn(event.threadId, "interrupted", "assistant text checkpoint failure");
     this.trackSessionEnded(event.threadId, executionId);
     this.disarmTurnRetryWindow(event.threadId);

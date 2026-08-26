@@ -19,11 +19,21 @@ export const TurnRuntimePhaseSchema = z.enum([
 /** Lifecycle phase projected for one thread's current turn. */
 export type TurnRuntimePhase = z.infer<typeof TurnRuntimePhaseSchema>;
 
+/** Server-authoritative assistant-text saving state for one active execution. */
+export const TurnSavingStatusSchema = z.object({
+  threadId: z.string().min(1),
+  executionId: TurnExecutionIdSchema,
+  mode: z.enum(["durable", "saving-delayed", "unsaved", "stopping"]),
+}).strict();
+/** Server-authoritative assistant-text saving state for one active execution. */
+export type TurnSavingStatus = z.infer<typeof TurnSavingStatusSchema>;
+
 /** Authoritative reconnect snapshot for one thread. */
 export const TurnRuntimeSnapshotSchema = z.object({
   threadId: z.string().min(1),
   turnExecutionId: TurnExecutionIdSchema.nullable(),
   phase: TurnRuntimePhaseSchema,
+  savingStatus: TurnSavingStatusSchema.shape.mode.nullable().optional(),
 });
 /** Authoritative reconnect snapshot for one thread. */
 export type TurnRuntimeSnapshot = z.infer<typeof TurnRuntimeSnapshotSchema>;

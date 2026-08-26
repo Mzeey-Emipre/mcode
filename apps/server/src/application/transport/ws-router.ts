@@ -1342,6 +1342,9 @@ async function dispatch(
           displayContent: command.content,
         }));
       return;
+    case "agent.continueWithoutSaving":
+      deps.agentService.continueWithoutSaving(params.executionId);
+      return;
     case "agent.createAndSend": {
       const thread = await deps.agentService.createAndSend({
         ...params,

@@ -27,6 +27,7 @@ export class TurnRecoveryService {
 
   /** Interrupt executions for which no current provider can prove the exact live execution. */
   reconcileOnStartup(): { interrupted: string[] } {
+    this.parentAssistantTextCheckpoints.importRecoveryJournals();
     for (const checkpoint of this.canonicalSink.listUnmaterializedTerminalCheckpoints()) {
       const checkpointChunks = this.parentAssistantTextCheckpoints.restoreChunks(checkpoint.executionId);
       const recoveredNarrative = this.canonicalSink.loadParentNarrativeRecovery(checkpoint.turnId);
