@@ -165,6 +165,49 @@ describe("completed thread cleanup Git safety", () => {
       .toContain("main");
   }, 30_000);
 
+  it("removes a clean worktree when a sibling record points to a missing directory", async () => {
+    const thread = addCompletedThread({ title: "Missing sibling" });
+    const workspace = workspaceRepo.listAll()[0]!;
+    const sibling = threadRepo.create(
+      workspace.id,
+      "Stale sibling",
+      "worktree",
+      "",
+      true,
+      "claude",
+      undefined,
+      "branchless",
+      "main",
+    );
+    database.prepare("UPDATE threads SET worktree_path = ? WHERE id = ?").run(
+      join(repositoryPath, "missing-worktree"),
+      sibling.id,
+    );
+
+    await worker.poll();
+
+    expect(threadRepo.findById(thread.id)).toBeNull();
+    expect(existsSync(worktreePath)).toBe(false);
+    expect(threadRepo.findById(sibling.id)).not.toBeNull();
+  }, 30_000);
+
+  it("removes a managed directory after Git no longer registers the worktree", async () => {
+    const thread = addCompletedThread({ title: "Git-pruned directory" });
+    rmSync(join(worktreePath, ".git"), { force: true });
+    execFileSync("git", ["-C", repositoryPath, "worktree", "prune"]);
+
+    expect(
+      execFileSync("git", ["-C", repositoryPath, "worktree", "list", "--porcelain"], {
+        encoding: "utf8",
+      }),
+    ).not.toContain(worktreePath);
+
+    await worker.poll();
+
+    expect(threadRepo.findById(thread.id)).toBeNull();
+    expect(existsSync(worktreePath)).toBe(false);
+  }, 30_000);
+
   it("keeps a dirty managed worktree and blocks cleanup", async () => {
     writeFileSync(join(worktreePath, "tracked.txt"), "changed\n");
     const thread = addCompletedThread({ title: "Dirty" });

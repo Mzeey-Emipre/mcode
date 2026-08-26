@@ -308,7 +308,15 @@ export class CleanupWorker {
             preserveWorktreeReason = safety.reason;
             return true;
           }
-          if (job.kind === "retention" && retentionThread?.checkout_state === "named") {
+          const gitStillOwnsWorktree = await this.gitService.isRegisteredWorktreePath(
+            resolvedWs,
+            resolvedWt,
+          );
+          if (
+            gitStillOwnsWorktree
+            && job.kind === "retention"
+            && retentionThread?.checkout_state === "named"
+          ) {
             const namedSafety = await this.gitService.assessNamedWorktreeRemoval(resolvedWt);
             if (
               !namedSafety.safe
@@ -319,6 +327,8 @@ export class CleanupWorker {
             }
           }
           if (
+            gitStillOwnsWorktree
+            &&
             job.kind === "retention"
             && retentionThread?.checkout_state === "branchless"
             && retentionThread.base_branch

@@ -1640,6 +1640,9 @@ export class GitService {
       return { safe: false, reason: "identity_uncertain" };
     }
     for (const siblingPath of activeSiblingPaths) {
+      // A missing directory cannot resolve to the existing target. Its thread
+      // record is stale, but it does not make this worktree shared.
+      if (!existsSync(siblingPath)) continue;
       const canonicalSibling = await this.canonicalWorktreeIdentity(siblingPath);
       if (!canonicalSibling) {
         return { safe: false, reason: "identity_uncertain" };

@@ -75,7 +75,7 @@ describe("CleanupWorker", () => {
 
     mockGitService = {
       removeWorktree: vi.fn().mockResolvedValue(true),
-      isRegisteredWorktreePath: vi.fn().mockReturnValue(false),
+      isRegisteredWorktreePath: vi.fn().mockReturnValue(true),
       withReviewWorktreeMutationLock: vi.fn(async (_repoPath, work) => work()),
       assessWorktreeRemovalSafety: vi.fn(async (
         worktreePath: string,

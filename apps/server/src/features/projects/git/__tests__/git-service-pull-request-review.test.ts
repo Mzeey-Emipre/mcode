@@ -288,7 +288,7 @@ describe("GitService pull request Review worktrees", () => {
     rmSync(target, { recursive: true, force: true });
   });
 
-  it("fails worktree removal closed on truncated or uncertain identities", async () => {
+  it("blocks truncated owner lists but ignores missing sibling directories", async () => {
     const target = mkdtempSync(join(tmpdir(), "mcode-worktree-bounded-"));
 
     await expect(
@@ -296,7 +296,7 @@ describe("GitService pull request Review worktrees", () => {
     ).resolves.toEqual({ safe: false, reason: "truncated" });
     await expect(
       service.assessWorktreeRemovalSafety(target, [join(target, "missing")], false),
-    ).resolves.toEqual({ safe: false, reason: "identity_uncertain" });
+    ).resolves.toEqual({ safe: true, reason: "exclusive" });
 
     rmSync(target, { recursive: true, force: true });
   });
