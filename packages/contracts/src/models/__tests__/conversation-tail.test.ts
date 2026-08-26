@@ -11,8 +11,62 @@ const message = {
   thread_id: "thread-1",
   role: "assistant" as const,
   content: "Done",
+  cost_usd: null,
+  tokens_used: null,
   timestamp: "2026-07-29T12:00:00.000Z",
   sequence: 2,
+  attachments: null,
+};
+
+const renderCompleteMessage = {
+  ...message,
+  content: "src/App.tsx",
+  tool_calls: [{ name: "Read" }],
+  files_changed: [{ path: "src/App.tsx" }],
+  cost_usd: 0.42,
+  tokens_used: 128,
+  attachments: [
+    { id: "attachment-1", name: "preview.png", mimeType: "image/png", sizeBytes: 128 },
+  ],
+  previewAnnotations: {
+    schemaVersion: 1,
+    annotations: [{
+      kind: "diff",
+      id: "550e8400-e29b-41d4-a716-446655440001",
+      displayNumber: 1,
+      filePath: "src/App.tsx",
+      side: "right",
+      line: 1,
+      lineContent: "const app = true;",
+      note: "Keep this visible.",
+    }],
+  },
+  mentions: [{
+    id: "file:src/App.tsx",
+    kind: "file",
+    label: "src/App.tsx",
+    path: "src/App.tsx",
+    range: { start: 0, end: 10 },
+  }],
+  tool_call_count: 1,
+  reply_to_message_id: "message-1",
+  quoted_text: "Earlier answer",
+  model: "gpt-5.6",
+  outcome: "completed",
+  outcomeExecutionId: "execution-1",
+  is_internal: false,
+  legacyProvenance: {
+    source: "messages",
+    migrationVersion: 1,
+    mapping: "legacy",
+    reason: "Compatibility record",
+  },
+  parentAgentProvenance: {
+    parentThreadId: "parent-thread",
+    parentTurnId: "parent-turn",
+    parentItemId: "parent-item",
+    providerIdentities: [],
+  },
 };
 
 describe("ConversationTailSchema", () => {
@@ -45,17 +99,16 @@ describe("ConversationTailSchema", () => {
     expect(ConversationTailParamsSchema().safeParse({ threadId: "thread-1", limit: 0 }).success).toBe(false);
   });
 
-  it("does not accept narrative fields on a tail message", () => {
-    const result = ConversationTailMessageSchema().safeParse({
-      ...message,
-      tool_calls: [],
-      narrativeByMessage: {},
-    });
+  it("retains render metadata while stripping only excluded message fields", () => {
+    const result = ConversationTailMessageSchema().safeParse(renderCompleteMessage);
 
     expect(result.success).toBe(true);
     if (result.success) {
+      const { tool_calls, files_changed, legacyProvenance, ...expected } = renderCompleteMessage;
+      expect(result.data).toEqual(expected);
       expect(result.data).not.toHaveProperty("tool_calls");
-      expect(result.data).not.toHaveProperty("narrativeByMessage");
+      expect(result.data).not.toHaveProperty("files_changed");
+      expect(result.data).not.toHaveProperty("legacyProvenance");
     }
   });
 });

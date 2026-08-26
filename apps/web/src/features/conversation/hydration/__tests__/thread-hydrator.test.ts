@@ -1712,6 +1712,41 @@ describe("ThreadHydrator", () => {
     }
   });
 
+  it("commits attachment metadata from the first-paint tail to the active record and cache", async () => {
+    const attachment = {
+      id: "attachment-1",
+      name: "preview.png",
+      mimeType: "image/png",
+      sizeBytes: 128,
+    };
+    const tailMessage = createMockMessage({
+      id: "tail-attachment-message",
+      thread_id: THREAD_A,
+      content: "Image attached",
+      sequence: 1,
+      attachments: [attachment],
+    });
+    delete tailMessage.tool_calls;
+    delete tailMessage.files_changed;
+    const tailLoader = vi.fn().mockResolvedValue({ messages: [tailMessage], hasMore: false });
+    mockTransport.loadConversationTail = tailLoader;
+
+    try {
+      await hydrator.hydrate(THREAD_A, "active");
+
+      expect(getTestActiveMessages()).toEqual([expect.objectContaining({
+        id: "tail-attachment-message",
+        attachments: [attachment],
+      })]);
+      expect(getCachedRecord(THREAD_A)?.messages).toEqual([expect.objectContaining({
+        id: "tail-attachment-message",
+        attachments: [attachment],
+      })]);
+    } finally {
+      mockTransport.loadConversationTail = undefined;
+    }
+  });
+
   it("does not let an invalidated tail follow-up overwrite newer cached messages", async () => {
     const staleTail = createMockMessage({
       id: "stale-tail-message",

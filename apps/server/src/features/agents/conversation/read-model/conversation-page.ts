@@ -6,6 +6,7 @@ import type {
   ConversationOlderPageRequest,
   ConversationPage,
   ConversationTail,
+  ConversationTailMessage,
   NarrativeEntry,
 } from "@mcode/contracts";
 import { CONVERSATION_TAIL_MAX_MESSAGES } from "@mcode/contracts";
@@ -25,6 +26,25 @@ export interface ConversationPageDeps {
 /** Dependencies needed to load a bounded conversation tail. */
 export interface ConversationTailDeps {
   messageRepo: MessageRepo;
+  canonicalSink?: Pick<CanonicalAgentEventSink, "loadConversationProjection">;
+}
+
+/** Merges compatibility and canonical messages into the newest bounded window. */
+function mergeNewestConversationMessages<T extends { id: string; sequence: number }>(
+  compatibilityMessages: readonly T[],
+  canonicalMessages: readonly T[],
+  limit: number,
+): { messages: T[]; exceededLimit: boolean } {
+  const messagesById = new Map(compatibilityMessages.map((message) => [message.id, message]));
+  for (const message of canonicalMessages) messagesById.set(message.id, message);
+  const mergedMessages = [...messagesById.values()].sort(
+    (left, right) => left.sequence - right.sequence,
+  );
+  const exceededLimit = mergedMessages.length > limit;
+  return {
+    messages: exceededLimit ? mergedMessages.slice(-limit) : mergedMessages,
+    exceededLimit,
+  };
 }
 
 /** Merge canonical and compatibility narrative rows without dropping append-only records. */
@@ -94,17 +114,11 @@ export function loadConversationPage(
     input.limit,
     input.before,
   );
-  const messagesById = new Map(
-    compatibilityPage.messages.map((message) => [message.id, message]),
+  const { messages, exceededLimit } = mergeNewestConversationMessages(
+    compatibilityPage.messages,
+    canonicalPage?.messages ?? [],
+    input.limit,
   );
-  for (const message of canonicalPage?.messages ?? []) {
-    messagesById.set(message.id, message);
-  }
-  const mergedMessages = [...messagesById.values()].sort(
-    (left, right) => left.sequence - right.sequence,
-  );
-  const exceededLimit = mergedMessages.length > input.limit;
-  const messages = exceededLimit ? mergedMessages.slice(-input.limit) : mergedMessages;
   const messageIds = new Set(messages.map((message) => message.id));
   const entries = deps.narrativeStore.loadForMessages(messages);
   const narrativeByMessage = groupNarrativeEntriesByMessage(entries);
@@ -292,22 +306,46 @@ export function loadConversationTail(
   deps: ConversationTailDeps,
   input: { threadId: string; limit: number },
 ): ConversationTail {
-  const page = deps.messageRepo.listByThread(
+  const limit = Math.min(CONVERSATION_TAIL_MAX_MESSAGES, input.limit);
+  const compatibilityPage = deps.messageRepo.listByThread(
     input.threadId,
-    Math.min(CONVERSATION_TAIL_MAX_MESSAGES, input.limit),
+    limit,
   );
-  const messages = page.messages.map((message) => ({
+  const canonicalPage = deps.canonicalSink?.loadConversationProjection(
+    input.threadId,
+    limit,
+  );
+  const { messages: visibleMessages, exceededLimit } = mergeNewestConversationMessages(
+    compatibilityPage.messages,
+    canonicalPage?.messages ?? [],
+    limit,
+  );
+  const messages: ConversationTailMessage[] = visibleMessages.map((message) => ({
     id: message.id,
     thread_id: message.thread_id,
     role: message.role,
     content: message.content,
+    cost_usd: message.cost_usd,
+    tokens_used: message.tokens_used,
     timestamp: message.timestamp,
     sequence: message.sequence,
+    attachments: message.attachments,
+    previewAnnotations: message.previewAnnotations,
+    mentions: message.mentions,
+    tool_call_count: message.tool_call_count,
+    reply_to_message_id: message.reply_to_message_id,
+    quoted_text: message.quoted_text,
+    model: message.model,
+    outcome: message.outcome,
+    outcomeExecutionId: message.outcomeExecutionId,
+    is_internal: message.is_internal,
+    parentAgentProvenance: message.parentAgentProvenance,
   }));
+  const hasMore = compatibilityPage.hasMore || canonicalPage?.hasMore === true || exceededLimit;
   return {
     messages,
-    hasMore: page.hasMore,
-    ...(page.hasMore && messages.length > 0
+    hasMore,
+    ...(hasMore && messages.length > 0
       ? { nextBefore: messages[0].sequence }
       : {}),
   };

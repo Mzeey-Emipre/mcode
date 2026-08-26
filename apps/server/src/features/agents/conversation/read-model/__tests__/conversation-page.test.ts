@@ -1,6 +1,7 @@
 import "reflect-metadata";
 import { describe, expect, it, vi } from "vitest";
 import type Database from "better-sqlite3";
+import type { Message, MessageMention, PreviewAnnotationBundle, StoredAttachment } from "@mcode/contracts";
 import { openMemoryDatabase } from "../../../../../runtime/persistence/sqlite/database.js";
 import { MessageRepo } from "../../persistence/message-repo.js";
 import { ToolCallRecordRepo } from "../../../tools/persistence/tool-call-record-repo.js";
@@ -289,6 +290,161 @@ describe("loadConversationTail", () => {
       hasMore: true,
       nextBefore: 2,
     });
+    expect(narrativeSpy).not.toHaveBeenCalled();
+    expect(planSpy).not.toHaveBeenCalled();
+  });
+
+  it("merges canonical child prompts into the newest deduplicated tail window", () => {
+    const db = openMemoryDatabase();
+    seedThread(db);
+    insertMessage(db, "legacy", "user", "older history", 1);
+    insertMessage(db, "compatibility-overlap", "assistant", "stale compatibility answer", 4);
+    const deps = createDeps(db);
+    const overlap = deps.messageRepo.findById("compatibility-overlap")!;
+    const canonicalChildPrompt: Message = {
+      ...overlap,
+      id: "canonical-child-prompt",
+      role: "user",
+      content: "Implement the canonical tail fix.",
+      sequence: 5,
+      parentAgentProvenance: {
+        parentThreadId: "parent-thread",
+        parentTurnId: "parent-turn",
+        parentItemId: "parent-item",
+        providerIdentities: [],
+      },
+    };
+    const canonicalSink = {
+      loadConversationProjection: vi.fn(() => ({
+        messages: [
+          { ...overlap, content: "canonical answer" },
+          canonicalChildPrompt,
+        ],
+        narrativeByMessage: {},
+        hasMore: false,
+      })),
+    };
+
+    const tail = loadConversationTail(
+      { ...deps, canonicalSink },
+      { threadId: "thread-1", limit: 2 },
+    );
+
+    expect(canonicalSink.loadConversationProjection).toHaveBeenCalledWith("thread-1", 2);
+    expect(tail).toEqual({
+      messages: [
+        expect.objectContaining({
+          id: "compatibility-overlap",
+          content: "canonical answer",
+          sequence: 4,
+        }),
+        expect.objectContaining({
+          id: "canonical-child-prompt",
+          content: "Implement the canonical tail fix.",
+          sequence: 5,
+          parentAgentProvenance: canonicalChildPrompt.parentAgentProvenance,
+        }),
+      ],
+      hasMore: true,
+      nextBefore: 4,
+    });
+  });
+
+  it("preserves render metadata while skipping narrative and plan queries", () => {
+    const db = openMemoryDatabase();
+    seedThread(db);
+    insertMessage(db, "a1", "assistant", "earlier answer", 1);
+    const deps = createDeps(db);
+    const attachment: StoredAttachment = {
+      id: "attachment-1",
+      name: "preview.png",
+      mimeType: "image/png",
+      sizeBytes: 128,
+    };
+    const mentions: MessageMention[] = [{
+      id: "file:src/App.tsx",
+      kind: "file",
+      label: "src/App.tsx",
+      path: "src/App.tsx",
+      range: { start: 0, end: 10 },
+    }];
+    const previewAnnotations: PreviewAnnotationBundle = {
+      schemaVersion: 1,
+      annotations: [{
+        kind: "diff",
+        id: "550e8400-e29b-41d4-a716-446655440001",
+        displayNumber: 1,
+        filePath: "src/App.tsx",
+        side: "right",
+        line: 1,
+        lineContent: "const app = true;",
+        note: "Keep this visible.",
+      }],
+    };
+    const persisted = deps.messageRepo.create(
+      "thread-1",
+      "assistant",
+      "src/App.tsx",
+      2,
+      [attachment],
+      "a1",
+      "earlier answer",
+      "gpt-5.6",
+      false,
+      mentions,
+      previewAnnotations,
+      { type: "composer" },
+      "a2",
+    );
+    const renderCompleteMessage: Message = {
+      ...persisted,
+      tool_calls: [{ name: "Read" }],
+      files_changed: [{ path: "src/App.tsx" }],
+      cost_usd: 0.42,
+      tokens_used: 128,
+      tool_call_count: 1,
+      outcome: "completed",
+      outcomeExecutionId: "execution-1",
+      legacyProvenance: {
+        source: "messages",
+        migrationVersion: 1,
+        mapping: "legacy",
+        reason: "Compatibility record",
+      },
+      parentAgentProvenance: {
+        parentThreadId: "parent-thread",
+        parentTurnId: "parent-turn",
+        parentItemId: "parent-item",
+        providerIdentities: [],
+      },
+    };
+    vi.spyOn(deps.messageRepo, "listByThread").mockReturnValue({
+      messages: [renderCompleteMessage],
+      hasMore: false,
+    });
+    const narrativeSpy = vi.spyOn(deps.narrativeStore, "loadForMessages");
+    const planSpy = vi.spyOn(deps.planQuestionAnswersRepo, "listAnsweredForThread");
+
+    const tail = loadConversationTail(deps, { threadId: "thread-1", limit: 2 });
+
+    expect(tail.messages).toEqual([expect.objectContaining({
+      attachments: [attachment],
+      previewAnnotations,
+      mentions,
+      reply_to_message_id: "a1",
+      quoted_text: "earlier answer",
+      model: "gpt-5.6",
+      cost_usd: 0.42,
+      tokens_used: 128,
+      outcome: "completed",
+      outcomeExecutionId: "execution-1",
+      tool_call_count: 1,
+      is_internal: false,
+      parentAgentProvenance: renderCompleteMessage.parentAgentProvenance,
+    })]);
+    expect(tail.messages[0]).not.toHaveProperty("tool_calls");
+    expect(tail.messages[0]).not.toHaveProperty("files_changed");
+    expect(tail.messages[0]).not.toHaveProperty("legacyProvenance");
     expect(narrativeSpy).not.toHaveBeenCalled();
     expect(planSpy).not.toHaveBeenCalled();
   });
