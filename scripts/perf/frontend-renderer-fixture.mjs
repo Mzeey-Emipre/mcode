@@ -457,6 +457,8 @@ function hasExpectedDynamicHeightBehavior(behavior) {
       dynamicHeight.anchorTopAfter,
     ].every(Number.isFinite)
     && dynamicHeight.measurementSettled === true
+    && dynamicHeight.renderedHeightAfter > dynamicHeight.renderedHeightBefore
+    && dynamicHeight.poolHeightAfter > dynamicHeight.poolHeightBefore
     && dynamicHeight.renderedHeightAfter > 148
     && dynamicHeight.poolHeightAfter > 148
     && Math.abs(dynamicHeight.anchorTopAfter - dynamicHeight.anchorTopBefore) <= 1;

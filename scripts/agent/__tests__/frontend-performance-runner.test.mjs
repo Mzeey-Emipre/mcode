@@ -412,20 +412,24 @@ describe("frontend performance runner", () => {
       "vlist lifecycle assertion failed: prependPreservesAnchorAndIdentity",
     ));
 
-    const dynamicHeightDidNotReachThePool = {
+    const dynamicHeightDidNotGrowAfterTheBaseline = {
       ...expectedFacts,
       behavior: {
         ...expectedFacts.behavior,
         dynamicHeight: {
           ...expectedFacts.behavior.dynamicHeight,
+          renderedHeightAfter: expectedFacts.behavior.dynamicHeight.renderedHeightBefore,
           poolHeightAfter: expectedFacts.behavior.dynamicHeight.poolHeightBefore,
         },
       },
     };
     assert.equal(
-      deriveVListLifecycleGate(dynamicHeightDidNotReachThePool).checks.dynamicHeightSettles,
+      deriveVListLifecycleGate(dynamicHeightDidNotGrowAfterTheBaseline).checks.dynamicHeightSettles,
       false,
     );
+    assert.ok(validateVListLifecycleFacts(dynamicHeightDidNotGrowAfterTheBaseline).includes(
+      "vlist lifecycle assertion failed: dynamicHeightSettles",
+    ));
 
     const measuredHeightMovedTheReadingAnchor = {
       ...expectedFacts,

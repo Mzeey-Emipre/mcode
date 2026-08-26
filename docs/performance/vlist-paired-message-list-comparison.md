@@ -23,7 +23,7 @@ The development-only candidate is `vlist` 2.6.1.
 | Runner completion bound | 480,000 ms, calculated as 120,000 plus three 120,000 ms sample budgets |
 
 The development probe has semantic checks for the prior lifecycle and
-fixed-height prepend work plus dynamic height, tail follow, user-away posture,
+fixed-height prepend work plus dynamic-height content growth after a short-row baseline, tail follow, user-away posture,
 sticky user-message control, text selection, direct message scrolling,
 automatic thread anchor restore, and off-screen retained state. The maintained
 validator test changes one fact for each behavior check and requires the

@@ -258,11 +258,7 @@ function rowsWithPrimary(primary: ProbeRow): ProbeRow[] {
   return [primary, ...STATIC_ROWS];
 }
 
-type BehaviorRowsOptions = {
-  readonly longDetailIndex?: number;
-};
-
-function createBehaviorRows(scope: string, count: number, options: BehaviorRowsOptions = {}): ProbeRow[] {
+function createBehaviorRows(scope: string, count: number): ProbeRow[] {
   return Array.from({ length: count }, (_, index) => {
     const kind = BEHAVIOR_ROW_KINDS[index % BEHAVIOR_ROW_KINDS.length] ?? "message";
     return {
@@ -270,11 +266,13 @@ function createBehaviorRows(scope: string, count: number, options: BehaviorRowsO
       kind,
       title: `${kind} ${index}`,
       initialDraft: `${scope}-draft-${index}`,
-      detail: index === options.longDetailIndex
-        ? `${scope} dynamic row ${index}. ${"measured height ".repeat(32)}`
-        : `${scope} selectable row ${index}.`,
+      detail: `${scope} selectable row ${index}.`,
     };
   });
+}
+
+function createLongBehaviorDetail(scope: string, index: number): string {
+  return `${scope} dynamic row ${index}. ${"measured height ".repeat(32)}`;
 }
 
 function waitForFrames(count = 2): Promise<void> {
@@ -728,6 +726,21 @@ class VListReactAdapterProbe {
     await waitForFrames();
   }
 
+  updateRowDetail(rowId: string, detail: string): void {
+    const row = this.rowsById.get(rowId);
+    if (!row) throw new Error(`The updated row ${rowId} is outside the current rows.`);
+    const updatedRow = { ...row, detail };
+    this.rows = this.rows.map((currentRow) => currentRow.id === rowId ? updatedRow : currentRow);
+    this.rowsById.set(rowId, updatedRow);
+    this.list.updateItem(rowId, { detail });
+    const renderedRows = [...this.reactRowsById.keys()].map((renderedRowId) => {
+      const renderedRow = this.rowsById.get(renderedRowId);
+      if (!renderedRow) throw new Error(`The rendered row ${renderedRowId} is outside the current rows.`);
+      return renderedRow;
+    });
+    this.renderRows(renderedRows);
+  }
+
   async scrollNativelyTo(index: number): Promise<void> {
     const expectedRow = this.rows[index];
     if (!expectedRow) throw new Error(`The native scroll target ${index} is outside the row range.`);
@@ -912,7 +925,7 @@ async function withProbe<T>(
 
 async function runVListBehaviorProbe(): Promise<LifecycleProbeResult["behavior"]> {
   const dynamicHeight = await withProbe(async (adapter) => {
-    const rows = createBehaviorRows("dynamic", 12, { longDetailIndex: 3 });
+    const rows = createBehaviorRows("dynamic", 12);
     const resizedRow = rows[3];
     const anchorRow = rows[5];
     if (!resizedRow || !anchorRow) throw new Error("The dynamic-height probe rows are missing.");
@@ -922,6 +935,7 @@ async function runVListBehaviorProbe(): Promise<LifecycleProbeResult["behavior"]
     const renderedHeightBefore = adapter.getRenderedRowHeight(resizedRow.id);
     const poolHeightBefore = adapter.getPoolRowHeight(resizedRow.id);
     const anchorTopBefore = adapter.getRowTop(anchorRow.id);
+    adapter.updateRowDetail(resizedRow.id, createLongBehaviorDetail("dynamic", 3));
     await adapter.waitForMeasurementSettlement(resizedRow.id, 148);
     const anchorTopAfter = adapter.getRowTop(anchorRow.id);
     return {
