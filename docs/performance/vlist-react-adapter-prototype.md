@@ -25,7 +25,13 @@ The vlist-react wrapper creates a vanilla vlist instance in a React effect and u
 
 ## Browser observation
 
-The Electron renderer ran three profiling samples. Raw output is in `.dev/verification/performance/issue-1548-vlist-lifecycle-bridge-prepend-electron.json`.
+The Electron renderer ran three profiling samples. The run wrote disposable raw output to `.dev/verification/performance/issue-1548-vlist-lifecycle-bridge-prepend-electron.json`. Repository policy keeps live verification artifacts under the ignored `.dev/verification/` directory. The raw file is not part of this document. See [ADR 0017](../adr/0017-separate-maintained-tests-from-disposable-verification.md).
+
+Run this command to create a new local artifact:
+
+```powershell
+bun run perf:frontend -- --mode profiling --sample-count 3 --workload vlistLifecycle --runtime electron --output .dev/verification/performance/issue-1548-vlist-lifecycle-bridge-prepend-electron.json
+```
 
 All three samples returned this decision:
 
