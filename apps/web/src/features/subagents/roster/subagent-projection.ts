@@ -145,62 +145,114 @@ function hydratedIdentity(record: ToolCallRecord): { identity: string; hasExplic
   };
 }
 
+function addPersistedTextField(
+  input: Record<string, unknown>,
+  name: string,
+  value: string | null | undefined,
+): void {
+  if (value) input[name] = value;
+}
+
+function addPersistedNumberField(
+  input: Record<string, unknown>,
+  name: string,
+  value: number | null | undefined,
+): void {
+  if (typeof value === "number") input[name] = value;
+}
+
+function addPersistedProviderAgentInput(
+  input: Record<string, unknown>,
+  providerAgentKey: string | null | undefined,
+): void {
+  if (!providerAgentKey) return;
+  input.codexCollabKind = "spawnAgent";
+  input.agentPath = providerAgentKey;
+}
+
+function addPersistedAgentPresentationMetadata(
+  input: Record<string, unknown>,
+  record: ToolCallRecord,
+): void {
+  addPersistedTextField(input, "agentName", record.display_name);
+  addPersistedProviderAgentInput(input, record.provider_agent_key);
+  addPersistedTextField(input, "nativeThreadId", record.subagent_identity_key);
+  addPersistedTextField(input, "subagentProviderName", record.subagent_provider_name);
+  addPersistedTextField(input, "prompt", record.subagent_prompt);
+  addPersistedTextField(input, "subagentType", record.subagent_type);
+  addPersistedTextField(input, "agentId", record.subagent_agent_id);
+  addPersistedNumberField(input, "durationMs", record.subagent_duration_ms);
+  addPersistedTextField(input, "model", record.model);
+  addPersistedTextField(input, "reasoningEffort", record.reasoning_effort);
+}
+
+function persistedAgentPresentationInput(record: ToolCallRecord): Record<string, unknown> {
+  const input: Record<string, unknown> = {};
+  addPersistedAgentPresentationMetadata(input, record);
+  return input;
+}
+
+function persistedTranscriptToolInput(record: ToolCallRecord): Record<string, unknown> {
+  const input: Record<string, unknown> = { _summary: record.input_summary };
+  if (record.tool_name !== "Agent") return input;
+  addPersistedTextField(input, "agentName", record.display_name);
+  addPersistedTextField(input, "prompt", record.subagent_prompt);
+  addPersistedTextField(input, "subagentType", record.subagent_type);
+  addPersistedTextField(input, "agentId", record.subagent_agent_id);
+  addPersistedNumberField(input, "durationMs", record.subagent_duration_ms);
+  return input;
+}
+
+function persistedSubagentPresentation(
+  record: ToolCallRecord,
+): ToolCall["subagentPresentation"] {
+  if (record.tool_name !== "Agent") return undefined;
+  return createSubagentPresentation(
+    persistedAgentPresentationInput(record),
+    record.provider_agent_key ?? record.id,
+  );
+}
+
+function persistedTranscriptParentField(
+  record: ToolCallRecord,
+  rootId: string,
+): Partial<Pick<ToolCall, "parentToolCallId">> {
+  if (!record.parent_tool_call_id || record.parent_tool_call_id === rootId) return {};
+  return { parentToolCallId: record.parent_tool_call_id };
+}
+
+function persistedTranscriptOptionalFields(
+  record: ToolCallRecord,
+  startedAt: number,
+  completedAt: number | undefined,
+): Partial<Pick<ToolCall, "isCancelled" | "outputTruncated" | "outputTotalBytes" | "outputArtifactPath" | "exitCode" | "lastActivityAt" | "durationMs">> {
+  const fields: Partial<Pick<ToolCall, "isCancelled" | "outputTruncated" | "outputTotalBytes" | "outputArtifactPath" | "exitCode" | "lastActivityAt" | "durationMs">> = {};
+  if (record.status === "cancelled") fields.isCancelled = true;
+  if (record.output_truncated === 1) fields.outputTruncated = true;
+  if (typeof record.output_total_bytes === "number") fields.outputTotalBytes = record.output_total_bytes;
+  if (record.output_artifact_path) fields.outputArtifactPath = record.output_artifact_path;
+  if (typeof record.exit_code === "number") fields.exitCode = record.exit_code;
+  if (completedAt === undefined) return fields;
+  fields.lastActivityAt = completedAt;
+  fields.durationMs = Math.max(0, completedAt - startedAt);
+  return fields;
+}
+
 function persistedRecordToToolCall(record: ToolCallRecord, rootId: string): ToolCall {
   const startedAt = parsedTimestamp(record.started_at) ?? 0;
   const completedAt = parsedTimestamp(record.completed_at);
-  const subagentPresentation = record.tool_name === "Agent"
-    ? createSubagentPresentation({
-        ...(record.display_name ? { agentName: record.display_name } : {}),
-        ...(record.provider_agent_key
-          ? { codexCollabKind: "spawnAgent", agentPath: record.provider_agent_key }
-          : {}),
-        ...(record.subagent_identity_key ? { nativeThreadId: record.subagent_identity_key } : {}),
-        ...(record.subagent_provider_name ? { subagentProviderName: record.subagent_provider_name } : {}),
-        ...(record.subagent_prompt ? { prompt: record.subagent_prompt } : {}),
-        ...(record.subagent_type ? { subagentType: record.subagent_type } : {}),
-        ...(record.subagent_agent_id ? { agentId: record.subagent_agent_id } : {}),
-        ...(typeof record.subagent_duration_ms === "number" ? { durationMs: record.subagent_duration_ms } : {}),
-        ...(record.model ? { model: record.model } : {}),
-        ...(record.reasoning_effort ? { reasoningEffort: record.reasoning_effort } : {}),
-      }, record.provider_agent_key ?? record.id)
-    : undefined;
+  const subagentPresentation = persistedSubagentPresentation(record);
   return {
     id: record.id,
     toolName: record.tool_name,
-    toolInput: {
-      _summary: record.input_summary,
-      ...(record.tool_name === "Agent" && record.display_name
-        ? { agentName: record.display_name }
-        : {}),
-      ...(record.tool_name === "Agent" && record.subagent_prompt
-        ? { prompt: record.subagent_prompt }
-        : {}),
-      ...(record.tool_name === "Agent" && record.subagent_type
-        ? { subagentType: record.subagent_type }
-        : {}),
-      ...(record.tool_name === "Agent" && record.subagent_agent_id
-        ? { agentId: record.subagent_agent_id }
-        : {}),
-      ...(record.tool_name === "Agent" && typeof record.subagent_duration_ms === "number"
-        ? { durationMs: record.subagent_duration_ms }
-        : {}),
-    },
+    toolInput: persistedTranscriptToolInput(record),
     ...(subagentPresentation ? { subagentPresentation } : {}),
     output: nonEmptyString(record.output_summary) ?? null,
     isError: record.status === "failed",
     isComplete: record.status !== "running",
-    ...(record.status === "cancelled" ? { isCancelled: true } : {}),
-    ...(record.parent_tool_call_id && record.parent_tool_call_id !== rootId
-      ? { parentToolCallId: record.parent_tool_call_id }
-      : {}),
-    ...(record.output_truncated === 1 ? { outputTruncated: true } : {}),
-    ...(typeof record.output_total_bytes === "number"
-      ? { outputTotalBytes: record.output_total_bytes }
-      : {}),
-    ...(record.output_artifact_path ? { outputArtifactPath: record.output_artifact_path } : {}),
-    ...(typeof record.exit_code === "number" ? { exitCode: record.exit_code } : {}),
+    ...persistedTranscriptParentField(record, rootId),
+    ...persistedTranscriptOptionalFields(record, startedAt, completedAt),
     startedAt,
-    ...(completedAt === undefined ? {} : { lastActivityAt: completedAt, durationMs: Math.max(0, completedAt - startedAt) }),
   };
 }
 

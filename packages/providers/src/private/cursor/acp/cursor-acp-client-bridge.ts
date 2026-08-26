@@ -31,6 +31,8 @@ import type { CursorAcpSessionEntry } from "../cursor-session-state.js";
 
 const UNSUPPORTED_RESULT = Object.freeze({ outcome: { outcome: "unsupported" as const } });
 
+type AcpExtMethodResponse = Awaited<ReturnType<Client["extMethod"]>>;
+
 interface PendingAcpPermission {
   mcodeSessionId: string;
   threadId: string;
@@ -113,63 +115,7 @@ export class CursorAcpClientBridge {
         this.writeWorkspaceFile(entry.cwd, request.path, request.content);
         return {};
       },
-      extMethod: async (method, params) => {
-        const cursorPrefs = this.deps.settings.get().provider.cursor;
-        if (method === "cursor/ask_question") {
-          const record = toRecord(params) ?? {};
-          const autoAnswer =
-            !this.planQuestionModeThreads.has(entry.threadId) && cursorPrefs.autoAnswerAskQuestions;
-          return buildCursorAskQuestionExtResponse(record, autoAnswer, (summary) => {
-            logger.info("Cursor ask_question resolved automatically", {
-              threadId: entry.threadId,
-              detail: summary.lines,
-            });
-            if (cursorPrefs.echoAskQuestionsToTimeline) {
-              const clip = summary.lines.join(" · ").slice(0, 900);
-              emitAcpEvent({
-                type: AgentEventType.System,
-                threadId: entry.threadId,
-                subtype: `cursor:ask_question:auto:${clip}`,
-              } satisfies AgentEvent);
-            }
-          });
-        }
-        if (method === "cursor/create_plan") {
-          const record = toRecord(params) ?? {};
-          const planMarkdown = extractCursorCreatePlanMarkdown(record);
-          if (planMarkdown) {
-            this.deps.emitExitPlanMode({ threadId: entry.threadId, planMarkdown });
-          } else {
-            logger.warn("cursor/create_plan missing plan markdown", {
-              threadId: entry.threadId,
-              keys: Object.keys(record),
-            });
-          }
-          return { outcome: { outcome: "accepted" } };
-        }
-        if (method === "cursor/task") {
-          const record = toRecord(params);
-          if (!entry.activeTurnState || !record) return UNSUPPORTED_RESULT;
-          for (const event of cursorTaskExtToAgentEvents(entry.threadId, record, entry.activeTurnState)) {
-            emitAcpEvent(event);
-          }
-          return {};
-        }
-        if (method === "cursor/update_todos") {
-          const record = toRecord(params);
-          if (!record) return UNSUPPORTED_RESULT;
-          for (const event of cursorUpdateTodosExtNotificationToAgentEvents(
-            entry.threadId,
-            record,
-            entry.todoSnapshot,
-          )) {
-            emitAcpEvent(event);
-          }
-          return {};
-        }
-        logger.debug("Cursor ACP extMethod unhandled", { threadId: entry.threadId, method });
-        return UNSUPPORTED_RESULT;
-      },
+      extMethod: async (method, params) => this.handleExtMethod(entry, emitAcpEvent, method, params),
       extNotification: async (method, params) => {
         const record = toRecord(params);
         if (method !== "cursor/update_todos" || !record) return;
@@ -182,6 +128,98 @@ export class CursorAcpClientBridge {
         }
       },
     };
+  }
+
+  private handleExtMethod(
+    entry: CursorAcpSessionEntry,
+    emitAcpEvent: (event: AgentEvent) => void,
+    method: string,
+    params: unknown,
+  ): AcpExtMethodResponse {
+    switch (method) {
+      case "cursor/ask_question":
+        return this.handleAskQuestionExtMethod(entry, emitAcpEvent, params);
+      case "cursor/create_plan":
+        return this.handleCreatePlanExtMethod(entry, params);
+      case "cursor/task":
+        return this.handleTaskExtMethod(entry, emitAcpEvent, params);
+      case "cursor/update_todos":
+        return this.handleUpdateTodosExtMethod(entry, emitAcpEvent, params);
+      default:
+        logger.debug("Cursor ACP extMethod unhandled", { threadId: entry.threadId, method });
+        return UNSUPPORTED_RESULT;
+    }
+  }
+
+  private handleAskQuestionExtMethod(
+    entry: CursorAcpSessionEntry,
+    emitAcpEvent: (event: AgentEvent) => void,
+    params: unknown,
+  ): AcpExtMethodResponse {
+    const cursorPrefs = this.deps.settings.get().provider.cursor;
+    const record = toRecord(params) ?? {};
+    const autoAnswer =
+      !this.planQuestionModeThreads.has(entry.threadId) && cursorPrefs.autoAnswerAskQuestions;
+    return buildCursorAskQuestionExtResponse(record, autoAnswer, (summary) => {
+      logger.info("Cursor ask_question resolved automatically", {
+        threadId: entry.threadId,
+        detail: summary.lines,
+      });
+      if (!cursorPrefs.echoAskQuestionsToTimeline) return;
+      const clip = summary.lines.join(" · ").slice(0, 900);
+      emitAcpEvent({
+        type: AgentEventType.System,
+        threadId: entry.threadId,
+        subtype: `cursor:ask_question:auto:${clip}`,
+      } satisfies AgentEvent);
+    });
+  }
+
+  private handleCreatePlanExtMethod(
+    entry: CursorAcpSessionEntry,
+    params: unknown,
+  ): AcpExtMethodResponse {
+    const record = toRecord(params) ?? {};
+    const planMarkdown = extractCursorCreatePlanMarkdown(record);
+    if (planMarkdown) {
+      this.deps.emitExitPlanMode({ threadId: entry.threadId, planMarkdown });
+    } else {
+      logger.warn("cursor/create_plan missing plan markdown", {
+        threadId: entry.threadId,
+        keys: Object.keys(record),
+      });
+    }
+    return { outcome: { outcome: "accepted" } };
+  }
+
+  private handleTaskExtMethod(
+    entry: CursorAcpSessionEntry,
+    emitAcpEvent: (event: AgentEvent) => void,
+    params: unknown,
+  ): AcpExtMethodResponse {
+    const record = toRecord(params);
+    if (!entry.activeTurnState || !record) return UNSUPPORTED_RESULT;
+    for (const event of cursorTaskExtToAgentEvents(entry.threadId, record, entry.activeTurnState)) {
+      emitAcpEvent(event);
+    }
+    return {};
+  }
+
+  private handleUpdateTodosExtMethod(
+    entry: CursorAcpSessionEntry,
+    emitAcpEvent: (event: AgentEvent) => void,
+    params: unknown,
+  ): AcpExtMethodResponse {
+    const record = toRecord(params);
+    if (!record) return UNSUPPORTED_RESULT;
+    for (const event of cursorUpdateTodosExtNotificationToAgentEvents(
+      entry.threadId,
+      record,
+      entry.todoSnapshot,
+    )) {
+      emitAcpEvent(event);
+    }
+    return {};
   }
 
   /** Handles a protocol permission request for one live Cursor session. */

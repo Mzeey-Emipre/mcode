@@ -67,6 +67,88 @@ function persistedToolInput(r: ToolCallRecord): Record<string, unknown> {
   return { _summary: r.input_summary };
 }
 
+function addPersistedTextField(
+  input: Record<string, unknown>,
+  name: string,
+  value: string | null | undefined,
+): void {
+  if (value) input[name] = value;
+}
+
+function addPersistedNumberField(
+  input: Record<string, unknown>,
+  name: string,
+  value: number | null | undefined,
+): void {
+  if (typeof value === "number") input[name] = value;
+}
+
+function addPersistedProviderAgentInput(
+  input: Record<string, unknown>,
+  providerAgentKey: string | null | undefined,
+): void {
+  if (!providerAgentKey) return;
+  input.codexCollabKind = "spawnAgent";
+  input.agentPath = providerAgentKey;
+}
+
+function addPersistedAgentPresentationMetadata(
+  input: Record<string, unknown>,
+  record: ToolCallRecord,
+): void {
+  addPersistedTextField(input, "agentName", record.display_name);
+  addPersistedProviderAgentInput(input, record.provider_agent_key);
+  addPersistedTextField(input, "nativeThreadId", record.subagent_identity_key);
+  addPersistedTextField(input, "subagentProviderName", record.subagent_provider_name);
+  addPersistedTextField(input, "prompt", record.subagent_prompt);
+  addPersistedTextField(input, "subagentType", record.subagent_type);
+  addPersistedTextField(input, "agentId", record.subagent_agent_id);
+  addPersistedNumberField(input, "durationMs", record.subagent_duration_ms);
+  addPersistedTextField(input, "model", record.model);
+  addPersistedTextField(input, "reasoningEffort", record.reasoning_effort);
+}
+
+function persistedAgentPresentationInput(record: ToolCallRecord): Record<string, unknown> {
+  const input: Record<string, unknown> = {};
+  addPersistedAgentPresentationMetadata(input, record);
+  return input;
+}
+
+function persistedToolInputWithAgentMetadata(record: ToolCallRecord): Record<string, unknown> {
+  const input = persistedToolInput(record);
+  if (record.tool_name !== AGENT_TOOL_NAME) return input;
+  addPersistedTextField(input, "agentName", record.display_name);
+  addPersistedTextField(input, "prompt", record.subagent_prompt);
+  addPersistedTextField(input, "subagentType", record.subagent_type);
+  addPersistedTextField(input, "agentId", record.subagent_agent_id);
+  addPersistedNumberField(input, "durationMs", record.subagent_duration_ms);
+  return input;
+}
+
+function persistedSubagentPresentation(
+  record: ToolCallRecord,
+): ToolCall["subagentPresentation"] {
+  if (record.tool_name !== AGENT_TOOL_NAME) return undefined;
+  return createSubagentPresentation(
+    persistedAgentPresentationInput(record),
+    record.provider_agent_key ?? record.id,
+  );
+}
+
+function persistedToolCallOptionalFields(
+  record: ToolCallRecord,
+  durationMs: number | undefined,
+): Partial<Pick<ToolCall, "isCancelled" | "outputTruncated" | "outputTotalBytes" | "outputArtifactPath" | "durationMs" | "exitCode">> {
+  const fields: Partial<Pick<ToolCall, "isCancelled" | "outputTruncated" | "outputTotalBytes" | "outputArtifactPath" | "durationMs" | "exitCode">> = {};
+  if (record.status === "cancelled") fields.isCancelled = true;
+  if (record.output_truncated === 1) fields.outputTruncated = true;
+  if (typeof record.output_total_bytes === "number") fields.outputTotalBytes = record.output_total_bytes;
+  if (record.output_artifact_path) fields.outputArtifactPath = record.output_artifact_path;
+  if (durationMs !== undefined) fields.durationMs = durationMs;
+  if (typeof record.exit_code === "number") fields.exitCode = record.exit_code;
+  return fields;
+}
+
 /** Map a persisted tool record to the live `ToolCall` shape used by row components. */
 export function recordToToolCall(r: ToolCallRecord): ToolCall {
   const cached = toolCallCache.get(r);
@@ -76,56 +158,18 @@ export function recordToToolCall(r: ToolCallRecord): ToolCall {
   const lifecycleInput = isSubagentLifecycleRecord(r)
     ? parseSubagentLifecycleInput(r.input_summary)
     : undefined;
-
-  const subagentPresentation = r.tool_name === AGENT_TOOL_NAME
-    ? createSubagentPresentation({
-        ...(r.display_name ? { agentName: r.display_name } : {}),
-        ...(r.provider_agent_key
-          ? { codexCollabKind: "spawnAgent", agentPath: r.provider_agent_key }
-          : {}),
-        ...(r.subagent_identity_key ? { nativeThreadId: r.subagent_identity_key } : {}),
-        ...(r.subagent_provider_name ? { subagentProviderName: r.subagent_provider_name } : {}),
-        ...(r.subagent_prompt ? { prompt: r.subagent_prompt } : {}),
-        ...(r.subagent_type ? { subagentType: r.subagent_type } : {}),
-        ...(r.subagent_agent_id ? { agentId: r.subagent_agent_id } : {}),
-        ...(typeof r.subagent_duration_ms === "number" ? { durationMs: r.subagent_duration_ms } : {}),
-        ...(r.model ? { model: r.model } : {}),
-        ...(r.reasoning_effort ? { reasoningEffort: r.reasoning_effort } : {}),
-      }, r.provider_agent_key ?? r.id)
-    : undefined;
+  const subagentPresentation = persistedSubagentPresentation(r);
   const toolCall: ToolCall = {
     id: r.id,
     toolName: r.tool_name,
     // Live components only inspect a few fields; the input summary suffices
     // for label derivation in the persisted view.
-    toolInput: lifecycleInput ?? {
-      ...persistedToolInput(r),
-      ...(r.tool_name === AGENT_TOOL_NAME && r.display_name
-        ? { agentName: r.display_name }
-        : {}),
-      ...(r.tool_name === AGENT_TOOL_NAME && r.subagent_prompt
-        ? { prompt: r.subagent_prompt }
-        : {}),
-      ...(r.tool_name === AGENT_TOOL_NAME && r.subagent_type
-        ? { subagentType: r.subagent_type }
-        : {}),
-      ...(r.tool_name === AGENT_TOOL_NAME && r.subagent_agent_id
-        ? { agentId: r.subagent_agent_id }
-        : {}),
-      ...(r.tool_name === AGENT_TOOL_NAME && typeof r.subagent_duration_ms === "number"
-        ? { durationMs: r.subagent_duration_ms }
-        : {}),
-    },
+    toolInput: lifecycleInput ?? persistedToolInputWithAgentMetadata(r),
     ...(subagentPresentation ? { subagentPresentation } : {}),
     output: r.output_summary || null,
     isError: r.status === "failed",
     isComplete: r.status === "completed" || r.status === "failed" || r.status === "cancelled",
-    ...(r.status === "cancelled" ? { isCancelled: true } : {}),
-    ...(r.output_truncated === 1 ? { outputTruncated: true } : {}),
-    ...(typeof r.output_total_bytes === "number" ? { outputTotalBytes: r.output_total_bytes } : {}),
-    ...(r.output_artifact_path ? { outputArtifactPath: r.output_artifact_path } : {}),
-    ...(durationMs === undefined ? {} : { durationMs }),
-    ...(typeof r.exit_code === "number" ? { exitCode: r.exit_code } : {}),
+    ...persistedToolCallOptionalFields(r, durationMs),
     parentToolCallId: r.parent_tool_call_id ?? undefined,
     startedAt: isoToMs(r.started_at),
   };

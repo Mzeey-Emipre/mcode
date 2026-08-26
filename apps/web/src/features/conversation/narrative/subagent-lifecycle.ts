@@ -133,78 +133,190 @@ export function collapseSubagentCalls(calls: readonly ToolCall[]): ToolCall[] {
   });
 }
 
+interface PersistedSubagentIdentity {
+  providerKey: string | undefined;
+  exactIdentity: string | undefined;
+}
+
+interface PersistedSubagentCollapseState {
+  canonicalByProviderKey: Map<string, string>;
+  canonicalByExactIdentity: Map<string, string>;
+  exactIdentityByCanonical: Map<string, string>;
+  aliases: Map<string, string>;
+  canonicalRecords: Map<string, ToolCallRecord>;
+  orderedIds: string[];
+}
+
+function persistedSubagentIdentity(record: ToolCallRecord): PersistedSubagentIdentity {
+  return {
+    providerKey: record.provider_agent_key ?? undefined,
+    exactIdentity: record.subagent_identity_key ?? undefined,
+  };
+}
+
+function createPersistedSubagentCollapseState(): PersistedSubagentCollapseState {
+  return {
+    canonicalByProviderKey: new Map<string, string>(),
+    canonicalByExactIdentity: new Map<string, string>(),
+    exactIdentityByCanonical: new Map<string, string>(),
+    aliases: new Map<string, string>(),
+    canonicalRecords: new Map<string, ToolCallRecord>(),
+    orderedIds: [],
+  };
+}
+
+function storePersistedRecord(
+  state: PersistedSubagentCollapseState,
+  record: ToolCallRecord,
+): void {
+  state.canonicalRecords.set(record.id, record);
+  state.orderedIds.push(record.id);
+}
+
+function rememberPersistedCanonicalIdentity(
+  state: PersistedSubagentCollapseState,
+  record: ToolCallRecord,
+  identity: PersistedSubagentIdentity,
+): void {
+  if (identity.providerKey) state.canonicalByProviderKey.set(identity.providerKey, record.id);
+  if (identity.exactIdentity) {
+    state.canonicalByExactIdentity.set(identity.exactIdentity, record.id);
+    state.exactIdentityByCanonical.set(record.id, identity.exactIdentity);
+  }
+}
+
+function persistedCanonicalId(
+  state: PersistedSubagentCollapseState,
+  identity: PersistedSubagentIdentity,
+): string | undefined {
+  if (identity.exactIdentity) {
+    const exactMatch = state.canonicalByExactIdentity.get(identity.exactIdentity);
+    if (exactMatch) return exactMatch;
+  }
+  if (!identity.providerKey) return undefined;
+  const providerCandidate = state.canonicalByProviderKey.get(identity.providerKey);
+  if (!providerCandidate) return undefined;
+  if (identity.exactIdentity && state.exactIdentityByCanonical.has(providerCandidate)) {
+    return undefined;
+  }
+  return providerCandidate;
+}
+
+function terminalPersistedRecord(
+  current: ToolCallRecord,
+  incoming: ToolCallRecord,
+): ToolCallRecord {
+  if (current.status !== "running") return current;
+  return incoming.status !== "running" ? incoming : current;
+}
+
+function mergedPersistedIdentityMetadata(
+  current: ToolCallRecord,
+  incoming: ToolCallRecord,
+): Pick<
+  ToolCallRecord,
+  "display_name" | "provider_agent_key" | "subagent_identity_key" | "subagent_provider_name" | "subagent_prompt"
+> {
+  return {
+    display_name: current.display_name ?? incoming.display_name,
+    provider_agent_key: current.provider_agent_key ?? incoming.provider_agent_key,
+    subagent_identity_key: current.subagent_identity_key ?? incoming.subagent_identity_key,
+    subagent_provider_name: current.subagent_provider_name ?? incoming.subagent_provider_name,
+    subagent_prompt: current.subagent_prompt ?? incoming.subagent_prompt,
+  };
+}
+
+function mergedPersistedExecutionMetadata(
+  current: ToolCallRecord,
+  incoming: ToolCallRecord,
+): Pick<
+  ToolCallRecord,
+  "subagent_type" | "subagent_agent_id" | "subagent_duration_ms" | "model" | "reasoning_effort"
+> {
+  return {
+    subagent_type: current.subagent_type ?? incoming.subagent_type,
+    subagent_agent_id: current.subagent_agent_id ?? incoming.subagent_agent_id,
+    subagent_duration_ms: current.subagent_duration_ms ?? incoming.subagent_duration_ms,
+    model: current.model ?? incoming.model,
+    reasoning_effort: current.reasoning_effort ?? incoming.reasoning_effort,
+  };
+}
+
+function mergePersistedRecordState(
+  current: ToolCallRecord,
+  incoming: ToolCallRecord,
+): ToolCallRecord {
+  const terminal = terminalPersistedRecord(current, incoming);
+  return {
+    ...current,
+    ...mergedPersistedIdentityMetadata(current, incoming),
+    ...mergedPersistedExecutionMetadata(current, incoming),
+    input_summary: current.input_summary || incoming.input_summary,
+    output_summary: terminal.output_summary,
+    output_truncated: terminal.output_truncated,
+    output_total_bytes: terminal.output_total_bytes,
+    output_artifact_path: terminal.output_artifact_path,
+    exit_code: terminal.exit_code,
+    status: terminal.status,
+    completed_at: terminal.completed_at,
+    parent_tool_call_id: current.parent_tool_call_id ?? incoming.parent_tool_call_id,
+  };
+}
+
+function mergePersistedSubagentRecord(
+  state: PersistedSubagentCollapseState,
+  record: ToolCallRecord,
+  identity: PersistedSubagentIdentity,
+  canonicalId: string,
+): void {
+  state.aliases.set(record.id, canonicalId);
+  if (identity.exactIdentity) {
+    state.canonicalByExactIdentity.set(identity.exactIdentity, canonicalId);
+    state.exactIdentityByCanonical.set(canonicalId, identity.exactIdentity);
+  }
+  const current = state.canonicalRecords.get(canonicalId)!;
+  state.canonicalRecords.set(canonicalId, mergePersistedRecordState(current, record));
+}
+
+function rebasePersistedRecordParent(
+  record: ToolCallRecord,
+  aliases: ReadonlyMap<string, string>,
+): ToolCallRecord {
+  const parentId = record.parent_tool_call_id;
+  if (!parentId) return record;
+  const canonicalParentId = resolveAlias(parentId, aliases);
+  if (canonicalParentId === parentId) return record;
+  return { ...record, parent_tool_call_id: canonicalParentId };
+}
+
+function rebasePersistedRecord(
+  record: ToolCallRecord,
+  aliases: ReadonlyMap<string, string>,
+): ToolCallRecord {
+  return rebasePersistedRecordParent(rebasePersistedMarker(record, aliases), aliases);
+}
+
 /** Collapse repeated persisted Agent records using the same provider identity rule as live calls. */
 export function collapseSubagentRecords(records: readonly ToolCallRecord[]): ToolCallRecord[] {
-  const canonicalByProviderKey = new Map<string, string>();
-  const canonicalByExactIdentity = new Map<string, string>();
-  const exactIdentityByCanonical = new Map<string, string>();
-  const aliases = new Map<string, string>();
-  const canonicalRecords = new Map<string, ToolCallRecord>();
-  const orderedIds: string[] = [];
+  const state = createPersistedSubagentCollapseState();
   for (const record of records) {
     if (record.tool_name !== "Agent") {
-      canonicalRecords.set(record.id, record);
-      orderedIds.push(record.id);
+      storePersistedRecord(state, record);
       continue;
     }
-    const providerKey = record.provider_agent_key ?? undefined;
-    const exactIdentity = record.subagent_identity_key ?? undefined;
-    let canonicalId = exactIdentity
-      ? canonicalByExactIdentity.get(exactIdentity)
-      : undefined;
-    if (!canonicalId && providerKey) {
-      const providerCandidate = canonicalByProviderKey.get(providerKey);
-      if (providerCandidate && (!exactIdentity || !exactIdentityByCanonical.has(providerCandidate))) {
-        canonicalId = providerCandidate;
-      }
-    }
-    if (!canonicalId) {
-      if (providerKey) canonicalByProviderKey.set(providerKey, record.id);
-      if (exactIdentity) {
-        canonicalByExactIdentity.set(exactIdentity, record.id);
-        exactIdentityByCanonical.set(record.id, exactIdentity);
-      }
-      canonicalRecords.set(record.id, record);
-      orderedIds.push(record.id);
+    const identity = persistedSubagentIdentity(record);
+    const canonicalId = persistedCanonicalId(state, identity);
+    if (canonicalId) {
+      mergePersistedSubagentRecord(state, record, identity, canonicalId);
       continue;
     }
-    aliases.set(record.id, canonicalId);
-    if (exactIdentity) {
-      canonicalByExactIdentity.set(exactIdentity, canonicalId);
-      exactIdentityByCanonical.set(canonicalId, exactIdentity);
-    }
-    const current = canonicalRecords.get(canonicalId)!;
-    const terminal = current.status !== "running" ? current : record.status !== "running" ? record : current;
-    canonicalRecords.set(canonicalId, {
-      ...current,
-      display_name: current.display_name ?? record.display_name,
-      provider_agent_key: current.provider_agent_key ?? record.provider_agent_key,
-      subagent_identity_key: current.subagent_identity_key ?? record.subagent_identity_key,
-      subagent_provider_name: current.subagent_provider_name ?? record.subagent_provider_name,
-      subagent_prompt: current.subagent_prompt ?? record.subagent_prompt,
-      subagent_type: current.subagent_type ?? record.subagent_type,
-      subagent_agent_id: current.subagent_agent_id ?? record.subagent_agent_id,
-      subagent_duration_ms: current.subagent_duration_ms ?? record.subagent_duration_ms,
-      model: current.model ?? record.model,
-      reasoning_effort: current.reasoning_effort ?? record.reasoning_effort,
-      input_summary: current.input_summary || record.input_summary,
-      output_summary: terminal.output_summary,
-      output_truncated: terminal.output_truncated,
-      output_total_bytes: terminal.output_total_bytes,
-      output_artifact_path: terminal.output_artifact_path,
-      exit_code: terminal.exit_code,
-      status: terminal.status,
-      completed_at: terminal.completed_at,
-      parent_tool_call_id: current.parent_tool_call_id ?? record.parent_tool_call_id,
-    });
+    rememberPersistedCanonicalIdentity(state, record, identity);
+    storePersistedRecord(state, record);
   }
-  return orderedIds.map((id) => {
-    const record = rebasePersistedMarker(canonicalRecords.get(id)!, aliases);
-    const parentId = record.parent_tool_call_id
-      ? resolveAlias(record.parent_tool_call_id, aliases)
-      : record.parent_tool_call_id;
-    return parentId === record.parent_tool_call_id ? record : { ...record, parent_tool_call_id: parentId };
-  });
+  return state.orderedIds.map((id) => rebasePersistedRecord(
+    state.canonicalRecords.get(id)!,
+    state.aliases,
+  ));
 }
 
 /** Returns whether a live call is an internal subagent lifecycle marker. */

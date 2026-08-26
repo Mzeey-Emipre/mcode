@@ -79,6 +79,16 @@ const TOOL_NAME_BY_TITLE: Record<string, string> = {
   "Search": "Grep",
 };
 
+const IGNORED_ACP_SESSION_UPDATES = new Set<string>([
+  "agent_thought_chunk",
+  "user_message_chunk",
+  "available_commands_update",
+  "current_mode_update",
+  "config_option_update",
+  "session_info_update",
+  "usage_update",
+]);
+
 /**
  * Accumulator for streaming state during one ACP prompt turn on a thread.
  */
@@ -130,26 +140,14 @@ export function mapCursorAcpSessionNotification(
   const { update } = notification;
   const acc = state.accumulator;
 
-  switch (update.sessionUpdate) {
-    case "agent_message_chunk":
-      return mapAgentLanguageChunk(threadId, acc, update);
-    case "plan":
-      return mapAcpPlanUpdate(update, threadId, todoSnapshot);
-    case "agent_thought_chunk":
-    case "user_message_chunk":
-    case "available_commands_update":
-    case "current_mode_update":
-    case "config_option_update":
-    case "session_info_update":
-    case "usage_update":
-      return [];
-    case "tool_call":
-      return mapAcpToolCallStarted(update, threadId, state, acc, todoSnapshot);
-    case "tool_call_update":
-      return mapAcpToolCallUpdated(update, threadId, state, acc);
-    default:
-      return [];
+  if (IGNORED_ACP_SESSION_UPDATES.has(update.sessionUpdate)) return [];
+  if (update.sessionUpdate === "agent_message_chunk") return mapAgentLanguageChunk(threadId, acc, update);
+  if (update.sessionUpdate === "plan") return mapAcpPlanUpdate(update, threadId, todoSnapshot);
+  if (update.sessionUpdate === "tool_call") {
+    return mapAcpToolCallStarted(update, threadId, state, acc, todoSnapshot);
   }
+  if (update.sessionUpdate === "tool_call_update") return mapAcpToolCallUpdated(update, threadId, state, acc);
+  return [];
 }
 
 // ---------------------------------------------------------------------------
@@ -181,35 +179,44 @@ function mapAgentLanguageChunk(
 // Tool call helpers
 // ---------------------------------------------------------------------------
 
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
+  return value as Record<string, unknown>;
+}
+
+function toolNameFromAcpKind(kind: unknown): string | undefined {
+  if (typeof kind !== "string") return undefined;
+  return TOOL_NAME_BY_ACP_KIND[kind];
+}
+
+function acpToolTitle(title: unknown): string | undefined {
+  return typeof title === "string" ? title : undefined;
+}
+
+function toolNameFromDiscriminator(rawInput: unknown): string | undefined {
+  const record = asRecord(rawInput);
+  if (!record) return undefined;
+  for (const key of Object.keys(record)) {
+    if (key === "result" || key === "args" || key === "_toolName") continue;
+    if (!asRecord(record[key])) continue;
+    const toolName = TOOL_NAME_BY_DISCRIMINATOR[key];
+    if (toolName) return toolName;
+  }
+  return undefined;
+}
+
 /** Resolve an ACP tool call to a Mcode tool name using kind → title → discriminator. */
 function resolveAcpToolName(update: {
   kind?: unknown;
   title?: string | null;
   rawInput?: unknown;
 }): string {
-  // 1. ACP `kind` field (most reliable for ACP-native calls)
-  if (typeof update.kind === "string" && TOOL_NAME_BY_ACP_KIND[update.kind]) {
-    return TOOL_NAME_BY_ACP_KIND[update.kind];
-  }
-
-  // 2. Title-based lookup
-  const title = typeof update.title === "string" ? update.title : null;
-  if (title && TOOL_NAME_BY_TITLE[title]) {
-    return TOOL_NAME_BY_TITLE[title];
-  }
-
-  // 3. Legacy discriminator in rawInput (--print compat)
-  if (update.rawInput && typeof update.rawInput === "object" && !Array.isArray(update.rawInput)) {
-    const rec = update.rawInput as Record<string, unknown>;
-    for (const key of Object.keys(rec)) {
-      if (key === "result" || key === "args" || key === "_toolName") continue;
-      if (rec[key] && typeof rec[key] === "object" && !Array.isArray(rec[key])) {
-        if (TOOL_NAME_BY_DISCRIMINATOR[key]) return TOOL_NAME_BY_DISCRIMINATOR[key];
-      }
-    }
-  }
-
-  return title || "Tool";
+  const title = acpToolTitle(update.title);
+  const kindToolName = toolNameFromAcpKind(update.kind);
+  if (kindToolName) return kindToolName;
+  const titleToolName = title ? TOOL_NAME_BY_TITLE[title] : undefined;
+  if (titleToolName) return titleToolName;
+  return toolNameFromDiscriminator(update.rawInput) ?? (title || "Tool");
 }
 
 function extractContentDiffs(update: Record<string, unknown>): AcpDiffBlock[] {
@@ -258,6 +265,93 @@ function coercePayloadArgs(payload: Record<string, unknown> | undefined): Record
   return { ...rest };
 }
 
+function toolUseEvent(
+  threadId: string,
+  toolCallId: string,
+  toolName: string,
+  toolInput: Record<string, unknown>,
+  parentToolCallId: string | undefined,
+): AgentEvent {
+  return {
+    type: AgentEventType.ToolUse,
+    threadId,
+    toolCallId,
+    toolName,
+    toolInput,
+    ...(parentToolCallId ? { parentToolCallId } : {}),
+  };
+}
+
+function markAcpToolCallStarted(acc: CursorStreamAccumulator, toolCallId: string): void {
+  acc.toolStartTimes.set(toolCallId, Date.now());
+  acc.pendingToolCalls.add(toolCallId);
+  acc.hasFiredToolThisTurn = true;
+}
+
+function mapSpecialAcpToolCall(
+  update: { rawInput?: unknown; toolCallId: string; title: string },
+  threadId: string,
+  state: CursorAcpTurnState,
+  rawInput: Record<string, unknown> | undefined,
+): AgentEvent[] | null {
+  const isTask = isCursorTaskAcpTool(rawInput, update.title);
+  if (typeof rawInput?._toolName !== "string" && !isTask) return null;
+  if (isTask) {
+    return cursorTaskToolCallStartedToAgentEvents(threadId, update.toolCallId, update.title, state);
+  }
+  state.suppressedToolCallIds.add(update.toolCallId);
+  return [];
+}
+
+function mapLegacyTodoToolCall(
+  update: { toolCallId: string },
+  threadId: string,
+  parentToolCallId: string | undefined,
+  raw: { discriminator: string | null; payload: Record<string, unknown> | undefined },
+  acc: CursorStreamAccumulator,
+  todoSnapshot: CursorTodoSnapshot | undefined,
+): AgentEvent[] | null {
+  if (raw.discriminator !== "updateTodosToolCall") return null;
+  const args = coercePayloadArgs(raw.payload);
+  const entries = extractCursorTodoEntries(args);
+  if (!entries || entries.length === 0) return [];
+  const incoming = entries.map((entry, index) => normalizeCursorTodoEntry(entry, index));
+  const todos = reconcileCursorTodos(incoming, args.merge === true, todoSnapshot);
+  markAcpToolCallStarted(acc, update.toolCallId);
+  return [toolUseEvent(threadId, update.toolCallId, "TodoWrite", { todos }, parentToolCallId)];
+}
+
+function initialAcpToolName(
+  update: { kind?: unknown; rawInput?: unknown; title?: string | null },
+  discriminator: string | null,
+): string {
+  let toolName = resolveAcpToolName(update);
+  if (discriminator) toolName = TOOL_NAME_BY_DISCRIMINATOR[discriminator] ?? discriminator;
+  return resolveCursorSubagentToolName(toolName, discriminator, update.title);
+}
+
+function normalizeInitialAcpToolInput(
+  toolName: string,
+  toolInput: Record<string, unknown>,
+): Record<string, unknown> {
+  return toolName === "Edit" || toolName === "Write"
+    ? normalizeMcodeCursorToolInput(toolName, toolInput)
+    : toolInput;
+}
+
+function initialAcpToolInput(
+  rawInput: Record<string, unknown> | undefined,
+  payload: Record<string, unknown> | undefined,
+  toolName: string,
+): Record<string, unknown> {
+  let toolInput = payload ? coercePayloadArgs(payload) : {};
+  if (Object.keys(toolInput).length === 0 && rawInput) {
+    const { _toolName: _, ...rest } = rawInput;
+    if (Object.keys(rest).length > 0) toolInput = rest;
+  }
+  return normalizeInitialAcpToolInput(toolName, toolInput);
+}
+
 // ---------------------------------------------------------------------------
 // tool_call (initial)
 // ---------------------------------------------------------------------------
@@ -275,67 +369,26 @@ function mapAcpToolCallStarted(
   todoSnapshot: CursorTodoSnapshot | undefined,
 ): AgentEvent[] {
   const parentToolCallId = extractCursorParentToolCallId(update as unknown as Record<string, unknown>);
-  const rawInputRecord =
-    update.rawInput && typeof update.rawInput === "object" && !Array.isArray(update.rawInput)
-      ? (update.rawInput as Record<string, unknown>)
-      : undefined;
-
-  // ACP `_toolName` tools carry no args on `tool_call`; data arrives via ext methods.
-  const acpToolName = rawInputRecord?._toolName;
-  if (typeof acpToolName === "string" || isCursorTaskAcpTool(rawInputRecord, update.title)) {
-    if (acpToolName === "task" || isCursorTaskAcpTool(rawInputRecord, update.title)) {
-      return cursorTaskToolCallStartedToAgentEvents(
-        threadId,
-        update.toolCallId,
-        update.title,
-        state,
-      );
-    }
-    state.suppressedToolCallIds.add(update.toolCallId);
-    return [];
-  }
+  const rawInputRecord = asRecord(update.rawInput);
+  const specialEvents = mapSpecialAcpToolCall(update, threadId, state, rawInputRecord);
+  if (specialEvents) return specialEvents;
 
   // Legacy --print discriminator (updateTodosToolCall, shellToolCall, etc.)
-  const raw = rawInputRecord ? extractToolCallDiscriminator(rawInputRecord) : { discriminator: null, payload: undefined };
-  if (raw.discriminator === "updateTodosToolCall") {
-    const args = coercePayloadArgs(raw.payload);
-    const entries = extractCursorTodoEntries(args);
-    if (!entries || entries.length === 0) return [];
-    const merge = args.merge === true;
-    const incoming = entries.map((entry, index) => normalizeCursorTodoEntry(entry, index));
-    const todos = reconcileCursorTodos(incoming, merge, todoSnapshot);
-    acc.toolStartTimes.set(update.toolCallId, Date.now());
-    acc.pendingToolCalls.add(update.toolCallId);
-    acc.hasFiredToolThisTurn = true;
-    return [
-      {
-        type: AgentEventType.ToolUse,
-        threadId,
-        toolCallId: update.toolCallId,
-        toolName: "TodoWrite",
-        toolInput: { todos },
-        ...(parentToolCallId ? { parentToolCallId } : {}),
-      },
-    ];
-  }
+  const raw = rawInputRecord
+    ? extractToolCallDiscriminator(rawInputRecord)
+    : { discriminator: null, payload: undefined };
+  const todoEvents = mapLegacyTodoToolCall(
+    update,
+    threadId,
+    parentToolCallId,
+    raw,
+    acc,
+    todoSnapshot,
+  );
+  if (todoEvents) return todoEvents;
 
-  // Resolve tool name from ACP kind/title/discriminator
-  let toolName = raw.discriminator
-    ? (TOOL_NAME_BY_DISCRIMINATOR[raw.discriminator] ?? raw.discriminator)
-    : resolveAcpToolName(update);
-  toolName = resolveCursorSubagentToolName(toolName, raw.discriminator, update.title);
-
-  // Build toolInput from rawInput if available
-  let toolInput: Record<string, unknown> =
-    raw.payload ? coercePayloadArgs(raw.payload) : {};
-  if (Object.keys(toolInput).length === 0 && rawInputRecord) {
-    const { _toolName: _, ...rest } = rawInputRecord;
-    if (Object.keys(rest).length > 0) toolInput = rest;
-  }
-
-  if (toolName === "Edit" || toolName === "Write") {
-    toolInput = normalizeMcodeCursorToolInput(toolName, toolInput);
-  }
+  const toolName = initialAcpToolName(update, raw.discriminator);
+  const toolInput = initialAcpToolInput(rawInputRecord, raw.payload, toolName);
 
   state.toolNameByCallId.set(update.toolCallId, toolName);
   state.pendingToolMarkerByCallId.set(update.toolCallId, {
@@ -352,25 +405,128 @@ function mapAcpToolCallStarted(
 
   // Align with {@link CursorStreamAccumulator}: only set once a ToolUse is emitted
   // so `tool_call_update` can orphan-synthesize a card like stream-json completions.
-  acc.toolStartTimes.set(update.toolCallId, Date.now());
-  acc.pendingToolCalls.add(update.toolCallId);
-  acc.hasFiredToolThisTurn = true;
-
-  return [
-    {
-      type: AgentEventType.ToolUse,
-      threadId,
-      toolCallId: update.toolCallId,
-      toolName,
-      toolInput,
-      ...(parentToolCallId ? { parentToolCallId } : {}),
-    },
-  ];
+  markAcpToolCallStarted(acc, update.toolCallId);
+  return [toolUseEvent(threadId, update.toolCallId, toolName, toolInput, parentToolCallId)];
 }
 
 // ---------------------------------------------------------------------------
 // tool_call_update (progress + completion)
 // ---------------------------------------------------------------------------
+
+function isTerminalAcpToolCallStatus(status: unknown): boolean {
+  return status === "completed" || status === "failed";
+}
+
+function mapTerminalSuppressedAcpToolCallUpdate(
+  update: { status?: unknown; toolCallId: string },
+  threadId: string,
+  state: CursorAcpTurnState,
+  acc: CursorStreamAccumulator,
+): AgentEvent[] {
+  if (state.pendingTaskToolCallIds.has(update.toolCallId)) {
+    if (state.taskMetaByCallId.has(update.toolCallId)) {
+      return cursorTaskCompletionToAgentEvents(
+        threadId,
+        update.toolCallId,
+        state,
+        update.status === "failed",
+      );
+    }
+    state.taskCompletedAwaitingMeta.add(update.toolCallId);
+    return [];
+  }
+  acc.toolStartTimes.delete(update.toolCallId);
+  state.suppressedToolCallIds.delete(update.toolCallId);
+  acc.pendingToolCalls.delete(update.toolCallId);
+  return [];
+}
+
+function mapSuppressedAcpToolCallUpdate(
+  update: { status?: unknown; toolCallId: string },
+  threadId: string,
+  state: CursorAcpTurnState,
+  acc: CursorStreamAccumulator,
+): AgentEvent[] | null {
+  if (!state.suppressedToolCallIds.has(update.toolCallId)) return null;
+  if (isTerminalAcpToolCallStatus(update.status)) {
+    return mapTerminalSuppressedAcpToolCallUpdate(update, threadId, state, acc);
+  }
+  acc.toolStartTimes.delete(update.toolCallId);
+  return [];
+}
+
+function acpToolCallUpdateHasData(update: {
+  content?: unknown;
+  rawOutput?: unknown;
+  status?: unknown;
+}): boolean {
+  if (update.rawOutput !== undefined) return true;
+  if (Array.isArray(update.content) && update.content.length > 0) return true;
+  return isTerminalAcpToolCallStatus(update.status);
+}
+
+function updatedAcpToolName(
+  update: { kind?: unknown; rawInput?: unknown; title?: string | null; toolCallId: string },
+  state: CursorAcpTurnState,
+): { toolName: string; discriminator: string | null } {
+  const rawInput = asRecord(update.rawInput);
+  const discriminator = rawInput ? extractToolCallDiscriminator(rawInput).discriminator : null;
+  let toolName = state.toolNameByCallId.get(update.toolCallId);
+  if (!toolName) toolName = resolveAcpToolName(update);
+  return {
+    toolName: resolveCursorSubagentToolName(toolName, discriminator, update.title),
+    discriminator,
+  };
+}
+
+function deferredAcpToolUse(
+  threadId: string,
+  toolCallId: string,
+  toolName: string,
+  toolInput: Record<string, unknown>,
+  parentToolCallId: string | undefined,
+  acc: CursorStreamAccumulator,
+): AgentEvent[] {
+  if (acc.toolStartTimes.has(toolCallId)) return [];
+  acc.hasFiredToolThisTurn = true;
+  return [toolUseEvent(threadId, toolCallId, toolName, toolInput, parentToolCallId)];
+}
+
+function resultToolInput(
+  toolName: string,
+  diffs: readonly AcpDiffBlock[],
+  toolInput: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  if (diffs.length === 0 || !Array.isArray(toolInput._mcodeFileMutations)) return undefined;
+  return {
+    _mcodeToolName: toolName,
+    _mcodeFileMutations: toolInput._mcodeFileMutations,
+  };
+}
+
+function acpToolResultEvent(
+  threadId: string,
+  toolCallId: string,
+  output: string,
+  isError: boolean,
+  toolInput: Record<string, unknown> | undefined,
+): AgentEvent {
+  return {
+    type: AgentEventType.ToolResult,
+    threadId,
+    toolCallId,
+    output,
+    isError,
+    ...(toolInput ? { toolInput } : {}),
+  };
+}
+
+function clearAcpToolCallUpdate(state: CursorAcpTurnState, acc: CursorStreamAccumulator, toolCallId: string): void {
+  acc.toolStartTimes.delete(toolCallId);
+  acc.pendingToolCalls.delete(toolCallId);
+  state.toolNameByCallId.delete(toolCallId);
+  state.pendingToolMarkerByCallId.delete(toolCallId);
+}
 
 function mapAcpToolCallUpdated(
   update: {
@@ -386,99 +542,35 @@ function mapAcpToolCallUpdated(
   state: CursorAcpTurnState,
   acc: CursorStreamAccumulator,
 ): AgentEvent[] {
+  const suppressedEvents = mapSuppressedAcpToolCallUpdate(update, threadId, state, acc);
+  if (suppressedEvents) return suppressedEvents;
+  if (!acpToolCallUpdateHasData(update)) return [];
+
   const parentToolCallId = extractCursorParentToolCallId(update as unknown as Record<string, unknown>);
-  // Suppress lifecycle-only tool calls (handled by ext methods)
-  if (state.suppressedToolCallIds.has(update.toolCallId)) {
-    const isTerminal = update.status === "completed" || update.status === "failed";
-    if (isTerminal && state.pendingTaskToolCallIds.has(update.toolCallId)) {
-      if (state.taskMetaByCallId.has(update.toolCallId)) {
-        return cursorTaskCompletionToAgentEvents(
-          threadId,
-          update.toolCallId,
-          state,
-          update.status === "failed",
-        );
-      }
-      // `cursor/task` often arrives after the completed tool_call_update.
-      state.taskCompletedAwaitingMeta.add(update.toolCallId);
-      return [];
-    }
-    acc.toolStartTimes.delete(update.toolCallId);
-    if (isTerminal) {
-      state.suppressedToolCallIds.delete(update.toolCallId);
-      acc.pendingToolCalls.delete(update.toolCallId);
-    }
-    return [];
-  }
-
-  // Skip in-progress updates that carry no data
-  const hasData =
-    update.rawOutput !== undefined ||
-    (Array.isArray(update.content) && (update.content as unknown[]).length > 0) ||
-    update.status === "completed" ||
-    update.status === "failed";
-  if (!hasData) return [];
-
-  const events: AgentEvent[] = [];
-  const isError = update.status === "failed";
-  const knownToolName = state.toolNameByCallId.get(update.toolCallId);
-  const rawInputRecord =
-    update.rawInput && typeof update.rawInput === "object" && !Array.isArray(update.rawInput)
-      ? (update.rawInput as Record<string, unknown>)
-      : undefined;
-  const derivedDiscriminator = rawInputRecord
-    ? extractToolCallDiscriminator(rawInputRecord).discriminator
-    : null;
-
   const diffs = extractContentDiffs(update as Record<string, unknown>);
   const marker = state.pendingToolMarkerByCallId.get(update.toolCallId);
-
-  let toolName = knownToolName ?? resolveAcpToolName(update);
-  toolName = resolveCursorSubagentToolName(toolName, derivedDiscriminator, update.title);
-  const toolInput = enrichAcpToolInput(
-    toolName,
-    marker,
-    update.rawInput,
-    update.rawOutput,
-    diffs,
-  );
+  const { toolName } = updatedAcpToolName(update, state);
+  const toolInput = enrichAcpToolInput(toolName, marker, update.rawInput, update.rawOutput, diffs);
   const output = formatAcpToolResultOutput(toolName, update.rawOutput, diffs);
-
-  // Emit ToolUse with actual data only if the initial tool_call deferred it
-  // (rawInput was empty). If tool_call already emitted ToolUse, skip to avoid
-  // duplicate tool-call cards.
-  if (!acc.toolStartTimes.has(update.toolCallId)) {
-    events.push({
-      type: AgentEventType.ToolUse,
-      threadId,
-      toolCallId: update.toolCallId,
-      toolName,
-      toolInput,
-      ...(parentToolCallId ? { parentToolCallId } : {}),
-    });
-    acc.hasFiredToolThisTurn = true;
-  }
-
-  acc.toolStartTimes.delete(update.toolCallId);
-  acc.pendingToolCalls.delete(update.toolCallId);
-  state.toolNameByCallId.delete(update.toolCallId);
-  state.pendingToolMarkerByCallId.delete(update.toolCallId);
-
-  events.push({
-    type: AgentEventType.ToolResult,
+  const events = deferredAcpToolUse(
     threadId,
-    toolCallId: update.toolCallId,
-    output,
-    isError,
-    ...(diffs.length > 0 && Array.isArray(toolInput._mcodeFileMutations)
-      ? {
-          toolInput: {
-            _mcodeToolName: toolName,
-            _mcodeFileMutations: toolInput._mcodeFileMutations,
-          },
-        }
-      : {}),
-  });
+    update.toolCallId,
+    toolName,
+    toolInput,
+    parentToolCallId,
+    acc,
+  );
+
+  clearAcpToolCallUpdate(state, acc, update.toolCallId);
+  events.push(
+    acpToolResultEvent(
+      threadId,
+      update.toolCallId,
+      output,
+      update.status === "failed",
+      resultToolInput(toolName, diffs, toolInput),
+    ),
+  );
   return events;
 }
 

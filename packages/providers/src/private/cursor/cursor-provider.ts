@@ -70,6 +70,16 @@ export function buildCursorInternalMcpServers(
 type BrowserAutomationSessionLeaseGrant = CursorBrowserLeaseGrant;
 type BrowserAutomationSessionLeaseStage = CursorBrowserLeaseHandle;
 
+type CursorTurnContext = {
+  req: TurnRequest<"cursor">;
+  sessionId: string;
+  threadId: string;
+  resume: boolean;
+  browserContext: CursorBrowserContext;
+  browserPermissionCapability: ReturnType<typeof providerBrowserPermissionCapability>;
+  emitTurnEvent: (event: AgentEvent) => void;
+};
+
 const CURSOR_SUPPORTED_CAPABILITIES = [
   "build",
   "plan",
@@ -313,190 +323,293 @@ export class CursorProvider
 
   /** Queues an ACP `session/prompt` on the session subprocess (serialized per thread). */
   async sendTurn(req: TurnRequest<"cursor">): Promise<void> {
+    const context = this.prepareTurnContext(req);
+    const { sessionId } = context;
+    // `resumeFrom` defined ⇒ resume the stored ACP session; undefined ⇒ fresh.
+    this.releaseMismatchedPendingBrowserGrant(context);
+    const existing = await this.rotateCompletedSession(sessionId);
+    const browserStage = await this.prepareBrowserLeaseForTurn(context, existing);
+
+    const entry = await this.acquireTurnSession(context, browserStage);
+    if (!entry) return;
+    this.clearBrowserStageAfterAcquire(sessionId, browserStage, entry, existing);
+    if (this.consumePendingStop(context)) return;
+
+    try {
+      await this.enqueueTurn(entry, context);
+    } finally {
+      this.finishPendingTurnExecution(sessionId, req.turnExecutionId);
+    }
+  }
+
+
+  private prepareTurnContext(req: TurnRequest<"cursor">): CursorTurnContext {
     void req.fallbackModel;
     void req.reasoningLevel;
-
-    const {
-      sessionId,
-      message,
-      cwd,
-      model,
-      permissionMode,
-      attachments,
-    } = req;
-    // `resumeFrom` defined ⇒ resume the stored ACP session; undefined ⇒ fresh.
     const resume = req.resumeFrom !== undefined;
     if (req.resumeFrom !== undefined) {
-      this.sdkSessionIds.set(sessionId, req.resumeFrom);
+      this.sdkSessionIds.set(req.sessionId, req.resumeFrom);
     }
 
-    const threadId = sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
-    this.pendingTurnExecutionIds.set(sessionId, req.turnExecutionId);
-    const emitTurnEvent = (event: AgentEvent): void => { this.emit("event", { ...event, turnExecutionId: req.turnExecutionId }); };
+    const threadId = req.sessionId.startsWith("mcode-") ? req.sessionId.slice(6) : req.sessionId;
     const browserPermissionCapability = providerBrowserPermissionCapability(
-      permissionMode,
+      req.permissionMode,
       req.interactionMode,
     );
     const browserContext: CursorBrowserContext = {
       workspaceId: req.workspaceId,
       browserPermissionCapability,
     };
-
+    this.pendingTurnExecutionIds.set(req.sessionId, req.turnExecutionId);
     this.getAcpClientBridge().setPlanQuestionMode(threadId, req.interactionMode === "plan");
+    return {
+      req,
+      sessionId: req.sessionId,
+      threadId,
+      resume,
+      browserContext,
+      browserPermissionCapability,
+      emitTurnEvent: (event) => {
+        this.emit("event", { ...event, turnExecutionId: req.turnExecutionId });
+      },
+    };
+  }
 
-    let existing = this.runtime.get(sessionId);
-    const pendingGrant = this.pendingBrowserGrants.get(sessionId);
-    const pendingGrantContext = this.pendingBrowserGrantContext.get(sessionId);
-    if (pendingGrant && (!pendingGrantContext || !this.sameBrowserContext(pendingGrantContext, browserContext))) {
-      this.releaseBrowserLeases(pendingGrant);
-      this.pendingBrowserGrants.delete(sessionId);
-      this.pendingBrowserGrantContext.delete(sessionId);
+  private releaseMismatchedPendingBrowserGrant(context: CursorTurnContext): void {
+    const grant = this.pendingBrowserGrants.get(context.sessionId);
+    if (!grant) return;
+    const grantContext = this.pendingBrowserGrantContext.get(context.sessionId);
+    if (grantContext && this.sameBrowserContext(grantContext, context.browserContext)) return;
+
+    this.releaseBrowserLeases(grant);
+    this.pendingBrowserGrants.delete(context.sessionId);
+    this.pendingBrowserGrantContext.delete(context.sessionId);
+  }
+
+  private async rotateCompletedSession(sessionId: string): Promise<CursorSessionState | undefined> {
+    const entry = this.runtime.get(sessionId);
+    if (!entry) return undefined;
+    if (entry.activeTurnState !== null) return entry;
+    if (entry.cursorPromptOrdinal <= 0) return entry;
+
+    await this.runtime.stop(sessionId);
+    return undefined;
+  }
+
+  private async prepareBrowserLeaseForTurn(
+    context: CursorTurnContext,
+    existing: CursorSessionState | undefined,
+  ): Promise<BrowserAutomationSessionLeaseStage | undefined> {
+    let browserStage = await this.reconcileExistingBrowserLease(context, existing);
+    if (!this.runtime.get(context.sessionId)) {
+      browserStage = this.stageBrowserLeaseForMissingSession(context);
     }
-    // ACP callbacks are connection-scoped and carry no prompt id. Rotate a
-    // completed session before the next logical turn so late notifications
-    // stay bound to the old connection's immutable execution state.
-    if (existing && existing.activeTurnState === null && existing.cursorPromptOrdinal > 0) {
-      await this.runtime.stop(sessionId);
-      existing = undefined;
+    return browserStage;
+  }
+
+  private async reconcileExistingBrowserLease(
+    context: CursorTurnContext,
+    existing: CursorSessionState | undefined,
+  ): Promise<BrowserAutomationSessionLeaseStage | undefined> {
+    if (!existing) return undefined;
+
+    const browserContextChanged = this.browserContextChanged(existing, context.browserContext);
+    const browserExpired = this.browserCredentialExpired(existing);
+    const acquireWillReplace = this.isStale(existing, {
+      cwd: context.req.cwd,
+      permissionMode: context.req.permissionMode,
+    });
+    if (!browserContextChanged && !browserExpired && !acquireWillReplace) return undefined;
+
+    this.refreshExpiredBrowserGrant(context, existing, browserContextChanged, browserExpired);
+    const browserStage = this.stageBrowserLeaseForReplacement(context, acquireWillReplace);
+    await this.runtime.stop(context.sessionId);
+    return browserStage;
+  }
+
+  private browserContextChanged(
+    entry: CursorSessionState,
+    browserContext: CursorBrowserContext,
+  ): boolean {
+    return entry.workspaceId !== browserContext.workspaceId ||
+      entry.browserPermissionCapability !== browserContext.browserPermissionCapability;
+  }
+
+  private browserCredentialExpired(entry: CursorSessionState): boolean {
+    const credential = entry.browserCredential;
+    return credential !== undefined && credential.expiresAt <= Date.now();
+  }
+
+  private refreshExpiredBrowserGrant(
+    context: CursorTurnContext,
+    entry: CursorSessionState,
+    browserContextChanged: boolean,
+    browserExpired: boolean,
+  ): void {
+    if (browserContextChanged) return;
+    if (!browserExpired) return;
+    const credential = entry.browserCredential;
+    if (!credential) return;
+
+    const refreshed = this.browserAutomationLease.refresh(credential.leaseId);
+    if (!refreshed.ok) return;
+
+    this.pendingBrowserGrants.set(context.sessionId, refreshed.grant);
+    this.pendingBrowserGrantContext.set(context.sessionId, context.browserContext);
+    entry.browserCredential = undefined;
+  }
+
+  private stageBrowserLeaseForReplacement(
+    context: CursorTurnContext,
+    acquireWillReplace: boolean,
+  ): BrowserAutomationSessionLeaseStage | undefined {
+    if (!acquireWillReplace) return undefined;
+    if (this.pendingBrowserGrants.has(context.sessionId)) return undefined;
+    return this.stageBrowserLease(context);
+  }
+
+  private stageBrowserLeaseForMissingSession(
+    context: CursorTurnContext,
+  ): BrowserAutomationSessionLeaseStage | undefined {
+    if (this.pendingBrowserGrants.has(context.sessionId)) {
+      this.discardStagedBrowserLease(context.sessionId);
+      return undefined;
     }
-    let browserStage: BrowserAutomationSessionLeaseStage | undefined;
-    if (existing) {
-      const browserContextChanged =
-        existing.workspaceId !== req.workspaceId ||
-        existing.browserPermissionCapability !== browserPermissionCapability;
-      const browserExpired = existing.browserCredential !== undefined &&
-        existing.browserCredential.expiresAt <= Date.now();
-      const acquireWillReplace = this.isStale(existing, { cwd, permissionMode });
-      if (browserContextChanged || browserExpired || acquireWillReplace) {
-        if (!browserContextChanged && browserExpired && existing.browserCredential) {
-          const refreshed = this.browserAutomationLease.refresh(existing.browserCredential.leaseId);
-          if (refreshed.ok) {
-            this.pendingBrowserGrants.set(sessionId, refreshed.grant);
-            this.pendingBrowserGrantContext.set(sessionId, browserContext);
-            existing.browserCredential = undefined;
-          }
-        }
-        if (acquireWillReplace && !this.pendingBrowserGrants.has(sessionId)) {
-          browserStage = this.pendingBrowserLeases.get(sessionId);
-          const stagedContext = this.pendingBrowserContext.get(sessionId);
-          if (browserStage && (!stagedContext || !this.sameBrowserContext(stagedContext, browserContext))) {
-            this.releaseBrowserLeases(browserStage);
-            this.pendingBrowserLeases.delete(sessionId);
-            this.pendingBrowserContext.delete(sessionId);
-            browserStage = undefined;
-          }
-          if (this.browserAutomationLease.isConfigured() && !browserStage) {
-            browserStage = this.browserAutomationLease.stage({
-              providerId: this.id,
-              providerSessionId: req.resumeFrom ?? sessionId,
-              mcodeSessionId: sessionId,
-              threadId: req.threadId,
-              workspaceId: req.workspaceId,
-              permissionCapability: browserPermissionCapability,
-            });
-            this.pendingBrowserLeases.set(sessionId, browserStage);
-            this.pendingBrowserContext.set(sessionId, browserContext);
-          }
-        }
-        await this.runtime.stop(sessionId);
-      }
-    }
-    if (!this.runtime.get(sessionId)) {
-      if (this.pendingBrowserGrants.has(sessionId)) {
-        const staleStage = this.pendingBrowserLeases.get(sessionId);
-        this.releaseBrowserLeases(staleStage);
-        this.pendingBrowserLeases.delete(sessionId);
-        this.pendingBrowserContext.delete(sessionId);
-      } else {
-        browserStage = this.pendingBrowserLeases.get(sessionId);
-        const stagedContext = this.pendingBrowserContext.get(sessionId);
-        if (browserStage && (!stagedContext || !this.sameBrowserContext(stagedContext, browserContext))) {
-          this.releaseBrowserLeases(browserStage);
-          this.pendingBrowserLeases.delete(sessionId);
-          this.pendingBrowserContext.delete(sessionId);
-          browserStage = undefined;
-        }
-      }
-      if (
-        this.browserAutomationLease.isConfigured() &&
-        !browserStage &&
-        !this.pendingBrowserGrants.has(sessionId)
-      ) {
-        browserStage = this.browserAutomationLease.stage({
-          providerId: this.id,
-          providerSessionId: req.resumeFrom ?? sessionId,
-          mcodeSessionId: sessionId,
-          threadId: req.threadId,
-          workspaceId: req.workspaceId,
-          permissionCapability: browserPermissionCapability,
-        });
-        this.pendingBrowserLeases.set(sessionId, browserStage);
-        this.pendingBrowserContext.set(sessionId, browserContext);
-      }
+    return this.stageBrowserLease(context);
+  }
+
+  private stageBrowserLease(
+    context: CursorTurnContext,
+  ): BrowserAutomationSessionLeaseStage | undefined {
+    const existingStage = this.pendingBrowserLeases.get(context.sessionId);
+    if (existingStage && !this.hasMatchingStagedBrowserContext(context)) {
+      this.discardStagedBrowserLease(context.sessionId);
     }
 
-    let entry: CursorSessionState;
+    const retainedStage = this.pendingBrowserLeases.get(context.sessionId);
+    if (retainedStage) return retainedStage;
+    if (!this.browserAutomationLease.isConfigured()) return undefined;
+
+    const browserStage = this.browserAutomationLease.stage({
+      providerId: this.id,
+      providerSessionId: context.req.resumeFrom ?? context.sessionId,
+      mcodeSessionId: context.sessionId,
+      threadId: context.req.threadId,
+      workspaceId: context.req.workspaceId,
+      permissionCapability: context.browserPermissionCapability,
+    });
+    this.pendingBrowserLeases.set(context.sessionId, browserStage);
+    this.pendingBrowserContext.set(context.sessionId, context.browserContext);
+    return browserStage;
+  }
+
+  private hasMatchingStagedBrowserContext(context: CursorTurnContext): boolean {
+    const stagedContext = this.pendingBrowserContext.get(context.sessionId);
+    if (!stagedContext) return false;
+    return this.sameBrowserContext(stagedContext, context.browserContext);
+  }
+
+  private discardStagedBrowserLease(sessionId: string): void {
+    this.releaseBrowserLeases(this.pendingBrowserLeases.get(sessionId));
+    this.pendingBrowserLeases.delete(sessionId);
+    this.pendingBrowserContext.delete(sessionId);
+  }
+
+  private async acquireTurnSession(
+    context: CursorTurnContext,
+    browserStage: BrowserAutomationSessionLeaseStage | undefined,
+  ): Promise<CursorSessionState | undefined> {
     try {
-      // The runtime discards a stale pooled session (dead child / cwd /
-       // permission-mode mismatch, see `isStale`) and spawns a fresh one.
-       // The server process port owns the returned child PID.
-      entry = await this.runtime.acquire({
-        sessionId,
-        threadId,
-        cwd,
-        permissionMode,
-        resumeFrom: resume ? this.sdkSessionIds.get(sessionId) : undefined,
+      return await this.runtime.acquire({
+        sessionId: context.sessionId,
+        threadId: context.threadId,
+        cwd: context.req.cwd,
+        permissionMode: context.req.permissionMode,
+        resumeFrom: context.resume ? this.sdkSessionIds.get(context.sessionId) : undefined,
       });
-    } catch (err) {
-      this.releaseBrowserLeases(browserStage);
-      this.pendingBrowserLeases.delete(sessionId);
-      this.pendingBrowserContext.delete(sessionId);
-      const refreshed = this.pendingBrowserGrants.get(sessionId);
-      this.releaseBrowserLeases(refreshed);
-      this.pendingBrowserGrants.delete(sessionId);
-      this.pendingBrowserGrantContext.delete(sessionId);
-      const errMsg = err instanceof Error ? err.message : String(err);
-      logger.error("Cursor ACP spawn failed", { sessionId, error: errMsg });
-      emitTurnEvent({ type: AgentEventType.Error, threadId, error: errMsg } satisfies AgentEvent);
-      emitTurnEvent({ type: AgentEventType.Ended, threadId, turnExecutionId: req.turnExecutionId } satisfies AgentEvent);
-      if (this.pendingTurnExecutionIds.get(sessionId) === req.turnExecutionId) {
-        this.pendingTurnExecutionIds.delete(sessionId);
-      }
-      return;
+    } catch (error) {
+      this.handleTurnAcquireFailure(context, browserStage, error);
+      return undefined;
     }
+  }
+
+  private handleTurnAcquireFailure(
+    context: CursorTurnContext,
+    browserStage: BrowserAutomationSessionLeaseStage | undefined,
+    error: unknown,
+  ): void {
+    this.releaseBrowserLeases(browserStage);
+    this.pendingBrowserLeases.delete(context.sessionId);
+    this.pendingBrowserContext.delete(context.sessionId);
+    this.releaseBrowserLeases(this.pendingBrowserGrants.get(context.sessionId));
+    this.pendingBrowserGrants.delete(context.sessionId);
+    this.pendingBrowserGrantContext.delete(context.sessionId);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.error("Cursor ACP spawn failed", { sessionId: context.sessionId, error: errorMessage });
+    context.emitTurnEvent({
+      type: AgentEventType.Error,
+      threadId: context.threadId,
+      error: errorMessage,
+    } satisfies AgentEvent);
+    context.emitTurnEvent({
+      type: AgentEventType.Ended,
+      threadId: context.threadId,
+      turnExecutionId: context.req.turnExecutionId,
+    } satisfies AgentEvent);
+    this.finishPendingTurnExecution(context.sessionId, context.req.turnExecutionId);
+  }
+
+  private clearBrowserStageAfterAcquire(
+    sessionId: string,
+    browserStage: BrowserAutomationSessionLeaseStage | undefined,
+    entry: CursorSessionState,
+    existing: CursorSessionState | undefined,
+  ): void {
     this.pendingBrowserLeases.delete(sessionId);
     this.pendingBrowserContext.delete(sessionId);
     if (browserStage && entry === existing) this.releaseBrowserLeases(browserStage);
+  }
 
-    // A stop requested before the session finished spawning: tear it down now.
-    if (this.pendingStops.delete(sessionId)) {
-      logger.info("Pending stop consumed, tearing down new Cursor session", { sessionId });
-      void this.runtime.stop(sessionId);
-      emitTurnEvent({ type: AgentEventType.Ended, threadId, turnExecutionId: req.turnExecutionId } satisfies AgentEvent);
-      if (this.pendingTurnExecutionIds.get(sessionId) === req.turnExecutionId) {
-        this.pendingTurnExecutionIds.delete(sessionId);
-      }
-      return;
-    }
+  private consumePendingStop(context: CursorTurnContext): boolean {
+    if (!this.pendingStops.delete(context.sessionId)) return false;
 
-    this.runtime.recordUsage(sessionId);
+    logger.info("Pending stop consumed, tearing down new Cursor session", {
+      sessionId: context.sessionId,
+    });
+    void this.runtime.stop(context.sessionId);
+    context.emitTurnEvent({
+      type: AgentEventType.Ended,
+      threadId: context.threadId,
+      turnExecutionId: context.req.turnExecutionId,
+    } satisfies AgentEvent);
+    this.finishPendingTurnExecution(context.sessionId, context.req.turnExecutionId);
+    return true;
+  }
+
+  private async enqueueTurn(
+    entry: CursorSessionState,
+    context: CursorTurnContext,
+  ): Promise<void> {
+    this.runtime.recordUsage(context.sessionId);
     entry.lastUsedAt = Date.now();
-    const scheduled = entry.turnChain.then(() =>
-      this.runTurn(entry, { message, model, resume, attachments, turnExecutionId: req.turnExecutionId }),
-    );
+    const scheduled = entry.turnChain.then(() => this.runTurn(entry, {
+      message: context.req.message,
+      model: context.req.model,
+      resume: context.resume,
+      attachments: context.req.attachments,
+      turnExecutionId: context.req.turnExecutionId,
+    }));
     entry.turnChain = scheduled.then(
       () => {},
       () => {},
     );
-    try {
-      await scheduled;
-    } finally {
-      if (this.pendingTurnExecutionIds.get(sessionId) === req.turnExecutionId) {
-        this.pendingTurnExecutionIds.delete(sessionId);
-      }
-    }
+    await scheduled;
   }
 
+  private finishPendingTurnExecution(sessionId: string, turnExecutionId: string): void {
+    if (this.pendingTurnExecutionIds.get(sessionId) !== turnExecutionId) return;
+    this.pendingTurnExecutionIds.delete(sessionId);
+  }
 
   /**
    * Cancel the active ACP session. Once the logical ACP session is open, a stop
@@ -510,28 +623,43 @@ export class CursorProvider
   async stopSession(sessionId: string): Promise<void> {
     const entry = this.runtime.get(sessionId);
     this.getAcpClientBridge().cancelPendingForSession(sessionId);
-    if (entry?.acpSessionId && entry.activeTurnState) {
-      entry.pendingUserStopAbort = true;
-    }
     if (entry?.acpSessionId) {
+      if (entry.activeTurnState) entry.pendingUserStopAbort = true;
       await entry.acpRuntime.cancel().catch(() => {});
-    } else if (entry) {
-      // Entry exists but ACP session hasn't opened yet; tear down immediately.
-      const threadId = sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
-      const turnExecutionId = entry.activeTurnState
-        ? this.turnExecutionByState.get(entry.activeTurnState)
-        : this.pendingTurnExecutionIds.get(sessionId);
-      await this.runtime.stop(sessionId);
-      if (turnExecutionId) {
-        this.emit("event", { type: AgentEventType.Ended, threadId, turnExecutionId } satisfies AgentEvent);
-      }
-    } else if (this.pendingAcpRuntimes?.has(sessionId)) {
-      this.pendingStops.add(sessionId);
-      await this.pendingAcpRuntimes?.get(sessionId)?.close();
-    } else {
-      this.pendingStops.add(sessionId);
-      setTimeout(() => this.pendingStops.delete(sessionId), 10_000);
+      return;
     }
+    if (entry) {
+      await this.stopUnopenedSession(sessionId, entry);
+      return;
+    }
+    await this.stopOpeningOrPendingSession(sessionId);
+  }
+
+  private async stopUnopenedSession(
+    sessionId: string,
+    entry: CursorSessionState,
+  ): Promise<void> {
+    const threadId = sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
+    const turnExecutionId = entry.activeTurnState
+      ? this.turnExecutionByState.get(entry.activeTurnState)
+      : this.pendingTurnExecutionIds.get(sessionId);
+    await this.runtime.stop(sessionId);
+    if (!turnExecutionId) return;
+    this.emit("event", {
+      type: AgentEventType.Ended,
+      threadId,
+      turnExecutionId,
+    } satisfies AgentEvent);
+  }
+
+  private async stopOpeningOrPendingSession(sessionId: string): Promise<void> {
+    this.pendingStops.add(sessionId);
+    const openingRuntime = this.pendingAcpRuntimes.get(sessionId);
+    if (openingRuntime) {
+      await openingRuntime.close();
+      return;
+    }
+    setTimeout(() => this.pendingStops.delete(sessionId), 10_000);
   }
 
   /**
@@ -611,32 +739,14 @@ export class CursorProvider
     let state: CursorAcpSessionEntry | undefined;
     try {
       state = await this.spawnChild(sessionId, threadId, cwd, pm, settings);
-      if (this.pendingStops?.has(sessionId)) {
-        throw new Error("Cursor ACP session stopped during startup");
-      }
-      if (state.browserHttpMcpSupported) {
-        if (refreshedGrant) {
-          browserGrant = refreshedGrant;
-          this.pendingBrowserGrants.delete(sessionId);
-          this.pendingBrowserGrantContext.delete(sessionId);
-          if (browserStage) this.releaseBrowserLeases(browserStage);
-        } else if (browserStage) {
-          browserGrant = this.browserAutomationLease.issue(browserStage);
-          if (!browserGrant) {
-            throw new Error("Cursor browser automation lease issuance failed");
-          }
-        }
-      } else {
-        this.releaseBrowserLeases(browserStage, refreshedGrant);
-        this.browserAutomationLease.releaseSession(this.id, sessionId);
-        this.pendingBrowserGrants.delete(sessionId);
-        this.pendingBrowserGrantContext.delete(sessionId);
-      }
-      if (browserStage && !state.browserHttpMcpSupported) {
-        logger.info("Cursor ACP does not advertise HTTP MCP; browser automation is unavailable", {
-          threadId,
-        });
-      }
+      this.throwIfPendingStop(sessionId);
+      browserGrant = this.resolveBrowserGrantForSpawn(
+        sessionId,
+        threadId,
+        state,
+        browserStage,
+        refreshedGrant,
+      );
       const mcpServers = buildCursorBrowserMcpServers(browserGrant);
 
       // Thread control is optional. Retry on a fresh ACP process without it so
@@ -649,31 +759,95 @@ export class CursorProvider
       );
       state = opened.state;
       state.mcodeLogicalSessionReloaded = opened.reloaded;
-      if (this.pendingStops?.has(sessionId)) {
-        throw new Error("Cursor ACP session stopped during startup");
-      }
-      state.mcodeRuntimeInstructions = renderMcodeInstructions(buildMcodeInstructionPlan({
-        sourceThreadId: threadId,
-        threadControlGranted: this.isThreadControlMcpEnabled(state),
-        browserAutomationGranted: Boolean(browserGrant),
-      }));
-      state.mcodeRuntimeInstructionsSent = false;
-      if (browserGrant) {
-        state.browserCredential = {
-          credentialId: browserGrant.credentialId,
-          expiresAt: browserGrant.expiresAt,
-          leaseId: browserGrant.leaseId,
-        };
-      }
-    } catch (err) {
+      this.throwIfPendingStop(sessionId);
+      this.configureSpawnedSession(state, threadId, browserGrant);
+    } catch (error) {
       await this.cleanupSpawnFailure(sessionId, state, browserGrant, browserStage, refreshedGrant);
-      this.pendingStops?.delete(sessionId);
-      this.pendingAcpRuntimes?.delete(sessionId);
-      await this.threadControlMcp?.close(sessionId);
-      throw err;
+      await this.clearFailedSpawn(sessionId);
+      throw error;
+    }
+    return this.completeSpawn(sessionId, state);
+  }
+
+  private throwIfPendingStop(sessionId: string): void {
+    if (!this.pendingStops.has(sessionId)) return;
+    throw new Error("Cursor ACP session stopped during startup");
+  }
+
+  private resolveBrowserGrantForSpawn(
+    sessionId: string,
+    threadId: string,
+    state: CursorAcpSessionEntry,
+    browserStage: BrowserAutomationSessionLeaseStage | undefined,
+    refreshedGrant: BrowserAutomationSessionLeaseGrant | undefined,
+  ): BrowserAutomationSessionLeaseGrant | null {
+    if (state.browserHttpMcpSupported) {
+      return this.resolveSupportedBrowserGrant(sessionId, browserStage, refreshedGrant);
     }
 
-    this.pendingAcpRuntimes?.delete(sessionId);
+    this.releaseBrowserLeases(browserStage, refreshedGrant);
+    this.browserAutomationLease.releaseSession(this.id, sessionId);
+    this.pendingBrowserGrants.delete(sessionId);
+    this.pendingBrowserGrantContext.delete(sessionId);
+    if (browserStage) {
+      logger.info("Cursor ACP does not advertise HTTP MCP; browser automation is unavailable", {
+        threadId,
+      });
+    }
+    return null;
+  }
+
+  private resolveSupportedBrowserGrant(
+    sessionId: string,
+    browserStage: BrowserAutomationSessionLeaseStage | undefined,
+    refreshedGrant: BrowserAutomationSessionLeaseGrant | undefined,
+  ): BrowserAutomationSessionLeaseGrant | null {
+    if (refreshedGrant) {
+      this.pendingBrowserGrants.delete(sessionId);
+      this.pendingBrowserGrantContext.delete(sessionId);
+      this.releaseBrowserLeases(browserStage);
+      return refreshedGrant;
+    }
+    if (!browserStage) return null;
+
+    const browserGrant = this.browserAutomationLease.issue(browserStage);
+    if (!browserGrant) {
+      throw new Error("Cursor browser automation lease issuance failed");
+    }
+    return browserGrant;
+  }
+
+  private configureSpawnedSession(
+    state: CursorAcpSessionEntry,
+    threadId: string,
+    browserGrant: BrowserAutomationSessionLeaseGrant | null,
+  ): void {
+    state.mcodeRuntimeInstructions = renderMcodeInstructions(buildMcodeInstructionPlan({
+      sourceThreadId: threadId,
+      threadControlGranted: this.isThreadControlMcpEnabled(state),
+      browserAutomationGranted: Boolean(browserGrant),
+    }));
+    state.mcodeRuntimeInstructionsSent = false;
+    if (!browserGrant) return;
+
+    state.browserCredential = {
+      credentialId: browserGrant.credentialId,
+      expiresAt: browserGrant.expiresAt,
+      leaseId: browserGrant.leaseId,
+    };
+  }
+
+  private async clearFailedSpawn(sessionId: string): Promise<void> {
+    this.pendingStops.delete(sessionId);
+    this.pendingAcpRuntimes.delete(sessionId);
+    await this.threadControlMcp.close(sessionId);
+  }
+
+  private completeSpawn(
+    sessionId: string,
+    state: CursorAcpSessionEntry,
+  ): SpawnResult<CursorSessionState> {
+    this.pendingAcpRuntimes.delete(sessionId);
     this.liveSessionIds.add(sessionId);
     return { state, pids: state.child.pid != null ? [state.child.pid] : [] };
   }

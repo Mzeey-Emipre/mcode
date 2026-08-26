@@ -145,6 +145,16 @@ export function createSubagentPresentation(
   };
 }
 
+function mergeSubagentDetail(
+  current: SubagentDetail,
+  incoming: SubagentDetail,
+): SubagentDetail {
+  if (current.kind === "canonical-child" || incoming.kind === "canonical-child") {
+    return { kind: "canonical-child" };
+  }
+  return incoming.providerName ? incoming : current;
+}
+
 /** Merges late sub-agent metadata without replacing an established navigation identity. */
 export function mergeSubagentPresentation(
   current: SubagentPresentation | undefined,
@@ -156,11 +166,7 @@ export function mergeSubagentPresentation(
     displayName: incoming.hasExplicitIdentity ? incoming.displayName : current.displayName,
     hasExplicitIdentity: current.hasExplicitIdentity || incoming.hasExplicitIdentity,
     identityKey: incoming.identityKey === fallbackIdentityKey ? current.identityKey : incoming.identityKey,
-    detail: current.detail.kind === "canonical-child" || incoming.detail.kind === "canonical-child"
-      ? { kind: "canonical-child" }
-      : incoming.detail.providerName
-        ? incoming.detail
-        : current.detail,
+    detail: mergeSubagentDetail(current.detail, incoming.detail),
     providerAgentKey: incoming.providerAgentKey ?? current.providerAgentKey,
     model: incoming.model ?? current.model,
     reasoningEffort: incoming.reasoningEffort ?? current.reasoningEffort,

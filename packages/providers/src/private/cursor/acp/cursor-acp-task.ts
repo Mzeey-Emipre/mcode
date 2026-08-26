@@ -89,6 +89,76 @@ function stringField(record: Record<string, unknown>, key: string): string | und
   return typeof v === "string" && v.length > 0 ? v : undefined;
 }
 
+function cursorTaskMetaFromParams(params: Record<string, unknown>): CursorTaskMeta | undefined {
+  const toolCallId = stringField(params, "toolCallId");
+  if (!toolCallId) return undefined;
+  const duration = params.durationMs;
+  return {
+    toolCallId,
+    description: stringField(params, "description") ?? "Subagent task",
+    prompt: stringField(params, "prompt") ?? "",
+    model: stringField(params, "model"),
+    agentId: stringField(params, "agentId"),
+    durationMs: typeof duration === "number" && Number.isFinite(duration) ? duration : undefined,
+  };
+}
+
+function cacheCursorTaskMeta(state: CursorAcpTurnState, meta: CursorTaskMeta): void {
+  state.taskMetaByCallId.set(meta.toolCallId, meta);
+  state.toolNameByCallId.set(meta.toolCallId, "Agent");
+  state.suppressedToolCallIds.add(meta.toolCallId);
+  state.pendingTaskToolCallIds.add(meta.toolCallId);
+}
+
+function markCursorTaskStarted(state: CursorAcpTurnState, toolCallId: string): boolean {
+  const alreadyStarted = state.accumulator.pendingToolCalls.has(toolCallId);
+  if (alreadyStarted) return true;
+  state.accumulator.toolStartTimes.set(toolCallId, Date.now());
+  state.accumulator.pendingToolCalls.add(toolCallId);
+  state.accumulator.hasFiredToolThisTurn = true;
+  return false;
+}
+
+function cursorTaskToolInput(
+  params: Record<string, unknown>,
+  meta: CursorTaskMeta,
+): Record<string, unknown> {
+  const toolInput: Record<string, unknown> = {
+    description: meta.description,
+    prompt: meta.prompt,
+    subagentProviderName: "Cursor",
+  };
+  if (meta.model) toolInput.model = meta.model;
+  if (meta.agentId) toolInput.agentId = meta.agentId;
+  if (params.subagentType !== undefined) toolInput.subagentType = params.subagentType;
+  if (meta.durationMs != null) toolInput.durationMs = meta.durationMs;
+  return toolInput;
+}
+
+function cursorTaskUseEvent(
+  threadId: string,
+  meta: CursorTaskMeta,
+  toolInput: Record<string, unknown>,
+): AgentEvent {
+  return {
+    type: AgentEventType.ToolUse,
+    threadId,
+    toolCallId: meta.toolCallId,
+    toolName: "Agent",
+    toolInput,
+  };
+}
+
+function completionAfterTaskMetadata(
+  threadId: string,
+  toolCallId: string,
+  state: CursorAcpTurnState,
+): AgentEvent[] {
+  if (!state.taskCompletedAwaitingMeta.has(toolCallId)) return [];
+  state.taskCompletedAwaitingMeta.delete(toolCallId);
+  return cursorTaskCompletionToAgentEvents(threadId, toolCallId, state, false);
+}
+
 /**
  * Builds {@link AgentEvent} values from a `cursor/task` ext method/request payload.
  *
@@ -101,69 +171,17 @@ export function cursorTaskExtToAgentEvents(
   params: Record<string, unknown>,
   state: CursorAcpTurnState,
 ): AgentEvent[] {
-  const toolCallId = stringField(params, "toolCallId");
-  if (!toolCallId) return [];
-
-  const description = stringField(params, "description") ?? "Subagent task";
-  const prompt = stringField(params, "prompt") ?? "";
-  const model = stringField(params, "model");
-  const agentId = stringField(params, "agentId");
-  const durationMs =
-    typeof params.durationMs === "number" && Number.isFinite(params.durationMs)
-      ? params.durationMs
-      : undefined;
-
-  const meta: CursorTaskMeta = {
-    toolCallId,
-    description,
-    prompt,
-    model,
-    agentId,
-    durationMs,
-  };
-  state.taskMetaByCallId.set(toolCallId, meta);
-  state.toolNameByCallId.set(toolCallId, "Agent");
-  state.suppressedToolCallIds.add(toolCallId);
-  state.pendingTaskToolCallIds.add(toolCallId);
-
-  const acc = state.accumulator;
-  const earlyToolUseEmitted = acc.pendingToolCalls.has(toolCallId);
-  if (!earlyToolUseEmitted) {
-    acc.toolStartTimes.set(toolCallId, Date.now());
-    acc.pendingToolCalls.add(toolCallId);
-    acc.hasFiredToolThisTurn = true;
-  }
-
-  const toolInput: Record<string, unknown> = {
-    description,
-    prompt,
-    subagentProviderName: "Cursor",
-  };
-  if (model) toolInput.model = model;
-  if (agentId) toolInput.agentId = agentId;
-  if (params.subagentType !== undefined) toolInput.subagentType = params.subagentType;
-  if (durationMs != null) toolInput.durationMs = durationMs;
-
-  const events: AgentEvent[] = [];
+  const meta = cursorTaskMetaFromParams(params);
+  if (!meta) return [];
+  cacheCursorTaskMeta(state, meta);
+  const earlyToolUseEmitted = markCursorTaskStarted(state, meta.toolCallId);
+  const toolInput = cursorTaskToolInput(params, meta);
+  const events = completionAfterTaskMetadata(threadId, meta.toolCallId, state);
   // When tool_call already fired a provisional ToolUse, emit again so the client can merge
   // enriched description/prompt/model without waiting for completion.
   if (!earlyToolUseEmitted || Object.keys(toolInput).length > 1) {
-    events.push({
-      type: AgentEventType.ToolUse,
-      threadId,
-      toolCallId,
-      toolName: "Agent",
-      toolInput,
-    });
+    events.unshift(cursorTaskUseEvent(threadId, meta, toolInput));
   }
-
-  if (state.taskCompletedAwaitingMeta.has(toolCallId)) {
-    state.taskCompletedAwaitingMeta.delete(toolCallId);
-    events.push(
-      ...cursorTaskCompletionToAgentEvents(threadId, toolCallId, state, false),
-    );
-  }
-
   return events;
 }
 

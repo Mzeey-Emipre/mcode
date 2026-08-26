@@ -73,6 +73,62 @@ export interface CreateToolCallRecordInput {
   parentToolCallId?: string;
 }
 
+interface ToolCallRecordInsert {
+  id: string;
+  startedAt: string;
+  completedAt: string | null;
+}
+
+function nullIfUndefined<T>(value: T | undefined): T | null {
+  return value ?? null;
+}
+
+function sqliteBoolean(value: boolean | undefined): number {
+  return value === true ? 1 : 0;
+}
+
+function prepareToolCallRecordInsert(
+  input: CreateToolCallRecordInput,
+  now: string,
+): ToolCallRecordInsert {
+  const id = input.toolCallId ?? randomUUID();
+  const startedAt = input.startedAt ?? now;
+  const completedAt = input.status !== "running" ? input.completedAt ?? now : null;
+  return { id, startedAt, completedAt };
+}
+
+function toolCallRecordFromInsert(
+  input: CreateToolCallRecordInput,
+  insert: ToolCallRecordInsert,
+): ToolCallRecord {
+  return {
+    id: insert.id,
+    message_id: input.messageId,
+    parent_tool_call_id: nullIfUndefined(input.parentToolCallId),
+    tool_name: input.toolName,
+    display_name: nullIfUndefined(input.displayName),
+    provider_agent_key: nullIfUndefined(input.providerAgentKey),
+    subagent_identity_key: nullIfUndefined(input.subagentIdentityKey),
+    subagent_provider_name: nullIfUndefined(input.subagentProviderName),
+    subagent_prompt: nullIfUndefined(input.subagentPrompt),
+    subagent_type: nullIfUndefined(input.subagentType),
+    subagent_agent_id: nullIfUndefined(input.subagentAgentId),
+    subagent_duration_ms: nullIfUndefined(input.subagentDurationMs),
+    model: nullIfUndefined(input.model),
+    reasoning_effort: nullIfUndefined(input.reasoningEffort),
+    input_summary: input.inputSummary,
+    output_summary: input.outputSummary,
+    output_truncated: sqliteBoolean(input.outputTruncated),
+    output_total_bytes: nullIfUndefined(input.outputTotalBytes),
+    output_artifact_path: nullIfUndefined(input.outputArtifactPath),
+    exit_code: nullIfUndefined(input.exitCode),
+    status: input.status,
+    started_at: insert.startedAt,
+    completed_at: insert.completedAt,
+    sort_order: input.sortOrder,
+  };
+}
+
 function rowToToolCallRecord(row: ToolCallRecordRow): ToolCallRecord {
   return {
     id: row.id,
@@ -130,64 +186,10 @@ export class ToolCallRecordRepo {
 
   /** Create a new tool call record and return the fully-populated record. */
   create(input: CreateToolCallRecordInput): ToolCallRecord {
-    const id = input.toolCallId ?? randomUUID();
     const now = new Date().toISOString();
-    const startedAt = input.startedAt ?? now;
-    const completedAt = input.status !== "running" ? input.completedAt ?? now : null;
-
-    this.stmtInsert.run(
-      id,
-      input.messageId,
-      input.parentToolCallId ?? null,
-      input.toolName,
-      input.displayName ?? null,
-      input.providerAgentKey ?? null,
-      input.subagentIdentityKey ?? null,
-      input.subagentProviderName ?? null,
-      input.subagentPrompt ?? null,
-      input.subagentType ?? null,
-      input.subagentAgentId ?? null,
-      input.subagentDurationMs ?? null,
-      input.model ?? null,
-      input.reasoningEffort ?? null,
-      input.inputSummary,
-      input.outputSummary,
-      input.outputTruncated === true ? 1 : 0,
-      input.outputTotalBytes ?? null,
-      input.outputArtifactPath ?? null,
-      input.exitCode ?? null,
-      input.status,
-      startedAt,
-      completedAt,
-      input.sortOrder,
-    );
-
-    return {
-      id,
-      message_id: input.messageId,
-      parent_tool_call_id: input.parentToolCallId ?? null,
-      tool_name: input.toolName,
-      display_name: input.displayName ?? null,
-      provider_agent_key: input.providerAgentKey ?? null,
-      subagent_identity_key: input.subagentIdentityKey ?? null,
-      subagent_provider_name: input.subagentProviderName ?? null,
-      subagent_prompt: input.subagentPrompt ?? null,
-      subagent_type: input.subagentType ?? null,
-      subagent_agent_id: input.subagentAgentId ?? null,
-      subagent_duration_ms: input.subagentDurationMs ?? null,
-      model: input.model ?? null,
-      reasoning_effort: input.reasoningEffort ?? null,
-      input_summary: input.inputSummary,
-      output_summary: input.outputSummary,
-      output_truncated: input.outputTruncated === true ? 1 : 0,
-      output_total_bytes: input.outputTotalBytes ?? null,
-      output_artifact_path: input.outputArtifactPath ?? null,
-      exit_code: input.exitCode ?? null,
-      status: input.status,
-      started_at: startedAt,
-      completed_at: completedAt,
-      sort_order: input.sortOrder,
-    };
+    const insert = prepareToolCallRecordInsert(input, now);
+    this.write(input, insert);
+    return toolCallRecordFromInsert(input, insert);
   }
 
   /** Create multiple tool call records in a single transaction. */
@@ -195,34 +197,7 @@ export class ToolCallRecordRepo {
     const tx = this.db.transaction((items: CreateToolCallRecordInput[]) => {
       const now = new Date().toISOString();
       for (const item of items) {
-        const startedAt = item.startedAt ?? now;
-        const completedAt = item.status !== "running" ? item.completedAt ?? now : null;
-        this.stmtInsert.run(
-          item.toolCallId ?? randomUUID(),
-          item.messageId,
-          item.parentToolCallId ?? null,
-          item.toolName,
-          item.displayName ?? null,
-          item.providerAgentKey ?? null,
-          item.subagentIdentityKey ?? null,
-          item.subagentProviderName ?? null,
-          item.subagentPrompt ?? null,
-          item.subagentType ?? null,
-          item.subagentAgentId ?? null,
-          item.subagentDurationMs ?? null,
-          item.model ?? null,
-          item.reasoningEffort ?? null,
-          item.inputSummary,
-          item.outputSummary,
-          item.outputTruncated === true ? 1 : 0,
-          item.outputTotalBytes ?? null,
-          item.outputArtifactPath ?? null,
-          item.exitCode ?? null,
-          item.status,
-          startedAt,
-          completedAt,
-          item.sortOrder,
-        );
+        this.write(item, prepareToolCallRecordInsert(item, now));
       }
     });
 
@@ -240,37 +215,37 @@ export class ToolCallRecordRepo {
       items: inputs,
       limits,
       byteLength: (item) => Buffer.byteLength(JSON.stringify(item), "utf8"),
-      write: (item) => {
-        const startedAt = item.startedAt ?? now;
-        const completedAt = item.status !== "running" ? item.completedAt ?? now : null;
-        this.stmtInsert.run(
-          item.toolCallId ?? randomUUID(),
-          item.messageId,
-          item.parentToolCallId ?? null,
-          item.toolName,
-          item.displayName ?? null,
-          item.providerAgentKey ?? null,
-          item.subagentIdentityKey ?? null,
-          item.subagentProviderName ?? null,
-          item.subagentPrompt ?? null,
-          item.subagentType ?? null,
-          item.subagentAgentId ?? null,
-          item.subagentDurationMs ?? null,
-          item.model ?? null,
-          item.reasoningEffort ?? null,
-          item.inputSummary,
-          item.outputSummary,
-          item.outputTruncated === true ? 1 : 0,
-          item.outputTotalBytes ?? null,
-          item.outputArtifactPath ?? null,
-          item.exitCode ?? null,
-          item.status,
-          startedAt,
-          completedAt,
-          item.sortOrder,
-        );
-      },
+      write: (item) => this.write(item, prepareToolCallRecordInsert(item, now)),
     });
+  }
+
+  private write(input: CreateToolCallRecordInput, insert: ToolCallRecordInsert): void {
+    this.stmtInsert.run(
+      insert.id,
+      input.messageId,
+      nullIfUndefined(input.parentToolCallId),
+      input.toolName,
+      nullIfUndefined(input.displayName),
+      nullIfUndefined(input.providerAgentKey),
+      nullIfUndefined(input.subagentIdentityKey),
+      nullIfUndefined(input.subagentProviderName),
+      nullIfUndefined(input.subagentPrompt),
+      nullIfUndefined(input.subagentType),
+      nullIfUndefined(input.subagentAgentId),
+      nullIfUndefined(input.subagentDurationMs),
+      nullIfUndefined(input.model),
+      nullIfUndefined(input.reasoningEffort),
+      input.inputSummary,
+      input.outputSummary,
+      sqliteBoolean(input.outputTruncated),
+      nullIfUndefined(input.outputTotalBytes),
+      nullIfUndefined(input.outputArtifactPath),
+      nullIfUndefined(input.exitCode),
+      input.status,
+      insert.startedAt,
+      insert.completedAt,
+      input.sortOrder,
+    );
   }
 
   /** List all tool call records for a message, ordered by sort_order ascending. */
