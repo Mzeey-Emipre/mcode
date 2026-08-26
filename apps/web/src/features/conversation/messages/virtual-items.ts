@@ -236,12 +236,14 @@ export function buildStableItems(
       msg.role === "assistant" &&
       persistedFilesChanged != null &&
       Object.prototype.hasOwnProperty.call(persistedFilesChanged, msg.id);
+    const hasCanonicalTurnSummary =
+      msg.role === "assistant" && turnSummariesByMessageId?.[msg.id] != null;
     items.push({
       key: assistantMessageItemKey(msg, currentTurn),
       type: "message",
       message: msg,
       ...(isCurrentAssistant
-        ? { assistantState: { isStreaming: false, actionsVisible: isPersisted } }
+        ? { assistantState: { isStreaming: false, actionsVisible: isPersisted || hasCanonicalTurnSummary } }
         : {}),
     });
 
