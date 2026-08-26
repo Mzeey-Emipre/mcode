@@ -31,7 +31,7 @@ import type { CursorAcpSessionEntry } from "../cursor-session-state.js";
 
 const UNSUPPORTED_RESULT = Object.freeze({ outcome: { outcome: "unsupported" as const } });
 
-type AcpExtMethodResponse = Awaited<ReturnType<Client["extMethod"]>>;
+type AcpExtMethodResponse = Awaited<ReturnType<NonNullable<Client["extMethod"]>>>;
 
 interface PendingAcpPermission {
   mcodeSessionId: string;

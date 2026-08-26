@@ -141,7 +141,7 @@ export class CursorTurnExecutor {
         attempt += 1;
         execution.currentEntry.activeTurnState = createCursorAcpTurnState();
         this.deps.bindTurnExecution(execution.currentEntry, turnExecutionId);
-        const promptResponse = await execution.currentEntry.acpRuntime.prompt({
+        const promptResponse = await execution.currentEntry.acpRuntime.prompt<CursorPromptResponse>({
           sessionId: execution.currentEntry.acpSessionId,
           prompt: promptAttempt.blocks,
         });
