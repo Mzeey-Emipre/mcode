@@ -88,6 +88,7 @@ const SHIKI_DURATION_STAGE_NAMES = Object.freeze(
 const SHIKI_PHASES = Object.freeze(["cold", "warm"]);
 const SHIKI_WORKLOAD_PHASE = "workload";
 const SHIKI_BUILD_MODES = Object.freeze(["profiling", "production"]);
+const VLIST_LIFECYCLE_PROBE_TIMEOUT_MS = 15_000;
 const SHIKI_WORKER_STAGES = Object.freeze([
   "workerStartup",
   "highlighterCreation",
@@ -124,6 +125,13 @@ const VLIST_LIFECYCLE_CHECK_NAMES = Object.freeze([
   "staticRowsStableAcrossTransitions",
   "nativeScrollRecyclesHosts",
   "prependPreservesAnchorAndIdentity",
+  "dynamicHeightSettles",
+  "tailFollowAndUserAway",
+  "stickyMessageJump",
+  "messageTextSelection",
+  "scrollToMessage",
+  "threadSwitchRestoresAnchor",
+  "offscreenStateIsRetained",
 ]);
 const VLIST_LIFECYCLE_ROWS = Object.freeze([
   { rowId: "message:thread-vlist-probe:A", kind: "message" },
@@ -204,6 +212,15 @@ const VLIST_LIFECYCLE_TRANSITION_ROW_KEYS = Object.freeze([
   "portalHostConnected",
   "effectCleanupCount",
   "refDetachCount",
+]);
+const VLIST_BEHAVIOR_KEYS = Object.freeze([
+  "dynamicHeight",
+  "tailFollow",
+  "stickyJump",
+  "selection",
+  "scrollToMessage",
+  "threadSwitchRestore",
+  "offscreenRetainedState",
 ]);
 
 function isPlainObject(value) {
@@ -389,6 +406,83 @@ function hasExpectedPrependBehavior(prepend) {
     && JSON.stringify(prepend.visibleRowIdsAfter) === JSON.stringify(expectedVisibleRowIds);
 }
 
+function hasExpectedVListBehaviorShape(behavior) {
+  return isPlainObject(behavior)
+    && hasExactKeys(behavior, VLIST_BEHAVIOR_KEYS)
+    && isPlainObject(behavior.dynamicHeight)
+    && hasExactKeys(behavior.dynamicHeight, [
+      "anchorRowId",
+      "anchorTopAfter",
+      "anchorTopBefore",
+      "poolHeightAfter",
+      "poolHeightBefore",
+      "renderedHeightAfter",
+      "renderedHeightBefore",
+      "rowId",
+    ])
+    && isPlainObject(behavior.tailFollow)
+    && hasExactKeys(behavior.tailFollow, ["tailFollowed", "userAwayPreserved"])
+    && isPlainObject(behavior.stickyJump)
+    && hasExactKeys(behavior.stickyJump, ["rowId", "targetVisible", "targetWasUnmounted"])
+    && isPlainObject(behavior.selection)
+    && hasExactKeys(behavior.selection, ["expectedText", "selectedText"])
+    && isPlainObject(behavior.scrollToMessage)
+    && hasExactKeys(behavior.scrollToMessage, ["rowId", "targetVisible", "targetWasUnmounted"])
+    && isPlainObject(behavior.threadSwitchRestore)
+    && hasExactKeys(behavior.threadSwitchRestore, ["anchorRowId", "anchorTopAfter", "anchorTopBefore"])
+    && isPlainObject(behavior.offscreenRetainedState)
+    && hasExactKeys(behavior.offscreenRetainedState, ["draftAfter", "draftBefore", "rowId", "rowWasUnmounted"]);
+}
+
+function hasExpectedDynamicHeightBehavior(behavior) {
+  const dynamicHeight = behavior.dynamicHeight;
+  return dynamicHeight.rowId === "permission-request:dynamic:3"
+    && dynamicHeight.anchorRowId === "message:dynamic:5"
+    && [
+      dynamicHeight.renderedHeightBefore,
+      dynamicHeight.renderedHeightAfter,
+      dynamicHeight.poolHeightBefore,
+      dynamicHeight.poolHeightAfter,
+      dynamicHeight.anchorTopBefore,
+      dynamicHeight.anchorTopAfter,
+    ].every(Number.isFinite)
+    && dynamicHeight.renderedHeightAfter > dynamicHeight.renderedHeightBefore + 64
+    && dynamicHeight.poolHeightAfter > dynamicHeight.poolHeightBefore + 64
+    && Math.abs(dynamicHeight.anchorTopAfter - dynamicHeight.anchorTopBefore) <= 1;
+}
+
+function hasExpectedTailFollowBehavior(behavior) {
+  return behavior.tailFollow.tailFollowed === true
+    && behavior.tailFollow.userAwayPreserved === true;
+}
+
+function hasExpectedJumpBehavior(jump, rowId) {
+  return jump.rowId === rowId
+    && jump.targetWasUnmounted === true
+    && jump.targetVisible === true;
+}
+
+function hasExpectedSelectionBehavior(behavior) {
+  return behavior.selection.expectedText === "selection selectable row 0."
+    && behavior.selection.selectedText === behavior.selection.expectedText;
+}
+
+function hasExpectedThreadSwitchBehavior(behavior) {
+  const restore = behavior.threadSwitchRestore;
+  return restore.anchorRowId === "turn-changes:thread-a:4"
+    && Number.isFinite(restore.anchorTopBefore)
+    && Number.isFinite(restore.anchorTopAfter)
+    && Math.abs(restore.anchorTopAfter - restore.anchorTopBefore) <= 1;
+}
+
+function hasExpectedOffscreenRetainedState(behavior) {
+  const retainedState = behavior.offscreenRetainedState;
+  return retainedState.rowId === "message:retained-state:0"
+    && retainedState.draftBefore === "retained-state-draft"
+    && retainedState.rowWasUnmounted === true
+    && retainedState.draftAfter === retainedState.draftBefore;
+}
+
 /** Derives the lifecycle gate from raw browser facts returned by the vlist probe. */
 export function deriveVListLifecycleGate(facts) {
   const rawFactsPresent = isPlainObject(facts)
@@ -399,6 +493,7 @@ export function deriveVListLifecycleGate(facts) {
     && isPlainObject(facts.focus)
     && isPlainObject(facts.bodyPortals)
     && isPlainObject(facts.prepend)
+    && hasExpectedVListBehaviorShape(facts.behavior)
     && Array.isArray(facts.transitions)
     && hasVListEventTrace(facts.events);
   const events = rawFactsPresent ? facts.events : [];
@@ -407,6 +502,7 @@ export function deriveVListLifecycleGate(facts) {
   const focus = rawFactsPresent ? facts.focus : {};
   const bodyPortals = rawFactsPresent ? facts.bodyPortals : {};
   const transitions = rawFactsPresent ? facts.transitions : [];
+  const behavior = rawFactsPresent ? facts.behavior : {};
   const checks = {
     heterogeneousRows: rawFactsPresent
       && hasExpectedRenderedRows(renderedRows.afterA, VLIST_LIFECYCLE_RENDERED_ROWS.afterA)
@@ -450,6 +546,15 @@ export function deriveVListLifecycleGate(facts) {
       && hasExpectedTransitions(transitions)
       && transitions.filter(({ cause }) => cause === "native-scroll").length === 2,
     prependPreservesAnchorAndIdentity: rawFactsPresent && hasExpectedPrependBehavior(facts.prepend),
+    dynamicHeightSettles: rawFactsPresent && hasExpectedDynamicHeightBehavior(behavior),
+    tailFollowAndUserAway: rawFactsPresent && hasExpectedTailFollowBehavior(behavior),
+    stickyMessageJump: rawFactsPresent
+      && hasExpectedJumpBehavior(behavior.stickyJump, "message:sticky:0"),
+    messageTextSelection: rawFactsPresent && hasExpectedSelectionBehavior(behavior),
+    scrollToMessage: rawFactsPresent
+      && hasExpectedJumpBehavior(behavior.scrollToMessage, "permission-request:scroll-to-message:8"),
+    threadSwitchRestoresAnchor: rawFactsPresent && hasExpectedThreadSwitchBehavior(behavior),
+    offscreenStateIsRetained: rawFactsPresent && hasExpectedOffscreenRetainedState(behavior),
   };
   const failures = rawFactsPresent ? [] : ["expected raw vlist lifecycle facts and event trace"];
   for (const [name, passed] of Object.entries(checks)) {
@@ -1159,6 +1264,33 @@ export function validateNarrativeRowIsolation(reactAttribution) {
     failures.push(`stable narrative row rendered: ${renderedSibling.rowId}`);
   }
   return failures;
+}
+
+/** Runs the vlist lifecycle page evaluation within its bounded worker budget. */
+export async function runVListLifecycleProbe(page, timeoutMs = VLIST_LIFECYCLE_PROBE_TIMEOUT_MS) {
+  let timeout;
+  try {
+    return await Promise.race([
+      page.evaluate(async () => {
+        const bridge = window.__mcodeFrontendPerformanceModules?.vlistLifecycle;
+        if (!bridge) throw new Error("The vlist lifecycle performance probe is unavailable.");
+        const startedAt = performance.now();
+        const check = await bridge.run();
+        return {
+          durationMs: performance.now() - startedAt,
+          check,
+        };
+      }),
+      new Promise((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new Error(`vlist lifecycle probe did not settle within ${timeoutMs} ms`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 /** Run the shared frontend renderer matrix against one Playwright page. */
@@ -2175,16 +2307,13 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
     : null;
 
   const vlistLifecycle = selectedWorkloads.has("vlistLifecycle")
-    ? await timeFixture(page, sampleCount, async () => page.evaluate(async () => {
-      const bridge = window.__mcodeFrontendPerformanceModules?.vlistLifecycle;
-      if (!bridge) throw new Error("The vlist lifecycle performance probe is unavailable.");
-      const startedAt = performance.now();
-      const check = await bridge.run();
-      return {
-        durationMs: performance.now() - startedAt,
-        check,
-      };
-    }), modeCollector, { captureMessageListAttribution: false })
+    ? await timeFixture(
+      page,
+      sampleCount,
+      async () => runVListLifecycleProbe(page),
+      modeCollector,
+      { captureMessageListAttribution: false },
+    )
     : null;
 
   await waitForFrames(page);
