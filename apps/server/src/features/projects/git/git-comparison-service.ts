@@ -30,8 +30,8 @@ export class GitComparisonService {
     this.gitRepository = gitRepository ?? new GitRepositoryService(workspaceRepo, gitExecutor);
   }
 
-  /** Get commits for a workspace branch or worktree. */
-  async log(
+  /** List commits for a workspace branch or worktree. */
+  async listCommits(
     workspaceId: string,
     branch?: string,
     limit = 50,
@@ -77,8 +77,8 @@ export class GitComparisonService {
     });
   }
 
-  /** Get the unified diff for one commit. */
-  async commitDiff(
+  /** Read the unified diff for one commit. */
+  async readCommitDiff(
     workspaceId: string,
     sha: string,
     filePath?: string,
@@ -105,7 +105,7 @@ export class GitComparisonService {
   }
 
   /** List files changed by one commit. */
-  async commitFiles(workspaceId: string, sha: string): Promise<string[]> {
+  async listCommitChangedFiles(workspaceId: string, sha: string): Promise<string[]> {
     assertCommitSha(sha);
     const repoPath = this.requireWorkspace(workspaceId).path;
     const readFiles = async (range: string) => {
@@ -127,7 +127,7 @@ export class GitComparisonService {
   }
 
   /** List changed files in a working tree. */
-  async workingTreeFiles(workspaceId: string, staged: boolean, repoPath?: string): Promise<string[]> {
+  async listWorkingTreeChangedFiles(workspaceId: string, staged: boolean, repoPath?: string): Promise<string[]> {
     const cwd = repoPath ?? this.requireWorkspace(workspaceId).path;
     const args = ["-C", cwd, "diff", "--name-only"];
     if (staged) args.push("--cached");
@@ -139,8 +139,8 @@ export class GitComparisonService {
     }
   }
 
-  /** Get a working-tree diff, optionally for a single file. */
-  async workingTreeDiff(
+  /** Read a working-tree diff, optionally for a single file. */
+  async readWorkingTreeDiff(
     workspaceId: string,
     staged: boolean,
     filePath?: string,
@@ -161,7 +161,7 @@ export class GitComparisonService {
   }
 
   /** List files changed on the target side of a branch comparison. */
-  async branchFiles(workspaceId: string, base?: string, target?: string, repoPath?: string): Promise<string[]> {
+  async listBranchComparisonChangedFiles(workspaceId: string, base?: string, target?: string, repoPath?: string): Promise<string[]> {
     const cwd = repoPath ?? this.requireWorkspace(workspaceId).path;
     const resolvedBase = base ?? await this.detectDefaultBranch(cwd);
     if (!resolvedBase) return [];
@@ -179,8 +179,8 @@ export class GitComparisonService {
     }
   }
 
-  /** Get a branch comparison diff, optionally for one file. */
-  async branchDiff(
+  /** Read a branch comparison diff, optionally for one file. */
+  async readBranchComparisonDiff(
     workspaceId: string,
     base?: string,
     target?: string,
@@ -205,8 +205,8 @@ export class GitComparisonService {
     }
   }
 
-  /** Return a file and stat batch for one Review comparison view. */
-  async reviewComparison(
+  /** Read a file and stat batch for one Review comparison view. */
+  async readReviewComparison(
     workspaceId: string,
     view: "unstaged" | "staged" | "branch" | "commit",
     opts: { base?: string; target?: string; sha?: string },
@@ -229,16 +229,16 @@ export class GitComparisonService {
     }
 
     try {
-      return await this.readReviewComparison(cwd, suffix);
+      return await this.runReviewComparison(cwd, suffix);
     } catch (error) {
       if (error instanceof Error && error.message.startsWith("Review comparison is limited")) throw error;
       if (view !== "commit") throw error;
-      return this.readReviewComparison(cwd, [EMPTY_TREE, opts.sha!]);
+      return this.runReviewComparison(cwd, [EMPTY_TREE, opts.sha!]);
     }
   }
 
-  /** Return Review-panel additions and deletions. */
-  async reviewDiffStats(
+  /** Read Review-panel additions and deletions. */
+  async readReviewDiffStats(
     workspaceId: string,
     view: "unstaged" | "staged" | "branch" | "commit",
     opts: { base?: string; target?: string; sha?: string },
@@ -322,8 +322,8 @@ export class GitComparisonService {
     return available(null, current, true);
   }
 
-  /** Return a diff stat summary between two refs. */
-  async diffStat(repoPath: string, base: string, head: string): Promise<string> {
+  /** Read a diff stat summary between two refs. */
+  async readBranchComparisonDiffStat(repoPath: string, base: string, head: string): Promise<string> {
     const { stdout } = await this.gitExecutor.exec(
       ["-C", repoPath, "diff", "--stat", `${base}...${head}`],
       { timeout: 30_000 },
@@ -331,7 +331,7 @@ export class GitComparisonService {
     return stdout.trim();
   }
 
-  private async readReviewComparison(cwd: string, range: readonly string[]): Promise<ReviewComparison> {
+  private async runReviewComparison(cwd: string, range: readonly string[]): Promise<ReviewComparison> {
     const [names, numstat] = await Promise.all([
       this.gitExecutor.exec(
         ["-C", cwd, "diff", "--name-status", "-z", "--find-renames", "--find-copies", ...range],

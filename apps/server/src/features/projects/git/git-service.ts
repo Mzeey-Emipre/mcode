@@ -586,47 +586,47 @@ export class GitService {
     skip = 0,
     includeStats = true,
   ): Promise<GitCommit[]> {
-    return this.gitComparison.log(workspaceId, branch, limit, baseBranch, repoPath, skip, includeStats);
+    return this.gitComparison.listCommits(workspaceId, branch, limit, baseBranch, repoPath, skip, includeStats);
   }
 
   /** Get the unified diff for a specific Git commit. */
   async commitDiff(workspaceId: string, sha: string, filePath?: string, maxLines?: number): Promise<string> {
-    return this.gitComparison.commitDiff(workspaceId, sha, filePath, maxLines);
+    return this.gitComparison.readCommitDiff(workspaceId, sha, filePath, maxLines);
   }
 
   /** List files changed in a specific Git commit. */
   async commitFiles(workspaceId: string, sha: string): Promise<string[]> {
-    return this.gitComparison.commitFiles(workspaceId, sha);
+    return this.gitComparison.listCommitChangedFiles(workspaceId, sha);
   }
 
   /** List changed files in a working tree. */
   async workingTreeFiles(workspaceId: string, staged: boolean, repoPath?: string): Promise<string[]> {
-    return this.gitComparison.workingTreeFiles(workspaceId, staged, repoPath);
+    return this.gitComparison.listWorkingTreeChangedFiles(workspaceId, staged, repoPath);
   }
 
   /** Get a working-tree diff, optionally for a single file. */
   async workingTreeDiff(workspaceId: string, staged: boolean, filePath?: string, maxLines?: number, repoPath?: string): Promise<string> {
-    return this.gitComparison.workingTreeDiff(workspaceId, staged, filePath, maxLines, repoPath);
+    return this.gitComparison.readWorkingTreeDiff(workspaceId, staged, filePath, maxLines, repoPath);
   }
 
   /** List files changed on the target side of a branch comparison. */
   async branchFiles(workspaceId: string, base?: string, target?: string, repoPath?: string): Promise<string[]> {
-    return this.gitComparison.branchFiles(workspaceId, base, target, repoPath);
+    return this.gitComparison.listBranchComparisonChangedFiles(workspaceId, base, target, repoPath);
   }
 
   /** Get a branch comparison diff, optionally for one file. */
   async branchDiff(workspaceId: string, base?: string, target?: string, filePath?: string, maxLines?: number, repoPath?: string): Promise<string> {
-    return this.gitComparison.branchDiff(workspaceId, base, target, filePath, maxLines, repoPath);
+    return this.gitComparison.readBranchComparisonDiff(workspaceId, base, target, filePath, maxLines, repoPath);
   }
 
   /** Return one file and stat batch for a Review comparison. */
   async reviewComparison(workspaceId: string, view: "unstaged" | "staged" | "branch" | "commit", opts: { base?: string; target?: string; sha?: string }, repoPath?: string): Promise<ReviewComparison> {
-    return this.gitComparison.reviewComparison(workspaceId, view, opts, repoPath);
+    return this.gitComparison.readReviewComparison(workspaceId, view, opts, repoPath);
   }
 
   /** Return additions and deletions for a Review comparison. */
   async reviewDiffStats(workspaceId: string, view: "unstaged" | "staged" | "branch" | "commit", opts: { base?: string; target?: string; sha?: string }, repoPath?: string): Promise<{ additions: number; deletions: number }> {
-    return this.gitComparison.reviewDiffStats(workspaceId, view, opts, repoPath);
+    return this.gitComparison.readReviewDiffStats(workspaceId, view, opts, repoPath);
   }
 
   /** Resolve the default branch comparison for a checkout. */
@@ -640,7 +640,7 @@ export class GitService {
 
   /** Return a diff stat summary between two refs. */
   async diffStat(repoPath: string, base: string, head: string): Promise<string> {
-    return this.gitComparison.diffStat(repoPath, base, head);
+    return this.gitComparison.readBranchComparisonDiffStat(repoPath, base, head);
   }
 
   /**

@@ -30,7 +30,7 @@ import { GitWorktreeService } from "../git-worktree-service.js";
 import type { WorktreeDirectoryRemover } from "../../worktrees/worktree-directory-remover.js";
 import { createMockGitExecutor } from "../execution/__tests__/mock-git-executor.js";
 
-describe("GitComparisonService.reviewComparison", () => {
+describe("GitComparisonService.readReviewComparison", () => {
   it("returns one batched status result for changed, renamed, copied, and binary files", async () => {
     const mock = createMockGitExecutor();
     mock.execFn.mockImplementation(async (args) => {
@@ -47,7 +47,7 @@ describe("GitComparisonService.reviewComparison", () => {
     });
     const service = new GitComparisonService({} as WorkspaceRepo, mock.executor);
 
-    const result = await service.reviewComparison("ws-1", "unstaged", {}, "/repo");
+    const result = await service.readReviewComparison("ws-1", "unstaged", {}, "/repo");
 
     expect(result).toEqual({
       files: [
@@ -70,7 +70,7 @@ describe("GitComparisonService.reviewComparison", () => {
       : { stdout: "-\t-\tsrc/name\twith-tab.bin\0", stderr: "" });
     const service = new GitComparisonService({} as WorkspaceRepo, mock.executor);
 
-    await expect(service.reviewComparison("ws-1", "unstaged", {}, "/repo")).resolves.toMatchObject({
+    await expect(service.readReviewComparison("ws-1", "unstaged", {}, "/repo")).resolves.toMatchObject({
       files: [{ path: "src/name\twith-tab.bin", binary: true }],
     });
   });
@@ -83,7 +83,7 @@ describe("GitComparisonService.reviewComparison", () => {
       : { stdout: "", stderr: "" });
     const service = new GitComparisonService({} as WorkspaceRepo, mock.executor);
 
-    await expect(service.reviewComparison("ws-1", "unstaged", {}, "/repo")).rejects.toThrow(
+    await expect(service.readReviewComparison("ws-1", "unstaged", {}, "/repo")).rejects.toThrow(
       "Review comparison is limited to 10000 files",
     );
   });
@@ -93,7 +93,7 @@ describe("GitComparisonService.reviewComparison", () => {
     mock.execFn.mockRejectedValue(new Error("git unavailable"));
     const service = new GitComparisonService({} as WorkspaceRepo, mock.executor);
 
-    await expect(service.reviewComparison("ws-1", "unstaged", {}, "/repo")).rejects.toThrow(
+    await expect(service.readReviewComparison("ws-1", "unstaged", {}, "/repo")).rejects.toThrow(
       "git unavailable",
     );
   });
@@ -110,7 +110,7 @@ describe("GitComparisonService.reviewComparison", () => {
     });
     const service = new GitComparisonService({} as WorkspaceRepo, mock.executor);
 
-    await expect(service.reviewComparison("ws-1", "commit", { sha: "abc1234" }, "/repo")).resolves.toMatchObject({
+    await expect(service.readReviewComparison("ws-1", "commit", { sha: "abc1234" }, "/repo")).resolves.toMatchObject({
       files: [{ path: "root.ts", changeType: "added" }],
       additions: 3,
       deletions: 0,
@@ -122,7 +122,7 @@ describe("GitComparisonService.reviewComparison", () => {
     mock.execFn.mockRejectedValue(new Error("git unavailable"));
     const service = new GitComparisonService({} as WorkspaceRepo, mock.executor);
 
-    await expect(service.reviewComparison("ws-1", "commit", { sha: "abc1234" }, "/repo")).rejects.toThrow(
+    await expect(service.readReviewComparison("ws-1", "commit", { sha: "abc1234" }, "/repo")).rejects.toThrow(
       "git unavailable",
     );
     expect(mock.execFn).toHaveBeenCalledTimes(4);
@@ -445,7 +445,7 @@ describe("GitWorktreeService.listWorktrees", () => {
   });
 });
 
-describe("GitComparisonService.log", () => {
+describe("GitComparisonService.listCommits", () => {
   let gitService: GitComparisonService;
   let execFn: ReturnType<typeof createMockGitExecutor>["execFn"];
 
@@ -472,7 +472,7 @@ describe("GitComparisonService.log", () => {
         stderr: "",
       });
 
-    const commits = await gitService.log("ws-1", "feat/-commit-picker", 100);
+    const commits = await gitService.listCommits("ws-1", "feat/-commit-picker", 100);
 
     expect(commits).toHaveLength(1);
     expect(commits[0]?.shortSha).toBe("abc1234");
@@ -491,7 +491,7 @@ describe("GitComparisonService.log", () => {
         stderr: "",
       });
 
-    const commits = await gitService.log(
+    const commits = await gitService.listCommits(
       "ws-1",
       "feat/-commit-picker",
       100,
