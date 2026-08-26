@@ -1580,6 +1580,9 @@ export class CanonicalAgentEventSink {
     const normalizedIdentity = resolveSubagentDisplayName({ agentName: input.identity });
     const normalizedModel = resolveSubagentMetadata(input.model);
     const normalizedReasoningEffort = resolveSubagentMetadata(input.reasoningEffort);
+    const normalizedPrompt = typeof input.prompt === "string"
+      ? input.prompt.trim().slice(0, CANONICAL_SUBAGENT_TASK_MAX_LENGTH) || undefined
+      : undefined;
     const existing = this.loadCodexChildDelegation(input.parentThreadId, input.parentItemId);
     if (existing) {
       const updatedPayload = {
@@ -1598,7 +1601,10 @@ export class CanonicalAgentEventSink {
       if (
         JSON.stringify(updatedPayload) === JSON.stringify(existing.parentItem.payload)
         && JSON.stringify(providerIdentities) === JSON.stringify(existing.parentItem.providerIdentities)
-      ) return existing;
+      ) {
+        this.recordLateCodexChildPrompt(existing, normalizedPrompt);
+        return existing;
+      }
 
       const parentThread = this.loadThread(input.parentThreadId);
       const parentTurn = this.loadTurn(input.parentTurnId);
@@ -1632,7 +1638,9 @@ export class CanonicalAgentEventSink {
           `${input.parentExecutionId}:codex-child:${hashCodexKey(input.parentItemId)}:metadata:${metadataKey}`,
         )],
       });
-      return { ...existing, parentItem: updatedParentItem };
+      const updated = { ...existing, parentItem: updatedParentItem };
+      this.recordLateCodexChildPrompt(updated, normalizedPrompt);
+      return updated;
     }
     const parentThread = this.loadThread(input.parentThreadId);
     const parentTurn = this.loadTurn(input.parentTurnId);
@@ -1714,6 +1722,60 @@ export class CanonicalAgentEventSink {
       ],
     });
     return { childThread, parentItem, collaborationAction };
+  }
+
+  private recordLateCodexChildPrompt(
+    delegation: CodexChildDelegation,
+    prompt: string | undefined,
+  ): void {
+    const turnId = delegation.collaborationAction.target.turnId;
+    if (!prompt || !turnId) return;
+    const childTurn = this.loadTurn(turnId);
+    if (!childTurn || childTurn.threadId !== delegation.childThread.id) return;
+    const promptItemId = `item:codex-child-prompt:${hashCodexKey(turnId)}`;
+    if (this.loadItem(promptItemId)) return;
+
+    const now = new Date().toISOString();
+    const action = delegation.collaborationAction;
+    const executionId = this.executionIdForTurn(turnId);
+    const item: AgentItem = {
+      id: promptItemId,
+      threadId: delegation.childThread.id,
+      turnId,
+      kind: "message",
+      providerIdentities: childTurn.providerIdentities,
+      payload: {
+        projection: "message",
+        message: {
+          id: `codex-child-prompt:${hashCodexKey(turnId)}`,
+          role: "user",
+          content: prompt,
+          thread_id: delegation.childThread.id,
+          tool_calls: null,
+          files_changed: null,
+          cost_usd: null,
+          tokens_used: null,
+          timestamp: now,
+          sequence: this.nextChildMessageSequence(delegation.childThread.id),
+          attachments: null,
+          parentAgentProvenance: {
+            parentThreadId: action.source.threadId,
+            parentTurnId: action.source.turnId,
+            parentItemId: action.source.itemId,
+            providerIdentities: action.providerIdentities,
+          },
+        },
+      },
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.commit({
+      threadId: delegation.childThread.id,
+      turnId,
+      executionId,
+      phase: "running",
+      events: [this.itemDraft(executionId, delegation.childThread, childTurn, item)],
+    });
   }
 
   /** Mark a child delivery as unknown without making the uncertain child reusable. */

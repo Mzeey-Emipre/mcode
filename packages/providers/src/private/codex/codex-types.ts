@@ -69,6 +69,12 @@ export interface ThreadStartResult {
     name?: string | null;
     agentNickname?: string | null;
     agentRole?: string | null;
+    turns?: Array<{
+      items?: Array<{
+        type?: string;
+        content?: Array<{ type?: string; text?: string }>;
+      }>;
+    }>;
     [key: string]: unknown;
   };
 }
@@ -76,6 +82,8 @@ export interface ThreadStartResult {
 /** Parameters for the `thread/resume` RPC method. */
 export interface ThreadResumeParams {
   threadId: string;
+  /** Return live thread metadata without hydrating its persisted turns. */
+  excludeTurns?: boolean;
   /** Override model for the resumed thread. */
   model?: string | null;
   /** Override sandbox mode for the resumed thread. */
@@ -115,11 +123,32 @@ export interface ThreadReadParams {
 export interface ThreadReadResult {
   thread: {
     id: string;
+    preview?: string | null;
     name?: string | null;
     agentNickname?: string | null;
     agentRole?: string | null;
     [key: string]: unknown;
   };
+}
+
+/** Parameters for reading the persisted item projection of a Codex thread. */
+export interface ThreadItemsListParams {
+  threadId: string;
+  /** The maximum number of chronological items to return. */
+  limit?: number;
+  /** The pagination direction. */
+  sortDirection?: "asc" | "desc";
+}
+
+/** Result returned by the persisted Codex thread-item projection. */
+export interface ThreadItemsListResult {
+  data?: Array<{
+    turnId?: string;
+    item?: {
+      type?: string;
+      content?: Array<{ type?: string; text?: string }>;
+    };
+  }>;
 }
 
 // Turn RPCs

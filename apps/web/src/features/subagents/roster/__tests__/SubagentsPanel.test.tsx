@@ -151,7 +151,7 @@ describe("SubagentsPanel", () => {
     }
   });
 
-  it("shows only the formatted identity and roster metadata", async () => {
+  it("shows the parent task and configuration in the roster", async () => {
     const child = canonicalRow({
       id: "direct-detail-child",
       identity: "direct_detail_worker",
@@ -164,7 +164,8 @@ describe("SubagentsPanel", () => {
     const row = await screen.findByTestId("subagent-finished-row");
     expect(row).toHaveTextContent("Direct detail worker");
     expect(row).not.toHaveTextContent("direct_detail_worker");
-    expect(row).not.toHaveTextContent("Read only README.md and return the full summary");
+    expect(row).toHaveTextContent("Parent task: Read only README.md and return the full summary");
+    expect(row).toHaveTextContent("GPT-5.6 Sol · High");
   });
 
   it("opens a chat-selected child when the canonical row arrives after the first roster read", async () => {
@@ -402,6 +403,7 @@ describe("SubagentsPanel", () => {
       latestTurnStatus: "Running",
       terminalOutcome: null,
       canStop: true,
+      task: "Inspect the parent request",
     });
     harness.loadCanonicalSubagentRoster.mockResolvedValue(canonicalRoster([child], []));
 
@@ -414,7 +416,7 @@ describe("SubagentsPanel", () => {
     expect(header).toBeTruthy();
     expect(header).toHaveTextContent("Detail layout child");
     expect(header).toHaveTextContent("ancestor");
-    expect(header).not.toHaveTextContent("Parent");
+    expect(header).toHaveTextContent("Parent task: Inspect the parent request");
     expect(header).toHaveTextContent("GPT-5.6 Sol · High");
     expect(screen.queryByText("Technical details")).not.toBeInTheDocument();
     expect(screen.queryByText("Canonical ID:")).not.toBeInTheDocument();

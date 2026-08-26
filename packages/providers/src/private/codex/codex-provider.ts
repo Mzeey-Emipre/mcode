@@ -1621,6 +1621,21 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       if (entry && childThreadToReplay) {
         this.replayPendingChildEvents(entry, sessionId, childThreadToReplay);
       }
+      if (
+        nativeThreadId
+        && n.method === "turn/completed"
+        && mapper.hasReceiverThread(nativeThreadId)
+      ) {
+        this.fetchChildThreadMetadata(
+          sessionId,
+          threadId,
+          server,
+          mapper,
+          nativeThreadId,
+          eventExecutionId,
+          true,
+        );
+      }
       const childThreadId = nativeSubAgentThreadId(n);
       if (childThreadId) {
         const currentExecutionId = entry?.currentTurnExecutionId;
@@ -1649,7 +1664,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
           pruneExecutionMap(entry.nativeThreadExecutionIds);
           this.replayPendingChildEvents(entry, sessionId, childThreadId);
         }
-        this.fetchChildThreadMetadata(sessionId, threadId, server, mapper, childThreadId, eventExecutionId);
+        this.fetchChildThreadMetadata(sessionId, threadId, server, mapper, childThreadId, eventExecutionId, true);
       }
       for (const collabChildThreadId of nativeCollabSpawnThreadIds(n)) {
         this.fetchChildThreadMetadata(sessionId, threadId, server, mapper, collabChildThreadId, eventExecutionId);
@@ -1851,6 +1866,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     mapper: CodexEventMapper,
     childThreadId: string,
     turnExecutionId?: string,
+    captureParentMessage = false,
   ): void {
     const state = this.runtime.get(sessionId);
     if (!state || state.mapper !== mapper || state.childMetadataFetches.has(childThreadId)) return;
@@ -1859,7 +1875,6 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
 
     void (async () => {
       const retryDelaysMs = [0, 100, 300, 1_000] as const;
-      let appliedInitialMetadata = false;
       for (const retryDelayMs of retryDelaysMs) {
         if (retryDelayMs > 0) {
           await new Promise<void>((resolve) => setTimeout(resolve, retryDelayMs));
@@ -1877,13 +1892,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         if (!currentState || currentState.mapper !== mapper || currentState.runTurnSeq !== runTurnSeq) return;
         if (!metadata) continue;
 
-        const metadataUpdate = appliedInitialMetadata
-          ? metadata.identity ? { identity: metadata.identity } : undefined
-          : metadata;
-        appliedInitialMetadata = true;
-        const events = metadataUpdate
-          ? mapper.applyChildThreadMetadata(childThreadId, metadataUpdate)
-          : [];
+        const events = mapper.applyChildThreadMetadata(childThreadId, metadata);
         traceCodexIngest(threadId, "child/thread-read", { childThreadId }, events);
         const resolvedExecutionId = turnExecutionId
           ?? currentState.nativeThreadExecutionIds.get(childThreadId);
@@ -1891,7 +1900,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
           this.recordGoalEvent(sessionId, event);
           this.emit("event", resolvedExecutionId ? { ...event, turnExecutionId: resolvedExecutionId } : event);
         }
-        if (metadata.identity) return;
+        if (metadata.identity && (!captureParentMessage || metadata.parentMessage)) return;
       }
     })()
       .catch((error: unknown) => {
@@ -1900,6 +1909,12 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
           childThreadId,
           error: error instanceof Error ? error.message : String(error),
         });
+      })
+      .finally(() => {
+        const currentState = this.runtime.get(sessionId);
+        if (currentState?.mapper === mapper && currentState.runTurnSeq === runTurnSeq) {
+          currentState.childMetadataFetches.delete(childThreadId);
+        }
       });
   }
 

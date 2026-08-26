@@ -1342,10 +1342,16 @@ describe("CanonicalAgentEventSink", () => {
       providerIdentities: [] as ProviderIdentity[],
     };
     const delegation = sink.startCodexChildDelegation(input);
+    const childTurn = sink.startCodexChildTurn({
+      ...input,
+      nativeThreadId: "native-late-roster-metadata",
+      nativeTurnId: "native-turn-late-roster-metadata",
+    });
 
     const enriched = sink.startCodexChildDelegation({
       ...input,
       description: "Inspect late metadata",
+      prompt: "Inspect the v2 child metadata.",
       identity: "Worker",
       model: "gpt-5.6-terra",
       reasoningEffort: "medium",
@@ -1365,6 +1371,26 @@ describe("CanonicalAgentEventSink", () => {
       model: "gpt-5.6-terra",
       reasoning: "medium",
       sourceProviderIdentities: [identity()],
+    });
+    const promptRow = db.prepare(`
+      SELECT payload_json
+      FROM canonical_agent_items
+      WHERE thread_id = ?
+        AND turn_id = ?
+        AND kind = 'message'
+    `).get(delegation.childThread.id, childTurn.id) as { payload_json: string } | undefined;
+    expect(promptRow).toBeDefined();
+    expect(JSON.parse(promptRow!.payload_json)).toMatchObject({
+      projection: "message",
+      message: {
+        role: "user",
+        content: "Inspect the v2 child metadata.",
+        parentAgentProvenance: {
+          parentThreadId: THREAD_ID,
+          parentTurnId: TURN_ID,
+          parentItemId: input.parentItemId,
+        },
+      },
     });
   });
 
