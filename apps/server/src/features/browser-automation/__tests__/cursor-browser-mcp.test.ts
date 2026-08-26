@@ -38,6 +38,14 @@ function configuredLease(): BrowserAutomationSessionLease {
   return lease;
 }
 
+function createCursorProviderFixture(): any {
+  const provider = Object.create(CursorProvider.prototype) as any;
+  provider.pendingStops = new Set();
+  provider.pendingAcpRuntimes = new Map();
+  provider.threadControlMcp = { close: vi.fn(async () => undefined) };
+  return provider;
+}
+
 describe("Cursor browser MCP configuration", () => {
   it("uses ACP HTTP headers for a normal main-session grant", () => {
     expect(buildCursorBrowserMcpServers({
@@ -81,7 +89,7 @@ describe("Cursor browser MCP configuration", () => {
     const staged = lease.stage(browserScope({ allowedOperations: ["evaluate"] } as never));
     const child = { pid: 101, kill: vi.fn() };
     const close = vi.fn(async () => undefined);
-    const provider = Object.create(CursorProvider.prototype) as any;
+    const provider = createCursorProviderFixture();
     provider.settingsService = { get: vi.fn(() => ({})) };
     provider.browserAutomationLease = lease;
     provider.pendingBrowserLeases = new Map([["mcode-a", staged]]);
@@ -108,7 +116,7 @@ describe("Cursor browser MCP configuration", () => {
     const staged = lease.stage(browserScope());
     const refreshed = lease.issue(browserScope());
     const child = { pid: 102, kill: vi.fn() };
-    const provider = Object.create(CursorProvider.prototype) as any;
+    const provider = createCursorProviderFixture();
     provider.settingsService = { get: vi.fn(() => ({})) };
     provider.browserAutomationLease = lease;
     provider.pendingBrowserLeases = new Map([["mcode-a", staged]]);
@@ -138,7 +146,7 @@ describe("Cursor browser MCP configuration", () => {
   it("continues without MCP when browser lease is unconfigured", async () => {
     const lease = new BrowserAutomationSessionLease();
     const child = { pid: 107, kill: vi.fn() };
-    const provider = Object.create(CursorProvider.prototype) as any;
+    const provider = createCursorProviderFixture();
     provider.id = "cursor";
     provider.settingsService = { get: vi.fn(() => ({})) };
     provider.browserAutomationLease = lease;
@@ -189,7 +197,7 @@ describe("Cursor browser MCP configuration", () => {
     const lease = configuredLease();
     const previousGrant = lease.issue(browserScope())!;
     const staged = lease.stage(browserScope());
-    const provider = Object.create(CursorProvider.prototype) as any;
+    const provider = createCursorProviderFixture();
     provider.id = "cursor";
     provider.settingsService = { get: vi.fn(() => ({})) };
     provider.browserAutomationLease = lease;
@@ -219,7 +227,7 @@ describe("Cursor browser MCP configuration", () => {
     const previousGrant = lease.issue(browserScope())!;
     const staged = lease.stage(browserScope());
     const child = { pid: 105, kill: vi.fn() };
-    const provider = Object.create(CursorProvider.prototype) as any;
+    const provider = createCursorProviderFixture();
     provider.id = "cursor";
     provider.settingsService = { get: vi.fn(() => ({})) };
     provider.browserAutomationLease = lease;
@@ -254,7 +262,7 @@ describe("Cursor browser MCP configuration", () => {
     now = staged.expiresAt;
     const child = { pid: 106, kill: vi.fn() };
     const close = vi.fn(async () => undefined);
-    const provider = Object.create(CursorProvider.prototype) as any;
+    const provider = createCursorProviderFixture();
     provider.id = "cursor";
     provider.settingsService = { get: vi.fn(() => ({})) };
     provider.browserAutomationLease = lease;
@@ -286,7 +294,7 @@ describe("Cursor browser MCP configuration", () => {
     const staged = lease.stage(browserScope());
     const child = { pid: 103, kill: vi.fn() };
     const close = vi.fn(async () => undefined);
-    const provider = Object.create(CursorProvider.prototype) as any;
+    const provider = createCursorProviderFixture();
     provider.settingsService = { get: vi.fn(() => ({})) };
     provider.browserAutomationLease = lease;
     provider.pendingBrowserLeases = new Map([["mcode-a", staged]]);
@@ -366,7 +374,7 @@ describe("Cursor browser MCP configuration", () => {
   it("continues a Cursor session when thread-control MCP bootstrap fails", async () => {
     const openSession = vi.fn(async () => ({ sessionId: "acp-session", reloaded: false }));
     const close = vi.fn(async () => undefined);
-    const provider = Object.create(CursorProvider.prototype) as any;
+    const provider = createCursorProviderFixture();
     provider.sdkSessionIds = new Map();
     provider.threadControlMcp = {
       createHttpConnection: vi.fn().mockRejectedValue(new Error("thread control unavailable")),
@@ -470,7 +478,7 @@ describe("Cursor browser MCP configuration", () => {
   it("closes pending ACP runtime when stopped during logical session load", async () => {
     const child = { pid: 108, kill: vi.fn() };
     const close = vi.fn().mockResolvedValue(undefined);
-    const provider = Object.create(CursorProvider.prototype) as any;
+    const provider = createCursorProviderFixture();
     provider.settingsService = { get: vi.fn(() => ({})) };
     provider.browserAutomationLease = {
       release: vi.fn(),
@@ -532,7 +540,7 @@ describe("Cursor browser MCP configuration", () => {
   it("propagates MCP grant when a stale pooled session is replaced", async () => {
     const lease = configuredLease();
     const previousGrant = lease.issue(browserScope())!;
-    const provider = Object.create(CursorProvider.prototype) as any;
+    const provider = createCursorProviderFixture();
     const existing = {
       child: { exitCode: 1, signalCode: null },
       workspaceId: "workspace-a",
