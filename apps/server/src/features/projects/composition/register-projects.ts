@@ -3,7 +3,12 @@ import { Lifecycle, type DependencyContainer } from "tsyringe";
 
 import {
   FilesystemBrowser,
-  GitService,
+  GitComparisonService,
+  GitRepositoryService,
+  GitWorktreeService,
+  PullRequestReviewGitService,
+  RepositoryGitMutationLock,
+  WorktreeSafetyService,
   ProjectWorktreeService,
   WorktreeDirectoryRemover,
   WorkspaceEnricher,
@@ -44,7 +49,7 @@ export function registerWorktreeRepository(container: DependencyContainer): void
   );
 }
 
-/** Register project lifecycle services and the GitService token alias. */
+/** Register project lifecycle services. */
 export function registerProjectServices(container: DependencyContainer): void {
   let workspaceEnvironmentService: WorkspaceEnvironmentService | undefined;
   container.register(
@@ -53,8 +58,33 @@ export function registerProjectServices(container: DependencyContainer): void {
     { lifecycle: Lifecycle.Singleton },
   );
   container.register(
-    GitService,
-    { useClass: GitService },
+    GitComparisonService,
+    { useClass: GitComparisonService },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    GitRepositoryService,
+    { useClass: GitRepositoryService },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    GitWorktreeService,
+    { useClass: GitWorktreeService },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    PullRequestReviewGitService,
+    { useClass: PullRequestReviewGitService },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    RepositoryGitMutationLock,
+    { useClass: RepositoryGitMutationLock },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    WorktreeSafetyService,
+    { useClass: WorktreeSafetyService },
     { lifecycle: Lifecycle.Singleton },
   );
   container.register(
@@ -90,9 +120,6 @@ export function registerProjectServices(container: DependencyContainer): void {
   container.register<ProjectActionClock>(PROJECT_ACTION_CLOCK_TOKEN, { useValue: () => new Date() });
   container.register<ProjectActionRunIdFactory>(PROJECT_ACTION_RUN_ID_FACTORY_TOKEN, { useValue: randomUUID });
   container.register(ProjectActionService, { useClass: ProjectActionService }, { lifecycle: Lifecycle.Singleton });
-  container.register("GitService", {
-    useFactory: (c) => c.resolve(GitService),
-  });
 }
 
 /** Register project startup support services after their Git dependencies exist. */

@@ -148,6 +148,7 @@ describe("ThreadControlService", () => {
       workspaces as never,
       worktrees as never,
       git as never,
+      git as never,
       threads as never,
       projectWorktreeService as never,
       agentService as never,
@@ -181,6 +182,7 @@ describe("ThreadControlService", () => {
     const workspacePath = "C:/private/workspace";
     const service = new ThreadControlService(
       { search: () => [{ id: "workspace-1", name: "Workspace", path: workspacePath, last_opened_at: null }] } as never,
+      {} as never,
       {} as never,
       {} as never,
       {} as never,

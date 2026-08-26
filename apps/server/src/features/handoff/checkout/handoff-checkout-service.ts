@@ -1,8 +1,9 @@
-import { delay, inject, injectable } from "tsyringe";
+import { inject, injectable } from "tsyringe";
 import type { Thread } from "@mcode/contracts";
 import { WorkspaceRepo } from "../../projects/persistence/workspace-repo.js";
 import { ThreadRepo } from "../../thread-control/persistence/thread-repo.js";
-import { GitService } from "../../projects/index.js";
+import { GitRepositoryService } from "../../projects/git/git-repository-service.js";
+import { GitWorktreeService } from "../../projects/git/git-worktree-service.js";
 
 /** Owns branch creation and checkout-state synchronization for thread handoffs. */
 @injectable()
@@ -10,7 +11,8 @@ export class HandoffCheckoutService {
   constructor(
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
     @inject(WorkspaceRepo) private readonly workspaceRepo: WorkspaceRepo,
-    @inject(delay(() => GitService)) private readonly gitService: GitService,
+    @inject(GitRepositoryService) private readonly gitRepository: GitRepositoryService,
+    @inject(GitWorktreeService) private readonly gitWorktrees: GitWorktreeService,
   ) {}
 
   /** Create a named branch in a thread's resolved checkout and persist its state. */
@@ -29,14 +31,14 @@ export class HandoffCheckoutService {
       if (thread.workspace_id !== workspaceId) {
         throw new Error(`Thread ${threadId} does not belong to workspace ${workspaceId}`);
       }
-      path = this.gitService.resolveWorkingDir(
+      path = this.gitWorktrees.resolveWorkingDir(
         workspace.path,
         thread.mode,
         thread.worktree_path,
       );
     }
 
-    const branch = await this.gitService.createBranch(path, name);
+    const branch = await this.gitRepository.createBranch(path, name);
     if (threadId) {
       const updated = this.threadRepo.updateCheckoutToNamedBranch(threadId, branch);
       if (!updated) {
@@ -53,7 +55,7 @@ export class HandoffCheckoutService {
     const thread = this.threadRepo.findById(threadId);
     if (!thread || thread.mode !== "worktree" || !thread.worktree_path) return null;
 
-    const currentBranch = await this.gitService.getCurrentBranchAt(thread.worktree_path);
+    const currentBranch = await this.gitRepository.getCurrentBranchAt(thread.worktree_path);
     const detached = !currentBranch || currentBranch === "HEAD";
     const branch = detached ? "HEAD" : currentBranch;
     const checkoutState = detached ? "branchless" : "named";

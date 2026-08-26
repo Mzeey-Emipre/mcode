@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { container } from "tsyringe";
 import { EnvService } from "../../../../runtime/environment/env-service.js";
-import { GitService } from "../../../projects/git/git-service.js";
+import { GitWorktreeService } from "../../../projects/git/git-worktree-service.js";
 import { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
 import { SettingsService } from "../../../settings/settings-service.js";
 import { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
@@ -23,7 +23,7 @@ describe("registerTerminalBackends", () => {
     terminalContainer.register(SettingsService, { useValue: {} as SettingsService });
     terminalContainer.register(WorkspaceRepo, { useValue: {} as WorkspaceRepo });
     terminalContainer.register(ThreadRepo, { useValue: {} as ThreadRepo });
-    terminalContainer.register(GitService, { useValue: {} as GitService });
+    terminalContainer.register(GitWorktreeService, { useValue: {} as GitWorktreeService });
     terminalContainer.register("PtyPidRegistry", { useValue: new PtyPidRegistry(pidRegistryDir) });
 
     try {

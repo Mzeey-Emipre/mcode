@@ -19,8 +19,11 @@ import { PtyPidRegistry } from "../../features/terminal/host/pty-pid-registry.js
 // Services
 import {
   FilesystemBrowser,
-  GitService,
+  GitComparisonService,
+  GitRepositoryService,
+  GitWorktreeService,
   GitWatcherService,
+  PullRequestReviewGitService,
   WorkspaceEnricher,
   WorkspaceService,
   WorkspaceEnvironmentService,
@@ -281,7 +284,10 @@ const turnRecoveryService = container.resolve(TurnRecoveryService);
 const threadControlService = container.resolve(ThreadControlService);
 const externalThreadControlPairingService = container.resolve(ExternalThreadControlPairingService);
 const externalThreadControlMcpRuntime = container.resolve(ExternalThreadControlMcpRuntime);
-const gitService = container.resolve(GitService);
+const gitComparison = container.resolve(GitComparisonService);
+const gitRepository = container.resolve(GitRepositoryService);
+const gitWorktrees = container.resolve(GitWorktreeService);
+const pullRequestReviews = container.resolve(PullRequestReviewGitService);
 const githubService = container.resolve(GithubService);
 const pullRequestService = container.resolve(PullRequestService);
 const pullRequestMutationService = container.resolve(PullRequestMutationService);
@@ -636,7 +642,10 @@ const { httpServer, wss } = createWsServer({
   threadControlService,
   externalThreadControlPairingService,
   externalThreadControlMcpRuntime,
-  gitService,
+  gitComparison,
+  gitRepository,
+  gitWorktrees,
+  pullRequestReviews,
   githubService,
   pullRequestService,
   pullRequestMutationService,

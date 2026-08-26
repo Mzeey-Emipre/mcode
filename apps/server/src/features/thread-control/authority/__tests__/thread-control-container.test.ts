@@ -6,7 +6,7 @@ import { WorktreeRepo } from "../../../projects/persistence/worktree-repo.js";
 import { ThreadRepo } from "../../persistence/thread-repo.js";
 import { ThreadControlApprovalRepo } from "../persistence/thread-control-approval-repo.js";
 import { ThreadControlAuditRepo } from "../persistence/thread-control-audit-repo.js";
-import { GitService } from "../../../projects/index.js";
+import { GitRepositoryService, GitWorktreeService } from "../../../projects/index.js";
 import { ProjectWorktreeService } from "../../../projects/worktrees/project-worktree-service.js";
 import { ThreadControlService } from "../thread-control-service.js";
 import { ThreadService } from "../../lifecycle/thread-service.js";
@@ -23,7 +23,8 @@ describe("thread-control DI", () => {
     child.registerInstance(SettingsService, {} as SettingsService);
     child.registerInstance(ThreadControlApprovalRepo, {} as ThreadControlApprovalRepo);
     child.registerInstance(ThreadControlAuditRepo, {} as ThreadControlAuditRepo);
-    child.registerInstance(GitService, {} as GitService);
+    child.registerInstance(GitRepositoryService, {} as GitRepositoryService);
+    child.registerInstance(GitWorktreeService, {} as GitWorktreeService);
     child.registerInstance(ProjectWorktreeService, {} as ProjectWorktreeService);
     child.register(ThreadControlService, { useClass: ThreadControlService });
 
@@ -39,7 +40,8 @@ describe("thread-control DI", () => {
     child.registerInstance(SettingsService, {} as SettingsService);
     child.registerInstance(ThreadControlApprovalRepo, {} as ThreadControlApprovalRepo);
     child.registerInstance(ThreadControlAuditRepo, {} as ThreadControlAuditRepo);
-    child.registerInstance(GitService, {} as GitService);
+    child.registerInstance(GitRepositoryService, {} as GitRepositoryService);
+    child.registerInstance(GitWorktreeService, {} as GitWorktreeService);
     child.registerInstance(ProjectWorktreeService, {} as ProjectWorktreeService);
     const resolverFactory = vi.fn(() => ({} as DelegationTargetResolver));
     child.register(DelegationTargetResolver, { useFactory: resolverFactory });

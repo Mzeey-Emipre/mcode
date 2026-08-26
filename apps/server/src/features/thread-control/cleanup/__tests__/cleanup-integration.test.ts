@@ -16,10 +16,15 @@ import { HandoffStorage } from "../../../handoff/index.js";
 import { ThreadService } from "../../index.js";
 import type { ClaudeProvider } from "../../../providers/adapters/claude/claude-provider.js";
 import type { TerminalBackend as TerminalService } from "../../../terminal/backends/terminal-backend.js";
-import type { GitService } from "../../../projects/index.js";
 import type { GitExecutor } from "../../../projects/git/execution/index.js";
 import { AttachmentService } from "../../../attachments/storage/attachment-service.js";
-import { ProjectWorktreeService, WorkspaceService } from "../../../projects/index.js";
+import {
+  ProjectWorktreeService,
+  RepositoryGitMutationLock,
+  type GitWorktreeService,
+  type WorktreeSafetyService,
+  WorkspaceService,
+} from "../../../projects/index.js";
 import type { AgentService } from "../../../agents/index.js";
 import { killDescendantsByName } from "../../../../runtime/process/containment/process-kill.js";
 import { getMcodeDir } from "@mcode/shared";
@@ -48,7 +53,8 @@ describe("Cleanup integration", () => {
   let worker: CleanupWorker;
   let mockClaudeProvider: ClaudeProvider;
   let mockTerminalService: TerminalService;
-  let mockGitService: GitService;
+  let mockGitWorktrees: GitWorktreeService;
+  let mockWorktreeSafety: WorktreeSafetyService;
   let mockAttachmentService: AttachmentService;
   let mockHandoffStorage: HandoffStorage;
   let mockAgentService: AgentService;
@@ -70,14 +76,13 @@ describe("Cleanup integration", () => {
       killByThread: vi.fn(),
     } as unknown as TerminalService;
 
-    mockGitService = {
+    mockGitWorktrees = {
       createWorktree: vi.fn().mockReturnValue({ path: join(WT_BASE, "test-wt") }),
       removeWorktree: vi.fn().mockResolvedValue(true),
       isRegisteredWorktreePath: vi.fn().mockReturnValue(true),
-      withReviewWorktreeMutationLock: vi.fn(async (
-        _repoPath: string,
-        work: () => Promise<unknown>,
-      ) => work()),
+    } as unknown as GitWorktreeService;
+
+    mockWorktreeSafety = {
       assessWorktreeRemovalSafety: vi.fn(async (
         worktreePath: string,
         siblingPaths: readonly string[],
@@ -91,7 +96,7 @@ describe("Cleanup integration", () => {
           ? { safe: false, reason: "shared" as const }
           : { safe: true, reason: "exclusive" as const };
       }),
-    } as unknown as GitService;
+    } as unknown as WorktreeSafetyService;
 
     mockAttachmentService = { removeForThread: vi.fn() } as unknown as AttachmentService;
     mockHandoffStorage = {
@@ -101,7 +106,8 @@ describe("Cleanup integration", () => {
       threadRepo,
       workspaceRepo,
       cleanupJobRepo,
-      mockGitService,
+      mockGitWorktrees,
+      mockWorktreeSafety,
     );
     threadService = new ThreadService(
       threadRepo,
@@ -116,7 +122,9 @@ describe("Cleanup integration", () => {
       threadRepo,
       mockClaudeProvider,
       mockTerminalService,
-      mockGitService,
+      mockGitWorktrees,
+      mockWorktreeSafety,
+      new RepositoryGitMutationLock(),
       workspaceRepo,
       { removeForThread: vi.fn() } as unknown as AttachmentService,
       { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as unknown as HandoffStorage,
@@ -186,7 +194,7 @@ describe("Cleanup integration", () => {
       expect.any(Number),
     );
     expect(mockTerminalService.killByThread).toHaveBeenCalledWith("thread-int-1");
-    expect(mockGitService.removeWorktree).toHaveBeenCalledWith(
+    expect(mockGitWorktrees.removeWorktree).toHaveBeenCalledWith(
       expect.any(String),
       "feat-wt",
       expect.objectContaining({
@@ -221,7 +229,7 @@ describe("Cleanup integration", () => {
 
     // No subprocess/git calls happened - they're deferred to the worker
     expect(mockClaudeProvider.waitForSessionExit).not.toHaveBeenCalled();
-    expect(mockGitService.removeWorktree).not.toHaveBeenCalled();
+    expect(mockGitWorktrees.removeWorktree).not.toHaveBeenCalled();
   });
 
   it("retry flow: failed cleanup retries on next poll", async () => {
@@ -241,7 +249,7 @@ describe("Cleanup integration", () => {
     });
 
     // First attempt: removeWorktree fails
-    (mockGitService.removeWorktree as ReturnType<typeof vi.fn>).mockResolvedValueOnce(false);
+    (mockGitWorktrees.removeWorktree as ReturnType<typeof vi.fn>).mockResolvedValueOnce(false);
 
     await worker.poll();
 
@@ -255,7 +263,7 @@ describe("Cleanup integration", () => {
     expect(threadRepo.findById("thread-retry")).not.toBeNull();
 
     // Second attempt succeeds (next_retry_at is in the future, so fast-forward)
-    (mockGitService.removeWorktree as ReturnType<typeof vi.fn>).mockResolvedValueOnce(true);
+    (mockGitWorktrees.removeWorktree as ReturnType<typeof vi.fn>).mockResolvedValueOnce(true);
     db.prepare("UPDATE cleanup_jobs SET next_retry_at = 0").run();
 
     await worker.poll();

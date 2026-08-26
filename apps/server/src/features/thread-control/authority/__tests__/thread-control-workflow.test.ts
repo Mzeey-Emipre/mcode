@@ -11,6 +11,7 @@ import { InternalThreadControlMcpAuthority } from "../thread-control-mcp-authori
 import { createInternalThreadControlMcpSession } from "../thread-control-mcp-transport.js";
 import { ThreadControlMutationReservationService } from "../thread-control-mutation-reservation-service.js";
 import { ThreadControlService } from "../thread-control-service.js";
+import type { GitRepositoryService, GitWorktreeService } from "../../../projects/index.js";
 
 vi.mock("../../../../application/transport/push.js", () => ({ broadcast: vi.fn() }));
 
@@ -41,10 +42,12 @@ describe("internal thread-control MCP workflow", () => {
       findCurrentById: vi.fn(),
       register: vi.fn().mockReturnValue({ worktreeId: "worktree-created", label: "feature/workflow-proof" }),
     };
-    const git = {
+    const gitWorktrees = {
       listWorktrees: vi.fn().mockResolvedValue([{ path: "C:/private/child", name: "main", branch: "main", managed: false }]),
+    } as unknown as GitWorktreeService;
+    const gitRepository = {
       getCurrentBranch: vi.fn().mockResolvedValue("main"),
-    };
+    } as unknown as GitRepositoryService;
     const projectWorktreeService = {
       provisionWorktree: vi.fn().mockImplementation(async (threadId: string) => ({
         ...threads.findById(threadId),
@@ -100,7 +103,8 @@ describe("internal thread-control MCP workflow", () => {
     const service = new ThreadControlService(
       workspaces,
       worktrees as never,
-      git as never,
+      gitWorktrees,
+      gitRepository,
       threads,
       projectWorktreeService as never,
       agentService as never,

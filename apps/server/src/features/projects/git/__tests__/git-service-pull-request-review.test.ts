@@ -9,9 +9,10 @@ import { WorkspaceRepo } from "../../persistence/workspace-repo.js";
 import { FakeGitExecutor } from "../execution/fake-git-executor.js";
 import type { GitExecOptions, GitExecResult } from "../execution/types.js";
 import {
-  GitService,
   type PullRequestReviewGitSource,
-} from "../git-service.js";
+  PullRequestReviewGitService,
+} from "../pull-request-review-git-service.js";
+import { GitRepositoryService } from "../git-repository-service.js";
 
 const headOid = "a".repeat(40);
 const source: PullRequestReviewGitSource = {
@@ -44,17 +45,20 @@ class WorktreeCreatingGitExecutor extends FakeGitExecutor {
   }
 }
 
-describe("GitService pull request Review worktrees", () => {
+describe("PullRequestReviewGitService", () => {
   let db: Database.Database;
   let executor: WorktreeCreatingGitExecutor;
-  let service: GitService;
+  let service: PullRequestReviewGitService;
+  let gitRepository: GitRepositoryService;
   let repoPath: string;
 
   beforeEach(() => {
     db = openMemoryDatabase();
     repoPath = mkdtempSync(join(tmpdir(), "mcode-review-repo-"));
     executor = new WorktreeCreatingGitExecutor();
-    service = new GitService(new WorkspaceRepo(db), executor);
+    const workspaceRepo = new WorkspaceRepo(db);
+    gitRepository = new GitRepositoryService(workspaceRepo, executor);
+    service = new PullRequestReviewGitService(executor, gitRepository);
     executor.setResponse(
       ["config", "--get-regexp", "^remote\\..*\\.url$"],
       {
@@ -78,7 +82,7 @@ describe("GitService pull request Review worktrees", () => {
   });
 
   it("normalizes SSH and HTTPS remotes in one bounded Git query", async () => {
-    await expect(service.listNormalizedRemotes(repoPath)).resolves.toMatchObject([
+    await expect(gitRepository.listNormalizedRemotes(repoPath)).resolves.toMatchObject([
       {
         name: "origin",
         host: "github.com",
@@ -272,33 +276,6 @@ describe("GitService pull request Review worktrees", () => {
     });
     rmSync(destination, { recursive: true, force: true });
     rmSync(externalTarget, { recursive: true, force: true });
-  });
-
-  it("treats a junction alias as the same active worktree identity", async () => {
-    const target = mkdtempSync(join(tmpdir(), "mcode-worktree-identity-"));
-    const aliasParent = mkdtempSync(join(tmpdir(), "mcode-worktree-alias-"));
-    const alias = join(aliasParent, "junction");
-    symlinkSync(target, alias, process.platform === "win32" ? "junction" : "dir");
-
-    await expect(
-      service.assessWorktreeRemovalSafety(target, [alias], false),
-    ).resolves.toEqual({ safe: false, reason: "shared" });
-
-    rmSync(aliasParent, { recursive: true, force: true });
-    rmSync(target, { recursive: true, force: true });
-  });
-
-  it("fails worktree removal closed on truncated or uncertain identities", async () => {
-    const target = mkdtempSync(join(tmpdir(), "mcode-worktree-bounded-"));
-
-    await expect(
-      service.assessWorktreeRemovalSafety(target, [], true),
-    ).resolves.toEqual({ safe: false, reason: "truncated" });
-    await expect(
-      service.assessWorktreeRemovalSafety(target, [join(target, "missing")], false),
-    ).resolves.toEqual({ safe: false, reason: "identity_uncertain" });
-
-    rmSync(target, { recursive: true, force: true });
   });
 
   it("cleans an exact partially-created branch and worktree without repository-wide prune", async () => {
