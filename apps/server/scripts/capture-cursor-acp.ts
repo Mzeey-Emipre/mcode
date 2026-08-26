@@ -23,15 +23,15 @@ import {
   type Client,
   type SessionNotification,
 } from "@agentclientprotocol/sdk";
-import { buildCursorAcpArgs } from "../src/features/providers/adapters/cursor/cursor-acp-spawn-args.js";
-import { pickFullAccessAllowOption } from "../src/features/providers/adapters/cursor/cursor-acp-permission-mapper.js";
+import { buildCursorAcpArgs } from "../../../packages/providers/src/private/cursor/cursor-acp-spawn-args.js";
+import { pickFullAccessAllowOption } from "../../../packages/providers/src/private/cursor/cursor-acp-permission-mapper.js";
 import {
   createCursorAcpTurnState,
   mapCursorAcpSessionNotification,
   type CursorAcpTurnState,
-} from "../src/features/providers/adapters/cursor/cursor-acp-event-mapper.js";
-import { summarizeEmittedAgentEventsForTrace } from "../src/features/providers/adapters/cursor/cursor-acp-session-trace.js";
-import { cursorTaskExtToAgentEvents } from "../src/features/providers/adapters/cursor/cursor-acp-task.js";
+} from "../../../packages/providers/src/private/cursor/cursor-acp-event-mapper.js";
+import { summarizeEmittedAgentEventsForTrace } from "../../../packages/providers/src/private/cursor/cursor-acp-session-trace.js";
+import { cursorTaskExtToAgentEvents } from "../../../packages/providers/src/private/cursor/cursor-acp-task.js";
 
 const REPO_ROOT = resolve(import.meta.dir, "../../..");
 const OUT_DIR = join(REPO_ROOT, ".mcode-local", "cursor-acp-capture");
@@ -57,15 +57,15 @@ const CAPTURE_SUITE: Array<{ id: string; prompt: string }> = [
     id: "subagents_parallel",
     prompt:
       "Scenario subagents_parallel: Run exactly two read-only Task subagents in parallel. " +
-      "Subagent A: Glob every file under apps/server/src/features/providers/adapters/cursor/. " +
-      "Subagent B: Read apps/server/src/features/providers/adapters/cursor/cursor-subagent-detection.ts. " +
+      "Subagent A: Glob every file under packages/providers/src/private/cursor/. " +
+      "Subagent B: Read packages/providers/src/private/cursor/cursor-subagent-detection.ts. " +
       "Do not edit repo files. End with a line listing tool names each subagent used.",
   },
   {
     id: "read_and_search",
     prompt:
-      "Scenario read_and_search: Without subagents, read apps/server/src/features/providers/adapters/cursor/cursor-acp-task.ts " +
-      "and run one repo search (Grep) for 'cursor/task' under apps/server/. Do not edit files.",
+      "Scenario read_and_search: Without subagents, read packages/providers/src/private/cursor/cursor-acp-task.ts " +
+      "and run one repo search (Grep) for 'cursor/task' under packages/providers/. Do not edit files.",
   },
   {
     id: "write_and_edit",

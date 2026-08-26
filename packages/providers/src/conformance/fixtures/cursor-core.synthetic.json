@@ -4,7 +4,7 @@
   "cliVersion": "synthetic",
   "protocolVersion": "synthetic-v1",
   "provenance": "synthetic",
-  "requiredProfiles": ["core"],
+  "requiredProfiles": ["core", "build", "plan", "permissions", "session-eviction", "clean-fork", "browser-access", "thread-control"],
   "scenario": "core lifecycle structure",
   "sourceHash": "3d1d522bf48832b459e3cb26962e6a7220c64d837a1c512b67e0164d71cf944c",
   "redaction": { "reviewed": true, "removedFields": ["prompt", "response", "environment", "tool output", "absolute paths"] },

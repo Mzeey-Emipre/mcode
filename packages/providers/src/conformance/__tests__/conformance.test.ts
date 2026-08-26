@@ -62,6 +62,11 @@ describe("Provider conformance registry", () => {
     expect(() => validateProviderConformanceRegistry([
       { ...registration, supportedVersions: [] },
     ])).toThrow("lacks supported-version evidence");
+
+    const cursor = ENABLED_PROVIDER_CONFORMANCE.find(({ providerId }) => providerId === "cursor")!;
+    expect(() => validateProviderConformanceRegistry([
+      { ...cursor, fixtureFiles: cursor.fixtureFiles.filter((file) => !file.endsWith("captured.json")) },
+    ])).toThrow("lacks captured fixture coverage for core");
   });
 
   it("registers a sanitized Codex adversarial fixture without private content", () => {

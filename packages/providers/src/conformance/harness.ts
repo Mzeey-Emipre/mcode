@@ -59,6 +59,7 @@ export async function runFactoryCoreProfile(
     configuration: { cliPath: "conformance-provider", idleSessionTtlMs: 600_000 },
     host,
     ...(registration.providerId === "codex" ? { codex: createFakeCodexPorts() } : {}),
+    ...(registration.providerId === "cursor" ? { cursor: createFakeCursorPorts() } : {}),
   };
   const boundary = registration.factory(factoryInput);
   if (boundary.id !== registration.providerId || boundary.descriptor.id !== registration.providerId) {
@@ -153,6 +154,17 @@ export function validateProviderConformanceRegistry(
         }
       }
     }
+    for (const provenance of registration.requiredFixtureProvenance ?? []) {
+      for (const profile of registration.requiredProfiles) {
+        if (!providerFixtures.some((fixture) =>
+          fixture.provenance === provenance && fixture.requiredProfiles.includes(profile)
+        )) {
+          throw new TypeError(
+            `Provider ${registration.providerId} lacks ${provenance} fixture coverage for ${profile}`,
+          );
+        }
+      }
+    }
     fixtures.push(...providerFixtures);
     if (registration.supportedVersions.length === 0) {
       throw new TypeError(`Provider ${registration.providerId} lacks supported-version evidence`);
@@ -167,6 +179,7 @@ export function validateProviderConformanceRegistry(
       configuration: { cliPath: "conformance-provider", idleSessionTtlMs: 600_000 },
       host: createFakeHost(new DeterministicCanonicalSink(), []),
       ...(registration.providerId === "codex" ? { codex: createFakeCodexPorts() } : {}),
+      ...(registration.providerId === "cursor" ? { cursor: createFakeCursorPorts() } : {}),
     });
     const declaredProfiles = boundary.descriptor.capabilities
       .filter((capability) => capability.support === "supported")
@@ -193,6 +206,13 @@ function createFakeCodexPorts(): NonNullable<ProviderFactoryInput["codex"]> {
   };
 }
 
+function createFakeCursorPorts(): NonNullable<ProviderFactoryInput["cursor"]> {
+  return {
+    settings: { get: () => undefined as never },
+    skills: { list: () => [] },
+  };
+}
+
 function createFakeHost(sink: DeterministicCanonicalSink, calls: string[]): ProviderHostPorts {
   return {
     environment: { snapshot: () => ({}) },
@@ -205,6 +225,7 @@ function createFakeHost(sink: DeterministicCanonicalSink, calls: string[]): Prov
       releaseSession: () => { calls.push("browser.releaseSession"); return 0; },
       isConfigured: () => false,
       issue: () => null,
+      refresh: (leaseId) => ({ ok: false, leaseId, reason: "not-found" }),
       release: (leaseId) => ({ leaseId, released: false }),
       revokeCredential: () => false,
     },

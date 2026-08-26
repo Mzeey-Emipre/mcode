@@ -1,30 +1,22 @@
 import "reflect-metadata";
 import { describe, it, expect, beforeEach } from "vitest";
 import type Database from "better-sqlite3";
+import { createCursorProvider, type ProviderFactoryInput, type ProviderHostPorts } from "@mcode/providers";
+import type { ForkRequest, HandoffArtifact, Settings } from "@mcode/contracts";
 import { openMemoryDatabase } from "../../../../../runtime/persistence/sqlite/database.js";
 import { ThreadRepo } from "../../../../thread-control/persistence/thread-repo.js";
 import { MessageRepo } from "../../../../agents/conversation/persistence/message-repo.js";
-import { CursorProvider } from "../cursor-provider.js";
-import { BrowserAutomationSessionLease } from "../../../../browser-automation/index.js";
-import type { InternalThreadControlMcpRuntime } from "../../../../thread-control/index.js";
-import type { SettingsService } from "../../../../settings/settings-service.js";
-import type { SkillService } from "../../../../agents/skills/catalog/skill-service.js";
-import type { EnvService } from "../../../../../runtime/environment/env-service.js";
-import type { JobObject } from "../../../../../runtime/process/containment/job-object.js";
 import type { Client } from "@agentclientprotocol/sdk";
-import type { ForkRequest } from "@mcode/contracts";
 
 /**
  * Slice 1 proof: forking a Cursor thread runs the handoff through the clean
- * side-channel (path B) and leaves the parent's canonical session untouched -
- * zero new `is_internal` rows and an unchanged max sequence - while still
- * producing a non-empty handoff for the child.
+ * side-channel (path B) and leaves the parent's canonical session untouched.
  */
 describe("Cursor clean side-channel fork", () => {
   let db: Database.Database;
   let threadRepo: ThreadRepo;
   let messageRepo: MessageRepo;
-  let provider: CursorProvider;
+  let provider: ReturnType<typeof createCursorProvider>;
 
   const SUMMARY = "Parent was fixing the auth middleware; tests added next.";
 
@@ -39,28 +31,32 @@ describe("Cursor clean side-channel fork", () => {
       "/tmp/test",
     );
 
-    const settingsStub = {
-      get: () => ({ provider: { cursor: { idleSessionTtlMinutes: 30 }, cli: {} } }),
-    } as unknown as SettingsService;
-    const skillStub = {} as unknown as SkillService;
-    const envStub = { getEnv: () => ({}) } as unknown as EnvService;
-    const jobStub = {} as unknown as JobObject;
-    const threadControlStub = {} as InternalThreadControlMcpRuntime;
-    const browserAutomationLease = new BrowserAutomationSessionLease();
-
-    provider = new CursorProvider(
-      settingsStub,
-      skillStub,
-      envStub,
-      jobStub,
-      threadControlStub,
-      browserAutomationLease,
-    );
-
-    expect((provider as unknown as { threadControlMcp: InternalThreadControlMcpRuntime }).threadControlMcp)
-      .toBe(threadControlStub);
-    expect((provider as unknown as { browserAutomationLease: BrowserAutomationSessionLease }).browserAutomationLease)
-      .toBe(browserAutomationLease);
+    const host: ProviderHostPorts = {
+      environment: { snapshot: () => ({}) },
+      processes: { attach: () => undefined, terminateTree: async () => undefined },
+      browser: {
+        stage: () => ({ leaseId: "lease", expiresAt: Date.now() + 1_000 }),
+        releaseSession: () => 0,
+        isConfigured: () => false,
+        issue: () => null,
+        refresh: (leaseId) => ({ ok: false, leaseId, reason: "not-found" }),
+        release: (leaseId) => ({ leaseId, released: false }),
+        revokeCredential: () => false,
+      },
+      threadControl: { bootstrap: async () => null, close: async () => undefined },
+      grants: { consume: () => false },
+      events: { submit: async () => undefined },
+    };
+    const input: ProviderFactoryInput = {
+      configuration: { cliPath: "cursor-agent", idleSessionTtlMs: 30 * 60 * 1_000 },
+      host,
+      cursor: {
+        settings: { get: () => ({ provider: { cursor: { idleSessionTtlMinutes: 30 }, cli: {} } } as Settings) },
+        skills: { list: () => [] },
+      },
+    };
+    provider = createCursorProvider(input);
+    expect(provider.id).toBe("cursor");
 
     // Replace the real `cursor-agent acp` spawn with a fake transport that
     // streams a summary chunk back through the client (no subprocess, no
@@ -119,7 +115,9 @@ describe("Cursor clean side-channel fork", () => {
       childThreadId: child.id,
     };
 
-    const artifact = await provider.forker.fork(req);
+    const artifact = await (provider as unknown as {
+      forker: { fork(request: ForkRequest): Promise<HandoffArtifact> };
+    }).forker.fork(req);
 
     expect(artifact.markdown).toContain(SUMMARY);
     expect(artifact.markdown.length).toBeGreaterThan(0);
@@ -157,6 +155,8 @@ describe("Cursor clean side-channel fork", () => {
       childThreadId: child.id,
     };
 
-    await expect(provider.forker.fork(req)).rejects.toMatchObject({ code: "ETIMEDOUT" });
+    await expect((provider as unknown as {
+      forker: { fork(request: ForkRequest): Promise<HandoffArtifact> };
+    }).forker.fork(req)).rejects.toMatchObject({ code: "ETIMEDOUT" });
   });
 });

@@ -13,8 +13,8 @@ import {
   buildCursorBrowserMcpServers,
   CursorProvider,
   cursorSupportsHttpMcp,
-} from "../cursor-provider.js";
-import { AcpSessionRuntime } from "../../acp/acp-session-runtime.js";
+} from "../../../../../../../../packages/providers/src/private/cursor/cursor-provider.js";
+import { AcpSessionRuntime } from "../../../../../../../../packages/providers/src/private/protocols/acp/acp-session-runtime.js";
 
 const spawnMock = vi.hoisted(() => vi.fn());
 vi.mock("node:child_process", async () => {
@@ -76,10 +76,11 @@ describe("Cursor browser MCP configuration", () => {
     expect(provider.liveSessionIds.has("mcode-a")).toBe(false);
   });
 
-  it("kills spawned child and releases staged lease when issuance fails", async () => {
+  it("closes the ACP runtime and releases the staged lease when issuance fails", async () => {
     const lease = configuredLease();
     const staged = lease.stage(browserScope({ allowedOperations: ["evaluate"] } as never));
     const child = { pid: 101, kill: vi.fn() };
+    const close = vi.fn(async () => undefined);
     const provider = Object.create(CursorProvider.prototype) as any;
     provider.settingsService = { get: vi.fn(() => ({})) };
     provider.browserAutomationLease = lease;
@@ -88,7 +89,7 @@ describe("Cursor browser MCP configuration", () => {
     provider.pendingBrowserGrants = new Map();
     provider.pendingBrowserGrantContext = new Map();
     provider.liveSessionIds = new Set();
-    provider.spawnChild = vi.fn().mockResolvedValue({ child, browserHttpMcpSupported: true });
+    provider.spawnChild = vi.fn().mockResolvedValue({ child, acpRuntime: { close }, browserHttpMcpSupported: true });
 
     await expect(provider.spawn({
       sessionId: "mcode-a",
@@ -98,7 +99,7 @@ describe("Cursor browser MCP configuration", () => {
       env: {},
     })).rejects.toThrow(/Evaluate requires/);
 
-    expect(child.kill).toHaveBeenCalledOnce();
+    expect(close).toHaveBeenCalledOnce();
     expect(lease.status()).toEqual({ active: 0, pending: 0 });
   });
 
@@ -244,7 +245,7 @@ describe("Cursor browser MCP configuration", () => {
     expect(lease.status()).toEqual({ active: 0, pending: 0 });
   });
 
-  it("fails closed when stale replacement lease stage expires", async () => {
+  it("closes the ACP runtime when a stale replacement lease stage expires", async () => {
     let now = 0;
     const lease = new BrowserAutomationSessionLease({ now: () => now });
     lease.configure({ mcpUrl: "http://127.0.0.1:19400/mcp", worktreeIdentity: "worktree-a" });
@@ -252,6 +253,7 @@ describe("Cursor browser MCP configuration", () => {
     const staged = lease.stage(browserScope());
     now = staged.expiresAt;
     const child = { pid: 106, kill: vi.fn() };
+    const close = vi.fn(async () => undefined);
     const provider = Object.create(CursorProvider.prototype) as any;
     provider.id = "cursor";
     provider.settingsService = { get: vi.fn(() => ({})) };
@@ -262,7 +264,7 @@ describe("Cursor browser MCP configuration", () => {
     provider.pendingBrowserGrants = new Map();
     provider.pendingBrowserGrantContext = new Map();
     provider.liveSessionIds = new Set();
-    provider.spawnChild = vi.fn().mockResolvedValue({ child, browserHttpMcpSupported: true });
+    provider.spawnChild = vi.fn().mockResolvedValue({ child, acpRuntime: { close }, browserHttpMcpSupported: true });
     provider.openLogicalSession = vi.fn();
 
     await expect(provider.spawn({
@@ -274,15 +276,16 @@ describe("Cursor browser MCP configuration", () => {
     })).rejects.toThrow("Cursor browser automation lease issuance failed");
 
     expect(provider.openLogicalSession).not.toHaveBeenCalled();
-    expect(child.kill).toHaveBeenCalledOnce();
+    expect(close).toHaveBeenCalledOnce();
     expect(lease.credentials.authenticate(previousGrant.token)).toBeNull();
     expect(lease.status()).toEqual({ active: 0, pending: 0 });
   });
 
-  it("kills child and releases issued lease when logical session setup fails", async () => {
+  it("closes the ACP runtime and releases its issued lease when logical session setup fails", async () => {
     const lease = configuredLease();
     const staged = lease.stage(browserScope());
     const child = { pid: 103, kill: vi.fn() };
+    const close = vi.fn(async () => undefined);
     const provider = Object.create(CursorProvider.prototype) as any;
     provider.settingsService = { get: vi.fn(() => ({})) };
     provider.browserAutomationLease = lease;
@@ -291,7 +294,7 @@ describe("Cursor browser MCP configuration", () => {
     provider.pendingBrowserGrants = new Map();
     provider.pendingBrowserGrantContext = new Map();
     provider.liveSessionIds = new Set();
-    provider.spawnChild = vi.fn().mockResolvedValue({ child, browserHttpMcpSupported: true });
+    provider.spawnChild = vi.fn().mockResolvedValue({ child, acpRuntime: { close }, browserHttpMcpSupported: true });
     provider.openLogicalSession = vi.fn().mockRejectedValue(new Error("logical session failed"));
 
     await expect(provider.spawn({
@@ -302,11 +305,11 @@ describe("Cursor browser MCP configuration", () => {
       env: {},
     })).rejects.toThrow("logical session failed");
 
-    expect(child.kill).toHaveBeenCalledOnce();
+    expect(close).toHaveBeenCalledOnce();
     expect(lease.status()).toEqual({ active: 0, pending: 0 });
   });
 
-  it("kills child when ACP handshake fails before spawn returns", async () => {
+  it("propagates an ACP handshake failure before spawn returns", async () => {
     const child = Object.assign(new EventEmitter(), {
       stderr: new PassThrough(),
       pid: 104,
@@ -319,6 +322,7 @@ describe("Cursor browser MCP configuration", () => {
     const start = vi.spyOn(AcpSessionRuntime, "start").mockResolvedValue(runtime);
     const provider = Object.create(CursorProvider.prototype) as any;
     provider.envService = { getEnv: vi.fn(() => ({})) };
+    provider.host = { processes: { attach: vi.fn(), terminateTree: vi.fn(async () => undefined) } };
     provider.settingsService = { get: vi.fn(() => ({ provider: { cursor: { verboseFailureLogs: false } } })) };
     provider.pendingBrowserContext = new Map();
 
@@ -326,10 +330,76 @@ describe("Cursor browser MCP configuration", () => {
       "handshake failed",
     );
 
-    expect(child.kill).toHaveBeenCalledOnce();
+    expect(child.kill).not.toHaveBeenCalled();
     expect(start).toHaveBeenCalledOnce();
     start.mockRestore();
     spawnMock.mockReset();
+  });
+
+  it("terminates the side-channel process tree when its handshake fails", async () => {
+    const child = Object.assign(new EventEmitter(), {
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      pid: 109,
+      kill: vi.fn(),
+    });
+    const terminateTree = vi.fn(async () => undefined);
+    spawnMock.mockReturnValue(child);
+    const provider = Object.create(CursorProvider.prototype) as any;
+    provider.envService = { getEnv: vi.fn(() => ({})) };
+    provider.settingsService = { get: vi.fn(() => ({ provider: { cli: {}, cursor: {} } })) };
+    provider.host = { processes: { terminateTree } };
+    provider.acpHandshake = vi.fn().mockRejectedValue(
+      Object.assign(new TypeError("invalid ACP payload"), { code: "INVALID_ACP_PAYLOAD" }),
+    );
+
+    await expect(provider.createSideChannelTransport({ cwd: ".", client: {} })).rejects.toMatchObject({
+      code: "INVALID_ACP_PAYLOAD",
+    });
+
+    expect(terminateTree).toHaveBeenCalledExactlyOnceWith(109);
+    expect(child.kill).not.toHaveBeenCalled();
+    spawnMock.mockReset();
+  });
+
+  it("opens a normal Cursor session without an inactive thread-control MCP connection", async () => {
+    const openSession = vi.fn(async () => ({ sessionId: "acp-session", reloaded: false }));
+    const provider = Object.create(CursorProvider.prototype) as any;
+    provider.sdkSessionIds = new Map();
+    provider.threadControlMcp = { createHttpConnection: vi.fn(async () => undefined) };
+    provider.emit = vi.fn();
+    const entry = {
+      mcodeSessionId: "mcode-a",
+      threadId: "thread-a",
+      cwd: ".",
+      supportsHttpMcp: true,
+      acpRuntime: { openSession },
+    };
+
+    await provider.openLogicalSession(entry, false);
+
+    expect(openSession).toHaveBeenCalledExactlyOnceWith({
+      resumeFrom: undefined,
+      cwd: ".",
+      mcpServers: [],
+    });
+    expect(entry.acpSessionId).toBe("acp-session");
+  });
+
+  it("returns a typed unsupported result for unknown or malformed Cursor child extensions", async () => {
+    const provider = Object.create(CursorProvider.prototype) as any;
+    provider.settingsService = { get: vi.fn(() => ({ provider: { cursor: {} } })) };
+    const client = provider.buildAcpClient({
+      threadId: "thread-a",
+      activeTurnState: null,
+    });
+
+    await expect(client.extMethod("cursor/task", null)).resolves.toEqual({
+      outcome: { outcome: "unsupported" },
+    });
+    await expect(client.extMethod("cursor/unknown_continuation", {})).resolves.toEqual({
+      outcome: { outcome: "unsupported" },
+    });
   });
 
   it("closes pending ACP runtime when stopped during logical session load", async () => {

@@ -8,6 +8,7 @@ import { container, Lifecycle } from "tsyringe";
 
 import { openDatabase } from "../../runtime/persistence/sqlite/database.js";
 import { registerCodexProvider } from "../../features/providers/composition/codex-provider-registration.js";
+import { registerCursorProvider } from "../../features/providers/composition/cursor-provider-registration.js";
 
 // Services
 import {
@@ -238,6 +239,20 @@ export function setupContainer(mcodeDir: string): typeof container {
     },
   });
   container.registerInstance("CodexProvider", codexProvider);
+
+  const cursorSettings = container.resolve(SettingsService).get();
+  const cursorProvider = registerCursorProvider(container, {
+    configuration: {
+      cliPath: cursorSettings.provider.cli.cursor || "cursor-agent",
+      idleSessionTtlMs: cursorSettings.provider.cursor.idleSessionTtlMinutes * 60 * 1_000,
+    },
+    host: container.resolve("ProviderHostPorts"),
+    cursor: {
+      settings: { get: () => container.resolve(SettingsService).get() },
+      skills: container.resolve(SkillService),
+    },
+  });
+  container.registerInstance("CursorProvider", cursorProvider);
 
   return container;
 }

@@ -8,12 +8,15 @@ export type {
   ProviderBoundary,
   CodexProviderBoundary,
   CodexProviderPorts,
+  CursorProviderBoundary,
+  CursorProviderPorts,
   ProviderFactoryConfiguration,
   ProviderFactoryInput,
 } from "./factory-types.js";
 export type {
   ProviderBrowserLeaseHandle,
   ProviderBrowserLeaseGrant,
+  ProviderBrowserLeaseRefreshResult,
   ProviderBrowserCredentialMetadata,
   ProviderBrowserLeaseRequest,
   ProviderBrowserPort,
@@ -25,6 +28,7 @@ export type {
   ProviderHostPorts,
   ProviderProcessPort,
   ProviderThreadControlPort,
+  ProviderThreadControlHttpConnection,
   ProviderThreadControlRequest,
 } from "./host-ports.js";
 export { providerBrowserPermissionCapability } from "./host-ports.js";

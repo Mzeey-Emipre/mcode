@@ -2,7 +2,6 @@ import { Lifecycle, type DependencyContainer } from "tsyringe";
 
 import { ClaudeProvider } from "../adapters/claude/claude-provider.js";
 import { CopilotProvider } from "../adapters/copilot/copilot-provider.js";
-import { CursorProvider } from "../adapters/cursor/cursor-provider.js";
 import { ProviderRegistry } from "./provider-registry.js";
 import { createProviderHostPorts } from "./provider-host-ports.js";
 import { BrowserAutomationSessionLease } from "../../browser-automation/index.js";
@@ -29,15 +28,6 @@ export function registerProviderAdapters(container: DependencyContainer): void {
   );
   container.register("IAgentProvider", {
     useFactory: (c) => c.resolve(CopilotProvider),
-  });
-  container.register(
-    CursorProvider,
-    { useClass: CursorProvider },
-    { lifecycle: Lifecycle.Singleton },
-  );
-
-  container.register("IAgentProvider", {
-    useFactory: (c) => c.resolve(CursorProvider),
   });
   container.register(
     ProviderRegistry,

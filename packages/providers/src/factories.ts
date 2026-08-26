@@ -1,5 +1,6 @@
 import type {
   CodexProviderBoundary,
+  CursorProviderBoundary,
   ProviderBoundary,
   ProviderFactoryInput,
 } from "./factory-types.js";
@@ -26,7 +27,7 @@ export function createCopilotProvider(input: ProviderFactoryInput): ProviderBoun
 }
 
 /** Prepares the Cursor Provider boundary with private generic ACP machinery. */
-export function createCursorProvider(input: ProviderFactoryInput): ProviderBoundary {
+export function createCursorProvider(input: ProviderFactoryInput): CursorProviderBoundary {
   return createCursorAcpProvider(input);
 }
 

@@ -197,6 +197,7 @@
       "name": "@mcode/providers",
       "version": "0.0.1",
       "dependencies": {
+        "@agentclientprotocol/sdk": "^0.21.0",
         "@mcode/agent-model": "workspace:*",
         "@mcode/contracts": "workspace:*",
         "@mcode/shared": "workspace:*",
