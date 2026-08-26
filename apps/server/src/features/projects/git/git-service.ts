@@ -8,7 +8,6 @@
 
 import { injectable, inject } from "tsyringe";
 import { createHash } from "crypto";
-import { AsyncLocalStorage } from "async_hooks";
 import { rmdir, realpath } from "fs/promises";
 import { existsSync, mkdirSync, realpathSync } from "fs";
 import { join, basename, dirname, resolve, relative, isAbsolute, sep } from "path";
@@ -20,6 +19,7 @@ import { WorkspaceRepo } from "../persistence/workspace-repo.js";
 import type { GitExecutor } from "./execution/index.js";
 import { normalizePathForComparison } from "../../../shared/filesystem/path-identity.js";
 import { WorktreeDirectoryRemover } from "../worktrees/worktree-directory-remover.js";
+import { RepositoryGitMutationLock } from "./repository-git-mutation-lock.js";
 
 /** Normalized configured remote used for repository-identity matching. */
 export interface NormalizedGitRemote {
@@ -382,17 +382,19 @@ interface ReviewProvisionAttempt {
 /** Handles all git branch, worktree, checkout, and fetch operations. */
 @injectable()
 export class GitService {
-  private readonly reviewRepositoryLocks = new Map<string, Promise<void>>();
-  private readonly reviewRepositoryLockContext = new AsyncLocalStorage<ReadonlySet<string>>();
   private readonly worktreeDirectoryRemover: WorktreeDirectoryRemover;
+  private readonly repositoryMutationLock: RepositoryGitMutationLock;
 
   constructor(
     @inject(WorkspaceRepo) private readonly workspaceRepo: WorkspaceRepo,
     @inject("GitExecutor") private readonly gitExecutor: GitExecutor,
     @inject(WorktreeDirectoryRemover, { isOptional: true })
     worktreeDirectoryRemover?: WorktreeDirectoryRemover,
+    @inject(RepositoryGitMutationLock, { isOptional: true })
+    repositoryMutationLock?: RepositoryGitMutationLock,
   ) {
     this.worktreeDirectoryRemover = worktreeDirectoryRemover ?? new WorktreeDirectoryRemover();
+    this.repositoryMutationLock = repositoryMutationLock ?? new RepositoryGitMutationLock();
   }
 
   /** List all branches (local, remote, and worktree-attached) for a workspace. */
@@ -1722,28 +1724,7 @@ export class GitService {
     repoPath: string,
     work: () => Promise<T>,
   ): Promise<T> {
-    const key = normalizePathForComparison(repoPath);
-    if (this.reviewRepositoryLockContext.getStore()?.has(key)) {
-      return work();
-    }
-    const previous = this.reviewRepositoryLocks.get(key) ?? Promise.resolve();
-    let release!: () => void;
-    const current = new Promise<void>((resolveLock) => {
-      release = resolveLock;
-    });
-    const tail = previous.then(() => current);
-    this.reviewRepositoryLocks.set(key, tail);
-    await previous;
-    try {
-      const context = new Set(this.reviewRepositoryLockContext.getStore() ?? []);
-      context.add(key);
-      return await this.reviewRepositoryLockContext.run(context, work);
-    } finally {
-      release();
-      if (this.reviewRepositoryLocks.get(key) === tail) {
-        this.reviewRepositoryLocks.delete(key);
-      }
-    }
+    return this.repositoryMutationLock.run(repoPath, work);
   }
 
   private validatePullRequestReviewSource(source: PullRequestReviewGitSource): void {
