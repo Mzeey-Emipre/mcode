@@ -185,6 +185,7 @@ export function ProjectEnvironmentPanel({ workspaceId, threadId, active = true }
   const draftRef = useRef(draft);
   const focusAfterRead = useRef(false);
   const firstTaskRef = useRef<HTMLButtonElement | null>(null);
+  const setupScriptRef = useRef<HTMLTextAreaElement | null>(null);
   const firstActionNameRef = useRef<HTMLInputElement | null>(null);
 
   const applyRead = useCallback((result: WorkspaceEnvironmentReadResult) => {
@@ -290,7 +291,10 @@ export function ProjectEnvironmentPanel({ workspaceId, threadId, active = true }
       ...current,
       setup: enabled ? current.setup ?? { default: "" } : undefined,
     }));
-    requestAnimationFrame(() => firstTaskRef.current?.focus());
+    requestAnimationFrame(() => {
+      if (enabled) setupScriptRef.current?.focus();
+      else firstTaskRef.current?.focus();
+    });
   };
 
   const addAction = () => {
@@ -387,7 +391,7 @@ export function ProjectEnvironmentPanel({ workspaceId, threadId, active = true }
                   idPrefix="setup"
                   command={draft.setup}
                   onChange={(setup) => setDraft((current) => ({ ...current, setup }))}
-                  firstControlRef={undefined}
+                  firstControlRef={setupScriptRef}
                 />
                 ) : null}
             </section>
