@@ -110,7 +110,6 @@ import {
   isFileSupported,
   getMaxFileSize,
   inferMimeType,
-  storedAttachmentSuffix,
   MAX_ATTACHMENTS,
   MCODE_BROWSER_CONTEXT_ATTACHMENT_MIME,
   isVirtualBrowserContextAttachment,
@@ -167,6 +166,14 @@ function resolveOutboundDisplayContent(
   displayInjected: string | undefined,
 ): string {
   return (displayInjected ?? rawInput).trim();
+}
+
+function resolveNativeFilePath(file: File): string | null {
+  try {
+    return window.desktopBridge?.getPathForFile?.(file) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 function writeComposerContent(
@@ -882,6 +889,26 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const [showReasoningPicker, setShowReasoningPicker] = useState(false);
   const [composerMode, setComposerModeLocal] = useState<ComposerMode>("direct");
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
+  const composerMountedRef = useRef(true);
+  const attachmentPreparationGenerationRef = useRef(0);
+  const pendingAttachmentPreparationsRef = useRef(new Set<Promise<void>>());
+  const pendingPathlessAttachmentCountRef = useRef(0);
+  const attachmentPreparationFailureCountRef = useRef(0);
+  const sendAfterAttachmentPreparationRef = useRef<{
+    failureCount: number;
+  } | null>(null);
+  const [attachmentPreparationRevision, setAttachmentPreparationRevision] = useState(0);
+  const isAttachmentPreparationCurrent = useCallback(
+    (generation: number): boolean =>
+      composerMountedRef.current && attachmentPreparationGenerationRef.current === generation,
+    [],
+  );
+  const invalidateAttachmentPreparations = useCallback(() => {
+    attachmentPreparationGenerationRef.current += 1;
+    pendingAttachmentPreparationsRef.current.clear();
+    pendingPathlessAttachmentCountRef.current = 0;
+    sendAfterAttachmentPreparationRef.current = null;
+  }, []);
   const annotationScopeId = threadId ?? workspaceId;
   const annotationRows = usePreviewAnnotationStore((s) =>
     annotationScopeId ? s.byThread[annotationScopeId] : undefined,
@@ -974,6 +1001,19 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   /** Last thread row model or provider applied from the server (for multi-tab sync). */
   const lastServerThreadModelKeyRef = useRef("");
 
+  useEffect(() => {
+    invalidateAttachmentPreparations();
+    return invalidateAttachmentPreparations;
+  }, [invalidateAttachmentPreparations, isNewThread, threadId, workspaceId]);
+
+  useEffect(() => {
+    composerMountedRef.current = true;
+    return () => {
+      composerMountedRef.current = false;
+      invalidateAttachmentPreparations();
+    };
+  }, [invalidateAttachmentPreparations]);
+
   // Keep draft ref in sync so the thread-switch effect reads current values
   useEffect(() => {
     draftRef.current = {
@@ -1038,7 +1078,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     if (incoming.length === 0) return;
 
     setAttachments((prev) => {
-      const room = MAX_ATTACHMENTS - prev.length;
+      const room = MAX_ATTACHMENTS - prev.length - pendingPathlessAttachmentCountRef.current;
       if (room <= 0) {
         for (const item of incoming) {
           URL.revokeObjectURL(item.previewUrl);
@@ -1847,6 +1887,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       const targetIndex = beforeQueue.findIndex((m) => m.id === msg.id);
       if (targetIndex === -1) return;
 
+      invalidateAttachmentPreparations();
+
       // If we were already editing a queued message, hand the in-progress
       // content back to the queue at its original slot before swapping in
       // the new one.
@@ -1925,6 +1967,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       attachments,
       mentions,
       captureComposerForRequeue,
+      invalidateAttachmentPreparations,
       setInput,
       setAttachments,
       setModelId,
@@ -1949,6 +1992,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
    */
   const cancelEditFromQueue = useCallback(() => {
     if (!threadId || !editingFromQueue) return;
+    invalidateAttachmentPreparations();
     const original = editingOriginalRef.current;
     if (original) {
       useQueueStore.getState().insertAt(threadId, editingFromQueue.originalIndex, {
@@ -1993,6 +2037,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     threadId,
     annotationScopeId,
     editingFromQueue,
+    invalidateAttachmentPreparations,
     setInput,
     setAttachments,
     setPreviewDesignModeActive,
@@ -2018,49 +2063,116 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     setPrDismissed(false);
   }, [detectedPr, workspaceId, setComposerMode, fetchBranch, setNewThreadBranchFromPr]);
 
-  const addFiles = useCallback((files: File[], filePaths?: (string | null)[]) => {
+  const appendAttachments = useCallback((nextAttachments: PendingAttachment[]) => {
+    if (nextAttachments.length === 0) return;
     setAttachments((prev) => {
       const remaining = MAX_ATTACHMENTS - prev.length;
-      if (remaining <= 0) return prev;
+      const accepted = remaining > 0 ? nextAttachments.slice(0, remaining) : [];
+      for (const attachment of nextAttachments.slice(accepted.length)) {
+        if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+      }
+      return accepted.length > 0 ? [...prev, ...accepted] : prev;
+    });
+  }, []);
 
-      const newAttachments: PendingAttachment[] = [];
-      for (let i = 0; i < Math.min(files.length, remaining); i++) {
-        const file = files[i];
-        if (!isFileSupported(file.name)) continue;
-        if (file.size > getMaxFileSize(file.name)) continue;
+  const preparePathlessAttachments = useCallback((files: File[]) => {
+    const generation = attachmentPreparationGenerationRef.current;
+    const reservedAttachmentCount = files.length;
+    pendingPathlessAttachmentCountRef.current += reservedAttachmentCount;
+    const preparation = (async () => {
+      const prepared: PendingAttachment[] = [];
 
+      for (const file of files) {
         const mimeType = file.type || inferMimeType(file.name);
-        const previewUrl = classifyFile(file.name) === "image"
-          ? URL.createObjectURL(file)
-          : "";
+        try {
+          const arrayBuffer = await file.arrayBuffer();
+          const bridge = window.desktopBridge;
+          const meta = bridge?.saveClipboardFile
+            ? await bridge.saveClipboardFile(new Uint8Array(arrayBuffer), mimeType, file.name)
+            : await getTransport().saveClipboardFile(arrayBuffer, mimeType, file.name);
+          if (!meta?.sourcePath) {
+            throw new Error("Attachment persistence returned no source path");
+          }
+          if (!isAttachmentPreparationCurrent(generation)) continue;
+          const previewUrl = classifyFile(file.name) === "image" ? URL.createObjectURL(file) : "";
+          if (!isAttachmentPreparationCurrent(generation)) {
+            if (previewUrl) URL.revokeObjectURL(previewUrl);
+            continue;
+          }
+          prepared.push({
+            id: meta.id,
+            name: meta.name,
+            mimeType: meta.mimeType,
+            sizeBytes: meta.sizeBytes,
+            previewUrl,
+            filePath: meta.sourcePath,
+          });
+        } catch {
+          if (!isAttachmentPreparationCurrent(generation)) continue;
+          attachmentPreparationFailureCountRef.current += 1;
+          useToastStore.getState().show(
+            "error",
+            "Could not attach file",
+            "The file was not saved. Try again.",
+          );
+        }
+      }
 
-        newAttachments.push({
+      if (!isAttachmentPreparationCurrent(generation)) {
+        for (const attachment of prepared) {
+          if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
+        }
+        return;
+      }
+      appendAttachments(prepared);
+    })();
+
+    pendingAttachmentPreparationsRef.current.add(preparation);
+    setAttachmentPreparationRevision((revision) => revision + 1);
+    void preparation.finally(() => {
+      if (!isAttachmentPreparationCurrent(generation)) return;
+      pendingAttachmentPreparationsRef.current.delete(preparation);
+      pendingPathlessAttachmentCountRef.current -= reservedAttachmentCount;
+      setAttachmentPreparationRevision((revision) => revision + 1);
+    });
+  }, [appendAttachments, isAttachmentPreparationCurrent]);
+
+  const addFiles = useCallback((files: File[], filePaths?: (string | null)[]) => {
+    const remaining = MAX_ATTACHMENTS - attachments.length - pendingPathlessAttachmentCountRef.current;
+    if (remaining <= 0) return;
+
+    const nativeAttachments: PendingAttachment[] = [];
+    const pathlessFiles: File[] = [];
+    for (let index = 0; index < files.length && nativeAttachments.length + pathlessFiles.length < remaining; index++) {
+      const file = files[index];
+      if (!isFileSupported(file.name) || file.size > getMaxFileSize(file.name)) continue;
+
+      const nativePath = filePaths?.[index] ?? null;
+      if (nativePath) {
+        const mimeType = file.type || inferMimeType(file.name);
+        nativeAttachments.push({
           id: crypto.randomUUID(),
           name: file.name,
           mimeType,
           sizeBytes: file.size,
-          previewUrl,
-          filePath: filePaths?.[i] || null,
+          previewUrl: classifyFile(file.name) === "image" ? URL.createObjectURL(file) : "",
+          filePath: nativePath,
         });
+      } else {
+        pathlessFiles.push(file);
       }
+    }
 
-      return [...prev, ...newAttachments];
-    });
-  }, []);
+    appendAttachments(nativeAttachments);
+    if (pathlessFiles.length > 0) preparePathlessAttachments(pathlessFiles);
+  }, [appendAttachments, attachments.length, preparePathlessAttachments]);
 
   const handleAttachmentInputChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const list = e.target.files;
       if (!list?.length) return;
       const files = Array.from(list);
-      const bridge = window.desktopBridge;
-      const paths = files.map((f) => {
-        try {
-          return bridge?.getPathForFile?.(f) ?? null;
-        } catch {
-          return null;
-        }
-      });
+      const paths = files.map(resolveNativeFilePath);
       addFiles(files, paths);
       e.target.value = "";
     },
@@ -2098,111 +2210,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
 
     e.preventDefault();
 
-    const bridge = window.desktopBridge;
-
-    // Attempt to resolve real file paths for all supported files
-    const paths = supported.map((f) => {
-      try { return bridge?.getPathForFile?.(f) || null; } catch { return null; }
-    });
-
-    // Partition into files with and without real paths
-    const withPaths: File[] = [];
-    const withPathPaths: (string | null)[] = [];
-    const withoutPaths: File[] = [];
-
-    for (let i = 0; i < supported.length; i++) {
-      if (paths[i]) {
-        withPaths.push(supported[i]);
-        withPathPaths.push(paths[i]);
-      } else {
-        withoutPaths.push(supported[i]);
-      }
-    }
-
-    // Files with real paths go straight to addFiles
-    if (withPaths.length > 0) {
-      addFiles(withPaths, withPathPaths);
-    }
-
-    // Files without paths need fallback handling
-    for (const file of withoutPaths) {
-      if (classifyFile(file.name) === "image") {
-        try {
-          let meta: AttachmentMeta | null = bridge?.readClipboardImage
-            ? await bridge.readClipboardImage()
-            : await getTransport().readClipboardImage();
-          if (!meta) {
-            const arrayBuffer = await file.arrayBuffer();
-            const mimeType = file.type || inferMimeType(file.name || "image/png");
-            const ext = storedAttachmentSuffix(mimeType) || ".bin";
-            const safeName =
-              file.name && isFileSupported(file.name)
-                ? file.name
-                : `clipboard-${Date.now()}${ext}`;
-            if (bridge?.saveClipboardFile) {
-              meta = await bridge.saveClipboardFile(
-                new Uint8Array(arrayBuffer),
-                mimeType,
-                safeName,
-              );
-            } else {
-              meta = await getTransport().saveClipboardFile(arrayBuffer, mimeType, safeName);
-            }
-          }
-          if (meta) {
-            setAttachments((prev) => {
-              if (prev.length >= MAX_ATTACHMENTS) return prev;
-              const previewUrl = URL.createObjectURL(file);
-              return [...prev, {
-                id: meta.id,
-                name: meta.name,
-                mimeType: meta.mimeType,
-                sizeBytes: meta.sizeBytes,
-                previewUrl,
-                filePath: meta.sourcePath,
-              }];
-            });
-          }
-        } catch {
-          addFiles([file]);
-        }
-      } else {
-        // Non-images (PDF, text): read blob and save via bridge or transport
-        if (file.size > getMaxFileSize(file.name)) continue;
-        const mimeType = file.type || inferMimeType(file.name);
-        try {
-          let meta: AttachmentMeta | null = null;
-          if (bridge?.saveClipboardFile) {
-            const arrayBuffer = await file.arrayBuffer();
-            meta = await bridge.saveClipboardFile(
-              new Uint8Array(arrayBuffer),
-              mimeType,
-              file.name,
-            );
-          } else {
-            // Send binary data directly over WebSocket (no base64 encoding)
-            const arrayBuffer = await file.arrayBuffer();
-            meta = await getTransport().saveClipboardFile(arrayBuffer, mimeType, file.name);
-          }
-          if (meta) {
-            const resolved = meta;
-            setAttachments((prev) => {
-              if (prev.length >= MAX_ATTACHMENTS) return prev;
-              return [...prev, {
-                id: resolved.id,
-                name: resolved.name,
-                mimeType: resolved.mimeType,
-                sizeBytes: resolved.sizeBytes,
-                previewUrl: "",
-                filePath: resolved.sourcePath,
-              }];
-            });
-          }
-        } catch {
-          addFiles([file]);
-        }
-      }
-    }
+    addFiles(supported, supported.map(resolveNativeFilePath));
   }, [addFiles]);
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
@@ -2234,16 +2242,13 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     const files = Array.from(e.dataTransfer.files);
     const supported = files.filter((f) => isFileSupported(f.name));
     if (supported.length === 0) return;
-    const bridge = window.desktopBridge;
-    const paths = supported.map((f) => {
-      try { return bridge?.getPathForFile?.(f) ?? null; } catch { return null; }
-    });
-    addFiles(supported, paths);
+    addFiles(supported, supported.map(resolveNativeFilePath));
     editorRef.current?.focus();
   }, [addFiles]);
 
   /** Collect attachment metadata for RPC and revoke preview URLs. */
   const collectAndClearAttachments = useCallback((): AttachmentMeta[] => {
+    invalidateAttachmentPreparations();
     const metas: AttachmentMeta[] = [];
     for (const a of attachments) {
       const fenceOnlyNoFile =
@@ -2277,10 +2282,19 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     }
     setAttachments([]);
     return metas;
-  }, [attachments]);
+  }, [attachments, invalidateAttachmentPreparations]);
 
   const handleSend = useCallback(async () => {
     if (isNewThread && !workspaceId) return;
+
+    const pendingPreparations = [...pendingAttachmentPreparationsRef.current];
+    if (pendingPreparations.length > 0) {
+      sendAfterAttachmentPreparationRef.current = {
+        failureCount: attachmentPreparationFailureCountRef.current,
+      };
+      await Promise.all(pendingPreparations);
+      return;
+    }
 
     const composerMessage = editorRef.current
       ? extractComposerMessage(editorRef.current)
@@ -2649,6 +2663,15 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
 
     await continueSend();
   }, [input, mentions, attachments, annotationCount, annotationScopeId, isAgentRunning, isNewThread, composerMode, newThreadBranch, newThreadBranchSource, workspaceId, threadId, sendMessage, modelId, provider, reasoning, orchestrationMode, mode, access, copilotAgent, contextWindow, thinking, codexFastMode, selectedWorktree, collectAndClearAttachments, clearDraftFromStore, isThreadScaffold, branchFromMessageId, branchExecMode, branchTargetBranch, branchWorktreePath, branchWorktreeIsDetached, activeThread, branchThread, onBranchModeExit, onThreadCreated, replyContext, clearReply, editingFromQueue, slashCommand, isGitRepo, setNewThreadMode, setNewThreadBranch, setNewThreadBranchFromPr, setPreviewDesignModeActive, resolveEditingPreviewAnnotations, goalPending]);
+
+  useEffect(() => {
+    const pendingSend = sendAfterAttachmentPreparationRef.current;
+    if (!pendingSend || pendingAttachmentPreparationsRef.current.size > 0) return;
+
+    sendAfterAttachmentPreparationRef.current = null;
+    if (attachmentPreparationFailureCountRef.current !== pendingSend.failureCount) return;
+    void handleSend();
+  }, [attachmentPreparationRevision, handleSend]);
 
   useEffect(() => {
     if (!annotationScopeId) return;
