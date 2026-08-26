@@ -1124,28 +1124,48 @@ export class CodexEventMapper {
     const record = settings as Record<string, unknown>;
     const model = this.stringField(record, "model");
     const reasoningEffort = this.stringField(record, "effort");
-    if (!model || !reasoningEffort) return [];
-    return this.applyChildThreadMetadata(childThreadId, { model, reasoningEffort });
+    if (!model && !reasoningEffort) return [];
+    return this.applyChildThreadMetadata(childThreadId, {
+      ...(model ? { model } : {}),
+      ...(reasoningEffort ? { reasoningEffort } : {}),
+    });
   }
 
   /** Applies authoritative child-thread model settings to the matching Agent row. */
   applyChildThreadMetadata(
     childThreadId: string,
-    metadata: { identity?: string; model?: string; reasoningEffort?: string },
+    metadata: { identity?: string; model?: string; reasoningEffort?: string; parentMessage?: string },
   ): AgentEvent[] {
-    if (!childThreadId || (!metadata.identity && !metadata.model && !metadata.reasoningEffort)) return [];
+    const parentMessage = typeof metadata.parentMessage === "string"
+      ? metadata.parentMessage.trim().slice(0, 32_768)
+      : undefined;
+    if (!childThreadId || (!metadata.identity && !metadata.model && !metadata.reasoningEffort && !parentMessage)) return [];
 
-    const toolMetadata = {
+    const storedMetadata = {
+      ...(this.childThreadMetadataById.get(childThreadId) ?? {}),
       ...(metadata.identity ? { agentName: metadata.identity } : {}),
       ...(metadata.model ? { model: metadata.model } : {}),
       ...(metadata.reasoningEffort ? { reasoningEffort: metadata.reasoningEffort } : {}),
+      ...(parentMessage ? {
+        description: this.promptDescription(parentMessage),
+        prompt: parentMessage,
+      } : {}),
     };
-    this.childThreadMetadataById.set(childThreadId, toolMetadata);
+    this.childThreadMetadataById.set(childThreadId, storedMetadata);
     const toolCallId = this.collabReceiverThreadToCollabId.get(childThreadId);
     const existingToolInput = toolCallId ? this.spawnAgentToolInputById.get(toolCallId) : undefined;
     if (!toolCallId || !existingToolInput) return [];
 
-    const toolInput = { ...existingToolInput, ...toolMetadata };
+    const toolInput = {
+      ...existingToolInput,
+      ...(metadata.identity ? { agentName: metadata.identity } : {}),
+      ...(metadata.model ? { model: metadata.model } : {}),
+      ...(metadata.reasoningEffort ? { reasoningEffort: metadata.reasoningEffort } : {}),
+      ...(parentMessage && !this.stringField(existingToolInput, "prompt") ? {
+        description: this.promptDescription(parentMessage),
+        prompt: parentMessage,
+      } : {}),
+    };
     this.spawnAgentToolInputById.set(toolCallId, toolInput);
     const completedResult = this.completedSpawnAgentResults.get(toolCallId);
     if (completedResult) return [{ ...completedResult, toolInput }];

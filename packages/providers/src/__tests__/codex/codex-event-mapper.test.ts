@@ -1463,6 +1463,50 @@ describe("CodexEventMapper", () => {
     }]);
   });
 
+  it("merges split child settings and captures the v2 parent message", () => {
+    mapper = new CodexEventMapper("test-thread", "main-thread");
+    mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "main-thread",
+        item: {
+          type: "subAgentActivity",
+          id: "call-v2-metadata",
+          agentThreadId: "child-v2-metadata",
+          agentPath: "/root/explorer",
+          kind: "started",
+        },
+      },
+    });
+
+    const modelUpdate = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "thread/settings/updated",
+      params: { threadId: "child-v2-metadata", threadSettings: { model: "gpt-5.6-sol" } },
+    });
+    const effortAndMessageUpdate = mapper.applyChildThreadMetadata("child-v2-metadata", {
+      reasoningEffort: "high",
+      parentMessage: "Inspect the provider boundary and report the result.",
+    });
+
+    expect(modelUpdate).toContainEqual(expect.objectContaining({
+      type: "toolUse",
+      toolCallId: "call-v2-metadata",
+      toolInput: expect.objectContaining({ model: "gpt-5.6-sol" }),
+    }));
+    expect(effortAndMessageUpdate).toEqual([expect.objectContaining({
+      type: "toolUse",
+      toolCallId: "call-v2-metadata",
+      toolInput: expect.objectContaining({
+        model: "gpt-5.6-sol",
+        reasoningEffort: "high",
+        description: "Inspect the provider boundary and report the result.",
+        prompt: "Inspect the provider boundary and report the result.",
+      }),
+    })]);
+  });
+
   it("updates an unnamed spawn with the identity from native child metadata", () => {
     mapper = new CodexEventMapper("test-thread", "main-thread");
     mapper.mapNotification({

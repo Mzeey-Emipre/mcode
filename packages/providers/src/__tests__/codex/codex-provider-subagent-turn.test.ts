@@ -17,6 +17,7 @@ const { sendTurnMock, getChildThreadMetadataMock, interruptChildTurnMock } = vi.
     identity: "read_docs_worker",
     model: "gpt-5.6-sol",
     reasoningEffort: "medium",
+    parentMessage: "Inspect the delegated task.",
   }),
   interruptChildTurnMock: vi.fn().mockResolvedValue(undefined),
 }));
@@ -35,6 +36,7 @@ vi.mock("../../private/codex/codex-app-server.js", async () => {
       identity?: string;
       model: string;
       reasoningEffort: string;
+      parentMessage?: string;
     }> {
       return getChildThreadMetadataMock(childThreadId);
     }
@@ -565,6 +567,7 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
         agentName: "read_docs_worker",
         model: "gpt-5.6-sol",
         reasoningEffort: "medium",
+        prompt: "Inspect the delegated task.",
       }),
     }));
   });
@@ -637,6 +640,82 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
       }));
     });
     expect(getChildThreadMetadataMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes a completed v2 child to capture its persisted parent task", async () => {
+    getChildThreadMetadataMock
+      .mockResolvedValueOnce({
+        identity: "Euclid",
+        model: "gpt-5.6-sol",
+        reasoningEffort: "high",
+      })
+      .mockResolvedValueOnce({
+        identity: "Euclid",
+        model: "gpt-5.6-sol",
+        reasoningEffort: "high",
+      })
+      .mockResolvedValueOnce({
+        identity: "Euclid",
+        model: "gpt-5.6-sol",
+        reasoningEffort: "high",
+      })
+      .mockResolvedValueOnce({
+        identity: "Euclid",
+        model: "gpt-5.6-sol",
+        reasoningEffort: "high",
+      });
+    const provider = makeProvider();
+    const events: AgentEvent[] = [];
+    provider.on("event", (event: AgentEvent) => events.push(event));
+    const entry = await startSession(provider, "mcode-subagent-delayed-task", "subagent-delayed-task");
+
+    entry.server.emit("notification", {
+      method: "item/completed",
+      params: {
+        threadId: "sdk-thread-1",
+        item: {
+          type: "subAgentActivity",
+          id: "call-delayed-task",
+          kind: "started",
+          agentThreadId: "child-delayed-task",
+          agentPath: "/root/worker",
+        },
+      },
+    });
+    await vi.waitFor(() => {
+      expect(getChildThreadMetadataMock).toHaveBeenCalledTimes(4);
+    }, { timeout: 3_000 });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    entry.server.emit("notification", {
+      method: "turn/completed",
+      params: {
+        threadId: "child-delayed-task",
+        turn: { id: "child-turn", status: "completed", usage: {} },
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(getChildThreadMetadataMock).toHaveBeenCalledTimes(5);
+    });
+    await vi.waitFor(() => {
+      const childResult = events.find((event) => (
+        "toolInput" in event
+        && event.toolCallId === "call-delayed-task"
+        && event.toolInput?.prompt === "Inspect the delegated task."
+      ));
+      expect(childResult).toMatchObject({
+        type: "toolResult",
+        toolCallId: "call-delayed-task",
+        toolInput: {
+          agentName: "read_docs_worker",
+          model: "gpt-5.6-sol",
+          reasoningEffort: "medium",
+          prompt: "Inspect the delegated task.",
+        },
+      });
+    });
   });
 
   it("retries child metadata after an active-thread read race", async () => {
