@@ -176,18 +176,30 @@ async function startBuiltRendererServer(root, port) {
   throw new Error("Built renderer server did not become ready within 30 seconds");
 }
 
-function waitForSuccessfulExit(child, label) {
+function waitForExpectedExit(child, label, expectedExitCode) {
   if (child.exitCode !== null) {
-    return child.exitCode === 0
+    return child.exitCode === expectedExitCode
       ? Promise.resolve()
       : Promise.reject(new Error(`${label} exited with code ${child.exitCode}`));
   }
   return new Promise((resolveExit, rejectExit) => {
     child.once("exit", (code, signal) => {
-      if (code === 0) resolveExit();
+      if (code === expectedExitCode) resolveExit();
       else rejectExit(new Error(`${label} exited with code ${code ?? "none"} and signal ${signal ?? "none"}`));
     });
   });
+}
+
+/** Returns the process exit code for harness failures and invalid lifecycle candidates. */
+export function getFrontendPerformanceExitCode(result) {
+  const invalidLifecycleCandidate = Object.values(result?.runtimes ?? {}).some((runtime) => {
+    const decision = runtime.metrics?.vlistLifecycle?.gateDecision;
+    return decision != null
+      && (decision.status !== "accepted"
+        || decision.candidateEligible !== true
+        || decision.reason !== null);
+  });
+  return result?.correctness?.passed === true && !invalidLifecycleCandidate ? 0 : 1;
 }
 
 function printResult(result, outputFile) {
@@ -196,6 +208,14 @@ function printResult(result, outputFile) {
     process.stdout.write(`${runtimeName}: correctness=${runtime.correctness.passed}\n`);
     for (const workload of result.comparisonContract.workloadOrder) {
       const metric = runtime.metrics[workload];
+      if (workload === "vlistLifecycle") {
+        const decision = metric.gateDecision;
+        process.stdout.write(
+          `  vlistLifecycle: harness=${metric.correctness.passed}, candidate=${decision?.status ?? "invalid"}, ` +
+          `eligible=${decision?.candidateEligible ?? false}, timing ignored\n`,
+        );
+        continue;
+      }
       const median = metric.summary ? `${metric.summary.medianMs.toFixed(1)} ms` : "rejected";
       process.stdout.write(
         `  ${workload}: median=${median}, rejected=${metric.correctness.rejectedSamples}\n`,
@@ -309,9 +329,10 @@ export async function runFrontendPerformance(repoRoot = process.cwd()) {
       waitForWorker(outputFile, failureFile, sampleCount),
       workerLaunchFailure,
     ]);
-    await waitForSuccessfulExit(worker, "Frontend performance worker");
+    const exitCode = getFrontendPerformanceExitCode(result);
+    await waitForExpectedExit(worker, "Frontend performance worker", exitCode);
     printResult(result, outputFile);
-    if (!result.correctness.passed) process.exitCode = 1;
+    if (exitCode !== 0) process.exitCode = exitCode;
     return result;
   } finally {
     if (startedElectron) stopElectron(root, { sessionFileName });

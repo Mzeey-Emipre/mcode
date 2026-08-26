@@ -208,6 +208,11 @@ async function run() {
         electronStartupMetrics.accelerationMode === "default",
       );
     }
+    const runtimeEntries = [
+      ["standaloneWeb", webResult],
+      ["electron", electronResult],
+    ].filter(([, runtime]) => runtime !== undefined);
+    const runtimeResults = runtimeEntries.map(([, runtime]) => runtime);
     const result = {
       schemaVersion: 2,
       recordedAt: new Date().toISOString(),
@@ -219,24 +224,29 @@ async function run() {
         sampleCount,
       },
       correctness: {
-        passed: [webResult, electronResult].every((runtime) => runtime?.correctness.passed),
-        rejectedSamples: [webResult, electronResult].reduce(
-          (total, runtime) => total + (runtime?.correctness.rejectedSamples ?? 0),
+        passed: runtimeResults.every((runtime) => runtime.correctness.passed),
+        rejectedSamples: runtimeResults.reduce(
+          (total, runtime) => total + runtime.correctness.rejectedSamples,
           0,
         ),
       },
-      runtimes: Object.fromEntries([
-        ["standaloneWeb", webResult],
-        ["electron", electronResult],
-      ].filter(([, runtime]) => runtime !== undefined)),
+      runtimes: Object.fromEntries(runtimeEntries),
     };
+    const invalidLifecycleCandidate = Object.values(result.runtimes).some((runtime) => {
+      const decision = runtime.metrics.vlistLifecycle?.gateDecision;
+      return decision != null
+        && (decision.status !== "accepted"
+          || decision.candidateEligible !== true
+          || decision.reason !== null);
+    });
     await writeFile(outputFile, `${JSON.stringify(result, null, 2)}\n`, "utf8");
     process.stdout.write(`${JSON.stringify({
       outputFile,
       correctness: result.correctness,
+      invalidLifecycleCandidate,
       sourceRevision: runEnvironment.sourceRevision,
     })}\n`);
-    if (!result.correctness.passed) process.exitCode = 1;
+    if (!result.correctness.passed || invalidLifecycleCandidate) process.exitCode = 1;
   } finally {
     if (electronSession) {
       try {
