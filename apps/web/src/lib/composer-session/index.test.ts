@@ -58,6 +58,40 @@ describe("resolveComposerSession", () => {
     expect(session.codexFastMode).toBe(true);
   });
 
+  it("restores one selected-text comment without sharing its source range", () => {
+    const draft: ComposerDraft = {
+      input: "",
+      attachments: [],
+      modelId: "claude-sonnet-4-20250514",
+      reasoning: "medium",
+      selectedTextComments: [{
+        id: "550e8400-e29b-41d4-a716-446655440003",
+        displayNumber: 1,
+        source: {
+          threadId: "thread-a",
+          messageId: "assistant-1",
+          sourceRole: "assistant",
+          start: 3,
+          end: 8,
+          quote: "focus",
+        },
+        note: "Explain this.",
+        mentions: [],
+      }],
+    };
+
+    const session = resolveComposerSession({
+      threadId: "thread-a",
+      getDraft: () => draft,
+      threadRow: undefined,
+      threadSettings,
+      globalDefaults,
+    });
+
+    expect(session.selectedTextComments).toEqual(draft.selectedTextComments);
+    expect(session.selectedTextComments[0]?.source).not.toBe(draft.selectedTextComments?.[0]?.source);
+  });
+
   it("uses thread row defaults when no draft exists", () => {
     const session = resolveComposerSession({
       threadId: "thread-b",

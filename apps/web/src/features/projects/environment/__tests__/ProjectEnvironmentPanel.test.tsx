@@ -90,6 +90,16 @@ describe("ProjectEnvironmentPanel", () => {
     expect(screen.queryByLabelText("Default command script")).not.toBeInTheDocument();
   });
 
+  it("moves focus into the setup script when setup is added", async () => {
+    const user = userEvent.setup();
+    render(<ProjectEnvironmentPanel workspaceId="workspace-1" />);
+
+    await user.click(await screen.findByRole("button", { name: "Add Setup" }));
+
+    const setupScript = screen.getByLabelText("Default command script");
+    await waitFor(() => expect(setupScript).toHaveFocus());
+  });
+
   it("requires confirmation before selecting shared storage and then exposes approval clearing", async () => {
     const user = userEvent.setup();
     render(<ProjectEnvironmentPanel workspaceId="workspace-1" />);

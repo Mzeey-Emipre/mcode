@@ -14,7 +14,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useThreadStore } from "@/stores/threadStore";
 import { mockTransport, createMockMessage } from "./mocks/transport";
 import { clearRecordCache } from "@/features/conversation/hydration/record-cache";
-import type { AgentEvent, PreviewAnnotationBundle } from "@mcode/contracts";
+import type { AgentEvent, PreviewAnnotationBundle, SelectedTextComment } from "@mcode/contracts";
 
 vi.mock("@/transport", async () => ({
   ...(await vi.importActual("@/transport")),
@@ -60,6 +60,23 @@ function makePreviewAnnotationBundle(): PreviewAnnotationBundle {
   };
 }
 
+function makeSelectedTextComment(): SelectedTextComment {
+  return {
+    id: "550e8400-e29b-41d4-a716-446655440003",
+    displayNumber: 1,
+    source: {
+      threadId: "thread-1",
+      messageId: "assistant-1",
+      sourceRole: "assistant",
+      start: 5,
+      end: 12,
+      quote: "selected",
+    },
+    note: "Explain this choice.",
+    mentions: [],
+  };
+}
+
 describe("Thread Lifecycle Behavior", () => {
   beforeEach(() => {
     clearRecordCache();
@@ -72,6 +89,80 @@ describe("Thread Lifecycle Behavior", () => {
     await useThreadStore.getState().sendMessage(threadId, "Hello");
 
     expect(useThreadStore.getState().runningThreadIds.has(threadId)).toBe(true);
+  });
+
+  it("sends one selected-text comment with a normal prompt after persistence acknowledges", async () => {
+    const threadId = "thread-1";
+    const comment = makeSelectedTextComment();
+    resetThreadStoreForTests({ currentThreadId: threadId });
+
+    const persisted = await useThreadStore.getState().sendMessage(
+      threadId,
+      "Please explain it.",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      [comment],
+    );
+
+    expect(persisted).toBe(true);
+    expect(mockTransport.sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      content: "Please explain it.",
+      selectedTextComments: [comment],
+    }));
+    expect(getTestThreadMessages(threadId)[0]?.selectedTextComments).toEqual([comment]);
+  });
+
+  it("reports a rejected selected-text send so the Composer can retain its draft", async () => {
+    const threadId = "thread-1";
+    const comment = makeSelectedTextComment();
+    resetThreadStoreForTests({ currentThreadId: threadId });
+    (mockTransport.sendMessage as ReturnType<typeof vi.fn>)
+      .mockRejectedValueOnce(new Error("connection lost"));
+
+    const persisted = await useThreadStore.getState().sendMessage(
+      threadId,
+      "",
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      [comment],
+    );
+
+    expect(persisted).toBe(false);
+    expect(mockTransport.sendMessage).toHaveBeenCalledWith(expect.objectContaining({
+      content: "",
+      selectedTextComments: [comment],
+    }));
+    expect(getTestThreadMessages(threadId)[0]?.selectedTextComments).toEqual([comment]);
   });
 
   it("shows saved annotation screenshots as optimistic image attachments", async () => {

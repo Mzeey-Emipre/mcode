@@ -21,6 +21,7 @@ function createTestDb(): Database.Database {
       attachments TEXT,
       preview_annotations TEXT,
       mentions TEXT,
+      selected_text_comments TEXT,
       reply_to_message_id TEXT,
       quoted_text TEXT,
       model TEXT,
@@ -426,6 +427,52 @@ ORDER BY page.sequence ASC`,
 
       expect(created.mentions).toEqual(mentions);
       expect(fetched?.mentions).toEqual(mentions);
+    });
+  });
+
+  describe("create with selected-text comments", () => {
+    it("round-trips one comment with its exact source range and typed mentions", () => {
+      const selectedTextComments = [{
+        id: "76da3c6e-6b42-4c01-aaf2-3ad0b29a4756",
+        displayNumber: 1 as const,
+        source: {
+          threadId: "thread-1",
+          messageId: "source-message",
+          sourceRole: "assistant" as const,
+          start: 2,
+          end: 9,
+          quote: "const x",
+        },
+        note: "Explain this branch.",
+        mentions: [{
+          id: "file:src/index.ts",
+          kind: "file" as const,
+          label: "src/index.ts",
+          path: "src/index.ts",
+          range: { start: 0, end: 12 },
+        }],
+      }];
+
+      const created = repo.create(
+        "thread-1",
+        "user",
+        "Please clarify this.",
+        1,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        selectedTextComments,
+      );
+      const fetched = repo.findByIdInThread("thread-1", created.id);
+
+      expect(created.selectedTextComments).toEqual(selectedTextComments);
+      expect(fetched?.selectedTextComments).toEqual(selectedTextComments);
     });
   });
 

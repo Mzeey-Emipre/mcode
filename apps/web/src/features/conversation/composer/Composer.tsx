@@ -127,6 +127,7 @@ import type {
   ProviderId,
   GoalState,
   OrchestrationMode,
+  SelectedTextComment,
 } from "@mcode/contracts";
 import { getModelContextWindow } from "@mcode/shared/model-context";
 import { useComposerDraftStore } from "@/stores/composerDraftStore";
@@ -298,6 +299,10 @@ interface ComposerProps {
   onBranchModeExit?: () => void;
   /** Called after a new-thread submission has created its durable thread. */
   onThreadCreated?: (thread: Thread) => void;
+  /** Selected-text comment created from the active transcript. */
+  selectedTextComment?: SelectedTextComment;
+  /** Clears the one-shot transcript handoff after this Composer stores it. */
+  onSelectedTextCommentConsumed?: () => void;
 }
 
 interface PendingCheckoutConfirmation {
@@ -822,7 +827,17 @@ export function ActiveGoalChip({
  * - **Existing worktree:** `[Worktree v]` … `[Select worktree v]`
  * - **Locked (existing thread):** read-only branch badge
  */
-export function Composer({ threadId, isNewThread, workspaceId, branchFromMessageId, branchFromMessageContent, onBranchModeExit, onThreadCreated }: ComposerProps) {
+export function Composer({
+  threadId,
+  isNewThread,
+  workspaceId,
+  branchFromMessageId,
+  branchFromMessageContent,
+  onBranchModeExit,
+  onThreadCreated,
+  selectedTextComment,
+  onSelectedTextCommentConsumed,
+}: ComposerProps) {
   // Mode/permissions/tasks toggles render inline when the composer's own
   // container is wide enough; below the threshold they collapse behind a
   // single overflow trigger so the send button never wraps to a new row.
@@ -861,6 +876,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
 
   const [input, setInput] = useState("");
   const [mentions, setMentions] = useState<MessageMention[]>([]);
+  const [selectedTextComments, setSelectedTextComments] = useState<SelectedTextComment[]>([]);
   const [modelId, setModelId] = useState(getDefaultModelId());
   // Track provider explicitly: multiple providers share the same model IDs
   // (e.g. "gpt-5.3-codex" exists in both Codex and Copilot), so deriving the
@@ -958,6 +974,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const draftRef = useRef<{
     input: string;
     mentions: MessageMention[];
+    selectedTextComments: SelectedTextComment[];
     attachments: PendingAttachment[];
     modelId: string;
     provider: string;
@@ -965,7 +982,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     contextWindow?: ContextWindowMode;
     thinking?: boolean;
     codexFastMode?: boolean | null;
-  }>({ input, mentions, attachments, modelId, provider, reasoning });
+  }>({ input, mentions, selectedTextComments, attachments, modelId, provider, reasoning });
   /** Tracks whether the user toggled mode/access before settings finished loading. */
   const agentSettingsTouchedRef = useRef(false);
   /** Set to true by the thread-switch effect; cleared by the model-sync effect.
@@ -979,6 +996,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     draftRef.current = {
       input,
       mentions,
+      selectedTextComments,
       attachments,
       modelId,
       provider,
@@ -994,6 +1012,14 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const clearDraftFromStore = useComposerDraftStore((s) => s.clearDraft);
   const pendingPrefill = useComposerDraftStore((s) => s.pendingPrefill);
   const clearPendingPrefill = useComposerDraftStore((s) => s.clearPendingPrefill);
+
+  useEffect(() => {
+    if (!threadId || !selectedTextComment || selectedTextComment.source.threadId !== threadId) return;
+    const comments = [selectedTextComment];
+    setSelectedTextComments(comments);
+    saveDraft(threadId, snapshotComposerDraft({ ...draftRef.current, selectedTextComments: comments }));
+    onSelectedTextCommentConsumed?.();
+  }, [threadId, selectedTextComment, onSelectedTextCommentConsumed, saveDraft]);
 
   // Reactive settings: sync model/reasoning defaults when settings finish loading
   const settingsLoaded = useSettingsStore((s) => s.loaded);
@@ -1139,6 +1165,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
 
     setInput(session.input);
     setMentions(session.mentions);
+    setSelectedTextComments(session.selectedTextComments);
     setAttachments(session.attachments);
     setModelId(session.modelId);
     setProvider(session.provider);
@@ -2242,8 +2269,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     editorRef.current?.focus();
   }, [addFiles]);
 
-  /** Collect attachment metadata for RPC and revoke preview URLs. */
-  const collectAndClearAttachments = useCallback((): AttachmentMeta[] => {
+  /** Collect attachment metadata for RPC without mutating the draft. */
+  const collectAttachmentMetas = useCallback((): AttachmentMeta[] => {
     const metas: AttachmentMeta[] = [];
     for (const a of attachments) {
       const fenceOnlyNoFile =
@@ -2272,12 +2299,18 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         });
       }
     }
+    return metas;
+  }, [attachments]);
+
+  /** Collect attachment metadata for a locally accepted queue entry and clear the draft. */
+  const collectAndClearAttachments = useCallback((): AttachmentMeta[] => {
+    const metas = collectAttachmentMetas();
     for (const att of attachments) {
       if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
     }
     setAttachments([]);
     return metas;
-  }, [attachments]);
+  }, [attachments, collectAttachmentMetas]);
 
   const handleSend = useCallback(async () => {
     if (isNewThread && !workspaceId) return;
@@ -2294,7 +2327,12 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       : undefined;
     const effectivePreviewAnnotations =
       resolveEditingPreviewAnnotations(outboundPreviewAnnotations);
-    if (trimmed.length === 0 && attachments.length === 0 && !effectivePreviewAnnotations) {
+    if (
+      trimmed.length === 0
+      && attachments.length === 0
+      && !effectivePreviewAnnotations
+      && selectedTextComments.length === 0
+    ) {
       // Empty submit while editing a queued message = the user emptied it
       // intentionally. Treat as "remove from queue" instead of silently
       // doing nothing (the message has already been popped on edit start).
@@ -2330,7 +2368,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       const status = threadId
         ? getHandoffStatus(getThreadRecord(useThreadStore.getState().records, threadId))
         : undefined;
-      if (status === "generating" && hasSeenHandoffTransition) {
+      if (status === "generating" && hasSeenHandoffTransition && selectedTextComments.length === 0) {
         setQueuedSend({
           content: trimmed,
           displayContent: trimmed,
@@ -2427,7 +2465,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     // complete. The server intercept handles these control forms synchronously
     // without invoking the provider, so they are safe to send mid-turn.
     if (
-      shouldQueueActiveThreadSubmit(
+      selectedTextComments.length === 0
+      && shouldQueueActiveThreadSubmit(
         threadId,
         isAgentRunning,
         branchFromMessageId,
@@ -2479,7 +2518,8 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
       // ---- Normal send path ----
 
       if (
-        shouldQueueActiveThreadSubmit(
+        selectedTextComments.length === 0
+        && shouldQueueActiveThreadSubmit(
           threadId,
           isAgentRunning,
           branchFromMessageId,
@@ -2491,30 +2531,36 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         return;
       }
 
-      setInput("");
-      setMentions([]);
-      if (editorRef.current) {
-        editorRef.current.update(() => {
-          const root = $getRoot();
-          root.clear();
-          root.append($createParagraphNode());
-        });
-      }
-      setDetectedPr(null);
-      setPrDismissed(false);
-      // Edit mode ends on send regardless of which path we took.
-      editingOriginalRef.current = null;
-      restoredPreviewAnnotationsClearedRef.current = false;
-      setEditingFromQueue(null);
-      useQueueStore.getState().setEditingThreadId(null);
-      const currentAttachments = collectAndClearAttachments();
-      if (threadId) clearDraftFromStore(threadId);
-      // Hide the reply bar with the composer reset; sendMessage still receives reply IDs from this render.
-      if (threadId) clearReply(threadId);
-      if (annotationScopeId && outboundPreviewAnnotations) {
-        usePreviewAnnotationStore.getState().clearThread(annotationScopeId);
-        setPreviewDesignModeActive(annotationScopeId, false);
-      }
+      const hasSelectedTextComments = selectedTextComments.length > 0;
+      const clearDispatchedComposerState = (clearSelectedTextComments: boolean): void => {
+        setInput("");
+        setMentions([]);
+        if (clearSelectedTextComments) setSelectedTextComments([]);
+        if (editorRef.current) {
+          editorRef.current.update(() => {
+            const root = $getRoot();
+            root.clear();
+            root.append($createParagraphNode());
+          });
+        }
+        setDetectedPr(null);
+        setPrDismissed(false);
+        editingOriginalRef.current = null;
+        restoredPreviewAnnotationsClearedRef.current = false;
+        setEditingFromQueue(null);
+        useQueueStore.getState().setEditingThreadId(null);
+        if (threadId) clearDraftFromStore(threadId);
+        if (threadId) clearReply(threadId);
+        if (annotationScopeId && outboundPreviewAnnotations) {
+          usePreviewAnnotationStore.getState().clearThread(annotationScopeId);
+          setPreviewDesignModeActive(annotationScopeId, false);
+        }
+      };
+      const currentAttachments = hasSelectedTextComments
+        ? collectAttachmentMetas()
+        : collectAndClearAttachments();
+      if (!hasSelectedTextComments) clearDispatchedComposerState(false);
+      let persisted = false;
 
       if (isNewThread && workspaceId) {
         setNewThreadMode(submittedNewThreadMode);
@@ -2544,6 +2590,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             orchestrationMode,
           );
         onThreadCreated?.(createdThread);
+        persisted = true;
       } else if (branchFromMessageId && threadId) {
       // Branch mode: create a child thread from the quoted message instead of sending.
       let branchMode: "direct" | "worktree" | "existing-worktree" = "direct";
@@ -2588,8 +2635,9 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
         orchestrationMode,
       });
       onBranchModeExit?.();
+      persisted = true;
       } else if (threadId) {
-        await sendMessage(
+        persisted = await sendMessage(
           threadId,
           messageContent,
           modelId,
@@ -2609,7 +2657,15 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
           effectivePreviewAnnotations,
           submittedGoalObjective,
           orchestrationMode,
+          hasSelectedTextComments ? selectedTextComments : undefined,
         );
+      }
+
+      if (!persisted) return;
+
+      if (hasSelectedTextComments) {
+        clearDispatchedComposerState(true);
+        collectAndClearAttachments();
       }
 
       if (submittedGoalObjective) setGoalPending(false);
@@ -2648,7 +2704,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
     }
 
     await continueSend();
-  }, [input, mentions, attachments, annotationCount, annotationScopeId, isAgentRunning, isNewThread, composerMode, newThreadBranch, newThreadBranchSource, workspaceId, threadId, sendMessage, modelId, provider, reasoning, orchestrationMode, mode, access, copilotAgent, contextWindow, thinking, codexFastMode, selectedWorktree, collectAndClearAttachments, clearDraftFromStore, isThreadScaffold, branchFromMessageId, branchExecMode, branchTargetBranch, branchWorktreePath, branchWorktreeIsDetached, activeThread, branchThread, onBranchModeExit, onThreadCreated, replyContext, clearReply, editingFromQueue, slashCommand, isGitRepo, setNewThreadMode, setNewThreadBranch, setNewThreadBranchFromPr, setPreviewDesignModeActive, resolveEditingPreviewAnnotations, goalPending]);
+  }, [input, mentions, attachments, selectedTextComments, annotationCount, annotationScopeId, isAgentRunning, isNewThread, composerMode, newThreadBranch, newThreadBranchSource, workspaceId, threadId, sendMessage, modelId, provider, reasoning, orchestrationMode, mode, access, copilotAgent, contextWindow, thinking, codexFastMode, selectedWorktree, collectAttachmentMetas, collectAndClearAttachments, clearDraftFromStore, isThreadScaffold, branchFromMessageId, branchExecMode, branchTargetBranch, branchWorktreePath, branchWorktreeIsDetached, activeThread, branchThread, onBranchModeExit, onThreadCreated, replyContext, clearReply, editingFromQueue, slashCommand, isGitRepo, setNewThreadMode, setNewThreadBranch, setNewThreadBranchFromPr, setPreviewDesignModeActive, resolveEditingPreviewAnnotations, goalPending]);
 
   useEffect(() => {
     if (!annotationScopeId) return;
@@ -3092,6 +3148,21 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             onDismiss={() => clearReply(threadId)}
           />
         )}
+
+        {selectedTextComments.map((comment) => (
+          <section
+            key={comment.id}
+            className="border-b border-border/40 bg-background/30 px-3 py-2"
+            aria-label={`Selected text comment ${comment.displayNumber}`}
+            data-testid="composer-selected-text-comment"
+          >
+            <p className="text-xs font-medium text-muted-foreground">Comment {comment.displayNumber}</p>
+            <blockquote className="mt-1 whitespace-pre-wrap border-l-2 border-primary/40 pl-2 text-xs text-muted-foreground">
+              {comment.source.quote}
+            </blockquote>
+            <p className="mt-1 whitespace-pre-wrap text-sm text-foreground">{comment.note}</p>
+          </section>
+        ))}
 
         {/* PR URL detection card */}
         {detectedPr && !prDismissed && (

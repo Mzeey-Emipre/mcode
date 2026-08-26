@@ -48,6 +48,7 @@ import {
 } from "@/lib/thread-switch-telemetry";
 import {
   MAX_THREAD_SUBSCRIPTIONS,
+  type SelectedTextComment,
   type SetThreadSubscriptionsInput,
   type TurnRecovery,
 } from "@mcode/contracts";
@@ -360,6 +361,7 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
   const updateThreadTitle = useWorkspaceStore((s) => s.updateThreadTitle);
   const setActiveThread = useWorkspaceStore((s) => s.setActiveThread);
   const [editingThreadId, setEditingThreadId] = useState<string | null>(null);
+  const [pendingSelectedTextComment, setPendingSelectedTextComment] = useState<SelectedTextComment | null>(null);
   const setForkMode = useThreadStore((s) => s.setForkMode);
   const activeForkMode = useActiveThreadRecord((r) => r.forkMode);
   const branchFromMessageId = activeForkMode?.messageId;
@@ -479,6 +481,11 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
     setEditingThreadId(null);
   }, [activeThreadId]);
 
+  useEffect(() => {
+    setPendingSelectedTextComment((comment) =>
+      comment?.source.threadId === activeThreadId ? comment : null);
+  }, [activeThreadId]);
+
   const handleOpenSettings = useCallback(() => {
     window.dispatchEvent(new CustomEvent("mcode:open-settings", { detail: { section: "model" } }));
   }, []);
@@ -567,6 +574,14 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
     const threadId = useWorkspaceStore.getState().activeThreadId;
     if (!threadId) return;
     useReplyStore.getState().setReply(threadId, messageId, role, content.slice(0, 150), content.slice(0, 2000));
+  }, []);
+
+  const handleSelectedTextComment = useCallback((comment: SelectedTextComment) => {
+    setPendingSelectedTextComment(comment);
+  }, []);
+
+  const consumeSelectedTextComment = useCallback(() => {
+    setPendingSelectedTextComment(null);
   }, []);
 
   const showCliError =
@@ -1099,6 +1114,7 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
                 displayThreadId={displayHoldThreadId}
                 onBranch={handleBranch}
                 onReply={handleReply}
+                onSelectedTextComment={handleSelectedTextComment}
                 onSubagentSelect={onSubagentSelect}
                 onOpenSubagents={onOpenSubagents}
                 onContinue={handleContinueTurn}
@@ -1123,6 +1139,7 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
             leadingContent={automaticSetupTranscriptBlock}
             onBranch={handleBranch}
             onReply={handleReply}
+            onSelectedTextComment={handleSelectedTextComment}
             onSubagentSelect={onSubagentSelect}
             onOpenSubagents={onOpenSubagents}
             onContinue={handleContinueTurn}
@@ -1152,6 +1169,8 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
           workspaceId={activeWorkspaceId ?? undefined}
           branchFromMessageId={branchFromMessageId}
           branchFromMessageContent={branchFromMessageContent}
+          selectedTextComment={pendingSelectedTextComment ?? undefined}
+          onSelectedTextCommentConsumed={consumeSelectedTextComment}
           onBranchModeExit={() => {
             if (activeThreadId) setForkMode(activeThreadId, null);
           }}

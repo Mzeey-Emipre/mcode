@@ -3,6 +3,7 @@ import { MessageRoleSchema } from "./enums.js";
 import { StoredAttachmentSchema } from "./attachment.js";
 import { lazySchema } from "../utils/lazySchema.js";
 import { MessageMentionsSchema } from "./mention.js";
+import { SelectedTextCommentsSchema } from "./selected-text-comment.js";
 import { PreviewAnnotationBundleSchema } from "./browser-preview.js";
 import { ProviderIdentitySchema } from "../compat/agent-model.js";
 import { TurnOutcomeSchema } from "./turn-outcome.js";
@@ -45,6 +46,7 @@ export const MessageSchema = lazySchema(() =>
     attachments: z.array(StoredAttachmentSchema).nullable(),
     previewAnnotations: PreviewAnnotationBundleSchema().nullable().optional(),
     mentions: MessageMentionsSchema.nullable().optional(),
+    selectedTextComments: SelectedTextCommentsSchema().nullable().optional(),
     tool_call_count: z.number().optional(),
     reply_to_message_id: z.string().nullable().optional(),
     quoted_text: z.string().nullable().optional(),

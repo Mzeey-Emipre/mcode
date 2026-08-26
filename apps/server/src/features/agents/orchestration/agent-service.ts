@@ -725,6 +725,7 @@ export class AgentService {
     displayContent: messageDisplayContent,
     planAction,
     mentions = [],
+    selectedTextComments,
     previewAnnotations,
     goalObjective,
     orchestrationMode,
@@ -851,6 +852,7 @@ export class AgentService {
           goalObjective,
           replyToMessageId,
           quotedText,
+          selectedTextComments,
           planAction,
           markPlanAnswerForMessageId,
           sourceTurnId: requestedSourceTurnId,
@@ -1073,7 +1075,9 @@ export class AgentService {
             validatedMentions.length > 0 ? validatedMentions : undefined,
             previewAnnotations,
           ] as const;
-          if (messageId === undefined && origin === undefined) {
+          if (selectedTextComments !== undefined) {
+            message = this.messageRepo.create(...args, origin, messageId, selectedTextComments);
+          } else if (messageId === undefined && origin === undefined) {
             message = this.messageRepo.create(...args);
           } else if (messageId === undefined && origin !== undefined) {
             message = this.messageRepo.create(...args, origin);
@@ -1661,6 +1665,7 @@ export class AgentService {
       goalObjective: submission.goalObjective,
       replyToMessageId: submission.replyToMessageId,
       quotedText: submission.quotedText,
+      selectedTextComments: submission.selectedTextComments ? [...submission.selectedTextComments] : undefined,
       planAction: submission.planAction,
       markPlanAnswerForMessageId: submission.markPlanAnswerForMessageId,
       sourceTurnId: submission.sourceTurnId,
