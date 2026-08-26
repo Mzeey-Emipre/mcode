@@ -3,7 +3,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentEvent } from "@mcode/contracts";
-import { Composer } from "../Composer";
+import { Composer } from "../../Composer";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import {
   usePreviewAnnotationStore,
@@ -1509,6 +1509,48 @@ describe("Composer checkout confirmation", () => {
     expect(mockTransport.sendMessage).not.toHaveBeenCalled();
     expect(screen.getByTestId("attachment-preview")).toBeEmptyDOMElement();
     expect(URL.createObjectURL).not.toHaveBeenCalled();
+  });
+
+  it("restores a queued goal when its edit is discarded", async () => {
+    const workspace = createMockWorkspace({ id: "ws-queued-goal", is_git_repo: true });
+    const thread = createMockThread({ id: "thread-queued-goal", workspace_id: workspace.id });
+    useWorkspaceStore.setState({
+      workspaces: [workspace],
+      activeWorkspaceId: workspace.id,
+      threads: [thread],
+      activeThreadId: thread.id,
+      branches: [branch("main", true)],
+      newThreadMode: "direct",
+      newThreadBranch: "main",
+      selectedWorktree: null,
+    });
+    resetThreadStoreForTests({
+      currentThreadId: thread.id,
+      records: seedThreadRecord(thread.id),
+    });
+    useQueueStore.getState().enqueue(thread.id, {
+      content: "Finish the migration",
+      displayContent: "Finish the migration",
+      mentions: undefined,
+      attachments: [],
+      model: "claude-sonnet-4-6",
+      permissionMode: "full",
+      goalObjective: "Ship the migration safely",
+    });
+
+    const user = userEvent.setup();
+    render(<Composer threadId={thread.id} workspaceId={workspace.id} />);
+    await user.click(screen.getByLabelText("Edit Finish the migration"));
+    await user.click(
+      screen.getByLabelText("Discard edits and restore the original queued message"),
+    );
+
+    expect(useQueueStore.getState().queues[thread.id]).toEqual([
+      expect.objectContaining({
+        content: "Finish the migration",
+        goalObjective: "Ship the migration safely",
+      }),
+    ]);
   });
 
   it("discards pathless persistence when the composer switches threads", async () => {
