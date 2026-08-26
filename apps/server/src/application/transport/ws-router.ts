@@ -405,6 +405,7 @@ export async function routeMessage(
       request.method === "workspace.environment.automaticSetup.cancelQueuedTurn" ||
       request.method === "workspace.environment.automaticSetup.stop" ||
       request.method === "workspace.environment.automaticSetup.retry" ||
+      request.method === "workspace.environment.automaticSetup.repair" ||
       request.method === "workspace.environment.automaticSetup.openTerminal" ||
       request.method.startsWith("workspace.environment.action.")
     ) {
@@ -912,6 +913,8 @@ async function dispatch(
       return await deps.workspaceEnvironmentService.stopAutomaticSetup(params);
     case "workspace.environment.automaticSetup.retry":
       return await deps.workspaceEnvironmentService.retryAutomaticSetup(params);
+    case "workspace.environment.automaticSetup.repair":
+      return await deps.workspaceEnvironmentService.repairAutomaticSetup(params);
     case "workspace.environment.automaticSetup.openTerminal":
       return await deps.workspaceEnvironmentService.openAutomaticSetupTerminal(params);
     case "workspace.environment.action.list":

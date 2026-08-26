@@ -10,6 +10,7 @@ const { transport, removePersistedMessage, addTerminal, addRightPanelTerminalTab
     cancelQueuedAutomaticTurn: vi.fn(),
     stopAutomaticSetup: vi.fn(),
     retryAutomaticSetup: vi.fn(),
+    repairAutomaticSetup: vi.fn(),
     openAutomaticSetupTerminal: vi.fn(),
   },
   removePersistedMessage: vi.fn(),
@@ -78,6 +79,7 @@ function AutomaticSetupState() {
       onCancel={automaticSetup.cancelQueuedTurn}
       onStop={automaticSetup.stopSetup}
       onRetry={automaticSetup.retrySetup}
+      onRepair={automaticSetup.repairSetup}
       onOpenTerminal={automaticSetup.openRecoveryTerminal}
     />
   );
@@ -95,6 +97,7 @@ describe("ProjectAutomaticSetupControl", () => {
 
   it("renders ordered queued Turns and joined keyboard-accessible recovery controls", async () => {
     const retry = vi.fn();
+    const repair = vi.fn();
     const terminal = vi.fn();
     const user = userEvent.setup();
     render(
@@ -106,6 +109,7 @@ describe("ProjectAutomaticSetupControl", () => {
         onCancel={async () => undefined}
         onStop={async () => undefined}
         onRetry={async () => { retry(); }}
+        onRepair={async () => { repair(); }}
         onOpenTerminal={async () => { terminal(); }}
       />,
     );
@@ -120,18 +124,22 @@ describe("ProjectAutomaticSetupControl", () => {
     expect(screen.getByRole("region").firstElementChild).not.toHaveClass("hidden");
     expect(screen.getByRole("status")).toHaveTextContent("2 queued Turns remain blocked");
     expect(screen.getByLabelText("Automatic Setup command")).toHaveTextContent("bun run setup");
-    expect(screen.getByRole("button", { name: "Retry setup" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Fix with agent" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "More automatic Setup recovery options" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Cancel queued Turn 1" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Cancel queued Turn 2" })).toBeEnabled();
 
     screen.getByRole("button", { name: "More automatic Setup recovery options" }).focus();
     await user.keyboard("{Enter}");
+    const retryFromMenu = await screen.findByRole("menuitem", { name: "Retry setup" });
+    expect(retryFromMenu).toHaveFocus();
+    await user.keyboard("{ArrowDown}");
     const openTerminal = await screen.findByRole("menuitem", { name: "Open terminal" });
     expect(openTerminal).toHaveFocus();
     await user.keyboard("{Enter}");
     expect(terminal).toHaveBeenCalledOnce();
     expect(retry).not.toHaveBeenCalled();
+    expect(repair).not.toHaveBeenCalled();
   });
 
   it("cancels only the selected queued Turn and removes its matching message", async () => {
@@ -149,6 +157,65 @@ describe("ProjectAutomaticSetupControl", () => {
     expect(removePersistedMessage).toHaveBeenCalledWith("thread-1", "message-1");
     expect(removePersistedMessage).not.toHaveBeenCalledWith("thread-1", "message-2");
     await waitFor(() => expect(screen.getByRole("status")).toHaveTextContent("1 queued Turn remains blocked"));
+  });
+
+  it("announces an active repair and suppresses duplicate recovery controls", async () => {
+    render(
+      <ProjectAutomaticSetupCard
+        snapshot={{
+          ...blocked,
+          repair: {
+            id: "repair-1",
+            failedAttemptId: "attempt-1",
+            state: "repairing",
+            createdAt: "2026-08-22T12:00:02.000Z",
+            finishedAt: null,
+          },
+        }}
+        busy={null}
+        error={null}
+        onContinue={async () => undefined}
+        onCancel={async () => undefined}
+        onStop={async () => undefined}
+        onRetry={async () => undefined}
+        onRepair={async () => undefined}
+        onOpenTerminal={async () => undefined}
+      />,
+    );
+    await showAutomaticSetupDetails();
+
+    expect(screen.getByRole("button", { name: /Automatic Setup. Repairing Setup/i })).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("A repair Turn is running before Setup reruns.");
+    expect(screen.queryByRole("button", { name: "Fix with agent" })).not.toBeInTheDocument();
+  });
+
+  it("offers Setup retry after the failed attempt already used its repair cycle", async () => {
+    render(
+      <ProjectAutomaticSetupCard
+        snapshot={{
+          ...blocked,
+          repair: {
+            id: "repair-1",
+            failedAttemptId: "attempt-1",
+            state: "failed",
+            createdAt: "2026-08-22T12:00:02.000Z",
+            finishedAt: "2026-08-22T12:00:03.000Z",
+          },
+        }}
+        busy={null}
+        error={null}
+        onContinue={async () => undefined}
+        onCancel={async () => undefined}
+        onStop={async () => undefined}
+        onRetry={async () => undefined}
+        onRepair={async () => undefined}
+        onOpenTerminal={async () => undefined}
+      />,
+    );
+    await showAutomaticSetupDetails();
+
+    expect(screen.getByRole("button", { name: "Retry setup" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Fix with agent" })).not.toBeInTheDocument();
   });
 
   it("keeps a message visible when the server could no longer cancel its Turn", async () => {
@@ -212,6 +279,7 @@ describe("ProjectAutomaticSetupControl", () => {
   it("keeps recovery actions available after the last queued Turn is cancelled", async () => {
     const user = userEvent.setup();
     const retry = vi.fn();
+    const repair = vi.fn();
     const terminal = vi.fn();
     const continueWithoutSetup = vi.fn();
     render(
@@ -223,18 +291,22 @@ describe("ProjectAutomaticSetupControl", () => {
         onCancel={async () => undefined}
         onStop={async () => undefined}
         onRetry={async () => { retry(); }}
+        onRepair={async () => { repair(); }}
         onOpenTerminal={async () => { terminal(); }}
       />,
     );
     await showAutomaticSetupDetails();
 
-    await user.click(screen.getByRole("button", { name: "Retry setup" }));
+    await user.click(screen.getByRole("button", { name: "Fix with agent" }));
+    await user.click(screen.getByRole("button", { name: "More automatic Setup recovery options" }));
+    await user.click(await screen.findByRole("menuitem", { name: "Retry setup" }));
     await user.click(screen.getByRole("button", { name: "More automatic Setup recovery options" }));
     await user.click(await screen.findByRole("menuitem", { name: "Open terminal" }));
     await user.click(screen.getByRole("button", { name: "More automatic Setup recovery options" }));
     await user.click(await screen.findByRole("menuitem", { name: "Continue without setup" }));
 
     expect(retry).toHaveBeenCalledOnce();
+    expect(repair).toHaveBeenCalledOnce();
     expect(terminal).toHaveBeenCalledOnce();
     expect(continueWithoutSetup).toHaveBeenCalledOnce();
   });
@@ -275,6 +347,7 @@ describe("ProjectAutomaticSetupControl", () => {
         onCancel={async () => undefined}
         onStop={async () => undefined}
         onRetry={async () => undefined}
+        onRepair={async () => undefined}
         onOpenTerminal={async () => undefined}
       />,
     );
@@ -302,6 +375,7 @@ describe("ProjectAutomaticSetupControl", () => {
         onCancel={async () => undefined}
         onStop={async () => undefined}
         onRetry={async () => undefined}
+        onRepair={async () => undefined}
         onOpenTerminal={async () => undefined}
       />,
     );

@@ -73,7 +73,12 @@ import type Database from "better-sqlite3";
 import { TaskRepo, type StoredTask } from "./persistence/task-repo.js";
 import { PlanQuestionAnswersRepo } from "../planning/persistence/plan-question-answers-repo.js";
 import { GitService, WorkspaceEnvironmentService } from "../../projects/index.js";
-import type { WorkspaceEnvironmentAutomaticSetupDispatch } from "../../projects/environment/workspace-environment-service.js";
+import type {
+  WorkspaceEnvironmentAutomaticSetupDispatch,
+  WorkspaceEnvironmentAutomaticSetupRepairDispatch,
+  WorkspaceEnvironmentAutomaticSetupRepairOutcome,
+  WorkspaceEnvironmentAutomaticSetupRepairSubmission,
+} from "../../projects/environment/workspace-environment-service.js";
 import { AttachmentService } from "../../attachments/storage/attachment-service.js";
 import { FileService } from "../../projects/files/file-service.js";
 import { SnapshotService } from "../../projects/diffs/snapshots/snapshot-service.js";
@@ -169,6 +174,12 @@ export type SendMessageCommand = Omit<SendMessageInput, "permissionMode" | "prov
   };
   /** Whether a handled native command must clean pre-persisted automatic-gate attachments. */
   cleanupPersistedAttachmentsOnHandledCommand?: boolean;
+  /** Keep a server-triggered user message out of the visible conversation. */
+  internalUserMessage?: boolean;
+  /** Permit the internal repair Turn to run while its failed Setup gate remains blocked. */
+  allowBlockedAutomaticSetup?: boolean;
+  /** Validated checkout boundary for an internal repair Turn. */
+  workingDirectoryOverride?: string;
 };
 
 /** Command accepted by {@link AgentService.createAndSend}, including service defaults for model and permission mode. */
@@ -447,6 +458,11 @@ export class AgentService {
   private readonly terminalFinalizedThreads = new Set<string>();
   /** Resolves queued automatic dispatches only after their authoritative runtime releases its active slot. */
   private readonly automaticQueuedTurnCompletionResolvers = new Map<string, () => void>();
+  /** Resolves automatic repair dispatches after terminal persistence reports their outcome. */
+  private readonly automaticRepairTurnCompletionResolvers = new Map<
+    string,
+    (outcome: WorkspaceEnvironmentAutomaticSetupRepairOutcome) => void
+  >();
   /**
    * Per-thread dispatch state for transient retries. Fire-and-forget providers
    * (Claude) can return from `sendTurn` before the stream ends, so the retry
@@ -740,6 +756,9 @@ export class AgentService {
     persistedUserMessage,
     persistedAttachmentData: suppliedPersistedAttachmentData,
     cleanupPersistedAttachmentsOnHandledCommand = false,
+    internalUserMessage,
+    allowBlockedAutomaticSetup = false,
+    workingDirectoryOverride,
   }: SendMessageCommand): Promise<void> {
     const provenance = [originSourceThreadId, originSourceTurnId, originSourceProviderId];
     const hasAnyProvenance = provenance.some((value) => value !== undefined);
@@ -812,6 +831,7 @@ export class AgentService {
       thread.worktree_managed === true &&
       this.workspaceEnvironmentService &&
       !persistedUserMessage &&
+      !allowBlockedAutomaticSetup &&
       this.workspaceEnvironmentService.getAutomaticSetup({ threadId }).gate === "blocked"
     ) {
       const persistedAttachments = await this.attachmentService.persist(
@@ -973,7 +993,7 @@ export class AgentService {
     };
 
     try {
-      const cwd = this.gitService.resolveWorkingDir(
+      const cwd = workingDirectoryOverride ?? this.gitService.resolveWorkingDir(
         workspace.path,
         thread.mode,
         thread.worktree_path,
@@ -1071,7 +1091,7 @@ export class AgentService {
             replyToMessageId,
             quotedText,
             undefined,
-            undefined,
+            internalUserMessage,
             validatedMentions.length > 0 ? validatedMentions : undefined,
             previewAnnotations,
           ] as const;
@@ -1410,7 +1430,9 @@ export class AgentService {
         return;
       }
       if (this.turnRuntime.terminalize(threadId, turnExecutionId, "errored")) {
-        await (this.finalizeTerminalTurn(threadId, "errored", "send setup failure") ?? Promise.resolve());
+        const finalization = this.finalizeTerminalTurn(threadId, "errored", "send setup failure");
+        await (finalization ?? Promise.resolve());
+        this.resolveAutomaticSetupRepairTurn(turnExecutionId, "failed", finalization);
         this.disarmTurnRetryWindow(threadId);
         this.trackSessionEnded(threadId, turnExecutionId);
       }
@@ -1689,6 +1711,57 @@ export class AgentService {
       started,
       send.then(() => {
         throw new Error(`Queued Turn finished without runtime dispatch: ${submission.threadId}`);
+      }),
+    ]);
+    return { completion };
+  }
+
+  /** Dispatch one hidden provider repair Turn with the blocked Turn's execution settings. */
+  async dispatchAutomaticSetupRepairTurn(
+    submission: WorkspaceEnvironmentAutomaticSetupRepairSubmission,
+  ): Promise<WorkspaceEnvironmentAutomaticSetupRepairDispatch> {
+    const queuedTurn = submission.queuedTurn;
+    let resolveStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      resolveStarted = resolve;
+    });
+    let resolveCompletion!: (outcome: WorkspaceEnvironmentAutomaticSetupRepairOutcome) => void;
+    const completion = new Promise<WorkspaceEnvironmentAutomaticSetupRepairOutcome>((resolve) => {
+      resolveCompletion = resolve;
+    });
+    const send = this.sendMessage({
+      threadId: queuedTurn.threadId,
+      content: submission.prompt,
+      displayContent: submission.prompt,
+      messageId: submission.repairId,
+      providerWireOverride: submission.prompt,
+      model: queuedTurn.model,
+      permissionMode: queuedTurn.permissionMode,
+      attachments: [],
+      provider: queuedTurn.provider as ProviderId,
+      reasoningLevel: queuedTurn.reasoningLevel as ReasoningLevel | undefined,
+      interactionMode: queuedTurn.interactionMode as InteractionMode | undefined,
+      orchestrationMode: queuedTurn.orchestrationMode as OrchestrationMode | undefined,
+      maxBudgetUsd: queuedTurn.maxBudgetUsd,
+      maxTurns: queuedTurn.maxTurns,
+      copilotAgent: queuedTurn.copilotAgent,
+      contextWindow: queuedTurn.contextWindow as ContextWindowMode | undefined,
+      thinking: queuedTurn.thinking,
+      codexFastMode: queuedTurn.codexFastMode,
+      goalObjective: queuedTurn.goalObjective,
+      mentions: [],
+      internalUserMessage: true,
+      allowBlockedAutomaticSetup: true,
+      workingDirectoryOverride: submission.checkoutPath ?? undefined,
+      onTurnStarted: (runtime) => {
+        this.automaticRepairTurnCompletionResolvers.set(runtime.turnExecutionId!, resolveCompletion);
+        resolveStarted();
+      },
+    });
+    await Promise.race([
+      started,
+      send.then(() => {
+        throw new Error(`Automatic Setup repair finished without runtime dispatch: ${queuedTurn.threadId}`);
       }),
     ]);
     return { completion };
@@ -2459,6 +2532,7 @@ export class AgentService {
     const finalize = this.finalizeTerminalTurn(threadId, "cancelled", "user stop");
     this.disarmTurnRetryWindow(threadId);
     await (finalize ?? Promise.resolve());
+    this.resolveAutomaticSetupRepairTurn(runtimeBefore.turnExecutionId, "cancelled", finalize);
     this.clearTurnEndedState(threadId);
     this.threadRepo.updateStatus(threadId, "paused");
     broadcast("thread.status", { threadId, status: "paused" });
@@ -2920,6 +2994,20 @@ export class AgentService {
     }
     const reservationToken = this.turnRetryDispatchByThread.get(threadId)?.mutationReservationToken;
     this.releaseMutationReservation(threadId, reservationToken);
+  }
+
+  private resolveAutomaticSetupRepairTurn(
+    executionId: string | null | undefined,
+    outcome: WorkspaceEnvironmentAutomaticSetupRepairOutcome,
+    finalization: Promise<boolean> | null,
+  ): void {
+    if (!executionId) return;
+    const resolve = this.automaticRepairTurnCompletionResolvers.get(executionId);
+    if (!resolve) return;
+    this.automaticRepairTurnCompletionResolvers.delete(executionId);
+    void (finalization ?? Promise.resolve(false)).then((finalized) => {
+      resolve(outcome === "completed" && !finalized ? "failed" : outcome);
+    });
   }
 
   /** Clear resources that belong to a turn after terminal handling owns the outcome. */
@@ -3852,9 +3940,9 @@ export class AgentService {
           // verified post-turn persistence instead of normal mid-turn finalization.
           this.turnCompleteSeenByThread.add(event.threadId);
 
-          if (terminalized) {
-            void this.finalizeTerminalTurn(event.threadId, "completed", "turnComplete");
-          }
+          const finalization = terminalized
+            ? this.finalizeTerminalTurn(event.threadId, "completed", "turnComplete")
+            : null;
 
           // Clear the "running" flag so agent.listRunning no longer reports
           // this thread and shutdown won't downgrade it to "interrupted."
@@ -3862,6 +3950,7 @@ export class AgentService {
           // before the compaction API call, but the session continues
           // automatically.
           if (!compactionInProgress) {
+            this.resolveAutomaticSetupRepairTurn(event.turnExecutionId, "completed", finalization);
             this.threadControlMcp?.revoke(`mcode-${event.threadId}`);
             this.trackSessionEnded(event.threadId, event.turnExecutionId);
             this.disarmTurnRetryWindow(event.threadId);
@@ -3925,7 +4014,8 @@ export class AgentService {
             "errored",
           );
           if (!terminalized) return false;
-          void this.finalizeTerminalTurn(event.threadId, "errored", "error");
+          const finalization = this.finalizeTerminalTurn(event.threadId, "errored", "error");
+          this.resolveAutomaticSetupRepairTurn(event.turnExecutionId, "failed", finalization);
           this.trackSessionEnded(event.threadId, event.turnExecutionId);
           this.disarmTurnRetryWindow(event.threadId);
           this.releaseMutationReservation(event.threadId);
@@ -4040,7 +4130,12 @@ export class AgentService {
               ? "errored"
               : "interrupted";
           if (!this.turnRuntime.terminalize(event.threadId, activeExecutionId, outcome)) return false;
-          void this.finalizeTerminalTurn(event.threadId, outcome, "ended");
+          const finalization = this.finalizeTerminalTurn(event.threadId, outcome, "ended");
+          this.resolveAutomaticSetupRepairTurn(
+            activeExecutionId,
+            outcome === "completed" ? "completed" : outcome === "errored" ? "failed" : "interrupted",
+            finalization,
+          );
           this.trackSessionEnded(event.threadId, activeExecutionId);
           this.disarmTurnRetryWindow(event.threadId);
           this.clearTurnEndedState(event.threadId);
@@ -4399,7 +4494,8 @@ export class AgentService {
         });
       });
     }
-    void this.finalizeTerminalTurn(event.threadId, "interrupted", "assistant text checkpoint failure");
+    const finalization = this.finalizeTerminalTurn(event.threadId, "interrupted", "assistant text checkpoint failure");
+    this.resolveAutomaticSetupRepairTurn(executionId, "interrupted", finalization);
     this.trackSessionEnded(event.threadId, executionId);
     this.disarmTurnRetryWindow(event.threadId);
   }
@@ -4413,8 +4509,9 @@ export class AgentService {
       turnExecutionId: executionId,
       error: error instanceof Error ? error.message : String(error),
     });
-    void this.finalizeTerminalTurn(event.threadId, "interrupted", "narrative recovery checkpoint failure");
-    this.trackSessionEnded(event.threadId);
+    const finalization = this.finalizeTerminalTurn(event.threadId, "interrupted", "narrative recovery checkpoint failure");
+    this.resolveAutomaticSetupRepairTurn(executionId, "interrupted", finalization);
+    this.trackSessionEnded(event.threadId, executionId);
     this.disarmTurnRetryWindow(event.threadId);
   }
 
@@ -5377,7 +5474,9 @@ ${userMessage}`;
           ? this.turnRuntime.terminalize(threadId, runtime.turnExecutionId, "interrupted")
           : false;
         if (!terminalized && runtime?.phase !== "interrupted") return;
-        await (this.finalizeTerminalTurn(threadId, "interrupted", "shutdown") ?? Promise.resolve());
+        const finalization = this.finalizeTerminalTurn(threadId, "interrupted", "shutdown");
+        await (finalization ?? Promise.resolve());
+        this.resolveAutomaticSetupRepairTurn(runtime?.turnExecutionId, "interrupted", finalization);
         this.trackSessionEnded(threadId, runtime?.turnExecutionId);
         this.threadRepo.updateStatus(threadId, "interrupted");
         broadcast("thread.status", { threadId, status: "interrupted" });

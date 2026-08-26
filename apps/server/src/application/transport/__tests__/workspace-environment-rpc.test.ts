@@ -2,7 +2,7 @@ import "reflect-metadata";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { routeMessage, type RouterDeps } from "../ws-router.js";
 import { WorkspaceEnvironmentService } from "../../../features/projects/environment/workspace-environment-service.js";
 import { openMemoryDatabase } from "../../../runtime/persistence/sqlite/database.js";
@@ -165,7 +165,7 @@ describe("workspace environment RPC", () => {
       method: "workspace.environment.automaticSetup.get",
       params: { threadId: "thread-1" },
     }), deps);
-    expect(get.result).toEqual({ gate: "not-required", attempt: null, queuedTurns: [] });
+    expect(get.result).toEqual({ gate: "not-required", attempt: null, queuedTurns: [], repair: null });
 
     const continued = await routeMessage(JSON.stringify({
       id: "automatic-continue",
@@ -181,6 +181,7 @@ describe("workspace environment RPC", () => {
       gate: "not-required",
       attempt: null,
       queuedTurns: [],
+      repair: null,
     });
 
     const cancelled = await routeMessage(JSON.stringify({
@@ -188,14 +189,14 @@ describe("workspace environment RPC", () => {
       method: "workspace.environment.automaticSetup.cancelQueuedTurn",
       params: { threadId: "thread-1", queuedTurnId: "queued-1" },
     }), deps);
-    expect(cancelled.result).toEqual({ gate: "not-required", attempt: null, queuedTurns: [] });
+    expect(cancelled.result).toEqual({ gate: "not-required", attempt: null, queuedTurns: [], repair: null });
 
     const stopped = await routeMessage(JSON.stringify({
       id: "automatic-stop",
       method: "workspace.environment.automaticSetup.stop",
       params: { threadId: "thread-1" },
     }), deps);
-    expect(stopped.result).toEqual({ gate: "not-required", attempt: null, queuedTurns: [] });
+    expect(stopped.result).toEqual({ gate: "not-required", attempt: null, queuedTurns: [], repair: null });
 
     const terminal = await routeMessage(JSON.stringify({
       id: "automatic-terminal",
@@ -217,6 +218,13 @@ describe("workspace environment RPC", () => {
       params: { threadId: "thread-1" },
     }), deps);
     expect(malformedCancel.error?.code).toBe("WORKSPACE_ENVIRONMENT_VALIDATION");
+
+    const malformedRepair = await routeMessage(JSON.stringify({
+      id: "automatic-repair-bad",
+      method: "workspace.environment.automaticSetup.repair",
+      params: { threadId: "thread-1", extra: true },
+    }), deps);
+    expect(malformedRepair.error?.code).toBe("WORKSPACE_ENVIRONMENT_VALIDATION");
 
     database.prepare("INSERT INTO workspaces (id, name, path, provider_config) VALUES ('workspace-1', 'Project', '/project', '{}')").run();
     database.prepare("INSERT INTO threads (id, workspace_id, title, mode, branch, worktree_managed, provider) VALUES ('thread-1', 'workspace-1', 'Blocked Turn', 'worktree', 'main', 1, 'claude')").run();
@@ -247,16 +255,29 @@ describe("workspace environment RPC", () => {
     await expect.poll(() => workspaceEnvironmentService.getAutomaticSetup({ threadId: "thread-1" }).attempt?.state)
       .toBe("failed");
 
+    workspaceEnvironmentService.setAutomaticSetupDispatcher({
+      dispatch: vi.fn(),
+      dispatchRepair: vi.fn(async () => ({ completion: new Promise<never>(() => undefined) })),
+    });
+    const repair = await routeMessage(JSON.stringify({
+      id: "automatic-repair-valid",
+      method: "workspace.environment.automaticSetup.repair",
+      params: { threadId: "thread-1" },
+    }), deps);
+    expect(repair.error).toBeUndefined();
+    expect(repair.result).toMatchObject({ repair: { state: "repairing" } });
+
     const validContinue = await routeMessage(JSON.stringify({
       id: "automatic-continue-valid",
       method: "workspace.environment.automaticSetup.continue",
       params: { threadId: "thread-1" },
     }), deps);
-    expect(validContinue.error).toBeUndefined();
-    expect(validContinue.result).toMatchObject({
-      gate: "released-by-continue",
+    expect(validContinue.error?.code).toBe("WORKSPACE_ENVIRONMENT_SETUP_UNAVAILABLE");
+    expect(workspaceEnvironmentService.getAutomaticSetup({ threadId: "thread-1" })).toMatchObject({
+      gate: "blocked",
       attempt: { state: "failed" },
-      queuedTurns: [{ state: "released", messageId: "message-1" }],
+      repair: { state: "repairing" },
+      queuedTurns: [{ state: "queued", messageId: "message-1" }],
     });
   });
 });

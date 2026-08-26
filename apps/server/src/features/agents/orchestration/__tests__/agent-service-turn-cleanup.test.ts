@@ -44,6 +44,7 @@ import type { PlanQuestionAnswersRepo } from "../../planning/persistence/plan-qu
 import { ThreadControlMutationReservationService } from "../../../thread-control/index.js";
 import { publishParentProviderEvent } from "../../events/provider-event-publication.js";
 import { TurnRecoveryService } from "../../recovery/turn-recovery-service.js";
+import type { WorkspaceEnvironmentService } from "../../../projects/environment/workspace-environment-service.js";
 
 vi.mock("../../../../application/transport/push.js", () => ({ broadcast: vi.fn() }));
 
@@ -150,6 +151,8 @@ function makePreviewAnnotationBundle(): PreviewAnnotationBundle {
 function buildService(
   cwd = process.cwd(),
   mutationReservations = new ThreadControlMutationReservationService(),
+  workspaceEnvironmentService?: WorkspaceEnvironmentService,
+  threadOverrides: Partial<Thread> = {},
 ): {
   service: AgentService;
   providerEmitter: EventEmitter;
@@ -161,7 +164,7 @@ function buildService(
   turnSnapshotRepo: { create: ReturnType<typeof vi.fn> };
   toolCallRecordRepo: { bulkCreate: ReturnType<typeof vi.fn> };
 } {
-  const thread = makeThread();
+  const thread = makeThread(threadOverrides);
   const providerEmitter = new EventEmitter();
   // sendTurn() is called on the resolved provider
   (providerEmitter as any).sendTurn = vi.fn(() => Promise.resolve());
@@ -328,6 +331,7 @@ function buildService(
       undefined,
       mutationReservations,
       createCanonicalAgentEventSinkStub(db),
+      workspaceEnvironmentService,
   );
 
   return {
@@ -546,6 +550,96 @@ describe("AgentService turn cleanup", () => {
 
     await expect(accepted.completion).resolves.toBeUndefined();
     expect(completed).toBe(true);
+  });
+
+  it("reports a completed automatic Setup repair only after its provider Turn completes", async () => {
+    const automaticGate = {
+      getAutomaticSetup: vi.fn(() => ({ gate: "blocked" })),
+      admitAutomaticTurn: vi.fn(),
+    } as unknown as WorkspaceEnvironmentService;
+    const { service, providerEmitter, messageRepo } = buildService(
+      process.cwd(),
+      new ThreadControlMutationReservationService(),
+      automaticGate,
+      { mode: "worktree", worktree_managed: true, worktree_path: process.cwd() },
+    );
+    service.init();
+
+    const accepted = await service.dispatchAutomaticSetupRepairTurn({
+      repairId: "repair-message-1",
+      prompt: "Repair the failed Project Setup.",
+      checkoutPath: process.cwd(),
+      queuedTurn: {
+        threadId: THREAD_ID,
+        messageId: "queued-message",
+        content: "Queued work",
+        displayContent: "Queued work",
+        model: "claude-sonnet-4-6",
+        permissionMode: "default",
+        attachments: [],
+        persistedAttachments: [],
+        mentions: [],
+        provider: "claude",
+      },
+    });
+    expect(automaticGate.admitAutomaticTurn).not.toHaveBeenCalled();
+    const executionId = activeExecutionId(service);
+    let completion: string | null = null;
+    void accepted.completion.then((outcome) => { completion = outcome; });
+    await Promise.resolve();
+    expect(completion).toBeNull();
+
+    providerEmitter.emit("event", {
+      type: AgentEventType.TurnComplete,
+      threadId: THREAD_ID,
+      turnExecutionId: executionId,
+      reason: "end_turn",
+      costUsd: null,
+      tokensIn: 0,
+      tokensOut: 0,
+      providerId: "claude",
+    } satisfies AgentEvent);
+
+    await expect(accepted.completion).resolves.toBe("completed");
+    expect(messageRepo.create).toHaveBeenCalledWith(
+      THREAD_ID,
+      "user",
+      "Repair the failed Project Setup.",
+      expect.any(Number),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      true,
+      undefined,
+      undefined,
+      undefined,
+      "repair-message-1",
+    );
+  });
+
+  it("reports a cancelled automatic Setup repair without treating it as completed", async () => {
+    const { service } = buildService();
+    const accepted = await service.dispatchAutomaticSetupRepairTurn({
+      repairId: "repair-message-1",
+      prompt: "Repair the failed Project Setup.",
+      checkoutPath: process.cwd(),
+      queuedTurn: {
+        threadId: THREAD_ID,
+        messageId: "queued-message",
+        content: "Queued work",
+        displayContent: "Queued work",
+        model: "claude-sonnet-4-6",
+        permissionMode: "default",
+        attachments: [],
+        persistedAttachments: [],
+        mentions: [],
+        provider: "claude",
+      },
+    });
+
+    await expect(service.stopSession(THREAD_ID)).resolves.toMatchObject({ status: "cancelled" });
+    await expect(accepted.completion).resolves.toBe("cancelled");
   });
 
   it("releases a stopped queued dispatch so the next FIFO Turn can reserve the active slot", async () => {

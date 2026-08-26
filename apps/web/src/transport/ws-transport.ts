@@ -708,6 +708,11 @@ export function createWsTransport(
         "workspace.environment.automaticSetup.retry",
         { threadId },
       ),
+    repairAutomaticSetup: (threadId) =>
+      rpc<import("@mcode/contracts").WorkspaceEnvironmentAutomaticSetupSnapshot>(
+        "workspace.environment.automaticSetup.repair",
+        { threadId },
+      ),
     openAutomaticSetupTerminal: (threadId) =>
       rpc<import("@mcode/contracts").WorkspaceEnvironmentAutomaticSetupTerminal>(
         "workspace.environment.automaticSetup.openTerminal",

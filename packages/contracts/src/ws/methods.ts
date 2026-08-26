@@ -17,6 +17,7 @@ import {
   WorkspaceEnvironmentQueuedTurnCancelInputSchema,
   WorkspaceEnvironmentAutomaticSetupStopInputSchema,
   WorkspaceEnvironmentAutomaticSetupRetryInputSchema,
+  WorkspaceEnvironmentAutomaticSetupRepairInputSchema,
   WorkspaceEnvironmentAutomaticSetupTerminalInputSchema,
   WorkspaceEnvironmentAutomaticSetupTerminalSchema,
   WorkspaceEnvironmentActionGetResultSchema,
@@ -42,6 +43,7 @@ import type {
   WorkspaceEnvironmentQueuedTurnCancelInput,
   WorkspaceEnvironmentAutomaticSetupStopInput,
   WorkspaceEnvironmentAutomaticSetupRetryInput,
+  WorkspaceEnvironmentAutomaticSetupRepairInput,
   WorkspaceEnvironmentAutomaticSetupTerminalInput,
   WorkspaceEnvironmentAutomaticSetupTerminal,
   WorkspaceEnvironmentActionGetResult,
@@ -500,6 +502,7 @@ type WorkspaceEnvironmentSetupWsMethodName =
   | "workspace.environment.automaticSetup.cancelQueuedTurn"
   | "workspace.environment.automaticSetup.stop"
   | "workspace.environment.automaticSetup.retry"
+  | "workspace.environment.automaticSetup.repair"
   | "workspace.environment.automaticSetup.openTerminal";
 
 const workspaceEnvironmentSetupMethods = (): Record<
@@ -544,6 +547,10 @@ const workspaceEnvironmentSetupMethods = (): Record<
   },
   "workspace.environment.automaticSetup.retry": {
     params: WorkspaceEnvironmentAutomaticSetupRetryInputSchema() as z.ZodType<WorkspaceEnvironmentAutomaticSetupRetryInput>,
+    result: WorkspaceEnvironmentAutomaticSetupSnapshotSchema() as z.ZodType<WorkspaceEnvironmentAutomaticSetupSnapshot>,
+  },
+  "workspace.environment.automaticSetup.repair": {
+    params: WorkspaceEnvironmentAutomaticSetupRepairInputSchema() as z.ZodType<WorkspaceEnvironmentAutomaticSetupRepairInput>,
     result: WorkspaceEnvironmentAutomaticSetupSnapshotSchema() as z.ZodType<WorkspaceEnvironmentAutomaticSetupSnapshot>,
   },
   "workspace.environment.automaticSetup.openTerminal": {

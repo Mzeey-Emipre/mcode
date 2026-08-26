@@ -11,6 +11,8 @@ import {
   WorkspaceEnvironmentQueuedTurnCancelInputSchema,
   WorkspaceEnvironmentAutomaticSetupStopInputSchema,
   WorkspaceEnvironmentAutomaticSetupRetryInputSchema,
+  WorkspaceEnvironmentAutomaticSetupRepairInputSchema,
+  WorkspaceEnvironmentAutomaticSetupRepairSchema,
   WorkspaceEnvironmentAutomaticSetupTerminalInputSchema,
   WorkspaceEnvironmentAutomaticSetupTerminalSchema,
   workspaceEnvironmentValidationIssues,
@@ -289,7 +291,26 @@ describe("workspace environment contracts", () => {
     expect(WorkspaceEnvironmentQueuedTurnCancelInputSchema().safeParse({ threadId: "thread-1", queuedTurnId: "queued-1", extra: true }).success).toBe(false);
     expect(WorkspaceEnvironmentAutomaticSetupStopInputSchema().safeParse({ threadId: "" }).success).toBe(false);
     expect(WorkspaceEnvironmentAutomaticSetupRetryInputSchema().safeParse({ threadId: "thread-1", extra: true }).success).toBe(false);
+    expect(WorkspaceEnvironmentAutomaticSetupRepairInputSchema().parse({ threadId: "thread-1" })).toEqual({ threadId: "thread-1" });
+    expect(WorkspaceEnvironmentAutomaticSetupRepairInputSchema().safeParse({ threadId: "thread-1", extra: true }).success).toBe(false);
     expect(WorkspaceEnvironmentAutomaticSetupTerminalInputSchema().parse({ threadId: "thread-1" })).toEqual({ threadId: "thread-1" });
     expect(WorkspaceEnvironmentAutomaticSetupTerminalSchema().safeParse({ ptyId: "pty-1", shell: "pwsh", extra: true }).success).toBe(false);
+  });
+
+  it("requires an active repair to remain unfinished", () => {
+    expect(WorkspaceEnvironmentAutomaticSetupRepairSchema().parse({
+      id: "repair-1",
+      failedAttemptId: "attempt-1",
+      state: "repairing",
+      createdAt: "2026-08-24T12:00:00.000Z",
+      finishedAt: null,
+    })).toMatchObject({ state: "repairing", finishedAt: null });
+    expect(WorkspaceEnvironmentAutomaticSetupRepairSchema().safeParse({
+      id: "repair-1",
+      failedAttemptId: "attempt-1",
+      state: "repairing",
+      createdAt: "2026-08-24T12:00:00.000Z",
+      finishedAt: "2026-08-24T12:00:01.000Z",
+    }).success).toBe(false);
   });
 });

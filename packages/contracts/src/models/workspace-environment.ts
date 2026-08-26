@@ -172,6 +172,7 @@ export const WorkspaceEnvironmentSetupLaunchSnapshotSchema = lazySchema(() =>
   z.object({
     platform: WorkspaceEnvironmentPlatformSchema,
     script: scriptSchema.nullable(),
+    sourceRevision: z.string().max(4096).nullable().optional(),
     checkoutPath: z.string().min(1).max(32 * 1024).nullable(),
     terminal: z.object({
       executable: TerminalExecutableSchema(),
@@ -527,12 +528,47 @@ export type WorkspaceEnvironmentQueuedTurn = z.infer<
   ReturnType<typeof WorkspaceEnvironmentQueuedTurnSchema>
 >;
 
+/** Durable state for one agent repair requested after automatic Setup fails. */
+export const WorkspaceEnvironmentAutomaticSetupRepairStateSchema = z.enum([
+  "repairing",
+  "rerunning",
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+]);
+export type WorkspaceEnvironmentAutomaticSetupRepairState = z.infer<
+  typeof WorkspaceEnvironmentAutomaticSetupRepairStateSchema
+>;
+
+/** Reconnect-authoritative state for one automatic Setup repair cycle. */
+export const WorkspaceEnvironmentAutomaticSetupRepairSchema = lazySchema(() =>
+  z.object({
+    id: z.string().min(1).max(256),
+    failedAttemptId: z.string().min(1).max(256),
+    state: WorkspaceEnvironmentAutomaticSetupRepairStateSchema,
+    createdAt: z.string().datetime(),
+    finishedAt: z.string().datetime().nullable(),
+  }).strict().superRefine((repair, ctx) => {
+    if ((repair.state === "repairing" || repair.state === "rerunning") && repair.finishedAt !== null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Active automatic Setup repairs cannot have a finish time" });
+    }
+    if ((repair.state === "completed" || repair.state === "failed" || repair.state === "cancelled" || repair.state === "interrupted") && repair.finishedAt === null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Finished automatic Setup repairs require a finish time" });
+    }
+  }),
+);
+export type WorkspaceEnvironmentAutomaticSetupRepair = z.infer<
+  ReturnType<typeof WorkspaceEnvironmentAutomaticSetupRepairSchema>
+>;
+
 /** Reconnect-authoritative snapshot of the automatic Setup lifecycle for one Thread. */
 export const WorkspaceEnvironmentAutomaticSetupSnapshotSchema = lazySchema(() =>
   z.object({
     gate: WorkspaceEnvironmentSetupGateStateSchema,
     attempt: WorkspaceEnvironmentAutomaticSetupAttemptSchema().nullable(),
     queuedTurns: z.array(WorkspaceEnvironmentQueuedTurnSchema()),
+    repair: WorkspaceEnvironmentAutomaticSetupRepairSchema().nullable().optional(),
   }).strict(),
 );
 export type WorkspaceEnvironmentAutomaticSetupSnapshot = z.infer<
@@ -580,6 +616,14 @@ export const WorkspaceEnvironmentAutomaticSetupRetryInputSchema = lazySchema(() 
 );
 export type WorkspaceEnvironmentAutomaticSetupRetryInput = z.infer<
   ReturnType<typeof WorkspaceEnvironmentAutomaticSetupRetryInputSchema>
+>;
+
+/** Request one provider repair Turn for the current failed automatic Setup attempt. */
+export const WorkspaceEnvironmentAutomaticSetupRepairInputSchema = lazySchema(() =>
+  z.object({ threadId: z.string().min(1).max(256) }).strict(),
+);
+export type WorkspaceEnvironmentAutomaticSetupRepairInput = z.infer<
+  ReturnType<typeof WorkspaceEnvironmentAutomaticSetupRepairInputSchema>
 >;
 
 /** Request to open one interactive recovery Terminal for a managed Thread. */

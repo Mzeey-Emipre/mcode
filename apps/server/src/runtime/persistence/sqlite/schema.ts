@@ -379,6 +379,26 @@ export const workspaceEnvironmentQueuedTurns = sqliteTable(
   ],
 );
 
+/** Durable agent repair cycles for failed automatic Project Setup attempts. */
+export const workspaceEnvironmentAutomaticSetupRepairs = sqliteTable(
+  "workspace_environment_automatic_setup_repairs",
+  {
+    id: text("id").primaryKey().notNull(),
+    threadId: text("thread_id").notNull().references(() => threads.id, { onDelete: "cascade" }),
+    failedAttemptId: text("failed_attempt_id").notNull(),
+    state: text("state").notNull(),
+    failureContextJson: text("failure_context_json").notNull(),
+    submissionJson: text("submission_json").notNull(),
+    rerunAttemptId: text("rerun_attempt_id"),
+    createdAt: text("created_at").notNull().default(timestampDefault),
+    finishedAt: text("finished_at"),
+  },
+  (table) => [
+    uniqueIndex("idx_workspace_environment_automatic_setup_repairs_failed_attempt").on(table.failedAttemptId),
+    index("idx_workspace_environment_automatic_setup_repairs_thread").on(table.threadId, desc(table.createdAt)),
+  ],
+);
+
 /** System-local storage choice for one Project environment document. */
 export const workspaceEnvironmentStorageSettings = sqliteTable("workspace_environment_storage_settings", {
   workspaceId: text("workspace_id").primaryKey().notNull().references(() => workspaces.id, { onDelete: "cascade" }),

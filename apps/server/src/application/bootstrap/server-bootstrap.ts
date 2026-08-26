@@ -275,6 +275,7 @@ const threadService = container.resolve(ThreadService);
 const agentService = container.resolve(AgentService);
 workspaceEnvironmentService.setAutomaticSetupDispatcher({
   dispatch: (submission) => agentService.dispatchQueuedAutomaticTurn(submission),
+  dispatchRepair: (submission) => agentService.dispatchAutomaticSetupRepairTurn(submission),
 });
 const agentPermissionService = container.resolve(AgentPermissionService);
 const turnRecoveryService = container.resolve(TurnRecoveryService);

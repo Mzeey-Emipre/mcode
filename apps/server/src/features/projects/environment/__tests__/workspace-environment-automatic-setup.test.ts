@@ -69,7 +69,8 @@ async function automaticHarness({ setup = true, prepareFailure = false, attachme
   const service = new WorkspaceEnvironmentService({
     mcodeDir: root,
     database: db,
-    threads: { findById: (id) => id === "thread-1" ? { id, workspace_id: "workspace-1", mode: "worktree", worktree_managed: true } : null },
+    workspaces: { findById: (id) => id === "workspace-1" ? { id, path: root } : null },
+    threads: { findById: (id) => id === "thread-1" ? { id, workspace_id: "workspace-1", mode: "worktree", worktree_managed: true, worktree_path: root } : null },
     terminalCommands,
     terminalRecovery,
     attachmentStorage,
@@ -725,6 +726,190 @@ describe("automatic Project Setup", () => {
     expect(JSON.parse(attempts.find((attempt) => attempt.id === retried.attempt?.id)!.launch_snapshot_json!).script).toBe("bun run setup --fresh");
   });
 
+  it("runs one completed repair with the blocked Turn identity, then queues one rerun", async () => {
+    const { db, service, completion, prepare, start } = await automaticHarness();
+    const repairCompletion = deferred<"completed">();
+    const dispatchRepair = vi.fn(async () => ({ completion: repairCompletion.promise }));
+    service.setAutomaticSetupDispatcher({ dispatch: vi.fn(), dispatchRepair });
+    service.queueAutomaticFirstTurn(queuedInput());
+    await eventually(() => expect(start).toHaveBeenCalledOnce());
+    completion.resolve({ kind: "exited", exitCode: 1, output: "missing generated file", outputTruncated: false });
+    await eventually(() => expect(service.getAutomaticSetup({ threadId: "thread-1" }).attempt?.state).toBe("failed"));
+    const failedAttemptId = service.getAutomaticSetup({ threadId: "thread-1" }).attempt!.id;
+
+    await service.repairAutomaticSetup({ threadId: "thread-1" });
+
+    expect(dispatchRepair).toHaveBeenCalledOnce();
+    expect(dispatchRepair).toHaveBeenCalledWith(expect.objectContaining({
+      repairId: expect.any(String),
+      queuedTurn: expect.objectContaining({
+        threadId: "thread-1",
+        provider: "claude",
+        model: "claude-sonnet-4-6",
+        permissionMode: "default",
+      }),
+    }));
+    expect(dispatchRepair.mock.calls[0]![0].prompt).toContain(`Setup attempt: ${failedAttemptId}`);
+    expect(dispatchRepair.mock.calls[0]![0].prompt).toContain("Exit code: 1");
+    expect(dispatchRepair.mock.calls[0]![0].prompt).toContain("missing generated file");
+    await expect(service.continueAutomaticSetup({ threadId: "thread-1" })).rejects.toMatchObject({
+      code: "WORKSPACE_ENVIRONMENT_SETUP_UNAVAILABLE",
+    });
+    await expect(service.retryAutomaticSetup({ threadId: "thread-1" })).rejects.toMatchObject({
+      code: "WORKSPACE_ENVIRONMENT_SETUP_UNAVAILABLE",
+    });
+    await expect(service.repairAutomaticSetup({ threadId: "thread-1" })).rejects.toMatchObject({
+      code: "WORKSPACE_ENVIRONMENT_SETUP_UNAVAILABLE",
+    });
+
+    repairCompletion.resolve("completed");
+    await eventually(() => expect(prepare).toHaveBeenCalledTimes(2));
+    await eventually(() => expect(service.getAutomaticSetup({ threadId: "thread-1" }).repair).toMatchObject({
+      failedAttemptId,
+      state: "completed",
+    }));
+    expect(db.prepare("SELECT COUNT(*) AS count FROM workspace_environment_automatic_setup_attempts WHERE thread_id = ?").get("thread-1")).toEqual({ count: 2 });
+    const repairRow = db.prepare("SELECT failure_context_json, submission_json FROM workspace_environment_automatic_setup_repairs WHERE failed_attempt_id = ?")
+      .get(failedAttemptId) as { failure_context_json: string; submission_json: string };
+    expect(JSON.parse(repairRow.failure_context_json)).toMatchObject({
+      attemptId: failedAttemptId,
+      output: "missing generated file",
+      exitCode: 1,
+    });
+    expect(JSON.parse(repairRow.submission_json)).toMatchObject({
+      provider: "claude",
+      model: "claude-sonnet-4-6",
+      permissionMode: "default",
+    });
+  });
+
+  it("completes the repair when its rerun finds Setup removed", async () => {
+    const { service, completion, start } = await automaticHarness();
+    const repairCompletion = deferred<"completed">();
+    const dispatch = vi.fn().mockResolvedValue({ completion: Promise.resolve() });
+    service.setAutomaticSetupDispatcher({
+      dispatch,
+      dispatchRepair: vi.fn(async () => ({ completion: repairCompletion.promise })),
+    });
+    service.queueAutomaticFirstTurn(queuedInput());
+    await eventually(() => expect(start).toHaveBeenCalledOnce());
+    completion.resolve({ kind: "exited", exitCode: 1, output: "failed", outputTruncated: false });
+    await eventually(() => expect(service.getAutomaticSetup({ threadId: "thread-1" }).attempt?.state).toBe("failed"));
+
+    await service.repairAutomaticSetup({ threadId: "thread-1" });
+    const current = await service.read("workspace-1");
+    await service.save({
+      workspaceId: "workspace-1",
+      sourceRevision: current.revision,
+      document: { version: "0.0.1", actions: [] },
+    });
+    repairCompletion.resolve("completed");
+
+    await eventually(() => expect(service.getAutomaticSetup({ threadId: "thread-1" })).toMatchObject({
+      gate: "not-required",
+      repair: { state: "completed" },
+    }));
+    await eventually(() => expect(dispatch).toHaveBeenCalledOnce());
+  });
+
+  it("does not rerun Setup after a failed repair", async () => {
+    const { service, completion, prepare, start } = await automaticHarness();
+    const repairCompletion = deferred<"failed">();
+    service.setAutomaticSetupDispatcher({
+      dispatch: vi.fn(),
+      dispatchRepair: vi.fn(async () => ({ completion: repairCompletion.promise })),
+    });
+    service.queueAutomaticFirstTurn(queuedInput());
+    await eventually(() => expect(start).toHaveBeenCalledOnce());
+    completion.resolve({ kind: "exited", exitCode: 1, output: "failed", outputTruncated: false });
+    await eventually(() => expect(service.getAutomaticSetup({ threadId: "thread-1" }).attempt?.state).toBe("failed"));
+
+    await service.repairAutomaticSetup({ threadId: "thread-1" });
+    repairCompletion.resolve("failed");
+
+    await eventually(() => expect(service.getAutomaticSetup({ threadId: "thread-1" }).repair?.state).toBe("failed"));
+    expect(prepare).toHaveBeenCalledOnce();
+    expect(service.getAutomaticSetup({ threadId: "thread-1" }).attempt?.state).toBe("failed");
+  });
+
+  it("rechecks approval when a completed repair reruns a changed shared Setup command", async () => {
+    const { service, completion, start } = await automaticHarness();
+    const repairCompletion = deferred<"completed">();
+    service.setAutomaticSetupDispatcher({
+      dispatch: vi.fn(),
+      dispatchRepair: vi.fn(async () => ({ completion: repairCompletion.promise })),
+    });
+    await service.setStorageMode({ workspaceId: "workspace-1", threadId: "thread-1", storageMode: "shared" });
+    const configured = await service.save({
+      workspaceId: "workspace-1",
+      threadId: "thread-1",
+      sourceRevision: null,
+      document: { version: "0.0.1", setup: { linux: "bun run setup" }, actions: [] },
+    });
+    service.queueAutomaticFirstTurn(queuedInput());
+    await eventually(() => expect(service.getAutomaticSetup({ threadId: "thread-1" }).attempt?.state).toBe("awaiting-approval"));
+    const firstApproval = service.getAutomaticSetup({ threadId: "thread-1" }).attempt?.snapshot?.approval;
+    if (!firstApproval) throw new Error("Expected shared Setup approval");
+    await service.approveCommand({ threadId: "thread-1", ...firstApproval });
+    await eventually(() => expect(start).toHaveBeenCalledOnce());
+    completion.resolve({ kind: "exited", exitCode: 1, output: "failed", outputTruncated: false });
+    await eventually(() => expect(service.getAutomaticSetup({ threadId: "thread-1" }).attempt?.state).toBe("failed"));
+    await service.save({
+      workspaceId: "workspace-1",
+      threadId: "thread-1",
+      sourceRevision: configured.revision,
+      document: { version: "0.0.1", setup: { linux: "bun run setup --fresh" }, actions: [] },
+    });
+
+    await service.repairAutomaticSetup({ threadId: "thread-1" });
+    repairCompletion.resolve("completed");
+
+    await eventually(() => expect(service.getAutomaticSetup({ threadId: "thread-1" }).attempt?.state).toBe("awaiting-approval"));
+    const rerun = service.getAutomaticSetup({ threadId: "thread-1" }).attempt!;
+    expect(rerun.snapshot?.script).toBe("bun run setup --fresh");
+    expect(rerun.snapshot?.approval?.fingerprint).not.toBe(firstApproval.fingerprint);
+    expect(start).toHaveBeenCalledOnce();
+  });
+
+  it("interrupts a repair rerun when its unstarted command cannot be contained", async () => {
+    const { service, completion, start, close } = await automaticHarness();
+    const repairCompletion = deferred<"completed">();
+    service.setAutomaticSetupDispatcher({
+      dispatch: vi.fn(),
+      dispatchRepair: vi.fn(async () => ({ completion: repairCompletion.promise })),
+    });
+    await service.setStorageMode({ workspaceId: "workspace-1", threadId: "thread-1", storageMode: "shared" });
+    const configured = await service.save({
+      workspaceId: "workspace-1",
+      threadId: "thread-1",
+      sourceRevision: null,
+      document: { version: "0.0.1", setup: { linux: "bun run setup" }, actions: [] },
+    });
+    service.queueAutomaticFirstTurn(queuedInput());
+    await eventually(() => expect(service.getAutomaticSetup({ threadId: "thread-1" }).attempt?.state).toBe("awaiting-approval"));
+    const approval = service.getAutomaticSetup({ threadId: "thread-1" }).attempt?.snapshot?.approval;
+    if (!approval) throw new Error("Expected shared Setup approval");
+    await service.approveCommand({ threadId: "thread-1", ...approval });
+    await eventually(() => expect(start).toHaveBeenCalledOnce());
+    completion.resolve({ kind: "exited", exitCode: 1, output: "failed", outputTruncated: false });
+    await eventually(() => expect(service.getAutomaticSetup({ threadId: "thread-1" }).attempt?.state).toBe("failed"));
+    await service.save({
+      workspaceId: "workspace-1",
+      threadId: "thread-1",
+      sourceRevision: configured.revision,
+      document: { version: "0.0.1", setup: { linux: "bun run setup --fresh" }, actions: [] },
+    });
+    close.mockResolvedValueOnce({ kind: "containment_failure" });
+
+    await service.repairAutomaticSetup({ threadId: "thread-1" });
+    repairCompletion.resolve("completed");
+
+    await eventually(() => expect(service.getAutomaticSetup({ threadId: "thread-1" })).toMatchObject({
+      attempt: { state: "interrupted" },
+      repair: { state: "completed" },
+    }));
+  });
+
   it("waits for Stop to close the prior automatic Setup command before Retry prepares another", async () => {
     const { service, close, prepare, start } = await automaticHarness();
     const closeCompletion = deferred<{ readonly kind: "contained" }>();
@@ -764,6 +949,8 @@ describe("automatic Project Setup", () => {
 
   it("blocks Retry after completion containment failure until the command release proves ownership ended", async () => {
     const { service, completion, prepare, start } = await automaticHarness();
+    const dispatchRepair = vi.fn().mockResolvedValue({ completion: Promise.resolve("completed") });
+    service.setAutomaticSetupDispatcher({ dispatch: vi.fn(), dispatchRepair });
     const released = deferred<void>();
     prepare.mockImplementationOnce(async () => ({
       kind: "ready" as const,
@@ -783,6 +970,10 @@ describe("automatic Project Setup", () => {
     await expect(service.retryAutomaticSetup({ threadId: "thread-1" })).rejects.toMatchObject({
       code: "WORKSPACE_ENVIRONMENT_SETUP_UNAVAILABLE",
     });
+    await expect(service.repairAutomaticSetup({ threadId: "thread-1" })).rejects.toMatchObject({
+      code: "WORKSPACE_ENVIRONMENT_SETUP_UNAVAILABLE",
+    });
+    expect(dispatchRepair).not.toHaveBeenCalled();
     expect(prepare).toHaveBeenCalledOnce();
 
     released.resolve();

@@ -14,7 +14,7 @@ import { useThreadStore } from "@/stores/threadStore";
 import { useTerminalStore } from "@/features/terminal/state/terminalStore";
 import { ProjectCommandApprovalDialog } from "./ProjectCommandApprovalDialog";
 
-type AutomaticSetupBusyAction = "approve" | "continue" | "cancel" | "stop" | "retry" | "terminal";
+type AutomaticSetupBusyAction = "approve" | "continue" | "cancel" | "stop" | "retry" | "repair" | "terminal";
 
 /** Read and mutate the reconnect-authoritative automatic Setup lifecycle for one Thread. */
 export function useProjectAutomaticSetup(threadId: string, workspaceId: string): {
@@ -25,6 +25,7 @@ export function useProjectAutomaticSetup(threadId: string, workspaceId: string):
   readonly cancelQueuedTurn: (queuedTurnId: string) => Promise<void>;
   readonly stopSetup: () => Promise<void>;
   readonly retrySetup: () => Promise<void>;
+  readonly repairSetup: () => Promise<void>;
   readonly approveSetup: () => Promise<void>;
   readonly openRecoveryTerminal: () => Promise<void>;
 } {
@@ -32,6 +33,7 @@ export function useProjectAutomaticSetup(threadId: string, workspaceId: string):
     gate: "not-required",
     attempt: null,
     queuedTurns: [],
+    repair: null,
   });
   const [busy, setBusy] = useState<AutomaticSetupBusyAction | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -50,7 +52,7 @@ export function useProjectAutomaticSetup(threadId: string, workspaceId: string):
   }, [threadId]);
 
   useEffect(() => {
-    setSnapshot({ gate: "not-required", attempt: null, queuedTurns: [] });
+    setSnapshot({ gate: "not-required", attempt: null, queuedTurns: [], repair: null });
     setBusy(null);
     setError(null);
     void refresh();
@@ -58,13 +60,14 @@ export function useProjectAutomaticSetup(threadId: string, workspaceId: string):
 
   useEffect(() => {
     const awaitingSetup = snapshot.attempt?.state === "queued" || snapshot.attempt?.state === "running";
+    const awaitingRepair = snapshot.repair?.state === "repairing" || snapshot.repair?.state === "rerunning";
     const awaitingDispatch = snapshot.queuedTurns.some((queuedTurn) =>
       queuedTurn.state === "released" || queuedTurn.state === "dispatching",
     );
-    if (!awaitingSetup && !awaitingDispatch) return;
+    if (!awaitingSetup && !awaitingRepair && !awaitingDispatch) return;
     const interval = window.setInterval(() => { void refresh(); }, 1_000);
     return () => window.clearInterval(interval);
-  }, [refresh, snapshot.attempt?.state, snapshot.queuedTurns]);
+  }, [refresh, snapshot.attempt?.state, snapshot.repair?.state, snapshot.queuedTurns]);
 
   const run = useCallback(async (
     action: AutomaticSetupBusyAction,
@@ -126,6 +129,14 @@ export function useProjectAutomaticSetup(threadId: string, workspaceId: string):
     );
   }, [run, threadId]);
 
+  const repairSetup = useCallback(async () => {
+    await run(
+      "repair",
+      () => getTransport().repairAutomaticSetup(threadId),
+      "Could not start automatic Setup repair",
+    );
+  }, [run, threadId]);
+
   const approveSetup = useCallback(async () => {
     const approval = snapshot.attempt?.snapshot?.approval;
     if (!approval || busy) return;
@@ -167,6 +178,7 @@ export function useProjectAutomaticSetup(threadId: string, workspaceId: string):
     cancelQueuedTurn,
     stopSetup,
     retrySetup,
+    repairSetup,
     approveSetup,
     openRecoveryTerminal,
   };
@@ -190,6 +202,7 @@ export function ProjectAutomaticSetupThreadBlock({
       onCancel={automaticSetup.cancelQueuedTurn}
       onStop={automaticSetup.stopSetup}
       onRetry={automaticSetup.retrySetup}
+      onRepair={automaticSetup.repairSetup}
       onApprove={automaticSetup.approveSetup}
       onOpenTerminal={automaticSetup.openRecoveryTerminal}
     />
@@ -205,6 +218,7 @@ export function ProjectAutomaticSetupCard({
   onCancel,
   onStop,
   onRetry,
+  onRepair,
   onApprove,
   onOpenTerminal,
 }: {
@@ -215,6 +229,7 @@ export function ProjectAutomaticSetupCard({
   readonly onCancel: (queuedTurnId: string) => Promise<void>;
   readonly onStop: () => Promise<void>;
   readonly onRetry: () => Promise<void>;
+  readonly onRepair: () => Promise<void>;
   readonly onApprove?: () => Promise<void>;
   readonly onOpenTerminal: () => Promise<void>;
 }) {
@@ -232,6 +247,9 @@ export function ProjectAutomaticSetupCard({
   const status = automaticSetupStatus(snapshot);
   const canRecover = snapshot.gate === "blocked" &&
     (snapshot.attempt?.state === "failed" || snapshot.attempt?.state === "interrupted");
+  const repairInProgress = snapshot.repair?.state === "repairing" || snapshot.repair?.state === "rerunning";
+  const repairAlreadyUsed = snapshot.repair?.failedAttemptId === snapshot.attempt?.id;
+  const canRepair = canRecover && snapshot.attempt?.state === "failed" && !repairInProgress && !repairAlreadyUsed;
   const canStop = snapshot.gate === "blocked" &&
     (snapshot.attempt?.state === "queued" || snapshot.attempt?.state === "running");
   return (
@@ -249,7 +267,7 @@ export function ProjectAutomaticSetupCard({
           >
             <span className="flex min-w-0 items-center gap-2">
               <span className="font-medium text-foreground">Automatic Setup</span>
-              <AutomaticSetupIcon state={snapshot.attempt?.state ?? "queued"} />
+              <AutomaticSetupIcon state={repairInProgress ? "running" : snapshot.attempt?.state ?? "queued"} />
               <span className="truncate text-muted-foreground">{status.label}</span>
             </span>
             <ChevronDown size={14} aria-hidden className={cn("shrink-0 transition-transform duration-150 motion-reduce:transition-none", open && "rotate-180")} />
@@ -276,17 +294,17 @@ export function ProjectAutomaticSetupCard({
               </>
             ) : null}
             {error ? <p role="alert" className="mt-2 text-xs text-destructive">{error}</p> : null}
-            {canRecover ? (
+            {canRecover && !repairInProgress ? (
               <div className="mt-2 inline-flex rounded-md shadow-xs">
                 <Button
                   type="button"
                   size="sm"
                   disabled={busy !== null}
                   className="rounded-r-none"
-                  onClick={() => { void onRetry(); }}
+                  onClick={() => { void (canRepair ? onRepair() : onRetry()); }}
                 >
-                  {busy === "retry" ? <Spinner size={13} aria-hidden /> : null}
-                  Retry setup
+                  {busy === "repair" || busy === "retry" ? <Spinner size={13} aria-hidden /> : null}
+                  {canRepair ? "Fix with agent" : "Retry setup"}
                 </Button>
                 <DropdownMenu>
                   <DropdownMenuTrigger
@@ -304,6 +322,11 @@ export function ProjectAutomaticSetupCard({
                     }
                   />
                   <DropdownMenuContent align="end">
+                    {canRepair ? (
+                      <DropdownMenuItem disabled={busy !== null} onClick={() => { void onRetry(); }}>
+                        Retry setup
+                      </DropdownMenuItem>
+                    ) : null}
                     <DropdownMenuItem disabled={busy !== null} onClick={() => { void onOpenTerminal(); }}>
                       <Terminal size={14} aria-hidden />
                       Open terminal
@@ -400,10 +423,12 @@ function automaticSetupStatus(snapshot: WorkspaceEnvironmentAutomaticSetupSnapsh
   if (snapshot.gate === "released-by-continue") return { label: "Continued", detail: "Queued Turns were released without recording that Setup passed." };
   if (snapshot.queuedTurns.length > 0 && snapshot.queuedTurns.every((queuedTurn) => queuedTurn.state === "dispatched")) return { label: "Turns dispatched", detail: "Queued Turns were dispatched after the gate released." };
   if (snapshot.gate === "released-by-pass") return { label: "Setup passed", detail: "Setup passed. Queued Turns were released." };
+  if (snapshot.attempt?.state === "awaiting-approval") return { label: "Approval required", detail: "Review and approve the exact shared Setup command before queued Turns can continue." };
+  if (snapshot.repair?.state === "repairing") return { label: "Repairing Setup", detail: "A repair Turn is running before Setup reruns." };
+  if (snapshot.repair?.state === "rerunning") return { label: "Rerunning Setup", detail: "The repair Turn completed. Setup is running again." };
   if (snapshot.attempt?.state === "failed") return { label: "Setup failed", detail: `${queuedCount} queued ${queuedCount === 1 ? "Turn remains" : "Turns remain"} blocked until you retry, continue, or cancel.` };
   if (snapshot.attempt?.state === "interrupted") return { label: "Setup interrupted", detail: `${queuedCount} queued ${queuedCount === 1 ? "Turn remains" : "Turns remain"} blocked until you retry, continue, or cancel.` };
   if (snapshot.attempt?.state === "running") return { label: "Setup running", detail: `${queuedCount} queued ${queuedCount === 1 ? "Turn is" : "Turns are"} waiting for Setup.` };
-  if (snapshot.attempt?.state === "awaiting-approval") return { label: "Approval required", detail: "Review and approve the exact shared Setup command before queued Turns can continue." };
   return { label: "Waiting for Setup", detail: `${queuedCount} queued ${queuedCount === 1 ? "Turn is" : "Turns are"} waiting for Setup.` };
 }
 

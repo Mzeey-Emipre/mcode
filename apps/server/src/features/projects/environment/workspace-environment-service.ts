@@ -28,6 +28,7 @@ import {
   type WorkspaceEnvironmentAutomaticSetupSnapshot,
   type WorkspaceEnvironmentAutomaticSetupStopInput,
   type WorkspaceEnvironmentAutomaticSetupRetryInput,
+  type WorkspaceEnvironmentAutomaticSetupRepairInput,
   type WorkspaceEnvironmentAutomaticSetupTerminalInput,
   type WorkspaceEnvironmentAutomaticSetupTerminal,
   type StoredAttachment,
@@ -51,6 +52,7 @@ import {
   WorkspaceEnvironmentAutomaticQueueCapacityError,
   type WorkspaceEnvironmentQueuedTurnSubmission,
   type WorkspaceEnvironmentQueueAdmission,
+  type WorkspaceEnvironmentClaimedAutomaticRepair,
 } from "./workspace-environment-automatic-repository.js";
 
 export { WorkspaceEnvironmentServiceError } from "./workspace-environment-errors.js";
@@ -125,9 +127,26 @@ export interface WorkspaceEnvironmentAutomaticSetupDispatch {
   readonly completion: Promise<void>;
 }
 
+/** Terminal provider result for one automatic Setup repair Turn. */
+export type WorkspaceEnvironmentAutomaticSetupRepairOutcome = "completed" | "failed" | "cancelled" | "interrupted";
+
+/** Accepted repair dispatch whose completion reports the finalized provider Turn outcome. */
+export interface WorkspaceEnvironmentAutomaticSetupRepairDispatch {
+  readonly completion: Promise<WorkspaceEnvironmentAutomaticSetupRepairOutcome>;
+}
+
+/** Immutable repair prompt and execution identity for one failed automatic Setup attempt. */
+export interface WorkspaceEnvironmentAutomaticSetupRepairSubmission {
+  readonly repairId: string;
+  readonly prompt: string;
+  readonly checkoutPath: string | null;
+  readonly queuedTurn: WorkspaceEnvironmentQueuedTurnSubmission;
+}
+
 /** Post-commit boundary that resolves once a claimed queued Turn has started a runtime. */
 export interface WorkspaceEnvironmentAutomaticSetupDispatcher {
   dispatch(submission: WorkspaceEnvironmentQueuedTurnSubmission): Promise<WorkspaceEnvironmentAutomaticSetupDispatch>;
+  dispatchRepair?(submission: WorkspaceEnvironmentAutomaticSetupRepairSubmission): Promise<WorkspaceEnvironmentAutomaticSetupRepairDispatch>;
 }
 
 /** Dependencies that add transient manual Setup execution to environment persistence. */
@@ -299,6 +318,7 @@ export class WorkspaceEnvironmentService {
   async continueAutomaticSetup(input: { readonly threadId: string }): Promise<WorkspaceEnvironmentAutomaticSetupSnapshot> {
     this.requireAutomaticSetupThread(input.threadId);
     const repository = this.requireAutomaticRepository();
+    this.requireAutomaticRepairInactive(input.threadId, repository);
     const current = repository.snapshot(input.threadId);
     if (current.attempt?.state !== "failed" && current.attempt?.state !== "interrupted") {
       throw new WorkspaceEnvironmentServiceError(
@@ -380,12 +400,53 @@ export class WorkspaceEnvironmentService {
         return this.requireAutomaticRepository().snapshot(input.threadId);
       }
       const thread = this.requireAutomaticSetupThread(input.threadId);
+      this.requireAutomaticRepairInactive(input.threadId, this.requireAutomaticRepository());
       this.requireAutomaticResourceReleased(input.threadId);
       if (this.requireAutomaticRepository().retryCurrentAttempt(input.threadId)) {
         await this.startAutomaticSetup(thread);
         this.requireAutomaticSetupThread(input.threadId);
       }
       return this.requireAutomaticRepository().snapshot(input.threadId);
+    });
+  }
+
+  /** Start one provider repair Turn for the current failed automatic Setup attempt. */
+  async repairAutomaticSetup(input: WorkspaceEnvironmentAutomaticSetupRepairInput): Promise<WorkspaceEnvironmentAutomaticSetupSnapshot> {
+    return await this.runAutomaticRecoveryOperation(input.threadId, async () => {
+      const thread = this.requireAutomaticSetupThread(input.threadId);
+      this.requireAutomaticResourceReleased(thread.id);
+      const dispatcher = this.automaticDispatcher;
+      if (!dispatcher?.dispatchRepair) {
+        throw new WorkspaceEnvironmentServiceError(
+          "WORKSPACE_ENVIRONMENT_SETUP_UNAVAILABLE",
+          "Automatic Setup repair is unavailable for this Thread",
+        );
+      }
+      const repository = this.requireAutomaticRepository();
+      const repair = repository.claimRepair({ threadId: thread.id, repairId: this.createAttemptId() });
+      if (!repair) {
+        throw new WorkspaceEnvironmentServiceError(
+          "WORKSPACE_ENVIRONMENT_SETUP_UNAVAILABLE",
+          "Automatic Setup repair requires one current failed Setup attempt",
+        );
+      }
+      let dispatch: WorkspaceEnvironmentAutomaticSetupRepairDispatch;
+      try {
+        dispatch = await dispatcher.dispatchRepair({
+          repairId: repair.id,
+          prompt: automaticRepairPrompt(repair),
+          checkoutPath: repair.failure.snapshot.checkoutPath,
+          queuedTurn: repair.submission,
+        });
+      } catch (error) {
+        repository.finishRepair(repair.id, "failed");
+        throw error;
+      }
+      void dispatch.completion.then(
+        (outcome) => this.completeAutomaticRepair(thread, repair.id, outcome),
+        () => { repository.finishRepair(repair.id, "failed"); },
+      );
+      return repository.snapshot(thread.id);
     });
   }
 
@@ -666,7 +727,7 @@ export class WorkspaceEnvironmentService {
       return {
         kind: preparation.kind,
         output: preparation.output,
-        snapshot: snapshotForPreparation(platform, script, preparation),
+        snapshot: snapshotForPreparation(platform, script, preparation, null, environment.revision),
         action,
       };
     }
@@ -677,7 +738,7 @@ export class WorkspaceEnvironmentService {
       kind: "ready",
       command: preparation.command,
       script,
-      snapshot: snapshotForPreparation(platform, script, preparation, approval),
+      snapshot: snapshotForPreparation(platform, script, preparation, approval, environment.revision),
       approval,
       action,
     };
@@ -960,6 +1021,25 @@ export class WorkspaceEnvironmentService {
     return starting;
   }
 
+  private async completeAutomaticRepair(
+    thread: WorkspaceEnvironmentSetupThread,
+    repairId: string,
+    outcome: WorkspaceEnvironmentAutomaticSetupRepairOutcome,
+  ): Promise<void> {
+    const repository = this.requireAutomaticRepository();
+    if (outcome !== "completed") {
+      repository.finishRepair(repairId, outcome);
+      return;
+    }
+    const rerun = repository.queueRepairRerun(repairId);
+    if (!rerun?.queued) return;
+    try {
+      await this.startAutomaticSetup(thread);
+    } catch {
+      repository.interruptCurrentAttempt(thread.id);
+    }
+  }
+
   private async startAutomaticSetupAttempt(thread: WorkspaceEnvironmentSetupThread): Promise<void> {
     const repository = this.requireAutomaticRepository();
     const snapshot = repository.snapshot(thread.id);
@@ -968,10 +1048,12 @@ export class WorkspaceEnvironmentService {
     const platform = this.options.platform ?? platformForCurrentProcess();
     let script: string | null;
     let storageMode: WorkspaceEnvironmentStorageMode;
+    let sourceRevision: string | null = null;
     try {
       const environment = await this.readForThread(thread);
       script = environment.document.setup ? selectWorkspaceEnvironmentScript(environment.document.setup, platform) : null;
       storageMode = environment.storageMode ?? "system";
+      sourceRevision = environment.revision;
     } catch (error) {
       if (error instanceof WorkspaceEnvironmentServiceError) {
         repository.failQueuedAttempt({
@@ -1033,7 +1115,7 @@ export class WorkspaceEnvironmentService {
         threadId: thread.id,
         attemptId: queuedAttemptId,
         reason: preparation.kind === "unavailable" ? "setup_unavailable" : "setup_configuration_invalid",
-        snapshot: snapshotForPreparation(platform, script, preparation),
+        snapshot: snapshotForPreparation(platform, script, preparation, null, sourceRevision),
         outcome: preparation.kind === "unavailable" ? "unavailable" : "configuration_failure",
       });
       return;
@@ -1052,7 +1134,7 @@ export class WorkspaceEnvironmentService {
       repository.awaitApproval({
         threadId: thread.id,
         attemptId: queuedAttemptId,
-        snapshot: snapshotForPreparation(platform, script, preparation, approval),
+        snapshot: snapshotForPreparation(platform, script, preparation, approval, sourceRevision),
       });
       return;
     }
@@ -1063,7 +1145,7 @@ export class WorkspaceEnvironmentService {
     const attemptId = repository.beginAttempt({
       threadId: thread.id,
       attemptId: queuedAttemptId,
-      snapshot: snapshotForPreparation(platform, script, preparation),
+      snapshot: snapshotForPreparation(platform, script, preparation, null, sourceRevision),
     });
     if (!attemptId) {
       await this.closeUnstartedCommand(preparation.command);
@@ -1274,6 +1356,18 @@ export class WorkspaceEnvironmentService {
       throw new WorkspaceEnvironmentServiceError(
         "WORKSPACE_ENVIRONMENT_SETUP_UNAVAILABLE",
         "Automatic Setup is still waiting for the prior command to release",
+      );
+    }
+  }
+
+  private requireAutomaticRepairInactive(
+    threadId: string,
+    repository: WorkspaceEnvironmentAutomaticRepository,
+  ): void {
+    if (repository.hasActiveRepair(threadId)) {
+      throw new WorkspaceEnvironmentServiceError(
+        "WORKSPACE_ENVIRONMENT_SETUP_UNAVAILABLE",
+        "Automatic Setup recovery is unavailable while its agent repair is active",
       );
     }
   }
@@ -1668,11 +1762,13 @@ function snapshotForPreparation(
   script: string,
   preparation: TerminalCommandPreparation,
   approval: WorkspaceEnvironmentCommandApproval | null = null,
+  sourceRevision: string | null = null,
 ): WorkspaceEnvironmentSetupLaunchSnapshot {
   const snapshot = preparation.kind === "ready" ? preparation.command.snapshot : preparation.snapshot;
   return {
     platform,
     script,
+    sourceRevision,
     checkoutPath: snapshot.checkoutPath,
     terminal: snapshot.terminal
       ? { executable: snapshot.terminal.executable, arguments: [...snapshot.terminal.arguments] }
@@ -1737,6 +1833,26 @@ function automaticCompletionResult(completion: TerminalCommandCompletion): {
     output: completion.output,
     outputTruncated: completion.outputTruncated,
   };
+}
+
+function automaticRepairPrompt(repair: WorkspaceEnvironmentClaimedAutomaticRepair): string {
+  const failure = repair.failure;
+  return [
+    "Repair the failed Project Setup before the queued user Turn runs.",
+    "",
+    `Setup attempt: ${failure.attemptId}`,
+    `Configuration revision: ${failure.snapshot.sourceRevision ?? "none"}`,
+    `Command: ${failure.snapshot.script ?? "none"}`,
+    `Checkout: ${failure.snapshot.checkoutPath ?? "none"}`,
+    `Outcome: ${failure.outcome}`,
+    `Exit code: ${failure.exitCode ?? "none"}`,
+    `Output truncated: ${failure.outputTruncated ? "yes" : "no"}`,
+    "",
+    "Setup output:",
+    failure.output,
+    "",
+    "Do not run Setup yourself. The app will rerun it after this repair Turn completes.",
+  ].join("\n");
 }
 
 function freezeSetupAttempt(attempt: WorkspaceEnvironmentSetupAttempt): WorkspaceEnvironmentSetupAttempt {

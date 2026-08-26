@@ -358,6 +358,13 @@
       "when": 1787675431835,
       "tag": "0049_bizarre_rictor",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "6",
+      "when": 1787742631649,
+      "tag": "0050_tiny_the_anarchist",
+      "breakpoints": true
     }
   ]
 }

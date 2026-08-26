@@ -5,6 +5,8 @@ import type {
   PreviewAnnotationBundle,
   StoredAttachment,
   WorkspaceEnvironmentAutomaticSetupAttempt,
+  WorkspaceEnvironmentAutomaticSetupRepair,
+  WorkspaceEnvironmentAutomaticSetupRepairState,
   WorkspaceEnvironmentAutomaticSetupReason,
   WorkspaceEnvironmentAutomaticSetupSnapshot,
   WorkspaceEnvironmentQueuedTurn,
@@ -16,6 +18,7 @@ import {
   SelectedTextCommentsSchema,
   SendMessageSchema,
   StoredAttachmentSchema,
+  WorkspaceEnvironmentAutomaticSetupRepairSchema,
   WorkspaceEnvironmentSetupLaunchSnapshotSchema,
 } from "@mcode/contracts";
 import { z } from "zod";
@@ -107,6 +110,33 @@ interface QueuedTurnRow {
   dispatched_at: string | null;
 }
 
+interface AutomaticRepairRow {
+  id: string;
+  failed_attempt_id: string;
+  state: WorkspaceEnvironmentAutomaticSetupRepairState;
+  created_at: string;
+  finished_at: string | null;
+}
+
+interface AutomaticRepairFailureContext {
+  readonly attemptId: string;
+  readonly reason: WorkspaceEnvironmentAutomaticSetupReason;
+  readonly snapshot: WorkspaceEnvironmentSetupLaunchSnapshot;
+  readonly outcome: Exclude<WorkspaceEnvironmentSetupOutcome, "success">;
+  readonly exitCode: number | null;
+  readonly output: string;
+  readonly outputTruncated: boolean;
+}
+
+/** Immutable repair work claimed for one failed automatic Setup attempt. */
+export interface WorkspaceEnvironmentClaimedAutomaticRepair {
+  readonly id: string;
+  readonly threadId: string;
+  readonly failedAttemptId: string;
+  readonly submission: WorkspaceEnvironmentQueuedTurnSubmission;
+  readonly failure: AutomaticRepairFailureContext;
+}
+
 /** SQLite storage for the automatic Setup gate, attempts, and queued Turn claims. */
 export class WorkspaceEnvironmentAutomaticRepository {
   constructor(private readonly db: Database.Database, private readonly now: () => string) {}
@@ -183,7 +213,7 @@ export class WorkspaceEnvironmentAutomaticRepository {
     const gate = this.db.prepare(
       "SELECT state, attempt_id FROM workspace_environment_setup_gates WHERE thread_id = ?",
     ).get(threadId) as { state: WorkspaceEnvironmentAutomaticSetupSnapshot["gate"]; attempt_id: string | null } | undefined;
-    if (!gate) return { gate: "not-required", attempt: null, queuedTurns: [] };
+    if (!gate) return { gate: "not-required", attempt: null, queuedTurns: [], repair: null };
     const attempt = gate.attempt_id
       ? this.db.prepare(
         "SELECT id, state, reason, launch_snapshot_json, outcome, created_at, started_at, finished_at, exit_code, output, output_truncated FROM workspace_environment_automatic_setup_attempts WHERE id = ?",
@@ -192,6 +222,9 @@ export class WorkspaceEnvironmentAutomaticRepository {
     const queued = this.db.prepare(
       "SELECT id, message_id, queue_position, state, created_at, submission_json, dispatched_at FROM workspace_environment_queued_turns WHERE thread_id = ? ORDER BY queue_position ASC",
     ).all(threadId) as QueuedTurnRow[];
+    const repair = this.db.prepare(
+      "SELECT id, failed_attempt_id, state, created_at, finished_at FROM workspace_environment_automatic_setup_repairs WHERE thread_id = ? ORDER BY created_at DESC, id DESC LIMIT 1",
+    ).get(threadId) as AutomaticRepairRow | undefined;
     return {
       gate: gate.state,
       attempt: attempt ? {
@@ -216,6 +249,7 @@ export class WorkspaceEnvironmentAutomaticRepository {
         createdAt: queuedTurn.created_at,
         dispatchedAt: queuedTurn.dispatched_at,
       })),
+      repair: repair ? this.parseRepair(repair) : null,
     };
   }
 
@@ -276,6 +310,7 @@ export class WorkspaceEnvironmentAutomaticRepository {
         input.threadId,
       );
       if (attempt.changes !== 1) return false;
+      this.completeRerunningRepair(input.attemptId, now);
       if (input.state !== "passed") return true;
       this.db.prepare(
         "UPDATE workspace_environment_setup_gates SET state = 'released-by-pass', updated_at = ? WHERE thread_id = ? AND state = 'blocked'",
@@ -296,10 +331,14 @@ export class WorkspaceEnvironmentAutomaticRepository {
     readonly outcome: Exclude<WorkspaceEnvironmentSetupOutcome, "success">;
   }): boolean {
     const now = this.now();
-    const result = this.db.prepare(
-      "UPDATE workspace_environment_automatic_setup_attempts SET state = 'failed', reason = ?, launch_snapshot_json = ?, outcome = ?, finished_at = ? WHERE id = ? AND thread_id = ? AND state = 'queued' AND id = (SELECT attempt_id FROM workspace_environment_setup_gates WHERE thread_id = ?)",
-    ).run(input.reason, JSON.stringify(input.snapshot), input.outcome, now, input.attemptId, input.threadId, input.threadId);
-    return result.changes === 1;
+    return this.db.transaction(() => {
+      const result = this.db.prepare(
+        "UPDATE workspace_environment_automatic_setup_attempts SET state = 'failed', reason = ?, launch_snapshot_json = ?, outcome = ?, finished_at = ? WHERE id = ? AND thread_id = ? AND state = 'queued' AND id = (SELECT attempt_id FROM workspace_environment_setup_gates WHERE thread_id = ?)",
+      ).run(input.reason, JSON.stringify(input.snapshot), input.outcome, now, input.attemptId, input.threadId, input.threadId);
+      if (result.changes !== 1) return false;
+      this.completeRerunningRepair(input.attemptId, now);
+      return true;
+    })();
   }
 
   /** Atomically release queued Turns when the workspace declares no automatic Setup. */
@@ -321,6 +360,7 @@ export class WorkspaceEnvironmentAutomaticRepository {
         "UPDATE workspace_environment_queued_turns SET state = 'released', released_at = ? WHERE thread_id = ? AND state = 'queued'",
       ).run(now, threadId);
       if (gate.attempt_id) {
+        this.completeRerunningRepair(gate.attempt_id, now);
         this.db.prepare(
           "DELETE FROM workspace_environment_automatic_setup_attempts WHERE id = ? AND state = 'queued'",
         ).run(gate.attempt_id);
@@ -376,6 +416,7 @@ export class WorkspaceEnvironmentAutomaticRepository {
       this.db.prepare(
         "UPDATE workspace_environment_setup_gates SET updated_at = ? WHERE thread_id = ? AND state = 'blocked'",
       ).run(now, threadId);
+      this.completeRerunningRepair(gate.attempt_id, now);
       return gate.attempt_id;
     })();
   }
@@ -396,6 +437,88 @@ export class WorkspaceEnvironmentAutomaticRepository {
     })();
   }
 
+  /** Report whether an agent repair or its Setup-owned rerun still controls the failed gate. */
+  hasActiveRepair(threadId: string): boolean {
+    return this.db.prepare(
+      "SELECT 1 FROM workspace_environment_automatic_setup_repairs WHERE thread_id = ? AND state IN ('repairing', 'rerunning') LIMIT 1",
+    ).get(threadId) !== undefined;
+  }
+
+  /** Claim one durable agent repair for the current failed automatic Setup attempt. */
+  claimRepair(input: { readonly threadId: string; readonly repairId: string }): WorkspaceEnvironmentClaimedAutomaticRepair | null {
+    const now = this.now();
+    return this.db.transaction(() => {
+      const attempt = this.db.prepare(
+        "SELECT id, state, reason, launch_snapshot_json, outcome, exit_code, output, output_truncated FROM workspace_environment_automatic_setup_attempts WHERE id = (SELECT attempt_id FROM workspace_environment_setup_gates WHERE thread_id = ? AND state = 'blocked')",
+      ).get(input.threadId) as Pick<AutomaticAttemptRow, "id" | "state" | "reason" | "launch_snapshot_json" | "outcome" | "exit_code" | "output" | "output_truncated"> | undefined;
+      if (!attempt || attempt.state !== "failed" || !attempt.reason || !attempt.launch_snapshot_json || !attempt.outcome || attempt.outcome === "success") return null;
+      const duplicate = this.db.prepare(
+        "SELECT 1 FROM workspace_environment_automatic_setup_repairs WHERE failed_attempt_id = ?",
+      ).get(attempt.id);
+      if (duplicate) return null;
+      const queued = this.db.prepare(
+        "SELECT submission_json FROM workspace_environment_queued_turns WHERE thread_id = ? ORDER BY CASE state WHEN 'queued' THEN 0 ELSE 1 END, queue_position ASC LIMIT 1",
+      ).get(input.threadId) as Pick<QueuedTurnRow, "submission_json"> | undefined;
+      if (!queued) return null;
+      const failure: AutomaticRepairFailureContext = {
+        attemptId: attempt.id,
+        reason: attempt.reason,
+        snapshot: this.parseLaunchSnapshot(attempt.launch_snapshot_json),
+        outcome: attempt.outcome,
+        exitCode: attempt.exit_code,
+        output: attempt.output,
+        outputTruncated: attempt.output_truncated === 1,
+      };
+      const submission = this.parseSubmission(queued.submission_json);
+      this.db.prepare(
+        "INSERT INTO workspace_environment_automatic_setup_repairs (id, thread_id, failed_attempt_id, state, failure_context_json, submission_json, created_at) VALUES (?, ?, ?, 'repairing', ?, ?, ?)",
+      ).run(input.repairId, input.threadId, attempt.id, JSON.stringify(failure), JSON.stringify(submission), now);
+      return {
+        id: input.repairId,
+        threadId: input.threadId,
+        failedAttemptId: attempt.id,
+        submission,
+        failure,
+      };
+    })();
+  }
+
+  /** Finish a repair that did not authorize a Setup rerun. */
+  finishRepair(repairId: string, state: "failed" | "cancelled" | "interrupted"): boolean {
+    const result = this.db.prepare(
+      "UPDATE workspace_environment_automatic_setup_repairs SET state = ?, finished_at = ? WHERE id = ? AND state = 'repairing'",
+    ).run(state, this.now(), repairId);
+    return result.changes === 1;
+  }
+
+  /** Atomically consume one completed repair and queue its one allowed Setup rerun. */
+  queueRepairRerun(repairId: string): { readonly threadId: string; readonly queued: boolean } | null {
+    const now = this.now();
+    const rerunAttemptId = randomUUID();
+    return this.db.transaction(() => {
+      const repair = this.db.prepare(
+        "SELECT thread_id, failed_attempt_id FROM workspace_environment_automatic_setup_repairs WHERE id = ? AND state = 'repairing'",
+      ).get(repairId) as { thread_id: string; failed_attempt_id: string } | undefined;
+      if (!repair) return null;
+      const replaced = this.db.prepare(
+        "UPDATE workspace_environment_setup_gates SET attempt_id = ?, updated_at = ? WHERE thread_id = ? AND state = 'blocked' AND attempt_id = ?",
+      ).run(rerunAttemptId, now, repair.thread_id, repair.failed_attempt_id);
+      if (replaced.changes !== 1) {
+        this.db.prepare(
+          "UPDATE workspace_environment_automatic_setup_repairs SET state = 'completed', finished_at = ? WHERE id = ? AND state = 'repairing'",
+        ).run(now, repairId);
+        return { threadId: repair.thread_id, queued: false };
+      }
+      this.db.prepare(
+        "INSERT INTO workspace_environment_automatic_setup_attempts (id, thread_id, state, reason, created_at) VALUES (?, ?, 'queued', NULL, ?)",
+      ).run(rerunAttemptId, repair.thread_id, now);
+      this.db.prepare(
+        "UPDATE workspace_environment_automatic_setup_repairs SET state = 'rerunning', rerun_attempt_id = ? WHERE id = ? AND state = 'repairing'",
+      ).run(rerunAttemptId, repairId);
+      return { threadId: repair.thread_id, queued: true };
+    })();
+  }
+
   /** Mark unfinished automatic attempts interrupted without replaying any command. */
   interruptUnfinishedAttempts(): void {
     const now = this.now();
@@ -405,6 +528,12 @@ export class WorkspaceEnvironmentAutomaticRepository {
       ).run(now);
       this.db.prepare(
         "UPDATE workspace_environment_setup_gates SET state = 'blocked', updated_at = ? WHERE state = 'blocked' AND attempt_id IN (SELECT id FROM workspace_environment_automatic_setup_attempts WHERE state = 'interrupted')",
+      ).run(now);
+      this.db.prepare(
+        "UPDATE workspace_environment_automatic_setup_repairs SET state = 'interrupted', finished_at = ? WHERE state = 'repairing'",
+      ).run(now);
+      this.db.prepare(
+        "UPDATE workspace_environment_automatic_setup_repairs SET state = 'completed', finished_at = ? WHERE state = 'rerunning' AND rerun_attempt_id IN (SELECT id FROM workspace_environment_automatic_setup_attempts WHERE state = 'interrupted')",
       ).run(now);
     })();
   }
@@ -456,12 +585,32 @@ export class WorkspaceEnvironmentAutomaticRepository {
     }
   }
 
+  private parseRepair(row: AutomaticRepairRow): WorkspaceEnvironmentAutomaticSetupRepair {
+    try {
+      return WorkspaceEnvironmentAutomaticSetupRepairSchema().parse({
+        id: row.id,
+        failedAttemptId: row.failed_attempt_id,
+        state: row.state,
+        createdAt: row.created_at,
+        finishedAt: row.finished_at,
+      });
+    } catch {
+      throw new Error("Invalid persisted automatic Setup repair");
+    }
+  }
+
   private parseSubmission(raw: string): WorkspaceEnvironmentQueuedTurnSubmission {
     try {
       return QueuedTurnSubmissionSchema.parse(JSON.parse(raw));
     } catch {
       throw new Error("Invalid persisted automatic Setup submission");
     }
+  }
+
+  private completeRerunningRepair(rerunAttemptId: string, finishedAt: string): void {
+    this.db.prepare(
+      "UPDATE workspace_environment_automatic_setup_repairs SET state = 'completed', finished_at = ? WHERE rerun_attempt_id = ? AND state = 'rerunning'",
+    ).run(finishedAt, rerunAttemptId);
   }
 
   private pruneTerminalTurns(threadId: string): void {

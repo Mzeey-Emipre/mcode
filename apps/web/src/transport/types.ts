@@ -335,6 +335,8 @@ export interface McodeTransport {
   stopAutomaticSetup(threadId: string): Promise<WorkspaceEnvironmentAutomaticSetupSnapshot>;
   /** Start one new automatic Setup attempt from the current Project environment. */
   retryAutomaticSetup(threadId: string): Promise<WorkspaceEnvironmentAutomaticSetupSnapshot>;
+  /** Start one provider repair Turn for the current failed automatic Setup attempt. */
+  repairAutomaticSetup(threadId: string): Promise<WorkspaceEnvironmentAutomaticSetupSnapshot>;
   /** Create one interactive recovery Terminal for the current Thread checkout. */
   openAutomaticSetupTerminal(threadId: string): Promise<WorkspaceEnvironmentAutomaticSetupTerminal>;
   /** Lists retained Project Action results for the current Thread. */
