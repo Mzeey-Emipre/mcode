@@ -3,12 +3,12 @@ import type { ChildProcess } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 import type { Client, ClientSideConnection, SessionNotification } from "@agentclientprotocol/sdk";
 import { AgentEventType } from "@mcode/contracts";
-import { AcpSessionRuntime } from "../../protocols/acp/acp-session-runtime.js";
+import { AcpSessionRuntime } from "../../../protocols/acp/acp-session-runtime.js";
 import {
   createCursorAcpTurnState,
   mapCursorAcpSessionNotification,
 } from "../cursor-acp-event-mapper.js";
-import { resolveCursorAssistantMessageContent } from "../cursor-stream-event-mapper.js";
+import { resolveCursorAssistantMessageContent } from "../../stream-json/cursor-stream-event-mapper.js";
 
 function fakeChild(): ChildProcess {
   return Object.assign(new EventEmitter(), {

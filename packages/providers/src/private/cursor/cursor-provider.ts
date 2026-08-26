@@ -7,30 +7,12 @@
  * and emit `sdk_session_id` so the DB tracks the active session id.
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import path from "node:path";
-import { Readable, Writable } from "node:stream";
-import { randomUUID } from "node:crypto";
 import { logger } from "@mcode/shared";
-import {
-  ClientSideConnection,
-  ndJsonStream,
-  PROTOCOL_VERSION,
-  type Client,
-  type PermissionOption,
-  type RequestPermissionRequest,
-  type RequestPermissionResponse,
-  type SessionNotification,
-  type McpServer,
-} from "@agentclientprotocol/sdk";
+import type { McpServer } from "@agentclientprotocol/sdk";
 
 import {
   providerBrowserPermissionCapability,
-  type ProviderBrowserCredentialMetadata,
-  type ProviderBrowserLeaseGrant,
-  type ProviderBrowserLeaseHandle,
   type ProviderHostPorts,
   type ProviderThreadControlHttpConnection,
 } from "../../host-ports.js";
@@ -43,94 +25,35 @@ import {
   getCatalogEntry,
 } from "@mcode/contracts";
 import type {
-  AttachmentMeta,
   AgentEvent,
-  ForkRequest,
-  HandoffArtifact,
-  HandoffMeta,
   IAgentProvider,
   ISessionEvictable,
   TurnRequest,
   PermissionDecision,
   PermissionRequest,
   ProviderModelInfo,
-  SessionForker,
   Settings,
 } from "@mcode/contracts";
-import {
-  createCursorTodoSnapshot,
-  cursorUpdateTodosExtNotificationToAgentEvents,
-  type CursorTodoSnapshot,
-} from "./cursor-todo-snapshot.js";
-import { fetchCursorCliModels } from "./cursor-cli-models.js";
-import { buildCursorAcpArgs } from "./cursor-acp-spawn-args.js";
-import { buildCursorAcpPromptBlocks } from "./cursor-acp-prompt.js";
+import { fetchCursorCliModels } from "./models/cursor-cli-models.js";
 import { buildMcodeInstructionPlan, renderMcodeInstructions } from "@mcode/thread-orchestration";
+import { AcpSessionRuntime } from "../protocols/acp/acp-session-runtime.js";
+import { CursorAcpClientBridge } from "./acp/cursor-acp-client-bridge.js";
+import { CursorAcpProcessSpawner } from "./runtime/cursor-acp-process-spawner.js";
+import { CursorTurnExecutor } from "./runtime/cursor-turn-executor.js";
 import {
-  buildCursorAgentGuidanceMarkdown,
-  formatCursorSkillsAndCommandsForPrompt,
-} from "./cursor-agent-guidance.js";
-import { readCursorUserInstructions } from "./cursor-prompt.js";
-import {
-  createCursorAcpTurnState,
-  mapCursorAcpSessionNotification,
-  type CursorAcpTurnState,
-} from "./cursor-acp-event-mapper.js";
-import { resolveCursorAssistantMessageContent } from "./cursor-stream-event-mapper.js";
-import {
-  mapDecisionToAcpOutcome,
-  pickFullAccessAllowOption,
-  synthesizeCursorAcpPermissionRequest,
-} from "./cursor-acp-permission-mapper.js";
-import { resolveCursorStickyInstructionBlob } from "./cursor-acp-sticky-instructions.js";
-import { buildCursorAskQuestionExtResponse } from "./cursor-acp-ask-question.js";
-import {
-  buildCursorAcpContinueAfterDisconnectPrompt,
-  looksLikeAcpConnectionClosed,
-  looksLikeCursorRateLimit,
-  computeCursorRateLimitBackoffMs,
-  interruptibleDelay,
-  isLikelyTransientCursorPromptFailure,
-  shouldSuppressCursorPromptError,
-} from "./cursor-acp-transient-retry.js";
-import {
-  shouldEmitCursorSessionTrace,
-  summarizeCursorSessionNotification,
-  summarizeEmittedAgentEventsForTrace,
-} from "./cursor-acp-session-trace.js";
-import { cursorTaskExtToAgentEvents } from "./cursor-acp-task.js";
-import { extractCursorCreatePlanMarkdown } from "./cursor-create-plan.js";
-import {
-  AcpSessionRuntime,
-  validateAcpInitializeResult,
-  validateAcpSessionUpdate,
-} from "../protocols/acp/acp-session-runtime.js";
+  CursorSideChannel,
+} from "./handoff/cursor-side-channel.js";
+import { CursorCleanForker } from "./handoff/cursor-clean-forker.js";
+import type {
+  CursorAcpSessionEntry,
+  CursorBrowserContext,
+  CursorBrowserLeaseGrant,
+  CursorBrowserLeaseHandle,
+  CursorSessionState,
+} from "./cursor-session-state.js";
 
-const CURSOR_STDERR_TAIL_MAX = 48;
-
-/**
- * Wrap a message as a transient (ETIMEDOUT) error. `classifyProviderError` maps
- * ETIMEDOUT to the "transient" bucket, so the handoff pipeline falls cleanly to
- * the deterministic path (D) instead of treating a missing/unresumable session
- * as a permanent failure.
- */
-function transientHandoffError(message: string): Error & { code: string } {
-  const err = new Error(message) as Error & { code: string };
-  err.code = "ETIMEDOUT";
-  return err;
-}
-
-/**
- * Minimal transport surface the clean side-channel needs from a throwaway ACP
- * connection: reconstruct the parent session, run one prompt, then dispose. The
- * assistant text is read off the local accumulator, so neither return value is
- * inspected here.
- */
-interface CursorSideChannelTransport {
-  loadSession(args: { cwd: string; mcpServers: never[]; sessionId: string }): Promise<unknown>;
-  prompt(args: { sessionId: string; prompt: { type: "text"; text: string }[] }): Promise<unknown>;
-  dispose(): Promise<void> | void;
-}
+export { cursorSupportsHttpMcp } from "./acp/cursor-acp-capabilities.js";
+export { appendCursorMcodeInstructions } from "./runtime/cursor-turn-executor.js";
 
 /** Builds the ACP HTTP MCP configuration for one provider session. */
 export function buildCursorInternalMcpServers(
@@ -144,9 +67,8 @@ export function buildCursorInternalMcpServers(
   }];
 }
 
-type BrowserAutomationCredentialMetadata = ProviderBrowserCredentialMetadata;
-type BrowserAutomationSessionLeaseGrant = ProviderBrowserLeaseGrant;
-type BrowserAutomationSessionLeaseStage = ProviderBrowserLeaseHandle;
+type BrowserAutomationSessionLeaseGrant = CursorBrowserLeaseGrant;
+type BrowserAutomationSessionLeaseStage = CursorBrowserLeaseHandle;
 
 const CURSOR_SUPPORTED_CAPABILITIES = [
   "build",
@@ -157,65 +79,6 @@ const CURSOR_SUPPORTED_CAPABILITIES = [
   "browser-access",
   "thread-control",
 ] as const;
-
-const CURSOR_ACP_UNSUPPORTED_RESULT = Object.freeze({ outcome: { outcome: "unsupported" as const } });
-
-interface CleanForkCapable {
-  readonly id: string;
-  runSideChannelQuery(args: {
-    parentThreadId: string;
-    parentSdkSessionId: string;
-    prompt: string;
-    abortSignal?: AbortSignal;
-    conversationHistory?: string;
-    cwd: string;
-  }): Promise<string>;
-}
-
-class CleanForker implements SessionForker {
-  constructor(private readonly provider: CleanForkCapable) {}
-
-  async fork(request: ForkRequest): Promise<HandoffArtifact> {
-    const markdown = await this.provider.runSideChannelQuery({
-      parentThreadId: request.parentThreadId,
-      parentSdkSessionId: request.parentSdkSessionId ?? "",
-      prompt: request.prompt,
-      abortSignal: request.abortSignal,
-      conversationHistory: request.conversationHistory,
-      cwd: request.cwd,
-    });
-    const parent = request.parentThread;
-    const meta: HandoffMeta = {
-      schemaVersion: 1,
-      parentThreadId: request.parentThreadId,
-      forkedFromMessageId: request.forkedFromMessageId,
-      forkAnchorRole: request.forkAnchorRole,
-      childThreadId: request.childThreadId,
-      generatedBy: "provider",
-      provider: parent.provider,
-      ladderStep: "B",
-      mode: "full",
-      generatedAt: new Date().toISOString(),
-      characterCount: markdown.length,
-      parentSdkSessionId: parent.sdk_session_id ?? null,
-      providerErrorOnGenerate: null,
-      regenerationHistory: [],
-      attachments: [],
-      ...(request.historyBudget && { historyBudget: request.historyBudget }),
-    };
-    return { markdown, meta };
-  }
-}
-
-/**
- * Factory that opens a throwaway ACP transport wired to a non-emitting client.
- * Defaulted to the real `cursor-agent acp` spawn and overridable in tests so the
- * clean-fork invariants can be asserted without a live subprocess.
- */
-type CursorSideChannelConnector = (args: {
-  cwd: string;
-  client: Client;
-}) => Promise<CursorSideChannelTransport>;
 
 function cursorCliProbeBinaries(settings: Settings): string[] {
   const configured = settings.provider.cli.cursor?.trim();
@@ -232,65 +95,6 @@ function isThreadControlHttpConnection(value: unknown): value is ProviderThreadC
     && !Array.isArray(connection.headers);
 }
 
-interface PendingAcpPermission {
-  mcodeSessionId: string;
-  threadId: string;
-  options: PermissionOption[];
-  request: PermissionRequest;
-  resolve: (value: RequestPermissionResponse) => void;
-}
-
-interface CursorAcpSessionEntry {
-  mcodeSessionId: string;
-  threadId: string;
-  child: ChildProcess;
-  connection: ClientSideConnection;
-  acpRuntime: AcpSessionRuntime;
-  acpSessionId: string;
-  cwd: string;
-  permissionMode: "full" | "default";
-  lastUsedAt: number;
-  todoSnapshot: CursorTodoSnapshot;
-  turnChain: Promise<void>;
-  activeTurnState: CursorAcpTurnState | null;
-  /** True once a heavy stitched instructions blob (> threshold) shipped on this MCP session. */
-  stickyHeavyInstructionsSent: boolean;
-  /** Monotonic prompts across the MCP subprocess lifetime (sticky preamble pacing). */
-  cursorPromptOrdinal: number;
-  /** Recent stderr snippets for diagnosing opaque CLI failures. */
-  stderrTailLines: string[];
-  /** Last stable `modelId` handshake for this MCP session (`acpSessionId` rotation forces re-apply). */
-  cursorModelAppliedPair: { acpSessionId: string; modelId: string } | null;
-  /** Set immediately before issuing ACP cancel while a prompt is in flight (explicit Stop vs noisy upstream errors). */
-  pendingUserStopAbort: boolean;
-  /** Whether this ACP version advertised HTTP MCP session support. */
-  browserHttpMcpSupported: boolean;
-  /** Non-secret browser credential lifecycle metadata for this main session. */
-  browserCredential?: BrowserAutomationCredentialMetadata & { leaseId: string };
-  /** Workspace fixed to this provider process at spawn. */
-  workspaceId: string;
-  /** Browser permission class fixed to this provider process at spawn. */
-  browserPermissionCapability: "observe" | "interact" | "privileged";
-  supportsHttpMcp: boolean;
-  /** Capability-derived Mcode guidance sent once on first normal prompt. */
-  mcodeRuntimeInstructions: string;
-  mcodeRuntimeInstructionsSent: boolean;
-  /** True when this ACP logical session successfully reloaded stored state. */
-  mcodeLogicalSessionReloaded: boolean;
-}
-
-/**
- * Per-session state owned by the {@link SessionRuntime}. Identical to the rich
- * ACP session entry the provider has always carried (child process, ACP
- * connection, logical session id, in-flight turn state, the serialized turn
- * chain, sticky-instruction pacing, stderr tail). The runtime now owns the
- * pool, idle eviction (with the `activeTurnState` busy guard), process-port
- * attachment, and process-tree termination for the child PID surfaced from `spawn`.
- */
-type CursorSessionState = CursorAcpSessionEntry;
-
-type CursorBrowserContext = Pick<CursorAcpSessionEntry, "workspaceId" | "browserPermissionCapability">;
-
 /** Builds the ACP HTTP MCP descriptor for one short-lived browser grant. */
 export function buildCursorBrowserMcpServers(
   grant: Pick<BrowserAutomationSessionLeaseGrant, "mcpUrl" | "token"> | null,
@@ -303,31 +107,6 @@ export function buildCursorBrowserMcpServers(
         headers: [{ name: "Authorization", value: `Bearer ${grant.token}` }],
       }]
     : [];
-}
-
-/** Returns true only when the ACP initialize response explicitly supports HTTP MCP. */
-export function cursorSupportsHttpMcp(initializeResult: {
-  agentCapabilities?: { mcpCapabilities?: { http?: boolean } };
-}): boolean {
-  return initializeResult.agentCapabilities?.mcpCapabilities?.http === true;
-}
-
-/** Appends Mcode guidance only when not yet delivered to a logical ACP session. */
-export function appendCursorMcodeInstructions(
-  instructionMarkdown: string | undefined,
-  runtimeInstructions: string,
-  sent: boolean,
-): { instructionMarkdown: string | undefined; included: boolean } {
-  if (sent || !runtimeInstructions.trim()) return { instructionMarkdown, included: false };
-  if (instructionMarkdown?.includes(runtimeInstructions)) {
-    return { instructionMarkdown, included: true };
-  }
-  return {
-    instructionMarkdown: [instructionMarkdown, runtimeInstructions]
-      .filter((value): value is string => Boolean(value && value.trim()))
-      .join("\n\n"),
-    included: true,
-  };
 }
 
 /** Carries one-time guidance state only across a successful stored-session reload. */
@@ -356,15 +135,7 @@ export class CursorProvider
   readonly sessionForkOnResume = "clean" as const;
   readonly maxInputCharactersPerTurn = 4_000;
   /** Path B forker; calls this provider's runSideChannelQuery on a forked copy of the parent session. */
-  readonly forker: SessionForker = new CleanForker(this);
-
-  /**
-   * Opens the throwaway ACP transport for {@link runSideChannelQuery}. Defaults
-   * to the real subprocess spawn; tests override it to assert the clean-fork
-   * invariants without launching `cursor-agent`.
-   */
-  private sideChannelConnector: CursorSideChannelConnector = (args) =>
-    this.createSideChannelTransport(args);
+  readonly forker = new CursorCleanForker(this);
 
   /** Owns the session pool, idle eviction, and server-managed process cleanup. */
   private readonly runtime: SessionRuntime<CursorSessionState>;
@@ -380,9 +151,6 @@ export class CursorProvider
   private pendingStops = new Set<string>();
   /** ACP runtimes still opening before SessionRuntime can own their state. */
   private pendingAcpRuntimes = new Map<string, AcpSessionRuntime>();
-  private pendingPermissions = new Map<string, PendingAcpPermission>();
-  /** Threads in Mcode plan-questions phase; disables Cursor ask_question auto-picks. */
-  private planQuestionModeThreads = new Set<string>();
   /**
    * Mcode session ids the runtime currently holds. The runtime owns the pool
    * but exposes only `get(id)`, so the provider mirrors the live id set to be
@@ -406,6 +174,10 @@ export class CursorProvider
     createHttpConnection(sessionId: string): Promise<ProviderThreadControlHttpConnection | undefined>;
     close(sessionId: string): Promise<void>;
   };
+  private acpClientBridge?: CursorAcpClientBridge;
+  private processSpawner?: CursorAcpProcessSpawner;
+  private turnExecutor?: CursorTurnExecutor;
+  private sideChannel?: CursorSideChannel;
 
   constructor(
     private readonly host: ProviderHostPorts,
@@ -436,6 +208,92 @@ export class CursorProvider
       envService: { getEnv: () => ({ ...this.host.environment.snapshot() }) },
       idleTtlMs: idleSessionTtlMs,
     });
+    this.getAcpClientBridge();
+    this.getProcessSpawner();
+    this.getTurnExecutor();
+    this.getSideChannel();
+  }
+
+  private getAcpClientBridge(): CursorAcpClientBridge {
+    if (!this.acpClientBridge) {
+      this.acpClientBridge = new CursorAcpClientBridge({
+        settings: this.settingsService,
+        emitEvent: (event) => this.emit("event", event),
+        emitPermissionRequest: (request) => {
+          try {
+            this.emit("permission_request", request);
+          } catch {
+            // Event subscribers must not prevent ACP from receiving its decision.
+          }
+        },
+        emitPermissionResolved: (requestId, decision) => {
+          try {
+            this.emit("permission_resolved", { requestId, decision });
+          } catch {
+            // Permission completion must not depend on a renderer subscriber.
+          }
+        },
+        emitExitPlanMode: (args) => this.emit("exit_plan_mode", args),
+        turnExecutionId: (entry) => entry.activeTurnState
+          ? this.turnExecutionByState.get(entry.activeTurnState)
+          : undefined,
+      });
+    }
+    return this.acpClientBridge;
+  }
+
+  private getProcessSpawner(): CursorAcpProcessSpawner {
+    if (!this.processSpawner) {
+      this.processSpawner = new CursorAcpProcessSpawner({
+        host: this.host,
+        getEnvironment: () => this.envService.getEnv(),
+        getSettings: () => this.settingsService.get(),
+        getBrowserContext: (sessionId) => this.pendingBrowserContext.get(sessionId),
+        registerOpening: (sessionId, runtime) => {
+          (this.pendingAcpRuntimes ??= new Map()).set(sessionId, runtime);
+        },
+        clearOpening: (sessionId) => this.pendingAcpRuntimes?.delete(sessionId),
+        onChildExit: (sessionId, child) => {
+          const pooled = this.runtime.get(sessionId);
+          if (pooled?.child !== child) return;
+          this.getAcpClientBridge().cancelPendingForSession(sessionId);
+          void this.runtime.stop(sessionId);
+        },
+        bridge: this.getAcpClientBridge(),
+      });
+    }
+    return this.processSpawner;
+  }
+
+  private getTurnExecutor(): CursorTurnExecutor {
+    if (!this.turnExecutor) {
+      this.turnExecutor = new CursorTurnExecutor({
+        settings: this.settingsService,
+        skills: this.skillService,
+        emitEvent: (event) => this.emit("event", event),
+        bindTurnExecution: (entry, turnExecutionId) => {
+          if (entry.activeTurnState) {
+            this.turnExecutionByState.set(entry.activeTurnState, turnExecutionId);
+          }
+        },
+        openLogicalSession: (entry, resume) => this.openLogicalSession(entry, resume),
+        applyModel: (entry, model) => this.applyModel(entry, model),
+        respawnAfterDisconnect: (entry) => this.respawnCursorSessionAfterAcpClose(entry),
+      });
+    }
+    return this.turnExecutor;
+  }
+
+  private getSideChannel(): CursorSideChannel {
+    if (!this.sideChannel) {
+      this.sideChannel = new CursorSideChannel({
+        host: this.host,
+        getEnvironment: () => this.envService.getEnv(),
+        getCliCandidates: () => cursorCliProbeBinaries(this.settingsService.get()),
+        readWorkspaceFile: (cwd, filePath) => this.getAcpClientBridge().readWorkspaceFile(cwd, filePath),
+      });
+    }
+    return this.sideChannel;
   }
 
   /** Lists models by running `cursor-agent models` (falls back when discovery fails). */
@@ -484,14 +342,7 @@ export class CursorProvider
       browserPermissionCapability,
     };
 
-    // interactionMode absorbs the retired setPlanQuestionMode: a plan-mode Turn
-    // suppresses Cursor's native auto-answer of ask_question; build clears it.
-    // The flag is re-derived every Turn, so it is authoritative per Turn.
-    if (req.interactionMode === "plan") {
-      this.planQuestionModeThreads.add(threadId);
-    } else {
-      this.planQuestionModeThreads.delete(threadId);
-    }
+    this.getAcpClientBridge().setPlanQuestionMode(threadId, req.interactionMode === "plan");
 
     let existing = this.runtime.get(sessionId);
     const pendingGrant = this.pendingBrowserGrants.get(sessionId);
@@ -658,7 +509,7 @@ export class CursorProvider
    */
   async stopSession(sessionId: string): Promise<void> {
     const entry = this.runtime.get(sessionId);
-    this.cancelPendingForThread(sessionId);
+    this.getAcpClientBridge().cancelPendingForSession(sessionId);
     if (entry?.acpSessionId && entry.activeTurnState) {
       entry.pendingUserStopAbort = true;
     }
@@ -697,7 +548,7 @@ export class CursorProvider
 
   /** Tear down all sessions, cancel pending permissions, and stop the eviction timer. */
   shutdown(): void {
-    this.drainAllPendingCancelled();
+    this.getAcpClientBridge().cancelAllPending();
     for (const [sessionId, runtime] of this.pendingAcpRuntimes ?? []) {
       this.pendingStops.add(sessionId);
       void runtime.close();
@@ -708,7 +559,6 @@ export class CursorProvider
     void this.runtime.shutdown().catch((err: unknown) => {
       logger.warn("Cursor runtime shutdown failed", { error: String(err) });
     });
-    this.planQuestionModeThreads.clear();
     this.sdkSessionIds.clear();
     this.liveSessionIds.clear();
     for (const stage of this.pendingBrowserLeases.values()) {
@@ -725,24 +575,11 @@ export class CursorProvider
   }
 
   resolvePermission(requestId: string, decision: PermissionDecision): boolean {
-    const pending = this.pendingPermissions.get(requestId);
-    if (!pending) return false;
-    this.pendingPermissions.delete(requestId);
-    try {
-      this.emit("permission_resolved", { requestId, decision });
-    } catch {
-      /* ignore subscriber errors */
-    }
-    pending.resolve({ outcome: mapDecisionToAcpOutcome(decision, pending.options) });
-    return true;
+    return this.getAcpClientBridge().resolvePermission(requestId, decision);
   }
 
   listPendingPermissions(threadId: string): PermissionRequest[] {
-    const out: PermissionRequest[] = [];
-    for (const p of this.pendingPermissions.values()) {
-      if (p.threadId === threadId) out.push(p.request);
-    }
-    return out;
+    return this.getAcpClientBridge().listPendingPermissions(threadId);
   }
 
   /**
@@ -754,31 +591,6 @@ export class CursorProvider
       const e = this.runtime.get(id);
       if (e) e.stickyHeavyInstructionsSent = false;
     }
-  }
-
-  private cancelPendingForThread(mcodeSessionId: string): void {
-    for (const [requestId, p] of this.pendingPermissions) {
-      if (p.mcodeSessionId !== mcodeSessionId) continue;
-      this.pendingPermissions.delete(requestId);
-      p.resolve({ outcome: { outcome: "cancelled" } });
-      try {
-        this.emit("permission_resolved", { requestId, decision: "cancelled" });
-      } catch {
-        /* ignore */
-      }
-    }
-  }
-
-  private drainAllPendingCancelled(): void {
-    for (const [requestId, p] of this.pendingPermissions) {
-      p.resolve({ outcome: { outcome: "cancelled" } });
-      try {
-        this.emit("permission_resolved", { requestId, decision: "cancelled" });
-      } catch {
-        /* ignore */
-      }
-    }
-    this.pendingPermissions.clear();
   }
 
   /**
@@ -827,19 +639,22 @@ export class CursorProvider
       }
       const mcpServers = buildCursorBrowserMcpServers(browserGrant);
 
-      // Open logical ACP session before runtime registration so every setup
-      // failure tears down child and browser state through one boundary.
-      state.mcodeLogicalSessionReloaded = await this.openLogicalSession(
+      // Thread control is optional. Retry on a fresh ACP process without it so
+      // a broken internal MCP cannot prevent a Cursor thread from starting.
+      const opened = await this.openSessionWithOptionalThreadControl(
         state,
         resumeFrom !== undefined,
         mcpServers,
+        settings,
       );
+      state = opened.state;
+      state.mcodeLogicalSessionReloaded = opened.reloaded;
       if (this.pendingStops?.has(sessionId)) {
         throw new Error("Cursor ACP session stopped during startup");
       }
       state.mcodeRuntimeInstructions = renderMcodeInstructions(buildMcodeInstructionPlan({
         sourceThreadId: threadId,
-        threadControlGranted: true,
+        threadControlGranted: this.isThreadControlMcpEnabled(state),
         browserAutomationGranted: Boolean(browserGrant),
       }));
       state.mcodeRuntimeInstructionsSent = false;
@@ -886,7 +701,7 @@ export class CursorProvider
    * live-id mirror. The child process is killed by the runtime's hard kill.
    */
   async close(state: CursorSessionState): Promise<void> {
-    this.cancelPendingForThread(state.mcodeSessionId);
+    this.getAcpClientBridge().cancelPendingForSession(state.mcodeSessionId);
     this.liveSessionIds.delete(state.mcodeSessionId);
     if (!this.pendingBrowserGrants.has(state.mcodeSessionId) && !this.pendingBrowserLeases.has(state.mcodeSessionId)) {
       this.browserAutomationLease.releaseSession(this.id, state.mcodeSessionId);
@@ -938,387 +753,90 @@ export class CursorProvider
     permissionMode: "full" | "default",
     settings: Settings,
   ): Promise<CursorAcpSessionEntry> {
-    const cliCandidates = cursorCliProbeBinaries(settings);
-    let lastErr: unknown = null;
-    for (const cliPath of cliCandidates) {
-      try {
-        return await this.spawnOneCli(cliPath, mcodeSessionId, threadId, cwd, permissionMode);
-      } catch (e) {
-        this.pendingAcpRuntimes?.delete(mcodeSessionId);
-        lastErr = e;
-        const msg = e instanceof Error ? e.message : String(e);
-        if (/Failed to spawn cursor-agent/i.test(msg)) continue;
-        break;
-      }
-    }
-    throw lastErr instanceof Error
-      ? lastErr
-      : new Error(String(lastErr ?? "Failed to spawn cursor-agent (acp)"));
-  }
-
-  private async spawnOneCli(
-    cliPath: string,
-    mcodeSessionId: string,
-    threadId: string,
-    cwd: string,
-    permissionMode: "full" | "default",
-  ): Promise<CursorAcpSessionEntry> {
-    const args = buildCursorAcpArgs({ permissionMode });
-    let entry!: CursorAcpSessionEntry;
-    const acpRuntime = await AcpSessionRuntime.start({
-      spawnSpec: {
-        command: cliPath,
-        args,
-        cwd,
-        env: this.envService.getEnv(),
-      },
-      callbacks: {
-        onPermissionRequest: async (request) => this.bridgePermission(entry, request),
-        onSessionUpdate: async (update) => this.deliverSessionUpdate(entry, update),
-        readTextFile: async (filePath) => this.safeReadWorkspaceFile(cwd, filePath),
-        writeTextFile: async (filePath, content) => this.safeWriteWorkspaceFile(cwd, filePath, content),
-        onExtensionRequest: async () => ({}),
-        onExtensionNotification: async () => {},
-      },
-      clientFactory: (callbacks) => {
-        return {
-          requestPermission: async (request) => {
-            if (!entry) return { outcome: { outcome: "cancelled" } };
-            return this.bridgePermission(entry, request);
-          },
-          sessionUpdate: callbacks.onSessionUpdate,
-          readTextFile: async ({ path: filePath }) => ({
-            content: entry ? this.safeReadWorkspaceFile(entry.cwd, filePath) : "",
-          }),
-          writeTextFile: async ({ path: filePath, content }) => {
-            if (!entry) throw new Error("Cursor ACP session is not ready");
-            this.safeWriteWorkspaceFile(entry.cwd, filePath, content);
-            return {};
-          },
-          extMethod: async (method, params) => {
-            if (!entry) return {};
-            const client = this.buildAcpClient(entry);
-            return client.extMethod ? (await client.extMethod(method, params)) ?? {} : {};
-          },
-          extNotification: async (method, params) => {
-            if (!entry) return;
-            const client = this.buildAcpClient(entry);
-            if (client.extNotification) await client.extNotification(method, params);
-          },
-        };
-      },
-      selectAuthMethod: (methods) => methods.find((method) => method.id === "cursor_login")?.id ?? methods[0]?.id,
-      ignoreAuthenticationErrors: true,
-      processes: this.host.processes,
-    });
-    (this.pendingAcpRuntimes ??= new Map()).set(mcodeSessionId, acpRuntime);
-    const child = acpRuntime.state.child;
-    const connection = acpRuntime.state.connection;
-    entry = {
-      workspaceId: this.pendingBrowserContext.get(mcodeSessionId)?.workspaceId ?? "unknown-workspace",
-      browserPermissionCapability:
-        this.pendingBrowserContext.get(mcodeSessionId)?.browserPermissionCapability ?? "interact",
-      browserHttpMcpSupported: false,
+    return this.getProcessSpawner().spawn(
       mcodeSessionId,
       threadId,
-      child,
-      connection,
-      acpRuntime,
-      acpSessionId: "",
       cwd,
       permissionMode,
-      lastUsedAt: Date.now(),
-      todoSnapshot: createCursorTodoSnapshot(),
-      turnChain: Promise.resolve(),
-      activeTurnState: null,
-      stickyHeavyInstructionsSent: false,
-      cursorPromptOrdinal: 0,
-      stderrTailLines: [],
-      cursorModelAppliedPair: null,
-      pendingUserStopAbort: false,
-      supportsHttpMcp: false,
-      mcodeRuntimeInstructions: "",
-      mcodeRuntimeInstructionsSent: false,
-      mcodeLogicalSessionReloaded: false,
-    };
-
-    child.stderr?.on("data", (chunk: Buffer) => {
-      const verboseLogs = this.settingsService.get().provider.cursor.verboseFailureLogs;
-      for (const line of chunk.toString().split("\n")) {
-        const trimmed = line.trim();
-        if (trimmed) {
-          if (verboseLogs) {
-            logger.debug("cursor-agent acp stderr", { threadId, line: trimmed });
-          }
-          const tail = entry.stderrTailLines;
-          tail.push(trimmed.slice(0, 2000));
-          while (tail.length > CURSOR_STDERR_TAIL_MAX) tail.shift();
-        }
-      }
-    });
-
-    child.on("exit", () => {
-      const pooled = this.runtime.get(mcodeSessionId);
-      // After ACP respawn, the same sessionId maps to a new child; ignore stale exits.
-      if (pooled?.child !== child) return;
-      this.cancelPendingForThread(mcodeSessionId);
-      // The child died unexpectedly; ask the runtime to drop the pooled entry
-      // (runs interrupt → close → hard kill of the already-dead PID, all no-ops
-      // here beyond removing it from the pool).
-      void this.runtime.stop(mcodeSessionId);
-    });
-
-    const initResult = await acpRuntime.initialize() as { agentCapabilities?: { mcpCapabilities?: { http?: boolean } } };
-    const supportsHttpMcp = cursorSupportsHttpMcp(initResult);
-    entry.browserHttpMcpSupported = supportsHttpMcp;
-    entry.supportsHttpMcp = supportsHttpMcp;
-
-    return entry as CursorAcpSessionEntry;
-  }
-
-  /**
-   * Runs the ACP `initialize` handshake and a best-effort `authenticate` on a
-   * fresh connection. Shared by the pooled session spawn and the throwaway
-   * side-channel transport.
-   */
-  private async acpHandshake(connection: ClientSideConnection, threadId: string): Promise<boolean> {
-    const initResult = validateAcpInitializeResult(await connection.initialize({
-      protocolVersion: PROTOCOL_VERSION,
-      clientInfo: { name: "mcode", title: "Mcode", version: "0.0.1" },
-      clientCapabilities: {
-        fs: { readTextFile: true, writeTextFile: true },
-      },
-    }));
-
-    const authMethods = initResult.authMethods ?? [];
-    const methodId =
-      authMethods.find((method: { id: string }) => method.id === "cursor_login")?.id ?? authMethods[0]?.id;
-    if (methodId) {
-      await connection.authenticate({ methodId }).catch((err: unknown) => {
-        logger.info("Cursor ACP authenticate noop", {
-          threadId,
-          error: String(err),
-        });
-      });
-    }
-    return cursorSupportsHttpMcp(initResult);
-  }
-
-  private buildAcpClient(entry: CursorAcpSessionEntry): Client {
-    const emitAcpEvent = (event: AgentEvent): void => {
-      const executionId = entry.activeTurnState
-        ? this.turnExecutionByState.get(entry.activeTurnState)
-        : undefined;
-      this.emit("event", executionId ? { ...event, turnExecutionId: executionId } : event);
-    };
-    return {
-      requestPermission: async (req) => this.bridgePermission(entry, req),
-      sessionUpdate: async (params) => this.deliverSessionUpdate(entry, params),
-      readTextFile: async (r) => ({ content: this.safeReadWorkspaceFile(entry.cwd, r.path) }),
-      writeTextFile: async (r) => {
-        this.safeWriteWorkspaceFile(entry.cwd, r.path, r.content);
-        return {};
-      },
-      extMethod: async (method, params) => {
-        const cursorPrefs = this.settingsService.get().provider.cursor;
-        if (method === "cursor/ask_question") {
-          const record =
-            params !== null && typeof params === "object" && !Array.isArray(params)
-              ? (params as Record<string, unknown>)
-              : {};
-          const inPlanQuestionMode = this.planQuestionModeThreads.has(entry.threadId);
-          const autoAnswer =
-            !inPlanQuestionMode && cursorPrefs.autoAnswerAskQuestions;
-          return buildCursorAskQuestionExtResponse(
-            record,
-            autoAnswer,
-            (summary) => {
-              logger.info("Cursor ask_question resolved automatically", {
-                threadId: entry.threadId,
-                detail: summary.lines,
-              });
-              if (cursorPrefs.echoAskQuestionsToTimeline) {
-                const clip = summary.lines.join(" · ").slice(0, 900);
-                emitAcpEvent({
-                  type: AgentEventType.System,
-                  threadId: entry.threadId,
-                  subtype: `cursor:ask_question:auto:${clip}`,
-                } satisfies AgentEvent);
-              }
-            },
-          );
-        }
-        if (method === "cursor/create_plan") {
-          const record =
-            params !== null && typeof params === "object" && !Array.isArray(params)
-              ? (params as Record<string, unknown>)
-              : {};
-          const planMarkdown = extractCursorCreatePlanMarkdown(record);
-          if (planMarkdown) {
-            this.emit("exit_plan_mode", {
-              threadId: entry.threadId,
-              planMarkdown,
-            });
-          } else {
-            logger.warn("cursor/create_plan missing plan markdown", {
-              threadId: entry.threadId,
-              keys: Object.keys(record),
-            });
-          }
-          return { outcome: { outcome: "accepted" } };
-        }
-        if (method === "cursor/task") {
-          const record =
-            params !== null && typeof params === "object" && !Array.isArray(params)
-              ? (params as Record<string, unknown>)
-              : null;
-          if (!entry.activeTurnState || !record) return CURSOR_ACP_UNSUPPORTED_RESULT;
-          const events = cursorTaskExtToAgentEvents(
-            entry.threadId,
-            record,
-            entry.activeTurnState,
-          );
-          for (const ev of events) {
-            emitAcpEvent(ev);
-          }
-          return {};
-        }
-        // cursor/update_todos arrives as a request (not notification) in the
-        // ACP SDK dispatch. Handle it here so the task panel stays in sync.
-        if (method === "cursor/update_todos") {
-          if (params === null || typeof params !== "object" || Array.isArray(params)) {
-            return CURSOR_ACP_UNSUPPORTED_RESULT;
-          }
-          const events = cursorUpdateTodosExtNotificationToAgentEvents(
-            entry.threadId,
-            params as Record<string, unknown>,
-            entry.todoSnapshot,
-          );
-          for (const ev of events) {
-            emitAcpEvent(ev);
-          }
-          return {};
-        }
-        logger.debug("Cursor ACP extMethod unhandled", {
-          threadId: entry.threadId,
-          method,
-        });
-        return CURSOR_ACP_UNSUPPORTED_RESULT;
-      },
-      extNotification: async (method, params) => {
-        if (
-          method === "cursor/update_todos" &&
-          params !== null &&
-          typeof params === "object" &&
-          !Array.isArray(params)
-        ) {
-          const events = cursorUpdateTodosExtNotificationToAgentEvents(
-            entry.threadId,
-            params as Record<string, unknown>,
-            entry.todoSnapshot,
-          );
-          for (const ev of events) {
-          emitAcpEvent(ev);
-          }
-          return;
-        }
-        void method;
-        void params;
-      },
-    };
-  }
-
-  private async bridgePermission(
-    entry: CursorAcpSessionEntry,
-    params: RequestPermissionRequest,
-  ): Promise<RequestPermissionResponse> {
-    if (entry.permissionMode === "full") {
-      const optionId = pickFullAccessAllowOption(params.options);
-      if (!optionId) return { outcome: { outcome: "cancelled" } };
-      return { outcome: { outcome: "selected", optionId } };
-    }
-
-    const requestId = randomUUID();
-    const toolTitle = typeof params.toolCall.title === "string" ? params.toolCall.title : "Tool";
-    const request = synthesizeCursorAcpPermissionRequest({
-      requestId,
-      threadId: entry.threadId,
-      toolTitle,
-      rawToolInput: params.toolCall.rawInput,
-    });
-
-    return await new Promise((resolve) => {
-      this.pendingPermissions.set(requestId, {
-        mcodeSessionId: entry.mcodeSessionId,
-        threadId: entry.threadId,
-        options: params.options,
-        request,
-        resolve,
-      });
-      queueMicrotask(() => {
-        try {
-          this.emit("permission_request", request);
-        } catch {
-          /* ignore */
-        }
-      });
-    });
-  }
-
-  private async deliverSessionUpdate(
-    entry: CursorAcpSessionEntry,
-    params: SessionNotification,
-  ): Promise<void> {
-    if (!entry.acpSessionId || params.sessionId !== entry.acpSessionId) return;
-    const state = entry.activeTurnState;
-    if (!state) return;
-
-    const mapped = mapCursorAcpSessionNotification(
-      params,
-      entry.threadId,
-      state,
-      entry.todoSnapshot,
+      settings,
     );
+  }
 
-    const cursorCfg = this.settingsService.get().provider.cursor;
-    if (
-      cursorCfg.traceSessionUpdates &&
-      shouldEmitCursorSessionTrace(params, mapped.length)
-    ) {
-      logger.info("Cursor ACP session/update trace", {
+  private isThreadControlMcpEnabled(entry: CursorAcpSessionEntry): boolean {
+    return entry.supportsHttpMcp && entry.threadControlMcpEnabled !== false;
+  }
+
+  private async openSessionWithOptionalThreadControl(
+    initialState: CursorAcpSessionEntry,
+    resume: boolean,
+    mcpServers: McpServer[],
+    settings: Settings,
+  ): Promise<{ state: CursorAcpSessionEntry; reloaded: boolean }> {
+    try {
+      return {
+        state: initialState,
+        reloaded: await this.openLogicalSession(initialState, resume, mcpServers),
+      };
+    } catch (error) {
+      if (!this.isThreadControlMcpEnabled(initialState)) throw error;
+
+      logger.warn("Cursor thread-control MCP prevented session startup; retrying without it", {
+        threadId: initialState.threadId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      await this.disableThreadControlMcp(initialState);
+      const fallbackState = await this.spawnChild(
+        initialState.mcodeSessionId,
+        initialState.threadId,
+        initialState.cwd,
+        initialState.permissionMode,
+        settings,
+      );
+      fallbackState.threadControlMcpEnabled = false;
+      try {
+        return {
+          state: fallbackState,
+          reloaded: await this.openLogicalSession(fallbackState, resume, mcpServers),
+        };
+      } catch (fallbackError) {
+        await fallbackState.acpRuntime.close();
+        throw fallbackError;
+      }
+    }
+  }
+
+  private async disableThreadControlMcp(entry: CursorAcpSessionEntry): Promise<void> {
+    entry.threadControlMcpEnabled = false;
+    try {
+      await this.threadControlMcp.close(entry.mcodeSessionId);
+    } catch (error) {
+      logger.warn("Cursor thread-control MCP cleanup failed", {
         threadId: entry.threadId,
-        mappedCount: mapped.length,
-        notification: summarizeCursorSessionNotification(params),
-        mappedEvents: summarizeEmittedAgentEventsForTrace(mapped),
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private async openThreadControlMcp(
+    entry: CursorAcpSessionEntry,
+  ): Promise<ProviderThreadControlHttpConnection | undefined> {
+    if (!this.isThreadControlMcpEnabled(entry)) return undefined;
+
+    try {
+      const connection = await this.threadControlMcp.createHttpConnection(entry.mcodeSessionId);
+      if (connection) return connection;
+      logger.warn("Cursor thread-control MCP is unavailable; continuing without it", {
+        threadId: entry.threadId,
+      });
+    } catch (error) {
+      logger.warn("Cursor thread-control MCP setup failed; continuing without it", {
+        threadId: entry.threadId,
+        error: error instanceof Error ? error.message : String(error),
       });
     }
 
-    for (const ev of mapped) {
-      const executionId = this.turnExecutionByState.get(state);
-      this.emit("event", executionId ? { ...ev, turnExecutionId: executionId } : ev);
-    }
-  }
-
-  private safeReadWorkspaceFile(cwd: string, filePath: string): string {
-    const root = path.resolve(cwd);
-    const resolved = path.resolve(root, filePath);
-    if (resolved !== root && !resolved.startsWith(root + path.sep)) return "";
-    try {
-      if (!existsSync(resolved)) return "";
-      return readFileSync(resolved, "utf-8");
-    } catch {
-      return "";
-    }
-  }
-
-  private safeWriteWorkspaceFile(cwd: string, filePath: string, content: string): void {
-    const root = path.resolve(cwd);
-    const resolved = path.resolve(root, filePath);
-    if (resolved !== root && !resolved.startsWith(root + path.sep)) {
-      throw new Error("Path outside workspace root");
-    }
-    mkdirSync(path.dirname(resolved), { recursive: true });
-    writeFileSync(resolved, content, "utf-8");
+    await this.disableThreadControlMcp(entry);
+    return undefined;
   }
 
   /** Ensures `entry.acpSessionId` is ready (new or load). */
@@ -1330,9 +848,7 @@ export class CursorProvider
     if (entry.acpSessionId) return true;
 
     const stored = this.sdkSessionIds.get(entry.mcodeSessionId);
-    const internalMcp = entry.supportsHttpMcp
-      ? await this.threadControlMcp?.createHttpConnection(entry.mcodeSessionId)
-      : undefined;
+    const internalMcp = await this.openThreadControlMcp(entry);
     const effectiveMcpServers = [
       ...(internalMcp ? buildCursorInternalMcpServers(internalMcp) : []),
       ...mcpServers,
@@ -1458,260 +974,12 @@ export class CursorProvider
 
   private async runTurn(
     entry: CursorAcpSessionEntry,
-    opts: {
-      message: string;
-      model: string;
-      resume: boolean;
-      attachments?: AttachmentMeta[];
-      turnExecutionId: string;
-    },
+    opts: Parameters<CursorTurnExecutor["run"]>[1],
   ): Promise<void> {
-    const { message, model, resume, attachments, turnExecutionId } = opts;
-    const emitTurnEvent = (event: AgentEvent): void => { this.emit("event", { ...event, turnExecutionId }); };
-    const cursorCfg = this.settingsService.get().provider.cursor;
-    let currentEntry = entry;
-    let promptMessage = message;
-    let promptAttachments = attachments;
-    const originalUserMessage = message;
-    const originalAttachments = attachments;
-    let isContinueRetry = false;
-    let instructionMarkdown: string | undefined;
-    let instructionMarkdownReady = false;
-    try {
-      currentEntry.cursorPromptOrdinal += 1;
-      if (
-        !cursorCfg.alwaysSendFullInstructions &&
-        cursorCfg.fullPreambleEveryNTurns > 0 &&
-        currentEntry.cursorPromptOrdinal % cursorCfg.fullPreambleEveryNTurns === 0
-      ) {
-        currentEntry.stickyHeavyInstructionsSent = false;
-      }
-
-      const maxAttempts = cursorCfg.retryTransientFailuresOnce ? 2 : 1;
-      let promptResponse: Awaited<ReturnType<ClientSideConnection["prompt"]>>;
-      let attempt = 0;
-      for (;;) {
-        await this.openLogicalSession(currentEntry, resume);
-        await this.applyModel(currentEntry, model);
-        currentEntry.stderrTailLines.length = 0;
-
-        let blocks;
-        let mcodeInstructionsIncluded = false;
-        if (isContinueRetry) {
-          const continuationInstructions = currentEntry.mcodeRuntimeInstructionsSent
-            ? undefined
-            : currentEntry.mcodeRuntimeInstructions;
-          blocks = buildCursorAcpPromptBlocks(
-            promptMessage,
-            promptAttachments,
-            continuationInstructions,
-          );
-          mcodeInstructionsIncluded = Boolean(continuationInstructions);
-        } else {
-          if (!instructionMarkdownReady) {
-            const guidance = buildCursorAgentGuidanceMarkdown(currentEntry.cwd);
-            const skillsBlock = formatCursorSkillsAndCommandsForPrompt(
-              this.skillService.list(currentEntry.cwd, "cursor"),
-            );
-            const instructionParts = [guidance, skillsBlock].filter(
-              (s): s is string => typeof s === "string" && s.length > 0,
-            );
-            const combined =
-              instructionParts.length > 0 ? instructionParts.join("\n\n---\n\n") : undefined;
-
-            if (cursorCfg.alwaysSendFullInstructions) {
-              instructionMarkdown = combined ?? readCursorUserInstructions();
-            } else {
-              const { instructionMarkdown: blob, markHeavyCommitted } =
-                resolveCursorStickyInstructionBlob({
-                  combinedGuidanceAndSkillsMarkdown: combined,
-                  readFallbackAgents: readCursorUserInstructions,
-                  stickyHeavyCommitted: currentEntry.stickyHeavyInstructionsSent,
-                });
-              instructionMarkdown = blob;
-              if (markHeavyCommitted) {
-                currentEntry.stickyHeavyInstructionsSent = true;
-              }
-            }
-            instructionMarkdownReady = true;
-            const mcode = appendCursorMcodeInstructions(
-              instructionMarkdown,
-              currentEntry.mcodeRuntimeInstructions,
-              currentEntry.mcodeRuntimeInstructionsSent,
-            );
-            instructionMarkdown = mcode.instructionMarkdown;
-            mcodeInstructionsIncluded = mcode.included;
-          }
-          blocks = buildCursorAcpPromptBlocks(
-            promptMessage,
-            promptAttachments,
-            instructionMarkdown,
-          );
-          mcodeInstructionsIncluded = Boolean(
-            !currentEntry.mcodeRuntimeInstructionsSent &&
-              currentEntry.mcodeRuntimeInstructions &&
-              instructionMarkdown?.includes(currentEntry.mcodeRuntimeInstructions),
-          );
-        }
-
-        try {
-          attempt += 1;
-          currentEntry.activeTurnState = createCursorAcpTurnState();
-          this.turnExecutionByState.set(currentEntry.activeTurnState, turnExecutionId);
-          promptResponse = await currentEntry.acpRuntime.prompt({
-            sessionId: currentEntry.acpSessionId,
-            prompt: blocks,
-          });
-          if (mcodeInstructionsIncluded) currentEntry.mcodeRuntimeInstructionsSent = true;
-          break;
-        } catch (attemptErr) {
-          const raw = attemptErr instanceof Error ? attemptErr.message : String(attemptErr);
-          // Do not retry after explicit Stop; cancel-like errors are expected and a
-          // second prompt would fight the user's abort.
-          if (currentEntry.pendingUserStopAbort) {
-            throw attemptErr;
-          }
-          if (
-            attempt >= maxAttempts ||
-            !cursorCfg.retryTransientFailuresOnce ||
-            !isLikelyTransientCursorPromptFailure(raw)
-          ) {
-            throw attemptErr;
-          }
-          if (looksLikeAcpConnectionClosed(raw)) {
-            currentEntry = await this.respawnCursorSessionAfterAcpClose(currentEntry);
-            promptMessage = buildCursorAcpContinueAfterDisconnectPrompt(originalUserMessage);
-            promptAttachments = originalAttachments;
-            isContinueRetry = true;
-            continue;
-          }
-          // Rate limit (`resource_exhausted`): the backend rejected the request
-          // before doing any work, so resend the SAME prompt after a jittered
-          // backoff. The wait stays invisible in the thread — runTurn emits no
-          // Error/Ended while it sleeps, so the turn reads as ordinary latency.
-          if (looksLikeCursorRateLimit(raw)) {
-            const backoffMs = computeCursorRateLimitBackoffMs(cursorCfg.rateLimitRetryBackoffMs);
-            logger.warn("Cursor ACP prompt rate-limited; backing off before one retry", {
-              threadId: currentEntry.threadId,
-              attempt,
-              backoffMs,
-              error: raw,
-            });
-            await interruptibleDelay(backoffMs, () => currentEntry.pendingUserStopAbort);
-            if (currentEntry.pendingUserStopAbort) {
-              throw attemptErr;
-            }
-            continue;
-          }
-          logger.warn("Cursor ACP prompt retry after transient CLI failure", {
-            threadId: currentEntry.threadId,
-            attempt,
-            error: raw,
-          });
-        }
-      }
-
-      const text = resolveCursorAssistantMessageContent(currentEntry.activeTurnState.accumulator);
-      if (text.length > 0) {
-        emitTurnEvent({
-          type: AgentEventType.Message,
-          threadId: currentEntry.threadId,
-          content: text,
-          tokens: null,
-        } satisfies AgentEvent);
-      }
-
-      const usage = promptResponse.usage;
-      emitTurnEvent({
-        type: AgentEventType.TurnComplete,
-        threadId: currentEntry.threadId,
-        reason: promptResponse.stopReason,
-        costUsd: null,
-        tokensIn: usage?.inputTokens ?? 0,
-        tokensOut: usage?.outputTokens ?? 0,
-        providerId: "cursor",
-      } satisfies AgentEvent);
-
-      emitTurnEvent({
-        type: AgentEventType.Ended,
-        threadId: currentEntry.threadId,
-        turnExecutionId,
-      } satisfies AgentEvent);
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      const userStoppedStream = shouldSuppressCursorPromptError(errMsg, {
-        pendingUserStopAbort: currentEntry.pendingUserStopAbort,
-      });
-      const stderrTail =
-        cursorCfg.verboseFailureLogs && currentEntry.stderrTailLines.length > 0
-          ? currentEntry.stderrTailLines.slice(-16)
-          : undefined;
-      if (!userStoppedStream) {
-        logger.error("Cursor ACP prompt failed", {
-          threadId: currentEntry.threadId,
-          stickyHeavyCommitted: currentEntry.stickyHeavyInstructionsSent,
-          promptOrdinal: currentEntry.cursorPromptOrdinal,
-          acpSessionId: currentEntry.acpSessionId,
-          verboseFailureLogs: cursorCfg.verboseFailureLogs,
-          childPid: currentEntry.child.pid,
-          childExitCode: currentEntry.child.exitCode,
-          childSignalCode: currentEntry.child.signalCode,
-          stderrTail,
-          error: errMsg,
-        });
-        emitTurnEvent({
-          type: AgentEventType.Error,
-          threadId: currentEntry.threadId,
-          error: errMsg,
-        } satisfies AgentEvent);
-      } else {
-        logger.info("Cursor prompt ended after Stop (expected disconnect)", {
-          threadId: currentEntry.threadId,
-          errorSample: errMsg.slice(0, 200),
-        });
-        const interrupted =
-          currentEntry.activeTurnState?.accumulator !== undefined
-            ? resolveCursorAssistantMessageContent(currentEntry.activeTurnState.accumulator).trim()
-            : "";
-        if (interrupted.length > 0) {
-          emitTurnEvent({
-            type: AgentEventType.Message,
-            threadId: currentEntry.threadId,
-            content: interrupted,
-            tokens: null,
-          } satisfies AgentEvent);
-        }
-      }
-      emitTurnEvent({
-        type: AgentEventType.Ended,
-        threadId: currentEntry.threadId,
-        turnExecutionId,
-      } satisfies AgentEvent);
-    } finally {
-      currentEntry.activeTurnState = null;
-      currentEntry.pendingUserStopAbort = false;
-    }
+    return this.getTurnExecutor().run(entry, opts);
   }
 
-  /**
-   * Clean side-channel handoff query (path B). Reconstructs the parent thread's
-   * persisted Cursor session into a throwaway ACP connection, runs the summary
-   * prompt against that fork, and returns the assistant text. It writes nothing
-   * to the parent thread's `messages` table and emits no provider events, so the
-   * canonical session is left exactly as it was. The throwaway subprocess is
-   * killed before returning.
-   *
-   * Because loading the same session id into a second connection branches the
-   * conversation rather than advancing the canonical server-side session, the
-   * parent is never mutated.
-   *
-   * Falls back to a transient (path-D) error when there is no persisted session
-   * to reconstruct, the load fails, or the fork produces no text — the pipeline
-   * then builds a deterministic handoff instead of mutating the parent.
-   * `conversationHistory` (the sessionless B-prime body Claude uses) is not
-   * consumed here: the slice's contract is a clean reconstruction of the
-   * persisted session, so a missing/unresumable session degrades to path D.
-   */
+  /** Runs an isolated path-B summary query against a persisted Cursor session. */
   async runSideChannelQuery(args: {
     parentThreadId: string;
     parentSdkSessionId: string;
@@ -1720,158 +988,6 @@ export class CursorProvider
     conversationHistory?: string;
     cwd: string;
   }): Promise<string> {
-    const { parentThreadId, parentSdkSessionId, prompt, abortSignal, cwd } = args;
-    void args.conversationHistory; // sessionless B-prime fallback is out of scope for this slice.
-
-    if (!parentSdkSessionId) {
-      throw transientHandoffError(
-        `No persisted Cursor session for parent thread ${parentThreadId}; cannot run clean side-channel query`,
-      );
-    }
-    if (abortSignal?.aborted) {
-      throw transientHandoffError("Cursor side-channel query aborted before start");
-    }
-
-    // Populated from session updates only; never emitted, so the parent thread
-    // gains no rows and the UI timeline sees nothing.
-    const turnState = createCursorAcpTurnState();
-    const todoSnapshot = createCursorTodoSnapshot();
-    const sideChannelThreadId = `sidechannel-${randomUUID()}`;
-
-    const client: Client = {
-      // A summary query needs no tools, and a throwaway side-channel must never
-      // mutate the user's workspace; deny every permission request.
-      requestPermission: async () => ({ outcome: { outcome: "cancelled" } }),
-      sessionUpdate: async (params: SessionNotification) => {
-        const update = validateAcpSessionUpdate(params);
-        if (update.sessionId !== parentSdkSessionId) return;
-        // Map for the accumulator side effect; discard the events (no emission).
-        mapCursorAcpSessionNotification(update, sideChannelThreadId, turnState, todoSnapshot);
-      },
-      readTextFile: async (r) => ({ content: this.safeReadWorkspaceFile(cwd, r.path) }),
-      writeTextFile: async () => {
-        throw new Error("Cursor side-channel is read-only");
-      },
-      extMethod: async () => ({}),
-      extNotification: async () => {},
-    };
-
-    let transport: CursorSideChannelTransport;
-    try {
-      transport = await this.sideChannelConnector({ cwd, client });
-    } catch (err) {
-      throw transientHandoffError(
-        `Failed to open Cursor side-channel connection: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
-
-    // Dispose exactly once: an abort during loadSession/prompt and the finally
-    // block both reach for teardown, so the first caller owns it and the other
-    // awaits the same promise rather than racing a second kill.
-    let disposal: Promise<void> | null = null;
-    const disposeOnce = (): Promise<void> => {
-      if (!disposal) disposal = Promise.resolve(transport.dispose());
-      return disposal;
-    };
-    const onAbort = (): void => {
-      void disposeOnce();
-    };
-    abortSignal?.addEventListener("abort", onAbort, { once: true });
-    try {
-      try {
-        await transport.loadSession({ cwd, mcpServers: [], sessionId: parentSdkSessionId });
-      } catch (err) {
-        throw transientHandoffError(
-          `Cursor side-channel could not reconstruct parent session ${parentSdkSessionId}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-
-      await transport.prompt({
-        sessionId: parentSdkSessionId,
-        prompt: [{ type: "text", text: prompt }],
-      });
-
-      const text = resolveCursorAssistantMessageContent(turnState.accumulator).trim();
-      if (!text) {
-        throw transientHandoffError("Cursor side-channel query returned empty output");
-      }
-      return text;
-    } finally {
-      abortSignal?.removeEventListener("abort", onAbort);
-      await disposeOnce();
-    }
-  }
-
-  /**
-   * Default {@link sideChannelConnector}: spawns a fresh `cursor-agent acp`
-   * subprocess, runs the ACP handshake, and returns a transport that wraps the
-   * connection plus a process-tree kill on dispose. The subprocess is never
-   * registered with the session pool, so it cannot disturb the parent thread's
-   * pooled session.
-   */
-  private async createSideChannelTransport(args: {
-    cwd: string;
-    client: Client;
-  }): Promise<CursorSideChannelTransport> {
-    const { cwd, client } = args;
-    const settings = this.settingsService.get();
-    const cliCandidates = cursorCliProbeBinaries(settings);
-
-    let child: ChildProcess | null = null;
-    let lastErr: unknown = null;
-    for (const cliPath of cliCandidates) {
-      try {
-        const candidate = spawn(cliPath, buildCursorAcpArgs({ permissionMode: "default" }), {
-          stdio: ["pipe", "pipe", "pipe"],
-          cwd,
-          shell: process.platform === "win32",
-          env: this.envService.getEnv(),
-        });
-        if (!candidate.stdin || !candidate.stdout) {
-          throw new Error("Failed to spawn cursor-agent: stdio pipes unavailable");
-        }
-        child = candidate;
-        break;
-      } catch (e) {
-        lastErr = e;
-        const m = e instanceof Error ? e.message : String(e);
-        if (/Failed to spawn cursor-agent/i.test(m)) continue;
-        break;
-      }
-    }
-    if (!child?.stdin || !child.stdout) {
-      throw lastErr instanceof Error
-        ? lastErr
-        : new Error(String(lastErr ?? "Failed to spawn cursor-agent (side-channel)"));
-    }
-
-    // Read the pipes off `child` directly: the guard above narrows
-    // `child.stdin`/`child.stdout` on that exact reference, a narrowing that
-    // would not survive being aliased through another binding.
-    const out = Writable.toWeb(child.stdin) as WritableStream<Uint8Array>;
-    const inp = Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>;
-    const spawned = child;
-    const stream = ndJsonStream(out, inp);
-    const connection = new ClientSideConnection(() => client, stream);
-    try {
-      await this.acpHandshake(connection, "cursor-side-channel");
-    } catch (error) {
-      if (spawned.pid !== undefined) {
-        await this.host.processes.terminateTree(spawned.pid).catch(() => undefined);
-      }
-      throw error;
-    }
-
-    return {
-      loadSession: (a) => connection.loadSession(a),
-      prompt: (a) => connection.prompt(a),
-      dispose: async () => {
-        try {
-          if (spawned.pid != null) await this.host.processes.terminateTree(spawned.pid);
-        } catch {
-          /* best-effort: the subprocess may already be gone */
-        }
-      },
-    };
+    return this.getSideChannel().run(args);
   }
 }

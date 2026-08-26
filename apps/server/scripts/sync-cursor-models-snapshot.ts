@@ -12,7 +12,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseCursorCliModelsOutput } from "../../../packages/providers/src/private/cursor/cursor-cli-models.js";
+import { parseCursorCliModelsOutput } from "../../../packages/providers/src/private/cursor/models/cursor-cli-models.js";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "../../..");
 const inputPath = process.argv[2] ?? join(repoRoot, ".mcode-local/cursor-models-stdout.txt");

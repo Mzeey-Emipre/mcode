@@ -4,7 +4,7 @@
  * lifecycle markers omit args on the initial `tool_call`.
  */
 
-import { normalizeMcodeCursorToolInput } from "./cursor-tool-input-normalize.js";
+import { normalizeMcodeCursorToolInput } from "../events/cursor-tool-input-normalize.js";
 
 /** ACP diff block on `tool_call_update.content`. */
 export interface AcpDiffBlock {

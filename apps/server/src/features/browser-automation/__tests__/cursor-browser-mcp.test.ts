@@ -8,13 +8,13 @@ import {
   type BrowserAutomationSessionLeaseGrant,
   type BrowserAutomationSessionLeaseScope,
   type BrowserAutomationSessionLeaseStage,
-} from "../../../../browser-automation/index.js";
+} from "../index.js";
 import {
   buildCursorBrowserMcpServers,
   CursorProvider,
   cursorSupportsHttpMcp,
-} from "../../../../../../../../packages/providers/src/private/cursor/cursor-provider.js";
-import { AcpSessionRuntime } from "../../../../../../../../packages/providers/src/private/protocols/acp/acp-session-runtime.js";
+} from "../../../../../../packages/providers/src/private/cursor/cursor-provider.js";
+import { AcpSessionRuntime } from "../../../../../../packages/providers/src/private/protocols/acp/acp-session-runtime.js";
 
 const spawnMock = vi.hoisted(() => vi.fn());
 vi.mock("node:child_process", async () => {
@@ -326,7 +326,7 @@ describe("Cursor browser MCP configuration", () => {
     provider.settingsService = { get: vi.fn(() => ({ provider: { cursor: { verboseFailureLogs: false } } })) };
     provider.pendingBrowserContext = new Map();
 
-    await expect(provider.spawnOneCli("cursor-agent", "mcode-a", "C:\\", "default")).rejects.toThrow(
+    await expect(provider.getProcessSpawner().spawnOneCli("cursor-agent", "mcode-a", "thread-a", "C:\\", "default")).rejects.toThrow(
       "handshake failed",
     );
 
@@ -349,11 +349,12 @@ describe("Cursor browser MCP configuration", () => {
     provider.envService = { getEnv: vi.fn(() => ({})) };
     provider.settingsService = { get: vi.fn(() => ({ provider: { cli: {}, cursor: {} } })) };
     provider.host = { processes: { terminateTree } };
-    provider.acpHandshake = vi.fn().mockRejectedValue(
+    const sideChannel = provider.getSideChannel();
+    sideChannel.acpHandshake = vi.fn().mockRejectedValue(
       Object.assign(new TypeError("invalid ACP payload"), { code: "INVALID_ACP_PAYLOAD" }),
     );
 
-    await expect(provider.createSideChannelTransport({ cwd: ".", client: {} })).rejects.toMatchObject({
+    await expect(sideChannel.createTransport({ cwd: ".", client: {} })).rejects.toMatchObject({
       code: "INVALID_ACP_PAYLOAD",
     });
 
@@ -362,17 +363,22 @@ describe("Cursor browser MCP configuration", () => {
     spawnMock.mockReset();
   });
 
-  it("opens a normal Cursor session without an inactive thread-control MCP connection", async () => {
+  it("continues a Cursor session when thread-control MCP bootstrap fails", async () => {
     const openSession = vi.fn(async () => ({ sessionId: "acp-session", reloaded: false }));
+    const close = vi.fn(async () => undefined);
     const provider = Object.create(CursorProvider.prototype) as any;
     provider.sdkSessionIds = new Map();
-    provider.threadControlMcp = { createHttpConnection: vi.fn(async () => undefined) };
+    provider.threadControlMcp = {
+      createHttpConnection: vi.fn().mockRejectedValue(new Error("thread control unavailable")),
+      close,
+    };
     provider.emit = vi.fn();
     const entry = {
       mcodeSessionId: "mcode-a",
       threadId: "thread-a",
       cwd: ".",
       supportsHttpMcp: true,
+      threadControlMcpEnabled: true,
       acpRuntime: { openSession },
     };
 
@@ -384,12 +390,71 @@ describe("Cursor browser MCP configuration", () => {
       mcpServers: [],
     });
     expect(entry.acpSessionId).toBe("acp-session");
+    expect(entry.threadControlMcpEnabled).toBe(false);
+    expect(close).toHaveBeenCalledExactlyOnceWith("mcode-a");
+  });
+
+  it("retries ACP setup without thread-control MCP when Cursor rejects its connection", async () => {
+    const initialOpen = vi.fn().mockRejectedValue(new Error("MCP connection closed"));
+    const fallbackOpen = vi.fn(async () => ({ sessionId: "fallback-session", reloaded: false }));
+    const close = vi.fn(async () => undefined);
+    const provider = Object.create(CursorProvider.prototype) as any;
+    provider.sdkSessionIds = new Map();
+    provider.emit = vi.fn();
+    provider.threadControlMcp = {
+      createHttpConnection: vi.fn(async () => ({
+        name: "mcode-thread-control",
+        url: "http://127.0.0.1:19400/mcp",
+        headers: { Authorization: "Bearer opaque-token" },
+      })),
+      close,
+    };
+    const initial = {
+      mcodeSessionId: "mcode-a",
+      threadId: "thread-a",
+      cwd: ".",
+      permissionMode: "default",
+      supportsHttpMcp: true,
+      threadControlMcpEnabled: true,
+      acpRuntime: { openSession: initialOpen },
+    };
+    const fallback = {
+      mcodeSessionId: "mcode-a",
+      threadId: "thread-a",
+      cwd: ".",
+      permissionMode: "default",
+      supportsHttpMcp: true,
+      threadControlMcpEnabled: true,
+      acpRuntime: { openSession: fallbackOpen, close: vi.fn(async () => undefined) },
+    };
+    provider.spawnChild = vi.fn().mockResolvedValue(fallback);
+
+    const opened = await provider.openSessionWithOptionalThreadControl(initial, false, [], {});
+
+    expect(initialOpen).toHaveBeenCalledExactlyOnceWith({
+      resumeFrom: undefined,
+      cwd: ".",
+      mcpServers: [{
+        type: "http",
+        name: "mcode-thread-control",
+        url: "http://127.0.0.1:19400/mcp",
+        headers: [{ name: "Authorization", value: "Bearer opaque-token" }],
+      }],
+    });
+    expect(fallbackOpen).toHaveBeenCalledExactlyOnceWith({
+      resumeFrom: undefined,
+      cwd: ".",
+      mcpServers: [],
+    });
+    expect(opened).toMatchObject({ state: fallback, reloaded: false });
+    expect(fallback.threadControlMcpEnabled).toBe(false);
+    expect(close).toHaveBeenCalledExactlyOnceWith("mcode-a");
   });
 
   it("returns a typed unsupported result for unknown or malformed Cursor child extensions", async () => {
     const provider = Object.create(CursorProvider.prototype) as any;
     provider.settingsService = { get: vi.fn(() => ({ provider: { cursor: {} } })) };
-    const client = provider.buildAcpClient({
+    const client = provider.getAcpClientBridge().createClient({
       threadId: "thread-a",
       activeTurnState: null,
     });

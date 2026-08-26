@@ -29,7 +29,7 @@ import {
   resolveCursorAssistantMessageContent,
   type CursorStreamAccumulator,
 } from "../cursor-stream-event-mapper.js";
-import { createCursorTodoSnapshot, type CursorTodoSnapshot } from "../cursor-todo-snapshot.js";
+import { createCursorTodoSnapshot, type CursorTodoSnapshot } from "../../events/cursor-todo-snapshot.js";
 import type { CursorStreamEvent } from "../cursor-stream-json-types.js";
 
 function freshAcc(): CursorStreamAccumulator {

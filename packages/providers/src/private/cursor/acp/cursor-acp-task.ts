@@ -60,7 +60,10 @@ export function cursorTaskToolCallStartedToAgentEvents(
       threadId,
       toolCallId,
       toolName: "Agent",
-      toolInput: { description: taskDescriptionFromAcpTitle(title) },
+      toolInput: {
+        description: taskDescriptionFromAcpTitle(title),
+        subagentProviderName: "Cursor",
+      },
     },
   ];
 }
@@ -134,6 +137,7 @@ export function cursorTaskExtToAgentEvents(
   const toolInput: Record<string, unknown> = {
     description,
     prompt,
+    subagentProviderName: "Cursor",
   };
   if (model) toolInput.model = model;
   if (agentId) toolInput.agentId = agentId;

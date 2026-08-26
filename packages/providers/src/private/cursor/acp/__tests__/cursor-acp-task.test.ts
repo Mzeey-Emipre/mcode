@@ -56,7 +56,10 @@ describe("cursor-acp-task", () => {
     expect(events[0]).toMatchObject({
       type: AgentEventType.ToolUse,
       toolName: "Agent",
-      toolInput: { description: "Subagent task" },
+      toolInput: {
+        description: "Subagent task",
+        subagentProviderName: "Cursor",
+      },
     });
   });
 
@@ -73,6 +76,7 @@ describe("cursor-acp-task", () => {
         prompt: CAPTURED_TASK_EXT.prompt,
         model: CAPTURED_TASK_EXT.model,
         agentId: CAPTURED_TASK_EXT.agentId,
+        subagentProviderName: "Cursor",
       },
     });
   });

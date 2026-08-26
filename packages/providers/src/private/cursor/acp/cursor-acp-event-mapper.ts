@@ -20,9 +20,9 @@ import {
   reconcileCursorTodos,
   buildTodoWriteEvents,
   type CursorTodoSnapshot,
-} from "./cursor-todo-snapshot.js";
-import { normalizeMcodeCursorToolInput } from "./cursor-tool-input-normalize.js";
-import type { CursorStreamAccumulator } from "./cursor-stream-event-mapper.js";
+} from "../events/cursor-todo-snapshot.js";
+import { normalizeMcodeCursorToolInput } from "../events/cursor-tool-input-normalize.js";
+import type { CursorStreamAccumulator } from "../stream-json/cursor-stream-event-mapper.js";
 import {
   enrichAcpToolInput,
   formatAcpToolResultOutput,
@@ -37,7 +37,7 @@ import {
 import {
   extractCursorParentToolCallId,
   resolveCursorSubagentToolName,
-} from "./cursor-subagent-detection.js";
+} from "../events/cursor-subagent-detection.js";
 
 /** Maps ACP `kind` field to Mcode tool names. */
 const TOOL_NAME_BY_ACP_KIND: Record<string, string> = {

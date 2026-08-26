@@ -3,9 +3,9 @@ import { describe, it, expect, beforeEach } from "vitest";
 import type Database from "better-sqlite3";
 import { createCursorProvider, type ProviderFactoryInput, type ProviderHostPorts } from "@mcode/providers";
 import type { ForkRequest, HandoffArtifact, Settings } from "@mcode/contracts";
-import { openMemoryDatabase } from "../../../../../runtime/persistence/sqlite/database.js";
-import { ThreadRepo } from "../../../../thread-control/persistence/thread-repo.js";
-import { MessageRepo } from "../../../../agents/conversation/persistence/message-repo.js";
+import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
+import { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
+import { MessageRepo } from "../../../agents/conversation/persistence/message-repo.js";
 import type { Client } from "@agentclientprotocol/sdk";
 
 /**
@@ -61,7 +61,7 @@ describe("Cursor clean side-channel fork", () => {
     // Replace the real `cursor-agent acp` spawn with a fake transport that
     // streams a summary chunk back through the client (no subprocess, no
     // events). `prompt` mimics the agent answering on the loaded session id.
-    (provider as unknown as { sideChannelConnector: unknown }).sideChannelConnector = (args: {
+    (provider as unknown as { sideChannel: { connector: unknown } }).sideChannel.connector = (args: {
       cwd: string;
       client: Client;
     }) => {

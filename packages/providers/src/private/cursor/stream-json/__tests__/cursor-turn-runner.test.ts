@@ -25,7 +25,7 @@ import {
   runCursorTurn,
   type SpawnLike,
 } from "../cursor-turn-runner.js";
-import { createCursorTodoSnapshot } from "../cursor-todo-snapshot.js";
+import { createCursorTodoSnapshot } from "../../events/cursor-todo-snapshot.js";
 import type { AgentEvent } from "@mcode/contracts";
 import type { ChildProcess } from "node:child_process";
 
