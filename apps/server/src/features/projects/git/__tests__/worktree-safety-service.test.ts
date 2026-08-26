@@ -26,4 +26,16 @@ describe("WorktreeSafetyService", () => {
       rmSync(target, { recursive: true, force: true });
     }
   });
+
+  it("blocks removal when the ownership list is truncated", async () => {
+    const service = new WorktreeSafetyService(new FakeGitExecutor());
+    const target = mkdtempSync(join(tmpdir(), "mcode-worktree-safety-truncated-"));
+
+    try {
+      await expect(service.assessWorktreeRemovalSafety(target, [], true))
+        .resolves.toEqual({ safe: false, reason: "truncated" });
+    } finally {
+      rmSync(target, { recursive: true, force: true });
+    }
+  });
 });

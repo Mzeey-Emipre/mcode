@@ -10,7 +10,6 @@ export { FilesystemBrowser } from "./lifecycle/filesystem-browser.js";
 /** Provides project Git and worktree operations. */
 export {
   GitService,
-  PullRequestReviewGitError,
 } from "./git/git-service.js";
 /** Serializes Git worktree mutations for one repository. */
 export { RepositoryGitMutationLock } from "./git/repository-git-mutation-lock.js";
@@ -19,6 +18,17 @@ export { GitRepositoryService } from "./git/git-repository-service.js";
 export type { NormalizedGitRemote } from "./git/git-repository-service.js";
 /** Computes Git history, diffs, file lists, and branch comparisons. */
 export { GitComparisonService } from "./git/git-comparison-service.js";
+/** Provisions and validates Review worktrees for immutable pull request heads. */
+export {
+  PullRequestReviewGitService,
+  PullRequestReviewGitError,
+} from "./git/pull-request-review-git-service.js";
+export type {
+  PullRequestReviewGitCandidate,
+  PullRequestReviewGitProvisionRequest,
+  PullRequestReviewGitProvisionResult,
+  PullRequestReviewGitSource,
+} from "./git/pull-request-review-git-service.js";
 /** Creates, discovers, and removes Mcode-managed Git worktrees. */
 export { GitWorktreeService } from "./git/git-worktree-service.js";
 export type { RemoveWorktreeOptions } from "./git/git-worktree-service.js";
@@ -29,10 +39,6 @@ export { GitWatcherService } from "./git/git-watcher-service.js";
 export type {
   BranchlessWorktreeRemovalSafety,
   NamedWorktreeRemovalSafety,
-  PullRequestReviewGitCandidate,
-  PullRequestReviewGitProvisionRequest,
-  PullRequestReviewGitProvisionResult,
-  PullRequestReviewGitSource,
   WorktreeRemovalSafety,
 } from "./git/git-service.js";
 

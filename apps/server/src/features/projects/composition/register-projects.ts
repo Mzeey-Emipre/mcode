@@ -7,6 +7,7 @@ import {
   GitComparisonService,
   GitRepositoryService,
   GitWorktreeService,
+  PullRequestReviewGitService,
   RepositoryGitMutationLock,
   WorktreeSafetyService,
   ProjectWorktreeService,
@@ -75,6 +76,11 @@ export function registerProjectServices(container: DependencyContainer): void {
   container.register(
     GitWorktreeService,
     { useClass: GitWorktreeService },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    PullRequestReviewGitService,
+    { useClass: PullRequestReviewGitService },
     { lifecycle: Lifecycle.Singleton },
   );
   container.register(
