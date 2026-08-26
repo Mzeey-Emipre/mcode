@@ -8,10 +8,10 @@
 
 import { injectable, inject } from "tsyringe";
 import { createHash } from "crypto";
-import { rmdir, realpath } from "fs/promises";
+import { realpath } from "fs/promises";
 import { existsSync, mkdirSync, realpathSync } from "fs";
-import { join, basename, dirname, resolve, relative, isAbsolute } from "path";
-import { getMcodeDir, validateBranchName, validateWorktreeName, logger } from "@mcode/shared";
+import { basename, resolve } from "path";
+import { getMcodeDir, validateWorktreeName, logger } from "@mcode/shared";
 import type { GitBranch, WorktreeInfo, GitCommit, BranchComparison, GitRemoteUrl, ReviewComparison, ReviewFileChange } from "@mcode/contracts";
 
 const MAX_REVIEW_COMPARISON_FILES = 10_000;
@@ -20,6 +20,15 @@ import type { GitExecutor } from "./execution/index.js";
 import { normalizePathForComparison } from "../../../shared/filesystem/path-identity.js";
 import { WorktreeDirectoryRemover } from "../worktrees/worktree-directory-remover.js";
 import { RepositoryGitMutationLock } from "./repository-git-mutation-lock.js";
+import {
+  ensureManagedWorktreeBaseDir,
+  getManagedWorktreeBaseDir,
+  isPathWithin,
+} from "./managed-worktree-paths.js";
+import {
+  GitWorktreeService,
+  type RemoveWorktreeOptions,
+} from "./git-worktree-service.js";
 import {
   GitRepositoryService,
   normalizeRemoteIdentity,
@@ -34,6 +43,7 @@ import {
 } from "./worktree-safety-service.js";
 
 export type { NormalizedGitRemote } from "./git-repository-service.js";
+export type { RemoveWorktreeOptions } from "./git-worktree-service.js";
 
 /** Immutable pull request head needed for local Review worktree setup. */
 export interface PullRequestReviewGitSource {
@@ -97,117 +107,6 @@ export class PullRequestReviewGitError extends Error {
   }
 }
 
-/** Max retries for rmdir on parent directories (handles transient Windows NTFS/AV locks). */
-const PARENT_RMDIR_MAX_RETRIES = 5;
-
-/** Delay between rmdir retries in milliseconds. */
-const PARENT_RMDIR_RETRY_DELAY_MS = 300;
-
-/**
- * Options for {@link GitService.removeWorktree}.
- * Controls which worktree path is removed and whether the associated branch is deleted.
- */
-interface RemoveWorktreeOptions {
-  /**
-   * Exact branch name to delete after the worktree is removed.
-   * When omitted and deleteBranch is true, removeWorktree falls back to `mcode/<worktree-name>`.
-   */
-  branchName?: string;
-  /**
-   * Whether removeWorktree should attempt `git branch -d` after cleaning up the worktree.
-   * Defaults to true; when false, branchName is ignored and no branch deletion is attempted.
-   */
-  deleteBranch?: boolean;
-  /**
-   * Exact filesystem path of the worktree to remove.
-   * When omitted, removeWorktree derives the managed path under the mcode worktree directory from the worktree name.
-   */
-  worktreePath?: string;
-  /**
-   * Require the supplied path to resolve to a canonical descendant of Mcode's
-   * managed worktree root before any Git or filesystem removal is attempted.
-   */
-  managedCanonicalOnly?: boolean;
-}
-
-/** Resolve the worktree base directory path under the mcode data dir. */
-function getWorktreeBaseDir(repoPath: string): string {
-  return join(getMcodeDir(), "worktrees", worktreeSlug(repoPath));
-}
-
-/** Resolve and ensure the worktree base directory exists. */
-function ensureWorktreeBaseDir(repoPath: string): string {
-  const dir = getWorktreeBaseDir(repoPath);
-  mkdirSync(dir, { recursive: true });
-  return dir;
-}
-
-function worktreeSlug(repoPath: string): string {
-  return basename(repoPath).toLowerCase().replace(/[^a-z0-9-]/g, "-");
-}
-
-/**
- * Retry rmdir for transient EBUSY/EPERM locks on Windows.
- * After a child directory is removed, NTFS journal updates, antivirus scans,
- * or the search indexer can briefly hold the parent directory.
- */
-async function rmdirWithRetry(dirPath: string): Promise<void> {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      await rmdir(dirPath);
-      return;
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code ?? "";
-      if (
-        (code === "EBUSY" || code === "EPERM") &&
-        attempt < PARENT_RMDIR_MAX_RETRIES - 1
-      ) {
-        await new Promise<void>((r) => setTimeout(r, PARENT_RMDIR_RETRY_DELAY_MS));
-        continue;
-      }
-      throw err;
-    }
-  }
-}
-
-/**
- * Best-effort cleanup of empty managed parent directories after a worktree is removed.
- * Returns true if all empty parents were removed, false if any failed.
- */
-async function removeEmptyManagedParentDirs(wtPath: string): Promise<boolean> {
-  const managedRoot = resolve(getMcodeDir(), "worktrees");
-  const rel = relative(managedRoot, resolve(wtPath));
-  if (rel.startsWith("..") || isAbsolute(rel)) {
-    return true;
-  }
-
-  let current = dirname(resolve(wtPath));
-  while (current !== managedRoot) {
-    try {
-      await rmdirWithRetry(current);
-      logger.info("Removed empty managed worktree parent dir", { path: current });
-      current = dirname(current);
-    } catch (err) {
-      const code = err && typeof err === "object" && "code" in err
-        ? String((err as NodeJS.ErrnoException).code)
-        : "";
-      if (code === "ENOTEMPTY" || code === "EEXIST") {
-        break;
-      }
-      if (code === "ENOENT") {
-        current = dirname(current);
-        continue;
-      }
-      logger.warn("Failed to remove empty managed worktree parent dir", {
-        path: current,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      return false;
-    }
-  }
-  return true;
-}
-
 /**
  * Reject a git ref that could smuggle a flag into a git argv (a leading `-`) or
  * contains characters outside what refnames and short SHAs use. Guards the
@@ -257,11 +156,6 @@ function assertSafeReviewBranch(value: string, label: string): void {
   }
 }
 
-function isPathWithin(basePath: string, candidatePath: string): boolean {
-  const rel = relative(normalizePathForComparison(basePath), normalizePathForComparison(candidatePath));
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-}
-
 interface ReviewBranchRecord {
   name: string;
   oid: string;
@@ -289,6 +183,7 @@ export class GitService {
   private readonly repositoryMutationLock: RepositoryGitMutationLock;
   private readonly worktreeSafety: WorktreeSafetyService;
   private readonly gitRepository: GitRepositoryService;
+  private readonly gitWorktrees: GitWorktreeService;
 
   constructor(
     @inject(WorkspaceRepo) private readonly workspaceRepo: WorkspaceRepo,
@@ -301,11 +196,20 @@ export class GitService {
     worktreeSafety?: WorktreeSafetyService,
     @inject(GitRepositoryService, { isOptional: true })
     gitRepository?: GitRepositoryService,
+    @inject(GitWorktreeService, { isOptional: true })
+    gitWorktrees?: GitWorktreeService,
   ) {
     this.worktreeDirectoryRemover = worktreeDirectoryRemover ?? new WorktreeDirectoryRemover();
     this.repositoryMutationLock = repositoryMutationLock ?? new RepositoryGitMutationLock();
     this.worktreeSafety = worktreeSafety ?? new WorktreeSafetyService(gitExecutor);
     this.gitRepository = gitRepository ?? new GitRepositoryService(workspaceRepo, gitExecutor);
+    this.gitWorktrees = gitWorktrees ?? new GitWorktreeService(
+      workspaceRepo,
+      gitExecutor,
+      this.worktreeDirectoryRemover,
+      this.worktreeSafety,
+      this.gitRepository,
+    );
   }
 
   /** List all branches (local, remote, and worktree-attached) for a workspace. */
@@ -339,8 +243,7 @@ export class GitService {
 
   /** List all git worktrees registered for a workspace. */
   async listWorktrees(workspaceId: string): Promise<WorktreeInfo[]> {
-    const workspace = this.requireWorkspace(workspaceId);
-    return this.listWorktreesForPath(workspace.path);
+    return this.gitWorktrees.listWorktrees(workspaceId);
   }
 
   /** Resolve the origin remote as a normalized https URL and UI label. */
@@ -356,7 +259,7 @@ export class GitService {
   /** Resolve a server-owned Review worktree leaf beneath the managed worktree root. */
   getReviewWorktreeDestination(repoPath: string, worktreeName: string): string {
     validateWorktreeName(worktreeName);
-    const base = resolve(getWorktreeBaseDir(repoPath));
+    const base = resolve(getManagedWorktreeBaseDir(repoPath));
     const destination = resolve(base, worktreeName);
     if (!isPathWithin(base, destination) || normalizePathForComparison(base) === normalizePathForComparison(destination)) {
       throw new PullRequestReviewGitError(
@@ -525,7 +428,7 @@ export class GitService {
         );
       }
       const canonicalDestination = await realpath(destination);
-      const canonicalBase = await realpath(getWorktreeBaseDir(repoPath));
+      const canonicalBase = await realpath(getManagedWorktreeBaseDir(repoPath));
       if (!isPathWithin(canonicalBase, canonicalDestination)) {
         throw new PullRequestReviewGitError(
           "path_collision",
@@ -614,11 +517,7 @@ export class GitService {
 
   /** Check whether a filesystem path is a git-registered worktree for a repository. */
   async isRegisteredWorktreePath(repoPath: string, worktreePath: string): Promise<boolean> {
-    const normalize = (value: string) =>
-      resolve(value).replace(/\\/g, "/").toLowerCase().replace(/\/+$/, "");
-    const target = normalize(worktreePath);
-    const worktrees = await this.listWorktreesForPath(repoPath);
-    return worktrees.some((worktree) => normalize(worktree.path) === target);
+    return this.gitWorktrees.isRegisteredWorktreePath(repoPath, worktreePath);
   }
 
   /**
@@ -645,64 +544,7 @@ export class GitService {
     branchName?: string,
     options: { branchless?: boolean; baseRef?: string } = {},
   ): Promise<WorktreeInfo & { createdBranch: boolean; warnings: string[] }> {
-    validateWorktreeName(name);
-
-    if (!existsSync(repoPath)) {
-      throw new Error(`Repository path does not exist: ${repoPath}`);
-    }
-
-    const branch = branchName ?? `mcode/${name}`;
-    validateBranchName(branch);
-    if (options.baseRef) validateBranchName(options.baseRef);
-    const wtPath = join(ensureWorktreeBaseDir(repoPath), name);
-
-    if (existsSync(wtPath)) {
-      throw new Error(`Worktree directory already exists: ${wtPath}`);
-    }
-
-    const createdBranch = options.branchless
-      ? false
-      : !(await this.gitRepository.branchExists(repoPath, branch));
-    const warnings: string[] = [];
-
-    try {
-      if (options.branchless) {
-        await this.gitExecutor.exec(["-C", repoPath, "worktree", "add", "--detach", wtPath, branch]);
-      } else if (!createdBranch) {
-        await this.gitExecutor.exec(["-C", repoPath, "worktree", "add", wtPath, branch]);
-      } else {
-        await this.gitExecutor.exec([
-          "-C",
-          repoPath,
-          "worktree",
-          "add",
-          wtPath,
-          "-b",
-          branch,
-          ...(options.baseRef ? [options.baseRef] : []),
-        ]);
-      }
-    } catch (err) {
-      // If the worktree's .git file exists, git initialized the worktree
-      // successfully. The error likely comes from a post-checkout hook.
-      // Treat it as a warning so the caller can still use the worktree.
-      if (existsSync(join(wtPath, ".git"))) {
-        const stderr =
-          err instanceof Error && "stderr" in err
-            ? String((err as { stderr: unknown }).stderr)
-            : String(err);
-        warnings.push(stderr || String(err));
-        logger.warn("Worktree created but post-checkout hook failed", {
-          wtPath,
-          branch,
-          error: stderr,
-        });
-      } else {
-        throw err;
-      }
-    }
-
-    return { name, path: wtPath, branch, managed: true, createdBranch, warnings };
+    return this.gitWorktrees.createWorktree(repoPath, name, branchName, options);
   }
 
   /**
@@ -718,109 +560,7 @@ export class GitService {
     name: string,
     options: RemoveWorktreeOptions = {},
   ): Promise<boolean> {
-    validateWorktreeName(name);
-
-    let wtPath = options.worktreePath ?? join(getWorktreeBaseDir(repoPath), name);
-    if (options.managedCanonicalOnly) {
-      wtPath = await this.worktreeSafety.resolveManagedCanonicalWorktreePath(wtPath);
-    }
-    const deleteBranch = options.deleteBranch ?? true;
-    const branch = deleteBranch
-      ? (options.branchName ?? `mcode/${name}`)
-      : null;
-    if (branch) {
-      validateBranchName(branch);
-    }
-
-    await this.assertRemovableWorktreePath(repoPath, wtPath);
-
-    // 1. Try git worktree remove
-    try {
-      await this.gitExecutor.exec(
-        // Double --force: the second flag tells git to remove even if the
-        // worktree directory is locked (e.g. held by a Windows process).
-        ["-C", repoPath, "worktree", "remove", wtPath, "--force", "--force"],
-        { timeout: 30_000 },
-      );
-    } catch (err) {
-      logger.warn("git worktree remove failed", {
-        wtPath,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-
-    // 2. Fallback: remove directory manually if git didn't clean it up.
-    if (existsSync(wtPath)) {
-      logger.warn(
-        "Worktree directory still exists after git remove, falling back to bounded child removal",
-        { wtPath },
-      );
-      try {
-        await this.worktreeDirectoryRemover.remove(wtPath);
-      } catch (err) {
-        logger.error("Fallback worktree removal failed", {
-          wtPath,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-
-    // 3. Keep a locked worktree at its registered path so the cleanup worker
-    // can retry after the application holding the directory releases it.
-    if (existsSync(wtPath)) {
-      logger.error("Worktree directory could not be removed", { wtPath });
-      return false;
-    }
-
-    // 4. Prune stale worktree metadata after any manual fallback removed the path.
-    try {
-      await this.gitExecutor.exec(["-C", repoPath, "worktree", "prune"], { timeout: 10_000 });
-    } catch (err) {
-      logger.warn("git worktree prune failed", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-
-    // 5. Remove empty managed parent directories. Returns false on transient
-    //    lock errors (EBUSY/EPERM) so the cleanup worker can retry later when
-    //    the OS releases handles.
-    const parentsCleaned = await removeEmptyManagedParentDirs(wtPath);
-
-    // 6. Delete the branch when explicitly requested (independent of parent
-    //    dir state - always attempt this).
-    if (branch) {
-      try {
-        await this.gitExecutor.exec(["-C", repoPath, "branch", "-d", branch], { timeout: 10_000 });
-      } catch (err) {
-        logger.warn("Branch deletion failed (may not exist)", {
-          branch,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-
-    return parentsCleaned;
-  }
-
-  /**
-   * Reject fallback removal when a caller-supplied worktree path is outside the
-   * managed mcode worktree root and not registered with git for the repo.
-   */
-  private async assertRemovableWorktreePath(
-    repoPath: string,
-    worktreePath: string,
-  ): Promise<void> {
-    const managedRoot = resolve(getMcodeDir(), "worktrees");
-    const rel = relative(managedRoot, resolve(worktreePath));
-    const isManagedPath = !(rel.startsWith("..") || isAbsolute(rel));
-    if (isManagedPath) return;
-
-    const isRegistered = await this.isRegisteredWorktreePath(repoPath, worktreePath);
-    if (!isRegistered) {
-      throw new Error(
-        `worktreePath is not a managed or registered worktree: ${worktreePath}`,
-      );
-    }
+    return this.gitWorktrees.removeWorktree(repoPath, name, options);
   }
 
   /**
@@ -832,10 +572,7 @@ export class GitService {
     threadMode: string | null,
     worktreePath: string | null,
   ): string {
-    if (threadMode === "worktree" && worktreePath) {
-      return worktreePath;
-    }
-    return workspacePath;
+    return this.gitWorktrees.resolveWorkingDir(workspacePath, threadMode, worktreePath);
   }
 
   /** Get commit log for a workspace. When baseBranch is provided, only returns commits on branch that are not on baseBranch. Pass repoPath to run from a worktree directory instead of the workspace root. */
@@ -1591,7 +1328,7 @@ export class GitService {
       ].join("\0"))
       .digest("base64url");
     let managed = false;
-    const managedRoot = getWorktreeBaseDir(repoPath);
+    const managedRoot = getManagedWorktreeBaseDir(repoPath);
     if (existsSync(managedRoot)) {
       try {
         const canonicalManagedRoot = await realpath(managedRoot);
@@ -1816,7 +1553,7 @@ export class GitService {
     }
     const managedRoot = resolve(getMcodeDir(), "worktrees");
     mkdirSync(managedRoot, { recursive: true });
-    const base = ensureWorktreeBaseDir(repoPath);
+    const base = ensureManagedWorktreeBaseDir(repoPath);
     const [realManagedRoot, realBase] = await Promise.all([
       realpath(managedRoot),
       realpath(base),
@@ -1879,7 +1616,7 @@ export class GitService {
           { timeout: 30_000 },
         );
       } catch {
-        if (isPathWithin(getWorktreeBaseDir(attempt.repoPath), attempt.createdWorktreePath)) {
+        if (isPathWithin(getManagedWorktreeBaseDir(attempt.repoPath), attempt.createdWorktreePath)) {
           await this.worktreeDirectoryRemover.remove(attempt.createdWorktreePath).catch(() => undefined);
           await this.gitExecutor.exec(
             [
@@ -1984,78 +1721,6 @@ export class GitService {
     const workspace = this.workspaceRepo.findById(workspaceId);
     if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
     return workspace;
-  }
-
-  // ---------------------------------------------------------------------------
-  // Private git helpers (formerly module-level functions)
-  // ---------------------------------------------------------------------------
-
-  /** List all git worktrees for a repository path. */
-  private async listWorktreesForPath(repoPath: string): Promise<WorktreeInfo[]> {
-    const worktreesDir = getWorktreeBaseDir(repoPath)
-      .replace(/\\/g, "/")
-      .toLowerCase();
-    const normalizedRepo = repoPath
-      .replace(/\\/g, "/")
-      .toLowerCase()
-      .replace(/\/+$/, "");
-
-    let output: string;
-    try {
-      const { stdout } = await this.gitExecutor.exec(
-        ["-C", repoPath, "worktree", "list", "--porcelain"],
-      );
-      output = stdout;
-    } catch {
-      return [];
-    }
-
-    const result: WorktreeInfo[] = [];
-    let currentPath = "";
-    let currentBranch = "";
-
-    for (const line of output.split("\n")) {
-      if (line.startsWith("worktree ")) {
-        currentPath = line.slice("worktree ".length).trim();
-        currentBranch = "";
-      } else if (line.startsWith("branch ")) {
-        currentBranch = line
-          .slice("branch ".length)
-          .trim()
-          .replace("refs/heads/", "");
-      } else if (line === "detached") {
-        currentBranch = "(detached)";
-      } else if (line.trim() === "" && currentPath) {
-        const normalized = currentPath
-          .replace(/\\/g, "/")
-          .toLowerCase()
-          .replace(/\/+$/, "");
-        if (normalized !== normalizedRepo && currentBranch) {
-          const name =
-            currentPath.replace(/\\/g, "/").split("/").pop() || currentPath;
-          const managed = normalized.startsWith(worktreesDir + "/");
-          result.push({ name, path: currentPath, branch: currentBranch, managed });
-        }
-        currentPath = "";
-        currentBranch = "";
-      }
-    }
-
-    // Handle last entry (porcelain output may not end with blank line)
-    if (currentPath && currentBranch) {
-      const normalized = currentPath
-        .replace(/\\/g, "/")
-        .toLowerCase()
-        .replace(/\/+$/, "");
-      if (normalized !== normalizedRepo) {
-        const name =
-          currentPath.replace(/\\/g, "/").split("/").pop() || currentPath;
-        const managed = normalized.startsWith(worktreesDir + "/");
-        result.push({ name, path: currentPath, branch: currentBranch, managed });
-      }
-    }
-
-    return result;
   }
 
   /** Per-repo cache: avoids re-running mutating git commands on every log call. */

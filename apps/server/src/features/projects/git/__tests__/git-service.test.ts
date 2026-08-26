@@ -26,6 +26,7 @@ vi.mock("@mcode/shared", () => ({
 }));
 
 import { GitService } from "../git-service.js";
+import { GitWorktreeService } from "../git-worktree-service.js";
 import type { WorktreeDirectoryRemover } from "../../worktrees/worktree-directory-remover.js";
 import { createMockGitExecutor } from "../execution/__tests__/mock-git-executor.js";
 
@@ -128,15 +129,15 @@ describe("GitService.reviewComparison", () => {
   });
 });
 
-describe("GitService.removeWorktree", () => {
-  let gitService: GitService;
+describe("GitWorktreeService.removeWorktree", () => {
+  let gitService: GitWorktreeService;
   let execFn: ReturnType<typeof createMockGitExecutor>["execFn"];
 
   beforeEach(() => {
     vi.resetAllMocks();
     const mock = createMockGitExecutor();
     execFn = mock.execFn;
-    gitService = new GitService(
+    gitService = new GitWorktreeService(
       {} as WorkspaceRepo,
       mock.executor,
       { remove: mockRemove } as unknown as WorktreeDirectoryRemover,
@@ -414,13 +415,13 @@ describe("GitService.removeWorktree", () => {
   });
 });
 
-describe("GitService.listWorktrees", () => {
+describe("GitWorktreeService.listWorktrees", () => {
   it("includes detached worktrees instead of dropping entries without a branch line", async () => {
     const mock = createMockGitExecutor();
     const workspaceRepo = {
       findById: vi.fn().mockReturnValue({ path: "/repo" }),
     } as unknown as WorkspaceRepo;
-    const gitService = new GitService(workspaceRepo, mock.executor);
+    const gitService = new GitWorktreeService(workspaceRepo, mock.executor);
     mock.execFn.mockResolvedValue({
       stdout: [
         "worktree /repo",
