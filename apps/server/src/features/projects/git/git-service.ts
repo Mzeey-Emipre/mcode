@@ -10,7 +10,7 @@ import { injectable, inject } from "tsyringe";
 import { createHash } from "crypto";
 import { rmdir, realpath } from "fs/promises";
 import { existsSync, mkdirSync, realpathSync } from "fs";
-import { join, basename, dirname, resolve, relative, isAbsolute, sep } from "path";
+import { join, basename, dirname, resolve, relative, isAbsolute } from "path";
 import { getMcodeDir, validateBranchName, validateWorktreeName, logger } from "@mcode/shared";
 import type { GitBranch, WorktreeInfo, GitCommit, BranchComparison, GitRemoteUrl, ReviewComparison, ReviewFileChange } from "@mcode/contracts";
 
@@ -20,6 +20,12 @@ import type { GitExecutor } from "./execution/index.js";
 import { normalizePathForComparison } from "../../../shared/filesystem/path-identity.js";
 import { WorktreeDirectoryRemover } from "../worktrees/worktree-directory-remover.js";
 import { RepositoryGitMutationLock } from "./repository-git-mutation-lock.js";
+import {
+  WorktreeSafetyService,
+  type BranchlessWorktreeRemovalSafety,
+  type NamedWorktreeRemovalSafety,
+  type WorktreeRemovalSafety,
+} from "./worktree-safety-service.js";
 
 /** Normalized configured remote used for repository-identity matching. */
 export interface NormalizedGitRemote {
@@ -42,23 +48,11 @@ export interface PullRequestReviewGitSource {
   headOid: string;
 }
 
-/** Fail-closed result for deciding whether one worktree path may be removed. */
-export interface WorktreeRemovalSafety {
-  safe: boolean;
-  reason: "exclusive" | "shared" | "truncated" | "identity_uncertain";
-}
-
-/** Fail-closed result for automatic removal of a branchless worktree. */
-export interface BranchlessWorktreeRemovalSafety {
-  safe: boolean;
-  reason: "clean" | "dirty" | "unique_commits" | "verification_failed";
-}
-
-/** Result of checking a named worktree's tracked and untracked files. */
-export interface NamedWorktreeRemovalSafety {
-  safe: boolean;
-  reason: "clean" | "dirty" | "verification_failed";
-}
+export type {
+  BranchlessWorktreeRemovalSafety,
+  NamedWorktreeRemovalSafety,
+  WorktreeRemovalSafety,
+} from "./worktree-safety-service.js";
 
 /** Registered compatible worktree offered through an opaque server-issued ID. */
 export interface PullRequestReviewGitCandidate {
@@ -384,6 +378,7 @@ interface ReviewProvisionAttempt {
 export class GitService {
   private readonly worktreeDirectoryRemover: WorktreeDirectoryRemover;
   private readonly repositoryMutationLock: RepositoryGitMutationLock;
+  private readonly worktreeSafety: WorktreeSafetyService;
 
   constructor(
     @inject(WorkspaceRepo) private readonly workspaceRepo: WorkspaceRepo,
@@ -392,9 +387,12 @@ export class GitService {
     worktreeDirectoryRemover?: WorktreeDirectoryRemover,
     @inject(RepositoryGitMutationLock, { isOptional: true })
     repositoryMutationLock?: RepositoryGitMutationLock,
+    @inject(WorktreeSafetyService, { isOptional: true })
+    worktreeSafety?: WorktreeSafetyService,
   ) {
     this.worktreeDirectoryRemover = worktreeDirectoryRemover ?? new WorktreeDirectoryRemover();
     this.repositoryMutationLock = repositoryMutationLock ?? new RepositoryGitMutationLock();
+    this.worktreeSafety = worktreeSafety ?? new WorktreeSafetyService(gitExecutor);
   }
 
   /** List all branches (local, remote, and worktree-attached) for a workspace. */
@@ -846,7 +844,7 @@ export class GitService {
 
     let wtPath = options.worktreePath ?? join(getWorktreeBaseDir(repoPath), name);
     if (options.managedCanonicalOnly) {
-      wtPath = await this.resolveManagedCanonicalWorktreePath(wtPath);
+      wtPath = await this.worktreeSafety.resolveManagedCanonicalWorktreePath(wtPath);
     }
     const deleteBranch = options.deleteBranch ?? true;
     const branch = deleteBranch
@@ -1608,24 +1606,7 @@ export class GitService {
    * UI then surfaces the warning state instead of the green "clean" pill.
    */
   async isWorkingTreeClean(repoPath: string): Promise<boolean> {
-    try {
-      const { stdout } = await this.gitExecutor.exec(
-        ["-C", repoPath, "status", "--porcelain"],
-        { timeout: 5_000 },
-      );
-      return stdout.trim() === "";
-    } catch (err) {
-      const stderr =
-        err && typeof err === "object" && "stderr" in err
-          ? String((err as { stderr?: string }).stderr ?? "")
-          : "";
-      if (/not a git repository/i.test(stderr)) return true;
-      logger.warn("git status failed while checking workspace cleanliness", {
-        repoPath,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      return false;
-    }
+    return this.worktreeSafety.isWorkingTreeClean(repoPath);
   }
 
   /** Compare bounded active sibling paths by canonical filesystem identity. */
@@ -1634,26 +1615,11 @@ export class GitService {
     activeSiblingPaths: readonly string[],
     truncated: boolean,
   ): Promise<WorktreeRemovalSafety> {
-    if (truncated || activeSiblingPaths.length > 512) {
-      return { safe: false, reason: "truncated" };
-    }
-    const canonicalTarget = await this.canonicalWorktreeIdentity(worktreePath);
-    if (!canonicalTarget) {
-      return { safe: false, reason: "identity_uncertain" };
-    }
-    for (const siblingPath of activeSiblingPaths) {
-      // A missing directory cannot resolve to the existing target. Its thread
-      // record is stale, but it does not make this worktree shared.
-      if (!existsSync(siblingPath)) continue;
-      const canonicalSibling = await this.canonicalWorktreeIdentity(siblingPath);
-      if (!canonicalSibling) {
-        return { safe: false, reason: "identity_uncertain" };
-      }
-      if (canonicalSibling === canonicalTarget) {
-        return { safe: false, reason: "shared" };
-      }
-    }
-    return { safe: true, reason: "exclusive" };
+    return this.worktreeSafety.assessWorktreeRemovalSafety(
+      worktreePath,
+      activeSiblingPaths,
+      truncated,
+    );
   }
 
   /** Verify that a branchless worktree is clean and has no commits beyond its base. */
@@ -1661,62 +1627,12 @@ export class GitService {
     worktreePath: string,
     baseBranch: string,
   ): Promise<BranchlessWorktreeRemovalSafety> {
-    try {
-      const status = await this.gitExecutor.exec(
-        ["-C", worktreePath, "status", "--porcelain"],
-        { timeout: 5_000 },
-      );
-      if (status.stdout.trim() !== "") return { safe: false, reason: "dirty" };
-
-      const unique = await this.gitExecutor.exec(
-        ["-C", worktreePath, "rev-list", "--count", `${baseBranch}..HEAD`],
-        { timeout: 5_000 },
-      );
-      const count = Number.parseInt(unique.stdout.trim(), 10);
-      if (!Number.isSafeInteger(count) || count < 0) {
-        return { safe: false, reason: "verification_failed" };
-      }
-      return count === 0
-        ? { safe: true, reason: "clean" }
-        : { safe: false, reason: "unique_commits" };
-    } catch (error) {
-      logger.warn("Automatic worktree cleanup verification failed", {
-        worktreePath,
-        baseBranch,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return { safe: false, reason: "verification_failed" };
-    }
-  }
-
-  /** Resolve and validate a managed worktree path without following a link later. */
-  private async resolveManagedCanonicalWorktreePath(worktreePath: string): Promise<string> {
-    const managedRoot = await realpath(resolve(getMcodeDir(), "worktrees"));
-    const canonicalPath = await realpath(worktreePath);
-    const rel = relative(managedRoot, canonicalPath);
-    if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
-      throw new Error(`worktreePath is not a canonical managed worktree: ${worktreePath}`);
-    }
-    return canonicalPath;
+    return this.worktreeSafety.assessBranchlessWorktreeRemoval(worktreePath, baseBranch);
   }
 
   /** Verify that a named worktree is accessible and has no uncommitted files. */
   async assessNamedWorktreeRemoval(worktreePath: string): Promise<NamedWorktreeRemovalSafety> {
-    try {
-      const status = await this.gitExecutor.exec(
-        ["-C", worktreePath, "status", "--porcelain"],
-        { timeout: 5_000 },
-      );
-      return status.stdout.trim() === ""
-        ? { safe: true, reason: "clean" }
-        : { safe: false, reason: "dirty" };
-    } catch (error) {
-      logger.warn("Named worktree cleanup verification failed", {
-        worktreePath,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return { safe: false, reason: "verification_failed" };
-    }
+    return this.worktreeSafety.assessNamedWorktreeRemoval(worktreePath);
   }
 
   /** Serialize Review provisioning and cleanup mutations for one repository. */
@@ -2188,21 +2104,6 @@ export class GitService {
     return effectiveUrls.every(
       (url) => normalizedRepositoryKey(url) === expectedRepositoryKey,
     );
-  }
-
-  private async canonicalWorktreeIdentity(worktreePath: string): Promise<string | null> {
-    if (
-      worktreePath.length === 0
-      || worktreePath.length > 4_096
-      || /[\x00-\x1f\x7f]/.test(worktreePath)
-    ) {
-      return null;
-    }
-    try {
-      return normalizePathForComparison(await realpath(resolve(worktreePath)));
-    } catch {
-      return null;
-    }
   }
 
   private requireWorkspace(workspaceId: string) {

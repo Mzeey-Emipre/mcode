@@ -14,6 +14,8 @@ export {
 } from "./git/git-service.js";
 /** Serializes Git worktree mutations for one repository. */
 export { RepositoryGitMutationLock } from "./git/repository-git-mutation-lock.js";
+/** Verifies worktree removal safety at the filesystem and Git boundaries. */
+export { WorktreeSafetyService } from "./git/worktree-safety-service.js";
 /** Watches project Git HEAD changes and synchronizes checkout state. */
 export { GitWatcherService } from "./git/git-watcher-service.js";
 export type {

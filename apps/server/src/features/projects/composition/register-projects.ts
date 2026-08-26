@@ -5,6 +5,7 @@ import {
   FilesystemBrowser,
   GitService,
   RepositoryGitMutationLock,
+  WorktreeSafetyService,
   ProjectWorktreeService,
   WorktreeDirectoryRemover,
   WorkspaceEnricher,
@@ -61,6 +62,11 @@ export function registerProjectServices(container: DependencyContainer): void {
   container.register(
     RepositoryGitMutationLock,
     { useClass: RepositoryGitMutationLock },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    WorktreeSafetyService,
+    { useClass: WorktreeSafetyService },
     { lifecycle: Lifecycle.Singleton },
   );
   container.register(
