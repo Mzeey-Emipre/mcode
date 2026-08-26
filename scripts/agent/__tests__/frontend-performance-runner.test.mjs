@@ -8,15 +8,20 @@ import {
   aggregateMessageListPerformanceAttribution,
   aggregateShikiStageAttribution,
   extractShikiLongTasks,
+  FRONTEND_RENDERER_EXPLICIT_WORKLOADS,
   FRONTEND_RENDERER_WORKLOADS,
+  deriveVListLifecycleGate,
   getShikiTraceOptions,
   MESSAGE_LIST_PERFORMANCE_STAGE_NAMES,
+  normalizeFrontendRendererWorkloads,
   SHIKI_STAGE_NAMES,
   validateMessageListPerformanceAttribution,
   validateNarrativeRowIsolation,
+  validateVListLifecycleExpectedRejection,
   validateWorkloadCheck,
 } from "../../perf/frontend-renderer-fixture.mjs";
 import {
+  getFrontendPerformanceExitCode,
   parseFrontendPerformanceRuntimes,
   parseFrontendPerformanceWorkloads,
   parsePerformanceMode,
@@ -48,6 +53,98 @@ const productionShikiObservations = completeShikiObservations.filter(
   ({ stage }) => !["reactCommit", "htmlInsertion", "totalCompletion"].includes(stage),
 );
 
+const VLIST_A_ROW_ID = "message:thread-vlist-probe:A";
+const VLIST_B_ROW_ID = "narrative-flow:turn-vlist-probe:B";
+const VLIST_STATIC_ROWS = [
+  ["narrative-indicator:turn-vlist-probe", "narrative-indicator"],
+  ["permission-request:permission-vlist-probe", "permission-request"],
+  ["turn-changes:message-vlist-probe", "turn-changes"],
+];
+const VLIST_ROW_IDS = [VLIST_A_ROW_ID, VLIST_B_ROW_ID, ...VLIST_STATIC_ROWS.map(([rowId]) => rowId)];
+
+function createExpectedVListLifecycleFacts() {
+  const renderedRows = (primaryRowId, primaryKind) => [
+    { rowId: primaryRowId, kind: primaryKind },
+    ...VLIST_STATIC_ROWS.map(([rowId, kind]) => ({ rowId, kind })),
+  ];
+  const bodyPortals = (...presentRowIds) => Object.fromEntries(
+    VLIST_ROW_IDS.map((rowId) => [rowId, presentRowIds.includes(rowId)]),
+  );
+  const rowEvents = (rowId, mounts, controls = 0) => [
+    ...Array.from({ length: mounts }, () => ({ type: "ref-attach", rowId, poolItemId: rowId })),
+    ...Array.from({ length: mounts }, () => ({ type: "effect-mount", rowId })),
+    ...Array.from({ length: controls }, () => ({ type: "control", rowId })),
+    ...Array.from({ length: mounts }, () => ({ type: "ref-detach", rowId })),
+    ...Array.from({ length: mounts }, () => ({ type: "effect-cleanup", rowId })),
+    ...Array.from({ length: mounts }, () => ({ type: "body-cleanup", rowId })),
+  ];
+  return {
+    renderedRows: {
+      afterA: renderedRows(VLIST_A_ROW_ID, "message"),
+      afterAToB: renderedRows(VLIST_B_ROW_ID, "narrative-flow"),
+      afterBToA: renderedRows(VLIST_A_ROW_ID, "message"),
+    },
+    values: {
+      a: {
+        draftAfterEdit: "edited-A",
+        buttonAfterClick: "Assistant message A action 1",
+        draftAfterReturn: "draft-A",
+        buttonAfterReturn: "Assistant message A action 0",
+      },
+      b: {
+        draftBeforeFocus: "draft-B",
+        buttonBeforeClick: "Narrative flow B action 0",
+        buttonAfterClick: "Narrative flow B action 1",
+      },
+    },
+    focus: {
+      afterAFocus: { activeProbeInputRowId: VLIST_A_ROW_ID },
+      afterAToB: {
+        activeProbeInputRowId: null,
+        previousInputConnected: false,
+        previousInputActive: false,
+      },
+      afterBFocus: { activeProbeInputRowId: VLIST_B_ROW_ID },
+      afterBToA: {
+        activeProbeInputRowId: null,
+        previousInputConnected: false,
+        previousInputActive: false,
+      },
+    },
+    bodyPortals: {
+      afterA: bodyPortals(VLIST_A_ROW_ID, ...VLIST_STATIC_ROWS.map(([rowId]) => rowId)),
+      afterAToB: bodyPortals(VLIST_B_ROW_ID, ...VLIST_STATIC_ROWS.map(([rowId]) => rowId)),
+      afterBToA: bodyPortals(VLIST_A_ROW_ID, ...VLIST_STATIC_ROWS.map(([rowId]) => rowId)),
+      afterDispose: bodyPortals(),
+    },
+    transitions: [
+      {
+        fromRowId: VLIST_A_ROW_ID,
+        toRowId: VLIST_B_ROW_ID,
+        previousPoolHostToken: "pool-host-0",
+        currentPoolHostToken: "pool-host-0",
+        previousPortalHostConnectedAfterVListMutation: false,
+        effectCleanupCountBeforeVListMutation: 0,
+        effectCleanupCountAfterVListMutation: 0,
+      },
+      {
+        fromRowId: VLIST_B_ROW_ID,
+        toRowId: VLIST_A_ROW_ID,
+        previousPoolHostToken: "pool-host-0",
+        currentPoolHostToken: "pool-host-0",
+        previousPortalHostConnectedAfterVListMutation: false,
+        effectCleanupCountBeforeVListMutation: 0,
+        effectCleanupCountAfterVListMutation: 0,
+      },
+    ],
+    events: [
+      ...rowEvents(VLIST_A_ROW_ID, 2, 1),
+      ...rowEvents(VLIST_B_ROW_ID, 1, 1),
+      ...VLIST_STATIC_ROWS.flatMap(([rowId]) => rowEvents(rowId, 1)),
+    ],
+  };
+}
+
 describe("frontend performance runner", () => {
   it("uses the approved workload order", () => {
     assert.deepEqual(FRONTEND_RENDERER_WORKLOADS, [
@@ -60,6 +157,103 @@ describe("frontend performance runner", () => {
       "markdownShiki",
       "panelTransitions",
     ]);
+  });
+
+  it("requires explicit selection and derives the exact vlist lifecycle rejection", () => {
+    assert.deepEqual(FRONTEND_RENDERER_EXPLICIT_WORKLOADS, ["vlistLifecycle"]);
+    assert.deepEqual(normalizeFrontendRendererWorkloads(null), FRONTEND_RENDERER_WORKLOADS);
+    assert.deepEqual(normalizeFrontendRendererWorkloads("vlistLifecycle"), ["vlistLifecycle"]);
+    assert.throws(
+      () => normalizeFrontendRendererWorkloads("message100,vlistLifecycle"),
+      /must be selected without another frontend renderer workload/,
+    );
+
+    const favorableProbeSummary = {
+      lifecycleGate: {
+        passed: false,
+        failure: "vlist detached the active React portal target before React ran the row cleanup.",
+      },
+      checks: {
+        heterogeneousRows: true,
+        stableLogicalIdentity: true,
+        stateDoesNotTransfer: true,
+        effectsCleanUpExactlyOnce: true,
+        refsMatchLogicalRows: true,
+        documentBodyPortalsCleanUp: true,
+        focusAndControlsRemainCorrect: true,
+        controlsDispatchToDisplayedRow: true,
+        vlistOwnsHostReuse: true,
+      },
+    };
+    const expectedFacts = { ...createExpectedVListLifecycleFacts(), ...favorableProbeSummary };
+    const derived = deriveVListLifecycleGate(expectedFacts);
+    assert.equal(derived.lifecycleGate.passed, false);
+    assert.equal(derived.lifecycleGate.failure, favorableProbeSummary.lifecycleGate.failure);
+    assert.deepEqual(derived.gateDecision, {
+      status: "rejected",
+      candidateEligible: false,
+      reason: favorableProbeSummary.lifecycleGate.failure,
+    });
+    assert.deepEqual(validateVListLifecycleExpectedRejection(expectedFacts), []);
+    assert.deepEqual(validateWorkloadCheck("vlistLifecycle", expectedFacts), []);
+
+    const missingRawCleanup = {
+      ...expectedFacts,
+      events: expectedFacts.events.filter((event) => !(event.type === "effect-cleanup" && event.rowId === VLIST_B_ROW_ID)),
+    };
+    assert.equal(deriveVListLifecycleGate(missingRawCleanup).checks.effectsCleanUpExactlyOnce, false);
+    assert.ok(validateVListLifecycleExpectedRejection(missingRawCleanup).includes(
+      "vlist lifecycle assertion failed: effectsCleanUpExactlyOnce",
+    ));
+
+    const cleanupAlreadyOccurredDuringVListMutation = {
+      ...expectedFacts,
+      transitions: expectedFacts.transitions.map((transition, index) => index === 0
+        ? {
+            ...transition,
+            effectCleanupCountBeforeVListMutation: 1,
+            effectCleanupCountAfterVListMutation: 1,
+          }
+        : transition),
+    };
+    const cleanupAlreadyOccurredDerived = deriveVListLifecycleGate(
+      cleanupAlreadyOccurredDuringVListMutation,
+    );
+    assert.equal(cleanupAlreadyOccurredDerived.checks.hostDetachedBeforeReactCleanup, false);
+    assert.equal(cleanupAlreadyOccurredDerived.gateDecision.status, "invalid");
+    assert.ok(validateVListLifecycleExpectedRejection(cleanupAlreadyOccurredDuringVListMutation).includes(
+      "vlist lifecycle assertion failed: hostDetachedBeforeReactCleanup",
+    ));
+
+    const mutatedRawState = {
+      ...expectedFacts,
+      values: {
+        ...expectedFacts.values,
+        a: { ...expectedFacts.values.a, draftAfterReturn: "edited-A" },
+      },
+    };
+    assert.equal(deriveVListLifecycleGate(mutatedRawState).checks.stateDoesNotTransfer, false);
+    assert.ok(validateVListLifecycleExpectedRejection(mutatedRawState).includes(
+      "vlist lifecycle assertion failed: stateDoesNotTransfer",
+    ));
+
+    const mutatedRawFocus = {
+      ...expectedFacts,
+      focus: {
+        ...expectedFacts.focus,
+        afterAToB: { ...expectedFacts.focus.afterAToB, activeProbeInputRowId: VLIST_B_ROW_ID },
+      },
+    };
+    assert.equal(deriveVListLifecycleGate(mutatedRawFocus).checks.focusAndControlsRemainCorrect, false);
+    assert.ok(validateVListLifecycleExpectedRejection(mutatedRawFocus).includes(
+      "vlist lifecycle assertion failed: focusAndControlsRemainCorrect",
+    ));
+    assert.equal(getFrontendPerformanceExitCode({
+      correctness: { passed: true },
+      runtimes: {
+        electron: { metrics: { vlistLifecycle: { gateDecision: derived.gateDecision } } },
+      },
+    }), 1);
   });
 
   it("reports deterministic duration statistics", () => {

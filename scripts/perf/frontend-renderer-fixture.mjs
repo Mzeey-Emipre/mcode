@@ -16,6 +16,16 @@ export const FRONTEND_RENDERER_WORKLOADS = Object.freeze([
   "panelTransitions",
 ]);
 
+/** Explicit-only probes excluded from the default frontend comparison matrix. */
+export const FRONTEND_RENDERER_EXPLICIT_WORKLOADS = Object.freeze([
+  "vlistLifecycle",
+]);
+
+const ALL_FRONTEND_RENDERER_WORKLOADS = Object.freeze([
+  ...FRONTEND_RENDERER_WORKLOADS,
+  ...FRONTEND_RENDERER_EXPLICIT_WORKLOADS,
+]);
+
 /** Paired runtime names supported by the frontend performance worker. */
 export const FRONTEND_RENDERER_RUNTIMES = Object.freeze([
   "standalone-web",
@@ -29,10 +39,13 @@ export function normalizeFrontendRendererWorkloads(value) {
     throw new Error("--workload must name one or more frontend renderer workloads");
   }
   const requested = value.split(",");
-  if (requested.some((workload) => !FRONTEND_RENDERER_WORKLOADS.includes(workload))) {
-    throw new Error(`--workload must use known workloads: ${FRONTEND_RENDERER_WORKLOADS.join(", ")}`);
+  if (requested.some((workload) => !ALL_FRONTEND_RENDERER_WORKLOADS.includes(workload))) {
+    throw new Error(`--workload must use known workloads: ${ALL_FRONTEND_RENDERER_WORKLOADS.join(", ")}`);
   }
-  return FRONTEND_RENDERER_WORKLOADS.filter((workload) => requested.includes(workload));
+  if (requested.includes("vlistLifecycle") && requested.length !== 1) {
+    throw new Error("vlistLifecycle must be selected without another frontend renderer workload");
+  }
+  return ALL_FRONTEND_RENDERER_WORKLOADS.filter((workload) => requested.includes(workload));
 }
 
 /** Normalizes the optional comma-separated runtime filter for the paired runner. */
@@ -97,6 +110,63 @@ const MESSAGE_LIST_OVERSCAN = 8;
 const MAX_MOUNTED_MESSAGE_ROWS = Math.ceil(
   PERFORMANCE_VIEWPORT_HEIGHT_PX / MIN_MESSAGE_ROW_HEIGHT_PX,
 ) + MESSAGE_LIST_OVERSCAN * 2;
+const VLIST_LIFECYCLE_DETACHMENT_FAILURE =
+  "vlist detached the active React portal target before React ran the row cleanup.";
+const VLIST_LIFECYCLE_CHECK_NAMES = Object.freeze([
+  "heterogeneousRows",
+  "stableLogicalIdentity",
+  "stateDoesNotTransfer",
+  "effectsCleanUpExactlyOnce",
+  "refsMatchLogicalRows",
+  "documentBodyPortalsCleanUp",
+  "focusAndControlsRemainCorrect",
+  "controlsDispatchToDisplayedRow",
+  "vlistOwnsHostReuse",
+  "hostDetachedBeforeReactCleanup",
+  "staticRowsStableAcrossTransitions",
+]);
+const VLIST_LIFECYCLE_ROWS = Object.freeze([
+  { rowId: "message:thread-vlist-probe:A", kind: "message" },
+  { rowId: "narrative-flow:turn-vlist-probe:B", kind: "narrative-flow" },
+  { rowId: "narrative-indicator:turn-vlist-probe", kind: "narrative-indicator" },
+  { rowId: "permission-request:permission-vlist-probe", kind: "permission-request" },
+  { rowId: "turn-changes:message-vlist-probe", kind: "turn-changes" },
+]);
+const VLIST_LIFECYCLE_ROW_IDS = Object.freeze(VLIST_LIFECYCLE_ROWS.map(({ rowId }) => rowId));
+const VLIST_LIFECYCLE_STATIC_ROW_IDS = Object.freeze(VLIST_LIFECYCLE_ROW_IDS.slice(2));
+const VLIST_LIFECYCLE_RENDERED_ROWS = Object.freeze({
+  afterA: Object.freeze([
+    VLIST_LIFECYCLE_ROWS[0],
+    ...VLIST_LIFECYCLE_ROWS.slice(2),
+  ]),
+  afterAToB: Object.freeze([
+    VLIST_LIFECYCLE_ROWS[1],
+    ...VLIST_LIFECYCLE_ROWS.slice(2),
+  ]),
+  afterBToA: Object.freeze([
+    VLIST_LIFECYCLE_ROWS[0],
+    ...VLIST_LIFECYCLE_ROWS.slice(2),
+  ]),
+});
+const VLIST_LIFECYCLE_TRANSITIONS = Object.freeze([
+  {
+    fromRowId: "message:thread-vlist-probe:A",
+    toRowId: "narrative-flow:turn-vlist-probe:B",
+  },
+  {
+    fromRowId: "narrative-flow:turn-vlist-probe:B",
+    toRowId: "message:thread-vlist-probe:A",
+  },
+]);
+const VLIST_LIFECYCLE_TRANSITION_KEYS = Object.freeze([
+  "fromRowId",
+  "toRowId",
+  "previousPoolHostToken",
+  "currentPoolHostToken",
+  "previousPortalHostConnectedAfterVListMutation",
+  "effectCleanupCountBeforeVListMutation",
+  "effectCleanupCountAfterVListMutation",
+]);
 
 function isPlainObject(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
@@ -106,7 +176,181 @@ function isPlainObject(value) {
 
 function hasExactKeys(value, keys) {
   const actualKeys = Object.keys(value).sort();
-  return actualKeys.length === keys.length && keys.every((key, index) => actualKeys[index] === key);
+  const expectedKeys = [...keys].sort();
+  return actualKeys.length === expectedKeys.length
+    && expectedKeys.every((key, index) => actualKeys[index] === key);
+}
+
+function hasExpectedRenderedRows(rows, expectedRows) {
+  return Array.isArray(rows)
+    && rows.length === expectedRows.length
+    && rows.every((row, index) => isPlainObject(row)
+      && hasExactKeys(row, ["kind", "rowId"])
+      && row.rowId === expectedRows[index]?.rowId
+      && row.kind === expectedRows[index]?.kind);
+}
+
+function hasExpectedBodyPortals(snapshot, presentRowIds) {
+  return isPlainObject(snapshot)
+    && hasExactKeys(snapshot, VLIST_LIFECYCLE_ROW_IDS)
+    && VLIST_LIFECYCLE_ROW_IDS.every((rowId) => snapshot[rowId] === presentRowIds.includes(rowId));
+}
+
+function countVListEvents(events, type, rowId) {
+  return events.filter((event) => event.type === type && event.rowId === rowId).length;
+}
+
+function hasVListEventTrace(events) {
+  const eventTypes = new Set([
+    "effect-mount",
+    "effect-cleanup",
+    "ref-attach",
+    "ref-detach",
+    "body-cleanup",
+    "control",
+  ]);
+  return Array.isArray(events) && events.every((event) => isPlainObject(event)
+    && typeof event.type === "string"
+    && eventTypes.has(event.type)
+    && typeof event.rowId === "string"
+    && VLIST_LIFECYCLE_ROW_IDS.includes(event.rowId)
+    && (event.type !== "ref-attach" || typeof event.poolItemId === "string"));
+}
+
+function hasExpectedEffectCounts(events) {
+  return countVListEvents(events, "effect-mount", VLIST_LIFECYCLE_ROW_IDS[0]) === 2
+    && countVListEvents(events, "effect-cleanup", VLIST_LIFECYCLE_ROW_IDS[0]) === 2
+    && countVListEvents(events, "effect-mount", VLIST_LIFECYCLE_ROW_IDS[1]) === 1
+    && countVListEvents(events, "effect-cleanup", VLIST_LIFECYCLE_ROW_IDS[1]) === 1;
+}
+
+function hasExpectedRefIdentity(events) {
+  const targetRowIds = VLIST_LIFECYCLE_ROW_IDS.slice(0, 2);
+  const expectedCounts = [2, 1];
+  return targetRowIds.every((rowId, index) => countVListEvents(events, "ref-attach", rowId) === expectedCounts[index]
+    && countVListEvents(events, "ref-detach", rowId) === expectedCounts[index])
+    && events
+      .filter((event) => event.type === "ref-attach")
+      .every((event) => event.poolItemId === event.rowId);
+}
+
+function hasExpectedStaticRowLifetimes(events) {
+  return VLIST_LIFECYCLE_STATIC_ROW_IDS.every((rowId) => countVListEvents(events, "effect-mount", rowId) === 1
+    && countVListEvents(events, "effect-cleanup", rowId) === 1
+    && countVListEvents(events, "ref-attach", rowId) === 1
+    && countVListEvents(events, "ref-detach", rowId) === 1
+    && countVListEvents(events, "body-cleanup", rowId) === 1);
+}
+
+function hasExpectedTransitions(transitions) {
+  return Array.isArray(transitions)
+    && transitions.length === VLIST_LIFECYCLE_TRANSITIONS.length
+    && transitions.every((transition, index) => isPlainObject(transition)
+      && hasExactKeys(transition, VLIST_LIFECYCLE_TRANSITION_KEYS)
+      && transition.fromRowId === VLIST_LIFECYCLE_TRANSITIONS[index]?.fromRowId
+      && transition.toRowId === VLIST_LIFECYCLE_TRANSITIONS[index]?.toRowId
+      && typeof transition.previousPoolHostToken === "string"
+      && transition.previousPoolHostToken === transition.currentPoolHostToken
+      && transition.previousPortalHostConnectedAfterVListMutation === false
+      && Number.isSafeInteger(transition.effectCleanupCountBeforeVListMutation)
+      && transition.effectCleanupCountBeforeVListMutation === 0
+      && transition.effectCleanupCountAfterVListMutation
+        === transition.effectCleanupCountBeforeVListMutation);
+}
+
+/** Derives the lifecycle gate from raw browser facts returned by the vlist probe. */
+export function deriveVListLifecycleGate(facts) {
+  const rawFactsPresent = isPlainObject(facts)
+    && isPlainObject(facts.renderedRows)
+    && isPlainObject(facts.values)
+    && isPlainObject(facts.values.a)
+    && isPlainObject(facts.values.b)
+    && isPlainObject(facts.focus)
+    && isPlainObject(facts.bodyPortals)
+    && Array.isArray(facts.transitions)
+    && hasVListEventTrace(facts.events);
+  const events = rawFactsPresent ? facts.events : [];
+  const renderedRows = rawFactsPresent ? facts.renderedRows : {};
+  const values = rawFactsPresent ? facts.values : {};
+  const focus = rawFactsPresent ? facts.focus : {};
+  const bodyPortals = rawFactsPresent ? facts.bodyPortals : {};
+  const transitions = rawFactsPresent ? facts.transitions : [];
+  const checks = {
+    heterogeneousRows: rawFactsPresent
+      && hasExpectedRenderedRows(renderedRows.afterA, VLIST_LIFECYCLE_RENDERED_ROWS.afterA)
+      && hasExpectedRenderedRows(renderedRows.afterAToB, VLIST_LIFECYCLE_RENDERED_ROWS.afterAToB)
+      && hasExpectedRenderedRows(renderedRows.afterBToA, VLIST_LIFECYCLE_RENDERED_ROWS.afterBToA),
+    stableLogicalIdentity: rawFactsPresent && hasExpectedTransitions(transitions),
+    stateDoesNotTransfer: rawFactsPresent
+      && values.a.draftAfterEdit === "edited-A"
+      && values.a.buttonAfterClick === "Assistant message A action 1"
+      && values.b.draftBeforeFocus === "draft-B"
+      && values.b.buttonBeforeClick === "Narrative flow B action 0"
+      && values.b.buttonAfterClick === "Narrative flow B action 1"
+      && values.a.draftAfterReturn === "draft-A"
+      && values.a.buttonAfterReturn === "Assistant message A action 0",
+    effectsCleanUpExactlyOnce: rawFactsPresent && hasExpectedEffectCounts(events),
+    refsMatchLogicalRows: rawFactsPresent && hasExpectedRefIdentity(events),
+    documentBodyPortalsCleanUp: rawFactsPresent
+      && hasExpectedBodyPortals(bodyPortals.afterA, VLIST_LIFECYCLE_RENDERED_ROWS.afterA.map(({ rowId }) => rowId))
+      && hasExpectedBodyPortals(bodyPortals.afterAToB, VLIST_LIFECYCLE_RENDERED_ROWS.afterAToB.map(({ rowId }) => rowId))
+      && hasExpectedBodyPortals(bodyPortals.afterBToA, VLIST_LIFECYCLE_RENDERED_ROWS.afterBToA.map(({ rowId }) => rowId))
+      && hasExpectedBodyPortals(bodyPortals.afterDispose, []),
+    focusAndControlsRemainCorrect: rawFactsPresent
+      && focus.afterAFocus?.activeProbeInputRowId === VLIST_LIFECYCLE_ROW_IDS[0]
+      && focus.afterAToB?.previousInputConnected === false
+      && focus.afterAToB?.previousInputActive === false
+      && focus.afterAToB?.activeProbeInputRowId !== VLIST_LIFECYCLE_ROW_IDS[1]
+      && focus.afterBFocus?.activeProbeInputRowId === VLIST_LIFECYCLE_ROW_IDS[1]
+      && focus.afterBToA?.previousInputConnected === false
+      && focus.afterBToA?.previousInputActive === false
+      && focus.afterBToA?.activeProbeInputRowId !== VLIST_LIFECYCLE_ROW_IDS[0],
+    controlsDispatchToDisplayedRow: rawFactsPresent
+      && countVListEvents(events, "control", VLIST_LIFECYCLE_ROW_IDS[0]) === 1
+      && countVListEvents(events, "control", VLIST_LIFECYCLE_ROW_IDS[1]) === 1,
+    vlistOwnsHostReuse: rawFactsPresent && hasExpectedTransitions(transitions),
+    hostDetachedBeforeReactCleanup: rawFactsPresent && hasExpectedTransitions(transitions),
+    staticRowsStableAcrossTransitions: rawFactsPresent && hasExpectedStaticRowLifetimes(events),
+  };
+  const behaviorChecksPassed = VLIST_LIFECYCLE_CHECK_NAMES
+    .filter((name) => name !== "hostDetachedBeforeReactCleanup")
+    .every((name) => checks[name] === true);
+  const lifecycleFailure = checks.hostDetachedBeforeReactCleanup
+    ? VLIST_LIFECYCLE_DETACHMENT_FAILURE
+    : null;
+  const expectedRejection = behaviorChecksPassed
+    && lifecycleFailure === VLIST_LIFECYCLE_DETACHMENT_FAILURE;
+  const failures = rawFactsPresent ? [] : ["expected raw vlist lifecycle facts and event trace"];
+  for (const [name, passed] of Object.entries(checks)) {
+    if (!passed) failures.push(`vlist lifecycle assertion failed: ${name}`);
+  }
+  if (!expectedRejection) {
+    failures.push("expected vlist host-detachment lifecycle failure after behavioral assertions passed");
+  }
+  return {
+    checks,
+    lifecycleGate: {
+      passed: behaviorChecksPassed && lifecycleFailure === null,
+      failure: lifecycleFailure,
+    },
+    gateDecision: expectedRejection
+      ? {
+          status: "rejected",
+          candidateEligible: false,
+          reason: VLIST_LIFECYCLE_DETACHMENT_FAILURE,
+        }
+      : {
+          status: "invalid",
+          candidateEligible: false,
+          reason: lifecycleFailure ?? "vlist lifecycle behavioral assertions did not pass.",
+        },
+    failures,
+  };
+}
+
+/** Returns failures when raw vlist lifecycle facts do not produce the expected rejection. */
+export function validateVListLifecycleExpectedRejection(facts) {
+  return deriveVListLifecycleGate(facts).failures;
 }
 
 function assertBoundedDuration(value) {
@@ -762,6 +1006,9 @@ export function validateWorkloadCheck(workload, check, buildMode = check?.buildM
       requireCheck(check.browserTabOpen === true, "Browser panel did not stay open");
       requireCheck(check.terminalTabOpen === true, "Terminal panel is not open");
       requireCheck(check.terminalShell === true, "Terminal surface is missing");
+      break;
+    case "vlistLifecycle":
+      failures.push(...validateVListLifecycleExpectedRejection(check));
       break;
     default:
       failures.push(`unknown workload: ${workload}`);
@@ -1798,6 +2045,19 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
     }, modeCollector)
     : null;
 
+  const vlistLifecycle = selectedWorkloads.has("vlistLifecycle")
+    ? await timeFixture(page, sampleCount, async () => page.evaluate(async () => {
+      const bridge = window.__mcodeFrontendPerformanceModules?.vlistLifecycle;
+      if (!bridge) throw new Error("The vlist lifecycle performance probe is unavailable.");
+      const startedAt = performance.now();
+      const check = await bridge.run();
+      return {
+        durationMs: performance.now() - startedAt,
+        check,
+      };
+    }), modeCollector, { captureMessageListAttribution: false })
+    : null;
+
   await waitForFrames(page);
   const observations = await signalCollector.read();
   signalCollector.dispose();
@@ -1829,10 +2089,14 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
       denseNarrative,
       markdownShiki,
       panelTransitions,
+      vlistLifecycle,
     }).filter(([, result]) => result !== null).map(([name, result]) => {
       const rawSamples = result.samples.map((durationMs, sampleIndex) => {
         const observed = result.checks[sampleIndex];
         const attribution = result.attributions[sampleIndex];
+        const lifecycle = name === "vlistLifecycle"
+          ? deriveVListLifecycleGate(observed)
+          : null;
         if (name === "denseNarrative" && attribution.react) {
           attribution.react.affectedRow = observed.affectedRowId
             ? {
@@ -1852,7 +2116,7 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
           ? validateMessageListPerformanceAttribution(attribution.messageList)
           : [];
         const failures = [
-          ...validateWorkloadCheck(name, observed, mode),
+          ...(lifecycle ? lifecycle.failures : validateWorkloadCheck(name, observed, mode)),
           ...rowIsolationFailures,
           ...messageListAttributionFailures,
           ...pageFailures,
@@ -1865,6 +2129,7 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
             passed: failures.length === 0,
             failures,
             observed,
+            ...(lifecycle ? { derived: lifecycle } : {}),
           },
         };
       });
@@ -1889,12 +2154,31 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
           };
         })(),
         messageListAttribution: (() => {
+          if (name === "vlistLifecycle") return null;
           const acceptedMessageListSamples = rawSamples
             .filter((sample) => sample.correctness.passed)
             .map((sample) => sample.attribution.messageList ?? []);
           return acceptedMessageListSamples.length > 0
             ? aggregateMessageListPerformanceAttribution(acceptedMessageListSamples)
             : null;
+        })(),
+        gateDecision: (() => {
+          if (name !== "vlistLifecycle") return null;
+          const decisions = rawSamples.map((sample) => sample.correctness.derived?.gateDecision);
+          const expectedRejection = decisions.every((decision) => decision?.status === "rejected"
+            && decision.candidateEligible === false
+            && decision.reason === VLIST_LIFECYCLE_DETACHMENT_FAILURE);
+          return expectedRejection
+            ? {
+                status: "rejected",
+                candidateEligible: false,
+                reason: VLIST_LIFECYCLE_DETACHMENT_FAILURE,
+              }
+            : {
+                status: "invalid",
+                candidateEligible: false,
+                reason: "vlist lifecycle samples did not produce the expected rejection.",
+              };
         })(),
         correctness: {
           passed: rawSamples.every((sample) => sample.correctness.passed),

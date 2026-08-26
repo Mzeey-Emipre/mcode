@@ -230,13 +230,18 @@ async function run() {
         ["electron", electronResult],
       ].filter(([, runtime]) => runtime !== undefined)),
     };
+    const candidateRejected = Object.values(result.runtimes).some((runtime) =>
+      runtime.metrics.vlistLifecycle?.gateDecision?.status === "rejected"
+        && runtime.metrics.vlistLifecycle.gateDecision.candidateEligible === false,
+    );
     await writeFile(outputFile, `${JSON.stringify(result, null, 2)}\n`, "utf8");
     process.stdout.write(`${JSON.stringify({
       outputFile,
       correctness: result.correctness,
+      candidateRejected,
       sourceRevision: runEnvironment.sourceRevision,
     })}\n`);
-    if (!result.correctness.passed) process.exitCode = 1;
+    if (!result.correctness.passed || candidateRejected) process.exitCode = 1;
   } finally {
     if (electronSession) {
       try {
