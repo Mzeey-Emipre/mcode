@@ -93,7 +93,7 @@ import { CleanupWorker } from "../../features/thread-control/cleanup/cleanup-wor
 import { ProviderAvailabilityService } from "../../features/providers/availability/provider-availability-service.js";
 import { ProviderUsageWarmupService } from "../../features/providers/availability/provider-usage-warmup-service.js";
 import { ProviderRegistry } from "../../features/providers/composition/provider-registry.js";
-import { CursorProvider } from "../../features/providers/adapters/cursor/cursor-provider.js";
+import type { CursorProviderBoundary } from "@mcode/providers";
 import { ModelCacheService } from "../../features/providers/models/model-cache-service.js";
 import { DiffSummaryService } from "../../features/projects/diffs/summaries/diff-summary-service.js";
 import { RecapService } from "../../features/agents/recap/recap-service.js";
@@ -304,7 +304,7 @@ const terminalDiagnosticsService = container.resolve(TerminalDiagnosticsService)
 const messageRepo = container.resolve(MessageRepo);
 const threadRepo = container.resolve(ThreadRepo);
 const providerRegistry = container.resolve(ProviderRegistry);
-const cursorProvider = container.resolve(CursorProvider);
+const cursorProvider = container.resolve<CursorProviderBoundary>("CursorProvider");
 const providerAvailability = container.resolve(ProviderAvailabilityService);
 const toolCallRecordRepo = container.resolve(ToolCallRecordRepo);
 const thoughtSegmentRepo = container.resolve(ThoughtSegmentRepo);

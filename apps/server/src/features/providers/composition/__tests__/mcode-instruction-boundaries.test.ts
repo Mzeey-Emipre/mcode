@@ -4,7 +4,7 @@ import { mergeClaudeMcpServers } from "../../adapters/claude/claude-provider.js"
 import {
   appendCursorMcodeInstructions,
   carryCursorMcodeSentState,
-} from "../../adapters/cursor/cursor-provider.js";
+} from "../../../../../../../packages/providers/src/private/cursor/cursor-provider.js";
 import { composeCopilotSystemMessage } from "../../adapters/copilot/copilot-provider.js";
 import {
   buildMcodeInstructionPlan,

@@ -87,6 +87,7 @@ describe("ToolCallRecordRepo", () => {
       displayName: "Explorer",
       providerAgentKey: "/root/explorer",
       subagentIdentityKey: "native-explorer",
+      subagentProviderName: "Cursor",
       model: "gpt-5.3-codex",
       reasoningEffort: "high",
       inputSummary: "file.ts",
@@ -107,6 +108,7 @@ describe("ToolCallRecordRepo", () => {
     expect(record.display_name).toBe("Explorer");
     expect(record.provider_agent_key).toBe("/root/explorer");
     expect(record.subagent_identity_key).toBe("native-explorer");
+    expect(record.subagent_provider_name).toBe("Cursor");
     expect(record.model).toBe("gpt-5.3-codex");
     expect(record.reasoning_effort).toBe("high");
     expect(record.input_summary).toBe("file.ts");
@@ -126,6 +128,7 @@ describe("ToolCallRecordRepo", () => {
     expect(records[0]!.display_name).toBe("Explorer");
     expect(records[0]!.provider_agent_key).toBe("/root/explorer");
     expect(records[0]!.subagent_identity_key).toBe("native-explorer");
+    expect(records[0]!.subagent_provider_name).toBe("Cursor");
     expect(records[0]!.model).toBe("gpt-5.3-codex");
     expect(records[0]!.reasoning_effort).toBe("high");
     expect(records[0]!.output_truncated).toBe(1);
