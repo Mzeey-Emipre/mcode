@@ -218,7 +218,7 @@ afterEach(() => {
 });
 
 describe("MessageList thread switch", () => {
-  it("opens selected-text actions after mouseup without a contextmenu event", () => {
+  it("keeps selected-text actions open through the selection click sequence", () => {
     messagesValue = [{
       id: "assistant-1",
       sequence: 1,
@@ -242,6 +242,7 @@ describe("MessageList thread switch", () => {
     selection.addRange(range);
 
     fireEvent.mouseUp(content, { button: 0, clientX: 24, clientY: 24 });
+    fireEvent.click(content, { button: 0, clientX: 24, clientY: 24 });
 
     expect(contextMenuSpy).not.toHaveBeenCalled();
     const copy = getByRole("button", { name: "Copy" });
