@@ -25,12 +25,12 @@ vi.mock("@mcode/shared", () => ({
   logger: mockLogger,
 }));
 
-import { GitService } from "../git-service.js";
+import { GitComparisonService } from "../git-comparison-service.js";
 import { GitWorktreeService } from "../git-worktree-service.js";
 import type { WorktreeDirectoryRemover } from "../../worktrees/worktree-directory-remover.js";
 import { createMockGitExecutor } from "../execution/__tests__/mock-git-executor.js";
 
-describe("GitService.reviewComparison", () => {
+describe("GitComparisonService.reviewComparison", () => {
   it("returns one batched status result for changed, renamed, copied, and binary files", async () => {
     const mock = createMockGitExecutor();
     mock.execFn.mockImplementation(async (args) => {
@@ -45,7 +45,7 @@ describe("GitService.reviewComparison", () => {
         stderr: "",
       };
     });
-    const service = new GitService({} as WorkspaceRepo, mock.executor);
+    const service = new GitComparisonService({} as WorkspaceRepo, mock.executor);
 
     const result = await service.reviewComparison("ws-1", "unstaged", {}, "/repo");
 
@@ -68,7 +68,7 @@ describe("GitService.reviewComparison", () => {
     mock.execFn.mockImplementation(async (args) => args.includes("--name-status")
       ? { stdout: "M\0src/name\twith-tab.bin\0", stderr: "" }
       : { stdout: "-\t-\tsrc/name\twith-tab.bin\0", stderr: "" });
-    const service = new GitService({} as WorkspaceRepo, mock.executor);
+    const service = new GitComparisonService({} as WorkspaceRepo, mock.executor);
 
     await expect(service.reviewComparison("ws-1", "unstaged", {}, "/repo")).resolves.toMatchObject({
       files: [{ path: "src/name\twith-tab.bin", binary: true }],
@@ -81,7 +81,7 @@ describe("GitService.reviewComparison", () => {
     mock.execFn.mockImplementation(async (args) => args.includes("--name-status")
       ? { stdout: names, stderr: "" }
       : { stdout: "", stderr: "" });
-    const service = new GitService({} as WorkspaceRepo, mock.executor);
+    const service = new GitComparisonService({} as WorkspaceRepo, mock.executor);
 
     await expect(service.reviewComparison("ws-1", "unstaged", {}, "/repo")).rejects.toThrow(
       "Review comparison is limited to 10000 files",
@@ -91,7 +91,7 @@ describe("GitService.reviewComparison", () => {
   it("propagates mutable comparison failures", async () => {
     const mock = createMockGitExecutor();
     mock.execFn.mockRejectedValue(new Error("git unavailable"));
-    const service = new GitService({} as WorkspaceRepo, mock.executor);
+    const service = new GitComparisonService({} as WorkspaceRepo, mock.executor);
 
     await expect(service.reviewComparison("ws-1", "unstaged", {}, "/repo")).rejects.toThrow(
       "git unavailable",
@@ -108,7 +108,7 @@ describe("GitService.reviewComparison", () => {
         ? { stdout: "A\0root.ts\0", stderr: "" }
         : { stdout: "3\t0\troot.ts\0", stderr: "" };
     });
-    const service = new GitService({} as WorkspaceRepo, mock.executor);
+    const service = new GitComparisonService({} as WorkspaceRepo, mock.executor);
 
     await expect(service.reviewComparison("ws-1", "commit", { sha: "abc1234" }, "/repo")).resolves.toMatchObject({
       files: [{ path: "root.ts", changeType: "added" }],
@@ -120,7 +120,7 @@ describe("GitService.reviewComparison", () => {
   it("propagates a root commit fallback failure", async () => {
     const mock = createMockGitExecutor();
     mock.execFn.mockRejectedValue(new Error("git unavailable"));
-    const service = new GitService({} as WorkspaceRepo, mock.executor);
+    const service = new GitComparisonService({} as WorkspaceRepo, mock.executor);
 
     await expect(service.reviewComparison("ws-1", "commit", { sha: "abc1234" }, "/repo")).rejects.toThrow(
       "git unavailable",
@@ -445,15 +445,15 @@ describe("GitWorktreeService.listWorktrees", () => {
   });
 });
 
-describe("GitService.log", () => {
-  let gitService: GitService;
+describe("GitComparisonService.log", () => {
+  let gitService: GitComparisonService;
   let execFn: ReturnType<typeof createMockGitExecutor>["execFn"];
 
   beforeEach(() => {
     vi.resetAllMocks();
     const mock = createMockGitExecutor();
     execFn = mock.execFn;
-    gitService = new GitService(
+    gitService = new GitComparisonService(
       {
         findById: vi.fn().mockReturnValue({ id: "ws-1", path: "/repo", is_git_repo: true }),
       } as unknown as WorkspaceRepo,

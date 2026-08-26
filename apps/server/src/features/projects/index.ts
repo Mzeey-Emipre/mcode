@@ -17,6 +17,8 @@ export { RepositoryGitMutationLock } from "./git/repository-git-mutation-lock.js
 /** Performs repository-level Git commands and remote identity normalization. */
 export { GitRepositoryService } from "./git/git-repository-service.js";
 export type { NormalizedGitRemote } from "./git/git-repository-service.js";
+/** Computes Git history, diffs, file lists, and branch comparisons. */
+export { GitComparisonService } from "./git/git-comparison-service.js";
 /** Creates, discovers, and removes Mcode-managed Git worktrees. */
 export { GitWorktreeService } from "./git/git-worktree-service.js";
 export type { RemoveWorktreeOptions } from "./git/git-worktree-service.js";

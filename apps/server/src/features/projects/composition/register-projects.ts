@@ -4,6 +4,7 @@ import { Lifecycle, type DependencyContainer } from "tsyringe";
 import {
   FilesystemBrowser,
   GitService,
+  GitComparisonService,
   GitRepositoryService,
   GitWorktreeService,
   RepositoryGitMutationLock,
@@ -59,6 +60,11 @@ export function registerProjectServices(container: DependencyContainer): void {
   container.register(
     GitService,
     { useClass: GitService },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register(
+    GitComparisonService,
+    { useClass: GitComparisonService },
     { lifecycle: Lifecycle.Singleton },
   );
   container.register(
