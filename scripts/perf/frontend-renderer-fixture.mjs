@@ -110,8 +110,6 @@ const MESSAGE_LIST_OVERSCAN = 8;
 const MAX_MOUNTED_MESSAGE_ROWS = Math.ceil(
   PERFORMANCE_VIEWPORT_HEIGHT_PX / MIN_MESSAGE_ROW_HEIGHT_PX,
 ) + MESSAGE_LIST_OVERSCAN * 2;
-const VLIST_LIFECYCLE_DETACHMENT_FAILURE =
-  "vlist detached the active React portal target before React ran the row cleanup.";
 const VLIST_LIFECYCLE_CHECK_NAMES = Object.freeze([
   "heterogeneousRows",
   "stableLogicalIdentity",
@@ -121,9 +119,11 @@ const VLIST_LIFECYCLE_CHECK_NAMES = Object.freeze([
   "documentBodyPortalsCleanUp",
   "focusAndControlsRemainCorrect",
   "controlsDispatchToDisplayedRow",
-  "vlistOwnsHostReuse",
-  "hostDetachedBeforeReactCleanup",
+  "poolHostIdentity",
+  "reactCleanupPrecedesVListPhase2",
   "staticRowsStableAcrossTransitions",
+  "nativeScrollRecyclesHosts",
+  "prependPreservesAnchorAndIdentity",
 ]);
 const VLIST_LIFECYCLE_ROWS = Object.freeze([
   { rowId: "message:thread-vlist-probe:A", kind: "message" },
@@ -134,6 +134,17 @@ const VLIST_LIFECYCLE_ROWS = Object.freeze([
 ]);
 const VLIST_LIFECYCLE_ROW_IDS = Object.freeze(VLIST_LIFECYCLE_ROWS.map(({ rowId }) => rowId));
 const VLIST_LIFECYCLE_STATIC_ROW_IDS = Object.freeze(VLIST_LIFECYCLE_ROW_IDS.slice(2));
+const VLIST_LIFECYCLE_SCROLL_ROWS = Object.freeze(Array.from({ length: 12 }, (_, index) => Object.freeze({
+  rowId: `message:scroll-vlist-probe:${index}`,
+  kind: "message",
+})));
+const VLIST_LIFECYCLE_SCROLL_ROW_IDS = Object.freeze(
+  VLIST_LIFECYCLE_SCROLL_ROWS.map(({ rowId }) => rowId),
+);
+const VLIST_LIFECYCLE_ALL_ROW_IDS = Object.freeze([
+  ...VLIST_LIFECYCLE_ROW_IDS,
+  ...VLIST_LIFECYCLE_SCROLL_ROW_IDS,
+]);
 const VLIST_LIFECYCLE_RENDERED_ROWS = Object.freeze({
   afterA: Object.freeze([
     VLIST_LIFECYCLE_ROWS[0],
@@ -147,25 +158,52 @@ const VLIST_LIFECYCLE_RENDERED_ROWS = Object.freeze({
     VLIST_LIFECYCLE_ROWS[0],
     ...VLIST_LIFECYCLE_ROWS.slice(2),
   ]),
+  beforeNativeScroll: Object.freeze(VLIST_LIFECYCLE_SCROLL_ROWS.slice(0, 4)),
+  afterFirstNativeScroll: Object.freeze(VLIST_LIFECYCLE_SCROLL_ROWS.slice(4, 8)),
+  afterNativeScrollRecycle: Object.freeze(VLIST_LIFECYCLE_SCROLL_ROWS.slice(8, 12)),
 });
 const VLIST_LIFECYCLE_TRANSITIONS = Object.freeze([
   {
-    fromRowId: "message:thread-vlist-probe:A",
-    toRowId: "narrative-flow:turn-vlist-probe:B",
+    cause: "set-items",
+    visibleRowIdsBefore: VLIST_LIFECYCLE_RENDERED_ROWS.afterA.map(({ rowId }) => rowId),
+    visibleRowIdsAfter: VLIST_LIFECYCLE_RENDERED_ROWS.afterAToB.map(({ rowId }) => rowId),
   },
   {
-    fromRowId: "narrative-flow:turn-vlist-probe:B",
-    toRowId: "message:thread-vlist-probe:A",
+    cause: "set-items",
+    visibleRowIdsBefore: VLIST_LIFECYCLE_RENDERED_ROWS.afterAToB.map(({ rowId }) => rowId),
+    visibleRowIdsAfter: VLIST_LIFECYCLE_RENDERED_ROWS.afterBToA.map(({ rowId }) => rowId),
+  },
+  {
+    cause: "set-items",
+    visibleRowIdsBefore: VLIST_LIFECYCLE_RENDERED_ROWS.afterBToA.map(({ rowId }) => rowId),
+    visibleRowIdsAfter: VLIST_LIFECYCLE_RENDERED_ROWS.beforeNativeScroll.map(({ rowId }) => rowId),
+  },
+  {
+    cause: "native-scroll",
+    visibleRowIdsBefore: VLIST_LIFECYCLE_RENDERED_ROWS.beforeNativeScroll.map(({ rowId }) => rowId),
+    visibleRowIdsAfter: VLIST_LIFECYCLE_RENDERED_ROWS.afterFirstNativeScroll.map(({ rowId }) => rowId),
+  },
+  {
+    cause: "native-scroll",
+    visibleRowIdsBefore: VLIST_LIFECYCLE_RENDERED_ROWS.afterFirstNativeScroll.map(({ rowId }) => rowId),
+    visibleRowIdsAfter: VLIST_LIFECYCLE_RENDERED_ROWS.afterNativeScrollRecycle.map(({ rowId }) => rowId),
   },
 ]);
 const VLIST_LIFECYCLE_TRANSITION_KEYS = Object.freeze([
-  "fromRowId",
-  "toRowId",
-  "previousPoolHostToken",
-  "currentPoolHostToken",
-  "previousPortalHostConnectedAfterVListMutation",
-  "effectCleanupCountBeforeVListMutation",
-  "effectCleanupCountAfterVListMutation",
+  "cause",
+  "visibleRowIdsBefore",
+  "visibleRowIdsAfter",
+  "beforeReactPreUnmount",
+  "afterReactPreUnmountBeforeVListPhase2",
+  "afterVListPhase2",
+  "incomingRowsAfterVListPhase2",
+]);
+const VLIST_LIFECYCLE_TRANSITION_ROW_KEYS = Object.freeze([
+  "rowId",
+  "poolHostToken",
+  "portalHostConnected",
+  "effectCleanupCount",
+  "refDetachCount",
 ]);
 
 function isPlainObject(value) {
@@ -192,8 +230,8 @@ function hasExpectedRenderedRows(rows, expectedRows) {
 
 function hasExpectedBodyPortals(snapshot, presentRowIds) {
   return isPlainObject(snapshot)
-    && hasExactKeys(snapshot, VLIST_LIFECYCLE_ROW_IDS)
-    && VLIST_LIFECYCLE_ROW_IDS.every((rowId) => snapshot[rowId] === presentRowIds.includes(rowId));
+    && hasExactKeys(snapshot, VLIST_LIFECYCLE_ALL_ROW_IDS)
+    && VLIST_LIFECYCLE_ALL_ROW_IDS.every((rowId) => snapshot[rowId] === presentRowIds.includes(rowId));
 }
 
 function countVListEvents(events, type, rowId) {
@@ -213,7 +251,7 @@ function hasVListEventTrace(events) {
     && typeof event.type === "string"
     && eventTypes.has(event.type)
     && typeof event.rowId === "string"
-    && VLIST_LIFECYCLE_ROW_IDS.includes(event.rowId)
+    && VLIST_LIFECYCLE_ALL_ROW_IDS.includes(event.rowId)
     && (event.type !== "ref-attach" || typeof event.poolItemId === "string"));
 }
 
@@ -221,14 +259,18 @@ function hasExpectedEffectCounts(events) {
   return countVListEvents(events, "effect-mount", VLIST_LIFECYCLE_ROW_IDS[0]) === 2
     && countVListEvents(events, "effect-cleanup", VLIST_LIFECYCLE_ROW_IDS[0]) === 2
     && countVListEvents(events, "effect-mount", VLIST_LIFECYCLE_ROW_IDS[1]) === 1
-    && countVListEvents(events, "effect-cleanup", VLIST_LIFECYCLE_ROW_IDS[1]) === 1;
+    && countVListEvents(events, "effect-cleanup", VLIST_LIFECYCLE_ROW_IDS[1]) === 1
+    && [...VLIST_LIFECYCLE_STATIC_ROW_IDS, ...VLIST_LIFECYCLE_SCROLL_ROW_IDS].every((rowId) =>
+      countVListEvents(events, "effect-mount", rowId) === 1
+      && countVListEvents(events, "effect-cleanup", rowId) === 1);
 }
 
 function hasExpectedRefIdentity(events) {
-  const targetRowIds = VLIST_LIFECYCLE_ROW_IDS.slice(0, 2);
-  const expectedCounts = [2, 1];
-  return targetRowIds.every((rowId, index) => countVListEvents(events, "ref-attach", rowId) === expectedCounts[index]
-    && countVListEvents(events, "ref-detach", rowId) === expectedCounts[index])
+  return VLIST_LIFECYCLE_ALL_ROW_IDS.every((rowId) => {
+    const mountCount = countVListEvents(events, "effect-mount", rowId);
+    return countVListEvents(events, "ref-attach", rowId) === mountCount
+      && countVListEvents(events, "ref-detach", rowId) === mountCount;
+  })
     && events
       .filter((event) => event.type === "ref-attach")
       .every((event) => event.poolItemId === event.rowId);
@@ -247,15 +289,104 @@ function hasExpectedTransitions(transitions) {
     && transitions.length === VLIST_LIFECYCLE_TRANSITIONS.length
     && transitions.every((transition, index) => isPlainObject(transition)
       && hasExactKeys(transition, VLIST_LIFECYCLE_TRANSITION_KEYS)
-      && transition.fromRowId === VLIST_LIFECYCLE_TRANSITIONS[index]?.fromRowId
-      && transition.toRowId === VLIST_LIFECYCLE_TRANSITIONS[index]?.toRowId
-      && typeof transition.previousPoolHostToken === "string"
-      && transition.previousPoolHostToken === transition.currentPoolHostToken
-      && transition.previousPortalHostConnectedAfterVListMutation === false
-      && Number.isSafeInteger(transition.effectCleanupCountBeforeVListMutation)
-      && transition.effectCleanupCountBeforeVListMutation === 0
-      && transition.effectCleanupCountAfterVListMutation
-        === transition.effectCleanupCountBeforeVListMutation);
+      && transition.cause === VLIST_LIFECYCLE_TRANSITIONS[index]?.cause
+      && JSON.stringify(transition.visibleRowIdsBefore)
+        === JSON.stringify(VLIST_LIFECYCLE_TRANSITIONS[index]?.visibleRowIdsBefore)
+      && JSON.stringify(transition.visibleRowIdsAfter)
+        === JSON.stringify(VLIST_LIFECYCLE_TRANSITIONS[index]?.visibleRowIdsAfter)
+      && hasExpectedTransitionPhases(transition));
+}
+
+function hasExpectedTransitionPhases(transition) {
+  const outgoingRowIds = transition.visibleRowIdsBefore.filter(
+    (rowId) => !transition.visibleRowIdsAfter.includes(rowId),
+  );
+  const incomingRowIds = transition.visibleRowIdsAfter.filter(
+    (rowId) => !transition.visibleRowIdsBefore.includes(rowId),
+  );
+  const phaseNames = [
+    "beforeReactPreUnmount",
+    "afterReactPreUnmountBeforeVListPhase2",
+    "afterVListPhase2",
+  ];
+  if (!phaseNames.every((phaseName) => Array.isArray(transition[phaseName])
+    && transition[phaseName].length === outgoingRowIds.length
+    && transition[phaseName].every((row, index) => isPlainObject(row)
+      && hasExactKeys(row, VLIST_LIFECYCLE_TRANSITION_ROW_KEYS)
+      && row.rowId === outgoingRowIds[index]
+      && typeof row.poolHostToken === "string"
+      && Number.isSafeInteger(row.effectCleanupCount)
+      && Number.isSafeInteger(row.refDetachCount)))) return false;
+
+  if (!Array.isArray(transition.incomingRowsAfterVListPhase2)
+    || transition.incomingRowsAfterVListPhase2.length !== incomingRowIds.length
+    || !transition.incomingRowsAfterVListPhase2.every((row, index) => isPlainObject(row)
+      && hasExactKeys(row, ["rowId", "poolHostToken"])
+      && row.rowId === incomingRowIds[index]
+      && typeof row.poolHostToken === "string")) return false;
+
+  return outgoingRowIds.every((_, index) => {
+    const before = transition.beforeReactPreUnmount[index];
+    const afterPreUnmount = transition.afterReactPreUnmountBeforeVListPhase2[index];
+    const afterPhase2 = transition.afterVListPhase2[index];
+    return before.portalHostConnected === true
+      && afterPreUnmount.portalHostConnected === true
+      && afterPhase2.portalHostConnected === false
+      && afterPreUnmount.poolHostToken === before.poolHostToken
+      && afterPhase2.poolHostToken === before.poolHostToken
+      && afterPreUnmount.effectCleanupCount === before.effectCleanupCount + 1
+      && afterPreUnmount.refDetachCount === before.refDetachCount + 1
+      && afterPhase2.effectCleanupCount === afterPreUnmount.effectCleanupCount
+      && afterPhase2.refDetachCount === afterPreUnmount.refDetachCount;
+  });
+}
+
+function hasExpectedPoolHostIdentity(transitions) {
+  if (!hasExpectedTransitions(transitions)) return false;
+  const setItemTransitions = transitions.filter(({ cause }) => cause === "set-items");
+  if (!setItemTransitions.every((transition) => transition.beforeReactPreUnmount.every((row, index) =>
+    row.poolHostToken === transition.incomingRowsAfterVListPhase2[index]?.poolHostToken))) return false;
+
+  const nativeScrollTransitions = transitions.filter(({ cause }) => cause === "native-scroll");
+  const firstOutgoingTokens = nativeScrollTransitions[0].beforeReactPreUnmount
+    .map(({ poolHostToken }) => poolHostToken)
+    .sort();
+  const recycledIncomingTokens = nativeScrollTransitions[1].incomingRowsAfterVListPhase2
+    .map(({ poolHostToken }) => poolHostToken)
+    .sort();
+  return JSON.stringify(firstOutgoingTokens) === JSON.stringify(recycledIncomingTokens);
+}
+
+function hasExpectedPrependBehavior(prepend) {
+  const expectedVisibleRowIds = VLIST_LIFECYCLE_SCROLL_ROW_IDS.slice(4, 8);
+  return isPlainObject(prepend)
+    && hasExactKeys(prepend, [
+      "anchorRowId",
+      "anchorTopBefore",
+      "anchorTopAfter",
+      "draftBefore",
+      "draftAfter",
+      "effectMountCountBefore",
+      "effectMountCountAfter",
+      "refAttachCountBefore",
+      "refAttachCountAfter",
+      "portalHostTokenBefore",
+      "portalHostTokenAfter",
+      "visibleRowIdsAfter",
+    ])
+    && prepend.anchorRowId === VLIST_LIFECYCLE_SCROLL_ROW_IDS[4]
+    && Number.isFinite(prepend.anchorTopBefore)
+    && Number.isFinite(prepend.anchorTopAfter)
+    && Math.abs(prepend.anchorTopAfter - prepend.anchorTopBefore) <= 1
+    && prepend.draftBefore === "edited-before-prepend"
+    && prepend.draftAfter === "edited-before-prepend"
+    && prepend.effectMountCountBefore === 1
+    && prepend.effectMountCountAfter === 1
+    && prepend.refAttachCountBefore === 1
+    && prepend.refAttachCountAfter === 1
+    && typeof prepend.portalHostTokenBefore === "string"
+    && prepend.portalHostTokenAfter === prepend.portalHostTokenBefore
+    && JSON.stringify(prepend.visibleRowIdsAfter) === JSON.stringify(expectedVisibleRowIds);
 }
 
 /** Derives the lifecycle gate from raw browser facts returned by the vlist probe. */
@@ -267,6 +398,7 @@ export function deriveVListLifecycleGate(facts) {
     && isPlainObject(facts.values.b)
     && isPlainObject(facts.focus)
     && isPlainObject(facts.bodyPortals)
+    && isPlainObject(facts.prepend)
     && Array.isArray(facts.transitions)
     && hasVListEventTrace(facts.events);
   const events = rawFactsPresent ? facts.events : [];
@@ -279,7 +411,10 @@ export function deriveVListLifecycleGate(facts) {
     heterogeneousRows: rawFactsPresent
       && hasExpectedRenderedRows(renderedRows.afterA, VLIST_LIFECYCLE_RENDERED_ROWS.afterA)
       && hasExpectedRenderedRows(renderedRows.afterAToB, VLIST_LIFECYCLE_RENDERED_ROWS.afterAToB)
-      && hasExpectedRenderedRows(renderedRows.afterBToA, VLIST_LIFECYCLE_RENDERED_ROWS.afterBToA),
+      && hasExpectedRenderedRows(renderedRows.afterBToA, VLIST_LIFECYCLE_RENDERED_ROWS.afterBToA)
+      && hasExpectedRenderedRows(renderedRows.beforeNativeScroll, VLIST_LIFECYCLE_RENDERED_ROWS.beforeNativeScroll)
+      && hasExpectedRenderedRows(renderedRows.afterFirstNativeScroll, VLIST_LIFECYCLE_RENDERED_ROWS.afterFirstNativeScroll)
+      && hasExpectedRenderedRows(renderedRows.afterNativeScrollRecycle, VLIST_LIFECYCLE_RENDERED_ROWS.afterNativeScrollRecycle),
     stableLogicalIdentity: rawFactsPresent && hasExpectedTransitions(transitions),
     stateDoesNotTransfer: rawFactsPresent
       && values.a.draftAfterEdit === "edited-A"
@@ -308,48 +443,42 @@ export function deriveVListLifecycleGate(facts) {
     controlsDispatchToDisplayedRow: rawFactsPresent
       && countVListEvents(events, "control", VLIST_LIFECYCLE_ROW_IDS[0]) === 1
       && countVListEvents(events, "control", VLIST_LIFECYCLE_ROW_IDS[1]) === 1,
-    vlistOwnsHostReuse: rawFactsPresent && hasExpectedTransitions(transitions),
-    hostDetachedBeforeReactCleanup: rawFactsPresent && hasExpectedTransitions(transitions),
+    poolHostIdentity: rawFactsPresent && hasExpectedPoolHostIdentity(transitions),
+    reactCleanupPrecedesVListPhase2: rawFactsPresent && hasExpectedTransitions(transitions),
     staticRowsStableAcrossTransitions: rawFactsPresent && hasExpectedStaticRowLifetimes(events),
+    nativeScrollRecyclesHosts: rawFactsPresent
+      && hasExpectedTransitions(transitions)
+      && transitions.filter(({ cause }) => cause === "native-scroll").length === 2,
+    prependPreservesAnchorAndIdentity: rawFactsPresent && hasExpectedPrependBehavior(facts.prepend),
   };
-  const behaviorChecksPassed = VLIST_LIFECYCLE_CHECK_NAMES
-    .filter((name) => name !== "hostDetachedBeforeReactCleanup")
-    .every((name) => checks[name] === true);
-  const lifecycleFailure = checks.hostDetachedBeforeReactCleanup
-    ? VLIST_LIFECYCLE_DETACHMENT_FAILURE
-    : null;
-  const expectedRejection = behaviorChecksPassed
-    && lifecycleFailure === VLIST_LIFECYCLE_DETACHMENT_FAILURE;
   const failures = rawFactsPresent ? [] : ["expected raw vlist lifecycle facts and event trace"];
   for (const [name, passed] of Object.entries(checks)) {
     if (!passed) failures.push(`vlist lifecycle assertion failed: ${name}`);
   }
-  if (!expectedRejection) {
-    failures.push("expected vlist host-detachment lifecycle failure after behavioral assertions passed");
-  }
+  const lifecyclePassed = VLIST_LIFECYCLE_CHECK_NAMES.every((name) => checks[name] === true);
   return {
     checks,
     lifecycleGate: {
-      passed: behaviorChecksPassed && lifecycleFailure === null,
-      failure: lifecycleFailure,
+      passed: lifecyclePassed,
+      failure: lifecyclePassed ? null : failures[0] ?? "vlist lifecycle assertions did not pass.",
     },
-    gateDecision: expectedRejection
+    gateDecision: lifecyclePassed
       ? {
-          status: "rejected",
-          candidateEligible: false,
-          reason: VLIST_LIFECYCLE_DETACHMENT_FAILURE,
+          status: "accepted",
+          candidateEligible: true,
+          reason: null,
         }
       : {
           status: "invalid",
           candidateEligible: false,
-          reason: lifecycleFailure ?? "vlist lifecycle behavioral assertions did not pass.",
+          reason: failures[0] ?? "vlist lifecycle assertions did not pass.",
         },
     failures,
   };
 }
 
-/** Returns failures when raw vlist lifecycle facts do not produce the expected rejection. */
-export function validateVListLifecycleExpectedRejection(facts) {
+/** Returns failures when raw vlist lifecycle facts do not satisfy the lifecycle contract. */
+export function validateVListLifecycleFacts(facts) {
   return deriveVListLifecycleGate(facts).failures;
 }
 
@@ -1008,7 +1137,7 @@ export function validateWorkloadCheck(workload, check, buildMode = check?.buildM
       requireCheck(check.terminalShell === true, "Terminal surface is missing");
       break;
     case "vlistLifecycle":
-      failures.push(...validateVListLifecycleExpectedRejection(check));
+      failures.push(...validateVListLifecycleFacts(check));
       break;
     default:
       failures.push(`unknown workload: ${workload}`);
@@ -2165,19 +2294,19 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
         gateDecision: (() => {
           if (name !== "vlistLifecycle") return null;
           const decisions = rawSamples.map((sample) => sample.correctness.derived?.gateDecision);
-          const expectedRejection = decisions.every((decision) => decision?.status === "rejected"
-            && decision.candidateEligible === false
-            && decision.reason === VLIST_LIFECYCLE_DETACHMENT_FAILURE);
-          return expectedRejection
+          const allAccepted = decisions.every((decision) => decision?.status === "accepted"
+            && decision.candidateEligible === true
+            && decision.reason === null);
+          return allAccepted
             ? {
-                status: "rejected",
-                candidateEligible: false,
-                reason: VLIST_LIFECYCLE_DETACHMENT_FAILURE,
+                status: "accepted",
+                candidateEligible: true,
+                reason: null,
               }
             : {
                 status: "invalid",
                 candidateEligible: false,
-                reason: "vlist lifecycle samples did not produce the expected rejection.",
+                reason: "vlist lifecycle samples did not satisfy the lifecycle contract.",
               };
         })(),
         correctness: {

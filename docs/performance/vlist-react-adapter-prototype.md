@@ -2,7 +2,17 @@
 
 ## Scope
 
-This is a development-only Route B lifecycle probe. One React root portals stable logical row keys into hosts created, laid out, and recycled by vlist. The probe sets `overscan: 0` to make host reuse deterministic. It does not alter the production TanStack message list, add a retained-row cache, or provide a performance comparison.
+This development-only probe tests an architectural bridge between React and vlist. One React root portals logical rows into hosts that vlist owns.
+
+The bridge uses a vlist plugin with priority `100`. It performs these operations:
+
+1. `onCalculate` removes outgoing React rows before vlist changes the DOM.
+2. `onCalculate` parks retained portal hosts when their logical rows move to new indices.
+3. vlist updates and recycles its item shells.
+4. `onCommit` moves parked hosts into their new shells and renders the visible React rows.
+5. The adapter unmounts React before it destroys vlist.
+
+The probe uses `overscan: 0` and fixed 84-pixel rows. It does not change the production TanStack message list or compare performance.
 
 ## Frozen baseline
 
@@ -15,35 +25,43 @@ The vlist-react wrapper creates a vanilla vlist instance in a React effect and u
 
 ## Browser observation
 
-The maintained frontend renderer fixture ran the explicit-only `vlistLifecycle` workload in profiling mode with three samples per runtime. Raw output is in `.dev/verification/performance/issue-1548-vlist-lifecycle.json`.
+The Electron renderer ran three profiling samples. Raw output is in `.dev/verification/performance/issue-1548-vlist-lifecycle-bridge-prepend-electron.json`.
 
-| Runtime | A, B, A samples | Runner-derived assertions | Harness result | Candidate gate |
-| --- | --- | --- | --- |
-| Standalone Chromium | 3 of 3 | All passed | Accepted | Rejected with the expected host-detachment condition |
-| Electron | 3 of 3 | All passed | Accepted | Rejected with the expected host-detachment condition |
+All three samples returned this decision:
 
-The expected condition was identical in every sample: `vlist detached the active React portal target before React ran the row cleanup.`
+```json
+{"status":"accepted","candidateEligible":true,"reason":null}
+```
 
-The runner ignores probe summaries and derives the assertions from raw rendered rows, values, focus state, portal snapshots, transitions, and event traces. The assertions cover heterogeneous logical rows, stable A/B/A identity, local state isolation, effect cleanup counts, ref identity, document-body portal cleanup, focus, controls, and control dispatch. They also require unchanged static rows to keep the same body portal hosts, effects, and refs until final disposal. They confirm that the same vlist pool item is reused before React receives the old row cleanup.
+The runner derives the decision from raw browser facts. It does not trust a summary from the probe.
 
-The raw artifact records `gateDecision` for each runtime. Its machine-readable rejection is `{"status":"rejected","candidateEligible":false,"reason":"vlist detached the active React portal target before React ran the row cleanup."}`. After writing and printing that artifact, the explicit `vlistLifecycle` command exits with status 1. That expected status means the candidate was rejected. It does not mean the behavior harness failed.
+The lifecycle checks cover heterogeneous rows, local state, effects, refs, body portals, focus, controls, and host reuse. The checks also cover native scroll recycling and final disposal.
 
-Timing fields in the raw artifact are intentionally ignored. This probe makes no latency, throughput, memory, or decision-grade performance claim.
+The prepend check inserts two older rows above a visible anchor. In each sample, the anchor stayed at pixel `774`. Its edited draft stayed `edited-before-prepend`. Its effect and ref counts stayed at one. Its React portal host token stayed `portal-host-0`.
+
+The standalone Chromium process failed to start twice within its 180-second limit. Later Electron profiles also failed during app startup. Those failures occurred before probe code ran.
+
+The runner ignores timing fields for this workload. This probe makes no performance claim.
 
 ## Gate matrix
 
 | Gate | Status | Evidence |
 | --- | --- | --- |
-| React portal lifecycle under vlist host reuse | Rejected | Both real-browser runtimes observed the exact deterministic host-detachment condition after behavioral assertions passed. |
-| Dynamic-height measurement | Not run | The lifecycle gate rejected before the full behavior harness. The autosize path is a separate plugin and has not been integrated. [Source](https://github.com/floor/vlist/blob/7c39284b964a4d4e7b67821d17a622cf599eaed8/src/plugins/autosize/plugin.ts) |
-| Prepend anchor preservation | Not run | The lifecycle gate rejected before the full behavior harness. Core `prependItems` updates item storage and rerenders, with no application-level reading-anchor proof in this probe. [Source](https://github.com/floor/vlist/blob/7c39284b964a4d4e7b67821d17a622cf599eaed8/src/core/create.ts#L756-L791) |
-| Sticky user-message jump behavior | Not run | The lifecycle gate rejected before the full behavior harness. vlist sticky support is for group headers, not the MessageList sticky-user contract. [Source](https://github.com/floor/vlist/blob/7c39284b964a4d4e7b67821d17a622cf599eaed8/src/plugins/groups/plugin.ts) |
-| Full selection and focus integration | Not run | The probe verifies focused inputs and controls only. It does not integrate the vlist selection plugin with message-list selection semantics. [Source](https://github.com/floor/vlist/blob/7c39284b964a4d4e7b67821d17a622cf599eaed8/src/plugins/selection/plugin.ts) |
+| React portal lifecycle under vlist host reuse | Passed in Electron | Three samples show React cleanup before vlist detaches the old host. Native scroll also recycles pool shells. |
+| Fixed-height prepend anchor and logical identity | Passed in Electron | Three samples keep the anchor position, draft, mount count, ref count, and portal host. |
+| Dynamic-height measurement | Not run | The fixed-height prepend bridge does not prove the autosize path. [Source](https://github.com/floor/vlist/blob/7c39284b964a4d4e7b67821d17a622cf599eaed8/src/plugins/autosize/plugin.ts) |
+| Tail follow and user-away posture | Not run | No browser artifact covers append behavior after the bridge change. |
+| Sticky user-message jump | Not run | vlist sticky support covers group headers, not the MessageList contract. [Source](https://github.com/floor/vlist/blob/7c39284b964a4d4e7b67821d17a622cf599eaed8/src/plugins/groups/plugin.ts) |
+| Selection and scroll-to-message | Not run | The probe covers focus and controls only. |
+| Thread-switch anchor restore | Not run | No browser artifact covers per-thread anchor storage after the bridge change. |
 | Arbitrary retained-row range | Does not fit the core model | Core rendering calculates one contiguous visible range plus overscan. It has no API for an unrelated retained range. [Source](https://github.com/floor/vlist/blob/7c39284b964a4d4e7b67821d17a622cf599eaed8/src/core/pipeline.ts#L225-L265) |
-| Production integration and comparison | Not run | Stopped after lifecycle rejection. The production TanStack route is unchanged. |
+| Equivalent retained-state mechanism | Not run | The bridge can keep moved visible hosts, but it does not prove an off-screen retained-state design. |
+| Production integration and comparison | Not run | The production TanStack route is unchanged. |
 
-## Cause
+## Architectural result
 
-The core pipeline clears the existing pooled item before appending the new template result when an item identity changes. [Pipeline source](https://github.com/floor/vlist/blob/7c39284b964a4d4e7b67821d17a622cf599eaed8/src/core/pipeline.ts#L312-L340) Releasing a pooled element also clears its text content. [Pool source](https://github.com/floor/vlist/blob/7c39284b964a4d4e7b67821d17a622cf599eaed8/src/core/pool.ts#L12-L50) In the portal topology, this detaches the active React portal target before React can reconcile and clean up the old row.
+The original direct-portal topology failed because vlist detached the portal target before React cleanup. The bridge changes that ownership handoff. React now removes outgoing rows before vlist updates its shells.
 
-The rejection is therefore a lifecycle incompatibility for the tested Route B topology, not a performance result. No full behavior harness or production migration should proceed from this probe.
+Prepend needs more work than cleanup order. vlist keys rendered shells by index. The bridge parks retained portal hosts, shifts the pending fixed-height range, and restores each host under its new index. This keeps the React component mounted.
+
+The tested bridge removes the original lifecycle rejection. It also proves fixed-height prepend behavior in Electron. The candidate remains incomplete until the other behavior gates pass.

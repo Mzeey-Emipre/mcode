@@ -17,7 +17,7 @@ import {
   SHIKI_STAGE_NAMES,
   validateMessageListPerformanceAttribution,
   validateNarrativeRowIsolation,
-  validateVListLifecycleExpectedRejection,
+  validateVListLifecycleFacts,
   validateWorkloadCheck,
 } from "../../perf/frontend-renderer-fixture.mjs";
 import {
@@ -60,7 +60,16 @@ const VLIST_STATIC_ROWS = [
   ["permission-request:permission-vlist-probe", "permission-request"],
   ["turn-changes:message-vlist-probe", "turn-changes"],
 ];
-const VLIST_ROW_IDS = [VLIST_A_ROW_ID, VLIST_B_ROW_ID, ...VLIST_STATIC_ROWS.map(([rowId]) => rowId)];
+const VLIST_SCROLL_ROWS = Array.from({ length: 12 }, (_, index) => [
+  `message:scroll-vlist-probe:${index}`,
+  "message",
+]);
+const VLIST_ROW_IDS = [
+  VLIST_A_ROW_ID,
+  VLIST_B_ROW_ID,
+  ...VLIST_STATIC_ROWS.map(([rowId]) => rowId),
+  ...VLIST_SCROLL_ROWS.map(([rowId]) => rowId),
+];
 
 function createExpectedVListLifecycleFacts() {
   const renderedRows = (primaryRowId, primaryKind) => [
@@ -78,11 +87,61 @@ function createExpectedVListLifecycleFacts() {
     ...Array.from({ length: mounts }, () => ({ type: "effect-cleanup", rowId })),
     ...Array.from({ length: mounts }, () => ({ type: "body-cleanup", rowId })),
   ];
+  const scrollRows = (start) => VLIST_SCROLL_ROWS
+    .slice(start, start + 4)
+    .map(([rowId, kind]) => ({ rowId, kind }));
+  const phaseRows = (rowIds, poolHostTokens, cleanupCounts, connected) => rowIds.map((rowId, index) => ({
+    rowId,
+    poolHostToken: poolHostTokens[index],
+    portalHostConnected: connected,
+    effectCleanupCount: cleanupCounts[index],
+    refDetachCount: cleanupCounts[index],
+  }));
+  const transition = ({
+    cause,
+    visibleRowIdsBefore,
+    visibleRowIdsAfter,
+    outgoingPoolHostTokens,
+    incomingPoolHostTokens,
+    cleanupCounts,
+  }) => {
+    const outgoingRowIds = visibleRowIdsBefore.filter((rowId) => !visibleRowIdsAfter.includes(rowId));
+    const incomingRowIds = visibleRowIdsAfter.filter((rowId) => !visibleRowIdsBefore.includes(rowId));
+    const cleanupCountsAfterPreUnmount = cleanupCounts.map((count) => count + 1);
+    return {
+      cause,
+      visibleRowIdsBefore,
+      visibleRowIdsAfter,
+      beforeReactPreUnmount: phaseRows(outgoingRowIds, outgoingPoolHostTokens, cleanupCounts, true),
+      afterReactPreUnmountBeforeVListPhase2: phaseRows(
+        outgoingRowIds,
+        outgoingPoolHostTokens,
+        cleanupCountsAfterPreUnmount,
+        true,
+      ),
+      afterVListPhase2: phaseRows(
+        outgoingRowIds,
+        outgoingPoolHostTokens,
+        cleanupCountsAfterPreUnmount,
+        false,
+      ),
+      incomingRowsAfterVListPhase2: incomingRowIds.map((rowId, index) => ({
+        rowId,
+        poolHostToken: incomingPoolHostTokens[index],
+      })),
+    };
+  };
+  const afterAIds = [VLIST_A_ROW_ID, ...VLIST_STATIC_ROWS.map(([rowId]) => rowId)];
+  const afterBIds = [VLIST_B_ROW_ID, ...VLIST_STATIC_ROWS.map(([rowId]) => rowId)];
+  const scrollIds = (start) => VLIST_SCROLL_ROWS.slice(start, start + 4).map(([rowId]) => rowId);
   return {
     renderedRows: {
       afterA: renderedRows(VLIST_A_ROW_ID, "message"),
       afterAToB: renderedRows(VLIST_B_ROW_ID, "narrative-flow"),
       afterBToA: renderedRows(VLIST_A_ROW_ID, "message"),
+      beforeNativeScroll: scrollRows(0),
+      afterFirstNativeScroll: scrollRows(4),
+      afterNativeScrollRecycle: scrollRows(8),
     },
     values: {
       a: {
@@ -118,29 +177,66 @@ function createExpectedVListLifecycleFacts() {
       afterDispose: bodyPortals(),
     },
     transitions: [
-      {
-        fromRowId: VLIST_A_ROW_ID,
-        toRowId: VLIST_B_ROW_ID,
-        previousPoolHostToken: "pool-host-0",
-        currentPoolHostToken: "pool-host-0",
-        previousPortalHostConnectedAfterVListMutation: false,
-        effectCleanupCountBeforeVListMutation: 0,
-        effectCleanupCountAfterVListMutation: 0,
-      },
-      {
-        fromRowId: VLIST_B_ROW_ID,
-        toRowId: VLIST_A_ROW_ID,
-        previousPoolHostToken: "pool-host-0",
-        currentPoolHostToken: "pool-host-0",
-        previousPortalHostConnectedAfterVListMutation: false,
-        effectCleanupCountBeforeVListMutation: 0,
-        effectCleanupCountAfterVListMutation: 0,
-      },
+      transition({
+        cause: "set-items",
+        visibleRowIdsBefore: afterAIds,
+        visibleRowIdsAfter: afterBIds,
+        outgoingPoolHostTokens: ["pool-host-0"],
+        incomingPoolHostTokens: ["pool-host-0"],
+        cleanupCounts: [0],
+      }),
+      transition({
+        cause: "set-items",
+        visibleRowIdsBefore: afterBIds,
+        visibleRowIdsAfter: afterAIds,
+        outgoingPoolHostTokens: ["pool-host-0"],
+        incomingPoolHostTokens: ["pool-host-0"],
+        cleanupCounts: [0],
+      }),
+      transition({
+        cause: "set-items",
+        visibleRowIdsBefore: afterAIds,
+        visibleRowIdsAfter: scrollIds(0),
+        outgoingPoolHostTokens: ["pool-host-0", "pool-host-1", "pool-host-2", "pool-host-3"],
+        incomingPoolHostTokens: ["pool-host-0", "pool-host-1", "pool-host-2", "pool-host-3"],
+        cleanupCounts: [1, 0, 0, 0],
+      }),
+      transition({
+        cause: "native-scroll",
+        visibleRowIdsBefore: scrollIds(0),
+        visibleRowIdsAfter: scrollIds(4),
+        outgoingPoolHostTokens: ["pool-host-0", "pool-host-1", "pool-host-2", "pool-host-3"],
+        incomingPoolHostTokens: ["pool-host-4", "pool-host-5", "pool-host-6", "pool-host-7"],
+        cleanupCounts: [0, 0, 0, 0],
+      }),
+      transition({
+        cause: "native-scroll",
+        visibleRowIdsBefore: scrollIds(4),
+        visibleRowIdsAfter: scrollIds(8),
+        outgoingPoolHostTokens: ["pool-host-4", "pool-host-5", "pool-host-6", "pool-host-7"],
+        incomingPoolHostTokens: ["pool-host-3", "pool-host-2", "pool-host-1", "pool-host-0"],
+        cleanupCounts: [0, 0, 0, 0],
+      }),
     ],
+    prepend: {
+      anchorRowId: VLIST_SCROLL_ROWS[4][0],
+      anchorTopBefore: 24,
+      anchorTopAfter: 24,
+      draftBefore: "edited-before-prepend",
+      draftAfter: "edited-before-prepend",
+      effectMountCountBefore: 1,
+      effectMountCountAfter: 1,
+      refAttachCountBefore: 1,
+      refAttachCountAfter: 1,
+      portalHostTokenBefore: "portal-host-4",
+      portalHostTokenAfter: "portal-host-4",
+      visibleRowIdsAfter: VLIST_SCROLL_ROWS.slice(4, 8).map(([rowId]) => rowId),
+    },
     events: [
       ...rowEvents(VLIST_A_ROW_ID, 2, 1),
       ...rowEvents(VLIST_B_ROW_ID, 1, 1),
       ...VLIST_STATIC_ROWS.flatMap(([rowId]) => rowEvents(rowId, 1)),
+      ...VLIST_SCROLL_ROWS.flatMap(([rowId]) => rowEvents(rowId, 1)),
     ],
   };
 }
@@ -159,7 +255,7 @@ describe("frontend performance runner", () => {
     ]);
   });
 
-  it("requires explicit selection and derives the exact vlist lifecycle rejection", () => {
+  it("requires explicit selection and accepts only the vlist lifecycle phase ordering", () => {
     assert.deepEqual(FRONTEND_RENDERER_EXPLICIT_WORKLOADS, ["vlistLifecycle"]);
     assert.deepEqual(normalizeFrontendRendererWorkloads(null), FRONTEND_RENDERER_WORKLOADS);
     assert.deepEqual(normalizeFrontendRendererWorkloads("vlistLifecycle"), ["vlistLifecycle"]);
@@ -168,61 +264,68 @@ describe("frontend performance runner", () => {
       /must be selected without another frontend renderer workload/,
     );
 
-    const favorableProbeSummary = {
-      lifecycleGate: {
-        passed: false,
-        failure: "vlist detached the active React portal target before React ran the row cleanup.",
-      },
-      checks: {
-        heterogeneousRows: true,
-        stableLogicalIdentity: true,
-        stateDoesNotTransfer: true,
-        effectsCleanUpExactlyOnce: true,
-        refsMatchLogicalRows: true,
-        documentBodyPortalsCleanUp: true,
-        focusAndControlsRemainCorrect: true,
-        controlsDispatchToDisplayedRow: true,
-        vlistOwnsHostReuse: true,
-      },
-    };
-    const expectedFacts = { ...createExpectedVListLifecycleFacts(), ...favorableProbeSummary };
+    const expectedFacts = createExpectedVListLifecycleFacts();
     const derived = deriveVListLifecycleGate(expectedFacts);
-    assert.equal(derived.lifecycleGate.passed, false);
-    assert.equal(derived.lifecycleGate.failure, favorableProbeSummary.lifecycleGate.failure);
+    assert.deepEqual(derived.lifecycleGate, { passed: true, failure: null });
     assert.deepEqual(derived.gateDecision, {
-      status: "rejected",
-      candidateEligible: false,
-      reason: favorableProbeSummary.lifecycleGate.failure,
+      status: "accepted",
+      candidateEligible: true,
+      reason: null,
     });
-    assert.deepEqual(validateVListLifecycleExpectedRejection(expectedFacts), []);
+    assert.deepEqual(validateVListLifecycleFacts(expectedFacts), []);
     assert.deepEqual(validateWorkloadCheck("vlistLifecycle", expectedFacts), []);
+    assert.equal(getFrontendPerformanceExitCode({
+      correctness: { passed: true },
+      runtimes: {
+        electron: { metrics: { vlistLifecycle: { gateDecision: derived.gateDecision } } },
+      },
+    }), 0);
 
-    const missingRawCleanup = {
-      ...expectedFacts,
-      events: expectedFacts.events.filter((event) => !(event.type === "effect-cleanup" && event.rowId === VLIST_B_ROW_ID)),
-    };
-    assert.equal(deriveVListLifecycleGate(missingRawCleanup).checks.effectsCleanUpExactlyOnce, false);
-    assert.ok(validateVListLifecycleExpectedRejection(missingRawCleanup).includes(
-      "vlist lifecycle assertion failed: effectsCleanUpExactlyOnce",
-    ));
-
-    const cleanupAlreadyOccurredDuringVListMutation = {
+    const lateCleanup = {
       ...expectedFacts,
       transitions: expectedFacts.transitions.map((transition, index) => index === 0
         ? {
             ...transition,
-            effectCleanupCountBeforeVListMutation: 1,
-            effectCleanupCountAfterVListMutation: 1,
+            afterReactPreUnmountBeforeVListPhase2: transition.beforeReactPreUnmount,
           }
         : transition),
     };
-    const cleanupAlreadyOccurredDerived = deriveVListLifecycleGate(
-      cleanupAlreadyOccurredDuringVListMutation,
+    const lateCleanupDerived = deriveVListLifecycleGate(lateCleanup);
+    assert.equal(lateCleanupDerived.checks.reactCleanupPrecedesVListPhase2, false);
+    assert.ok(validateVListLifecycleFacts(lateCleanup).includes(
+      "vlist lifecycle assertion failed: reactCleanupPrecedesVListPhase2",
+    ));
+
+    const disconnectedBeforePreUnmount = {
+      ...expectedFacts,
+      transitions: expectedFacts.transitions.map((transition, index) => index === 0
+        ? {
+            ...transition,
+            beforeReactPreUnmount: transition.beforeReactPreUnmount.map((row) => ({
+              ...row,
+              portalHostConnected: false,
+            })),
+          }
+        : transition),
+    };
+    assert.equal(
+      deriveVListLifecycleGate(disconnectedBeforePreUnmount).checks.reactCleanupPrecedesVListPhase2,
+      false,
     );
-    assert.equal(cleanupAlreadyOccurredDerived.checks.hostDetachedBeforeReactCleanup, false);
-    assert.equal(cleanupAlreadyOccurredDerived.gateDecision.status, "invalid");
-    assert.ok(validateVListLifecycleExpectedRejection(cleanupAlreadyOccurredDuringVListMutation).includes(
-      "vlist lifecycle assertion failed: hostDetachedBeforeReactCleanup",
+    assert.ok(validateVListLifecycleFacts(disconnectedBeforePreUnmount).includes(
+      "vlist lifecycle assertion failed: reactCleanupPrecedesVListPhase2",
+    ));
+
+    const duplicateCleanup = {
+      ...expectedFacts,
+      events: [
+        ...expectedFacts.events,
+        { type: "effect-cleanup", rowId: VLIST_A_ROW_ID },
+      ],
+    };
+    assert.equal(deriveVListLifecycleGate(duplicateCleanup).checks.effectsCleanUpExactlyOnce, false);
+    assert.ok(validateVListLifecycleFacts(duplicateCleanup).includes(
+      "vlist lifecycle assertion failed: effectsCleanUpExactlyOnce",
     ));
 
     const mutatedRawState = {
@@ -233,7 +336,7 @@ describe("frontend performance runner", () => {
       },
     };
     assert.equal(deriveVListLifecycleGate(mutatedRawState).checks.stateDoesNotTransfer, false);
-    assert.ok(validateVListLifecycleExpectedRejection(mutatedRawState).includes(
+    assert.ok(validateVListLifecycleFacts(mutatedRawState).includes(
       "vlist lifecycle assertion failed: stateDoesNotTransfer",
     ));
 
@@ -245,13 +348,30 @@ describe("frontend performance runner", () => {
       },
     };
     assert.equal(deriveVListLifecycleGate(mutatedRawFocus).checks.focusAndControlsRemainCorrect, false);
-    assert.ok(validateVListLifecycleExpectedRejection(mutatedRawFocus).includes(
+    assert.ok(validateVListLifecycleFacts(mutatedRawFocus).includes(
       "vlist lifecycle assertion failed: focusAndControlsRemainCorrect",
     ));
+
+    const remountedDuringPrepend = {
+      ...expectedFacts,
+      prepend: {
+        ...expectedFacts.prepend,
+        effectMountCountAfter: 2,
+        refAttachCountAfter: 2,
+      },
+    };
+    assert.equal(
+      deriveVListLifecycleGate(remountedDuringPrepend).checks.prependPreservesAnchorAndIdentity,
+      false,
+    );
+    assert.ok(validateVListLifecycleFacts(remountedDuringPrepend).includes(
+      "vlist lifecycle assertion failed: prependPreservesAnchorAndIdentity",
+    ));
+
     assert.equal(getFrontendPerformanceExitCode({
       correctness: { passed: true },
       runtimes: {
-        electron: { metrics: { vlistLifecycle: { gateDecision: derived.gateDecision } } },
+        electron: { metrics: { vlistLifecycle: { gateDecision: lateCleanupDerived.gateDecision } } },
       },
     }), 1);
   });

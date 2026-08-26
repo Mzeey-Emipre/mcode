@@ -190,13 +190,16 @@ function waitForExpectedExit(child, label, expectedExitCode) {
   });
 }
 
-/** Returns the process exit code for harness failures and rejected lifecycle candidates. */
+/** Returns the process exit code for harness failures and invalid lifecycle candidates. */
 export function getFrontendPerformanceExitCode(result) {
-  const candidateRejected = Object.values(result?.runtimes ?? {}).some((runtime) =>
-    runtime.metrics?.vlistLifecycle?.gateDecision?.status === "rejected"
-      && runtime.metrics.vlistLifecycle.gateDecision.candidateEligible === false,
-  );
-  return result?.correctness?.passed === true && !candidateRejected ? 0 : 1;
+  const invalidLifecycleCandidate = Object.values(result?.runtimes ?? {}).some((runtime) => {
+    const decision = runtime.metrics?.vlistLifecycle?.gateDecision;
+    return decision != null
+      && (decision.status !== "accepted"
+        || decision.candidateEligible !== true
+        || decision.reason !== null);
+  });
+  return result?.correctness?.passed === true && !invalidLifecycleCandidate ? 0 : 1;
 }
 
 function printResult(result, outputFile) {

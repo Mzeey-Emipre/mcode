@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
-import { createVList, type VList } from "vlist";
+import { createVList, type VList, type VListPlugin } from "vlist";
 import "vlist/styles";
 
 type ProbeRowKind = "message" | "narrative-flow" | "narrative-indicator" | "permission-request" | "turn-changes";
@@ -20,13 +20,26 @@ type LifecycleEvent = {
 };
 
 type TransitionObservation = {
-  readonly fromRowId: string;
-  readonly toRowId: string;
-  readonly previousPoolHostToken: string | null;
-  readonly currentPoolHostToken: string | null;
-  readonly previousPortalHostConnectedAfterVListMutation: boolean;
-  readonly effectCleanupCountBeforeVListMutation: number;
-  readonly effectCleanupCountAfterVListMutation: number;
+  readonly cause: "set-items" | "native-scroll";
+  readonly visibleRowIdsBefore: readonly string[];
+  readonly visibleRowIdsAfter: readonly string[];
+  readonly beforeReactPreUnmount: readonly TransitionRowObservation[];
+  readonly afterReactPreUnmountBeforeVListPhase2: readonly TransitionRowObservation[];
+  readonly afterVListPhase2: readonly TransitionRowObservation[];
+  readonly incomingRowsAfterVListPhase2: readonly PoolHostObservation[];
+};
+
+type TransitionRowObservation = {
+  readonly rowId: string;
+  readonly poolHostToken: string | null;
+  readonly portalHostConnected: boolean;
+  readonly effectCleanupCount: number;
+  readonly refDetachCount: number;
+};
+
+type PoolHostObservation = {
+  readonly rowId: string;
+  readonly poolHostToken: string | null;
 };
 
 type RenderedRow = {
@@ -45,6 +58,9 @@ type LifecycleProbeResult = {
     readonly afterA: readonly RenderedRow[];
     readonly afterAToB: readonly RenderedRow[];
     readonly afterBToA: readonly RenderedRow[];
+    readonly beforeNativeScroll: readonly RenderedRow[];
+    readonly afterFirstNativeScroll: readonly RenderedRow[];
+    readonly afterNativeScrollRecycle: readonly RenderedRow[];
   };
   readonly values: {
     readonly a: {
@@ -73,12 +89,47 @@ type LifecycleProbeResult = {
   };
   readonly transitions: readonly TransitionObservation[];
   readonly events: readonly LifecycleEvent[];
+  readonly prepend: {
+    readonly anchorRowId: string;
+    readonly anchorTopBefore: number;
+    readonly anchorTopAfter: number;
+    readonly draftBefore: string;
+    readonly draftAfter: string;
+    readonly effectMountCountBefore: number;
+    readonly effectMountCountAfter: number;
+    readonly refAttachCountBefore: number;
+    readonly refAttachCountAfter: number;
+    readonly portalHostTokenBefore: string | null;
+    readonly portalHostTokenAfter: string | null;
+    readonly visibleRowIdsAfter: readonly string[];
+  };
 };
 
 type PortalEntry = {
   readonly row: ProbeRow;
   readonly host: HTMLElement;
   readonly bodyPortalHost: HTMLElement;
+};
+
+type PendingOutgoingRow = {
+  readonly row: ProbeRow;
+  readonly host: HTMLElement;
+  readonly poolHostToken: string | null;
+};
+
+type PendingTransition = {
+  readonly cause: TransitionObservation["cause"];
+  readonly visibleRowIdsBefore: readonly string[];
+  readonly visibleRowsAfter: readonly ProbeRow[];
+  readonly outgoingRows: readonly PendingOutgoingRow[];
+  readonly beforeReactPreUnmount: readonly TransitionRowObservation[];
+  readonly afterReactPreUnmountBeforeVListPhase2: readonly TransitionRowObservation[];
+};
+
+type PendingRelocatedRow = {
+  readonly rowId: string;
+  readonly host: HTMLElement;
+  readonly targetIndex: number;
 };
 
 const A_ROW: ProbeRow = {
@@ -116,7 +167,21 @@ const STATIC_ROWS: readonly ProbeRow[] = [
   },
 ];
 
-const BODY_PORTAL_ROW_IDS = [A_ROW.id, B_ROW.id, ...STATIC_ROWS.map((row) => row.id)];
+const SCROLL_ROWS: readonly ProbeRow[] = Array.from({ length: 12 }, (_, index) => ({
+  id: `message:scroll-vlist-probe:${index}`,
+  kind: "message" as const,
+  title: `Scroll message ${index}`,
+  initialDraft: `scroll-draft-${index}`,
+}));
+
+const PREPEND_ROWS: readonly ProbeRow[] = Array.from({ length: 2 }, (_, index) => ({
+  id: `message:prepend-vlist-probe:${index}`,
+  kind: "message" as const,
+  title: `Prepended message ${index}`,
+  initialDraft: `prepend-draft-${index}`,
+}));
+
+const BODY_PORTAL_ROW_IDS = [A_ROW.id, B_ROW.id, ...STATIC_ROWS.map((row) => row.id), ...SCROLL_ROWS.map((row) => row.id)];
 
 function rowsWithPrimary(primary: ProbeRow): ProbeRow[] {
   return [primary, ...STATIC_ROWS];
@@ -271,25 +336,49 @@ function ProbePortals({ entries, record }: { readonly entries: readonly PortalEn
 class VListReactAdapterProbe {
   private readonly container: HTMLElement;
   private readonly reactContainer: HTMLElement;
+  private readonly parkingContainer: HTMLElement;
   private readonly reactRoot: Root;
-  private readonly portalHosts = new Map<string, HTMLElement>();
+  private readonly rowsById = new Map<string, ProbeRow>();
+  private readonly portalHostsByRowId = new Map<string, HTMLElement>();
   private readonly bodyPortalHosts = new Map<string, HTMLElement>();
   private readonly poolHostTokens = new WeakMap<HTMLElement, string>();
+  private readonly portalHostTokens = new WeakMap<HTMLElement, string>();
   private readonly events: LifecycleEvent[] = [];
+  private readonly transitions: TransitionObservation[] = [];
   private readonly list: VList<ProbeRow>;
   private nextPoolHostToken = 0;
+  private nextPortalHostToken = 0;
   private rows: readonly ProbeRow[] = [];
+  private reactRowsById = new Map<string, ProbeRow>();
+  private pendingTransition: PendingTransition | null = null;
+  private pendingRelocatedRows: readonly PendingRelocatedRow[] = [];
+  private pendingPrependCount = 0;
+  private nextTransitionCause: TransitionObservation["cause"] = "native-scroll";
 
   constructor() {
     this.container = document.createElement("div");
     this.container.dataset.vlistProbe = "container";
-    this.container.style.cssText = "height:420px;width:620px;overflow:hidden;padding:8px;background:#0f1720";
+    this.container.style.cssText = "height:180px;width:620px;overflow:hidden;padding:8px;background:#0f1720";
     document.body.appendChild(this.container);
 
     this.reactContainer = document.createElement("div");
     this.reactContainer.dataset.vlistProbe = "react-root";
     document.body.appendChild(this.reactContainer);
     this.reactRoot = createRoot(this.reactContainer);
+
+    this.parkingContainer = document.createElement("div");
+    this.parkingContainer.hidden = true;
+    this.parkingContainer.dataset.vlistProbe = "parking";
+    document.body.appendChild(this.parkingContainer);
+
+    const reactLifecyclePlugin: VListPlugin<ProbeRow> = {
+      name: "react-lifecycle-probe",
+      priority: 100,
+      hooks: {
+        onCalculate: (state) => this.preUnmountRows(state),
+        onCommit: (state) => this.commitRows(state),
+      },
+    };
 
     this.list = createVList<ProbeRow>({
       container: this.container,
@@ -300,11 +389,13 @@ class VListReactAdapterProbe {
         template: (row) => {
           const portalHost = document.createElement("div");
           portalHost.dataset.vlistProbeHost = row.id;
-          this.portalHosts.set(row.id, portalHost);
+          this.portalHostsByRowId.set(row.id, portalHost);
           return portalHost;
         },
       },
-    });
+    }, [reactLifecyclePlugin]);
+    this.list.element.style.height = "180px";
+    this.getViewport().style.cssText = "height:180px;overflow:auto";
   }
 
   private record = (event: LifecycleEvent): void => {
@@ -331,59 +422,225 @@ class VListReactAdapterProbe {
     return token;
   }
 
-  private renderPortals(): void {
-    const entries = this.rows.map((row): PortalEntry => {
-      const host = this.portalHosts.get(row.id);
+  private getPortalHostToken(portalHost: HTMLElement | null): string | null {
+    if (!portalHost) return null;
+    const existing = this.portalHostTokens.get(portalHost);
+    if (existing) return existing;
+    const token = `portal-host-${this.nextPortalHostToken}`;
+    this.nextPortalHostToken += 1;
+    this.portalHostTokens.set(portalHost, token);
+    return token;
+  }
+
+  private getViewport(): HTMLElement {
+    const viewport = this.list?.element.querySelector<HTMLElement>(".vlist-prototype-viewport")
+      ?? this.container.querySelector<HTMLElement>(".vlist-prototype-viewport");
+    if (!viewport) throw new Error("vlist did not create its viewport.");
+    return viewport;
+  }
+
+  private getVisibleRows(state: { readonly visibleCount: number; readonly visibleIndices: Int32Array }): ProbeRow[] {
+    const visibleRows: ProbeRow[] = [];
+    for (let offset = 0; offset < state.visibleCount; offset += 1) {
+      const row = this.rows[state.visibleIndices[offset] ?? -1];
+      const ownedRow = row ? this.rowsById.get(row.id) : undefined;
+      if (ownedRow) visibleRows.push(ownedRow);
+    }
+    return visibleRows;
+  }
+
+  private renderRows(rows: readonly ProbeRow[]): void {
+    const entries = rows.map((row): PortalEntry => {
+      const host = this.portalHostsByRowId.get(row.id);
       if (!host?.isConnected) throw new Error(`vlist did not keep a portal host for ${row.id}.`);
       return { row, host, bodyPortalHost: this.getBodyPortalHost(row.id) };
     });
     flushSync(() => {
       this.reactRoot.render(<ProbePortals entries={entries} record={this.record} />);
     });
+    this.reactRowsById = new Map(rows.map((row) => [row.id, row]));
   }
 
-  private async waitForPortalHosts(rows: readonly ProbeRow[]): Promise<void> {
+  private captureOutgoingRows(rows: readonly PendingOutgoingRow[]): readonly TransitionRowObservation[] {
+    return rows.map(({ row, host, poolHostToken }) => ({
+      rowId: row.id,
+      poolHostToken,
+      portalHostConnected: host.isConnected,
+      effectCleanupCount: eventCount(this.events, "effect-cleanup", row.id),
+      refDetachCount: eventCount(this.events, "ref-detach", row.id),
+    }));
+  }
+
+  private applyPendingPrepend(state: {
+    readonly visibleCount: number;
+    readonly visibleIndices: Int32Array;
+    readonly visibleOffsets: Float64Array;
+    readonly visibleSizes: Float64Array;
+    scrollPosition: number;
+    startIndex: number;
+  }): void {
+    if (this.pendingPrependCount === 0) return;
+    const addedHeight = this.pendingPrependCount * 84;
+    state.scrollPosition += addedHeight;
+    this.getViewport().scrollTop = state.scrollPosition;
+    for (let offset = 0; offset < state.visibleCount; offset += 1) {
+      const index = (state.visibleIndices[offset] ?? 0) + this.pendingPrependCount;
+      state.visibleIndices[offset] = index;
+      state.visibleOffsets[offset] = index * 84;
+      state.visibleSizes[offset] = 84;
+    }
+    state.startIndex += this.pendingPrependCount;
+    this.pendingPrependCount = 0;
+  }
+
+  private parkRelocatedRows(visibleRowsAfter: readonly ProbeRow[]): readonly PendingRelocatedRow[] {
+    return visibleRowsAfter.flatMap((row) => {
+      const previousRow = this.reactRowsById.get(row.id);
+      if (!previousRow) return [];
+      const host = this.portalHostsByRowId.get(row.id);
+      if (!host) throw new Error(`The adapter lost the retained portal host for ${row.id}.`);
+      const currentIndex = Number(host.parentElement?.dataset.index ?? Number.NaN);
+      const targetIndex = this.rows.findIndex((candidate) => candidate.id === row.id);
+      if (currentIndex === targetIndex && previousRow === row) return [];
+      this.parkingContainer.appendChild(host);
+      return [{ rowId: row.id, host, targetIndex }];
+    });
+  }
+
+  private restoreRelocatedRows(): void {
+    for (const { rowId, host, targetIndex } of this.pendingRelocatedRows) {
+      const replacementHost = this.portalHostsByRowId.get(rowId);
+      const targetPoolHost = replacementHost?.parentElement;
+      if (!replacementHost || !targetPoolHost || targetPoolHost.dataset.index !== String(targetIndex)) {
+        throw new Error(`vlist did not create the expected relocated host for ${rowId}.`);
+      }
+      replacementHost.remove();
+      targetPoolHost.appendChild(host);
+      this.portalHostsByRowId.set(rowId, host);
+    }
+    this.pendingRelocatedRows = [];
+  }
+
+  private preUnmountRows(state: {
+    readonly visibleCount: number;
+    readonly visibleIndices: Int32Array;
+    readonly visibleOffsets: Float64Array;
+    readonly visibleSizes: Float64Array;
+    scrollPosition: number;
+    startIndex: number;
+  }): void {
+    this.applyPendingPrepend(state);
+    const visibleRowsAfter = this.getVisibleRows(state);
+    const visibleRowIdsAfter = new Set(visibleRowsAfter.map((row) => row.id));
+    const outgoingRows = [...this.reactRowsById.values()]
+      .filter((row) => !visibleRowIdsAfter.has(row.id))
+      .map((row): PendingOutgoingRow => {
+        const host = this.portalHostsByRowId.get(row.id);
+        if (!host) throw new Error(`The adapter lost the portal host for ${row.id}.`);
+        return { row, host, poolHostToken: this.getPoolHostToken(host.parentElement) };
+      });
+    this.pendingRelocatedRows = this.parkRelocatedRows(visibleRowsAfter);
+    if (outgoingRows.length === 0 && this.pendingRelocatedRows.length === 0) return;
+
+    const retainedRows = visibleRowsAfter.filter((row) => this.reactRowsById.has(row.id));
+    const beforeReactPreUnmount = this.captureOutgoingRows(outgoingRows);
+    const visibleRowIdsBefore = [...this.reactRowsById.keys()];
+    this.renderRows(retainedRows);
+    if (outgoingRows.length === 0) return;
+
+    this.pendingTransition = {
+      cause: this.nextTransitionCause,
+      visibleRowIdsBefore,
+      visibleRowsAfter,
+      outgoingRows,
+      beforeReactPreUnmount,
+      afterReactPreUnmountBeforeVListPhase2: this.captureOutgoingRows(outgoingRows),
+    };
+    this.nextTransitionCause = "native-scroll";
+  }
+
+  private commitRows(state: { readonly visibleCount: number; readonly visibleIndices: Int32Array }): void {
+    const visibleRows = this.getVisibleRows(state);
+    this.restoreRelocatedRows();
+    this.renderRows(visibleRows);
+    const transition = this.pendingTransition;
+    if (!transition) return;
+
+    this.transitions.push({
+      cause: transition.cause,
+      visibleRowIdsBefore: transition.visibleRowIdsBefore,
+      visibleRowIdsAfter: transition.visibleRowsAfter.map((row) => row.id),
+      beforeReactPreUnmount: transition.beforeReactPreUnmount,
+      afterReactPreUnmountBeforeVListPhase2: transition.afterReactPreUnmountBeforeVListPhase2,
+      afterVListPhase2: this.captureOutgoingRows(transition.outgoingRows),
+      incomingRowsAfterVListPhase2: transition.visibleRowsAfter
+        .filter((row) => !transition.visibleRowIdsBefore.includes(row.id))
+        .map((row) => {
+          const host = this.portalHostsByRowId.get(row.id);
+          return {
+            rowId: row.id,
+            poolHostToken: this.getPoolHostToken(host?.parentElement ?? null),
+          };
+        }),
+    });
+    this.pendingTransition = null;
+  }
+
+  private async waitForCommittedRows(rows: readonly ProbeRow[]): Promise<void> {
     for (let frame = 0; frame < 10; frame += 1) {
-      if (rows.every((row) => this.portalHosts.get(row.id)?.isConnected)) return;
+      if (rows.every((row) => this.reactRowsById.has(row.id)
+        && this.portalHostsByRowId.get(row.id)?.isConnected)) return;
       await waitForFrames(1);
     }
-    throw new Error("vlist did not render every portal host.");
+    throw new Error("vlist did not commit every requested React row.");
   }
 
-  async show(rows: readonly ProbeRow[]): Promise<TransitionObservation | null> {
-    const previousPrimary = this.rows[0];
-    const previousPortalHost = previousPrimary ? this.portalHosts.get(previousPrimary.id) : undefined;
-    const previousPoolHostToken = this.getPoolHostToken(previousPortalHost?.parentElement ?? null);
-    const effectCleanupCountBeforeVListMutation = previousPrimary
-      ? eventCount(this.events, "effect-cleanup", previousPrimary.id)
-      : 0;
-
+  async show(rows: readonly ProbeRow[]): Promise<void> {
     this.rows = rows;
+    this.rowsById.clear();
+    for (const row of rows) this.rowsById.set(row.id, row);
+    this.nextTransitionCause = "set-items";
     this.list.setItems([...rows]);
-    await this.waitForPortalHosts(rows);
-
-    const currentPrimary = rows[0];
-    const currentPortalHost = this.portalHosts.get(currentPrimary.id);
-    if (!currentPortalHost) throw new Error(`vlist did not return a portal host for ${currentPrimary.id}.`);
-    const transition = previousPrimary
-      ? {
-          fromRowId: previousPrimary.id,
-          toRowId: currentPrimary.id,
-          previousPoolHostToken,
-          currentPoolHostToken: this.getPoolHostToken(currentPortalHost.parentElement),
-          previousPortalHostConnectedAfterVListMutation: previousPortalHost?.isConnected ?? false,
-          effectCleanupCountBeforeVListMutation,
-          effectCleanupCountAfterVListMutation: eventCount(this.events, "effect-cleanup", previousPrimary.id),
-        }
-      : null;
-
-    this.renderPortals();
+    await this.waitForCommittedRows(rows.slice(0, 1));
     await waitForFrames();
-    return transition;
+  }
+
+  async scrollNativelyTo(index: number): Promise<void> {
+    const expectedRow = this.rows[index];
+    if (!expectedRow) throw new Error(`The native scroll target ${index} is outside the row range.`);
+    const viewport = this.getViewport();
+    viewport.scrollTop = index * 84;
+    viewport.dispatchEvent(new Event("scroll"));
+    await this.waitForCommittedRows([expectedRow]);
+    await waitForFrames();
+  }
+
+  async prependWithAnchor(rows: readonly ProbeRow[], anchorRow: ProbeRow): Promise<void> {
+    this.rows = [...rows, ...this.rows];
+    for (const row of rows) this.rowsById.set(row.id, row);
+    this.pendingPrependCount = rows.length;
+    this.nextTransitionCause = "set-items";
+    this.list.prependItems([...rows]);
+    await this.waitForCommittedRows([anchorRow]);
+    await waitForFrames();
+  }
+
+  getRowTop(rowId: string): number {
+    const row = document.querySelector<HTMLElement>(`[data-vlist-probe-row="${rowId}"]`);
+    if (!row) throw new Error(`The probe row for ${rowId} was not rendered.`);
+    return row.getBoundingClientRect().top;
+  }
+
+  getPortalHostTokenForRow(rowId: string): string | null {
+    return this.getPortalHostToken(this.portalHostsByRowId.get(rowId) ?? null);
   }
 
   getEvents(): readonly LifecycleEvent[] {
     return this.events;
+  }
+
+  getTransitions(): readonly TransitionObservation[] {
+    return this.transitions;
   }
 
   async dispose(): Promise<void> {
@@ -392,16 +649,17 @@ class VListReactAdapterProbe {
     this.list.destroy();
     this.container.remove();
     this.reactContainer.remove();
+    this.parkingContainer.remove();
     for (const bodyPortalHost of this.bodyPortalHosts.values()) {
       bodyPortalHost.remove();
     }
   }
 }
 
-/** Runs the vlist React portal lifecycle rejection probe. */
+/** Runs the vlist React portal lifecycle probe. */
 export async function runVListReactAdapterLifecycleProbe(): Promise<LifecycleProbeResult> {
   const adapter = new VListReactAdapterProbe();
-  const transitions: TransitionObservation[] = [];
+  let adapterDisposed = false;
   try {
     await adapter.show(rowsWithPrimary(A_ROW));
     const renderedRowsAfterA = captureRenderedRows();
@@ -415,8 +673,7 @@ export async function runVListReactAdapterLifecycleProbe(): Promise<LifecyclePro
     const aDraftAfterEdit = getInput(A_ROW.id).value;
     const aButtonAfterClick = getButton(A_ROW.id).textContent;
 
-    const toB = await adapter.show(rowsWithPrimary(B_ROW));
-    if (toB) transitions.push(toB);
+    await adapter.show(rowsWithPrimary(B_ROW));
     const renderedRowsAfterAToB = captureRenderedRows();
     const bodyPortalsAfterAToB = captureBodyPortals();
     const focusAfterAToB = captureFocus(aInput);
@@ -429,20 +686,66 @@ export async function runVListReactAdapterLifecycleProbe(): Promise<LifecyclePro
     await waitForFrames();
     const bButtonAfterClick = getButton(B_ROW.id).textContent;
 
-    const toA = await adapter.show(rowsWithPrimary(A_ROW));
-    if (toA) transitions.push(toA);
+    await adapter.show(rowsWithPrimary(A_ROW));
     const renderedRowsAfterBToA = captureRenderedRows();
     const bodyPortalsAfterBToA = captureBodyPortals();
     const focusAfterBToA = captureFocus(bInput);
     const aDraftAfterReturn = getInput(A_ROW.id).value;
     const aButtonAfterReturn = getButton(A_ROW.id).textContent;
 
+    await adapter.show(SCROLL_ROWS);
+    const renderedRowsBeforeNativeScroll = captureRenderedRows();
+    await adapter.scrollNativelyTo(4);
+    const renderedRowsAfterFirstNativeScroll = captureRenderedRows();
+    await adapter.scrollNativelyTo(8);
+    const renderedRowsAfterNativeScrollRecycle = captureRenderedRows();
+
     await adapter.dispose();
+    adapterDisposed = true;
+    const prependAdapter = new VListReactAdapterProbe();
+    let prependAdapterDisposed = false;
+    let prepend: LifecycleProbeResult["prepend"];
+    try {
+      await prependAdapter.show(SCROLL_ROWS);
+      await prependAdapter.scrollNativelyTo(4);
+      const anchorRow = SCROLL_ROWS[4];
+      if (!anchorRow) throw new Error("The prepend probe anchor row is missing.");
+      const anchorInput = getInput(anchorRow.id);
+      setInputValue(anchorInput, "edited-before-prepend");
+      await waitForFrames();
+      const anchorTopBefore = prependAdapter.getRowTop(anchorRow.id);
+      const effectMountCountBefore = eventCount(prependAdapter.getEvents(), "effect-mount", anchorRow.id);
+      const refAttachCountBefore = eventCount(prependAdapter.getEvents(), "ref-attach", anchorRow.id);
+      const portalHostTokenBefore = prependAdapter.getPortalHostTokenForRow(anchorRow.id);
+      await prependAdapter.prependWithAnchor(PREPEND_ROWS, anchorRow);
+      prepend = {
+        anchorRowId: anchorRow.id,
+        anchorTopBefore,
+        anchorTopAfter: prependAdapter.getRowTop(anchorRow.id),
+        draftBefore: "edited-before-prepend",
+        draftAfter: getInput(anchorRow.id).value,
+        effectMountCountBefore,
+        effectMountCountAfter: eventCount(prependAdapter.getEvents(), "effect-mount", anchorRow.id),
+        refAttachCountBefore,
+        refAttachCountAfter: eventCount(prependAdapter.getEvents(), "ref-attach", anchorRow.id),
+        portalHostTokenBefore,
+        portalHostTokenAfter: prependAdapter.getPortalHostTokenForRow(anchorRow.id),
+        visibleRowIdsAfter: captureRenderedRows().map(({ rowId }) => rowId),
+      };
+      await prependAdapter.dispose();
+      prependAdapterDisposed = true;
+    } catch (error) {
+      if (!prependAdapterDisposed) await prependAdapter.dispose();
+      throw error;
+    }
     return {
       renderedRows: {
         afterA: renderedRowsAfterA,
         afterAToB: renderedRowsAfterAToB,
         afterBToA: renderedRowsAfterBToA,
+        beforeNativeScroll: renderedRowsBeforeNativeScroll,
+        afterFirstNativeScroll: renderedRowsAfterFirstNativeScroll,
+        afterNativeScrollRecycle: renderedRowsAfterNativeScrollRecycle,
       },
       values: {
         a: {
@@ -469,11 +772,12 @@ export async function runVListReactAdapterLifecycleProbe(): Promise<LifecyclePro
         afterBToA: bodyPortalsAfterBToA,
         afterDispose: captureBodyPortals(),
       },
-      transitions,
+      transitions: adapter.getTransitions(),
       events: adapter.getEvents(),
+      prepend,
     };
   } catch (error) {
-    await adapter.dispose();
+    if (!adapterDisposed) await adapter.dispose();
     throw error;
   }
 }
