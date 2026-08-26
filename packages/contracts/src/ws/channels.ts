@@ -17,6 +17,7 @@ import {
 } from "../models/browser-automation.js";
 import { TurnFileEffectSummarySchema } from "../models/file-effect.js";
 import { TurnOutcomeSchema } from "../models/turn-outcome.js";
+import { TurnSavingStatusSchema } from "../models/turn-runtime.js";
 import { ProviderCatalogChangeSchema } from "../providers/capability-catalog.js";
 import { ThreadObservedStateSchema } from "../thread-control.js";
 import { WorkspaceEnvironmentActionRunSchema } from "../models/workspace-environment.js";
@@ -155,6 +156,8 @@ export const WS_CHANNELS = {
     outcome: TurnOutcomeSchema.optional(),
     executionId: z.string().nullable().optional(),
   }),
+  /** Reports whether live assistant text remains recoverable or needs explicit risk acceptance. */
+  "turn.savingStatus": TurnSavingStatusSchema,
   /** Live net file effects attributed to explicit agent mutation tools. */
   "turn.fileEffectsUpdated": z.object({
     threadId: z.string(),

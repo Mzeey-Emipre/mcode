@@ -1,4 +1,7 @@
 import "reflect-metadata";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type Database from "better-sqlite3";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
@@ -219,6 +222,37 @@ describe("TurnRecoveryService", () => {
 
     expect(service.reconcileOnStartup()).toEqual({ interrupted: [] });
     expect(messageRepo.listByThread(THREAD_ID, 10).messages).toHaveLength(2);
+  });
+
+  it("imports a fsynced recovery journal before it restores the interrupted assistant text", () => {
+    const journalDirectory = mkdtempSync(join(tmpdir(), "mcode-recovery-journal-"));
+    const checkpoints = new ParentAssistantTextCheckpointService(db, undefined, { directory: journalDirectory });
+    checkpoints.recoveryJournal.append([{
+      executionId: EXECUTION_ID,
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      sequence: 1,
+      text: "Journal text survives the SQLite outage.",
+    }]);
+    const service = new TurnRecoveryService(
+      sink,
+      threadRepo,
+      new AttachmentService(),
+      checkpoints,
+      messageRepo,
+      narrativeStore,
+    );
+
+    try {
+      expect(service.reconcileOnStartup()).toEqual({ interrupted: [EXECUTION_ID] });
+      expect(sink.loadTerminalProjection(TURN_ID).message).toMatchObject({
+        content: "Journal text survives the SQLite outage.",
+        outcome: "interrupted",
+        outcomeExecutionId: EXECUTION_ID,
+      });
+    } finally {
+      rmSync(journalDirectory, { recursive: true, force: true });
+    }
   });
 
   it("restores ordered narration, interrupted tools, completed hooks, and explicit parallel parents", () => {

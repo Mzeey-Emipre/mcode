@@ -127,6 +127,7 @@ function minimalService(): AgentService {
     listAnsweredForThread: vi.fn(() => []),
   } as unknown as PlanQuestionAnswersRepo;
   const db = {
+    name: ":memory:",
     transaction: vi.fn((fn: Function) => fn),
     prepare: vi.fn(() => ({ run: vi.fn() })),
   } as unknown as import("better-sqlite3").Database;

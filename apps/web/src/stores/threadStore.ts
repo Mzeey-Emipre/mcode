@@ -230,6 +230,8 @@ interface ThreadState {
   /** Remove one durably cancelled message from the resident thread transcript. */
   removePersistedMessage: (threadId: string, messageId: string) => void;
   stopAgent: (threadId: string) => Promise<void>;
+  /** Apply server-authoritative assistant-text saving state for one active execution. */
+  setTurnSavingStatus: (status: import("@mcode/contracts").TurnSavingStatus) => void;
   /** Apply one authoritative runtime snapshot without replacing other running threads. */
   applyThreadRuntimeSnapshot: (snapshot: TurnRuntimeSnapshot) => void;
   /** Atomically move optimistic first-turn runtime state to the persisted thread identity. */
@@ -566,6 +568,7 @@ function resetTurnEphemeral(_rec: ThreadRecord): Partial<ThreadRecord> {
     currentTurnMessageId: "",
     currentTurnResponseKey: "",
     fileEffectTurnId: "",
+    savingStatus: null,
   };
 }
 
@@ -1999,6 +2002,17 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
     threadHydrator.invalidatePermissionSnapshots(threadId);
   },
 
+  setTurnSavingStatus: (status) => {
+    set((state) => ({
+      records: patchThreadRecord(state.records, status.threadId, (rec) => {
+        if (rec.turnExecutionId !== status.executionId) return rec;
+        return {
+          savingStatus: status,
+        };
+      }),
+    }));
+  },
+
   applyThreadRuntimeSnapshot: (snapshot) => {
     const running = snapshot.phase === "running" || snapshot.phase === "finalizing";
     set((state) => {
@@ -2120,6 +2134,13 @@ export const useThreadStore = create<ThreadState>((zustandSet, get) => {
         records = patchThreadRecord(records, snapshot.threadId, {
           turnExecutionId: snapshot.turnExecutionId,
           runtimePhase: snapshot.phase,
+          savingStatus: snapshot.turnExecutionId && snapshot.savingStatus
+            ? {
+              threadId: snapshot.threadId,
+              executionId: snapshot.turnExecutionId,
+              mode: snapshot.savingStatus,
+            }
+            : null,
           ...((snapshot.phase === "running" || snapshot.phase === "finalizing") && {
             agentStartTime: getThreadRecord(records, snapshot.threadId).agentStartTime ?? Date.now(),
           }),

@@ -63,6 +63,31 @@ describe("hydrateRunningThreadsFromServer", () => {
     expect(rec.thoughtSegments).toEqual([]);
   });
 
+  it("restores a delayed-saving decision and rejects a status for another execution", async () => {
+    resetThreadStoreForTests({ runningThreadIds: new Set() });
+    const executionId = "00000000-0000-4000-8000-000000000005";
+    const rpc = vi.fn().mockResolvedValue([{
+      threadId: "t-saving",
+      turnExecutionId: executionId,
+      phase: "running",
+      savingStatus: "saving-delayed",
+    }]);
+
+    await hydrateRunningThreadsFromServer(rpc);
+    expect(useThreadStore.getState().records.get("t-saving")?.savingStatus).toEqual({
+      threadId: "t-saving",
+      executionId,
+      mode: "saving-delayed",
+    });
+
+    useThreadStore.getState().setTurnSavingStatus({
+      threadId: "t-saving",
+      executionId: "00000000-0000-4000-8000-000000000006",
+      mode: "durable",
+    });
+    expect(useThreadStore.getState().records.get("t-saving")?.savingStatus?.mode).toBe("saving-delayed");
+  });
+
   it("preserves a newer turnStarted runtime while hydration is pending", async () => {
     resetThreadStoreForTests({ runningThreadIds: new Set() });
     let resolveRpc: (v: Array<{ threadId: string; turnExecutionId: string; phase: "running" }>) => void = () => {};

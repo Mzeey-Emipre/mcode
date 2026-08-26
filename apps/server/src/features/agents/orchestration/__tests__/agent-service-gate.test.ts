@@ -180,6 +180,7 @@ function buildService({
   } as unknown as ProviderAvailabilityService;
 
   const db = {
+    name: ":memory:",
     transaction: vi.fn((fn) => fn),
     prepare: vi.fn(() => ({ run: vi.fn() })),
   } as unknown as import("better-sqlite3").Database;

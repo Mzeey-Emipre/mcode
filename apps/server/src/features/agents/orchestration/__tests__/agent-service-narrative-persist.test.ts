@@ -1,6 +1,9 @@
 import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EventEmitter } from "events";
+import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type Database from "better-sqlite3";
 import { AgentEventType } from "@mcode/contracts";
 import type { Thread, IProviderRegistry, Message, AgentEvent } from "@mcode/contracts";
@@ -8,7 +11,10 @@ import { AgentService } from "../agent-service.js";
 import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/canonical-agent-event-sink-stub.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
 import { PlanQuestionService } from "../../planning/plan-question-service.js";
-import { ParentAssistantTextCheckpointService } from "../../turns/parent-assistant-text-checkpoint-service.js";
+import {
+  ParentAssistantTextCheckpointService,
+  PARENT_ASSISTANT_TEXT_RETAINED_LIMITS,
+} from "../../turns/parent-assistant-text-checkpoint-service.js";
 import { CanonicalAgentEventSink } from "../../canonical/canonical-agent-event-sink.js";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { broadcast } from "../../../../application/transport/push.js";
@@ -93,11 +99,13 @@ interface Built {
 function build(options: {
   db?: Database.Database;
   canonicalSink?: CanonicalAgentEventSink;
+  parentAssistantTextCheckpoints?: ParentAssistantTextCheckpointService;
   onProviderEvent?: (event: AgentEvent) => void;
 } = {}): Built {
   const thread = makeThread();
   const providerEmitter = new EventEmitter();
   (providerEmitter as any).sendTurn = vi.fn(() => Promise.resolve());
+  (providerEmitter as any).stopSession = vi.fn(() => Promise.resolve());
 
   const threadRepo = {
     findById: vi.fn(() => thread),
@@ -193,10 +201,13 @@ function build(options: {
     listAnsweredForThread: vi.fn(() => []),
   } as unknown as PlanQuestionAnswersRepo;
   const db = options.db ?? ({
+    name: ":memory:",
     transaction: vi.fn((fn: Function) => fn),
     prepare: vi.fn(() => ({ run: vi.fn() })),
   } as unknown as Database.Database);
   const canonicalSink = options.canonicalSink ?? createCanonicalAgentEventSinkStub(db);
+  const parentAssistantTextCheckpoints = options.parentAssistantTextCheckpoints
+    ?? new ParentAssistantTextCheckpointService(db);
 
   // The narrative write seam lives in NarrativeStore; build it from the same
   // repo mocks so the bulkCreate spies observe what AgentService delegates.
@@ -229,7 +240,7 @@ function build(options: {
       { issue: vi.fn(), tryConsume: vi.fn(() => false), clear: vi.fn(), hasActiveGrant: vi.fn(() => false) } as any,
       narrativeStore,
       new PlanQuestionService(messageRepo, planQuestionAnswersRepo),
-      new ParentAssistantTextCheckpointService(db),
+      parentAssistantTextCheckpoints,
       undefined,
       undefined,
       undefined,
@@ -349,6 +360,487 @@ describe("AgentService narrative persistence", () => {
       `).all(executionId)).toEqual([]);
     } finally {
       vi.useRealTimers();
+      db.close();
+    }
+  });
+
+  it("starts a fresh retention window after each durable narration boundary", () => {
+    const db = openMemoryDatabase();
+    const now = "2026-08-24T10:00:00.000Z";
+    db.prepare(
+      "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    ).run("ws-1", "Workspace", "/workspace", now, now);
+    db.prepare(
+      "INSERT INTO threads (id, workspace_id, title, branch, provider, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(THREAD_ID, "ws-1", "Parent", "main", "claude", "active", now, now);
+    const canonicalSink = new CanonicalAgentEventSink(db, vi.fn());
+    const published: AgentEvent[] = [];
+    const { providerEmitter, service } = build({
+      db,
+      canonicalSink,
+      onProviderEvent: (event) => published.push(event),
+    });
+    const executionId = (service as unknown as {
+      turnRuntime: { snapshot: (threadId: string) => { turnExecutionId: string } | undefined };
+    }).turnRuntime.snapshot(THREAD_ID)!.turnExecutionId;
+    const messages = new SqliteMessageRepo(db);
+    canonicalSink.startParentTurn({
+      thread: { id: THREAD_ID, workspaceId: "ws-1", providerId: "claude", createdAt: now },
+      turnId: "turn-multiple-narration-segments",
+      executionId,
+      permissionMode: "supervised",
+      providerIdentities: [],
+      projectUserMessage: () => messages.create(THREAD_ID, "user", "start", 1),
+    });
+    const firstSegment = Array.from({ length: 10 }, () => "a".repeat(14 * 1024));
+    const secondSegment = Array.from({ length: 10 }, () => "b".repeat(14 * 1024));
+
+    try {
+      for (const segment of [firstSegment, secondSegment]) {
+        for (const delta of segment) {
+          providerEmitter.emit("event", {
+            type: AgentEventType.TextDelta,
+            threadId: THREAD_ID,
+            turnExecutionId: executionId,
+            delta,
+          });
+        }
+        providerEmitter.emit("event", {
+          type: AgentEventType.AssistantMessageBoundary,
+          threadId: THREAD_ID,
+          turnExecutionId: executionId,
+          isFinalResponse: false,
+        });
+      }
+
+      expect(published
+        .filter((event) => event.type === AgentEventType.TextDelta)
+        .map((event) => event.delta.length))
+        .toEqual([...firstSegment, ...secondSegment].map((delta) => delta.length));
+      expect(published.filter((event) => event.type === AgentEventType.AssistantMessageBoundary))
+        .toHaveLength(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("holds a semantic boundary until delayed text reaches SQLite, then publishes both in provider order", async () => {
+    const db = openMemoryDatabase();
+    const now = "2026-08-24T10:00:00.000Z";
+    db.prepare(
+      "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    ).run("ws-1", "Workspace", "/workspace", now, now);
+    db.prepare(
+      "INSERT INTO threads (id, workspace_id, title, branch, provider, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(THREAD_ID, "ws-1", "Parent", "main", "claude", "active", now, now);
+    const canonicalSink = new CanonicalAgentEventSink(db, vi.fn());
+    const published: AgentEvent[] = [];
+    let sqliteAvailable = false;
+    const appendChunk = ParentAssistantTextCheckpointService.prototype.appendChunk;
+    const appendSpy = vi.spyOn(ParentAssistantTextCheckpointService.prototype, "appendChunk")
+      .mockImplementation(function (inputs) {
+        if (!sqliteAvailable) throw Object.assign(new Error("database locked"), { code: "SQLITE_BUSY" });
+        return appendChunk.call(this, inputs);
+      });
+
+    vi.useFakeTimers();
+    try {
+      const { providerEmitter, service } = build({
+        db,
+        canonicalSink,
+        onProviderEvent: (event) => published.push(event),
+      });
+      const executionId = (service as unknown as {
+        turnRuntime: { snapshot: (threadId: string) => { turnExecutionId: string } | undefined };
+      }).turnRuntime.snapshot(THREAD_ID)!.turnExecutionId;
+      const messages = new SqliteMessageRepo(db);
+      canonicalSink.startParentTurn({
+        thread: { id: THREAD_ID, workspaceId: "ws-1", providerId: "claude", createdAt: now },
+        turnId: "turn-delayed-semantic-boundary",
+        executionId,
+        permissionMode: "supervised",
+        providerIdentities: [],
+        projectUserMessage: () => messages.create(THREAD_ID, "user", "start", 1),
+      });
+
+      providerEmitter.emit("event", {
+        type: AgentEventType.TextDelta,
+        threadId: THREAD_ID,
+        turnExecutionId: executionId,
+        delta: "delayed text",
+      });
+      providerEmitter.emit("event", {
+        type: AgentEventType.AssistantMessageBoundary,
+        threadId: THREAD_ID,
+        turnExecutionId: executionId,
+        isFinalResponse: false,
+      });
+
+      expect(published).toEqual([]);
+
+      sqliteAvailable = true;
+      await vi.advanceTimersByTimeAsync(250);
+
+      expect(published.map((event) => event.type)).toEqual([
+        AgentEventType.TextDelta,
+        AgentEventType.AssistantMessageBoundary,
+      ]);
+      expect(appendSpy).toHaveBeenCalledTimes(3);
+    } finally {
+      appendSpy.mockRestore();
+      vi.useRealTimers();
+      db.close();
+    }
+  });
+
+  it("holds the provider FIFO until the assistant-text baseline is readable", async () => {
+    const db = openMemoryDatabase();
+    const now = "2026-08-24T10:00:00.000Z";
+    db.prepare(
+      "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    ).run("ws-1", "Workspace", "/workspace", now, now);
+    db.prepare(
+      "INSERT INTO threads (id, workspace_id, title, branch, provider, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(THREAD_ID, "ws-1", "Parent", "main", "claude", "active", now, now);
+    const canonicalSink = new CanonicalAgentEventSink(db, vi.fn());
+    const published: AgentEvent[] = [];
+    const restoreChunks = ParentAssistantTextCheckpointService.prototype.restoreChunks;
+    const restoreChunksSpy = vi.spyOn(ParentAssistantTextCheckpointService.prototype, "restoreChunks")
+      .mockImplementationOnce(() => {
+        throw Object.assign(new Error("database locked"), { code: "SQLITE_BUSY" });
+      })
+      .mockImplementation(function (executionId) {
+        return restoreChunks.call(this, executionId);
+      });
+
+    vi.useFakeTimers();
+    try {
+      const { providerEmitter, service } = build({
+        db,
+        canonicalSink,
+        onProviderEvent: (event) => published.push(event),
+      });
+      const executionId = (service as unknown as {
+        turnRuntime: { snapshot: (threadId: string) => { turnExecutionId: string } | undefined };
+      }).turnRuntime.snapshot(THREAD_ID)!.turnExecutionId;
+      const messages = new SqliteMessageRepo(db);
+      canonicalSink.startParentTurn({
+        thread: { id: THREAD_ID, workspaceId: "ws-1", providerId: "claude", createdAt: now },
+        turnId: "turn-delayed-baseline",
+        executionId,
+        permissionMode: "supervised",
+        providerIdentities: [],
+        projectUserMessage: () => messages.create(THREAD_ID, "user", "start", 1),
+      });
+
+      providerEmitter.emit("event", {
+        type: AgentEventType.TextDelta,
+        threadId: THREAD_ID,
+        turnExecutionId: executionId,
+        delta: "delayed baseline",
+      });
+      providerEmitter.emit("event", {
+        type: AgentEventType.AssistantMessageBoundary,
+        threadId: THREAD_ID,
+        turnExecutionId: executionId,
+        isFinalResponse: false,
+      });
+
+      expect(published).toEqual([]);
+
+      await vi.advanceTimersByTimeAsync(250);
+      expect(published.map((event) => event.type)).toEqual([
+        AgentEventType.TextDelta,
+        AgentEventType.AssistantMessageBoundary,
+      ]);
+      expect(restoreChunksSpy).toHaveBeenCalledTimes(3);
+    } finally {
+      restoreChunksSpy.mockRestore();
+      vi.useRealTimers();
+      db.close();
+    }
+  });
+
+  it("stops before a queued non-text provider payload exceeds the FIFO byte limit", async () => {
+    const db = openMemoryDatabase();
+    const now = "2026-08-24T10:00:00.000Z";
+    db.prepare(
+      "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    ).run("ws-1", "Workspace", "/workspace", now, now);
+    db.prepare(
+      "INSERT INTO threads (id, workspace_id, title, branch, provider, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(THREAD_ID, "ws-1", "Parent", "main", "claude", "active", now, now);
+    const canonicalSink = new CanonicalAgentEventSink(db, vi.fn());
+    const restoreChunksSpy = vi.spyOn(ParentAssistantTextCheckpointService.prototype, "restoreChunks")
+      .mockImplementation(() => {
+        throw Object.assign(new Error("database locked"), { code: "SQLITE_BUSY" });
+      });
+
+    vi.useFakeTimers();
+    try {
+      const { providerEmitter, service } = build({ db, canonicalSink, onProviderEvent: vi.fn() });
+      const executionId = (service as unknown as {
+        turnRuntime: { snapshot: (threadId: string) => { turnExecutionId: string } | undefined };
+      }).turnRuntime.snapshot(THREAD_ID)!.turnExecutionId;
+      const messages = new SqliteMessageRepo(db);
+      canonicalSink.startParentTurn({
+        thread: { id: THREAD_ID, workspaceId: "ws-1", providerId: "claude", createdAt: now },
+        turnId: "turn-oversized-event",
+        executionId,
+        permissionMode: "supervised",
+        providerIdentities: [],
+        projectUserMessage: () => messages.create(THREAD_ID, "user", "start", 1),
+      });
+
+      providerEmitter.emit("event", {
+        type: AgentEventType.TextDelta,
+        threadId: THREAD_ID,
+        turnExecutionId: executionId,
+        delta: "blocked first",
+      });
+      providerEmitter.emit("event", {
+        type: AgentEventType.ToolResult,
+        threadId: THREAD_ID,
+        turnExecutionId: executionId,
+        toolCallId: "oversized-result",
+        output: "x".repeat(PARENT_ASSISTANT_TEXT_RETAINED_LIMITS.maxBytes),
+        isError: false,
+      });
+
+      expect((providerEmitter as unknown as { stopSession: ReturnType<typeof vi.fn> }).stopSession)
+        .toHaveBeenCalledWith(`mcode-${THREAD_ID}`);
+      await Promise.resolve();
+      (service as unknown as {
+        parentAssistantTextCheckpointQueue: { discard: (executionId: string) => void };
+      }).parentAssistantTextCheckpointQueue.discard(executionId);
+    } finally {
+      restoreChunksSpy.mockRestore();
+      vi.useRealTimers();
+      db.close();
+    }
+  });
+
+  it("stops before a deeply nested queued provider payload can exhaust the event pump", async () => {
+    const db = openMemoryDatabase();
+    const now = "2026-08-24T10:00:00.000Z";
+    db.prepare(
+      "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    ).run("ws-1", "Workspace", "/workspace", now, now);
+    db.prepare(
+      "INSERT INTO threads (id, workspace_id, title, branch, provider, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(THREAD_ID, "ws-1", "Parent", "main", "claude", "active", now, now);
+    const canonicalSink = new CanonicalAgentEventSink(db, vi.fn());
+    const restoreChunksSpy = vi.spyOn(ParentAssistantTextCheckpointService.prototype, "restoreChunks")
+      .mockImplementation(() => {
+        throw Object.assign(new Error("database locked"), { code: "SQLITE_BUSY" });
+      });
+    const nestedInput: Record<string, unknown> = {};
+    let current = nestedInput;
+    for (let index = 0; index < 60_000; index += 1) {
+      const child: Record<string, unknown> = {};
+      current.child = child;
+      current = child;
+    }
+
+    vi.useFakeTimers();
+    try {
+      const { providerEmitter, service } = build({ db, canonicalSink, onProviderEvent: vi.fn() });
+      const executionId = (service as unknown as {
+        turnRuntime: { snapshot: (threadId: string) => { turnExecutionId: string } | undefined };
+      }).turnRuntime.snapshot(THREAD_ID)!.turnExecutionId;
+      const messages = new SqliteMessageRepo(db);
+      canonicalSink.startParentTurn({
+        thread: { id: THREAD_ID, workspaceId: "ws-1", providerId: "claude", createdAt: now },
+        turnId: "turn-deep-event",
+        executionId,
+        permissionMode: "supervised",
+        providerIdentities: [],
+        projectUserMessage: () => messages.create(THREAD_ID, "user", "start", 1),
+      });
+
+      providerEmitter.emit("event", {
+        type: AgentEventType.TextDelta,
+        threadId: THREAD_ID,
+        turnExecutionId: executionId,
+        delta: "blocked first",
+      });
+      providerEmitter.emit("event", {
+        type: AgentEventType.ToolUse,
+        threadId: THREAD_ID,
+        turnExecutionId: executionId,
+        toolCallId: "deep-tool",
+        toolName: "Read",
+        toolInput: nestedInput,
+      });
+
+      expect((providerEmitter as unknown as { stopSession: ReturnType<typeof vi.fn> }).stopSession)
+        .toHaveBeenCalledWith(`mcode-${THREAD_ID}`);
+      await Promise.resolve();
+      (service as unknown as {
+        parentAssistantTextCheckpointQueue: { discard: (executionId: string) => void };
+      }).parentAssistantTextCheckpointQueue.discard(executionId);
+    } finally {
+      restoreChunksSpy.mockRestore();
+      vi.useRealTimers();
+      db.close();
+    }
+  });
+
+  it("resumes a journal-blocked boundary after SQLite recovers without another provider event", async () => {
+    const db = openMemoryDatabase();
+    const now = "2026-08-24T10:00:00.000Z";
+    const journalDirectory = mkdtempSync(join(tmpdir(), "mcode-agent-journal-"));
+    const filesystem = await vi.importActual<typeof import("node:fs")>("node:fs");
+    vi.mocked(existsSync).mockImplementation(filesystem.existsSync);
+    vi.mocked(statSync).mockImplementation(filesystem.statSync);
+    db.prepare(
+      "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    ).run("ws-1", "Workspace", "/workspace", now, now);
+    db.prepare(
+      "INSERT INTO threads (id, workspace_id, title, branch, provider, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(THREAD_ID, "ws-1", "Parent", "main", "claude", "active", now, now);
+    const canonicalSink = new CanonicalAgentEventSink(db, vi.fn());
+    const journalService = new ParentAssistantTextCheckpointService(
+      db,
+      undefined,
+      { directory: journalDirectory },
+    );
+    const published: AgentEvent[] = [];
+    let sqliteAvailable = false;
+    const appendChunk = journalService.appendChunk.bind(journalService);
+    const appendRecoveredChunk = journalService.appendRecoveredChunk.bind(journalService);
+    const appendChunkSpy = vi.spyOn(journalService, "appendChunk")
+      .mockImplementation((inputs) => {
+        if (!sqliteAvailable) throw Object.assign(new Error("database locked"), { code: "SQLITE_BUSY" });
+        return appendChunk(inputs);
+      });
+    const appendRecoveredChunkSpy = vi.spyOn(journalService, "appendRecoveredChunk")
+      .mockImplementation((input) => {
+        if (!sqliteAvailable) throw Object.assign(new Error("database locked"), { code: "SQLITE_BUSY" });
+        return appendRecoveredChunk(input);
+      });
+
+    vi.useFakeTimers();
+    try {
+      const { providerEmitter, service } = build({
+        db,
+        canonicalSink,
+        parentAssistantTextCheckpoints: journalService,
+        onProviderEvent: (event) => published.push(event),
+      });
+      const executionId = (service as unknown as {
+        turnRuntime: { snapshot: (threadId: string) => { turnExecutionId: string } | undefined };
+      }).turnRuntime.snapshot(THREAD_ID)!.turnExecutionId;
+      const messages = new SqliteMessageRepo(db);
+      canonicalSink.startParentTurn({
+        thread: { id: THREAD_ID, workspaceId: "ws-1", providerId: "claude", createdAt: now },
+        turnId: "turn-journal-boundary",
+        executionId,
+        permissionMode: "supervised",
+        providerIdentities: [],
+        projectUserMessage: () => messages.create(THREAD_ID, "user", "start", 1),
+      });
+
+      providerEmitter.emit("event", {
+        type: AgentEventType.TextDelta,
+        threadId: THREAD_ID,
+        turnExecutionId: executionId,
+        delta: "journaled text",
+      });
+      providerEmitter.emit("event", {
+        type: AgentEventType.AssistantMessageBoundary,
+        threadId: THREAD_ID,
+        turnExecutionId: executionId,
+        isFinalResponse: false,
+      });
+
+      expect(published.map((event) => event.type)).toEqual([AgentEventType.TextDelta]);
+
+      sqliteAvailable = true;
+      await vi.advanceTimersByTimeAsync(250);
+      await Promise.resolve();
+
+      expect(published.map((event) => event.type)).toEqual([
+        AgentEventType.TextDelta,
+        AgentEventType.AssistantMessageBoundary,
+      ]);
+    } finally {
+      appendChunkSpy.mockRestore();
+      appendRecoveredChunkSpy.mockRestore();
+      vi.mocked(existsSync).mockImplementation(() => true);
+      vi.mocked(statSync).mockImplementation(() => ({ isDirectory: () => true }) as ReturnType<typeof statSync>);
+      vi.useRealTimers();
+      db.close();
+      rmSync(journalDirectory, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps an explicitly unsaved narration boundary in memory without creating a recovery projection", async () => {
+    const db = openMemoryDatabase();
+    const now = "2026-08-24T10:00:00.000Z";
+    db.prepare(
+      "INSERT INTO workspaces (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    ).run("ws-1", "Workspace", "/workspace", now, now);
+    db.prepare(
+      "INSERT INTO threads (id, workspace_id, title, branch, provider, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    ).run(THREAD_ID, "ws-1", "Parent", "main", "claude", "active", now, now);
+    const canonicalSink = new CanonicalAgentEventSink(db, vi.fn());
+    const published: AgentEvent[] = [];
+    const appendSpy = vi.spyOn(ParentAssistantTextCheckpointService.prototype, "appendChunk")
+      .mockImplementation(() => {
+        throw Object.assign(new Error("database locked"), { code: "SQLITE_BUSY" });
+      });
+
+    try {
+      const { providerEmitter, service, narrativeStore } = build({
+        db,
+        canonicalSink,
+        onProviderEvent: (event) => published.push(event),
+      });
+      const executionId = (service as unknown as {
+        turnRuntime: { snapshot: (threadId: string) => { turnExecutionId: string } | undefined };
+      }).turnRuntime.snapshot(THREAD_ID)!.turnExecutionId;
+      const messages = new SqliteMessageRepo(db);
+      canonicalSink.startParentTurn({
+        thread: { id: THREAD_ID, workspaceId: "ws-1", providerId: "claude", createdAt: now },
+        turnId: "turn-unsaved-narration",
+        executionId,
+        permissionMode: "supervised",
+        providerIdentities: [],
+        projectUserMessage: () => messages.create(THREAD_ID, "user", "start", 1),
+      });
+
+      providerEmitter.emit("event", {
+        type: AgentEventType.TextDelta,
+        threadId: THREAD_ID,
+        turnExecutionId: executionId,
+        delta: "visible but unsaved",
+      });
+      providerEmitter.emit("event", {
+        type: AgentEventType.AssistantMessageBoundary,
+        threadId: THREAD_ID,
+        turnExecutionId: executionId,
+        isFinalResponse: false,
+      });
+
+      expect(published).toEqual([]);
+
+      service.continueWithoutSaving(executionId);
+      await Promise.resolve();
+
+      expect(published.map((event) => event.type)).toEqual([
+        AgentEventType.TextDelta,
+        AgentEventType.AssistantMessageBoundary,
+      ]);
+      expect(narrativeStore.recoverySnapshot(THREAD_ID)).toEqual([
+        expect.objectContaining({
+          kind: "narrationSegment",
+          record: expect.objectContaining({ text: "visible but unsaved" }),
+        }),
+      ]);
+      expect(canonicalSink.loadParentNarrativeRecovery("turn-unsaved-narration")).toEqual([]);
+    } finally {
+      appendSpy.mockRestore();
       db.close();
     }
   });

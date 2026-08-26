@@ -36,6 +36,7 @@ vi.mock("@/transport", async () => ({
     deleteWorkspace: vi.fn().mockResolvedValue(true),
     createThread: vi.fn().mockResolvedValue({}),
     deleteThread: vi.fn().mockResolvedValue(true),
+    continueWithoutSaving: vi.fn().mockResolvedValue(undefined),
     stopAgent: vi.fn().mockImplementation((threadId: string) => Promise.resolve({
       threadId,
       turnExecutionId: null,

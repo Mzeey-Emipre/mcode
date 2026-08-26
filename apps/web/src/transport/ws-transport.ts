@@ -835,6 +835,8 @@ export function createWsTransport(
       });
     },
     stopAgent: (threadId) => rpc<import("@mcode/contracts").AgentStopResult>("agent.stop", { threadId }),
+    continueWithoutSaving: (executionId) =>
+      rpc<void>("agent.continueWithoutSaving", { executionId }),
     respondToPermission: (requestId, decision) =>
       rpc<void>("permission.respond", { requestId, decision }),
     listPendingPermissions: (threadId) =>
