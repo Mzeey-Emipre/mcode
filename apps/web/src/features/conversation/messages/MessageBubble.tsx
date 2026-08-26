@@ -1,10 +1,14 @@
-import { memo, useMemo, useState, useCallback, useRef, useEffect, lazy, Suspense, type ReactNode } from "react";
+import { memo, useMemo, useState, useCallback, useRef, useEffect, useSyncExternalStore, lazy, Suspense, type ReactNode } from "react";
 import type { Message } from "@/transport";
 import { ImageIcon, RotateCcw, Copy, Check, GitFork, AlertCircle, Reply, Target } from "lucide-react";
 import { cn } from "@/lib/utils";
 const LazyMarkdownContent = lazy(() => import("@/components/chat/MarkdownContent"));
 import { stripInjectedFiles } from "@/lib/file-tags";
-import { buildStoredAttachmentImageSrc } from "@/lib/attachment-url";
+import {
+  buildStoredAttachmentImageSrc,
+  getAttachmentTransportUrlSnapshot,
+  subscribeToAttachmentTransportUrl,
+} from "@/lib/attachment-url";
 import { resolveModelDisplayLabel } from "@/lib/format-model-label";
 import { useProviderModelsStore } from "@/stores/providerModelsStore";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
@@ -477,10 +481,12 @@ export const MessageBubble = memo(function MessageBubble({
   assistantActionsVisible = true,
   showParentAgentProvenance = true,
 }: MessageBubbleProps) {
-  const [imagePreview, setImagePreview] = useState<{
-    items: { src: string; title: string }[];
-    initialIndex: number;
-  } | null>(null);
+  const [imagePreviewIndex, setImagePreviewIndex] = useState<number | null>(null);
+  const attachmentTransportUrl = useSyncExternalStore(
+    subscribeToAttachmentTransportUrl,
+    getAttachmentTransportUrlSnapshot,
+    getAttachmentTransportUrlSnapshot,
+  );
 
   const formattedTime = useMemo(
     () => new Date(message.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
@@ -524,7 +530,7 @@ export const MessageBubble = memo(function MessageBubble({
         src: buildStoredAttachmentImageSrc(message.thread_id, img.id, img.mimeType),
         title: img.name,
       })),
-    [imageAttachments, message.thread_id],
+    [attachmentTransportUrl, imageAttachments, message.thread_id],
   );
 
   if (message.role === "system") {
@@ -641,7 +647,7 @@ export const MessageBubble = memo(function MessageBubble({
                       name={img.name}
                       single={imageAttachments.length === 1}
                       onOpenPreview={interactive
-                        ? () => setImagePreview({ items: imageSlides, initialIndex: idx })
+                        ? () => setImagePreviewIndex(idx)
                         : undefined}
                     />
                   );
@@ -724,12 +730,12 @@ export const MessageBubble = memo(function MessageBubble({
         </div>
         </div>
         <ImageAttachmentLightbox
-          open={imagePreview !== null}
+          open={imagePreviewIndex !== null}
           onOpenChange={(open) => {
-            if (!open) setImagePreview(null);
+            if (!open) setImagePreviewIndex(null);
           }}
-          items={imagePreview?.items ?? []}
-          initialIndex={imagePreview?.initialIndex ?? 0}
+          items={imageSlides}
+          initialIndex={imagePreviewIndex ?? 0}
         />
       </>
     );
@@ -790,7 +796,7 @@ export const MessageBubble = memo(function MessageBubble({
                 name={img.name}
                 single={imageAttachments.length === 1}
                 onOpenPreview={() =>
-                  setImagePreview({ items: imageSlides, initialIndex: idx })
+                  setImagePreviewIndex(idx)
                 }
               />
             );
@@ -845,12 +851,12 @@ export const MessageBubble = memo(function MessageBubble({
         )}
       </div>
       <ImageAttachmentLightbox
-        open={imagePreview !== null}
+        open={imagePreviewIndex !== null}
         onOpenChange={(open) => {
-          if (!open) setImagePreview(null);
+          if (!open) setImagePreviewIndex(null);
         }}
-        items={imagePreview?.items ?? []}
-        initialIndex={imagePreview?.initialIndex ?? 0}
+        items={imageSlides}
+        initialIndex={imagePreviewIndex ?? 0}
       />
     </div>
   );

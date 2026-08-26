@@ -4,6 +4,10 @@ import userEvent from "@testing-library/user-event";
 import type { Message, StoredAttachment } from "@/transport";
 import type { PreviewAnnotationBundle } from "@mcode/contracts";
 import { MessageBubble } from "../MessageBubble";
+import {
+  clearAttachmentTransportWsUrlCache,
+  setAttachmentTransportWsUrl,
+} from "@/lib/attachment-url";
 
 // Mock MarkdownContent to detect when it's used
 vi.mock("@/components/chat/MarkdownContent", () => ({
@@ -262,6 +266,54 @@ describe("MessageBubble user messages", () => {
       );
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  it("updates mounted image and lightbox sources when the transport becomes ready", async () => {
+    const user = userEvent.setup();
+    const threadId = "550e8400-e29b-41d4-a716-446655440000";
+    const message: Message = {
+      ...makeMessage(""),
+      thread_id: threadId,
+      attachments: [
+        {
+          id: "sent-image",
+          name: "sent.png",
+          mimeType: "image/png",
+          sizeBytes: 128,
+        },
+      ],
+    };
+
+    clearAttachmentTransportWsUrlCache();
+    try {
+      const { getByAltText, getByTestId } = render(<MessageBubble message={message} />);
+      const image = getByAltText("sent.png");
+
+      expect(image).toHaveAttribute(
+        "src",
+        `mcode-attachment://${threadId}/sent-image.png`,
+      );
+      await user.click(image);
+      expect(getByTestId("mock-lightbox")).toHaveAttribute(
+        "data-active-src",
+        `mcode-attachment://${threadId}/sent-image.png`,
+      );
+
+      await act(async () => {
+        setAttachmentTransportWsUrl("ws://127.0.0.1:19400");
+      });
+
+      expect(image).toHaveAttribute(
+        "src",
+        `http://127.0.0.1:19400/attachments/${threadId}/sent-image.png`,
+      );
+      expect(getByTestId("mock-lightbox")).toHaveAttribute(
+        "data-active-src",
+        `http://127.0.0.1:19400/attachments/${threadId}/sent-image.png`,
+      );
+    } finally {
+      clearAttachmentTransportWsUrlCache();
     }
   });
 
