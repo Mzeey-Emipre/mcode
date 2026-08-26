@@ -24,10 +24,11 @@ The development-only candidate is `vlist` 2.6.1.
 
 The development probe has semantic checks for the prior lifecycle and
 fixed-height prepend work plus dynamic height, tail follow, user-away posture,
-sticky jump, text selection, direct message scrolling, thread anchor restore,
-and off-screen retained state. The maintained validator test changes one fact
-for each behavior check and requires the lifecycle gate to reject it. This
-confirms the gate conditions, not runtime eligibility.
+sticky user-message control, text selection, direct message scrolling,
+automatic thread anchor restore, and off-screen retained state. The maintained
+validator test changes one fact for each behavior check and requires the
+lifecycle gate to reject it. This confirms the gate conditions, not runtime
+eligibility.
 
 ## Run evidence
 
@@ -87,25 +88,6 @@ to a separate rejected local-server attempt.
 The existing issue #1548 report records earlier Electron evidence for the
 lifecycle and fixed-height prepend subset. It does not certify this complete
 matrix.
-
-## Bounded worker safeguard
-
-The performance fixture now limits one lifecycle page evaluation to 15 seconds.
-If a reached probe never settles, the worker rejects with
-`vlist lifecycle probe did not settle within 15000 ms` and writes its normal
-failure receipt. This is a runner reliability safeguard. It did not trigger in
-the paired attempt because that run did not reach a trustworthy page-evaluation
-boundary.
-
-The focused regression command is:
-
-```powershell
-bun test scripts/agent/__tests__/frontend-performance-runner.test.mjs
-```
-
-It first failed while the bounded evaluator was absent. After the safeguard was
-added, it passed 23 tests in 0.18 seconds. The test supplies a page evaluation
-that never settles and requires the exact bounded error.
 
 ## Required next condition
 

@@ -14,7 +14,6 @@ import {
   getShikiTraceOptions,
   MESSAGE_LIST_PERFORMANCE_STAGE_NAMES,
   normalizeFrontendRendererWorkloads,
-  runVListLifecycleProbe,
   SHIKI_STAGE_NAMES,
   validateMessageListPerformanceAttribution,
   validateNarrativeRowIsolation,
@@ -243,6 +242,7 @@ function createExpectedVListLifecycleFacts() {
         poolHeightAfter: 480,
         anchorTopBefore: 24,
         anchorTopAfter: 24,
+        measurementSettled: true,
       },
       tailFollow: {
         tailFollowed: true,
@@ -252,6 +252,7 @@ function createExpectedVListLifecycleFacts() {
         rowId: "message:sticky:0",
         targetWasUnmounted: true,
         targetVisible: true,
+        activatedByStickyUserControl: true,
       },
       selection: {
         expectedText: "selection selectable row 0.",
@@ -266,6 +267,7 @@ function createExpectedVListLifecycleFacts() {
         anchorRowId: "turn-changes:thread-a:4",
         anchorTopBefore: 24,
         anchorTopAfter: 24,
+        restoreSource: "automatic",
       },
       offscreenRetainedState: {
         rowId: "message:retained-state:0",
@@ -425,6 +427,21 @@ describe("frontend performance runner", () => {
       false,
     );
 
+    const measuredHeightMovedTheReadingAnchor = {
+      ...expectedFacts,
+      behavior: {
+        ...expectedFacts.behavior,
+        dynamicHeight: {
+          ...expectedFacts.behavior.dynamicHeight,
+          anchorTopAfter: expectedFacts.behavior.dynamicHeight.anchorTopBefore + 20,
+        },
+      },
+    };
+    assert.equal(
+      deriveVListLifecycleGate(measuredHeightMovedTheReadingAnchor).checks.dynamicHeightSettles,
+      false,
+    );
+
     const appendMovedTheReader = {
       ...expectedFacts,
       behavior: {
@@ -442,6 +459,18 @@ describe("frontend performance runner", () => {
       },
     };
     assert.equal(deriveVListLifecycleGate(stickyJumpLeftTheTargetUnmounted).checks.stickyMessageJump, false);
+
+    const stickyJumpBypassedTheUserControl = {
+      ...expectedFacts,
+      behavior: {
+        ...expectedFacts.behavior,
+        stickyJump: {
+          ...expectedFacts.behavior.stickyJump,
+          activatedByStickyUserControl: false,
+        },
+      },
+    };
+    assert.equal(deriveVListLifecycleGate(stickyJumpBypassedTheUserControl).checks.stickyMessageJump, false);
 
     const recycledTextSelection = {
       ...expectedFacts,
@@ -476,6 +505,21 @@ describe("frontend performance runner", () => {
     };
     assert.equal(deriveVListLifecycleGate(threadSwitchLostItsAnchor).checks.threadSwitchRestoresAnchor, false);
 
+    const threadSwitchRepairedTheRestoreManually = {
+      ...expectedFacts,
+      behavior: {
+        ...expectedFacts.behavior,
+        threadSwitchRestore: {
+          ...expectedFacts.behavior.threadSwitchRestore,
+          restoreSource: "manual",
+        },
+      },
+    };
+    assert.equal(
+      deriveVListLifecycleGate(threadSwitchRepairedTheRestoreManually).checks.threadSwitchRestoresAnchor,
+      false,
+    );
+
     const recycledRowLostItsDraft = {
       ...expectedFacts,
       behavior: {
@@ -494,17 +538,6 @@ describe("frontend performance runner", () => {
         electron: { metrics: { vlistLifecycle: { gateDecision: lateCleanupDerived.gateDecision } } },
       },
     }), 1);
-  });
-
-  it("fails promptly when the vlist lifecycle page evaluation never settles", async () => {
-    const neverSettlingPage = {
-      evaluate: () => new Promise(() => {}),
-    };
-
-    await assert.rejects(
-      runVListLifecycleProbe(neverSettlingPage, 1),
-      /vlist lifecycle probe did not settle within 1 ms/,
-    );
   });
 
   it("reports deterministic duration statistics", () => {

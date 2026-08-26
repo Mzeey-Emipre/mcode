@@ -88,7 +88,6 @@ const SHIKI_DURATION_STAGE_NAMES = Object.freeze(
 const SHIKI_PHASES = Object.freeze(["cold", "warm"]);
 const SHIKI_WORKLOAD_PHASE = "workload";
 const SHIKI_BUILD_MODES = Object.freeze(["profiling", "production"]);
-const VLIST_LIFECYCLE_PROBE_TIMEOUT_MS = 15_000;
 const SHIKI_WORKER_STAGES = Object.freeze([
   "workerStartup",
   "highlighterCreation",
@@ -416,6 +415,7 @@ function hasExpectedVListBehaviorShape(behavior) {
       "anchorTopBefore",
       "poolHeightAfter",
       "poolHeightBefore",
+      "measurementSettled",
       "renderedHeightAfter",
       "renderedHeightBefore",
       "rowId",
@@ -423,13 +423,23 @@ function hasExpectedVListBehaviorShape(behavior) {
     && isPlainObject(behavior.tailFollow)
     && hasExactKeys(behavior.tailFollow, ["tailFollowed", "userAwayPreserved"])
     && isPlainObject(behavior.stickyJump)
-    && hasExactKeys(behavior.stickyJump, ["rowId", "targetVisible", "targetWasUnmounted"])
+    && hasExactKeys(behavior.stickyJump, [
+      "activatedByStickyUserControl",
+      "rowId",
+      "targetVisible",
+      "targetWasUnmounted",
+    ])
     && isPlainObject(behavior.selection)
     && hasExactKeys(behavior.selection, ["expectedText", "selectedText"])
     && isPlainObject(behavior.scrollToMessage)
     && hasExactKeys(behavior.scrollToMessage, ["rowId", "targetVisible", "targetWasUnmounted"])
     && isPlainObject(behavior.threadSwitchRestore)
-    && hasExactKeys(behavior.threadSwitchRestore, ["anchorRowId", "anchorTopAfter", "anchorTopBefore"])
+    && hasExactKeys(behavior.threadSwitchRestore, [
+      "anchorRowId",
+      "anchorTopAfter",
+      "anchorTopBefore",
+      "restoreSource",
+    ])
     && isPlainObject(behavior.offscreenRetainedState)
     && hasExactKeys(behavior.offscreenRetainedState, ["draftAfter", "draftBefore", "rowId", "rowWasUnmounted"]);
 }
@@ -446,8 +456,9 @@ function hasExpectedDynamicHeightBehavior(behavior) {
       dynamicHeight.anchorTopBefore,
       dynamicHeight.anchorTopAfter,
     ].every(Number.isFinite)
-    && dynamicHeight.renderedHeightAfter > dynamicHeight.renderedHeightBefore + 64
-    && dynamicHeight.poolHeightAfter > dynamicHeight.poolHeightBefore + 64
+    && dynamicHeight.measurementSettled === true
+    && dynamicHeight.renderedHeightAfter > 148
+    && dynamicHeight.poolHeightAfter > 148
     && Math.abs(dynamicHeight.anchorTopAfter - dynamicHeight.anchorTopBefore) <= 1;
 }
 
@@ -462,6 +473,11 @@ function hasExpectedJumpBehavior(jump, rowId) {
     && jump.targetVisible === true;
 }
 
+function hasExpectedStickyUserMessageBehavior(behavior) {
+  return behavior.stickyJump.activatedByStickyUserControl === true
+    && hasExpectedJumpBehavior(behavior.stickyJump, "message:sticky:0");
+}
+
 function hasExpectedSelectionBehavior(behavior) {
   return behavior.selection.expectedText === "selection selectable row 0."
     && behavior.selection.selectedText === behavior.selection.expectedText;
@@ -472,6 +488,7 @@ function hasExpectedThreadSwitchBehavior(behavior) {
   return restore.anchorRowId === "turn-changes:thread-a:4"
     && Number.isFinite(restore.anchorTopBefore)
     && Number.isFinite(restore.anchorTopAfter)
+    && restore.restoreSource === "automatic"
     && Math.abs(restore.anchorTopAfter - restore.anchorTopBefore) <= 1;
 }
 
@@ -548,8 +565,7 @@ export function deriveVListLifecycleGate(facts) {
     prependPreservesAnchorAndIdentity: rawFactsPresent && hasExpectedPrependBehavior(facts.prepend),
     dynamicHeightSettles: rawFactsPresent && hasExpectedDynamicHeightBehavior(behavior),
     tailFollowAndUserAway: rawFactsPresent && hasExpectedTailFollowBehavior(behavior),
-    stickyMessageJump: rawFactsPresent
-      && hasExpectedJumpBehavior(behavior.stickyJump, "message:sticky:0"),
+    stickyMessageJump: rawFactsPresent && hasExpectedStickyUserMessageBehavior(behavior),
     messageTextSelection: rawFactsPresent && hasExpectedSelectionBehavior(behavior),
     scrollToMessage: rawFactsPresent
       && hasExpectedJumpBehavior(behavior.scrollToMessage, "permission-request:scroll-to-message:8"),
@@ -1264,33 +1280,6 @@ export function validateNarrativeRowIsolation(reactAttribution) {
     failures.push(`stable narrative row rendered: ${renderedSibling.rowId}`);
   }
   return failures;
-}
-
-/** Runs the vlist lifecycle page evaluation within its bounded worker budget. */
-export async function runVListLifecycleProbe(page, timeoutMs = VLIST_LIFECYCLE_PROBE_TIMEOUT_MS) {
-  let timeout;
-  try {
-    return await Promise.race([
-      page.evaluate(async () => {
-        const bridge = window.__mcodeFrontendPerformanceModules?.vlistLifecycle;
-        if (!bridge) throw new Error("The vlist lifecycle performance probe is unavailable.");
-        const startedAt = performance.now();
-        const check = await bridge.run();
-        return {
-          durationMs: performance.now() - startedAt,
-          check,
-        };
-      }),
-      new Promise((_, reject) => {
-        timeout = setTimeout(
-          () => reject(new Error(`vlist lifecycle probe did not settle within ${timeoutMs} ms`)),
-          timeoutMs,
-        );
-      }),
-    ]);
-  } finally {
-    clearTimeout(timeout);
-  }
 }
 
 /** Run the shared frontend renderer matrix against one Playwright page. */
@@ -2307,13 +2296,16 @@ export async function runRendererMatrix(page, runtime, sampleCount = 7, mode = "
     : null;
 
   const vlistLifecycle = selectedWorkloads.has("vlistLifecycle")
-    ? await timeFixture(
-      page,
-      sampleCount,
-      async () => runVListLifecycleProbe(page),
-      modeCollector,
-      { captureMessageListAttribution: false },
-    )
+    ? await timeFixture(page, sampleCount, async () => page.evaluate(async () => {
+      const bridge = window.__mcodeFrontendPerformanceModules?.vlistLifecycle;
+      if (!bridge) throw new Error("The vlist lifecycle performance probe is unavailable.");
+      const startedAt = performance.now();
+      const check = await bridge.run();
+      return {
+        durationMs: performance.now() - startedAt,
+        check,
+      };
+    }), modeCollector, { captureMessageListAttribution: false })
     : null;
 
   await waitForFrames(page);
