@@ -5,6 +5,7 @@ import path from "path";
 import { validateBranchName } from "@mcode/shared";
 import type { WorkspaceRepo } from "../../persistence/workspace-repo.js";
 import { GitService } from "../git-service.js";
+import { GitRepositoryService } from "../git-repository-service.js";
 import { createMockGitExecutor } from "../execution/__tests__/mock-git-executor.js";
 
 vi.mock("fs", () => ({
@@ -24,8 +25,8 @@ vi.mock("@mcode/shared", () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 
-describe("GitService.push", () => {
-  let gitService: GitService;
+describe("GitRepositoryService.push", () => {
+  let gitService: GitRepositoryService;
   let execFn: ReturnType<typeof createMockGitExecutor>["execFn"];
 
   beforeEach(() => {
@@ -35,7 +36,7 @@ describe("GitService.push", () => {
     const mockWorkspaceRepo = {
       findById: vi.fn().mockReturnValue({ path: "/repo" }),
     } as unknown as WorkspaceRepo;
-    gitService = new GitService(mockWorkspaceRepo, mock.executor);
+    gitService = new GitRepositoryService(mockWorkspaceRepo, mock.executor);
   });
 
   it("pushes branch to origin with --set-upstream", async () => {
@@ -193,15 +194,15 @@ describe("GitService.diffStat", () => {
   });
 });
 
-describe("GitService.getRemoteUrl", () => {
-  let gitService: GitService;
+describe("GitRepositoryService.getRemoteUrl", () => {
+  let gitService: GitRepositoryService;
   let execFn: ReturnType<typeof createMockGitExecutor>["execFn"];
 
   beforeEach(() => {
     vi.clearAllMocks();
     const mock = createMockGitExecutor();
     execFn = mock.execFn;
-    gitService = new GitService({} as WorkspaceRepo, mock.executor);
+    gitService = new GitRepositoryService({} as WorkspaceRepo, mock.executor);
   });
 
   it("normalizes SSH origin remotes to https web URLs", async () => {

@@ -21,20 +21,19 @@ import { normalizePathForComparison } from "../../../shared/filesystem/path-iden
 import { WorktreeDirectoryRemover } from "../worktrees/worktree-directory-remover.js";
 import { RepositoryGitMutationLock } from "./repository-git-mutation-lock.js";
 import {
+  GitRepositoryService,
+  normalizeRemoteIdentity,
+  normalizedRepositoryKey,
+  type NormalizedGitRemote,
+} from "./git-repository-service.js";
+import {
   WorktreeSafetyService,
   type BranchlessWorktreeRemovalSafety,
   type NamedWorktreeRemovalSafety,
   type WorktreeRemovalSafety,
 } from "./worktree-safety-service.js";
 
-/** Normalized configured remote used for repository-identity matching. */
-export interface NormalizedGitRemote {
-  name: string;
-  rawUrl: string;
-  host: string;
-  repositoryPath: string;
-  webUrl: string;
-}
+export type { NormalizedGitRemote } from "./git-repository-service.js";
 
 /** Immutable pull request head needed for local Review worktree setup. */
 export interface PullRequestReviewGitSource {
@@ -222,96 +221,6 @@ function assertSafeRef(ref: string): void {
   }
 }
 
-function assertSafeBranchCreationName(name: string): void {
-  validateBranchName(name);
-  if (!/^(?!-)[A-Za-z0-9._/-]+$/.test(name) || name.includes("..") || name === "HEAD") {
-    throw new Error(`Branch name contains invalid characters: ${name}`);
-  }
-}
-
-function fallbackRemoteUrl(repoPath: string): GitRemoteUrl {
-  return {
-    webUrl: null,
-    label: basename(repoPath) || repoPath,
-  };
-}
-
-function normalizeRemotePath(pathname: string): string | null {
-  const trimmed = pathname.trim().replace(/^\/+/, "").replace(/\/+$/, "");
-  const withoutGitSuffix = trimmed.replace(/\.git$/i, "");
-  if (!withoutGitSuffix || /[\s\\?#]/.test(withoutGitSuffix)) {
-    return null;
-  }
-  const segments = withoutGitSuffix.split("/").filter(Boolean);
-  if (segments.length < 2 || segments.some((segment) => segment === "." || segment === "..")) {
-    return null;
-  }
-  return segments.join("/");
-}
-
-function isSafeRemoteHost(host: string): boolean {
-  const match = /^(?:[A-Za-z0-9-]+\.)*[A-Za-z0-9-]+(?::(?<port>\d{1,5}))?$/.exec(host);
-  if (!match) return false;
-  const port = match.groups?.port;
-  return port === undefined || Number(port) <= 65_535;
-}
-
-function buildHttpsRemote(host: string, remotePath: string): GitRemoteUrl | null {
-  const normalizedPath = normalizeRemotePath(remotePath);
-  if (!host || !isSafeRemoteHost(host) || !normalizedPath) return null;
-  try {
-    const parsed = new URL(`https://${host}/${normalizedPath}`);
-    if (parsed.username || parsed.password) return null;
-    return {
-      webUrl: parsed.toString().replace(/\/$/, ""),
-      label: normalizedPath,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function normalizeRemoteUrl(remote: string): GitRemoteUrl | null {
-  const trimmed = remote.trim();
-  if (!trimmed) return null;
-
-  const scpLike = /^(?<user>[^@\s]+)@(?<host>[^@:\s/]+):(?<path>.+)$/.exec(trimmed);
-  if (scpLike?.groups) {
-    return buildHttpsRemote(scpLike.groups.host ?? "", scpLike.groups.path ?? "");
-  }
-
-  try {
-    const parsed = new URL(trimmed);
-    if (parsed.protocol !== "https:" && parsed.protocol !== "http:" && parsed.protocol !== "ssh:") {
-      return null;
-    }
-    const host = parsed.protocol === "ssh:" ? parsed.hostname : parsed.host;
-    return buildHttpsRemote(host, parsed.pathname);
-  } catch {
-    return null;
-  }
-}
-
-function normalizeRemoteIdentity(remote: string): Omit<NormalizedGitRemote, "name" | "rawUrl"> | null {
-  const normalized = normalizeRemoteUrl(remote);
-  if (!normalized?.webUrl) return null;
-  const parsed = new URL(normalized.webUrl);
-  const repositoryPath = normalizeRemotePath(parsed.pathname);
-  if (!repositoryPath) return null;
-  return {
-    host: parsed.host.toLowerCase(),
-    repositoryPath: repositoryPath.toLowerCase(),
-    webUrl: normalized.webUrl,
-  };
-}
-
-function normalizedRepositoryKey(url: string): string | null {
-  const normalized = normalizeRemoteIdentity(url);
-  return normalized
-    ? `${normalized.host}/${normalized.repositoryPath}`
-    : null;
-}
-
 function safeReviewRefComponent(value: string): string {
   const readable = value.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
   const hash = createHash("sha256").update(value).digest("hex").slice(0, 10);
@@ -379,6 +288,7 @@ export class GitService {
   private readonly worktreeDirectoryRemover: WorktreeDirectoryRemover;
   private readonly repositoryMutationLock: RepositoryGitMutationLock;
   private readonly worktreeSafety: WorktreeSafetyService;
+  private readonly gitRepository: GitRepositoryService;
 
   constructor(
     @inject(WorkspaceRepo) private readonly workspaceRepo: WorkspaceRepo,
@@ -389,22 +299,23 @@ export class GitService {
     repositoryMutationLock?: RepositoryGitMutationLock,
     @inject(WorktreeSafetyService, { isOptional: true })
     worktreeSafety?: WorktreeSafetyService,
+    @inject(GitRepositoryService, { isOptional: true })
+    gitRepository?: GitRepositoryService,
   ) {
     this.worktreeDirectoryRemover = worktreeDirectoryRemover ?? new WorktreeDirectoryRemover();
     this.repositoryMutationLock = repositoryMutationLock ?? new RepositoryGitMutationLock();
     this.worktreeSafety = worktreeSafety ?? new WorktreeSafetyService(gitExecutor);
+    this.gitRepository = gitRepository ?? new GitRepositoryService(workspaceRepo, gitExecutor);
   }
 
   /** List all branches (local, remote, and worktree-attached) for a workspace. */
   async listBranches(workspaceId: string): Promise<GitBranch[]> {
-    const workspace = this.requireWorkspace(workspaceId);
-    return this.listBranchesForPath(workspace.path);
+    return this.gitRepository.listBranches(workspaceId);
   }
 
   /** Get the current branch name for a workspace. Returns null for non-git workspaces. */
   async getCurrentBranch(workspaceId: string): Promise<string | null> {
-    const workspace = this.requireWorkspace(workspaceId);
-    return this.getCurrentBranchForPath(workspace.path);
+    return this.gitRepository.getCurrentBranch(workspaceId);
   }
 
   /**
@@ -413,21 +324,17 @@ export class GitService {
    * (e.g. a worktree directory that may differ from the workspace root).
    */
   async getCurrentBranchAt(repoPath: string): Promise<string | null> {
-    return this.getCurrentBranchForPath(repoPath);
+    return this.gitRepository.getCurrentBranchAt(repoPath);
   }
 
   /** Checkout an existing branch in the workspace repository. */
   async checkout(workspaceId: string, branch: string): Promise<void> {
-    validateBranchName(branch);
-    const workspace = this.requireWorkspace(workspaceId);
-    await this.gitExecutor.exec(["-C", workspace.path, "checkout", branch]);
+    await this.gitRepository.checkout(workspaceId, branch);
   }
 
   /** Create and checkout a new branch in the repository at the given path. */
   async createBranch(path: string, name: string): Promise<string> {
-    assertSafeBranchCreationName(name);
-    await this.gitExecutor.exec(["-C", path, "checkout", "-b", name]);
-    return name;
+    return this.gitRepository.createBranch(path, name);
   }
 
   /** List all git worktrees registered for a workspace. */
@@ -438,42 +345,12 @@ export class GitService {
 
   /** Resolve the origin remote as a normalized https URL and UI label. */
   async getRemoteUrl(repoPath: string): Promise<GitRemoteUrl> {
-    try {
-      const { stdout } = await this.gitExecutor.exec(
-        ["-C", repoPath, "remote", "get-url", "origin"],
-        { timeout: 5_000 },
-      );
-      return normalizeRemoteUrl(stdout) ?? fallbackRemoteUrl(repoPath);
-    } catch {
-      return fallbackRemoteUrl(repoPath);
-    }
+    return this.gitRepository.getRemoteUrl(repoPath);
   }
 
   /** List bounded configured remotes normalized to repository identities. */
   async listNormalizedRemotes(repoPath: string): Promise<NormalizedGitRemote[]> {
-    let stdout: string;
-    try {
-      ({ stdout } = await this.gitExecutor.exec(
-        ["-C", repoPath, "config", "--get-regexp", "^remote\\..*\\.url$"],
-        { timeout: 5_000 },
-      ));
-    } catch {
-      return [];
-    }
-
-    const remotes: NormalizedGitRemote[] = [];
-    for (const line of stdout.split("\n").slice(0, 64)) {
-      const separator = line.search(/\s/);
-      if (separator <= 0) continue;
-      const key = line.slice(0, separator);
-      const rawUrl = line.slice(separator).trim();
-      const match = /^remote\.([A-Za-z0-9._-]{1,100})\.url$/.exec(key);
-      if (!match?.[1] || rawUrl.length === 0 || rawUrl.length > 2_048) continue;
-      const normalized = normalizeRemoteIdentity(rawUrl);
-      if (!normalized) continue;
-      remotes.push({ name: match[1], rawUrl, ...normalized });
-    }
-    return remotes;
+    return this.gitRepository.listNormalizedRemotes(repoPath);
   }
 
   /** Resolve a server-owned Review worktree leaf beneath the managed worktree root. */
@@ -753,8 +630,7 @@ export class GitService {
     branch: string,
     prNumber?: number,
   ): Promise<void> {
-    const workspace = this.requireWorkspace(workspaceId);
-    await this.fetchBranchForPath(workspace.path, branch, prNumber);
+    await this.gitRepository.fetchBranch(workspaceId, branch, prNumber);
   }
 
   /**
@@ -784,7 +660,9 @@ export class GitService {
       throw new Error(`Worktree directory already exists: ${wtPath}`);
     }
 
-    const createdBranch = options.branchless ? false : !(await this.branchExists(repoPath, branch));
+    const createdBranch = options.branchless
+      ? false
+      : !(await this.gitRepository.branchExists(repoPath, branch));
     const warnings: string[] = [];
 
     try {
@@ -1446,7 +1324,7 @@ export class GitService {
     savedBaseBranch?: string | null,
   ): Promise<BranchComparison> {
     const cwd = repoPath ?? this.requireWorkspace(workspaceId).path;
-    const refs = await this.listBranchesForPath(cwd);
+    const refs = await this.gitRepository.listBranchesAt(cwd);
 
     if (!(await this.hasCommits(cwd))) {
       return { base: null, target: null, refs, isUnborn: true, isComparisonAvailable: false };
@@ -1454,7 +1332,7 @@ export class GitService {
 
     const defaultBranch = await this.detectDefaultBranch(cwd);
     const originDefaultRef = await this.detectOriginDefaultRef(cwd);
-    const current = await this.getCurrentBranchForPath(cwd);
+    const current = await this.gitRepository.getCurrentBranchAt(cwd);
     const upstream =
       current && current !== "HEAD" ? await this.getUpstreamRef(cwd) : null;
     const onDefaultBranch = defaultBranch !== null && current === defaultBranch;
@@ -1582,11 +1460,7 @@ export class GitService {
 
   /** Push a branch to the origin remote, creating the upstream tracking ref if needed. */
   async push(repoPath: string, branch: string): Promise<void> {
-    validateBranchName(branch);
-    await this.gitExecutor.exec(
-      ["-C", repoPath, "push", "--set-upstream", "origin", branch],
-      { timeout: 60_000 },
-    );
+    await this.gitRepository.push(repoPath, branch);
   }
 
   /** Return a diff stat summary between two refs. */
@@ -2116,88 +1990,6 @@ export class GitService {
   // Private git helpers (formerly module-level functions)
   // ---------------------------------------------------------------------------
 
-  /** Check whether a branch ref exists in the repository. */
-  private async branchExists(repoPath: string, branch: string): Promise<boolean> {
-    try {
-      await this.gitExecutor.exec(["-C", repoPath, "rev-parse", "--verify", branch]);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  /** Get the current branch name for a repository path. Returns null for non-git paths. */
-  private async getCurrentBranchForPath(repoPath: string): Promise<string | null> {
-    try {
-      const { stdout } = await this.gitExecutor.exec(
-        ["-C", repoPath, "rev-parse", "--abbrev-ref", "HEAD"],
-      );
-      return stdout.trim() || null;
-    } catch {
-      return null;
-    }
-  }
-
-  /** List all branches (local, remote, worktree-attached) for a repository path. */
-  private async listBranchesForPath(repoPath: string): Promise<GitBranch[]> {
-    let output: string;
-    try {
-      const { stdout } = await this.gitExecutor.exec([
-        "-C",
-        repoPath,
-        "branch",
-        "-a",
-        "--format=%(refname)|||%(refname:short)|||%(objectname:short)|||%(HEAD)|||%(worktreepath)",
-      ]);
-      output = stdout;
-    } catch {
-      return [];
-    }
-
-    const branches: GitBranch[] = [];
-
-    for (const line of output.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-
-      const [fullRefname, refname, shortSha, head, worktreepath] = trimmed.split("|||");
-      // Skip remote HEAD symrefs (refs/remotes/*/HEAD)
-      if (!fullRefname || !refname || /\/HEAD$/.test(fullRefname)) continue;
-      // Detached checkouts appear as "(no branch)" in `git branch --format`.
-      // They are display-only pseudo refs; diff callers use HEAD instead.
-      if (fullRefname === "(no branch)" || refname === "(no branch)") continue;
-
-      let type: GitBranch["type"];
-      if (worktreepath && worktreepath.length > 0) {
-        type = "worktree";
-      } else if (fullRefname.startsWith("refs/remotes/")) {
-        type = "remote";
-      } else {
-        type = "local";
-      }
-
-      branches.push({
-        name: refname,
-        shortSha: shortSha ?? "",
-        type,
-        isCurrent: head === "*",
-      });
-    }
-
-    const typeOrder: Record<GitBranch["type"], number> = {
-      local: 0,
-      worktree: 1,
-      remote: 2,
-    };
-
-    return branches.sort((a, b) => {
-      if (a.isCurrent !== b.isCurrent) return a.isCurrent ? -1 : 1;
-      const orderDiff = typeOrder[a.type] - typeOrder[b.type];
-      if (orderDiff !== 0) return orderDiff;
-      return a.name.localeCompare(b.name);
-    });
-  }
-
   /** List all git worktrees for a repository path. */
   private async listWorktreesForPath(repoPath: string): Promise<WorktreeInfo[]> {
     const worktreesDir = getWorktreeBaseDir(repoPath)
@@ -2264,50 +2056,6 @@ export class GitService {
     }
 
     return result;
-  }
-
-  /**
-   * Fetch a remote branch from origin and create a local tracking branch.
-   * When prNumber is provided, fetches via `refs/pull/<n>/head` refspec.
-   */
-  private async fetchBranchForPath(
-    repoPath: string,
-    branch: string,
-    prNumber?: number,
-  ): Promise<void> {
-    validateBranchName(branch);
-
-    let fetchOk = true;
-    try {
-      if (prNumber != null) {
-        await this.gitExecutor.exec([
-          "-C",
-          repoPath,
-          "fetch",
-          "origin",
-          `+pull/${prNumber}/head:${branch}`,
-        ]);
-      } else {
-        await this.gitExecutor.exec(["-C", repoPath, "fetch", "origin", branch]);
-      }
-    } catch {
-      fetchOk = false;
-    }
-
-    if (fetchOk && prNumber == null) {
-      const localExists = await this.branchExists(repoPath, branch);
-      if (localExists) {
-        await this.gitExecutor.exec(
-          ["-C", repoPath, "branch", "-f", branch, `origin/${branch}`],
-        );
-      } else {
-        await this.gitExecutor.exec(
-          ["-C", repoPath, "branch", "--track", branch, `origin/${branch}`],
-        );
-      }
-    } else if (!fetchOk && !(await this.branchExists(repoPath, branch))) {
-      throw new Error(`Branch "${branch}" not found locally or on origin`);
-    }
   }
 
   /** Per-repo cache: avoids re-running mutating git commands on every log call. */
