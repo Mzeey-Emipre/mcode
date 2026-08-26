@@ -117,6 +117,8 @@ describe("Cleanup integration", () => {
       mockClaudeProvider,
       mockTerminalService,
       mockGitService,
+      mockGitService,
+      mockGitService,
       workspaceRepo,
       { removeForThread: vi.fn() } as unknown as AttachmentService,
       { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as unknown as HandoffStorage,

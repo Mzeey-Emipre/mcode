@@ -190,6 +190,7 @@ describe("ReviewWorktreeService", () => {
       threadRepo,
       reviewLinkRepo,
       gitService,
+      gitService,
       pullRequestService,
       agentService,
       settingsService,

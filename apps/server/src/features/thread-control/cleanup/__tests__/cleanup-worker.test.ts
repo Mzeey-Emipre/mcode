@@ -76,7 +76,7 @@ describe("CleanupWorker", () => {
     mockGitService = {
       removeWorktree: vi.fn().mockResolvedValue(true),
       isRegisteredWorktreePath: vi.fn().mockReturnValue(true),
-      withReviewWorktreeMutationLock: vi.fn(async (_repoPath, work) => work()),
+      run: vi.fn(async (_repoPath, work) => work()),
       assessWorktreeRemovalSafety: vi.fn(async (
         worktreePath: string,
         siblingPaths: readonly string[],
@@ -111,6 +111,8 @@ describe("CleanupWorker", () => {
       threadRepo,
       mockClaudeProvider,
       mockTerminalService,
+      mockGitService,
+      mockGitService,
       mockGitService,
       workspaceRepo,
       mockAttachmentService,
@@ -334,7 +336,7 @@ describe("CleanupWorker", () => {
       expect(mockAttachmentService.removeForThread).toHaveBeenCalledWith("expired-named");
       expect(mockHandoffStorage.deleteThreadFiles).toHaveBeenCalledWith("expired-named");
       expect(mockGitService.assessWorktreeRemovalSafety).toHaveBeenCalled();
-      expect(mockGitService.withReviewWorktreeMutationLock).toHaveBeenCalled();
+      expect(mockGitService.run).toHaveBeenCalled();
       expect(mockGitService.removeWorktree).toHaveBeenCalledWith(
         expect.any(String),
         "named",
@@ -765,7 +767,7 @@ describe("CleanupWorker", () => {
       await worker.poll();
 
       expect(mockGitService.removeWorktree).not.toHaveBeenCalled();
-      expect(mockGitService.withReviewWorktreeMutationLock).toHaveBeenCalledWith(
+      expect(mockGitService.run).toHaveBeenCalledWith(
         expect.stringMatching(/[\\/]repo$/i),
         expect.any(Function),
       );

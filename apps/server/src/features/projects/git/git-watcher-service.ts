@@ -11,7 +11,7 @@ import { logger } from "@mcode/shared";
 import { broadcast } from "../../../application/transport/push.js";
 import { WorkspaceRepo } from "../persistence/workspace-repo.js";
 import type { GitExecutor } from "./execution/index.js";
-import type { GitService } from "./git-service.js";
+import { GitRepositoryService } from "./git-repository-service.js";
 import { HandoffCheckoutService } from "../../handoff/index.js";
 
 /** Debounce delay in milliseconds to batch rapid HEAD file writes (e.g., during rebase). */
@@ -38,7 +38,7 @@ export class GitWatcherService {
   constructor(
     @inject(WorkspaceRepo) private readonly workspaceRepo: WorkspaceRepo,
     @inject("GitExecutor") private readonly gitExecutor: GitExecutor,
-    @inject("GitService") private readonly gitService: GitService,
+    @inject(GitRepositoryService) private readonly gitRepository: GitRepositoryService,
     @inject(delay(() => HandoffCheckoutService))
     private readonly handoffCheckoutService: HandoffCheckoutService,
   ) {}
@@ -119,7 +119,7 @@ export class GitWatcherService {
         }
         entry.timer = setTimeout(() => {
           entry.timer = null;
-          void this.gitService.getCurrentBranchAt(workspacePath).then((branch) => {
+          void this.gitRepository.getCurrentBranchAt(workspacePath).then((branch) => {
             logger.info("GitWatcherService: branch changed", {
               workspaceId,
               branch,

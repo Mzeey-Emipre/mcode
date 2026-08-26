@@ -21,7 +21,7 @@ describe("WorkspaceEnricher", () => {
     mockGit.isWorkingTreeClean.mockResolvedValue(true);
     mockThreads.countActiveByWorkspaceIds.mockReturnValue(new Map([["ws-1", 3]]));
 
-    const enricher = new WorkspaceEnricher(mockGit as any, mockThreads as any);
+    const enricher = new WorkspaceEnricher(mockGit as any, mockGit as any, mockThreads as any);
     const result = await enricher.enrich([{ id: "ws-1", path: "/tmp/proj" }]);
 
     expect(result).toEqual([{ id: "ws-1", branch: "main", isGit: true, isClean: true, threadCount: 3 }]);
@@ -32,7 +32,7 @@ describe("WorkspaceEnricher", () => {
     mockGit.isWorkingTreeClean.mockResolvedValue(true);
     mockThreads.countActiveByWorkspaceIds.mockReturnValue(new Map());
 
-    const enricher = new WorkspaceEnricher(mockGit as any, mockThreads as any);
+    const enricher = new WorkspaceEnricher(mockGit as any, mockGit as any, mockThreads as any);
     const result = await enricher.enrich([{ id: "ws-2", path: "/tmp/notgit" }]);
 
     expect(result[0].isGit).toBe(false);
@@ -45,7 +45,7 @@ describe("WorkspaceEnricher", () => {
     mockGit.isWorkingTreeClean.mockResolvedValue(true);
     mockThreads.countActiveByWorkspaceIds.mockReturnValue(new Map());
 
-    const enricher = new WorkspaceEnricher(mockGit as any, mockThreads as any);
+    const enricher = new WorkspaceEnricher(mockGit as any, mockGit as any, mockThreads as any);
     const result = await enricher.enrich([{ id: "ws-3", path: "/tmp/proj" }]);
 
     expect(result[0].threadCount).toBe(0);

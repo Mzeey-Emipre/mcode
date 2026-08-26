@@ -10,6 +10,7 @@ import { ThreadRepo } from "../../persistence/thread-repo.js";
 import { CleanupJobRepo, MAX_CLEANUP_ATTEMPTS } from "../persistence/cleanup-job-repo.js";
 import { CleanupWorker } from "../cleanup-worker.js";
 import { GitService } from "../../../projects/index.js";
+import { RepositoryGitMutationLock } from "../../../projects/git/repository-git-mutation-lock.js";
 import { RealGitExecutor } from "../../../projects/git/execution/real-git-executor.js";
 import { getMcodeDir } from "@mcode/shared";
 import type { ClaudeProvider } from "../../../providers/adapters/claude/claude-provider.js";
@@ -72,6 +73,8 @@ describe("completed thread cleanup Git safety", () => {
       { waitForSessionExit: vi.fn().mockResolvedValue(undefined) } as unknown as ClaudeProvider,
       { killByThread: vi.fn().mockResolvedValue(undefined) } as unknown as TerminalBackend,
       service,
+      service,
+      new RepositoryGitMutationLock(),
       workspaceRepo,
       { removeForThread: vi.fn() } as unknown as AttachmentService,
       { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as unknown as HandoffStorage,

@@ -15,7 +15,11 @@ import type { CleanupJob } from "./persistence/cleanup-job-repo.js";
 import { ThreadRepo } from "../persistence/thread-repo.js";
 import { ClaudeProvider } from "../../providers/adapters/claude/claude-provider.js";
 import { TerminalBackend, TERMINAL_BACKEND_TOKEN } from "../../terminal/backends/terminal-backend.js";
-import { GitService } from "../../projects/index.js";
+import {
+  GitWorktreeService,
+  RepositoryGitMutationLock,
+  WorktreeSafetyService,
+} from "../../projects/index.js";
 import { AttachmentService } from "../../attachments/storage/attachment-service.js";
 import { killDescendantsByName } from "../../../runtime/process/containment/process-kill.js";
 import { WorkspaceRepo } from "../../projects/persistence/workspace-repo.js";
@@ -67,7 +71,9 @@ export class CleanupWorker {
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
     @inject(ClaudeProvider) private readonly claudeProvider: ClaudeProvider,
     @inject(TERMINAL_BACKEND_TOKEN) private readonly terminalService: TerminalBackend,
-    @inject(GitService) private readonly gitService: GitService,
+    @inject(GitWorktreeService) private readonly gitWorktrees: GitWorktreeService,
+    @inject(WorktreeSafetyService) private readonly worktreeSafety: WorktreeSafetyService,
+    @inject(RepositoryGitMutationLock) private readonly repositoryMutationLock: RepositoryGitMutationLock,
     @inject(WorkspaceRepo) private readonly workspaceRepo: WorkspaceRepo,
     @inject(AttachmentService) private readonly attachmentService: AttachmentService,
     @inject(HandoffStorage) private readonly handoffStorage: HandoffStorage,
@@ -272,7 +278,7 @@ export class CleanupWorker {
         throw new Error(`worktree_path must not equal workspace_path: ${resolvedWt}`);
       }
 
-      if (!isCanonicalPath && !(await this.gitService.isRegisteredWorktreePath(resolvedWs, resolvedWt))) {
+      if (!isCanonicalPath && !(await this.gitWorktrees.isRegisteredWorktreePath(resolvedWs, resolvedWt))) {
         throw new Error(`worktree_path is not a registered worktree for repo: ${resolvedWt}`);
       }
 
@@ -295,11 +301,11 @@ export class CleanupWorker {
       //    separately in ThreadService.
       const wtName = resolvedWt.replace(/\\/g, "/").split("/").pop() ?? resolvedWt;
       let preserveWorktreeReason: string | null = null;
-      const removed = await this.gitService.withReviewWorktreeMutationLock(
+      const removed = await this.repositoryMutationLock.run(
         resolvedWs,
         async () => {
           const siblings = this.threadRepo.listActiveSiblingWorktreePaths(job.thread_id);
-          const safety = await this.gitService.assessWorktreeRemovalSafety(
+          const safety = await this.worktreeSafety.assessWorktreeRemovalSafety(
             resolvedWt,
             siblings.paths,
             siblings.truncated,
@@ -308,7 +314,7 @@ export class CleanupWorker {
             preserveWorktreeReason = safety.reason;
             return true;
           }
-          const gitStillOwnsWorktree = await this.gitService.isRegisteredWorktreePath(
+          const gitStillOwnsWorktree = await this.gitWorktrees.isRegisteredWorktreePath(
             resolvedWs,
             resolvedWt,
           );
@@ -317,7 +323,7 @@ export class CleanupWorker {
             && job.kind === "retention"
             && retentionThread?.checkout_state === "named"
           ) {
-            const namedSafety = await this.gitService.assessNamedWorktreeRemoval(resolvedWt);
+            const namedSafety = await this.worktreeSafety.assessNamedWorktreeRemoval(resolvedWt);
             if (
               !namedSafety.safe
               && !(this.unsafeWorktreePolicy() === "delete" && namedSafety.reason === "dirty")
@@ -333,7 +339,7 @@ export class CleanupWorker {
             && retentionThread?.checkout_state === "branchless"
             && retentionThread.base_branch
           ) {
-            const automaticSafety = await this.gitService.assessBranchlessWorktreeRemoval(
+            const automaticSafety = await this.worktreeSafety.assessBranchlessWorktreeRemoval(
               resolvedWt,
               retentionThread.base_branch,
             );
@@ -358,7 +364,7 @@ export class CleanupWorker {
             : (job.branch && shouldDelete)
             ? { branchName: job.branch, worktreePath: resolvedWt }
             : { deleteBranch: false, worktreePath: resolvedWt };
-          return this.gitService.removeWorktree(resolvedWs, wtName, removeOptions);
+          return this.gitWorktrees.removeWorktree(resolvedWs, wtName, removeOptions);
         },
       );
 

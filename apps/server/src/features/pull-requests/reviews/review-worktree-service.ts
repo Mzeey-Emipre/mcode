@@ -21,7 +21,8 @@ import {
   type PullRequestReviewLink,
 } from "./persistence/pull-request-review-link-repo.js";
 import {
-  GitService,
+  GitRepositoryService,
+  PullRequestReviewGitService,
   PullRequestReviewGitError,
   type PullRequestReviewGitSource,
 } from "../../projects/index.js";
@@ -97,7 +98,9 @@ export class ReviewWorktreeService {
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
     @inject(PullRequestReviewLinkRepo)
     private readonly reviewLinkRepo: PullRequestReviewLinkRepo,
-    @inject(GitService) private readonly gitService: GitService,
+    @inject(PullRequestReviewGitService)
+    private readonly pullRequestReviews: PullRequestReviewGitService,
+    @inject(GitRepositoryService) private readonly gitRepository: GitRepositoryService,
     @inject(PullRequestService) private readonly pullRequestService: PullRequestService,
     @inject(AgentService) private readonly agentService: AgentService,
     @inject(SettingsService) private readonly settingsService: SettingsService,
@@ -128,7 +131,7 @@ export class ReviewWorktreeService {
         );
         if ("error" in workspace) return { ok: false, error: workspace.error };
 
-        const compatible = await this.gitService.findCompatiblePullRequestReviewWorktrees(
+        const compatible = await this.pullRequestReviews.findCompatiblePullRequestReviewWorktrees(
           workspace.workspace.path,
           source.git,
         );
@@ -150,7 +153,7 @@ export class ReviewWorktreeService {
             source: source.contract,
             workspace: workspace.candidate,
             suggestedWorktreeName,
-            destinationPath: this.gitService.getReviewWorktreeDestination(
+            destinationPath: this.pullRequestReviews.getReviewWorktreeDestination(
               workspace.workspace.path,
               suggestedWorktreeName,
             ),
@@ -169,7 +172,7 @@ export class ReviewWorktreeService {
 
         let mutation;
         try {
-          mutation = await this.gitService.provisionPullRequestReviewWorktreeAndCommit(
+          mutation = await this.pullRequestReviews.provisionPullRequestReviewWorktreeAndCommit(
             workspace.workspace.path,
             source.git,
             request.action === "create_new"
@@ -381,7 +384,7 @@ export class ReviewWorktreeService {
     const targetKey = `${target.host.toLowerCase()}${target.pathname.toLowerCase()}`;
     for (const workspace of this.workspaceRepo.listAll()) {
       if (!workspace.is_git_repo) continue;
-      const remotes = await this.gitService.listNormalizedRemotes(workspace.path);
+      const remotes = await this.gitRepository.listNormalizedRemotes(workspace.path);
       if (!remotes.some((remote) => {
         const url = new URL(remote.webUrl);
         return `${url.host.toLowerCase()}${url.pathname.toLowerCase()}` === targetKey;
@@ -440,7 +443,7 @@ export class ReviewWorktreeService {
     source: ResolvedReviewSource,
     workspaceId: string,
     provisioned: Extract<
-      Awaited<ReturnType<GitService["provisionPullRequestReviewWorktree"]>>,
+      Awaited<ReturnType<PullRequestReviewGitService["provisionPullRequestReviewWorktree"]>>,
       { kind: "ready" }
     >,
   ): { threadId: string; link: PullRequestReviewLinkDto } {

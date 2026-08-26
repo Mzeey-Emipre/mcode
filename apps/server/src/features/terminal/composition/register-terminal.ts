@@ -1,7 +1,7 @@
 import { TERMINAL_MAX_SESSIONS } from "@mcode/contracts";
 import { Lifecycle, type DependencyContainer } from "tsyringe";
 
-import { GitService } from "../../projects/git/git-service.js";
+import { GitWorktreeService } from "../../projects/git/git-worktree-service.js";
 import { WorkspaceRepo } from "../../projects/persistence/workspace-repo.js";
 import { ThreadRepo } from "../../thread-control/persistence/thread-repo.js";
 import { SettingsService } from "../../settings/settings-service.js";
@@ -36,7 +36,7 @@ export function registerTerminalBackends(container: DependencyContainer): void {
         threads: c.resolve(ThreadRepo),
         pidRegistry: c.resolve<PtyPidRegistry>("PtyPidRegistry"),
         resolveWorkingDir: (workspacePath, mode, worktreePath) =>
-          c.resolve(GitService).resolveWorkingDir(workspacePath, mode, worktreePath),
+          c.resolve(GitWorktreeService).resolveWorkingDir(workspacePath, mode, worktreePath),
       });
       return terminalCommandService;
     },
@@ -77,7 +77,7 @@ export function registerTerminalBackends(container: DependencyContainer): void {
         workspaces: c.resolve(WorkspaceRepo),
         threads: c.resolve(ThreadRepo),
         resolveWorkingDir: (workspacePath, mode, worktreePath) =>
-          c.resolve(GitService).resolveWorkingDir(workspacePath, mode, worktreePath),
+          c.resolve(GitWorktreeService).resolveWorkingDir(workspacePath, mode, worktreePath),
         hostGeneration: () => host.health().hostGeneration,
       });
       modernTerminalBackend = new ModernTerminalBackend(

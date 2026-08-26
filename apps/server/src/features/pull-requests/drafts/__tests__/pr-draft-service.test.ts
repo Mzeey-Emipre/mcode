@@ -24,8 +24,8 @@ import { PrDraftService } from "../pr-draft-service.js";
 describe("PrDraftService", () => {
   let service: PrDraftService;
   const mockGitService = {
-    log: vi.fn(),
-    diffStat: vi.fn(),
+    listCommits: vi.fn(),
+    readBranchComparisonDiffStat: vi.fn(),
     getCurrentBranch: vi.fn(),
     getCurrentBranchAt: vi.fn(),
     resolveWorkingDir: vi.fn(),
@@ -61,6 +61,8 @@ describe("PrDraftService", () => {
     mockGitService.getCurrentBranchAt.mockReturnValue("feat/add-widget");
     service = new PrDraftService(
       mockGitService as any,
+      mockGitService as any,
+      mockGitService as any,
       mockMessageRepo as any,
       mockWorkspaceRepo as any,
       mockThreadRepo as any,
@@ -70,10 +72,10 @@ describe("PrDraftService", () => {
 
   it("generates draft from commit history and conversation", async () => {
     mockWorkspaceRepo.findById.mockReturnValue({ path: "/repo" });
-    mockGitService.log.mockResolvedValue([
+    mockGitService.listCommits.mockResolvedValue([
       { message: "feat: add widget", sha: "abc123" },
     ]);
-    mockGitService.diffStat.mockResolvedValue("2 files changed, 50 insertions(+)");
+    mockGitService.readBranchComparisonDiffStat.mockResolvedValue("2 files changed, 50 insertions(+)");
     mockMessageRepo.listByThread.mockReturnValue({
       messages: [
         { role: "user", content: "Add a widget to the dashboard" },
@@ -98,11 +100,11 @@ describe("PrDraftService", () => {
 
   it("falls back to commit-only when AI fails", async () => {
     mockWorkspaceRepo.findById.mockReturnValue({ path: "/repo" });
-    mockGitService.log.mockResolvedValue([
+    mockGitService.listCommits.mockResolvedValue([
       { message: "feat: add widget", sha: "abc123" },
       { message: "fix: widget sizing", sha: "def456" },
     ]);
-    mockGitService.diffStat.mockResolvedValue("3 files changed");
+    mockGitService.readBranchComparisonDiffStat.mockResolvedValue("3 files changed");
     mockMessageRepo.listByThread.mockReturnValue({
       messages: [],
       hasMore: false,
@@ -119,14 +121,14 @@ describe("PrDraftService", () => {
   it("retries log without range when baseBranch does not exist in repo", async () => {
     mockWorkspaceRepo.findById.mockReturnValue({ path: "/repo" });
     mockGitService.getCurrentBranchAt.mockReturnValue("master");
-    mockGitService.log
+    mockGitService.listCommits
       .mockRejectedValueOnce(
         new Error(
           "Command failed: git log main..master fatal: ambiguous argument 'main..master': unknown revision",
         ),
       )
       .mockResolvedValueOnce([{ message: "feat: add widget", sha: "abc123" }]);
-    mockGitService.diffStat.mockResolvedValue("2 files changed");
+    mockGitService.readBranchComparisonDiffStat.mockResolvedValue("2 files changed");
     mockMessageRepo.listByThread.mockReturnValue({ messages: [], hasMore: false });
     mockComplete.mockResolvedValue(JSON.stringify({
       title: "feat: add widget",
@@ -136,17 +138,17 @@ describe("PrDraftService", () => {
     const result = await service.generateDraft("ws-1", "thread-1", "main");
 
     expect(result.title).toBe("feat: add widget");
-    expect(mockGitService.log).toHaveBeenCalledTimes(2);
-    expect(mockGitService.log).toHaveBeenNthCalledWith(1, "ws-1", "master", 50, "main", "/repo");
-    expect(mockGitService.log).toHaveBeenNthCalledWith(2, "ws-1", "master", 50, undefined, "/repo");
+    expect(mockGitService.listCommits).toHaveBeenCalledTimes(2);
+    expect(mockGitService.listCommits).toHaveBeenNthCalledWith(1, "ws-1", "master", 50, "main", "/repo");
+    expect(mockGitService.listCommits).toHaveBeenNthCalledWith(2, "ws-1", "master", 50, undefined, "/repo");
   });
 
   it("uses repo PR template when available", async () => {
     mockWorkspaceRepo.findById.mockReturnValue({ path: "/repo" });
-    mockGitService.log.mockResolvedValue([
+    mockGitService.listCommits.mockResolvedValue([
       { message: "feat: thing", sha: "aaa" },
     ]);
-    mockGitService.diffStat.mockResolvedValue("1 file changed");
+    mockGitService.readBranchComparisonDiffStat.mockResolvedValue("1 file changed");
     mockMessageRepo.listByThread.mockReturnValue({
       messages: [],
       hasMore: false,
@@ -179,8 +181,8 @@ describe("PrDraftService", () => {
     mockGitService.resolveWorkingDir.mockReturnValue(worktreePath);
     mockGitService.getCurrentBranchAt.mockReturnValue("feat/my-feature");
     mockWorkspaceRepo.findById.mockReturnValue({ path: "/repo" });
-    mockGitService.log.mockResolvedValue([{ message: "feat: my feature", sha: "aaa" }]);
-    mockGitService.diffStat.mockResolvedValue("1 file changed");
+    mockGitService.listCommits.mockResolvedValue([{ message: "feat: my feature", sha: "aaa" }]);
+    mockGitService.readBranchComparisonDiffStat.mockResolvedValue("1 file changed");
     mockMessageRepo.listByThread.mockReturnValue({ messages: [], hasMore: false });
     mockComplete.mockResolvedValue(JSON.stringify({ title: "feat: my feature", body: "body" }));
 
@@ -190,15 +192,15 @@ describe("PrDraftService", () => {
     expect(mockGitService.resolveWorkingDir).toHaveBeenCalledWith("/repo", "worktree", worktreePath);
     // Branch detection and diff must use the worktree path, not the workspace root
     expect(mockGitService.getCurrentBranchAt).toHaveBeenCalledWith(worktreePath);
-    expect(mockGitService.diffStat).toHaveBeenCalledWith(worktreePath, "main", "feat/my-feature");
+    expect(mockGitService.readBranchComparisonDiffStat).toHaveBeenCalledWith(worktreePath, "main", "feat/my-feature");
     // complete() must also receive the worktree path as cwd
     expect(mockUtilityCompletion.complete).toHaveBeenCalledWith(expect.any(String), worktreePath);
   });
 
   it("uses workspace root for git operations when thread is in direct mode", async () => {
     mockWorkspaceRepo.findById.mockReturnValue({ path: "/repo" });
-    mockGitService.log.mockResolvedValue([{ message: "fix: thing", sha: "bbb" }]);
-    mockGitService.diffStat.mockResolvedValue("1 file changed");
+    mockGitService.listCommits.mockResolvedValue([{ message: "fix: thing", sha: "bbb" }]);
+    mockGitService.readBranchComparisonDiffStat.mockResolvedValue("1 file changed");
     mockMessageRepo.listByThread.mockReturnValue({ messages: [], hasMore: false });
     mockComplete.mockResolvedValue(JSON.stringify({ title: "fix: thing", body: "body" }));
 
@@ -206,7 +208,7 @@ describe("PrDraftService", () => {
 
     expect(mockGitService.resolveWorkingDir).toHaveBeenCalledWith("/repo", "direct", null);
     expect(mockGitService.getCurrentBranchAt).toHaveBeenCalledWith("/repo");
-    expect(mockGitService.diffStat).toHaveBeenCalledWith("/repo", "main", "feat/add-widget");
+    expect(mockGitService.readBranchComparisonDiffStat).toHaveBeenCalledWith("/repo", "main", "feat/add-widget");
   });
 
   it("throws when thread is not found", async () => {
@@ -243,8 +245,8 @@ describe("PrDraftService", () => {
     // Provider/model resolution is entirely owned by UtilityCompletionService.
     // PrDraftService should call utilityCompletion.complete() with the prompt and cwd only.
     mockWorkspaceRepo.findById.mockReturnValue({ path: "/repo" });
-    mockGitService.log.mockResolvedValue([{ message: "feat: thing", sha: "aaa" }]);
-    mockGitService.diffStat.mockResolvedValue("1 file changed");
+    mockGitService.listCommits.mockResolvedValue([{ message: "feat: thing", sha: "aaa" }]);
+    mockGitService.readBranchComparisonDiffStat.mockResolvedValue("1 file changed");
     mockMessageRepo.listByThread.mockReturnValue({ messages: [], hasMore: false });
     mockComplete.mockResolvedValue(JSON.stringify({ title: "feat: thing", body: "body" }));
 
@@ -259,8 +261,8 @@ describe("PrDraftService", () => {
   describe("parseCompletionDraft (via generateWithAI)", () => {
     beforeEach(() => {
       mockWorkspaceRepo.findById.mockReturnValue({ path: "/repo" });
-      mockGitService.log.mockResolvedValue([{ message: "feat: x", sha: "aaa" }]);
-      mockGitService.diffStat.mockResolvedValue("1 file changed");
+      mockGitService.listCommits.mockResolvedValue([{ message: "feat: x", sha: "aaa" }]);
+      mockGitService.readBranchComparisonDiffStat.mockResolvedValue("1 file changed");
       mockMessageRepo.listByThread.mockReturnValue({ messages: [], hasMore: false });
     });
 
