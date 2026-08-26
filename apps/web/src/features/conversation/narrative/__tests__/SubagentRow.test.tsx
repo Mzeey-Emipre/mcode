@@ -46,7 +46,7 @@ describe("SubagentRow", () => {
   it("shows explicit identity and exact lowercase lifecycle copy without delegated task text", () => {
     renderRow(agent());
 
-    expect(screen.getByRole("button", { name: "Open Explorer subagent details" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show Explorer subagent details" })).toBeInTheDocument();
     expect(screen.getByText("started working")).toBeInTheDocument();
     expect(screen.queryByTestId("subagent-lifecycle-dot")).not.toBeInTheDocument();
     expect(screen.queryByText("Read detection module")).not.toBeInTheDocument();
@@ -56,7 +56,7 @@ describe("SubagentRow", () => {
   it("formats a provider identity as a sentence title", () => {
     renderRow(agent({ toolInput: { agentName: "direct_detail_worker" } }));
 
-    expect(screen.getByRole("button", { name: "Open Direct detail worker subagent details" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show Direct detail worker subagent details" })).toBeInTheDocument();
     expect(screen.queryByText("direct_detail_worker")).not.toBeInTheDocument();
   });
 
@@ -67,6 +67,7 @@ describe("SubagentRow", () => {
         displayName: "Correct identity",
         hasExplicitIdentity: true,
         identityKey: "child-correct",
+        detail: { kind: "canonical-child" },
       },
     }));
 
@@ -130,7 +131,7 @@ describe("SubagentRow", () => {
     const anonymousAgent = agent({ toolInput: { prompt: "Private prompt", description: "Private task" }, isComplete: true });
     render(<SubagentRow toolCall={anonymousAgent} participants={[anonymousAgent]} lifecycle="finished" children={[]} hooks={[]} onSubagentSelect={openSubagentDetail} />);
 
-    expect(screen.getByRole("button", { name: "Open Subagent subagent details" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show Subagent subagent details" })).toBeInTheDocument();
     expect(screen.queryByText("Private prompt")).not.toBeInTheDocument();
     expect(screen.queryByText("Private task")).not.toBeInTheDocument();
     const glyph = document.querySelector('[data-subagent-identity-glyph="Subagent"]');
@@ -190,6 +191,23 @@ describe("SubagentRow", () => {
     expect(openSubagentDetail).toHaveBeenLastCalledWith("child-worker", "finished");
   });
 
+  it("explains unavailable Cursor detail without selecting a canonical child", async () => {
+    const cursorAgent = agent({
+      toolInput: {
+        description: "Read the current module",
+        agentId: "cursor-agent-1",
+        subagentProviderName: "Cursor",
+      },
+    });
+    renderRow(cursorAgent);
+
+    await userEvent.click(screen.getByRole("button", { name: "Show Subagent subagent details" }));
+
+    expect(screen.getByTestId("subagent-transcript-unavailable"))
+      .toHaveTextContent("Cursor did not provide this subagent’s transcript.");
+    expect(openSubagentDetail).not.toHaveBeenCalled();
+  });
+
   it("colors an explicitly named Subagent instead of treating the label as anonymous", () => {
     renderRow(agent({ toolInput: { agentName: "Subagent" } }));
 
@@ -221,12 +239,15 @@ describe("SubagentRow", () => {
   it("renders source and target as independent compact controls without a chevron", async () => {
     const source = agent({
       id: "agent-source",
-      toolInput: { agentName: "Explorer with a deliberately long identity" },
+      toolInput: {
+        agentName: "Explorer with a deliberately long identity",
+        nativeThreadId: "child-source",
+      },
       isComplete: true,
     });
     const target = agent({
       id: "agent-target",
-      toolInput: { agentName: "Implementer" },
+      toolInput: { agentName: "Implementer", nativeThreadId: "child-target" },
       isComplete: true,
     });
 
@@ -263,8 +284,8 @@ describe("SubagentRow", () => {
 
     await userEvent.click(sourceButton);
     await userEvent.click(targetButton);
-    expect(openSubagentDetail).toHaveBeenNthCalledWith(1, "agent-source", "finished");
-    expect(openSubagentDetail).toHaveBeenNthCalledWith(2, "agent-target", "finished");
+    expect(openSubagentDetail).toHaveBeenNthCalledWith(1, "child-source", "finished");
+    expect(openSubagentDetail).toHaveBeenNthCalledWith(2, "child-target", "finished");
   });
 
   it("caps sibling names at two and aggregates remaining lifecycle counts", async () => {
@@ -295,13 +316,13 @@ describe("SubagentRow", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "Open Explorer subagent details" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Open Reviewer subagent details" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Open Implementer subagent details" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Open Tester subagent details" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show Explorer subagent details" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show Reviewer subagent details" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Show Implementer subagent details" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Show Tester subagent details" })).not.toBeInTheDocument();
     const aggregate = screen.getByRole("button", { name: "Open full Subagents roster, +1 working, 1 finished" });
     expect(aggregate).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Open Explorer subagent details" })).not.toHaveTextContent("updated");
+    expect(screen.getByRole("button", { name: "Show Explorer subagent details" })).not.toHaveTextContent("updated");
 
     await userEvent.click(aggregate);
     expect(rosterOpen).toHaveBeenCalledTimes(1);
@@ -335,7 +356,7 @@ describe("SubagentRow", () => {
       />,
     );
 
-    const identityButtons = screen.getAllByRole("button", { name: "Open Subagent subagent details" });
+    const identityButtons = screen.getAllByRole("button", { name: "Show Subagent subagent details" });
     expect(identityButtons).toHaveLength(2);
     for (const button of identityButtons) {
       expect(button).toHaveClass("shrink");

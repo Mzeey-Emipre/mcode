@@ -7,6 +7,10 @@ export const SUBAGENT_DISPLAY_NAME_MAX_LENGTH = 96;
 export const PROVIDER_AGENT_KEY_MAX_LENGTH = 256;
 /** Maximum persisted length of provider model and reasoning metadata. */
 export const SUBAGENT_METADATA_MAX_LENGTH = 128;
+/** Maximum persisted length of a provider-reported sub-agent prompt. */
+export const SUBAGENT_PROMPT_MAX_LENGTH = 4_000;
+/** Maximum provider-reported sub-agent duration retained in milliseconds. */
+export const SUBAGENT_DURATION_MAX_MS = 86_400_000;
 /** Maximum accepted length of a sub-agent navigation identity. */
 export const SUBAGENT_IDENTITY_KEY_MAX_LENGTH = 512;
 
@@ -47,6 +51,22 @@ export function resolveSubagentMetadata(value: unknown): string | undefined {
   return metadata && metadata.length <= SUBAGENT_METADATA_MAX_LENGTH ? metadata : undefined;
 }
 
+/** Resolves one bounded provider-reported sub-agent prompt. */
+export function resolveSubagentPrompt(value: unknown): string | undefined {
+  const prompt = explicitString(value);
+  return prompt && prompt.length <= SUBAGENT_PROMPT_MAX_LENGTH ? prompt : undefined;
+}
+
+/** Resolves one bounded provider-reported sub-agent duration. */
+export function resolveSubagentDuration(value: unknown): number | undefined {
+  return typeof value === "number"
+    && Number.isSafeInteger(value)
+    && value >= 0
+    && value <= SUBAGENT_DURATION_MAX_MS
+    ? value
+    : undefined;
+}
+
 /** Resolves the exact receiver/native child identity from structural Agent input. */
 export function resolveSubagentExactIdentity(input: Record<string, unknown>): string | undefined {
   const receiverThreadId = resolveReceiverThreadId(input);
@@ -64,11 +84,24 @@ export function formatSubagentDisplayName(identity: string): string {
   return `${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}`;
 }
 
+/** Detail availability for one provider-reported sub-agent. */
+export const SubagentDetailSchema = lazySchema(() => z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("canonical-child") }),
+  z.object({
+    kind: z.literal("transcript-unavailable"),
+    providerName: z.string().min(1).max(SUBAGENT_METADATA_MAX_LENGTH).optional(),
+  }),
+]));
+
+/** Detail availability for one provider-reported sub-agent. */
+export type SubagentDetail = z.infer<ReturnType<typeof SubagentDetailSchema>>;
+
 /** Presentation model consumed by sub-agent UI surfaces. */
 export const SubagentPresentationSchema = lazySchema(() => z.object({
   displayName: z.string().min(1).max(SUBAGENT_DISPLAY_NAME_MAX_LENGTH),
   hasExplicitIdentity: z.boolean(),
   identityKey: z.string().min(1).max(SUBAGENT_IDENTITY_KEY_MAX_LENGTH),
+  detail: SubagentDetailSchema(),
   providerAgentKey: z.string().max(PROVIDER_AGENT_KEY_MAX_LENGTH).optional(),
   model: z.string().max(SUBAGENT_METADATA_MAX_LENGTH).optional(),
   reasoningEffort: z.string().max(SUBAGENT_METADATA_MAX_LENGTH).optional(),
@@ -94,10 +127,18 @@ export function createSubagentPresentation(
   const providerAgentKey = resolveProviderAgentKey(input);
   const model = resolveSubagentMetadata(input.model);
   const reasoningEffort = resolveSubagentMetadata(input.reasoningEffort);
+  const exactIdentity = resolveSubagentExactIdentity(input);
+  const providerName = resolveSubagentMetadata(input.subagentProviderName);
   return {
     displayName: formatSubagentDisplayName(resolvedDisplayName ?? "Subagent"),
     hasExplicitIdentity: resolvedDisplayName !== undefined,
-    identityKey: resolveSubagentExactIdentity(input) ?? providerAgentKey ?? fallbackIdentityKey,
+    identityKey: exactIdentity ?? providerAgentKey ?? fallbackIdentityKey,
+    detail: exactIdentity
+      ? { kind: "canonical-child" }
+      : {
+          kind: "transcript-unavailable",
+          ...(providerName ? { providerName } : {}),
+        },
     ...(providerAgentKey ? { providerAgentKey } : {}),
     ...(model ? { model } : {}),
     ...(reasoningEffort ? { reasoningEffort } : {}),
@@ -115,6 +156,11 @@ export function mergeSubagentPresentation(
     displayName: incoming.hasExplicitIdentity ? incoming.displayName : current.displayName,
     hasExplicitIdentity: current.hasExplicitIdentity || incoming.hasExplicitIdentity,
     identityKey: incoming.identityKey === fallbackIdentityKey ? current.identityKey : incoming.identityKey,
+    detail: current.detail.kind === "canonical-child" || incoming.detail.kind === "canonical-child"
+      ? { kind: "canonical-child" }
+      : incoming.detail.providerName
+        ? incoming.detail
+        : current.detail,
     providerAgentKey: incoming.providerAgentKey ?? current.providerAgentKey,
     model: incoming.model ?? current.model,
     reasoningEffort: incoming.reasoningEffort ?? current.reasoningEffort,
@@ -136,6 +182,11 @@ export const ToolCallRecordSchema = z.object({
   display_name: z.string().max(SUBAGENT_DISPLAY_NAME_MAX_LENGTH).nullable().optional(),
   provider_agent_key: z.string().max(PROVIDER_AGENT_KEY_MAX_LENGTH).nullable().optional(),
   subagent_identity_key: z.string().max(SUBAGENT_IDENTITY_KEY_MAX_LENGTH).nullable().optional(),
+  subagent_provider_name: z.string().max(SUBAGENT_METADATA_MAX_LENGTH).nullable().optional(),
+  subagent_prompt: z.string().max(SUBAGENT_PROMPT_MAX_LENGTH).nullable().optional(),
+  subagent_type: z.string().max(SUBAGENT_METADATA_MAX_LENGTH).nullable().optional(),
+  subagent_agent_id: z.string().max(SUBAGENT_METADATA_MAX_LENGTH).nullable().optional(),
+  subagent_duration_ms: z.number().int().min(0).max(SUBAGENT_DURATION_MAX_MS).nullable().optional(),
   model: z.string().max(SUBAGENT_METADATA_MAX_LENGTH).nullable().optional(),
   reasoning_effort: z.string().max(SUBAGENT_METADATA_MAX_LENGTH).nullable().optional(),
   input_summary: z.string(),

@@ -154,6 +154,12 @@ function persistedRecordToToolCall(record: ToolCallRecord, rootId: string): Tool
         ...(record.provider_agent_key
           ? { codexCollabKind: "spawnAgent", agentPath: record.provider_agent_key }
           : {}),
+        ...(record.subagent_identity_key ? { nativeThreadId: record.subagent_identity_key } : {}),
+        ...(record.subagent_provider_name ? { subagentProviderName: record.subagent_provider_name } : {}),
+        ...(record.subagent_prompt ? { prompt: record.subagent_prompt } : {}),
+        ...(record.subagent_type ? { subagentType: record.subagent_type } : {}),
+        ...(record.subagent_agent_id ? { agentId: record.subagent_agent_id } : {}),
+        ...(typeof record.subagent_duration_ms === "number" ? { durationMs: record.subagent_duration_ms } : {}),
         ...(record.model ? { model: record.model } : {}),
         ...(record.reasoning_effort ? { reasoningEffort: record.reasoning_effort } : {}),
       }, record.provider_agent_key ?? record.id)
@@ -166,14 +172,20 @@ function persistedRecordToToolCall(record: ToolCallRecord, rootId: string): Tool
       ...(record.tool_name === "Agent" && record.display_name
         ? { agentName: record.display_name }
         : {}),
+      ...(record.tool_name === "Agent" && record.subagent_prompt
+        ? { prompt: record.subagent_prompt }
+        : {}),
+      ...(record.tool_name === "Agent" && record.subagent_type
+        ? { subagentType: record.subagent_type }
+        : {}),
+      ...(record.tool_name === "Agent" && record.subagent_agent_id
+        ? { agentId: record.subagent_agent_id }
+        : {}),
+      ...(record.tool_name === "Agent" && typeof record.subagent_duration_ms === "number"
+        ? { durationMs: record.subagent_duration_ms }
+        : {}),
     },
-    ...(subagentPresentation
-      ? {
-          subagentPresentation: record.subagent_identity_key
-            ? { ...subagentPresentation, identityKey: record.subagent_identity_key }
-            : subagentPresentation,
-        }
-      : {}),
+    ...(subagentPresentation ? { subagentPresentation } : {}),
     output: nonEmptyString(record.output_summary) ?? null,
     isError: record.status === "failed",
     isComplete: record.status !== "running",

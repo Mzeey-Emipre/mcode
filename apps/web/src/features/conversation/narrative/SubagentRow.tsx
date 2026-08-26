@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { SubagentIdentityGlyph } from "@/components/ui/SubagentIdentityGlyph";
 import type { HookExecution, ToolCall } from "@/transport/types";
@@ -46,6 +47,12 @@ function remainingLabel(activities: readonly SubagentActivity[]): string {
   return labels.map((label, index) => index === 0 ? `+${label}` : label).join(", ");
 }
 
+function transcriptUnavailableMessage(providerName: string | undefined): string {
+  return providerName
+    ? `${providerName} did not provide this subagent’s transcript.`
+    : "This provider did not provide this subagent’s transcript.";
+}
+
 /** Renders one identity-only sub-agent lifecycle row in the chat narrative. */
 export function SubagentRow({
   participants,
@@ -54,6 +61,7 @@ export function SubagentRow({
   onOpenSubagents,
   activities,
 }: SubagentRowProps) {
+  const [unavailableDetailId, setUnavailableDetailId] = useState<string>();
   const groupedActivities = activities && activities.length > 1 ? activities : undefined;
   const visibleParticipants = groupedActivities
     ? groupedActivities.slice(0, 2).map((activity) => ({
@@ -74,6 +82,8 @@ export function SubagentRow({
           const presentation = participant.subagentPresentation;
           const identity = presentation?.displayName ?? "Subagent";
           const identityKey = presentation?.identityKey ?? participant.id;
+          const detail = presentation?.detail;
+          const hasCanonicalChild = detail?.kind === "canonical-child";
           const status = participantLifecycle === "finished"
             ? terminalStatus(participant)
             : "Active";
@@ -83,12 +93,18 @@ export function SubagentRow({
                 type="button"
                 variant="ghost"
                 size="sm"
-                onClick={() => onSubagentSelect?.(
-                  identityKey,
-                  participantLifecycle === "finished" ? "finished" : "active",
-                )}
+                onClick={() => {
+                  if (hasCanonicalChild) {
+                    onSubagentSelect?.(
+                      identityKey,
+                      participantLifecycle === "finished" ? "finished" : "active",
+                    );
+                    return;
+                  }
+                  setUnavailableDetailId(participant.id);
+                }}
                 className="min-w-0 shrink gap-1 rounded-full px-2 text-left transition-colors duration-150 motion-reduce:transition-none hover:bg-muted/30"
-                aria-label={`Open ${identity} subagent details`}
+                aria-label={`${hasCanonicalChild ? "Open" : "Show"} ${identity} subagent details`}
                 aria-describedby={`subagent-status-${participant.id}`}
               >
                 <SubagentIdentityGlyph
@@ -105,6 +121,13 @@ export function SubagentRow({
               <span id={`subagent-status-${participant.id}`} role="status" className="sr-only">
                 {status}
               </span>
+              {unavailableDetailId === participant.id && (
+                <span data-testid="subagent-transcript-unavailable" role="status" className="text-xs text-muted-foreground">
+                  {transcriptUnavailableMessage(
+                    detail?.kind === "transcript-unavailable" ? detail.providerName : undefined,
+                  )}
+                </span>
+              )}
               <span className="shrink-0 text-xs text-muted-foreground">
                 {lifecycleLabel(participantLifecycle)}
               </span>

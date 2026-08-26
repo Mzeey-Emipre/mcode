@@ -26,7 +26,7 @@ describe("extractSubagentDescription", () => {
   });
 
   it("falls back to prompt when description is the generic Task title", () => {
-    const prompt = "Read apps/server/src/features/providers/adapters/cursor/cursor-acp-task.ts.";
+    const prompt = "Read packages/providers/src/private/cursor/acp/cursor-acp-task.ts.";
     expect(
       extractSubagentDescription(
         mkAgent({

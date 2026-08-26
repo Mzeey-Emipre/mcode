@@ -83,6 +83,12 @@ export function recordToToolCall(r: ToolCallRecord): ToolCall {
         ...(r.provider_agent_key
           ? { codexCollabKind: "spawnAgent", agentPath: r.provider_agent_key }
           : {}),
+        ...(r.subagent_identity_key ? { nativeThreadId: r.subagent_identity_key } : {}),
+        ...(r.subagent_provider_name ? { subagentProviderName: r.subagent_provider_name } : {}),
+        ...(r.subagent_prompt ? { prompt: r.subagent_prompt } : {}),
+        ...(r.subagent_type ? { subagentType: r.subagent_type } : {}),
+        ...(r.subagent_agent_id ? { agentId: r.subagent_agent_id } : {}),
+        ...(typeof r.subagent_duration_ms === "number" ? { durationMs: r.subagent_duration_ms } : {}),
         ...(r.model ? { model: r.model } : {}),
         ...(r.reasoning_effort ? { reasoningEffort: r.reasoning_effort } : {}),
       }, r.provider_agent_key ?? r.id)
@@ -97,14 +103,20 @@ export function recordToToolCall(r: ToolCallRecord): ToolCall {
       ...(r.tool_name === AGENT_TOOL_NAME && r.display_name
         ? { agentName: r.display_name }
         : {}),
+      ...(r.tool_name === AGENT_TOOL_NAME && r.subagent_prompt
+        ? { prompt: r.subagent_prompt }
+        : {}),
+      ...(r.tool_name === AGENT_TOOL_NAME && r.subagent_type
+        ? { subagentType: r.subagent_type }
+        : {}),
+      ...(r.tool_name === AGENT_TOOL_NAME && r.subagent_agent_id
+        ? { agentId: r.subagent_agent_id }
+        : {}),
+      ...(r.tool_name === AGENT_TOOL_NAME && typeof r.subagent_duration_ms === "number"
+        ? { durationMs: r.subagent_duration_ms }
+        : {}),
     },
-    ...(subagentPresentation
-      ? {
-          subagentPresentation: r.subagent_identity_key
-            ? { ...subagentPresentation, identityKey: r.subagent_identity_key }
-            : subagentPresentation,
-        }
-      : {}),
+    ...(subagentPresentation ? { subagentPresentation } : {}),
     output: r.output_summary || null,
     isError: r.status === "failed",
     isComplete: r.status === "completed" || r.status === "failed" || r.status === "cancelled",

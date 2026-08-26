@@ -40,7 +40,9 @@ import {
   resolveBrowserNarrativeTool,
   resolveProviderAgentKey,
   resolveSubagentDisplayName,
+  resolveSubagentDuration,
   resolveSubagentMetadata,
+  resolveSubagentPrompt,
   createSubagentPresentation,
   resolveSubagentExactIdentity,
   type Message,
@@ -71,6 +73,16 @@ const DEFAULT_LOAD_LIMIT = 200;
 /** Buffered tool call with raw input preserved for deferred summarization. */
 export interface BufferedToolCall extends CreateToolCallRecordInput {
   _rawToolInput?: Record<string, unknown>;
+}
+
+/** Extracts bounded provider metadata that must survive a persisted Agent card. */
+function persistedSubagentMetadata(input: Record<string, unknown>) {
+  return {
+    subagentPrompt: resolveSubagentPrompt(input.prompt),
+    subagentType: resolveSubagentMetadata(input.subagentType),
+    subagentAgentId: resolveSubagentMetadata(input.agentId),
+    subagentDurationMs: resolveSubagentDuration(input.durationMs),
+  };
 }
 
 /** In-flight thought segment accumulated from consecutive textDelta events. */
@@ -412,6 +424,10 @@ export class NarrativeStore {
           existing.displayName = presentation.hasExplicitIdentity ? presentation.displayName : undefined;
           existing.providerAgentKey = presentation.providerAgentKey;
           existing.subagentIdentityKey = resolveSubagentExactIdentity(mergedToolInput);
+          existing.subagentProviderName = presentation.detail.kind === "transcript-unavailable"
+            ? presentation.detail.providerName
+            : undefined;
+          Object.assign(existing, persistedSubagentMetadata(mergedToolInput));
           if (existing.messageId && existing.subagentIdentityKey) {
             this.toolCallRecordRepo.updateSubagentIdentity(
               existing.toolCallId!,
@@ -450,6 +466,10 @@ export class NarrativeStore {
       subagentIdentityKey: event.toolName === "Agent"
         ? resolveSubagentExactIdentity(event.toolInput)
         : undefined,
+      subagentProviderName: presentation?.detail.kind === "transcript-unavailable"
+        ? presentation.detail.providerName
+        : undefined,
+      ...(event.toolName === "Agent" ? persistedSubagentMetadata(event.toolInput) : {}),
       model: presentation?.model,
       reasoningEffort: presentation?.reasoningEffort,
       inputSummary: "", // Deferred to persistNarrative
@@ -572,6 +592,11 @@ export class NarrativeStore {
           display_name: toolCall.displayName ?? null,
           provider_agent_key: toolCall.providerAgentKey ?? null,
           subagent_identity_key: toolCall.subagentIdentityKey ?? null,
+          subagent_provider_name: toolCall.subagentProviderName ?? null,
+          subagent_prompt: toolCall.subagentPrompt ?? null,
+          subagent_type: toolCall.subagentType ?? null,
+          subagent_agent_id: toolCall.subagentAgentId ?? null,
+          subagent_duration_ms: toolCall.subagentDurationMs ?? null,
           model: toolCall.model ?? null,
           reasoning_effort: toolCall.reasoningEffort ?? null,
           input_summary: toolCall.inputSummary || this.summarizeInput(
@@ -761,6 +786,11 @@ export class NarrativeStore {
       displayName: item.record.display_name ?? undefined,
       providerAgentKey: item.record.provider_agent_key ?? undefined,
       subagentIdentityKey: item.record.subagent_identity_key ?? undefined,
+      subagentProviderName: item.record.subagent_provider_name ?? undefined,
+      subagentPrompt: item.record.subagent_prompt ?? undefined,
+      subagentType: item.record.subagent_type ?? undefined,
+      subagentAgentId: item.record.subagent_agent_id ?? undefined,
+      subagentDurationMs: item.record.subagent_duration_ms ?? undefined,
       model: item.record.model ?? undefined,
       reasoningEffort: item.record.reasoning_effort ?? undefined,
       inputSummary: item.record.input_summary,
@@ -1028,6 +1058,11 @@ export class NarrativeStore {
           toolCall.displayName = resolveSubagentDisplayName(toolCall._rawToolInput);
           toolCall.providerAgentKey = resolveProviderAgentKey(toolCall._rawToolInput);
           toolCall.subagentIdentityKey = resolveSubagentExactIdentity(toolCall._rawToolInput);
+          const presentation = createSubagentPresentation(toolCall._rawToolInput, toolCall.toolCallId);
+          toolCall.subagentProviderName = presentation.detail.kind === "transcript-unavailable"
+            ? presentation.detail.providerName
+            : undefined;
+          Object.assign(toolCall, persistedSubagentMetadata(toolCall._rawToolInput));
           toolCall.model = resolveSubagentMetadata(toolCall._rawToolInput.model);
           toolCall.reasoningEffort = resolveSubagentMetadata(toolCall._rawToolInput.reasoningEffort);
         }

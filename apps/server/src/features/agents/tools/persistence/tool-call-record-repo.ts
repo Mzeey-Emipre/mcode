@@ -23,6 +23,11 @@ interface ToolCallRecordRow {
   display_name: string | null;
   provider_agent_key: string | null;
   subagent_identity_key: string | null;
+  subagent_provider_name: string | null;
+  subagent_prompt: string | null;
+  subagent_type: string | null;
+  subagent_agent_id: string | null;
+  subagent_duration_ms: number | null;
   model: string | null;
   reasoning_effort: string | null;
   input_summary: string;
@@ -46,6 +51,11 @@ export interface CreateToolCallRecordInput {
   displayName?: string;
   providerAgentKey?: string;
   subagentIdentityKey?: string;
+  subagentProviderName?: string;
+  subagentPrompt?: string;
+  subagentType?: string;
+  subagentAgentId?: string;
+  subagentDurationMs?: number;
   model?: string;
   reasoningEffort?: string;
   inputSummary: string;
@@ -72,6 +82,11 @@ function rowToToolCallRecord(row: ToolCallRecordRow): ToolCallRecord {
     display_name: row.display_name,
     provider_agent_key: row.provider_agent_key,
     subagent_identity_key: row.subagent_identity_key,
+    subagent_provider_name: row.subagent_provider_name,
+    subagent_prompt: row.subagent_prompt,
+    subagent_type: row.subagent_type,
+    subagent_agent_id: row.subagent_agent_id,
+    subagent_duration_ms: row.subagent_duration_ms,
     model: row.model,
     reasoning_effort: row.reasoning_effort,
     input_summary: row.input_summary,
@@ -88,7 +103,7 @@ function rowToToolCallRecord(row: ToolCallRecordRow): ToolCallRecord {
 }
 
 const TOOL_CALL_RECORD_COLUMNS =
-  "id, message_id, parent_tool_call_id, tool_name, display_name, provider_agent_key, subagent_identity_key, model, reasoning_effort, input_summary, output_summary, output_truncated, output_total_bytes, output_artifact_path, exit_code, status, started_at, completed_at, sort_order";
+  "id, message_id, parent_tool_call_id, tool_name, display_name, provider_agent_key, subagent_identity_key, subagent_provider_name, subagent_prompt, subagent_type, subagent_agent_id, subagent_duration_ms, model, reasoning_effort, input_summary, output_summary, output_truncated, output_total_bytes, output_artifact_path, exit_code, status, started_at, completed_at, sort_order";
 
 /** Repository for tool call record creation and retrieval against SQLite. */
 @injectable()
@@ -100,7 +115,7 @@ export class ToolCallRecordRepo {
 
   constructor(@inject("Database") private readonly db: Database.Database) {
     this.stmtInsert = db.prepare(
-      "INSERT OR IGNORE INTO tool_call_records (id, message_id, parent_tool_call_id, tool_name, display_name, provider_agent_key, subagent_identity_key, model, reasoning_effort, input_summary, output_summary, output_truncated, output_total_bytes, output_artifact_path, exit_code, status, started_at, completed_at, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      "INSERT OR IGNORE INTO tool_call_records (id, message_id, parent_tool_call_id, tool_name, display_name, provider_agent_key, subagent_identity_key, subagent_provider_name, subagent_prompt, subagent_type, subagent_agent_id, subagent_duration_ms, model, reasoning_effort, input_summary, output_summary, output_truncated, output_total_bytes, output_artifact_path, exit_code, status, started_at, completed_at, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     );
     this.stmtListByMessage = db.prepare(
       `SELECT ${TOOL_CALL_RECORD_COLUMNS} FROM tool_call_records WHERE message_id = ? ORDER BY sort_order ASC`,
@@ -128,6 +143,11 @@ export class ToolCallRecordRepo {
       input.displayName ?? null,
       input.providerAgentKey ?? null,
       input.subagentIdentityKey ?? null,
+      input.subagentProviderName ?? null,
+      input.subagentPrompt ?? null,
+      input.subagentType ?? null,
+      input.subagentAgentId ?? null,
+      input.subagentDurationMs ?? null,
       input.model ?? null,
       input.reasoningEffort ?? null,
       input.inputSummary,
@@ -150,6 +170,11 @@ export class ToolCallRecordRepo {
       display_name: input.displayName ?? null,
       provider_agent_key: input.providerAgentKey ?? null,
       subagent_identity_key: input.subagentIdentityKey ?? null,
+      subagent_provider_name: input.subagentProviderName ?? null,
+      subagent_prompt: input.subagentPrompt ?? null,
+      subagent_type: input.subagentType ?? null,
+      subagent_agent_id: input.subagentAgentId ?? null,
+      subagent_duration_ms: input.subagentDurationMs ?? null,
       model: input.model ?? null,
       reasoning_effort: input.reasoningEffort ?? null,
       input_summary: input.inputSummary,
@@ -180,6 +205,11 @@ export class ToolCallRecordRepo {
           item.displayName ?? null,
           item.providerAgentKey ?? null,
           item.subagentIdentityKey ?? null,
+          item.subagentProviderName ?? null,
+          item.subagentPrompt ?? null,
+          item.subagentType ?? null,
+          item.subagentAgentId ?? null,
+          item.subagentDurationMs ?? null,
           item.model ?? null,
           item.reasoningEffort ?? null,
           item.inputSummary,
@@ -221,6 +251,11 @@ export class ToolCallRecordRepo {
           item.displayName ?? null,
           item.providerAgentKey ?? null,
           item.subagentIdentityKey ?? null,
+          item.subagentProviderName ?? null,
+          item.subagentPrompt ?? null,
+          item.subagentType ?? null,
+          item.subagentAgentId ?? null,
+          item.subagentDurationMs ?? null,
           item.model ?? null,
           item.reasoningEffort ?? null,
           item.inputSummary,

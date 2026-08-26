@@ -75,9 +75,33 @@ describe("buildPersistedNarrativeItems", () => {
       displayName: "Explorer",
       hasExplicitIdentity: true,
       identityKey: "/root/explorer",
+      detail: { kind: "transcript-unavailable" },
       providerAgentKey: "/root/explorer",
       model: "gpt-5.6-luna",
       reasoningEffort: "medium",
+    });
+  });
+
+  it("keeps Cursor transcript unavailability after reload", () => {
+    const call = recordToToolCall(makeTool({
+      tool_name: "Agent",
+      subagent_provider_name: "Cursor",
+      subagent_prompt: "Inspect the current module without editing files.",
+      subagent_type: "explore",
+      subagent_agent_id: "cursor-agent-1",
+      subagent_duration_ms: 1_200,
+      input_summary: "Read the current module",
+    }));
+
+    expect(call.subagentPresentation?.detail).toEqual({
+      kind: "transcript-unavailable",
+      providerName: "Cursor",
+    });
+    expect(call.toolInput).toMatchObject({
+      prompt: "Inspect the current module without editing files.",
+      subagentType: "explore",
+      agentId: "cursor-agent-1",
+      durationMs: 1_200,
     });
   });
 
