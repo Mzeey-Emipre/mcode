@@ -70,6 +70,12 @@ vi.mock("@/components/chat/lexical", () => ({
   insertSlashCommandNode: vi.fn(),
 }));
 
+vi.mock("@/features/conversation/composer/draft/composer-editor-content", () => ({
+  writeComposerContent: vi.fn((_editor: unknown, text: string) => {
+    lastComposerText = text;
+  }),
+}));
+
 vi.mock("@/components/chat/useFileAutocomplete", () => ({
   clearFileListCache: vi.fn(),
   useFileAutocomplete: (options: Record<string, unknown>) => {
@@ -678,13 +684,49 @@ describe("Composer checkout confirmation", () => {
 
     render(<Composer threadId={thread.id} workspaceId="ws-1" />);
 
-    await userEvent.click(screen.getByLabelText("Send message"));
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText("Message Mcode"), "Fix the preview");
+    await user.click(screen.getByLabelText("Send message"));
     await waitFor(() => expect(mockTransport.sendMessage).toHaveBeenCalled());
 
+    expect(lastComposerText).toBe("");
     expect(screen.queryByTestId("composer-annotation-bundle")).not.toBeInTheDocument();
     expect(usePreviewAnnotationStore.getState().byThread[thread.id] ?? []).toEqual([]);
     expect(usePreviewAnnotationStore.getState().diffByThread[thread.id] ?? []).toEqual([]);
     expect(usePreviewDesignModeStore.getState().modes[thread.id]).toBe(false);
+  });
+
+  it("restores the draft when existing-thread transport fails", async () => {
+    const workspace = createMockWorkspace({ id: "ws-1", is_git_repo: true });
+    const thread = createMockThread({ id: "thread-restore-draft", workspace_id: "ws-1" });
+    useWorkspaceStore.setState({
+      workspaces: [workspace],
+      activeWorkspaceId: workspace.id,
+      threads: [thread],
+      activeThreadId: thread.id,
+      branches: [branch("main", true)],
+      newThreadMode: "direct",
+      newThreadBranch: "main",
+      selectedWorktree: null,
+    });
+    (mockTransport.sendMessage as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error("transport unavailable"),
+    );
+
+    render(<Composer threadId={thread.id} workspaceId="ws-1" />);
+
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText("Message Mcode"), "Retry this message");
+    await user.click(screen.getByLabelText("Send message"));
+
+    await waitFor(() => expect(useToastStore.getState().toasts).toContainEqual(
+      expect.objectContaining({
+        level: "error",
+        title: "Could not send message",
+        message: "Message dispatch failed",
+      }),
+    ));
+    expect(lastComposerText).toBe("Retry this message");
   });
 
   it("sends workspace-scoped annotations from a new thread composer", async () => {

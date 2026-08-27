@@ -49,6 +49,8 @@ export interface ComposerAttachments {
   replaceAttachments(nextAttachments: PendingAttachment[]): void;
   removeAttachment(id: string): void;
   snapshotAttachmentMetas(): AttachmentMeta[];
+  detachAttachments(): PendingAttachment[];
+  releaseAttachments(attachments: readonly PendingAttachment[]): void;
   collectAndClearAttachments(): AttachmentMeta[];
   waitForPreparationsBeforeSubmit(): Promise<boolean>;
   consumeDeferredSubmit(): boolean;
@@ -274,16 +276,27 @@ export function useComposerAttachments(context: ComposerAttachmentContext): Comp
     return toComposerAttachmentMetas(attachmentsRef.current);
   }, []);
 
-  const collectAndClearAttachments = useCallback((): AttachmentMeta[] => {
+  const detachAttachments = useCallback((): PendingAttachment[] => {
     invalidatePreparations();
     const currentAttachments = attachmentsRef.current;
-    const metas = toComposerAttachmentMetas(currentAttachments);
-    for (const attachment of currentAttachments) {
+    commitAttachments([]);
+    return currentAttachments;
+  }, [commitAttachments, invalidatePreparations]);
+
+  const releaseAttachments = useCallback((attachmentsToRelease: readonly PendingAttachment[]) => {
+    for (const attachment of attachmentsToRelease) {
       if (attachment.previewUrl) URL.revokeObjectURL(attachment.previewUrl);
     }
-    commitAttachments([]);
+    const spillPaths = collectSpillPathsFromPendingAttachments(attachmentsToRelease);
+    if (spillPaths.length > 0) void releaseBrowserCaptureSpills(spillPaths);
+  }, []);
+
+  const collectAndClearAttachments = useCallback((): AttachmentMeta[] => {
+    const currentAttachments = detachAttachments();
+    const metas = toComposerAttachmentMetas(currentAttachments);
+    releaseAttachments(currentAttachments);
     return metas;
-  }, [commitAttachments, invalidatePreparations]);
+  }, [detachAttachments, releaseAttachments]);
 
   const waitForPreparationsBeforeSubmit = useCallback(async (): Promise<boolean> => {
     const pendingPreparations = [...pendingAttachmentPreparationsRef.current];
@@ -311,6 +324,8 @@ export function useComposerAttachments(context: ComposerAttachmentContext): Comp
     replaceAttachments,
     removeAttachment,
     snapshotAttachmentMetas,
+    detachAttachments,
+    releaseAttachments,
     collectAndClearAttachments,
     waitForPreparationsBeforeSubmit,
     consumeDeferredSubmit,
