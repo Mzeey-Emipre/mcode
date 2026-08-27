@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { rmdir } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { inject, injectable } from "tsyringe";
@@ -132,14 +132,15 @@ export class GitWorktreeService {
     validateWorktreeName(name);
 
     let worktreePath = options.worktreePath ?? join(getManagedWorktreeBaseDir(repoPath), name);
-    if (options.managedCanonicalOnly) {
+    const managedCanonicalOnly = options.managedCanonicalOnly === true;
+    if (managedCanonicalOnly) {
       worktreePath = await this.worktreeSafety.resolveManagedCanonicalWorktreePath(worktreePath);
     }
     const deleteBranch = options.deleteBranch ?? true;
     const branch = deleteBranch ? (options.branchName ?? `mcode/${name}`) : null;
     if (branch) validateBranchName(branch);
 
-    await this.assertRemovableWorktreePath(repoPath, worktreePath);
+    await this.assertRemovableWorktreePath(repoPath, worktreePath, managedCanonicalOnly);
     try {
       // Git needs the second flag to remove a worktree held by another Windows process.
       await this.gitExecutor.exec(
@@ -249,7 +250,13 @@ export class GitWorktreeService {
     return worktrees;
   }
 
-  private async assertRemovableWorktreePath(repoPath: string, worktreePath: string): Promise<void> {
+  private async assertRemovableWorktreePath(
+    repoPath: string,
+    worktreePath: string,
+    managedCanonicalOnly: boolean,
+  ): Promise<void> {
+    if (managedCanonicalOnly) return;
+
     const managedRoot = resolve(getMcodeDir(), "worktrees");
     const relativePath = relative(managedRoot, resolve(worktreePath));
     const isManagedPath = !(relativePath.startsWith("..") || isAbsolute(relativePath));
@@ -314,5 +321,7 @@ export class GitWorktreeService {
 }
 
 function normalizeWorktreePath(path: string): string {
-  return resolve(path).replace(/\\/g, "/").toLowerCase().replace(/\/+$/, "");
+  const resolvedPath = resolve(path);
+  const identityPath = existsSync(resolvedPath) ? realpathSync.native(resolvedPath) : resolvedPath;
+  return identityPath.replace(/\\/g, "/").toLowerCase().replace(/\/+$/, "");
 }
