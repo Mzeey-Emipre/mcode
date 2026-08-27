@@ -89,6 +89,9 @@ const IGNORED_ACP_SESSION_UPDATES = new Set<string>([
   "usage_update",
 ]);
 
+const MAX_RETAINED_ACP_TOOL_RESULT_CHARS = 64_000;
+const RETAINED_ACP_TOOL_RESULT_TRUNCATION_MARKER = "\n[ACP progress output truncated]";
+
 /**
  * Accumulator for streaming state during one ACP prompt turn on a thread.
  */
@@ -100,12 +103,16 @@ export interface CursorAcpTurnState {
   pendingTaskToolCallIds: Set<string>;
   /** Task ids that completed on ACP before `cursor/task` metadata arrived. */
   taskCompletedAwaitingMeta: Set<string>;
+  /** Terminal failure status for Task ids awaiting `cursor/task` metadata. */
+  taskCompletionErrorByCallId: Map<string, boolean>;
   /** Cached `cursor/task` metadata keyed by toolCallId until tool_call_update completes. */
   taskMetaByCallId: Map<string, import("./cursor-acp-task.js").CursorTaskMeta>;
   /** Tracks the ACP tool name (kind/title) per tool call ID for enriching updates. */
   toolNameByCallId: Map<string, string>;
   /** Kind/title from deferred lifecycle `tool_call` markers. */
   pendingToolMarkerByCallId: Map<string, PendingAcpToolMarker>;
+  /** Bounded result text from in-progress ACP updates until their terminal update arrives. */
+  retainedToolResultOutputByCallId: Map<string, string>;
 }
 
 /** Creates a fresh per-turn state bundle (wraps shared stream accumulator shape). */
@@ -122,9 +129,11 @@ export function createCursorAcpTurnState(): CursorAcpTurnState {
     suppressedToolCallIds: new Set(),
     pendingTaskToolCallIds: new Set(),
     taskCompletedAwaitingMeta: new Set(),
+    taskCompletionErrorByCallId: new Map(),
     taskMetaByCallId: new Map(),
     toolNameByCallId: new Map(),
     pendingToolMarkerByCallId: new Map(),
+    retainedToolResultOutputByCallId: new Map(),
   };
 }
 
@@ -417,6 +426,20 @@ function isTerminalAcpToolCallStatus(status: unknown): boolean {
   return status === "completed" || status === "failed";
 }
 
+function hasAcpToolCallUpdateResultData(update: {
+  content?: unknown;
+  rawOutput?: unknown;
+}): boolean {
+  return update.rawOutput !== undefined || (Array.isArray(update.content) && update.content.length > 0);
+}
+
+function boundedAcpToolResultOutput(output: string): string {
+  if (output.length <= MAX_RETAINED_ACP_TOOL_RESULT_CHARS) return output;
+  const retainedLength =
+    MAX_RETAINED_ACP_TOOL_RESULT_CHARS - RETAINED_ACP_TOOL_RESULT_TRUNCATION_MARKER.length;
+  return `${output.slice(0, retainedLength)}${RETAINED_ACP_TOOL_RESULT_TRUNCATION_MARKER}`;
+}
+
 function mapTerminalSuppressedAcpToolCallUpdate(
   update: { status?: unknown; toolCallId: string },
   threadId: string,
@@ -433,6 +456,7 @@ function mapTerminalSuppressedAcpToolCallUpdate(
       );
     }
     state.taskCompletedAwaitingMeta.add(update.toolCallId);
+    state.taskCompletionErrorByCallId.set(update.toolCallId, update.status === "failed");
     return [];
   }
   acc.toolStartTimes.delete(update.toolCallId);
@@ -453,16 +477,6 @@ function mapSuppressedAcpToolCallUpdate(
   }
   acc.toolStartTimes.delete(update.toolCallId);
   return [];
-}
-
-function acpToolCallUpdateHasData(update: {
-  content?: unknown;
-  rawOutput?: unknown;
-  status?: unknown;
-}): boolean {
-  if (update.rawOutput !== undefined) return true;
-  if (Array.isArray(update.content) && update.content.length > 0) return true;
-  return isTerminalAcpToolCallStatus(update.status);
 }
 
 function updatedAcpToolName(
@@ -526,6 +540,7 @@ function clearAcpToolCallUpdate(state: CursorAcpTurnState, acc: CursorStreamAccu
   acc.pendingToolCalls.delete(toolCallId);
   state.toolNameByCallId.delete(toolCallId);
   state.pendingToolMarkerByCallId.delete(toolCallId);
+  state.retainedToolResultOutputByCallId.delete(toolCallId);
 }
 
 function mapAcpToolCallUpdated(
@@ -544,14 +559,30 @@ function mapAcpToolCallUpdated(
 ): AgentEvent[] {
   const suppressedEvents = mapSuppressedAcpToolCallUpdate(update, threadId, state, acc);
   if (suppressedEvents) return suppressedEvents;
-  if (!acpToolCallUpdateHasData(update)) return [];
+
+  const hasResultData = hasAcpToolCallUpdateResultData(update);
+  if (update.status === "in_progress") {
+    if (hasResultData) {
+      const diffs = extractContentDiffs(update as Record<string, unknown>);
+      const { toolName } = updatedAcpToolName(update, state);
+      state.retainedToolResultOutputByCallId.set(
+        update.toolCallId,
+        boundedAcpToolResultOutput(formatAcpToolResultOutput(toolName, update.rawOutput, diffs)),
+      );
+    }
+    return [];
+  }
+  const isStatuslessResultUpdate = update.status === undefined && hasResultData;
+  if (!isTerminalAcpToolCallStatus(update.status) && !isStatuslessResultUpdate) return [];
 
   const parentToolCallId = extractCursorParentToolCallId(update as unknown as Record<string, unknown>);
   const diffs = extractContentDiffs(update as Record<string, unknown>);
   const marker = state.pendingToolMarkerByCallId.get(update.toolCallId);
   const { toolName } = updatedAcpToolName(update, state);
   const toolInput = enrichAcpToolInput(toolName, marker, update.rawInput, update.rawOutput, diffs);
-  const output = formatAcpToolResultOutput(toolName, update.rawOutput, diffs);
+  const output = hasResultData
+    ? formatAcpToolResultOutput(toolName, update.rawOutput, diffs)
+    : (state.retainedToolResultOutputByCallId.get(update.toolCallId) ?? "");
   const events = deferredAcpToolUse(
     threadId,
     update.toolCallId,
@@ -561,7 +592,6 @@ function mapAcpToolCallUpdated(
     acc,
   );
 
-  clearAcpToolCallUpdate(state, acc, update.toolCallId);
   events.push(
     acpToolResultEvent(
       threadId,
@@ -571,6 +601,7 @@ function mapAcpToolCallUpdated(
       resultToolInput(toolName, diffs, toolInput),
     ),
   );
+  clearAcpToolCallUpdate(state, acc, update.toolCallId);
   return events;
 }
 

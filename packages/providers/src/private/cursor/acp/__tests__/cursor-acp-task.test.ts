@@ -118,4 +118,38 @@ describe("cursor-acp-task", () => {
     expect(fromExt[1].type).toBe(AgentEventType.ToolResult);
     expect((fromExt[0] as { toolName: string }).toolName).toBe("Agent");
   });
+
+  it("preserves a failed Task completion until cursor/task metadata arrives", () => {
+    const state = createCursorAcpTurnState();
+    const sessionId = "s";
+
+    mapCursorAcpSessionNotification(
+      { sessionId, update: CAPTURED_TASK_TOOL_CALL },
+      threadId,
+      state,
+    );
+    const failed = mapCursorAcpSessionNotification(
+      {
+        sessionId,
+        update: {
+          sessionUpdate: "tool_call_update",
+          status: "failed",
+          toolCallId: CAPTURED_TASK_TOOL_CALL.toolCallId,
+          rawOutput: { durationMs: 7456, isBackground: false },
+        },
+      },
+      threadId,
+      state,
+    );
+    expect(failed).toEqual([]);
+
+    const fromExt = cursorTaskExtToAgentEvents(threadId, CAPTURED_TASK_EXT, state);
+    expect(fromExt).toContainEqual(
+      expect.objectContaining({
+        type: AgentEventType.ToolResult,
+        toolCallId: CAPTURED_TASK_TOOL_CALL.toolCallId,
+        isError: true,
+      }),
+    );
+  });
 });

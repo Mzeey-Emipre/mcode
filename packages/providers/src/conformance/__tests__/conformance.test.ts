@@ -9,6 +9,7 @@ import {
   createProviderFixtureManifest,
   loadProviderFixtureManifest,
   runFactoryCoreProfile,
+  runCursorAcpTraceProfile,
   runMapperProfile,
   sanitizeProviderFixtureFile,
   validateProviderConformanceRegistry,
@@ -66,7 +67,36 @@ describe("Provider conformance registry", () => {
     const cursor = ENABLED_PROVIDER_CONFORMANCE.find(({ providerId }) => providerId === "cursor")!;
     expect(() => validateProviderConformanceRegistry([
       { ...cursor, fixtureFiles: cursor.fixtureFiles.filter((file) => !file.endsWith("captured.json")) },
-    ])).toThrow("lacks captured fixture coverage for core");
+    ])).toThrow("lacks captured fixture coverage");
+  });
+
+  it("covers each declared Cursor capability with captured and synthetic ACP trace envelopes", async () => {
+    const cursor = ENABLED_PROVIDER_CONFORMANCE.find(({ providerId }) => providerId === "cursor")!;
+    const cursorFixtures = cursor.fixtureFiles.map(loadProviderFixtureManifest);
+    const captured = cursorFixtures.find((fixture) => fixture.provenance === "captured")!;
+    const synthetic = cursorFixtures.find((fixture) => fixture.provenance === "synthetic")!;
+
+    expect([...new Set(cursorFixtures.flatMap((fixture) => fixture.requiredProfiles))].sort()).toEqual(
+      [...cursor.requiredProfiles].sort(),
+    );
+    expect(captured.requiredProfiles).toEqual(["core", "build"]);
+    expect(synthetic.requiredProfiles).toEqual(cursor.requiredProfiles);
+    await expect(Promise.all(cursorFixtures.map(runCursorAcpTraceProfile))).resolves.toEqual([
+      {
+        scenario: "synthetic Cursor ACP lifecycle and unsupported extension replay",
+        coveredProfiles: cursor.requiredProfiles,
+        emittedEventTypes: ["toolUse", "toolResult", "toolUse", "toolUse", "toolResult"],
+        toolNames: ["Read", "Agent", "Agent"],
+        unsupportedMethods: ["cursor/task", "cursor/continue"],
+      },
+      {
+        scenario: "captured Cursor ACP tool and child lifecycle envelope replay",
+        coveredProfiles: ["core", "build"],
+        emittedEventTypes: ["toolUse", "toolUse", "toolResult", "toolUse", "toolResult"],
+        toolNames: ["Agent", "Agent", "Read"],
+        unsupportedMethods: [],
+      },
+    ]);
   });
 
   it("registers a sanitized Codex adversarial fixture without private content", () => {

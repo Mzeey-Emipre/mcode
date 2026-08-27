@@ -21,6 +21,84 @@ export interface SanitizedTraceEvent {
   status?: "started" | "completed" | "interrupted" | "errored";
 }
 
+/** Allowlisted native Cursor ACP `session/update` fields safe for committed fixtures. */
+export type CursorAcpTraceSessionUpdate =
+  | {
+    sessionUpdate: "tool_call";
+    toolCallId: string;
+    title: string;
+    kind: "read" | "other";
+    status: "pending" | "in_progress";
+  }
+  | {
+    sessionUpdate: "tool_call_update";
+    toolCallId: string;
+    status: "in_progress" | "completed" | "failed";
+  }
+  | { sessionUpdate: "session_info_update" };
+
+/** Sanitized native Cursor ACP `session/update` envelope. */
+export interface CursorAcpTraceSessionUpdateEnvelope {
+  sequence: number;
+  kind: "session/update";
+  sessionId: string;
+  update: CursorAcpTraceSessionUpdate;
+}
+
+/** Sanitized native Cursor ACP extension request envelope. */
+export type CursorAcpTraceExtMethodEnvelope =
+  | {
+    sequence: number;
+    kind: "ext-method";
+    method: "cursor/task";
+    params: null | { toolCallId: string };
+  }
+  | {
+    sequence: number;
+    kind: "ext-method";
+    method: "cursor/create_plan";
+    params: { markdown: string };
+  }
+  | {
+    sequence: number;
+    kind: "ext-method";
+    method: "cursor/continue";
+    params: Record<never, never>;
+  };
+
+/** Sanitized native Cursor ACP permission request envelope. */
+export interface CursorAcpTracePermissionRequestEnvelope {
+  sequence: number;
+  kind: "request-permission";
+  request: {
+    sessionId: string;
+    options: readonly [{ optionId: string; kind: "allow_once"; name: string }];
+    toolCall: { title: string };
+  };
+}
+
+/** One safe native Cursor ACP envelope replayed without fixture-side synthesis. */
+export type CursorAcpTraceEnvelope =
+  | CursorAcpTraceSessionUpdateEnvelope
+  | CursorAcpTraceExtMethodEnvelope
+  | CursorAcpTracePermissionRequestEnvelope;
+
+/** Semantic output expected after Cursor ACP trace replay. */
+export interface CursorAcpTraceExpectedSemantics {
+  emittedEventTypes: readonly ("toolUse" | "toolResult")[];
+  toolNames: readonly ("Read" | "Agent")[];
+  planExitCount: number;
+  permissionOutcomes: readonly "selected"[];
+  unsupportedMethods: readonly ("cursor/task" | "cursor/continue")[];
+  ignoredForeignSessionUpdateCount: number;
+}
+
+/** Cursor-only ACP evidence that replays through the production mapper and bridge. */
+export interface CursorAcpTraceFixture {
+  envelopes: readonly CursorAcpTraceEnvelope[];
+  expected: CursorAcpTraceExpectedSemantics;
+}
+
 /** Semantic result expected from one sanitized Provider trace. */
 export interface FixtureExpectedSemantics {
   orderedKinds: readonly SanitizedTraceEvent["kind"][];
@@ -44,6 +122,8 @@ export interface ProviderFixtureManifest {
   };
   input: {
     events: readonly SanitizedTraceEvent[];
+    /** Cursor-only ACP envelopes. Generic ACP fixtures remain private. */
+    cursorAcpTrace?: CursorAcpTraceFixture;
   };
   expected: FixtureExpectedSemantics;
 }
@@ -62,7 +142,7 @@ export interface ProviderConformanceRegistration {
   factory(input: ProviderFactoryInput): ProviderBoundary;
   requiredProfiles: readonly ProviderConformanceProfile[];
   fixtureFiles: readonly string[];
-  /** Fixture provenance classes required for every declared profile. */
+  /** Fixture provenance classes required for the Provider's collective evidence. */
   requiredFixtureProvenance?: readonly ProviderFixtureManifest["provenance"][];
   supportedVersions: readonly ProviderVersionEvidence[];
 }

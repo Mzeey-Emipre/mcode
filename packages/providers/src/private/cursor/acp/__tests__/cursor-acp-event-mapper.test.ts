@@ -220,6 +220,114 @@ describe("mapCursorAcpSessionNotification", () => {
     );
   });
 
+  it("retains in-progress output until a status-only terminal update", () => {
+    const state = createCursorAcpTurnState();
+    mapCursorAcpSessionNotification(
+      {
+        sessionId: "s",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "c-progress",
+          title: "Terminal",
+          kind: "execute",
+          rawInput: { command: "echo processing" },
+          status: "in_progress",
+        },
+      },
+      threadId,
+      state,
+    );
+
+    const progress = mapCursorAcpSessionNotification(
+      {
+        sessionId: "s",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "c-progress",
+          status: "in_progress",
+          rawOutput: { stdout: "partial output" },
+        },
+      },
+      threadId,
+      state,
+    );
+    expect(progress).toEqual([]);
+    expect(state.accumulator.pendingToolCalls.has("c-progress")).toBe(true);
+
+    const completed = mapCursorAcpSessionNotification(
+      {
+        sessionId: "s",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "c-progress",
+          status: "completed",
+        },
+      },
+      threadId,
+      state,
+    );
+    expect(completed).toHaveLength(1);
+    expect(completed[0]).toMatchObject({
+      type: AgentEventType.ToolResult,
+      toolCallId: "c-progress",
+      output: "partial output",
+      isError: false,
+    });
+  });
+
+  it("treats only statusless updates with result data as terminal", () => {
+    const state = createCursorAcpTurnState();
+    mapCursorAcpSessionNotification(
+      {
+        sessionId: "s",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "c-statusless",
+          title: "Terminal",
+          kind: "execute",
+          rawInput: { command: "echo done" },
+          status: "in_progress",
+        },
+      },
+      threadId,
+      state,
+    );
+
+    const empty = mapCursorAcpSessionNotification(
+      {
+        sessionId: "s",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "c-statusless",
+        },
+      },
+      threadId,
+      state,
+    );
+    expect(empty).toEqual([]);
+    expect(state.accumulator.pendingToolCalls.has("c-statusless")).toBe(true);
+
+    const completed = mapCursorAcpSessionNotification(
+      {
+        sessionId: "s",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "c-statusless",
+          rawOutput: { stdout: "statusless output" },
+        },
+      },
+      threadId,
+      state,
+    );
+    expect(completed).toHaveLength(1);
+    expect(completed[0]).toMatchObject({
+      type: AgentEventType.ToolResult,
+      toolCallId: "c-statusless",
+      output: "statusless output",
+      isError: false,
+    });
+  });
+
   it("maps plan session update to TodoWrite events", () => {
     const state = createCursorAcpTurnState();
     const events = mapCursorAcpSessionNotification(
