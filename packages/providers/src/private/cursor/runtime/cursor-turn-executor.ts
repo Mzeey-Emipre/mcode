@@ -22,13 +22,14 @@ import {
 import { createCursorAcpTurnState } from "../acp/cursor-acp-event-mapper.js";
 import { resolveCursorAssistantMessageContent } from "../stream-json/cursor-stream-event-mapper.js";
 import type { CursorSessionState } from "../cursor-session-state.js";
+import type { CursorCanonicalEventRouting } from "../cursor-canonical-event-publisher.js";
 
 /** Supplies provider-owned session operations to the turn executor. */
 export interface CursorTurnExecutorDeps {
   settings: CursorProviderPorts["settings"];
   skills: CursorProviderPorts["skills"];
-  emitEvent: (event: AgentEvent) => void;
-  bindTurnExecution: (entry: CursorSessionState, executionId: string) => void;
+  publishEvent: (entry: CursorSessionState, event: AgentEvent) => void;
+  bindTurnRouting: (entry: CursorSessionState, routing: CursorCanonicalEventRouting) => void;
   openLogicalSession: (entry: CursorSessionState, resume: boolean) => Promise<boolean>;
   applyModel: (entry: CursorSessionState, model: string) => Promise<void>;
   respawnAfterDisconnect: (entry: CursorSessionState) => Promise<CursorSessionState>;
@@ -40,7 +41,9 @@ export interface CursorTurnExecutorOptions {
   model: string;
   resume: boolean;
   attachments?: AttachmentMeta[];
+  turnId: string;
   turnExecutionId: string;
+  deliveryAttempt: number;
 }
 
 type CursorProviderConfig =
@@ -71,10 +74,7 @@ export class CursorTurnExecutor {
 
   /** Runs a turn and emits its terminal events. */
   async run(entry: CursorSessionState, opts: CursorTurnExecutorOptions): Promise<void> {
-    const { message, model, resume, attachments, turnExecutionId } = opts;
-    const emitTurnEvent = (event: AgentEvent): void => {
-      this.deps.emitEvent({ ...event, turnExecutionId });
-    };
+    const { message, model, resume, attachments, turnId, turnExecutionId, deliveryAttempt } = opts;
     const cursorCfg = this.deps.settings.get().provider.cursor;
     const execution: CursorTurnExecutionState = {
       currentEntry: entry,
@@ -86,6 +86,9 @@ export class CursorTurnExecutor {
       instructionMarkdown: undefined,
       instructionMarkdownReady: false,
     };
+    const emitTurnEvent = (event: AgentEvent): void => {
+      this.deps.publishEvent(execution.currentEntry, { ...event, turnExecutionId });
+    };
     try {
       this.incrementCursorPromptOrdinal(execution.currentEntry, cursorCfg);
       const promptResponse = await this.promptWithTransientRetry(
@@ -93,7 +96,9 @@ export class CursorTurnExecutor {
         cursorCfg,
         model,
         resume,
+        turnId,
         turnExecutionId,
+        deliveryAttempt,
       );
       this.emitSuccessfulTurn(execution.currentEntry, promptResponse, turnExecutionId, emitTurnEvent);
     } catch (error) {
@@ -130,7 +135,9 @@ export class CursorTurnExecutor {
     cursorCfg: CursorProviderConfig,
     model: string,
     resume: boolean,
+    turnId: string,
     turnExecutionId: string,
+    deliveryAttempt: number,
   ): Promise<CursorPromptResponse> {
     const maxAttempts = cursorCfg.retryTransientFailuresOnce ? 2 : 1;
     let attempt = 0;
@@ -140,7 +147,12 @@ export class CursorTurnExecutor {
       try {
         attempt += 1;
         execution.currentEntry.activeTurnState = createCursorAcpTurnState();
-        this.deps.bindTurnExecution(execution.currentEntry, turnExecutionId);
+        this.deps.bindTurnRouting(execution.currentEntry, {
+          threadId: execution.currentEntry.threadId,
+          turnId,
+          executionId: turnExecutionId,
+          deliveryAttempt,
+        });
         const promptResponse = await execution.currentEntry.acpRuntime.prompt<CursorPromptResponse>({
           sessionId: execution.currentEntry.acpSessionId,
           prompt: promptAttempt.blocks,

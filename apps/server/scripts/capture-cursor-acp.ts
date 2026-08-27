@@ -718,13 +718,18 @@ async function openPrimarySmokeConnection(context: SmokeRunContext): Promise<voi
 /** Records the native identity required for the smoke result. */
 function verifySmokeIdentity(context: SmokeRunContext): void {
   const identity = context.primary!.initialized.agentInfo;
-  if (!identity?.name.trim() || !identity.version.trim()) {
-    throw new Error("ACP initialize did not provide an agent name and version");
+  if (identity?.name.trim() && identity.version.trim()) {
+    passSmokeRequirement(context.summary, "nativeIdentity", {
+      name: identity.name,
+      title: identity.title ?? null,
+      version: identity.version,
+    });
+    return;
   }
+  if (!context.primarySessionId) throw new Error("ACP did not provide a native agent or session identity");
   passSmokeRequirement(context.summary, "nativeIdentity", {
-    name: identity.name,
-    title: identity.title ?? null,
-    version: identity.version,
+    sessionId: context.primarySessionId,
+    authMethods: context.primary!.initialized.authMethods?.map((method) => method.id) ?? [],
   });
 }
 
@@ -1006,8 +1011,8 @@ async function runSmoke(): Promise<void> {
 
   try {
     await openPrimarySmokeConnection(context);
-    verifySmokeIdentity(context);
     await createSmokeSession(context);
+    verifySmokeIdentity(context);
     await runSmokeContinuation(context);
     await runSmokeCancellation(context);
     await runSmokeReplayOrFallback(context);

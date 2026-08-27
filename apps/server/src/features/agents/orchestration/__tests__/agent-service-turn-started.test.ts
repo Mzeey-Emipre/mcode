@@ -173,6 +173,7 @@ describe("AgentService.sendMessage emits TurnStarted", () => {
       threadId: thread.id,
       content: "hello",
       permissionMode: "default",
+      sourceTurnId: "canonical-source-turn",
     });
 
     // Let the async prelude (attachment persist + ref capture + settings.get) settle.
@@ -215,5 +216,36 @@ describe("AgentService.sendMessage emits TurnStarted", () => {
     // Provider.sendTurn must have been invoked. Confirms the emit happened
     // during sendTurn flow, not via some other path.
     expect(providerStub.sendTurn).toHaveBeenCalledTimes(1);
+    expect(providerStub.sendTurn).toHaveBeenCalledWith(expect.objectContaining({
+      turnId: "canonical-source-turn",
+    }));
+  });
+
+  it("starts canonical providers through AgentService without leaving terminal suppression behind", async () => {
+    Object.assign(providerStub, {
+      id: "cursor" as ProviderId,
+      eventDelivery: "canonical-sink" as const,
+    });
+    svc.init();
+    const workspace = workspaceRepo.create("test-ws", process.cwd());
+    const thread = threadRepo.create(workspace.id, "Cursor Thread", "direct", "main", true, "cursor");
+    const serviceInternals = svc as unknown as {
+      terminalFinalizedThreads: Set<string>;
+    };
+    serviceInternals.terminalFinalizedThreads.add(thread.id);
+
+    void svc.sendMessage({
+      threadId: thread.id,
+      content: "hello",
+      permissionMode: "default",
+      sourceTurnId: "canonical-cursor-turn",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    expect(serviceInternals.terminalFinalizedThreads.has(thread.id)).toBe(false);
+    expect(svc.activeThreadIds()).toContain(thread.id);
+    expect(providerStub.sendTurn).toHaveBeenCalledWith(expect.objectContaining({
+      turnId: "canonical-cursor-turn",
+    }));
   });
 });

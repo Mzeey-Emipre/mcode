@@ -93,6 +93,7 @@ describe("Provider factories", () => {
     }
     if (id === "cursor") {
       expect(provider.sendTurn).toBeTypeOf("function");
+      expect(provider.eventDelivery).toBe("canonical-sink");
       expect(provider.descriptor.capabilities).toContainEqual(
         { name: "provider-continuation", support: "unsupported" },
       );
@@ -100,6 +101,7 @@ describe("Provider factories", () => {
         { name: "child-cancellation", support: "unsupported" },
       );
     }
+    if (id === "codex") expect(provider.eventDelivery).toBe("legacy-emitter");
     expect(Object.values(input.host).flatMap((port) => Object.values(port))).toSatisfy(
       (methods: unknown[]) => methods.every((method) => !vi.mocked(method as never).mock.calls.length),
     );

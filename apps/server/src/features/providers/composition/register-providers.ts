@@ -10,9 +10,15 @@ import { CanonicalAgentEventSink } from "../../agents/index.js";
 import { ScopedPreGrantService } from "../../agents/permissions/scoped-pre-grant.js";
 import { EnvService } from "../../../runtime/environment/env-service.js";
 import type { JobObject } from "../../../runtime/process/containment/job-object.js";
+import { CursorLegacyEventBridge } from "./cursor-legacy-event-bridge.js";
 
 /** Register provider adapters, the provider registry, and provider host ports. */
 export function registerProviderAdapters(container: DependencyContainer): void {
+  container.register(
+    CursorLegacyEventBridge,
+    { useClass: CursorLegacyEventBridge },
+    { lifecycle: Lifecycle.Singleton },
+  );
   container.register(
     ClaudeProvider,
     { useClass: ClaudeProvider },
@@ -45,6 +51,7 @@ export function registerProviderAdapters(container: DependencyContainer): void {
       threadControl: c.resolve(InternalThreadControlMcpRuntime),
       grants: c.resolve(ScopedPreGrantService),
       events: c.resolve(CanonicalAgentEventSink),
+      cursorLegacyEvents: c.resolve(CursorLegacyEventBridge),
     }),
   });
 }

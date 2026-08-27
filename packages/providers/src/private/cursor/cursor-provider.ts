@@ -10,6 +10,7 @@
 import { EventEmitter } from "node:events";
 import { logger } from "@mcode/shared";
 import type { McpServer } from "@agentclientprotocol/sdk";
+import type { ProviderIdentity } from "@mcode/agent-model";
 
 import {
   providerBrowserPermissionCapability,
@@ -51,6 +52,10 @@ import type {
   CursorBrowserLeaseHandle,
   CursorSessionState,
 } from "./cursor-session-state.js";
+import {
+  CursorCanonicalEventPublisher,
+  type CursorCanonicalEventRouting,
+} from "./cursor-canonical-event-publisher.js";
 
 export { cursorSupportsHttpMcp } from "./acp/cursor-acp-capabilities.js";
 export { appendCursorMcodeInstructions } from "./runtime/cursor-turn-executor.js";
@@ -74,10 +79,10 @@ type CursorTurnContext = {
   req: TurnRequest<"cursor">;
   sessionId: string;
   threadId: string;
+  routing: CursorCanonicalEventRouting;
   resume: boolean;
   browserContext: CursorBrowserContext;
   browserPermissionCapability: ReturnType<typeof providerBrowserPermissionCapability>;
-  emitTurnEvent: (event: AgentEvent) => void;
 };
 
 const CURSOR_SUPPORTED_CAPABILITIES = [
@@ -142,6 +147,7 @@ export class CursorProvider
     ],
   });
   readonly supportsCompletion = false;
+  readonly eventDelivery = "canonical-sink" as const;
   readonly sessionForkOnResume = "clean" as const;
   readonly maxInputCharactersPerTurn = 4_000;
   /** Path B forker; calls this provider's runSideChannelQuery on a forked copy of the parent session. */
@@ -150,10 +156,12 @@ export class CursorProvider
   /** Owns the session pool, idle eviction, and server-managed process cleanup. */
   private readonly runtime: SessionRuntime<CursorSessionState>;
   private sdkSessionIds = new Map<string, string>();
-  /** Binds each ACP prompt state to its immutable originating Mcode execution. */
-  private readonly turnExecutionByState = new WeakMap<object, string>();
-  /** Binds a request that is still opening to its Mcode execution for stop teardown. */
-  private readonly pendingTurnExecutionIds = new Map<string, string>();
+  /** Binds each ACP prompt state to its immutable Mcode routing. */
+  private readonly turnRoutingByState = new WeakMap<object, CursorCanonicalEventRouting>();
+  /** Binds a request that is still opening to its Mcode routing for stop teardown. */
+  private readonly pendingTurnRoutings = new Map<string, CursorCanonicalEventRouting>();
+  /** Serializes canonical sink delivery for each Cursor execution. */
+  private readonly canonicalEventPublisher: CursorCanonicalEventPublisher;
   /**
    * Session IDs for which a stop was requested before the session was created.
    * Checked after session creation; if found the session is torn down immediately.
@@ -195,6 +203,7 @@ export class CursorProvider
     idleSessionTtlMs: number,
   ) {
     super();
+    this.canonicalEventPublisher = new CursorCanonicalEventPublisher(host.events);
     this.settingsService = cursorPorts.settings;
     this.skillService = cursorPorts.skills;
     this.envService = { getEnv: () => ({ ...host.environment.snapshot() }) };
@@ -228,7 +237,11 @@ export class CursorProvider
     if (!this.acpClientBridge) {
       this.acpClientBridge = new CursorAcpClientBridge({
         settings: this.settingsService,
-        emitEvent: (event) => this.emit("event", event),
+        publishEvent: (entry, event) => this.publishCursorEvent(
+          this.turnRoutingForEntry(entry),
+          event,
+          this.acpSessionIdentities(entry),
+        ),
         emitPermissionRequest: (request) => {
           try {
             this.emit("permission_request", request);
@@ -244,9 +257,6 @@ export class CursorProvider
           }
         },
         emitExitPlanMode: (args) => this.emit("exit_plan_mode", args),
-        turnExecutionId: (entry) => entry.activeTurnState
-          ? this.turnExecutionByState.get(entry.activeTurnState)
-          : undefined,
       });
     }
     return this.acpClientBridge;
@@ -280,10 +290,14 @@ export class CursorProvider
       this.turnExecutor = new CursorTurnExecutor({
         settings: this.settingsService,
         skills: this.skillService,
-        emitEvent: (event) => this.emit("event", event),
-        bindTurnExecution: (entry, turnExecutionId) => {
+        publishEvent: (entry, event) => this.publishCursorEvent(
+          this.turnRoutingForEntry(entry),
+          event,
+          this.acpSessionIdentities(entry),
+        ),
+        bindTurnRouting: (entry, routing) => {
           if (entry.activeTurnState) {
-            this.turnExecutionByState.set(entry.activeTurnState, turnExecutionId);
+            this.turnRoutingByState.set(entry.activeTurnState, routing);
           }
         },
         openLogicalSession: (entry, resume) => this.openLogicalSession(entry, resume),
@@ -333,12 +347,12 @@ export class CursorProvider
     const entry = await this.acquireTurnSession(context, browserStage);
     if (!entry) return;
     this.clearBrowserStageAfterAcquire(sessionId, browserStage, entry, existing);
-    if (this.consumePendingStop(context)) return;
+    if (await this.consumePendingStop(context)) return;
 
     try {
       await this.enqueueTurn(entry, context);
     } finally {
-      this.finishPendingTurnExecution(sessionId, req.turnExecutionId);
+      this.finishPendingTurnRouting(sessionId, req.turnExecutionId);
     }
   }
 
@@ -360,19 +374,53 @@ export class CursorProvider
       workspaceId: req.workspaceId,
       browserPermissionCapability,
     };
-    this.pendingTurnExecutionIds.set(req.sessionId, req.turnExecutionId);
+    const routing: CursorCanonicalEventRouting = {
+      threadId: req.threadId,
+      turnId: req.turnId,
+      executionId: req.turnExecutionId,
+      deliveryAttempt: req.deliveryAttempt ?? 1,
+    };
+    this.pendingTurnRoutings.set(req.sessionId, routing);
     this.getAcpClientBridge().setPlanQuestionMode(threadId, req.interactionMode === "plan");
     return {
       req,
       sessionId: req.sessionId,
       threadId,
+      routing,
       resume,
       browserContext,
       browserPermissionCapability,
-      emitTurnEvent: (event) => {
-        this.emit("event", { ...event, turnExecutionId: req.turnExecutionId });
-      },
     };
+  }
+
+  private turnRoutingForEntry(entry: CursorAcpSessionEntry): CursorCanonicalEventRouting | undefined {
+    if (entry.activeTurnState) {
+      const activeRouting = this.turnRoutingByState.get(entry.activeTurnState);
+      if (activeRouting) return activeRouting;
+    }
+    return this.pendingTurnRoutings.get(entry.mcodeSessionId);
+  }
+
+  private acpSessionIdentities(entry: CursorAcpSessionEntry): readonly ProviderIdentity[] {
+    if (!entry.acpSessionId) return [];
+    return [{
+      providerId: this.id,
+      scope: "session" as const,
+      value: entry.acpSessionId,
+      provenance: "native" as const,
+    }];
+  }
+
+  private publishCursorEvent(
+    routing: CursorCanonicalEventRouting | undefined,
+    event: AgentEvent,
+    sourceIdentities: readonly ProviderIdentity[] = [],
+  ): void {
+    if (!routing) {
+      logger.warn("Cursor event had no active turn routing", { type: event.type, threadId: event.threadId });
+      return;
+    }
+    this.canonicalEventPublisher.publish(routing, event, sourceIdentities);
   }
 
   private releaseMismatchedPendingBrowserGrant(context: CursorTurnContext): void {
@@ -528,16 +576,16 @@ export class CursorProvider
         resumeFrom: context.resume ? this.sdkSessionIds.get(context.sessionId) : undefined,
       });
     } catch (error) {
-      this.handleTurnAcquireFailure(context, browserStage, error);
+      await this.handleTurnAcquireFailure(context, browserStage, error);
       return undefined;
     }
   }
 
-  private handleTurnAcquireFailure(
+  private async handleTurnAcquireFailure(
     context: CursorTurnContext,
     browserStage: BrowserAutomationSessionLeaseStage | undefined,
     error: unknown,
-  ): void {
+  ): Promise<void> {
     this.releaseBrowserLeases(browserStage);
     this.pendingBrowserLeases.delete(context.sessionId);
     this.pendingBrowserContext.delete(context.sessionId);
@@ -546,17 +594,19 @@ export class CursorProvider
     this.pendingBrowserGrantContext.delete(context.sessionId);
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error("Cursor ACP spawn failed", { sessionId: context.sessionId, error: errorMessage });
-    context.emitTurnEvent({
+    this.publishCursorEvent(context.routing, {
       type: AgentEventType.Error,
       threadId: context.threadId,
+      turnExecutionId: context.req.turnExecutionId,
       error: errorMessage,
     } satisfies AgentEvent);
-    context.emitTurnEvent({
+    this.publishCursorEvent(context.routing, {
       type: AgentEventType.Ended,
       threadId: context.threadId,
       turnExecutionId: context.req.turnExecutionId,
     } satisfies AgentEvent);
-    this.finishPendingTurnExecution(context.sessionId, context.req.turnExecutionId);
+    await this.canonicalEventPublisher.waitForExecution(context.routing);
+    this.finishPendingTurnRouting(context.sessionId, context.req.turnExecutionId);
   }
 
   private clearBrowserStageAfterAcquire(
@@ -570,19 +620,23 @@ export class CursorProvider
     if (browserStage && entry === existing) this.releaseBrowserLeases(browserStage);
   }
 
-  private consumePendingStop(context: CursorTurnContext): boolean {
+  private async consumePendingStop(context: CursorTurnContext): Promise<boolean> {
     if (!this.pendingStops.delete(context.sessionId)) return false;
 
     logger.info("Pending stop consumed, tearing down new Cursor session", {
       sessionId: context.sessionId,
     });
-    void this.runtime.stop(context.sessionId);
-    context.emitTurnEvent({
+    const stopped = this.runtime.stop(context.sessionId);
+    this.publishCursorEvent(context.routing, {
       type: AgentEventType.Ended,
       threadId: context.threadId,
       turnExecutionId: context.req.turnExecutionId,
     } satisfies AgentEvent);
-    this.finishPendingTurnExecution(context.sessionId, context.req.turnExecutionId);
+    await Promise.all([
+      stopped,
+      this.canonicalEventPublisher.waitForExecution(context.routing),
+    ]);
+    this.finishPendingTurnRouting(context.sessionId, context.req.turnExecutionId);
     return true;
   }
 
@@ -597,18 +651,21 @@ export class CursorProvider
       model: context.req.model,
       resume: context.resume,
       attachments: context.req.attachments,
+      turnId: context.req.turnId,
       turnExecutionId: context.req.turnExecutionId,
+      deliveryAttempt: context.routing.deliveryAttempt,
     }));
     entry.turnChain = scheduled.then(
       () => {},
       () => {},
     );
     await scheduled;
+    await this.canonicalEventPublisher.waitForExecution(context.routing);
   }
 
-  private finishPendingTurnExecution(sessionId: string, turnExecutionId: string): void {
-    if (this.pendingTurnExecutionIds.get(sessionId) !== turnExecutionId) return;
-    this.pendingTurnExecutionIds.delete(sessionId);
+  private finishPendingTurnRouting(sessionId: string, executionId: string): void {
+    if (this.pendingTurnRoutings.get(sessionId)?.executionId !== executionId) return;
+    this.pendingTurnRoutings.delete(sessionId);
   }
 
   /**
@@ -639,17 +696,16 @@ export class CursorProvider
     sessionId: string,
     entry: CursorSessionState,
   ): Promise<void> {
-    const threadId = sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
-    const turnExecutionId = entry.activeTurnState
-      ? this.turnExecutionByState.get(entry.activeTurnState)
-      : this.pendingTurnExecutionIds.get(sessionId);
+    const routing = this.turnRoutingForEntry(entry);
+    const sourceIdentities = this.acpSessionIdentities(entry);
     await this.runtime.stop(sessionId);
-    if (!turnExecutionId) return;
-    this.emit("event", {
+    if (!routing) return;
+    this.publishCursorEvent(routing, {
       type: AgentEventType.Ended,
-      threadId,
-      turnExecutionId,
-    } satisfies AgentEvent);
+      threadId: routing.threadId,
+      turnExecutionId: routing.executionId,
+    } satisfies AgentEvent, sourceIdentities);
+    await this.canonicalEventPublisher.waitForExecution(routing);
   }
 
   private async stopOpeningOrPendingSession(sessionId: string): Promise<void> {
@@ -1034,11 +1090,11 @@ export class CursorProvider
     });
     entry.acpSessionId = opened.sessionId;
     this.sdkSessionIds.set(entry.mcodeSessionId, opened.sessionId);
-    this.emit("event", {
+    this.publishCursorEvent(this.turnRoutingForEntry(entry), {
       type: AgentEventType.System,
       threadId: entry.threadId,
       subtype: `sdk_session_id:${opened.sessionId}`,
-    } satisfies AgentEvent);
+    } satisfies AgentEvent, this.acpSessionIdentities(entry));
     return opened.reloaded;
   }
 

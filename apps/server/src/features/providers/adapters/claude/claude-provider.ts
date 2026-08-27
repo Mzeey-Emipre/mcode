@@ -368,6 +368,8 @@ interface PendingBrowserAccess {
 @injectable()
 export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoalCapable, ISessionEvictable, ProtocolAdapter<ClaudeSessionState> {
   readonly id: ProviderId = "claude";
+  /** Claude streams agent events through EventEmitter. */
+  readonly eventDelivery = "legacy-emitter" as const;
   /** Claude supports one-shot text completion via sdkQuery with maxTurns: 1. */
   readonly supportsCompletion = true;
   readonly sessionForkOnResume = "clean" as const;

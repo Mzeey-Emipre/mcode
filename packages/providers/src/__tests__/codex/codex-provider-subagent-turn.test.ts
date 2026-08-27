@@ -66,6 +66,7 @@ async function startSession(
   threadId: string,
 ): Promise<PoolEntry> {
   await provider.sendTurn({
+    turnId: "test-turn",
     turnExecutionId: `exec-${sessionId}`,
     sessionId,
     workspaceId: "workspace-test",
@@ -184,6 +185,7 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
 
     const sessionId = "mcode-early-completion";
     const completion = provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "exec-early-completion",
       sessionId,
       workspaceId: "workspace-test",
@@ -235,6 +237,7 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
     sendTurnMock.mockResolvedValueOnce("root-native-turn");
 
     const completion = provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "exec-root-child-churn",
       sessionId: "mcode-root-child-churn",
       workspaceId: "workspace-test",
@@ -807,6 +810,7 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
     expect(getChildThreadMetadataMock).toHaveBeenCalledTimes(1);
 
     await provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "exec-next",
       sessionId: "mcode-subagent-metadata-race",
       workspaceId: "workspace-test",
@@ -919,6 +923,7 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
       params: { threadId: "sdk-thread-1", turnId: "turn-a", delta: "A" },
     });
     await provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "exec-b",
       sessionId: "mcode-origin-a",
       workspaceId: "workspace-test",
@@ -995,6 +1000,7 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
     await new Promise<void>((resolve) => setImmediate(resolve));
 
     await provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "exec-b",
       sessionId: "mcode-origin-immutable",
       workspaceId: "workspace-test",
@@ -1079,6 +1085,7 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
     });
 
     await provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "exec-b",
       sessionId: "mcode-late-completion",
       workspaceId: "workspace-test",
@@ -1124,6 +1131,7 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
       params: { threadId: "sdk-thread-1", turn: { id: "turn-a" } },
     });
     await provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "exec-b",
       sessionId: "mcode-evicted-turn",
       workspaceId: "workspace-test",
@@ -1172,6 +1180,7 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
       params: { threadId: "sdk-thread-1", turn: { id: "turn-a" } },
     });
     await provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "exec-b",
       sessionId: "mcode-parent-no-turn",
       workspaceId: "workspace-test",
@@ -1207,6 +1216,7 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
       params: { threadId: "sdk-thread-1", turn: { id: "turn-a" } },
     });
     await provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "exec-b",
       sessionId: "mcode-conflict-bound",
       workspaceId: "workspace-test",
@@ -1291,6 +1301,7 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
       params: { threadId: "sdk-thread-1", turn: { id: "turn-a" } },
     });
     await provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "exec-b",
       sessionId: "mcode-pruned-text",
       workspaceId: "workspace-test",
@@ -1360,6 +1371,7 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
       params: { threadId: "child-reused", turn: { id: "child-turn-a" } },
     });
     await provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "exec-b",
       sessionId: "mcode-child-generation",
       workspaceId: "workspace-test",
@@ -1451,6 +1463,7 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
       params: { threadId: "child-reused", turn: { id: "child-turn-a" } },
     });
     await provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "exec-b",
       sessionId: "mcode-late-parent",
       workspaceId: "workspace-test",
@@ -1522,6 +1535,7 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
       params: { threadId: "sdk-thread-1", turn: { id: "turn-a" } },
     });
     await provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "exec-b",
       sessionId: "mcode-stale-main",
       workspaceId: "workspace-test",
@@ -1577,6 +1591,7 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
       params: { threadId: "sdk-thread-1", turn: { id: "turn-a" } },
     });
     await provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "exec-b",
       sessionId: "mcode-parent-no-turn",
       workspaceId: "workspace-test",
@@ -1634,6 +1649,7 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
       params: { threadId: "child-replay", turn: { id: "child-turn-a" } },
     });
     await provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "exec-b",
       sessionId: "mcode-child-replay-events",
       workspaceId: "workspace-test",

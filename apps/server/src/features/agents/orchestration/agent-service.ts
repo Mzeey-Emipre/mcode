@@ -107,6 +107,7 @@ import { TurnRuntimeRegistry } from "../turns/turn-runtime.js";
 import type { WorkspaceEnvironmentQueuedTurnSubmission, WorkspaceEnvironmentQueueAdmission } from "../../projects/environment/workspace-environment-automatic-repository.js";
 import type { TurnOutcome } from "../turns/turn-outcome.js";
 import { BrowserNarrativeEventSanitizer } from "../../browser-automation/index.js";
+import { CursorLegacyEventBridge } from "../../providers/composition/cursor-legacy-event-bridge.js";
 import {
   CanonicalAgentEventSink,
   type CanonicalChildStopTarget,
@@ -383,6 +384,10 @@ export class AgentService {
   private initialized = false;
   /** Production publication callback reused by the private reliability seam. */
   private providerEventPublisher: ((event: AgentEvent) => void) | undefined;
+  /** Provider event pipelines keyed by their delivery provider. */
+  private readonly providerEventHandlers = new Map<ProviderId, (event: AgentEvent, publish?: boolean) => void>();
+  /** Provider IDs that use the canonical event sink instead of EventEmitter delivery. */
+  private readonly canonicalSinkProviderIds = new Set<ProviderId>();
   /** Running context token estimate, per thread. Reset on compaction start; overwritten on turnComplete. */
   private lastContextByThread = new Map<string, number>();
   /** Most recent SDK-reported context window size, per thread. */
@@ -581,6 +586,8 @@ export class AgentService {
     canonicalSink?: CanonicalAgentEventSink,
     @inject(delay(() => WorkspaceEnvironmentService))
     private readonly workspaceEnvironmentService?: WorkspaceEnvironmentService,
+    @inject(CursorLegacyEventBridge)
+    private readonly cursorLegacyEventBridge?: CursorLegacyEventBridge,
   ) {
     this.browserNarrativeEventSanitizer = new BrowserNarrativeEventSanitizer(
       (threadId, toolCallId) => this.narrativeStore.getBufferedToolCalls(threadId)
@@ -1165,7 +1172,7 @@ export class AgentService {
     this.threadRepo.updateStatus(threadId, "active");
     // Emit before baseline I/O so the UI enters running state immediately. AgentService's
     // provider listener initializes the tracker synchronously before the broadcaster reads its id.
-    (resolvedProvider as unknown as import("events").EventEmitter).emit("event", {
+    this.emitProviderEvent(resolvedProvider, {
       type: AgentEventType.TurnStarted,
       threadId,
       turnExecutionId,
@@ -1308,6 +1315,8 @@ export class AgentService {
     const baseTurnRequest = {
       sessionId: sessionName,
       turnExecutionId,
+      turnId: sourceTurnId,
+      deliveryAttempt: 1,
       workspaceId: workspace.id,
       threadId,
       message: providerMessage,
@@ -3181,7 +3190,11 @@ export class AgentService {
         error: triggerErr instanceof Error ? triggerErr.message : String(triggerErr),
       });
       dispatch.attempt += 1;
-      dispatch.turnRequest = { ...dispatch.turnRequest, resumeFrom: undefined };
+      dispatch.turnRequest = {
+        ...dispatch.turnRequest,
+        deliveryAttempt: dispatch.attempt,
+        resumeFrom: undefined,
+      };
       if (!this.resetParentAssistantTextForRetry(threadId, dispatch.turnRequest.turnExecutionId)) return false;
       this.endedSuppressionThreads.delete(threadId);
       dispatch.sendTurnInFlight = true;
@@ -3275,14 +3288,14 @@ export class AgentService {
     logger.error("Provider send failed", { threadId, error: rawMessage });
 
     try {
-      const resolvedProvider = this.providerRegistry.resolve(effectiveProvider) as unknown as import("events").EventEmitter;
-      resolvedProvider.emit("event", {
+      const resolvedProvider = this.providerRegistry.resolve(effectiveProvider);
+      this.emitProviderEvent(resolvedProvider, {
         type: "error",
         threadId,
         turnExecutionId,
         error: errorMessage,
       } satisfies AgentEvent);
-      resolvedProvider.emit("event", {
+      this.emitProviderEvent(resolvedProvider, {
         type: "ended",
         threadId,
         turnExecutionId,
@@ -4164,8 +4177,18 @@ export class AgentService {
         );
         pumpProviderEvents(normalizedEvent.threadId);
       };
-      provider.on("event", handleEvent);
+      this.providerEventHandlers.set(provider.id, handleEvent);
+      if (provider.eventDelivery === "legacy-emitter") {
+        provider.on("event", handleEvent);
+      }
+      if (provider.eventDelivery === "canonical-sink") {
+        this.canonicalSinkProviderIds.add(provider.id);
+      }
     }
+    this.cursorLegacyEventBridge?.register((providerId, event) => {
+      if (!this.canonicalSinkProviderIds.has(providerId)) return;
+      this.providerEventHandlers.get(providerId)?.(event);
+    });
   }
 
   /** Publish one unfinished deterministic assistant prefix for the private reliability harness. */
@@ -5013,6 +5036,10 @@ export class AgentService {
   }
 
   private emitProviderEvent(provider: IAgentProvider, event: AgentEvent): void {
+    if (provider.eventDelivery === "canonical-sink") {
+      this.providerEventHandlers.get(provider.id)?.(event);
+      return;
+    }
     const emitter = provider as unknown as {
       emit?: (eventName: "event", event: AgentEvent) => boolean;
     };

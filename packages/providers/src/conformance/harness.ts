@@ -176,11 +176,10 @@ function createCursorAcpTraceReplay(trace: CursorAcpTraceFixture): CursorAcpTrac
   const planExits: Array<{ threadId: string; planMarkdown: string }> = [];
   const bridge = new CursorAcpClientBridge({
     settings: { get: () => ({ provider: { cursor: {} } }) as never },
-    emitEvent: (event) => emittedEvents.push(event),
+    publishEvent: (_entry, event) => emittedEvents.push(event),
     emitPermissionRequest: () => undefined,
     emitPermissionResolved: () => undefined,
     emitExitPlanMode: (args) => planExits.push(args),
-    turnExecutionId: () => undefined,
   });
   const entry = createCursorTraceSessionEntry(trace);
   const client = bridge.createClient(entry);

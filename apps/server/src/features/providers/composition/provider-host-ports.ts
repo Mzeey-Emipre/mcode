@@ -6,6 +6,7 @@ import type { CanonicalAgentEventSink } from "../../agents/index.js";
 import type { BrowserAutomationSessionLease } from "../../browser-automation/index.js";
 import type { InternalThreadControlMcpRuntime } from "../../thread-control/index.js";
 import { killProcessTree } from "../../../runtime/process/containment/process-kill.js";
+import type { CursorLegacyEventBridge } from "./cursor-legacy-event-bridge.js";
 
 /** Server services used to compose the narrow Provider host-port boundary. */
 export interface ProviderHostPortDependencies {
@@ -15,6 +16,7 @@ export interface ProviderHostPortDependencies {
   threadControl: InternalThreadControlMcpRuntime;
   grants: ScopedPreGrantService;
   events: CanonicalAgentEventSink;
+  cursorLegacyEvents: CursorLegacyEventBridge;
 }
 
 /** Adapts server-owned services to the only host operations exposed to Providers. */
@@ -76,7 +78,7 @@ export function createProviderHostPorts(
     },
     events: {
       submit: async (batch) => {
-        dependencies.events.commit({
+        const result = dependencies.events.commit({
           threadId: batch.threadId,
           turnId: batch.turnId,
           executionId: batch.executionId,
@@ -84,6 +86,9 @@ export function createProviderHostPorts(
           nativeCursor: batch.nativeCursor,
           events: batch.events,
         });
+        if (result.outcome === "committed") {
+          dependencies.cursorLegacyEvents.deliver(result.events);
+        }
       },
     },
   };
