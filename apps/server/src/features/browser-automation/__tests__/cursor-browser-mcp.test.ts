@@ -42,6 +42,9 @@ function createCursorProviderFixture(): any {
   const provider = Object.create(CursorProvider.prototype) as any;
   provider.pendingStops = new Set();
   provider.pendingAcpRuntimes = new Map();
+  provider.turnRoutingByState = new WeakMap();
+  provider.pendingTurnRoutings = new Map();
+  provider.canonicalEventPublisher = { waitForExecution: vi.fn(async () => undefined) };
   provider.threadControlMcp = { close: vi.fn(async () => undefined) };
   return provider;
 }
@@ -159,7 +162,6 @@ describe("Cursor browser MCP configuration", () => {
     provider.liveSessionIds = new Set();
     provider.planQuestionModeThreads = new Set();
     provider.sdkSessionIds = new Map();
-    provider.pendingTurnExecutionIds = new Map();
     provider.spawnChild = vi.fn().mockResolvedValue({
       child,
       browserHttpMcpSupported: true,
@@ -406,7 +408,7 @@ describe("Cursor browser MCP configuration", () => {
     const initialOpen = vi.fn().mockRejectedValue(new Error("MCP connection closed"));
     const fallbackOpen = vi.fn(async () => ({ sessionId: "fallback-session", reloaded: false }));
     const close = vi.fn(async () => undefined);
-    const provider = Object.create(CursorProvider.prototype) as any;
+    const provider = createCursorProviderFixture();
     provider.sdkSessionIds = new Map();
     provider.emit = vi.fn();
     provider.threadControlMcp = {
@@ -576,7 +578,6 @@ describe("Cursor browser MCP configuration", () => {
     provider.pendingStops = new Set();
     provider.liveSessionIds = new Set(["mcode-a"]);
     provider.planQuestionModeThreads = new Set();
-    provider.pendingTurnExecutionIds = new Map();
     provider.spawnChild = vi.fn().mockResolvedValue(replacement);
     provider.openLogicalSession = vi.fn(async (_state: unknown, _resume: boolean, servers: unknown) => {
       mcpServers = servers;
