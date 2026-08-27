@@ -226,6 +226,26 @@ describe("CanonicalAgentEventSink", () => {
     expect(published.mock.calls[0]![0].every((event) => event.durableRevision === 1)).toBe(true);
   });
 
+  it("reports deferred canonical delivery without undoing the durable commit", () => {
+    const failingPublisher = vi.fn(() => { throw new Error("canonical delivery failed"); });
+    const deferredSink = new CanonicalAgentEventSink(db, failingPublisher);
+
+    const result = deferredSink.commit({
+      threadId: THREAD_ID,
+      turnId: TURN_ID,
+      executionId: EXECUTION_ID,
+      phase: "running",
+      events: initialDrafts(),
+    });
+
+    expect(result).toMatchObject({ outcome: "committed", canonicalDelivery: "deferred" });
+    expect(deferredSink.loadTurn(TURN_ID)).toMatchObject({ status: "Running" });
+    expect(deferredSink.loadCheckpoint(EXECUTION_ID)).toMatchObject({
+      lastAcceptedSequence: 3,
+      lastDurableSequence: 3,
+    });
+  });
+
   it("returns only retained contiguous canonical deltas after known revisions", () => {
     sink.commit({
       threadId: THREAD_ID,
@@ -801,11 +821,88 @@ describe("CanonicalAgentEventSink", () => {
       events: [terminalDraft("turn.errored")],
     });
 
-    expect(late).toMatchObject({ outcome: "terminal-outcome-confirmed", conversationRevision: 2 });
+    expect(late).toMatchObject({ outcome: "conflict", conversationRevision: 2 });
     expect(sink.loadTurn(TURN_ID)).toMatchObject({ status: "Completed" });
     expect(sink.loadCheckpoint(EXECUTION_ID)).toMatchObject({ terminalOutcome: "completed" });
     expect(published).not.toHaveBeenCalled();
   });
+
+  it.each(["claude", "cursor", "copilot"] as const)(
+    "keeps %s terminal evidence stable across duplicate, conflict, and reload",
+    (providerId) => {
+      const providerIdentity: ProviderIdentity = {
+        providerId,
+        scope: "session",
+        value: "native-session-1",
+        provenance: "native",
+      };
+      const sourceIdentities = [providerIdentity];
+      const messageRepo = new MessageRepo(db);
+      sink.startParentTurn({
+        thread: {
+          id: THREAD_ID,
+          workspaceId: "workspace-1",
+          providerId,
+          createdAt: NOW,
+        },
+        turnId: TURN_ID,
+        executionId: EXECUTION_ID,
+        permissionMode: "supervised",
+        providerIdentities: sourceIdentities,
+        projectUserMessage: () => messageRepo.create(THREAD_ID, "user", `${providerId} terminal fixture`, 1),
+      });
+      const completed = {
+        eventId: `${EXECUTION_ID}:${providerId}-completed`,
+        routing: { threadId: THREAD_ID, turnId: TURN_ID, executionId: EXECUTION_ID },
+        sourceProviderId: providerId,
+        sourceIdentities,
+        payload: { type: "turn.completed" as const, endedAt: "2026-08-27T12:01:00.000Z" },
+      };
+      const committed = sink.commit({
+        threadId: THREAD_ID,
+        turnId: TURN_ID,
+        executionId: EXECUTION_ID,
+        phase: "completed",
+        terminalOutcome: "completed",
+        events: [completed],
+      });
+      const duplicate = sink.commit({
+        threadId: THREAD_ID,
+        turnId: TURN_ID,
+        executionId: EXECUTION_ID,
+        phase: "completed",
+        terminalOutcome: "completed",
+        events: [completed],
+      });
+      const conflict = sink.commit({
+        threadId: THREAD_ID,
+        turnId: TURN_ID,
+        executionId: EXECUTION_ID,
+        phase: "errored",
+        terminalOutcome: "errored",
+        error: `late ${providerId} error`,
+        events: [{
+          ...completed,
+          eventId: `${EXECUTION_ID}:${providerId}-errored`,
+          payload: {
+            type: "turn.errored" as const,
+            endedAt: "2026-08-27T12:02:00.000Z",
+            error: `late ${providerId} error`,
+          },
+        }],
+      });
+      const reloaded = new CanonicalAgentEventSink(db, vi.fn());
+
+      expect(committed.outcome).toBe("committed");
+      expect(duplicate.outcome).toBe("duplicate");
+      expect(conflict.outcome).toBe("conflict");
+      expect(reloaded.loadTurnByExecution(EXECUTION_ID)).toMatchObject({ status: "Completed" });
+      expect(reloaded.loadCheckpoint(EXECUTION_ID)).toMatchObject({
+        terminalOutcome: "completed",
+        phase: "completed",
+      });
+    },
+  );
 
   it("preserves each turn's execution identity across later turns", () => {
     const messageRepo = new MessageRepo(db);

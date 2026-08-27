@@ -56,12 +56,18 @@ import type {
   QuotaCategory,
   ProviderUsageInfo,
   CompletionOptions,
+  ProviderIdentity,
 } from "@mcode/contracts";
+import type { ProviderHostPorts } from "@mcode/providers";
 import {
   AgentEventType,
   BROWSER_AUTOMATION_OPERATION_METADATA,
 } from "@mcode/contracts";
 import type { InternalThreadControlMcpHttpConnection } from "../../../thread-control/index.js";
+import {
+  CanonicalLiveEventPublisher,
+  type CanonicalLiveEventRouting,
+} from "../../composition/canonical-live-event-publisher.js";
 
 /** Promisified execFile used to retrieve the gh auth token. */
 const execFileAsync = promisify(execFile);
@@ -216,8 +222,8 @@ interface CopilotSessionState {
 @injectable()
 export class CopilotProvider extends EventEmitter implements IAgentProvider, ISessionEvictable, ProtocolAdapter<CopilotSessionState> {
   readonly id: ProviderId = "copilot";
-  /** Copilot streams agent events through EventEmitter. */
-  readonly eventDelivery = "legacy-emitter" as const;
+  /** Selects canonical host delivery when the server composition supplies the host port. */
+  readonly eventDelivery: "canonical-sink" | "legacy-emitter";
   readonly supportsCompletion = true;
   readonly sessionForkOnResume = "clean" as const;
   readonly maxInputCharactersPerTurn = 16_000;
@@ -233,6 +239,10 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
   /** Owns the session pool, idle eviction (now with a real busy guard via `isBusy`), and JobObject/kill. */
   private readonly runtime: SessionRuntime<CopilotSessionState>;
   private sdkSessionIds = new Map<string, string>();
+  /** Canonical routing retained while the SDK keeps a pooled session alive. */
+  private readonly canonicalRoutings = new Map<string, CanonicalLiveEventRouting>();
+  /** Serializes canonical event submission when the adapter runs in the server composition. */
+  private readonly canonicalEventPublisher: CanonicalLiveEventPublisher | undefined;
   /**
    * Session IDs for which a stop was requested before the session was created.
    * Checked after session creation; if found the session is torn down immediately.
@@ -268,8 +278,14 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     private readonly browserAutomationLease: BrowserAutomationSessionLease = new BrowserAutomationSessionLease(),
     @inject(InternalThreadControlMcpRuntime)
     private readonly threadControlMcp: InternalThreadControlMcpRuntime = undefined as never,
+    @inject("ProviderHostPorts")
+    host?: ProviderHostPorts,
   ) {
     super();
+    this.eventDelivery = host ? "canonical-sink" : "legacy-emitter";
+    this.canonicalEventPublisher = host
+      ? new CanonicalLiveEventPublisher(this.id, host.events)
+      : undefined;
     this.runtime = new SessionRuntime<CopilotSessionState>(this, {
       jobObject: this.jobObject,
       envService: this.envService,
@@ -737,6 +753,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
 
   /** Start or continue a session by sending a message via the Copilot SDK. When `copilotAgent` is provided, routes the session to the appropriate built-in mode or custom agent before sending. */
   async sendTurn(req: TurnRequest<"copilot">): Promise<void> {
+    const routing = this.rememberCanonicalRouting(req);
     const previousSend = this.sendLocks.get(req.sessionId) ?? Promise.resolve();
     let releaseSend!: () => void;
     const currentSend = new Promise<void>((resolve) => {
@@ -778,7 +795,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
       copilotAgent: req.providerOptions.agent,
     };
     try {
-      await this.doSendMessage(params, req.turnExecutionId);
+      await this.doSendMessage(params, routing);
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       logger.error("CopilotProvider sendMessage error", {
@@ -798,8 +815,13 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
         const userMsg =
           "GitHub Copilot CLI exited unexpectedly.\n\n" +
           "Ensure you are authenticated: run `gh auth login` and confirm you have an active GitHub Copilot subscription.";
-        this.emit("event", { type: "error", threadId, error: userMsg, turnExecutionId: req.turnExecutionId } satisfies AgentEvent);
-        this.emit("event", { type: "ended", threadId, turnExecutionId: req.turnExecutionId } satisfies AgentEvent);
+        this.publishTurnEvent(routing, req.sessionId, { type: "error", threadId, error: userMsg } satisfies AgentEvent);
+        this.publishTurnEvent(routing, req.sessionId, {
+          type: "ended",
+          threadId,
+          turnExecutionId: routing.executionId,
+        } satisfies AgentEvent);
+        await this.waitForCanonicalExecution(routing.executionId);
         return;
       }
 
@@ -808,8 +830,13 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
           undefined,
           createNodeResolverIO(this.envService.getEnv(), process.platform),
         );
-        this.emit("event", { type: "error", threadId, error: userMsg, turnExecutionId: req.turnExecutionId } satisfies AgentEvent);
-        this.emit("event", { type: "ended", threadId, turnExecutionId: req.turnExecutionId } satisfies AgentEvent);
+        this.publishTurnEvent(routing, req.sessionId, { type: "error", threadId, error: userMsg } satisfies AgentEvent);
+        this.publishTurnEvent(routing, req.sessionId, {
+          type: "ended",
+          threadId,
+          turnExecutionId: routing.executionId,
+        } satisfies AgentEvent);
+        await this.waitForCanonicalExecution(routing.executionId);
         return;
       }
 
@@ -837,18 +864,21 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     reasoningLevel?: ReasoningLevel;
     /** Copilot sub-agent name. Built-in modes: "interactive" | "plan" | "autopilot". Custom: any YAML agent name. */
     copilotAgent?: string;
-  }, turnExecutionId: string): Promise<void> {
+  }, routing: CanonicalLiveEventRouting): Promise<void> {
     await this.refreshClient();
 
     const { sessionId, message, cwd, model, permissionMode, resume, copilotAgent } = params;
     const threadId = this.toThreadId(sessionId);
-    const emitTurnEvent = (event: AgentEvent): void => { this.emit("event", { ...event, turnExecutionId }); };
+    const emitTurnEvent = (event: AgentEvent): void => {
+      this.publishTurnEvent(routing, sessionId, event);
+    };
 
     // The CLI could not be resolved during refreshClient; surface the resolver's
     // install message via the existing error seam (mirrors Codex's abort-before-spawn).
     if (this.lastResolution?.source === "not-found") {
       emitTurnEvent({ type: "error", threadId, error: this.lastResolution.message } satisfies AgentEvent);
-      emitTurnEvent({ type: "ended", threadId, turnExecutionId } satisfies AgentEvent);
+      emitTurnEvent({ type: "ended", threadId, turnExecutionId: routing.executionId } satisfies AgentEvent);
+      await this.waitForCanonicalExecution(routing.executionId);
       return;
     }
 
@@ -884,7 +914,12 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     // fresh session correctly. The turn itself is run here after `acquire`
     // (uniformly for fresh and reuse paths) so it never races the runtime's
     // post-spawn pool write.
-    this.pendingSpawnTurns.set(sessionId, { message, model, copilotAgent, turnExecutionId });
+    this.pendingSpawnTurns.set(sessionId, {
+      message,
+      model,
+      copilotAgent,
+      turnExecutionId: routing.executionId,
+    });
 
     let state: CopilotSessionState;
     try {
@@ -942,7 +977,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
 
     // Run the turn. Sending a new message on an existing session implicitly
     // aborts any in-flight turn; the prior runTurn promise resolves on idle.
-    void this.runTurn(sessionId, threadId, state.session, message, turnExecutionId);
+    void this.runTurn(sessionId, threadId, state.session, message, routing);
   }
 
   /**
@@ -966,6 +1001,9 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     const staged = this.pendingSpawnTurns.get(sessionId);
     const copilotAgent = staged?.copilotAgent;
     const stagedExecutionId = staged?.turnExecutionId;
+    const stagedRouting = stagedExecutionId
+      ? this.canonicalRoutings.get(stagedExecutionId)
+      : undefined;
     const browserAccess = this.pendingBrowserAccess.get(sessionId);
     const browserScope = browserAccess?.scope;
     const browserGrant = browserAccess
@@ -996,10 +1034,12 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     const userInstructions = readUserInstructions();
     const skillDirs = userSkillDirectories();
     const internalMcp = await this.threadControlMcp?.createHttpConnection(sessionId);
-    if (!internalMcp) throw new Error("Copilot internal thread-control MCP connection unavailable");
+    if (!internalMcp) {
+      logger.warn("Copilot thread-control MCP is unavailable; continuing without it", { threadId });
+    }
     const runtimeInstructions = renderMcodeInstructions(buildMcodeInstructionPlan({
       sourceThreadId: threadId,
-      threadControlGranted: true,
+      threadControlGranted: Boolean(internalMcp),
       browserAutomationGranted: Boolean(browserGrant),
     }));
     const sessionBase = {
@@ -1011,7 +1051,7 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
       ...(skillDirs.length > 0 && { skillDirectories: skillDirs }),
       systemMessage: composeCopilotSystemMessage(userInstructions, runtimeInstructions),
       mcpServers: {
-        ...buildCopilotInternalMcpServers(internalMcp),
+        ...(internalMcp ? buildCopilotInternalMcpServers(internalMcp) : {}),
         ...(browserGrant ? {
           "mcode-browser": {
             type: "http" as const,
@@ -1065,11 +1105,13 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
       if (sdkId && !this.sdkSessionIds.has(sessionId)) {
         this.sdkSessionIds.set(sessionId, sdkId);
         logger.info("Captured Copilot SDK session ID", { sessionId, sdkId });
-        this.emit("event", {
-          type: "system",
-          threadId,
-          subtype: "sdk_session_id:" + sdkId,
-        } satisfies AgentEvent);
+        if (stagedRouting) {
+          this.publishTurnEvent(stagedRouting, sessionId, {
+            type: "system",
+            threadId,
+            subtype: "sdk_session_id:" + sdkId,
+          } satisfies AgentEvent);
+        }
       }
 
       const state: CopilotSessionState = {
@@ -1091,12 +1133,13 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
       if (this.pendingStops.has(sessionId)) {
         logger.info("Pending stop consumed, tearing down new Copilot session", { sessionId });
         session.disconnect().catch(() => {});
-        if (stagedExecutionId) {
-          this.emit("event", {
+        if (stagedRouting) {
+          this.publishTurnEvent(stagedRouting, sessionId, {
             type: AgentEventType.Ended,
             threadId,
-            turnExecutionId: stagedExecutionId,
+            turnExecutionId: stagedRouting.executionId,
           } satisfies AgentEvent);
+          await this.waitForCanonicalExecution(stagedRouting.executionId);
         }
       }
 
@@ -1174,9 +1217,11 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     threadId: string,
     session: CopilotSession,
     message: string,
-    turnExecutionId: string,
+    routing: CanonicalLiveEventRouting,
   ): Promise<void> {
-    const emitTurnEvent = (event: AgentEvent): void => { this.emit("event", { ...event, turnExecutionId }); };
+    const emitTurnEvent = (event: AgentEvent): void => {
+      this.publishTurnEvent(routing, sessionId, event);
+    };
     // Mark the session busy so the runtime's idle-eviction guard spares it for
     // the duration of the turn (Copilot has no native busy signal).
     const turnState = this.runtime.get(sessionId);
@@ -1438,8 +1483,63 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
             emitTurnEvent({
         type: "ended",
         threadId,
-        turnExecutionId,
+        turnExecutionId: routing.executionId,
       } satisfies AgentEvent);
+      await this.waitForCanonicalExecution(routing.executionId);
+    }
+  }
+
+  private rememberCanonicalRouting(req: TurnRequest<"copilot">): CanonicalLiveEventRouting {
+    const routing = {
+      threadId: req.threadId,
+      turnId: req.turnId,
+      executionId: req.turnExecutionId,
+      deliveryAttempt: req.deliveryAttempt ?? 1,
+    };
+    this.canonicalRoutings.set(routing.executionId, routing);
+    return routing;
+  }
+
+  private publishTurnEvent(
+    routing: CanonicalLiveEventRouting,
+    sessionId: string,
+    event: AgentEvent,
+  ): void {
+    const eventWithExecution = { ...event, turnExecutionId: routing.executionId };
+    if (!this.canonicalEventPublisher) {
+      this.emit("event", eventWithExecution);
+      return;
+    }
+    this.canonicalEventPublisher.publish(
+      routing,
+      eventWithExecution,
+      this.copilotSessionIdentities(sessionId),
+    );
+  }
+
+  private copilotSessionIdentities(sessionId: string): ProviderIdentity[] {
+    const nativeSessionId = this.sdkSessionIds.get(sessionId);
+    if (!nativeSessionId) return [];
+    return [{
+      providerId: this.id,
+      scope: "session",
+      value: nativeSessionId,
+      provenance: "native",
+    }];
+  }
+
+  private async waitForCanonicalExecution(executionId: string): Promise<void> {
+    const routing = this.canonicalRoutings.get(executionId);
+    if (!routing || !this.canonicalEventPublisher) return;
+    try {
+      await this.canonicalEventPublisher.waitForExecution(routing);
+    } catch (error: unknown) {
+      logger.error("Copilot canonical event delivery failed", {
+        executionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      this.canonicalRoutings.delete(executionId);
     }
   }
 

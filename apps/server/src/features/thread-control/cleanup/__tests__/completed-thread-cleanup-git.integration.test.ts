@@ -223,6 +223,7 @@ describe("completed thread cleanup Git safety", () => {
     writeFileSync(join(worktreePath, "tracked.txt"), "changed\n");
     const thread = addCompletedThread({ title: "Dirty" });
 
+    await expect(gitWorktrees.isRegisteredWorktreePath(repositoryPath, worktreePath)).resolves.toBe(true);
     await worker.poll();
 
     expect(threadRepo.findById(thread.id)).toMatchObject({

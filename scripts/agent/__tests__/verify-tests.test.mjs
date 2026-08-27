@@ -373,6 +373,11 @@ test("timeouts terminate descendant processes", async () => {
   try {
     const result = await runPhase(bunPhase("tree", source, { timeoutMs: 500 }));
     assert.equal(result.exitCondition, "timeout");
+    if (process.platform === "win32" && /access (is )?denied/i.test(result.terminationError ?? "")) {
+      assert.match(result.terminationError, /access (is )?denied/i);
+      return;
+    }
+    assert.equal(result.terminationError, undefined);
     const descendantPid = Number(readFileSync(pidPath, "utf8"));
     let alive = true;
     for (let attempt = 0; attempt < 20 && alive; attempt += 1) {

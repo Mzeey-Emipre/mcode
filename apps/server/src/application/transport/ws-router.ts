@@ -33,7 +33,7 @@ import { discoverCopilotAgents } from "../../features/providers/adapters/copilot
 import type {
   AgentPermissionService,
   AgentService,
-  CanonicalAgentEventSink,
+  CanonicalAgentBoundary,
   TurnRecoveryService,
 } from "../../features/agents/index.js";
 import type {
@@ -291,7 +291,7 @@ export interface RouterDeps {
   /** Single-source ordered narrative reader backing the `turn.load` RPC. */
   narrativeStore: NarrativeStore;
   /** Canonical agent-model reader used during staged compatibility projection. */
-  canonicalSink: CanonicalAgentEventSink;
+  canonicalSink: CanonicalAgentBoundary;
   turnSnapshotRepo: TurnSnapshotRepo;
   snapshotService: SnapshotService;
   settingsService: SettingsService;

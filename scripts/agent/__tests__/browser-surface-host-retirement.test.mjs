@@ -6,6 +6,14 @@ import { test } from "node:test";
 
 const repositoryRoot = process.cwd();
 const sourceExtensions = new Set([".js", ".jsx", ".mjs", ".ts", ".tsx"]);
+const nonSourceDirectories = new Set([
+  "node_modules",
+  "dist",
+  "dist-tsc",
+  "out",
+  "release",
+  ".turbo",
+]);
 const legacyMigrationFixtures = new Set([
   "apps/server/src/features/settings/__tests__/settings-service.test.ts",
   "packages/contracts/src/models/__tests__/settings.test.ts",
@@ -19,7 +27,7 @@ function listFiles(directory) {
   const files = [];
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     const path = join(directory, entry.name);
-    if (entry.isDirectory()) files.push(...listFiles(path));
+    if (entry.isDirectory() && !nonSourceDirectories.has(entry.name)) files.push(...listFiles(path));
     else if (entry.isFile()) files.push(path);
   }
   return files;

@@ -3,6 +3,7 @@ import { Lifecycle, type DependencyContainer } from "tsyringe";
 import {
   AgentPermissionService,
   AgentService,
+  CanonicalAgentBoundary,
   CanonicalAgentEventSink,
   ParentAssistantTextCheckpointService,
   publishCanonicalAgentEvents,
@@ -26,10 +27,13 @@ export function registerAgentServices(container: DependencyContainer): void {
     useValue: publishCanonicalAgentEvents,
   });
   container.register(
-    CanonicalAgentEventSink,
-    { useClass: CanonicalAgentEventSink },
+    CanonicalAgentBoundary,
+    { useClass: CanonicalAgentBoundary },
     { lifecycle: Lifecycle.Singleton },
   );
+  container.register(CanonicalAgentEventSink, {
+    useFactory: (c) => c.resolve(CanonicalAgentBoundary) as CanonicalAgentEventSink,
+  });
   container.register(
     ParentAssistantTextCheckpointService,
     { useClass: ParentAssistantTextCheckpointService },

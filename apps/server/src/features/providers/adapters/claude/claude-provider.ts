@@ -33,7 +33,6 @@ import type {
   CompletionOptions,
 } from "@mcode/contracts";
 import { buildReasoningOptions } from "./build-reasoning-options.js";
-import { createTurnEventSink } from "../../../agents/turns/turn-event-sink.js";
 import { listClaudeModels } from "./list-models.js";
 import { resolveSdkModelSlug } from "./resolve-slug.js";
 import { clampContextWindowToMode, resolveAutoCompactWindow } from "./context-window.js";
@@ -77,7 +76,13 @@ import {
   type BrowserAutomationSessionLeaseStage,
 } from "../../../browser-automation/index.js";
 import type { SessionForker } from "@mcode/contracts";
+import type { ProviderHostPorts } from "@mcode/providers";
+import type { ProviderIdentity } from "@mcode/contracts";
 import { parseClaudeGoalCommandResult } from "./claude-goal-command-parser.js";
+import {
+  ClaudeCanonicalEventPublisher,
+  type ClaudeCanonicalEventRouting,
+} from "./claude-canonical-event-publisher.js";
 
 /**
  * Default model slug used for side-channel and fallback paths.
@@ -368,8 +373,8 @@ interface PendingBrowserAccess {
 @injectable()
 export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoalCapable, ISessionEvictable, ProtocolAdapter<ClaudeSessionState> {
   readonly id: ProviderId = "claude";
-  /** Claude streams agent events through EventEmitter. */
-  readonly eventDelivery = "legacy-emitter" as const;
+  /** Selects canonical host delivery when the server composition supplies the host port. */
+  readonly eventDelivery: "canonical-sink" | "legacy-emitter";
   /** Claude supports one-shot text completion via sdkQuery with maxTurns: 1. */
   readonly supportsCompletion = true;
   readonly sessionForkOnResume = "clean" as const;
@@ -384,6 +389,10 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
   /** Browser lease staged only until a fresh normal SDK query starts. */
   private pendingBrowserAccess = new Map<string, PendingBrowserAccess>();
   private sdkSessionIds = new Map<string, string>();
+  /** Canonical routing retained while the SDK keeps a pooled stream alive. */
+  private canonicalRoutings: Map<string, ClaudeCanonicalEventRouting> | undefined;
+  /** Serializes canonical event submission when the adapter runs in the server composition. */
+  private readonly canonicalEventPublisher: ClaudeCanonicalEventPublisher | undefined;
   /**
    * Tail of the most recent stderr emitted by each session's Claude Code
    * subprocess, capped at {@link STDERR_CAPTURE_LIMIT}. The SDK's process-exit
@@ -459,8 +468,14 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
     private readonly browserAutomationSessionLease: BrowserAutomationSessionLease = new BrowserAutomationSessionLease(),
     @inject(InternalThreadControlMcpRuntime)
     private readonly threadControlMcp: InternalThreadControlMcpRuntime = undefined as never,
+    @inject("ProviderHostPorts")
+    host?: ProviderHostPorts,
   ) {
     super();
+    this.eventDelivery = host ? "canonical-sink" : "legacy-emitter";
+    this.canonicalEventPublisher = host
+      ? new ClaudeCanonicalEventPublisher(host.events)
+      : undefined;
     this.runtime = new SessionRuntime<ClaudeSessionState>(this, {
       jobObject: this.jobObject,
       envService: this.envService,
@@ -486,6 +501,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
 
   /** Start or continue a session by sending a message via the SDK. */
   async sendTurn(req: TurnRequest<"claude">): Promise<void> {
+    const routing = this.rememberCanonicalRouting(req);
     // Seed the resume id so doSendMessage's sdkSessionIds lookup resolves it.
     // `resumeFrom` defined ⇒ resume that SDK session; undefined ⇒ fresh.
     if (req.resumeFrom !== undefined) {
@@ -527,7 +543,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
       maxTurns: req.maxTurns,
     };
     try {
-      await this.doSendMessage(params, req.turnExecutionId);
+      await this.doSendMessage(params, routing);
     } catch (e: unknown) {
       logger.error("sendTurn error", {
         sessionId: req.sessionId,
@@ -950,7 +966,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
     thinking?: boolean;
     maxBudgetUsd?: number;
     maxTurns?: number;
-  }, turnExecutionId: string): Promise<void> {
+  }, routing: ClaudeCanonicalEventRouting): Promise<void> {
     const {
       sessionId,
       message,
@@ -965,7 +981,9 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
       contextWindowMode,
       thinking,
     } = params;
-    const emitTurnEvent = (event: AgentEvent): void => { this.emit("event", { ...event, turnExecutionId }); };
+    const emitTurnEvent = (event: AgentEvent): void => {
+      this.publishTurnEvent(routing, sessionId, event);
+    };
 
     const existing = this.runtime.get(sessionId);
     const pendingBrowserAccess = this.pendingBrowserAccess.get(sessionId);
@@ -1063,7 +1081,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
           this.suppressEndedQueries.add(existing.query);
           this.suppressSessionStartHooks.add(tid);
           await this.runtime.stop(sessionId);
-          return this.doSendMessage({ ...params, resume: false }, turnExecutionId);
+          return this.doSendMessage({ ...params, resume: false }, routing);
         }
       }
 
@@ -1094,12 +1112,12 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
           this.suppressEndedQueries.add(existing.query);
           this.suppressSessionStartHooks.add(tid);
           await this.runtime.stop(sessionId);
-          return this.doSendMessage({ ...params, resume: false }, turnExecutionId);
+          return this.doSendMessage({ ...params, resume: false }, routing);
         }
       }
 
       try {
-        existing.pushMessage(prompt, turnExecutionId);
+        existing.pushMessage(prompt, routing.executionId);
       } catch (err) {
         const errorMessage =
           err instanceof Error ? err.message : String(err);
@@ -1364,7 +1382,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
     // `spawn` discriminates resume vs. fresh via these staged fields.
     const stageTurn = (doResume: boolean): void => {
       this.pendingSpawnTurns.set(sessionId, {
-        turnExecutionId,
+        turnExecutionId: routing.executionId,
         prompt,
         resume: doResume,
         resumeId,
@@ -1441,7 +1459,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
           emitTurnEvent({
           type: AgentEventType.Ended,
           threadId: tid,
-          turnExecutionId,
+          turnExecutionId: routing.executionId,
         } satisfies AgentEvent);
         return "stopped";
       }
@@ -1624,8 +1642,12 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
     // reads `this.runtime.get(sessionId)` lazily on each SDK message; by the
     // time the first message yields, `acquire` has stored `state` in the pool
     // (the runtime stores it synchronously the moment this `spawn` resolves).
-    this.startStreamLoop(sessionId, q, turnExecutionId, queue.setOnPromptConsumed);
-    queue.push(prompt, turnExecutionId);
+    const routing = this.getCanonicalRoutings().get(turnExecutionId);
+    if (!routing) {
+      throw new Error(`Claude canonical routing missing for execution ${turnExecutionId}`);
+    }
+    this.startStreamLoop(sessionId, q, routing, queue.setOnPromptConsumed);
+    queue.push(prompt, routing.executionId);
 
     return { state, pids };
   }
@@ -1680,7 +1702,7 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
   private startStreamLoop(
     sessionId: string,
     q: Query,
-    turnExecutionId: string,
+    initialRouting: ClaudeCanonicalEventRouting,
     setOnPromptConsumed: (handler: (turnExecutionId?: string) => void) => void,
   ): void {
     const threadId = sessionId.startsWith("mcode-")
@@ -1688,15 +1710,17 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
       : sessionId;
 
     (async () => {
-      let currentTurnExecutionId = turnExecutionId;
+      let currentTurnExecutionId = initialRouting.executionId;
       const pendingPromptExecutionIds: string[] = [];
       setOnPromptConsumed((consumedTurnExecutionId) => {
         if (consumedTurnExecutionId && consumedTurnExecutionId !== currentTurnExecutionId) {
           pendingPromptExecutionIds.push(consumedTurnExecutionId);
         }
       });
-      const emitTurnEvent = (event: AgentEvent): void =>
-        createTurnEventSink(this, currentTurnExecutionId)(event);
+      const emitTurnEvent = (event: AgentEvent): void => {
+        const routing = this.getCanonicalRoutings().get(currentTurnExecutionId) ?? initialRouting;
+        this.publishTurnEvent(routing, sessionId, event);
+      };
       let suppressEnded = false;
       try {
         let lastAssistantText = "";
@@ -2461,14 +2485,74 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
           !current?.suppressEnded &&
           (!current || current.query === q)
         ) {
-        emitTurnEvent({
+          emitTurnEvent({
             type: AgentEventType.Ended,
             threadId,
             turnExecutionId: currentTurnExecutionId,
           } satisfies AgentEvent);
+          await this.waitForCanonicalExecution(currentTurnExecutionId);
         }
       }
     })();
+  }
+
+  private rememberCanonicalRouting(req: TurnRequest<"claude">): ClaudeCanonicalEventRouting {
+    const routing = {
+      threadId: req.threadId,
+      turnId: req.turnId,
+      executionId: req.turnExecutionId,
+      deliveryAttempt: req.deliveryAttempt ?? 1,
+    };
+    this.getCanonicalRoutings().set(routing.executionId, routing);
+    return routing;
+  }
+
+  private publishTurnEvent(
+    routing: ClaudeCanonicalEventRouting,
+    sessionId: string,
+    event: AgentEvent,
+  ): void {
+    const eventWithExecution = { ...event, turnExecutionId: routing.executionId };
+    if (!this.canonicalEventPublisher) {
+      this.emit("event", eventWithExecution);
+      return;
+    }
+    this.canonicalEventPublisher.publish(
+      routing,
+      eventWithExecution,
+      this.claudeSessionIdentities(sessionId),
+    );
+  }
+
+  private claudeSessionIdentities(sessionId: string): ProviderIdentity[] {
+    const nativeSessionId = this.sdkSessionIds.get(sessionId);
+    if (!nativeSessionId) return [];
+    return [{
+      providerId: this.id,
+      scope: "session",
+      value: nativeSessionId,
+      provenance: "native",
+    }];
+  }
+
+  private async waitForCanonicalExecution(executionId: string): Promise<void> {
+    const routing = this.getCanonicalRoutings().get(executionId);
+    if (!routing || !this.canonicalEventPublisher) return;
+    try {
+      await this.canonicalEventPublisher.waitForExecution(routing);
+    } catch (error: unknown) {
+      logger.error("Claude canonical event delivery failed", {
+        executionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      this.getCanonicalRoutings().delete(executionId);
+    }
+  }
+
+  private getCanonicalRoutings(): Map<string, ClaudeCanonicalEventRouting> {
+    this.canonicalRoutings ??= new Map<string, ClaudeCanonicalEventRouting>();
+    return this.canonicalRoutings;
   }
 
   /** Build a multimodal SDKUserMessage from text and attachments. */

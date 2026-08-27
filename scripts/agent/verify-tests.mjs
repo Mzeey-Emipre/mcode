@@ -292,16 +292,27 @@ function appendBounded(buffer, chunk, maxBytes = MAX_RETAINED_OUTPUT_BYTES) {
 }
 
 function terminateProcessTree(child, force = false) {
-  if (!child.pid) return;
+  if (!child.pid) return null;
   if (isWindows) {
-    spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true });
-    return;
+    const result = spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+      encoding: "utf8",
+      windowsHide: true,
+    });
+    if (!result.error && result.status === 0) return null;
+    try { child.kill("SIGKILL"); } catch { /* Process already exited. */ }
+    const error = result.error?.message ?? (
+      String(result.stderr ?? "").trim()
+      || String(result.stdout ?? "").trim()
+      || `taskkill exited with ${result.status ?? "an unknown status"}`
+    );
+    return error.slice(0, MAX_FAILURE_EXCERPT_CHARS);
   }
   try {
     process.kill(-child.pid, force ? "SIGKILL" : "SIGTERM");
   } catch {
     try { child.kill(force ? "SIGKILL" : "SIGTERM"); } catch { /* Process already exited. */ }
   }
+  return null;
 }
 
 /** Formats a bounded argv display without interpreting shell metacharacters. */
@@ -386,6 +397,7 @@ export function runPhase({
     let exitCondition = "nonzero";
     let spawnError;
     let logError;
+    let terminationError;
     const output = logPath ? createWriteStream(logPath, { flags: "wx" }) : null;
     const executable = resolveSafeExecutable(command, phaseEnv);
     const child = spawn(executable, args, {
@@ -401,6 +413,10 @@ export function runPhase({
     };
     child.stdout?.on("data", retain);
     child.stderr?.on("data", retain);
+
+    const terminate = (force = false) => {
+      terminationError ??= terminateProcessTree(child, force) ?? undefined;
+    };
 
     let forceKillTimer;
     let settlementTimer;
@@ -429,6 +445,7 @@ export function runPhase({
         exitCondition,
         spawnError,
         logError,
+        terminationError,
         output: tail.toString("utf8"),
         outputTruncated: tail.length >= MAX_RETAINED_OUTPUT_BYTES,
         durationMs: Date.now() - startedAt,
@@ -454,23 +471,23 @@ export function runPhase({
       if (settled) return;
       logError = error.message;
       tail = appendBounded(tail, Buffer.from(`[log error] ${error.message}\n`));
-      terminateProcessTree(child);
+      terminate();
       output.destroy();
       complete(1, null);
     });
     const cancel = () => {
       exitCondition = "cancelled";
-      terminateProcessTree(child);
+      terminate();
       if (!isWindows) {
-        forceKillTimer = setTimeout(() => terminateProcessTree(child, true), 500);
+        forceKillTimer = setTimeout(() => terminate(true), 500);
       }
       settlementTimer = setTimeout(() => finish(1, null), 2_000);
     };
     const timeout = setTimeout(() => {
       exitCondition = "timeout";
-      terminateProcessTree(child);
+      terminate();
       if (!isWindows) {
-        forceKillTimer = setTimeout(() => terminateProcessTree(child, true), 500);
+        forceKillTimer = setTimeout(() => terminate(true), 500);
       }
       settlementTimer = setTimeout(() => finish(1, null), 2_000);
     }, timeoutMs);
@@ -478,8 +495,8 @@ export function runPhase({
     signal?.addEventListener("abort", cancel, { once: true });
     if (signal?.aborted) cancel();
     child.on("error", (error) => {
-      spawnError = error.message;
-      retain(Buffer.from(`[spawn error] ${error.message}\n`));
+      spawnError = typeof error.code === "string" ? `${error.code}: ${error.message}` : error.message;
+      retain(Buffer.from(`[spawn error] ${spawnError}\n`));
       finish(1, null);
     });
     child.on("close", finish);

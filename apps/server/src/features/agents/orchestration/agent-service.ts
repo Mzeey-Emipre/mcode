@@ -107,11 +107,11 @@ import { TurnRuntimeRegistry } from "../turns/turn-runtime.js";
 import type { WorkspaceEnvironmentQueuedTurnSubmission, WorkspaceEnvironmentQueueAdmission } from "../../projects/environment/workspace-environment-automatic-repository.js";
 import type { TurnOutcome } from "../turns/turn-outcome.js";
 import { BrowserNarrativeEventSanitizer } from "../../browser-automation/index.js";
-import { CursorLegacyEventBridge } from "../../providers/composition/cursor-legacy-event-bridge.js";
+import { CanonicalLegacyEventBridge } from "../../providers/composition/canonical-legacy-event-bridge.js";
 import {
-  CanonicalAgentEventSink,
+  CanonicalAgentBoundary,
   type CanonicalChildStopTarget,
-} from "../canonical/canonical-agent-event-sink.js";
+} from "../canonical/canonical-agent-boundary.js";
 import { isExplicitMcodeThreadRequest } from "@mcode/thread-orchestration";
 
 /**
@@ -528,7 +528,7 @@ export class AgentService {
   /** Monotonic turn generation per thread, including turns that failed setup. */
   private readonly turnGenerations = new Map<string, number>();
   private readonly mutationReservations: ThreadControlMutationReservationService;
-  private readonly canonicalSink: CanonicalAgentEventSink;
+  private readonly canonicalSink: CanonicalAgentBoundary;
   private readonly parentAssistantTextCheckpoints: ParentAssistantTextCheckpointService;
   private readonly parentAssistantTextCheckpointQueue: ParentAssistantTextCheckpointQueue;
   private readonly parentNarrativeRecovery: ParentNarrativeRecoveryCoordinator;
@@ -582,12 +582,12 @@ export class AgentService {
     private readonly threadControlMcp?: InternalThreadControlMcpRuntime,
     @inject(delay(() => ThreadControlMutationReservationService))
     mutationReservations?: ThreadControlMutationReservationService,
-    @inject(CanonicalAgentEventSink)
-    canonicalSink?: CanonicalAgentEventSink,
+    @inject(CanonicalAgentBoundary)
+    canonicalSink?: CanonicalAgentBoundary,
     @inject(delay(() => WorkspaceEnvironmentService))
     private readonly workspaceEnvironmentService?: WorkspaceEnvironmentService,
-    @inject(CursorLegacyEventBridge)
-    private readonly cursorLegacyEventBridge?: CursorLegacyEventBridge,
+    @inject(CanonicalLegacyEventBridge)
+    private readonly canonicalLegacyEventBridge?: CanonicalLegacyEventBridge,
   ) {
     this.browserNarrativeEventSanitizer = new BrowserNarrativeEventSanitizer(
       (threadId, toolCallId) => this.narrativeStore.getBufferedToolCalls(threadId)
@@ -595,7 +595,7 @@ export class AgentService {
         ?.toolName,
     );
     this.mutationReservations = mutationReservations ?? new ThreadControlMutationReservationService();
-    this.canonicalSink = canonicalSink ?? new CanonicalAgentEventSink(this.db);
+    this.canonicalSink = canonicalSink ?? new CanonicalAgentBoundary(this.db);
     this.parentAssistantTextCheckpoints = parentAssistantTextCheckpoints;
     this.parentAssistantTextCheckpointQueue = new ParentAssistantTextCheckpointQueue(
       this.parentAssistantTextCheckpoints,
@@ -4185,7 +4185,7 @@ export class AgentService {
         this.canonicalSinkProviderIds.add(provider.id);
       }
     }
-    this.cursorLegacyEventBridge?.register((providerId, event) => {
+    this.canonicalLegacyEventBridge?.register((providerId, event) => {
       if (!this.canonicalSinkProviderIds.has(providerId)) return;
       this.providerEventHandlers.get(providerId)?.(event);
     });
