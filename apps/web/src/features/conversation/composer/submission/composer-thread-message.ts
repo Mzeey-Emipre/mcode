@@ -1,5 +1,10 @@
 import type { AttachmentMeta } from "@/transport";
-import type { MessageMention, OrchestrationMode, PreviewAnnotationBundle } from "@mcode/contracts";
+import type {
+  MessageMention,
+  OrchestrationMode,
+  PreviewAnnotationBundle,
+  SelectedTextComment,
+} from "@mcode/contracts";
 import { useThreadStore } from "@/stores/threadStore";
 import type { ComposerAgentSelection } from "../draft/useComposerFormController";
 import type { ComposerReplyContext, PreparedComposerSubmission } from "./composer-submission-types";
@@ -14,6 +19,7 @@ export interface ComposerThreadMessagePayload {
   previewAnnotations?: PreviewAnnotationBundle;
   goalObjective?: string;
   orchestrationMode?: OrchestrationMode;
+  selectedTextComments?: SelectedTextComment[];
   replyToMessageId?: string;
   quotedText?: string;
 }
@@ -44,6 +50,7 @@ export async function sendComposerThreadMessage(
     payload.previewAnnotations,
     payload.goalObjective,
     payload.orchestrationMode,
+    payload.selectedTextComments,
   );
 }
 
@@ -61,6 +68,9 @@ export function createPreparedThreadMessagePayload(
     previewAnnotations: submission.previewAnnotations,
     goalObjective: submission.goalObjective,
     orchestrationMode: submission.snapshot.selection.orchestrationMode,
+    selectedTextComments: submission.snapshot.selectedTextComments.length > 0
+      ? submission.snapshot.selectedTextComments
+      : undefined,
     replyToMessageId: replyContext?.messageId,
     quotedText: replyContext?.quotedText,
   };

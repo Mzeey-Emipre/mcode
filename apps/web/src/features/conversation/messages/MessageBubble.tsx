@@ -470,6 +470,30 @@ function QuoteBlock({
   );
 }
 
+function SelectedTextCommentCard({
+  quote,
+  note,
+  displayNumber,
+}: {
+  quote: string;
+  note: string;
+  displayNumber: number;
+}) {
+  return (
+    <section
+      className="mt-2 rounded-md border border-border/60 bg-background/45 px-3 py-2 text-left"
+      data-selected-text-exclude
+      aria-label={`Selected text comment ${displayNumber}`}
+    >
+      <p className="text-xs font-medium text-muted-foreground">Comment {displayNumber}</p>
+      <blockquote className="mt-1 whitespace-pre-wrap border-l-2 border-primary/40 pl-2 text-xs text-muted-foreground">
+        {quote}
+      </blockquote>
+      <p className="mt-1 whitespace-pre-wrap text-sm text-accent-foreground">{note}</p>
+    </section>
+  );
+}
+
 /** Renders a single chat message (system, user, or assistant). Memoized to prevent re-renders when the message ref is unchanged. */
 export const MessageBubble = memo(function MessageBubble({
   message,
@@ -694,7 +718,11 @@ export const MessageBubble = memo(function MessageBubble({
             ) : null}
 
           {userDisplayText.trim() && (
-            <div className="overflow-hidden break-words rounded-lg rounded-br-md bg-accent px-3 py-1.5 text-sm text-accent-foreground">
+            <div
+              className="overflow-hidden break-words rounded-lg rounded-br-md bg-accent px-3 py-1.5 text-sm text-accent-foreground"
+              data-selected-text-content
+              data-selected-text-eligible="true"
+            >
               {!userGoal && message.mentions?.length ? (
                 <MentionedUserText text={userDisplayText} mentions={message.mentions} />
               ) : (
@@ -704,6 +732,15 @@ export const MessageBubble = memo(function MessageBubble({
               )}
             </div>
           )}
+
+          {message.selectedTextComments?.map((comment) => (
+            <SelectedTextCommentCard
+              key={comment.id}
+              quote={comment.source.quote}
+              note={comment.note}
+              displayNumber={comment.displayNumber}
+            />
+          ))}
 
           <div className="flex flex-col items-end gap-0.5 pr-1">
             <div className="flex items-center gap-1.5">
@@ -817,7 +854,12 @@ export const MessageBubble = memo(function MessageBubble({
         </div>
       )}
       {!assistantContentEmpty && (
-        <div className="text-sm text-foreground" data-testid="assistant-response-text">
+        <div
+          className="text-sm text-foreground"
+          data-testid="assistant-response-text"
+          data-selected-text-content
+          data-selected-text-eligible={assistantStreaming === undefined ? "true" : "false"}
+        >
           {renderAssistantDelta ? (
             <DeltaBlock
               text={message.content}

@@ -4,7 +4,8 @@ import type { Thread } from "@mcode/contracts";
 import { CleanupJobRepo } from "../../thread-control/cleanup/persistence/cleanup-job-repo.js";
 import { ThreadRepo } from "../../thread-control/persistence/thread-repo.js";
 import { WorkspaceRepo } from "../persistence/workspace-repo.js";
-import { GitService } from "../git/git-service.js";
+import { GitWorktreeService } from "../git/git-worktree-service.js";
+import { WorktreeSafetyService } from "../git/worktree-safety-service.js";
 
 function managedWorktreeName(ref: string, threadId: string): string {
   return `${sanitizeBranchForFolder(ref).slice(0, 91)}-${threadId.slice(0, 8)}`;
@@ -17,7 +18,8 @@ export class ProjectWorktreeService {
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
     @inject(WorkspaceRepo) private readonly workspaceRepo: WorkspaceRepo,
     @inject(CleanupJobRepo) private readonly cleanupJobRepo: CleanupJobRepo,
-    @inject(GitService) private readonly gitService: GitService,
+    @inject(GitWorktreeService) private readonly gitWorktrees: GitWorktreeService,
+    @inject(WorktreeSafetyService) private readonly worktreeSafety: WorktreeSafetyService,
   ) {}
 
   /** Provision a worktree for a newly-created thread and persist its path. */
@@ -31,7 +33,7 @@ export class ProjectWorktreeService {
     if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
 
     const worktreeName = managedWorktreeName(branch, thread.id);
-    const info = await this.gitService.createWorktree(
+    const info = await this.gitWorktrees.createWorktree(
       workspace.path,
       worktreeName,
       branch,
@@ -45,7 +47,7 @@ export class ProjectWorktreeService {
         const rollbackOptions = info.createdBranch
           ? { branchName: branch }
           : { deleteBranch: false };
-        const cleaned = await this.gitService.removeWorktree(
+        const cleaned = await this.gitWorktrees.removeWorktree(
           workspace.path,
           worktreeName,
           rollbackOptions,
@@ -95,7 +97,7 @@ export class ProjectWorktreeService {
 
     const worktreeRef = placement.branchName ?? placement.baseRef;
     const worktreeName = managedWorktreeName(worktreeRef, thread.id);
-    const info = await this.gitService.createWorktree(
+    const info = await this.gitWorktrees.createWorktree(
       workspace.path,
       worktreeName,
       worktreeRef,
@@ -106,7 +108,7 @@ export class ProjectWorktreeService {
     );
     const updated = this.threadRepo.updateWorktreePath(thread.id, info.path);
     if (!updated) {
-      await this.gitService.removeWorktree(workspace.path, worktreeName, {
+      await this.gitWorktrees.removeWorktree(workspace.path, worktreeName, {
         ...(info.createdBranch ? { branchName: worktreeRef } : { deleteBranch: false }),
       });
       throw new Error(`Failed to persist worktree path for thread ${thread.id}`);
@@ -129,7 +131,7 @@ export class ProjectWorktreeService {
     if (!workspace) throw new Error(`Workspace not found: ${workspaceId}`);
     const ref = placement.branchName ?? placement.baseRef;
     const name = managedWorktreeName(ref, threadId);
-    return this.gitService.removeWorktree(workspace.path, name, { deleteBranch: false });
+    return this.gitWorktrees.removeWorktree(workspace.path, name, { deleteBranch: false });
   }
 
   /** Check ownership and enqueue cleanup for one managed worktree. */
@@ -161,7 +163,7 @@ export class ProjectWorktreeService {
     }
 
     const siblings = this.threadRepo.listActiveSiblingWorktreePaths(threadId);
-    const safety = await this.gitService.assessWorktreeRemovalSafety(
+    const safety = await this.worktreeSafety.assessWorktreeRemovalSafety(
       current.worktree_path,
       siblings.paths,
       siblings.truncated,

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { SubagentIdentityGlyph } from "@/components/ui/SubagentIdentityGlyph";
 import type { HookExecution, ToolCall } from "@/transport/types";
@@ -24,6 +25,23 @@ interface SubagentRowProps {
   activities?: readonly SubagentActivity[];
 }
 
+interface VisibleSubagentParticipant {
+  participant: ToolCall;
+  lifecycle: SubagentLifecycle;
+}
+
+interface SubagentParticipantProps extends VisibleSubagentParticipant {
+  unavailableDetailId: string | undefined;
+  onSubagentSelect: SubagentRowProps["onSubagentSelect"];
+  onUnavailableDetail: (id: string) => void;
+}
+
+interface AggregateSubagentButtonProps {
+  label: string;
+  target: SubagentRosterTarget;
+  onOpenSubagents: SubagentRowProps["onOpenSubagents"];
+}
+
 function terminalStatus(toolCall: ToolCall): "Completed" | "Interrupted" | "Failed" {
   if (toolCall.isCancelled) {
     return "Interrupted";
@@ -46,6 +64,146 @@ function remainingLabel(activities: readonly SubagentActivity[]): string {
   return labels.map((label, index) => index === 0 ? `+${label}` : label).join(", ");
 }
 
+function transcriptUnavailableMessage(providerName: string | undefined): string {
+  return providerName
+    ? `${providerName} did not provide this subagent’s transcript.`
+    : "This provider did not provide this subagent’s transcript.";
+}
+
+function groupedSubagentActivities(
+  activities: readonly SubagentActivity[] | undefined,
+): readonly SubagentActivity[] | undefined {
+  if (!activities || activities.length <= 1) return undefined;
+  return activities;
+}
+
+function visibleSubagentParticipants(
+  groupedActivities: readonly SubagentActivity[] | undefined,
+  participants: readonly ToolCall[],
+  lifecycle: SubagentLifecycle,
+): VisibleSubagentParticipant[] {
+  if (groupedActivities) {
+    return groupedActivities.slice(0, 2).map((activity) => ({
+      participant: activity.participants.at(-1) ?? activity.toolCall,
+      lifecycle: activity.lifecycle,
+    }));
+  }
+  return participants.slice(0, 2).map((participant) => ({ participant, lifecycle }));
+}
+
+function aggregateSubagentTarget(
+  activities: readonly SubagentActivity[],
+): SubagentRosterTarget {
+  return activities.some((activity) => activity.lifecycle !== "finished")
+    ? "active"
+    : "finished";
+}
+
+function participantTranscriptUnavailableMessage(participant: ToolCall): string {
+  const detail = participant.subagentPresentation?.detail;
+  return transcriptUnavailableMessage(
+    detail?.kind === "transcript-unavailable" ? detail.providerName : undefined,
+  );
+}
+
+function handleSubagentSelection(
+  participant: ToolCall,
+  lifecycle: SubagentLifecycle,
+  hasCanonicalChild: boolean,
+  identityKey: string,
+  onSubagentSelect: SubagentRowProps["onSubagentSelect"],
+  onUnavailableDetail: (id: string) => void,
+): void {
+  if (!hasCanonicalChild) {
+    onUnavailableDetail(participant.id);
+    return;
+  }
+  onSubagentSelect?.(
+    identityKey,
+    lifecycle === "finished" ? "finished" : "active",
+  );
+}
+
+function SubagentParticipant({
+  participant,
+  lifecycle,
+  unavailableDetailId,
+  onSubagentSelect,
+  onUnavailableDetail,
+}: SubagentParticipantProps) {
+  const presentation = participant.subagentPresentation;
+  const identity = presentation?.displayName ?? "Subagent";
+  const identityKey = presentation?.identityKey ?? participant.id;
+  const detail = presentation?.detail;
+  const hasCanonicalChild = detail?.kind === "canonical-child";
+  const status = lifecycle === "finished" ? terminalStatus(participant) : "Active";
+  const unavailableMessage = participantTranscriptUnavailableMessage(participant);
+
+  return (
+    <span className="flex min-w-0 shrink items-center gap-1">
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        onClick={() => handleSubagentSelection(
+          participant,
+          lifecycle,
+          hasCanonicalChild,
+          identityKey,
+          onSubagentSelect,
+          onUnavailableDetail,
+        )}
+        className="min-w-0 shrink gap-1 rounded-full px-2 text-left transition-colors duration-150 motion-reduce:transition-none hover:bg-muted/30"
+        aria-label={`${hasCanonicalChild ? "Open" : "Show"} ${identity} subagent details`}
+        aria-describedby={`subagent-status-${participant.id}`}
+      >
+        <SubagentIdentityGlyph
+          identity={identity}
+          hasExplicitIdentity={presentation?.hasExplicitIdentity ?? false}
+          paletteSeed={identityKey}
+          className="size-4"
+          size={12}
+        />
+        <span className="min-w-0 truncate text-xs font-medium text-foreground/85">
+          {identity}
+        </span>
+      </Button>
+      <span id={`subagent-status-${participant.id}`} role="status" className="sr-only">
+        {status}
+      </span>
+      {unavailableDetailId === participant.id && unavailableMessage && (
+        <span data-testid="subagent-transcript-unavailable" role="status" className="text-xs text-muted-foreground">
+          {unavailableMessage}
+        </span>
+      )}
+      <span className="shrink-0 text-xs text-muted-foreground">
+        {lifecycleLabel(lifecycle)}
+      </span>
+    </span>
+  );
+}
+
+function AggregateSubagentButton({
+  label,
+  target,
+  onOpenSubagents,
+}: AggregateSubagentButtonProps) {
+  if (!label) return null;
+
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      onClick={() => onOpenSubagents?.(target)}
+      className="shrink-0 justify-start rounded-full px-2 text-left text-xs text-muted-foreground hover:bg-muted/30"
+      aria-label={`Open full Subagents roster, ${label}`}
+    >
+      <span className="whitespace-nowrap">{label}</span>
+    </Button>
+  );
+}
+
 /** Renders one identity-only sub-agent lifecycle row in the chat narrative. */
 export function SubagentRow({
   participants,
@@ -54,76 +212,36 @@ export function SubagentRow({
   onOpenSubagents,
   activities,
 }: SubagentRowProps) {
-  const groupedActivities = activities && activities.length > 1 ? activities : undefined;
-  const visibleParticipants = groupedActivities
-    ? groupedActivities.slice(0, 2).map((activity) => ({
-        participant: activity.participants.at(-1) ?? activity.toolCall,
-        lifecycle: activity.lifecycle,
-      }))
-    : participants.slice(0, 2).map((participant) => ({ participant, lifecycle }));
+  const [unavailableDetailId, setUnavailableDetailId] = useState<string>();
+  const groupedActivities = groupedSubagentActivities(activities);
+  const visibleParticipants = visibleSubagentParticipants(
+    groupedActivities,
+    participants,
+    lifecycle,
+  );
   const remainingActivities = groupedActivities?.slice(2) ?? [];
   const aggregateLabel = remainingActivities.length > 0 ? remainingLabel(remainingActivities) : "";
-  const aggregateTarget: SubagentRosterTarget = remainingActivities.some(
-    (activity) => activity.lifecycle !== "finished",
-  ) ? "active" : "finished";
+  const aggregateTarget = aggregateSubagentTarget(remainingActivities);
 
   return (
     <div className={`${NARRATIVE_TOOL_ROW} min-w-0 gap-2`}>
       <div className={`flex min-w-0 flex-1 items-center overflow-hidden ${groupedActivities ? "gap-1" : "gap-2"}`}>
-        {visibleParticipants.map(({ participant, lifecycle: participantLifecycle }) => {
-          const presentation = participant.subagentPresentation;
-          const identity = presentation?.displayName ?? "Subagent";
-          const identityKey = presentation?.identityKey ?? participant.id;
-          const status = participantLifecycle === "finished"
-            ? terminalStatus(participant)
-            : "Active";
-          return (
-            <span key={participant.id} className="flex min-w-0 shrink items-center gap-1">
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => onSubagentSelect?.(
-                  identityKey,
-                  participantLifecycle === "finished" ? "finished" : "active",
-                )}
-                className="min-w-0 shrink gap-1 rounded-full px-2 text-left transition-colors duration-150 motion-reduce:transition-none hover:bg-muted/30"
-                aria-label={`Open ${identity} subagent details`}
-                aria-describedby={`subagent-status-${participant.id}`}
-              >
-                <SubagentIdentityGlyph
-                  identity={identity}
-                  hasExplicitIdentity={presentation?.hasExplicitIdentity ?? false}
-                  paletteSeed={identityKey}
-                  className="size-4"
-                  size={12}
-                />
-                <span className="min-w-0 truncate text-xs font-medium text-foreground/85">
-                  {identity}
-                </span>
-              </Button>
-              <span id={`subagent-status-${participant.id}`} role="status" className="sr-only">
-                {status}
-              </span>
-              <span className="shrink-0 text-xs text-muted-foreground">
-                {lifecycleLabel(participantLifecycle)}
-              </span>
-            </span>
-          );
-        })}
+        {visibleParticipants.map(({ participant, lifecycle: participantLifecycle }) => (
+          <SubagentParticipant
+            key={participant.id}
+            participant={participant}
+            lifecycle={participantLifecycle}
+            unavailableDetailId={unavailableDetailId}
+            onSubagentSelect={onSubagentSelect}
+            onUnavailableDetail={setUnavailableDetailId}
+          />
+        ))}
       </div>
-      {aggregateLabel && (
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={() => onOpenSubagents?.(aggregateTarget)}
-          className="shrink-0 justify-start rounded-full px-2 text-left text-xs text-muted-foreground hover:bg-muted/30"
-          aria-label={`Open full Subagents roster, ${aggregateLabel}`}
-        >
-          <span className="whitespace-nowrap">{aggregateLabel}</span>
-        </Button>
-      )}
+      <AggregateSubagentButton
+        label={aggregateLabel}
+        target={aggregateTarget}
+        onOpenSubagents={onOpenSubagents}
+      />
     </div>
   );
 }

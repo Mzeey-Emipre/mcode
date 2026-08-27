@@ -9,7 +9,7 @@ import { readFileSync, existsSync, statSync, realpathSync } from "fs";
 import { resolve, isAbsolute, sep } from "path";
 import { WorkspaceRepo } from "../persistence/workspace-repo.js";
 import { ThreadRepo } from "../../thread-control/persistence/thread-repo.js";
-import { GitService } from "../index.js";
+import { GitWorktreeService } from "../git/git-worktree-service.js";
 import type { GitExecutor } from "../git/execution/index.js";
 
 /** Handles file listing and content reading for workspaces and threads. */
@@ -18,7 +18,7 @@ export class FileService {
   constructor(
     @inject(WorkspaceRepo) private readonly workspaceRepo: WorkspaceRepo,
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
-    @inject(delay(() => GitService)) private readonly gitService: GitService,
+    @inject(delay(() => GitWorktreeService)) private readonly gitWorktrees: GitWorktreeService,
     @inject("GitExecutor") private readonly gitExecutor: GitExecutor,
   ) {}
 
@@ -154,7 +154,7 @@ export class FileService {
       }
     }
 
-    return this.gitService.resolveWorkingDir(
+    return this.gitWorktrees.resolveWorkingDir(
       workspace.path,
       thread?.mode ?? null,
       thread?.worktree_path ?? null,

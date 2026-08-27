@@ -23,7 +23,12 @@ describe("HandoffCheckoutService", () => {
       createBranch: vi.fn(),
       getCurrentBranchAt: vi.fn(),
     } as unknown as GitService;
-    service = new HandoffCheckoutService(threadRepo, workspaceRepo, gitService);
+    service = new HandoffCheckoutService(
+      threadRepo,
+      workspaceRepo,
+      gitService,
+      gitService,
+    );
   });
 
   it("creates a branch for a thread and marks its checkout state named", async () => {

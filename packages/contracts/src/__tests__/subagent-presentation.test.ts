@@ -17,6 +17,7 @@ describe("sub-agent presentation", () => {
       displayName: "Direct detail worker",
       hasExplicitIdentity: true,
       identityKey: "child-1",
+      detail: { kind: "canonical-child" },
       model: "gpt-5.6-luna",
       reasoningEffort: "low",
     });
@@ -30,6 +31,7 @@ describe("sub-agent presentation", () => {
       displayName: "Review probe",
       hasExplicitIdentity: true,
       identityKey: "/root/review_probe",
+      detail: { kind: "transcript-unavailable" },
       providerAgentKey: "/root/review_probe",
     });
   });
@@ -44,6 +46,19 @@ describe("sub-agent presentation", () => {
     expect(resolveSubagentExactIdentity({ nativeThreadId: "x".repeat(513) })).toBeUndefined();
   });
 
+  it("keeps a provider identity as metadata when no canonical child exists", () => {
+    expect(createSubagentPresentation({
+      subagentProviderName: "Cursor",
+      agentId: "cursor-agent-1",
+    }, "call-1")).toMatchObject({
+      identityKey: "call-1",
+      detail: {
+        kind: "transcript-unavailable",
+        providerName: "Cursor",
+      },
+    });
+  });
+
   it("enriches a terminal row without losing its established child identity", () => {
     const initial = createSubagentPresentation({ receiverThreadIds: ["child-1"] }, "call-1");
     const late = createSubagentPresentation({ agentName: "Hubble", model: "gpt-5.6-luna" }, "call-1");
@@ -52,6 +67,7 @@ describe("sub-agent presentation", () => {
       displayName: "Hubble",
       hasExplicitIdentity: true,
       identityKey: "child-1",
+      detail: { kind: "canonical-child" },
       providerAgentKey: undefined,
       model: "gpt-5.6-luna",
       reasoningEffort: undefined,

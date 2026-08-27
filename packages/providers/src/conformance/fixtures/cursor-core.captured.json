@@ -1,0 +1,21 @@
+{
+  "contractVersion": 1,
+  "providerId": "cursor",
+  "cliVersion": "captured",
+  "protocolVersion": "acp",
+  "provenance": "captured",
+  "requiredProfiles": ["core", "build", "plan", "permissions", "session-eviction", "clean-fork", "browser-access", "thread-control"],
+  "scenario": "captured ACP tool lifecycle",
+  "sourceHash": "3980d0fa608209511ef1ffc34ef069bf5cdbbd68bd1d6804e7492ef41db67600",
+  "redaction": { "reviewed": true, "removedFields": ["prompt", "response", "environment", "absolute paths"] },
+  "input": {
+    "events": [
+      { "kind": "session", "sequence": 1, "nativeId": "CURSOR_SESSION_CAPTURE", "status": "started" },
+      { "kind": "turn", "sequence": 2, "nativeId": "CURSOR_TURN_CAPTURE", "status": "started" },
+      { "kind": "item", "sequence": 3, "nativeId": "CURSOR_TOOL_CAPTURE", "pairId": "CURSOR_TOOL_CAPTURE", "size": 1, "status": "started" },
+      { "kind": "item", "sequence": 4, "nativeId": "CURSOR_TOOL_CAPTURE", "pairId": "CURSOR_TOOL_CAPTURE", "size": 1, "status": "completed" },
+      { "kind": "terminal", "sequence": 5, "nativeId": "CURSOR_TURN_CAPTURE", "status": "completed" }
+    ]
+  },
+  "expected": { "orderedKinds": ["session", "turn", "item", "item", "terminal"], "terminal": "completed", "toolPairs": [["CURSOR_TOOL_CAPTURE", "CURSOR_TOOL_CAPTURE"]] }
+}

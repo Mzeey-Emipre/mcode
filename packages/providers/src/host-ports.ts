@@ -58,12 +58,18 @@ export interface ProviderBrowserLeaseGrant extends ProviderBrowserCredentialMeta
   allowedOperations: readonly string[];
 }
 
+/** Result of rotating credentials for an active browser lease. */
+export type ProviderBrowserLeaseRefreshResult =
+  | { ok: true; grant: ProviderBrowserLeaseGrant }
+  | { ok: false; leaseId: string; reason: "not-found" | "unconfigured" | "issuance-failed" };
+
 /** Gives a Provider scoped access to server-owned browser leases. */
 export interface ProviderBrowserPort {
   stage(request: ProviderBrowserLeaseRequest): ProviderBrowserLeaseHandle;
   releaseSession(providerId: string, mcodeSessionId: string): number;
   isConfigured(): boolean;
   issue(stage: ProviderBrowserLeaseHandle): ProviderBrowserLeaseGrant | null;
+  refresh(leaseId: string): ProviderBrowserLeaseRefreshResult;
   release(leaseId: string): { leaseId: string; released: boolean; credentialId?: string };
   revokeCredential(credentialId: string): boolean;
 }
@@ -73,8 +79,15 @@ export interface ProviderThreadControlRequest {
   providerId: string;
   sessionId: string;
   threadId: string;
-  turnId: string;
+  turnId?: string;
   protocol: "claude" | "codex" | "http";
+}
+
+/** Authenticated HTTP MCP connection supplied by the server-owned thread-control authority. */
+export interface ProviderThreadControlHttpConnection {
+  name: string;
+  url: string;
+  headers: Record<string, string>;
 }
 
 /** Gives a Provider opaque thread-control bootstrap data for one scoped session. */

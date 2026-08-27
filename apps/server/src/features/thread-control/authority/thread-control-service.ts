@@ -79,18 +79,14 @@ import {
   ThreadControlMutationReservationService,
   type ThreadMutationReservationState,
 } from "./thread-control-mutation-reservation-service.js";
-import { GitService, ProjectWorktreeService } from "../../projects/index.js";
+import { ProjectWorktreeService } from "../../projects/index.js";
+import { GitRepositoryService } from "../../projects/git/git-repository-service.js";
+import { GitWorktreeService } from "../../projects/git/git-worktree-service.js";
 import { ModelCacheService } from "../../providers/models/model-cache-service.js";
 import { SettingsService } from "../../settings/settings-service.js";
 import { broadcast } from "../../../application/transport/push.js";
 
 const THREAD_WAIT_POLL_INTERVAL_MS = 250;
-
-/** Git operations required by thread-control discovery and placement. */
-export interface ThreadControlGitDiscovery {
-  listWorktrees(workspaceId: string): Promise<Array<{ name: string; path: string; branch: string; managed: boolean }>>;
-  getCurrentBranch(workspaceId: string): Promise<string | null>;
-}
 
 /** Sole server authority boundary for internal thread-control operations. */
 @injectable()
@@ -102,7 +98,8 @@ export class ThreadControlService {
   constructor(
     @inject(WorkspaceRepo) private readonly workspaces: WorkspaceRepo,
     @inject(WorktreeRepo) private readonly worktrees: WorktreeRepo,
-    @inject(delay(() => GitService)) private readonly git: ThreadControlGitDiscovery,
+    @inject(delay(() => GitWorktreeService)) private readonly gitWorktrees: GitWorktreeService,
+    @inject(delay(() => GitRepositoryService)) private readonly gitRepository: GitRepositoryService,
     @inject(ThreadRepo) private readonly threads: ThreadRepo,
     @inject(delay(() => ProjectWorktreeService)) private readonly projectWorktreeService: ProjectWorktreeService,
     @inject(delay(() => AgentService)) private readonly agentService: AgentService,
@@ -360,7 +357,7 @@ export class ThreadControlService {
         || !authority.scopes.includes("worktrees:read")))) {
       return { status: "rejected", error: this.error("not_found", "Workspace not found", false) };
     }
-    const discovered = await this.git.listWorktrees(input.workspaceId);
+    const discovered = await this.gitWorktrees.listWorktrees(input.workspaceId);
     const worktrees = this.worktrees.reconcile(input.workspaceId, discovered.map((worktree) => ({
       canonicalPath: worktree.path,
       label: worktree.name,
@@ -1375,7 +1372,7 @@ export class ThreadControlService {
 
     if (input.placement.type === "direct") {
       mode = "direct";
-      branch = await this.git.getCurrentBranch(input.workspaceId).catch(() => null) ?? "HEAD";
+      branch = await this.gitRepository.getCurrentBranch(input.workspaceId).catch(() => null) ?? "HEAD";
     } else if (input.placement.type === "new_worktree") {
       mode = "worktree";
       branch = input.placement.branchName ?? input.placement.baseRef;

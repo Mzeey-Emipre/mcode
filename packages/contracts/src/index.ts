@@ -310,6 +310,17 @@ export {
   MAX_MESSAGE_MENTIONS,
 } from "./models/mention.js";
 export type { MessageMention } from "./models/mention.js";
+export {
+  MAX_SELECTED_TEXT_COMMENTS,
+  MAX_SELECTED_TEXT_COMMENT_TEXT_CHARS,
+  SelectedTextCommentSourceSchema,
+  SelectedTextCommentSchema,
+  SelectedTextCommentsSchema,
+} from "./models/selected-text-comment.js";
+export type {
+  SelectedTextCommentSource,
+  SelectedTextComment,
+} from "./models/selected-text-comment.js";
 
 export {
   GoalControlsSchema,
@@ -416,20 +427,26 @@ export {
   ToolCallStatusSchema,
   PROVIDER_AGENT_KEY_MAX_LENGTH,
   SUBAGENT_DISPLAY_NAME_MAX_LENGTH,
+  SUBAGENT_DURATION_MAX_MS,
   SUBAGENT_IDENTITY_KEY_MAX_LENGTH,
   SUBAGENT_METADATA_MAX_LENGTH,
+  SUBAGENT_PROMPT_MAX_LENGTH,
+  SubagentDetailSchema,
   SubagentPresentationSchema,
   createSubagentPresentation,
   formatSubagentDisplayName,
   mergeSubagentPresentation,
   resolveProviderAgentKey,
+  resolveSubagentDuration,
   resolveSubagentExactIdentity,
   resolveSubagentDisplayName,
   resolveSubagentMetadata,
+  resolveSubagentPrompt,
 } from "./models/tool-call-record.js";
 export type {
   ToolCallRecord,
   ToolCallStatus,
+  SubagentDetail,
   SubagentPresentation,
 } from "./models/tool-call-record.js";
 

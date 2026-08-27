@@ -50,6 +50,7 @@ export function createProviderHostPorts(
           allowedOperations: [...grant.allowedOperations],
         };
       },
+      refresh: (leaseId) => dependencies.browser.refresh(leaseId),
       release: (leaseId) => dependencies.browser.release(leaseId),
       revokeCredential: (credentialId) => dependencies.browser.revokeCredential(credentialId),
     },

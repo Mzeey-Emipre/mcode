@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import type { Settings } from "@mcode/contracts";
 import {
   createClaudeProvider,
   createCodexProvider,
@@ -21,6 +22,7 @@ function createHostPorts(): ProviderHostPorts {
       releaseSession: vi.fn(() => 0),
       isConfigured: vi.fn(() => false),
       issue: vi.fn(() => null),
+      refresh: vi.fn((leaseId: string) => ({ ok: false as const, leaseId, reason: "not-found" as const })),
       release: vi.fn((leaseId: string) => ({ leaseId, released: false })),
       revokeCredential: vi.fn(() => false),
     },
@@ -49,6 +51,10 @@ function createInput(): ProviderFactoryInput {
         refreshCustomPrompts: vi.fn(async () => ({ prompts: [] })),
         shutdown: vi.fn(async () => undefined),
       },
+    },
+    cursor: {
+      settings: { get: vi.fn(() => ({} as Settings)) },
+      skills: { list: vi.fn(() => []) },
     },
   };
 }
@@ -83,6 +89,15 @@ describe("Provider factories", () => {
       ]);
       expect(provider.descriptor.capabilities).not.toContainEqual(
         { name: "provider-continuation", support: "supported" },
+      );
+    }
+    if (id === "cursor") {
+      expect(provider.sendTurn).toBeTypeOf("function");
+      expect(provider.descriptor.capabilities).toContainEqual(
+        { name: "provider-continuation", support: "unsupported" },
+      );
+      expect(provider.descriptor.capabilities).toContainEqual(
+        { name: "child-cancellation", support: "unsupported" },
       );
     }
     expect(Object.values(input.host).flatMap((port) => Object.values(port))).toSatisfy(
@@ -125,5 +140,12 @@ describe("Provider factories", () => {
     expect(() => protocol?.encodeRequest("session/prompt", "x".repeat(1_048_576))).toThrow(
       "maximum encoded size",
     );
+  });
+
+  it("rejects incomplete Cursor-specific ports", () => {
+    const input = createInput();
+    input.cursor = { settings: { get: vi.fn(() => ({} as Settings)) } } as never;
+
+    expect(() => createCursorProvider(input)).toThrow("skills.list");
   });
 });

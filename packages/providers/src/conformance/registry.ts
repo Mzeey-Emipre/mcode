@@ -73,8 +73,21 @@ export const ENABLED_PROVIDER_CONFORMANCE: readonly ProviderConformanceRegistrat
   {
     providerId: "cursor",
     factory: createCursorProvider,
-    requiredProfiles: ["core"],
-    fixtureFiles: [fixtureFile("cursor")],
+    requiredProfiles: [
+      "core",
+      "build",
+      "plan",
+      "permissions",
+      "session-eviction",
+      "clean-fork",
+      "browser-access",
+      "thread-control",
+    ],
+    fixtureFiles: [
+      fixtureFile("cursor"),
+      namedFixtureFile("cursor-core.captured.json"),
+    ],
+    requiredFixtureProvenance: ["captured", "synthetic"],
     supportedVersions: [{
       component: "@agentclientprotocol/sdk",
       oldestSupported: "0.21.0",

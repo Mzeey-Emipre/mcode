@@ -645,6 +645,7 @@ describe("handleAgentEvent branches", () => {
         displayName: "Subagent",
         hasExplicitIdentity: false,
         identityKey: "child-result-name",
+        detail: { kind: "canonical-child" },
       },
     } as AgentEvent);
     handleAgentEvent({
@@ -658,6 +659,7 @@ describe("handleAgentEvent branches", () => {
         displayName: "Franklin",
         hasExplicitIdentity: true,
         identityKey: "child-result-name",
+        detail: { kind: "canonical-child" },
         model: "gpt-5.6-luna",
         reasoningEffort: "low",
       },
@@ -671,6 +673,7 @@ describe("handleAgentEvent branches", () => {
           displayName: "Franklin",
           hasExplicitIdentity: true,
           identityKey: "child-result-name",
+          detail: { kind: "canonical-child" },
           model: "gpt-5.6-luna",
           reasoningEffort: "low",
         },

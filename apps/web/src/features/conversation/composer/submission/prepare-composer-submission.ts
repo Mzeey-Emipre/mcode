@@ -29,7 +29,12 @@ export async function prepareComposerSubmission({
   const snapshot = form.readSubmission();
   const currentAnnotations = readPreviewAnnotations(annotationScopeId);
   const previewAnnotations = resolvePreviewAnnotations(currentAnnotations);
-  if (isEmptySubmission(snapshot.rawInput, snapshot.attachments.length, previewAnnotations)) {
+  if (isEmptySubmission(
+    snapshot.rawInput,
+    snapshot.attachments.length,
+    snapshot.selectedTextComments.length,
+    previewAnnotations,
+  )) {
     discardEmptyEdit();
     return null;
   }
@@ -69,9 +74,13 @@ function readPreviewAnnotations(
 function isEmptySubmission(
   rawInput: string,
   attachmentCount: number,
+  selectedTextCommentCount: number,
   previewAnnotations: PreviewAnnotationBundle | undefined,
 ): boolean {
-  return rawInput.trim().length === 0 && attachmentCount === 0 && !previewAnnotations;
+  return rawInput.trim().length === 0
+    && attachmentCount === 0
+    && selectedTextCommentCount === 0
+    && !previewAnnotations;
 }
 
 /** Displays a payload-normalization failure without mutating the current draft. */

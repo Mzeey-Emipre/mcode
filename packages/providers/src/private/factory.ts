@@ -24,6 +24,14 @@ export function providerProtocolBinding(
   return protocolBindings.get(boundary);
 }
 
+/** Associates package-private protocol machinery with a usable Provider boundary. */
+export function bindProviderProtocol(
+  boundary: ProviderBoundary,
+  protocol: ProviderProtocolBinding,
+): void {
+  protocolBindings.set(boundary, protocol);
+}
+
 const requiredHostMethods = [
   ["environment", "snapshot"],
   ["processes", "attach"],

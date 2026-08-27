@@ -318,6 +318,36 @@ describe("CodexAppServer.start (failed handshake teardown)", () => {
     });
   }, 10_000);
 
+  it("forwards v2 child settings notifications to provider mapping", async () => {
+    const { child } = harnessFakeServer((req): Record<string, unknown> =>
+      req.method === "thread/start" ? { result: { thread: { id: "thread-parent" } } } : { result: {} },
+    );
+    const server = new CodexAppServer({ cliPath: "codex", workingDirectory: "/tmp", getSpawnEnv: () => ({}) });
+    const notification = vi.fn();
+
+    server.on("notification", notification);
+    await server.start();
+    child.stdout.write(JSON.stringify({
+      jsonrpc: "2.0",
+      method: "thread/settings/updated",
+      params: {
+        threadId: "thread-child",
+        threadSettings: { model: "gpt-5.6-sol", effort: "high" },
+      },
+    }) + "\n");
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(notification).toHaveBeenCalledWith({
+      jsonrpc: "2.0",
+      method: "thread/settings/updated",
+      params: {
+        threadId: "thread-child",
+        threadSettings: { model: "gpt-5.6-sol", effort: "high" },
+      },
+    });
+    await server.kill();
+  }, 10_000);
+
   it("does not rotate the root thread id for a spawned child thread", async () => {
     const { child } = harnessFakeServer((req): Record<string, unknown> =>
       req.method === "thread/start" ? { result: { thread: { id: "thread-root" } } } : { result: {} },
@@ -628,23 +658,44 @@ describe("CodexAppServer.start (failed handshake teardown)", () => {
     }
   }, 10_000);
 
-  it("reads active child identity without requiring thread/resume to succeed", async () => {
-    const readRequests: Array<Record<string, unknown>> = [];
+  it("reads v2 child settings and parent task from the subscribed thread projections", async () => {
+    const childRequests: Array<Record<string, unknown>> = [];
     harnessFakeServer((req): Record<string, unknown> => {
       if (req.method === "thread/start") return { result: { thread: { id: "parent-thread" } } };
-      if (req.method === "thread/read") {
-        readRequests.push(req as Record<string, unknown>);
+      if (req.method === "thread/resume") {
+        childRequests.push(req as Record<string, unknown>);
         const threadId = (req.params as { threadId?: string } | undefined)?.threadId;
         return {
           result: {
-            thread: threadId === "child-without-settings"
-              ? { id: threadId, agentNickname: "Ada", agentRole: "worker" }
-              : {
-                  id: "child-thread",
-                  name: "read_docs_worker",
-                  agentNickname: "Ada",
-                  agentRole: "worker",
+            thread: { id: threadId, name: "read_docs_worker", agentNickname: "Ada", agentRole: "worker" },
+            model: "gpt-5.6-sol",
+            reasoningEffort: "high",
+          },
+        };
+      }
+      if (req.method === "thread/items/list") {
+        childRequests.push(req as Record<string, unknown>);
+        return {
+          result: {
+            data: [
+              {
+                turnId: "child-turn",
+                item: {
+                  type: "userMessage",
+                  content: [{ type: "text", text: "read_docs_worker" }],
                 },
+              },
+              {
+                turnId: "child-turn",
+                item: {
+                  type: "userMessage",
+                  content: [{
+                    type: "text",
+                    text: "Message Type: NEW_TASK\nTask name: read_docs_worker\nSender: /root\nPayload:\nInspect the child metadata.",
+                  }],
+                },
+              },
+            ],
           },
         };
       }
@@ -655,14 +706,19 @@ describe("CodexAppServer.start (failed handshake teardown)", () => {
     await server.start();
     await expect(server.getChildThreadMetadata("child-thread")).resolves.toEqual({
       identity: "read_docs_worker",
-    });
-    await expect(server.getChildThreadMetadata("child-without-settings")).resolves.toEqual({
-      identity: "Ada",
+      model: "gpt-5.6-sol",
+      reasoningEffort: "high",
+      parentMessage: "Inspect the child metadata.",
     });
     await expect(server.getChildThreadMetadata("../invalid")).resolves.toBeNull();
 
     expect(server.threadId).toBe("parent-thread");
-    expect(readRequests).toHaveLength(2);
+    expect(childRequests).toEqual(expect.arrayContaining([
+      expect.objectContaining({ method: "thread/resume", params: { threadId: "child-thread", excludeTurns: true } }),
+      expect.objectContaining({ method: "thread/items/list", params: {
+        threadId: "child-thread", limit: 100, sortDirection: "asc",
+      } }),
+    ]));
     await server.kill();
   }, 10_000);
 

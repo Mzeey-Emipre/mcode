@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import type { ProviderProcessPort } from "../host-ports.js";
 
 const DEFAULT_IDLE_TTL_MS = 10 * 60 * 1_000;
 const EVICTION_INTERVAL_MS = 60 * 1_000;
@@ -63,6 +64,7 @@ export class SessionRuntime<TState> {
     private readonly adapter: ProtocolAdapter<TState>,
     private readonly deps: {
       jobObject: SessionRuntimeJobPort;
+      processes?: ProviderProcessPort;
       envService: SessionRuntimeEnvironmentPort;
       idleTtlMs?: number;
       logger?: SessionRuntimeLoggerPort;
@@ -174,7 +176,11 @@ export class SessionRuntime<TState> {
       await this.closeEntry(args.sessionId, { ...result, lastUsedAt: Date.now() });
       throw new Error(`Provider session stopped during spawn: ${args.sessionId}`);
     }
-    if (this.deps.jobObject.isWindowsJob) {
+    if (this.deps.processes) {
+      for (const pid of result.pids) {
+        this.deps.processes.attach(pid, `mcode session ${args.sessionId}`);
+      }
+    } else if (this.deps.jobObject.isWindowsJob) {
       for (const pid of result.pids) {
         this.deps.jobObject.assign(pid);
         this.deps.jobObject.setDescription(pid, `mcode session ${args.sessionId}`);
@@ -215,6 +221,10 @@ export class SessionRuntime<TState> {
   }
 
   private async hardKill(pids: number[]): Promise<void> {
+    if (this.deps.processes) {
+      await Promise.all(pids.map((pid) => this.deps.processes!.terminateTree(pid)));
+      return;
+    }
     await Promise.all(pids.map((pid) => new Promise<void>((resolve) => {
       if (process.platform === "win32") {
         execFile("taskkill", ["/T", "/F", "/PID", String(pid)], (error) => {

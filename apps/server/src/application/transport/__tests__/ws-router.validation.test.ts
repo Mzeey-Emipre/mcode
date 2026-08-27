@@ -819,7 +819,7 @@ mcode-preview-annotations:end -->`,
 });
 
 describe("routeMessage git.getRemoteUrl", () => {
-  it("resolves the git path from a workspace thread before calling GitService", async () => {
+  it("resolves the git path from a workspace thread before calling GitRepositoryService", async () => {
     const getRemoteUrl = vi.fn().mockResolvedValue({
       webUrl: "https://github.com/Mzeey-Empire/mcode",
       label: "Mzeey-Empire/mcode",
@@ -837,10 +837,8 @@ describe("routeMessage git.getRemoteUrl", () => {
           worktree_path: "C:/repo-worktree",
         }),
       },
-      gitService: {
-        getRemoteUrl,
-        resolveWorkingDir,
-      },
+      gitRepository: { getRemoteUrl },
+      gitWorktrees: { resolveWorkingDir },
     } as unknown as RouterDeps;
 
     const response = await routeMessage(
@@ -878,10 +876,8 @@ describe("routeMessage git.getRemoteUrl", () => {
           worktree_path: "C:/repo-worktree",
         }),
       },
-      gitService: {
-        getRemoteUrl,
-        resolveWorkingDir: vi.fn(),
-      },
+      gitRepository: { getRemoteUrl },
+      gitWorktrees: { resolveWorkingDir: vi.fn() },
     } as unknown as RouterDeps;
 
     const response = await routeMessage(
@@ -1634,6 +1630,8 @@ describe("routeMessage github.createPr", () => {
 
   function createGithubPrDeps(thread: typeof namedThread, currentBranch: string | null) {
     const push = vi.fn().mockResolvedValue(undefined);
+    const getCurrentBranchAt = vi.fn().mockResolvedValue(currentBranch);
+    const resolveWorkingDir = vi.fn().mockReturnValue("C:/repo-worktree");
     const createPr = vi.fn().mockResolvedValue({
       number: 42,
       url: "https://github.com/Mzeey-Empire/mcode/pull/42",
@@ -1650,11 +1648,8 @@ describe("routeMessage github.createPr", () => {
         findById: vi.fn().mockReturnValue(thread),
         linkPr: vi.fn(),
       },
-      gitService: {
-        resolveWorkingDir: vi.fn().mockReturnValue("C:/repo-worktree"),
-        getCurrentBranchAt: vi.fn().mockResolvedValue(currentBranch),
-        push,
-      },
+      gitRepository: { getCurrentBranchAt, push },
+      gitWorktrees: { resolveWorkingDir },
       githubService: {
         createPr,
       },
@@ -1664,7 +1659,7 @@ describe("routeMessage github.createPr", () => {
         scheduleBumpAfterPush: vi.fn(),
       },
     } as unknown as RouterDeps;
-    return { deps, push, createPr };
+    return { deps, push, createPr, getCurrentBranchAt, resolveWorkingDir };
   }
 
   const createPrRequest = {
@@ -1712,7 +1707,10 @@ describe("routeMessage github.createPr", () => {
   });
 
   it("pushes and creates a PR only when thread state and current branch match", async () => {
-    const { deps, push, createPr } = createGithubPrDeps(namedThread, "feat/from-thread");
+    const { deps, push, createPr, getCurrentBranchAt, resolveWorkingDir } = createGithubPrDeps(
+      namedThread,
+      "feat/from-thread",
+    );
 
     const response = await routeMessage(JSON.stringify(createPrRequest), deps);
 
@@ -1720,6 +1718,8 @@ describe("routeMessage github.createPr", () => {
       number: 42,
       url: "https://github.com/Mzeey-Empire/mcode/pull/42",
     });
+    expect(resolveWorkingDir).toHaveBeenCalledWith("C:/repo", "worktree", "C:/repo-worktree");
+    expect(getCurrentBranchAt).toHaveBeenCalledWith("C:/repo-worktree");
     expect(push).toHaveBeenCalledWith("C:/repo-worktree", "feat/from-thread");
     expect(createPr).toHaveBeenCalledWith({
       cwd: "C:/repo-worktree",

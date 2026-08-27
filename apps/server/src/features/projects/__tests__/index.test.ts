@@ -10,18 +10,23 @@ describe("projects feature boundary", () => {
   it("exposes only the composition-root project symbols", () => {
     expect(Object.keys(projects).sort()).toStrictEqual([
       "FilesystemBrowser",
-      "GitService",
+      "GitComparisonService",
+      "GitRepositoryService",
       "GitWatcherService",
+      "GitWorktreeService",
       "PROJECT_ACTION_CLOCK_TOKEN",
       "PROJECT_ACTION_RUN_ID_FACTORY_TOKEN",
       "ProjectActionService",
       "ProjectWorktreeService",
       "PullRequestReviewGitError",
+      "PullRequestReviewGitService",
+      "RepositoryGitMutationLock",
       "WorkspaceEnricher",
       "WorkspaceEnvironmentService",
       "WorkspaceEnvironmentServiceError",
       "WorkspaceService",
       "WorktreeDirectoryRemover",
+      "WorktreeSafetyService",
     ]);
   });
 

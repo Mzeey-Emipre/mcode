@@ -17,7 +17,7 @@ import { TerminalReplayBuffer, replayCapBytesForScrollback } from "./terminal-re
 import type { PtyPidRegistry } from "../../host/pty-pid-registry.js";
 import type { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
 import type { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
-import type { GitService } from "../../../projects/index.js";
+import { GitWorktreeService } from "../../../projects/git/git-worktree-service.js";
 import type { SettingsService } from "../../../settings/settings-service.js";
 import { EnvService } from "../../../../runtime/environment/env-service.js";
 import {
@@ -136,7 +136,7 @@ export class TerminalService {
   constructor(
     @inject("ThreadRepo") private readonly threadRepo: ThreadRepo,
     @inject("WorkspaceRepo") private readonly workspaceRepo: WorkspaceRepo,
-    @inject("GitService") private readonly gitService: GitService,
+    @inject(GitWorktreeService) private readonly gitWorktrees: GitWorktreeService,
     @inject("SettingsService") private readonly settingsService: SettingsService,
     @inject(EnvService) private readonly envService: EnvService,
     @inject("PtyPidRegistry") private readonly pidRegistry: PtyPidRegistry,
@@ -382,7 +382,7 @@ export class TerminalService {
     if (thread) {
       const workspace = this.workspaceRepo.findById(thread.workspace_id);
       if (!workspace) throw new Error(`Workspace not found: ${thread.workspace_id}`);
-      return this.gitService.resolveWorkingDir(workspace.path, thread.mode, thread.worktree_path);
+      return this.gitWorktrees.resolveWorkingDir(workspace.path, thread.mode, thread.worktree_path);
     }
     const workspace = this.workspaceRepo.findById(scopeId);
     if (!workspace) throw new Error(`Thread or workspace not found: ${scopeId}`);

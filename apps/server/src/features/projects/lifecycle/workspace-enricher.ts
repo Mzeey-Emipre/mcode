@@ -6,7 +6,8 @@
 
 import { injectable, inject } from "tsyringe";
 import { logger } from "@mcode/shared";
-import { GitService } from "../git/git-service.js";
+import { GitRepositoryService } from "../git/git-repository-service.js";
+import { WorktreeSafetyService } from "../git/worktree-safety-service.js";
 import { ThreadRepo } from "../../thread-control/persistence/thread-repo.js";
 import type { WorkspaceEnrichment } from "@mcode/contracts";
 
@@ -14,7 +15,8 @@ import type { WorkspaceEnrichment } from "@mcode/contracts";
 @injectable()
 export class WorkspaceEnricher {
   constructor(
-    @inject(GitService) private git: GitService,
+    @inject(GitRepositoryService) private readonly gitRepository: GitRepositoryService,
+    @inject(WorktreeSafetyService) private readonly worktreeSafety: WorktreeSafetyService,
     @inject(ThreadRepo) private threads: ThreadRepo,
   ) {}
 
@@ -30,10 +32,10 @@ export class WorkspaceEnricher {
     return Promise.all(
       items.map(async ({ id, path }) => {
         try {
-          const branch = await this.git.getCurrentBranchAt(path);
+          const branch = await this.gitRepository.getCurrentBranchAt(path);
           const isGit = branch !== null;
           // Non-git workspaces have no dirty state — treat as clean to avoid noise in the UI.
-          const isClean = isGit ? await this.git.isWorkingTreeClean(path) : true;
+          const isClean = isGit ? await this.worktreeSafety.isWorkingTreeClean(path) : true;
           return { id, branch, isGit, isClean, threadCount: counts.get(id) ?? 0 };
         } catch (err) {
           logger.warn("workspace enrichment failed, returning safe defaults", {

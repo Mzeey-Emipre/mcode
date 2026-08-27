@@ -38,7 +38,10 @@ import type {
 } from "../../features/agents/index.js";
 import type {
   FilesystemBrowser,
-  GitService,
+  GitComparisonService,
+  GitRepositoryService,
+  GitWorktreeService,
+  PullRequestReviewGitService,
   GitWatcherService,
   WorkspaceEnricher,
   WorkspaceService,
@@ -262,7 +265,10 @@ export interface RouterDeps {
   turnRecoveryService: TurnRecoveryService;
   /** Owns durable approvals for protected delegated-thread mutations. */
   threadControlService: ThreadControlService;
-  gitService: GitService;
+  gitComparison: GitComparisonService;
+  gitRepository: GitRepositoryService;
+  gitWorktrees: GitWorktreeService;
+  pullRequestReviews: PullRequestReviewGitService;
   githubService: GithubService;
   fileService: FileService;
   configService: ConfigService;
@@ -503,7 +509,7 @@ function resolveThreadRepoPath(deps: RouterDeps, threadId?: string): string | un
   const thread = deps.threadRepo.findById(threadId);
   const ws = thread ? deps.workspaceRepo.findById(thread.workspace_id) : null;
   if (!thread || !ws) return undefined;
-  return deps.gitService.resolveWorkingDir(ws.path, thread.mode, thread.worktree_path);
+  return deps.gitWorktrees.resolveWorkingDir(ws.path, thread.mode, thread.worktree_path);
 }
 
 function resolveWorkspaceRepoPath(
@@ -520,7 +526,7 @@ function resolveWorkspaceRepoPath(
   if (thread.workspace_id !== workspaceId) {
     throw new Error(`Thread ${threadId} does not belong to workspace ${workspaceId}`);
   }
-  return deps.gitService.resolveWorkingDir(
+  return deps.gitWorktrees.resolveWorkingDir(
     workspace.path,
     thread.mode,
     thread.worktree_path,
@@ -1186,17 +1192,17 @@ async function dispatch(
     case "git.listBranches": {
       const ws = deps.workspaceService.findById(params.workspaceId);
       if (!ws?.is_git_repo) return [];
-      return deps.gitService.listBranches(params.workspaceId);
+      return deps.gitRepository.listBranches(params.workspaceId);
     }
     case "git.currentBranch": {
       const ws = deps.workspaceService.findById(params.workspaceId);
       if (!ws?.is_git_repo) return null;
-      return deps.gitService.getCurrentBranch(params.workspaceId);
+      return deps.gitRepository.getCurrentBranch(params.workspaceId);
     }
     case "git.checkout": {
       const ws = deps.workspaceService.findById(params.workspaceId);
       if (!ws?.is_git_repo) return;
-      await deps.gitService.checkout(params.workspaceId, params.branch);
+      await deps.gitRepository.checkout(params.workspaceId, params.branch);
       return;
     }
     case "git.createBranch": {
@@ -1224,16 +1230,16 @@ async function dispatch(
     case "git.listWorktrees": {
       const ws = deps.workspaceService.findById(params.workspaceId);
       if (!ws?.is_git_repo) return [];
-      return deps.gitService.listWorktrees(params.workspaceId);
+      return deps.gitWorktrees.listWorktrees(params.workspaceId);
     }
     case "git.getRemoteUrl":
-      return deps.gitService.getRemoteUrl(
+      return deps.gitRepository.getRemoteUrl(
         resolveWorkspaceRepoPath(deps, params.workspaceId, params.threadId),
       );
     case "git.fetchBranch": {
       const ws = deps.workspaceService.findById(params.workspaceId);
       if (!ws?.is_git_repo) return;
-      await deps.gitService.fetchBranch(
+      await deps.gitRepository.fetchBranch(
         params.workspaceId,
         params.branch,
         params.prNumber,
@@ -1248,10 +1254,10 @@ async function dispatch(
         const t = deps.threadRepo.findById(params.threadId);
         const wsForThread = t ? deps.workspaceRepo.findById(t.workspace_id) : null;
         if (t && wsForThread) {
-          repoPath = deps.gitService.resolveWorkingDir(wsForThread.path, t.mode, t.worktree_path);
+          repoPath = deps.gitWorktrees.resolveWorkingDir(wsForThread.path, t.mode, t.worktree_path);
         }
       }
-      return deps.gitService.log(
+      return deps.gitComparison.listCommits(
         params.workspaceId,
         params.branch,
         params.limit,
@@ -1264,32 +1270,32 @@ async function dispatch(
     case "git.commitDiff": {
       const ws = deps.workspaceService.findById(params.workspaceId);
       if (!ws?.is_git_repo) return "";
-      return deps.gitService.commitDiff(params.workspaceId, params.sha, params.filePath, params.maxLines);
+      return deps.gitComparison.readCommitDiff(params.workspaceId, params.sha, params.filePath, params.maxLines);
     }
     case "git.commitFiles": {
       const ws = deps.workspaceService.findById(params.workspaceId);
       if (!ws?.is_git_repo) return [];
-      return deps.gitService.commitFiles(params.workspaceId, params.sha);
+      return deps.gitComparison.listCommitChangedFiles(params.workspaceId, params.sha);
     }
     case "git.workingTreeFiles": {
       const ws = deps.workspaceService.findById(params.workspaceId);
       if (!ws?.is_git_repo) return [];
-      return deps.gitService.workingTreeFiles(params.workspaceId, params.staged, resolveThreadRepoPath(deps, params.threadId));
+      return deps.gitComparison.listWorkingTreeChangedFiles(params.workspaceId, params.staged, resolveThreadRepoPath(deps, params.threadId));
     }
     case "git.workingTreeDiff": {
       const ws = deps.workspaceService.findById(params.workspaceId);
       if (!ws?.is_git_repo) return "";
-      return deps.gitService.workingTreeDiff(params.workspaceId, params.staged, params.filePath, params.maxLines, resolveThreadRepoPath(deps, params.threadId));
+      return deps.gitComparison.readWorkingTreeDiff(params.workspaceId, params.staged, params.filePath, params.maxLines, resolveThreadRepoPath(deps, params.threadId));
     }
     case "git.branchFiles": {
       const ws = deps.workspaceService.findById(params.workspaceId);
       if (!ws?.is_git_repo) return [];
-      return deps.gitService.branchFiles(params.workspaceId, params.base, params.target, resolveThreadRepoPath(deps, params.threadId));
+      return deps.gitComparison.listBranchComparisonChangedFiles(params.workspaceId, params.base, params.target, resolveThreadRepoPath(deps, params.threadId));
     }
     case "git.branchDiff": {
       const ws = deps.workspaceService.findById(params.workspaceId);
       if (!ws?.is_git_repo) return "";
-      return deps.gitService.branchDiff(params.workspaceId, params.base, params.target, params.filePath, params.maxLines, resolveThreadRepoPath(deps, params.threadId));
+      return deps.gitComparison.readBranchComparisonDiff(params.workspaceId, params.base, params.target, params.filePath, params.maxLines, resolveThreadRepoPath(deps, params.threadId));
     }
     case "git.branchComparison": {
       const ws = deps.workspaceService.findById(params.workspaceId);
@@ -1297,7 +1303,7 @@ async function dispatch(
         return { base: null, target: null, refs: [], isUnborn: false, isComparisonAvailable: false };
       }
       const thread = params.threadId ? deps.threadRepo.findById(params.threadId) : null;
-      return deps.gitService.resolveBranchComparison(
+      return deps.gitComparison.resolveBranchComparison(
         params.workspaceId,
         resolveThreadRepoPath(deps, params.threadId),
         thread?.checkout_state === "branchless" ? thread.base_branch ?? thread.branch : null,
@@ -1306,7 +1312,7 @@ async function dispatch(
     case "git.reviewDiffStats": {
       const ws = deps.workspaceService.findById(params.workspaceId);
       if (!ws?.is_git_repo) return { additions: 0, deletions: 0 };
-      return deps.gitService.reviewDiffStats(
+      return deps.gitComparison.readReviewDiffStats(
         params.workspaceId,
         params.view,
         { base: params.base, target: params.target, sha: params.sha },
@@ -1316,7 +1322,7 @@ async function dispatch(
     case "git.reviewComparison": {
       const ws = deps.workspaceService.findById(params.workspaceId);
       if (!ws?.is_git_repo) return { files: [], additions: 0, deletions: 0 };
-      return deps.gitService.reviewComparison(
+      return deps.gitComparison.readReviewComparison(
         params.workspaceId,
         params.view,
         { base: params.base, target: params.target, sha: params.sha },
@@ -1652,7 +1658,7 @@ async function dispatch(
         if (!snapshotThread) throw new Error(`Thread not found for snapshot: ${snapshot.thread_id}`);
         const ws = deps.workspaceService.findById(snapshotThread.workspace_id);
         if (!ws) throw new Error(`Workspace not found: ${snapshotThread.workspace_id}`);
-        snapshotCwd = deps.gitService.resolveWorkingDir(ws.path, snapshotThread.mode, snapshotThread.worktree_path);
+        snapshotCwd = deps.gitWorktrees.resolveWorkingDir(ws.path, snapshotThread.mode, snapshotThread.worktree_path);
       }
       const attributedPaths = attributedWorkspacePaths(snapshot);
       const attributedPathGroups = attributedWorkspacePathGroups(snapshot);
@@ -1680,7 +1686,7 @@ async function dispatch(
         if (!snapshotThread) throw new Error(`Thread not found for snapshot: ${snapshot.thread_id}`);
         const ws = deps.workspaceService.findById(snapshotThread.workspace_id);
         if (!ws) throw new Error(`Workspace not found: ${snapshotThread.workspace_id}`);
-        snapshotCwd = deps.gitService.resolveWorkingDir(ws.path, snapshotThread.mode, snapshotThread.worktree_path);
+        snapshotCwd = deps.gitWorktrees.resolveWorkingDir(ws.path, snapshotThread.mode, snapshotThread.worktree_path);
       }
       return await deps.snapshotService.getDiffStats(
         snapshotCwd,
@@ -1716,7 +1722,7 @@ async function dispatch(
         if (!thread) throw new Error(`Thread not found: ${params.threadId}`);
         const ws = deps.workspaceService.findById(thread.workspace_id);
         if (!ws) throw new Error(`Workspace not found: ${thread.workspace_id}`);
-        cwd = deps.gitService.resolveWorkingDir(ws.path, thread.mode, thread.worktree_path);
+        cwd = deps.gitWorktrees.resolveWorkingDir(ws.path, thread.mode, thread.worktree_path);
       }
       return await deps.snapshotService.getDiff(
         cwd,
@@ -1744,7 +1750,7 @@ async function dispatch(
         if (!thread) throw new Error(`Thread not found: ${params.threadId}`);
         const ws = deps.workspaceService.findById(thread.workspace_id);
         if (!ws) throw new Error(`Workspace not found: ${thread.workspace_id}`);
-        cwd = deps.gitService.resolveWorkingDir(ws.path, thread.mode, thread.worktree_path);
+        cwd = deps.gitWorktrees.resolveWorkingDir(ws.path, thread.mode, thread.worktree_path);
       }
       const stats = await deps.snapshotService.getDiffStats(
         cwd,
@@ -1842,7 +1848,7 @@ async function dispatch(
       if (!thread) throw new Error(`Thread not found: ${params.threadId}`);
       const ws = deps.workspaceService.findById(thread.workspace_id);
       if (!ws) throw new Error(`Workspace not found: ${thread.workspace_id}`);
-      const cwd = deps.gitService.resolveWorkingDir(
+      const cwd = deps.gitWorktrees.resolveWorkingDir(
         ws.path,
         thread.mode,
         thread.worktree_path,
@@ -1894,7 +1900,7 @@ async function dispatch(
         ) {
           throw new Error("Review task push target does not match the requested Workspace branch.");
         }
-        const currentBranch = await deps.gitService.getCurrentBranchAt(
+        const currentBranch = await deps.gitRepository.getCurrentBranchAt(
           reviewTarget.worktreePath,
         );
         if (currentBranch !== reviewTarget.localBranch) {
@@ -1902,14 +1908,14 @@ async function dispatch(
             `Review task checkout is on ${currentBranch ?? "detached HEAD"}, expected ${reviewTarget.localBranch}.`,
           );
         }
-        await deps.gitService.pushPullRequestReviewBranch(
+        await deps.pullRequestReviews.pushPullRequestReviewBranch(
           reviewTarget.worktreePath,
           reviewTarget.pushRemote,
           reviewTarget.pushRef,
           reviewTarget.expectedHeadRepositoryUrl,
         );
       } else {
-        await deps.gitService.push(workspace.path, params.branch);
+        await deps.gitRepository.push(workspace.path, params.branch);
       }
       // Fresh CI runs appear 3-15s after push. Schedule bumps so the UI surfaces
       // "pending" without waiting a full passive poll cycle.
@@ -1949,7 +1955,7 @@ async function dispatch(
         );
       }
 
-      const repoPath = deps.gitService.resolveWorkingDir(
+      const repoPath = deps.gitWorktrees.resolveWorkingDir(
         workspace.path,
         thread.mode,
         thread.worktree_path,
@@ -1957,7 +1963,7 @@ async function dispatch(
       const branch = thread.branch;
       if (!branch) throw new Error(`Missing branch for thread ${params.threadId}`);
       validateBranchName(branch);
-      const currentBranch = await deps.gitService.getCurrentBranchAt(repoPath);
+      const currentBranch = await deps.gitRepository.getCurrentBranchAt(repoPath);
       if (!currentBranch || currentBranch === "HEAD" || currentBranch !== branch) {
         throw new Error(
           `Thread ${params.threadId} checkout is on ${currentBranch ?? "HEAD"}, expected ${branch}`,
@@ -1966,7 +1972,7 @@ async function dispatch(
 
       // Silent auto-push (no-op if already up to date)
       try {
-        await deps.gitService.push(repoPath, branch);
+        await deps.gitRepository.push(repoPath, branch);
       } catch (err) {
         const detail = err instanceof Error ? err.message : String(err);
         throw new Error(

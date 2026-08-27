@@ -167,7 +167,8 @@ export function useComposerSubmissionController({
       resolvePreviewAnnotations: queue.resolvePreviewAnnotations,
     });
     if (!submission) return "complete";
-    if (shouldDeferToHandoff({ threadId, branchFromMessageId, isNewThread })
+    if (submission.snapshot.selectedTextComments.length === 0
+      && shouldDeferToHandoff({ threadId, branchFromMessageId, isNewThread })
       && queue.queueIfGenerating(createHandoffQueuedSend({ submission, replyContext }))) {
       completeQueued(submission);
       return "complete";
@@ -263,7 +264,7 @@ function shouldQueueActiveSubmit({
     branchFromMessageId,
     isNewThread,
     submission.trimmed,
-  );
+  ) && submission.snapshot.selectedTextComments.length === 0;
 }
 
 /** Opens checkout confirmation when a Direct new thread targets another branch. */

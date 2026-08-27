@@ -22,7 +22,12 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { usePreviewAnnotationStore } from "@/features/preview/state/previewAnnotationStore";
 import { getModelContextWindow } from "@mcode/shared/model-context";
-import type { ContextWindowMode, MessageMention, ProviderId } from "@mcode/contracts";
+import type {
+  ContextWindowMode,
+  MessageMention,
+  ProviderId,
+  SelectedTextComment,
+} from "@mcode/contracts";
 import type { Thread } from "@/transport";
 import { cn } from "@/lib/utils";
 import { ComposerAgentControls } from "./controls/ComposerAgentControls";
@@ -76,6 +81,7 @@ interface ComposerContentSurfaceProps {
     readonly attachmentBundle?: ComponentProps<typeof PreviewAnnotationBundleChip>["bundle"];
     readonly annotationScopeId?: string;
     readonly attachments: ComponentProps<typeof AttachmentPreview>["attachments"];
+    readonly selectedTextComments: readonly SelectedTextComment[];
     readonly isCompacting: boolean;
     readonly hasRetryState: boolean;
     readonly isThreadScaffold: boolean;
@@ -228,6 +234,29 @@ function ComposerReplySurface({
       onDismiss={() => actions.onClearReply(model.threadId!)}
     />
   );
+}
+
+function ComposerSelectedTextComments({
+  comments,
+}: {
+  readonly comments: readonly SelectedTextComment[];
+}) {
+  if (comments.length === 0) return null;
+
+  return comments.map((comment) => (
+    <section
+      key={comment.id}
+      className="border-b border-border/40 bg-background/30 px-3 py-2"
+      aria-label={`Selected text comment ${comment.displayNumber}`}
+      data-testid="composer-selected-text-comment"
+    >
+      <p className="text-xs font-medium text-muted-foreground">Comment {comment.displayNumber}</p>
+      <blockquote className="mt-1 whitespace-pre-wrap border-l-2 border-primary/40 pl-2 text-xs text-muted-foreground">
+        {comment.source.quote}
+      </blockquote>
+      <p className="mt-1 whitespace-pre-wrap text-sm text-foreground">{comment.note}</p>
+    </section>
+  ));
 }
 
 function ComposerDetectedPullRequest({
@@ -630,6 +659,7 @@ function ComposerInputSurface({
         onBranchModeExit={actions.onBranchModeExit}
       />
       <ComposerReplySurface model={model} actions={actions} />
+      <ComposerSelectedTextComments comments={model.selectedTextComments} />
       <ComposerDetectedPullRequest model={model} actions={actions} />
       <ComposerProviderUnavailableBanner model={model} />
       <ComposerQueueEditNotice model={model} actions={actions} />

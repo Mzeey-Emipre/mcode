@@ -9,7 +9,12 @@ import { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
 import { ThreadRepo } from "../../persistence/thread-repo.js";
 import { CleanupJobRepo, MAX_CLEANUP_ATTEMPTS } from "../persistence/cleanup-job-repo.js";
 import { CleanupWorker } from "../cleanup-worker.js";
-import { GitService } from "../../../projects/index.js";
+import {
+  GitRepositoryService,
+  GitWorktreeService,
+  WorktreeSafetyService,
+} from "../../../projects/index.js";
+import { RepositoryGitMutationLock } from "../../../projects/git/repository-git-mutation-lock.js";
 import { RealGitExecutor } from "../../../projects/git/execution/real-git-executor.js";
 import { getMcodeDir } from "@mcode/shared";
 import type { ClaudeProvider } from "../../../providers/adapters/claude/claude-provider.js";
@@ -26,7 +31,8 @@ describe("completed thread cleanup Git safety", () => {
   let database: Database.Database;
   let repositoryPath: string;
   let worktreePath: string;
-  let service: GitService;
+  let gitWorktrees: GitWorktreeService;
+  let worktreeSafety: WorktreeSafetyService;
   let workspaceRepo: WorkspaceRepo;
   let threadRepo: ThreadRepo;
   let cleanupJobRepo: CleanupJobRepo;
@@ -52,7 +58,10 @@ describe("completed thread cleanup Git safety", () => {
     cleanupJobRepo = new CleanupJobRepo(database);
     externalTargetPath = null;
     escapingLinkContainerPath = null;
-    service = new GitService(workspaceRepo, new RealGitExecutor());
+    const executor = new RealGitExecutor();
+    const gitRepository = new GitRepositoryService(workspaceRepo, executor);
+    gitWorktrees = new GitWorktreeService(workspaceRepo, executor, undefined, undefined, gitRepository);
+    worktreeSafety = new WorktreeSafetyService(executor);
     worker = createWorker();
   }, 30_000);
 
@@ -71,7 +80,9 @@ describe("completed thread cleanup Git safety", () => {
       threadRepo,
       { waitForSessionExit: vi.fn().mockResolvedValue(undefined) } as unknown as ClaudeProvider,
       { killByThread: vi.fn().mockResolvedValue(undefined) } as unknown as TerminalBackend,
-      service,
+      gitWorktrees,
+      worktreeSafety,
+      new RepositoryGitMutationLock(),
       workspaceRepo,
       { removeForThread: vi.fn() } as unknown as AttachmentService,
       { deleteThreadFiles: vi.fn().mockResolvedValue(undefined) } as unknown as HandoffStorage,
@@ -119,7 +130,7 @@ describe("completed thread cleanup Git safety", () => {
   }
 
   it("accepts a clean branchless worktree with no unique commits", async () => {
-    await expect(service.assessBranchlessWorktreeRemoval(worktreePath, "main")).resolves.toEqual({
+    await expect(worktreeSafety.assessBranchlessWorktreeRemoval(worktreePath, "main")).resolves.toEqual({
       safe: true,
       reason: "clean",
     });
@@ -128,7 +139,7 @@ describe("completed thread cleanup Git safety", () => {
   it("rejects a worktree with uncommitted changes", async () => {
     writeFileSync(join(worktreePath, "tracked.txt"), "changed\n");
 
-    await expect(service.assessBranchlessWorktreeRemoval(worktreePath, "main")).resolves.toEqual({
+    await expect(worktreeSafety.assessBranchlessWorktreeRemoval(worktreePath, "main")).resolves.toEqual({
       safe: false,
       reason: "dirty",
     });
@@ -139,7 +150,7 @@ describe("completed thread cleanup Git safety", () => {
     execFileSync("git", ["-C", worktreePath, "add", "unique.txt"]);
     execFileSync("git", ["-C", worktreePath, "commit", "-m", "unique"]);
 
-    await expect(service.assessBranchlessWorktreeRemoval(worktreePath, "main")).resolves.toEqual({
+    await expect(worktreeSafety.assessBranchlessWorktreeRemoval(worktreePath, "main")).resolves.toEqual({
       safe: false,
       reason: "unique_commits",
     });
@@ -163,6 +174,49 @@ describe("completed thread cleanup Git safety", () => {
     expect(existsSync(worktreePath)).toBe(false);
     expect(execFileSync("git", ["-C", repositoryPath, "branch", "--list", "main"], { encoding: "utf8" }))
       .toContain("main");
+  }, 30_000);
+
+  it("removes a clean worktree when a sibling record points to a missing directory", async () => {
+    const thread = addCompletedThread({ title: "Missing sibling" });
+    const workspace = workspaceRepo.listAll()[0]!;
+    const sibling = threadRepo.create(
+      workspace.id,
+      "Stale sibling",
+      "worktree",
+      "",
+      true,
+      "claude",
+      undefined,
+      "branchless",
+      "main",
+    );
+    database.prepare("UPDATE threads SET worktree_path = ? WHERE id = ?").run(
+      join(repositoryPath, "missing-worktree"),
+      sibling.id,
+    );
+
+    await worker.poll();
+
+    expect(threadRepo.findById(thread.id)).toBeNull();
+    expect(existsSync(worktreePath)).toBe(false);
+    expect(threadRepo.findById(sibling.id)).not.toBeNull();
+  }, 30_000);
+
+  it("removes a managed directory after Git no longer registers the worktree", async () => {
+    const thread = addCompletedThread({ title: "Git-pruned directory" });
+    rmSync(join(worktreePath, ".git"), { force: true });
+    execFileSync("git", ["-C", repositoryPath, "worktree", "prune"]);
+
+    expect(
+      execFileSync("git", ["-C", repositoryPath, "worktree", "list", "--porcelain"], {
+        encoding: "utf8",
+      }),
+    ).not.toContain(worktreePath);
+
+    await worker.poll();
+
+    expect(threadRepo.findById(thread.id)).toBeNull();
+    expect(existsSync(worktreePath)).toBe(false);
   }, 30_000);
 
   it("keeps a dirty managed worktree and blocks cleanup", async () => {
@@ -228,7 +282,7 @@ describe("completed thread cleanup Git safety", () => {
     expect(existsSync(externalTargetPath)).toBe(true);
   }, 30_000);
 
-  it("rejects an escaping link at the GitService removal boundary", async ({ skip }) => {
+  it("rejects an escaping link at the worktree removal boundary", async ({ skip }) => {
     externalTargetPath = mkdtempSync(join(getMcodeDir(), "mcode-external-git-service-"));
     escapingLinkContainerPath = mkdtempSync(join(getMcodeDir(), "worktrees", "mcode-git-service-link-"));
     const escapingLink = join(escapingLinkContainerPath, "worktree");
@@ -240,7 +294,7 @@ describe("completed thread cleanup Git safety", () => {
     }
 
     await expect(
-      service.removeWorktree(repositoryPath, "escaping", {
+      gitWorktrees.removeWorktree(repositoryPath, "escaping", {
         deleteBranch: false,
         worktreePath: escapingLink,
         managedCanonicalOnly: true,
@@ -276,7 +330,7 @@ describe("completed thread cleanup Git safety", () => {
 
   it("preserves retry state across worker restart and blocks after exhaustion", async () => {
     const thread = addCompletedThread({ title: "Retry" });
-    vi.spyOn(service, "removeWorktree").mockRejectedValue(new Error("transient lock"));
+    vi.spyOn(gitWorktrees, "removeWorktree").mockRejectedValue(new Error("transient lock"));
 
     await worker.poll();
     expect(cleanupJobRepo.findByThreadId(thread.id)).toMatchObject({ attempts: 1 });

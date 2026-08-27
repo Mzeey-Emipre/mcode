@@ -1,10 +1,12 @@
 import { useRef, useEffect, useLayoutEffect, useMemo, useCallback, memo, useState, type ReactNode, type WheelEvent } from "react";
-import { useReplyStore } from "@/stores/replyStore";
 import { ArrowDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { ContextMenu } from "@/components/ui/context-menu";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Spinner } from "@/components/ui/spinner";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import { useShallow } from "zustand/shallow";
 import { defaultRangeExtractor, useVirtualizer, type Range } from "@tanstack/react-virtual";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
@@ -44,6 +46,14 @@ import { shouldShowStickyUserMessage, type StickyVisibilityVirtualizer } from "@
 import { resolveUserMessagePreview } from "@/components/chat/user-message-preview";
 import { isConversationVisible } from "../residency/conversation-residency";
 import { projectCanonicalMessageList } from "./canonical-message-projection";
+import {
+  createSelectedTextCommentSource,
+  type SelectedTextCommentSource,
+} from "./selected-text-projection";
+import {
+  MAX_SELECTED_TEXT_COMMENT_TEXT_CHARS,
+  type SelectedTextComment,
+} from "@mcode/contracts";
 import {
   isMessageListPerformanceBuild,
   measureMessageListPerformance,
@@ -287,8 +297,10 @@ export interface MessageListProps {
   leadingContent?: ReactNode;
   /** Called when the user clicks the branch icon on a message. */
   onBranch?: (messageId: string) => void;
-  /** Called when the user clicks the reply button or selects text in a message. */
+  /** Called when the user uses a message reply control. */
   onReply?: (messageId: string, content: string, role: "user" | "assistant") => void;
+  /** Adds one selected-text comment to the active Composer draft. */
+  onSelectedTextComment?: (comment: SelectedTextComment) => void;
   /** Opens a selected canonical child through the composition root. */
   onSubagentSelect?: (id: string, target: SubagentRosterTarget) => void;
   /** Opens the owning thread's Subagents roster for aggregate activity. */
@@ -317,6 +329,7 @@ export function MessageList({
   leadingContent,
   onBranch,
   onReply,
+  onSelectedTextComment,
   onSubagentSelect,
   onOpenSubagents,
   onContinue,
@@ -375,6 +388,14 @@ export function MessageList({
   /** Invalidates stale reading-position settle loops after another navigation. */
   const scrollRestoreGenerationRef = useRef(0);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
+  const [selectedTextContextMenu, setSelectedTextContextMenu] = useState<{
+    source: SelectedTextCommentSource;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [selectedTextCopyAnnouncement, setSelectedTextCopyAnnouncement] = useState("");
+  const [commentEditorSource, setCommentEditorSource] = useState<SelectedTextCommentSource | null>(null);
+  const [commentNote, setCommentNote] = useState("");
   /** True when new content arrived while the user was scrolled up. */
   const [hasNewContent, setHasNewContent] = useState(false);
   const [historyAnchorTrailingSpace, setHistoryAnchorTrailingSpace] = useState(0);
@@ -1513,45 +1534,56 @@ export function MessageList({
     scrollToBottom(false);
   }, [streamingText, renderedThreadId, scrollToBottom]);
 
-  // Capture text selections in message bubbles and activate reply mode for the selected text.
-  // Only triggers when Ctrl (or Cmd on Mac) is held during mouseup so casual
-  // highlights don't accidentally activate the reply bar.
   useEffect(() => {
-    const handleMouseUp = (e: MouseEvent) => {
-      if (!e.ctrlKey && !e.metaKey) return;
-
+    const handleMouseUp = (event: MouseEvent) => {
+      if (event.button !== 0) return;
       const selection = window.getSelection();
-      if (!selection || selection.isCollapsed || !selection.toString().trim()) return;
-
-      const anchorNode = selection.anchorNode;
-      if (!anchorNode) return;
-      const msgElement = (anchorNode instanceof Element ? anchorNode : anchorNode.parentElement)
-        ?.closest("[data-message-id]");
-      if (!msgElement) return;
-
-      const messageId = msgElement.getAttribute("data-message-id");
-      const messageRoleRaw = msgElement.getAttribute("data-message-role");
-      if (!messageId || !messageRoleRaw || messageRoleRaw === "system") return;
-      const messageRole = messageRoleRaw as "user" | "assistant";
-
-      const selectedText = selection.toString().trim();
-      if (!selectedText) return;
-
-      const threadId = msgElement.getAttribute("data-thread-id");
-      if (threadId) {
-        useReplyStore.getState().setReply(
-          threadId,
-          messageId,
-          messageRole,
-          selectedText.slice(0, 150),
-          selectedText.slice(0, 2000),
-        );
-      }
+      if (!selection) return;
+      const source = createSelectedTextCommentSource(selection, selection.anchorNode);
+      if (!source) return;
+      setSelectedTextContextMenu({ source, x: event.clientX, y: event.clientY });
     };
 
     document.addEventListener("mouseup", handleMouseUp);
     return () => document.removeEventListener("mouseup", handleMouseUp);
   }, []);
+
+  const handleCopySelectedText = useCallback(async () => {
+    const quote = selectedTextContextMenu?.source.quote;
+    if (!quote) return;
+    try {
+      await navigator.clipboard.writeText(quote);
+      setSelectedTextCopyAnnouncement("Selected text copied.");
+    } catch {
+      setSelectedTextCopyAnnouncement("Could not copy selected text.");
+    }
+  }, [selectedTextContextMenu]);
+
+  const openSelectedTextCommentEditor = useCallback(() => {
+    const source = selectedTextContextMenu?.source;
+    if (!source) return;
+    setSelectedTextContextMenu(null);
+    setCommentEditorSource(source);
+    setCommentNote("");
+  }, [selectedTextContextMenu]);
+
+  const closeSelectedTextCommentEditor = useCallback(() => {
+    setCommentEditorSource(null);
+    setCommentNote("");
+  }, []);
+
+  const saveSelectedTextComment = useCallback(() => {
+    if (!commentEditorSource || !onSelectedTextComment || !commentNote.trim()) return;
+    onSelectedTextComment({
+      id: crypto.randomUUID(),
+      displayNumber: 1,
+      source: commentEditorSource,
+      note: commentNote,
+      mentions: [],
+    });
+    setCommentEditorSource(null);
+    setCommentNote("");
+  }, [commentEditorSource, commentNote, onSelectedTextComment]);
 
   /**
    * While {@link pinListTailRef} is set (open or tail restore), keep the viewport on the tail as row heights stabilize.
@@ -1596,6 +1628,9 @@ export function MessageList({
 
   return (
     <div className="relative h-full" data-testid="message-list">
+      <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+        {selectedTextCopyAnnouncement}
+      </div>
       <div
         ref={containerRef}
         onScroll={handleScroll}
@@ -1668,6 +1703,74 @@ export function MessageList({
           </div>
         </div>
       )}
+
+      {selectedTextContextMenu && (
+        <ContextMenu
+          x={selectedTextContextMenu.x}
+          y={selectedTextContextMenu.y}
+          items={[
+            { label: "Copy", onClick: () => { void handleCopySelectedText(); } },
+            { label: "Add comment", onClick: openSelectedTextCommentEditor },
+          ]}
+          onClose={() => setSelectedTextContextMenu(null)}
+        />
+      )}
+
+      <Popover
+        open={commentEditorSource !== null}
+        modal={false}
+        onOpenChange={(open) => {
+          if (!open) closeSelectedTextCommentEditor();
+        }}
+      >
+        <PopoverTrigger
+          nativeButton={false}
+          render={<span aria-hidden className="pointer-events-none absolute bottom-4 left-4 size-px sm:left-8" />}
+        />
+        {commentEditorSource && (
+          <PopoverContent
+            side="top"
+            align="start"
+            sideOffset={8}
+            role="dialog"
+            aria-label="Comment on selected text"
+            initialFocus={() => document.getElementById("selected-text-comment-note")}
+            finalFocus={false}
+            className="w-[min(26rem,calc(100vw-2rem))] p-3"
+          >
+            <p className="text-sm font-medium">Comment on selected text</p>
+            <blockquote className="mt-2 max-h-24 overflow-y-auto whitespace-pre-wrap border-l-2 border-primary/40 pl-2 text-xs text-muted-foreground">
+              {commentEditorSource.quote}
+            </blockquote>
+            <Textarea
+              id="selected-text-comment-note"
+              className="mt-3 min-h-20"
+              aria-label="Comment note"
+              value={commentNote}
+              maxLength={MAX_SELECTED_TEXT_COMMENT_TEXT_CHARS}
+              onChange={(event) => setCommentNote(event.target.value)}
+            />
+            <div className="mt-3 flex justify-end gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={closeSelectedTextCommentEditor}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={!commentNote.trim()}
+                onClick={saveSelectedTextComment}
+              >
+                Add comment
+              </Button>
+            </div>
+          </PopoverContent>
+        )}
+      </Popover>
 
       {lastUserMessagePreview && (
         <StickyUserMessage

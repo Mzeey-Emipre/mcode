@@ -21,8 +21,8 @@ import type {
   ThreadStartResult,
   ThreadResumeParams,
   ThreadResumeResult,
-  ThreadReadParams,
-  ThreadReadResult,
+  ThreadItemsListParams,
+  ThreadItemsListResult,
   TurnInputPart,
   CodexTurnOptions,
   TurnStartParams,
@@ -484,11 +484,39 @@ const RECOVERABLE_RESUME_ERROR_PHRASES = [
 
 const CHILD_THREAD_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
+function parentMessageFromChildPreview(preview: unknown): string | undefined {
+  if (typeof preview !== "string") return undefined;
+  const message = preview.trim();
+  if (!message) return undefined;
+  if (!message.startsWith("Message Type:")) return message;
+  const payload = message.match(/\r?\nPayload:\s*\r?\n([\s\S]*)$/i)?.[1]?.trim();
+  return payload || undefined;
+}
+
+function parentMessageFromChildItems(items: ThreadItemsListResult["data"]): string | undefined {
+  let fallbackMessage: string | undefined;
+  for (const entry of items ?? []) {
+    if (entry.item?.type !== "userMessage") continue;
+    const message = entry.item.content
+      ?.filter((part) => part.type === "text" && typeof part.text === "string")
+      .map((part) => part.text)
+      .join("");
+    if (!message?.trim().startsWith("Message Type:")) {
+      fallbackMessage ??= parentMessageFromChildPreview(message);
+      continue;
+    }
+    const parentMessage = parentMessageFromChildPreview(message);
+    if (parentMessage) return parentMessage;
+  }
+  return fallbackMessage;
+}
+
 /** Authoritative display identity and model configuration for a native sub-agent thread. */
 export interface CodexChildThreadMetadata {
   identity?: string;
   model?: string;
   reasoningEffort?: ReasoningEffort;
+  parentMessage?: string;
 }
 
 /**
@@ -902,8 +930,9 @@ export class CodexAppServer extends EventEmitter {
       }
 
       if (
-        !method.startsWith("thread/goal/") &&
-        LIFECYCLE_NOTIFICATION_PREFIXES.some((p) => method.startsWith(p))
+        method !== "thread/settings/updated"
+        && !method.startsWith("thread/goal/")
+        && LIFECYCLE_NOTIFICATION_PREFIXES.some((p) => method.startsWith(p))
       ) {
         // Swallowed from the mapper, but still proof of life: thread/status
         // and similar lifecycle traffic must reset turn-level watchdogs.
@@ -1054,22 +1083,48 @@ export class CodexAppServer extends EventEmitter {
     return turnId;
   }
 
-  /** Reads a child thread's identity without changing or blocking the active thread. */
+  /** Reads authoritative child settings and its persisted parent message. */
   async getChildThreadMetadata(childThreadId: string): Promise<CodexChildThreadMetadata | null> {
     if (!CHILD_THREAD_ID_PATTERN.test(childThreadId)) return null;
 
-    const readResult = await this.rpc.sendRequest<ThreadReadParams, ThreadReadResult>(
-      "thread/read",
-      { threadId: childThreadId, includeTurns: false },
-      10_000,
-    );
-    const identity = resolveSubagentDisplayName({
-      agentName: readResult.thread.name,
-      subagentName: readResult.thread.agentNickname,
-      subagentType: readResult.thread.agentRole,
-    });
+    const [resume, items] = await Promise.allSettled([
+      this.rpc.sendRequest<ThreadResumeParams, ThreadResumeResult>(
+        "thread/resume",
+        { threadId: childThreadId, excludeTurns: true },
+        3_000,
+      ),
+      this.rpc.sendRequest<ThreadItemsListParams, ThreadItemsListResult>(
+        "thread/items/list",
+        { threadId: childThreadId, limit: 100, sortDirection: "asc" },
+        10_000,
+      ),
+    ]);
+    if (resume.status === "rejected" && items.status === "rejected") {
+      throw resume.reason;
+    }
 
-    return identity ? { identity } : null;
+    const resumedThread = resume.status === "fulfilled" ? resume.value.thread : undefined;
+    const identity = resolveSubagentDisplayName({
+      agentName: resumedThread?.name,
+      subagentName: resumedThread?.agentNickname,
+      subagentType: resumedThread?.agentRole,
+    });
+    const parentMessage = items.status === "fulfilled"
+      ? parentMessageFromChildItems(items.value.data)
+      : undefined;
+    const model = resume.status === "fulfilled" && typeof resume.value.model === "string"
+      ? resume.value.model
+      : undefined;
+    const reasoningEffort = resume.status === "fulfilled" ? resume.value.reasoningEffort ?? undefined : undefined;
+
+    return identity || model || reasoningEffort || parentMessage
+      ? {
+          ...(identity ? { identity } : {}),
+          ...(model ? { model } : {}),
+          ...(reasoningEffort ? { reasoningEffort } : {}),
+          ...(parentMessage ? { parentMessage } : {}),
+        }
+      : null;
   }
 
   /** Set or update the native Codex thread goal. */

@@ -76,6 +76,13 @@ function canonicalStatus(row: CanonicalSubagentRosterRow): string {
   return row.terminalOutcome ?? row.activityState;
 }
 
+function canonicalConfiguration(row: CanonicalSubagentRosterRow): string {
+  return [
+    row.model ? resolveModelDisplayLabel(row.model) : undefined,
+    row.reasoning ? formatReasoningLevel(row.reasoning) : undefined,
+  ].filter((value): value is string => value !== undefined).join(" · ");
+}
+
 function canonicalLineage(row: CanonicalSubagentRosterRow, rows: readonly CanonicalSubagentRosterRow[]): string {
   const identities = new Map(rows.map((candidate) => [candidate.id, canonicalIdentity(candidate)]));
   return row.lineage
@@ -128,6 +135,7 @@ function CanonicalRosterRow({
   const active = canonicalIsActive(row);
   const status = canonicalStatus(row);
   const lineage = canonicalLineage(row, rows);
+  const configuration = canonicalConfiguration(row);
   const lastActiveAt = active ? null : row.endedAt ?? row.updatedAt;
   const lastActiveLabel = lastActiveAt ? formatRelative(lastActiveAt) : null;
   return (
@@ -164,6 +172,8 @@ function CanonicalRosterRow({
             )}
           </span>
           {lineage && <span className="mt-0.5 block truncate text-xs text-muted-foreground" aria-label={`Lineage: ${lineage}`}>{lineage}</span>}
+          {row.task && <span className="mt-0.5 block truncate text-xs text-muted-foreground">Parent task: {row.task}</span>}
+          {configuration && <span className="mt-0.5 block truncate font-mono text-xs text-muted-foreground">{configuration}</span>}
           {!active && row.hasActiveDescendant && (
             <span className="mt-0.5 block text-xs text-primary">Active descendant</span>
           )}
@@ -197,10 +207,7 @@ function CanonicalDetailView({
   const identity = canonicalIdentity(row);
   const lineage = canonicalLineage(row, rows);
   const active = canonicalIsActive(row);
-  const configuration = [
-    row.model ? resolveModelDisplayLabel(row.model) : undefined,
-    row.reasoning ? formatReasoningLevel(row.reasoning) : undefined,
-  ].filter((value): value is string => value !== undefined).join(" · ");
+  const configuration = canonicalConfiguration(row);
   const [displayLeaseAcquired, setDisplayLeaseAcquired] = useState(false);
   useEffect(() => {
     const residency = getConversationResidency();
@@ -219,6 +226,7 @@ function CanonicalDetailView({
           <div className="min-w-0 flex-1">
             <h2 className="truncate text-sm font-semibold">{identity}</h2>
             {lineage && <p className="truncate text-xs text-muted-foreground">{lineage}</p>}
+            {row.task && <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">Parent task: {row.task}</p>}
           </div>
           <span role="status" className="sr-only">
             {canonicalStatus(row)}

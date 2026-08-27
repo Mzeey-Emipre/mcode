@@ -62,6 +62,8 @@ export interface ProviderConformanceRegistration {
   factory(input: ProviderFactoryInput): ProviderBoundary;
   requiredProfiles: readonly ProviderConformanceProfile[];
   fixtureFiles: readonly string[];
+  /** Fixture provenance classes required for every declared profile. */
+  requiredFixtureProvenance?: readonly ProviderFixtureManifest["provenance"][];
   supportedVersions: readonly ProviderVersionEvidence[];
 }
 

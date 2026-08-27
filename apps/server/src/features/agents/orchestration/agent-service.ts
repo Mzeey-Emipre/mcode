@@ -72,7 +72,8 @@ import { TurnSnapshotRepo } from "../turns/persistence/turn-snapshot-repo.js";
 import type Database from "better-sqlite3";
 import { TaskRepo, type StoredTask } from "./persistence/task-repo.js";
 import { PlanQuestionAnswersRepo } from "../planning/persistence/plan-question-answers-repo.js";
-import { GitService, WorkspaceEnvironmentService } from "../../projects/index.js";
+import { WorkspaceEnvironmentService } from "../../projects/index.js";
+import { GitWorktreeService } from "../../projects/git/git-worktree-service.js";
 import type { WorkspaceEnvironmentAutomaticSetupDispatch } from "../../projects/environment/workspace-environment-service.js";
 import { AttachmentService } from "../../attachments/storage/attachment-service.js";
 import { FileService } from "../../projects/files/file-service.js";
@@ -541,7 +542,7 @@ export class AgentService {
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
     @inject(WorkspaceRepo) private readonly workspaceRepo: WorkspaceRepo,
     @inject(MessageRepo) private readonly messageRepo: MessageRepo,
-    @inject(delay(() => GitService)) private readonly gitService: GitService,
+    @inject(delay(() => GitWorktreeService)) private readonly gitWorktrees: GitWorktreeService,
     @inject(AttachmentService)
     private readonly attachmentService: AttachmentService,
     @inject("IProviderRegistry")
@@ -636,7 +637,7 @@ export class AgentService {
     if (!thread) return Promise.resolve();
     const workspace = this.workspaceRepo.findById(thread.workspace_id);
     if (!workspace) return Promise.resolve();
-    const cwd = cwdOverride ?? this.gitService.resolveWorkingDir(
+    const cwd = cwdOverride ?? this.gitWorktrees.resolveWorkingDir(
       workspace.path,
       thread.mode,
       thread.worktree_path,
@@ -725,6 +726,7 @@ export class AgentService {
     displayContent: messageDisplayContent,
     planAction,
     mentions = [],
+    selectedTextComments,
     previewAnnotations,
     goalObjective,
     orchestrationMode,
@@ -851,6 +853,7 @@ export class AgentService {
           goalObjective,
           replyToMessageId,
           quotedText,
+          selectedTextComments,
           planAction,
           markPlanAnswerForMessageId,
           sourceTurnId: requestedSourceTurnId,
@@ -971,7 +974,7 @@ export class AgentService {
     };
 
     try {
-      const cwd = this.gitService.resolveWorkingDir(
+      const cwd = this.gitWorktrees.resolveWorkingDir(
         workspace.path,
         thread.mode,
         thread.worktree_path,
@@ -1073,7 +1076,9 @@ export class AgentService {
             validatedMentions.length > 0 ? validatedMentions : undefined,
             previewAnnotations,
           ] as const;
-          if (messageId === undefined && origin === undefined) {
+          if (selectedTextComments !== undefined) {
+            message = this.messageRepo.create(...args, origin, messageId, selectedTextComments);
+          } else if (messageId === undefined && origin === undefined) {
             message = this.messageRepo.create(...args);
           } else if (messageId === undefined && origin !== undefined) {
             message = this.messageRepo.create(...args, origin);
@@ -1554,7 +1559,7 @@ export class AgentService {
     const workspace = this.workspaceRepo.findById(params.workspaceId);
     if (!workspace) throw new Error(`Workspace not found: ${params.workspaceId}`);
 
-    const knownWorktrees = await this.gitService.listWorktrees(params.workspaceId);
+    const knownWorktrees = await this.gitWorktrees.listWorktrees(params.workspaceId);
     const normalize = (p: string) =>
       p.replace(/\\/g, "/").replace(/\/$/, "");
     const normalizedInput = normalize(params.existingWorktreePath);
@@ -1661,6 +1666,7 @@ export class AgentService {
       goalObjective: submission.goalObjective,
       replyToMessageId: submission.replyToMessageId,
       quotedText: submission.quotedText,
+      selectedTextComments: submission.selectedTextComments ? [...submission.selectedTextComments] : undefined,
       planAction: submission.planAction,
       markPlanAnswerForMessageId: submission.markPlanAnswerForMessageId,
       sourceTurnId: submission.sourceTurnId,

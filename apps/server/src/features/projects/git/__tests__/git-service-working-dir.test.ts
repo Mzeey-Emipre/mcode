@@ -1,19 +1,18 @@
 import "reflect-metadata";
 import { describe, it, expect } from "vitest";
-import type { WorkspaceRepo } from "../../persistence/workspace-repo.js";
 import { FakeGitExecutor } from "../execution/fake-git-executor.js";
-import { GitService } from "../git-service.js";
+import { GitWorktreeService } from "../git-worktree-service.js";
 
 /**
  * resolveWorkingDir decides the cwd a threadless or thread-scoped terminal
  * spawns in. It needs no repo access, so a bare GitService is enough to
  * exercise the worktree-vs-root branch the terminal rebind relies on.
  */
-function makeGitService(): GitService {
-  return new GitService(undefined as unknown as WorkspaceRepo, new FakeGitExecutor());
+function makeGitService(): GitWorktreeService {
+  return new GitWorktreeService(undefined as never, new FakeGitExecutor());
 }
 
-describe("GitService.resolveWorkingDir", () => {
+describe("GitWorktreeService.resolveWorkingDir", () => {
   const WORKSPACE_ROOT = "/repo/main";
   const WORKTREE = "/repo/worktrees/feature";
 

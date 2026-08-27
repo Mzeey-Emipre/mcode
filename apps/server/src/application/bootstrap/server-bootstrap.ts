@@ -19,8 +19,11 @@ import { PtyPidRegistry } from "../../features/terminal/host/pty-pid-registry.js
 // Services
 import {
   FilesystemBrowser,
-  GitService,
+  GitComparisonService,
+  GitRepositoryService,
+  GitWorktreeService,
   GitWatcherService,
+  PullRequestReviewGitService,
   WorkspaceEnricher,
   WorkspaceService,
   WorkspaceEnvironmentService,
@@ -90,7 +93,7 @@ import { CleanupWorker } from "../../features/thread-control/cleanup/cleanup-wor
 import { ProviderAvailabilityService } from "../../features/providers/availability/provider-availability-service.js";
 import { ProviderUsageWarmupService } from "../../features/providers/availability/provider-usage-warmup-service.js";
 import { ProviderRegistry } from "../../features/providers/composition/provider-registry.js";
-import { CursorProvider } from "../../features/providers/adapters/cursor/cursor-provider.js";
+import type { CursorProviderBoundary } from "@mcode/providers";
 import { ModelCacheService } from "../../features/providers/models/model-cache-service.js";
 import { DiffSummaryService } from "../../features/projects/diffs/summaries/diff-summary-service.js";
 import { RecapService } from "../../features/agents/recap/recap-service.js";
@@ -281,7 +284,10 @@ const turnRecoveryService = container.resolve(TurnRecoveryService);
 const threadControlService = container.resolve(ThreadControlService);
 const externalThreadControlPairingService = container.resolve(ExternalThreadControlPairingService);
 const externalThreadControlMcpRuntime = container.resolve(ExternalThreadControlMcpRuntime);
-const gitService = container.resolve(GitService);
+const gitComparison = container.resolve(GitComparisonService);
+const gitRepository = container.resolve(GitRepositoryService);
+const gitWorktrees = container.resolve(GitWorktreeService);
+const pullRequestReviews = container.resolve(PullRequestReviewGitService);
 const githubService = container.resolve(GithubService);
 const pullRequestService = container.resolve(PullRequestService);
 const pullRequestMutationService = container.resolve(PullRequestMutationService);
@@ -298,7 +304,7 @@ const terminalDiagnosticsService = container.resolve(TerminalDiagnosticsService)
 const messageRepo = container.resolve(MessageRepo);
 const threadRepo = container.resolve(ThreadRepo);
 const providerRegistry = container.resolve(ProviderRegistry);
-const cursorProvider = container.resolve(CursorProvider);
+const cursorProvider = container.resolve<CursorProviderBoundary>("CursorProvider");
 const providerAvailability = container.resolve(ProviderAvailabilityService);
 const toolCallRecordRepo = container.resolve(ToolCallRecordRepo);
 const thoughtSegmentRepo = container.resolve(ThoughtSegmentRepo);
@@ -636,7 +642,10 @@ const { httpServer, wss } = createWsServer({
   threadControlService,
   externalThreadControlPairingService,
   externalThreadControlMcpRuntime,
-  gitService,
+  gitComparison,
+  gitRepository,
+  gitWorktrees,
+  pullRequestReviews,
   githubService,
   pullRequestService,
   pullRequestMutationService,

@@ -40,7 +40,9 @@ import {
   resolveBrowserNarrativeTool,
   resolveProviderAgentKey,
   resolveSubagentDisplayName,
+  resolveSubagentDuration,
   resolveSubagentMetadata,
+  resolveSubagentPrompt,
   createSubagentPresentation,
   resolveSubagentExactIdentity,
   type Message,
@@ -71,6 +73,16 @@ const DEFAULT_LOAD_LIMIT = 200;
 /** Buffered tool call with raw input preserved for deferred summarization. */
 export interface BufferedToolCall extends CreateToolCallRecordInput {
   _rawToolInput?: Record<string, unknown>;
+}
+
+/** Extracts bounded provider metadata that must survive a persisted Agent card. */
+function persistedSubagentMetadata(input: Record<string, unknown>) {
+  return {
+    subagentPrompt: resolveSubagentPrompt(input.prompt),
+    subagentType: resolveSubagentMetadata(input.subagentType),
+    subagentAgentId: resolveSubagentMetadata(input.agentId),
+    subagentDurationMs: resolveSubagentDuration(input.durationMs),
+  };
 }
 
 /** In-flight thought segment accumulated from consecutive textDelta events. */
@@ -371,98 +383,180 @@ export class NarrativeStore {
    */
   bufferToolCall(threadId: string, event: BufferToolCallEvent): string | undefined {
     const buffer = this.turnToolCalls.get(threadId) ?? [];
-
     const stack = this.agentCallStack.get(threadId) ?? [];
-    // Preserve provider attribution for every call. Only non-Agent calls may
-    // use the stack fallback because it cannot identify a nested Agent source.
-    const parentToolCallId =
-      event.toolName === "Agent"
-        ? event.parentToolCallId
-        : event.parentToolCallId ?? this.getStackDerivedParentFallback(threadId);
-    // Diagnostic: trace parent attribution when a mismatch is suspected.
-    if (event.toolName !== "Agent" && parentToolCallId) {
-      logger.debug("bufferToolCall: parent attribution", {
-        threadId,
-        toolCallId: event.toolCallId,
-        toolName: event.toolName,
-        sdkParent: event.parentToolCallId ?? null,
-        stackDepth: stack.length,
-        attributed: parentToolCallId,
-        source: event.parentToolCallId ? "sdk" : "stack-fallback",
-      });
-    }
-
+    const parentToolCallId = this.resolveParentToolCallId(threadId, event);
+    this.logParentToolCallAttribution(threadId, event, parentToolCallId, stack.length);
     const existing = buffer.find((tc) => tc.toolCallId === event.toolCallId);
     if (existing) {
-      const isAgentEnrichment = existing.toolName === "Agent" && event.toolName === "Agent";
-      const shouldMergeDuplicate = isAgentEnrichment || (
-        existing.status === "running" && (
-          Object.keys(existing._rawToolInput ?? {}).length === 0
-          || existing.toolName !== event.toolName
-        ));
-      if (shouldMergeDuplicate) {
-        existing.toolName = event.toolName;
-        const mergedToolInput = {
-          ...(existing._rawToolInput ?? {}),
-          ...event.toolInput,
-        };
-        existing._rawToolInput = mergedToolInput;
-        if (event.toolName === "Agent") {
-          const presentation = createSubagentPresentation(mergedToolInput, event.toolCallId);
-          existing.displayName = presentation.hasExplicitIdentity ? presentation.displayName : undefined;
-          existing.providerAgentKey = presentation.providerAgentKey;
-          existing.subagentIdentityKey = resolveSubagentExactIdentity(mergedToolInput);
-          if (existing.messageId && existing.subagentIdentityKey) {
-            this.toolCallRecordRepo.updateSubagentIdentity(
-              existing.toolCallId!,
-              existing.messageId,
-              existing.subagentIdentityKey,
-            );
-          }
-          existing.model = presentation.model;
-          existing.reasoningEffort = presentation.reasoningEffort;
-        }
-      }
-      if (event.parentToolCallId) {
-        existing.parentToolCallId = event.parentToolCallId;
-      } else if (shouldMergeDuplicate && parentToolCallId && !existing.parentToolCallId) {
-        existing.parentToolCallId = parentToolCallId;
-      }
-      return existing.parentToolCallId;
+      return this.updateExistingBufferedToolCall(existing, event, parentToolCallId);
     }
+    return this.addBufferedToolCall(
+      threadId,
+      buffer,
+      stack,
+      event,
+      parentToolCallId,
+    );
+  }
 
+  private resolveParentToolCallId(
+    threadId: string,
+    event: BufferToolCallEvent,
+  ): string | undefined {
+    if (event.toolName === "Agent") return event.parentToolCallId;
+    return event.parentToolCallId ?? this.getStackDerivedParentFallback(threadId);
+  }
+
+  private logParentToolCallAttribution(
+    threadId: string,
+    event: BufferToolCallEvent,
+    parentToolCallId: string | undefined,
+    stackDepth: number,
+  ): void {
+    if (event.toolName === "Agent" || !parentToolCallId) return;
+    logger.debug("bufferToolCall: parent attribution", {
+      threadId,
+      toolCallId: event.toolCallId,
+      toolName: event.toolName,
+      sdkParent: event.parentToolCallId ?? null,
+      stackDepth,
+      attributed: parentToolCallId,
+      source: event.parentToolCallId ? "sdk" : "stack-fallback",
+    });
+  }
+
+  private updateExistingBufferedToolCall(
+    existing: BufferedToolCall,
+    event: BufferToolCallEvent,
+    parentToolCallId: string | undefined,
+  ): string | undefined {
+    const shouldMergeDuplicate = this.shouldMergeDuplicateToolCall(existing, event);
+    if (shouldMergeDuplicate) {
+      this.mergeDuplicateToolCall(existing, event);
+    }
+    this.mergeParentToolCallId(
+      existing,
+      event.parentToolCallId,
+      parentToolCallId,
+      shouldMergeDuplicate,
+    );
+    return existing.parentToolCallId;
+  }
+
+  private shouldMergeDuplicateToolCall(
+    existing: BufferedToolCall,
+    event: BufferToolCallEvent,
+  ): boolean {
+    if (existing.toolName === "Agent" && event.toolName === "Agent") return true;
+    const rawToolInput = existing._rawToolInput ?? {};
+    return existing.status === "running" && (
+      Object.keys(rawToolInput).length === 0 || existing.toolName !== event.toolName
+    );
+  }
+
+  private mergeDuplicateToolCall(existing: BufferedToolCall, event: BufferToolCallEvent): void {
+    existing.toolName = event.toolName;
+    const mergedToolInput = {
+      ...(existing._rawToolInput ?? {}),
+      ...event.toolInput,
+    };
+    existing._rawToolInput = mergedToolInput;
+    if (event.toolName === "Agent") {
+      this.applyAgentPresentation(existing, mergedToolInput, event.toolCallId);
+    }
+  }
+
+  private mergeParentToolCallId(
+    existing: BufferedToolCall,
+    providerParentToolCallId: string | undefined,
+    inferredParentToolCallId: string | undefined,
+    mergedDuplicate: boolean,
+  ): void {
+    if (providerParentToolCallId) {
+      existing.parentToolCallId = providerParentToolCallId;
+      return;
+    }
+    if (mergedDuplicate && inferredParentToolCallId && !existing.parentToolCallId) {
+      existing.parentToolCallId = inferredParentToolCallId;
+    }
+  }
+
+  private applyAgentPresentation(
+    toolCall: BufferedToolCall,
+    rawToolInput: Record<string, unknown>,
+    toolCallId: string,
+  ): void {
+    const presentation = createSubagentPresentation(rawToolInput, toolCallId);
+    toolCall.displayName = presentation.hasExplicitIdentity ? presentation.displayName : undefined;
+    toolCall.providerAgentKey = presentation.providerAgentKey;
+    toolCall.subagentIdentityKey = resolveSubagentExactIdentity(rawToolInput);
+    toolCall.subagentProviderName = this.subagentProviderName(presentation);
+    Object.assign(toolCall, persistedSubagentMetadata(rawToolInput));
+    if (toolCall.messageId && toolCall.subagentIdentityKey) {
+      this.toolCallRecordRepo.updateSubagentIdentity(
+        toolCall.toolCallId!,
+        toolCall.messageId,
+        toolCall.subagentIdentityKey,
+      );
+    }
+    toolCall.model = presentation.model;
+    toolCall.reasoningEffort = presentation.reasoningEffort;
+  }
+
+  private addBufferedToolCall(
+    threadId: string,
+    buffer: BufferedToolCall[],
+    stack: string[],
+    event: BufferToolCallEvent,
+    parentToolCallId: string | undefined,
+  ): string | undefined {
     const sortOrder = this.nextSortOrder(threadId);
     if (event.toolName === "Agent") {
       stack.push(event.toolCallId);
       this.agentCallStack.set(threadId, stack);
     }
+    const presentation = this.subagentPresentation(event);
+    buffer.push(this.createBufferedToolCall(event, presentation, sortOrder, parentToolCallId));
+    this.turnToolCalls.set(threadId, buffer);
+    return parentToolCallId;
+  }
 
-    const presentation = event.toolName === "Agent"
-      ? event.subagentPresentation ?? createSubagentPresentation(event.toolInput, event.toolCallId)
-      : undefined;
+  private subagentPresentation(event: BufferToolCallEvent): SubagentPresentation | undefined {
+    if (event.toolName !== "Agent") return undefined;
+    return event.subagentPresentation ?? createSubagentPresentation(event.toolInput, event.toolCallId);
+  }
 
-    buffer.push({
+  private createBufferedToolCall(
+    event: BufferToolCallEvent,
+    presentation: SubagentPresentation | undefined,
+    sortOrder: number,
+    parentToolCallId: string | undefined,
+  ): BufferedToolCall {
+    const isAgent = event.toolName === "Agent";
+    return {
       toolCallId: event.toolCallId,
       messageId: "",
       toolName: event.toolName,
       displayName: presentation?.hasExplicitIdentity ? presentation.displayName : undefined,
       providerAgentKey: presentation?.providerAgentKey,
-      subagentIdentityKey: event.toolName === "Agent"
-        ? resolveSubagentExactIdentity(event.toolInput)
-        : undefined,
+      subagentIdentityKey: isAgent ? resolveSubagentExactIdentity(event.toolInput) : undefined,
+      subagentProviderName: this.subagentProviderName(presentation),
+      ...(isAgent ? persistedSubagentMetadata(event.toolInput) : {}),
       model: presentation?.model,
       reasoningEffort: presentation?.reasoningEffort,
-      inputSummary: "", // Deferred to persistNarrative
+      inputSummary: "",
       outputSummary: "",
       status: "running",
       startedAt: new Date().toISOString(),
       sortOrder,
       parentToolCallId,
       _rawToolInput: event.toolInput,
-    });
-    this.turnToolCalls.set(threadId, buffer);
+    };
+  }
 
-    return parentToolCallId;
+  private subagentProviderName(presentation: SubagentPresentation | undefined): string | undefined {
+    if (presentation?.detail.kind !== "transcript-unavailable") return undefined;
+    return presentation.detail.providerName;
   }
 
   /**
@@ -549,112 +643,207 @@ export class NarrativeStore {
   recoverySnapshot(threadId: string): ParentNarrativeRecoveryItem[] {
     const snapshot: ParentNarrativeRecoveryItem[] = [];
     let bytes = 0;
-    const append = (item: ParentNarrativeRecoveryItem): void => {
-      if (snapshot.length >= ACTIVE_TURN_WRITE_BATCH_LIMITS.maxRows - 1) {
-        throw new Error(`Parent narrative recovery exceeds the active-turn row limit: ${threadId}`);
-      }
-      const nextBytes = Buffer.byteLength(JSON.stringify(item), "utf8");
-      if (bytes + nextBytes > ACTIVE_TURN_WRITE_BATCH_LIMITS.maxBytes) {
-        throw new Error(`Parent narrative recovery exceeds the active-turn byte limit: ${threadId}`);
-      }
-      bytes += nextBytes;
-      snapshot.push(item);
-    };
-
-    for (const toolCall of this.turnToolCalls.get(threadId) ?? []) {
-      append({
-        kind: "toolCall",
-        record: {
-          id: this.requireRecoveryString(toolCall.toolCallId, "tool call id"),
-          message_id: this.requireRecoveryString(toolCall.messageId, "tool call message id"),
-          parent_tool_call_id: toolCall.parentToolCallId ?? null,
-          tool_name: toolCall.toolName,
-          display_name: toolCall.displayName ?? null,
-          provider_agent_key: toolCall.providerAgentKey ?? null,
-          subagent_identity_key: toolCall.subagentIdentityKey ?? null,
-          model: toolCall.model ?? null,
-          reasoning_effort: toolCall.reasoningEffort ?? null,
-          input_summary: toolCall.inputSummary || this.summarizeInput(
-            toolCall.toolName,
-            toolCall._rawToolInput ?? {},
-          ),
-          output_summary: toolCall.outputSummary,
-          ...(toolCall.outputTruncated ? { output_truncated: 1 } : {}),
-          output_total_bytes: toolCall.outputTotalBytes ?? null,
-          output_artifact_path: toolCall.outputArtifactPath ?? null,
-          exit_code: toolCall.exitCode ?? null,
-          status: toolCall.status,
-          started_at: this.requireRecoveryString(toolCall.startedAt, "tool call start time"),
-          completed_at: toolCall.completedAt ?? null,
-          sort_order: toolCall.sortOrder,
-        },
-      });
-    }
+    bytes = this.appendBufferedToolCallRecoveryItems(snapshot, bytes, threadId);
     for (const thought of this.turnThoughts.get(threadId) ?? []) {
-      append({
-        kind: "narrationSegment",
-        record: {
-          id: this.requireRecoveryString(thought.id, "thought id"),
-          message_id: this.requireRecoveryString(thought.messageId, "thought message id"),
-          text: this.requireRecoveryString(thought.text, "thought text"),
-          started_at: this.requireRecoveryString(thought.startedAt, "thought start time"),
-          ended_at: thought.endedAt ?? null,
-          sort_order: thought.sortOrder,
-          ...(thought.isFinalResponse ? { is_final_response: thought.isFinalResponse } : {}),
-        },
-      });
+      bytes = this.appendRecoverySnapshotItem(
+        snapshot,
+        bytes,
+        this.thoughtRecoveryItem(thought),
+        threadId,
+      );
     }
     const openThought = this.turnOpenThought.get(threadId);
     if (openThought) {
-      append({
-        kind: "narrationSegment",
-        record: {
-          id: openThought.id,
-          message_id: "",
-          text: openThought.text,
-          started_at: openThought.startedAt,
-          ended_at: null,
-          sort_order: openThought.sortOrder,
-        },
-      });
+      bytes = this.appendRecoverySnapshotItem(
+        snapshot,
+        bytes,
+        this.openThoughtRecoveryItem(openThought),
+        threadId,
+      );
     }
     for (const hook of this.turnHooks.get(threadId) ?? []) {
-      append({
-        kind: "hook",
-        record: {
-          id: this.requireRecoveryString(hook.id, "hook id"),
-          message_id: this.requireRecoveryString(hook.messageId, "hook message id"),
-          hook_name: hook.hookName,
-          tool_name: hook.toolName,
-          phase: hook.phase,
-          payload: hook.payload,
-          duration_ms: hook.durationMs ?? null,
-          did_block: hook.didBlock,
-          started_at: this.requireRecoveryString(hook.startedAt, "hook start time"),
-          ended_at: hook.endedAt ?? null,
-          sort_order: hook.sortOrder,
-        },
-      });
+      bytes = this.appendRecoverySnapshotItem(
+        snapshot,
+        bytes,
+        this.hookRecoveryItem(hook),
+        threadId,
+      );
     }
     for (const hook of this.turnOpenHooks.get(threadId)?.values() ?? []) {
-      append({
-        kind: "hook",
-        record: {
-          id: hook.id,
-          message_id: "",
-          hook_name: hook.hookName,
-          tool_name: hook.toolName,
-          phase: hook.phase,
-          payload: hook.payload,
-          duration_ms: null,
-          did_block: false,
-          started_at: hook.startedAt,
-          ended_at: null,
-          sort_order: hook.sortOrder,
-        },
-      });
+      bytes = this.appendRecoverySnapshotItem(
+        snapshot,
+        bytes,
+        this.openHookRecoveryItem(hook),
+        threadId,
+      );
     }
+    return this.sortRecoverySnapshot(snapshot);
+  }
 
+  private appendBufferedToolCallRecoveryItems(
+    snapshot: ParentNarrativeRecoveryItem[],
+    bytes: number,
+    threadId: string,
+  ): number {
+    for (const toolCall of this.turnToolCalls.get(threadId) ?? []) {
+      bytes = this.appendRecoverySnapshotItem(
+        snapshot,
+        bytes,
+        this.toolCallRecoveryItem(toolCall),
+        threadId,
+      );
+    }
+    return bytes;
+  }
+
+  private appendRecoverySnapshotItem(
+    snapshot: ParentNarrativeRecoveryItem[],
+    bytes: number,
+    item: ParentNarrativeRecoveryItem,
+    threadId: string,
+  ): number {
+    if (snapshot.length >= ACTIVE_TURN_WRITE_BATCH_LIMITS.maxRows - 1) {
+      throw new Error(`Parent narrative recovery exceeds the active-turn row limit: ${threadId}`);
+    }
+    const nextBytes = Buffer.byteLength(JSON.stringify(item), "utf8");
+    if (bytes + nextBytes > ACTIVE_TURN_WRITE_BATCH_LIMITS.maxBytes) {
+      throw new Error(`Parent narrative recovery exceeds the active-turn byte limit: ${threadId}`);
+    }
+    snapshot.push(item);
+    return bytes + nextBytes;
+  }
+
+  private toolCallRecoveryItem(toolCall: BufferedToolCall): ParentNarrativeRecoveryItem {
+    return {
+      kind: "toolCall",
+      record: {
+        ...this.toolCallRecoveryIdentityFields(toolCall),
+        ...this.toolCallRecoveryPresentationFields(toolCall),
+        ...this.toolCallRecoveryOutputFields(toolCall),
+        ...this.toolCallRecoveryStateFields(toolCall),
+      },
+    };
+  }
+
+  private toolCallRecoveryIdentityFields(toolCall: BufferedToolCall) {
+    return {
+      id: this.requireRecoveryString(toolCall.toolCallId, "tool call id"),
+      message_id: this.requireRecoveryString(toolCall.messageId, "tool call message id"),
+      parent_tool_call_id: toolCall.parentToolCallId ?? null,
+      tool_name: toolCall.toolName,
+      display_name: toolCall.displayName ?? null,
+      provider_agent_key: toolCall.providerAgentKey ?? null,
+      subagent_identity_key: toolCall.subagentIdentityKey ?? null,
+      subagent_provider_name: toolCall.subagentProviderName ?? null,
+    };
+  }
+
+  private toolCallRecoveryPresentationFields(toolCall: BufferedToolCall) {
+    return {
+      subagent_prompt: toolCall.subagentPrompt ?? null,
+      subagent_type: toolCall.subagentType ?? null,
+      subagent_agent_id: toolCall.subagentAgentId ?? null,
+      subagent_duration_ms: toolCall.subagentDurationMs ?? null,
+      model: toolCall.model ?? null,
+      reasoning_effort: toolCall.reasoningEffort ?? null,
+    };
+  }
+
+  private toolCallRecoveryOutputFields(toolCall: BufferedToolCall) {
+    return {
+      input_summary: this.toolCallRecoveryInputSummary(toolCall),
+      output_summary: toolCall.outputSummary,
+      ...(toolCall.outputTruncated ? { output_truncated: 1 } : {}),
+      output_total_bytes: toolCall.outputTotalBytes ?? null,
+      output_artifact_path: toolCall.outputArtifactPath ?? null,
+      exit_code: toolCall.exitCode ?? null,
+    };
+  }
+
+  private toolCallRecoveryInputSummary(toolCall: BufferedToolCall): string {
+    if (toolCall.inputSummary) return toolCall.inputSummary;
+    return this.summarizeInput(toolCall.toolName, toolCall._rawToolInput ?? {});
+  }
+
+  private toolCallRecoveryStateFields(toolCall: BufferedToolCall) {
+    return {
+      status: toolCall.status,
+      started_at: this.requireRecoveryString(toolCall.startedAt, "tool call start time"),
+      completed_at: toolCall.completedAt ?? null,
+      sort_order: toolCall.sortOrder,
+    };
+  }
+
+  private thoughtRecoveryItem(thought: CreateThoughtSegmentInput): ParentNarrativeRecoveryItem {
+    return {
+      kind: "narrationSegment",
+      record: {
+        id: this.requireRecoveryString(thought.id, "thought id"),
+        message_id: this.requireRecoveryString(thought.messageId, "thought message id"),
+        text: this.requireRecoveryString(thought.text, "thought text"),
+        started_at: this.requireRecoveryString(thought.startedAt, "thought start time"),
+        ended_at: thought.endedAt ?? null,
+        sort_order: thought.sortOrder,
+        ...(thought.isFinalResponse ? { is_final_response: thought.isFinalResponse } : {}),
+      },
+    };
+  }
+
+  private openThoughtRecoveryItem(openThought: OpenThought): ParentNarrativeRecoveryItem {
+    return {
+      kind: "narrationSegment",
+      record: {
+        id: openThought.id,
+        message_id: "",
+        text: openThought.text,
+        started_at: openThought.startedAt,
+        ended_at: null,
+        sort_order: openThought.sortOrder,
+      },
+    };
+  }
+
+  private hookRecoveryItem(hook: CreateHookExecutionInput): ParentNarrativeRecoveryItem {
+    return {
+      kind: "hook",
+      record: {
+        id: this.requireRecoveryString(hook.id, "hook id"),
+        message_id: this.requireRecoveryString(hook.messageId, "hook message id"),
+        hook_name: hook.hookName,
+        tool_name: hook.toolName,
+        phase: hook.phase,
+        payload: hook.payload,
+        duration_ms: hook.durationMs ?? null,
+        did_block: hook.didBlock,
+        started_at: this.requireRecoveryString(hook.startedAt, "hook start time"),
+        ended_at: hook.endedAt ?? null,
+        sort_order: hook.sortOrder,
+      },
+    };
+  }
+
+  private openHookRecoveryItem(hook: OpenHook): ParentNarrativeRecoveryItem {
+    return {
+      kind: "hook",
+      record: {
+        id: hook.id,
+        message_id: "",
+        hook_name: hook.hookName,
+        tool_name: hook.toolName,
+        phase: hook.phase,
+        payload: hook.payload,
+        duration_ms: null,
+        did_block: false,
+        started_at: hook.startedAt,
+        ended_at: null,
+        sort_order: hook.sortOrder,
+      },
+    };
+  }
+
+  private sortRecoverySnapshot(
+    snapshot: ParentNarrativeRecoveryItem[],
+  ): ParentNarrativeRecoveryItem[] {
     return snapshot.sort((left, right) => (
       left.record.sort_order - right.record.sort_order || left.record.id.localeCompare(right.record.id)
     ));
@@ -761,6 +950,11 @@ export class NarrativeStore {
       displayName: item.record.display_name ?? undefined,
       providerAgentKey: item.record.provider_agent_key ?? undefined,
       subagentIdentityKey: item.record.subagent_identity_key ?? undefined,
+      subagentProviderName: item.record.subagent_provider_name ?? undefined,
+      subagentPrompt: item.record.subagent_prompt ?? undefined,
+      subagentType: item.record.subagent_type ?? undefined,
+      subagentAgentId: item.record.subagent_agent_id ?? undefined,
+      subagentDurationMs: item.record.subagent_duration_ms ?? undefined,
       model: item.record.model ?? undefined,
       reasoningEffort: item.record.reasoning_effort ?? undefined,
       inputSummary: item.record.input_summary,
@@ -1010,84 +1204,140 @@ export class NarrativeStore {
     messageContent: string,
     outcome: TurnOutcome,
   ): PreparedNarrativePersistence {
+    const toolCalls = this.prepareToolCallsForPersistence(threadId, messageId, outcome);
+    this.closeOpenThought(threadId);
+    this.closeOpenHooksForPersistence(threadId);
+    const thoughts = this.prepareThoughtsForPersistence(threadId, messageId, messageContent);
+    const hooks = this.prepareHooksForPersistence(threadId, messageId);
+    return { toolCalls, thoughts, hooks };
+  }
+
+  private prepareToolCallsForPersistence(
+    threadId: string,
+    messageId: string,
+    outcome: TurnOutcome,
+  ): BufferedToolCall[] {
     const toolCalls = this.turnToolCalls.get(threadId) ?? [];
     const settledAt = new Date().toISOString();
     for (const toolCall of toolCalls) {
       toolCall.toolCallId ??= randomUUID();
-      if (toolCall.status === "running") {
-        toolCall.status = outcome === "errored" || outcome === "interrupted"
-          ? "failed"
-          : outcome === "cancelled"
-            ? "cancelled"
-            : "completed";
-        toolCall.completedAt = settledAt;
-      }
+      this.settleRunningToolCall(toolCall, outcome, settledAt);
       toolCall.messageId = messageId;
-      if (!toolCall.inputSummary && toolCall._rawToolInput) {
-        if (toolCall.toolName === "Agent") {
-          toolCall.displayName = resolveSubagentDisplayName(toolCall._rawToolInput);
-          toolCall.providerAgentKey = resolveProviderAgentKey(toolCall._rawToolInput);
-          toolCall.subagentIdentityKey = resolveSubagentExactIdentity(toolCall._rawToolInput);
-          toolCall.model = resolveSubagentMetadata(toolCall._rawToolInput.model);
-          toolCall.reasoningEffort = resolveSubagentMetadata(toolCall._rawToolInput.reasoningEffort);
-        }
-        toolCall.inputSummary = this.summarizeInput(toolCall.toolName, toolCall._rawToolInput);
-        delete toolCall._rawToolInput;
-      }
+      this.prepareToolCallInput(toolCall);
     }
+    return toolCalls;
+  }
 
-    this.closeOpenThought(threadId);
+  private settleRunningToolCall(
+    toolCall: BufferedToolCall,
+    outcome: TurnOutcome,
+    settledAt: string,
+  ): void {
+    if (toolCall.status !== "running") return;
+    toolCall.status = this.settledToolCallStatus(outcome);
+    toolCall.completedAt = settledAt;
+  }
+
+  private settledToolCallStatus(outcome: TurnOutcome): BufferedToolCall["status"] {
+    if (outcome === "errored" || outcome === "interrupted") return "failed";
+    if (outcome === "cancelled") return "cancelled";
+    return "completed";
+  }
+
+  private prepareToolCallInput(toolCall: BufferedToolCall): void {
+    const rawToolInput = toolCall._rawToolInput;
+    if (toolCall.inputSummary || !rawToolInput) return;
+    if (toolCall.toolName === "Agent") {
+      this.applyAgentPersistenceMetadata(toolCall, rawToolInput);
+    }
+    toolCall.inputSummary = this.summarizeInput(toolCall.toolName, rawToolInput);
+    delete toolCall._rawToolInput;
+  }
+
+  private applyAgentPersistenceMetadata(
+    toolCall: BufferedToolCall,
+    rawToolInput: Record<string, unknown>,
+  ): void {
+    toolCall.displayName = resolveSubagentDisplayName(rawToolInput);
+    toolCall.providerAgentKey = resolveProviderAgentKey(rawToolInput);
+    toolCall.subagentIdentityKey = resolveSubagentExactIdentity(rawToolInput);
+    const presentation = createSubagentPresentation(rawToolInput, toolCall.toolCallId!);
+    toolCall.subagentProviderName = this.subagentProviderName(presentation);
+    Object.assign(toolCall, persistedSubagentMetadata(rawToolInput));
+    toolCall.model = resolveSubagentMetadata(rawToolInput.model);
+    toolCall.reasoningEffort = resolveSubagentMetadata(rawToolInput.reasoningEffort);
+  }
+
+  private closeOpenHooksForPersistence(threadId: string): void {
     const openHookMap = this.turnOpenHooks.get(threadId);
-    if (openHookMap && openHookMap.size > 0) {
-      const list = this.turnHooks.get(threadId) ?? [];
-      const endedAt = new Date().toISOString();
-      for (const open of openHookMap.values()) {
-        list.push({
-          id: open.id,
-          messageId: "",
-          hookName: open.hookName,
-          toolName: open.toolName,
-          phase: open.phase,
-          payload: open.payload,
-          durationMs: Date.parse(endedAt) - Date.parse(open.startedAt),
-          didBlock: false,
-          startedAt: open.startedAt,
-          endedAt,
-          sortOrder: open.sortOrder,
-        });
-      }
-      this.turnHooks.set(threadId, list);
-      openHookMap.clear();
+    if (!openHookMap || openHookMap.size === 0) return;
+    const list = this.turnHooks.get(threadId) ?? [];
+    const endedAt = new Date().toISOString();
+    for (const open of openHookMap.values()) {
+      list.push({
+        id: open.id,
+        messageId: "",
+        hookName: open.hookName,
+        toolName: open.toolName,
+        phase: open.phase,
+        payload: open.payload,
+        durationMs: Date.parse(endedAt) - Date.parse(open.startedAt),
+        didBlock: false,
+        startedAt: open.startedAt,
+        endedAt,
+        sortOrder: open.sortOrder,
+      });
     }
+    this.turnHooks.set(threadId, list);
+    openHookMap.clear();
+  }
 
+  private prepareThoughtsForPersistence(
+    threadId: string,
+    messageId: string,
+    messageContent: string,
+  ): CreateThoughtSegmentInput[] {
     const bufferedThoughts = this.turnThoughts.get(threadId) ?? [];
     for (const thought of bufferedThoughts) thought.id ??= randomUUID();
-    const thoughts = bufferedThoughts.map((thought) => ({
-      ...thought,
-      messageId,
-    }));
+    const thoughts = bufferedThoughts.map((thought) => ({ ...thought, messageId }));
     const message = messageContent.trim();
     if (message.length > 0 && thoughts.length > 0) {
-      const maxSortOrder = Math.max(...thoughts.map((thought) => thought.sortOrder));
-      for (const thought of thoughts) {
-        const text = thought.text.trim();
-        if (text.length === 0) continue;
-        if (text === message || (
-          thought.sortOrder === maxSortOrder
-          && (thought.isFinalResponse === 1 || message.endsWith(text))
-        )) {
-          thought.isFinalResponse = 1;
-        }
+      this.markFinalResponseThoughts(thoughts, message);
+    }
+    return thoughts;
+  }
+
+  private markFinalResponseThoughts(
+    thoughts: CreateThoughtSegmentInput[],
+    message: string,
+  ): void {
+    const maxSortOrder = Math.max(...thoughts.map((thought) => thought.sortOrder));
+    for (const thought of thoughts) {
+      const text = thought.text.trim();
+      if (text.length > 0 && this.isFinalResponseThought(thought, text, message, maxSortOrder)) {
+        thought.isFinalResponse = 1;
       }
     }
+  }
 
+  private isFinalResponseThought(
+    thought: CreateThoughtSegmentInput,
+    text: string,
+    message: string,
+    maxSortOrder: number,
+  ): boolean {
+    if (text === message) return true;
+    return thought.sortOrder === maxSortOrder
+      && (thought.isFinalResponse === 1 || message.endsWith(text));
+  }
+
+  private prepareHooksForPersistence(
+    threadId: string,
+    messageId: string,
+  ): CreateHookExecutionInput[] {
     const bufferedHooks = this.turnHooks.get(threadId) ?? [];
     for (const hook of bufferedHooks) hook.id ??= randomUUID();
-    const hooks = bufferedHooks.map((hook) => ({
-      ...hook,
-      messageId,
-    }));
-    return { toolCalls, thoughts, hooks };
+    return bufferedHooks.map((hook) => ({ ...hook, messageId }));
   }
 
   /**

@@ -12,6 +12,7 @@ import { INTERACTION_MODES } from "@/transport";
 import type {
   ContextWindowMode,
   MessageMention,
+  SelectedTextComment,
 } from "@mcode/contracts";
 import { ORCHESTRATION_MODES } from "@mcode/contracts";
 import {
@@ -25,6 +26,7 @@ import { useThreadRecord } from "@/features/conversation/state";
 import { useThreadStore } from "@/stores/threadStore";
 import { usePreviewReferenceQueueStore } from "@/features/preview/state/previewReferenceQueueStore";
 import { useToastStore } from "@/stores/toastStore";
+import { snapshotComposerDraft } from "@/lib/composer-session";
 import { writeComposerContent } from "./composer-editor-content";
 import {
   useComposerAttachments,
@@ -50,6 +52,7 @@ export type { ComposerAgentSelection } from "./composer-selection-state";
 export interface ComposerFormState {
   text: string;
   mentions: MessageMention[];
+  selectedTextComments: SelectedTextComment[];
   attachments: PendingAttachment[];
   selection: ComposerAgentSelection;
   goalPending: boolean;
@@ -62,6 +65,7 @@ export interface ComposerFormSubmission {
   revision: number;
   rawInput: string;
   mentions: MessageMention[];
+  selectedTextComments: SelectedTextComment[];
   attachments: PendingAttachment[];
   selection: ComposerAgentSelection;
   goalPending: boolean;
@@ -107,6 +111,7 @@ export interface ComposerFormController {
   attachmentBindings: ComposerAttachmentBindings;
   updateDraft(text: string, mentions: readonly MessageMention[]): void;
   replaceDraft(text: string, mentions?: readonly MessageMention[], italic?: boolean): void;
+  setSelectedTextComments(comments: readonly SelectedTextComment[]): void;
   updateSelection(patch: Partial<ComposerAgentSelection>): void;
   setGoalPending(value: boolean): void;
   markAgentSettingsTouched(): void;
@@ -129,6 +134,7 @@ export function useComposerFormController({
 }: UseComposerFormControllerOptions): ComposerFormController {
   const [input, setInput] = useState("");
   const [mentions, setMentions] = useState<MessageMention[]>([]);
+  const [selectedTextComments, setSelectedTextComments] = useState<SelectedTextComment[]>([]);
   const [goalPending, setGoalPending] = useState(false);
   const { selection, setSelection, updateSelection } = useComposerSelectionState();
   const editorRef = useRef<LexicalEditor | null>(null);
@@ -137,6 +143,7 @@ export function useComposerFormController({
   const draftRef = useRef({
     input,
     mentions,
+    selectedTextComments,
     attachments: attachments.attachments,
     modelId: selection.modelId,
     provider: selection.provider,
@@ -202,6 +209,16 @@ export function useComposerFormController({
     [updateDraft],
   );
 
+  const setSelectedTextCommentDraft = useCallback((comments: readonly SelectedTextComment[]) => {
+    const nextComments = [...comments];
+    setSelectedTextComments(nextComments);
+    if (!threadId) return;
+    saveDraft(threadId, snapshotComposerDraft({
+      ...draftRef.current,
+      selectedTextComments: nextComments,
+    }));
+  }, [saveDraft, threadId]);
+
   const setGoalPendingValue = useCallback((value: boolean) => {
     setGoalPending(value);
   }, []);
@@ -218,6 +235,7 @@ export function useComposerFormController({
       revision: submissionRevisionRef.current,
       rawInput: message.text,
       mentions: message.mentions,
+      selectedTextComments,
       attachments: attachments.attachments,
       selection: { ...selection },
       goalPending,
@@ -227,6 +245,7 @@ export function useComposerFormController({
     goalPending,
     input,
     mentions,
+    selectedTextComments,
     selection,
   ]);
 
@@ -251,6 +270,7 @@ export function useComposerFormController({
     (reason: "dispatch" | "queue-cancel") => {
       const currentAttachments = attachments.collectAndClearAttachments();
       replaceDraft("");
+      setSelectedTextComments([]);
       if (reason === "dispatch" && threadId) clearDraft(threadId);
       return currentAttachments;
     },
@@ -261,6 +281,7 @@ export function useComposerFormController({
     draftRef.current = {
       input,
       mentions,
+      selectedTextComments,
       attachments: attachments.attachments,
       modelId: selection.modelId,
       provider: selection.provider,
@@ -278,6 +299,7 @@ export function useComposerFormController({
     goalPending,
     input,
     mentions,
+    selectedTextComments,
     selection,
   ]);
 
@@ -352,6 +374,7 @@ export function useComposerFormController({
 
     setInput(session.input);
     setMentions(session.mentions);
+    setSelectedTextComments(session.selectedTextComments);
     attachments.replaceAttachments(session.attachments);
     setSelection((current) => ({
       ...current,
@@ -467,10 +490,14 @@ export function useComposerFormController({
       text: input,
       mentions,
       attachments: attachments.attachments,
+      selectedTextComments,
       selection: { ...selection },
       goalPending,
       isDragOver: attachments.isDragOver,
-      hasContent: input.trim().length > 0 || attachments.attachments.length > 0,
+      hasContent:
+        input.trim().length > 0
+        || selectedTextComments.length > 0
+        || attachments.attachments.length > 0,
     }),
     [
       attachments.attachments,
@@ -478,6 +505,7 @@ export function useComposerFormController({
       goalPending,
       input,
       mentions,
+      selectedTextComments,
       selection,
     ],
   );
@@ -513,6 +541,7 @@ export function useComposerFormController({
     attachmentBindings,
     updateDraft,
     replaceDraft,
+    setSelectedTextComments: setSelectedTextCommentDraft,
     updateSelection,
     setGoalPending: setGoalPendingValue,
     markAgentSettingsTouched,

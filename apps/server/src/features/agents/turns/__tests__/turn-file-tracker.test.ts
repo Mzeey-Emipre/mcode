@@ -7,7 +7,7 @@ import { TurnFileTracker } from "../turn-file-tracker.js";
 import {
   createCursorAcpTurnState,
   mapCursorAcpSessionNotification,
-} from "../../../providers/adapters/cursor/cursor-acp-event-mapper.js";
+} from "../../../../../../../packages/providers/src/private/cursor/acp/cursor-acp-event-mapper.js";
 
 const dirs: string[] = [];
 

@@ -618,6 +618,38 @@ describe("NarrativeStore write seam (server-side traps)", () => {
       ]);
     });
 
+    it("persists a Cursor delegation as transcript-unavailable without fabricating a child identity", () => {
+      seedAssistantMessage("m1", "", 1);
+      store.beginTurn(THREAD);
+      store.resetTurnCounters(THREAD);
+      store.bufferToolCall(THREAD, {
+        toolCallId: "cursor-task",
+        toolName: "Agent",
+        toolInput: {
+          description: "Read the current module",
+          prompt: "Inspect the current module without editing files.",
+          subagentType: "explore",
+          agentId: "cursor-agent-1",
+          durationMs: 1_200,
+          model: "gpt-5.6-luna",
+          subagentProviderName: "Cursor",
+        },
+      });
+
+      store.persistNarrative(THREAD, "m1", "", "completed");
+
+      expect(new ToolCallRecordRepo(db).listByMessage("m1")[0]).toMatchObject({
+        id: "cursor-task",
+        subagent_identity_key: null,
+        subagent_provider_name: "Cursor",
+        subagent_prompt: "Inspect the current module without editing files.",
+        subagent_type: "explore",
+        subagent_agent_id: "cursor-agent-1",
+        subagent_duration_ms: 1_200,
+        model: "gpt-5.6-luna",
+      });
+    });
+
     it("backfills an exact identity when Agent enrichment arrives after the row is persisted", () => {
       seedAssistantMessage("m1", "", 1);
       store.beginTurn(THREAD);

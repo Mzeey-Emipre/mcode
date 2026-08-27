@@ -19,6 +19,7 @@ import {
   drainMessageListPerformanceObservations,
   resetMessageListPerformanceObservations,
 } from "./message-list-performance";
+import { runVListReactAdapterLifecycleProbe } from "./vlist-react-adapter-prototype";
 
 function resetShikiPerformanceWorker(): void {
   resetWorkerForPerformance();
@@ -41,6 +42,9 @@ declare global {
       readonly messageListPerformance: {
         readonly drain: typeof drainMessageListPerformanceObservations;
         readonly reset: typeof resetMessageListPerformanceObservations;
+      };
+      readonly vlistLifecycle: {
+        readonly run: typeof runVListReactAdapterLifecycleProbe;
       };
       readonly recordCache: {
         readonly clear: typeof clearRecordCache;
@@ -70,6 +74,9 @@ export function installFrontendRendererFixtureBridge(): void {
     messageListPerformance: {
       drain: drainMessageListPerformanceObservations,
       reset: resetMessageListPerformanceObservations,
+    },
+    vlistLifecycle: {
+      run: runVListReactAdapterLifecycleProbe,
     },
     recordCache: {
       clear: clearRecordCache,

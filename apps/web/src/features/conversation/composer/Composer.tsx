@@ -35,7 +35,7 @@ import { SlashCommandPopup } from "@/components/chat/SlashCommandPopup";
 import { useReplyStore } from "@/stores/replyStore";
 import { useQueueStore } from "@/stores/queueStore";
 import { attachmentAcceptAttribute, isGoalOpen } from "@mcode/contracts";
-import type { MessageMention } from "@mcode/contracts";
+import type { MessageMention, SelectedTextComment } from "@mcode/contracts";
 import { useElementWidth } from "@/hooks/useElementWidth";
 import { useComposerFormController } from "./draft/useComposerFormController";
 import { useComposerExecutionTarget } from "./execution/useComposerExecutionTarget";
@@ -134,6 +134,10 @@ interface ComposerProps {
   onBranchModeExit?: () => void;
   /** Called after a new-thread submission has created its durable thread. */
   onThreadCreated?: (thread: Thread) => void;
+  /** Selected-text comment created from the active transcript. */
+  selectedTextComment?: SelectedTextComment;
+  /** Clears the one-shot transcript handoff after this Composer stores it. */
+  onSelectedTextCommentConsumed?: () => void;
 }
 
 /**
@@ -145,7 +149,17 @@ interface ComposerProps {
  * - **Existing worktree:** `[Worktree v]` … `[Select worktree v]`
  * - **Locked (existing thread):** read-only branch badge
  */
-export function Composer({ threadId, isNewThread, workspaceId, branchFromMessageId, branchFromMessageContent, onBranchModeExit, onThreadCreated }: ComposerProps) {
+export function Composer({
+  threadId,
+  isNewThread,
+  workspaceId,
+  branchFromMessageId,
+  branchFromMessageContent,
+  onBranchModeExit,
+  onThreadCreated,
+  selectedTextComment,
+  onSelectedTextCommentConsumed,
+}: ComposerProps) {
   // Mode/permissions/tasks toggles render inline when the composer's own
   // container is wide enough; below the threshold they collapse behind a
   // single overflow trigger so the send button never wraps to a new row.
@@ -223,10 +237,16 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
   const {
     markAgentSettingsTouched,
     replaceDraft,
+    setSelectedTextComments,
     setGoalPending,
     updateDraft,
     updateSelection,
   } = form;
+  useEffect(() => {
+    if (!threadId || !selectedTextComment || selectedTextComment.source.threadId !== threadId) return;
+    setSelectedTextComments([selectedTextComment]);
+    onSelectedTextCommentConsumed?.();
+  }, [onSelectedTextCommentConsumed, selectedTextComment, setSelectedTextComments, threadId]);
   const execution = useComposerExecutionTarget({
     input,
     activeThread,
@@ -564,6 +584,7 @@ export function Composer({ threadId, isNewThread, workspaceId, branchFromMessage
             attachmentBundle: surfaceState.annotationBundleForDisplay,
             annotationScopeId: surfaceState.annotationScopeId,
             attachments,
+            selectedTextComments: form.state.selectedTextComments,
             isCompacting,
             hasRetryState,
             isThreadScaffold: surfaceState.isThreadScaffold,

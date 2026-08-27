@@ -8,7 +8,9 @@ import { injectable, inject } from "tsyringe";
 import { existsSync, readFileSync, statSync } from "fs";
 import { join } from "path";
 import { logger } from "@mcode/shared";
-import type { GitService } from "../../projects/index.js";
+import { GitComparisonService } from "../../projects/git/git-comparison-service.js";
+import { GitRepositoryService } from "../../projects/git/git-repository-service.js";
+import { GitWorktreeService } from "../../projects/git/git-worktree-service.js";
 import type { MessageRepo } from "../../agents/conversation/persistence/message-repo.js";
 import type { WorkspaceRepo } from "../../projects/persistence/workspace-repo.js";
 import type { ThreadRepo } from "../../thread-control/persistence/thread-repo.js";
@@ -43,7 +45,9 @@ export class PrDraftService {
   private readonly templateCache = new Map<string, string | null>();
 
   constructor(
-    @inject("GitService") private readonly gitService: GitService,
+    @inject(GitComparisonService) private readonly gitComparison: GitComparisonService,
+    @inject(GitRepositoryService) private readonly gitRepository: GitRepositoryService,
+    @inject(GitWorktreeService) private readonly gitWorktrees: GitWorktreeService,
     @inject("MessageRepo") private readonly messageRepo: MessageRepo,
     @inject("WorkspaceRepo") private readonly workspaceRepo: WorkspaceRepo,
     @inject("ThreadRepo") private readonly threadRepo: ThreadRepo,
@@ -68,28 +72,28 @@ export class PrDraftService {
     const workspace = this.workspaceRepo.findById(workspaceId);
     if (!workspace) throw new Error(`Workspace ${workspaceId} not found`);
 
-    const repoPath = this.gitService.resolveWorkingDir(
+    const repoPath = this.gitWorktrees.resolveWorkingDir(
       workspace.path,
       thread.mode,
       thread.worktree_path,
     );
-    const headBranch = await this.gitService.getCurrentBranchAt(repoPath);
+    const headBranch = await this.gitRepository.getCurrentBranchAt(repoPath);
     if (!headBranch || headBranch === "HEAD") {
       throw new Error("Cannot generate PR draft: repository is in detached HEAD state or not a git repo");
     }
 
     const [commits, diffStat, messagesResult] = await Promise.all([
-      this.gitService.log(workspaceId, headBranch, 50, baseBranch, repoPath).catch(
+      this.gitComparison.listCommits(workspaceId, headBranch, 50, baseBranch, repoPath).catch(
         (err: unknown) => {
           logger.warn("git log with base branch failed, retrying without range", {
             baseBranch,
             headBranch,
             error: err instanceof Error ? err.message : String(err),
           });
-          return this.gitService.log(workspaceId, headBranch, 50, undefined, repoPath);
+          return this.gitComparison.listCommits(workspaceId, headBranch, 50, undefined, repoPath);
         },
       ),
-      this.gitService.diffStat(repoPath, baseBranch, headBranch).catch(
+      this.gitComparison.readBranchComparisonDiffStat(repoPath, baseBranch, headBranch).catch(
         (err: unknown) => {
           logger.warn("git diff --stat failed, skipping diff context", {
             baseBranch,
