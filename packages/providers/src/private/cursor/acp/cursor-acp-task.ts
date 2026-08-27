@@ -155,8 +155,10 @@ function completionAfterTaskMetadata(
   state: CursorAcpTurnState,
 ): AgentEvent[] {
   if (!state.taskCompletedAwaitingMeta.has(toolCallId)) return [];
+  const isError = state.taskCompletionErrorByCallId.get(toolCallId) === true;
   state.taskCompletedAwaitingMeta.delete(toolCallId);
-  return cursorTaskCompletionToAgentEvents(threadId, toolCallId, state, false);
+  state.taskCompletionErrorByCallId.delete(toolCallId);
+  return cursorTaskCompletionToAgentEvents(threadId, toolCallId, state, isError);
 }
 
 /**

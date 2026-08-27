@@ -57,8 +57,12 @@ export interface ProviderOptionsByProvider {
  * between Turns. Provider-specific knobs live only in `providerOptions`.
  */
 export interface TurnRequest<P extends ProviderId = ProviderId> {
+  /** Mcode-owned canonical identifier for this logical turn. */
+  turnId: string;
   /** Mcode-owned identity for this logical turn. */
   turnExecutionId: string;
+  /** Monotonic dispatch attempt for canonical provider event identity. */
+  deliveryAttempt?: number;
   /** SDK session name, currently `mcode-${threadId}`. */
   sessionId: string;
   /** Workspace that owns the thread and any visible-browser automation scope. */
@@ -100,6 +104,9 @@ export interface TurnRequest<P extends ProviderId = ProviderId> {
 /** A pluggable agent backend that can run sessions and emit events. */
 export interface IAgentProvider {
   readonly id: ProviderId;
+
+  /** Selects the provider's event delivery contract. */
+  readonly eventDelivery: "legacy-emitter" | "canonical-sink";
 
   /**
    * Whether this provider supports one-shot text completion (e.g. PR draft generation).

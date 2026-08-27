@@ -784,6 +784,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
   });
   /** Codex CLI is an agentic tool with no one-shot text completion mode. */
   readonly supportsCompletion = false;
+  readonly eventDelivery = "legacy-emitter" as const;
   readonly sessionForkOnResume = "clean" as const;
   readonly maxInputCharactersPerTurn = 16_000;
   /** Path B forker; calls this provider's throwaway app-server side channel. */

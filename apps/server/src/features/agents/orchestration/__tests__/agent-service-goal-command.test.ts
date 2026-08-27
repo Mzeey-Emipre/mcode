@@ -70,6 +70,7 @@ function buildService(db: Database.Database) {
 
   const providerStub = Object.assign(new EventEmitter(), {
     id: "claude" as const,
+    eventDelivery: "legacy-emitter" as const,
     supportsCompletion: true,
     sessionForkOnResume: "unsupported" as const,
     maxInputCharactersPerTurn: 16_000,
@@ -96,6 +97,7 @@ function buildService(db: Database.Database) {
   // `/goal` must pass through to this provider as plain text.
   const nonGoalStub = Object.assign(new EventEmitter(), {
     id: "gemini" as const,
+    eventDelivery: "legacy-emitter" as const,
     supportsCompletion: true,
     sessionForkOnResume: "unsupported" as const,
     maxInputCharactersPerTurn: 16_000,

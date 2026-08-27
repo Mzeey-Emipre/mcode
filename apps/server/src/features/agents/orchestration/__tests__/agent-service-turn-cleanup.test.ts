@@ -8,7 +8,9 @@ import { AgentEventType } from "@mcode/contracts";
 import type {
   AgentEvent,
   AttachmentMeta,
+  IAgentProvider,
   IProviderRegistry,
+  ProviderId,
   PreviewAnnotationBundle,
   Thread,
 } from "@mcode/contracts";
@@ -44,6 +46,7 @@ import type { PlanQuestionAnswersRepo } from "../../planning/persistence/plan-qu
 import { ThreadControlMutationReservationService } from "../../../thread-control/index.js";
 import { publishParentProviderEvent } from "../../events/provider-event-publication.js";
 import { TurnRecoveryService } from "../../recovery/turn-recovery-service.js";
+import { CursorLegacyEventBridge } from "../../../providers/composition/cursor-legacy-event-bridge.js";
 
 vi.mock("../../../../application/transport/push.js", () => ({ broadcast: vi.fn() }));
 
@@ -150,6 +153,8 @@ function makePreviewAnnotationBundle(): PreviewAnnotationBundle {
 function buildService(
   cwd = process.cwd(),
   mutationReservations = new ThreadControlMutationReservationService(),
+  providers?: IAgentProvider[],
+  cursorLegacyEventBridge?: CursorLegacyEventBridge,
 ): {
   service: AgentService;
   providerEmitter: EventEmitter;
@@ -162,7 +167,10 @@ function buildService(
   toolCallRecordRepo: { bulkCreate: ReturnType<typeof vi.fn> };
 } {
   const thread = makeThread();
-  const providerEmitter = new EventEmitter();
+  const providerEmitter = Object.assign(new EventEmitter(), {
+    id: "claude" as ProviderId,
+    eventDelivery: "legacy-emitter" as const,
+  });
   // sendTurn() is called on the resolved provider
   (providerEmitter as any).sendTurn = vi.fn(() => Promise.resolve());
   (providerEmitter as any).stopSession = vi.fn(() => Promise.resolve());
@@ -232,9 +240,12 @@ function buildService(
 
   // The provider must be an EventEmitter so init() can subscribe via
   // provider.on("event", ...) and tests can fire events via providerEmitter.emit()
+  const registeredProviders = providers ?? [providerEmitter as unknown as IAgentProvider];
   const providerRegistry = {
-    resolve: vi.fn(() => providerEmitter),
-    resolveAll: vi.fn(() => [providerEmitter]),
+    resolve: vi.fn((providerId: ProviderId) => (
+      registeredProviders.find((provider) => provider.id === providerId) ?? providerEmitter
+    )),
+    resolveAll: vi.fn(() => registeredProviders),
     shutdown: vi.fn(),
   } as unknown as IProviderRegistry;
 
@@ -328,6 +339,8 @@ function buildService(
       undefined,
       mutationReservations,
       createCanonicalAgentEventSinkStub(db),
+      undefined,
+      cursorLegacyEventBridge,
   );
 
   return {
@@ -348,23 +361,62 @@ describe("AgentService turn cleanup", () => {
     vi.clearAllMocks();
   });
 
-  it("uses one provider event listener and forwards each normalized event once", () => {
-    const { service, providerEmitter } = buildService();
+  it("routes canonical events through the registered provider handler once and retains legacy subscriptions", () => {
+    let bridgeHandler: ((providerId: ProviderId, event: AgentEvent) => void) | undefined;
+    const cursorLegacyEventBridge = {
+      register: vi.fn((handler: (providerId: ProviderId, event: AgentEvent) => void) => {
+        bridgeHandler = handler;
+      }),
+    } as unknown as CursorLegacyEventBridge;
+    const legacyProvider = Object.assign(new EventEmitter(), {
+      id: "claude" as ProviderId,
+      eventDelivery: "legacy-emitter" as const,
+    }) as unknown as IAgentProvider;
+    const canonicalProvider = Object.assign(new EventEmitter(), {
+      id: "cursor" as ProviderId,
+      eventDelivery: "canonical-sink" as const,
+    }) as unknown as IAgentProvider;
+    const { service } = buildService(
+      process.cwd(),
+      new ThreadControlMutationReservationService(),
+      [legacyProvider, canonicalProvider],
+      cursorLegacyEventBridge,
+    );
     const publish = vi.fn();
     service.init(publish);
+    service.init(publish);
 
-    expect(providerEmitter.listenerCount("event")).toBe(1);
+    expect(cursorLegacyEventBridge.register).toHaveBeenCalledTimes(1);
+    expect((legacyProvider as unknown as EventEmitter).listenerCount("event")).toBe(1);
+    expect((canonicalProvider as unknown as EventEmitter).listenerCount("event")).toBe(0);
 
-    const event = {
+    const canonicalEvent = {
+      type: AgentEventType.ProviderUnavailable,
+      threadId: THREAD_ID,
+      providerId: "cursor",
+      reason: "disabled",
+    } satisfies AgentEvent;
+    bridgeHandler?.("cursor", canonicalEvent);
+
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(publish).toHaveBeenCalledWith(canonicalEvent);
+
+    bridgeHandler?.("claude", canonicalEvent);
+    expect(publish).toHaveBeenCalledTimes(1);
+
+    bridgeHandler?.("codex", canonicalEvent);
+    expect(publish).toHaveBeenCalledTimes(1);
+
+    const legacyEvent = {
       type: AgentEventType.ProviderUnavailable,
       threadId: THREAD_ID,
       providerId: "claude",
       reason: "disabled",
     } satisfies AgentEvent;
-    providerEmitter.emit("event", event);
+    (legacyProvider as unknown as EventEmitter).emit("event", legacyEvent);
 
-    expect(publish).toHaveBeenCalledTimes(1);
-    expect(publish).toHaveBeenCalledWith(event);
+    expect(publish).toHaveBeenCalledTimes(2);
+    expect(publish).toHaveBeenLastCalledWith(legacyEvent);
   });
 
   it("forwards normalized events even when internal continuation validation returns early", async () => {
@@ -1320,6 +1372,8 @@ describe("AgentService Ended finalization", () => {
     const thoughtSegmentRepo = new RealThoughtSegmentRepo(db);
     const hookExecutionRepo = new RealHookExecutionRepo(db);
     providerEmitter = Object.assign(new EventEmitter(), {
+      id: "codex" as ProviderId,
+      eventDelivery: "legacy-emitter" as const,
       descriptor: {
         capabilities: [{ name: "child-cancellation", support: "supported" }],
       },

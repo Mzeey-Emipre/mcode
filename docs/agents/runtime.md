@@ -176,7 +176,15 @@ Capture live ACP envelopes for mapper work:
 bun apps/server/scripts/capture-cursor-acp.ts --suite
 ```
 
-Artifacts land in `<repo>/.mcode-local/cursor-acp-capture/` (`*-raw.jsonl`, `*-mapped.jsonl`, `*-summary.txt`). Golden tool-only traces live in `apps/server/src/features/providers/adapters/cursor/__tests__/fixtures/`.
+Artifacts land in `<repo>/.mcode-local/cursor-acp-capture/` (`*-raw.jsonl`, `*-mapped.jsonl`, `*-summary.txt`). Golden tool-only traces live in `packages/providers/src/private/cursor/acp/__tests__/fixtures/`.
+
+Run the live ACP smoke check only with a logged-in Cursor CLI:
+
+```sh
+bun apps/server/scripts/capture-cursor-acp.ts --smoke
+```
+
+The smoke check sends short same-session prompts, cancels one active prompt, then loads the session and continues it, or starts a new fallback session. It consumes Cursor capacity. Each protocol operation has a fixed timeout. The capture client denies ACP tool permissions and file access, and it uses the capture directory as its working directory. It writes `*-smoke-raw.jsonl`, `*-smoke-mapped.jsonl`, and `*-smoke-summary.json` under `<repo>/.mcode-local/cursor-acp-capture/`. Raw and mapped artifacts each stop at 1,000 events or 2 MiB. Child stderr stops at 64 KiB, and the machine-readable stdout result stops at 4 KiB. A limit fails the smoke run. The JSON summary reports pass or fail for the native identity, session start, continuation, cancellation, and replay or fallback observations.
 
 ---
 

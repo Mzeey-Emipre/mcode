@@ -103,7 +103,10 @@ function build(options: {
   onProviderEvent?: (event: AgentEvent) => void;
 } = {}): Built {
   const thread = makeThread();
-  const providerEmitter = new EventEmitter();
+  const providerEmitter = Object.assign(new EventEmitter(), {
+    id: "claude" as const,
+    eventDelivery: "legacy-emitter" as const,
+  });
   (providerEmitter as any).sendTurn = vi.fn(() => Promise.resolve());
   (providerEmitter as any).stopSession = vi.fn(() => Promise.resolve());
 

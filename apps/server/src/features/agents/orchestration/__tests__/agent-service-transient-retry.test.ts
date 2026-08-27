@@ -79,7 +79,10 @@ function buildService(): {
   threadRepo: ThreadRepo & { clearSdkSessionId: ReturnType<typeof vi.fn>; updateStatus: ReturnType<typeof vi.fn> };
 } {
   const thread = makeThread();
-  const providerEmitter = new EventEmitter();
+  const providerEmitter = Object.assign(new EventEmitter(), {
+    id: "claude" as const,
+    eventDelivery: "legacy-emitter" as const,
+  });
   const sendTurn = vi.fn(() => Promise.resolve());
   (providerEmitter as unknown as { sendTurn: typeof sendTurn }).sendTurn = sendTurn;
   const stopSession = vi.fn().mockResolvedValue(undefined);

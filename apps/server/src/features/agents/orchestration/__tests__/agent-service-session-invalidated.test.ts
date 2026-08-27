@@ -58,6 +58,7 @@ describe("AgentService clears sdk_session_id on session invalidation", () => {
 
     providerStub = Object.assign(new EventEmitter(), {
       id: "claude" as ProviderId,
+      eventDelivery: "legacy-emitter" as const,
       supportsCompletion: false,
       sessionForkOnResume: "unsupported" as const,
       maxInputCharactersPerTurn: 16_000,

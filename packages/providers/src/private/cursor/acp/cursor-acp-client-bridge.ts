@@ -44,11 +44,10 @@ interface PendingAcpPermission {
 /** Supplies host-facing effects for the ACP client bridge. */
 export interface CursorAcpClientBridgeDeps {
   settings: CursorProviderPorts["settings"];
-  emitEvent: (event: AgentEvent) => void;
+  publishEvent: (entry: CursorAcpSessionEntry, event: AgentEvent) => void;
   emitPermissionRequest: (request: PermissionRequest) => void;
   emitPermissionResolved: (requestId: string, decision: PermissionDecision) => void;
   emitExitPlanMode: (args: { threadId: string; planMarkdown: string }) => void;
-  turnExecutionId: (entry: CursorAcpSessionEntry) => string | undefined;
 }
 
 /** Bridges ACP callbacks to Mcode events, permissions, and workspace file access. */
@@ -104,8 +103,7 @@ export class CursorAcpClientBridge {
   /** Creates the ACP client callbacks for one Cursor subprocess. */
   createClient(entry: CursorAcpSessionEntry): Client {
     const emitAcpEvent = (event: AgentEvent): void => {
-      const executionId = this.deps.turnExecutionId(entry);
-      this.deps.emitEvent(executionId ? { ...event, turnExecutionId: executionId } : event);
+      this.deps.publishEvent(entry, event);
     };
     return {
       requestPermission: async (request) => this.requestPermission(entry, request),
@@ -273,9 +271,8 @@ export class CursorAcpClientBridge {
         mappedEvents: summarizeEmittedAgentEventsForTrace(mapped),
       });
     }
-    const executionId = this.deps.turnExecutionId(entry);
     for (const event of mapped) {
-      this.deps.emitEvent(executionId ? { ...event, turnExecutionId: executionId } : event);
+      this.deps.publishEvent(entry, event);
     }
   }
 

@@ -216,6 +216,8 @@ interface CopilotSessionState {
 @injectable()
 export class CopilotProvider extends EventEmitter implements IAgentProvider, ISessionEvictable, ProtocolAdapter<CopilotSessionState> {
   readonly id: ProviderId = "copilot";
+  /** Copilot streams agent events through EventEmitter. */
+  readonly eventDelivery = "legacy-emitter" as const;
   readonly supportsCompletion = true;
   readonly sessionForkOnResume = "clean" as const;
   readonly maxInputCharactersPerTurn = 16_000;

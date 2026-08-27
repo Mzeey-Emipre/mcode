@@ -137,6 +137,7 @@ describe("CodexProvider first turn on new session", () => {
     const provider = makeProvider(undefined, lease);
 
     await provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "test-execution",
       sessionId,
       workspaceId: "workspace-test",
@@ -170,6 +171,7 @@ describe("CodexProvider first turn on new session", () => {
     const provider = makeProvider();
 
     await provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "test-execution",
       sessionId: "mcode-without-browser-grant",
       workspaceId: "workspace-test",
@@ -194,6 +196,7 @@ describe("CodexProvider first turn on new session", () => {
     const childBrief = "Spawn one nested child and return NESTED_DONE exactly.";
 
     await provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "child-routing-execution",
       sessionId: "mcode-child-routing",
       workspaceId: "workspace-test",
@@ -222,6 +225,7 @@ describe("CodexProvider first turn on new session", () => {
     const provider = makeProvider();
 
     await provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "nested-model-guidance-execution",
       sessionId: "mcode-nested-model-guidance",
       workspaceId: "workspace-test",
@@ -253,6 +257,7 @@ describe("CodexProvider first turn on new session", () => {
     provider.on("event", (event: AgentEvent) => events.push(event));
 
     await provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "test-execution",
       sessionId: "mcode-browser-spawn-failure",
       workspaceId: "workspace-test",
@@ -296,6 +301,7 @@ describe("CodexProvider first turn on new session", () => {
     provider.on("event", (event: AgentEvent) => events.push(event));
 
     await provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: schemaValidExecutionId,
       sessionId: "mcode-browser-config-failure",
       workspaceId: "workspace-test",
@@ -346,6 +352,7 @@ describe("CodexProvider first turn on new session", () => {
     (provider as any).runtime.acquire = vi.fn(() => acquirePromise);
     const release = vi.spyOn(lease, "release");
     const request = {
+      turnId: "test-turn",
       turnExecutionId: "test-execution",
       sessionId: "mcode-overlapping-browser-stage",
       workspaceId: "workspace-test",
@@ -387,6 +394,7 @@ describe("CodexProvider first turn on new session", () => {
 
     const sessionId = "mcode-pending-stop";
     const sendPromise = provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "test-execution",
       sessionId,
       workspaceId: "workspace-test",
@@ -449,6 +457,7 @@ describe("CodexProvider first turn on new session", () => {
     });
 
     await provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "test-execution",
       sessionId,
       workspaceId: "workspace-test",
@@ -486,6 +495,7 @@ describe("CodexProvider first turn on new session", () => {
     provider.on("event", (event: AgentEvent) => events.push(event));
 
     await provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "test-execution",
       sessionId: "mcode-preflight-failure",
       workspaceId: "workspace-test",
@@ -512,6 +522,7 @@ describe("CodexProvider first turn on new session", () => {
     const events: AgentEvent[] = [];
     provider.on("event", (event: AgentEvent) => events.push(event));
     const request = {
+      turnId: "test-turn",
       turnExecutionId: "test-execution",
       sessionId,
       workspaceId: "workspace-test",
@@ -557,6 +568,7 @@ describe("CodexProvider first turn on new session", () => {
     provider.on("event", (event: AgentEvent) => events.push(event));
 
     await provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "test-execution",
       sessionId: "mcode-unsupported-version",
       workspaceId: "workspace-test",
@@ -615,6 +627,7 @@ describe("CodexProvider first turn on new session", () => {
     });
 
     await provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "test-execution",
       sessionId: "mcode-catalog-independent",
       workspaceId: "workspace-test",
@@ -637,6 +650,7 @@ describe("CodexProvider first turn on new session", () => {
     const provider = makeProvider();
 
     await provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "test-execution",
       sessionId: "mcode-ultra-sol",
       workspaceId: "workspace-test",
@@ -658,6 +672,7 @@ describe("CodexProvider first turn on new session", () => {
 
     sendTurnMock.mockClear();
     await provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "test-execution",
       sessionId: "mcode-ultra-luna",
       workspaceId: "workspace-test",
@@ -691,6 +706,7 @@ describe("CodexProvider first turn on new session", () => {
     const provider = makeProvider();
 
     void provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "test-execution",
       sessionId: supersedeSessionId,
       workspaceId: "workspace-test",
@@ -749,6 +765,7 @@ describe("CodexProvider first turn on new session", () => {
     });
 
     await provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "test-execution",
       sessionId: "mcode-skill-turn",
       workspaceId: "workspace-test",
@@ -775,6 +792,7 @@ describe("CodexProvider first turn on new session", () => {
     const provider = makeProvider();
 
     await provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "test-execution",
       sessionId: "mcode-mentioned-file",
       workspaceId: "workspace-test",
@@ -808,6 +826,7 @@ describe("CodexProvider first turn on new session", () => {
     const provider = makeProvider();
 
     await provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "test-execution",
       sessionId: "mcode-mentioned-plugin",
       workspaceId: "workspace-test",
@@ -842,6 +861,7 @@ describe("CodexProvider first turn on new session", () => {
     const provider = makeProvider();
 
     await provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "test-execution",
       sessionId: "mcode-mentioned-agent",
       workspaceId: "workspace-test",
@@ -900,6 +920,7 @@ describe("CodexProvider first turn on new session", () => {
       });
 
       await provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "test-execution",
         sessionId: "mcode-prompt-turn",
         workspaceId: "workspace-test",
@@ -960,6 +981,7 @@ describe("CodexProvider first turn on new session", () => {
       });
 
       await provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "test-execution",
         sessionId: "mcode-prompt-collision",
         workspaceId: "workspace-test",
@@ -984,6 +1006,7 @@ describe("CodexProvider first turn on new session", () => {
         permissionMode: "auto",
       });
       await provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "test-execution",
         sessionId: "mcode-skill-collision",
         workspaceId: "workspace-test",
@@ -1048,6 +1071,7 @@ describe("CodexProvider first turn on new session", () => {
       provider.on("event", (event: AgentEvent) => events.push(event));
 
       await provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "test-execution",
         sessionId: "mcode-missing-prompt",
         workspaceId: "workspace-test",
@@ -1079,6 +1103,7 @@ describe("CodexProvider first turn on new session", () => {
     const provider = makeProvider();
 
     await provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "test-execution",
       sessionId: "mcode-unknown-slash",
       workspaceId: "workspace-test",
@@ -1147,6 +1172,7 @@ describe("CodexProvider first turn on new session", () => {
     provider.on("event", (event: AgentEvent) => events.push(event));
 
     await provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: schemaValidExecutionId,
       sessionId: "mcode-mcp-failure",
       workspaceId: "workspace-mcp-failure",
@@ -1182,6 +1208,7 @@ describe("CodexProvider first turn on new session", () => {
     provider.on("event", (event: AgentEvent) => events.push(event));
 
     const send = provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: schemaValidExecutionId,
       sessionId: "mcode-mcp-startup-failure",
       workspaceId: "workspace-mcp-failure",
@@ -1242,6 +1269,7 @@ describe("CodexProvider first turn on new session", () => {
     provider.on("event", (event: AgentEvent) => events.push(event));
 
     const send = provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: schemaValidExecutionId,
       sessionId: "mcode-mcp-legacy-error",
       workspaceId: "workspace-mcp-legacy-error",
@@ -1299,6 +1327,7 @@ describe("CodexProvider first turn on new session", () => {
     provider.on("event", (event: AgentEvent) => events.push(event));
 
     const send = provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: schemaValidExecutionId,
       sessionId: "mcode-mcp-cancelled",
       workspaceId: "workspace-mcp-cancelled",
@@ -1369,6 +1398,7 @@ describe("CodexProvider first turn on new session", () => {
     const sessionId = `mcode-mcp-config-${_name.replaceAll(" ", "-")}`;
     const threadId = `mcp-config-${_name.replaceAll(" ", "-")}`;
     const send = provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: schemaValidExecutionId,
       sessionId,
       workspaceId: "workspace-mcp-config",
@@ -1429,6 +1459,7 @@ describe("CodexProvider first turn on new session", () => {
     });
 
     await provider.sendTurn({
+      turnId: "test-turn",
       turnExecutionId: "ineligible-execution",
       sessionId: "mcode-ineligible",
       workspaceId: "workspace-test",
@@ -1459,6 +1490,7 @@ describe("CodexProvider first turn on new session", () => {
     });
 
     const request = {
+      turnId: "test-turn",
       turnExecutionId: "eligible-execution",
       sessionId: "mcode-eligibility-transition",
       workspaceId: "workspace-test",
@@ -1510,6 +1542,7 @@ describe("CodexProvider first turn on new session", () => {
       provider.on("event", (event: AgentEvent) => events.push(event));
 
       const send = provider.sendTurn({
+        turnId: "test-turn",
         turnExecutionId: schemaValidExecutionId,
         sessionId: "mcode-mcp-startup-timeout",
         workspaceId: "workspace-mcp-timeout",
