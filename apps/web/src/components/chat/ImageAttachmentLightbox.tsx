@@ -1,7 +1,7 @@
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
 import { ChevronLeft, ChevronRight, XIcon } from "lucide-react";
 import type { MouseEvent } from "react";
-import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useState } from "react";
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import {
   Dialog,
@@ -40,6 +40,7 @@ export const ImageAttachmentLightbox = memo(function ImageAttachmentLightbox({
 }: ImageAttachmentLightboxProps) {
   const [failed, setFailed] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
+  const wasOpen = useRef(false);
   const captionId = useId();
   const liveId = useId();
   const carousel = items.length > 1;
@@ -51,6 +52,10 @@ export const ImageAttachmentLightbox = memo(function ImageAttachmentLightbox({
   );
 
   const safeIndex = clampIndex(activeIndex);
+  const current = items[safeIndex] ?? items[0];
+  const src = current?.src ?? "";
+  const rawTitle = current?.title ?? "";
+  const displayTitle = rawTitle.trim() || "Untitled attachment";
 
   const handleOpenChange = useCallback(
     (next: boolean) => {
@@ -60,16 +65,23 @@ export const ImageAttachmentLightbox = memo(function ImageAttachmentLightbox({
     [onOpenChange],
   );
 
-  /** Align slide index whenever the dialog opens or the tray changes mid-flight. */
+  /** Set the opening slide once, then preserve it while the tray refreshes. */
   useEffect(() => {
-    if (!open || items.length === 0) return;
-    setActiveIndex(clampIndex(initialIndex));
-    setFailed(false);
-  }, [open, items, initialIndex, clampIndex]);
+    if (!open || items.length === 0) {
+      wasOpen.current = false;
+      return;
+    }
+
+    setActiveIndex((index) =>
+      wasOpen.current ? clampIndex(index) : clampIndex(initialIndex),
+    );
+    if (!wasOpen.current) setFailed(false);
+    wasOpen.current = true;
+  }, [clampIndex, initialIndex, items.length, open]);
 
   useEffect(() => {
     setFailed(false);
-  }, [activeIndex]);
+  }, [src]);
 
   /** Capture phase on `document` so shortcuts work even when the portal mounts lazily. */
   useLayoutEffect(() => {
@@ -102,11 +114,6 @@ export const ImageAttachmentLightbox = memo(function ImageAttachmentLightbox({
     document.addEventListener("keydown", onKeyDown, true);
     return () => document.removeEventListener("keydown", onKeyDown, true);
   }, [open, carousel, items.length]);
-
-  const current = items[safeIndex] ?? items[0];
-  const src = current?.src ?? "";
-  const rawTitle = current?.title ?? "";
-  const displayTitle = rawTitle.trim() || "Untitled attachment";
 
   const liveAnnouncement = useMemo(() => {
     if (!carousel) return `${displayTitle}`;
@@ -271,9 +278,9 @@ export const ImageAttachmentLightbox = memo(function ImageAttachmentLightbox({
                             "[-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
                           )}
                         >
-                          {items.map((slide, i) => (
+                          {items.map((_, i) => (
                             <button
-                              key={`${slide.src}:${String(i)}`}
+                              key={i}
                               type="button"
                               aria-label={`Go to image ${String(i + 1)} of ${String(items.length)}`}
                               aria-current={i === safeIndex ? "true" : undefined}

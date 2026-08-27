@@ -183,11 +183,8 @@ function buildConversationPageSubset(
 function normalizeTailMessages(tail: ConversationTail): ConversationPage["messages"] {
   return tail.messages.map((message) => ({
     ...message,
-    cost_usd: null,
-    tokens_used: null,
     tool_calls: null,
     files_changed: null,
-    attachments: null,
   }));
 }
 

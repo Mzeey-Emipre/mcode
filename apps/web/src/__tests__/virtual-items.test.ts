@@ -158,6 +158,70 @@ describe("buildStableItems", () => {
       },
     });
   });
+
+  it("shows actions for a terminal canonical current assistant without legacy file metadata", () => {
+    const items = buildStableItems(
+      [makeMessage({ id: "a1", content: "completed response" })],
+      {},
+      undefined,
+      {
+        threadId: "thread-1",
+        messageId: "a1",
+        responseKey: "turn-response:thread-1:canonical",
+      },
+      undefined,
+      {
+        a1: {
+          counts: { steps: 1, thoughts: 0, subagents: 0 },
+          durationMs: 1_250,
+        },
+      },
+    );
+
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "message",
+      message: expect.objectContaining({ id: "a1" }),
+      assistantState: { isStreaming: false, actionsVisible: true },
+    }));
+  });
+
+  it("keeps actions hidden for an incomplete current assistant", () => {
+    const items = buildStableItems(
+      [makeMessage({ id: "a1", content: "partial response" })],
+      {},
+      undefined,
+      {
+        threadId: "thread-1",
+        messageId: "a1",
+        responseKey: "turn-response:thread-1:incomplete",
+      },
+    );
+
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "message",
+      message: expect.objectContaining({ id: "a1" }),
+      assistantState: { isStreaming: false, actionsVisible: false },
+    }));
+  });
+
+  it("keeps legacy persisted current assistants actionable", () => {
+    const items = buildStableItems(
+      [makeMessage({ id: "a1", content: "persisted response" })],
+      { a1: [] },
+      undefined,
+      {
+        threadId: "thread-1",
+        messageId: "a1",
+        responseKey: "turn-response:thread-1:legacy",
+      },
+    );
+
+    expect(items).toContainEqual(expect.objectContaining({
+      type: "message",
+      message: expect.objectContaining({ id: "a1" }),
+      assistantState: { isStreaming: false, actionsVisible: true },
+    }));
+  });
 });
 
 describe("final response item keys", () => {

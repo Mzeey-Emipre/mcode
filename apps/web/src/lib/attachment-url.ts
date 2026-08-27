@@ -3,13 +3,31 @@ import { AUTH_TOKEN_STORAGE_KEY } from "@/transport/scan-port-range";
 
 /** Last WebSocket URL used by the transport; drives HTTP attachment URLs in browser builds. */
 let transportWsUrl: string | null = null;
+const attachmentTransportListeners = new Set<() => void>();
+
+function hasDesktopAttachmentBridge(): boolean {
+  return typeof window !== "undefined" && !!window.desktopBridge;
+}
+
+function getEffectiveAttachmentTransportUrl(): string | null {
+  const e2eWs = readE2EAttachmentTransportWsOverride();
+  if (e2eWs) return e2eWs;
+  return hasDesktopAttachmentBridge() ? null : transportWsUrl;
+}
+
+function notifyAttachmentTransportListeners(previousUrl: string | null): void {
+  if (previousUrl === getEffectiveAttachmentTransportUrl()) return;
+  for (const listener of attachmentTransportListeners) listener();
+}
 
 /**
  * Stores the active WebSocket URL so {@link buildStoredAttachmentImageSrc} can derive
  * the matching `http(s)` origin for `/attachments/` requests (called from ws `onopen`).
  */
 export function setAttachmentTransportWsUrl(wsUrl: string): void {
+  const previousUrl = getEffectiveAttachmentTransportUrl();
   transportWsUrl = wsUrl;
+  notifyAttachmentTransportListeners(previousUrl);
 }
 
 /**
@@ -19,15 +37,28 @@ export function getAttachmentTransportWsUrl(): string | null {
   return transportWsUrl;
 }
 
+/** Returns the attachment transport URL that affects the current renderer. */
+export function getAttachmentTransportUrlSnapshot(): string | null {
+  return getEffectiveAttachmentTransportUrl();
+}
+
+/** Subscribes to effective attachment transport URL changes. */
+export function subscribeToAttachmentTransportUrl(listener: () => void): () => void {
+  attachmentTransportListeners.add(listener);
+  return () => attachmentTransportListeners.delete(listener);
+}
+
 /**
  * Clears the cached transport URL. Lets unit tests reset state between cases.
  */
 export function clearAttachmentTransportWsUrlCache(): void {
+  const previousUrl = getEffectiveAttachmentTransportUrl();
   transportWsUrl = null;
   if (typeof window !== "undefined") {
     delete (window as unknown as { __mcodeE2EAttachmentTransportWsUrl?: string })
       .__mcodeE2EAttachmentTransportWsUrl;
   }
+  notifyAttachmentTransportListeners(previousUrl);
 }
 
 /**
@@ -71,7 +102,7 @@ export function buildStoredAttachmentImageSrc(
     return `${base}/attachments/${threadId}/${filename}${q}`;
   }
 
-  if (typeof window !== "undefined" && window.desktopBridge) {
+  if (hasDesktopAttachmentBridge()) {
     return `mcode-attachment://${threadId}/${filename}`;
   }
 

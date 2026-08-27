@@ -2,12 +2,13 @@
 export { ChatView } from "./messages/ChatView";
 export type { ChatViewProps } from "./messages/ChatView";
 /** Public composer used by the main conversation and supported workbench flows. */
+export { Composer } from "./composer/Composer";
 export {
-  Composer,
-  ActiveGoalChip,
   isThreadRunningForSubmit,
   shouldQueueActiveThreadSubmit,
-} from "./composer/Composer";
+} from "./composer/submission/composer-submit-policy";
+export { ActiveGoalChip } from "./composer/ActiveGoalChip";
+export type { ActiveGoalChipProps } from "./composer/ActiveGoalChip";
 /** Public transcript list used by Conversation and child detail views. */
 export { MessageList } from "./messages/MessageList";
 export type { MessageListProps } from "./messages/MessageList";

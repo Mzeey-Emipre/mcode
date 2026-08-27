@@ -3,7 +3,7 @@ import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AgentEvent } from "@mcode/contracts";
-import { Composer } from "../Composer";
+import { Composer } from "../../Composer";
 import { useWorkspaceStore } from "@/features/projects/state/workspaceStore";
 import {
   usePreviewAnnotationStore,
@@ -12,8 +12,13 @@ import {
 } from "@/features/preview/state/previewAnnotationStore";
 import { usePreviewDesignModeStore } from "@/features/preview/state/previewDesignModeStore";
 import { useQueueStore } from "@/stores/queueStore";
-import { resetThreadStoreForTests, seedThreadRecord } from "@/stores/thread-store-test-utils";
+import {
+  getTestThreadMessages,
+  resetThreadStoreForTests,
+  seedThreadRecord,
+} from "@/stores/thread-store-test-utils";
 import { useThreadStore } from "@/stores/threadStore";
+import { useToastStore } from "@/stores/toastStore";
 import { mockTransport, createMockThread, createMockWorkspace } from "@/__tests__/mocks/transport";
 import type { GitBranch } from "@/transport";
 
@@ -142,9 +147,16 @@ vi.mock("@/components/chat/CopilotAgentSelector", () => ({
 }));
 
 vi.mock("@/components/chat/AttachmentPreview", () => ({
-  AttachmentPreview: ({ attachments }: { attachments: Array<{ name: string }> }) => (
+  AttachmentPreview: ({ attachments }: { attachments: Array<{ name: string; previewUrl: string }> }) => (
     <div data-testid="attachment-preview">
-      {attachments.map((attachment) => attachment.name).join(",")}
+      {attachments.map((attachment) => (
+        <div key={attachment.name}>
+          {attachment.name}
+          {attachment.previewUrl ? (
+            <img src={attachment.previewUrl} alt={`Preview image ${attachment.name}`} />
+          ) : null}
+        </div>
+      ))}
     </div>
   ),
 }));
@@ -337,6 +349,7 @@ describe("Composer checkout confirmation", () => {
     useQueueStore.setState({ queues: {}, toast: null, editingThreadId: null });
     usePreviewAnnotationStore.setState({ byThread: {}, diffByThread: {}, drafts: {} });
     usePreviewDesignModeStore.setState({ modes: {} });
+    useToastStore.setState({ toasts: [] });
     useWorkspaceStore.setState({
       workspaces: [],
       activeWorkspaceId: null,
@@ -353,6 +366,7 @@ describe("Composer checkout confirmation", () => {
     vi.spyOn(window, "alert").mockImplementation(() => {
       throw new Error("native alert should not be used");
     });
+    delete (window as unknown as Record<string, unknown>).desktopBridge;
     (mockTransport.getCurrentBranch as ReturnType<typeof vi.fn>).mockResolvedValue("main");
     (mockTransport.checkoutBranch as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
     (mockTransport.createAndSendMessage as ReturnType<typeof vi.fn>).mockResolvedValue(
@@ -1084,5 +1098,525 @@ describe("Composer checkout confirmation", () => {
       handleAgentEvent({ type: "ended", threadId: thread.id, turnExecutionId: "exec-b" } as AgentEvent);
     });
     await waitFor(() => expect(screen.getByLabelText("Send message")).toBeInTheDocument());
+  });
+
+  it("persists a pathless image before sending its durable attachment metadata", async () => {
+    const workspace = createMockWorkspace({ id: "ws-pathless", is_git_repo: true });
+    const thread = createMockThread({ id: "thread-pathless", workspace_id: workspace.id });
+    const selectedImage = new File(
+      [new Uint8Array([137, 80, 78, 71])],
+      "selected-image.png",
+      { type: "image/png" },
+    );
+    const durableAttachment = {
+      id: "attachment-persisted-image",
+      name: "stored-image.png",
+      mimeType: "image/png",
+      sizeBytes: 4,
+      sourcePath: "C:\\mcode-data\\attachments\\attachment-persisted-image.png",
+    };
+    let resolvePersistence: (value: typeof durableAttachment) => void = () => undefined;
+    const persistence = new Promise<typeof durableAttachment>((resolve) => {
+      resolvePersistence = resolve;
+    });
+    const persistedBytes: Uint8Array[] = [];
+    const saveClipboardFile = vi.fn((bytes: Uint8Array) => {
+      persistedBytes.push(bytes);
+      return persistence;
+    });
+    URL.createObjectURL = vi.fn(() => "blob:stored-image-preview");
+    URL.revokeObjectURL = vi.fn();
+    window.desktopBridge = {
+      getPathForFile: () => null,
+      saveClipboardFile,
+    } as unknown as typeof window.desktopBridge;
+    useWorkspaceStore.setState({
+      workspaces: [workspace],
+      activeWorkspaceId: workspace.id,
+      threads: [thread],
+      activeThreadId: thread.id,
+      branches: [branch("main", true)],
+      newThreadMode: "direct",
+      newThreadBranch: "main",
+      selectedWorktree: null,
+    });
+    resetThreadStoreForTests({
+      currentThreadId: thread.id,
+      records: seedThreadRecord(thread.id),
+    });
+
+    const user = userEvent.setup();
+    render(<Composer threadId={thread.id} workspaceId={workspace.id} />);
+    await user.type(screen.getByLabelText("Message Mcode"), "Inspect this image");
+    await user.upload(screen.getByTestId("composer-attachment-input"), selectedImage);
+
+    await waitFor(() => expect(saveClipboardFile).toHaveBeenCalledTimes(1));
+    expect(Array.from(persistedBytes[0]!)).toEqual([137, 80, 78, 71]);
+    expect(saveClipboardFile).toHaveBeenCalledWith(
+      expect.any(Uint8Array),
+      "image/png",
+      "selected-image.png",
+    );
+
+    resolvePersistence(durableAttachment);
+
+    await waitFor(() => {
+      expect(screen.getByRole("img", { name: "Preview image stored-image.png" })).toHaveAttribute(
+        "src",
+        "blob:stored-image-preview",
+      );
+    });
+    await user.click(screen.getByLabelText("Send message"));
+    await waitFor(() => expect(mockTransport.sendMessage).toHaveBeenCalledTimes(1));
+    const sentCommand = (mockTransport.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(sentCommand.attachments).toEqual([durableAttachment]);
+    expect(getTestThreadMessages(thread.id).at(-1)?.attachments).toEqual([
+      {
+        id: "attachment-persisted-image",
+        name: "stored-image.png",
+        mimeType: "image/png",
+        sizeBytes: 4,
+      },
+    ]);
+  });
+
+  it("waits for pathless image persistence before sending", async () => {
+    const workspace = createMockWorkspace({ id: "ws-pathless-wait", is_git_repo: true });
+    const thread = createMockThread({ id: "thread-pathless-wait", workspace_id: workspace.id });
+    const selectedImage = new File([new Uint8Array([4, 5, 6])], "wait-image.png", {
+      type: "image/png",
+    });
+    const durableAttachment = {
+      id: "attachment-wait-image",
+      name: "stored-wait-image.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+      sourcePath: "C:\\mcode-data\\attachments\\attachment-wait-image.png",
+    };
+    let resolvePersistence: (value: typeof durableAttachment) => void = () => undefined;
+    const persistence = new Promise<typeof durableAttachment>((resolve) => {
+      resolvePersistence = resolve;
+    });
+    const saveClipboardFile = vi.fn(() => persistence);
+    URL.createObjectURL = vi.fn(() => "blob:wait-image-preview");
+    URL.revokeObjectURL = vi.fn();
+    window.desktopBridge = {
+      getPathForFile: () => null,
+      saveClipboardFile,
+    } as unknown as typeof window.desktopBridge;
+    useWorkspaceStore.setState({
+      workspaces: [workspace],
+      activeWorkspaceId: workspace.id,
+      threads: [thread],
+      activeThreadId: thread.id,
+      branches: [branch("main", true)],
+      newThreadMode: "direct",
+      newThreadBranch: "main",
+      selectedWorktree: null,
+    });
+    resetThreadStoreForTests({
+      currentThreadId: thread.id,
+      records: seedThreadRecord(thread.id),
+    });
+
+    const user = userEvent.setup();
+    render(<Composer threadId={thread.id} workspaceId={workspace.id} />);
+    await user.type(screen.getByLabelText("Message Mcode"), "Wait for the image");
+    await user.upload(screen.getByTestId("composer-attachment-input"), selectedImage);
+    await waitFor(() => expect(saveClipboardFile).toHaveBeenCalledTimes(1));
+
+    await user.click(screen.getByLabelText("Send message"));
+    expect(mockTransport.sendMessage).not.toHaveBeenCalled();
+
+    resolvePersistence(durableAttachment);
+
+    await waitFor(() => expect(mockTransport.sendMessage).toHaveBeenCalledTimes(1));
+    const sentCommand = (mockTransport.sendMessage as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(sentCommand.attachments).toEqual([durableAttachment]);
+  });
+
+  it("does not send a pathless image when attachment persistence fails", async () => {
+    const workspace = createMockWorkspace({ id: "ws-pathless-failure", is_git_repo: true });
+    const thread = createMockThread({ id: "thread-pathless-failure", workspace_id: workspace.id });
+    const selectedImage = new File([new Uint8Array([1, 2, 3])], "retry-image.png", {
+      type: "image/png",
+    });
+    let rejectPersistence: (reason: Error) => void = () => undefined;
+    const persistence = new Promise<never>((_resolve, reject) => {
+      rejectPersistence = reject;
+    });
+    const saveClipboardFile = vi.fn(() => persistence);
+    URL.createObjectURL = vi.fn(() => "blob:retry-image-preview");
+    URL.revokeObjectURL = vi.fn();
+    window.desktopBridge = {
+      getPathForFile: () => null,
+      saveClipboardFile,
+    } as unknown as typeof window.desktopBridge;
+    useWorkspaceStore.setState({
+      workspaces: [workspace],
+      activeWorkspaceId: workspace.id,
+      threads: [thread],
+      activeThreadId: thread.id,
+      branches: [branch("main", true)],
+      newThreadMode: "direct",
+      newThreadBranch: "main",
+      selectedWorktree: null,
+    });
+    resetThreadStoreForTests({
+      currentThreadId: thread.id,
+      records: seedThreadRecord(thread.id),
+    });
+
+    const user = userEvent.setup();
+    render(<Composer threadId={thread.id} workspaceId={workspace.id} />);
+    await user.type(screen.getByLabelText("Message Mcode"), "Do not send without the image");
+    await user.upload(screen.getByTestId("composer-attachment-input"), selectedImage);
+    await waitFor(() => expect(saveClipboardFile).toHaveBeenCalledTimes(1));
+
+    await user.click(screen.getByLabelText("Send message"));
+    rejectPersistence(new Error("disk unavailable"));
+
+    await waitFor(() => {
+      expect(useToastStore.getState().toasts).toEqual([
+        expect.objectContaining({
+          level: "error",
+          title: "Could not attach file",
+          message: "The file was not saved. Try again.",
+        }),
+      ]);
+    });
+    expect(mockTransport.sendMessage).not.toHaveBeenCalled();
+    expect(getTestThreadMessages(thread.id)).toEqual([]);
+    expect(screen.getByTestId("attachment-preview")).toBeEmptyDOMElement();
+  });
+
+  it("reserves capacity for delayed pathless image persistence", async () => {
+    const workspace = createMockWorkspace({ id: "ws-pathless-capacity", is_git_repo: true });
+    const thread = createMockThread({ id: "thread-pathless-capacity", workspace_id: workspace.id });
+    const selectedImages = Array.from(
+      { length: 12 },
+      (_, index) =>
+        new File([new Uint8Array([index])], `capacity-${String(index + 1).padStart(2, "0")}.png`, {
+          type: "image/png",
+        }),
+    );
+    const resolvePersistenceByName = new Map<
+      string,
+      (value: {
+        id: string;
+        name: string;
+        mimeType: string;
+        sizeBytes: number;
+        sourcePath: string;
+      }) => void
+    >();
+    const saveClipboardFile = vi.fn(
+      (_bytes: Uint8Array, _mimeType: string, name: string) =>
+        new Promise<{
+          id: string;
+          name: string;
+          mimeType: string;
+          sizeBytes: number;
+          sourcePath: string;
+        }>((resolve) => {
+          resolvePersistenceByName.set(name, resolve);
+        }),
+    );
+    URL.createObjectURL = vi.fn((file: File) => `blob:${file.name}`);
+    URL.revokeObjectURL = vi.fn();
+    window.desktopBridge = {
+      getPathForFile: () => null,
+      saveClipboardFile,
+    } as unknown as typeof window.desktopBridge;
+    useWorkspaceStore.setState({
+      workspaces: [workspace],
+      activeWorkspaceId: workspace.id,
+      threads: [thread],
+      activeThreadId: thread.id,
+      branches: [branch("main", true)],
+      newThreadMode: "direct",
+      newThreadBranch: "main",
+      selectedWorktree: null,
+    });
+    resetThreadStoreForTests({
+      currentThreadId: thread.id,
+      records: seedThreadRecord(thread.id),
+    });
+
+    const user = userEvent.setup();
+    render(<Composer threadId={thread.id} workspaceId={workspace.id} />);
+    const attachmentInput = screen.getByTestId("composer-attachment-input");
+    for (const image of selectedImages.slice(0, 6)) {
+      await user.upload(attachmentInput, image);
+    }
+    await waitFor(() => expect(saveClipboardFile).toHaveBeenCalledTimes(6));
+    for (const image of selectedImages.slice(6)) {
+      await user.upload(attachmentInput, image);
+    }
+
+    await waitFor(() => expect(saveClipboardFile).toHaveBeenCalledTimes(10));
+    expect(saveClipboardFile).toHaveBeenCalledWith(
+      expect.any(Uint8Array),
+      "image/png",
+      "capacity-10.png",
+    );
+    expect(saveClipboardFile).not.toHaveBeenCalledWith(
+      expect.any(Uint8Array),
+      "image/png",
+      "capacity-11.png",
+    );
+    expect(saveClipboardFile).not.toHaveBeenCalledWith(
+      expect.any(Uint8Array),
+      "image/png",
+      "capacity-12.png",
+    );
+
+    for (let index = 1; index <= 10; index++) {
+      const name = `capacity-${String(index).padStart(2, "0")}.png`;
+      resolvePersistenceByName.get(name)!({
+        id: `attachment-${index}`,
+        name,
+        mimeType: "image/png",
+        sizeBytes: 1,
+        sourcePath: `C:\\mcode-data\\attachments\\${name}`,
+      });
+    }
+
+    await waitFor(() => {
+      expect(screen.getByTestId("attachment-preview")).toHaveTextContent("capacity-10.png");
+    });
+    expect(screen.getByTestId("attachment-preview")).not.toHaveTextContent("capacity-11.png");
+    expect(screen.getByTestId("attachment-preview")).not.toHaveTextContent("capacity-12.png");
+  });
+
+  it("discards delayed pathless persistence after replacing or cancelling a queued edit", async () => {
+    const workspace = createMockWorkspace({ id: "ws-pathless-edit", is_git_repo: true });
+    const thread = createMockThread({ id: "thread-pathless-edit", workspace_id: workspace.id });
+    const firstImage = new File([new Uint8Array([10])], "first-delayed.png", {
+      type: "image/png",
+    });
+    const secondImage = new File([new Uint8Array([11])], "second-delayed.png", {
+      type: "image/png",
+    });
+    let resolveFirstPersistence: (value: {
+      id: string;
+      name: string;
+      mimeType: string;
+      sizeBytes: number;
+      sourcePath: string;
+    }) => void = () => undefined;
+    let resolveSecondPersistence: (value: {
+      id: string;
+      name: string;
+      mimeType: string;
+      sizeBytes: number;
+      sourcePath: string;
+    }) => void = () => undefined;
+    const firstPersistence = new Promise<{
+      id: string;
+      name: string;
+      mimeType: string;
+      sizeBytes: number;
+      sourcePath: string;
+    }>((resolve) => {
+      resolveFirstPersistence = resolve;
+    });
+    const secondPersistence = new Promise<{
+      id: string;
+      name: string;
+      mimeType: string;
+      sizeBytes: number;
+      sourcePath: string;
+    }>((resolve) => {
+      resolveSecondPersistence = resolve;
+    });
+    const saveClipboardFile = vi.fn((_bytes: Uint8Array, _mimeType: string, name: string) =>
+      name === "first-delayed.png" ? firstPersistence : secondPersistence,
+    );
+    URL.createObjectURL = vi.fn((file: File) => `blob:${file.name}`);
+    URL.revokeObjectURL = vi.fn();
+    window.desktopBridge = {
+      getPathForFile: () => null,
+      saveClipboardFile,
+    } as unknown as typeof window.desktopBridge;
+    useWorkspaceStore.setState({
+      workspaces: [workspace],
+      activeWorkspaceId: workspace.id,
+      threads: [thread],
+      activeThreadId: thread.id,
+      branches: [branch("main", true)],
+      newThreadMode: "direct",
+      newThreadBranch: "main",
+      selectedWorktree: null,
+    });
+    resetThreadStoreForTests({
+      currentThreadId: thread.id,
+      records: seedThreadRecord(thread.id),
+    });
+    useQueueStore.getState().enqueue(thread.id, {
+      content: "Message A",
+      displayContent: "Message A",
+      mentions: undefined,
+      attachments: [],
+      model: "claude-sonnet-4-6",
+      permissionMode: "full",
+    });
+    useQueueStore.getState().enqueue(thread.id, {
+      content: "Message B",
+      displayContent: "Message B",
+      mentions: undefined,
+      attachments: [],
+      model: "claude-sonnet-4-6",
+      permissionMode: "full",
+    });
+
+    const user = userEvent.setup();
+    render(<Composer threadId={thread.id} workspaceId={workspace.id} />);
+    await user.click(screen.getByLabelText("Edit Message A"));
+    await user.upload(screen.getByTestId("composer-attachment-input"), firstImage);
+    await waitFor(() => expect(saveClipboardFile).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByLabelText("Edit Message B"));
+
+    await act(async () => {
+      resolveFirstPersistence({
+        id: "attachment-first-delayed",
+        name: "stored-first-delayed.png",
+        mimeType: "image/png",
+        sizeBytes: 1,
+        sourcePath: "C:\\mcode-data\\attachments\\stored-first-delayed.png",
+      });
+      await firstPersistence;
+    });
+
+    expect(screen.getByTestId("attachment-preview")).toBeEmptyDOMElement();
+    await user.upload(screen.getByTestId("composer-attachment-input"), secondImage);
+    await waitFor(() => expect(saveClipboardFile).toHaveBeenCalledTimes(2));
+    await user.click(
+      screen.getByLabelText("Discard edits and restore the original queued message"),
+    );
+
+    await act(async () => {
+      resolveSecondPersistence({
+        id: "attachment-second-delayed",
+        name: "stored-second-delayed.png",
+        mimeType: "image/png",
+        sizeBytes: 1,
+        sourcePath: "C:\\mcode-data\\attachments\\stored-second-delayed.png",
+      });
+      await secondPersistence;
+    });
+
+    expect(mockTransport.sendMessage).not.toHaveBeenCalled();
+    expect(screen.getByTestId("attachment-preview")).toBeEmptyDOMElement();
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+  });
+
+  it("restores a queued goal when its edit is discarded", async () => {
+    const workspace = createMockWorkspace({ id: "ws-queued-goal", is_git_repo: true });
+    const thread = createMockThread({ id: "thread-queued-goal", workspace_id: workspace.id });
+    useWorkspaceStore.setState({
+      workspaces: [workspace],
+      activeWorkspaceId: workspace.id,
+      threads: [thread],
+      activeThreadId: thread.id,
+      branches: [branch("main", true)],
+      newThreadMode: "direct",
+      newThreadBranch: "main",
+      selectedWorktree: null,
+    });
+    resetThreadStoreForTests({
+      currentThreadId: thread.id,
+      records: seedThreadRecord(thread.id),
+    });
+    useQueueStore.getState().enqueue(thread.id, {
+      content: "Finish the migration",
+      displayContent: "Finish the migration",
+      mentions: undefined,
+      attachments: [],
+      model: "claude-sonnet-4-6",
+      permissionMode: "full",
+      goalObjective: "Ship the migration safely",
+    });
+
+    const user = userEvent.setup();
+    render(<Composer threadId={thread.id} workspaceId={workspace.id} />);
+    await user.click(screen.getByLabelText("Edit Finish the migration"));
+    await user.click(
+      screen.getByLabelText("Discard edits and restore the original queued message"),
+    );
+
+    expect(useQueueStore.getState().queues[thread.id]).toEqual([
+      expect.objectContaining({
+        content: "Finish the migration",
+        goalObjective: "Ship the migration safely",
+      }),
+    ]);
+  });
+
+  it("discards pathless persistence when the composer switches threads", async () => {
+    const workspace = createMockWorkspace({ id: "ws-pathless-switch", is_git_repo: true });
+    const threadA = createMockThread({ id: "thread-pathless-a", workspace_id: workspace.id });
+    const threadB = createMockThread({ id: "thread-pathless-b", workspace_id: workspace.id });
+    const selectedImage = new File([new Uint8Array([7, 8, 9])], "switch-image.png", {
+      type: "image/png",
+    });
+    const durableAttachment = {
+      id: "attachment-switch-image",
+      name: "stored-switch-image.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+      sourcePath: "C:\\mcode-data\\attachments\\attachment-switch-image.png",
+    };
+    let resolvePersistence: (value: typeof durableAttachment) => void = () => undefined;
+    const persistence = new Promise<typeof durableAttachment>((resolve) => {
+      resolvePersistence = resolve;
+    });
+    const saveClipboardFile = vi.fn(() => persistence);
+    URL.createObjectURL = vi.fn(() => "blob:switch-image-preview");
+    URL.revokeObjectURL = vi.fn();
+    window.desktopBridge = {
+      getPathForFile: () => null,
+      saveClipboardFile,
+    } as unknown as typeof window.desktopBridge;
+    useWorkspaceStore.setState({
+      workspaces: [workspace],
+      activeWorkspaceId: workspace.id,
+      threads: [threadA, threadB],
+      activeThreadId: threadA.id,
+      branches: [branch("main", true)],
+      newThreadMode: "direct",
+      newThreadBranch: "main",
+      selectedWorktree: null,
+    });
+    resetThreadStoreForTests({
+      currentThreadId: threadA.id,
+      records: seedThreadRecord(threadA.id),
+    });
+
+    const user = userEvent.setup();
+    const { rerender } = render(<Composer threadId={threadA.id} workspaceId={workspace.id} />);
+    await user.type(screen.getByLabelText("Message Mcode"), "Send from thread A");
+    await user.upload(screen.getByTestId("composer-attachment-input"), selectedImage);
+    await waitFor(() => expect(saveClipboardFile).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByLabelText("Send message"));
+    expect(mockTransport.sendMessage).not.toHaveBeenCalled();
+
+    useWorkspaceStore.setState({ activeThreadId: threadB.id });
+    useThreadStore.setState({
+      currentThreadId: threadB.id,
+      records: seedThreadRecord(threadB.id),
+    });
+    rerender(<Composer threadId={threadB.id} workspaceId={workspace.id} />);
+
+    await act(async () => {
+      resolvePersistence(durableAttachment);
+      await persistence;
+    });
+
+    expect(mockTransport.sendMessage).not.toHaveBeenCalled();
+    expect(getTestThreadMessages(threadA.id)).toEqual([]);
+    expect(getTestThreadMessages(threadB.id)).toEqual([]);
+    expect(screen.getByTestId("attachment-preview")).toBeEmptyDOMElement();
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
   });
 });

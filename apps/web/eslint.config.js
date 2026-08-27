@@ -15,5 +15,11 @@ export default tseslint.config(
     rules: {
       "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
     },
-  }
+  },
+  {
+    files: ["src/features/conversation/composer/**/*.{ts,tsx}"],
+    rules: {
+      complexity: ["error", 10],
+    },
+  },
 );
