@@ -127,20 +127,23 @@ export function useComposerSubmissionController({
         submission.currentAnnotations,
       );
       annotations.clearBeforeDispatch();
+      const dispatch = dispatchComposerTarget({
+        threadId,
+        workspaceId,
+        branchFromMessageId,
+        activeThread,
+        target,
+        execution,
+        submission,
+        replyContext,
+        onBranchModeExit,
+        onThreadCreated,
+      });
+      const draftCleared = form.clearSubmittedDraft(submission.snapshot);
       try {
-        await dispatchComposerTarget({
-          threadId,
-          workspaceId,
-          branchFromMessageId,
-          activeThread,
-          target,
-          execution,
-          submission,
-          replyContext,
-          onBranchModeExit,
-          onThreadCreated,
-        });
+        await dispatch;
       } catch (error) {
+        if (draftCleared) form.restoreFailedDispatch();
         annotations.restoreAfterFailure();
         showDispatchFailure(error);
         return;

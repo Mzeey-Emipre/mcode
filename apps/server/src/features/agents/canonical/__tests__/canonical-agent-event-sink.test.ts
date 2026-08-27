@@ -590,7 +590,7 @@ describe("CanonicalAgentEventSink", () => {
     expect(messageRepo.listByThread(THREAD_ID, 10).messages).toHaveLength(2);
   });
 
-  it("resumes bounded terminal batches without gaps and confirms visibility last", async () => {
+  it("resumes terminal batches when a recovered item changes", async () => {
     const messageRepo = new MessageRepo(db);
     let interruptPublication = false;
     let interrupted = false;
@@ -634,6 +634,7 @@ describe("CanonicalAgentEventSink", () => {
         sort_order: index,
       },
     }));
+    let hasFinalToolOutput = false;
     const input = {
       threadId: THREAD_ID,
       turnId: TURN_ID,
@@ -641,7 +642,18 @@ describe("CanonicalAgentEventSink", () => {
       providerId: "codex",
       providerIdentities: [],
       outcome: "completed" as const,
-      projectTurn: () => ({ message: { ...message, is_internal: false }, narrative }),
+      projectTurn: () => ({
+        message: { ...message, is_internal: false },
+        narrative: narrative.map((entry) => entry.record.id === "tool-0"
+          ? {
+              ...entry,
+              record: {
+                ...entry.record,
+                output_summary: hasFinalToolOutput ? "final" : "partial",
+              },
+            }
+          : entry),
+      }),
       finalizeCompatibility: () => messageRepo.publishAssistant(message.id),
     };
 
@@ -650,17 +662,20 @@ describe("CanonicalAgentEventSink", () => {
     expect(messageRepo.listByThread(THREAD_ID, 10).messages).toHaveLength(1);
     expect(sink.loadConversationProjection(THREAD_ID, 10).messages).toHaveLength(1);
 
+    hasFinalToolOutput = true;
     const result = await sink.finishParentTurnBatched(input);
 
     expect(result.outcome).toBe("committed");
     expect(sink.loadCheckpoint(EXECUTION_ID)).toMatchObject({
       terminalOutcome: "completed",
-      lastAcceptedSequence: 106,
-      lastDurableSequence: 106,
+      lastAcceptedSequence: 107,
+      lastDurableSequence: 107,
     });
-    expect(db.prepare("SELECT COUNT(*) AS count FROM canonical_agent_events").get()).toEqual({ count: 106 });
+    expect(db.prepare("SELECT COUNT(*) AS count FROM canonical_agent_events").get()).toEqual({ count: 107 });
     expect(messageRepo.listByThread(THREAD_ID, 10).messages).toHaveLength(2);
     expect(sink.loadConversationProjection(THREAD_ID, 10).messages).toHaveLength(2);
+    expect(sink.loadConversationProjection(THREAD_ID, 10).narrativeByMessage[message.id]?.tools)
+      .toContainEqual(expect.objectContaining({ id: "tool-0", output_summary: "final" }));
     const maximumItemEventsPerBatch = Math.floor(
       (ACTIVE_TURN_WRITE_BATCH_LIMITS.maxRows - 3) / 2,
     );

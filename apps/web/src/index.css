@@ -909,13 +909,13 @@ input[type="range"].settings-range::-moz-range-thumb {
   transform-origin: left center;
 }
 
-@keyframes assistant-just-persisted-in {
+@keyframes agent-response-just-persisted-in {
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
-.assistant-just-persisted {
-  animation: assistant-just-persisted-in 320ms cubic-bezier(0.22, 1, 0.36, 1);
+.agent-response-just-persisted {
+  animation: agent-response-just-persisted-in 320ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* Turn-end exit for the live narrative step indicator: fade while collapsing
@@ -940,7 +940,7 @@ input[type="range"].settings-range::-moz-range-thumb {
   }
 
   .thought-settling,
-  .assistant-just-persisted,
+  .agent-response-just-persisted,
   .narrative-indicator-exit {
     animation: none;
   }

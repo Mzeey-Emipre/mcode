@@ -30,7 +30,7 @@ export async function sendComposerThreadMessage(
   payload: ComposerThreadMessagePayload,
 ): Promise<void> {
   const { selection } = payload;
-  await useThreadStore.getState().sendMessage(
+  const sent = await useThreadStore.getState().sendMessage(
     threadId,
     payload.content,
     selection.modelId,
@@ -52,6 +52,7 @@ export async function sendComposerThreadMessage(
     payload.orchestrationMode,
     payload.selectedTextComments,
   );
+  if (!sent) throw new Error("Message dispatch failed");
 }
 
 /** Adapts a prepared submit and its reply context for existing-thread transport. */

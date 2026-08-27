@@ -105,7 +105,7 @@ describe("projectCanonicalMessageList", () => {
     });
 
     expect(projection).toMatchObject({
-      isAgentRunning: true,
+      agentDisplayState: { phase: "streaming" },
       agentStartTime: Date.parse(STARTED_AT),
       thoughtSegments: [{ text: "Reading the file", isExplicitNonFinal: true }],
       toolCalls: [{
@@ -151,7 +151,7 @@ describe("projectCanonicalMessageList", () => {
       thoughtSegments: [],
     });
 
-    expect(projection?.isAgentRunning).toBe(false);
+    expect(projection?.agentDisplayState).toEqual({ phase: "completed" });
     expect(projection?.messages.map((entry) => entry.id)).toEqual(["child-prompt", "child-answer"]);
     expect(projection?.thoughtSegments).toEqual([expect.objectContaining({ text: "Done" })]);
     expect(projection?.currentTurnMessageId).toBe("child-answer");

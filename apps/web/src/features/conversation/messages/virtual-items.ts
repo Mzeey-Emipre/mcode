@@ -1,4 +1,4 @@
-import type { PermissionDecision, TurnOutcome } from "@mcode/contracts";
+import type { AgentTurnStatus, PermissionDecision, TurnOutcome, TurnRuntimePhase } from "@mcode/contracts";
 import type { Message, ToolCall, HookExecution, ToolCallRecord, ThoughtSegmentRecord, HookExecutionRecord } from "@/transport/types";
 import type { ThoughtSegment, TurnFooterSummary } from "../narrative/types";
 import { computeLiveStreamingText } from "../narrative/build-narrative";
@@ -24,9 +24,6 @@ function isPlanQuestionsMessage(content: string): boolean {
   return content.includes("```plan-questions");
 }
 
-/** Estimated collapsed height (px) for a streaming card virtual item. */
-export const STREAMING_CARD_COLLAPSED_HEIGHT = 56;
-
 const EMPTY_HOOKS: readonly HookExecution[] = [];
 const EMPTY_THOUGHT_SEGMENTS: readonly ThoughtSegment[] = [];
 
@@ -47,6 +44,113 @@ export interface CurrentTurnResponseIdentity {
   responseKey?: string;
   responseKeysByMessageId?: Record<string, string>;
 }
+/** UI state for one agent response, projected from its authoritative turn lifecycle. */
+export type AgentDisplayState =
+  | { phase: "streaming" }
+  | { phase: "finalizing" }
+  | { phase: "completed" }
+  | { phase: "errored"; reason?: string }
+  | { phase: "cancelled" }
+  | { phase: "interrupted" };
+
+/** Maps the runtime lifecycle for the current turn into transcript display state. */
+export function agentDisplayStateFromRuntimePhase(
+  phase: TurnRuntimePhase,
+  reason?: string | null,
+): AgentDisplayState | undefined {
+  switch (phase) {
+    case "idle":
+      return undefined;
+    case "running":
+      return { phase: "streaming" };
+    case "finalizing":
+      return { phase: "finalizing" };
+    case "completed":
+      return { phase: "completed" };
+    case "errored":
+      return reason ? { phase: "errored", reason } : { phase: "errored" };
+    case "cancelled":
+      return { phase: "cancelled" };
+    case "interrupted":
+      return { phase: "interrupted" };
+  }
+}
+
+/** Maps a canonical turn status into the shared transcript display state. */
+export function agentDisplayStateFromCanonicalTurnStatus(
+  status: AgentTurnStatus,
+): AgentDisplayState {
+  switch (status) {
+    case "Pending":
+    case "Running":
+      return { phase: "streaming" };
+    case "Completed":
+      return { phase: "completed" };
+    case "Cancelled":
+      return { phase: "cancelled" };
+    case "Interrupted":
+      return { phase: "interrupted" };
+    case "Errored":
+      return { phase: "errored" };
+  }
+}
+
+/** Returns the terminal display state for one persisted agent message. */
+function agentDisplayStateFromOutcome(
+  outcome: TurnOutcome | null | undefined,
+): AgentDisplayState {
+  switch (outcome) {
+    case "errored":
+      return { phase: "errored" };
+    case "cancelled":
+      return { phase: "cancelled" };
+    case "interrupted":
+      return { phase: "interrupted" };
+    case "completed":
+    case null:
+    case undefined:
+      return { phase: "completed" };
+  }
+}
+
+/** Whether an agent display state still owns live narrative activity. */
+export function isAgentDisplayActive(
+  state: AgentDisplayState | undefined,
+): boolean {
+  return state?.phase === "streaming" || state?.phase === "finalizing";
+}
+
+/** Inputs for projecting one transcript into stable and volatile virtual rows. */
+export interface TranscriptProjectionInput {
+  /** Persisted conversation messages in chronological order. */
+  messages: readonly Message[];
+  /** Persisted file changes keyed by assistant message id. */
+  persistedFilesChanged?: Record<string, string[]>;
+  /** Assistant message that owns the latest file-change disclosure. */
+  latestTurnWithChanges?: string | null;
+  /** Identity that keeps live and persisted assistant rows in one React slot. */
+  currentTurn?: CurrentTurnResponseIdentity;
+  /** Authoritative lifecycle projected into the current agent response state. */
+  agentDisplayState?: AgentDisplayState;
+  /** Persisted narrative records keyed by assistant message id. */
+  persistedNarrativeByMessage?: PersistedNarrativeRecordsByMessage;
+  /** Canonical child turn summaries keyed by assistant message id. */
+  turnSummariesByMessageId?: Record<string, TurnFooterSummary>;
+  /** In-memory tool calls for the active turn. */
+  toolCalls: readonly ToolCall[];
+  /** Start time for active-turn timing displays. */
+  agentStartTime: number | undefined;
+  /** Latest streamed assistant text. */
+  streamingText: string | undefined;
+  /** Permission requests for the active turn. */
+  permissions?: Parameters<typeof buildVolatileItems>[4];
+  /** Hook events for the active turn. */
+  hooks?: readonly HookExecution[];
+  /** Reasoning segments for the active turn. */
+  thoughtSegments?: readonly ThoughtSegment[];
+  /** Persisted assistant text that remains visible while volatile rows settle. */
+  committedAssistantBody?: string;
+}
 
 function messageOutcome(message: Message): TurnOutcome | null | undefined {
   return (message as Message & { outcome?: TurnOutcome | null }).outcome;
@@ -64,8 +168,8 @@ export function liveFinalResponseItemKey(
   return responseKey || `turn-response:${threadId}:pending`;
 }
 
-/** Returns the message item key, preserving the current turn's live key after persistence. */
-export function assistantMessageItemKey(
+/** Returns the agent message item key, preserving the current turn's live key after persistence. */
+export function agentMessageItemKey(
   message: Message,
   currentTurn?: CurrentTurnResponseIdentity,
 ): string {
@@ -83,16 +187,80 @@ export function assistantMessageItemKey(
   return message.id;
 }
 
+/**
+ * Creates a transcript projector with separate stable and volatile caches.
+ * Callers provide one explicit transcript state instead of coordinating three builders.
+ */
+export function createTranscriptItemProjector(): (input: TranscriptProjectionInput) => ChatVirtualItem[] {
+  const buildVolatile = createVolatileItemsBuilder();
+  const buildVirtual = createVirtualItemsBuilder();
+  let previousStableInput:
+    | Pick<
+      TranscriptProjectionInput,
+      | "messages"
+      | "persistedFilesChanged"
+      | "latestTurnWithChanges"
+      | "currentTurn"
+      | "agentDisplayState"
+      | "persistedNarrativeByMessage"
+      | "turnSummariesByMessageId"
+    >
+    | undefined;
+  let previousStableItems: ChatVirtualItem[] = [];
+
+  return (input) => {
+    const stableInput = {
+      messages: input.messages,
+      persistedFilesChanged: input.persistedFilesChanged,
+      latestTurnWithChanges: input.latestTurnWithChanges,
+      currentTurn: input.currentTurn,
+      agentDisplayState: input.agentDisplayState,
+      persistedNarrativeByMessage: input.persistedNarrativeByMessage,
+      turnSummariesByMessageId: input.turnSummariesByMessageId,
+    };
+    const stableItems = previousStableInput
+      && previousStableInput.messages === stableInput.messages
+      && previousStableInput.persistedFilesChanged === stableInput.persistedFilesChanged
+      && previousStableInput.latestTurnWithChanges === stableInput.latestTurnWithChanges
+      && previousStableInput.currentTurn === stableInput.currentTurn
+      && previousStableInput.agentDisplayState === stableInput.agentDisplayState
+      && previousStableInput.persistedNarrativeByMessage === stableInput.persistedNarrativeByMessage
+      && previousStableInput.turnSummariesByMessageId === stableInput.turnSummariesByMessageId
+      ? previousStableItems
+      : buildStableItems(
+        stableInput.messages,
+        stableInput.persistedFilesChanged,
+        stableInput.latestTurnWithChanges,
+        stableInput.currentTurn,
+        stableInput.persistedNarrativeByMessage,
+        stableInput.turnSummariesByMessageId,
+        stableInput.agentDisplayState,
+      );
+    previousStableInput = stableInput;
+    previousStableItems = stableItems;
+
+    const volatileItems = buildVolatile(
+      input.toolCalls,
+      input.agentDisplayState,
+      input.agentStartTime,
+      input.streamingText,
+      input.permissions,
+      input.hooks,
+      input.thoughtSegments,
+      input.currentTurn,
+      input.committedAssistantBody,
+    );
+    return buildVirtual(stableItems, volatileItems, input.toolCalls.length > 0);
+  };
+}
+
 /** Represents an item rendered in the virtualized chat list: messages, tool indicators, or streaming text. */
 export type ChatVirtualItem =
   | {
       key: string;
       type: "message";
       message: Message;
-      assistantState?: {
-        isStreaming: boolean;
-        actionsVisible: boolean;
-      };
+      agentDisplayState?: AgentDisplayState;
     }
   | { key: string; type: "active-tools"; toolCalls: readonly ToolCall[] }
   | {
@@ -197,6 +365,7 @@ export function buildStableItems(
   currentTurn?: CurrentTurnResponseIdentity,
   persistedNarrativeByMessage?: PersistedNarrativeRecordsByMessage,
   turnSummariesByMessageId?: Record<string, TurnFooterSummary>,
+  currentAgentDisplayState?: AgentDisplayState,
 ): ChatVirtualItem[] {
   const items: ChatVirtualItem[] = [];
   for (let i = 0; i < messages.length; i++) {
@@ -213,6 +382,10 @@ export function buildStableItems(
       persistedRecords?.hooks.some((h) => h.phase === "stop") === true;
     const hasPersistedFooter =
       persistedRecords?.tools.some((t) => t.parent_tool_call_id == null) === true;
+    const canonicalSummary = turnSummariesByMessageId?.[msg.id];
+    const explicitOutcome = messageOutcome(msg);
+    const outcome = explicitOutcome ?? canonicalSummary?.outcome;
+    const outcomeExecutionId = messageOutcomeExecutionId(msg) ?? canonicalSummary?.outcomeExecutionId;
 
     // Persisted narrative timeline appears immediately BEFORE each assistant
     // message so the audit trail visually precedes the response text. Only
@@ -228,22 +401,20 @@ export function buildStableItems(
         });
       }
     }
-    const isCurrentAssistant =
+    const isCurrentAgentMessage =
       msg.role === "assistant" &&
-      (currentTurn?.messageId === msg.id ||
-        currentTurn?.responseKeysByMessageId?.[msg.id] != null);
-    const isPersisted =
-      msg.role === "assistant" &&
-      persistedFilesChanged != null &&
-      Object.prototype.hasOwnProperty.call(persistedFilesChanged, msg.id);
-    const hasCanonicalTurnSummary =
-      msg.role === "assistant" && turnSummariesByMessageId?.[msg.id] != null;
+      currentTurn?.messageId === msg.id;
+    const agentDisplayState = msg.role === "assistant"
+      ? isCurrentAgentMessage && currentAgentDisplayState
+        ? currentAgentDisplayState
+        : agentDisplayStateFromOutcome(outcome)
+      : undefined;
     items.push({
-      key: assistantMessageItemKey(msg, currentTurn),
+      key: agentMessageItemKey(msg, currentTurn),
       type: "message",
       message: msg,
-      ...(isCurrentAssistant
-        ? { assistantState: { isStreaming: false, actionsVisible: isPersisted || hasCanonicalTurnSummary } }
+      ...(agentDisplayState
+        ? { agentDisplayState }
         : {}),
     });
 
@@ -263,10 +434,6 @@ export function buildStableItems(
       // Turn footer (step / sub-agent counts + duration) renders AFTER the
       // assistant body — closing the turn rather than separating its actions
       // from its answer.
-      const canonicalSummary = turnSummariesByMessageId?.[msg.id];
-      const explicitOutcome = messageOutcome(msg);
-      const outcome = explicitOutcome ?? canonicalSummary?.outcome;
-      const outcomeExecutionId = messageOutcomeExecutionId(msg) ?? canonicalSummary?.outcomeExecutionId;
       const turnSummary = canonicalSummary
         ? {
             ...canonicalSummary,
@@ -313,7 +480,7 @@ export function buildStableItems(
  */
 export function buildVolatileItems(
   toolCalls: readonly ToolCall[],
-  isAgentRunning: boolean,
+  agentDisplayState: AgentDisplayState | undefined,
   agentStartTime: number | undefined,
   streamingText: string | undefined,
   permissions?: readonly {
@@ -330,6 +497,7 @@ export function buildVolatileItems(
   committedAssistantBody?: string,
 ): ChatVirtualItem[] {
   const items: ChatVirtualItem[] = [];
+  const isAgentRunning = isAgentDisplayActive(agentDisplayState);
   const resolvedHooks = hooks ?? EMPTY_HOOKS;
   const resolvedThoughtSegments = thoughtSegments ?? EMPTY_THOUGHT_SEGMENTS;
   const resolvedStreamingText = streamingText ?? "";
@@ -379,7 +547,9 @@ export function buildVolatileItems(
         sequence: Number.MAX_SAFE_INTEGER,
         attachments: null,
       },
-      assistantState: { isStreaming: true, actionsVisible: false },
+      agentDisplayState: agentDisplayState?.phase === "finalizing"
+        ? { phase: "finalizing" }
+        : { phase: "streaming" },
     });
   }
 
@@ -445,15 +615,15 @@ function sameArrayItems<T>(
   return true;
 }
 
-function sameAssistantState(
-  left: Extract<ChatVirtualItem, { type: "message" }>["assistantState"],
-  right: Extract<ChatVirtualItem, { type: "message" }>["assistantState"],
+function sameAgentDisplayState(
+  left: Extract<ChatVirtualItem, { type: "message" }>["agentDisplayState"],
+  right: Extract<ChatVirtualItem, { type: "message" }>["agentDisplayState"],
 ): boolean {
   if (left === right) return true;
-  return (
-    left?.isStreaming === right?.isStreaming &&
-    left?.actionsVisible === right?.actionsVisible
-  );
+  if (left?.phase !== right?.phase) return false;
+  const leftReason = left?.phase === "errored" ? left.reason : undefined;
+  const rightReason = right?.phase === "errored" ? right.reason : undefined;
+  return leftReason === rightReason;
 }
 
 function sameMessage(left: Message, right: Message): boolean {
@@ -487,7 +657,7 @@ function sameVirtualItem(
       return (
         left.type === "message" &&
         sameMessage(left.message, right.message) &&
-        sameAssistantState(left.assistantState, right.assistantState)
+        sameAgentDisplayState(left.agentDisplayState, right.agentDisplayState)
       );
     case "active-tools":
       return left.type === "active-tools" && left.toolCalls === right.toolCalls;
@@ -641,7 +811,7 @@ export function buildVirtualItems(
     (item) =>
       !(
         item.type === "message" &&
-        item.assistantState?.isStreaming &&
+        isAgentDisplayActive(item.agentDisplayState) &&
         stableKeys.has(item.key)
       ),
   );
@@ -693,7 +863,7 @@ export function buildVirtualItems(
     const headItems = dedupedVolatileItems.filter(
       (v) =>
         v.type === "narrative-flow" ||
-        (v.type === "message" && v.message.role === "assistant" && v.assistantState?.isStreaming),
+        (v.type === "message" && v.message.role === "assistant" && isAgentDisplayActive(v.agentDisplayState)),
     );
     const indicatorItems = dedupedVolatileItems.filter(
       (v) => v.type === "narrative-indicator",
@@ -701,7 +871,7 @@ export function buildVirtualItems(
     const tailItems = dedupedVolatileItems.filter(
       (v) =>
         v.type !== "narrative-flow" &&
-        !(v.type === "message" && v.message.role === "assistant" && v.assistantState?.isStreaming) &&
+        !(v.type === "message" && v.message.role === "assistant" && isAgentDisplayActive(v.agentDisplayState)) &&
         v.type !== "narrative-indicator",
     );
     // Drop the persisted-narrative placeholder for the message that has live
@@ -742,149 +912,4 @@ export function buildVirtualItems(
   }
 
   return [...stableItems, ...dedupedVolatileItems];
-}
-
-/**
- * Estimated chrome (px) around an assistant bubble's markdown body: the
- * reserved actions row, provenance foot line, and inter-block spacing.
- * Used for BOTH the streaming provisional bubble and the persisted message —
- * they must stay equal so persisting a turn never changes the estimate.
- */
-const ASSISTANT_BUBBLE_CHROME_PX = 80;
-
-const LIST_ITEM_RE = /^[-*]\s|^\d+\.\s/;
-const LINE_HEIGHT = 22;
-const CHARS_PER_LINE = 65;
-const TABLE_ROW_HEIGHT = 44;
-const CODE_BLOCK_PADDING = 32;
-const HEADING_EXTRA = 16;
-const LIST_ITEM_HEIGHT = 28;
-
-/**
- * Estimate rendered height from markdown content.
- * Accounts for tables, code blocks, headings, and lists that render
- * much taller than their raw character count suggests.
- */
-function estimateMarkdownHeight(content: string): number {
-  let height = 0;
-  let inCodeBlock = false;
-  let start = 0;
-
-  while (start <= content.length) {
-    let end = content.indexOf("\n", start);
-    if (end === -1) end = content.length;
-    const line = content.substring(start, end);
-    const trimmed = line.trimStart();
-
-    if (trimmed.startsWith("```")) {
-      height += CODE_BLOCK_PADDING / 2;
-      inCodeBlock = !inCodeBlock;
-      start = end + 1;
-      continue;
-    }
-
-    if (inCodeBlock) {
-      height += LINE_HEIGHT;
-      start = end + 1;
-      continue;
-    }
-
-    // Table rows (| col | col |) and separator rows (|---|---|)
-    if (trimmed.startsWith("|")) {
-      height += trimmed.includes("---") ? 4 : TABLE_ROW_HEIGHT;
-      start = end + 1;
-      continue;
-    }
-
-    // Headings
-    if (trimmed.startsWith("#")) {
-      height += LINE_HEIGHT + HEADING_EXTRA;
-      start = end + 1;
-      continue;
-    }
-
-    // List items
-    if (LIST_ITEM_RE.test(trimmed)) {
-      const wrappedLines = Math.max(1, Math.ceil(trimmed.length / CHARS_PER_LINE));
-      height += LIST_ITEM_HEIGHT + (wrappedLines - 1) * LINE_HEIGHT;
-      start = end + 1;
-      continue;
-    }
-
-    // Empty line = paragraph break
-    if (trimmed.length === 0) {
-      height += 12;
-      start = end + 1;
-      continue;
-    }
-
-    // Regular text, may wrap
-    const wrappedLines = Math.max(1, Math.ceil(trimmed.length / CHARS_PER_LINE));
-    height += wrappedLines * LINE_HEIGHT;
-    start = end + 1;
-  }
-
-  return Math.max(LINE_HEIGHT, height);
-}
-
-/** Estimate pixel height for a virtual item before `measureElement` fires. */
-export function estimateItemHeight(item: ChatVirtualItem): number {
-  switch (item.type) {
-    case "message": {
-      const { message } = item;
-      if (message.role === "system") return 40;
-      const contentHeight = estimateMarkdownHeight(message.content);
-      if (message.role === "user") return 52 + contentHeight;
-      // Streaming and persisted assistant bubbles share one estimate: they
-      // render the same chrome (the DeltaBlock stays mounted on persist and
-      // the actions row reserves its height while hidden), and they share a
-      // virtual-item key. A differing estimate made the persist swap reflow
-      // the virtualizer by the chrome offset and nudge the scroll position.
-      return ASSISTANT_BUBBLE_CHROME_PX + contentHeight;
-    }
-    case "active-tools":
-      return Math.min(item.toolCalls.length * 48, 400);
-    case "indicator":
-      return 48;
-    case "streaming":
-      return STREAMING_CARD_COLLAPSED_HEIGHT;
-    case "turn-changes": {
-      // Collapsed: ~44px. Expanded: 44px header + 32px per file row (capped at 50) + overflow link.
-      const visibleFiles = Math.min(item.filesChanged.length, 50);
-      const overflowRow = item.filesChanged.length > 50 ? 28 : 0;
-      return item.isLatestTurn ? 44 + visibleFiles * 32 + overflowRow : 44;
-    }
-    case "permission-request":
-      return item.settled ? 36 : 120;
-    case "hook-activity":
-      // Header (28px) + one row (28px) per hook, capped at 300px
-      return Math.min(28 + item.hooks.length * 28, 300);
-    case "narrative-flow": {
-      const segCount = item.thoughtSegments.length;
-      const toolCount = item.toolCalls.length;
-      const hookCount = item.hooks.length;
-      return Math.min(segCount * 60 + toolCount * 32 + hookCount * 28 + 48, 600);
-    }
-    case "persisted-narrative":
-      // Conservative estimate: most turns produce a handful of rows. The
-      // virtualizer re-measures once mounted, so this only affects scrollbar
-      // initial sizing. Setting too small causes scroll-jump on settle;
-      // setting too large wastes pre-allocated space.
-      return 120;
-    case "persisted-late-hooks":
-      // Most turns have zero late hooks; the component renders null in that
-      // case. The virtualizer will re-measure on mount, so a small default
-      // keeps pre-allocated space tight for the common (no-late-hooks) path.
-      return 0;
-    case "persisted-turn-footer":
-      // One-line summary plus margin; the component renders null when records
-      // are still loading or when the turn had no structured activity.
-      return 24;
-    case "narrative-indicator":
-      // One-line status bar (dot/layers icon + "X steps … 0:22"). 36px keeps
-      // pre-allocation tight; the virtualizer re-measures once mounted.
-      return 36;
-    default:
-      return assertNever(item);
-  }
 }

@@ -71,6 +71,12 @@ export interface ComposerFormSubmission {
   goalPending: boolean;
 }
 
+interface SubmittedDraftClear {
+  ownerThreadId: string | undefined;
+  submission: ComposerFormSubmission;
+  attachments: PendingAttachment[];
+}
+
 /** Event bindings and lifecycle operations for the Composer attachment tray. */
 export interface ComposerAttachmentBindings {
   attachmentInputRef: RefObject<HTMLInputElement | null>;
@@ -119,6 +125,9 @@ export interface ComposerFormController {
   isUnchangedSince(revision: number): boolean;
   snapshotAttachmentMetas(): AttachmentMeta[];
   restoreQueued(message: QueuedMessage): void;
+  clearSubmittedDraft(submission: ComposerFormSubmission): boolean;
+  restoreFailedDispatch(): void;
+  confirmSubmittedDispatch(): boolean;
   clear(reason: "dispatch" | "queue-cancel"): AttachmentMeta[];
   focus(): void;
 }
@@ -154,6 +163,9 @@ export function useComposerFormController({
   });
   const agentSettingsTouchedRef = useRef(false);
   const submissionRevisionRef = useRef(0);
+  const submittedDraftClearRef = useRef<SubmittedDraftClear | null>(null);
+  const currentThreadIdRef = useRef(threadId);
+  currentThreadIdRef.current = threadId;
   const threadSwitchRef = useRef(false);
   const lastServerThreadModelKeyRef = useRef("");
   const saveDraft = useComposerDraftStore((state) => state.saveDraft);
@@ -195,9 +207,12 @@ export function useComposerFormController({
   }, []);
 
   const updateDraft = useCallback((text: string, nextMentions: readonly MessageMention[]) => {
+    const submittedDraftClear = submittedDraftClearRef.current;
+    submittedDraftClearRef.current = null;
+    if (submittedDraftClear) attachments.releaseAttachments(submittedDraftClear.attachments);
     setInput(text);
     setMentions([...nextMentions]);
-  }, []);
+  }, [attachments.releaseAttachments]);
 
   const replaceDraft = useCallback(
     (text: string, nextMentions: readonly MessageMention[] = [], italic = false) => {
@@ -210,6 +225,9 @@ export function useComposerFormController({
   );
 
   const setSelectedTextCommentDraft = useCallback((comments: readonly SelectedTextComment[]) => {
+    const submittedDraftClear = submittedDraftClearRef.current;
+    submittedDraftClearRef.current = null;
+    if (submittedDraftClear) attachments.releaseAttachments(submittedDraftClear.attachments);
     const nextComments = [...comments];
     setSelectedTextComments(nextComments);
     if (!threadId) return;
@@ -217,7 +235,7 @@ export function useComposerFormController({
       ...draftRef.current,
       selectedTextComments: nextComments,
     }));
-  }, [saveDraft, threadId]);
+  }, [attachments.releaseAttachments, saveDraft, threadId]);
 
   const setGoalPendingValue = useCallback((value: boolean) => {
     setGoalPending(value);
@@ -277,6 +295,51 @@ export function useComposerFormController({
     [attachments.collectAndClearAttachments, clearDraft, replaceDraft, threadId],
   );
 
+  const discardSubmittedDraftClear = useCallback(() => {
+    const submittedDraftClear = submittedDraftClearRef.current;
+    submittedDraftClearRef.current = null;
+    if (submittedDraftClear) attachments.releaseAttachments(submittedDraftClear.attachments);
+  }, [attachments.releaseAttachments]);
+
+  const clearSubmittedDraft = useCallback((submission: ComposerFormSubmission): boolean => {
+    if (submissionRevisionRef.current !== submission.revision) return false;
+    const dispatchedAttachments = attachments.detachAttachments();
+    replaceDraft("");
+    setSelectedTextComments([]);
+    if (threadId) clearDraft(threadId);
+    submittedDraftClearRef.current = {
+      ownerThreadId: threadId,
+      submission,
+      attachments: dispatchedAttachments,
+    };
+    return true;
+  }, [attachments.detachAttachments, clearDraft, replaceDraft, threadId]);
+
+  const restoreFailedDispatch = useCallback(() => {
+    const submittedDraftClear = submittedDraftClearRef.current;
+    submittedDraftClearRef.current = null;
+    if (!submittedDraftClear) return;
+    if (submittedDraftClear.ownerThreadId !== currentThreadIdRef.current) {
+      attachments.releaseAttachments(submittedDraftClear.attachments);
+      return;
+    }
+    replaceDraft(
+      submittedDraftClear.submission.rawInput,
+      submittedDraftClear.submission.mentions,
+    );
+    attachments.replaceAttachments(submittedDraftClear.attachments);
+    setSelectedTextCommentDraft(submittedDraftClear.submission.selectedTextComments);
+    focus();
+  }, [attachments.releaseAttachments, attachments.replaceAttachments, focus, replaceDraft, setSelectedTextCommentDraft]);
+
+  const confirmSubmittedDispatch = useCallback((): boolean => {
+    const submittedDraftClear = submittedDraftClearRef.current;
+    submittedDraftClearRef.current = null;
+    if (!submittedDraftClear) return false;
+    attachments.releaseAttachments(submittedDraftClear.attachments);
+    return true;
+  }, [attachments.releaseAttachments]);
+
   useEffect(() => {
     draftRef.current = {
       input,
@@ -291,6 +354,18 @@ export function useComposerFormController({
       codexFastMode: selection.codexFastMode,
     };
   });
+
+  useEffect(() => {
+    const submittedDraftClear = submittedDraftClearRef.current;
+    if (!submittedDraftClear) return;
+    if (
+      input === ""
+      && mentions.length === 0
+      && selectedTextComments.length === 0
+      && attachments.attachments.length === 0
+    ) return;
+    discardSubmittedDraftClear();
+  }, [attachments.attachments.length, discardSubmittedDraftClear, input, mentions.length, selectedTextComments.length]);
 
   useEffect(() => {
     submissionRevisionRef.current += 1;
@@ -334,30 +409,28 @@ export function useComposerFormController({
 
   useEffect(() => {
     if (!settingsLoaded || threadId) return;
-    setSelection((current) => {
-      const validModelId = getDefaultModelId();
-      const defaults = {
-        modelId: validModelId,
-        provider: settingsDefaultProvider ?? "claude",
-        reasoning: normalizeReasoningLevelForModel(validModelId, settingsDefaultReasoning),
-      };
-      if (agentSettingsTouchedRef.current) return { ...current, ...defaults };
-      return {
-        ...current,
-        ...defaults,
-        interactionMode:
-          settingsDefaultMode === "plan" ? INTERACTION_MODES.PLAN : INTERACTION_MODES.BUILD,
-        permissionMode: settingsDefaultPermission,
-      };
-    });
+    const validModelId = getDefaultModelId();
+    const defaults = {
+      modelId: validModelId,
+      provider: settingsDefaultProvider ?? "claude",
+      reasoning: normalizeReasoningLevelForModel(validModelId, settingsDefaultReasoning),
+    };
+    updateSelection(agentSettingsTouchedRef.current
+      ? defaults
+      : {
+          ...defaults,
+          interactionMode:
+            settingsDefaultMode === "plan" ? INTERACTION_MODES.PLAN : INTERACTION_MODES.BUILD,
+          permissionMode: settingsDefaultPermission,
+        });
   }, [
     settingsDefaultMode,
     settingsDefaultPermission,
     settingsDefaultProvider,
     settingsDefaultReasoning,
     settingsLoaded,
-    setSelection,
     threadId,
+    updateSelection,
   ]);
 
   useEffect(() => {
@@ -549,6 +622,9 @@ export function useComposerFormController({
     isUnchangedSince,
     snapshotAttachmentMetas: attachments.snapshotAttachmentMetas,
     restoreQueued,
+    clearSubmittedDraft,
+    restoreFailedDispatch,
+    confirmSubmittedDispatch,
     clear,
     focus,
   };

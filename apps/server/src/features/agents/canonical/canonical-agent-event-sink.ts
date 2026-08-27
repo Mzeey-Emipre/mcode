@@ -3326,7 +3326,7 @@ export class CanonicalAgentEventSink {
     },
   ): CanonicalAgentEventDraft {
     return {
-      eventId: `${input.executionId}:item:${item.id}`,
+      eventId: `${input.executionId}:terminal-item:${item.id}:${hashCodexKey(JSON.stringify(item))}`,
       routing: {
         threadId: input.threadId,
         turnId: input.turnId,

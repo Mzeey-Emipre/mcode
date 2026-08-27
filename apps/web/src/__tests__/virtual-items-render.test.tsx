@@ -2,9 +2,7 @@ import { memo } from "react";
 import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import {
-  buildStableItems,
-  createVolatileItemsBuilder,
-  createVirtualItemsBuilder,
+  createTranscriptItemProjector,
   type ChatVirtualItem,
 } from "@/features/conversation/messages/virtual-items";
 import type { Message, ToolCall } from "@/transport/types";
@@ -59,8 +57,7 @@ function makeToolCall(overrides: Partial<ToolCall> = {}): ToolCall {
 describe("virtual item render isolation", () => {
   it("re-renders only the typing row when final-response text changes", () => {
     renderCounts.clear();
-    const buildVolatile = createVolatileItemsBuilder();
-    const buildVirtual = createVirtualItemsBuilder();
+    const projectTranscript = createTranscriptItemProjector();
     const toolCalls = [makeToolCall()];
     const hooks = [] as const;
     const thoughts = [] as const;
@@ -68,35 +65,32 @@ describe("virtual item render isolation", () => {
       threadId: "thread-1",
       responseKey: "turn-response:thread-1:typing",
     };
-    const stable = buildStableItems([
+    const messages = [
       makeMessage({ id: "user-1", role: "user", content: "Prompt", sequence: 1 }),
       makeMessage({ id: "assistant-1", role: "assistant", sequence: 2 }),
-    ]);
-
-    const firstVolatile = buildVolatile(
+    ];
+    const firstItems = projectTranscript({
+      messages,
       toolCalls,
-      true,
-      1000,
-      "first streamed answer",
-      undefined,
+      agentDisplayState: { phase: "streaming" },
+      agentStartTime: 1000,
+      streamingText: "first streamed answer",
       hooks,
-      thoughts,
+      thoughtSegments: thoughts,
       currentTurn,
-    );
-    const firstItems = buildVirtual(stable, firstVolatile, true);
+    });
     const { rerender } = render(<ItemList items={firstItems} />);
 
-    const secondVolatile = buildVolatile(
+    const secondItems = projectTranscript({
+      messages,
       toolCalls,
-      true,
-      1000,
-      "second streamed answer",
-      undefined,
+      agentDisplayState: { phase: "streaming" },
+      agentStartTime: 1000,
+      streamingText: "second streamed answer",
       hooks,
-      thoughts,
+      thoughtSegments: thoughts,
       currentTurn,
-    );
-    const secondItems = buildVirtual(stable, secondVolatile, true);
+    });
     rerender(<ItemList items={secondItems} />);
 
     expect(renderCounts.get("narrative-flow")).toBe(1);

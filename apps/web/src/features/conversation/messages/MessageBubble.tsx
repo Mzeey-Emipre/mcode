@@ -268,6 +268,9 @@ function parseAgentError(content: string): string | null {
   return null;
 }
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import type { AgentDisplayState } from "./virtual-items";
+
+const COMPLETED_AGENT_DISPLAY_STATE: AgentDisplayState = { phase: "completed" };
 
 /** Props for {@link MessageBubble}. */
 interface MessageBubbleProps {
@@ -281,10 +284,8 @@ interface MessageBubbleProps {
   onReply?: (messageId: string, content: string, role: "user" | "assistant") => void;
   /** Called when the user clicks a quote block to scroll to the original message. */
   onScrollToMessage?: (messageId: string) => void;
-  /** Renders assistant content through the live delta adapter for the active turn. */
-  assistantStreaming?: boolean;
-  /** Controls whether persisted-message actions are interactive for assistant output. */
-  assistantActionsVisible?: boolean;
+  /** Lifecycle state that controls the visible treatment of this agent response. */
+  agentDisplayState?: AgentDisplayState;
   /** Whether a child prompt displays its parent-agent provenance label. */
   showParentAgentProvenance?: boolean;
 }
@@ -501,8 +502,7 @@ export const MessageBubble = memo(function MessageBubble({
   onBranch,
   onReply,
   onScrollToMessage,
-  assistantStreaming,
-  assistantActionsVisible = true,
+  agentDisplayState,
   showParentAgentProvenance = true,
 }: MessageBubbleProps) {
   const [imagePreviewIndex, setImagePreviewIndex] = useState<number | null>(null);
@@ -797,14 +797,20 @@ export const MessageBubble = memo(function MessageBubble({
   // with redundant role labelling (only one party in the chat besides the
   // user). Provenance — model, tokens, cost, time — now lives in one quiet
   // foot line so the body owns the top of the message.
-  const renderAssistantDelta = assistantStreaming !== undefined;
-  const assistantActionsClass = cn(
-    "flex min-h-7 flex-wrap items-center gap-x-3 gap-y-1 px-1 transition-opacity duration-150",
-    assistantActionsVisible ? "opacity-100" : "pointer-events-none opacity-0",
-  );
-  const assistantReplyContent =
+  const resolvedAgentDisplayState = agentDisplayState ?? COMPLETED_AGENT_DISPLAY_STATE;
+  const isAgentResponseComplete = resolvedAgentDisplayState.phase === "completed";
+  const isAgentResponseStreaming = resolvedAgentDisplayState.phase === "streaming";
+  const renderAgentDelta = agentDisplayState?.phase === "streaming"
+    || agentDisplayState?.phase === "finalizing";
+  const agentReplyContent =
     textContent.trim() ||
     (imageAttachments.length > 0 ? "[Generated image]" : "[Assistant message]");
+  const hasAgentMetadata = Boolean(
+    message.model || message.tokens_used != null || message.cost_usd != null || formattedTime,
+  );
+  const hasAgentActions = isAgentResponseComplete && Boolean(
+    onReply || onBranch || textContent.trim(),
+  );
 
   return (
     <div className="group/msg space-y-2" data-message-id={message.id} data-message-role={message.role} data-thread-id={message.thread_id}>
@@ -858,13 +864,13 @@ export const MessageBubble = memo(function MessageBubble({
           className="text-sm text-foreground"
           data-testid="assistant-response-text"
           data-selected-text-content
-          data-selected-text-eligible={assistantStreaming === undefined ? "true" : "false"}
+          data-selected-text-eligible={isAgentResponseComplete ? "true" : "false"}
         >
-          {renderAssistantDelta ? (
+          {renderAgentDelta ? (
             <DeltaBlock
               text={message.content}
-              isStreaming={assistantStreaming}
-              showCursor={assistantStreaming}
+              isStreaming={isAgentResponseStreaming}
+              showCursor={isAgentResponseStreaming}
             />
           ) : (
             <Suspense fallback={null}>
@@ -873,25 +879,30 @@ export const MessageBubble = memo(function MessageBubble({
           )}
         </div>
       )}
-      <div
-        className={assistantActionsClass}
-        data-testid="assistant-message-actions"
-        aria-hidden={assistantActionsVisible ? undefined : true}
-      >
-        {assistantActionsVisible && onReply && <ReplyButton onClick={() => onReply(message.id, assistantReplyContent, "assistant")} />}
-        {assistantActionsVisible && onBranch && <BranchButton onClick={() => onBranch(message.id)} />}
-        {assistantActionsVisible && textContent.trim() && <CopyButton content={textContent} />}
-        {assistantActionsVisible && (message.model || message.tokens_used != null || message.cost_usd != null || formattedTime) && (
-          <span className="ml-auto font-mono text-xs tabular-nums text-muted-foreground/55 transition-colors group-hover/msg:text-muted-foreground/80">
+      {isAgentResponseComplete && (hasAgentActions || hasAgentMetadata) && (
+        <div className="flex min-h-7 flex-wrap items-center gap-x-3 gap-y-1 px-1">
+          {hasAgentActions && (
+            <div
+              className="flex items-center gap-x-3 opacity-0 transition-opacity duration-150 group-hover/msg:opacity-100 group-focus-within/msg:opacity-100"
+              data-testid="agent-message-actions"
+            >
+              {onReply && <ReplyButton onClick={() => onReply(message.id, agentReplyContent, "assistant")} />}
+              {onBranch && <BranchButton onClick={() => onBranch(message.id)} />}
+              {textContent.trim() && <CopyButton content={textContent} />}
+            </div>
+          )}
+          {hasAgentMetadata && (
+            <span className="ml-auto font-mono text-xs tabular-nums text-muted-foreground/55" data-testid="agent-message-metadata">
             {[
               modelDisplayLabel,
               message.tokens_used != null ? `${message.tokens_used.toLocaleString()} tok` : null,
               message.cost_usd != null ? `$${message.cost_usd.toFixed(4)}` : null,
               formattedTime,
             ].filter(Boolean).join(" · ")}
-          </span>
-        )}
-      </div>
+            </span>
+          )}
+        </div>
+      )}
       <ImageAttachmentLightbox
         open={imagePreviewIndex !== null}
         onOpenChange={(open) => {

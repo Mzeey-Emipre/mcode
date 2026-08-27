@@ -48,6 +48,22 @@ function readNullableSelectionPatch<Field extends NullableSelectionField>(
   return patch[field] ?? null;
 }
 
+function hasSameComposerAgentSelection(
+  current: ComposerAgentSelection,
+  next: ComposerAgentSelection,
+): boolean {
+  return current.modelId === next.modelId
+    && current.provider === next.provider
+    && current.reasoning === next.reasoning
+    && current.interactionMode === next.interactionMode
+    && current.permissionMode === next.permissionMode
+    && current.orchestrationMode === next.orchestrationMode
+    && current.copilotAgent === next.copilotAgent
+    && current.contextWindow === next.contextWindow
+    && current.thinking === next.thinking
+    && current.codexFastMode === next.codexFastMode;
+}
+
 /** Creates the selection values used before a Composer restores a draft or thread session. */
 export function createDefaultComposerAgentSelection(): ComposerAgentSelection {
   return {
@@ -69,7 +85,7 @@ export function mergeComposerAgentSelection(
   current: ComposerAgentSelection,
   patch: Partial<ComposerAgentSelection>,
 ): ComposerAgentSelection {
-  return {
+  const next = {
     modelId: retainCurrentWhenUndefined(current.modelId, patch.modelId),
     provider: retainCurrentWhenUndefined(current.provider, patch.provider),
     reasoning: retainCurrentWhenUndefined(current.reasoning, patch.reasoning),
@@ -84,6 +100,7 @@ export function mergeComposerAgentSelection(
     thinking: readNullableSelectionPatch(current, patch, "thinking"),
     codexFastMode: readNullableSelectionPatch(current, patch, "codexFastMode"),
   };
+  return hasSameComposerAgentSelection(current, next) ? current : next;
 }
 
 /** Owns mutable agent-selection state for one Composer form. */

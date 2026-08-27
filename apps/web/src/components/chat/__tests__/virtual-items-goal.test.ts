@@ -51,7 +51,7 @@ describe("goal notices in chat virtual items", () => {
     const stableItems = buildStableItems(messages);
     const volatileItems = buildVolatileItems(
       [toolCall()],
-      false,
+      { phase: "completed" },
       1,
       "",
       [],

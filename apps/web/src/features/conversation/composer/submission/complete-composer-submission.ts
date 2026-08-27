@@ -20,8 +20,7 @@ export function completeSuccessfulComposerSubmission({
   replyContext,
   finishEditing,
 }: CompleteComposerSubmissionOptions): void {
-  const submittedFormIsCurrent = form.isUnchangedSince(submission.snapshot.revision);
-  if (submittedFormIsCurrent) form.clear("dispatch");
+  const submittedFormIsCurrent = form.confirmSubmittedDispatch();
   clearMatchingReply(threadId, replyContext);
   finishEditing();
   if (submission.goalObjective && submittedFormIsCurrent) form.setGoalPending(false);
