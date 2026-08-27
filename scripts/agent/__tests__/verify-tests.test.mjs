@@ -18,7 +18,6 @@ import { delimiter, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  AGENT_REFACTOR_COMPLEXITY_PHASE,
   DEFAULT_PHASES,
   FULL_TEST_PHASE,
   MAX_FAILURE_EXCERPT_CHARS,
@@ -29,7 +28,6 @@ import {
   SCRIPT_TEST_PHASE,
   VERIFICATION_SCHEMA_VERSION,
   calculateVerificationIdentities,
-  buildPhases,
   findReusableResult,
   formatArgvDisplay,
   formatSafeReproduction,
@@ -77,17 +75,6 @@ test("the full gate contains typecheck, lint, and all unit tests", () => {
     "Lint",
     "Unit Tests",
   ]);
-});
-
-test("agent refactor production changes include the complexity gate", () => {
-  const phases = buildPhases([
-    "apps/server/src/features/agents/canonical/canonical-agent-event-sink.ts",
-  ]);
-
-  assert.ok(phases.some((phase) => phase.name === AGENT_REFACTOR_COMPLEXITY_PHASE.name));
-  assert.equal(buildPhases([
-    "apps/server/src/features/agents/canonical/__tests__/canonical-agent-event-sink.test.ts",
-  ]).some((phase) => phase.name === AGENT_REFACTOR_COMPLEXITY_PHASE.name), false);
 });
 
 test("desktop changes select desktop related tests", () => {

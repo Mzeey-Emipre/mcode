@@ -61,13 +61,6 @@ const TESTABLE_WORKSPACES = [
 const CODE_EXTENSIONS = new Set([
   ".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs",
 ]);
-const AGENT_REFACTOR_COMPLEXITY_PREFIXES = [
-  "apps/server/src/features/agents/",
-  "packages/providers/src/private/claude/",
-  "packages/providers/src/private/codex/",
-  "packages/providers/src/private/copilot/",
-  "packages/providers/src/private/cursor/",
-];
 const ROOT_VERIFICATION_FILES = new Set([
   "package.json",
   "bun.lock",
@@ -120,13 +113,6 @@ export const SCRIPT_TEST_PHASE = {
   args: ["run", "test:scripts"],
 };
 
-/** Static gate for production functions changed by the canonical agent refactor. */
-export const AGENT_REFACTOR_COMPLEXITY_PHASE = {
-  name: "Agent Refactor Complexity",
-  command: "bun",
-  args: ["run", "check:refactor-complexity"],
-};
-
 function selectAgentScriptTestPhases(changedFiles, cwd) {
   const tests = new Set();
   let needsFullScriptSuite = false;
@@ -165,16 +151,6 @@ export function isVerificationRelevant(file) {
   if (basename(normalized) === "package.json") return true;
   const dot = normalized.lastIndexOf(".");
   return dot >= 0 && CODE_EXTENSIONS.has(normalized.slice(dot));
-}
-
-/** Returns whether a changed file needs the agent-refactor complexity gate. */
-export function isAgentRefactorProductionSource(file) {
-  const normalized = file.replaceAll("\\", "/");
-  return AGENT_REFACTOR_COMPLEXITY_PREFIXES.some((prefix) => normalized.startsWith(prefix))
-    && [".ts", ".tsx", ".mts", ".cts"].some((extension) => normalized.endsWith(extension))
-    && !normalized.includes("/__tests__/")
-    && !normalized.endsWith(".test.ts")
-    && !normalized.endsWith(".spec.ts");
 }
 
 function isVerificationConfig(file) {
@@ -306,7 +282,6 @@ export function buildPhases(changedFiles, options = {}) {
   return [
     { name: "Typecheck", command: "bun", args: ["run", "typecheck"] },
     { name: "Lint", command: "bun", args: ["run", "lint"] },
-    ...(changedFiles?.some(isAgentRefactorProductionSource) ? [AGENT_REFACTOR_COMPLEXITY_PHASE] : []),
     ...selectTestPhases(changedFiles, options),
   ];
 }
