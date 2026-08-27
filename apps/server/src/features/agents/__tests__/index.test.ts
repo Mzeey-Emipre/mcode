@@ -7,6 +7,7 @@ describe("agents feature boundary", () => {
     expect(Object.keys(agents).sort()).toStrictEqual([
       "AgentPermissionService",
       "AgentService",
+      "CanonicalAgentBoundary",
       "CanonicalAgentEventSink",
       "DelegationTargetResolver",
       "ParentAssistantTextCheckpointService",

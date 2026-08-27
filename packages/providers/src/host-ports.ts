@@ -112,7 +112,7 @@ export interface ProviderGrantPort {
 
 /** Submits bounded semantic drafts to the server-owned canonical event sink. */
 export interface ProviderEventSinkPort {
-  submit(batch: ProviderEventBatch): Promise<void>;
+  submit(batch: ProviderEventBatch): Promise<ProviderEventSubmissionReceipt>;
 }
 
 /** One bounded provider batch submitted through the canonical server sink. */
@@ -123,6 +123,28 @@ export interface ProviderEventBatch {
   phase: string;
   nativeCursor?: unknown;
   events: readonly ProviderEventDraft[];
+}
+
+/** Durable result for one provider event submission. */
+export interface ProviderEventCommitReceipt {
+  outcome: "committed" | "duplicate" | "conflict" | "ingest-overflow";
+  conversationRevision: number;
+  rosterRevision: number;
+  acceptedThrough: number;
+  durableThrough: number;
+  eventCount: number;
+}
+
+/** Delivery state for one output path after a durable submission. */
+export type ProviderEventDeliveryStatus = "published" | "deferred" | "not-required";
+
+/** Separates durable commit state from canonical and legacy delivery state. */
+export interface ProviderEventSubmissionReceipt {
+  commit: ProviderEventCommitReceipt;
+  delivery: {
+    canonical: ProviderEventDeliveryStatus;
+    legacy: ProviderEventDeliveryStatus;
+  };
 }
 
 /** Narrow server services that Provider implementations can use. */

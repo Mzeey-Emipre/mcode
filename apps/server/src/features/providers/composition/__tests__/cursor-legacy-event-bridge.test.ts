@@ -29,7 +29,7 @@ function cursorLiveEventEnvelope(): CanonicalAgentEventEnvelope {
         kind: "system",
         providerIdentities: [],
         payload: {
-          projection: "cursorLiveEvent",
+          projection: "agentLiveEvent",
           event: {
             type: "textDelta",
             threadId: "thread-1",
@@ -60,7 +60,7 @@ describe("CursorLegacyEventBridge", () => {
           ...cursorLiveEventEnvelope().payload.item,
           id: "item-2",
           payload: {
-            projection: "cursorLiveEvent",
+            projection: "agentLiveEvent",
             event: {
               type: "textDelta" as const,
               threadId: "thread-1",
@@ -84,6 +84,71 @@ describe("CursorLegacyEventBridge", () => {
     expect(consumer).toHaveBeenNthCalledWith(2, "cursor", second.payload.item.payload.event);
   });
 
+  it("delivers a committed Cursor terminal to the legacy consumer", () => {
+    const bridge = new CursorLegacyEventBridge();
+    const consumer = vi.fn();
+    bridge.register(consumer);
+    const terminal = {
+      ...cursorLiveEventEnvelope(),
+      payload: {
+        type: "item.recorded" as const,
+        item: {
+          ...cursorLiveEventEnvelope().payload.item,
+          payload: {
+            projection: "agentLiveEvent",
+            event: {
+              type: "turnComplete" as const,
+              threadId: "thread-1",
+              turnExecutionId: EXECUTION_ID,
+              reason: "end_turn",
+              costUsd: null,
+              tokensIn: 1,
+              tokensOut: 1,
+              providerId: "cursor" as const,
+            },
+          },
+        },
+      },
+    } satisfies CanonicalAgentEventEnvelope;
+
+    bridge.deliver([terminal]);
+
+    expect(consumer).toHaveBeenCalledWith("cursor", terminal.payload.item.payload.event);
+  });
+
+  it("delivers a committed Copilot terminal to the legacy consumer", () => {
+    const bridge = new CursorLegacyEventBridge();
+    const consumer = vi.fn();
+    bridge.register(consumer);
+    const terminal = {
+      ...cursorLiveEventEnvelope(),
+      sourceProviderId: "copilot" as const,
+      payload: {
+        type: "item.recorded" as const,
+        item: {
+          ...cursorLiveEventEnvelope().payload.item,
+          payload: {
+            projection: "agentLiveEvent",
+            event: {
+              type: "turnComplete" as const,
+              threadId: "thread-1",
+              turnExecutionId: EXECUTION_ID,
+              reason: "end_turn",
+              costUsd: null,
+              tokensIn: 1,
+              tokensOut: 1,
+              providerId: "copilot" as const,
+            },
+          },
+        },
+      },
+    } satisfies CanonicalAgentEventEnvelope;
+
+    bridge.deliver([terminal]);
+
+    expect(consumer).toHaveBeenCalledWith("copilot", terminal.payload.item.payload.event);
+  });
+
   it("rejects malformed routing and event identity", () => {
     const bridge = new CursorLegacyEventBridge();
     const consumer = vi.fn();
@@ -100,7 +165,7 @@ describe("CursorLegacyEventBridge", () => {
         item: {
           ...valid.payload.item,
           payload: {
-            projection: "cursorLiveEvent",
+            projection: "agentLiveEvent",
             event: {
               type: "textDelta" as const,
               threadId: "thread-1",
@@ -118,7 +183,7 @@ describe("CursorLegacyEventBridge", () => {
         item: {
           ...valid.payload.item,
           payload: {
-            projection: "cursorLiveEvent",
+            projection: "agentLiveEvent",
             event: { type: "textDelta", threadId: "thread-1", delta: 1 },
           },
         },

@@ -3,7 +3,11 @@ import {
   CanonicalAgentEventSchema,
   type CanonicalAgentEventEnvelope,
 } from "@mcode/agent-model";
-import type { ProviderEventBatch, ProviderEventSinkPort } from "../host-ports.js";
+import type {
+  ProviderEventBatch,
+  ProviderEventSinkPort,
+  ProviderEventSubmissionReceipt,
+} from "../host-ports.js";
 import type { DeterministicSinkSnapshot } from "./types.js";
 
 const TERMINAL_TYPES = new Set([
@@ -36,10 +40,11 @@ export class DeterministicCanonicalSink implements ProviderEventSinkPort {
   }
 
   /** Accepts one bounded batch and assigns canonical ordering and timestamps. */
-  async submit(batch: ProviderEventBatch): Promise<void> {
+  async submit(batch: ProviderEventBatch): Promise<ProviderEventSubmissionReceipt> {
     if (!batch || typeof batch !== "object" || !Array.isArray(batch.events)) {
       throw new TypeError("Deterministic sink batch is invalid");
     }
+    const acceptedBefore = this.accepted.length;
     for (const draft of batch.events) {
       CanonicalAgentEventSchema.parse(draft.payload);
       if (draft.routing.threadId !== batch.threadId || draft.routing.turnId !== batch.turnId || draft.routing.executionId !== batch.executionId) {
@@ -63,6 +68,21 @@ export class DeterministicCanonicalSink implements ProviderEventSinkPort {
       if (TERMINAL_TYPES.has(draft.payload.type)) this.terminalType = draft.payload.type;
       this.acceptEnvelope(draft);
     }
+    return {
+      commit: {
+        outcome: this.terminalType === "ingest.overflow"
+          ? "ingest-overflow"
+          : this.accepted.length === acceptedBefore
+            ? "duplicate"
+            : "committed",
+        conversationRevision: this.accepted.length,
+        rosterRevision: 0,
+        acceptedThrough: this.accepted.length,
+        durableThrough: this.accepted.length,
+        eventCount: this.accepted.length - acceptedBefore,
+      },
+      delivery: { canonical: "published", legacy: "not-required" },
+    };
   }
 
   /** Returns an immutable snapshot of accepted events and bounded diagnostics. */

@@ -27,7 +27,7 @@ function cursorLiveEventEnvelope(): CanonicalAgentEventEnvelope {
         kind: "system",
         providerIdentities: [],
         payload: {
-          projection: "cursorLiveEvent",
+          projection: "agentLiveEvent",
           event: {
             type: "textDelta",
             threadId: "thread-1",
@@ -94,7 +94,7 @@ describe("createProviderHostPorts", () => {
       threadControl: {},
       grants: {},
       events: { commit },
-      cursorLegacyEvents: { deliver },
+      legacyEvents: { deliver },
     } as never);
     const batch = {
       threadId: "thread-1",
@@ -104,11 +104,22 @@ describe("createProviderHostPorts", () => {
       events: [],
     };
 
-    await ports.events.submit(batch);
+    const receipt = await ports.events.submit(batch);
 
     expect(commit).toHaveBeenCalledWith({ ...batch, nativeCursor: undefined });
     expect(deliver).toHaveBeenCalledWith(events);
     expect(deliveryOrder).toEqual(["commit", "deliver"]);
+    expect(receipt).toEqual({
+      commit: {
+        outcome: "committed",
+        conversationRevision: 1,
+        rosterRevision: 0,
+        acceptedThrough: 1,
+        durableThrough: 1,
+        eventCount: 1,
+      },
+      delivery: { canonical: "published", legacy: "published" },
+    });
   });
 
   it("does not deliver duplicate or failed canonical commits", async () => {
@@ -118,6 +129,7 @@ describe("createProviderHostPorts", () => {
       .fn()
       .mockReturnValueOnce({
         outcome: "duplicate",
+        canonicalDelivery: "not-required",
         conversationRevision: 1,
         rosterRevision: 0,
         acceptedThrough: 1,
@@ -134,7 +146,7 @@ describe("createProviderHostPorts", () => {
       threadControl: {},
       grants: {},
       events: { commit },
-      cursorLegacyEvents: { deliver },
+      legacyEvents: { deliver },
     } as never);
     const batch = {
       threadId: "thread-1",
@@ -144,9 +156,47 @@ describe("createProviderHostPorts", () => {
       events: [],
     };
 
-    await ports.events.submit(batch);
+    const duplicate = await ports.events.submit(batch);
 
     await expect(ports.events.submit(batch)).rejects.toThrow("commit failed");
+    expect(duplicate).toMatchObject({
+      commit: { outcome: "duplicate" },
+      delivery: { canonical: "not-required", legacy: "not-required" },
+    });
     expect(deliver).not.toHaveBeenCalled();
+  });
+
+  it("keeps a durable commit visible when either publication path is deferred", async () => {
+    const events = [cursorLiveEventEnvelope()];
+    const commit = vi.fn(() => ({
+      outcome: "committed" as const,
+      canonicalDelivery: "deferred" as const,
+      conversationRevision: 1,
+      rosterRevision: 0,
+      acceptedThrough: 1,
+      durableThrough: 1,
+      events,
+    }));
+    const deliver = vi.fn(() => { throw new Error("legacy delivery failed"); });
+    const ports = createProviderHostPorts({
+      envService: { getEnv: () => ({ PATH: "test" }) },
+      jobObject: { isWindowsJob: false },
+      browser: {},
+      threadControl: {},
+      grants: {},
+      events: { commit },
+      legacyEvents: { deliver },
+    } as never);
+
+    await expect(ports.events.submit({
+      threadId: "thread-1",
+      turnId: "turn-1",
+      executionId: EXECUTION_ID,
+      phase: "streaming",
+      events: [],
+    })).resolves.toMatchObject({
+      commit: { outcome: "committed", eventCount: 1 },
+      delivery: { canonical: "deferred", legacy: "deferred" },
+    });
   });
 });

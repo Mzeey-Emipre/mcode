@@ -1,5 +1,5 @@
 import { inject, injectable } from "tsyringe";
-import { CanonicalAgentEventSink } from "../canonical/canonical-agent-event-sink.js";
+import { CanonicalAgentBoundary } from "../canonical/canonical-agent-boundary.js";
 import { MessageRepo } from "../conversation/persistence/message-repo.js";
 import { ParentAssistantTextCheckpointService } from "../turns/parent-assistant-text-checkpoint-service.js";
 import { NarrativeStore } from "../conversation/narrative/narrative-store.js";
@@ -16,7 +16,7 @@ const UNPROVED_EXECUTION_REASON =
 @injectable()
 export class TurnRecoveryService {
   constructor(
-    @inject(CanonicalAgentEventSink) private readonly canonicalSink: CanonicalAgentEventSink,
+    @inject(CanonicalAgentBoundary) private readonly canonicalSink: CanonicalAgentBoundary,
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
     @inject(AttachmentService) private readonly attachmentService: AttachmentService,
     @inject(ParentAssistantTextCheckpointService)

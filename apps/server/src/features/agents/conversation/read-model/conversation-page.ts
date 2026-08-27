@@ -13,20 +13,20 @@ import { CONVERSATION_TAIL_MAX_MESSAGES } from "@mcode/contracts";
 import type { MessageRepo } from "../persistence/message-repo.js";
 import type { NarrativeStore } from "../narrative/narrative-store.js";
 import type { PlanQuestionAnswersRepo } from "../../planning/persistence/plan-question-answers-repo.js";
-import type { CanonicalAgentEventSink } from "../../index.js";
+import type { CanonicalAgentBoundary } from "../../canonical/canonical-agent-boundary.js";
 
 /** Dependencies needed to load one paginated conversation page. */
 export interface ConversationPageDeps {
   messageRepo: MessageRepo;
   narrativeStore: NarrativeStore;
   planQuestionAnswersRepo: PlanQuestionAnswersRepo;
-  canonicalSink?: Pick<CanonicalAgentEventSink, "loadConversationProjection">;
+  canonicalSink?: Pick<CanonicalAgentBoundary, "loadConversationProjection">;
 }
 
 /** Dependencies needed to load a bounded conversation tail. */
 export interface ConversationTailDeps {
   messageRepo: MessageRepo;
-  canonicalSink?: Pick<CanonicalAgentEventSink, "loadConversationProjection">;
+  canonicalSink?: Pick<CanonicalAgentBoundary, "loadConversationProjection">;
 }
 
 /** Merges compatibility and canonical messages into the newest bounded window. */

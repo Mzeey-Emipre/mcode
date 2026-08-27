@@ -12,7 +12,7 @@ import { ThoughtSegmentRepo } from "../../../../features/agents/conversation/nar
 import { ToolCallRecordRepo } from "../../../../features/agents/tools/persistence/tool-call-record-repo.js";
 import { loadConversationPage } from "../../../../features/agents/conversation/read-model/conversation-page.js";
 import { NarrativeStore } from "../../../../features/agents/conversation/narrative/narrative-store.js";
-import { CanonicalAgentEventSink } from "../../../../features/agents/canonical/canonical-agent-event-sink.js";
+import { CanonicalAgentBoundary } from "../../../../features/agents/canonical/canonical-agent-boundary.js";
 import {
   PARENT_ASSISTANT_TEXT_RETAINED_LIMITS,
   ParentAssistantTextCheckpointService,
@@ -778,7 +778,7 @@ function seedCheckpointProfileExecution(
     "INSERT INTO threads (id, workspace_id, title, branch, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
   ).run(threadId, WORKSPACE_ID, "SQLite checkpoint profile", "main", FIXED_TIMESTAMP, FIXED_TIMESTAMP);
   const messages = new MessageRepo(db);
-  new CanonicalAgentEventSink(db, () => undefined).startParentTurn({
+  new CanonicalAgentBoundary(db, () => undefined).startParentTurn({
     thread: {
       id: threadId,
       workspaceId: WORKSPACE_ID,
@@ -875,7 +875,7 @@ async function writeActiveTurn(db: Database.Database): Promise<NonNullable<SQLit
   const toolRepo = new ToolCallRecordRepo(db);
   const thoughtRepo = new ThoughtSegmentRepo(db);
   const hookRepo = new HookExecutionRepo(db);
-  const sink = new CanonicalAgentEventSink(db, () => undefined);
+  const sink = new CanonicalAgentBoundary(db, () => undefined);
   const executionId = "00000000-0000-4000-8000-000000000001";
   const turnId = "sqlite-profile-turn";
   sink.startParentTurn({

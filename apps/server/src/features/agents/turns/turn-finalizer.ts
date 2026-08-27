@@ -30,7 +30,7 @@ import type { NarrativeStore } from "../conversation/narrative/narrative-store.j
 import type { TurnOutcome } from "./turn-outcome.js";
 import type { TurnFileTracker } from "./turn-file-tracker.js";
 import type { TurnFileEffectSummary } from "@mcode/contracts";
-import type { CanonicalAgentEventSink } from "../canonical/canonical-agent-event-sink.js";
+import type { CanonicalAgentBoundary } from "../canonical/canonical-agent-boundary.js";
 import type { ParentAssistantTextCheckpointService } from "./parent-assistant-text-checkpoint-service.js";
 import { deriveTurnAssistantMessageId } from "./turn-assistant-message-id.js";
 
@@ -77,7 +77,7 @@ export class TurnFinalizer {
     private readonly turnSnapshotRepo: TurnSnapshotRepo,
     private readonly db: Database.Database,
     private readonly turnFileTracker?: TurnFileTracker,
-    private readonly canonicalSink?: CanonicalAgentEventSink,
+  private readonly canonicalSink?: CanonicalAgentBoundary,
     private readonly parentAssistantTextCheckpoints?: ParentAssistantTextCheckpointService,
   ) {}
 

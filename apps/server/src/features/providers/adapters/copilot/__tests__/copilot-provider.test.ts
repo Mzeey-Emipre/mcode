@@ -1,6 +1,7 @@
 import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
 import type { AgentEvent } from "@mcode/contracts";
+import type { ProviderEventBatch, ProviderHostPorts } from "@mcode/providers";
 import { MCODE_BROWSER_GUIDE } from "@mcode/thread-orchestration";
 
 // ---------------------------------------------------------------------------
@@ -299,6 +300,40 @@ describe("CopilotProvider bootstrap", () => {
     expect(lease.credentials.size()).toBe(0);
   });
 
+  it("starts an ordinary turn when thread-control was not granted", async () => {
+    mockClient.getState.mockReturnValue("connected");
+    mockClient.createSession.mockResolvedValue(makeMockSession());
+    const threadControl = {
+      createHttpConnection: vi.fn().mockResolvedValue(undefined),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    const provider = new CopilotProvider(
+      makeSettingsService() as any,
+      stubJobObject(),
+      stubEnvService(),
+      undefined,
+      threadControl as any,
+    );
+
+    await provider.sendTurn({
+      turnExecutionId: "ordinary-execution",
+      sessionId: "mcode-ordinary-copilot",
+      workspaceId: "workspace-test",
+      threadId: "ordinary-copilot",
+      message: "reply normally",
+      cwd: "/tmp",
+      model: "gpt-4o",
+      interactionMode: "build",
+      providerOptions: {},
+      permissionMode: "supervised",
+    });
+
+    const config = mockClient.createSession.mock.calls[0]![0];
+    expect(config.mcpServers).not.toHaveProperty("mcode_internal_thread_control");
+    expect(config.systemMessage.content).not.toContain("mcode_internal_thread_control");
+    await provider.stopSession("mcode-ordinary-copilot");
+  });
+
   it("recreates a pooled session after its browser lease is revoked externally", async () => {
     mockClient.getState.mockReturnValue("connected");
     const firstSession = makeMockSession();
@@ -595,6 +630,57 @@ async function runWithMockSession(
 
   return { events };
 }
+
+describe("CopilotProvider canonical host delivery", () => {
+  it("submits a terminal through the canonical host without direct EventEmitter delivery", async () => {
+    vi.clearAllMocks();
+    mockClient.getState.mockReturnValue("connected");
+    const session = makeMockSession();
+    mockClient.createSession.mockResolvedValue(session);
+    session.send.mockImplementation(async () => {
+      session.fire("session.idle");
+    });
+    const submit = vi.fn<(batch: ProviderEventBatch) => Promise<void>>().mockResolvedValue(undefined);
+    const provider = new CopilotProvider(
+      makeSettingsService() as any,
+      stubJobObject(),
+      stubEnvService(),
+      undefined,
+      makeThreadControlMcp() as any,
+      { events: { submit } } as ProviderHostPorts,
+    );
+    const directEvents = vi.fn();
+    provider.on("event", directEvents);
+
+    await provider.sendTurn({
+      turnId: "turn-canonical",
+      turnExecutionId: "test-execution",
+      sessionId: "mcode-canonical-copilot",
+      workspaceId: "workspace-1",
+      threadId: "canonical-copilot",
+      message: "hello",
+      cwd: "/tmp",
+      model: "gpt-4.1",
+      permissionMode: "supervised",
+      interactionMode: "build",
+      providerOptions: {},
+    });
+
+    await vi.waitFor(() => expect(submit.mock.calls.flatMap(([batch]) => batch.events)
+      .some((event) => event.payload.type === "item.recorded"
+        && event.payload.item.payload.event.type === "turnComplete")).toBe(true));
+    const submittedEvents = submit.mock.calls.flatMap(([batch]) => batch.events)
+      .map((event) => event.payload.type === "item.recorded" ? event.payload.item.payload.event : undefined);
+
+    expect(provider.eventDelivery).toBe("canonical-sink");
+    expect(directEvents).not.toHaveBeenCalled();
+    expect(submittedEvents).toContainEqual(expect.objectContaining({
+      type: "turnComplete",
+      providerId: "copilot",
+      turnExecutionId: "test-execution",
+    }));
+  });
+});
 
 /**
  * Resolve once an "ended" AgentEvent has been pushed, or after a bounded number

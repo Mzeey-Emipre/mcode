@@ -46,6 +46,7 @@
     "verify": "bun scripts/agent/verify-tests.mjs --full",
     "preverify:changed": "bun run deps:ensure",
     "verify:changed": "bun scripts/agent/verify-tests.mjs",
+    "check:refactor-complexity": "bun scripts/agent/check-refactor-complexity.mjs",
     "audit:baseline": "bun scripts/security/check-bun-audit-baseline.mjs",
     "test:scripts": "bun scripts/agent/test-scripts.mjs"
   },

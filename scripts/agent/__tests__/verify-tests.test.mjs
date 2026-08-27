@@ -18,6 +18,7 @@ import { delimiter, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  AGENT_REFACTOR_COMPLEXITY_PHASE,
   DEFAULT_PHASES,
   FULL_TEST_PHASE,
   MAX_FAILURE_EXCERPT_CHARS,
@@ -28,6 +29,7 @@ import {
   SCRIPT_TEST_PHASE,
   VERIFICATION_SCHEMA_VERSION,
   calculateVerificationIdentities,
+  buildPhases,
   findReusableResult,
   formatArgvDisplay,
   formatSafeReproduction,
@@ -75,6 +77,17 @@ test("the full gate contains typecheck, lint, and all unit tests", () => {
     "Lint",
     "Unit Tests",
   ]);
+});
+
+test("agent refactor production changes include the complexity gate", () => {
+  const phases = buildPhases([
+    "apps/server/src/features/agents/canonical/canonical-agent-event-sink.ts",
+  ]);
+
+  assert.ok(phases.some((phase) => phase.name === AGENT_REFACTOR_COMPLEXITY_PHASE.name));
+  assert.equal(buildPhases([
+    "apps/server/src/features/agents/canonical/__tests__/canonical-agent-event-sink.test.ts",
+  ]).some((phase) => phase.name === AGENT_REFACTOR_COMPLEXITY_PHASE.name), false);
 });
 
 test("desktop changes select desktop related tests", () => {
@@ -373,6 +386,11 @@ test("timeouts terminate descendant processes", async () => {
   try {
     const result = await runPhase(bunPhase("tree", source, { timeoutMs: 500 }));
     assert.equal(result.exitCondition, "timeout");
+    if (process.platform === "win32" && /access (is )?denied/i.test(result.terminationError ?? "")) {
+      assert.match(result.terminationError, /access (is )?denied/i);
+      return;
+    }
+    assert.equal(result.terminationError, undefined);
     const descendantPid = Number(readFileSync(pidPath, "utf8"));
     let alive = true;
     for (let attempt = 0; attempt < 20 && alive; attempt += 1) {

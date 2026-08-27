@@ -17,6 +17,7 @@ import { stubEnvService } from "../../../../../runtime/environment/__tests__/stu
 import { stubJobObject } from "../../../../../runtime/process/containment/__tests__/stub-job-object.js";
 import { queryMethodStubs } from "./helpers/mock-sdk-query.js";
 import { AgentEventType } from "@mcode/contracts";
+import type { ProviderEventBatch, ProviderHostPorts } from "@mcode/providers";
 
 /** Build a minimal mock Query that yields one non-result message (so sessionInitialized=true), then the requested result. */
 function mockSdkStream(results: Array<Record<string, unknown>>) {
@@ -138,5 +139,51 @@ describe("ClaudeProvider result is_error handling (#293)", () => {
     expect(events.some((e) => e.type === AgentEventType.TurnComplete)).toBe(false);
     // Partial assistant text is dropped because the result errored out
     expect(events.some((e) => e.type === AgentEventType.Message)).toBe(false);
+  });
+
+  it("submits Claude terminal evidence through the canonical host without direct EventEmitter delivery", async () => {
+    const submit = vi.fn<(batch: ProviderEventBatch) => Promise<void>>().mockResolvedValue(undefined);
+    provider = new ClaudeProvider(
+      stubEnvService(),
+      stubJobObject(),
+      undefined,
+      undefined,
+      undefined,
+      { events: { submit } } as ProviderHostPorts,
+    );
+    mockQuery.mockImplementation(mockSdkStream([
+      { type: "result", is_error: true, errors: ["rate_limit_exceeded"] },
+    ]));
+    const directEvents = vi.fn();
+    provider.on("event", directEvents);
+
+    await provider.sendTurn({
+      turnId: "turn-4",
+      turnExecutionId: "test-execution",
+      sessionId: "mcode-thread-4",
+      workspaceId: "workspace-1",
+      threadId: "thread-4",
+      message: "hi",
+      cwd: "/tmp",
+      model: "claude-sonnet-4-6",
+      permissionMode: "default",
+      interactionMode: "build",
+      providerOptions: {},
+    });
+
+    await vi.waitFor(() => expect(submit.mock.calls.flatMap(([batch]) => batch.events)
+      .some((event) => event.payload.type === "item.recorded"
+        && event.payload.item.payload.event.type === AgentEventType.Error)).toBe(true));
+    const submittedEvents = submit.mock.calls.flatMap(([batch]) => batch.events)
+      .map((event) => event.payload.type === "item.recorded" ? event.payload.item.payload.event : undefined);
+
+    expect(provider.eventDelivery).toBe("canonical-sink");
+    expect(directEvents).not.toHaveBeenCalled();
+    expect(submittedEvents).toContainEqual(expect.objectContaining({
+      type: AgentEventType.Error,
+      error: "rate_limit_exceeded",
+      turnExecutionId: "test-execution",
+    }));
+    expect(submittedEvents).not.toContainEqual(expect.objectContaining({ type: AgentEventType.TurnComplete }));
   });
 });

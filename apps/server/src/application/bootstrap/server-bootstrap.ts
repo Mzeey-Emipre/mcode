@@ -59,7 +59,7 @@ import {
 import {
   AgentPermissionService,
   AgentService,
-  CanonicalAgentEventSink,
+  CanonicalAgentBoundary,
   TurnRecoveryService,
   startAgentOrchestration,
 } from "../../features/agents";
@@ -310,7 +310,7 @@ const toolCallRecordRepo = container.resolve(ToolCallRecordRepo);
 const thoughtSegmentRepo = container.resolve(ThoughtSegmentRepo);
 const hookExecutionRepo = container.resolve(HookExecutionRepo);
 const narrativeStore = container.resolve(NarrativeStore);
-const canonicalSink = container.resolve(CanonicalAgentEventSink);
+const canonicalSink = container.resolve(CanonicalAgentBoundary);
 const legacyConversationMigration = container.resolve(LegacyConversationMigration);
 const turnSnapshotRepo = container.resolve(TurnSnapshotRepo);
 const snapshotService = container.resolve(SnapshotService);

@@ -6,6 +6,11 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const testDirectory = resolve(process.cwd(), "scripts", "agent", "__tests__");
+const NODE_RUNTIME_TEST_FILES = new Set([
+  "electron-live-testing.test.mjs",
+  "frontend-performance-runner.test.mjs",
+  "packaged-windows-acceleration-runner.test.mjs",
+]);
 
 /** Finds maintained agent test files and fails closed when none exist. */
 export function discoverAgentTestFiles(directory) {
@@ -21,7 +26,13 @@ export function discoverAgentTestFiles(directory) {
 const invokedScript = process.argv[1] ? resolve(process.argv[1]) : null;
 if (invokedScript === resolve(fileURLToPath(import.meta.url))) {
   for (const file of discoverAgentTestFiles(testDirectory)) {
-    const result = spawnSync(process.execPath, ["test", resolve(testDirectory, file)], {
+    const testFile = resolve(testDirectory, file);
+    // Bun cannot read the skill module under this worktree's Windows ACLs.
+    const command = NODE_RUNTIME_TEST_FILES.has(file) ? "node" : process.execPath;
+    const argumentsForCommand = NODE_RUNTIME_TEST_FILES.has(file)
+      ? ["--test", testFile]
+      : ["test", testFile];
+    const result = spawnSync(command, argumentsForCommand, {
       cwd: process.cwd(),
       stdio: "inherit",
       windowsHide: true,

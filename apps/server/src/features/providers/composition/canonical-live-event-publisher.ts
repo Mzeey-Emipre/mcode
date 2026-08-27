@@ -1,44 +1,44 @@
-import { AgentEventType } from "@mcode/contracts";
-import type { AgentEvent } from "@mcode/contracts";
-import type { ProviderIdentity } from "@mcode/agent-model";
-import type { ProviderEventDraft, ProviderEventSinkPort } from "../../host-ports.js";
+import { AgentEventType, type AgentEvent, type ProviderIdentity, type ProviderId } from "@mcode/contracts";
+import type { ProviderEventBatch, ProviderEventSinkPort } from "@mcode/providers";
 
 const MAX_PENDING_EVENTS_PER_EXECUTION = 1_024;
 
-/** Identifies the canonical turn execution that owns Cursor live events. */
-export interface CursorCanonicalEventRouting {
+/** Identifies the canonical turn execution that owns provider live events. */
+export interface CanonicalLiveEventRouting {
   threadId: string;
   turnId: string;
   executionId: string;
   deliveryAttempt: number;
 }
 
-interface CursorExecutionQueue {
+interface ProviderExecutionQueue {
   nextSourceSequence: number;
   pendingEventCount: number;
   tail: Promise<void>;
   failure: Error | undefined;
 }
 
-/** Serializes Cursor live events into canonical item drafts for one execution. */
-export class CursorCanonicalEventPublisher {
-  private readonly queues = new Map<string, CursorExecutionQueue>();
+/** Serializes one provider's live events into canonical drafts for an execution. */
+export class CanonicalLiveEventPublisher {
+  private readonly queues = new Map<string, ProviderExecutionQueue>();
 
-  constructor(private readonly sink: ProviderEventSinkPort) {}
+  constructor(
+    private readonly providerId: ProviderId,
+    private readonly sink: ProviderEventSinkPort,
+  ) {}
 
-  /** Queues one Cursor event without exposing a legacy EventEmitter path. */
+  /** Queues one provider event without exposing a direct legacy EventEmitter path. */
   publish(
-    routing: CursorCanonicalEventRouting,
+    routing: CanonicalLiveEventRouting,
     event: AgentEvent,
     sourceIdentities: readonly ProviderIdentity[],
   ): void {
     const queue = this.queueFor(routing);
     if (queue.failure) return;
     if (queue.pendingEventCount >= MAX_PENDING_EVENTS_PER_EXECUTION) {
-      queue.failure = new Error(`Cursor canonical event queue overflowed for execution ${routing.executionId}`);
+      queue.failure = new Error(`${this.providerId} canonical event queue overflowed for execution ${routing.executionId}`);
       return;
     }
-
     const sourceSequence = queue.nextSourceSequence;
     queue.nextSourceSequence += 1;
     queue.pendingEventCount += 1;
@@ -63,7 +63,7 @@ export class CursorCanonicalEventPublisher {
   }
 
   /** Waits for all queued drafts, then reports a sink failure to the caller. */
-  async waitForExecution(routing: CursorCanonicalEventRouting): Promise<void> {
+  async waitForExecution(routing: CanonicalLiveEventRouting): Promise<void> {
     const key = this.queueKey(routing);
     const queue = this.queues.get(key);
     if (!queue) return;
@@ -72,11 +72,11 @@ export class CursorCanonicalEventPublisher {
     if (queue.failure) throw queue.failure;
   }
 
-  private queueFor(routing: CursorCanonicalEventRouting): CursorExecutionQueue {
+  private queueFor(routing: CanonicalLiveEventRouting): ProviderExecutionQueue {
     const key = this.queueKey(routing);
     const existing = this.queues.get(key);
     if (existing) return existing;
-    const queue: CursorExecutionQueue = {
+    const queue: ProviderExecutionQueue = {
       nextSourceSequence: 1,
       pendingEventCount: 0,
       tail: Promise.resolve(),
@@ -86,18 +86,18 @@ export class CursorCanonicalEventPublisher {
     return queue;
   }
 
-  private queueKey(routing: CursorCanonicalEventRouting): string {
+  private queueKey(routing: CanonicalLiveEventRouting): string {
     return `${routing.executionId}:attempt:${routing.deliveryAttempt}`;
   }
 
   private createDraft(
-    routing: CursorCanonicalEventRouting,
+    routing: CanonicalLiveEventRouting,
     event: AgentEvent,
     sourceIdentities: readonly ProviderIdentity[],
     sourceSequence: number,
-  ): ProviderEventDraft {
-    const eventId = `cursor:${routing.executionId}:attempt:${routing.deliveryAttempt}:event:${sourceSequence}`;
-    const itemId = `cursor:${routing.executionId}:attempt:${routing.deliveryAttempt}:item:${sourceSequence}`;
+  ): ProviderEventBatch["events"][number] {
+    const eventId = `${this.providerId}:${routing.executionId}:attempt:${routing.deliveryAttempt}:event:${sourceSequence}`;
+    const itemId = `${this.providerId}:${routing.executionId}:attempt:${routing.deliveryAttempt}:item:${sourceSequence}`;
     const timestamp = new Date().toISOString();
     return {
       eventId,
@@ -107,7 +107,7 @@ export class CursorCanonicalEventPublisher {
         executionId: routing.executionId,
         itemId,
       },
-      sourceProviderId: "cursor",
+      sourceProviderId: this.providerId,
       sourceIdentities,
       sourceSequence,
       providerTimestamp: timestamp,

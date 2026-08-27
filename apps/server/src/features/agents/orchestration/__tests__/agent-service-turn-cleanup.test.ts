@@ -4,7 +4,12 @@ import { EventEmitter } from "events";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AgentEventType } from "@mcode/contracts";
+import {
+  AgentEventType,
+  createAgentModelState,
+  reduceAgentEventBatch,
+  type CanonicalAgentEventEnvelope,
+} from "@mcode/contracts";
 import type {
   AgentEvent,
   AttachmentMeta,
@@ -1360,11 +1365,13 @@ describe("AgentService Ended finalization", () => {
     interruptChildTurn: ReturnType<typeof vi.fn>;
   };
   let canonicalSink: CanonicalAgentEventSink;
+  let canonicalEvents: CanonicalAgentEventEnvelope[];
   let service: AgentService;
 
   beforeEach(() => {
     vi.clearAllMocks();
     db = openMemoryDatabase();
+    canonicalEvents = [];
     threadRepo = new RealThreadRepo(db);
     workspaceRepo = new RealWorkspaceRepo(db);
     messageRepo = new RealMessageRepo(db);
@@ -1419,7 +1426,9 @@ describe("AgentService Ended finalization", () => {
       listAnsweredForThread: vi.fn(() => []),
     } as unknown as PlanQuestionAnswersRepo;
 
-    canonicalSink = new CanonicalAgentEventSink(db, vi.fn());
+    canonicalSink = new CanonicalAgentEventSink(db, (events) => {
+      canonicalEvents.push(...events);
+    });
     service = new AgentService(
       threadRepo,
       workspaceRepo,
@@ -1925,7 +1934,7 @@ describe("AgentService Ended finalization", () => {
     }));
   });
 
-  it("persists a known provider Error as an errored turn outcome", async () => {
+  it("keeps a provider Error consistent across canonical, legacy, and renderer state", async () => {
     const workspace = workspaceRepo.create("Test", process.cwd());
     const thread = threadRepo.create(workspace.id, "Test thread", "direct", "main", true, "codex");
 
@@ -1954,10 +1963,91 @@ describe("AgentService Ended finalization", () => {
     await vi.waitFor(() => expect(canonicalSink.loadCheckpoint(executionId)?.terminalOutcome).toBe("errored"));
 
     const { messages } = messageRepo.listByThread(thread.id, 10);
-    expect(messages.find((message) => message.role === "assistant")).toMatchObject({
+    const assistant = messages.find((message) => message.role === "assistant");
+    expect(assistant).toMatchObject({
       outcome: "errored",
       outcomeExecutionId: executionId,
     });
     expect(canonicalSink.loadTurnByExecution(executionId)?.status).toBe("Errored");
+    expect(canonicalSink.loadConversationProjection(thread.id, 10).messages)
+      .toContainEqual(expect.objectContaining({ id: assistant?.id, outcome: "errored" }));
+    expect(reduceAgentEventBatch(createAgentModelState(), canonicalEvents)).toMatchObject({
+      outcome: "applied",
+      state: {
+        turns: {
+          [canonicalSink.loadTurnByExecution(executionId)!.id]: expect.objectContaining({
+            status: "Errored",
+          }),
+        },
+      },
+    });
+    expect(broadcast).toHaveBeenCalledWith("turn.persisted", expect.objectContaining({
+      threadId: thread.id,
+      messageId: assistant?.id,
+      outcome: "errored",
+      executionId,
+    }));
+  });
+
+  it("keeps a completed turn completed when a provider sends a late error", async () => {
+    const workspace = workspaceRepo.create("Test", process.cwd());
+    const thread = threadRepo.create(workspace.id, "Completed thread", "direct", "main", true, "codex");
+
+    await service.sendMessage({
+      threadId: thread.id,
+      content: "complete this turn",
+      permissionMode: "default",
+      model: "gpt-5",
+      attachments: [],
+      provider: "codex",
+    });
+    const executionId = activeExecutionId(service, thread.id);
+    providerEmitter.emit("event", {
+      type: AgentEventType.Message,
+      threadId: thread.id,
+      turnExecutionId: executionId,
+      content: "completed answer",
+      tokens: null,
+    } satisfies AgentEvent);
+    providerEmitter.emit("event", {
+      type: AgentEventType.TurnComplete,
+      threadId: thread.id,
+      turnExecutionId: executionId,
+      reason: "end_turn",
+      costUsd: null,
+      tokensIn: 1,
+      tokensOut: 1,
+      providerId: "codex",
+    } satisfies AgentEvent);
+
+    await vi.waitFor(() => expect(canonicalSink.loadCheckpoint(executionId)?.terminalOutcome).toBe("completed"));
+    providerEmitter.emit("event", {
+      type: AgentEventType.Error,
+      threadId: thread.id,
+      turnExecutionId: executionId,
+      error: "late provider failure",
+    } satisfies AgentEvent);
+
+    const turn = canonicalSink.loadTurnByExecution(executionId);
+    const assistant = messageRepo.listByThread(thread.id, 10).messages
+      .find((message) => message.role === "assistant");
+    expect(turn?.status).toBe("Completed");
+    expect(assistant).toMatchObject({ outcome: "completed", outcomeExecutionId: executionId });
+    expect(canonicalSink.loadConversationProjection(thread.id, 10).messages)
+      .toContainEqual(expect.objectContaining({ id: assistant?.id, outcome: "completed" }));
+    expect(reduceAgentEventBatch(createAgentModelState(), canonicalEvents)).toMatchObject({
+      outcome: "applied",
+      state: {
+        turns: {
+          [turn!.id]: expect.objectContaining({ status: "Completed" }),
+        },
+      },
+    });
+    expect(broadcast).toHaveBeenCalledWith("turn.persisted", expect.objectContaining({
+      threadId: thread.id,
+      messageId: assistant?.id,
+      outcome: "completed",
+      executionId,
+    }));
   });
 });

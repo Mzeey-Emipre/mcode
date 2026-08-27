@@ -6,17 +6,17 @@ import { ProviderRegistry } from "./provider-registry.js";
 import { createProviderHostPorts } from "./provider-host-ports.js";
 import { BrowserAutomationSessionLease } from "../../browser-automation/index.js";
 import { InternalThreadControlMcpRuntime } from "../../thread-control/index.js";
-import { CanonicalAgentEventSink } from "../../agents/index.js";
+import { CanonicalAgentBoundary } from "../../agents/index.js";
 import { ScopedPreGrantService } from "../../agents/permissions/scoped-pre-grant.js";
 import { EnvService } from "../../../runtime/environment/env-service.js";
 import type { JobObject } from "../../../runtime/process/containment/job-object.js";
-import { CursorLegacyEventBridge } from "./cursor-legacy-event-bridge.js";
+import { CanonicalLegacyEventBridge } from "./canonical-legacy-event-bridge.js";
 
 /** Register provider adapters, the provider registry, and provider host ports. */
 export function registerProviderAdapters(container: DependencyContainer): void {
   container.register(
-    CursorLegacyEventBridge,
-    { useClass: CursorLegacyEventBridge },
+    CanonicalLegacyEventBridge,
+    { useClass: CanonicalLegacyEventBridge },
     { lifecycle: Lifecycle.Singleton },
   );
   container.register(
@@ -50,8 +50,8 @@ export function registerProviderAdapters(container: DependencyContainer): void {
       browser: c.resolve(BrowserAutomationSessionLease),
       threadControl: c.resolve(InternalThreadControlMcpRuntime),
       grants: c.resolve(ScopedPreGrantService),
-      events: c.resolve(CanonicalAgentEventSink),
-      cursorLegacyEvents: c.resolve(CursorLegacyEventBridge),
+      events: c.resolve(CanonicalAgentBoundary),
+      legacyEvents: c.resolve(CanonicalLegacyEventBridge),
     }),
   });
 }
