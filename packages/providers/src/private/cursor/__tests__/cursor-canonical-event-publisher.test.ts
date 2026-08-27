@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { AgentEventRoutingSchema } from "@mcode/agent-model";
 import { AgentEventType } from "@mcode/contracts";
 import type { ProviderEventBatch, ProviderEventSinkPort } from "../../../host-ports.js";
 import {
@@ -9,7 +10,7 @@ import {
 const routing: CursorCanonicalEventRouting = {
   threadId: "thread-1",
   turnId: "turn-1",
-  executionId: "execution-1",
+  executionId: "00000000-0000-4000-8000-000000000001",
   deliveryAttempt: 1,
 };
 
@@ -49,16 +50,23 @@ describe("CursorCanonicalEventPublisher", () => {
       executionId: routing.executionId,
       phase: "running",
       events: [{
-        eventId: "cursor:execution-1:attempt:1:event:1",
+        eventId: `cursor:${routing.executionId}:attempt:1:event:1`,
         sourceSequence: 1,
         ingestClass: "volatile",
-        routing: { itemId: "cursor:execution-1:attempt:1:item:1" },
+        routing: { itemId: `cursor:${routing.executionId}:attempt:1:item:1` },
         payload: { type: "item.recorded" },
       }],
     });
+    expect(textBatch.events[0]?.routing).toEqual({
+      threadId: routing.threadId,
+      turnId: routing.turnId,
+      executionId: routing.executionId,
+      itemId: `cursor:${routing.executionId}:attempt:1:item:1`,
+    });
+    AgentEventRoutingSchema.parse(textBatch.events[0]?.routing);
     expect(terminalBatch).toMatchObject({
       events: [{
-        eventId: "cursor:execution-1:attempt:1:event:2",
+        eventId: `cursor:${routing.executionId}:attempt:1:event:2`,
         sourceSequence: 2,
         payload: { type: "item.recorded" },
       }],
@@ -102,8 +110,8 @@ describe("CursorCanonicalEventPublisher", () => {
     await publisher.waitForExecution(retryRouting);
 
     expect(submit.mock.calls.map(([batch]) => batch.events[0]?.eventId)).toEqual([
-      "cursor:execution-1:attempt:1:event:1",
-      "cursor:execution-1:attempt:2:event:1",
+      `cursor:${routing.executionId}:attempt:1:event:1`,
+      `cursor:${routing.executionId}:attempt:2:event:1`,
     ]);
   });
 });

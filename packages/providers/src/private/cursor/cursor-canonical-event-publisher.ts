@@ -101,7 +101,12 @@ export class CursorCanonicalEventPublisher {
     const timestamp = new Date().toISOString();
     return {
       eventId,
-      routing: { ...routing, itemId },
+      routing: {
+        threadId: routing.threadId,
+        turnId: routing.turnId,
+        executionId: routing.executionId,
+        itemId,
+      },
       sourceProviderId: "cursor",
       sourceIdentities,
       sourceSequence,
