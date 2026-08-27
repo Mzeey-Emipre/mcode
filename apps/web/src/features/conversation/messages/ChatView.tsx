@@ -16,7 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { MessageList } from "./MessageList";
-import { SavingDelayedDialog } from "./SavingDelayedDialog";
+import { SavingDelayedDialog } from "../saving/SavingDelayedDialog";
 import type { SubagentRosterTarget } from "../narrative";
 import { ConversationHoldOverlay } from "@/components/chat/ConversationHoldOverlay";
 import { Composer } from "../composer/Composer";
@@ -42,16 +42,15 @@ import { McodeLogo } from "@/components/brand/McodeLogo";
 import { NewThreadProjectPicker } from "@/components/chat/NewThreadProjectPicker";
 import {
   recordFirstMessageVisible,
-  recordSubscriptionSkipped,
   recordThreadHoldEnd,
   recordThreadHoldStart,
 } from "@/lib/thread-switch-telemetry";
 import {
   MAX_THREAD_SUBSCRIPTIONS,
   type SelectedTextComment,
-  type SetThreadSubscriptionsInput,
   type TurnRecovery,
 } from "@mcode/contracts";
+import { useThreadSubscriptionReconciler } from "../subscriptions/useThreadSubscriptionReconciler";
 
 const EMPTY_DISPLAYED_THREAD_IDS: readonly string[] = [];
 
@@ -62,30 +61,6 @@ function subscribeDisplayedConversations(listener: () => void): () => void {
 function getDisplayedConversationSnapshot(): readonly string[] {
   return getConversationResidency().getDisplayConversationSnapshot();
 }
-
-/** Entry point suggestions shown in the empty state — each maps to a real Mcode capability. */
-const ENTRY_POINTS = [
-  {
-    label: "Start agent in new worktree",
-    description: "Isolated branch, no stash needed",
-    prompt: "Start a new worktree and run an agent to ",
-  },
-  {
-    label: "Run agent on this branch",
-    description: "Direct mode, commits to current branch",
-    prompt: "On the current branch, ",
-  },
-  {
-    label: "Orchestrate parallel tasks",
-    description: "Multiple agents, one goal",
-    prompt: "Spawn parallel agents to ",
-  },
-  {
-    label: "Review open PRs",
-    description: "Diff + summary for each",
-    prompt: "List and summarize open pull requests in this repo",
-  },
-] as const;
 
 const NEW_THREAD_STARTERS = [
   {
@@ -109,37 +84,6 @@ const NEW_THREAD_STARTERS = [
     icon: Bug,
   },
 ] as const;
-
-/** Props for {@link EmptyState}. */
-interface EmptyStateProps {
-  /** Called when the user clicks an entry point — prefills the composer. */
-  onPromptSelect: (text: string) => void;
-}
-
-/** Centered empty state selling Mcode's multi-agent, worktree-based value. */
-function EmptyState({ onPromptSelect }: EmptyStateProps) {
-  return (
-    <div className="flex flex-col items-center justify-center gap-8 px-8 text-center">
-      <div className="flex flex-col items-center gap-3">
-        <span aria-hidden="true" className="font-mono text-[36px] leading-none text-muted-foreground/15">⊕</span>
-        <p className="font-mono text-[10.5px] uppercase tracking-[0.18em] text-muted-foreground/55">no messages yet</p>
-      </div>
-      <div className="grid grid-cols-2 gap-2 w-full max-w-sm">
-        {ENTRY_POINTS.map((ep) => (
-          <button
-            key={ep.label}
-            type="button"
-            onClick={() => onPromptSelect(ep.prompt)}
-            className="flex flex-col items-start gap-0.5 rounded-lg border border-border/40 bg-muted/20 px-3 py-2.5 text-left transition-colors hover:border-border/70 hover:bg-muted/40"
-          >
-            <span className="text-xs font-medium text-foreground/80">{ep.label}</span>
-            <span className="text-xs text-muted-foreground/60">{ep.description}</span>
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
 
 /** Premium blank-thread welcome that turns common coding tasks into composer prefills. */
 function NewThreadWelcome({
@@ -294,16 +238,6 @@ function ThreadPreparingShell({
   );
 }
 const CACHE_PRESSURE_BYTES = 20 * 1024 * 1024; // 20 MB
-const THREAD_SUBSCRIPTION_RETRY_BASE_MS = 100;
-const THREAD_SUBSCRIPTION_RETRY_MAX_MS = 1_600;
-const THREAD_SUBSCRIPTION_MAX_RETRIES = 4;
-
-type ThreadSubscriptionAction = "subscribe" | "unsubscribe";
-type AtomicSubscriptionRequest = {
-  epoch: number;
-  signature: string;
-  id: number;
-};
 
 /** Keeps a cold switch target visible without rendering stale transcript content. */
 function ConversationTransitionState({
@@ -610,313 +544,22 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
     }
   }, [connectionStatus]);
 
+  const desiredThreadIds = useMemo(() => [
+    ...(activeThreadId ? [activeThreadId] : []),
+    ...displayedThreadIds,
+    ...Array.from(runningThreadIds).filter((threadId) => threadId !== activeThreadId).sort(),
+  ].filter((threadId, index, threadIds) => threadIds.indexOf(threadId) === index)
+    .slice(0, MAX_THREAD_SUBSCRIPTIONS), [activeThreadId, displayedThreadIds, runningThreadIds]);
+
+  useThreadSubscriptionReconciler({
+    activeThreadId,
+    desiredThreadIds,
+    connectionStatus,
+    runningThreadIds,
+    canonicalRecoverySignature,
+  });
+
   const prevThreadIdRef = useRef<string | null>(null);
-  const confirmedThreadIdsRef = useRef<Set<string>>(new Set());
-  const desiredThreadIdsRef = useRef<Set<string>>(new Set());
-  const pendingThreadChangesRef = useRef<Map<string, symbol>>(new Map());
-  const previousSubscriptionStatusRef = useRef<typeof connectionStatus | null>(null);
-  const subscriptionEpochRef = useRef(0);
-  const subscriptionRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const subscriptionRetryAttemptRef = useRef(0);
-  const subscriptionRetryExhaustedRef = useRef(false);
-  const subscriptionTargetSignatureRef = useRef("");
-  const atomicSubscriptionRequestIdRef = useRef(0);
-  const atomicSubscriptionRequestRef = useRef<AtomicSubscriptionRequest | null>(null);
-  const pendingAtomicThreadIdsRef = useRef<Map<number, string[]>>(new Map());
-  const subscriptionMountedRef = useRef(true);
-  const [subscriptionReconcileVersion, setSubscriptionReconcileVersion] = useState(0);
-
-  useEffect(() => {
-    const orderedDesiredThreadIds = [
-      ...(activeThreadId ? [activeThreadId] : []),
-      ...displayedThreadIds,
-      ...Array.from(runningThreadIds).filter((threadId) => threadId !== activeThreadId).sort(),
-    ].filter((threadId, index, threadIds) => threadIds.indexOf(threadId) === index)
-      .slice(0, MAX_THREAD_SUBSCRIPTIONS);
-    const desired = new Set(orderedDesiredThreadIds);
-    desiredThreadIdsRef.current = desired;
-
-    const targetSignature = `${connectionStatus}:${orderedDesiredThreadIds.join("\u0000")}`;
-    if (subscriptionTargetSignatureRef.current !== targetSignature) {
-      subscriptionTargetSignatureRef.current = targetSignature;
-      subscriptionRetryAttemptRef.current = 0;
-      subscriptionRetryExhaustedRef.current = false;
-      if (subscriptionRetryTimerRef.current !== null) {
-        clearTimeout(subscriptionRetryTimerRef.current);
-        subscriptionRetryTimerRef.current = null;
-      }
-    }
-
-    const reconnected = connectionStatus === "connected"
-      && previousSubscriptionStatusRef.current !== "connected";
-    const disconnected = connectionStatus !== "connected"
-      && previousSubscriptionStatusRef.current === "connected";
-    if (reconnected || disconnected) {
-      subscriptionEpochRef.current += 1;
-      confirmedThreadIdsRef.current.clear();
-      pendingThreadChangesRef.current.clear();
-    }
-    previousSubscriptionStatusRef.current = connectionStatus;
-
-    if (connectionStatus !== "connected" || subscriptionRetryExhaustedRef.current) return;
-
-    const epoch = subscriptionEpochRef.current;
-    const setThreadSubscriptions = getTransport().setThreadSubscriptions;
-    if (setThreadSubscriptions) {
-      const sortedThreadIds = orderedDesiredThreadIds;
-      const sentThreadIds = new Set(sortedThreadIds);
-      const confirmed = confirmedThreadIdsRef.current;
-      const needsCanonicalRecovery = sortedThreadIds.some((threadId) =>
-        readThreadRecord(threadId).canonicalAgent.recoveryRequired
-      );
-      const alreadyApplied = confirmed.size === desired.size
-        && Array.from(confirmed).every((threadId) => desired.has(threadId))
-        && !needsCanonicalRecovery;
-      const pending = atomicSubscriptionRequestRef.current;
-      if (alreadyApplied) {
-        const telemetryThreadId = activeThreadId ?? sortedThreadIds[0];
-        if (telemetryThreadId) recordSubscriptionSkipped(telemetryThreadId);
-        return;
-      }
-      if (pending?.epoch === epoch) return;
-      const requestId = atomicSubscriptionRequestIdRef.current + 1;
-      atomicSubscriptionRequestIdRef.current = requestId;
-      atomicSubscriptionRequestRef.current = {
-        epoch,
-        signature: targetSignature,
-        id: requestId,
-      };
-      pendingAtomicThreadIdsRef.current.set(requestId, sortedThreadIds);
-      const cursors: NonNullable<SetThreadSubscriptionsInput["cursors"]> = {};
-      const revisions: NonNullable<SetThreadSubscriptionsInput["revisions"]> = {};
-      const cursorAuthority = new Map<string, { epoch?: string; sequence?: number }>();
-      for (const threadId of sortedThreadIds) {
-        const record = readThreadRecord(threadId);
-        revisions[threadId] = record.canonicalAgent.revision;
-        const sequence = record.lastAgentEventSequence;
-        if (typeof sequence === "number" && sequence > 0) {
-          cursorAuthority.set(threadId, {
-            epoch: record.lastAgentEventEpoch,
-            sequence,
-          });
-          cursors[threadId] = record.lastAgentEventEpoch
-            ? { epoch: record.lastAgentEventEpoch, sequence }
-            : sequence;
-        }
-      }
-      const input = Object.keys(cursors).length > 0
-        ? { threadIds: sortedThreadIds, cursors, revisions }
-        : { threadIds: sortedThreadIds, revisions };
-      const isCurrentAtomicResponse = () => {
-        const currentRequest = atomicSubscriptionRequestRef.current;
-        const latestDesired = desiredThreadIdsRef.current;
-        return subscriptionMountedRef.current
-          && subscriptionEpochRef.current === epoch
-          && currentRequest?.epoch === epoch
-          && currentRequest?.id === requestId
-          && currentRequest?.signature === targetSignature
-          && subscriptionTargetSignatureRef.current === targetSignature
-          && latestDesired.size === sentThreadIds.size
-          && Array.from(latestDesired).every((threadId) => sentThreadIds.has(threadId));
-      };
-      void setThreadSubscriptions(input).then((result) => {
-        if (!isCurrentAtomicResponse()) return;
-        const canonicalRecoveries = result?.canonicalRecoveries ?? [];
-        if (canonicalRecoveries.length > 0) {
-          useThreadStore.getState().applyCanonicalReconnectRecoveries(canonicalRecoveries);
-        }
-        const residency = getConversationResidency();
-        for (const recovery of canonicalRecoveries) {
-          const requested = revisions[recovery.threadId];
-          const through = recovery.mode === "snapshot"
-            ? recovery.snapshot.revision
-            : recovery.through;
-          const changed = recovery.mode === "snapshot"
-            || !requested
-            || through.conversationRevision > requested.conversationRevision
-            || through.rosterRevision > requested.rosterRevision;
-          if (!changed) continue;
-          residency.invalidateConversation(recovery.threadId);
-          if (recovery.threadId === activeThreadId) {
-            void residency.refresh(
-              activeThreadId,
-              useWorkspaceStore.getState().threads,
-            ).catch(() => {});
-          }
-        }
-        if (result?.hydrationRequiredThreadIds?.length) {
-          for (const threadId of result.hydrationRequiredThreadIds) {
-            const expected = cursorAuthority.get(threadId);
-            if (!isCurrentAtomicResponse()) return;
-            useThreadStore.setState((state) => {
-              const record = state.records.get(threadId);
-              if (!record) return state;
-              const stillOwnsCursor = expected?.epoch
-                ? record.lastAgentEventEpoch === expected.epoch
-                  && record.lastAgentEventSequence === expected.sequence
-                : record.lastAgentEventEpoch === undefined
-                  && record.lastAgentEventSequence === expected?.sequence;
-              if (!stillOwnsCursor) return state;
-              const records = new Map(state.records);
-              records.set(threadId, {
-                ...record,
-                lastAgentEventEpoch: undefined,
-                lastAgentEventSequence: undefined,
-              });
-              return { records };
-            });
-            if (!isCurrentAtomicResponse()) return;
-            residency.invalidateConversation(threadId);
-            if (threadId === activeThreadId && runningThreadIds.has(threadId)) {
-              if (!isCurrentAtomicResponse()) return;
-              void residency.refresh(threadId, useWorkspaceStore.getState().threads).catch(() => {});
-            }
-          }
-        }
-        if (!isCurrentAtomicResponse()) return;
-        confirmedThreadIdsRef.current = sentThreadIds;
-        subscriptionRetryAttemptRef.current = 0;
-        subscriptionRetryExhaustedRef.current = false;
-      }).catch(() => {
-        if (!subscriptionMountedRef.current || subscriptionEpochRef.current !== epoch) return;
-        const currentRequest = atomicSubscriptionRequestRef.current;
-        if (currentRequest?.epoch !== epoch || currentRequest.id !== requestId) return;
-        if (subscriptionTargetSignatureRef.current !== targetSignature) return;
-        if (subscriptionRetryAttemptRef.current >= THREAD_SUBSCRIPTION_MAX_RETRIES) {
-          subscriptionRetryExhaustedRef.current = true;
-          return;
-        }
-        const delay = Math.min(
-          THREAD_SUBSCRIPTION_RETRY_BASE_MS * (2 ** subscriptionRetryAttemptRef.current),
-          THREAD_SUBSCRIPTION_RETRY_MAX_MS,
-        );
-        subscriptionRetryAttemptRef.current += 1;
-        subscriptionRetryTimerRef.current = setTimeout(() => {
-          subscriptionRetryTimerRef.current = null;
-          if (subscriptionMountedRef.current) {
-            setSubscriptionReconcileVersion((version) => version + 1);
-          }
-        }, delay);
-      }).finally(() => {
-        pendingAtomicThreadIdsRef.current.delete(requestId);
-        if (atomicSubscriptionRequestRef.current?.epoch === epoch
-          && atomicSubscriptionRequestRef.current.id === requestId) {
-          atomicSubscriptionRequestRef.current = null;
-          if (subscriptionMountedRef.current
-            && subscriptionEpochRef.current === epoch
-            && subscriptionTargetSignatureRef.current !== targetSignature) {
-            setSubscriptionReconcileVersion((version) => version + 1);
-          }
-        }
-      });
-      return;
-    }
-
-    const operations: Promise<boolean>[] = [];
-    const startChange = (threadId: string, action: ThreadSubscriptionAction) => {
-      const change = Symbol();
-      pendingThreadChangesRef.current.set(threadId, change);
-      const request = action === "subscribe"
-        ? getTransport().subscribeThread(threadId)
-        : getTransport().unsubscribeThread(threadId);
-
-      operations.push(request.then(() => {
-        if (subscriptionEpochRef.current !== epoch) return true;
-        if (action === "subscribe") confirmedThreadIdsRef.current.add(threadId);
-        else confirmedThreadIdsRef.current.delete(threadId);
-        return true;
-      }, () => false).finally(() => {
-        if (pendingThreadChangesRef.current.get(threadId) === change) {
-          pendingThreadChangesRef.current.delete(threadId);
-        }
-      }));
-    };
-
-    for (const threadId of desired) {
-      if (!confirmedThreadIdsRef.current.has(threadId)
-        && !pendingThreadChangesRef.current.has(threadId)) {
-        startChange(threadId, "subscribe");
-      }
-    }
-    for (const threadId of confirmedThreadIdsRef.current) {
-      if (!desired.has(threadId) && !pendingThreadChangesRef.current.has(threadId)) {
-        startChange(threadId, "unsubscribe");
-      }
-    }
-
-    if (operations.length === 0) return;
-
-    void Promise.all(operations).then((results) => {
-      if (!subscriptionMountedRef.current || subscriptionEpochRef.current !== epoch) return;
-      if (subscriptionTargetSignatureRef.current !== targetSignature) {
-        setSubscriptionReconcileVersion((version) => version + 1);
-        return;
-      }
-
-      if (results.every(Boolean)) {
-        subscriptionRetryAttemptRef.current = 0;
-        subscriptionRetryExhaustedRef.current = false;
-        const confirmed = confirmedThreadIdsRef.current;
-        const latestDesired = desiredThreadIdsRef.current;
-        const needsReconcile = confirmed.size !== latestDesired.size
-          || Array.from(confirmed).some((threadId) => !latestDesired.has(threadId));
-        if (needsReconcile) {
-          setSubscriptionReconcileVersion((version) => version + 1);
-        }
-        return;
-      }
-
-      if (subscriptionRetryAttemptRef.current >= THREAD_SUBSCRIPTION_MAX_RETRIES) {
-        subscriptionRetryExhaustedRef.current = true;
-        return;
-      }
-
-      const delay = Math.min(
-        THREAD_SUBSCRIPTION_RETRY_BASE_MS * (2 ** subscriptionRetryAttemptRef.current),
-        THREAD_SUBSCRIPTION_RETRY_MAX_MS,
-      );
-      subscriptionRetryAttemptRef.current += 1;
-      subscriptionRetryTimerRef.current = setTimeout(() => {
-        subscriptionRetryTimerRef.current = null;
-        if (subscriptionMountedRef.current) {
-          setSubscriptionReconcileVersion((version) => version + 1);
-        }
-      }, delay);
-    });
-  }, [activeThreadId, canonicalRecoverySignature, connectionStatus, displayedThreadIds, runningThreadIds, subscriptionReconcileVersion]);
-
-  useEffect(() => {
-    subscriptionMountedRef.current = true;
-    return () => {
-      subscriptionMountedRef.current = false;
-      const pendingAtomicThreadIds = Array.from(pendingAtomicThreadIdsRef.current.values()).flat();
-      subscriptionEpochRef.current += 1;
-      if (subscriptionRetryTimerRef.current !== null) {
-        clearTimeout(subscriptionRetryTimerRef.current);
-        subscriptionRetryTimerRef.current = null;
-      }
-      const threadIds = new Set([
-        ...confirmedThreadIdsRef.current,
-        ...desiredThreadIdsRef.current,
-        ...pendingAtomicThreadIds,
-      ]);
-      if (threadIds.size > 0) {
-        const setThreadSubscriptions = getTransport().setThreadSubscriptions;
-        if (setThreadSubscriptions) {
-          void setThreadSubscriptions({ threadIds: [] }).catch(() => {});
-        } else {
-          for (const threadId of threadIds) {
-            void getTransport().unsubscribeThread(threadId).catch(() => {});
-          }
-        }
-      }
-      confirmedThreadIdsRef.current.clear();
-      desiredThreadIdsRef.current.clear();
-      pendingThreadChangesRef.current.clear();
-      pendingAtomicThreadIdsRef.current.clear();
-    };
-  }, []);
-
   useLayoutEffect(() => {
     // Only evict Blink's resource cache when it exceeds the pressure threshold.
     // Avoids unnecessary re-fetches on routine thread switches.
@@ -997,7 +640,6 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
   const conversationLoading = hydratedThreadId !== activeThreadId || historyLoading;
   const showHold = displayHoldThreadId !== null && !targetPaintable;
   const showTransition = conversationLoading && !targetPaintable && !showHold && !isAgentRunning;
-  const showEmptyState = !hasMessages && !isAgentRunning && !conversationLoading && !showHold;
   const showFullConversationError = showConversationError && !hasMessages && !isAgentRunning;
   const showConversationErrorBanner = showConversationError && (hasMessages || isAgentRunning);
 
@@ -1130,10 +772,6 @@ export function ChatView({ onSubagentSelect, onOpenSubagents }: ChatViewProps = 
           />
         ) : showFullConversationError ? (
           <ConversationErrorState error={sessionError ?? ""} />
-        ) : showEmptyState ? (
-          <div className="flex h-full items-center justify-center">
-            <EmptyState onPromptSelect={setPendingPrefill} />
-          </div>
         ) : (
           <MessageList
             leadingContent={automaticSetupTranscriptBlock}

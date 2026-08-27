@@ -97,7 +97,7 @@ describe("MessageBubble", () => {
     render(
       <MessageBubble
         message={createAssistantMessage()}
-        assistantStreaming
+        agentDisplayState={{ phase: "streaming" }}
       />,
     );
 

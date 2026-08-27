@@ -373,6 +373,15 @@ describe("ChatView - Thread Title Double-Click Rename", () => {
     expect(screen.queryByTestId("chat-header-title-input")).not.toBeInTheDocument();
   });
 
+  it("keeps an empty selected thread free of starter suggestions", () => {
+    render(<ChatView />);
+
+    expect(screen.getByTestId("message-list")).toBeInTheDocument();
+    expect(screen.getByTestId("composer")).toBeInTheDocument();
+    expect(screen.queryByText("no messages yet")).not.toBeInTheDocument();
+    expect(screen.queryByText("Start agent in new worktree")).not.toBeInTheDocument();
+  });
+
   it("offers explicit Retry without Resume and starts the selected new execution", async () => {
     chatViewTransportMock.listTurnRecoveries.mockResolvedValue([{
       threadId: "thread-1",

@@ -5,14 +5,16 @@ import {
   buildVirtualItems,
   createVolatileItemsBuilder,
   createVirtualItemsBuilder,
-  estimateItemHeight,
-  STREAMING_CARD_COLLAPSED_HEIGHT,
-  assistantMessageItemKey,
+  agentDisplayStateFromRuntimePhase,
+  agentMessageItemKey,
   liveFinalResponseItemKey,
 } from "@/features/conversation/messages/virtual-items";
 import type { ChatVirtualItem } from "@/features/conversation/messages/virtual-items";
 import type { ThoughtSegment } from "@/features/conversation/narrative/types";
 import type { Message, ToolCall, HookExecution, ToolCallRecord, HookExecutionRecord } from "@/transport/types";
+
+const STREAMING_AGENT = { phase: "streaming" } as const;
+const COMPLETED_AGENT = { phase: "completed" } as const;
 
 function makeMessage(overrides: Partial<Message> = {}): Message {
   return {
@@ -81,15 +83,27 @@ function buildAll(
   messages: readonly Message[],
   toolCalls: readonly ToolCall[],
   streamingText: string | undefined,
-  isAgentRunning: boolean,
+  agentDisplayState: typeof STREAMING_AGENT | typeof COMPLETED_AGENT,
   agentStartTime: number | undefined,
 ): ChatVirtualItem[] {
   const stable = buildStableItems(messages);
-  const volatile = buildVolatileItems(toolCalls, isAgentRunning, agentStartTime, streamingText);
+  const volatile = buildVolatileItems(toolCalls, agentDisplayState, agentStartTime, streamingText);
   return buildVirtualItems(stable, volatile, toolCalls.length > 0);
 }
 
 describe("buildStableItems", () => {
+  it("maps each runtime phase into an explicit agent display state", () => {
+    expect(agentDisplayStateFromRuntimePhase("running")).toEqual({ phase: "streaming" });
+    expect(agentDisplayStateFromRuntimePhase("finalizing")).toEqual({ phase: "finalizing" });
+    expect(agentDisplayStateFromRuntimePhase("completed")).toEqual({ phase: "completed" });
+    expect(agentDisplayStateFromRuntimePhase("errored", "Provider request failed")).toEqual({
+      phase: "errored",
+      reason: "Provider request failed",
+    });
+    expect(agentDisplayStateFromRuntimePhase("cancelled")).toEqual({ phase: "cancelled" });
+    expect(agentDisplayStateFromRuntimePhase("interrupted")).toEqual({ phase: "interrupted" });
+  });
+
   it("does not emit empty persisted chrome before records are loaded", () => {
     const messages: Message[] = [
       makeMessage({ id: "u1", role: "user", content: "hi" }),
@@ -159,7 +173,7 @@ describe("buildStableItems", () => {
     });
   });
 
-  it("shows actions for a terminal canonical current assistant without legacy file metadata", () => {
+  it("projects a completed current agent response without file-change metadata", () => {
     const items = buildStableItems(
       [makeMessage({ id: "a1", content: "completed response" })],
       {},
@@ -181,11 +195,11 @@ describe("buildStableItems", () => {
     expect(items).toContainEqual(expect.objectContaining({
       type: "message",
       message: expect.objectContaining({ id: "a1" }),
-      assistantState: { isStreaming: false, actionsVisible: true },
+      agentDisplayState: { phase: "completed" },
     }));
   });
 
-  it("keeps actions hidden for an incomplete current assistant", () => {
+  it("projects finalizing state for the current agent response", () => {
     const items = buildStableItems(
       [makeMessage({ id: "a1", content: "partial response" })],
       {},
@@ -195,16 +209,48 @@ describe("buildStableItems", () => {
         messageId: "a1",
         responseKey: "turn-response:thread-1:incomplete",
       },
+      undefined,
+      undefined,
+      { phase: "finalizing" },
     );
 
     expect(items).toContainEqual(expect.objectContaining({
       type: "message",
       message: expect.objectContaining({ id: "a1" }),
-      assistantState: { isStreaming: false, actionsVisible: false },
+      agentDisplayState: { phase: "finalizing" },
     }));
   });
 
-  it("keeps legacy persisted current assistants actionable", () => {
+  it("keeps prior agent responses completed while the next response streams", () => {
+    const items = buildStableItems(
+      [
+        makeMessage({ id: "a1", sequence: 1, content: "Earlier response" }),
+        makeMessage({ id: "a2", sequence: 2, content: "Current response" }),
+      ],
+      undefined,
+      undefined,
+      {
+        threadId: "thread-1",
+        messageId: "a2",
+        responseKey: "turn-response:thread-1:current",
+        responseKeysByMessageId: {
+          a1: "turn-response:thread-1:earlier",
+          a2: "turn-response:thread-1:current",
+        },
+      },
+      undefined,
+      undefined,
+      STREAMING_AGENT,
+    );
+
+    const prior = items.find((item) => item.type === "message" && item.message.id === "a1");
+    const current = items.find((item) => item.type === "message" && item.message.id === "a2");
+
+    expect(prior).toMatchObject({ agentDisplayState: { phase: "completed" } });
+    expect(current).toMatchObject({ agentDisplayState: { phase: "streaming" } });
+  });
+
+  it("projects completed state for legacy persisted current agent responses", () => {
     const items = buildStableItems(
       [makeMessage({ id: "a1", content: "persisted response" })],
       { a1: [] },
@@ -219,15 +265,14 @@ describe("buildStableItems", () => {
     expect(items).toContainEqual(expect.objectContaining({
       type: "message",
       message: expect.objectContaining({ id: "a1" }),
-      assistantState: { isStreaming: false, actionsVisible: true },
+      agentDisplayState: { phase: "completed" },
     }));
   });
 });
-
 describe("final response item keys", () => {
   it("derives the same key before and after the assistant message persists", () => {
     const liveKey = liveFinalResponseItemKey("thread-1", "turn-response:thread-1:abc");
-    const persistedKey = assistantMessageItemKey(
+    const persistedKey = agentMessageItemKey(
       makeMessage({ id: "persisted-msg", thread_id: "thread-1" }),
       {
         threadId: "thread-1",
@@ -240,13 +285,13 @@ describe("final response item keys", () => {
   });
 
   it("falls back to the persisted message id outside the active turn", () => {
-    expect(assistantMessageItemKey(makeMessage({ id: "persisted-msg" }))).toBe(
+    expect(agentMessageItemKey(makeMessage({ id: "persisted-msg" }))).toBe(
       "persisted-msg",
     );
   });
 
   it("keeps the inherited key after the active turn marker is cleared", () => {
-    const persistedKey = assistantMessageItemKey(
+    const persistedKey = agentMessageItemKey(
       makeMessage({ id: "persisted-msg", thread_id: "thread-1" }),
       {
         threadId: "thread-1",
@@ -263,7 +308,7 @@ describe("final response item keys", () => {
 describe("buildVolatileItems", () => {
   it("returns narrative-flow item when agent is running with tool calls", () => {
     const toolCalls = [makeToolCall({ id: "t1" })];
-    const items = buildVolatileItems(toolCalls, true, 1000, undefined);
+    const items = buildVolatileItems(toolCalls, STREAMING_AGENT, 1000, undefined);
     const narrativeItem = items.find((i) => i.type === "narrative-flow") as Extract<(typeof items)[number], { type: "narrative-flow" }> | undefined;
     expect(narrativeItem).toBeDefined();
     expect(narrativeItem?.isAgentRunning).toBe(true);
@@ -271,30 +316,43 @@ describe("buildVolatileItems", () => {
   });
 
   it("returns empty array when no tool calls and agent not running", () => {
-    const items = buildVolatileItems([], false, undefined, undefined);
+    const items = buildVolatileItems([], COMPLETED_AGENT, undefined, undefined);
     expect(items).toHaveLength(0);
   });
 
   it("returns empty array when streaming text is present but agent not running and no tool calls", () => {
     // With the narrative-flow consolidation, streaming text alone (no active agent, no tool calls)
     // does not produce a volatile item.
-    const items = buildVolatileItems([], false, undefined, "partial...");
+    const items = buildVolatileItems([], COMPLETED_AGENT, undefined, "partial...");
     expect(items).toHaveLength(0);
   });
 
   it("keeps final-response text in the live assistant item when agent is running", () => {
-    const items = buildVolatileItems([], true, 1000, "streaming...");
+    const items = buildVolatileItems([], STREAMING_AGENT, 1000, "streaming...");
     const narrativeItem = items.find((i) => i.type === "narrative-flow") as Extract<(typeof items)[number], { type: "narrative-flow" }> | undefined;
     expect(narrativeItem).toBeDefined();
     expect(narrativeItem?.streamingText).toBe("");
     expect(narrativeItem?.isAgentRunning).toBe(true);
-    const liveMessage = items.find((i) => i.type === "message" && i.assistantState?.isStreaming) as Extract<(typeof items)[number], { type: "message" }> | undefined;
+    const liveMessage = items.find((i) => i.type === "message" && i.agentDisplayState?.phase === "streaming") as Extract<(typeof items)[number], { type: "message" }> | undefined;
     expect(liveMessage?.message.content).toBe("streaming...");
+  });
+
+  it("retains finalizing state on a live response row", () => {
+    const items = buildVolatileItems([], { phase: "finalizing" }, 1000, "settling...");
+    const liveMessage = items.find(
+      (item) => item.type === "message" && item.agentDisplayState?.phase === "finalizing",
+    );
+
+    expect(liveMessage).toMatchObject({
+      type: "message",
+      message: { content: "settling..." },
+      agentDisplayState: { phase: "finalizing" },
+    });
   });
 
   it("passes thoughtSegments through on narrative-flow items", () => {
     const thoughtSegments: ThoughtSegment[] = [{ text: "planning", startedAt: 42, endedAt: 100 }];
-    const items = buildVolatileItems([makeToolCall({ id: "t1" })], true, 1000, undefined, undefined, [], thoughtSegments);
+    const items = buildVolatileItems([makeToolCall({ id: "t1" })], STREAMING_AGENT, 1000, undefined, undefined, [], thoughtSegments);
     const narrativeItem = items.find((i) => i.type === "narrative-flow") as Extract<
       (typeof items)[number],
       { type: "narrative-flow" }
@@ -308,7 +366,7 @@ describe("buildVolatileItems", () => {
     ];
     const items = buildVolatileItems(
       [],
-      true,
+      STREAMING_AGENT,
       1000,
       "codex narration",
       undefined,
@@ -321,7 +379,7 @@ describe("buildVolatileItems", () => {
         (i) =>
           i.type === "message" &&
           i.message.role === "assistant" &&
-          i.assistantState?.isStreaming,
+          i.agentDisplayState?.phase === "streaming",
       ),
     ).toBe(false);
     const narrativeItem = items.find((i) => i.type === "narrative-flow") as Extract<
@@ -343,7 +401,7 @@ describe("buildVolatileItems", () => {
 
     const first = build(
       toolCalls,
-      true,
+      STREAMING_AGENT,
       1000,
       "answer",
       undefined,
@@ -353,7 +411,7 @@ describe("buildVolatileItems", () => {
     );
     const second = build(
       toolCalls,
-      true,
+      STREAMING_AGENT,
       1000,
       "answer",
       undefined,
@@ -380,7 +438,7 @@ describe("buildVolatileItems", () => {
 
     const first = build(
       toolCalls,
-      true,
+      STREAMING_AGENT,
       1000,
       "answer one",
       undefined,
@@ -390,7 +448,7 @@ describe("buildVolatileItems", () => {
     );
     const second = build(
       toolCalls,
-      true,
+      STREAMING_AGENT,
       1000,
       "answer two",
       undefined,
@@ -407,9 +465,9 @@ describe("buildVolatileItems", () => {
       first.find((item) => item.type === "narrative-indicator"),
     );
     expect(
-      second.find((item) => item.type === "message" && item.assistantState?.isStreaming),
+      second.find((item) => item.type === "message" && item.agentDisplayState?.phase === "streaming"),
     ).not.toBe(
-      first.find((item) => item.type === "message" && item.assistantState?.isStreaming),
+      first.find((item) => item.type === "message" && item.agentDisplayState?.phase === "streaming"),
     );
   });
 });
@@ -418,7 +476,7 @@ describe("buildVirtualItems (combined)", () => {
   it("memoized splicer returns the same array for unchanged stable and volatile inputs", () => {
     const build = createVirtualItemsBuilder();
     const stable = buildStableItems([makeMessage({ id: "msg-1" })]);
-    const volatile = buildVolatileItems([], true, 1000, "typing");
+    const volatile = buildVolatileItems([], STREAMING_AGENT, 1000, "typing");
 
     const first = build(stable, volatile, false);
     const second = build(stable, volatile, false);
@@ -468,7 +526,7 @@ describe("buildVirtualItems (combined)", () => {
   });
 
   it("empty messages returns empty array", () => {
-    const result = buildAll([], [], undefined, false, undefined);
+    const result = buildAll([], [], undefined, COMPLETED_AGENT, undefined);
     expect(result).toEqual([]);
   });
 
@@ -477,7 +535,7 @@ describe("buildVirtualItems (combined)", () => {
       makeMessage({ id: "msg-1", sequence: 1 }), // assistant by default
       makeMessage({ id: "msg-2", sequence: 2, role: "user", content: "Hi" }),
     ];
-    const result = buildAll(messages, [], undefined, false, undefined);
+    const result = buildAll(messages, [], undefined, COMPLETED_AGENT, undefined);
     expect(result.map((i) => i.type)).toEqual(["message", "message"]);
     expect(result[0]).toMatchObject({ type: "message", key: "msg-1" });
     expect(result[1]).toMatchObject({ type: "message", key: "msg-2" });
@@ -489,7 +547,7 @@ describe("buildVirtualItems (combined)", () => {
       makeMessage({ id: "msg-2", sequence: 2, role: "assistant", content: "thinking" }),
     ];
     const toolCalls = [makeToolCall({ id: "tc-1" })];
-    const result = buildAll(messages, toolCalls, undefined, false, undefined);
+    const result = buildAll(messages, toolCalls, undefined, COMPLETED_AGENT, undefined);
 
     const types = result.map((item) => item.type);
     // Persisted chrome is absent until records load and contain visible rows.
@@ -510,7 +568,7 @@ describe("buildVirtualItems (combined)", () => {
 
   it("streaming text with agent running emits narrative-flow and live assistant message items", () => {
     const messages = [makeMessage({ id: "msg-1" })];
-    const result = buildAll(messages, [], "partial response...", true, undefined);
+    const result = buildAll(messages, [], "partial response...", STREAMING_AGENT, undefined);
 
     const narrative = result.find((i) => i.type === "narrative-flow") as
       | (ChatVirtualItem & { type: "narrative-flow" })
@@ -521,7 +579,7 @@ describe("buildVirtualItems (combined)", () => {
     // The streaming text also surfaces as a provisional assistant message so
     // the persisted MessageBubble keeps the same component and key.
     const streaming = result.find(
-      (i) => i.type === "message" && i.message.role === "assistant" && i.assistantState?.isStreaming,
+      (i) => i.type === "message" && i.message.role === "assistant" && i.agentDisplayState?.phase === "streaming",
     ) as
       | (ChatVirtualItem & { type: "message" })
       | undefined;
@@ -543,7 +601,7 @@ describe("buildVirtualItems (combined)", () => {
     });
     const volatile = buildVolatileItems(
       [makeToolCall({ id: "tc-1", isComplete: true })],
-      true,
+      STREAMING_AGENT,
       1000,
       "live response",
       undefined,
@@ -564,7 +622,7 @@ describe("buildVirtualItems (combined)", () => {
     expect(responseItems[0]).toMatchObject({
       type: "message",
       message: { id: "a1", content: "persisted response" },
-      assistantState: { isStreaming: false },
+      agentDisplayState: { phase: "completed" },
     });
   });
 
@@ -581,7 +639,7 @@ describe("buildVirtualItems (combined)", () => {
     });
     const volatile = buildVolatileItems(
       [],
-      true,
+      STREAMING_AGENT,
       1000,
       "live response",
       undefined,
@@ -602,7 +660,7 @@ describe("buildVirtualItems (combined)", () => {
       result.some(
         (item) =>
           item.type === "message" &&
-          item.assistantState?.isStreaming &&
+          item.agentDisplayState?.phase === "streaming" &&
           item.key === responseKey,
       ),
     ).toBe(false);
@@ -614,11 +672,11 @@ describe("buildVirtualItems (combined)", () => {
     // the live assistant message so the writing animation reads as the primary
     // surface and the progress meta sits underneath it.
     const messages = [makeMessage({ id: "msg-1" })];
-    const result = buildAll(messages, [], "writing animation text...", true, 1000);
+    const result = buildAll(messages, [], "writing animation text...", STREAMING_AGENT, 1000);
 
     const narrativeFlowIdx = result.findIndex((i) => i.type === "narrative-flow");
     const streamingResponseIdx = result.findIndex(
-      (i) => i.type === "message" && i.message.role === "assistant" && i.assistantState?.isStreaming,
+      (i) => i.type === "message" && i.message.role === "assistant" && i.agentDisplayState?.phase === "streaming",
     );
     const indicatorIdx = result.findIndex((i) => i.type === "narrative-indicator");
 
@@ -638,7 +696,7 @@ describe("buildVirtualItems (combined)", () => {
     ];
     const items = buildVolatileItems(
       toolCalls,
-      true,
+      STREAMING_AGENT,
       1000,
       undefined,
       undefined,
@@ -657,7 +715,7 @@ describe("buildVirtualItems (combined)", () => {
       makeToolCall({ id: "a2", toolName: "Agent", isComplete: false }),
       makeToolCall({ id: "read-1", toolName: "Read", parentToolCallId: "a1" }),
     ];
-    const items = buildVolatileItems(toolCalls, true, 1000, undefined);
+    const items = buildVolatileItems(toolCalls, STREAMING_AGENT, 1000, undefined);
     const indicator = items.find((i) => i.type === "narrative-indicator") as
       | (ChatVirtualItem & { type: "narrative-indicator" })
       | undefined;
@@ -666,7 +724,7 @@ describe("buildVirtualItems (combined)", () => {
 
   it("does not emit a narrative-indicator when not running and no tool calls remain", () => {
     const messages = [makeMessage({ id: "msg-1" })];
-    const result = buildAll(messages, [], undefined, false, undefined);
+    const result = buildAll(messages, [], undefined, COMPLETED_AGENT, undefined);
     expect(result.some((i) => i.type === "narrative-indicator")).toBe(false);
   });
 
@@ -676,7 +734,7 @@ describe("buildVirtualItems (combined)", () => {
     // turn's volatile tail so NarrativeIndicator can animate out; the
     // component renders null once the exit completes.
     const toolCalls = [makeToolCall({ id: "tc-1", isComplete: true })];
-    const items = buildVolatileItems(toolCalls, false, 1000, undefined);
+    const items = buildVolatileItems(toolCalls, COMPLETED_AGENT, 1000, undefined);
     const indicator = items.find((i) => i.type === "narrative-indicator") as
       | (ChatVirtualItem & { type: "narrative-indicator" })
       | undefined;
@@ -687,7 +745,7 @@ describe("buildVirtualItems (combined)", () => {
   it("indicator (running, no streaming) appends narrative-flow followed by narrative-indicator", () => {
     const messages = [makeMessage({ id: "msg-1" })];
     const startTime = 12345;
-    const result = buildAll(messages, [], undefined, true, startTime);
+    const result = buildAll(messages, [], undefined, STREAMING_AGENT, startTime);
 
     const narrativeFlowIdx = result.findIndex((i) => i.type === "narrative-flow");
     const narrativeIndicatorIdx = result.findIndex(
@@ -713,13 +771,13 @@ describe("buildVirtualItems (combined)", () => {
       makeMessage({ id: "msg-1", sequence: 1, role: "user", content: "hi" }),
       makeMessage({ id: "msg-2", sequence: 2, role: "assistant", content: "done" }),
     ];
-    const result = buildAll(messages, [], undefined, false, undefined);
+    const result = buildAll(messages, [], undefined, COMPLETED_AGENT, undefined);
     expect(result.map((item) => item.type)).toEqual(["message", "message"]);
   });
 
   it("includes narrative-flow with both streaming and running state when agent running and streaming", () => {
     const messages = [makeMessage({ id: "msg-1" })];
-    const result = buildAll(messages, [], "streaming...", true, undefined);
+    const result = buildAll(messages, [], "streaming...", STREAMING_AGENT, undefined);
 
     const types = result.map((item) => item.type);
     expect(types).toContain("narrative-flow");
@@ -734,7 +792,7 @@ describe("buildVirtualItems (combined)", () => {
       makeMessage({ id: "msg-2", sequence: 2, role: "user", content: "next prompt" }),
     ];
     const toolCalls = [makeToolCall({ id: "tc-1" })];
-    const result = buildAll(messages, toolCalls, undefined, false, undefined);
+    const result = buildAll(messages, toolCalls, undefined, COMPLETED_AGENT, undefined);
 
     // Persisted chrome is absent until loaded records contain visible rows.
     // The live narrative is appended at the tail because the trailing message
@@ -757,7 +815,7 @@ describe("buildVirtualItems (combined)", () => {
       makeToolCall({ id: "tc-1", toolName: "Read" }),
       makeToolCall({ id: "tc-2", toolName: "Write" }),
     ];
-    const result = buildAll(messages, toolCalls, "Here is my answer...", true, 99999);
+    const result = buildAll(messages, toolCalls, "Here is my answer...", STREAMING_AGENT, 99999);
 
     const types = result.map((item) => item.type);
     // user msg, narrative-flow (before split assistant msg), split assistant
@@ -803,12 +861,12 @@ describe("buildVirtualItems (combined)", () => {
     // A completed top-level tool lets the live plan-output text stream through
     // computeLiveStreamingText, mirroring the real generation turn.
     const toolCalls = [makeToolCall({ id: "tc-1", isComplete: true })];
-    const result = buildAll(messages, toolCalls, "## Plan\n\n1. do it", true, 1000);
+    const result = buildAll(messages, toolCalls, "## Plan\n\n1. do it", STREAMING_AGENT, 1000);
 
     const a1Idx = result.findIndex((i) => i.type === "message" && i.key === "a1");
     const narrativeIdx = result.findIndex((i) => i.type === "narrative-flow");
     const streamingIdx = result.findIndex(
-      (i) => i.type === "message" && i.message.role === "assistant" && i.assistantState?.isStreaming,
+      (i) => i.type === "message" && i.message.role === "assistant" && i.agentDisplayState?.phase === "streaming",
     );
 
     expect(a1Idx).toBeGreaterThanOrEqual(0);
@@ -830,7 +888,7 @@ describe("buildVirtualItems (combined)", () => {
       }),
     ];
     const toolCalls = [makeToolCall({ id: "tc-1" })];
-    const result = buildAll(messages, toolCalls, undefined, false, undefined);
+    const result = buildAll(messages, toolCalls, undefined, COMPLETED_AGENT, undefined);
 
     const a1Idx = result.findIndex((i) => i.type === "message" && i.key === "a1");
     const narrativeIdx = result.findIndex((i) => i.type === "narrative-flow");
@@ -843,7 +901,7 @@ describe("buildVirtualItems (combined)", () => {
       makeMessage({ id: "msg-1", sequence: 1, role: "assistant", content: "done" }),
     ];
     const toolCalls = [makeToolCall({ id: "tc-1" })];
-    const result = buildAll(messages, toolCalls, undefined, false, undefined);
+    const result = buildAll(messages, toolCalls, undefined, COMPLETED_AGENT, undefined);
 
     expect(result.map((item) => item.type)).toContain("narrative-flow");
   });
@@ -864,7 +922,7 @@ function makeHook(overrides: Partial<HookExecution> = {}): HookExecution {
 describe("buildVolatileItems with hooks", () => {
   it("includes hooks inside narrative-flow when agent is running and hooks are present", () => {
     const hooks = [makeHook()];
-    const items = buildVolatileItems([], true, 1000, undefined, undefined, hooks);
+    const items = buildVolatileItems([], STREAMING_AGENT, 1000, undefined, undefined, hooks);
     const narrativeItem = items.find((i) => i.type === "narrative-flow") as Extract<(typeof items)[number], { type: "narrative-flow" }> | undefined;
     expect(narrativeItem).toBeDefined();
     expect(narrativeItem?.hooks).toHaveLength(1);
@@ -873,14 +931,14 @@ describe("buildVolatileItems with hooks", () => {
   it("omits narrative-flow when no tool calls and agent not running (even with hooks)", () => {
     // Hooks alone (without agent running or tool calls) do not trigger a narrative-flow item.
     const hooks = [makeHook()];
-    const items = buildVolatileItems([], false, undefined, undefined, undefined, hooks);
+    const items = buildVolatileItems([], COMPLETED_AGENT, undefined, undefined, undefined, hooks);
     expect(items.some((i) => i.type === "narrative-flow")).toBe(false);
   });
 
   it("narrative-flow appears before permission-request items", () => {
     const hooks = [makeHook()];
     const permissions = [{ requestId: "p1", toolName: "Edit", settled: false }];
-    const items = buildVolatileItems([], true, 1000, undefined, permissions, hooks);
+    const items = buildVolatileItems([], STREAMING_AGENT, 1000, undefined, permissions, hooks);
     const types = items.map((i) => i.type);
     const narrativeIdx = types.indexOf("narrative-flow");
     const permIdx = types.indexOf("permission-request");
@@ -889,94 +947,9 @@ describe("buildVolatileItems with hooks", () => {
 
   it("narrative-flow item carries the hooks array", () => {
     const hooks = [makeHook({ hookName: "lint" }), makeHook({ hookName: "test", status: "completed", exitCode: 0, durationMs: 150 })];
-    const items = buildVolatileItems([], true, 1000, undefined, undefined, hooks);
+    const items = buildVolatileItems([], STREAMING_AGENT, 1000, undefined, undefined, hooks);
     const narrativeItem = items.find((i) => i.type === "narrative-flow") as Extract<(typeof items)[number], { type: "narrative-flow" }>;
     expect(narrativeItem.hooks).toHaveLength(2);
     expect(narrativeItem.hooks[0].hookName).toBe("lint");
-  });
-});
-
-describe("estimateItemHeight", () => {
-  it("system message returns 40", () => {
-    const item: ChatVirtualItem = {
-      key: "sys-1",
-      type: "message",
-      message: makeMessage({ role: "system", content: "You are an assistant." }),
-    };
-    expect(estimateItemHeight(item)).toBe(40);
-  });
-
-  it("short user message returns compact height (>= 74, < 200)", () => {
-    const item: ChatVirtualItem = {
-      key: "user-1",
-      type: "message",
-      message: makeMessage({ role: "user", content: "Hello!" }),
-    };
-    const height = estimateItemHeight(item);
-    expect(height).toBeGreaterThanOrEqual(74);
-    expect(height).toBeLessThan(200);
-  });
-
-  it("long assistant message returns taller estimate (> 200)", () => {
-    const longContent = "This is a very long response. ".repeat(30);
-    const item: ChatVirtualItem = {
-      key: "asst-1",
-      type: "message",
-      message: makeMessage({ role: "assistant", content: longContent }),
-    };
-    const height = estimateItemHeight(item);
-    expect(height).toBeGreaterThan(200);
-  });
-
-  it("many tool calls height capped at 400", () => {
-    const toolCalls = Array.from({ length: 20 }, (_, i) =>
-      makeToolCall({ id: `tc-${i}` }),
-    );
-    const item: ChatVirtualItem = {
-      key: "active-tools",
-      type: "active-tools",
-      toolCalls,
-    };
-    expect(estimateItemHeight(item)).toBe(400);
-  });
-
-  it("indicator returns 48", () => {
-    const item: ChatVirtualItem = {
-      key: "indicator",
-      type: "indicator",
-      startTime: undefined,
-      activeToolCalls: [],
-    };
-    expect(estimateItemHeight(item)).toBe(48);
-  });
-
-  it("streaming item returns 56", () => {
-    const item: ChatVirtualItem = {
-      key: "streaming",
-      type: "streaming",
-      text: "Hello world",
-    };
-    expect(estimateItemHeight(item)).toBe(STREAMING_CARD_COLLAPSED_HEIGHT);
-  });
-
-  it("estimates the streaming slot and the persisted assistant bubble identically", () => {
-    // Regression for issue #695: the streaming provisional bubble and the
-    // persisted assistant message share a virtual-item key and render the
-    // same chrome, so their estimates must match — a difference reflows the
-    // virtualizer and nudges the scroll position at persist time.
-    const content = "A response body.\n\nWith a second paragraph and a list:\n- one\n- two\n";
-    const streaming: ChatVirtualItem = {
-      key: "turn-response:thread-1:abc",
-      type: "message",
-      message: makeMessage({ content }),
-      assistantState: { isStreaming: true, actionsVisible: false },
-    };
-    const persisted: ChatVirtualItem = {
-      key: "turn-response:thread-1:abc",
-      type: "message",
-      message: makeMessage({ content }),
-      assistantState: { isStreaming: false, actionsVisible: true },
-    };
-    expect(estimateItemHeight(streaming)).toBe(estimateItemHeight(persisted));
   });
 });

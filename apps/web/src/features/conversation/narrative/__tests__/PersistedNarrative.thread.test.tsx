@@ -53,7 +53,7 @@ vi.mock("../HookRow", () => ({
 
 import { PersistedNarrative } from "../PersistedNarrative";
 import { PersistedTurnFooter } from "../PersistedTurnFooter";
-import { PersistedLateHooks } from "../../messages/PersistedLateHooks";
+import { PersistedLateHooks } from "../PersistedLateHooks";
 
 function tool(id: string, toolName = "Read"): ToolCallRecord {
   return {

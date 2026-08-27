@@ -1,11 +1,15 @@
 import type { AgentItem, AgentModelState, AgentTurn, Message, TurnOutcome } from "@mcode/contracts";
 import type { ToolCall } from "@/transport/types";
 import type { ThoughtSegment, TurnFooterSummary } from "../narrative/types";
+import {
+  agentDisplayStateFromCanonicalTurnStatus,
+  type AgentDisplayState,
+} from "./virtual-items";
 
 /** Live canonical child state adapted to the shared chat timeline inputs. */
 export interface CanonicalMessageProjection {
   messages: Message[];
-  isAgentRunning: boolean;
+  agentDisplayState: AgentDisplayState;
   agentStartTime?: number;
   toolCalls: ToolCall[];
   thoughtSegments: ThoughtSegment[];
@@ -159,7 +163,7 @@ export function projectCanonicalMessageList({
   if (!latestTurn) return undefined;
 
   const terminal = isTerminalTurn(latestTurn);
-  const isAgentRunning = latestTurn.status === "Pending" || latestTurn.status === "Running";
+  const agentDisplayState = agentDisplayStateFromCanonicalTurnStatus(latestTurn.status);
   const threadItems = Object.values(state.items).filter((item) => item.threadId === threadId);
   const items = threadItems
     .filter((item) => item.turnId === latestTurn.id)
@@ -246,7 +250,7 @@ export function projectCanonicalMessageList({
 
   return {
     messages: mergedMessages,
-    isAgentRunning,
+    agentDisplayState,
     agentStartTime: timestamp(latestTurn.startedAt ?? latestTurn.createdAt),
     toolCalls: [...toolCallById.values()],
     thoughtSegments: projectedThoughts.length > 0 ? projectedThoughts : [...thoughtSegments],

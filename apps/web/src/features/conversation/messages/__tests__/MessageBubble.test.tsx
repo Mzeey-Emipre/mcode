@@ -519,6 +519,49 @@ describe("MessageBubble user messages", () => {
   });
 });
 
+describe("MessageBubble agent response state", () => {
+  const makeAgentMessage = (): Message => ({
+    ...makeMessage("Completed response"),
+    role: "assistant",
+    model: "gpt-5.6",
+    tokens_used: 128,
+    cost_usd: 0.0123,
+    timestamp: "2026-08-27T11:12:00.000Z",
+  });
+
+  it("shows completed metadata while keeping response actions hover-only", () => {
+    const { getByTestId } = render(
+      <MessageBubble
+        message={makeAgentMessage()}
+        onReply={vi.fn()}
+        onBranch={vi.fn()}
+        agentDisplayState={{ phase: "completed" }}
+      />,
+    );
+
+    expect(getByTestId("agent-message-metadata")).toHaveTextContent("128 tok");
+    expect(getByTestId("agent-message-actions")).toHaveClass(
+      "opacity-0",
+      "group-hover/msg:opacity-100",
+      "group-focus-within/msg:opacity-100",
+    );
+  });
+
+  it("withholds metadata and response actions until the agent completes", () => {
+    const { queryByTestId } = render(
+      <MessageBubble
+        message={makeAgentMessage()}
+        onReply={vi.fn()}
+        onBranch={vi.fn()}
+        agentDisplayState={{ phase: "finalizing" }}
+      />,
+    );
+
+    expect(queryByTestId("agent-message-metadata")).not.toBeInTheDocument();
+    expect(queryByTestId("agent-message-actions")).not.toBeInTheDocument();
+  });
+});
+
 describe("MessageBubble assistant plan-questions suppression", () => {
   const makeAssistantMessage = (content: string): Message => ({
     id: "msg-asst",

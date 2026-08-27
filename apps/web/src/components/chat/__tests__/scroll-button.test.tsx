@@ -6,7 +6,7 @@
  */
 import { render, screen } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
-import { ScrollToBottomButton } from "@/features/conversation/messages/MessageList";
+import { ScrollToBottomButton } from "@/features/conversation/messages/ScrollToBottomButton";
 
 describe("ScrollToBottomButton", () => {
   it("uses primary color tokens when hasNewContent is true", () => {

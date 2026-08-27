@@ -182,7 +182,8 @@ vi.mock("../../narrative", () => ({
     isAgentRunning ? <div>Thinking</div> : null,
 }));
 
-import { MessageList, preservePrependedVirtualRange } from "../MessageList";
+import { MessageList } from "../MessageList";
+import { preservePrependedVirtualRange } from "../message-list-virtualization";
 import {
   rememberScrollTop,
   recallScrollPosition,
@@ -546,6 +547,7 @@ describe("MessageList thread switch", () => {
     activeThreadIdValue = "thread-B";
     currentThreadIdValue = "thread-A";
     runningThreadIdsValue = new Set(["thread-B"]);
+    recordOverridesByThread = { "thread-B": { runtimePhase: "running" } };
     messagesValue = [{
       id: "a-final",
       sequence: 1,
