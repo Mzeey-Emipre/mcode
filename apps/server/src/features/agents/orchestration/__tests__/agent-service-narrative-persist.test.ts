@@ -6,10 +6,24 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type Database from "better-sqlite3";
 import { AgentEventType } from "@mcode/contracts";
-import type { Thread, IProviderRegistry, Message, AgentEvent } from "@mcode/contracts";
+import type {
+  AgentEvent,
+  IProviderRegistry,
+  Message,
+  ProviderRuntimeEvent,
+  ProviderRuntimeExtension,
+  Thread,
+} from "@mcode/contracts";
 import { AgentService } from "../agent-service.js";
+import {
+  createAgentServiceForTest,
+  runtimeProviderEvent,
+  startAgentServiceIngressForTest,
+  streamAgentReliabilityTextForTest,
+} from "./agent-service-test-harness.js";
 import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/canonical-agent-event-sink-stub.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
+import { TaskPersistenceService } from "../../tasks/task-persistence-service.js";
 import { PlanQuestionService } from "../../planning/plan-question-service.js";
 import {
   ParentAssistantTextCheckpointService,
@@ -39,6 +53,8 @@ import type { SettingsService } from "../../../settings/settings-service.js";
 import type { ThreadService } from "../../../thread-control/index.js";
 import type { ProviderAvailabilityService } from "../../../providers/availability/provider-availability-service.js";
 import type { PlanQuestionAnswersRepo } from "../../planning/persistence/plan-question-answers-repo.js";
+import { CodexCollaborationEventAdapter } from "../../collaboration/adapters/codex-collaboration-event-adapter.js";
+import { ProviderEventIngress } from "../../../providers/composition/provider-event-ingress.js";
 
 vi.mock("../../../../application/transport/push.js", () => ({ broadcast: vi.fn() }));
 vi.mock("fs", async (importOriginal) => {
@@ -52,6 +68,20 @@ vi.mock("fs", async (importOriginal) => {
 
 const THREAD_ID = "t-narr";
 const MSG_ID = "msg-narr";
+
+function codexRuntimeEvent(
+  event: AgentEvent,
+  extension: Omit<ProviderRuntimeExtension, "providerId" | "kind">,
+): ProviderRuntimeEvent {
+  return {
+    event,
+    extension: {
+      providerId: "codex",
+      kind: "codex-collaboration",
+      ...extension,
+    },
+  };
+}
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
@@ -104,8 +134,7 @@ function build(options: {
 } = {}): Built {
   const thread = makeThread();
   const providerEmitter = Object.assign(new EventEmitter(), {
-    id: "claude" as const,
-    eventDelivery: "legacy-emitter" as const,
+    id: "codex" as const,
   });
   (providerEmitter as any).sendTurn = vi.fn(() => Promise.resolve());
   (providerEmitter as any).stopSession = vi.fn(() => Promise.resolve());
@@ -221,7 +250,7 @@ function build(options: {
     hookExecutionRepo,
   );
 
-  const service = new AgentService(
+  const service = createAgentServiceForTest(
     threadRepo,
     workspaceRepo,
     messageRepo,
@@ -234,22 +263,28 @@ function build(options: {
     snapshotService,
     db,
     memoryPressureService,
-    taskRepo,
     settingsService,
     availability,
     planQuestionAnswersRepo,
-    { create: vi.fn(), updateStatus: vi.fn(), listByThread: vi.fn(() => []), getLatestForThread: vi.fn(() => null), getById: vi.fn(() => null) } as unknown as import("../../planning/persistence/plan-repo.js").PlanRepo,
       { deliverHandoff: vi.fn(async () => ({ providerWireOverride: "" })) } as any,
       { issue: vi.fn(), tryConsume: vi.fn(() => false), clear: vi.fn(), hasActiveGrant: vi.fn(() => false) } as any,
       narrativeStore,
-      new PlanQuestionService(messageRepo, planQuestionAnswersRepo),
       parentAssistantTextCheckpoints,
       undefined,
       undefined,
       undefined,
       canonicalSink,
+      undefined,
+      new ProviderEventIngress(
+        undefined,
+        new CodexCollaborationEventAdapter(canonicalSink),
+      ),
+      undefined,
+      undefined,
+      undefined,
+      new TaskPersistenceService(taskRepo, narrativeStore),
   );
-  service.init(options.onProviderEvent);
+  startAgentServiceIngressForTest(service, options.onProviderEvent);
   // Provider adapters always stamp turn-scoped events with the active execution
   // identity. Keep this fixture aligned with that production boundary while
   // leaving each test focused on the narrative payload it emits.
@@ -262,13 +297,24 @@ function build(options: {
   turnRuntime.start(THREAD_ID);
   const emit = providerEmitter.emit.bind(providerEmitter);
   providerEmitter.emit = ((eventName: string, event?: unknown, ...args: unknown[]) => {
-    if (eventName === "event" && event && typeof event === "object"
-      && isTurnScopedEvent(event as Parameters<typeof isTurnScopedEvent>[0])
-      && !(event as { turnExecutionId?: string }).turnExecutionId) {
-      const runtime = turnRuntime.snapshot(THREAD_ID);
-      event = { ...(event as Record<string, unknown>), turnExecutionId: runtime?.turnExecutionId };
+    if (eventName === "event" && event && typeof event === "object") {
+      const providerEvent = event as Record<string, unknown>;
+      event = providerEvent.type === AgentEventType.TurnComplete
+        ? { reason: "completed", costUsd: null, ...providerEvent }
+        : providerEvent;
+      if (isTurnScopedEvent(event as Parameters<typeof isTurnScopedEvent>[0])
+        && !(event as { turnExecutionId?: string }).turnExecutionId) {
+        const runtime = turnRuntime.snapshot(THREAD_ID);
+        event = { ...(event as Record<string, unknown>), turnExecutionId: runtime?.turnExecutionId };
+      }
     }
-    return emit(eventName, event, ...args);
+    return emit(
+      eventName,
+      eventName === "event" && event && typeof event === "object" && !("event" in event)
+        ? runtimeProviderEvent(event as AgentEvent)
+        : event,
+      ...args,
+    );
   }) as typeof providerEmitter.emit;
   // Prime per-thread state without running sendMessage's full path. The buffers
   // now live in NarrativeStore; seed them via the same public entry points
@@ -612,10 +658,11 @@ describe("AgentService narrative persistence", () => {
 
       expect((providerEmitter as unknown as { stopSession: ReturnType<typeof vi.fn> }).stopSession)
         .toHaveBeenCalledWith(`mcode-${THREAD_ID}`);
-      await Promise.resolve();
-      (service as unknown as {
-        parentAssistantTextCheckpointQueue: { discard: (executionId: string) => void };
-      }).parentAssistantTextCheckpointQueue.discard(executionId);
+      expect(service.runtimeSnapshots()).toContainEqual(expect.objectContaining({
+        threadId: THREAD_ID,
+        turnExecutionId: executionId,
+        phase: "interrupted",
+      }));
     } finally {
       restoreChunksSpy.mockRestore();
       vi.useRealTimers();
@@ -678,10 +725,11 @@ describe("AgentService narrative persistence", () => {
 
       expect((providerEmitter as unknown as { stopSession: ReturnType<typeof vi.fn> }).stopSession)
         .toHaveBeenCalledWith(`mcode-${THREAD_ID}`);
-      await Promise.resolve();
-      (service as unknown as {
-        parentAssistantTextCheckpointQueue: { discard: (executionId: string) => void };
-      }).parentAssistantTextCheckpointQueue.discard(executionId);
+      expect(service.runtimeSnapshots()).toContainEqual(expect.objectContaining({
+        threadId: THREAD_ID,
+        turnExecutionId: executionId,
+        phase: "interrupted",
+      }));
     } finally {
       restoreChunksSpy.mockRestore();
       vi.useRealTimers();
@@ -995,7 +1043,7 @@ describe("AgentService narrative persistence", () => {
     (service as unknown as { messageRepo: MessageRepo }).messageRepo = new SqliteMessageRepo(db);
 
     try {
-      const stream = service.streamReliabilityAssistantText(THREAD_ID);
+      const stream = streamAgentReliabilityTextForTest(service, THREAD_ID);
 
       expect(stream).toMatchObject({
         threadId: THREAD_ID,
@@ -1886,14 +1934,20 @@ describe("AgentService narrative persistence", () => {
       projectUserMessage: () => userMessage,
     });
 
-    providerEmitter.emit("event", {
+    providerEmitter.emit("event", codexRuntimeEvent({
       type: AgentEventType.ToolUse,
       threadId: THREAD_ID,
       turnExecutionId: executionId,
       toolCallId: "spawn-from-provider",
       toolName: "Agent",
-      toolInput: { codexCollabKind: "spawnAgent", prompt: "secret child prompt" },
-    });
+      toolInput: {},
+    }, {
+      collaboration: {
+        kind: "spawnAgent",
+        prompt: "secret child prompt",
+        receiverThreadIds: ["provider-child-thread"],
+      },
+    }));
     const provisional = canonicalSink.loadCodexChildDelegation(
       THREAD_ID,
       "toolCall:spawn-from-provider",
@@ -1909,52 +1963,46 @@ describe("AgentService narrative persistence", () => {
       parentCollaborationItemId: "spawn-from-provider",
       prompt: "secret child prompt",
     };
-    providerEmitter.emit("event", {
+    providerEmitter.emit("event", codexRuntimeEvent({
       type: AgentEventType.TurnStarted,
       threadId: THREAD_ID,
       turnExecutionId: executionId,
-      codexChild: childEvidence,
-    });
-    providerEmitter.emit("event", {
+    }, { child: childEvidence }));
+    providerEmitter.emit("event", codexRuntimeEvent({
       type: AgentEventType.ToolUse,
       threadId: THREAD_ID,
       turnExecutionId: executionId,
       toolCallId: "provider-child-tool",
       toolName: "Read",
       toolInput: { path: "secret-child-input" },
-      codexChild: { ...childEvidence, nativeItemId: "provider-child-tool", itemEventKey: "started" },
-    });
-    providerEmitter.emit("event", {
+    }, { child: { ...childEvidence, nativeItemId: "provider-child-tool", itemEventKey: "started" } }));
+    providerEmitter.emit("event", codexRuntimeEvent({
       type: AgentEventType.ToolResult,
       threadId: THREAD_ID,
       turnExecutionId: executionId,
       toolCallId: "provider-child-tool",
       output: "secret-child-output",
       isError: false,
-      codexChild: { ...childEvidence, nativeItemId: "provider-child-tool", itemEventKey: "completed" },
-    });
-    providerEmitter.emit("event", {
+    }, { child: { ...childEvidence, nativeItemId: "provider-child-tool", itemEventKey: "completed" } }));
+    providerEmitter.emit("event", codexRuntimeEvent({
       type: AgentEventType.TextDelta,
       threadId: THREAD_ID,
       turnExecutionId: executionId,
       delta: "secret-child-narration",
       isFinalResponse: false,
-      codexChild: { ...childEvidence, nativeItemId: "provider-child-reasoning", itemEventKey: "completed" },
-    });
-    providerEmitter.emit("event", {
+    }, { child: { ...childEvidence, nativeItemId: "provider-child-reasoning", itemEventKey: "completed" } }));
+    providerEmitter.emit("event", codexRuntimeEvent({
       type: AgentEventType.Message,
       threadId: THREAD_ID,
       turnExecutionId: executionId,
       content: "secret-child-message",
       tokens: null,
-      codexChild: { ...childEvidence, nativeItemId: "provider-child-message", itemEventKey: "completed" },
-    });
-    providerEmitter.emit("event", {
+    }, { child: { ...childEvidence, nativeItemId: "provider-child-message", itemEventKey: "completed" } }));
+    providerEmitter.emit("event", codexRuntimeEvent({
       type: AgentEventType.Ended,
       threadId: THREAD_ID,
       turnExecutionId: executionId,
-      codexChild: childEvidence,
-    });
+    }, { child: childEvidence }));
 
     const child = canonicalSink.loadCodexChildDelegation(
       THREAD_ID,
@@ -2049,28 +2097,27 @@ describe("AgentService narrative persistence", () => {
       projectUserMessage: () => userMessage,
     });
 
-    providerEmitter.emit("event", {
+    providerEmitter.emit("event", codexRuntimeEvent({
       type: AgentEventType.ToolUse,
       threadId: THREAD_ID,
       turnExecutionId: executionId,
       toolCallId: "root-spawn",
       toolName: "Agent",
-      toolInput: {
-        codexCollabKind: "spawnAgent",
+      toolInput: {},
+    }, { collaboration: {
+      kind: "spawnAgent",
         agentName: "Direct child",
         receiverThreadIds: ["native-direct-child"],
-      },
-    });
-    providerEmitter.emit("event", {
+    } }));
+    providerEmitter.emit("event", codexRuntimeEvent({
       type: AgentEventType.TurnStarted,
       threadId: THREAD_ID,
       turnExecutionId: executionId,
-      codexChild: {
+    }, { child: {
         nativeThreadId: "native-direct-child",
         nativeTurnId: "native-direct-turn",
         parentCollaborationItemId: "root-spawn",
-      },
-    });
+    } }));
 
     const directChild = canonicalSink.loadThreadByProviderIdentity({
       providerId: "codex",
@@ -2089,57 +2136,60 @@ describe("AgentService narrative persistence", () => {
     expect(directChild).toBeTruthy();
     expect(directTurn).toMatchObject({ threadId: directChild!.id });
 
-    providerEmitter.emit("event", {
+    providerEmitter.emit("event", codexRuntimeEvent({
       type: AgentEventType.ToolUse,
       threadId: THREAD_ID,
       turnExecutionId: executionId,
       toolCallId: "nested-spawn",
       toolName: "Agent",
-      toolInput: {
-        codexCollabKind: "spawnAgent",
+      toolInput: {},
+    }, {
+      collaboration: {
+        kind: "spawnAgent",
         agentName: "Nested child",
         receiverThreadIds: ["native-nested-child"],
       },
-      codexChild: {
+      child: {
         nativeThreadId: "native-direct-child",
         nativeTurnId: "native-direct-turn",
         parentCollaborationItemId: "root-spawn",
         nativeItemId: "nested-spawn",
         itemEventKey: "started",
       },
-    });
-    providerEmitter.emit("event", {
+    }));
+    providerEmitter.emit("event", codexRuntimeEvent({
       type: AgentEventType.ToolUse,
       threadId: THREAD_ID,
       turnExecutionId: executionId,
       toolCallId: "nested-spawn",
       toolName: "Agent",
-      toolInput: {
-        codexCollabKind: "spawnAgent",
+      toolInput: {},
+    }, {
+      collaboration: {
+        kind: "spawnAgent",
         agentName: "Nested child",
         receiverThreadIds: ["native-nested-child"],
         model: "gpt-5.6-sol",
         reasoningEffort: "medium",
       },
-      codexChild: {
+      child: {
         nativeThreadId: "native-direct-child",
         nativeTurnId: "native-direct-turn",
         parentCollaborationItemId: "root-spawn",
         nativeItemId: "nested-spawn",
         itemEventKey: "started",
       },
-    });
-    providerEmitter.emit("event", {
+    }));
+    providerEmitter.emit("event", codexRuntimeEvent({
       type: AgentEventType.TurnStarted,
       threadId: THREAD_ID,
       turnExecutionId: executionId,
-      codexChild: {
+    }, { child: {
         nativeThreadId: "native-nested-child",
         nativeTurnId: "native-nested-turn",
         parentCollaborationItemId: "nested-spawn",
-      },
-    });
-    providerEmitter.emit("event", {
+    } }));
+    providerEmitter.emit("event", codexRuntimeEvent({
       type: AgentEventType.TurnComplete,
       threadId: THREAD_ID,
       turnExecutionId: executionId,
@@ -2147,49 +2197,49 @@ describe("AgentService narrative persistence", () => {
       costUsd: null,
       tokensIn: 0,
       tokensOut: 0,
-      codexChild: {
+    }, { child: {
         nativeThreadId: "native-nested-child",
         nativeTurnId: "native-nested-turn",
         parentCollaborationItemId: "nested-spawn",
         nativeItemId: "native-nested-turn",
         itemEventKey: "completed",
         outcome: "completed",
-      },
-    });
-    providerEmitter.emit("event", {
+    } }));
+    providerEmitter.emit("event", codexRuntimeEvent({
       type: AgentEventType.ToolResult,
       threadId: THREAD_ID,
       turnExecutionId: executionId,
       toolCallId: "nested-spawn",
       output: "",
       isError: false,
-      toolInput: {
-        codexCollabKind: "spawnAgent",
+      toolInput: {},
+    }, {
+      collaboration: {
+        kind: "spawnAgent",
         agentName: "Nested child",
         receiverThreadIds: ["native-nested-child"],
       },
-      codexChild: {
+      child: {
         nativeThreadId: "native-direct-child",
         nativeTurnId: "native-direct-turn",
         parentCollaborationItemId: "root-spawn",
         nativeItemId: "nested-spawn",
         itemEventKey: "completed",
       },
-    });
-    providerEmitter.emit("event", {
+    }));
+    providerEmitter.emit("event", codexRuntimeEvent({
       type: AgentEventType.Message,
       threadId: THREAD_ID,
       turnExecutionId: executionId,
       content: "direct child continues after nested spawn",
       tokens: null,
-      codexChild: {
+    }, { child: {
         nativeThreadId: "native-direct-child",
         nativeTurnId: "native-direct-turn",
         parentCollaborationItemId: "root-spawn",
         nativeItemId: "direct-child-follow-up",
         itemEventKey: "completed",
-      },
-    });
+    } }));
 
     const directItems = db.prepare(
       "SELECT payload_json FROM canonical_agent_items WHERE thread_id = ? AND kind = 'tool-call'",
@@ -2307,48 +2357,46 @@ describe("AgentService narrative persistence", () => {
       providerIdentities: [],
       projectUserMessage: () => userMessage,
     });
-    providerEmitter.emit("event", {
+    providerEmitter.emit("event", codexRuntimeEvent({
       type: AgentEventType.ToolUse,
       threadId: THREAD_ID,
       turnExecutionId: executionId,
       toolCallId: "spawn-failure",
       toolName: "Agent",
-      toolInput: { codexCollabKind: "spawnAgent" },
-    });
+      toolInput: {},
+    }, { collaboration: { kind: "spawnAgent", receiverThreadIds: ["native-failure-child"] } }));
     const provisional = canonicalSink.loadCodexChildDelegation(
       THREAD_ID,
       "toolCall:spawn-failure",
     )!;
-    providerEmitter.emit("event", {
+    providerEmitter.emit("event", codexRuntimeEvent({
       type: AgentEventType.TurnStarted,
       threadId: THREAD_ID,
       turnExecutionId: executionId,
-      codexChild: {
+    }, { child: {
         nativeThreadId: "native-failure-child",
         nativeTurnId: "native-failure-turn",
         parentCollaborationItemId: "spawn-failure",
-      },
-    });
+    } }));
     (canonicalSink as unknown as {
       recordCodexChildItem: (...args: unknown[]) => never;
     }).recordCodexChildItem = vi.fn(() => {
       throw new Error("injected child persistence failure");
     });
-    providerEmitter.emit("event", {
+    providerEmitter.emit("event", codexRuntimeEvent({
       type: AgentEventType.ToolUse,
       threadId: THREAD_ID,
       turnExecutionId: executionId,
       toolCallId: "child-failure-tool",
       toolName: "Read",
       toolInput: { path: "child-secret" },
-      codexChild: {
+    }, { child: {
         nativeThreadId: "native-failure-child",
         nativeTurnId: "native-failure-turn",
         parentCollaborationItemId: "spawn-failure",
         nativeItemId: "child-failure-tool",
         itemEventKey: "started",
-      },
-    });
+    } }));
 
     const parentFailure = db.prepare(`
       SELECT payload_json
@@ -2392,54 +2440,53 @@ describe("AgentService narrative persistence", () => {
       projectUserMessage: () => userMessage,
     });
 
-    providerEmitter.emit("event", {
+    providerEmitter.emit("event", codexRuntimeEvent({
       type: AgentEventType.ToolUse,
       threadId: THREAD_ID,
       turnExecutionId: executionId,
       toolCallId: "spawn-action-child",
       toolName: "Agent",
-      toolInput: {
-        codexCollabKind: "spawnAgent",
+      toolInput: {},
+    }, { collaboration: {
+        kind: "spawnAgent",
         receiverThreadIds: ["native-action-child"],
-      },
-    });
-    providerEmitter.emit("event", {
+    } }));
+    providerEmitter.emit("event", codexRuntimeEvent({
       type: AgentEventType.ToolResult,
       threadId: THREAD_ID,
       turnExecutionId: executionId,
       toolCallId: "spawn-action-child",
-      toolInput: {
-        codexCollabKind: "spawnAgent",
-        agentName: "Mendel",
-        receiverThreadIds: ["native-action-child"],
-      },
+      toolInput: {},
       output: "ready",
       isError: false,
-    });
+    }, { collaboration: {
+        kind: "spawnAgent",
+        agentName: "Mendel",
+        receiverThreadIds: ["native-action-child"],
+    } }));
     expect(canonicalSink.loadSubagentRoster({ owningParentThreadId: THREAD_ID }).active[0]?.identity)
       .toBe("Mendel");
-    providerEmitter.emit("event", {
+    providerEmitter.emit("event", codexRuntimeEvent({
       type: AgentEventType.TurnStarted,
       threadId: THREAD_ID,
       turnExecutionId: executionId,
-      codexChild: {
+    }, { child: {
         nativeThreadId: "native-action-child",
         nativeTurnId: "native-action-turn",
         parentCollaborationItemId: "spawn-action-child",
-      },
-    });
-    providerEmitter.emit("event", {
+    } }));
+    providerEmitter.emit("event", codexRuntimeEvent({
       type: AgentEventType.ToolUse,
       threadId: THREAD_ID,
       turnExecutionId: executionId,
       toolCallId: "parent-message-child",
       toolName: "sendInput",
-      toolInput: {
-        codexCollabKind: "sendInput",
+      toolInput: {},
+    }, { collaboration: {
+        kind: "sendInput",
         receiverThreadIds: ["native-action-child"],
         prompt: "Inspect this case.",
-      },
-    });
+    } }));
 
     const dispatched = db.prepare(`
       SELECT id, source_item_id, status, target_turn_id
@@ -2459,19 +2506,19 @@ describe("AgentService narrative persistence", () => {
     expect(db.prepare("SELECT thread_id, turn_id FROM canonical_agent_items WHERE id = ?")
       .get("toolCall:parent-message-child")).toMatchObject({ thread_id: THREAD_ID });
 
-    providerEmitter.emit("event", {
+    providerEmitter.emit("event", codexRuntimeEvent({
       type: AgentEventType.ToolResult,
       threadId: THREAD_ID,
       turnExecutionId: executionId,
       toolCallId: "parent-message-child",
       toolName: "sendInput",
-      toolInput: {
-        codexCollabKind: "sendInput",
-        receiverThreadIds: ["native-action-child"],
-      },
+      toolInput: {},
       output: "delivered",
       isError: false,
-    });
+    }, { collaboration: {
+        kind: "sendInput",
+        receiverThreadIds: ["native-action-child"],
+    } }));
 
     expect(db.prepare("SELECT status FROM canonical_collaboration_actions WHERE id = ?")
       .get(dispatched!.id)).toEqual({ status: "Acknowledged" });
@@ -2485,6 +2532,7 @@ describe("AgentService narrative persistence", () => {
       loadThreadByProviderIdentity: ReturnType<typeof vi.fn>;
       loadTurnByProviderIdentity: ReturnType<typeof vi.fn>;
       loadCollaborationActionBySourceProviderIdentity: ReturnType<typeof vi.fn>;
+      loadExecutionIdForTurn: ReturnType<typeof vi.fn>;
       loadThread: ReturnType<typeof vi.fn>;
       startProviderContinuation: ReturnType<typeof vi.fn>;
     };
@@ -2498,26 +2546,39 @@ describe("AgentService narrative persistence", () => {
       threadId: "source-child",
     }));
     sink.loadCollaborationActionBySourceProviderIdentity = vi.fn();
+    sink.loadExecutionIdForTurn = vi.fn(() => "00000000-0000-4000-8000-000000000098");
     sink.loadThread = vi.fn(() => ({ id: THREAD_ID }));
     sink.startProviderContinuation = vi.fn();
+    sink.recordCodexChildRoutingDiagnostic = vi.fn(() => true);
 
-    const started = (service as unknown as {
-      startCodexProviderContinuationFromEvent: (event: unknown) => boolean;
-    }).startCodexProviderContinuationFromEvent({
-      type: AgentEventType.TurnStarted,
-      threadId: THREAD_ID,
-      turnExecutionId: "00000000-0000-4000-8000-000000000099",
-      codexContinuation: {
+    const projection = new CodexCollaborationEventAdapter(canonicalSink).project({
+      providerId: "codex",
+      sourceKind: "provider-runtime",
+      event: {
+        type: AgentEventType.TurnStarted,
+        threadId: THREAD_ID,
+        turnExecutionId: "00000000-0000-4000-8000-000000000099",
+      },
+      runtimeExtension: {
+        providerId: "codex",
+        kind: "codex-collaboration",
+        continuation: {
         sourceNativeThreadId: "native-source-child",
         sourceNativeTurnId: "native-source-turn",
         sourceNativeItemId: "native-return-parent",
         targetNativeThreadId: "native-wrong-parent",
+        },
       },
     });
 
-    expect(started).toBe(false);
-    expect(sink.loadCollaborationActionBySourceProviderIdentity).not.toHaveBeenCalled();
+    expect(projection.status).toBe("rejected");
+    expect(sink.loadCollaborationActionBySourceProviderIdentity).toHaveBeenCalled();
     expect(sink.startProviderContinuation).not.toHaveBeenCalled();
+    expect(sink.recordCodexChildRoutingDiagnostic).toHaveBeenCalledWith(expect.objectContaining({
+      reason: "continuation-evidence-not-found",
+      threadId: "source-child",
+      executionId: "00000000-0000-4000-8000-000000000098",
+    }));
   });
 
   it("records a failure signal when attributed child routing lacks parent execution context", () => {
@@ -2527,21 +2588,28 @@ describe("AgentService narrative persistence", () => {
       recordCodexChildRoutingDiagnostic: typeof diagnostic;
     }).recordCodexChildRoutingDiagnostic = diagnostic;
 
-    (service as unknown as {
-      handleCodexChildProviderEvent: (event: unknown) => boolean;
-    }).handleCodexChildProviderEvent({
-      type: AgentEventType.ToolUse,
-      threadId: THREAD_ID,
-      toolCallId: "child-failure",
-      toolName: "Read",
-      toolInput: {},
-      codexChild: {
+    const projection = new CodexCollaborationEventAdapter(canonicalSink).project({
+      providerId: "codex",
+      sourceKind: "provider-runtime",
+      event: {
+        type: AgentEventType.ToolUse,
+        threadId: THREAD_ID,
+        toolCallId: "child-failure",
+        toolName: "Read",
+        toolInput: {},
+      },
+      runtimeExtension: {
+        providerId: "codex",
+        kind: "codex-collaboration",
+        child: {
         nativeThreadId: "child-native",
         nativeTurnId: "child-turn",
         parentCollaborationItemId: "missing-parent-item",
+        },
       },
     });
 
+    expect(projection.status).toBe("rejected");
     expect(diagnostic).toHaveBeenCalledWith(expect.objectContaining({
       reason: "missing-parent-execution",
       threadId: THREAD_ID,
@@ -2553,9 +2621,7 @@ describe("AgentService narrative persistence", () => {
     (canonicalSink as unknown as {
       recordCodexChildRoutingDiagnostic: () => boolean;
     }).recordCodexChildRoutingDiagnostic = vi.fn(() => true);
-    const handle = (service as unknown as {
-      handleCodexChildProviderEvent: (event: unknown) => boolean;
-    }).handleCodexChildProviderEvent;
+    const adapter = new CodexCollaborationEventAdapter(canonicalSink);
     const evidence = {
       nativeThreadId: "child-boundary-thread",
       nativeTurnId: "child-boundary-turn",
@@ -2570,7 +2636,16 @@ describe("AgentService narrative persistence", () => {
       { type: AgentEventType.TurnComplete, reason: "completed", costUsd: null, tokensIn: 0, tokensOut: 0 },
     ];
     for (const event of events) {
-      expect(handle.call(service, { threadId: THREAD_ID, ...event, codexChild: evidence })).toBe(true);
+      expect(adapter.project({
+        providerId: "codex",
+        sourceKind: "provider-runtime",
+        event: { threadId: THREAD_ID, ...event } as AgentEvent,
+        runtimeExtension: {
+          providerId: "codex",
+          kind: "codex-collaboration",
+          child: evidence,
+        },
+      }).status).toBe("rejected");
     }
     expect(toolBulk).not.toHaveBeenCalled();
     expect(thoughtBulk).not.toHaveBeenCalled();
@@ -2583,22 +2658,28 @@ describe("AgentService narrative persistence", () => {
     (canonicalSink as unknown as {
       recordCodexChildRoutingDiagnostic: typeof diagnostic;
     }).recordCodexChildRoutingDiagnostic = diagnostic;
-    const handle = (service as unknown as {
-      handleCodexChildProviderEvent: (event: unknown) => boolean;
-    }).handleCodexChildProviderEvent;
+    const adapter = new CodexCollaborationEventAdapter(canonicalSink);
 
-    expect(() => handle.call(service, {
-      type: AgentEventType.ToolUse,
-      threadId: THREAD_ID,
-      toolCallId: "child-unowned",
-      toolName: "Read",
-      toolInput: {},
-      codexChild: {
+    expect(adapter.project({
+      providerId: "codex",
+      sourceKind: "provider-runtime",
+      event: {
+        type: AgentEventType.ToolUse,
+        threadId: THREAD_ID,
+        toolCallId: "child-unowned",
+        toolName: "Read",
+        toolInput: {},
+      },
+      runtimeExtension: {
+        providerId: "codex",
+        kind: "codex-collaboration",
+        child: {
         nativeThreadId: "child-unowned-thread",
         nativeTurnId: "child-unowned-turn",
         parentCollaborationItemId: "missing-parent-item",
+        },
       },
-    })).toThrow("Codex child routing invariant failed");
+    }).status).toBe("rejected");
     expect(diagnostic).toHaveBeenCalledTimes(1);
   });
 

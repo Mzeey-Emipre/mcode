@@ -8,6 +8,7 @@ import type {
   IAgentProvider,
   IProviderRegistry,
   ProviderId,
+  ProviderRuntimeEvent,
 } from "@mcode/contracts";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
@@ -18,6 +19,7 @@ import { ToolCallRecordRepo } from "../../tools/persistence/tool-call-record-rep
 import { TurnSnapshotRepo } from "../../turns/persistence/turn-snapshot-repo.js";
 import { TaskRepo } from "../persistence/task-repo.js";
 import { AgentService } from "../agent-service.js";
+import { createAgentServiceForTest, startAgentServiceIngressForTest, wrapProviderEmitterForRuntimeEvents } from "./agent-service-test-harness.js";
 import { CanonicalAgentEventSink } from "../../canonical/canonical-agent-event-sink.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
 import { PlanQuestionService } from "../../planning/plan-question-service.js";
@@ -50,7 +52,7 @@ describe("AgentService.sendMessage emits TurnStarted", () => {
   let providerStub: EventEmitter & Partial<IAgentProvider> & {
     sendTurn: ReturnType<typeof vi.fn>;
   };
-  let capturedEvents: AgentEvent[];
+  let capturedEvents: ProviderRuntimeEvent[];
   // Snapshot of capturedEvents.length taken synchronously when the provider's
   // sendMessage body is entered. If emit truly precedes the call, this must be >= 1.
   let eventsLengthAtSendMessageEntry: number;
@@ -64,10 +66,10 @@ describe("AgentService.sendMessage emits TurnStarted", () => {
     turnSnapshotRepo = new TurnSnapshotRepo(db);
     taskRepo = new TaskRepo(db);
 
-    // Capture AgentEvents emitted on the provider bus.
+    // Capture runtime envelopes emitted on the provider bus.
     capturedEvents = [];
     eventsLengthAtSendMessageEntry = -1;
-    providerStub = Object.assign(new EventEmitter(), {
+    providerStub = wrapProviderEmitterForRuntimeEvents(Object.assign(new EventEmitter(), {
       id: "claude" as ProviderId,
       supportsCompletion: false,
       sessionForkOnResume: "unsupported" as const,
@@ -82,8 +84,8 @@ describe("AgentService.sendMessage emits TurnStarted", () => {
       }),
       stopSession: vi.fn(),
       shutdown: vi.fn(),
-    });
-    providerStub.on("event", (e: AgentEvent) => capturedEvents.push(e));
+    }));
+    providerStub.on("event", (event: ProviderRuntimeEvent) => capturedEvents.push(event));
 
     const registryStub: IProviderRegistry = {
       resolve: () => providerStub as unknown as IAgentProvider,
@@ -129,7 +131,7 @@ describe("AgentService.sendMessage emits TurnStarted", () => {
     } as unknown as ProviderAvailabilityService;
 
     canonicalSink = new CanonicalAgentEventSink(db, vi.fn());
-    svc = new AgentService(
+    svc = createAgentServiceForTest(
       threadRepo,
       workspaceRepo,
       messageRepo,
@@ -142,11 +144,9 @@ describe("AgentService.sendMessage emits TurnStarted", () => {
       snapshotServiceStub,
       db,
       memoryPressureServiceStub,
-      taskRepo,
       settingsServiceStub,
       availabilityStub,
       { markAnswered: vi.fn(), isAnswered: vi.fn(() => false), listAnsweredForThread: vi.fn(() => []) } as unknown as import("../../planning/persistence/plan-question-answers-repo.js").PlanQuestionAnswersRepo,
-      { create: vi.fn(), updateStatus: vi.fn(), listByThread: vi.fn(() => []), getLatestForThread: vi.fn(() => null), getById: vi.fn(() => null) } as unknown as import("../../planning/persistence/plan-repo.js").PlanRepo,
       { deliverHandoff: vi.fn(async () => ({ providerWireOverride: "" })) } as any,
       { issue: vi.fn(), tryConsume: vi.fn(() => false), clear: vi.fn(), hasActiveGrant: vi.fn(() => false) } as any,
       new NarrativeStore(
@@ -155,7 +155,6 @@ describe("AgentService.sendMessage emits TurnStarted", () => {
         { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../conversation/narrative/persistence/thought-segment-repo.js").ThoughtSegmentRepo,
         { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../events/persistence/hook-execution-repo.js").HookExecutionRepo,
       ),
-      new PlanQuestionService(messageRepo, new PlanQuestionAnswersRepo(db)),
       new ParentAssistantTextCheckpointService(db),
       undefined,
       undefined,
@@ -181,11 +180,11 @@ describe("AgentService.sendMessage emits TurnStarted", () => {
 
     // TurnStarted must be the FIRST event on the bus (nothing precedes it).
     expect(capturedEvents.length, "expected at least one event on the bus").toBeGreaterThan(0);
-    expect(capturedEvents[0]).toMatchObject({
+    expect(capturedEvents[0]?.event).toMatchObject({
       type: AgentEventType.TurnStarted,
       threadId: thread.id,
     });
-    const executionId = (capturedEvents[0] as { turnExecutionId: string }).turnExecutionId;
+    const executionId = capturedEvents[0]!.event.turnExecutionId;
     expect(canonicalSink.loadTurnByExecution(executionId)).toMatchObject({
       threadId: thread.id,
       status: "Running",
@@ -206,7 +205,7 @@ describe("AgentService.sendMessage emits TurnStarted", () => {
 
     // Guard against accidental double-emission on resume/retry paths.
     const turnStartedCount = capturedEvents.filter(
-      (e) => e.type === AgentEventType.TurnStarted,
+      (runtimeEvent) => runtimeEvent.event.type === AgentEventType.TurnStarted,
     ).length;
     expect(turnStartedCount, "turnStarted must be emitted exactly once").toBe(1);
     expect(svc.getCurrentFileEffectTurnId(thread.id)).toMatch(/^\d+$/);
@@ -224,9 +223,8 @@ describe("AgentService.sendMessage emits TurnStarted", () => {
   it("starts canonical providers through AgentService without leaving terminal suppression behind", async () => {
     Object.assign(providerStub, {
       id: "cursor" as ProviderId,
-      eventDelivery: "canonical-sink" as const,
     });
-    svc.init();
+    startAgentServiceIngressForTest(svc, );
     const workspace = workspaceRepo.create("test-ws", process.cwd());
     const thread = threadRepo.create(workspace.id, "Cursor Thread", "direct", "main", true, "cursor");
     const serviceInternals = svc as unknown as {

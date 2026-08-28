@@ -26,7 +26,9 @@ function makeMinimalDeps(
   return {
     authToken: AUTH_TOKEN,
     shutdown: () => {},
-    agentService: { activeCount: () => 0 } as unknown as RouterDeps["agentService"],
+    agentService: {
+      runtimeAccess: () => ({ activeCount: () => 0 }),
+    } as unknown as RouterDeps["agentService"],
     workspaceService: undefined as unknown as RouterDeps["workspaceService"],
     threadService: undefined as unknown as RouterDeps["threadService"],
     gitService: undefined as unknown as RouterDeps["gitService"],

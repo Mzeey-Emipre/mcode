@@ -10,7 +10,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
-import { AgentEventType, type AgentEvent } from "@mcode/contracts";
+import { AgentEventType, type AgentEvent, type ProviderRuntimeEvent } from "@mcode/contracts";
 import { CodexEventMapper } from "../../private/codex/codex-event-mapper.js";
 import type { CodexNotification } from "../../private/codex/codex-types.js";
 
@@ -122,12 +122,12 @@ function replay(notifications: CodexNotification[]) {
     ?.threadId as string | undefined;
   const mapper = new CodexEventMapper("coverage-thread", mainThreadId);
   const methodsSeen = new Set<string>();
-  const events: ReturnType<CodexEventMapper["mapNotification"]> = [];
+  const runtimeEvents: ProviderRuntimeEvent[] = [];
   for (const n of notifications) {
     methodsSeen.add(n.method);
-    events.push(...mapper.mapNotification(n));
+    runtimeEvents.push(...mapper.mapNotification(n));
   }
-  return { methodsSeen, events };
+  return { methodsSeen, events: runtimeEvents.map((runtimeEvent) => runtimeEvent.event), runtimeEvents };
 }
 
 function loadGoldenScenario(id: string): CodexNotification[] {
@@ -274,7 +274,7 @@ describe("Codex protocol coverage", () => {
     });
     if (!hasMainCompletion) return;
 
-    const { events } = replay(subagentNotifications);
+    const { events, runtimeEvents } = replay(subagentNotifications);
     const turnCompletes = events.filter((event) => event.type === AgentEventType.TurnComplete);
     expect(turnCompletes).toHaveLength(1);
   });
@@ -284,21 +284,25 @@ describe("Codex protocol coverage", () => {
     const subagentNotifications = loadGoldenScenario("D_subagents");
     if (subagentNotifications.length === 0) return;
 
-    const { events } = replay(subagentNotifications);
+    const { events, runtimeEvents } = replay(subagentNotifications);
     const toolUses = events.filter(
       (event): event is Extract<AgentEvent, { type: "toolUse" }> =>
         event.type === AgentEventType.ToolUse,
     );
-    const spawnUses = toolUses.filter(
-      (event) => event.toolName === "Agent" && event.toolInput.codexCollabKind === "spawnAgent",
+    const spawnUses = runtimeEvents.filter(
+      (runtimeEvent) => runtimeEvent.event.type === AgentEventType.ToolUse
+        && runtimeEvent.event.toolName === "Agent"
+        && runtimeEvent.extension?.collaboration?.kind === "spawnAgent",
     );
-    const waitUses = toolUses.filter(
-      (event) => event.toolName === "Agent" && event.toolInput.codexCollabKind === "wait",
+    const waitUses = runtimeEvents.filter(
+      (runtimeEvent) => runtimeEvent.event.type === AgentEventType.ToolUse
+        && runtimeEvent.event.toolName === "Agent"
+        && runtimeEvent.extension?.collaboration?.kind === "wait",
     );
     const spawnResults = events.filter(
       (event) =>
         event.type === AgentEventType.ToolResult
-        && spawnUses.some((use) => use.toolCallId === event.toolCallId),
+        && spawnUses.some((use) => use.event.toolCallId === event.toolCallId),
     );
 
     expect(spawnUses.length).toBeGreaterThan(0);

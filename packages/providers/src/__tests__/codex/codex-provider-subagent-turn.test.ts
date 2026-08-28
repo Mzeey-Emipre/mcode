@@ -51,7 +51,7 @@ vi.mock("../../private/codex/codex-app-server.js", async () => {
 
 import { CodexProvider, stubEnvService } from "./codex-provider-test-fixture.js";
 import { AgentEventType } from "@mcode/contracts";
-import type { AgentEvent } from "@mcode/contracts";
+import type { ProviderRuntimeEvent } from "@mcode/contracts";
 
 interface PoolEntry {
   pendingTurnId: string | null;
@@ -128,8 +128,8 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
 
   it("assigns the active execution to main tool and text events before turn/start binds", async () => {
     const provider = makeProvider();
-    const events: AgentEvent[] = [];
-    provider.on("event", (event: AgentEvent) => events.push(event));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
     const entry = await startSession(provider, "mcode-early-main", "early-main");
     const state = entry as PoolEntry & {
       currentTurnExecutionId?: string;
@@ -168,16 +168,16 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
     });
 
     expect(events).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: AgentEventType.ToolUse, toolCallId: "early-tool", turnExecutionId: "exec-early-main" }),
-      expect.objectContaining({ type: AgentEventType.TextDelta, delta: "early text", turnExecutionId: "exec-early-main" }),
-      expect.objectContaining({ type: AgentEventType.TurnComplete, turnExecutionId: "exec-early-main" }),
+      expect.objectContaining({ event: expect.objectContaining({ type: AgentEventType.ToolUse, toolCallId: "early-tool", turnExecutionId: "exec-early-main" }) }),
+      expect.objectContaining({ event: expect.objectContaining({ type: AgentEventType.TextDelta, delta: "early text", turnExecutionId: "exec-early-main" }) }),
+      expect.objectContaining({ event: expect.objectContaining({ type: AgentEventType.TurnComplete, turnExecutionId: "exec-early-main" }) }),
     ]));
   });
 
   it("resolves an early main completion after turn/start returns its native id", async () => {
     const provider = makeProvider();
-    const events: AgentEvent[] = [];
-    provider.on("event", (event: AgentEvent) => events.push(event));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
     let resolveNativeTurn!: (turnId: string) => void;
     sendTurnMock.mockImplementationOnce(() => new Promise<string>((resolve) => {
       resolveNativeTurn = resolve;
@@ -226,14 +226,14 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
 
     await expect(completion).resolves.toBeUndefined();
     expect(events).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: AgentEventType.TurnComplete, turnExecutionId: "exec-early-completion" }),
+      expect.objectContaining({ event: expect.objectContaining({ type: AgentEventType.TurnComplete, turnExecutionId: "exec-early-completion" }) }),
     ]));
   });
 
   it("settles the root turn by native identity after a child thread id churn", async () => {
     const provider = makeProvider();
-    const events: AgentEvent[] = [];
-    provider.on("event", (event: AgentEvent) => events.push(event));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
     sendTurnMock.mockResolvedValueOnce("root-native-turn");
 
     const completion = provider.sendTurn({
@@ -296,17 +296,17 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
     });
 
     await expect(completion).resolves.toBeUndefined();
-    expect(events.filter((event) => event.type === AgentEventType.TurnComplete)).toHaveLength(1);
-    expect(events.filter((event) => event.type === AgentEventType.Ended)).toHaveLength(1);
-    expect(events.find((event) => event.type === AgentEventType.Message)).toMatchObject({
+    expect(events.filter((runtimeEvent) => runtimeEvent.event.type === AgentEventType.TurnComplete)).toHaveLength(1);
+    expect(events.filter((runtimeEvent) => runtimeEvent.event.type === AgentEventType.Ended)).toHaveLength(1);
+    expect(events.find((runtimeEvent) => runtimeEvent.event.type === AgentEventType.Message)?.event).toMatchObject({
       content: "root final",
     });
   });
 
   it("buffers ambiguous child events, replays after native mapping, and stays bounded", async () => {
     const provider = makeProvider();
-    const events: AgentEvent[] = [];
-    provider.on("event", (event: AgentEvent) => events.push(event));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
     const entry = await startSession(provider, "mcode-child-buffer", "child-buffer");
     const state = entry as PoolEntry & {
       currentTurnExecutionId?: string;
@@ -347,19 +347,19 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
         item: { type: "commandExecution", id: "child-tool", command: "echo child" },
       },
     });
-    expect(events.find((event) => event.type === AgentEventType.ToolUse && event.toolCallId === "child-tool")).toBeUndefined();
+    expect(events.find((runtimeEvent) => runtimeEvent.event.type === AgentEventType.ToolUse && runtimeEvent.event.toolCallId === "child-tool")).toBeUndefined();
 
     entry.server.emit("notification", {
       method: "turn/started",
       params: { threadId: "child-buffered", turn: { id: "child-native-turn" } },
     });
-    expect(events).toContainEqual(expect.objectContaining({
+    expect(events).toContainEqual(expect.objectContaining({ event: expect.objectContaining({
       type: AgentEventType.ToolUse,
       toolCallId: "child-tool",
       turnExecutionId: "exec-child-buffer",
-    }));
-    const childToolEvents = events.filter((event) => (
-      event.type === AgentEventType.ToolUse && event.toolCallId === "child-tool"
+    }) }));
+    const childToolEvents = events.filter((runtimeEvent) => (
+      runtimeEvent.event.type === AgentEventType.ToolUse && runtimeEvent.event.toolCallId === "child-tool"
     ));
     expect(childToolEvents).toHaveLength(1);
     entry.server.emit("notification", {
@@ -370,8 +370,8 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
         item: { type: "commandExecution", id: "child-tool", command: "echo child" },
       },
     });
-    expect(events.filter((event) => (
-      event.type === AgentEventType.ToolUse && event.toolCallId === "child-tool"
+    expect(events.filter((runtimeEvent) => (
+      runtimeEvent.event.type === AgentEventType.ToolUse && runtimeEvent.event.toolCallId === "child-tool"
     ))).toHaveLength(1);
 
     for (let i = 0; i < 140; i++) {
@@ -389,8 +389,8 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
 
   it("replays mapper and provider child buffers in structural order exactly once", async () => {
     const provider = makeProvider();
-    const events: AgentEvent[] = [];
-    provider.on("event", (event: AgentEvent) => events.push(event));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
     const entry = await startSession(provider, "mcode-child-two-layer-replay", "child-two-layer-replay");
     const state = entry as PoolEntry & {
       currentTurnExecutionId?: string;
@@ -465,32 +465,29 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
       },
     });
 
-    const childEvents = events.filter((event) => (
-      "codexChild" in event
-      && event.codexChild?.nativeThreadId === "child-two-layer"
+    const childEvents = events.filter((runtimeEvent) => (
+      runtimeEvent.extension?.child?.nativeThreadId === "child-two-layer"
     ));
-    expect(childEvents.map((event) => event.type)).toEqual([
+    expect(childEvents.map((runtimeEvent) => runtimeEvent.event.type)).toEqual([
       AgentEventType.TurnStarted,
       AgentEventType.ToolUse,
       AgentEventType.ToolResult,
     ]);
-    expect(childEvents.map((event) => (
-      event.type === AgentEventType.ToolUse || event.type === AgentEventType.ToolResult
-        ? event.toolCallId
-        : event.type
+    expect(childEvents.map((runtimeEvent) => (
+      runtimeEvent.event.type === AgentEventType.ToolUse || runtimeEvent.event.type === AgentEventType.ToolResult
+        ? runtimeEvent.event.toolCallId
+        : runtimeEvent.event.type
     ))).toEqual([
       AgentEventType.TurnStarted,
       "child-two-layer-item",
       "child-two-layer-item",
     ]);
     expect(childEvents).toHaveLength(3);
-    expect(childEvents.every((event) => (
-      (event as AgentEvent & { turnExecutionId?: string }).turnExecutionId
+    expect(childEvents.every((runtimeEvent) => (
+      runtimeEvent.event.turnExecutionId
         === "exec-mcode-child-two-layer-replay"
     ))).toBe(true);
-    const childEventIds = childEvents.map((event) => (
-      "codexChild" in event ? event.codexChild?.nativeEventId : undefined
-    ));
+    const childEventIds = childEvents.map((runtimeEvent) => runtimeEvent.extension?.child?.nativeEventId);
     expect(childEventIds.every((id): id is string => Boolean(id))).toBe(true);
     expect(new Set(childEventIds).size).toBe(3);
 
@@ -507,16 +504,15 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
         },
       },
     });
-    expect(events.filter((event) => (
-      "codexChild" in event
-      && event.codexChild?.nativeThreadId === "child-two-layer"
+    expect(events.filter((runtimeEvent) => (
+      runtimeEvent.extension?.child?.nativeThreadId === "child-two-layer"
     ))).toHaveLength(3);
   });
 
   it("enriches nested native sub-agents from one authoritative child lookup each", async () => {
     const provider = makeProvider();
-    const events: AgentEvent[] = [];
-    provider.on("event", (event: AgentEvent) => events.push(event));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
     const entry = await startSession(provider, "mcode-subagent-metadata", "subagent-metadata");
 
     entry.server.emit("notification", {
@@ -562,23 +558,29 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
     await new Promise<void>((resolve) => setImmediate(resolve));
 
     expect(getChildThreadMetadataMock).toHaveBeenCalledTimes(2);
-    expect(events).toContainEqual(expect.objectContaining({
+    const nestedUpdate = events.find((runtimeEvent) => (
+      runtimeEvent.event.type === AgentEventType.ToolUse && runtimeEvent.event.toolCallId === "call-inner"
+    ));
+    expect(nestedUpdate?.event).toMatchObject({
       type: AgentEventType.ToolUse,
       toolCallId: "call-inner",
       parentToolCallId: "call-outer",
-      toolInput: expect.objectContaining({
+      toolInput: { description: "Inspect the delegated task." },
+    });
+    expect(nestedUpdate?.extension).toMatchObject({
+      collaboration: expect.objectContaining({
         agentName: "read_docs_worker",
         model: "gpt-5.6-sol",
         reasoningEffort: "medium",
         prompt: "Inspect the delegated task.",
       }),
-    }));
+    });
   });
 
   it("enriches a Codex collab spawn from its receiver thread", async () => {
     const provider = makeProvider();
-    const events: AgentEvent[] = [];
-    provider.on("event", (event: AgentEvent) => events.push(event));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
     const entry = await startSession(provider, "mcode-collab-metadata", "collab-metadata");
 
     entry.server.emit("notification", {
@@ -597,15 +599,22 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
     await new Promise<void>((resolve) => setImmediate(resolve));
 
     expect(getChildThreadMetadataMock).toHaveBeenCalledWith("child-collab-metadata");
-    expect(events).toContainEqual(expect.objectContaining({
+    const collabUpdate = events.find((runtimeEvent) => (
+      runtimeEvent.event.type === AgentEventType.ToolUse
+      && runtimeEvent.event.toolCallId === "call-collab-metadata"
+      && runtimeEvent.extension?.collaboration?.agentName === "read_docs_worker"
+    ));
+    expect(collabUpdate?.event).toMatchObject({
       type: AgentEventType.ToolUse,
       toolCallId: "call-collab-metadata",
-      toolInput: expect.objectContaining({
+    });
+    expect(collabUpdate?.extension).toMatchObject({
+      collaboration: expect.objectContaining({
         agentName: "read_docs_worker",
         model: "gpt-5.6-sol",
         reasoningEffort: "medium",
       }),
-    }));
+    });
   });
 
   it("retries child metadata until Codex publishes the display identity", async () => {
@@ -617,8 +626,8 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
         reasoningEffort: "medium",
       });
     const provider = makeProvider();
-    const events: AgentEvent[] = [];
-    provider.on("event", (event: AgentEvent) => events.push(event));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
     const entry = await startSession(provider, "mcode-subagent-late-identity", "subagent-late-identity");
 
     entry.server.emit("notification", {
@@ -636,11 +645,11 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
     });
 
     await vi.waitFor(() => {
-      expect(events).toContainEqual(expect.objectContaining({
-        type: AgentEventType.ToolUse,
-        toolCallId: "call-late-identity",
-        toolInput: expect.objectContaining({ agentName: "Euclid" }),
-      }));
+      expect(events.some((runtimeEvent) => (
+        runtimeEvent.event.type === AgentEventType.ToolUse
+        && runtimeEvent.event.toolCallId === "call-late-identity"
+        && runtimeEvent.extension?.collaboration?.agentName === "Euclid"
+      ))).toBe(true);
     });
     expect(getChildThreadMetadataMock).toHaveBeenCalledTimes(2);
   });
@@ -668,8 +677,8 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
         reasoningEffort: "high",
       });
     const provider = makeProvider();
-    const events: AgentEvent[] = [];
-    provider.on("event", (event: AgentEvent) => events.push(event));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
     const entry = await startSession(provider, "mcode-subagent-delayed-task", "subagent-delayed-task");
 
     entry.server.emit("notification", {
@@ -703,15 +712,17 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
       expect(getChildThreadMetadataMock).toHaveBeenCalledTimes(5);
     });
     await vi.waitFor(() => {
-      const childResult = events.find((event) => (
-        "toolInput" in event
-        && event.toolCallId === "call-delayed-task"
-        && event.toolInput?.prompt === "Inspect the delegated task."
+      const childResult = events.find((runtimeEvent) => (
+        runtimeEvent.event.type === AgentEventType.ToolResult
+        && runtimeEvent.event.toolCallId === "call-delayed-task"
       ));
-      expect(childResult).toMatchObject({
+      expect(childResult?.event).toMatchObject({
         type: "toolResult",
         toolCallId: "call-delayed-task",
-        toolInput: {
+        toolInput: { description: "Inspect the delegated task." },
+      });
+      expect(childResult?.extension).toMatchObject({
+        collaboration: {
           agentName: "read_docs_worker",
           model: "gpt-5.6-sol",
           reasoningEffort: "medium",
@@ -726,8 +737,8 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
       .mockRejectedValueOnce(new Error("thread is not readable yet"))
       .mockResolvedValueOnce({ identity: "Dirac" });
     const provider = makeProvider();
-    const events: AgentEvent[] = [];
-    provider.on("event", (event: AgentEvent) => events.push(event));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
     const entry = await startSession(provider, "mcode-subagent-read-race", "subagent-read-race");
 
     entry.server.emit("notification", {
@@ -744,11 +755,11 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
     });
 
     await vi.waitFor(() => {
-      expect(events).toContainEqual(expect.objectContaining({
-        type: AgentEventType.ToolUse,
-        toolCallId: "call-read-race",
-        toolInput: expect.objectContaining({ agentName: "Dirac" }),
-      }));
+      expect(events.some((runtimeEvent) => (
+        runtimeEvent.event.type === AgentEventType.ToolUse
+        && runtimeEvent.event.toolCallId === "call-read-race"
+        && runtimeEvent.extension?.collaboration?.agentName === "Dirac"
+      ))).toBe(true);
     });
     expect(getChildThreadMetadataMock).toHaveBeenCalledTimes(2);
   });
@@ -788,8 +799,8 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
       .mockImplementationOnce(() => new Promise((resolve) => { resolveOldMetadata = resolve; }))
       .mockResolvedValueOnce({ model: "gpt-current", reasoningEffort: "high" });
     const provider = makeProvider();
-    const events: AgentEvent[] = [];
-    provider.on("event", (event: AgentEvent) => events.push(event));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
     const entry = await startSession(provider, "mcode-subagent-metadata-race", "subagent-metadata-race");
     const oldActivity = {
       method: "item/completed",
@@ -841,14 +852,18 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
     resolveOldMetadata?.({ model: "gpt-stale", reasoningEffort: "low" });
     await new Promise<void>((resolve) => setImmediate(resolve));
 
-    const currentMetadataEvents = events.filter((event) =>
-      event.type === AgentEventType.ToolUse
-      && event.toolCallId === "call-current-metadata"
-      && event.toolInput.model !== undefined,
+    const currentMetadataEvents = events.filter((runtimeEvent) =>
+      runtimeEvent.event.type === AgentEventType.ToolUse
+      && runtimeEvent.event.toolCallId === "call-current-metadata"
+      && runtimeEvent.extension?.collaboration?.model !== undefined,
     );
-    expect(currentMetadataEvents).toEqual([expect.objectContaining({
-      toolInput: expect.objectContaining({ model: "gpt-current", reasoningEffort: "high" }),
+    expect(currentMetadataEvents).toEqual([expect.objectContaining({ event: expect.objectContaining({
+      toolInput: { description: "explorer" },
+    })
     })]);
+    expect(currentMetadataEvents[0]?.extension).toMatchObject({
+      collaboration: { model: "gpt-current", reasoningEffort: "high" },
+    });
   });
 
   it("does not let a child-thread turn/started overwrite pendingTurnId", async () => {
@@ -872,8 +887,8 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
   it("does not emit Ended when a child-thread turn completes mid main turn", async () => {
     sendTurnMock.mockResolvedValueOnce("turn-main");
     const provider = makeProvider();
-    const events: AgentEvent[] = [];
-    provider.on("event", (e: AgentEvent) => events.push(e));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
 
     const entry = await startSession(provider, "mcode-subagent-b", "subagent-b");
 
@@ -894,12 +909,12 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
     });
     await new Promise<void>((resolve) => setImmediate(resolve));
 
-    expect(events.filter((e) => e.type === AgentEventType.Ended)).toHaveLength(0);
+    expect(events.filter((runtimeEvent) => runtimeEvent.event.type === AgentEventType.Ended)).toHaveLength(0);
     expect(entry.pendingTurnId).toBe("turn-main");
 
     const ended = new Promise<void>((resolve) => {
-      provider.on("event", (e: AgentEvent) => {
-        if (e.type === AgentEventType.Ended && e.threadId === "subagent-b") resolve();
+      provider.on("event", (runtimeEvent: ProviderRuntimeEvent) => {
+        if (runtimeEvent.event.type === AgentEventType.Ended && runtimeEvent.event.threadId === "subagent-b") resolve();
       });
     });
     entry.server.emit("notification", {
@@ -911,8 +926,8 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
 
   it("attributes reused-session child notifications to the active execution", async () => {
     const provider = makeProvider();
-    const events: AgentEvent[] = [];
-    provider.on("event", (event: AgentEvent) => events.push(event));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
     const entry = await startSession(provider, "mcode-origin-a", "origin-a");
     entry.server.emit("notification", {
       method: "turn/started",
@@ -962,14 +977,14 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
     });
     await new Promise<void>((resolve) => setImmediate(resolve));
 
-    expect(events.some((event) => event.turnExecutionId === "exec-b")).toBe(true);
+    expect(events.some((runtimeEvent) => runtimeEvent.event.turnExecutionId === "exec-b")).toBe(true);
   });
 
   it("keeps known native A mappings immutable after B starts", async () => {
     sendTurnMock.mockResolvedValueOnce("turn-a").mockResolvedValueOnce("turn-b");
     const provider = makeProvider();
-    const events: AgentEvent[] = [];
-    provider.on("event", (event: AgentEvent) => events.push(event));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
     const entry = await startSession(provider, "mcode-origin-immutable", "origin-immutable");
 
     entry.server.emit("notification", {
@@ -1066,18 +1081,18 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
     });
     await new Promise<void>((resolve) => setImmediate(resolve));
 
-    const lateA = events.find((event) => event.type === AgentEventType.TextDelta && event.delta === "late A");
-    const bText = events.find((event) => event.type === AgentEventType.TextDelta && event.delta === "B");
-    expect(lateA?.turnExecutionId).toBe("exec-mcode-origin-immutable");
-    expect(bText?.turnExecutionId).toBe("exec-b");
-    expect(events.filter((event) => event.type === AgentEventType.Ended).at(-1)?.turnExecutionId).toBe("exec-b");
+    const lateA = events.find((runtimeEvent) => runtimeEvent.event.type === AgentEventType.TextDelta && runtimeEvent.event.delta === "late A");
+    const bText = events.find((runtimeEvent) => runtimeEvent.event.type === AgentEventType.TextDelta && runtimeEvent.event.delta === "B");
+    expect(lateA?.event.turnExecutionId).toBe("exec-mcode-origin-immutable");
+    expect(bText?.event.turnExecutionId).toBe("exec-b");
+    expect(events.filter((runtimeEvent) => runtimeEvent.event.type === AgentEventType.Ended).at(-1)?.event.turnExecutionId).toBe("exec-b");
   });
 
   it("does not settle B from late A completion before B binds", async () => {
     sendTurnMock.mockResolvedValueOnce("turn-a").mockResolvedValueOnce("turn-b");
     const provider = makeProvider();
-    const events: AgentEvent[] = [];
-    provider.on("event", (event: AgentEvent) => events.push(event));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
     const entry = await startSession(provider, "mcode-late-completion", "late-completion");
     entry.server.emit("notification", {
       method: "turn/started",
@@ -1106,7 +1121,7 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
       params: { threadId: "sdk-thread-1", turn: { id: "turn-a", status: "completed" } },
     });
     await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(events.some((event) => event.type === AgentEventType.Ended && event.turnExecutionId === "exec-b")).toBe(false);
+    expect(events.some((runtimeEvent) => runtimeEvent.event.type === AgentEventType.Ended && runtimeEvent.event.turnExecutionId === "exec-b")).toBe(false);
 
     entry.server.emit("notification", {
       method: "turn/started",
@@ -1117,14 +1132,14 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
       params: { threadId: "sdk-thread-1", turn: { id: "turn-b", status: "completed" } },
     });
     await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(events.some((event) => event.type === AgentEventType.Ended && event.turnExecutionId === "exec-b")).toBe(true);
+    expect(events.some((runtimeEvent) => runtimeEvent.event.type === AgentEventType.Ended && runtimeEvent.event.turnExecutionId === "exec-b")).toBe(true);
   });
 
   it("does not rebind an evicted native A turn id from a late start", async () => {
     sendTurnMock.mockResolvedValueOnce("turn-a").mockResolvedValueOnce("turn-b");
     const provider = makeProvider();
-    const events: AgentEvent[] = [];
-    provider.on("event", (event: AgentEvent) => events.push(event));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
     const entry = await startSession(provider, "mcode-evicted-turn", "evicted-turn");
     entry.server.emit("notification", {
       method: "turn/started",
@@ -1166,14 +1181,14 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
     });
     await new Promise<void>((resolve) => setImmediate(resolve));
 
-    expect(events.some((event) => event.type === AgentEventType.Ended && event.turnExecutionId === "exec-b")).toBe(false);
+    expect(events.some((runtimeEvent) => runtimeEvent.event.type === AgentEventType.Ended && runtimeEvent.event.turnExecutionId === "exec-b")).toBe(false);
   });
 
   it("attributes parent notifications without turn ids to active B", async () => {
     sendTurnMock.mockResolvedValueOnce("turn-a").mockResolvedValueOnce("turn-b");
     const provider = makeProvider();
-    const events: AgentEvent[] = [];
-    provider.on("event", (event: AgentEvent) => events.push(event));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
     const entry = await startSession(provider, "mcode-parent-no-turn", "parent-no-turn");
     entry.server.emit("notification", {
       method: "turn/started",
@@ -1204,7 +1219,7 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
       method: "item/agentMessage/delta",
       params: { threadId: "sdk-thread-1", delta: "B no turn id" },
     });
-    expect(events.find((event) => event.type === AgentEventType.TextDelta && event.delta === "B no turn id")?.turnExecutionId).toBe("exec-b");
+    expect(events.find((runtimeEvent) => runtimeEvent.event.type === AgentEventType.TextDelta && runtimeEvent.event.delta === "B no turn id")?.event.turnExecutionId).toBe("exec-b");
   });
 
   it("bounds repeated native mapping conflict diagnostics", async () => {
@@ -1251,8 +1266,8 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
       resolveTurnStart = resolve;
     }));
     const provider = makeProvider();
-    const events: AgentEvent[] = [];
-    provider.on("event", (event: AgentEvent) => events.push(event));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
     const entry = await startSession(provider, "mcode-null-before", "null-before");
 
     entry.server.emit("notification", {
@@ -1262,8 +1277,8 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
     resolveTurnStart?.(null);
     await new Promise<void>((resolve) => setImmediate(resolve));
     await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(events.some((event) => event.type === AgentEventType.Error && event.turnExecutionId === "exec-mcode-null-before")).toBe(true);
-    expect(events.some((event) => event.type === AgentEventType.Ended && event.turnExecutionId === "exec-mcode-null-before")).toBe(true);
+    expect(events.some((runtimeEvent) => runtimeEvent.event.type === AgentEventType.Error && runtimeEvent.event.turnExecutionId === "exec-mcode-null-before")).toBe(true);
+    expect(events.some((runtimeEvent) => runtimeEvent.event.type === AgentEventType.Ended && runtimeEvent.event.turnExecutionId === "exec-mcode-null-before")).toBe(true);
     expect((entry as PoolEntry & { turnBindingPhase?: string }).turnBindingPhase).toBe("idle");
     entry.server.emit("notification", {
       method: "turn/completed",
@@ -1274,8 +1289,8 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
   it("fails closed when turn/started follows a null turn/start response", async () => {
     sendTurnMock.mockResolvedValueOnce(null);
     const provider = makeProvider();
-    const events: AgentEvent[] = [];
-    provider.on("event", (event: AgentEvent) => events.push(event));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
     const entry = await startSession(provider, "mcode-null-after", "null-after");
 
     await new Promise<void>((resolve) => setImmediate(resolve));
@@ -1285,16 +1300,16 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
     });
     await new Promise<void>((resolve) => setImmediate(resolve));
 
-    expect(events.some((event) => event.type === AgentEventType.Error && event.turnExecutionId === "exec-mcode-null-after")).toBe(true);
-    expect(events.some((event) => event.type === AgentEventType.Ended && event.turnExecutionId === "exec-mcode-null-after")).toBe(true);
+    expect(events.some((runtimeEvent) => runtimeEvent.event.type === AgentEventType.Error && runtimeEvent.event.turnExecutionId === "exec-mcode-null-after")).toBe(true);
+    expect(events.some((runtimeEvent) => runtimeEvent.event.type === AgentEventType.Ended && runtimeEvent.event.turnExecutionId === "exec-mcode-null-after")).toBe(true);
     expect((entry as PoolEntry & { turnBindingPhase?: string }).turnBindingPhase).toBe("idle");
   });
 
   it("drops text and tool events for a pruned A turn instead of falling back to B", async () => {
     sendTurnMock.mockResolvedValueOnce("turn-a").mockResolvedValueOnce("turn-b");
     const provider = makeProvider();
-    const events: AgentEvent[] = [];
-    provider.on("event", (event: AgentEvent) => events.push(event));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
     const entry = await startSession(provider, "mcode-pruned-text", "pruned-text");
     entry.server.emit("notification", {
       method: "turn/started",
@@ -1342,17 +1357,17 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
       },
     });
 
-    const lateText = events.find((event) => event.type === AgentEventType.TextDelta && event.delta === "late pruned A");
-    const lateTool = events.find((event) => event.type === AgentEventType.ToolUse && event.toolCallId === "late-pruned-tool");
-    expect(lateText?.turnExecutionId).not.toBe("exec-b");
-    expect(lateTool?.turnExecutionId).not.toBe("exec-b");
+    const lateText = events.find((runtimeEvent) => runtimeEvent.event.type === AgentEventType.TextDelta && runtimeEvent.event.delta === "late pruned A");
+    const lateTool = events.find((runtimeEvent) => runtimeEvent.event.type === AgentEventType.ToolUse && runtimeEvent.event.toolCallId === "late-pruned-tool");
+    expect(lateText?.event.turnExecutionId).not.toBe("exec-b");
+    expect(lateTool?.event.turnExecutionId).not.toBe("exec-b");
   });
 
   it("binds first child turn/start to B and preserves reused child A generation", async () => {
     sendTurnMock.mockResolvedValueOnce("turn-a").mockResolvedValueOnce("turn-b");
     const provider = makeProvider();
-    const events: AgentEvent[] = [];
-    provider.on("event", (event: AgentEvent) => events.push(event));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
     const entry = await startSession(provider, "mcode-child-generation", "child-generation");
     entry.server.emit("notification", {
       method: "turn/started",
@@ -1443,8 +1458,8 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
   it("does not let a late A parent activity replace the active B child generation", async () => {
     sendTurnMock.mockResolvedValueOnce("turn-a").mockResolvedValueOnce("turn-b");
     const provider = makeProvider();
-    const events: AgentEvent[] = [];
-    provider.on("event", (event: AgentEvent) => events.push(event));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
     const entry = await startSession(provider, "mcode-late-parent", "late-parent");
     entry.server.emit("notification", {
       method: "turn/started",
@@ -1521,14 +1536,14 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
     };
     expect(maps.nativeThreadExecutionIds.get("child-reused")).toBe("exec-b");
     expect(maps.turnExecutionIdsByNativeTurn.get("child-turn-b")).toBe("exec-b");
-    expect(events.find((event) => event.type === AgentEventType.GeneratedAttachment)?.turnExecutionId).toBe("exec-b");
+    expect(events.find((runtimeEvent) => runtimeEvent.event.type === AgentEventType.GeneratedAttachment)?.event.turnExecutionId).toBe("exec-b");
   });
 
   it("keeps B child attribution after a stale A main turn/started replay", async () => {
     sendTurnMock.mockResolvedValueOnce("turn-a").mockResolvedValueOnce("turn-b");
     const provider = makeProvider();
-    const events: AgentEvent[] = [];
-    provider.on("event", (event: AgentEvent) => events.push(event));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
     const entry = await startSession(provider, "mcode-stale-main", "stale-main");
     entry.server.emit("notification", {
       method: "turn/started",
@@ -1579,7 +1594,7 @@ describe("CodexProvider sub-agent turn lifecycle isolation", () => {
         item: { type: "imageGeneration", id: "stale-main-b-image", savedPath: "C:/tmp/stale-main-b.png" },
       },
     });
-    expect(events.find((event) => event.type === AgentEventType.GeneratedAttachment)?.turnExecutionId).toBe("exec-b");
+    expect(events.find((runtimeEvent) => runtimeEvent.event.type === AgentEventType.GeneratedAttachment)?.event.turnExecutionId).toBe("exec-b");
   });
 
   it("links a current B parent activity without a turn id to B", async () => {

@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { AgentEventType } from "@mcode/contracts";
+import { AgentEventType, type ProviderRuntimeEvent } from "@mcode/contracts";
 
 const { mockQuery } = vi.hoisted(() => ({ mockQuery: vi.fn() }));
 
@@ -81,8 +81,8 @@ describe("ClaudeProvider native goal support detection", () => {
       { type: "system", subtype: "status", status: "compacting" },
     ]));
     const claude = provider();
-    const events: Array<{ type: string; active?: boolean }> = [];
-    claude.on("event", (event) => events.push(event as { type: string; active?: boolean }));
+    const events: ProviderRuntimeEvent[] = [];
+    claude.on("event", (event) => events.push(event));
 
     await claude.sendTurn({
       turnExecutionId: "test-execution",
@@ -97,14 +97,16 @@ describe("ClaudeProvider native goal support detection", () => {
       providerOptions: {},
     });
 
-    for (let i = 0; i < 20 && !events.some((event) => event.type === AgentEventType.Compacting); i++) {
+    for (let i = 0; i < 20 && !events.some((runtimeEvent) => runtimeEvent.event.type === AgentEventType.Compacting); i++) {
       await new Promise<void>((resolve) => setImmediate(resolve));
     }
 
     expect(claude.hasNativeGoalCommand("mcode-thread-1")).toBe(true);
     expect(events).toContainEqual(expect.objectContaining({
-      type: AgentEventType.Compacting,
-      active: true,
+      event: expect.objectContaining({
+        type: AgentEventType.Compacting,
+        active: true,
+      }),
     }));
   });
 

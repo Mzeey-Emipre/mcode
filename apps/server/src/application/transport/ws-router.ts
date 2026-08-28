@@ -34,6 +34,9 @@ import type {
   AgentPermissionService,
   AgentService,
   CanonicalAgentBoundary,
+  GoalLifecycleService,
+  PlanTurnService,
+  SubagentLifecycleService,
   TurnRecoveryService,
 } from "../../features/agents/index.js";
 import type {
@@ -86,6 +89,7 @@ import { TerminalSessionRuntimeError } from "../../features/terminal/sessions/te
 import type { TerminalProfileService } from "../../features/terminal/profiles/terminal-profile-service.js";
 import type { WorkspaceTerminalPreferencesService } from "../../features/terminal/preferences/workspace-terminal-preferences-service.js";
 import type { SettingsService } from "../../features/settings/settings-service.js";
+import type { AgentTurnContinuationPort } from "../../features/agents/orchestration/agent-runtime-internal-ports.js";
 import { ZodError } from "zod";
 import type { MessageRepo } from "../../features/agents/conversation/persistence/message-repo.js";
 import type { ToolCallRecordRepo } from "../../features/agents/tools/persistence/tool-call-record-repo.js";
@@ -259,8 +263,16 @@ export interface RouterDeps {
   projectActionService: ProjectActionService;
   threadService: ThreadService;
   agentService: AgentService;
+  /** Continues an active turn without exposing AgentService lifecycle internals. */
+  agentContinuation?: AgentTurnContinuationPort;
   /** Routes provider permission decisions through the Agents feature boundary. */
   agentPermissionService: AgentPermissionService;
+  /** Owns plan question submission and plan output lifecycle. */
+  planTurnService: PlanTurnService;
+  /** Owns thread goal commands and goal lifecycle reads. */
+  goalLifecycleService: GoalLifecycleService;
+  /** Owns sub-agent roster and independent cancellation. */
+  subagentLifecycleService: SubagentLifecycleService;
   /** Owns restart reconciliation and explicit turn recovery actions. */
   turnRecoveryService: TurnRecoveryService;
   /** Owns durable approvals for protected delegated-thread mutations. */
@@ -1086,9 +1098,9 @@ async function dispatch(
       deps.threadService.markViewed(params.threadId);
       return;
     case "thread.goal.get":
-      return deps.agentService.getThreadGoal(params.threadId);
+      return deps.goalLifecycleService.get(params.threadId);
     case "thread.goal.clear":
-      return deps.agentService.clearThreadGoal(params.threadId);
+      return deps.goalLifecycleService.clear(params.threadId);
     case "thread.search":
       return deps.threadService.search({
         query: params.query,
@@ -1349,7 +1361,8 @@ async function dispatch(
         }));
       return;
     case "agent.continueWithoutSaving":
-      deps.agentService.continueWithoutSaving(params.executionId);
+      if (!deps.agentContinuation) throw new Error("Agent turn continuation is unavailable");
+      deps.agentContinuation.continueWithoutSaving(params.executionId);
       return;
     case "agent.createAndSend": {
       const thread = await deps.agentService.createAndSend({
@@ -1363,11 +1376,11 @@ async function dispatch(
     case "agent.stop":
       return deps.agentService.stopSession(params.threadId);
     case "agent.activeCount":
-      return deps.agentService.activeCount();
+      return deps.agentService.runtimeAccess().activeCount();
     case "agent.listRunning":
-      return deps.agentService.runtimeSnapshots();
+      return deps.agentService.runtimeAccess().runtimeSnapshots();
     case "agent.answerQuestions":
-      await deps.agentService.answerQuestions(
+      await deps.planTurnService.answerQuestions(
         params.threadId,
         params.answers,
         params.permissionMode ?? "default",
@@ -1377,7 +1390,7 @@ async function dispatch(
       );
       return;
     case "agent.dismissPlanQuestions":
-      deps.agentService.dismissPlanQuestions(params.threadId);
+      deps.planTurnService.dismissQuestions(params.threadId);
       return;
     case "plan.updateStatus":
       deps.planRepo.updateStatus(params.planId, params.status);
@@ -1405,12 +1418,9 @@ async function dispatch(
         before: params.before,
       });
     case "canonicalAgent.roster":
-      return deps.agentService.loadCanonicalSubagentRoster(params);
+      return deps.subagentLifecycleService.loadRoster(params);
     case "agent.child.stop":
-      return deps.agentService.stopChildTurn(
-        params.owningParentThreadId,
-        params.childThreadId,
-      );
+      return deps.subagentLifecycleService.stop(params);
     case "conversation.olderPage":
       return loadOlderConversationPage(deps, params);
     case "conversation.newerPage":

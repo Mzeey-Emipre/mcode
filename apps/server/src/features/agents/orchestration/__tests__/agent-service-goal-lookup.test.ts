@@ -1,7 +1,7 @@
 import "reflect-metadata";
 import { describe, expect, it, vi } from "vitest";
-import { AgentService } from "../agent-service.js";
 import type { GoalLookupResult, GoalState, IAgentProvider, IGoalCapable } from "@mcode/contracts";
+import { GoalLifecycleService } from "../../goals/goal-lifecycle-service.js";
 
 const openGoal: GoalState = {
   threadId: "thread-1",
@@ -17,20 +17,20 @@ const openGoal: GoalState = {
   controls: { canInspect: true, canClear: true },
 };
 
-type AgentServiceGoalHarness = Pick<AgentService, "getThreadGoal" | "clearThreadGoal"> & {
-  threadRepo: { findById: ReturnType<typeof vi.fn> };
-  providerRegistry: { resolve: ReturnType<typeof vi.fn> };
+type GoalLifecycleHarness = Pick<GoalLifecycleService, "get" | "clear"> & {
+  threads: { findById: ReturnType<typeof vi.fn> };
+  providers: { resolve: ReturnType<typeof vi.fn> };
 };
 
 function makeService(opts: {
   thread?: { id: string; provider: string | null };
   provider: Partial<IAgentProvider>;
-}): AgentServiceGoalHarness {
-  const service = Object.create(AgentService.prototype) as AgentServiceGoalHarness;
-  service.threadRepo = {
+}): GoalLifecycleHarness {
+  const service = Object.create(GoalLifecycleService.prototype) as GoalLifecycleHarness;
+  service.threads = {
     findById: vi.fn().mockReturnValue(opts.thread ?? null),
   };
-  service.providerRegistry = {
+  service.providers = {
     resolve: vi.fn().mockReturnValue(opts.provider),
   };
   return service;
@@ -87,14 +87,14 @@ function clearableProvider(opts: {
   return provider;
 }
 
-describe("AgentService.getThreadGoal", () => {
+describe("GoalLifecycleService.get", () => {
   it("rejects unknown thread ids before provider access", async () => {
     const providerRegistry = { resolve: vi.fn() };
-    const service = Object.create(AgentService.prototype) as AgentServiceGoalHarness;
-    service.threadRepo = { findById: vi.fn().mockReturnValue(null) };
-    service.providerRegistry = providerRegistry;
+    const service = Object.create(GoalLifecycleService.prototype) as GoalLifecycleHarness;
+    service.threads = { findById: vi.fn().mockReturnValue(null) };
+    service.providers = providerRegistry;
 
-    await expect(service.getThreadGoal("missing")).rejects.toThrow("Thread not found: missing");
+    await expect(service.get("missing")).rejects.toThrow("Thread not found: missing");
     expect(providerRegistry.resolve).not.toHaveBeenCalled();
   });
 
@@ -115,7 +115,7 @@ describe("AgentService.getThreadGoal", () => {
       } as unknown as IAgentProvider,
     });
 
-    await expect(service.getThreadGoal("thread-1")).resolves.toEqual({
+    await expect(service.get("thread-1")).resolves.toEqual({
       goal: null,
       authoritative: true,
       source: "unsupported",
@@ -136,7 +136,7 @@ describe("AgentService.getThreadGoal", () => {
       provider,
     });
 
-    await expect(service.getThreadGoal("thread-1")).resolves.toEqual(result);
+    await expect(service.get("thread-1")).resolves.toEqual(result);
     expect(provider.getGoalLookup).toHaveBeenCalledWith("mcode-thread-1");
   });
 
@@ -151,7 +151,7 @@ describe("AgentService.getThreadGoal", () => {
       }),
     });
 
-    await expect(service.getThreadGoal("thread-1")).resolves.toEqual({
+    await expect(service.get("thread-1")).resolves.toEqual({
       goal: null,
       authoritative: true,
       source: "codex-native",
@@ -160,7 +160,7 @@ describe("AgentService.getThreadGoal", () => {
   });
 });
 
-describe("AgentService.clearThreadGoal", () => {
+describe("GoalLifecycleService.clear", () => {
   it("returns unsupported result for non-goal-capable providers", async () => {
     const service = makeService({
       thread: { id: "thread-1", provider: "copilot" },
@@ -178,7 +178,7 @@ describe("AgentService.clearThreadGoal", () => {
       } as unknown as IAgentProvider,
     });
 
-    await expect(service.clearThreadGoal("thread-1")).resolves.toEqual({
+    await expect(service.clear("thread-1")).resolves.toEqual({
       goal: null,
       authoritative: true,
       source: "unsupported",
@@ -193,7 +193,7 @@ describe("AgentService.clearThreadGoal", () => {
       provider,
     });
 
-    await expect(service.clearThreadGoal("thread-1")).resolves.toEqual({
+    await expect(service.clear("thread-1")).resolves.toEqual({
       goal: null,
       authoritative: true,
       source: "codex-native",
@@ -218,7 +218,7 @@ describe("AgentService.clearThreadGoal", () => {
       provider,
     });
 
-    await expect(service.clearThreadGoal("thread-1")).resolves.toEqual({
+    await expect(service.clear("thread-1")).resolves.toEqual({
       goal: null,
       authoritative: false,
       source: "codex-cache",
@@ -235,7 +235,7 @@ describe("AgentService.clearThreadGoal", () => {
       provider,
     });
 
-    await expect(service.clearThreadGoal("thread-1")).resolves.toEqual({
+    await expect(service.clear("thread-1")).resolves.toEqual({
       goal: null,
       authoritative: true,
       source: "claude-wrapper",
@@ -249,7 +249,7 @@ describe("AgentService.clearThreadGoal", () => {
       provider,
     });
 
-    await expect(service.clearThreadGoal("thread-1")).resolves.toEqual({
+    await expect(service.clear("thread-1")).resolves.toEqual({
       goal: openGoal,
       authoritative: false,
       source: "codex-cache",
@@ -265,7 +265,7 @@ describe("AgentService.clearThreadGoal", () => {
       provider,
     });
 
-    await expect(service.clearThreadGoal("thread-1")).resolves.toEqual({
+    await expect(service.clear("thread-1")).resolves.toEqual({
       goal: null,
       authoritative: false,
       source: "codex-cache",
@@ -289,7 +289,7 @@ describe("AgentService.clearThreadGoal", () => {
       provider,
     });
 
-    await expect(service.clearThreadGoal("thread-1")).resolves.toEqual({
+    await expect(service.clear("thread-1")).resolves.toEqual({
       goal: null,
       authoritative: true,
       source: "codex-native",
@@ -306,7 +306,7 @@ describe("AgentService.clearThreadGoal", () => {
       provider,
     });
 
-    await expect(service.clearThreadGoal("thread-1")).rejects.toThrow("native clear failed");
+    await expect(service.clear("thread-1")).rejects.toThrow("native clear failed");
     expect(provider.getGoal).not.toHaveBeenCalled();
   });
 });

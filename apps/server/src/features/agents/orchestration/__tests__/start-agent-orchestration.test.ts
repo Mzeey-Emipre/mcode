@@ -1,18 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
 import { AgentEventType, type AgentEvent } from "@mcode/contracts";
 import { startAgentOrchestration } from "../start-agent-orchestration.js";
+import { AgentEventPublicationRegistry } from "../agent-event-publication-registry.js";
 
 function buildOrchestration() {
   let publish: ((event: AgentEvent) => void) | undefined;
-  const agentService = {
-    init: vi.fn((callback: (event: AgentEvent) => void) => {
-      publish = callback;
-    }),
+  const runtime = {
     getCurrentFileEffectTurnId: vi.fn(() => undefined),
     shouldSuppressTurnEnded: vi.fn(() => false),
     shouldSuppressTurnComplete: vi.fn(() => false),
     shouldSuppressTransientTurnError: vi.fn(() => false),
   };
+  const publicationRegistry = new AgentEventPublicationRegistry();
+  publicationRegistry.bind = vi.fn((callback: (event: AgentEvent) => void) => {
+    publish = callback;
+  });
   const threadRepo = {
     findById: vi.fn(() => ({
       id: "thread-1",
@@ -26,37 +28,34 @@ function buildOrchestration() {
   };
   const publishedEvents: AgentEvent[] = [];
   const publishThreadStatus = vi.fn();
-  const publishThreadPrLinked = vi.fn();
+  const pullRequestCompletionEffect = { schedule: vi.fn() };
 
   startAgentOrchestration({
-    agentService,
+    runtime,
+    publicationRegistry,
     threadRepo,
-    workspaceRepo: { findById: vi.fn() },
     narrativeStore: { getCurrentParentToolCallId: vi.fn(() => "agent-parent") },
-    threadService: { linkPr: vi.fn() },
-    githubService: { getBranchPr: vi.fn() },
-    ciWatcherService: { watch: vi.fn(), unwatch: vi.fn() },
+    pullRequestCompletionEffect,
     providerRegistry: { resolveAll: vi.fn(() => []) },
     publishAgentEvent: (event: AgentEvent) => publishedEvents.push(event),
     publishPermissionRequest: vi.fn(),
     publishPermissionResolved: vi.fn(),
     publishThreadStatus,
-    publishThreadPrLinked,
   } as never);
 
   if (!publish) throw new Error("orchestration did not register publication callback");
   return {
     publish,
-    agentService,
+    runtime,
     threadRepo,
     publishedEvents,
     publishThreadStatus,
-    publishThreadPrLinked,
+    pullRequestCompletionEffect,
   };
 }
 
 describe("agent orchestration", () => {
-  it("publishes enriched parent events once while keeping child and attachment events private", () => {
+  it("publishes enriched parent events once while keeping attachments private", () => {
     const orchestration = buildOrchestration();
 
     orchestration.publish({
@@ -81,17 +80,6 @@ describe("agent orchestration", () => {
       toolInput: { old_string: expect.anything(), new_string: expect.anything() },
     });
 
-    orchestration.publish({
-      type: AgentEventType.ToolUse,
-      threadId: "thread-1",
-      toolCallId: "child-tool",
-      toolName: "Read",
-      toolInput: {},
-      codexChild: {
-        nativeThreadId: "child-native-thread",
-        parentCollaborationItemId: "parent-item",
-      },
-    });
     orchestration.publish({
       type: AgentEventType.GeneratedAttachment,
       threadId: "thread-1",
@@ -125,5 +113,6 @@ describe("agent orchestration", () => {
       threadId: "thread-1",
       status: "completed",
     });
+    expect(orchestration.pullRequestCompletionEffect.schedule).toHaveBeenCalledWith("thread-1");
   });
 });

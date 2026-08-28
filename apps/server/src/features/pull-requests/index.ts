@@ -19,5 +19,8 @@ export { ReviewWorktreeService } from "./reviews/review-worktree-service.js";
 /** Polls linked pull requests for CI state and lifecycle changes. */
 export { CiWatcherService } from "./status/ci-watcher.js";
 
+/** Refreshes branch pull-request linkage after terminal turn publication. */
+export { TurnPullRequestCompletionEffect } from "./lifecycle/turn-pull-request-completion-effect.js";
+
 /** Generates pull-request titles and bodies from repository and thread context. */
 export { PrDraftService } from "./drafts/pr-draft-service.js";

@@ -1,18 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import type { CanonicalAgentEventEnvelope } from "@mcode/contracts";
+
 import { createProviderHostPorts } from "../provider-host-ports.js";
 
 const EXECUTION_ID = "00000000-0000-4000-8000-000000000001";
 
-function cursorLiveEventEnvelope(): CanonicalAgentEventEnvelope {
+function committedRuntimeEnvelope(): CanonicalAgentEventEnvelope {
   return {
     eventId: "event-1",
-    routing: {
-      threadId: "thread-1",
-      turnId: "turn-1",
-      executionId: EXECUTION_ID,
-      itemId: "item-1",
-    },
+    routing: { threadId: "thread-1", turnId: "turn-1", executionId: EXECUTION_ID, itemId: "item-1" },
     sourceProviderId: "cursor",
     sourceIdentities: [],
     acceptedSequence: 1,
@@ -27,12 +23,9 @@ function cursorLiveEventEnvelope(): CanonicalAgentEventEnvelope {
         kind: "system",
         providerIdentities: [],
         payload: {
-          projection: "agentLiveEvent",
-          event: {
-            type: "textDelta",
-            threadId: "thread-1",
-            turnExecutionId: EXECUTION_ID,
-            delta: "Cursor output",
+          projection: "providerRuntimeEvent",
+          runtimeEvent: {
+            event: { type: "textDelta", threadId: "thread-1", turnExecutionId: EXECUTION_ID, delta: "Cursor output" },
           },
         },
         createdAt: "2026-08-27T12:00:00.000Z",
@@ -60,6 +53,7 @@ describe("createProviderHostPorts", () => {
       threadControl: {},
       grants: {},
       events: {},
+      ingress: {},
     } as never);
 
     expect(ports.browser.issue({ leaseId: "lease-1", expiresAt: 123 })).toEqual({
@@ -72,8 +66,8 @@ describe("createProviderHostPorts", () => {
     });
   });
 
-  it("routes canonical drafts through the server-owned sink", async () => {
-    const events = [cursorLiveEventEnvelope()];
+  it("hands a committed canonical batch directly to ingress after durable acceptance", async () => {
+    const events = [committedRuntimeEnvelope()];
     const deliveryOrder: string[] = [];
     const commit = vi.fn(() => {
       deliveryOrder.push("commit");
@@ -86,7 +80,7 @@ describe("createProviderHostPorts", () => {
         events,
       };
     });
-    const deliver = vi.fn(() => deliveryOrder.push("deliver"));
+    const acceptCommitted = vi.fn(() => deliveryOrder.push("ingress"));
     const ports = createProviderHostPorts({
       envService: { getEnv: () => ({ PATH: "test" }) },
       jobObject: { isWindowsJob: false },
@@ -94,22 +88,11 @@ describe("createProviderHostPorts", () => {
       threadControl: {},
       grants: {},
       events: { commit },
-      legacyEvents: { deliver },
+      ingress: { acceptCommitted },
     } as never);
-    const batch = {
-      threadId: "thread-1",
-      turnId: "turn-1",
-      executionId: "00000000-0000-4000-8000-000000000001",
-      phase: "streaming",
-      events: [],
-    };
+    const batch = { threadId: "thread-1", turnId: "turn-1", executionId: EXECUTION_ID, phase: "streaming", events: [] };
 
-    const receipt = await ports.events.submit(batch);
-
-    expect(commit).toHaveBeenCalledWith({ ...batch, nativeCursor: undefined });
-    expect(deliver).toHaveBeenCalledWith(events);
-    expect(deliveryOrder).toEqual(["commit", "deliver"]);
-    expect(receipt).toEqual({
+    await expect(ports.events.submit(batch)).resolves.toEqual({
       commit: {
         outcome: "committed",
         conversationRevision: 1,
@@ -118,27 +101,27 @@ describe("createProviderHostPorts", () => {
         durableThrough: 1,
         eventCount: 1,
       },
-      delivery: { canonical: "published", legacy: "published" },
+      delivery: { ingress: "queued" },
     });
+    expect(commit).toHaveBeenCalledWith({ ...batch, nativeCursor: undefined });
+    expect(acceptCommitted).toHaveBeenCalledWith(events);
+    expect(deliveryOrder).toEqual(["commit", "ingress"]);
   });
 
-  it("does not deliver duplicate or failed canonical commits", async () => {
-    const events = [cursorLiveEventEnvelope()];
-    const deliver = vi.fn();
+  it("does not hand duplicate or failed commits to ingress", async () => {
+    const events = [committedRuntimeEnvelope()];
+    const acceptCommitted = vi.fn();
     const commit = vi
       .fn()
       .mockReturnValueOnce({
         outcome: "duplicate",
-        canonicalDelivery: "not-required",
         conversationRevision: 1,
         rosterRevision: 0,
         acceptedThrough: 1,
         durableThrough: 1,
         events,
       })
-      .mockImplementationOnce(() => {
-        throw new Error("commit failed");
-      });
+      .mockImplementationOnce(() => { throw new Error("commit failed"); });
     const ports = createProviderHostPorts({
       envService: { getEnv: () => ({ PATH: "test" }) },
       jobObject: { isWindowsJob: false },
@@ -146,57 +129,15 @@ describe("createProviderHostPorts", () => {
       threadControl: {},
       grants: {},
       events: { commit },
-      legacyEvents: { deliver },
+      ingress: { acceptCommitted },
     } as never);
-    const batch = {
-      threadId: "thread-1",
-      turnId: "turn-1",
-      executionId: EXECUTION_ID,
-      phase: "streaming",
-      events: [],
-    };
+    const batch = { threadId: "thread-1", turnId: "turn-1", executionId: EXECUTION_ID, phase: "streaming", events: [] };
 
-    const duplicate = await ports.events.submit(batch);
-
-    await expect(ports.events.submit(batch)).rejects.toThrow("commit failed");
-    expect(duplicate).toMatchObject({
+    await expect(ports.events.submit(batch)).resolves.toMatchObject({
       commit: { outcome: "duplicate" },
-      delivery: { canonical: "not-required", legacy: "not-required" },
+      delivery: { ingress: "not-required" },
     });
-    expect(deliver).not.toHaveBeenCalled();
-  });
-
-  it("keeps a durable commit visible when either publication path is deferred", async () => {
-    const events = [cursorLiveEventEnvelope()];
-    const commit = vi.fn(() => ({
-      outcome: "committed" as const,
-      canonicalDelivery: "deferred" as const,
-      conversationRevision: 1,
-      rosterRevision: 0,
-      acceptedThrough: 1,
-      durableThrough: 1,
-      events,
-    }));
-    const deliver = vi.fn(() => { throw new Error("legacy delivery failed"); });
-    const ports = createProviderHostPorts({
-      envService: { getEnv: () => ({ PATH: "test" }) },
-      jobObject: { isWindowsJob: false },
-      browser: {},
-      threadControl: {},
-      grants: {},
-      events: { commit },
-      legacyEvents: { deliver },
-    } as never);
-
-    await expect(ports.events.submit({
-      threadId: "thread-1",
-      turnId: "turn-1",
-      executionId: EXECUTION_ID,
-      phase: "streaming",
-      events: [],
-    })).resolves.toMatchObject({
-      commit: { outcome: "committed", eventCount: 1 },
-      delivery: { canonical: "deferred", legacy: "deferred" },
-    });
+    await expect(ports.events.submit(batch)).rejects.toThrow("commit failed");
+    expect(acceptCommitted).not.toHaveBeenCalled();
   });
 });

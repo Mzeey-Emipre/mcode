@@ -3,7 +3,7 @@ import {
   type AgentEvent,
   type ParentNarrativeRecoveryItem,
 } from "@mcode/contracts";
-import type { CanonicalAgentBoundary } from "../canonical/canonical-agent-boundary.js";
+import type { ParentTurnDurability } from "./parent-turn-durability.js";
 import type { NarrativeStore } from "../conversation/narrative/narrative-store.js";
 
 interface ParentNarrativeRecoveryCheckpoint {
@@ -16,7 +16,7 @@ export class ParentNarrativeRecoveryCoordinator {
   private readonly fingerprintsByExecution = new Map<string, Map<string, string>>();
 
   constructor(
-  private readonly canonicalSink: CanonicalAgentBoundary,
+    private readonly canonicalSink: ParentTurnDurability,
     private readonly narrativeStore: NarrativeStore,
   ) {}
 

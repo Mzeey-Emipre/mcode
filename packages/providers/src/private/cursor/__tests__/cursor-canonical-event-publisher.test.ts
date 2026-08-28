@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { AgentEventRoutingSchema } from "@mcode/agent-model";
-import { AgentEventType } from "@mcode/contracts";
+import { AgentEventType, providerRuntimeEvent } from "@mcode/contracts";
 import type { ProviderEventBatch, ProviderEventSinkPort } from "../../../host-ports.js";
 import {
   CursorCanonicalEventPublisher,
@@ -24,21 +24,21 @@ describe("CursorCanonicalEventPublisher", () => {
     const submit = vi.fn<(batch: ProviderEventBatch) => Promise<void>>().mockResolvedValue(undefined);
     const publisher = new CursorCanonicalEventPublisher(createSink(submit));
 
-    publisher.publish(routing, {
+    publisher.publish(routing, providerRuntimeEvent({
       type: AgentEventType.TextDelta,
       threadId: routing.threadId,
       delta: "Hello",
-    }, [{
+    }), [{
       providerId: "cursor",
       scope: "session",
       value: "cursor-session-1",
       provenance: "native",
     }]);
-    publisher.publish(routing, {
+    publisher.publish(routing, providerRuntimeEvent({
       type: AgentEventType.TurnComplete,
       threadId: routing.threadId,
       turnExecutionId: routing.executionId,
-    }, []);
+    }), []);
 
     await publisher.waitForExecution(routing);
 
@@ -78,16 +78,16 @@ describe("CursorCanonicalEventPublisher", () => {
       .mockRejectedValueOnce(new Error("canonical sink unavailable"));
     const publisher = new CursorCanonicalEventPublisher(createSink(submit));
 
-    publisher.publish(routing, {
+    publisher.publish(routing, providerRuntimeEvent({
       type: AgentEventType.System,
       threadId: routing.threadId,
       subtype: "first",
-    }, []);
-    publisher.publish(routing, {
+    }), []);
+    publisher.publish(routing, providerRuntimeEvent({
       type: AgentEventType.System,
       threadId: routing.threadId,
       subtype: "second",
-    }, []);
+    }), []);
 
     await expect(publisher.waitForExecution(routing))
       .rejects.toThrow("canonical sink unavailable");
@@ -103,10 +103,10 @@ describe("CursorCanonicalEventPublisher", () => {
       subtype: "retryable",
     } as const;
 
-    publisher.publish(routing, event, []);
+    publisher.publish(routing, providerRuntimeEvent(event), []);
     await publisher.waitForExecution(routing);
     const retryRouting = { ...routing, deliveryAttempt: 2 };
-    publisher.publish(retryRouting, event, []);
+    publisher.publish(retryRouting, providerRuntimeEvent(event), []);
     await publisher.waitForExecution(retryRouting);
 
     expect(submit.mock.calls.map(([batch]) => batch.events[0]?.eventId)).toEqual([

@@ -16,7 +16,7 @@ import { ClaudeProvider } from "../claude-provider.js";
 import { stubEnvService } from "../../../../../runtime/environment/__tests__/stub-env-service.js";
 import { stubJobObject } from "../../../../../runtime/process/containment/__tests__/stub-job-object.js";
 import { queryMethodStubs } from "./helpers/mock-sdk-query.js";
-import { AgentEventType } from "@mcode/contracts";
+import { AgentEventType, type ProviderRuntimeEvent } from "@mcode/contracts";
 import type { ProviderEventBatch, ProviderHostPorts } from "@mcode/providers";
 
 /** Build a minimal mock Query that yields one non-result message (so sessionInitialized=true), then the requested result. */
@@ -61,8 +61,8 @@ describe("ClaudeProvider result is_error handling (#293)", () => {
       { type: "result", is_error: true, errors: ["rate_limit_exceeded"] },
     ]));
 
-    const events: Array<{ type: string; error?: string }> = [];
-    provider.on("event", (e: { type: string; error?: string }) => events.push(e));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (runtimeEvent: ProviderRuntimeEvent) => events.push(runtimeEvent));
 
     await provider.sendTurn({
       turnExecutionId: "test-execution",
@@ -79,12 +79,12 @@ describe("ClaudeProvider result is_error handling (#293)", () => {
     // Allow the stream loop microtasks to drain
     await new Promise((r) => setTimeout(r, 10));
 
-    const errorEvents = events.filter((e) => e.type === AgentEventType.Error);
-    const turnComplete = events.filter((e) => e.type === AgentEventType.TurnComplete);
+    const errorEvents = events.filter((runtimeEvent) => runtimeEvent.event.type === AgentEventType.Error);
+    const turnComplete = events.filter((runtimeEvent) => runtimeEvent.event.type === AgentEventType.TurnComplete);
     expect(errorEvents).toHaveLength(1);
-    expect(errorEvents[0].error).toContain("rate_limit_exceeded");
+    expect(errorEvents[0]?.event.error).toContain("rate_limit_exceeded");
     expect(turnComplete).toHaveLength(0);
-    const ended = events.filter((e) => e.type === AgentEventType.Ended);
+    const ended = events.filter((runtimeEvent) => runtimeEvent.event.type === AgentEventType.Ended);
     expect(ended).toHaveLength(1);
   });
 
@@ -93,8 +93,8 @@ describe("ClaudeProvider result is_error handling (#293)", () => {
       { type: "result", is_error: false, result: "ok", usage: {}, modelUsage: {} },
     ]));
 
-    const events: Array<{ type: string }> = [];
-    provider.on("event", (e: { type: string }) => events.push(e));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (runtimeEvent: ProviderRuntimeEvent) => events.push(runtimeEvent));
 
     await provider.sendTurn({
       turnExecutionId: "test-execution",
@@ -109,8 +109,8 @@ describe("ClaudeProvider result is_error handling (#293)", () => {
     });
     await new Promise((r) => setTimeout(r, 10));
 
-    expect(events.some((e) => e.type === AgentEventType.Error)).toBe(false);
-    expect(events.some((e) => e.type === AgentEventType.TurnComplete)).toBe(true);
+    expect(events.some((runtimeEvent) => runtimeEvent.event.type === AgentEventType.Error)).toBe(false);
+    expect(events.some((runtimeEvent) => runtimeEvent.event.type === AgentEventType.TurnComplete)).toBe(true);
   });
 
   it("emits Error (not Message/TurnComplete) when is_error arrives after assistant text", async () => {
@@ -119,8 +119,8 @@ describe("ClaudeProvider result is_error handling (#293)", () => {
       { type: "result", is_error: true, errors: ["api_overload"] },
     ]));
 
-    const events: Array<{ type: string; error?: string; content?: string }> = [];
-    provider.on("event", (e: { type: string; error?: string; content?: string }) => events.push(e));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (runtimeEvent: ProviderRuntimeEvent) => events.push(runtimeEvent));
 
     await provider.sendTurn({
       turnExecutionId: "test-execution",
@@ -135,10 +135,10 @@ describe("ClaudeProvider result is_error handling (#293)", () => {
     });
     await new Promise((r) => setTimeout(r, 10));
 
-    expect(events.some((e) => e.type === AgentEventType.Error)).toBe(true);
-    expect(events.some((e) => e.type === AgentEventType.TurnComplete)).toBe(false);
+    expect(events.some((runtimeEvent) => runtimeEvent.event.type === AgentEventType.Error)).toBe(true);
+    expect(events.some((runtimeEvent) => runtimeEvent.event.type === AgentEventType.TurnComplete)).toBe(false);
     // Partial assistant text is dropped because the result errored out
-    expect(events.some((e) => e.type === AgentEventType.Message)).toBe(false);
+    expect(events.some((runtimeEvent) => runtimeEvent.event.type === AgentEventType.Message)).toBe(false);
   });
 
   it("submits Claude terminal evidence through the canonical host without direct EventEmitter delivery", async () => {
@@ -173,11 +173,10 @@ describe("ClaudeProvider result is_error handling (#293)", () => {
 
     await vi.waitFor(() => expect(submit.mock.calls.flatMap(([batch]) => batch.events)
       .some((event) => event.payload.type === "item.recorded"
-        && event.payload.item.payload.event.type === AgentEventType.Error)).toBe(true));
+        && event.payload.item.payload.runtimeEvent.event.type === AgentEventType.Error)).toBe(true));
     const submittedEvents = submit.mock.calls.flatMap(([batch]) => batch.events)
-      .map((event) => event.payload.type === "item.recorded" ? event.payload.item.payload.event : undefined);
+      .map((event) => event.payload.type === "item.recorded" ? event.payload.item.payload.runtimeEvent.event : undefined);
 
-    expect(provider.eventDelivery).toBe("canonical-sink");
     expect(directEvents).not.toHaveBeenCalled();
     expect(submittedEvents).toContainEqual(expect.objectContaining({
       type: AgentEventType.Error,

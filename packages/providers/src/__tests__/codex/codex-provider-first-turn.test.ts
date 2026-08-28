@@ -70,7 +70,7 @@ vi.mock("../../private/codex/codex-app-server.js", async () => {
 
 import { BrowserAutomationSessionLease, CodexProvider, stubEnvService } from "./codex-provider-test-fixture.js";
 import { AgentEventSchema, AgentEventType } from "@mcode/contracts";
-import type { AgentEvent } from "@mcode/contracts";
+import type { AgentEvent, ProviderRuntimeEvent } from "@mcode/contracts";
 
 const schemaValidExecutionId = "00000000-0000-4000-8000-000000000001";
 
@@ -253,8 +253,8 @@ describe("CodexProvider first turn on new session", () => {
     });
     startError.current = new Error("handshake failed");
     const provider = makeProvider(undefined, lease);
-    const events: AgentEvent[] = [];
-    provider.on("event", (event: AgentEvent) => events.push(event));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
 
     await provider.sendTurn({
       turnId: "test-turn",
@@ -275,15 +275,19 @@ describe("CodexProvider first turn on new session", () => {
     expect(sendTurnMock).not.toHaveBeenCalled();
     expect(events).toEqual([
       {
-        type: AgentEventType.Error,
-        threadId: "browser-spawn-failure",
-        error: "handshake failed",
-        turnExecutionId: "test-execution",
+        event: {
+          type: AgentEventType.Error,
+          threadId: "browser-spawn-failure",
+          error: "handshake failed",
+          turnExecutionId: "test-execution",
+        },
       },
       {
-        type: AgentEventType.Ended,
-        threadId: "browser-spawn-failure",
-        turnExecutionId: "test-execution",
+        event: {
+          type: AgentEventType.Ended,
+          threadId: "browser-spawn-failure",
+          turnExecutionId: "test-execution",
+        },
       },
     ]);
   });
@@ -294,11 +298,11 @@ describe("CodexProvider first turn on new session", () => {
       mcpUrl: "http://127.0.0.1:19400/mcp",
       worktreeIdentity: "worktree-test",
     });
-    const events: AgentEvent[] = [];
+    const events: ProviderRuntimeEvent[] = [];
     const provider = makeProvider(undefined, lease, {
       createCodexConfiguration: vi.fn().mockRejectedValue(new Error("MCP config failed")),
     });
-    provider.on("event", (event: AgentEvent) => events.push(event));
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
 
     await provider.sendTurn({
       turnId: "test-turn",
@@ -321,9 +325,9 @@ describe("CodexProvider first turn on new session", () => {
       { model: "gpt-5.4" },
     );
     expect(appServers.at(-1)?.isAlive).toBe(true);
-    const failure = events.filter((event) => event.type === AgentEventType.McpServerStartupStatus);
+    const failure = events.filter((runtimeEvent) => runtimeEvent.event.type === AgentEventType.McpServerStartupStatus);
     expect(failure).toHaveLength(1);
-    expect(failure[0]).toMatchObject({
+    expect(failure[0]?.event).toMatchObject({
       threadId: "browser-config-failure",
       providerId: "codex",
       serverThreadId: "sdk-thread-1",
@@ -332,9 +336,9 @@ describe("CodexProvider first turn on new session", () => {
       error: "MCP config failed",
       turnExecutionId: schemaValidExecutionId,
     });
-    expect(AgentEventSchema().parse(failure[0])).toEqual(failure[0]);
-    expect(events.some((event) => event.type === AgentEventType.Error)).toBe(false);
-    expect(events.some((event) => event.type === AgentEventType.Ended)).toBe(false);
+    expect(AgentEventSchema().parse(failure[0]?.event)).toEqual(failure[0]?.event);
+    expect(events.some((runtimeEvent) => runtimeEvent.event.type === AgentEventType.Error)).toBe(false);
+    expect(events.some((runtimeEvent) => runtimeEvent.event.type === AgentEventType.Ended)).toBe(false);
     await provider.stopSession("mcode-browser-config-failure");
   });
 
@@ -451,8 +455,8 @@ describe("CodexProvider first turn on new session", () => {
     const provider = makeProvider();
 
     const ended = new Promise<void>((resolve) => {
-      provider.on("event", (e: AgentEvent) => {
-        if (e.type === AgentEventType.Ended && e.threadId === threadId) resolve();
+      provider.on("event", (event: ProviderRuntimeEvent) => {
+        if (event.event.type === AgentEventType.Ended && event.event.threadId === threadId) resolve();
       });
     });
 
@@ -491,8 +495,8 @@ describe("CodexProvider first turn on new session", () => {
   it("emits Error before Ended when CLI preflight fails before runtime acquire", async () => {
     checkCodexVersionMock.mockReturnValueOnce({ ok: false, error: "Codex CLI unavailable" });
     const provider = makeProvider();
-    const events: AgentEvent[] = [];
-    provider.on("event", (event: AgentEvent) => events.push(event));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
 
     await provider.sendTurn({
       turnId: "test-turn",
@@ -509,8 +513,8 @@ describe("CodexProvider first turn on new session", () => {
     });
 
     expect(events).toEqual([
-      { type: AgentEventType.Error, threadId: "preflight-failure", error: "Codex CLI unavailable", turnExecutionId: "test-execution" },
-      { type: AgentEventType.Ended, threadId: "preflight-failure", turnExecutionId: "test-execution" },
+      { event: { type: AgentEventType.Error, threadId: "preflight-failure", error: "Codex CLI unavailable", turnExecutionId: "test-execution" } },
+      { event: { type: AgentEventType.Ended, threadId: "preflight-failure", turnExecutionId: "test-execution" } },
     ]);
     expect(appServers).toHaveLength(0);
   });
@@ -519,8 +523,8 @@ describe("CodexProvider first turn on new session", () => {
     const provider = makeProvider();
     const sessionId = "mcode-reusable-session";
     const threadId = "reusable-session";
-    const events: AgentEvent[] = [];
-    provider.on("event", (event: AgentEvent) => events.push(event));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
     const request = {
       turnId: "test-turn",
       turnExecutionId: "test-execution",
@@ -557,15 +561,15 @@ describe("CodexProvider first turn on new session", () => {
       params: { turn: { id: "turn-test-id", status: "completed" } },
     });
     await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(events.filter((event) => event.type === AgentEventType.Ended)).toHaveLength(2);
+    expect(events.filter((runtimeEvent) => runtimeEvent.event.type === AgentEventType.Ended)).toHaveLength(2);
   });
 
   it("keeps caller-specific policy for unsupported CLI versions", async () => {
     checkCodexVersionMock.mockReturnValueOnce({ ok: true, version: "0.36.0" });
     meetsMinVersionMock.mockReturnValueOnce(false);
     const provider = makeProvider();
-    const events: AgentEvent[] = [];
-    provider.on("event", (event: AgentEvent) => events.push(event));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
 
     await provider.sendTurn({
       turnId: "test-turn",
@@ -583,12 +587,14 @@ describe("CodexProvider first turn on new session", () => {
 
     expect(events).toEqual([
       {
-        type: AgentEventType.Error,
-        threadId: "unsupported-version",
-        error: "Codex CLI version 0.36.0 is not supported. Minimum required: 0.37.0. Update with: npm install -g @openai/codex",
-        turnExecutionId: "test-execution",
+        event: {
+          type: AgentEventType.Error,
+          threadId: "unsupported-version",
+          error: "Codex CLI version 0.36.0 is not supported. Minimum required: 0.37.0. Update with: npm install -g @openai/codex",
+          turnExecutionId: "test-execution",
+        },
       },
-      { type: AgentEventType.Ended, threadId: "unsupported-version", turnExecutionId: "test-execution" },
+      { event: { type: AgentEventType.Ended, threadId: "unsupported-version", turnExecutionId: "test-execution" } },
     ]);
 
     checkCodexVersionMock.mockReturnValueOnce({ ok: true, version: "0.36.0" });
@@ -1067,8 +1073,8 @@ describe("CodexProvider first turn on new session", () => {
           onSkillsChanged: vi.fn(() => () => undefined),
           shutdown: vi.fn(async () => undefined),
       });
-      const events: AgentEvent[] = [];
-      provider.on("event", (event: AgentEvent) => events.push(event));
+      const events: ProviderRuntimeEvent[] = [];
+      provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
 
       await provider.sendTurn({
       turnId: "test-turn",
@@ -1087,12 +1093,14 @@ describe("CodexProvider first turn on new session", () => {
       expect(sendTurnMock).not.toHaveBeenCalled();
       expect(events).toEqual([
         {
-          type: AgentEventType.Error,
-          threadId: "missing-prompt",
-          error: "Could not load Codex prompt /prompts:draftpr. Refresh commands and try again.",
-          turnExecutionId: "test-execution",
+          event: {
+            type: AgentEventType.Error,
+            threadId: "missing-prompt",
+            error: "Could not load Codex prompt /prompts:draftpr. Refresh commands and try again.",
+            turnExecutionId: "test-execution",
+          },
         },
-        { type: AgentEventType.Ended, threadId: "missing-prompt", turnExecutionId: "test-execution" },
+        { event: { type: AgentEventType.Ended, threadId: "missing-prompt", turnExecutionId: "test-execution" } },
       ]);
     } finally {
       rmSync(promptDir, { recursive: true, force: true });
@@ -1164,12 +1172,12 @@ describe("CodexProvider first turn on new session", () => {
 
   it("closes partial internal MCP authority when bootstrap fails", async () => {
     const close = vi.fn().mockResolvedValue(undefined);
-    const events: AgentEvent[] = [];
+    const events: ProviderRuntimeEvent[] = [];
     const provider = makeProvider(undefined, new BrowserAutomationSessionLease(), {
       createCodexConfiguration: vi.fn().mockRejectedValue(new Error("MCP setup failed")),
       close,
     });
-    provider.on("event", (event: AgentEvent) => events.push(event));
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
 
     await provider.sendTurn({
       turnId: "test-turn",
@@ -1190,11 +1198,11 @@ describe("CodexProvider first turn on new session", () => {
     expect((provider as unknown as { runtime: { get: (sessionId: string) => unknown } }).runtime.get("mcode-mcp-failure")).toBeDefined();
     expect(appServers.at(-1)?.isAlive).toBe(true);
     expect(sendTurnMock).toHaveBeenCalledTimes(1);
-    const failure = events.filter((event) => event.type === AgentEventType.McpServerStartupStatus);
+    const failure = events.filter((runtimeEvent) => runtimeEvent.event.type === AgentEventType.McpServerStartupStatus);
     expect(failure).toHaveLength(1);
-    expect(AgentEventSchema().parse(failure[0])).toEqual(failure[0]);
-    expect(events.some((event) => event.type === AgentEventType.Error)).toBe(false);
-    expect(events.some((event) => event.type === AgentEventType.Ended)).toBe(false);
+    expect(AgentEventSchema().parse(failure[0]?.event)).toEqual(failure[0]?.event);
+    expect(events.some((runtimeEvent) => runtimeEvent.event.type === AgentEventType.Error)).toBe(false);
+    expect(events.some((runtimeEvent) => runtimeEvent.event.type === AgentEventType.Ended)).toBe(false);
     await provider.stopSession("mcode-mcp-failure");
   });
 
@@ -1204,8 +1212,8 @@ describe("CodexProvider first turn on new session", () => {
       createCodexConfiguration: vi.fn().mockResolvedValue({ configOverrides: [], env: {} }),
       close,
     });
-    const events: AgentEvent[] = [];
-    provider.on("event", (event: AgentEvent) => events.push(event));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
 
     const send = provider.sendTurn({
       turnId: "test-turn",
@@ -1243,10 +1251,10 @@ describe("CodexProvider first turn on new session", () => {
     expect(readConfigMock).not.toHaveBeenCalled();
     expect(server.isAlive).toBe(true);
     expect(close).not.toHaveBeenCalled();
-    expect(events).not.toContainEqual(expect.objectContaining({ type: AgentEventType.Error }));
-    const failures = events.filter((event) => event.type === AgentEventType.McpServerStartupStatus);
+    expect(events).not.toContainEqual(expect.objectContaining({ event: expect.objectContaining({ type: AgentEventType.Error }) }));
+    const failures = events.filter((runtimeEvent) => runtimeEvent.event.type === AgentEventType.McpServerStartupStatus);
     expect(failures).toHaveLength(1);
-    expect(failures[0]).toMatchObject({
+    expect(failures[0]?.event).toMatchObject({
       threadId: "mcp-startup-failure",
       providerId: "codex",
       serverThreadId: "sdk-thread-1",
@@ -1255,7 +1263,7 @@ describe("CodexProvider first turn on new session", () => {
       error: "fixture MCP failed to start",
       turnExecutionId: schemaValidExecutionId,
     });
-    expect(AgentEventSchema().parse(failures[0])).toEqual(failures[0]);
+    expect(AgentEventSchema().parse(failures[0]?.event)).toEqual(failures[0]?.event);
     await provider.stopSession("mcode-mcp-startup-failure");
   });
 
@@ -1265,8 +1273,8 @@ describe("CodexProvider first turn on new session", () => {
       createCodexConfiguration: vi.fn().mockResolvedValue({ configOverrides: [], env: {} }),
       close,
     });
-    const events: AgentEvent[] = [];
-    provider.on("event", (event: AgentEvent) => events.push(event));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
 
     const send = provider.sendTurn({
       turnId: "test-turn",
@@ -1304,16 +1312,16 @@ describe("CodexProvider first turn on new session", () => {
     expect(readConfigMock).not.toHaveBeenCalled();
     expect(server.isAlive).toBe(true);
     expect(close).not.toHaveBeenCalled();
-    const failures = events.filter((event) => event.type === AgentEventType.McpServerStartupStatus);
+    const failures = events.filter((runtimeEvent) => runtimeEvent.event.type === AgentEventType.McpServerStartupStatus);
     expect(failures).toHaveLength(1);
-    expect(failures[0]).toMatchObject({
+    expect(failures[0]?.event).toMatchObject({
       status: "failed",
       failureReason: "legacy fixture failure",
       turnExecutionId: schemaValidExecutionId,
     });
-    expect(AgentEventSchema().parse(failures[0])).toEqual(failures[0]);
-    expect(events.some((event) => event.type === AgentEventType.Error)).toBe(false);
-    expect(events.some((event) => event.type === AgentEventType.Ended)).toBe(false);
+    expect(AgentEventSchema().parse(failures[0]?.event)).toEqual(failures[0]?.event);
+    expect(events.some((runtimeEvent) => runtimeEvent.event.type === AgentEventType.Error)).toBe(false);
+    expect(events.some((runtimeEvent) => runtimeEvent.event.type === AgentEventType.Ended)).toBe(false);
     await provider.stopSession("mcode-mcp-legacy-error");
   });
 
@@ -1323,8 +1331,8 @@ describe("CodexProvider first turn on new session", () => {
       createCodexConfiguration: vi.fn().mockResolvedValue({ configOverrides: [], env: {} }),
       close,
     });
-    const events: AgentEvent[] = [];
-    provider.on("event", (event: AgentEvent) => events.push(event));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
 
     const send = provider.sendTurn({
       turnId: "test-turn",
@@ -1361,9 +1369,9 @@ describe("CodexProvider first turn on new session", () => {
     expect(readConfigMock).not.toHaveBeenCalled();
     expect(server.isAlive).toBe(true);
     expect(close).not.toHaveBeenCalled();
-    const statuses = events.filter((event) => event.type === AgentEventType.McpServerStartupStatus);
+    const statuses = events.filter((runtimeEvent) => runtimeEvent.event.type === AgentEventType.McpServerStartupStatus);
     expect(statuses).toHaveLength(1);
-    expect(statuses[0]).toMatchObject({
+    expect(statuses[0]?.event).toMatchObject({
       threadId: "mcp-cancelled",
       providerId: "codex",
       serverThreadId: "sdk-thread-1",
@@ -1371,10 +1379,10 @@ describe("CodexProvider first turn on new session", () => {
       status: "cancelled",
       turnExecutionId: schemaValidExecutionId,
     });
-    expect(AgentEventSchema().parse(statuses[0])).toEqual(statuses[0]);
-    expect(events.some((event) => event.type === AgentEventType.Error)).toBe(false);
-    expect(events.some((event) => event.type === AgentEventType.Ended)).toBe(false);
-    expect(events.some((event) => event.type === AgentEventType.McpServerStartupStatus && event.status === "failed")).toBe(false);
+    expect(AgentEventSchema().parse(statuses[0]?.event)).toEqual(statuses[0]?.event);
+    expect(events.some((runtimeEvent) => runtimeEvent.event.type === AgentEventType.Error)).toBe(false);
+    expect(events.some((runtimeEvent) => runtimeEvent.event.type === AgentEventType.Ended)).toBe(false);
+    expect(events.some((runtimeEvent) => runtimeEvent.event.type === AgentEventType.McpServerStartupStatus && runtimeEvent.event.status === "failed")).toBe(false);
     await provider.stopSession("mcode-mcp-cancelled");
   });
 
@@ -1392,8 +1400,8 @@ describe("CodexProvider first turn on new session", () => {
       createCodexConfiguration: vi.fn().mockResolvedValue({ configOverrides: [], env: {} }),
       close,
     });
-    const events: AgentEvent[] = [];
-    provider.on("event", (event: AgentEvent) => events.push(event));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
 
     const sessionId = `mcode-mcp-config-${_name.replaceAll(" ", "-")}`;
     const threadId = `mcp-config-${_name.replaceAll(" ", "-")}`;
@@ -1432,9 +1440,9 @@ describe("CodexProvider first turn on new session", () => {
     );
     expect(server.isAlive).toBe(true);
     expect(close).toHaveBeenCalledWith(sessionId);
-    const failures = events.filter((event) => event.type === AgentEventType.McpServerStartupStatus && event.status === "failed");
+    const failures = events.filter((runtimeEvent) => runtimeEvent.event.type === AgentEventType.McpServerStartupStatus && runtimeEvent.event.status === "failed");
     expect(failures).toHaveLength(1);
-    expect(failures[0]).toMatchObject({
+    expect(failures[0]?.event).toMatchObject({
       threadId,
       providerId: "codex",
       serverThreadId: "sdk-thread-1",
@@ -1443,9 +1451,9 @@ describe("CodexProvider first turn on new session", () => {
       error: expectedError,
       turnExecutionId: schemaValidExecutionId,
     });
-    expect(AgentEventSchema().parse(failures[0])).toEqual(failures[0]);
-    expect(events.some((event) => event.type === AgentEventType.Error)).toBe(false);
-    expect(events.some((event) => event.type === AgentEventType.Ended)).toBe(false);
+    expect(AgentEventSchema().parse(failures[0]?.event)).toEqual(failures[0]?.event);
+    expect(events.some((runtimeEvent) => runtimeEvent.event.type === AgentEventType.Error)).toBe(false);
+    expect(events.some((runtimeEvent) => runtimeEvent.event.type === AgentEventType.Ended)).toBe(false);
     await provider.stopSession(sessionId);
   });
 
@@ -1538,8 +1546,8 @@ describe("CodexProvider first turn on new session", () => {
         createCodexConfiguration: vi.fn().mockResolvedValue({ configOverrides: [], env: {} }),
         close,
       });
-      const events: AgentEvent[] = [];
-      provider.on("event", (event: AgentEvent) => events.push(event));
+      const events: ProviderRuntimeEvent[] = [];
+      provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
 
       const send = provider.sendTurn({
         turnId: "test-turn",
@@ -1567,9 +1575,9 @@ describe("CodexProvider first turn on new session", () => {
         { model: "gpt-5.4" },
       );
       expect(readConfigMock).not.toHaveBeenCalled();
-      const failures = events.filter((event) => event.type === AgentEventType.McpServerStartupStatus);
+      const failures = events.filter((runtimeEvent) => runtimeEvent.event.type === AgentEventType.McpServerStartupStatus);
       expect(failures).toHaveLength(1);
-      expect(failures[0]).toMatchObject({
+      expect(failures[0]?.event).toMatchObject({
         threadId: "mcp-startup-timeout",
         providerId: "codex",
         serverThreadId: "sdk-thread-1",
@@ -1578,9 +1586,9 @@ describe("CodexProvider first turn on new session", () => {
         error: "Codex internal MCP startup timed out",
         turnExecutionId: schemaValidExecutionId,
       });
-      expect(AgentEventSchema().parse(failures[0])).toEqual(failures[0]);
-      expect(events.some((event) => event.type === AgentEventType.Error)).toBe(false);
-      expect(events.some((event) => event.type === AgentEventType.Ended)).toBe(false);
+      expect(AgentEventSchema().parse(failures[0]?.event)).toEqual(failures[0]?.event);
+      expect(events.some((runtimeEvent) => runtimeEvent.event.type === AgentEventType.Error)).toBe(false);
+      expect(events.some((runtimeEvent) => runtimeEvent.event.type === AgentEventType.Ended)).toBe(false);
       await provider.stopSession("mcode-mcp-startup-timeout");
     } finally {
       vi.useRealTimers();

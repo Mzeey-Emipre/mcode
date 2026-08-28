@@ -24,6 +24,7 @@ import {
   AgentEventType,
   CURSOR_STATIC_MODEL_FALLBACK,
   getCatalogEntry,
+  providerRuntimeEvent,
 } from "@mcode/contracts";
 import type {
   AgentEvent,
@@ -147,7 +148,6 @@ export class CursorProvider
     ],
   });
   readonly supportsCompletion = false;
-  readonly eventDelivery = "canonical-sink" as const;
   readonly sessionForkOnResume = "clean" as const;
   readonly maxInputCharactersPerTurn = 4_000;
   /** Path B forker; calls this provider's runSideChannelQuery on a forked copy of the parent session. */
@@ -420,7 +420,7 @@ export class CursorProvider
       logger.warn("Cursor event had no active turn routing", { type: event.type, threadId: event.threadId });
       return;
     }
-    this.canonicalEventPublisher.publish(routing, event, sourceIdentities);
+    this.canonicalEventPublisher.publish(routing, providerRuntimeEvent(event), sourceIdentities);
   }
 
   private releaseMismatchedPendingBrowserGrant(context: CursorTurnContext): void {

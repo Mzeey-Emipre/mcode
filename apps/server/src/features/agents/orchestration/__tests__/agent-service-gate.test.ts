@@ -1,7 +1,9 @@
 import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Thread, IProviderRegistry } from "@mcode/contracts";
-import { AgentService, usesInternalThreadControlMcp } from "../agent-service.js";
+import { AgentService } from "../agent-service.js";
+import { supportsInternalThreadControl } from "../../turns/turn-admission-dispatch-coordinator.js";
+import { createAgentServiceForTest } from "./agent-service-test-harness.js";
 import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/canonical-agent-event-sink-stub.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
 import { PlanQuestionService } from "../../planning/plan-question-service.js";
@@ -195,7 +197,7 @@ function buildService({
     listAnsweredForThread: vi.fn(() => []),
   } as unknown as import("../../planning/persistence/plan-question-answers-repo.js").PlanQuestionAnswersRepo;
 
-  const svc = new AgentService(
+  const svc = createAgentServiceForTest(
     threadRepo,
     workspaceRepo,
     messageRepo,
@@ -208,11 +210,9 @@ function buildService({
     snapshotService,
     db,
     memoryPressureService,
-    taskRepo,
     settingsService,
     availability,
     planQuestionAnswersRepo,
-      { create: vi.fn(), updateStatus: vi.fn(), listByThread: vi.fn(() => []), getLatestForThread: vi.fn(() => null), getById: vi.fn(() => null) } as unknown as import("../../planning/persistence/plan-repo.js").PlanRepo,
       { deliverHandoff: vi.fn(async () => ({ providerWireOverride: "" })) } as any,
       { issue: vi.fn(), tryConsume: vi.fn(() => false), clear: vi.fn(), hasActiveGrant: vi.fn(() => false) } as any,
       new NarrativeStore(
@@ -221,7 +221,6 @@ function buildService({
         { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../conversation/narrative/persistence/thought-segment-repo.js").ThoughtSegmentRepo,
         { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../events/persistence/hook-execution-repo.js").HookExecutionRepo,
       ),
-      new PlanQuestionService(messageRepo, planQuestionAnswersRepo),
       new ParentAssistantTextCheckpointService(db),
       undefined,
       threadControlMcp as never,
@@ -362,11 +361,11 @@ describe("AgentService.sendMessage — provider availability gate", () => {
 
 describe("AgentService internal MCP provider allowlist", () => {
   it.each(["claude", "codex", "cursor", "copilot"])("includes %s for initial and retry activation", (provider) => {
-    expect(usesInternalThreadControlMcp(provider)).toBe(true);
+    expect(supportsInternalThreadControl(provider)).toBe(true);
   });
 
   it("excludes unsupported providers", () => {
-    expect(usesInternalThreadControlMcp("unknown")).toBe(false);
+    expect(supportsInternalThreadControl("unknown")).toBe(false);
   });
 
   it.each([

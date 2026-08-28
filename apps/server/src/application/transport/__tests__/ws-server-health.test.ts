@@ -33,7 +33,9 @@ function makeMinimalDeps(
     instanceToken: null,
     worktreeIdentity: null,
     shutdown: vi.fn(),
-    agentService: { activeCount: () => 2 } as unknown as RouterDeps["agentService"],
+    agentService: {
+      runtimeAccess: () => ({ activeCount: () => 2 }),
+    } as unknown as RouterDeps["agentService"],
     workspaceService: undefined as unknown as RouterDeps["workspaceService"],
     threadService: undefined as unknown as RouterDeps["threadService"],
     gitService: undefined as unknown as RouterDeps["gitService"],

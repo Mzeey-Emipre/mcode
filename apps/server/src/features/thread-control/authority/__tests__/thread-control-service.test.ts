@@ -64,7 +64,12 @@ describe("ThreadControlService", () => {
     listDelegationChildren: ReturnType<typeof vi.fn>;
   };
   let projectWorktreeService: { provisionWorktree: ReturnType<typeof vi.fn>; cleanupInterruptedProvisioning: ReturnType<typeof vi.fn> };
-  let agentService: { sendMessage: ReturnType<typeof vi.fn>; stopSession: ReturnType<typeof vi.fn>; activeThreadIds?: ReturnType<typeof vi.fn> };
+  let agentService: {
+    sendMessage: ReturnType<typeof vi.fn>;
+    stopSession: ReturnType<typeof vi.fn>;
+    runtimeAccess: () => { activeThreadIds: ReturnType<typeof vi.fn> };
+  };
+  let activeThreadIds: ReturnType<typeof vi.fn>;
   let approvals: {
     create: ReturnType<typeof vi.fn>;
     createSend: ReturnType<typeof vi.fn>;
@@ -124,7 +129,12 @@ describe("ThreadControlService", () => {
       }),
       cleanupInterruptedProvisioning: vi.fn().mockResolvedValue(true),
     };
-    agentService = { sendMessage: vi.fn().mockResolvedValue(undefined), stopSession: vi.fn().mockResolvedValue(undefined) };
+    activeThreadIds = vi.fn().mockReturnValue([]);
+    agentService = {
+      sendMessage: vi.fn().mockResolvedValue(undefined),
+      stopSession: vi.fn().mockResolvedValue(undefined),
+      runtimeAccess: () => ({ activeThreadIds }),
+    };
     approvals = {
       create: vi.fn().mockReturnValue("approval-1"),
       createSend: vi.fn().mockReturnValue("approval-send"),
@@ -1140,7 +1150,7 @@ describe("ThreadControlService", () => {
       deleted_at: null,
     };
     threads.findById.mockReturnValue(runningThread);
-    agentService.activeThreadIds = vi.fn().mockReturnValue([runningThread.id]);
+    activeThreadIds.mockReturnValue([runningThread.id]);
     const setTimeoutSpy = vi.spyOn(globalThis, "setTimeout");
 
     try {
@@ -1173,7 +1183,7 @@ describe("ThreadControlService", () => {
       deleted_at: null,
     };
     threads.findById.mockReturnValue(runningThread);
-    agentService.activeThreadIds = vi.fn().mockReturnValue([runningThread.id]);
+    activeThreadIds.mockReturnValue([runningThread.id]);
 
     await expect(service.threadWait(authority, { threadIds: [runningThread.id], until: "attention_or_terminal", timeoutSeconds: 1 })).resolves.toEqual({
       status: "success",

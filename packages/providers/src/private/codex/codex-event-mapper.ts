@@ -1,7 +1,15 @@
 import { createHash, randomUUID } from "crypto";
 import { logger } from "@mcode/shared";
 import { AgentEventType } from "@mcode/contracts";
-import type { AgentEvent, GoalState, ProviderFileMutationStart } from "@mcode/contracts";
+import type {
+  AgentEvent,
+  CodexChildEvidence,
+  CodexCollaborationEvidence,
+  CodexContinuationEvidence,
+  GoalState,
+  ProviderFileMutationStart,
+  ProviderRuntimeEvent,
+} from "@mcode/contracts";
 import {
   BoundedToolOutputBuffer,
   boundToolOutput,
@@ -15,17 +23,11 @@ import type {
   ThreadSettingsUpdatedPayload,
 } from "./codex-types.js";
 
-type ToolResultAgentEvent = Extract<AgentEvent, { type: typeof AgentEventType.ToolResult }>;
-
-type CodexChildEvidence = {
-  nativeThreadId: string;
-  nativeTurnId?: string;
-  parentCollaborationItemId: string;
-  prompt?: string;
-  nativeItemId?: string;
-  itemEventKey?: string;
-  outcome?: "completed" | "errored" | "interrupted" | "cancelled";
+type CodexMappedEvent = AgentEvent & {
+  codexChild?: CodexChildEvidence;
+  codexContinuation?: CodexContinuationEvidence;
 };
+type ToolResultAgentEvent = Extract<CodexMappedEvent, { type: typeof AgentEventType.ToolResult }>;
 
 /** Notification methods that produce no agent events (module-level to avoid per-call allocation). */
 const SILENCED_METHODS = new Set([
@@ -184,7 +186,7 @@ export class CodexEventMapper {
   private readonly childNotificationsBeforeTurnByThread = new Map<string, CodexNotification[]>();
   private childNotificationsBeforeTurnCount = 0;
   /** Child events replayed while the current main-thread notification registers receivers. */
-  private replayedChildEvents: AgentEvent[] = [];
+  private replayedChildEvents: CodexMappedEvent[] = [];
   /** Monotonic sequence that keeps repeated native subagent interactions distinct. */
   private subagentInteractionSequence = 0;
   /**
@@ -313,16 +315,16 @@ export class CodexEventMapper {
   }
 
   private withChildEvidence(
-    events: AgentEvent[],
+    events: CodexMappedEvent[],
     evidence: CodexChildEvidence,
-  ): AgentEvent[] {
+  ): CodexMappedEvent[] {
     const attributed = events.map((event) => ({
       ...event,
       codexChild: {
         ...evidence,
         nativeEventId: this.childNativeEventId(event.type, evidence),
       },
-    } as AgentEvent));
+    } as CodexMappedEvent));
     for (const event of attributed) {
       if (
         event.type === AgentEventType.ToolUse
@@ -383,8 +385,8 @@ export class CodexEventMapper {
     return `codex-child:${createHash("sha256").update(structuralEvidence).digest("hex")}`;
   }
 
-  private dedupeChildEvents(events: AgentEvent[]): AgentEvent[] {
-    const deduped: AgentEvent[] = [];
+  private dedupeChildEvents(events: CodexMappedEvent[]): CodexMappedEvent[] {
+    const deduped: CodexMappedEvent[] = [];
     for (const event of events) {
       if (!("codexChild" in event) || !event.codexChild?.nativeEventId) {
         deduped.push(event);
@@ -520,7 +522,7 @@ export class CodexEventMapper {
   }
 
   /** Child receiver threads contribute tool rows only; text and lifecycle stay private to Codex. */
-  private mapChildThreadNotification(notification: CodexNotification): AgentEvent[] {
+  private mapChildThreadNotification(notification: CodexNotification): CodexMappedEvent[] {
     const { method } = notification;
     const childThreadId = this.notificationThreadId(notification);
     const parentCollaborationItemId = childThreadId
@@ -545,7 +547,7 @@ export class CodexEventMapper {
           "prompt",
         );
       this.pendingChildPromptByThreadId.delete(childThreadId);
-      const turnStarted: AgentEvent = {
+      const turnStarted: CodexMappedEvent = {
         type: AgentEventType.TurnStarted,
         threadId: this.threadId,
         codexChild: {
@@ -746,7 +748,7 @@ export class CodexEventMapper {
         nativeItemId,
         itemEventKey: "completed",
       } as const;
-      const childEvents: AgentEvent[] = [];
+      const childEvents: CodexMappedEvent[] = [];
       if (childOutput) {
         childEvents.push(...this.withChildEvidence([{
           type: AgentEventType.Message,
@@ -994,7 +996,7 @@ export class CodexEventMapper {
   }
 
   /** Applies resolved model settings carried by a completed native spawn item. */
-  private applySpawnItemMetadata(item: CompletedItem): AgentEvent[] {
+  private applySpawnItemMetadata(item: CompletedItem): CodexMappedEvent[] {
     const raw = item as unknown as Record<string, unknown>;
     const model = this.stringField(raw, "model");
     const reasoningEffort =
@@ -1015,7 +1017,7 @@ export class CodexEventMapper {
     }
 
     return [...receiverThreadIds].flatMap((childThreadId) => (
-      this.applyChildThreadMetadata(childThreadId, { model, reasoningEffort })
+      this.applyChildThreadMetadataInternal(childThreadId, { model, reasoningEffort })
     ));
   }
 
@@ -1025,7 +1027,7 @@ export class CodexEventMapper {
     toolCallId: string,
     includeInteractions: boolean,
     notification?: CodexNotification,
-  ): AgentEvent[] {
+  ): CodexMappedEvent[] {
     const agentThreadId = this.stringField(item, "agentThreadId");
     const agentPath = this.stringField(item, "agentPath");
     if (!agentThreadId || !agentPath) return [];
@@ -1116,7 +1118,7 @@ export class CodexEventMapper {
   }
 
   /** Stores authoritative child-thread settings and updates any mapped Agent row. */
-  private mapThreadSettingsUpdated(params: ThreadSettingsUpdatedPayload): AgentEvent[] {
+  private mapThreadSettingsUpdated(params: ThreadSettingsUpdatedPayload): CodexMappedEvent[] {
     const childThreadId = params.threadId;
     const settings = params.threadSettings;
     if (!childThreadId || !settings || typeof settings !== "object" || Array.isArray(settings)) return [];
@@ -1125,17 +1127,26 @@ export class CodexEventMapper {
     const model = this.stringField(record, "model");
     const reasoningEffort = this.stringField(record, "effort");
     if (!model && !reasoningEffort) return [];
-    return this.applyChildThreadMetadata(childThreadId, {
+    return this.applyChildThreadMetadataInternal(childThreadId, {
       ...(model ? { model } : {}),
       ...(reasoningEffort ? { reasoningEffort } : {}),
     });
   }
 
-  /** Applies authoritative child-thread model settings to the matching Agent row. */
+  /** Applies authoritative child-thread metadata and returns runtime events. */
   applyChildThreadMetadata(
     childThreadId: string,
     metadata: { identity?: string; model?: string; reasoningEffort?: string; parentMessage?: string },
-  ): AgentEvent[] {
+  ): ProviderRuntimeEvent[] {
+    return this.applyChildThreadMetadataInternal(childThreadId, metadata)
+      .map((event) => this.toRuntimeEvent(event));
+  }
+
+  /** Applies authoritative child-thread model settings to the matching Agent row. */
+  private applyChildThreadMetadataInternal(
+    childThreadId: string,
+    metadata: { identity?: string; model?: string; reasoningEffort?: string; parentMessage?: string },
+  ): CodexMappedEvent[] {
     const parentMessage = typeof metadata.parentMessage === "string"
       ? metadata.parentMessage.trim().slice(0, 32_768)
       : undefined;
@@ -1170,7 +1181,7 @@ export class CodexEventMapper {
     const completedResult = this.completedSpawnAgentResults.get(toolCallId);
     if (completedResult) return [{ ...completedResult, toolInput }];
 
-    const toolUse: AgentEvent = {
+    const toolUse: CodexMappedEvent = {
       type: AgentEventType.ToolUse,
       threadId: this.threadId,
       toolCallId,
@@ -1223,7 +1234,7 @@ export class CodexEventMapper {
     output: string | BoundedToolOutputBuffer | undefined,
     isError = false,
     childEvidence?: CodexChildEvidence,
-  ): AgentEvent[] {
+  ): CodexMappedEvent[] {
     if (!collabId || this.completedSpawnAgentIds.has(collabId)) return [];
     if (!this.openSpawnAgentIds.has(collabId)) return [];
     this.completedSpawnAgentIds.add(collabId);
@@ -1240,12 +1251,12 @@ export class CodexEventMapper {
   }
 
   /** Maps a `wait` collab's per-child state payload into Agent ToolResults. */
-  private mapWaitStates(item: CompletedItem): AgentEvent[] {
+  private mapWaitStates(item: CompletedItem): CodexMappedEvent[] {
     const raw = item as unknown as Record<string, unknown>;
     const agentsStates = raw.agentsStates;
     if (!agentsStates || typeof agentsStates !== "object") return [];
 
-    const events: AgentEvent[] = [];
+    const events: CodexMappedEvent[] = [];
     for (const [childThreadId, state] of Object.entries(agentsStates as Record<string, unknown>)) {
       if (!state || typeof state !== "object") continue;
       const record = state as Record<string, unknown>;
@@ -1297,7 +1308,7 @@ export class CodexEventMapper {
     item: CompletedItem,
     toolCallId: string,
     notification?: CodexNotification,
-  ): AgentEvent {
+  ): CodexMappedEvent {
     const nestParent = this.nestingParentToolCallId(notification);
     const toolInput = this.isSpawnAgentCollab(item)
       ? this.mergeSpawnAgentToolInput(toolCallId, item)
@@ -1327,7 +1338,7 @@ export class CodexEventMapper {
     item: CompletedItem,
     toolCallId: string,
     notification?: CodexNotification,
-  ): AgentEvent | undefined {
+  ): CodexMappedEvent | undefined {
     const itemType = item.type;
     const nestParent = this.nestingParentToolCallId(notification);
 
@@ -1393,7 +1404,7 @@ export class CodexEventMapper {
   }
 
   /** Stable enough for same-turn start/completion enrichment checks. */
-  private toolUseSignature(event: AgentEvent): string {
+  private toolUseSignature(event: CodexMappedEvent): string {
     if (event.type !== AgentEventType.ToolUse) return "";
     return JSON.stringify({
       toolName: event.toolName,
@@ -1403,7 +1414,7 @@ export class CodexEventMapper {
   }
 
   /** Returns true when completion has new ToolUse details worth broadcasting. */
-  private shouldEmitCompletionToolUse(toolCallId: string, event: AgentEvent | undefined): event is AgentEvent {
+  private shouldEmitCompletionToolUse(toolCallId: string, event: CodexMappedEvent | undefined): event is CodexMappedEvent {
     if (!event) return false;
     const started = this.startedToolUseSignatures.get(toolCallId);
     this.startedToolUseSignatures.delete(toolCallId);
@@ -1450,12 +1461,12 @@ export class CodexEventMapper {
    * Non-final boundaries clear assistant text so later turn failure/cancel
    * cannot persist narration as the assistant reply.
    */
-  drainPendingAssistantBoundary(isFinalResponse = false): AgentEvent[] {
+  drainPendingAssistantBoundary(isFinalResponse = false): CodexMappedEvent[] {
     if (!this.hasOpenAssistantText()) return [];
     if (isFinalResponse && this.lastCompletedAssistantText.length === 0) {
       this.lastCompletedAssistantText = this.currentAssistantItemText;
     }
-    const event: AgentEvent = {
+    const event: CodexMappedEvent = {
       type: AgentEventType.AssistantMessageBoundary,
       threadId: this.threadId,
       isFinalResponse,
@@ -1471,7 +1482,7 @@ export class CodexEventMapper {
   }
 
   /** Flushes a pending boundary when a different item starts producing work. */
-  private drainAssistantBoundaryBeforeItem(nextItemId?: string): AgentEvent[] {
+  private drainAssistantBoundaryBeforeItem(nextItemId?: string): CodexMappedEvent[] {
     if (!this.hasOpenAssistantText()) return [];
     if (nextItemId && this.currentAssistantItemId === nextItemId) return [];
     return this.drainPendingAssistantBoundary(false);
@@ -1493,7 +1504,7 @@ export class CodexEventMapper {
   private recordAssistantCompletion(
     item: CompletedItem,
     notification: CodexNotification,
-  ): AgentEvent[] {
+  ): CodexMappedEvent[] {
     const itemId = this.assistantItemId(notification, item);
     const completedText = this.assistantTextFromCompletedItem(item);
     const hasSpecificItemId = itemId !== FALLBACK_ASSISTANT_ITEM_ID;
@@ -1509,7 +1520,7 @@ export class CodexEventMapper {
     }
     const boundaryEvents = this.drainAssistantBoundaryBeforeItem(itemId);
     const previousText = this.assistantTextByItemId.get(itemId) ?? "";
-    const events: AgentEvent[] = [...boundaryEvents];
+    const events: CodexMappedEvent[] = [...boundaryEvents];
 
     if (completedText.length > 0) {
       const delta = completedText.length > previousText.length
@@ -1540,17 +1551,88 @@ export class CodexEventMapper {
    * Translates a single `CodexNotification` into zero or more `AgentEvent` objects.
    * Returns an empty array for silently consumed notification types.
    */
-  mapNotification(notification: CodexNotification): AgentEvent[] {
+  mapNotification(notification: CodexNotification): ProviderRuntimeEvent[] {
     this.replayedChildEvents = [];
     const events = this.mapNotificationInternal(notification);
     return this.dedupeChildEvents(
       this.replayedChildEvents.length > 0
         ? [...events, ...this.replayedChildEvents]
         : events,
-    );
+    ).map((event) => this.toRuntimeEvent(event));
   }
 
-  private mapNotificationInternal(notification: CodexNotification): AgentEvent[] {
+  private toRuntimeEvent(event: CodexMappedEvent): ProviderRuntimeEvent {
+    const extension = this.runtimeExtension(event);
+    return {
+      event: this.rendererEvent(event),
+      ...(extension ? { extension } : {}),
+    };
+  }
+
+  private runtimeExtension(event: CodexMappedEvent): ProviderRuntimeEvent["extension"] {
+    const collaboration = this.collaborationEvidence(event);
+    if (!event.codexChild && !event.codexContinuation && !collaboration) return undefined;
+    return {
+      providerId: "codex",
+      kind: "codex-collaboration",
+      ...(event.codexChild ? { child: event.codexChild } : {}),
+      ...(event.codexContinuation ? { continuation: event.codexContinuation } : {}),
+      ...(collaboration ? { collaboration } : {}),
+    };
+  }
+
+  private collaborationEvidence(event: CodexMappedEvent): CodexCollaborationEvidence | undefined {
+    if (event.type !== AgentEventType.ToolUse && event.type !== AgentEventType.ToolResult) return undefined;
+    const input = event.toolInput ?? {};
+    const kind = this.stringField(input, "codexCollabKind");
+    if (!kind) return undefined;
+    const senderThreadId = this.stringField(input, "senderThreadId");
+    const prompt = this.stringField(input, "prompt");
+    const agentName = this.stringField(input, "agentName");
+    const agentPath = this.stringField(input, "agentPath");
+    const model = this.stringField(input, "model");
+    const reasoningEffort = this.stringField(input, "reasoningEffort");
+    const receiverThreadIds = Array.isArray(input.receiverThreadIds)
+      ? input.receiverThreadIds.filter((value): value is string => typeof value === "string")
+      : undefined;
+    return {
+      kind,
+      ...(senderThreadId ? { senderThreadId } : {}),
+      ...(receiverThreadIds && receiverThreadIds.length > 0 ? { receiverThreadIds } : {}),
+      ...(prompt ? { prompt } : {}),
+      ...(agentName ? { agentName } : {}),
+      ...(agentPath ? { agentPath } : {}),
+      ...(model ? { model } : {}),
+      ...(reasoningEffort ? { reasoningEffort } : {}),
+    };
+  }
+
+  private rendererEvent(event: CodexMappedEvent): AgentEvent {
+    const { codexChild: _child, codexContinuation: _continuation, ...genericEvent } = event;
+    if (genericEvent.type !== AgentEventType.ToolUse && genericEvent.type !== AgentEventType.ToolResult) {
+      return genericEvent;
+    }
+    const {
+      codexCollabKind: _kind,
+      senderThreadId: _senderThreadId,
+      receiverThreadIds: _receiverThreadIds,
+      prompt: _prompt,
+      agentName: _agentName,
+      agentPath: _agentPath,
+      model: _model,
+      reasoningEffort: _reasoningEffort,
+      ...toolInput
+    } = genericEvent.toolInput ?? {};
+    const { toolInput: _nativeToolInput, ...eventWithoutToolInput } = genericEvent;
+    return {
+      ...eventWithoutToolInput,
+      ...(genericEvent.type === AgentEventType.ToolUse
+        ? { toolInput }
+        : { ...(Object.keys(toolInput).length > 0 ? { toolInput } : {}) }),
+    } as AgentEvent;
+  }
+
+  private mapNotificationInternal(notification: CodexNotification): CodexMappedEvent[] {
     const { method } = notification;
     if (method === "warning") {
       logger.warn("Codex warning notification", { method, params: notification.params });
@@ -1593,7 +1675,7 @@ export class CodexEventMapper {
 
     if (method === "thread/goal/updated") {
       const goal = this.mapThreadGoal(notification.params.goal, notification.params.turnId ?? null);
-      const events: AgentEvent[] = [{
+      const events: CodexMappedEvent[] = [{
         type: AgentEventType.GoalUpdated,
         threadId: this.threadId,
         goal,
@@ -1877,7 +1959,7 @@ export class CodexEventMapper {
       const tokensOut = usage.output_tokens ?? 0;
       const totalProcessedTokens = inputTokens + cachedInputTokens + tokensOut;
 
-      const events: AgentEvent[] = [...boundaryEvents];
+    const events: CodexMappedEvent[] = [...boundaryEvents];
       if (text) {
         events.push({ type: AgentEventType.Message, threadId: this.threadId, content: text, tokens: null });
       }
@@ -1975,7 +2057,7 @@ export class CodexEventMapper {
     item: CompletedItem | undefined,
     notification: CodexNotification,
     route: "main" | "child" = "main",
-  ): AgentEvent[] {
+  ): CodexMappedEvent[] {
     if (!item) return [];
 
     const { threadId } = this;

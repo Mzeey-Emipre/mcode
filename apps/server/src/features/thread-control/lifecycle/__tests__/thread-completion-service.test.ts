@@ -10,6 +10,7 @@ import { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
 import { MessageRepo } from "../../../agents/conversation/persistence/message-repo.js";
 import { getDefaultSettings, type CompletedThreadRetentionDays, type Settings } from "@mcode/contracts";
 import type { AgentService } from "../../../agents/index.js";
+import type { AgentPermissionService } from "../../../agents/permissions/agent-permission-service.js";
 import type { SettingsService } from "../../../settings/settings-service.js";
 import type { ThreadTeardownService } from "../thread-teardown-service.js";
 import { ThreadControlMutationReservationService } from "../../authority/thread-control-mutation-reservation-service.js";
@@ -27,6 +28,7 @@ describe("ThreadCompletionService", () => {
   let db: Database.Database;
   let threadRepo: ThreadRepo;
   let agentService: AgentService;
+  let permissions: AgentPermissionService;
   let teardownService: ThreadTeardownService;
   let settingsService: SettingsService;
   let service: ThreadCompletionService;
@@ -35,6 +37,7 @@ describe("ThreadCompletionService", () => {
   let now: Date;
   let settings: Settings;
   let settingsListener: ((settings: Settings) => void) | null;
+  let activeThreadIds: ReturnType<typeof vi.fn<() => string[]>>;
 
   beforeEach(() => {
     db = openMemoryDatabase();
@@ -47,10 +50,13 @@ describe("ThreadCompletionService", () => {
       "direct",
       "main",
     ).id;
+    activeThreadIds = vi.fn(() => []);
     agentService = {
-      activeThreadIds: vi.fn(() => []),
-      listPendingPermissions: vi.fn(() => []),
+      runtimeAccess: () => ({ activeThreadIds }),
     } as unknown as AgentService;
+    permissions = {
+      listPendingPermissions: vi.fn(() => []),
+    } as unknown as AgentPermissionService;
     teardownService = {
       teardownThread: vi.fn().mockResolvedValue(undefined),
     } as unknown as ThreadTeardownService;
@@ -69,6 +75,7 @@ describe("ThreadCompletionService", () => {
     service = new ThreadCompletionService(
       threadRepo,
       agentService,
+      permissions,
       teardownService,
       new ThreadControlMutationReservationService(),
       settingsService,
@@ -241,6 +248,7 @@ describe("ThreadCompletionService", () => {
     const restarted = new ThreadCompletionService(
       threadRepo,
       agentService,
+      permissions,
       teardownService,
       new ThreadControlMutationReservationService(),
       settingsService,
@@ -387,7 +395,7 @@ describe("ThreadCompletionService", () => {
   });
 
   it("rejects completion while the thread is running", async () => {
-    vi.mocked(agentService.activeThreadIds).mockReturnValue([threadId]);
+    activeThreadIds.mockReturnValue([threadId]);
 
     await expect(service.complete(threadId)).rejects.toThrow(
       "Thread cannot be completed while it is running",
@@ -397,7 +405,7 @@ describe("ThreadCompletionService", () => {
   });
 
   it("rejects completion while permission is pending", async () => {
-    vi.mocked(agentService.listPendingPermissions).mockReturnValue([
+    vi.mocked(permissions.listPendingPermissions).mockReturnValue([
       { requestId: "permission-1" },
     ] as never);
 

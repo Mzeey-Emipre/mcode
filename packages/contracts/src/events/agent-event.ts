@@ -6,28 +6,6 @@ import { GoalStateSchema } from "../models/goal.js";
 import { SubagentPresentationSchema } from "../models/tool-call-record.js";
 import { TurnOutcomeSchema } from "../models/turn-outcome.js";
 
-const CodexChildEvidenceSchema = z
-  .object({
-    nativeThreadId: z.string().trim().min(1).max(512),
-    nativeTurnId: z.string().trim().min(1).max(512).optional(),
-    parentCollaborationItemId: z.string().trim().min(1).max(512),
-    prompt: z.string().max(32_768).optional(),
-    nativeEventId: z.string().trim().min(1).max(1_024).optional(),
-    nativeItemId: z.string().trim().min(1).max(512).optional(),
-    itemEventKey: z.string().trim().min(1).max(512).optional(),
-    outcome: TurnOutcomeSchema.optional(),
-  })
-  .strict();
-
-const CodexContinuationEvidenceSchema = z
-  .object({
-    sourceNativeThreadId: z.string().trim().min(1).max(512),
-    sourceNativeTurnId: z.string().trim().min(1).max(512),
-    sourceNativeItemId: z.string().trim().min(1).max(512),
-    targetNativeThreadId: z.string().trim().min(1).max(512),
-  })
-  .strict();
-
 
 /**
  * All valid `type` discriminants for `AgentEvent`.
@@ -77,8 +55,6 @@ const AgentEventPayloadSchema = z.discriminatedUnion("type", [
        *  Used by the client to populate `runningThreadIds` for live-session UI indicators. */
       type: z.literal(AgentEventType.TurnStarted),
       threadId: z.string(),
-      codexChild: CodexChildEvidenceSchema.optional(),
-      codexContinuation: CodexContinuationEvidenceSchema.optional(),
       /** Server tracker generation that owns live file effects for this turn. */
       fileEffectTurnId: z.string().optional(),
     }),
@@ -87,7 +63,6 @@ const AgentEventPayloadSchema = z.discriminatedUnion("type", [
       threadId: z.string(),
       content: z.string(),
       tokens: z.number().nullable(),
-      codexChild: CodexChildEvidenceSchema.optional(),
       /** Server-assigned message ID, injected after DB persistence. Used by the client for stable branching. */
       messageId: z.string().optional(),
       /**
@@ -113,7 +88,6 @@ const AgentEventPayloadSchema = z.discriminatedUnion("type", [
       toolName: z.string(),
       toolInput: z.record(z.unknown()),
       parentToolCallId: z.string().optional(),
-      codexChild: CodexChildEvidenceSchema.optional(),
       subagentPresentation: SubagentPresentationSchema().optional(),
     }),
     z.object({
@@ -134,7 +108,6 @@ const AgentEventPayloadSchema = z.discriminatedUnion("type", [
       toolInput: z.record(z.unknown()).optional(),
       /** Provider-neutral Agent presentation when this result enriches a sub-agent row. */
       subagentPresentation: SubagentPresentationSchema().optional(),
-      codexChild: CodexChildEvidenceSchema.optional(),
     }),
     z.object({
       type: z.literal(AgentEventType.TurnComplete),
@@ -151,13 +124,11 @@ const AgentEventPayloadSchema = z.discriminatedUnion("type", [
       cacheWriteTokens: z.number().optional(),
       costMultiplier: z.number().optional(),
       providerId: z.string().optional(),
-      codexChild: CodexChildEvidenceSchema.optional(),
     }),
     z.object({
       type: z.literal(AgentEventType.Error),
       threadId: z.string(),
       error: z.string(),
-      codexChild: CodexChildEvidenceSchema.optional(),
     }),
     z.object({
       type: z.literal(AgentEventType.Ended),
@@ -166,7 +137,6 @@ const AgentEventPayloadSchema = z.discriminatedUnion("type", [
       turnExecutionId: z.string().uuid(),
       outcome: TurnOutcomeSchema.optional(),
       reason: z.string().optional(),
-      codexChild: CodexChildEvidenceSchema.optional(),
     }),
     z.object({
       type: z.literal(AgentEventType.System),
@@ -202,7 +172,6 @@ const AgentEventPayloadSchema = z.discriminatedUnion("type", [
       threadId: z.string(),
       /** Partial response text - append to accumulate the full response. */
       delta: z.string(),
-      codexChild: CodexChildEvidenceSchema.optional(),
       /**
        * Set to `true` when this delta belongs to the final user-facing response
        * for providers that can classify it while streaming. The client uses
@@ -408,7 +377,20 @@ const AgentEventSequenceSchema = z.object({
 
 /** Validated agent event payload, including an optional server ordering sequence. */
 export const AgentEventSchema = lazySchema(() =>
-  z.intersection(AgentEventPayloadSchema, AgentEventSequenceSchema),
+  z.preprocess(
+    rejectProviderRuntimeFields,
+    z.intersection(AgentEventPayloadSchema, AgentEventSequenceSchema),
+  ),
 );
 /** Union of all events emitted by an agent provider. */
 export type AgentEvent = z.infer<ReturnType<typeof AgentEventSchema>>;
+
+function rejectProviderRuntimeFields(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  for (const field of ["codexChild", "codexContinuation", "providerRuntimeExtension"] as const) {
+    if (field in value) {
+      return undefined;
+    }
+  }
+  return value;
+}

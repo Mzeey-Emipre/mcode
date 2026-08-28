@@ -9,11 +9,13 @@ import { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
 import { MessageRepo } from "../../conversation/persistence/message-repo.js";
 import { PlanQuestionAnswersRepo } from "../../planning/persistence/plan-question-answers-repo.js";
 import { TurnSnapshotRepo } from "../../turns/persistence/turn-snapshot-repo.js";
-import { TaskRepo } from "../persistence/task-repo.js";
 import { AgentService } from "../agent-service.js";
+import { createAgentServiceForTest } from "./agent-service-test-harness.js";
 import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/canonical-agent-event-sink-stub.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
 import { PlanQuestionService } from "../../planning/plan-question-service.js";
+import { PlanTurnService } from "../../planning/plan-turn-service.js";
+import { PlanRepo } from "../../planning/persistence/plan-repo.js";
 import { ParentAssistantTextCheckpointService } from "../../turns/parent-assistant-text-checkpoint-service.js";
 import { ProviderAvailabilityService } from "../../../providers/availability/provider-availability-service.js";
 import type { GitService } from "../../../projects/index.js";
@@ -41,7 +43,6 @@ function buildService(db: Database.Database) {
   const messageRepo = container.resolve(MessageRepo);
   const planQuestionAnswersRepo = container.resolve(PlanQuestionAnswersRepo);
   const turnSnapshotRepo = container.resolve(TurnSnapshotRepo);
-  const taskRepo = container.resolve(TaskRepo);
 
   const gitService = {
     resolveWorkingDir: vi.fn(() => process.cwd()),
@@ -98,7 +99,7 @@ function buildService(db: Database.Database) {
     assertUsable: vi.fn(),
   } as unknown as ProviderAvailabilityService;
 
-  const svc = new AgentService(
+  const svc = createAgentServiceForTest(
     threadRepo,
     workspaceRepo,
     messageRepo,
@@ -111,23 +112,28 @@ function buildService(db: Database.Database) {
     snapshotService,
     db,
     memoryPressureService,
-    taskRepo,
     settingsService,
     availability,
     planQuestionAnswersRepo,
-      { create: vi.fn(), updateStatus: vi.fn(), listByThread: vi.fn(() => []), getLatestForThread: vi.fn(() => null), getById: vi.fn(() => null) } as unknown as import("../../planning/persistence/plan-repo.js").PlanRepo,
       { deliverHandoff: vi.fn(async () => ({ providerWireOverride: "" })) } as any,
       { issue: vi.fn(), tryConsume: vi.fn(() => false), clear: vi.fn(), hasActiveGrant: vi.fn(() => false) } as any,
       container.resolve(NarrativeStore),
-      container.resolve(PlanQuestionService),
       new ParentAssistantTextCheckpointService(db),
       undefined,
       undefined,
       undefined,
       createCanonicalAgentEventSinkStub(db),
   );
+  const plans = new PlanTurnService(
+    threadRepo,
+    providerRegistry,
+    container.resolve(PlanQuestionService),
+    new PlanRepo(db),
+    svc,
+  );
+  (svc as unknown as { planTurns: PlanTurnService }).planTurns = plans;
 
-  return { svc, threadRepo, workspaceRepo, messageRepo, planQuestionAnswersRepo };
+  return { svc, plans, threadRepo, workspaceRepo, messageRepo, planQuestionAnswersRepo };
 }
 
 describe("AgentService.sendMessage — plan-questions answered marker", () => {
@@ -183,9 +189,9 @@ describe("AgentService.sendMessage — plan-questions answered marker", () => {
   });
 
   it("answerQuestions marks the latest plan-questions message answered", async () => {
-    const { svc, planQuestionAnswersRepo } = buildService(db);
+    const { plans, planQuestionAnswersRepo } = buildService(db);
 
-    await svc.answerQuestions(thread.id, [
+    await plans.answerQuestions(thread.id, [
       { questionId: "q1", selectedOptionId: "opt1", freeText: null },
     ]);
 
@@ -194,13 +200,13 @@ describe("AgentService.sendMessage — plan-questions answered marker", () => {
 
   it("answerQuestions still sends when no plan-questions message exists", async () => {
     // Fresh thread/workspace with NO plan-questions assistant message.
-    const { svc, workspaceRepo, threadRepo, planQuestionAnswersRepo } =
+    const { plans, workspaceRepo, threadRepo, planQuestionAnswersRepo } =
       buildService(db);
     const ws2 = workspaceRepo.create("plain-ws", `${process.cwd()}#alt`, false);
     const plainThread = threadRepo.create(ws2.id, "plain", "direct", "main");
 
     await expect(
-      svc.answerQuestions(plainThread.id, [
+      plans.answerQuestions(plainThread.id, [
         { questionId: "q1", selectedOptionId: null, freeText: "anything" },
       ]),
     ).resolves.toBeUndefined();
@@ -267,9 +273,9 @@ describe("AgentService.sendMessage — plan-questions answered marker", () => {
   });
 
   it("dismissPlanQuestions marks the latest fence answered and broadcasts plan.dismissed", () => {
-    const { svc, planQuestionAnswersRepo } = buildService(db);
+    const { plans, planQuestionAnswersRepo } = buildService(db);
 
-    svc.dismissPlanQuestions(thread.id);
+    plans.dismissQuestions(thread.id);
 
     expect(planQuestionAnswersRepo.isAnswered(assistantMessageId)).toBe(true);
     expect(broadcast).toHaveBeenCalledWith("plan.dismissed", {
@@ -285,10 +291,10 @@ describe("AgentService.sendMessage — plan-questions answered marker", () => {
   });
 
   it("dismissPlanQuestions is idempotent — repeat calls don't fail and re-broadcast", () => {
-    const { svc, planQuestionAnswersRepo } = buildService(db);
+    const { plans, planQuestionAnswersRepo } = buildService(db);
 
-    svc.dismissPlanQuestions(thread.id);
-    svc.dismissPlanQuestions(thread.id);
+    plans.dismissQuestions(thread.id);
+    plans.dismissQuestions(thread.id);
 
     expect(planQuestionAnswersRepo.listAnsweredForThread(thread.id)).toEqual([
       assistantMessageId,
@@ -296,12 +302,12 @@ describe("AgentService.sendMessage — plan-questions answered marker", () => {
   });
 
   it("dismissPlanQuestions is a no-op when the thread has no plan-questions fence", () => {
-    const { svc, workspaceRepo, threadRepo, planQuestionAnswersRepo } =
+    const { plans, workspaceRepo, threadRepo, planQuestionAnswersRepo } =
       buildService(db);
     const ws2 = workspaceRepo.create("dismiss-ws", `${process.cwd()}#dismiss`, false);
     const plainThread = threadRepo.create(ws2.id, "plain", "direct", "main");
 
-    svc.dismissPlanQuestions(plainThread.id);
+    plans.dismissQuestions(plainThread.id);
 
     expect(planQuestionAnswersRepo.listAnsweredForThread(plainThread.id)).toEqual([]);
     const calls = (broadcast as unknown as ReturnType<typeof vi.fn>).mock.calls.filter(

@@ -91,6 +91,9 @@ export type TurnBaselineReader = (
   relativePath: string,
 ) => Promise<{ kind: "text"; text: string } | { kind: "missing" } | { kind: "unavailable" }>;
 
+/** Injection token for the composed live file-effect tracker. */
+export const TURN_FILE_TRACKER = "TurnFileTracker";
+
 /**
  * Tracks bounded, explicit agent file mutations and reduces them to net turn effects.
  * Git supplies the immutable in-project baseline; external paths use the state observed

@@ -10,14 +10,33 @@ import { CanonicalAgentBoundary } from "../../agents/index.js";
 import { ScopedPreGrantService } from "../../agents/permissions/scoped-pre-grant.js";
 import { EnvService } from "../../../runtime/environment/env-service.js";
 import type { JobObject } from "../../../runtime/process/containment/job-object.js";
-import { CanonicalLegacyEventBridge } from "./canonical-legacy-event-bridge.js";
+import { CodexCollaborationEventAdapter } from "../../agents/collaboration/adapters/codex-collaboration-event-adapter.js";
+import {
+  logProviderEventIngressDiagnostic,
+  PROVIDER_EVENT_INGRESS_DIAGNOSTIC_SINK,
+  ProviderEventIngress,
+  type ProviderEventIngressDiagnosticSink,
+} from "./provider-event-ingress.js";
+import { CODEX_PROVIDER_EVENT_ADAPTER, type ProviderEventAdapter } from "./provider-event-adapter.js";
 
 /** Register provider adapters, the provider registry, and provider host ports. */
 export function registerProviderAdapters(container: DependencyContainer): void {
   container.register(
-    CanonicalLegacyEventBridge,
-    { useClass: CanonicalLegacyEventBridge },
+    CodexCollaborationEventAdapter,
+    { useClass: CodexCollaborationEventAdapter },
     { lifecycle: Lifecycle.Singleton },
+  );
+  container.register<ProviderEventAdapter>(CODEX_PROVIDER_EVENT_ADAPTER, {
+    useFactory: (c) => c.resolve(CodexCollaborationEventAdapter),
+  });
+  container.register(
+    ProviderEventIngress,
+    { useClass: ProviderEventIngress },
+    { lifecycle: Lifecycle.Singleton },
+  );
+  container.register<ProviderEventIngressDiagnosticSink>(
+    PROVIDER_EVENT_INGRESS_DIAGNOSTIC_SINK,
+    { useValue: logProviderEventIngressDiagnostic },
   );
   container.register(
     ClaudeProvider,
@@ -51,7 +70,7 @@ export function registerProviderAdapters(container: DependencyContainer): void {
       threadControl: c.resolve(InternalThreadControlMcpRuntime),
       grants: c.resolve(ScopedPreGrantService),
       events: c.resolve(CanonicalAgentBoundary),
-      legacyEvents: c.resolve(CanonicalLegacyEventBridge),
+      ingress: c.resolve(ProviderEventIngress),
     }),
   });
 }

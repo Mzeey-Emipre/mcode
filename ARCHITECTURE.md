@@ -64,7 +64,10 @@ Runtime-neutral authority for canonical agent identities, records, semantic even
 
 ### packages/contracts
 
-Authority for transport schemas and compatibility projections. It imports canonical agent types through `compat/agent-model.ts`. Existing WebSocket payloads remain unchanged during the canonical-model migration.
+Authority for transport schemas, renderer events, and provider-runtime events.
+It imports canonical agent types through `compat/agent-model.ts`. Renderer
+payloads contain provider-neutral `AgentEvent` data. Provider-native evidence
+travels only in a provider-runtime extension before server projection.
 
 ```text
 packages/contracts/src/
@@ -77,6 +80,7 @@ packages/contracts/src/
     enums.ts                  ThreadStatus, ThreadMode, MessageRole, PermissionMode, InteractionMode
   events/
     agent-event.ts            AgentEvent discriminated union (Zod)
+    provider-runtime-event.ts ProviderRuntimeEvent and native extension schema
   ws/
     methods.ts                WS_METHODS: RPC method definitions (params + result schemas)
     channels.ts               WS_CHANNELS: push channel definitions
@@ -87,6 +91,19 @@ packages/contracts/src/
   github.ts                   PrInfo, PrDetail schemas
   skills.ts                   SkillInfo schema
 ```
+
+### Provider event path
+
+Providers emit `ProviderRuntimeEvent` values. Provider ingress validates the
+provider and queues each event. A registered provider adapter then projects the
+event as `forward`, `consumed`, or `rejected`. Only a forwarded `AgentEvent`
+enters the turn event pipeline and the `agent.event` WebSocket channel.
+
+Canonical commits submit their committed runtime envelopes directly to ingress.
+Their receipt confirms durable acceptance or queueing, not renderer
+publication. `AgentService` depends on provider registration and narrow
+parent-turn durability only. It has no dependency on a concrete provider,
+adapter, or canonical implementation.
 
 ### packages/shared
 

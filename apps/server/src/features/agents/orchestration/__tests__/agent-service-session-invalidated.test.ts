@@ -18,6 +18,7 @@ import { ToolCallRecordRepo } from "../../tools/persistence/tool-call-record-rep
 import { TurnSnapshotRepo } from "../../turns/persistence/turn-snapshot-repo.js";
 import { TaskRepo } from "../persistence/task-repo.js";
 import { AgentService } from "../agent-service.js";
+import { createAgentServiceForTest, startAgentServiceIngressForTest, wrapProviderEmitterForRuntimeEvents } from "./agent-service-test-harness.js";
 import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/canonical-agent-event-sink-stub.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
 import { PlanQuestionService } from "../../planning/plan-question-service.js";
@@ -56,16 +57,15 @@ describe("AgentService clears sdk_session_id on session invalidation", () => {
     turnSnapshotRepo = new TurnSnapshotRepo(db);
     taskRepo = new TaskRepo(db);
 
-    providerStub = Object.assign(new EventEmitter(), {
+    providerStub = wrapProviderEmitterForRuntimeEvents(Object.assign(new EventEmitter(), {
       id: "claude" as ProviderId,
-      eventDelivery: "legacy-emitter" as const,
       supportsCompletion: false,
       sessionForkOnResume: "unsupported" as const,
       maxInputCharactersPerTurn: 16_000,
       sendTurn: vi.fn(() => new Promise<void>(() => {})),
       stopSession: vi.fn(),
       shutdown: vi.fn(),
-    });
+    }));
 
     const registryStub: IProviderRegistry = {
       resolve: () => providerStub as unknown as IAgentProvider,
@@ -99,7 +99,7 @@ describe("AgentService clears sdk_session_id on session invalidation", () => {
       assertUsable: vi.fn(),
     } as unknown as ProviderAvailabilityService;
 
-    svc = new AgentService(
+    svc = createAgentServiceForTest(
       threadRepo,
       workspaceRepo,
       messageRepo,
@@ -112,11 +112,9 @@ describe("AgentService clears sdk_session_id on session invalidation", () => {
       snapshotServiceStub,
       db,
       memoryPressureServiceStub,
-      taskRepo,
       settingsServiceStub,
       availabilityStub,
       { markAnswered: vi.fn(), isAnswered: vi.fn(() => false), listAnsweredForThread: vi.fn(() => []) } as unknown as import("../../planning/persistence/plan-question-answers-repo.js").PlanQuestionAnswersRepo,
-      { create: vi.fn(), updateStatus: vi.fn(), listByThread: vi.fn(() => []), getLatestForThread: vi.fn(() => null), getById: vi.fn(() => null) } as unknown as import("../../planning/persistence/plan-repo.js").PlanRepo,
       { deliverHandoff: vi.fn(async () => ({ providerWireOverride: "" })) } as any,
       { issue: vi.fn(), tryConsume: vi.fn(() => false), clear: vi.fn(), hasActiveGrant: vi.fn(() => false) } as any,
       new NarrativeStore(
@@ -125,14 +123,13 @@ describe("AgentService clears sdk_session_id on session invalidation", () => {
         { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../conversation/narrative/persistence/thought-segment-repo.js").ThoughtSegmentRepo,
         { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../events/persistence/hook-execution-repo.js").HookExecutionRepo,
       ),
-      new PlanQuestionService(messageRepo, new PlanQuestionAnswersRepo(db)),
       new ParentAssistantTextCheckpointService(db),
       undefined,
       undefined,
       undefined,
       createCanonicalAgentEventSinkStub(db),
     );
-    svc.init();
+    startAgentServiceIngressForTest(svc, );
   });
 
   it("nulls sdk_session_id when a sdk_session_invalidated event arrives", () => {

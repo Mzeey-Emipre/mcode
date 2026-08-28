@@ -1,8 +1,8 @@
 import "reflect-metadata";
 import { describe, expect, it, vi } from "vitest";
-import { AgentService } from "../agent-service.js";
 import type { IAgentProvider } from "@mcode/contracts";
 import { logger } from "@mcode/shared";
+import { SubagentLifecycleService } from "../../collaboration/subagent-lifecycle-service.js";
 
 type StopTarget = {
   childThread: { providerId: string };
@@ -12,13 +12,13 @@ type StopTarget = {
 };
 
 type ServiceHarness = {
-  stopChildTurn: AgentService["stopChildTurn"];
-  canonicalSink: {
-    loadCanonicalChildStopTarget: ReturnType<typeof vi.fn>;
-    finishCodexChildTurn: ReturnType<typeof vi.fn>;
+  stop: SubagentLifecycleService["stop"];
+  durability: {
+    loadSubagentStopTarget: ReturnType<typeof vi.fn>;
+    finishSubagentTurn: ReturnType<typeof vi.fn>;
   };
-  providerRegistry: { resolve: ReturnType<typeof vi.fn> };
-  childStopOperationsByThread: Map<string, Promise<unknown>>;
+  providers: { resolve: ReturnType<typeof vi.fn> };
+  activeStops: Map<string, Promise<unknown>>;
 };
 
 function makeTarget(overrides: Partial<StopTarget> = {}): StopTarget {
@@ -45,7 +45,7 @@ function makeHarness(options: {
     interruptChildTurn: ReturnType<typeof vi.fn>;
     stopSession: ReturnType<typeof vi.fn>;
   };
-  finishCodexChildTurn: ReturnType<typeof vi.fn>;
+  finishSubagentTurn: ReturnType<typeof vi.fn>;
 } {
   const target = options.target === undefined ? makeTarget() : options.target;
   const provider = {
@@ -60,15 +60,15 @@ function makeHarness(options: {
     interruptChildTurn: ReturnType<typeof vi.fn>;
     stopSession: ReturnType<typeof vi.fn>;
   };
-  const finishCodexChildTurn = vi.fn().mockReturnValue({ status: "Interrupted" });
-  const service = Object.create(AgentService.prototype) as ServiceHarness;
-  service.canonicalSink = {
-    loadCanonicalChildStopTarget: vi.fn(() => target),
-    finishCodexChildTurn,
+  const finishSubagentTurn = vi.fn().mockReturnValue({ status: "Interrupted" });
+  const service = Object.create(SubagentLifecycleService.prototype) as ServiceHarness;
+  service.durability = {
+    loadSubagentStopTarget: vi.fn(() => target),
+    finishSubagentTurn,
   };
-  service.providerRegistry = { resolve: vi.fn(() => provider) };
-  service.childStopOperationsByThread = new Map();
-  return { service, target, provider, finishCodexChildTurn };
+  service.providers = { resolve: vi.fn(() => provider) };
+  service.activeStops = new Map();
+  return { service, target, provider, finishSubagentTurn };
 }
 
 const request = {
@@ -76,11 +76,11 @@ const request = {
   childThreadId: "child-thread",
 };
 
-describe("AgentService.stopChildTurn", () => {
+describe("SubagentLifecycleService.stop", () => {
   it("interrupts the exact native child turn without stopping the provider session", async () => {
-    const { service, provider, finishCodexChildTurn } = makeHarness();
+    const { service, provider, finishSubagentTurn } = makeHarness();
 
-    await expect(service.stopChildTurn(request.owningParentThreadId, request.childThreadId)).resolves.toEqual({
+    await expect(service.stop(request)).resolves.toEqual({
       childThreadId: request.childThreadId,
       status: "interrupted",
     });
@@ -92,7 +92,7 @@ describe("AgentService.stopChildTurn", () => {
       "native-child-turn",
     );
     expect(provider.stopSession).not.toHaveBeenCalled();
-    expect(finishCodexChildTurn).toHaveBeenCalledWith({
+    expect(finishSubagentTurn).toHaveBeenCalledWith({
       childThreadId: request.childThreadId,
       nativeTurnId: "native-child-turn",
       outcome: "interrupted",
@@ -103,11 +103,11 @@ describe("AgentService.stopChildTurn", () => {
   it("rejects an unowned child before provider access", async () => {
     const { service, provider } = makeHarness({ target: null });
 
-    await expect(service.stopChildTurn(request.owningParentThreadId, request.childThreadId)).resolves.toMatchObject({
+    await expect(service.stop(request)).resolves.toMatchObject({
       status: "failed",
     });
     expect(provider.interruptChildTurn).not.toHaveBeenCalled();
-    expect(service.providerRegistry.resolve).not.toHaveBeenCalled();
+    expect(service.providers.resolve).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -115,13 +115,13 @@ describe("AgentService.stopChildTurn", () => {
     ["missing native thread identity", makeTarget({ nativeThreadId: null }), "unsupported"],
     ["missing native turn identity", makeTarget({ nativeTurnId: null }), "unsupported"],
   ] as const)("rejects %s without interrupting", async (_case, target, status) => {
-    const { service, provider, finishCodexChildTurn } = makeHarness({ target });
+    const { service, provider, finishSubagentTurn } = makeHarness({ target });
 
-    await expect(service.stopChildTurn(request.owningParentThreadId, request.childThreadId)).resolves.toMatchObject({
+    await expect(service.stop(request)).resolves.toMatchObject({
       status,
     });
     expect(provider.interruptChildTurn).not.toHaveBeenCalled();
-    expect(finishCodexChildTurn).not.toHaveBeenCalled();
+    expect(finishSubagentTurn).not.toHaveBeenCalled();
   });
 
   it("rejects a provider that lacks declared child cancellation support", async () => {
@@ -131,7 +131,7 @@ describe("AgentService.stopChildTurn", () => {
       },
     });
 
-    await expect(service.stopChildTurn(request.owningParentThreadId, request.childThreadId)).resolves.toMatchObject({
+    await expect(service.stop(request)).resolves.toMatchObject({
       status: "unsupported",
     });
     expect(provider.interruptChildTurn).not.toHaveBeenCalled();
@@ -140,29 +140,29 @@ describe("AgentService.stopChildTurn", () => {
   it("leaves a running child untouched when provider interruption fails", async () => {
     const target = makeTarget();
     const providerError = "token=sk-provider-secret path=C:\\private\\provider.log";
-    const { service, provider, finishCodexChildTurn } = makeHarness({
+    const { service, provider, finishSubagentTurn } = makeHarness({
       target,
       provider: { interruptChildTurn: vi.fn().mockRejectedValue(new Error(providerError)) },
     });
 
     const warn = vi.spyOn(logger, "warn").mockImplementation(() => logger);
     try {
-      const result = await service.stopChildTurn(request.owningParentThreadId, request.childThreadId);
+      const result = await service.stop(request);
       expect(result).toEqual({
         childThreadId: request.childThreadId,
         status: "failed",
-        message: "Child interruption failed.",
+        message: "Sub-agent interruption failed.",
       });
       expect(JSON.stringify(result)).not.toContain(providerError);
       expect(JSON.stringify(warn.mock.calls)).not.toContain(providerError);
-      expect(warn).toHaveBeenCalledWith("Canonical child interruption failed", {
+      expect(warn).toHaveBeenCalledWith("Sub-agent interruption failed", {
         category: "provider-interrupt-failed",
         owningParentThreadId: request.owningParentThreadId,
         childThreadId: request.childThreadId,
         providerId: "codex",
       });
       expect(target.latestTurn?.status).toBe("Running");
-      expect(finishCodexChildTurn).not.toHaveBeenCalled();
+      expect(finishSubagentTurn).not.toHaveBeenCalled();
       expect(provider.stopSession).not.toHaveBeenCalled();
     } finally {
       warn.mockRestore();
@@ -171,7 +171,7 @@ describe("AgentService.stopChildTurn", () => {
 
   it("leaves a running child untouched when interruption completion times out", async () => {
     const target = makeTarget();
-    const { service, provider, finishCodexChildTurn } = makeHarness({
+    const { service, provider, finishSubagentTurn } = makeHarness({
       target,
       provider: {
         interruptChildTurn: vi.fn().mockRejectedValue(
@@ -180,13 +180,13 @@ describe("AgentService.stopChildTurn", () => {
       },
     });
 
-    await expect(service.stopChildTurn(request.owningParentThreadId, request.childThreadId)).resolves.toEqual({
+    await expect(service.stop(request)).resolves.toEqual({
       childThreadId: request.childThreadId,
       status: "failed",
-      message: "Child interruption failed.",
+      message: "Sub-agent interruption failed.",
     });
     expect(target.latestTurn?.status).toBe("Running");
-    expect(finishCodexChildTurn).not.toHaveBeenCalled();
+    expect(finishSubagentTurn).not.toHaveBeenCalled();
     expect(provider.stopSession).not.toHaveBeenCalled();
   });
 
@@ -201,12 +201,12 @@ describe("AgentService.stopChildTurn", () => {
         })),
       },
     });
-    service.canonicalSink.loadCanonicalChildStopTarget.mockImplementation((candidate: { owningParentThreadId: string }) => (
+    service.durability.loadSubagentStopTarget.mockImplementation((candidate: { owningParentThreadId: string }) => (
       candidate.owningParentThreadId === request.owningParentThreadId ? target : null
     ));
 
-    const unowned = service.stopChildTurn("wrong-parent", request.childThreadId);
-    const owned = service.stopChildTurn(request.owningParentThreadId, request.childThreadId);
+    const unowned = service.stop({ ...request, owningParentThreadId: "wrong-parent" });
+    const owned = service.stop(request);
 
     await expect(unowned).resolves.toMatchObject({ status: "failed" });
     expect(provider.interruptChildTurn).toHaveBeenCalledOnce();
@@ -225,12 +225,12 @@ describe("AgentService.stopChildTurn", () => {
         })),
       },
     });
-    service.canonicalSink.loadCanonicalChildStopTarget.mockImplementation((candidate: { owningParentThreadId: string }) => (
+    service.durability.loadSubagentStopTarget.mockImplementation((candidate: { owningParentThreadId: string }) => (
       candidate.owningParentThreadId === request.owningParentThreadId ? target : null
     ));
 
-    const owned = service.stopChildTurn(request.owningParentThreadId, request.childThreadId);
-    const wrongParent = service.stopChildTurn("wrong-parent", request.childThreadId);
+    const owned = service.stop(request);
+    const wrongParent = service.stop({ ...request, owningParentThreadId: "wrong-parent" });
 
     await expect(wrongParent).resolves.toMatchObject({ status: "failed" });
     expect(provider.interruptChildTurn).toHaveBeenCalledOnce();
@@ -243,12 +243,12 @@ describe("AgentService.stopChildTurn", () => {
     const interruptChildTurn = vi.fn().mockReturnValue(new Promise<void>((resolve) => {
       acknowledge = resolve;
     }));
-    const { service, provider, finishCodexChildTurn } = makeHarness({
+    const { service, provider, finishSubagentTurn } = makeHarness({
       provider: { interruptChildTurn },
     });
 
-    const first = service.stopChildTurn(request.owningParentThreadId, request.childThreadId);
-    const duplicate = service.stopChildTurn(request.owningParentThreadId, request.childThreadId);
+    const first = service.stop(request);
+    const duplicate = service.stop(request);
     expect(provider.interruptChildTurn).toHaveBeenCalledOnce();
     acknowledge();
 
@@ -256,27 +256,27 @@ describe("AgentService.stopChildTurn", () => {
       { childThreadId: request.childThreadId, status: "interrupted" },
       { childThreadId: request.childThreadId, status: "interrupted" },
     ]);
-    expect(finishCodexChildTurn).toHaveBeenCalledOnce();
+    expect(finishSubagentTurn).toHaveBeenCalledOnce();
   });
 
   it("does not overwrite a completion acknowledged before terminalization", async () => {
     const target = makeTarget();
-    const { service, provider, finishCodexChildTurn } = makeHarness({ target });
-    finishCodexChildTurn.mockImplementation(() => {
+    const { service, provider, finishSubagentTurn } = makeHarness({ target });
+    finishSubagentTurn.mockImplementation(() => {
       target.latestTurn = { status: "Completed" };
       return { status: "Completed" };
     });
 
-    await expect(service.stopChildTurn(request.owningParentThreadId, request.childThreadId)).resolves.toEqual({
+    await expect(service.stop(request)).resolves.toEqual({
       childThreadId: request.childThreadId,
       status: "already-terminal",
     });
-    await expect(service.stopChildTurn(request.owningParentThreadId, request.childThreadId)).resolves.toEqual({
+    await expect(service.stop(request)).resolves.toEqual({
       childThreadId: request.childThreadId,
       status: "already-terminal",
     });
     expect(provider.interruptChildTurn).toHaveBeenCalledOnce();
-    expect(finishCodexChildTurn).toHaveBeenCalledOnce();
+    expect(finishSubagentTurn).toHaveBeenCalledOnce();
     expect(provider.stopSession).not.toHaveBeenCalled();
   });
 });

@@ -7,7 +7,7 @@ vi.mock("@mcode/shared", () => ({
 
 import { CodexProvider, stubEnvService } from "./codex-provider-test-fixture.js";
 import { CodexAppServer } from "../../private/codex/codex-app-server.js";
-import type { PermissionRequest, PermissionDecision } from "@mcode/contracts";
+import type { PermissionRequest, PermissionDecision, ProviderRuntimeEvent } from "@mcode/contracts";
 import { AgentEventType } from "@mcode/contracts";
 import { logger } from "@mcode/shared";
 
@@ -226,8 +226,8 @@ describe("CodexProvider permission flow", () => {
   it("logs fatal breadcrumbs and preserves failure events from the app-server", async () => {
     const start = vi.spyOn(CodexAppServer.prototype, "start").mockResolvedValue(undefined);
     try {
-      const events: Array<{ type: AgentEventType; threadId: string; error?: string }> = [];
-      provider.on("event", (event) => events.push(event as never));
+      const events: ProviderRuntimeEvent[] = [];
+      provider.on("event", (event) => events.push(event));
 
       const result = await (provider as unknown as {
         spawn: (args: {
@@ -264,7 +264,7 @@ describe("CodexProvider permission flow", () => {
         expect.objectContaining({ sessionId, error: "simulated fatal", breadcrumb }),
       );
       expect(events).toEqual([
-        { type: AgentEventType.Error, threadId, error: "simulated fatal" },
+        { event: { type: AgentEventType.Error, threadId, error: "simulated fatal" } },
       ]);
     } finally {
       start.mockRestore();

@@ -727,6 +727,21 @@ export type {
 // Events
 export { AgentEventSchema, AgentEventType, AgentEventEpochSchema } from "./events/agent-event.js";
 export type { AgentEvent } from "./events/agent-event.js";
+export {
+  CodexChildEvidenceSchema,
+  CodexCollaborationEvidenceSchema,
+  CodexContinuationEvidenceSchema,
+  ProviderRuntimeEventSchema,
+  ProviderRuntimeExtensionSchema,
+  providerRuntimeEvent,
+} from "./events/provider-runtime-event.js";
+export type {
+  CodexChildEvidence,
+  CodexCollaborationEvidence,
+  CodexContinuationEvidence,
+  ProviderRuntimeEvent,
+  ProviderRuntimeExtension,
+} from "./events/provider-runtime-event.js";
 
 // Canonical agent model compatibility boundary
 export {

@@ -62,6 +62,7 @@ import type { ProviderHostPorts } from "@mcode/providers";
 import {
   AgentEventType,
   BROWSER_AUTOMATION_OPERATION_METADATA,
+  providerRuntimeEvent,
 } from "@mcode/contracts";
 import type { InternalThreadControlMcpHttpConnection } from "../../../thread-control/index.js";
 import {
@@ -222,8 +223,6 @@ interface CopilotSessionState {
 @injectable()
 export class CopilotProvider extends EventEmitter implements IAgentProvider, ISessionEvictable, ProtocolAdapter<CopilotSessionState> {
   readonly id: ProviderId = "copilot";
-  /** Selects canonical host delivery when the server composition supplies the host port. */
-  readonly eventDelivery: "canonical-sink" | "legacy-emitter";
   readonly supportsCompletion = true;
   readonly sessionForkOnResume = "clean" as const;
   readonly maxInputCharactersPerTurn = 16_000;
@@ -282,7 +281,6 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     host?: ProviderHostPorts,
   ) {
     super();
-    this.eventDelivery = host ? "canonical-sink" : "legacy-emitter";
     this.canonicalEventPublisher = host
       ? new CanonicalLiveEventPublisher(this.id, host.events)
       : undefined;
@@ -1505,14 +1503,14 @@ export class CopilotProvider extends EventEmitter implements IAgentProvider, ISe
     sessionId: string,
     event: AgentEvent,
   ): void {
-    const eventWithExecution = { ...event, turnExecutionId: routing.executionId };
+    const runtimeEvent = providerRuntimeEvent({ ...event, turnExecutionId: routing.executionId });
     if (!this.canonicalEventPublisher) {
-      this.emit("event", eventWithExecution);
+      this.emit("event", runtimeEvent);
       return;
     }
     this.canonicalEventPublisher.publish(
       routing,
-      eventWithExecution,
+      runtimeEvent,
       this.copilotSessionIdentities(sessionId),
     );
   }

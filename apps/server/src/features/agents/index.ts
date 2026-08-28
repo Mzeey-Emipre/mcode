@@ -4,6 +4,15 @@ export { AgentService } from "./orchestration/agent-service.js";
 /** Agent permission capability used by the server composition roots. */
 export { AgentPermissionService } from "./permissions/agent-permission-service.js";
 
+/** Owns plan-question and plan-output turns. */
+export { PlanTurnService } from "./planning/plan-turn-service.js";
+
+/** Owns provider-native goal lifecycle and goal commands. */
+export { GoalLifecycleService } from "./goals/goal-lifecycle-service.js";
+
+/** Owns sub-agent roster and stop operations. */
+export { SubagentLifecycleService } from "./collaboration/subagent-lifecycle-service.js";
+
 /** Full canonical agent system boundary used by the server composition roots. */
 export { CanonicalAgentBoundary } from "./canonical/canonical-agent-boundary.js";
 

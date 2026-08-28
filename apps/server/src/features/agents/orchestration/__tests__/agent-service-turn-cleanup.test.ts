@@ -28,6 +28,8 @@ import { ToolCallRecordRepo as RealToolCallRecordRepo } from "../../tools/persis
 import { ThoughtSegmentRepo as RealThoughtSegmentRepo } from "../../conversation/narrative/persistence/thought-segment-repo.js";
 import { HookExecutionRepo as RealHookExecutionRepo } from "../../events/persistence/hook-execution-repo.js";
 import { AgentService } from "../agent-service.js";
+import { PlanTurnService } from "../../planning/plan-turn-service.js";
+import { createAgentServiceForTest, startAgentServiceIngressForTest, wrapProviderEmitterForRuntimeEvents } from "./agent-service-test-harness.js";
 import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/canonical-agent-event-sink-stub.js";
 import { CanonicalAgentEventSink } from "../../canonical/canonical-agent-event-sink.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
@@ -51,7 +53,8 @@ import type { PlanQuestionAnswersRepo } from "../../planning/persistence/plan-qu
 import { ThreadControlMutationReservationService } from "../../../thread-control/index.js";
 import { publishParentProviderEvent } from "../../events/provider-event-publication.js";
 import { TurnRecoveryService } from "../../recovery/turn-recovery-service.js";
-import { CursorLegacyEventBridge } from "../../../providers/composition/cursor-legacy-event-bridge.js";
+import { SubagentLifecycleService } from "../../collaboration/subagent-lifecycle-service.js";
+import type { TurnEventDiagnosticProvenance } from "../../turns/turn-event-application.js";
 
 vi.mock("../../../../application/transport/push.js", () => ({ broadcast: vi.fn() }));
 
@@ -159,7 +162,6 @@ function buildService(
   cwd = process.cwd(),
   mutationReservations = new ThreadControlMutationReservationService(),
   providers?: IAgentProvider[],
-  cursorLegacyEventBridge?: CursorLegacyEventBridge,
 ): {
   service: AgentService;
   providerEmitter: EventEmitter;
@@ -172,10 +174,9 @@ function buildService(
   toolCallRecordRepo: { bulkCreate: ReturnType<typeof vi.fn> };
 } {
   const thread = makeThread();
-  const providerEmitter = Object.assign(new EventEmitter(), {
+  const providerEmitter = wrapProviderEmitterForRuntimeEvents(Object.assign(new EventEmitter(), {
     id: "claude" as ProviderId,
-    eventDelivery: "legacy-emitter" as const,
-  });
+  }));
   // sendTurn() is called on the resolved provider
   (providerEmitter as any).sendTurn = vi.fn(() => Promise.resolve());
   (providerEmitter as any).stopSession = vi.fn(() => Promise.resolve());
@@ -312,7 +313,7 @@ function buildService(
     prepare: vi.fn(() => ({ run: vi.fn() })),
   } as unknown as import("better-sqlite3").Database;
 
-  const service = new AgentService(
+  const service = createAgentServiceForTest(
     threadRepo,
     workspaceRepo,
     messageRepo,
@@ -325,11 +326,9 @@ function buildService(
     snapshotService,
     db,
     memoryPressureService as MemoryPressureService,
-    taskRepo,
     settingsService,
     availability,
     planQuestionAnswersRepo,
-      { create: vi.fn(), updateStatus: vi.fn(), listByThread: vi.fn(() => []), getLatestForThread: vi.fn(() => null), getById: vi.fn(() => null) } as unknown as import("../../planning/persistence/plan-repo.js").PlanRepo,
       { deliverHandoff: vi.fn(async () => ({ providerWireOverride: "" })) } as any,
       { issue: vi.fn(), tryConsume: vi.fn(() => false), clear: vi.fn(), hasActiveGrant: vi.fn(() => false) } as any,
       new NarrativeStore(
@@ -338,14 +337,13 @@ function buildService(
       { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../conversation/narrative/persistence/thought-segment-repo.js").ThoughtSegmentRepo,
       { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../events/persistence/hook-execution-repo.js").HookExecutionRepo,
       ),
-      new PlanQuestionService(messageRepo, planQuestionAnswersRepo),
       new ParentAssistantTextCheckpointService(db),
       undefined,
       undefined,
       mutationReservations,
       createCanonicalAgentEventSinkStub(db),
       undefined,
-      cursorLegacyEventBridge,
+      undefined,
   );
 
   return {
@@ -366,68 +364,37 @@ describe("AgentService turn cleanup", () => {
     vi.clearAllMocks();
   });
 
-  it("routes canonical events through the registered provider handler once and retains legacy subscriptions", () => {
-    let bridgeHandler: ((providerId: ProviderId, event: AgentEvent) => void) | undefined;
-    const cursorLegacyEventBridge = {
-      register: vi.fn((handler: (providerId: ProviderId, event: AgentEvent) => void) => {
-        bridgeHandler = handler;
-      }),
-    } as unknown as CursorLegacyEventBridge;
-    const legacyProvider = Object.assign(new EventEmitter(), {
+  it("retains provider subscriptions through the provider ingress", () => {
+    const legacyProvider = wrapProviderEmitterForRuntimeEvents(Object.assign(new EventEmitter(), {
       id: "claude" as ProviderId,
-      eventDelivery: "legacy-emitter" as const,
-    }) as unknown as IAgentProvider;
-    const canonicalProvider = Object.assign(new EventEmitter(), {
-      id: "cursor" as ProviderId,
-      eventDelivery: "canonical-sink" as const,
-    }) as unknown as IAgentProvider;
+    })) as unknown as IAgentProvider;
     const { service } = buildService(
       process.cwd(),
       new ThreadControlMutationReservationService(),
-      [legacyProvider, canonicalProvider],
-      cursorLegacyEventBridge,
+      [legacyProvider],
     );
     const publish = vi.fn();
-    service.init(publish);
-    service.init(publish);
+    startAgentServiceIngressForTest(service, publish);
+    startAgentServiceIngressForTest(service, publish);
 
-    expect(cursorLegacyEventBridge.register).toHaveBeenCalledTimes(1);
     expect((legacyProvider as unknown as EventEmitter).listenerCount("event")).toBe(1);
-    expect((canonicalProvider as unknown as EventEmitter).listenerCount("event")).toBe(0);
 
-    const canonicalEvent = {
-      type: AgentEventType.ProviderUnavailable,
-      threadId: THREAD_ID,
-      providerId: "cursor",
-      reason: "disabled",
-    } satisfies AgentEvent;
-    bridgeHandler?.("cursor", canonicalEvent);
-
-    expect(publish).toHaveBeenCalledTimes(1);
-    expect(publish).toHaveBeenCalledWith(canonicalEvent);
-
-    bridgeHandler?.("claude", canonicalEvent);
-    expect(publish).toHaveBeenCalledTimes(1);
-
-    bridgeHandler?.("codex", canonicalEvent);
-    expect(publish).toHaveBeenCalledTimes(1);
-
-    const legacyEvent = {
+    const providerEvent = {
       type: AgentEventType.ProviderUnavailable,
       threadId: THREAD_ID,
       providerId: "claude",
       reason: "disabled",
     } satisfies AgentEvent;
-    (legacyProvider as unknown as EventEmitter).emit("event", legacyEvent);
+    (legacyProvider as unknown as EventEmitter).emit("event", providerEvent);
 
-    expect(publish).toHaveBeenCalledTimes(2);
-    expect(publish).toHaveBeenLastCalledWith(legacyEvent);
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(publish).toHaveBeenLastCalledWith(providerEvent);
   });
 
-  it("forwards normalized events even when internal continuation validation returns early", async () => {
+  it("forwards a generic runtime event", async () => {
     const { service, providerEmitter } = buildService();
     const publish = vi.fn();
-    service.init(publish);
+    startAgentServiceIngressForTest(service, publish);
 
     await service.sendMessage({
       threadId: THREAD_ID,
@@ -439,21 +406,10 @@ describe("AgentService turn cleanup", () => {
     });
     const executionId = activeExecutionId(service);
     publish.mockClear();
-    vi.spyOn(
-      service as unknown as { startCodexProviderContinuationFromEvent: () => boolean },
-      "startCodexProviderContinuationFromEvent",
-    ).mockReturnValue(false);
-
     const event = {
       type: AgentEventType.TurnStarted,
       threadId: THREAD_ID,
       turnExecutionId: executionId,
-      codexContinuation: {
-        sourceNativeThreadId: "missing-source-thread",
-        sourceNativeTurnId: "missing-source-turn",
-        sourceNativeItemId: "missing-source-item",
-        targetNativeThreadId: "missing-target-thread",
-      },
     } satisfies AgentEvent;
     providerEmitter.emit("event", event);
 
@@ -461,20 +417,11 @@ describe("AgentService turn cleanup", () => {
     expect(publish).toHaveBeenCalledWith(event);
   });
 
-  it("publishes once before a provider-event barrier replay", async () => {
+  it("publishes a resumed turn event once after ingress reaches the pipeline", async () => {
     const { service, providerEmitter } = buildService();
     const publish = vi.fn();
-    service.init(publish);
+    startAgentServiceIngressForTest(service, publish);
     const executionId = startProviderTurn(service);
-
-    let releaseBarrier!: () => void;
-    const barrier = new Promise<void>((resolve) => {
-      releaseBarrier = resolve;
-    });
-    const eventState = service as unknown as {
-      providerEventBarrierByThread: Map<string, Promise<void>>;
-    };
-    eventState.providerEventBarrierByThread.set(THREAD_ID, barrier);
 
     const event = {
       type: AgentEventType.TurnStarted,
@@ -485,11 +432,6 @@ describe("AgentService turn cleanup", () => {
 
     expect(publish).toHaveBeenCalledTimes(1);
     expect(publish).toHaveBeenCalledWith(event);
-
-    releaseBarrier();
-    await barrier;
-    await Promise.resolve();
-    await Promise.resolve();
 
     expect(publish).toHaveBeenCalledTimes(1);
   });
@@ -497,7 +439,7 @@ describe("AgentService turn cleanup", () => {
   it("does not publish when internal event handling throws", async () => {
     const { service, providerEmitter } = buildService();
     const publish = vi.fn();
-    service.init(publish);
+    startAgentServiceIngressForTest(service, publish);
 
     await service.sendMessage({
       threadId: THREAD_ID,
@@ -509,21 +451,23 @@ describe("AgentService turn cleanup", () => {
     });
     const executionId = activeExecutionId(service);
     publish.mockClear();
-    vi.spyOn(
-      service as unknown as { startCodexChildFromProviderEvent: () => void },
-      "startCodexChildFromProviderEvent",
-    ).mockImplementation(() => {
+    const application = (service as unknown as {
+      normalizedTurnEventApplication: { apply: () => boolean };
+    }).normalizedTurnEventApplication;
+    vi.spyOn(application, "apply").mockImplementation(() => {
       throw new Error("internal event failure");
     });
 
     const event = {
-      type: AgentEventType.ToolUse,
-      threadId: THREAD_ID,
-      turnExecutionId: executionId,
-      toolCallId: "tool-1",
-      toolName: "Agent",
-      toolInput: { codexCollabKind: "spawnAgent", prompt: "delegate" },
-    } satisfies AgentEvent;
+      event: {
+        type: AgentEventType.ToolUse,
+        threadId: THREAD_ID,
+        turnExecutionId: executionId,
+        toolCallId: "tool-1",
+        toolName: "Agent",
+        toolInput: {},
+      },
+    } satisfies import("@mcode/contracts").ProviderRuntimeEvent;
 
     expect(() => providerEmitter.emit("event", event)).toThrow("internal event failure");
     expect(publish).not.toHaveBeenCalled();
@@ -531,7 +475,7 @@ describe("AgentService turn cleanup", () => {
 
   it("removes thread from activeThreadIds on TurnComplete", async () => {
     const { service, providerEmitter, memoryPressureService } = buildService();
-    service.init();
+    startAgentServiceIngressForTest(service, );
 
     // sendMessage adds thread to activeSessionIds and emits TurnStarted
     await service.sendMessage({
@@ -567,7 +511,7 @@ describe("AgentService turn cleanup", () => {
 
   it("keeps an automatic queued dispatch pending after an early provider send until TurnComplete releases the active Turn", async () => {
     const { service, providerEmitter, messageRepo } = buildService();
-    service.init();
+    startAgentServiceIngressForTest(service, );
     vi.mocked(messageRepo.findByIdInThread).mockReturnValue({ id: "queued-message", sequence: 1 } as never);
 
     const accepted = await service.dispatchQueuedAutomaticTurn({
@@ -603,6 +547,67 @@ describe("AgentService turn cleanup", () => {
 
     await expect(accepted.completion).resolves.toBeUndefined();
     expect(completed).toBe(true);
+  });
+
+  it("resolves queued automatic completion when a narrative checkpoint failure terminalizes its execution", async () => {
+    const { service, providerEmitter, messageRepo } = buildService();
+    startAgentServiceIngressForTest(service, );
+    vi.mocked(messageRepo.findByIdInThread).mockReturnValue({ id: "queued-checkpoint-failure", sequence: 1 } as never);
+    const accepted = await service.dispatchQueuedAutomaticTurn({
+      threadId: THREAD_ID,
+      messageId: "queued-checkpoint-failure",
+      content: "Queued work",
+      displayContent: "Queued work",
+      model: "claude-sonnet-4-6",
+      permissionMode: "default",
+      attachments: [],
+      persistedAttachments: [],
+      mentions: [],
+      provider: "claude",
+    });
+    const recovery = (service as unknown as {
+      parentNarrativeRecovery: { checkpoint: (event: AgentEvent) => void };
+    }).parentNarrativeRecovery;
+    vi.spyOn(recovery, "checkpoint").mockImplementation(() => {
+      throw new Error("narrative checkpoint unavailable");
+    });
+
+    providerEmitter.emit("event", {
+      type: AgentEventType.TextDelta,
+      threadId: THREAD_ID,
+      turnExecutionId: activeExecutionId(service),
+      delta: "durability boundary",
+    } satisfies AgentEvent);
+
+    await expect(accepted.completion).resolves.toBeUndefined();
+  });
+
+  it("records runtime diagnostics without duplicating a canonical receipt", () => {
+    const { service } = buildService();
+    const runtime = service as unknown as {
+      parentDurability: { recordProviderDiagnostic: (input: unknown) => void };
+      recordProviderDiagnostic: (provenance: TurnEventDiagnosticProvenance, event: AgentEvent) => void;
+    };
+    const recordDiagnostic = vi.spyOn(runtime.parentDurability, "recordProviderDiagnostic");
+    const event = {
+      type: AgentEventType.TextDelta,
+      threadId: THREAD_ID,
+      turnExecutionId: "00000000-0000-4000-8000-000000000031",
+      delta: "diagnostic boundary",
+    } satisfies AgentEvent;
+
+    runtime.recordProviderDiagnostic({ sourceKind: "provider-runtime" }, event);
+    runtime.recordProviderDiagnostic({
+      sourceKind: "canonical-commit",
+      canonicalReceipt: { eventId: "canonical-event-31", durableRevision: 31 },
+    }, event);
+
+    expect(recordDiagnostic).toHaveBeenCalledOnce();
+    expect(recordDiagnostic).toHaveBeenCalledWith({
+      executionId: event.turnExecutionId,
+      event,
+      terminal: false,
+    });
   });
 
   it("releases a stopped queued dispatch so the next FIFO Turn can reserve the active slot", async () => {
@@ -699,7 +704,7 @@ describe("AgentService turn cleanup", () => {
 
   it("ignores a late TurnStarted after stop instead of auto-resuming the thread", async () => {
     const { service, providerEmitter, memoryPressureService } = buildService();
-    service.init();
+    startAgentServiceIngressForTest(service, );
 
     await service.sendMessage({
       threadId: THREAD_ID,
@@ -723,7 +728,7 @@ describe("AgentService turn cleanup", () => {
 
   it("keeps exact turn running when provider stop fails, then cancels on retry", async () => {
     const { service, providerEmitter } = buildService();
-    service.init();
+    startAgentServiceIngressForTest(service, );
 
     await service.sendMessage({
       threadId: THREAD_ID,
@@ -749,7 +754,7 @@ describe("AgentService turn cleanup", () => {
 
   it("cancels during delayed setup without dispatching after setup resumes", async () => {
     const { service, providerEmitter, attachmentService } = buildService();
-    service.init();
+    startAgentServiceIngressForTest(service, );
     let releaseSetup!: () => void;
     const setupReady = new Promise<void>((resolve) => { releaseSetup = resolve; });
     (attachmentService.persist as ReturnType<typeof vi.fn>).mockImplementationOnce(() => (
@@ -791,7 +796,7 @@ describe("AgentService turn cleanup", () => {
 
   it("terminalizes setup failure after reserving runtime authority", async () => {
     const { service, providerEmitter, attachmentService } = buildService();
-    service.init();
+    startAgentServiceIngressForTest(service, );
     (attachmentService.persist as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
       new Error("attachment setup failed"),
     );
@@ -814,7 +819,7 @@ describe("AgentService turn cleanup", () => {
 
   it("shares one successful provider stop across concurrent callers", async () => {
     const { service, providerEmitter } = buildService();
-    service.init();
+    startAgentServiceIngressForTest(service, );
     await service.sendMessage({
       threadId: THREAD_ID,
       content: "hello",
@@ -842,7 +847,7 @@ describe("AgentService turn cleanup", () => {
 
   it("shares provider stop failure, then retries after single-flight clears", async () => {
     const { service, providerEmitter } = buildService();
-    service.init();
+    startAgentServiceIngressForTest(service, );
     await service.sendMessage({
       threadId: THREAD_ID,
       content: "hello",
@@ -870,7 +875,7 @@ describe("AgentService turn cleanup", () => {
 
   it("does not let completion race overwrite an explicit stop", async () => {
     const { service, providerEmitter } = buildService();
-    service.init();
+    startAgentServiceIngressForTest(service, );
     await service.sendMessage({
       threadId: THREAD_ID,
       content: "hello",
@@ -966,7 +971,7 @@ describe("AgentService turn cleanup", () => {
 
   it("does NOT remove thread from activeThreadIds on TurnComplete during compaction", async () => {
     const { service, providerEmitter } = buildService();
-    service.init();
+    startAgentServiceIngressForTest(service, );
 
     await service.sendMessage({
       threadId: THREAD_ID,
@@ -1004,7 +1009,7 @@ describe("AgentService turn cleanup", () => {
 
   it("re-adds thread to activeThreadIds on TurnStarted after TurnComplete (auto-resume)", async () => {
     const { service, providerEmitter, memoryPressureService } = buildService();
-    service.init();
+    startAgentServiceIngressForTest(service, );
 
     await service.sendMessage({
       threadId: THREAD_ID,
@@ -1053,7 +1058,7 @@ describe("AgentService turn cleanup", () => {
     const mutationReservations = new ThreadControlMutationReservationService();
     const { service, providerEmitter } = buildService(process.cwd(), mutationReservations);
     const provider = providerEmitter as EventEmitter & { stopSession: ReturnType<typeof vi.fn> };
-    service.init();
+    startAgentServiceIngressForTest(service, );
 
     expect(mutationReservations.rehydrate(THREAD_ID, "pending-approval")).toBe(true);
     const resumedExecutionId = startProviderTurn(service);
@@ -1083,7 +1088,7 @@ describe("AgentService turn cleanup", () => {
         snapshotService,
         turnSnapshotRepo,
       } = buildService(root);
-      service.init();
+      startAgentServiceIngressForTest(service, );
       const resumedExecutionId = startProviderTurn(service);
       snapshotService.captureRef.mockClear();
       const internals = service as unknown as {
@@ -1157,7 +1162,7 @@ describe("AgentService turn cleanup", () => {
         turnSnapshotRepo,
         toolCallRecordRepo,
       } = buildService(root);
-      service.init();
+      startAgentServiceIngressForTest(service, );
       const tracker = (service as unknown as {
         turnFileTracker: {
           observeToolUse: (...args: unknown[]) => Promise<void>;
@@ -1286,7 +1291,7 @@ describe("AgentService turn cleanup", () => {
 
   it("does not re-add thread after an Error event following TurnComplete", async () => {
     const { service, providerEmitter, memoryPressureService } = buildService();
-    service.init();
+    startAgentServiceIngressForTest(service, );
 
     await service.sendMessage({
       threadId: THREAD_ID,
@@ -1330,7 +1335,7 @@ describe("AgentService turn cleanup", () => {
 
   it("removes thread from activeThreadIds on Ended event", async () => {
     const { service, providerEmitter, memoryPressureService } = buildService();
-    service.init();
+    startAgentServiceIngressForTest(service, );
 
     await service.sendMessage({
       threadId: THREAD_ID,
@@ -1367,6 +1372,7 @@ describe("AgentService Ended finalization", () => {
   let canonicalSink: CanonicalAgentEventSink;
   let canonicalEvents: CanonicalAgentEventEnvelope[];
   let service: AgentService;
+  let pendingPlanOutputs: Map<string, string>;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -1378,9 +1384,8 @@ describe("AgentService Ended finalization", () => {
     const toolCallRecordRepo = new RealToolCallRecordRepo(db);
     const thoughtSegmentRepo = new RealThoughtSegmentRepo(db);
     const hookExecutionRepo = new RealHookExecutionRepo(db);
-    providerEmitter = Object.assign(new EventEmitter(), {
+    providerEmitter = wrapProviderEmitterForRuntimeEvents(Object.assign(new EventEmitter(), {
       id: "codex" as ProviderId,
-      eventDelivery: "legacy-emitter" as const,
       descriptor: {
         capabilities: [{ name: "child-cancellation", support: "supported" }],
       },
@@ -1388,7 +1393,7 @@ describe("AgentService Ended finalization", () => {
       stopSession: vi.fn(),
       interruptChildTurn: vi.fn(() => Promise.resolve()),
       shutdown: vi.fn(),
-    });
+    }));
 
     const providerRegistry = {
       resolve: vi.fn(() => providerEmitter),
@@ -1429,7 +1434,20 @@ describe("AgentService Ended finalization", () => {
     canonicalSink = new CanonicalAgentEventSink(db, (events) => {
       canonicalEvents.push(...events);
     });
-    service = new AgentService(
+    pendingPlanOutputs = new Map<string, string>();
+    const planTurns = Object.assign(Object.create(PlanTurnService.prototype), {
+      beginOutputGeneration: () => undefined,
+      beginQuestionGeneration: () => undefined,
+      buildQuestionPrompt: (content: string) => content,
+      buildPlanOutputInstructions: () => "",
+      onTextDelta: () => undefined,
+      needsAssistantMaterialization: () => false,
+      persistAssistantMessage: () => undefined,
+      clearTurn: (threadId: string) => {
+        pendingPlanOutputs.delete(threadId);
+      },
+    }) as PlanTurnService;
+    service = createAgentServiceForTest(
       threadRepo,
       workspaceRepo,
       messageRepo,
@@ -1442,22 +1460,24 @@ describe("AgentService Ended finalization", () => {
       snapshotService,
       db,
       memoryPressureService,
-      { get: vi.fn(() => []), upsert: vi.fn() } as unknown as TaskRepo,
       settingsService,
       { assertUsable: vi.fn() } as unknown as ProviderAvailabilityService,
       planQuestionAnswersRepo,
-      { create: vi.fn(), updateStatus: vi.fn(), listByThread: vi.fn(() => []), getLatestForThread: vi.fn(() => null), getById: vi.fn(() => null) } as unknown as import("../../planning/persistence/plan-repo.js").PlanRepo,
       { deliverHandoff: vi.fn(async () => ({ providerWireOverride: "" })) } as any,
       { issue: vi.fn(), tryConsume: vi.fn(() => false), clear: vi.fn(), hasActiveGrant: vi.fn(() => false) } as any,
       new NarrativeStore(messageRepo, toolCallRecordRepo, thoughtSegmentRepo, hookExecutionRepo),
-      new PlanQuestionService(messageRepo, planQuestionAnswersRepo),
       new ParentAssistantTextCheckpointService(db),
       undefined,
       undefined,
       undefined,
       canonicalSink,
+      undefined,
+      undefined,
+      planTurns,
+      undefined,
+      new SubagentLifecycleService(canonicalSink, providerRegistry),
     );
-    service.init((event) => {
+    startAgentServiceIngressForTest(service, (event) => {
       publishParentProviderEvent(event, event, {
         publishAgentEvent: vi.fn(),
         updateThreadStatus: (threadId, status) => threadRepo.updateStatus(threadId, status),
@@ -1612,10 +1632,7 @@ describe("AgentService Ended finalization", () => {
     expect(service.runtimeSnapshots().find((snapshot) => snapshot.threadId === thread.id))
       .toMatchObject({ phase: "running", turnExecutionId: executionId });
 
-    service.handleExitPlanMode(thread.id, "# plan\n\n## Stop-safe cleanup");
-    const pendingPlanOutputs = (service as unknown as {
-      pendingExitPlanMarkdown: Map<string, string>;
-    }).pendingExitPlanMarkdown;
+    pendingPlanOutputs.set(thread.id, "# plan\n\n## Stop-safe cleanup");
     expect(pendingPlanOutputs.has(thread.id)).toBe(true);
 
     providerEmitter.interruptChildTurn.mockRejectedValueOnce(new Error("child interrupt unavailable"));

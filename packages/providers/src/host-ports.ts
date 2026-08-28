@@ -135,15 +135,14 @@ export interface ProviderEventCommitReceipt {
   eventCount: number;
 }
 
-/** Delivery state for one output path after a durable submission. */
-export type ProviderEventDeliveryStatus = "published" | "deferred" | "not-required";
+/** Delivery state for canonical runtime events after a durable submission. */
+export type ProviderEventDeliveryStatus = "queued" | "not-required";
 
-/** Separates durable commit state from canonical and legacy delivery state. */
+/** Separates durable commit state from the subsequent ingress handoff. */
 export interface ProviderEventSubmissionReceipt {
   commit: ProviderEventCommitReceipt;
   delivery: {
-    canonical: ProviderEventDeliveryStatus;
-    legacy: ProviderEventDeliveryStatus;
+    ingress: ProviderEventDeliveryStatus;
   };
 }
 

@@ -12,6 +12,7 @@ describe("pull requests feature boundary", () => {
       "PullRequestMutationService",
       "PullRequestService",
       "ReviewWorktreeService",
+      "TurnPullRequestCompletionEffect",
     ]);
   });
 });

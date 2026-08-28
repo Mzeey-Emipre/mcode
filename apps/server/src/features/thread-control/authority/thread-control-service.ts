@@ -813,7 +813,7 @@ export class ThreadControlService {
       pendingApproval = undefined;
     }
     if (pendingApproval) return { status: "waiting_for_approval", approvalId: pendingApproval.approvalId };
-    if (this.agentService.activeThreadIds?.().includes(thread.id)) return { status: "running" };
+    if (this.agentService.runtimeAccess().activeThreadIds().includes(thread.id)) return { status: "running" };
     switch (thread.status) {
       case "completed": return { status: "completed" };
       case "errored": return { status: "failed" };

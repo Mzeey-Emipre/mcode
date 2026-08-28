@@ -77,7 +77,6 @@ export class GoalCommand implements McodeCommand {
       throw new Error(`Goal objectives must contain 1-${MAX_GOAL_OBJECTIVE_CHARS} characters.`);
     }
 
-    const capable = ctx.provider;
     const session = this.sessionName(ctx.threadId);
     const native = asClaudeNativeGoalCommandProvider(ctx.provider);
     const useNative = native?.hasNativeGoalCommand(session) === true;
@@ -86,14 +85,7 @@ export class GoalCommand implements McodeCommand {
       return {
         kind: "rewrite",
         content: `/goal ${arg}`,
-        onDispatch: async () => {
-          const goal = native.setNativeGoalMirror(session, arg);
-          this.broadcastGoalUpdated(ctx.threadId, goal);
-        },
-        onRollback: async () => {
-          native.clearNativeGoalMirror(session);
-          this.broadcastGoalCleared(ctx.threadId, "rollback");
-        },
+        effect: { kind: "goal", objective: arg, delivery: "native" },
       };
     }
 
@@ -103,23 +95,15 @@ export class GoalCommand implements McodeCommand {
         `A goal has been set for this session: "${arg}". Treat this exactly ` +
         `as your directive: start working toward it now. The session will not ` +
         `stop until the goal is satisfied.`,
-      onDispatch: async () => {
-        const goal = await capable.setGoal(session, arg);
-        this.broadcastGoalUpdated(ctx.threadId, goal);
-      },
-      onRollback: async () => {
-        await capable.clearGoal(session);
-        this.broadcastGoalCleared(ctx.threadId, "rollback");
-      },
+      effect: { kind: "goal", objective: arg, delivery: "provider" },
     };
   }
 
   /**
    * Route a `/goal` message. Returns {@link CommandOutcome} describing how the
    * caller should proceed. The SET form rewrites the wire payload and defers the
-   * actual goal install to the returned {@link CommandOutcome.onDispatch} so a
-   * send failure can't leave a stale goal in the provider; `onRollback` tears it
-   * back out.
+   * actual goal install to the goal lifecycle owner so a send failure cannot
+   * leave a stale goal in the provider.
    */
   async handle(ctx: CommandContext): Promise<CommandOutcome> {
     const { threadId, content } = ctx;
@@ -170,15 +154,6 @@ export class GoalCommand implements McodeCommand {
     }
 
     return this.prepareSet(ctx, arg);
-  }
-
-  /** Broadcast a normalized goal-state update to connected clients. */
-  private broadcastGoalUpdated(threadId: string, goal: GoalState): void {
-    this.broadcast("agent.event", {
-      type: AgentEventType.GoalUpdated,
-      threadId,
-      goal,
-    } satisfies AgentEvent);
   }
 
   /** Broadcast that the active goal has been cleared. */
