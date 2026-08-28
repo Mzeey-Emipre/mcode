@@ -13,7 +13,6 @@ export function publishParentProviderEvent(
   enrichedEvent: AgentEvent,
   deps: ParentProviderEventPublicationDeps,
 ): boolean {
-  if ("codexChild" in event && event.codexChild !== undefined) return false;
   if (event.type === "generatedAttachment") return false;
 
   deps.publishAgentEvent(enrichedEvent);

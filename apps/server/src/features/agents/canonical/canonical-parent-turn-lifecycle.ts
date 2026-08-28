@@ -8,30 +8,21 @@ import type {
   ProviderIdentity,
 } from "@mcode/contracts";
 import type {
+  ParentTurnFinishInput as CanonicalParentTurnFinishInput,
+  ParentTurnInterruptionInput,
+  ParentTurnProjection as CanonicalParentTurnProjection,
+  ParentTurnStartInput,
+} from "../turns/parent-turn-durability.js";
+import type {
   CanonicalAgentCheckpoint,
   CanonicalAgentCommitInput,
   CanonicalAgentCommitResult,
   CanonicalAgentEventDraft,
   CanonicalProviderContinuationInput,
-  CanonicalParentTurnFinishInput,
-  CanonicalParentTurnProjection,
 } from "./canonical-agent-event-sink.js";
 
-/** Input for starting one user-triggered parent execution. */
-export interface CanonicalParentTurnStartInput {
-  thread: {
-    id: string;
-    workspaceId: string;
-    providerId: string;
-    createdAt: string;
-  };
-  turnId: string;
-  executionId: string;
-  permissionMode: "supervised" | "full";
-  providerIdentities: readonly ProviderIdentity[];
-  retryOfExecutionId?: string;
-  projectUserMessage: () => Message;
-}
+/** Canonical alias for the parent-turn start durability input. */
+export type CanonicalParentTurnStartInput = ParentTurnStartInput;
 
 /** Durable operations required by the parent-turn lifecycle. */
 export interface CanonicalParentTurnLifecycleOperations {
@@ -73,17 +64,8 @@ export interface CanonicalParentTurnLifecycleOperations {
   }): CanonicalAgentEventDraft[];
 }
 
-/** Inputs for recovering one execution that was unfinished at restart. */
-export interface CanonicalParentTurnInterruptionInput {
-  executionId: string;
-  reason: string;
-  stagedAssistant?: Message;
-  finalizeCompatibility?: (
-    assistant: Message,
-    narrative: readonly ParentNarrativeRecoveryItem[],
-  ) => void;
-  recoveredNarrative?: readonly ParentNarrativeRecoveryItem[];
-}
+/** Canonical alias for the parent-turn interruption durability input. */
+export type CanonicalParentTurnInterruptionInput = ParentTurnInterruptionInput;
 
 /** Coordinates start and terminal decisions for one parent execution. */
 export class CanonicalParentTurnLifecycle {

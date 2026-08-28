@@ -81,7 +81,7 @@ export class DeterministicCanonicalSink implements ProviderEventSinkPort {
         durableThrough: this.accepted.length,
         eventCount: this.accepted.length - acceptedBefore,
       },
-      delivery: { canonical: "published", legacy: "not-required" },
+      delivery: { ingress: "queued" },
     };
   }
 

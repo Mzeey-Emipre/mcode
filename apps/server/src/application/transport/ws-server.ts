@@ -165,7 +165,7 @@ export function createWsServer(deps: WsServerDeps): {
     if (req.method === "GET" && req.url?.startsWith("/health")) {
       const body: Record<string, unknown> = {
         status: "ok",
-        activeAgents: deps.agentService.activeCount(),
+        activeAgents: deps.agentService.runtimeAccess().activeCount(),
       };
       if (deps.browserAutomationBroker) {
         body.browserAutomation = {

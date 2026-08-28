@@ -2,6 +2,7 @@ import { inject, injectable } from "tsyringe";
 import type { CompletedThreadRetentionDays, Settings, Thread } from "@mcode/contracts";
 import { ThreadRepo } from "../persistence/thread-repo.js";
 import { AgentService } from "../../agents/index.js";
+import { AgentPermissionService } from "../../agents/permissions/agent-permission-service.js";
 import { SettingsService } from "../../settings/settings-service.js";
 import { ThreadTeardownService } from "./thread-teardown-service.js";
 import { ThreadControlMutationReservationService } from "../authority/thread-control-mutation-reservation-service.js";
@@ -32,6 +33,7 @@ export class ThreadCompletionService {
   constructor(
     @inject(ThreadRepo) private readonly threadRepo: ThreadRepo,
     @inject(AgentService) private readonly agentService: AgentService,
+    @inject(AgentPermissionService) private readonly permissions: AgentPermissionService,
     @inject(ThreadTeardownService) private readonly teardownService: ThreadTeardownService,
     @inject(ThreadControlMutationReservationService)
     private readonly mutationReservations: ThreadControlMutationReservationService,
@@ -98,10 +100,10 @@ export class ThreadCompletionService {
     try {
       const thread = this.requireThread(threadId);
       if (thread.user_completed_at !== null) return thread;
-      if (this.agentService.activeThreadIds().includes(threadId)) {
+      if (this.agentService.runtimeAccess().activeThreadIds().includes(threadId)) {
         throw new Error("Thread cannot be completed while it is running");
       }
-      if (this.agentService.listPendingPermissions(threadId).length > 0) {
+      if (this.permissions.listPendingPermissions(threadId).length > 0) {
         throw new Error("Thread cannot be completed while permission is pending");
       }
 

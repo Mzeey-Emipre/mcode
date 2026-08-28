@@ -40,12 +40,20 @@ import type {
   PermissionRequest,
   ProviderModelInfo,
   ProviderUsageInfo,
+  ProviderRuntimeEvent,
   ProviderCapabilityName,
   ProviderCapabilityIdentity,
   QuotaCategory,
   SkillInfo,
 } from "@mcode/contracts";
-import { AgentEventType, CODEX_STATIC_MODELS, isGoalOpen, isVirtualBrowserContextAttachment, supportsCodexUltraOrchestration } from "@mcode/contracts";
+import {
+  AgentEventType,
+  CODEX_STATIC_MODELS,
+  isGoalOpen,
+  isVirtualBrowserContextAttachment,
+  providerRuntimeEvent,
+  supportsCodexUltraOrchestration,
+} from "@mcode/contracts";
 import { checkCodexVersion, meetsMinVersion } from "./codex-version.js";
 import { CodexAppServer, warmCodexAppServer } from "./codex-app-server.js";
 import type { CodexApprovalRequest } from "./codex-app-server.js";
@@ -620,7 +628,7 @@ function isMainThreadNotification(
 }
 
 interface PendingChildEvent {
-  event: AgentEvent;
+  event: ProviderRuntimeEvent;
   nativeThreadId: string;
   nativeTurnId?: string;
   childGeneration?: number;
@@ -693,7 +701,7 @@ function executionForDrain(state: CodexSessionState): string | undefined {
 
 function bufferPendingChildEvent(
   state: CodexSessionState,
-  event: AgentEvent,
+  event: ProviderRuntimeEvent,
   nativeThreadId: string,
   nativeTurnId: string | undefined,
   eventKey?: string,
@@ -711,17 +719,23 @@ function bufferPendingChildEvent(
   }
 }
 
-function childEventIdentity(event: AgentEvent): string | undefined {
-  if (!("codexChild" in event) || !event.codexChild) return undefined;
-  if (event.codexChild.nativeEventId) return event.codexChild.nativeEventId;
+function childEventIdentity(event: ProviderRuntimeEvent): string | undefined {
+  const evidence = event.extension?.child;
+  if (!evidence) return undefined;
+  if (evidence.nativeEventId) return evidence.nativeEventId;
   return `codex-child:${createHash("sha256").update(JSON.stringify([
-    event.type,
-    event.codexChild.nativeThreadId,
-    event.codexChild.nativeTurnId ?? "",
-    event.codexChild.parentCollaborationItemId,
-    event.codexChild.nativeItemId ?? "",
-    event.codexChild.itemEventKey ?? "",
+    event.event.type,
+    evidence.nativeThreadId,
+    evidence.nativeTurnId ?? "",
+    evidence.parentCollaborationItemId,
+    evidence.nativeItemId ?? "",
+    evidence.itemEventKey ?? "",
   ])).digest("hex")}`;
+}
+
+function withTurnExecutionId(event: ProviderRuntimeEvent, turnExecutionId: string | undefined): ProviderRuntimeEvent {
+  if (!turnExecutionId) return event;
+  return { ...event, event: { ...event.event, turnExecutionId } as AgentEvent };
 }
 
 function rememberChildEventKey(state: CodexSessionState, eventKey: string): void {
@@ -784,7 +798,6 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
   });
   /** Codex CLI is an agentic tool with no one-shot text completion mode. */
   readonly supportsCompletion = false;
-  readonly eventDelivery = "legacy-emitter" as const;
   readonly sessionForkOnResume = "clean" as const;
   readonly maxInputCharactersPerTurn = 16_000;
   /** Path B forker; calls this provider's throwaway app-server side channel. */
@@ -799,6 +812,10 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
   async getUsage(): Promise<ProviderUsageInfo> {
     if (this.usageInfo.quotaCategories.length > 0) return this.usageInfo;
     return this.warmUsageCache();
+  }
+
+  private emitRuntimeEvent(runtimeEvent: ProviderRuntimeEvent): void {
+    super.emit("event", runtimeEvent);
   }
 
   /** Owns the session pool, idle eviction (with busy guard), and JobObject/kill. */
@@ -908,12 +925,12 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
 
     this.usageInfo = nextUsage;
     if (threadId) {
-      this.emit("event", {
+      this.emitRuntimeEvent(providerRuntimeEvent({
         type: AgentEventType.QuotaUpdate,
         threadId,
         providerId: "codex",
         categories: this.usageInfo.quotaCategories,
-      } satisfies AgentEvent);
+      } satisfies AgentEvent));
     }
     return true;
   }
@@ -967,7 +984,12 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     emitEnded = true,
     turnExecutionId?: string,
   ): AgentEvent | undefined {
-    this.emit("event", { type: AgentEventType.Error, threadId, error, ...(turnExecutionId ? { turnExecutionId } : {}) } satisfies AgentEvent);
+    this.emitRuntimeEvent(providerRuntimeEvent({
+      type: AgentEventType.Error,
+      threadId,
+      error,
+      ...(turnExecutionId ? { turnExecutionId } : {}),
+    } satisfies AgentEvent));
     if (!turnExecutionId) return undefined;
     const ended = {
       type: AgentEventType.Ended,
@@ -975,7 +997,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       ...(outcome ? { outcome } : {}),
       turnExecutionId,
     } satisfies AgentEvent;
-    if (emitEnded) this.emit("event", ended);
+    if (emitEnded) this.emitRuntimeEvent(providerRuntimeEvent(ended));
     return ended;
   }
 
@@ -986,7 +1008,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     error: string,
     turnExecutionId?: string,
   ): void {
-    this.emit("event", {
+    this.emitRuntimeEvent(providerRuntimeEvent({
       type: AgentEventType.McpServerStartupStatus,
       threadId,
       providerId: this.id,
@@ -995,7 +1017,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       status: "failed",
       error,
       ...(turnExecutionId ? { turnExecutionId } : {}),
-    } satisfies AgentEvent);
+    } satisfies AgentEvent));
   }
 
   /** Convert a native Codex goal into Mcode's provider-neutral goal state. */
@@ -1067,11 +1089,11 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     } else {
       this.goalsBySession.delete(sessionId);
     }
-    this.emit("event", {
+    this.emitRuntimeEvent(providerRuntimeEvent({
       type: AgentEventType.GoalUpdated,
       threadId: goal.threadId ?? this.threadIdFromSession(sessionId),
       goal,
-    } satisfies AgentEvent);
+    } satisfies AgentEvent));
   }
 
   /** Emit a goal clear and update the local mirror. */
@@ -1081,12 +1103,12 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
   ): void {
     this.goalsBySession.delete(sessionId);
     this.pendingGoalObjectives.delete(sessionId);
-    this.emit("event", {
+    this.emitRuntimeEvent(providerRuntimeEvent({
       type: AgentEventType.GoalCleared,
       threadId: this.threadIdFromSession(sessionId),
       providerId: "codex",
       reason,
-    } satisfies AgentEvent);
+    } satisfies AgentEvent));
   }
 
   /** Evict idle Codex sessions while preserving active turns. */
@@ -1388,7 +1410,11 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       logger.info("Pending stop consumed, tearing down new Codex session", { sessionId });
       this.pendingSpawnTurns.delete(sessionId);
       void this.runtime.stop(sessionId);
-      this.emit("event", { type: AgentEventType.Ended, threadId, turnExecutionId: req.turnExecutionId } satisfies AgentEvent);
+      this.emitRuntimeEvent(providerRuntimeEvent({
+        type: AgentEventType.Ended,
+        threadId,
+        turnExecutionId: req.turnExecutionId,
+      } satisfies AgentEvent));
       return;
     }
 
@@ -1561,9 +1587,10 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
           pruneExecutionMap(entry.turnExecutionIdsByNativeTurn);
         }
       }
-      const generatedImageEvents = this.mapGeneratedImageEvents(threadId, notification as CodexNotification);
+      const generatedImageEvents = this.mapGeneratedImageEvents(threadId, notification as CodexNotification)
+        .map(providerRuntimeEvent);
       const events = mapper.mapNotification(notification as CodexNotification);
-      traceCodexIngest(threadId, n.method, n.params, [...generatedImageEvents, ...events]);
+      traceCodexIngest(threadId, n.method, n.params, [...generatedImageEvents, ...events].map((event) => event.event));
       if (
         entry
         && nativeThreadId
@@ -1603,17 +1630,16 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
           && nativeThreadId
           && mapper.hasReceiverThread(nativeThreadId)
           && !nativeTurnId
-          && "codexChild" in event
-          && event.codexChild,
+          && event.extension?.child,
         );
         if (
           !childEventNeedsTurnBinding
-          && (!entry || eventExecutionId || !isTurnScopedEvent(event) || mainNotification || !nativeThreadId)
+          && (!entry || eventExecutionId || !isTurnScopedEvent(event.event) || mainNotification || !nativeThreadId)
         ) {
           if (eventKey && entry) rememberChildEventKey(entry, eventKey);
-          this.recordGoalEvent(sessionId, event);
+          this.recordGoalEvent(sessionId, event.event);
           const resolvedEventExecutionId = eventExecutionId ?? startupEventExecutionId;
-          this.emit("event", { ...event, ...(resolvedEventExecutionId ? { turnExecutionId: resolvedEventExecutionId } : {}) });
+          this.emitRuntimeEvent(withTurnExecutionId(event, resolvedEventExecutionId));
         } else {
           if (!entry || !nativeThreadId) continue;
           bufferPendingChildEvent(entry, event, nativeThreadId, nativeTurnId, eventKey);
@@ -1676,7 +1702,9 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       logger.error("CodexAppServer fatal", { sessionId, error, breadcrumb: server.lastTransportBreadcrumb });
       const activeExecutionId = this.runtime.get(sessionId)?.activeParentTurnExecutionId ?? stagedExecutionId;
       for (const event of mapper.drainPendingAssistantBoundary(false)) {
-        this.emit("event", activeExecutionId ? { ...event, turnExecutionId: activeExecutionId } : event);
+        this.emitRuntimeEvent(providerRuntimeEvent(
+          activeExecutionId ? { ...event, turnExecutionId: activeExecutionId } : event,
+        ));
       }
       this.emitTurnFailure(threadId, error, undefined, true, activeExecutionId);
       void this.runtime.stop(sessionId);
@@ -1748,30 +1776,30 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     server.on("threadIdChanged", (newThreadId: string) => {
       mapper.setMainCodexThreadId(newThreadId);
       this.sdkSessionIds.set(sessionId, newThreadId);
-      this.emit("event", {
+      this.emitRuntimeEvent(providerRuntimeEvent({
         type: AgentEventType.System,
         threadId,
         subtype: "sdk_session_id:" + newThreadId,
-      } satisfies AgentEvent);
+      } satisfies AgentEvent));
     });
 
     if (server.resumeFailed) {
       logger.warn("Codex session context lost; resume failed, started fresh thread", { sessionId });
-      this.emit("event", {
+      this.emitRuntimeEvent(providerRuntimeEvent({
         type: AgentEventType.System,
         threadId,
         subtype: "context_lost",
-      } satisfies AgentEvent);
+      } satisfies AgentEvent));
     }
 
     if (server.threadId) {
       mapper.setMainCodexThreadId(server.threadId);
       this.sdkSessionIds.set(sessionId, server.threadId);
-      this.emit("event", {
+      this.emitRuntimeEvent(providerRuntimeEvent({
         type: AgentEventType.System,
         threadId,
         subtype: "sdk_session_id:" + server.threadId,
-      } satisfies AgentEvent);
+      } satisfies AgentEvent));
     }
 
     const state: CodexSessionState = {
@@ -1853,8 +1881,8 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
       }
       if (item.eventKey && state.deliveredChildEventKeys.has(item.eventKey)) continue;
       if (item.eventKey) rememberChildEventKey(state, item.eventKey);
-      this.recordGoalEvent(sessionId, item.event);
-      this.emit("event", { ...item.event, turnExecutionId: executionId });
+      this.recordGoalEvent(sessionId, item.event.event);
+      this.emitRuntimeEvent(withTurnExecutionId(item.event, executionId));
     }
     state.pendingChildEvents = remaining;
   }
@@ -1894,12 +1922,12 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         if (!metadata) continue;
 
         const events = mapper.applyChildThreadMetadata(childThreadId, metadata);
-        traceCodexIngest(threadId, "child/thread-read", { childThreadId }, events);
+        traceCodexIngest(threadId, "child/thread-read", { childThreadId }, events.map((event) => event.event));
         const resolvedExecutionId = turnExecutionId
           ?? currentState.nativeThreadExecutionIds.get(childThreadId);
         for (const event of events) {
-          this.recordGoalEvent(sessionId, event);
-          this.emit("event", resolvedExecutionId ? { ...event, turnExecutionId: resolvedExecutionId } : event);
+          this.recordGoalEvent(sessionId, event.event);
+          this.emitRuntimeEvent(withTurnExecutionId(event, resolvedExecutionId));
         }
         if (metadata.identity && (!captureParentMessage || metadata.parentMessage)) return;
       }
@@ -1928,7 +1956,9 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
   async interrupt(state: CodexSessionState): Promise<void> {
     const turnExecutionId = executionForDrain(state);
     for (const event of state.mapper.drainPendingAssistantBoundary(false)) {
-      this.emit("event", turnExecutionId ? { ...event, turnExecutionId } : event);
+      this.emitRuntimeEvent(providerRuntimeEvent(
+        turnExecutionId ? { ...event, turnExecutionId } : event,
+      ));
     }
     state.pendingTurnStartNotification = undefined;
     state.turnStartResponsePending = false;
@@ -1950,7 +1980,9 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     await this.host.threadControl.close(state.sessionId);
     const turnExecutionId = executionForDrain(state);
     for (const event of state.mapper.drainPendingAssistantBoundary(false)) {
-      this.emit("event", turnExecutionId ? { ...event, turnExecutionId } : event);
+      this.emitRuntimeEvent(providerRuntimeEvent(
+        turnExecutionId ? { ...event, turnExecutionId } : event,
+      ));
     }
     this.liveSessionIds.delete(state.sessionId);
     state.pendingTurnStartNotification = undefined;
@@ -2156,7 +2188,9 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
   ): Promise<void> {
     const entry = this.runtime.get(sessionId);
     if (!entry) return;
-    const emitTurnEvent = (event: AgentEvent): void => { this.emit("event", { ...event, turnExecutionId }); };
+    const emitTurnEvent = (event: AgentEvent): void => {
+      this.emitRuntimeEvent(providerRuntimeEvent({ ...event, turnExecutionId }));
+    };
 
     for (const event of entry.mapper.drainPendingAssistantBoundary(false)) {
       emitTurnEvent(event);

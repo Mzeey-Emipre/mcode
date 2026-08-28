@@ -122,8 +122,8 @@ describe("routeMessage result validation seam", () => {
 });
 
 describe("routeMessage agent.child.stop", () => {
-  it("routes the distinct child-stop action to AgentService", async () => {
-    const stopChildTurn = vi.fn().mockResolvedValue({
+  it("routes the distinct child-stop action to the sub-agent lifecycle service", async () => {
+    const stop = vi.fn().mockResolvedValue({
       childThreadId: "child-thread",
       status: "interrupted",
     });
@@ -136,14 +136,17 @@ describe("routeMessage agent.child.stop", () => {
         childThreadId: "child-thread",
       },
     }), {
-      agentService: { stopChildTurn },
+      subagentLifecycleService: { stop },
     } as unknown as RouterDeps);
 
     expect(response).toEqual({
       id: "child-stop-1",
       result: { childThreadId: "child-thread", status: "interrupted" },
     });
-    expect(stopChildTurn).toHaveBeenCalledWith("parent-thread", "child-thread");
+    expect(stop).toHaveBeenCalledWith({
+      owningParentThreadId: "parent-thread",
+      childThreadId: "child-thread",
+    });
   });
 });
 

@@ -46,7 +46,7 @@ describe("CodexEventMapper defect regressions", () => {
       method: "turn/completed",
       params: { turn: { status: "completed" } },
     });
-    expect(completed.some((e) => e.type === AgentEventType.TurnComplete)).toBe(true);
+    expect(completed.some((runtimeEvent) => runtimeEvent.event.type === AgentEventType.TurnComplete)).toBe(true);
 
     // Late reasoning delta from the CLI must NOT emit anything.
     const late = mapper.mapNotification({
@@ -85,7 +85,7 @@ describe("CodexEventMapper defect regressions", () => {
       params: { delta: "visible", itemId: "rs1" },
     });
     expect(fresh.length).toBeGreaterThan(0);
-    expect(fresh[0]!.type).toBe(AgentEventType.TextDelta);
+    expect(fresh[0]!.event.type).toBe(AgentEventType.TextDelta);
   });
 
   it("resumes emitting events after the next turn/started", () => {
@@ -114,7 +114,7 @@ describe("CodexEventMapper defect regressions", () => {
       params: { delta: "fresh thought", itemId: "rs2" },
     });
     expect(fresh.length).toBeGreaterThan(0);
-    expect(fresh[0]!.type).toBe(AgentEventType.TextDelta);
+    expect(fresh[0]!.event.type).toBe(AgentEventType.TextDelta);
   });
 
   // -------------------------------------------------------------------------
@@ -142,10 +142,10 @@ describe("CodexEventMapper defect regressions", () => {
         item: { type: "commandExecution", id: "cmd1", command: "echo hi", aggregatedOutput: "hi", exitCode: 0 },
       },
     });
-    const toolUse = childEvents.find((e) => e.type === AgentEventType.ToolUse);
+    const toolUse = childEvents.find((runtimeEvent) => runtimeEvent.event.type === AgentEventType.ToolUse);
     expect(toolUse).toBeDefined();
-    if (toolUse?.type === AgentEventType.ToolUse) {
-      expect(toolUse.parentToolCallId).toBeUndefined();
+    if (toolUse?.event.type === AgentEventType.ToolUse) {
+      expect(toolUse.event.parentToolCallId).toBeUndefined();
     }
   });
 
@@ -162,8 +162,8 @@ describe("CodexEventMapper defect regressions", () => {
         item: { type: "commandExecution", id: "cmd2", command: "ls", aggregatedOutput: "x", exitCode: 0 },
       },
     });
-    const toolUse = childEvents.find((e) => e.type === AgentEventType.ToolUse);
-    expect(toolUse?.type === AgentEventType.ToolUse && toolUse.parentToolCallId).toBe("collab-only");
+    const toolUse = childEvents.find((runtimeEvent) => runtimeEvent.event.type === AgentEventType.ToolUse);
+    expect(toolUse?.event.type === AgentEventType.ToolUse && toolUse.event.parentToolCallId).toBe("collab-only");
   });
 
   it("does not use Mcode thread id as Codex main thread fallback", () => {
@@ -226,9 +226,9 @@ describe("CodexEventMapper defect regressions", () => {
       params: { turn: { status: "completed" } },
     });
 
-    expect(events.find((e) => e.type === AgentEventType.ToolResult && e.toolCallId === "spawn-empty")).toBeUndefined();
-    expect(events[0]).toMatchObject({ type: AgentEventType.AssistantMessageBoundary, isFinalResponse: true });
-    expect(events.find((e) => e.type === AgentEventType.Message)).toMatchObject({
+    expect(events.find((runtimeEvent) => runtimeEvent.event.type === AgentEventType.ToolResult && runtimeEvent.event.toolCallId === "spawn-empty")).toBeUndefined();
+    expect(events[0]!.event).toMatchObject({ type: AgentEventType.AssistantMessageBoundary, isFinalResponse: true });
+    expect(events.find((runtimeEvent) => runtimeEvent.event.type === AgentEventType.Message)?.event).toMatchObject({
       type: AgentEventType.Message,
       content: "Final response.",
     });
@@ -263,12 +263,12 @@ describe("CodexEventMapper defect regressions", () => {
       },
     });
 
-    const toolUse = events.find((e) => e.type === AgentEventType.ToolUse);
-    expect(toolUse).toMatchObject({
+    const toolUse = events.find((runtimeEvent) => runtimeEvent.event.type === AgentEventType.ToolUse);
+    expect(toolUse?.event).toMatchObject({
       type: AgentEventType.ToolUse,
       toolCallId: "cmd-after-empty-spawn",
     });
-    expect(toolUse?.type === AgentEventType.ToolUse ? toolUse.parentToolCallId : undefined).toBeUndefined();
+    expect(toolUse?.event.type === AgentEventType.ToolUse ? toolUse.event.parentToolCallId : undefined).toBeUndefined();
   });
 
   it("keeps final assistant boundary pending across wait bookkeeping", () => {
@@ -343,15 +343,22 @@ describe("CodexEventMapper defect regressions", () => {
     });
 
     expect(waitStarted).toEqual([]);
-    expect(waitCompleted).toEqual([
+    expect(waitCompleted.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       expect.objectContaining({
         type: AgentEventType.ToolResult,
         toolCallId: "spawn-1",
         output: "child done",
       }),
     ]);
-    expect(completed[0]).toMatchObject({ type: AgentEventType.AssistantMessageBoundary, isFinalResponse: true });
-    expect(completed.find((e) => e.type === AgentEventType.Message)).toMatchObject({
+    expect(waitCompleted[0]!.extension).toMatchObject({
+      providerId: "codex",
+      kind: "codex-collaboration",
+      collaboration: { kind: "spawnAgent", receiverThreadIds: ["child-1"] },
+    });
+    expect(waitCompleted[0]).not.toHaveProperty("codexChild");
+    expect(waitCompleted[0]).not.toHaveProperty("codexContinuation");
+    expect(completed[0]!.event).toMatchObject({ type: AgentEventType.AssistantMessageBoundary, isFinalResponse: true });
+    expect(completed.find((runtimeEvent) => runtimeEvent.event.type === AgentEventType.Message)?.event).toMatchObject({
       type: AgentEventType.Message,
       content: "Done.",
     });
@@ -386,8 +393,8 @@ describe("CodexEventMapper defect regressions", () => {
         item: { type: "commandExecution", id: "c1", command: "echo a", aggregatedOutput: "a", exitCode: 0 },
       },
     });
-    const child1Use = child1.find((e) => e.type === AgentEventType.ToolUse);
-    expect(child1Use?.type === AgentEventType.ToolUse && child1Use.parentToolCallId).toBe("legacy-collab");
+    const child1Use = child1.find((runtimeEvent) => runtimeEvent.event.type === AgentEventType.ToolUse);
+    expect(child1Use?.event.type === AgentEventType.ToolUse && child1Use.event.parentToolCallId).toBe("legacy-collab");
 
     const child2 = mapper.mapNotification({
       jsonrpc: "2.0",
@@ -396,8 +403,8 @@ describe("CodexEventMapper defect regressions", () => {
         item: { type: "commandExecution", id: "c2", command: "echo b", aggregatedOutput: "b", exitCode: 0 },
       },
     });
-    const child2Use = child2.find((e) => e.type === AgentEventType.ToolUse);
-    expect(child2Use?.type === AgentEventType.ToolUse && child2Use.parentToolCallId).toBe("legacy-collab");
+    const child2Use = child2.find((runtimeEvent) => runtimeEvent.event.type === AgentEventType.ToolUse);
+    expect(child2Use?.event.type === AgentEventType.ToolUse && child2Use.event.parentToolCallId).toBe("legacy-collab");
 
     // Coordinator resumes: next tool fires its own item/started. This signals
     // the legacy collab is finished — it must be popped so this tool does NOT
@@ -414,10 +421,10 @@ describe("CodexEventMapper defect regressions", () => {
         item: { type: "commandExecution", id: "c3", command: "echo coord", aggregatedOutput: "coord", exitCode: 0 },
       },
     });
-    const coordUse = coordinator.find((e) => e.type === AgentEventType.ToolUse);
+    const coordUse = coordinator.find((runtimeEvent) => runtimeEvent.event.type === AgentEventType.ToolUse);
     expect(coordUse).toBeDefined();
-    if (coordUse?.type === AgentEventType.ToolUse) {
-      expect(coordUse.parentToolCallId).toBeUndefined();
+    if (coordUse?.event.type === AgentEventType.ToolUse) {
+      expect(coordUse.event.parentToolCallId).toBeUndefined();
     }
   });
 });

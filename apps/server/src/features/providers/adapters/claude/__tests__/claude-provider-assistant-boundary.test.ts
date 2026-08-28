@@ -16,7 +16,7 @@ import { ClaudeProvider } from "../claude-provider.js";
 import { stubEnvService } from "../../../../../runtime/environment/__tests__/stub-env-service.js";
 import { stubJobObject } from "../../../../../runtime/process/containment/__tests__/stub-job-object.js";
 import { queryMethodStubs } from "./helpers/mock-sdk-query.js";
-import { AgentEventType } from "@mcode/contracts";
+import { AgentEventType, type ProviderRuntimeEvent } from "@mcode/contracts";
 
 /** Build a minimal mock Query that yields init, assistant messages, then result. */
 function mockSdkStream(messages: Array<Record<string, unknown>>) {
@@ -76,9 +76,9 @@ describe("ClaudeProvider AssistantMessageBoundary from stop_reason", () => {
       ]),
     );
 
-    const boundaries: Array<{ isFinalResponse?: boolean }> = [];
-    provider.on("event", (e: { type: string; isFinalResponse?: boolean }) => {
-      if (e.type === AgentEventType.AssistantMessageBoundary) boundaries.push(e);
+    const boundaries: ProviderRuntimeEvent[] = [];
+    provider.on("event", (runtimeEvent: ProviderRuntimeEvent) => {
+      if (runtimeEvent.event.type === AgentEventType.AssistantMessageBoundary) boundaries.push(runtimeEvent);
     });
 
     await provider.sendTurn({
@@ -95,7 +95,7 @@ describe("ClaudeProvider AssistantMessageBoundary from stop_reason", () => {
     await new Promise((r) => setTimeout(r, 10));
 
     expect(boundaries).toHaveLength(1);
-    expect(boundaries[0]?.isFinalResponse).toBe(true);
+    expect(boundaries[0]?.event.isFinalResponse).toBe(true);
   });
 
   it("emits isFinalResponse=false when stop_reason is tool_use", async () => {
@@ -120,9 +120,9 @@ describe("ClaudeProvider AssistantMessageBoundary from stop_reason", () => {
       ]),
     );
 
-    const boundaries: Array<{ isFinalResponse?: boolean }> = [];
-    provider.on("event", (e: { type: string; isFinalResponse?: boolean }) => {
-      if (e.type === AgentEventType.AssistantMessageBoundary) boundaries.push(e);
+    const boundaries: ProviderRuntimeEvent[] = [];
+    provider.on("event", (runtimeEvent: ProviderRuntimeEvent) => {
+      if (runtimeEvent.event.type === AgentEventType.AssistantMessageBoundary) boundaries.push(runtimeEvent);
     });
 
     await provider.sendTurn({
@@ -139,7 +139,7 @@ describe("ClaudeProvider AssistantMessageBoundary from stop_reason", () => {
     await new Promise((r) => setTimeout(r, 10));
 
     expect(boundaries).toHaveLength(1);
-    expect(boundaries[0]?.isFinalResponse).toBe(false);
+    expect(boundaries[0]?.event.isFinalResponse).toBe(false);
   });
 
   it("does not emit AssistantMessageBoundary for text-free tool-only messages", async () => {
@@ -163,9 +163,9 @@ describe("ClaudeProvider AssistantMessageBoundary from stop_reason", () => {
       ]),
     );
 
-    const boundaries: unknown[] = [];
-    provider.on("event", (e: { type: string }) => {
-      if (e.type === AgentEventType.AssistantMessageBoundary) boundaries.push(e);
+    const boundaries: ProviderRuntimeEvent[] = [];
+    provider.on("event", (runtimeEvent: ProviderRuntimeEvent) => {
+      if (runtimeEvent.event.type === AgentEventType.AssistantMessageBoundary) boundaries.push(runtimeEvent);
     });
 
     await provider.sendTurn({
@@ -197,7 +197,7 @@ describe("ClaudeProvider AssistantMessageBoundary from stop_reason", () => {
     const bTextSeen = new Promise<void>((resolve) => {
       resolveBText = resolve;
     });
-    const events: Array<{ type: string; turnExecutionId?: string; delta?: string }> = [];
+    const events: ProviderRuntimeEvent[] = [];
 
     mockQuery.mockImplementation(({ prompt }: { prompt: AsyncIterable<unknown> }) => {
       const iterator = prompt[Symbol.asyncIterator]();
@@ -263,12 +263,12 @@ describe("ClaudeProvider AssistantMessageBoundary from stop_reason", () => {
       return Object.assign(gen, { ...queryMethodStubs(), close: vi.fn() });
     });
 
-    provider.on("event", (event: { type: string; turnExecutionId?: string; delta?: string }) => {
-      events.push(event);
-      if (event.type === AgentEventType.TurnComplete && event.turnExecutionId === "A") {
+    provider.on("event", (runtimeEvent: ProviderRuntimeEvent) => {
+      events.push(runtimeEvent);
+      if (runtimeEvent.event.type === AgentEventType.TurnComplete && runtimeEvent.event.turnExecutionId === "A") {
         resolveTurnComplete();
       }
-      if (event.type === AgentEventType.TextDelta && event.delta === "B started") {
+      if (runtimeEvent.event.type === AgentEventType.TextDelta && runtimeEvent.event.delta === "B started") {
         resolveBText();
       }
     });
@@ -301,16 +301,16 @@ describe("ClaudeProvider AssistantMessageBoundary from stop_reason", () => {
     await bTextSeen;
 
     const continuation = events.find(
-      (event) => event.type === AgentEventType.TextDelta && event.delta === "A continuation",
+      (runtimeEvent) => runtimeEvent.event.type === AgentEventType.TextDelta && runtimeEvent.event.delta === "A continuation",
     );
-    expect(continuation?.turnExecutionId).toBe("A");
+    expect(continuation?.event.turnExecutionId).toBe("A");
     expect(
       events.some(
-        (event) => event.type === AgentEventType.TurnStarted && event.turnExecutionId === "B",
+        (runtimeEvent) => runtimeEvent.event.type === AgentEventType.TurnStarted && runtimeEvent.event.turnExecutionId === "B",
       ),
     ).toBe(true);
     expect(
-      events.find((event) => event.type === AgentEventType.TextDelta && event.delta === "B started")?.turnExecutionId,
+      events.find((runtimeEvent) => runtimeEvent.event.type === AgentEventType.TextDelta && runtimeEvent.event.delta === "B started")?.event.turnExecutionId,
     ).toBe("B");
   });
 });

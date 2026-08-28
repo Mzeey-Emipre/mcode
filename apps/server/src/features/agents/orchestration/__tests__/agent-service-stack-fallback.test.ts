@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EventEmitter } from "events";
 import type { Thread, IProviderRegistry } from "@mcode/contracts";
 import { AgentService } from "../agent-service.js";
+import { createAgentServiceForTest } from "./agent-service-test-harness.js";
 import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/canonical-agent-event-sink-stub.js";
 import { NarrativeStore } from "../../conversation/narrative/narrative-store.js";
 import { PlanQuestionService } from "../../planning/plan-question-service.js";
@@ -69,7 +70,7 @@ interface BufferedToolRow {
   status: string;
 }
 
-function minimalService(): AgentService {
+function minimalService(): { service: AgentService; narrativeStore: NarrativeStore } {
   const thread = makeThread();
   const providerEmitter = new EventEmitter();
   (providerEmitter as unknown as Record<string, unknown>).sendMessage = vi.fn(() => Promise.resolve());
@@ -139,7 +140,7 @@ function minimalService(): AgentService {
     hookExecutionRepo,
   );
 
-  return new AgentService(
+  const service = createAgentServiceForTest(
     threadRepo,
     workspaceRepo,
     messageRepo,
@@ -152,21 +153,19 @@ function minimalService(): AgentService {
     snapshotService,
     db,
     memoryPressureService,
-    taskRepo,
     settingsService,
     availability,
     planQuestionAnswersRepo,
-      { create: vi.fn(), updateStatus: vi.fn(), listByThread: vi.fn(() => []), getLatestForThread: vi.fn(() => null), getById: vi.fn(() => null) } as unknown as import("../../planning/persistence/plan-repo.js").PlanRepo,
       { deliverHandoff: vi.fn(async () => ({ providerWireOverride: "" })) } as any,
       { issue: vi.fn(), tryConsume: vi.fn(() => false), clear: vi.fn(), hasActiveGrant: vi.fn(() => false) } as any,
       narrativeStore,
-      new PlanQuestionService(messageRepo, planQuestionAnswersRepo),
       new ParentAssistantTextCheckpointService(db),
       undefined,
       undefined,
       undefined,
       createCanonicalAgentEventSinkStub(db),
   );
+  return { service, narrativeStore };
 }
 
 /**
@@ -175,11 +174,10 @@ function minimalService(): AgentService {
  * `getCurrentParentToolCallId`'s exactly-one-running-Agent semantics.
  */
 function seedThreadState(
-  service: AgentService,
+  narrativeStore: NarrativeStore,
   stack: string[],
   bufferRows: BufferedToolRow[],
 ): void {
-  const narrativeStore = (service as unknown as { narrativeStore: NarrativeStore }).narrativeStore;
   (narrativeStore as unknown as { agentCallStack: Map<string, string[]> }).agentCallStack.set(
     THREAD_ID,
     stack,
@@ -203,29 +201,30 @@ function seedThreadState(
 
 describe("AgentService stack-derived parent fallback", () => {
   let service: AgentService;
+  let narrativeStore: NarrativeStore;
 
   beforeEach(() => {
-    service = minimalService();
+    ({ service, narrativeStore } = minimalService());
   });
 
   it("returns undefined when every Agent on the stack is completed in the buffer", () => {
-    seedThreadState(service, ["a1", "a4"], [
+    seedThreadState(narrativeStore, ["a1", "a4"], [
       { toolCallId: "a1", toolName: "Agent", status: "completed" },
       { toolCallId: "a4", toolName: "Agent", status: "completed" },
     ]);
-    expect(service.getCurrentParentToolCallId(THREAD_ID)).toBeUndefined();
+    expect(narrativeStore.getCurrentParentToolCallId(THREAD_ID)).toBeUndefined();
   });
 
   it("returns undefined when multiple Agents are still running", () => {
-    seedThreadState(service, ["a1", "a2"], [
+    seedThreadState(narrativeStore, ["a1", "a2"], [
       { toolCallId: "a1", toolName: "Agent", status: "running" },
       { toolCallId: "a2", toolName: "Agent", status: "running" },
     ]);
-    expect(service.getCurrentParentToolCallId(THREAD_ID)).toBeUndefined();
+    expect(narrativeStore.getCurrentParentToolCallId(THREAD_ID)).toBeUndefined();
   });
 
   it("returns the Agent id when it is the only running stack entry", () => {
-    seedThreadState(service, ["solo"], [{ toolCallId: "solo", toolName: "Agent", status: "running" }]);
-    expect(service.getCurrentParentToolCallId(THREAD_ID)).toBe("solo");
+    seedThreadState(narrativeStore, ["solo"], [{ toolCallId: "solo", toolName: "Agent", status: "running" }]);
+    expect(narrativeStore.getCurrentParentToolCallId(THREAD_ID)).toBe("solo");
   });
 });

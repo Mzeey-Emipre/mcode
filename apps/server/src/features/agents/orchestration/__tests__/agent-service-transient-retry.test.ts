@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { EventEmitter } from "events";
 import type { Thread, IProviderRegistry, TurnRequest } from "@mcode/contracts";
 import { AgentService } from "../agent-service.js";
+import { createAgentServiceForTest, startAgentServiceIngressForTest, wrapProviderEmitterForRuntimeEvents } from "./agent-service-test-harness.js";
 import { publishParentProviderEvent } from "../../events/provider-event-publication.js";
 import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/canonical-agent-event-sink-stub.js";
 import { ThreadControlMutationReservationService } from "../../../thread-control/index.js";
@@ -79,10 +80,9 @@ function buildService(): {
   threadRepo: ThreadRepo & { clearSdkSessionId: ReturnType<typeof vi.fn>; updateStatus: ReturnType<typeof vi.fn> };
 } {
   const thread = makeThread();
-  const providerEmitter = Object.assign(new EventEmitter(), {
+  const providerEmitter = wrapProviderEmitterForRuntimeEvents(Object.assign(new EventEmitter(), {
     id: "claude" as const,
-    eventDelivery: "legacy-emitter" as const,
-  });
+  }));
   const sendTurn = vi.fn(() => Promise.resolve());
   (providerEmitter as unknown as { sendTurn: typeof sendTurn }).sendTurn = sendTurn;
   const stopSession = vi.fn().mockResolvedValue(undefined);
@@ -190,7 +190,7 @@ function buildService(): {
     prepare: vi.fn(() => ({ run: vi.fn() })),
   } as unknown as import("better-sqlite3").Database;
 
-  const service = new AgentService(
+  const service = createAgentServiceForTest(
     threadRepo,
     workspaceRepo,
     messageRepo,
@@ -203,11 +203,9 @@ function buildService(): {
     snapshotService,
     db,
     memoryPressureService,
-    taskRepo,
     settingsService,
     availability,
     planQuestionAnswersRepo,
-    { create: vi.fn(), updateStatus: vi.fn(), listByThread: vi.fn(() => []), getLatestForThread: vi.fn(() => null), getById: vi.fn(() => null) } as unknown as import("../../planning/persistence/plan-repo.js").PlanRepo,
     { deliverHandoff: vi.fn(async () => ({ providerWireOverride: "" })) } as never,
     { issue: vi.fn(), tryConsume: vi.fn(() => false), clear: vi.fn(), hasActiveGrant: vi.fn(() => false) } as never,
     new NarrativeStore(
@@ -216,7 +214,6 @@ function buildService(): {
       { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../conversation/narrative/persistence/thought-segment-repo.js").ThoughtSegmentRepo,
       { bulkCreate: () => {}, create: () => ({}), listByMessage: () => [], countByMessage: () => 0 } as unknown as import("../../events/persistence/hook-execution-repo.js").HookExecutionRepo,
     ),
-    new PlanQuestionService(messageRepo, planQuestionAnswersRepo),
     new ParentAssistantTextCheckpointService(db),
     undefined,
     threadControlMcp as never,
@@ -249,7 +246,7 @@ describe("AgentService transient-failure auto-retry", () => {
 
   it("retries a transient send failure once against a fresh session", async () => {
     const { service, sendTurn, discardSession, threadRepo } = buildService();
-    service.init();
+    startAgentServiceIngressForTest(service, );
     sendTurn
       .mockRejectedValueOnce(new Error("read ECONNRESET"))
       .mockResolvedValueOnce(undefined);
@@ -276,7 +273,7 @@ describe("AgentService transient-failure auto-retry", () => {
 
   it("reactivates the same turn authority after retry discards its provider session", async () => {
     const { service, sendTurn, threadControlMcp } = buildService();
-    service.init();
+    startAgentServiceIngressForTest(service, );
     sendTurn.mockRejectedValueOnce(new Error("read ECONNRESET")).mockResolvedValueOnce(undefined);
 
     await service.sendMessage({
@@ -299,7 +296,7 @@ describe("AgentService transient-failure auto-retry", () => {
 
   it("does not retry a fatal send failure", async () => {
     const { service, sendTurn, discardSession, threadRepo } = buildService();
-    service.init();
+    startAgentServiceIngressForTest(service, );
     sendTurn.mockRejectedValue(new Error("permission denied"));
 
     await service.sendMessage({
@@ -319,7 +316,7 @@ describe("AgentService transient-failure auto-retry", () => {
 
   it("hides the failed attempt's transient error from the UI but keeps a fatal error visible", async () => {
     const { service, sendTurn, providerEmitter } = buildService();
-    service.init();
+    startAgentServiceIngressForTest(service, );
 
     // Probe the suppression gate from inside the failing attempt — this is the
     // window during which the provider emits its mid-attempt Error event.
@@ -362,8 +359,8 @@ describe("AgentService transient-failure auto-retry", () => {
   it("terminalizes exhausted provider retries with the active turn identity", async () => {
     const { service, sendTurn, providerEmitter, threadRepo } = buildService();
     const events: Array<Record<string, unknown>> = [];
-    providerEmitter.on("event", (event: Record<string, unknown>) => events.push(event));
-    service.init();
+    providerEmitter.on("event", (event: { event: Record<string, unknown> }) => events.push(event.event));
+    startAgentServiceIngressForTest(service, );
     sendTurn.mockRejectedValue(new Error("read ECONNRESET"));
 
     await service.sendMessage({
@@ -386,7 +383,7 @@ describe("AgentService transient-failure auto-retry", () => {
 
   it("swallows the failed attempt's trailing Ended so the UI's running state survives the retry", async () => {
     const { service, sendTurn, providerEmitter } = buildService();
-    service.init();
+    startAgentServiceIngressForTest(service, );
 
     // Model the await-full-turn provider flow: stream, hit a mid-attempt
     // transient error (emitted through the provider), then reject so the loop
@@ -431,7 +428,7 @@ describe("AgentService transient-failure auto-retry", () => {
 
   it("does not publish an interrupted status for suppressed retry teardown", async () => {
     const { service, sendTurn, providerEmitter, threadRepo } = buildService();
-    service.init((event) => {
+    startAgentServiceIngressForTest(service, (event) => {
       publishParentProviderEvent(event, event, {
         publishAgentEvent: vi.fn(),
         updateThreadStatus: threadRepo.updateStatus,
@@ -483,7 +480,7 @@ describe("AgentService transient-failure auto-retry", () => {
 
   it("does not arm Ended suppression for a fatal error (the spinner tears down)", async () => {
     const { service, sendTurn, providerEmitter } = buildService();
-    service.init();
+    startAgentServiceIngressForTest(service, );
 
     let endedSuppressedDuringAttempt: boolean | undefined;
     sendTurn.mockImplementationOnce(() => {
@@ -512,7 +509,7 @@ describe("AgentService transient-failure auto-retry", () => {
 
   it("disarms suppression before the final give-up so the error still reaches the UI", async () => {
     const { service, sendTurn } = buildService();
-    service.init();
+    startAgentServiceIngressForTest(service, );
     sendTurn.mockRejectedValue(new Error("read ECONNRESET"));
 
     await service.sendMessage({
@@ -531,8 +528,8 @@ describe("AgentService transient-failure auto-retry", () => {
   it("persists a full-looking response as interrupted when the provider ends without terminal proof", async () => {
     const { service, sendTurn, providerEmitter, messageRepo } = buildService();
     const events: Array<Record<string, unknown>> = [];
-    providerEmitter.on("event", (event: Record<string, unknown>) => events.push(event));
-    service.init();
+    providerEmitter.on("event", (event: { event: Record<string, unknown> }) => events.push(event.event));
+    startAgentServiceIngressForTest(service, );
     sendTurn.mockImplementationOnce((request: TurnRequest) => {
       providerEmitter.emit("event", {
         type: "message",
@@ -574,8 +571,8 @@ describe("AgentService transient-failure auto-retry", () => {
   it("does not synthesize a terminal event after an explicit completion", async () => {
     const { service, sendTurn, providerEmitter, messageRepo } = buildService();
     const events: Array<Record<string, unknown>> = [];
-    providerEmitter.on("event", (event: Record<string, unknown>) => events.push(event));
-    service.init();
+    providerEmitter.on("event", (event: { event: Record<string, unknown> }) => events.push(event.event));
+    startAgentServiceIngressForTest(service, );
     sendTurn.mockImplementationOnce((request: TurnRequest) => {
       providerEmitter.emit("event", {
         type: "message",
@@ -627,8 +624,8 @@ describe("AgentService transient-failure auto-retry", () => {
   it("fences child Ended events and clears the final-response marker for the next turn", async () => {
     const { service, sendTurn, providerEmitter, messageRepo } = buildService();
     const events: Array<Record<string, unknown>> = [];
-    providerEmitter.on("event", (event: Record<string, unknown>) => events.push(event));
-    service.init();
+    providerEmitter.on("event", (event: { event: Record<string, unknown> }) => events.push(event.event));
+    startAgentServiceIngressForTest(service, );
     sendTurn.mockImplementation((request: TurnRequest) => {
       if (sendTurn.mock.calls.length === 1) {
         providerEmitter.emit("event", {
@@ -681,8 +678,8 @@ describe("AgentService transient-failure auto-retry", () => {
   it("keeps a stream that reports an error on the error path", async () => {
     const { service, sendTurn, providerEmitter } = buildService();
     const events: Array<Record<string, unknown>> = [];
-    providerEmitter.on("event", (event: Record<string, unknown>) => events.push(event));
-    service.init();
+    providerEmitter.on("event", (event: { event: Record<string, unknown> }) => events.push(event.event));
+    startAgentServiceIngressForTest(service, );
     sendTurn.mockImplementationOnce((request: TurnRequest) => {
       providerEmitter.emit("event", {
         type: "error",
@@ -709,7 +706,7 @@ describe("AgentService transient-failure auto-retry", () => {
 
   it("does not turn a stopped turn into a successful fallback", async () => {
     const { service, sendTurn, providerEmitter } = buildService();
-    service.init();
+    startAgentServiceIngressForTest(service, );
     sendTurn.mockResolvedValueOnce(undefined);
 
     await service.sendMessage({
@@ -734,8 +731,8 @@ describe("AgentService transient-failure auto-retry", () => {
   it("ignores stale Message events and interrupts only the matching execution", async () => {
     const { service, sendTurn, providerEmitter, messageRepo } = buildService();
     const events: Array<Record<string, unknown>> = [];
-    providerEmitter.on("event", (event: Record<string, unknown>) => events.push(event));
-    service.init();
+    providerEmitter.on("event", (event: { event: Record<string, unknown> }) => events.push(event.event));
+    startAgentServiceIngressForTest(service, );
     sendTurn.mockResolvedValueOnce(undefined);
 
     await service.sendMessage({
@@ -788,8 +785,8 @@ describe("AgentService transient-failure auto-retry", () => {
   it("does not treat a post-turn goal receipt as a new completion", async () => {
     const { service, sendTurn, providerEmitter, messageRepo } = buildService();
     const events: Array<Record<string, unknown>> = [];
-    providerEmitter.on("event", (event: Record<string, unknown>) => events.push(event));
-    service.init();
+    providerEmitter.on("event", (event: { event: Record<string, unknown> }) => events.push(event.event));
+    startAgentServiceIngressForTest(service, );
     sendTurn.mockResolvedValueOnce(undefined);
 
     await service.sendMessage({
@@ -839,8 +836,8 @@ describe("AgentService transient-failure auto-retry", () => {
   it("leaves compaction-owned messages running until compaction finishes", async () => {
     const { service, sendTurn, providerEmitter } = buildService();
     const events: Array<Record<string, unknown>> = [];
-    providerEmitter.on("event", (event: Record<string, unknown>) => events.push(event));
-    service.init();
+    providerEmitter.on("event", (event: { event: Record<string, unknown> }) => events.push(event.event));
+    startAgentServiceIngressForTest(service, );
     sendTurn.mockResolvedValueOnce(undefined);
 
     await service.sendMessage({
@@ -880,7 +877,7 @@ describe("AgentService transient-failure auto-retry", () => {
 
   it("swallows discardSession's trailing Ended when sendTurn rejects without emitting Error", async () => {
     const { service, sendTurn, discardSession, waitForSessionExit, providerEmitter } = buildService();
-    service.init();
+    startAgentServiceIngressForTest(service, );
 
     let endedSuppressedWhenDiscardUnwinds: boolean | undefined;
     // Spawn-style failure: no provider Error, but discardSession unwinds a pooled
@@ -923,12 +920,12 @@ describe("AgentService transient-failure auto-retry", () => {
   it("keeps a transient disconnect unfinished until a real terminal outcome", async () => {
     const { service, sendTurn, providerEmitter } = buildService();
     const events: Array<Record<string, unknown>> = [];
-    providerEmitter.on("event", (event: Record<string, unknown>) => events.push(event));
+    providerEmitter.on("event", (event: { event: Record<string, unknown> }) => events.push(event.event));
     let markRetryStarted!: () => void;
     const retryStarted = new Promise<void>((resolve) => { markRetryStarted = resolve; });
     let releaseRetry!: () => void;
     const retryBlocked = new Promise<void>((resolve) => { releaseRetry = resolve; });
-    service.init();
+    startAgentServiceIngressForTest(service, );
     sendTurn
       .mockResolvedValueOnce(undefined)
       .mockImplementationOnce(() => {
@@ -982,7 +979,7 @@ describe("AgentService transient-failure auto-retry", () => {
 
   it("does not suppress a bare Ended for a normal in-flight turn (no transient retry armed)", async () => {
     const { service, sendTurn } = buildService();
-    service.init();
+    startAgentServiceIngressForTest(service, );
 
     sendTurn.mockResolvedValueOnce(undefined);
 
@@ -1006,7 +1003,7 @@ describe("AgentService transient-failure auto-retry", () => {
 
   it("disarms the retry window on a user stop so it can't re-dispatch or suppress later events", async () => {
     const { service, sendTurn } = buildService();
-    service.init();
+    startAgentServiceIngressForTest(service, );
     sendTurn.mockResolvedValueOnce(undefined);
 
     // Fire-and-forget send leaves the retry window armed until TurnComplete.
@@ -1030,7 +1027,7 @@ describe("AgentService transient-failure auto-retry", () => {
 
   it("fences a delayed stream retry from stop and a replacement turn", async () => {
     const { service, sendTurn, discardSession, providerEmitter, mutationReservations } = buildService();
-    service.init();
+    startAgentServiceIngressForTest(service, );
 
     let releaseEviction!: () => void;
     let evictionStarted!: () => void;
@@ -1079,7 +1076,7 @@ describe("AgentService transient-failure auto-retry", () => {
 
   it("retries when sendTurn resolves early then a transient stream Error arrives", async () => {
     const { service, sendTurn, providerEmitter } = buildService();
-    service.init();
+    startAgentServiceIngressForTest(service, );
 
     sendTurn
       .mockImplementationOnce(async () => {
@@ -1111,7 +1108,7 @@ describe("AgentService transient-failure auto-retry", () => {
 
   it("retries when a failed completion emits an identified transient Error", async () => {
     const { service, sendTurn, providerEmitter, threadRepo } = buildService();
-    service.init();
+    startAgentServiceIngressForTest(service, );
     sendTurn.mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined);
 
     await service.sendMessage({
@@ -1155,7 +1152,7 @@ describe("AgentService transient-failure auto-retry", () => {
 
   it("swallows a failed attempt's TurnComplete during the retry window", async () => {
     const { service, sendTurn, providerEmitter } = buildService();
-    service.init();
+    startAgentServiceIngressForTest(service, );
 
     let turnCompleteSuppressedDuringAttempt: boolean | undefined;
     sendTurn
@@ -1204,7 +1201,7 @@ describe("AgentService transient-failure auto-retry", () => {
 
   it("stops retrying at the attempt cap when a transient signature keeps failing", async () => {
     const { service, sendTurn, threadRepo } = buildService();
-    service.init();
+    startAgentServiceIngressForTest(service, );
     sendTurn.mockRejectedValue(new Error("read ECONNRESET"));
 
     await service.sendMessage({

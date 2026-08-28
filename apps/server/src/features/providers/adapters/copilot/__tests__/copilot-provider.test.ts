@@ -1,6 +1,6 @@
 import "reflect-metadata";
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
-import type { AgentEvent } from "@mcode/contracts";
+import type { ProviderRuntimeEvent } from "@mcode/contracts";
 import type { ProviderEventBatch, ProviderHostPorts } from "@mcode/providers";
 import { MCODE_BROWSER_GUIDE } from "@mcode/thread-orchestration";
 
@@ -457,8 +457,8 @@ describe("CopilotProvider bootstrap", () => {
         makeThreadControlMcp() as any,
       );
 
-      const events: AgentEvent[] = [];
-      provider.on("event", (e: AgentEvent) => events.push(e));
+      const events: ProviderRuntimeEvent[] = [];
+      provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
 
       await provider.sendTurn({
       turnExecutionId: "test-execution",
@@ -472,9 +472,9 @@ describe("CopilotProvider bootstrap", () => {
         permissionMode: "auto",
       });
 
-      const errorEvt = events.find((e) => e.type === "error");
+      const errorEvt = events.find((runtimeEvent) => runtimeEvent.event.type === "error");
       expect(errorEvt).toBeDefined();
-      expect(errorEvt?.type === "error" && errorEvt.error).toContain("gh auth login");
+      expect(errorEvt?.event.type === "error" && errorEvt.event.error).toContain("gh auth login");
     });
 
     it("translates package not found to install instructions", async () => {
@@ -492,8 +492,8 @@ describe("CopilotProvider bootstrap", () => {
         makeThreadControlMcp() as any,
       );
 
-      const events: AgentEvent[] = [];
-      provider.on("event", (e: AgentEvent) => events.push(e));
+      const events: ProviderRuntimeEvent[] = [];
+      provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
 
       await provider.sendTurn({
       turnExecutionId: "test-execution",
@@ -507,9 +507,9 @@ describe("CopilotProvider bootstrap", () => {
         permissionMode: "auto",
       });
 
-      const errorEvt = events.find((e) => e.type === "error");
+      const errorEvt = events.find((runtimeEvent) => runtimeEvent.event.type === "error");
       expect(errorEvt).toBeDefined();
-      expect(errorEvt?.type === "error" && errorEvt.error).toContain("npm install");
+      expect(errorEvt?.event.type === "error" && errorEvt.event.error).toContain("npm install");
     });
 
     it("emits the resolver's not-found message when the CLI cannot be resolved", async () => {
@@ -521,8 +521,8 @@ describe("CopilotProvider bootstrap", () => {
       });
 
       const provider = new CopilotProvider(makeSettingsService("/configured/copilot.js") as any, stubJobObject(), stubEnvService());
-      const events: AgentEvent[] = [];
-      provider.on("event", (e: AgentEvent) => events.push(e));
+      const events: ProviderRuntimeEvent[] = [];
+      provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
 
       await provider.sendTurn({
       turnExecutionId: "test-execution",
@@ -536,9 +536,9 @@ describe("CopilotProvider bootstrap", () => {
         permissionMode: "auto",
       });
 
-      const errorEvt = events.find((e) => e.type === "error");
+      const errorEvt = events.find((runtimeEvent) => runtimeEvent.event.type === "error");
       expect(errorEvt).toBeDefined();
-      expect(errorEvt?.type === "error" && errorEvt.error).toContain("npm install -g @github/copilot");
+      expect(errorEvt?.event.type === "error" && errorEvt.event.error).toContain("npm install -g @github/copilot");
     });
 
     it("returns an empty model list when the CLI cannot be resolved", async () => {
@@ -581,7 +581,7 @@ describe("CopilotProvider bootstrap", () => {
 async function runWithMockSession(
   eventSequence: Array<{ name: string; data?: unknown }>,
   sessionId = "mcode-shared-test",
-): Promise<{ events: AgentEvent[] }> {
+): Promise<{ events: ProviderRuntimeEvent[] }> {
   vi.clearAllMocks();
   mockClient.getState.mockReturnValue("connected");
   mockClient.start.mockResolvedValue(undefined);
@@ -607,8 +607,8 @@ async function runWithMockSession(
     undefined,
     makeThreadControlMcp() as any,
   );
-  const events: AgentEvent[] = [];
-  provider.on("event", (e: AgentEvent) => events.push(e));
+  const events: ProviderRuntimeEvent[] = [];
+  provider.on("event", (event: ProviderRuntimeEvent) => events.push(event));
 
   await provider.sendTurn({
       turnExecutionId: "test-execution",
@@ -668,11 +668,10 @@ describe("CopilotProvider canonical host delivery", () => {
 
     await vi.waitFor(() => expect(submit.mock.calls.flatMap(([batch]) => batch.events)
       .some((event) => event.payload.type === "item.recorded"
-        && event.payload.item.payload.event.type === "turnComplete")).toBe(true));
+        && event.payload.item.payload.runtimeEvent.event.type === "turnComplete")).toBe(true));
     const submittedEvents = submit.mock.calls.flatMap(([batch]) => batch.events)
-      .map((event) => event.payload.type === "item.recorded" ? event.payload.item.payload.event : undefined);
+      .map((event) => event.payload.type === "item.recorded" ? event.payload.item.payload.runtimeEvent.event : undefined);
 
-    expect(provider.eventDelivery).toBe("canonical-sink");
     expect(directEvents).not.toHaveBeenCalled();
     expect(submittedEvents).toContainEqual(expect.objectContaining({
       type: "turnComplete",
@@ -683,14 +682,14 @@ describe("CopilotProvider canonical host delivery", () => {
 });
 
 /**
- * Resolve once an "ended" AgentEvent has been pushed, or after a bounded number
+ * Resolve once an "ended" provider runtime event has been pushed, or after a bounded number
  * of event-loop ticks. The runtime schedules the first turn on a microtask and
  * runTurn awaits the async session.send(), so several ticks must drain before
  * the turn settles.
  */
-async function waitForEnded(events: AgentEvent[]): Promise<void> {
+async function waitForEnded(events: ProviderRuntimeEvent[]): Promise<void> {
   for (let i = 0; i < 50; i++) {
-    if (events.some((e) => e.type === "ended")) return;
+    if (events.some((runtimeEvent) => runtimeEvent.event.type === "ended")) return;
     await new Promise((r) => setTimeout(r, 0));
   }
   throw new Error("waitForEnded timed out waiting for 'ended' event");
@@ -715,10 +714,10 @@ describe("CopilotProvider session.usage_info", () => {
       },
     ]);
 
-    const ctxEvt = events.find((e) => e.type === "contextEstimate");
+    const ctxEvt = events.find((runtimeEvent) => runtimeEvent.event.type === "contextEstimate");
     expect(ctxEvt).toBeDefined();
-    expect(ctxEvt?.type === "contextEstimate" && ctxEvt.tokensIn).toBe(5000);
-    expect(ctxEvt?.type === "contextEstimate" && ctxEvt.contextWindow).toBe(128000);
+    expect(ctxEvt?.event.type === "contextEstimate" && ctxEvt.event.tokensIn).toBe(5000);
+    expect(ctxEvt?.event.type === "contextEstimate" && ctxEvt.event.contextWindow).toBe(128000);
   });
 
   it("populates contextWindow on turnComplete using the cached tokenLimit", async () => {
@@ -733,9 +732,9 @@ describe("CopilotProvider session.usage_info", () => {
       },
     ]);
 
-    const turnEvt = events.find((e) => e.type === "turnComplete");
+    const turnEvt = events.find((runtimeEvent) => runtimeEvent.event.type === "turnComplete");
     expect(turnEvt).toBeDefined();
-    expect(turnEvt?.type === "turnComplete" && turnEvt.contextWindow).toBe(128000);
+    expect(turnEvt?.event.type === "turnComplete" && turnEvt.event.contextWindow).toBe(128000);
   });
 
   it("leaves contextWindow undefined on turnComplete when no usage_info fired", async () => {
@@ -746,9 +745,9 @@ describe("CopilotProvider session.usage_info", () => {
       },
     ]);
 
-    const turnEvt = events.find((e) => e.type === "turnComplete");
+    const turnEvt = events.find((runtimeEvent) => runtimeEvent.event.type === "turnComplete");
     expect(turnEvt).toBeDefined();
-    expect(turnEvt?.type === "turnComplete" && turnEvt.contextWindow).toBeUndefined();
+    expect(turnEvt?.event.type === "turnComplete" && turnEvt.event.contextWindow).toBeUndefined();
   });
 
   it("does not emit contextEstimate when session.usage_info is not fired", async () => {
@@ -759,7 +758,7 @@ describe("CopilotProvider session.usage_info", () => {
       },
     ]);
 
-    expect(events.find((e) => e.type === "contextEstimate")).toBeUndefined();
+    expect(events.find((runtimeEvent) => runtimeEvent.event.type === "contextEstimate")).toBeUndefined();
   });
 
   it("emits exactly one turnComplete per turn even with multiple assistant.usage events", async () => {
@@ -772,14 +771,14 @@ describe("CopilotProvider session.usage_info", () => {
       { name: "assistant.usage", data: { inputTokens: 7000, outputTokens: 150, cacheReadTokens: 200, cacheWriteTokens: 0 } },
     ]);
 
-    const turnEvts = events.filter((e) => e.type === "turnComplete");
+    const turnEvts = events.filter((runtimeEvent) => runtimeEvent.event.type === "turnComplete");
     expect(turnEvts).toHaveLength(1);
 
     // tokensIn uses the latest value (context grows)
     const tc = turnEvts[0]!;
-    expect(tc.type === "turnComplete" && tc.tokensIn).toBe(7000);
+    expect(tc.event.type === "turnComplete" && tc.event.tokensIn).toBe(7000);
     // tokensOut accumulates across all calls
-    expect(tc.type === "turnComplete" && tc.tokensOut).toBe(450);
+    expect(tc.event.type === "turnComplete" && tc.event.tokensOut).toBe(450);
   });
 
   it("emits exactly one turnComplete when only one assistant.usage fires", async () => {
@@ -788,7 +787,7 @@ describe("CopilotProvider session.usage_info", () => {
     ]);
 
     // One usage event → still exactly one turnComplete (on session.idle, not on usage)
-    expect(events.filter((e) => e.type === "turnComplete")).toHaveLength(1);
+    expect(events.filter((runtimeEvent) => runtimeEvent.event.type === "turnComplete")).toHaveLength(1);
   });
 });
 
@@ -942,9 +941,9 @@ describe("CopilotProvider assistant.message phase filtering", () => {
       { name: "assistant.message", data: { content: "Hello, world!", outputTokens: 5 } },
     ]);
 
-    const msgEvts = events.filter((e) => e.type === "message");
+    const msgEvts = events.filter((runtimeEvent) => runtimeEvent.event.type === "message");
     expect(msgEvts).toHaveLength(1);
-    expect(msgEvts[0]?.type === "message" && msgEvts[0].content).toBe("Hello, world!");
+    expect(msgEvts[0]?.event.type === "message" && msgEvts[0].event.content).toBe("Hello, world!");
   });
 
   it("emits a message event for a response-phase assistant.message", async () => {
@@ -952,9 +951,9 @@ describe("CopilotProvider assistant.message phase filtering", () => {
       { name: "assistant.message", data: { content: "Final answer.", outputTokens: 10, phase: "response" } },
     ]);
 
-    const msgEvts = events.filter((e) => e.type === "message");
+    const msgEvts = events.filter((runtimeEvent) => runtimeEvent.event.type === "message");
     expect(msgEvts).toHaveLength(1);
-    expect(msgEvts[0]?.type === "message" && msgEvts[0].content).toBe("Final answer.");
+    expect(msgEvts[0]?.event.type === "message" && msgEvts[0].event.content).toBe("Final answer.");
   });
 
   it("does NOT emit a message event for a thinking-phase assistant.message", async () => {
@@ -962,7 +961,7 @@ describe("CopilotProvider assistant.message phase filtering", () => {
       { name: "assistant.message", data: { content: "I am reasoning internally...", outputTokens: 20, phase: "thinking" } },
     ]);
 
-    const msgEvts = events.filter((e) => e.type === "message");
+    const msgEvts = events.filter((runtimeEvent) => runtimeEvent.event.type === "message");
     expect(msgEvts).toHaveLength(0);
   });
 
@@ -972,9 +971,9 @@ describe("CopilotProvider assistant.message phase filtering", () => {
       { name: "assistant.message", data: { content: "Here is my answer.", outputTokens: 8, phase: "response" } },
     ]);
 
-    const msgEvts = events.filter((e) => e.type === "message");
+    const msgEvts = events.filter((runtimeEvent) => runtimeEvent.event.type === "message");
     expect(msgEvts).toHaveLength(1);
-    expect(msgEvts[0]?.type === "message" && msgEvts[0].content).toBe("Here is my answer.");
+    expect(msgEvts[0]?.event.type === "message" && msgEvts[0].event.content).toBe("Here is my answer.");
   });
 
   it("does NOT emit a message event when content is empty", async () => {
@@ -982,7 +981,7 @@ describe("CopilotProvider assistant.message phase filtering", () => {
       { name: "assistant.message", data: { content: "", outputTokens: 0 } },
     ]);
 
-    const msgEvts = events.filter((e) => e.type === "message");
+    const msgEvts = events.filter((runtimeEvent) => runtimeEvent.event.type === "message");
     expect(msgEvts).toHaveLength(0);
   });
 
@@ -992,11 +991,11 @@ describe("CopilotProvider assistant.message phase filtering", () => {
       { name: "assistant.message", data: { content: "Actual response.", outputTokens: 5 } },
     ]);
 
-    const deltaEvts = events.filter((e) => e.type === "textDelta");
+    const deltaEvts = events.filter((runtimeEvent) => runtimeEvent.event.type === "textDelta");
     // No textDelta from reasoning events - only from assistant.message_delta
     expect(deltaEvts).toHaveLength(0);
     // Response message is still emitted
-    const msgEvts = events.filter((e) => e.type === "message");
+    const msgEvts = events.filter((runtimeEvent) => runtimeEvent.event.type === "message");
     expect(msgEvts).toHaveLength(1);
   });
 });
@@ -1014,12 +1013,14 @@ describe("CopilotProvider tool completion output", () => {
       },
     ]);
 
-    const result = events.find((event) => event.type === "toolResult");
+    const result = events.find((runtimeEvent) => runtimeEvent.event.type === "toolResult");
     expect(result).toMatchObject({
-      type: "toolResult",
-      toolCallId: "browser-open-1",
-      output: "Browser target did not attach",
-      isError: true,
+      event: {
+        type: "toolResult",
+        toolCallId: "browser-open-1",
+        output: "Browser target did not attach",
+        isError: true,
+      },
     });
   });
 
@@ -1043,10 +1044,10 @@ describe("CopilotProvider tool completion output", () => {
       },
     ]);
 
-    expect(events.filter((event) => event.type === "toolResult")).toEqual(
+    expect(events.filter((runtimeEvent) => runtimeEvent.event.type === "toolResult")).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ toolCallId: "browser-snapshot-1", output: "complete diagnostics" }),
-        expect.objectContaining({ toolCallId: "browser-status-1", output: "status only" }),
+        expect.objectContaining({ event: expect.objectContaining({ toolCallId: "browser-snapshot-1", output: "complete diagnostics" }) }),
+        expect.objectContaining({ event: expect.objectContaining({ toolCallId: "browser-status-1", output: "status only" }) }),
       ]),
     );
   });

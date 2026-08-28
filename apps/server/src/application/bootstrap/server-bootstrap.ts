@@ -40,6 +40,7 @@ import {
   PullRequestMutationService,
   PullRequestService,
   ReviewWorktreeService,
+  TurnPullRequestCompletionEffect,
 } from "../../features/pull-requests";
 import {
   BrowserAutomationBroker,
@@ -60,9 +61,18 @@ import {
   AgentPermissionService,
   AgentService,
   CanonicalAgentBoundary,
+  GoalLifecycleService,
+  PlanTurnService,
+  SubagentLifecycleService,
   TurnRecoveryService,
   startAgentOrchestration,
 } from "../../features/agents";
+import { AgentEventPublicationRegistry } from "../../features/agents/orchestration/agent-event-publication-registry.js";
+import {
+  AgentEventPublicationRuntimePort,
+  AgentReliabilityPort,
+  AgentTurnContinuationPort,
+} from "../../features/agents/orchestration/agent-runtime-internal-ports.js";
 import { NarrativeStore } from "../../features/agents/conversation/narrative/narrative-store.js";
 import { LegacyConversationMigration } from "../../features/agents/conversation/migrations/legacy-conversation-migration.js";
 import { FileService } from "../../features/projects/files/file-service.js";
@@ -276,10 +286,15 @@ const workspaceEnvironmentService = container.resolve(WorkspaceEnvironmentServic
 const projectActionService = container.resolve(ProjectActionService);
 const threadService = container.resolve(ThreadService);
 const agentService = container.resolve(AgentService);
+const agentReliability = container.resolve(AgentReliabilityPort);
+const agentContinuation = container.resolve(AgentTurnContinuationPort);
 workspaceEnvironmentService.setAutomaticSetupDispatcher({
   dispatch: (submission) => agentService.dispatchQueuedAutomaticTurn(submission),
 });
-const agentPermissionService = container.resolve(AgentPermissionService);
+  const agentPermissionService = container.resolve(AgentPermissionService);
+  const planTurnService = container.resolve(PlanTurnService);
+  const goalLifecycleService = container.resolve(GoalLifecycleService);
+  const subagentLifecycleService = container.resolve(SubagentLifecycleService);
 const turnRecoveryService = container.resolve(TurnRecoveryService);
 const threadControlService = container.resolve(ThreadControlService);
 const externalThreadControlPairingService = container.resolve(ExternalThreadControlPairingService);
@@ -382,7 +397,7 @@ const handoffStorage = container.resolve(HandoffStorage);
 const handoffCheckoutService = container.resolve(HandoffCheckoutService);
 const db = container.resolve<Database.Database>("Database");
 const reliabilityHarness = createReliabilityHarnessAdapter(db, undefined, {
-  streamAssistant: (threadId) => agentService.streamReliabilityAssistantText(threadId),
+  streamAssistant: (threadId) => agentReliability.streamAssistantText(threadId),
 });
 const jobObject = container.resolve<JobObject>("JobObject");
 
@@ -411,6 +426,17 @@ const ciWatcherService = new CiWatcherService(githubService, (channel, data) => 
   broadcast("thread.prLinked", payload);
   portPush.send("thread.prLinked", payload);
 });
+const pullRequestCompletionEffect = new TurnPullRequestCompletionEffect(
+  threadRepo,
+  workspaceRepo,
+  threadService,
+  githubService,
+  ciWatcherService,
+  (payload) => {
+    broadcast("thread.prLinked", payload);
+    portPush.send("thread.prLinked", payload);
+  },
+);
 threadCompletionService.registerResourceOwner("ci-watcher", (threadId) =>
   ciWatcherService.teardownThread(threadId),
 );
@@ -483,13 +509,11 @@ setInterval(() => {
 // Agents own provider execution; this composition adapter supplies the server
 // publication and background PR/CI integrations.
 startAgentOrchestration({
-  agentService,
+  runtime: container.resolve(AgentEventPublicationRuntimePort),
+  publicationRegistry: container.resolve(AgentEventPublicationRegistry),
   threadRepo,
-  workspaceRepo,
   narrativeStore,
-  threadService,
-  githubService,
-  ciWatcherService,
+  pullRequestCompletionEffect,
   providerRegistry,
   publishAgentEvent: (event) => {
     const sequencedEvent = broadcast("agent.event", event) ?? event;
@@ -498,10 +522,6 @@ startAgentOrchestration({
   publishThreadStatus: (status) => {
     broadcast("thread.status", status);
     portPush.send("thread.status", status);
-  },
-  publishThreadPrLinked: (payload) => {
-    broadcast("thread.prLinked", payload);
-    portPush.send("thread.prLinked", payload);
   },
   publishPermissionRequest: (request) => {
     broadcast("permission.request", request);
@@ -618,7 +638,7 @@ for (const provider of providerRegistry.resolveAll()) {
   // the tool call, captures the plan markdown, and emits this event. We
   // persist the plan and broadcast to clients.
   provider.on("exit_plan_mode", (data: { threadId: string; planMarkdown: string }) => {
-    agentService.handleExitPlanMode(data.threadId, data.planMarkdown);
+    planTurnService.handleExitPlanMode(data.threadId, data.planMarkdown);
   });
 }
 
@@ -637,7 +657,11 @@ const { httpServer, wss } = createWsServer({
   projectActionService,
   threadService,
   agentService,
+  agentContinuation,
   agentPermissionService,
+  planTurnService,
+  goalLifecycleService,
+  subagentLifecycleService,
   turnRecoveryService,
   threadControlService,
   externalThreadControlPairingService,
@@ -765,7 +789,7 @@ function startServerAndSubscribe(): void {
   // isBusy guards against shutting down mid-turn or mid-terminal session.
   // Both services are resolved from the container before this function is called.
   const isBusy = () =>
-    agentService.activeCount() > 0 ||
+    agentService.runtimeAccess().activeCount() > 0 ||
     terminalService.listActiveSessions().length > 0;
 
   graceController = createGraceController({
@@ -852,7 +876,7 @@ async function shutdown(): Promise<void> {
   }
 
   // 1. Capture active thread IDs before stopAll() clears them
-  const activeThreadIds = agentService.activeThreadIds();
+  const activeThreadIds = agentService.runtimeAccess().activeThreadIds();
 
   // 2. Stop all agent sessions
   shutdownCoordinator.setPhase("stop agent sessions");

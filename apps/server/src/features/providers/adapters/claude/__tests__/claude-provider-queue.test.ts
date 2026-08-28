@@ -60,7 +60,7 @@ describe("createPromptQueue (#292)", () => {
 });
 
 import { vi } from "vitest";
-import { AgentEventType } from "@mcode/contracts";
+import { AgentEventType, type ProviderRuntimeEvent } from "@mcode/contracts";
 
 const { mockQuery } = vi.hoisted(() => ({ mockQuery: vi.fn() }));
 vi.mock("@anthropic-ai/claude-agent-sdk", () => ({ query: mockQuery }));
@@ -105,8 +105,8 @@ describe("ClaudeProvider sendMessage on closed queue (#292)", () => {
     });
 
     provider = new ClaudeProvider(stubEnvService(), stubJobObject());
-    const events: Array<{ type: string; error?: string }> = [];
-    provider.on("event", (e: { type: string; error?: string }) => events.push(e));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (runtimeEvent: ProviderRuntimeEvent) => events.push(runtimeEvent));
 
     // First send establishes the session
     await provider.sendTurn({
@@ -141,7 +141,7 @@ describe("ClaudeProvider sendMessage on closed queue (#292)", () => {
       }),
     ).rejects.toThrow(/closed/i);
 
-    const errorEvents = events.filter((e) => e.type === AgentEventType.Error);
+    const errorEvents = events.filter((runtimeEvent) => runtimeEvent.event.type === AgentEventType.Error);
     expect(errorEvents.length).toBeGreaterThan(0);
   });
 
@@ -170,8 +170,8 @@ describe("ClaudeProvider sendMessage on closed queue (#292)", () => {
     });
 
     provider = new ClaudeProvider(stubEnvService(), stubJobObject());
-    const events: Array<{ type: string; error?: string }> = [];
-    provider.on("event", (e: { type: string; error?: string }) => events.push(e));
+    const events: ProviderRuntimeEvent[] = [];
+    provider.on("event", (runtimeEvent: ProviderRuntimeEvent) => events.push(runtimeEvent));
 
     // First send establishes the session
     await provider.sendTurn({
@@ -219,9 +219,9 @@ describe("ClaudeProvider sendMessage on closed queue (#292)", () => {
 
     // And an Error event surfaced to the caller, but with the raw overflow
     // message (not the "session was shutting down" closed-session wording).
-    const errorEvents = events.filter((e) => e.type === AgentEventType.Error);
+    const errorEvents = events.filter((runtimeEvent) => runtimeEvent.event.type === AgentEventType.Error);
     expect(errorEvents.length).toBeGreaterThan(0);
-    expect(errorEvents.some((e) => /queue full/i.test(e.error ?? ""))).toBe(true);
-    expect(errorEvents.every((e) => !/shutting down/i.test(e.error ?? ""))).toBe(true);
+    expect(errorEvents.some((runtimeEvent) => /queue full/i.test(runtimeEvent.event.error ?? ""))).toBe(true);
+    expect(errorEvents.every((runtimeEvent) => !/shutting down/i.test(runtimeEvent.event.error ?? ""))).toBe(true);
   });
 });

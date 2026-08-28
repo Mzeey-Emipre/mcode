@@ -136,18 +136,15 @@ describe("GoalCommand", () => {
       // The wire payload becomes a directive that names the condition.
       expect(outcome.content).toContain("analyse this branch");
       expect(outcome.content.toLowerCase()).toContain("directive");
-      // SET does not persist, broadcast, or install on its own — the caller owns
-      // the send and runs the deferred lifecycle closures around it.
+      // SET does not persist, broadcast, or install on its own. The goal owner
+      // receives a typed effect request after admission reserves a runtime lease.
       expect(broadcast).not.toHaveBeenCalled();
       expect(provider.setGoal).not.toHaveBeenCalled();
-
-      // onDispatch installs the goal keyed by the thread session.
-      await outcome.onDispatch?.();
-      expect(provider.setGoal).toHaveBeenCalledWith(`mcode-${threadId}`, "analyse this branch");
-
-      // onRollback tears it back out after a failed send.
-      await outcome.onRollback?.();
-      expect(provider.clearGoal).toHaveBeenCalledWith(`mcode-${threadId}`);
+      expect(outcome.effect).toEqual({
+        kind: "goal",
+        objective: "analyse this branch",
+        delivery: "provider",
+      });
     });
   });
 
@@ -247,12 +244,12 @@ describe("GoalCommand", () => {
       if (outcome.kind !== "rewrite") throw new Error("expected rewrite");
       expect(outcome.content).toBe("/goal analyse this branch");
 
-      await outcome.onDispatch?.();
       expect(provider.setGoal).not.toHaveBeenCalled();
-      expect(provider.setNativeGoalMirror).toHaveBeenCalledWith(
-        `mcode-${threadId}`,
-        "analyse this branch",
-      );
+      expect(outcome.effect).toEqual({
+        kind: "goal",
+        objective: "analyse this branch",
+        delivery: "native",
+      });
     });
 
     it("does not clear the native mirror from control command rollback", async () => {
@@ -266,7 +263,6 @@ describe("GoalCommand", () => {
       if (outcome.kind !== "rewrite") throw new Error("expected rewrite");
       expect(outcome.content).toBe("/goal off");
 
-      await outcome.onRollback?.();
       expect(provider.clearNativeGoalMirror).not.toHaveBeenCalled();
     });
   });

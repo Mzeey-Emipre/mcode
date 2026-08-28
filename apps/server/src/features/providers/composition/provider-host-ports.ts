@@ -6,7 +6,7 @@ import type { CanonicalAgentBoundary } from "../../agents/index.js";
 import type { BrowserAutomationSessionLease } from "../../browser-automation/index.js";
 import type { InternalThreadControlMcpRuntime } from "../../thread-control/index.js";
 import { killProcessTree } from "../../../runtime/process/containment/process-kill.js";
-import type { CanonicalLegacyEventBridge } from "./canonical-legacy-event-bridge.js";
+import type { ProviderEventIngress } from "./provider-event-ingress.js";
 
 /** Server services used to compose the narrow Provider host-port boundary. */
 export interface ProviderHostPortDependencies {
@@ -16,7 +16,7 @@ export interface ProviderHostPortDependencies {
   threadControl: InternalThreadControlMcpRuntime;
   grants: ScopedPreGrantService;
   events: CanonicalAgentBoundary;
-  legacyEvents: CanonicalLegacyEventBridge;
+  ingress: ProviderEventIngress;
 }
 
 /** Adapts server-owned services to the only host operations exposed to Providers. */
@@ -86,7 +86,9 @@ export function createProviderHostPorts(
           nativeCursor: batch.nativeCursor,
           events: batch.events,
         });
-        const legacyDelivery = deliverLegacyProjection(dependencies.legacyEvents, result);
+        if (result.outcome === "committed" && result.events.length > 0) {
+          dependencies.ingress.acceptCommitted(result.events);
+        }
         return {
           commit: {
             outcome: providerCommitOutcome(result.outcome),
@@ -97,9 +99,9 @@ export function createProviderHostPorts(
             eventCount: result.events.length,
           },
           delivery: {
-            canonical: result.canonicalDelivery
-              ?? (result.events.length > 0 ? "published" : "not-required"),
-            legacy: legacyDelivery,
+            ingress: result.outcome === "committed" && result.events.length > 0
+              ? "queued"
+              : "not-required",
           },
         };
       },
@@ -112,17 +114,4 @@ function providerCommitOutcome(
 ): "committed" | "duplicate" | "conflict" | "ingest-overflow" {
   if (outcome === "terminal-outcome-confirmed") return "duplicate";
   return outcome;
-}
-
-function deliverLegacyProjection(
-  bridge: CanonicalLegacyEventBridge,
-  result: ReturnType<CanonicalAgentBoundary["commit"]>,
-): "published" | "deferred" | "not-required" {
-  if (result.outcome !== "committed" || result.events.length === 0) return "not-required";
-  try {
-    bridge.deliver(result.events);
-    return "published";
-  } catch {
-    return "deferred";
-  }
 }

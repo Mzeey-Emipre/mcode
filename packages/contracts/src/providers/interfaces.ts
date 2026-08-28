@@ -1,4 +1,4 @@
-import type { AgentEvent } from "../events/agent-event.js";
+import type { ProviderRuntimeEvent } from "../events/provider-runtime-event.js";
 import type { InteractionMode, OrchestrationMode } from "../models/enums.js";
 import type { AttachmentMeta } from "../models/attachment.js";
 import type { MessageMention } from "../models/mention.js";
@@ -105,9 +105,6 @@ export interface TurnRequest<P extends ProviderId = ProviderId> {
 export interface IAgentProvider {
   readonly id: ProviderId;
 
-  /** Selects the provider's event delivery contract. */
-  readonly eventDelivery: "legacy-emitter" | "canonical-sink";
-
   /**
    * Whether this provider supports one-shot text completion (e.g. PR draft generation).
    * Use `isCompletionCapable()` to narrow to `ICompletionCapable` before calling `complete()`.
@@ -173,8 +170,8 @@ export interface IAgentProvider {
   /** Return all pending permission requests for a given thread. */
   listPendingPermissions?(threadId: string): PermissionRequest[];
 
-  /** Subscribe to agent events. */
-  on(event: "event", handler: (event: AgentEvent) => void): void;
+  /** Subscribe to provider runtime events before ingress projects them for renderer consumers. */
+  on(event: "event", handler: (event: ProviderRuntimeEvent) => void): void;
   /** Subscribe to private file-tool starts that must be observed before public attribution is known. */
   on(event: "file_mutation_start", handler: (event: ProviderFileMutationStart) => void): void;
   /** Subscribe to provider-level errors. */

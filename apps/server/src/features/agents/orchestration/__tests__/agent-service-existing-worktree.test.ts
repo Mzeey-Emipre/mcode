@@ -9,6 +9,7 @@ import { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
 import { WorkspaceRepo } from "../../../projects/persistence/workspace-repo.js";
 import { MessageRepo } from "../../conversation/persistence/message-repo.js";
 import { AgentService } from "../agent-service.js";
+import { createAgentServiceForTest } from "./agent-service-test-harness.js";
 import { WorkspaceEnvironmentService } from "../../../projects/environment/workspace-environment-service.js";
 import { createCanonicalAgentEventSinkStub } from "../../canonical/__tests__/canonical-agent-event-sink-stub.js";
 import type { GitService } from "../../../projects/index.js";
@@ -65,10 +66,11 @@ function createAgentServiceHarness(automaticSetup?:
     persist: vi.fn(async () => ({ stored: [], persisted: [] })),
     removeStoredAttachments: vi.fn(async () => undefined),
   };
+  const goals = { routeCommand: vi.fn(async () => ({ kind: "passthrough" as const })) };
   const resolvedAutomaticSetup = typeof automaticSetup === "function"
     ? automaticSetup({ db, threadRepo })
     : automaticSetup;
-  const service = new AgentService(
+  const service = createAgentServiceForTest(
     threadRepo,
     workspaceRepo,
     messageRepo,
@@ -82,10 +84,7 @@ function createAgentServiceHarness(automaticSetup?:
     db,
     {} as never,
     {} as never,
-    {} as never,
     availability as never,
-    {} as never,
-    {} as never,
     {} as never,
     {} as never,
     {} as never,
@@ -96,10 +95,16 @@ function createAgentServiceHarness(automaticSetup?:
     undefined,
     createCanonicalAgentEventSinkStub(db),
     resolvedAutomaticSetup as never,
+    undefined,
+    undefined,
+    goals as never,
+    undefined,
+    undefined,
+    undefined,
   );
   vi.spyOn(service, "sendMessage").mockResolvedValue(undefined);
 
-  return { db, threadRepo, workspaceRepo, messageRepo, gitService, threadService, service, availability, attachmentService, automaticSetup: resolvedAutomaticSetup };
+  return { db, threadRepo, workspaceRepo, messageRepo, gitService, threadService, service, availability, attachmentService, goals, automaticSetup: resolvedAutomaticSetup };
 }
 
 describe("AgentService.createAndSend defaults", () => {
@@ -348,7 +353,7 @@ describe("AgentService.createAndSend defaults", () => {
   it("cleans released-gate attachments when a native command handles the send without persisting a Turn", async () => {
     const root = await mkdtemp(join(tmpdir(), "mcode-agent-queued-turn-handled-"));
     roots.push(root);
-    const { threadRepo, workspaceRepo, messageRepo, service, attachmentService, automaticSetup } = createAgentServiceHarness(({ db, threadRepo: threads }) =>
+    const { threadRepo, workspaceRepo, messageRepo, service, attachmentService, goals, automaticSetup } = createAgentServiceHarness(({ db, threadRepo: threads }) =>
       new WorkspaceEnvironmentService({
         mcodeDir: root,
         database: db,
@@ -390,10 +395,7 @@ describe("AgentService.createAndSend defaults", () => {
       await environment.continueAutomaticSetup({ threadId: managed.id });
       return { stored: [stored], persisted: [{ ...stored, sourcePath: "/tmp/handled.png" }] };
     });
-    const commandRouter = (service as unknown as {
-      commandRouter: { route: ReturnType<typeof vi.fn> };
-    }).commandRouter;
-    vi.spyOn(commandRouter, "route").mockResolvedValueOnce({ kind: "handled" });
+    goals.routeCommand.mockResolvedValueOnce({ kind: "handled" });
     vi.mocked(service.sendMessage).mockRestore();
 
     await service.sendMessage({

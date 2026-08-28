@@ -26,7 +26,7 @@ describe("CodexEventMapper", () => {
       method: "turn/started",
       params: {},
     });
-    expect(events).toEqual([]);
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
   });
 
   it("maps native goal updates into goal state events", () => {
@@ -49,7 +49,7 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(events).toEqual([
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       {
         type: "goalUpdated",
         threadId: "test-thread",
@@ -86,7 +86,7 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(events).toEqual([
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       expect.objectContaining({
         type: "goalUpdated",
         threadId: "test-thread",
@@ -118,7 +118,7 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(events).toEqual([
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       {
         type: "goalCleared",
         threadId: "test-thread",
@@ -142,7 +142,7 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(events).toEqual([
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       {
         type: "mcpServerStartupStatus",
         threadId: "test-thread",
@@ -168,7 +168,7 @@ describe("CodexEventMapper", () => {
       },
     } as never);
 
-    expect(events).toEqual([
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       {
         type: "mcpServerStartupStatus",
         threadId: "test-thread",
@@ -179,7 +179,7 @@ describe("CodexEventMapper", () => {
         error: "connection refused",
       },
     ]);
-    expect(AgentEventSchema().parse(events[0])).toEqual(events[0]);
+    expect(AgentEventSchema().parse(events[0]!.event)).toEqual(events[0]!.event);
   });
 
   it("maps golden MCP startup status without native thread id and null error into schema-safe event", () => {
@@ -195,7 +195,7 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(events).toEqual([
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       {
         type: "mcpServerStartupStatus",
         threadId: "test-thread",
@@ -205,7 +205,7 @@ describe("CodexEventMapper", () => {
         status: "ready",
       },
     ]);
-    expect(AgentEventSchema().parse(events[0])).toEqual(events[0]);
+    expect(AgentEventSchema().parse(events[0]!.event)).toEqual(events[0]!.event);
   });
 
   it("emits Agent toolUse for item/started collabAgentToolCall", () => {
@@ -224,11 +224,16 @@ describe("CodexEventMapper", () => {
       },
     });
     expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({
+    expect(events[0]!.event).toMatchObject({
       type: "toolUse",
       toolCallId: "collab-1",
       toolName: "Agent",
-      toolInput: { codexCollabKind: "spawnAgent", prompt: "Review security" },
+      toolInput: { description: "Review security" },
+    });
+    expect((events[0]!).extension).toMatchObject({
+      providerId: "codex",
+      kind: "codex-collaboration",
+      collaboration: { kind: "spawnAgent", prompt: "Review security" },
     });
   });
 
@@ -248,11 +253,15 @@ describe("CodexEventMapper", () => {
         },
       },
     });
-    expect(parent[0]).toMatchObject({
+    expect(parent[0]!.event).toMatchObject({
       type: "toolUse",
       toolCallId: "collab-structural",
-      toolInput: {
-        codexCollabKind: "spawnAgent",
+      toolInput: { description: "same prompt" },
+    });
+    expect((parent[0]!).extension).toMatchObject({
+      collaboration: {
+        kind: "spawnAgent",
+        receiverThreadIds: ["child-native-a", "child-native-b"],
       },
     });
 
@@ -261,32 +270,33 @@ describe("CodexEventMapper", () => {
       method: "turn/started",
       params: { threadId: "child-native-b", turn: { id: "child-turn-9" } },
     });
-    expect(childStarted).toEqual([expect.objectContaining({
+    expect(childStarted.map((runtimeEvent) => runtimeEvent.event)).toEqual([expect.objectContaining({
       type: "turnStarted",
       threadId: "test-thread",
-      codexChild: {
+    })]);
+    expect((childStarted[0]!).extension).toMatchObject({
+      child: {
         nativeThreadId: "child-native-b",
         nativeTurnId: "child-turn-9",
         parentCollaborationItemId: "collab-structural",
         prompt: "same prompt",
         nativeEventId: expect.any(String),
       },
-    })]);
-
+    });
     const parallelChild = mapper.mapNotification({
       jsonrpc: "2.0",
       method: "turn/started",
       params: { threadId: "child-native-a", turn: { id: "child-turn-10" } },
     });
-    expect(parallelChild[0]).toMatchObject({
-      codexChild: {
+    expect((parallelChild[0]!).extension).toMatchObject({
+      child: {
         nativeThreadId: "child-native-a",
         nativeTurnId: "child-turn-10",
         parentCollaborationItemId: "collab-structural",
       },
     });
-    expect(parallelChild[0]).toMatchObject({
-      codexChild: {
+    expect((parallelChild[0]!).extension).toMatchObject({
+      child: {
         prompt: "same prompt",
         nativeEventId: expect.any(String),
       },
@@ -322,17 +332,20 @@ describe("CodexEventMapper", () => {
       method: "turn/started",
       params: { threadId: "child-bound-0", turn: { id: "child-turn-0" } },
     })).toEqual([]);
-    expect(mapper.mapNotification({
+    const retainedChild = mapper.mapNotification({
       jsonrpc: "2.0",
       method: "turn/started",
       params: { threadId: "child-bound-32", turn: { id: "child-turn-32" } },
-    })).toEqual([expect.objectContaining({
+    });
+    expect(retainedChild.map((runtimeEvent) => runtimeEvent.event)).toEqual([expect.objectContaining({
       type: "turnStarted",
-      codexChild: expect.objectContaining({
+    })]);
+    expect((retainedChild[0]!).extension).toMatchObject({
+      child: expect.objectContaining({
         nativeThreadId: "child-bound-32",
         nativeTurnId: "child-turn-32",
       }),
-    })]);
+    });
   });
 
   it("buffers receiver items before the exact child turn and replays them once", () => {
@@ -401,33 +414,37 @@ describe("CodexEventMapper", () => {
       method: "turn/started",
       params: { threadId: "child-early", turn: { id: "native-turn-early" } },
     });
-    expect(replayed[0]).toMatchObject({
+    expect(replayed[0]!.event).toMatchObject({
       type: "turnStarted",
-      codexChild: { nativeTurnId: "native-turn-early" },
     });
-    expect(replayed.slice(1)).toEqual([
+    expect((replayed[0]!).extension).toMatchObject({
+      child: { nativeTurnId: "native-turn-early" },
+    });
+    expect(replayed.slice(1).map((runtimeEvent) => runtimeEvent.event)).toEqual([
       expect.objectContaining({
         type: "toolUse",
         toolCallId: "native-item-early",
-        codexChild: expect.objectContaining({
-          nativeTurnId: "native-turn-early",
-          nativeItemId: "native-item-early",
-          itemEventKey: "started",
-        }),
       }),
       expect.objectContaining({
         type: "toolResult",
         toolCallId: "native-item-early",
-        codexChild: expect.objectContaining({
-          nativeTurnId: "native-turn-early",
-          nativeItemId: "native-item-early",
-          itemEventKey: "completed",
-        }),
       }),
     ]);
-    const replayIds = replayed.map((event) => (
-      "codexChild" in event ? event.codexChild?.nativeEventId : undefined
-    ));
+    expect((replayed[1]!).extension).toMatchObject({
+      child: {
+        nativeTurnId: "native-turn-early",
+        nativeItemId: "native-item-early",
+        itemEventKey: "started",
+      },
+    });
+    expect((replayed[2]!).extension).toMatchObject({
+      child: {
+        nativeTurnId: "native-turn-early",
+        nativeItemId: "native-item-early",
+        itemEventKey: "completed",
+      },
+    });
+    const replayIds = replayed.map((event) => (event).extension?.child?.nativeEventId);
     expect(replayIds).toHaveLength(3);
     expect(replayIds.every((id): id is string => Boolean(id))).toBe(true);
     expect(new Set(replayIds).size).toBe(3);
@@ -458,7 +475,7 @@ describe("CodexEventMapper", () => {
       method: "turn/started",
       params: { threadId: "child-bound", turn: { id: "native-turn-bound" } },
     });
-    expect(boundedReplay[0]).toMatchObject({ type: "turnStarted" });
+    expect(boundedReplay[0]!.event).toMatchObject({ type: "turnStarted" });
     expect(boundedReplay.length).toBeLessThanOrEqual(129);
     expect(boundedReplay.length).toBeGreaterThan(1);
   });
@@ -512,21 +529,17 @@ describe("CodexEventMapper", () => {
         },
       },
     });
-    const firstId = first.find((event) => event.type === "toolResult");
-    const secondId = second.find((event) => event.type === "toolResult");
-    const firstNativeEventId = firstId && "codexChild" in firstId
-      ? firstId.codexChild?.nativeEventId
-      : undefined;
-    const secondNativeEventId = secondId && "codexChild" in secondId
-      ? secondId.codexChild?.nativeEventId
-      : undefined;
-    expect(firstId && "codexChild" in firstId ? firstId.codexChild?.nativeItemId : undefined)
+    const firstId = first.find((event) => event.event.type === "toolResult");
+    const secondId = second.find((event) => event.event.type === "toolResult");
+    const firstNativeEventId = firstId ? (firstId).extension?.child?.nativeEventId : undefined;
+    const secondNativeEventId = secondId ? (secondId).extension?.child?.nativeEventId : undefined;
+    expect(firstId ? (firstId).extension?.child?.nativeItemId : undefined)
       .toBe("native-item-prefix-a");
-    expect(firstId && "codexChild" in firstId ? firstId.codexChild?.itemEventKey : undefined)
+    expect(firstId ? (firstId).extension?.child?.itemEventKey : undefined)
       .toBe("completed");
-    expect(secondId && "codexChild" in secondId ? secondId.codexChild?.nativeItemId : undefined)
+    expect(secondId ? (secondId).extension?.child?.nativeItemId : undefined)
       .toBe("native-item-prefix-b");
-    expect(secondId && "codexChild" in secondId ? secondId.codexChild?.itemEventKey : undefined)
+    expect(secondId ? (secondId).extension?.child?.itemEventKey : undefined)
       .toBe("completed");
     expect(typeof firstNativeEventId).toBe("string");
     expect(typeof secondNativeEventId).toBe("string");
@@ -553,7 +566,7 @@ describe("CodexEventMapper", () => {
       method: "item/started",
       params: { item: { type: "commandExecution", id: "x" } },
     });
-    expect(events).toEqual([
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       {
         type: "toolUse",
         threadId: "test-thread",
@@ -584,7 +597,7 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(started).toEqual([
+    expect(started.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       {
         type: "toolUse",
         threadId: "test-thread",
@@ -593,7 +606,7 @@ describe("CodexEventMapper", () => {
         toolInput: {},
       },
     ]);
-    expect(completed).toEqual([
+    expect(completed.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       {
         type: "toolUse",
         threadId: "test-thread",
@@ -637,19 +650,19 @@ describe("CodexEventMapper", () => {
         },
       },
     });
-    const result = events.find((event) => event.type === "toolResult");
+    const result = events.find((event) => event.event.type === "toolResult");
 
-    expect(result).toMatchObject({
+    expect(result?.event).toMatchObject({
       type: "toolResult",
       toolCallId: "cmd-big",
       outputTruncated: true,
       outputTotalBytes: Buffer.byteLength(fullOutput, "utf8"),
     });
-    expect(result?.type === "toolResult" ? Buffer.byteLength(result.output, "utf8") : 0).toBe(256 * 1024);
-    expect(result?.type === "toolResult" ? result.output.startsWith("A".repeat(1024)) : false).toBe(true);
-    expect(result?.type === "toolResult" ? result.output.endsWith("Z".repeat(1024)) : false).toBe(true);
-    expect(result?.type === "toolResult" ? existsSync(result.outputArtifactPath ?? "") : false).toBe(true);
-    expect(result?.type === "toolResult" ? readFileSync(result.outputArtifactPath!, "utf8") : "").toBe(fullOutput);
+    expect(result?.event.type === "toolResult" ? Buffer.byteLength(result.event.output, "utf8") : 0).toBe(256 * 1024);
+    expect(result?.event.type === "toolResult" ? result.event.output.startsWith("A".repeat(1024)) : false).toBe(true);
+    expect(result?.event.type === "toolResult" ? result.event.output.endsWith("Z".repeat(1024)) : false).toBe(true);
+    expect(result?.event.type === "toolResult" ? existsSync(result.event.outputArtifactPath ?? "") : false).toBe(true);
+    expect(result?.event.type === "toolResult" ? readFileSync(result.event.outputArtifactPath!, "utf8") : "").toBe(fullOutput);
   });
 
   it("emits only toolResult at completion when command start already had full details", () => {
@@ -673,7 +686,7 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(completed).toEqual([
+    expect(completed.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       {
         type: "toolResult",
         threadId: "test-thread",
@@ -706,7 +719,7 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(started).toEqual([
+    expect(started.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       {
         type: "toolUse",
         threadId: "test-thread",
@@ -715,14 +728,14 @@ describe("CodexEventMapper", () => {
         toolInput: {},
       },
     ]);
-    expect(completed[0]).toEqual({
+    expect(completed[0]!.event).toEqual({
       type: "toolUse",
       threadId: "test-thread",
       toolCallId: "mcp-live",
       toolName: "mcp:filesystem/read_file",
       toolInput: { path: "README.md" },
     });
-    expect(completed[1]).toEqual({
+    expect(completed[1]!.event).toEqual({
       type: "toolResult",
       threadId: "test-thread",
       toolCallId: "mcp-live",
@@ -746,7 +759,7 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(events).toEqual([
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       {
         type: "toolUse",
         threadId: "test-thread",
@@ -786,7 +799,7 @@ describe("CodexEventMapper", () => {
       params: { delta: "Done" },
     });
 
-    expect(events).toEqual([
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       {
         type: "textDelta",
         threadId: "test-thread",
@@ -813,8 +826,8 @@ describe("CodexEventMapper", () => {
       params: { threadId: "t", turnId: "u", itemId: "i", delta: "!" },
     });
 
-    expect(e1).toEqual([{ type: "textDelta", threadId: "test-thread", delta: "Hello", isFinalResponse: false }]);
-    expect(e2).toEqual([{ type: "textDelta", threadId: "test-thread", delta: "!", isFinalResponse: false }]);
+    expect(e1.map((runtimeEvent) => runtimeEvent.event)).toEqual([{ type: "textDelta", threadId: "test-thread", delta: "Hello", isFinalResponse: false }]);
+    expect(e2.map((runtimeEvent) => runtimeEvent.event)).toEqual([{ type: "textDelta", threadId: "test-thread", delta: "!", isFinalResponse: false }]);
   });
 
   it("emits non-final textDelta for item/agentMessage/delta after tool completes", () => {
@@ -834,7 +847,7 @@ describe("CodexEventMapper", () => {
       method: "item/agentMessage/delta",
       params: { delta: "Done" },
     });
-    expect(evt).toEqual([{ type: "textDelta", threadId: "test-thread", delta: "Done", isFinalResponse: false }]);
+    expect(evt.map((runtimeEvent) => runtimeEvent.event)).toEqual([{ type: "textDelta", threadId: "test-thread", delta: "Done", isFinalResponse: false }]);
   });
 
   it("keeps pre-tool agentMessage delta as thought even while tools run", () => {
@@ -849,7 +862,7 @@ describe("CodexEventMapper", () => {
       method: "item/agentMessage/delta",
       params: { delta: "thinking..." },
     });
-    expect(mid).toEqual([{ type: "textDelta", threadId: "test-thread", delta: "thinking...", isFinalResponse: false }]);
+    expect(mid.map((runtimeEvent) => runtimeEvent.event)).toEqual([{ type: "textDelta", threadId: "test-thread", delta: "thinking...", isFinalResponse: false }]);
   });
 
   it("emits Message with full accumulated text on turn/completed after deltas", () => {
@@ -862,9 +875,9 @@ describe("CodexEventMapper", () => {
       params: { turn: { status: "completed" } },
     });
 
-    const msg = events.find((e) => e.type === "message");
-    expect(events[0]).toMatchObject({ type: "assistantMessageBoundary", isFinalResponse: true });
-    expect(msg).toMatchObject({ type: "message", content: "Hello world" });
+    const msg = events.find((e) => e.event.type === "message");
+    expect(events[0]!.event).toMatchObject({ type: "assistantMessageBoundary", isFinalResponse: true });
+    expect(msg?.event).toMatchObject({ type: "message", content: "Hello world" });
   });
 
   it("keeps streamed text when item deltas omit ids but completion includes one", () => {
@@ -885,8 +898,8 @@ describe("CodexEventMapper", () => {
       params: { turn: { status: "completed" } },
     });
 
-    expect(events[0]).toMatchObject({ type: "assistantMessageBoundary", isFinalResponse: true });
-    expect(events.find((event) => event.type === "message")).toMatchObject({
+    expect(events[0]!.event).toMatchObject({ type: "assistantMessageBoundary", isFinalResponse: true });
+    expect(events.find((event) => event.event.type === "message")?.event).toMatchObject({
       type: "message",
       content: "Legacy streamed answer",
     });
@@ -897,7 +910,7 @@ describe("CodexEventMapper", () => {
       jsonrpc: "2.0",
       method: "item/agentMessage/delta",
       params: { itemId: "msg-1", delta: "First narration." },
-    })).toEqual([
+    }).map((runtimeEvent) => runtimeEvent.event)).toEqual([
       { type: "textDelta", threadId: "test-thread", delta: "First narration.", isFinalResponse: false },
     ]);
     expect(mapper.mapNotification({
@@ -911,12 +924,12 @@ describe("CodexEventMapper", () => {
       method: "item/started",
       params: { item: { type: "commandExecution", id: "cmd-1" } },
     });
-    expect(firstTool[0]).toEqual({
+    expect(firstTool[0]!.event).toEqual({
       type: "assistantMessageBoundary",
       threadId: "test-thread",
       isFinalResponse: false,
     });
-    expect(firstTool[1]).toMatchObject({ type: "toolUse", toolCallId: "cmd-1" });
+    expect(firstTool[1]!.event).toMatchObject({ type: "toolUse", toolCallId: "cmd-1" });
     mapper.mapNotification({
       jsonrpc: "2.0",
       method: "item/completed",
@@ -927,7 +940,7 @@ describe("CodexEventMapper", () => {
       jsonrpc: "2.0",
       method: "item/agentMessage/delta",
       params: { itemId: "msg-2", delta: "Middle narration." },
-    })).toEqual([
+    }).map((runtimeEvent) => runtimeEvent.event)).toEqual([
       { type: "textDelta", threadId: "test-thread", delta: "Middle narration.", isFinalResponse: false },
     ]);
     mapper.mapNotification({
@@ -941,12 +954,12 @@ describe("CodexEventMapper", () => {
       method: "item/started",
       params: { item: { type: "commandExecution", id: "cmd-2" } },
     });
-    expect(secondTool[0]).toEqual({
+    expect(secondTool[0]!.event).toEqual({
       type: "assistantMessageBoundary",
       threadId: "test-thread",
       isFinalResponse: false,
     });
-    expect(secondTool[1]).toMatchObject({ type: "toolUse", toolCallId: "cmd-2" });
+    expect(secondTool[1]!.event).toMatchObject({ type: "toolUse", toolCallId: "cmd-2" });
     mapper.mapNotification({
       jsonrpc: "2.0",
       method: "item/completed",
@@ -969,12 +982,12 @@ describe("CodexEventMapper", () => {
       method: "turn/completed",
       params: { turn: { status: "completed" } },
     });
-    expect(completed[0]).toEqual({
+    expect(completed[0]!.event).toEqual({
       type: "assistantMessageBoundary",
       threadId: "test-thread",
       isFinalResponse: true,
     });
-    expect(completed.find((event) => event.type === "message")).toEqual({
+    expect(completed.find((event) => event.event.type === "message")?.event).toEqual({
       type: "message",
       threadId: "test-thread",
       content: "Final answer only.",
@@ -1000,8 +1013,8 @@ describe("CodexEventMapper", () => {
       params: { turn: { status: "completed" } },
     });
 
-    expect(events[0]).toMatchObject({ type: "assistantMessageBoundary", isFinalResponse: true });
-    expect(events.find((event) => event.type === "message")).toMatchObject({
+    expect(events[0]!.event).toMatchObject({ type: "assistantMessageBoundary", isFinalResponse: true });
+    expect(events.find((event) => event.event.type === "message")?.event).toMatchObject({
       type: "message",
       content: "Tool-free final.",
     });
@@ -1025,7 +1038,7 @@ describe("CodexEventMapper", () => {
       params: { turn: { status: "failed", error: { message: "boom" } } },
     });
 
-    expect(events).toEqual([
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       { type: "assistantMessageBoundary", threadId: "test-thread", isFinalResponse: false },
       { type: "error", threadId: "test-thread", error: "boom" },
     ]);
@@ -1037,7 +1050,7 @@ describe("CodexEventMapper", () => {
       method: "item/agentMessage/delta",
       params: { delta: "" },
     });
-    expect(events).toEqual([]);
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
   });
 
   // ---------------------------------------------------------------------------
@@ -1057,7 +1070,7 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(events).toEqual([
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       { type: "textDelta", threadId: "test-thread", delta: "Hello", isFinalResponse: false },
     ]);
   });
@@ -1074,7 +1087,7 @@ describe("CodexEventMapper", () => {
         },
       },
     });
-    expect(events).toEqual([
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       { type: "textDelta", threadId: "test-thread", delta: "Hello from codex", isFinalResponse: false },
     ]);
   });
@@ -1096,7 +1109,7 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(events).toEqual([
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       { type: "textDelta", threadId: "test-thread", delta: " world", isFinalResponse: false },
     ]);
   });
@@ -1118,7 +1131,7 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(events).toEqual([]);
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
   });
 
   it("returns empty array for item/completed message with no content parts", () => {
@@ -1129,7 +1142,7 @@ describe("CodexEventMapper", () => {
         item: { type: "message", content: [] },
       },
     });
-    expect(events).toEqual([]);
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
   });
 
   it("returns empty array for item/completed with no item", () => {
@@ -1138,7 +1151,7 @@ describe("CodexEventMapper", () => {
       method: "item/completed",
       params: {},
     });
-    expect(events).toEqual([]);
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
   });
 
   it("returns empty array for item/completed userMessage (echo of user input)", () => {
@@ -1153,7 +1166,7 @@ describe("CodexEventMapper", () => {
         },
       },
     });
-    expect(events).toEqual([]);
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
   });
 
   it("returns empty array for item/completed with unrecognized item type", () => {
@@ -1162,7 +1175,7 @@ describe("CodexEventMapper", () => {
       method: "item/completed",
       params: { item: { type: "unknown_item_type" } },
     });
-    expect(events).toEqual([]);
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
   });
 
   // ---------------------------------------------------------------------------
@@ -1185,14 +1198,14 @@ describe("CodexEventMapper", () => {
     });
 
     expect(events).toHaveLength(2);
-    expect(events[0]).toEqual({
+    expect(events[0]!.event).toEqual({
       type: "toolUse",
       threadId: "test-thread",
       toolCallId: "call-1",
       toolName: "bash",
       toolInput: { command: "ls" },
     });
-    expect(events[1]).toEqual({
+    expect(events[1]!.event).toEqual({
       type: "toolResult",
       threadId: "test-thread",
       toolCallId: "call-1",
@@ -1223,7 +1236,7 @@ describe("CodexEventMapper", () => {
     });
 
     expect(events).toHaveLength(2);
-    expect(events[0]).toEqual({
+    expect(events[0]!.event).toEqual({
       type: "toolUse",
       threadId: "test-thread",
       toolCallId: "call-update-plan",
@@ -1254,7 +1267,7 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(events).toEqual([
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       {
         type: "toolUse",
         threadId: "test-thread",
@@ -1295,7 +1308,7 @@ describe("CodexEventMapper", () => {
     });
 
     expect(events).toHaveLength(2);
-    expect(events[0]).toMatchObject({
+    expect(events[0]!.event).toMatchObject({
       type: "toolUse",
       toolInput: { arguments: "not valid json" },
     });
@@ -1315,7 +1328,7 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(events[1]).toMatchObject({ type: "toolResult", output: "" });
+    expect(events[1]!.event).toMatchObject({ type: "toolResult", output: "" });
   });
 
   it("keeps spawnAgent row running when spawn item completes", () => {
@@ -1346,7 +1359,7 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(events).toEqual([]);
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
   });
 
   it("maps native sub-agent activity and attributes child file changes", () => {
@@ -1390,27 +1403,29 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(started).toEqual([{
+    expect(started.map((runtimeEvent) => runtimeEvent.event)).toEqual([{
       type: "toolUse",
       threadId: "test-thread",
       toolCallId: "call-explorer",
       toolName: "Agent",
-      toolInput: {
-        codexCollabKind: "spawnAgent",
+      toolInput: { description: "explorer" },
+    }]);
+    expect((started[0]!).extension).toMatchObject({
+      collaboration: {
+        kind: "spawnAgent",
         agentName: "explorer",
         agentPath: "/root/explorer",
-        description: "explorer",
         receiverThreadIds: ["child-thread"],
       },
-    }]);
-    expect(childStarted).toEqual([
+    });
+    expect(childStarted.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       expect.objectContaining({
         type: "toolUse",
         toolCallId: "child-edit",
         parentToolCallId: "call-explorer",
       }),
     ]);
-    expect(childCompleted).toEqual([
+    expect(childCompleted.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       expect.objectContaining({
         type: "toolResult",
         toolCallId: "child-edit",
@@ -1445,22 +1460,24 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(settings).toEqual([]);
-    expect(started).toEqual([{
+    expect(settings.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
+    expect(started.map((runtimeEvent) => runtimeEvent.event)).toEqual([{
       type: "toolUse",
       threadId: "test-thread",
       toolCallId: "call-metadata",
       toolName: "Agent",
-      toolInput: {
-        codexCollabKind: "spawnAgent",
+      toolInput: { description: "explorer" },
+    }]);
+    expect((started[0]!).extension).toMatchObject({
+      collaboration: {
+        kind: "spawnAgent",
         agentName: "explorer",
         agentPath: "/root/explorer",
-        description: "explorer",
         model: "gpt-5.5",
         reasoningEffort: "high",
         receiverThreadIds: ["child-metadata"],
       },
-    }]);
+    });
   });
 
   it("merges split child settings and captures the v2 parent message", () => {
@@ -1487,24 +1504,28 @@ describe("CodexEventMapper", () => {
     });
     const effortAndMessageUpdate = mapper.applyChildThreadMetadata("child-v2-metadata", {
       reasoningEffort: "high",
-      parentMessage: "Inspect the provider boundary and report the result.",
+      parentMessage: "Inspect the provider boundary and report the result.event.",
     });
 
-    expect(modelUpdate).toContainEqual(expect.objectContaining({
+    expect(modelUpdate.map((runtimeEvent) => runtimeEvent.event)).toContainEqual(expect.objectContaining({
       type: "toolUse",
       toolCallId: "call-v2-metadata",
-      toolInput: expect.objectContaining({ model: "gpt-5.6-sol" }),
     }));
-    expect(effortAndMessageUpdate).toEqual([expect.objectContaining({
+    expect((modelUpdate[0]!).extension).toMatchObject({
+      collaboration: { model: "gpt-5.6-sol" },
+    });
+    expect(effortAndMessageUpdate.map((runtimeEvent) => runtimeEvent.event)).toEqual([expect.objectContaining({
       type: "toolUse",
       toolCallId: "call-v2-metadata",
-      toolInput: expect.objectContaining({
+      toolInput: { description: "Inspect the provider boundary and report the result.event." },
+    })]);
+    expect((effortAndMessageUpdate[0]!).extension).toMatchObject({
+      collaboration: {
         model: "gpt-5.6-sol",
         reasoningEffort: "high",
-        description: "Inspect the provider boundary and report the result.",
-        prompt: "Inspect the provider boundary and report the result.",
-      }),
-    })]);
+        prompt: "Inspect the provider boundary and report the result.event.",
+      },
+    });
   });
 
   it("updates an unnamed spawn with the identity from native child metadata", () => {
@@ -1527,13 +1548,13 @@ describe("CodexEventMapper", () => {
       identity: "read_docs_worker",
     });
 
-    expect(updates).toContainEqual(expect.objectContaining({
+    expect(updates.map((runtimeEvent) => runtimeEvent.event)).toContainEqual(expect.objectContaining({
       type: "toolUse",
       toolCallId: "spawn-without-name",
-      toolInput: expect.objectContaining({
-        agentName: "read_docs_worker",
-      }),
     }));
+    expect((updates[0]!).extension).toMatchObject({
+      collaboration: { agentName: "read_docs_worker" },
+    });
   });
 
   it("updates a completed native sub-agent when child settings arrive late", () => {
@@ -1572,36 +1593,40 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(childCompleted).toEqual([{
+    expect(childCompleted.map((runtimeEvent) => runtimeEvent.event)).toEqual([{
       type: "toolResult",
       threadId: "test-thread",
       toolCallId: "call-late-settings",
       output: "Child output is authoritative.",
       isError: false,
-      toolInput: {
-        codexCollabKind: "spawnAgent",
+      toolInput: { description: "explorer" },
+    }]);
+    expect((childCompleted[0]!).extension).toMatchObject({
+      collaboration: {
+        kind: "spawnAgent",
         agentName: "explorer",
         agentPath: "/root/explorer",
-        description: "explorer",
         receiverThreadIds: ["child-late-settings"],
       },
-    }]);
-    expect(settings).toEqual([{
+    });
+    expect(settings.map((runtimeEvent) => runtimeEvent.event)).toEqual([{
       type: "toolResult",
       threadId: "test-thread",
       toolCallId: "call-late-settings",
       output: "Child output is authoritative.",
       isError: false,
-      toolInput: {
-        codexCollabKind: "spawnAgent",
+      toolInput: { description: "explorer" },
+    }]);
+    expect((settings[0]!).extension).toMatchObject({
+      collaboration: {
+        kind: "spawnAgent",
         agentName: "explorer",
         agentPath: "/root/explorer",
-        description: "explorer",
         model: "gpt-5.5",
         reasoningEffort: "high",
         receiverThreadIds: ["child-late-settings"],
       },
-    }]);
+    });
   });
 
   it("emits a distinct parented lifecycle record for every native sub-agent interaction", () => {
@@ -1655,15 +1680,14 @@ describe("CodexEventMapper", () => {
     });
 
     expect(first).toHaveLength(1);
-    expect(duplicate).toEqual([]);
-    expect(firstInteraction).toEqual([
+    expect(duplicate.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
+    expect(firstInteraction.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       expect.objectContaining({
         type: "toolUse",
         toolName: "__McodeSubagentLifecycle",
         parentToolCallId: "call-explorer",
         toolInput: expect.objectContaining({
           lifecycle: "updated",
-          agentName: "explorer",
         }),
       }),
       expect.objectContaining({
@@ -1671,10 +1695,13 @@ describe("CodexEventMapper", () => {
         isError: false,
       }),
     ]);
+    expect((first[0]!).extension).toMatchObject({
+      collaboration: { agentName: "explorer" },
+    });
     expect(firstInteraction[0]).not.toHaveProperty("toolInput.sourceAgentName");
     expect(firstInteraction[0]).not.toHaveProperty("toolInput.sourceAgentToolCallId");
     expect(secondInteraction).toHaveLength(2);
-    expect(secondInteraction[0]).toMatchObject({
+    expect(secondInteraction[0]!.event).toMatchObject({
       type: "toolUse",
       toolName: "__McodeSubagentLifecycle",
       parentToolCallId: "call-explorer",
@@ -1682,13 +1709,13 @@ describe("CodexEventMapper", () => {
     expect(secondInteraction[0]).not.toMatchObject({
       toolCallId: (firstInteraction[0] as { toolCallId?: string } | undefined)?.toolCallId,
     });
-    expect(interactionCompletion).toEqual([]);
-    expect(completed).toEqual([]);
+    expect(interactionCompletion.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
+    expect(completed.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
   });
 
   it("uses the notification thread as the authoritative source for nested activity", () => {
     mapper = new CodexEventMapper("test-thread", "main-thread");
-    mapper.mapNotification({
+    const explorerStarted = mapper.mapNotification({
       jsonrpc: "2.0",
       method: "item/started",
       params: {
@@ -1732,24 +1759,29 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(nestedStarted).toEqual([
+    expect(nestedStarted.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       expect.objectContaining({
         type: "toolUse",
         toolCallId: "call-implementer",
         parentToolCallId: "call-explorer",
       }),
     ]);
-    expect(interaction[0]).toEqual(expect.objectContaining({
+    expect(interaction[0]!.event).toEqual(expect.objectContaining({
       type: "toolUse",
       toolName: "__McodeSubagentLifecycle",
       parentToolCallId: "call-implementer",
       toolInput: expect.objectContaining({
         lifecycle: "updated",
-        agentName: "implementer",
         sourceAgentName: "explorer",
         sourceAgentToolCallId: "call-explorer",
       }),
     }));
+    expect((explorerStarted[0]!).extension).toMatchObject({
+      collaboration: { agentName: "explorer" },
+    });
+    expect((interaction[0]!).extension).toMatchObject({
+      child: expect.objectContaining({ nativeThreadId: "explorer-thread" }),
+    });
   });
 
   it("maps completed-only native sub-agent activity before child file changes", () => {
@@ -1793,21 +1825,21 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(activity).toEqual([
+    expect(activity.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       expect.objectContaining({
         type: "toolUse",
         toolCallId: "call-explorer",
         toolName: "Agent",
       }),
     ]);
-    expect(childStarted).toEqual([
+    expect(childStarted.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       expect.objectContaining({
         type: "toolUse",
         toolCallId: "child-edit",
         parentToolCallId: "call-explorer",
       }),
     ]);
-    expect(childCompleted).toEqual([
+    expect(childCompleted.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       expect.objectContaining({
         type: "toolResult",
         toolCallId: "child-edit",
@@ -1841,10 +1873,10 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(collab).toEqual([
+    expect(collab.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       expect.objectContaining({ type: "toolUse", toolCallId: "shared-agent", toolName: "Agent" }),
     ]);
-    expect(activity).toEqual([]);
+    expect(activity.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
   });
 
   it("does not duplicate native activity when same-ID collab completion follows", () => {
@@ -1877,10 +1909,10 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(activity).toEqual([
+    expect(activity.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       expect.objectContaining({ type: "toolUse", toolCallId: "shared-agent", toolName: "Agent" }),
     ]);
-    expect(collab).toEqual([]);
+    expect(collab.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
   });
 
   it("keeps native activity deduplicated after same-ID collab completion", () => {
@@ -1917,7 +1949,7 @@ describe("CodexEventMapper", () => {
       params: { threadId: "main-thread", item: activity },
     });
 
-    expect(duplicate).toEqual([]);
+    expect(duplicate.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
   });
 
   it("suppresses wait rows and completes spawnAgent from wait child state", () => {
@@ -1975,23 +2007,25 @@ describe("CodexEventMapper", () => {
     });
 
     expect(started).toHaveLength(1);
-    expect(spawnCompleted).toEqual([]);
-    expect(waitStarted).toEqual([]);
-    expect(waitCompleted).toEqual([
+    expect(spawnCompleted.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
+    expect(waitStarted.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
+    expect(waitCompleted.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       {
         type: "toolResult",
         threadId: "test-thread",
         toolCallId: "spawn-1",
         output: "child final",
         isError: false,
-        toolInput: {
-          codexCollabKind: "spawnAgent",
-          description: "Do work",
-          prompt: "Do work",
-          receiverThreadIds: ["child-1"],
-        },
+        toolInput: { description: "Do work" },
       },
     ]);
+    expect((waitCompleted[0]!).extension).toMatchObject({
+      collaboration: {
+        kind: "spawnAgent",
+        prompt: "Do work",
+        receiverThreadIds: ["child-1"],
+      },
+    });
   });
 
   it("keeps follow-up prompts and assistant output isolated across reused child turns", () => {
@@ -2055,15 +2089,19 @@ describe("CodexEventMapper", () => {
       params: { threadId: "child-worker", turn: { id: "child-turn-2", status: "completed" } },
     });
 
-    expect(firstStarted).toEqual([expect.objectContaining({
+    expect(firstStarted.map((runtimeEvent) => runtimeEvent.event)).toEqual([expect.objectContaining({
       type: "turnStarted",
-      codexChild: expect.objectContaining({ prompt: "Read the repository purpose." }),
     })]);
-    expect(secondStarted).toEqual([expect.objectContaining({
+    expect((firstStarted[0]!).extension).toMatchObject({
+      child: expect.objectContaining({ prompt: "Read the repository purpose." }),
+    });
+    expect(secondStarted.map((runtimeEvent) => runtimeEvent.event)).toEqual([expect.objectContaining({
       type: "turnStarted",
-      codexChild: expect.objectContaining({ prompt: "Read the README heading." }),
     })]);
-    expect(secondCompleted).toContainEqual(expect.objectContaining({
+    expect((secondStarted[0]!).extension).toMatchObject({
+      child: expect.objectContaining({ prompt: "Read the README heading." }),
+    });
+    expect(secondCompleted.map((runtimeEvent) => runtimeEvent.event)).toContainEqual(expect.objectContaining({
       type: "message",
       content: "Second answer.",
     }));
@@ -2114,54 +2152,60 @@ describe("CodexEventMapper", () => {
       params: { threadId: "child-meta", turn: { status: "completed" } },
     });
 
-    expect(started).toEqual([
+    expect(started.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       {
         type: "toolUse",
         threadId: "test-thread",
         toolCallId: "spawn-meta",
         toolName: "Agent",
-        toolInput: {
-          codexCollabKind: "spawnAgent",
-          agentName: "metadata_worker",
-          description: "Inspect mapper metadata.",
-          prompt: "task_name: metadata_worker\n\nInspect mapper metadata.",
-          reasoningEffort: "medium",
-        },
+        toolInput: { description: "Inspect mapper metadata." },
       },
     ]);
-    expect(spawnCompleted).toEqual([{
+    expect((started[0]!).extension).toMatchObject({
+      collaboration: {
+        kind: "spawnAgent",
+        agentName: "metadata_worker",
+        prompt: "task_name: metadata_worker\n\nInspect mapper metadata.",
+        reasoningEffort: "medium",
+      },
+    });
+    expect(spawnCompleted.map((runtimeEvent) => runtimeEvent.event)).toEqual([{
       type: "toolUse",
       threadId: "test-thread",
       toolCallId: "spawn-meta",
       toolName: "Agent",
-      toolInput: {
-        codexCollabKind: "spawnAgent",
+      toolInput: { description: "Inspect mapper metadata." },
+    }]);
+    expect((spawnCompleted[0]!).extension).toMatchObject({
+      collaboration: {
+        kind: "spawnAgent",
         agentName: "metadata_worker",
-        description: "Inspect mapper metadata.",
         prompt: "task_name: metadata_worker\n\nInspect mapper metadata.",
         model: "gpt-5.5",
         reasoningEffort: "high",
         receiverThreadIds: ["child-meta"],
       },
-    }]);
-    expect(childCompleted).toEqual([
+    });
+    expect(childCompleted.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       {
         type: "toolResult",
         threadId: "test-thread",
         toolCallId: "spawn-meta",
         output: "Metadata verified.",
         isError: false,
-        toolInput: {
-          codexCollabKind: "spawnAgent",
-          agentName: "metadata_worker",
-          description: "Inspect mapper metadata.",
-          prompt: "task_name: metadata_worker\n\nInspect mapper metadata.",
-          model: "gpt-5.5",
-          reasoningEffort: "high",
-          receiverThreadIds: ["child-meta"],
-        },
+        toolInput: { description: "Inspect mapper metadata." },
       },
     ]);
+    expect((childCompleted[0]!).extension).toMatchObject({
+      collaboration: {
+        kind: "spawnAgent",
+        agentName: "metadata_worker",
+        prompt: "task_name: metadata_worker\n\nInspect mapper metadata.",
+        model: "gpt-5.5",
+        reasoningEffort: "high",
+        receiverThreadIds: ["child-meta"],
+      },
+    });
   });
 
   it("keeps the named child identity from Codex's generated delegation prompt", () => {
@@ -2181,11 +2225,14 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(events).toEqual([expect.objectContaining({
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([expect.objectContaining({
       type: "toolUse",
       toolCallId: "spawn-named-child",
-      toolInput: expect.objectContaining({ agentName: "route_probe" }),
+      toolInput: { description: "You are the child agent named route_probe. Inspect the routing boundary." },
     })]);
+    expect((events[0]!).extension).toMatchObject({
+      collaboration: { agentName: "route_probe" },
+    });
   });
 
   it("updates a completed spawnAgent with metadata when parent completion arrives late", () => {
@@ -2235,54 +2282,60 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(started).toEqual([
+    expect(started.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       {
         type: "toolUse",
         threadId: "test-thread",
         toolCallId: "spawn-late-meta",
         toolName: "Agent",
-        toolInput: {
-          codexCollabKind: "spawnAgent",
-          description: "Inspect reverse-order metadata.",
-          prompt: "Inspect reverse-order metadata.",
-          reasoningEffort: "medium",
-          receiverThreadIds: ["child-late-meta"],
-        },
+        toolInput: { description: "Inspect reverse-order metadata." },
       },
     ]);
-    expect(childCompleted).toEqual([
+    expect((started[0]!).extension).toMatchObject({
+      collaboration: {
+        kind: "spawnAgent",
+        prompt: "Inspect reverse-order metadata.",
+        reasoningEffort: "medium",
+        receiverThreadIds: ["child-late-meta"],
+      },
+    });
+    expect(childCompleted.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       {
         type: "toolResult",
         threadId: "test-thread",
         toolCallId: "spawn-late-meta",
         output: "Child output is authoritative.",
         isError: false,
-        toolInput: {
-          codexCollabKind: "spawnAgent",
-          description: "Inspect reverse-order metadata.",
-          prompt: "Inspect reverse-order metadata.",
-          reasoningEffort: "medium",
-          receiverThreadIds: ["child-late-meta"],
-        },
+        toolInput: { description: "Inspect reverse-order metadata." },
       },
     ]);
-    expect(parentCompleted).toEqual([
+    expect((childCompleted[0]!).extension).toMatchObject({
+      collaboration: {
+        kind: "spawnAgent",
+        prompt: "Inspect reverse-order metadata.",
+        reasoningEffort: "medium",
+        receiverThreadIds: ["child-late-meta"],
+      },
+    });
+    expect(parentCompleted.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       {
         type: "toolResult",
         threadId: "test-thread",
         toolCallId: "spawn-late-meta",
         output: "Child output is authoritative.",
         isError: false,
-        toolInput: {
-          codexCollabKind: "spawnAgent",
-          description: "Inspect reverse-order metadata.",
-          prompt: "Inspect reverse-order metadata.",
-          model: "gpt-5.5",
-          reasoningEffort: "high",
-          receiverThreadIds: ["child-late-meta"],
-        },
+        toolInput: { description: "Inspect reverse-order metadata." },
       },
     ]);
+    expect((parentCompleted[0]!).extension).toMatchObject({
+      collaboration: {
+        kind: "spawnAgent",
+        prompt: "Inspect reverse-order metadata.",
+        model: "gpt-5.5",
+        reasoningEffort: "high",
+        receiverThreadIds: ["child-late-meta"],
+      },
+    });
   });
 
   it("keeps exact sender and receiver identity on directional child messages", () => {
@@ -2305,17 +2358,19 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(events).toEqual([expect.objectContaining({
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([expect.objectContaining({
       type: "toolUse",
       toolCallId: "message-child-1",
-      toolInput: {
-        codexCollabKind: "sendInput",
-        description: "Continue the audit.",
+      toolInput: { description: "Continue the audit." },
+    })]);
+    expect((events[0]!).extension).toMatchObject({
+      collaboration: {
+        kind: "sendInput",
         prompt: "Continue the audit.",
         senderThreadId: "native-parent",
         receiverThreadIds: ["native-child"],
       },
-    })]);
+    });
   });
 
   it("carries a known child identity into later messages to the same sub-agent", () => {
@@ -2355,16 +2410,19 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(events).toContainEqual(expect.objectContaining({
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toContainEqual(expect.objectContaining({
       type: "toolUse",
       toolCallId: "follow-up-known-child",
-      toolInput: expect.objectContaining({
+      toolInput: { description: "Confirm the title." },
+    }));
+    expect((events[0]!).extension).toMatchObject({
+      collaboration: {
         agentName: "read_docs_worker",
         model: "gpt-5.6-luna",
         reasoningEffort: "low",
         receiverThreadIds: ["native-child"],
-      }),
-    }));
+      },
+    });
   });
 
   it("does not infer parent continuation from child evidence and a later main turn", () => {
@@ -2410,21 +2468,23 @@ describe("CodexEventMapper", () => {
         },
       },
     });
-    expect(childAction[0]).toEqual(expect.objectContaining({
+    expect(childAction[0]!.event).toEqual(expect.objectContaining({
       type: "toolUse",
       toolCallId: "send-parent-1",
-      codexChild: expect.objectContaining({
+    }));
+    expect((childAction[0]!).extension).toMatchObject({
+      child: expect.objectContaining({
         nativeThreadId: "native-child",
         nativeTurnId: "child-turn-1",
       }),
-    }));
+    });
 
     const continuation = mapper.mapNotification({
       jsonrpc: "2.0",
       method: "turn/started",
       params: { threadId: "native-parent", turnId: "parent-turn-2" },
     });
-    expect(continuation).toEqual([]);
+    expect(continuation.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
   });
 
   it("does not classify an unrelated child collaboration item as parent continuation", () => {
@@ -2529,17 +2589,19 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(childCompleted).toEqual([
+    expect(childCompleted.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       {
         type: "toolResult",
         threadId: "test-thread",
         toolCallId: "spawn-1",
         output: "child streamed final",
         isError: false,
-        toolInput: { codexCollabKind: "spawnAgent", receiverThreadIds: ["child-1"] },
       },
     ]);
-    expect(laterWait).toEqual([]);
+    expect((childCompleted[0]!).extension).toMatchObject({
+      collaboration: { kind: "spawnAgent", receiverThreadIds: ["child-1"] },
+    });
+    expect(laterWait.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
   });
 
   it("preserves an interrupted native child turn outcome", () => {
@@ -2580,17 +2642,21 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(events).toEqual(expect.arrayContaining([
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual(expect.arrayContaining([
       expect.objectContaining({
         type: "turnComplete",
         reason: "interrupted",
-        codexChild: expect.objectContaining({
-          nativeThreadId: "child-interrupted",
-          nativeTurnId: "child-turn-interrupted",
-          outcome: "interrupted",
-        }),
       }),
     ]));
+    const completed = events.find((event) => event.event.type === "turnComplete");
+    expect(completed).toBeDefined();
+    expect((completed!).extension).toMatchObject({
+      child: {
+        nativeThreadId: "child-interrupted",
+        nativeTurnId: "child-turn-interrupted",
+        outcome: "interrupted",
+      },
+    });
   });
 
   it("completes parallel spawnAgents independently from wait states", () => {
@@ -2658,10 +2724,10 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(firstWait).toEqual([
+    expect(firstWait.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       expect.objectContaining({ type: "toolResult", toolCallId: "spawn-b", output: "B done" }),
     ]);
-    expect(secondWait).toEqual([
+    expect(secondWait.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       expect.objectContaining({ type: "toolResult", toolCallId: "spawn-a", output: "A done" }),
     ]);
   });
@@ -2696,7 +2762,7 @@ describe("CodexEventMapper", () => {
       params: { turn: { status: "completed" } },
     });
 
-    expect(finalText).toEqual([
+    expect(finalText.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       {
         type: "textDelta",
         threadId: "test-thread",
@@ -2704,14 +2770,14 @@ describe("CodexEventMapper", () => {
         isFinalResponse: false,
       },
     ]);
-    expect(finalItem).toEqual([]);
-    expect(events.find((event) => event.type === "toolResult" && event.toolCallId === "spawn-open")).toBeUndefined();
-    expect(events[0]).toMatchObject({ type: "assistantMessageBoundary", isFinalResponse: true });
-    expect(events.find((event) => event.type === "message")).toMatchObject({
+    expect(finalItem.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
+    expect(events.find((event) => event.event.type === "toolResult" && event.event.toolCallId === "spawn-open")).toBeUndefined();
+    expect(events[0]!.event).toMatchObject({ type: "assistantMessageBoundary", isFinalResponse: true });
+    expect(events.find((event) => event.event.type === "message")?.event).toMatchObject({
       type: "message",
       content: "Final after rejected spawn.",
     });
-    expect(events.some((event) => event.type === "turnComplete")).toBe(true);
+    expect(events.some((event) => event.event.type === "turnComplete")).toBe(true);
   });
 
   it("nests commandExecution on Codex receiver thread via receiverThreadIds", () => {
@@ -2754,7 +2820,7 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(events[0]).toMatchObject({
+    expect(events[0]!.event).toMatchObject({
       type: "toolUse",
       toolCallId: "cmd-child",
       parentToolCallId: "collab-a",
@@ -2803,9 +2869,9 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(earlyStart).toEqual([]);
-    expect(earlyCompletion).toEqual([]);
-    expect(registered).toEqual([
+    expect(earlyStart.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
+    expect(earlyCompletion.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
+    expect(registered.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       expect.objectContaining({
         type: "toolUse",
         toolCallId: "collab-early",
@@ -2853,8 +2919,8 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(unknown).toEqual([]);
-    expect(registered).toEqual([
+    expect(unknown.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
+    expect(registered.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       expect.objectContaining({ type: "toolUse", toolCallId: "collab-unrelated" }),
     ]);
   });
@@ -2921,7 +2987,7 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(events[0]).toMatchObject({
+    expect(events[0]!.event).toMatchObject({
       type: "toolUse",
       toolCallId: "cmd-deep",
       parentToolCallId: "collab-inner",
@@ -2951,7 +3017,7 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(events[0]).toMatchObject({
+    expect(events[0]!.event).toMatchObject({
       type: "toolUse",
       toolCallId: "cmd-1",
       parentToolCallId: "collab-p",
@@ -2984,7 +3050,7 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(events[0]).toMatchObject({
+    expect(events[0]!.event).toMatchObject({
       type: "toolUse",
       toolCallId: "cmd-1",
       parentToolCallId: "collab-p",
@@ -3007,11 +3073,14 @@ describe("CodexEventMapper", () => {
     });
 
     expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({
+    expect(events[0]!.event).toMatchObject({
       type: "toolUse",
       toolCallId: "collab-1",
       toolName: "Agent",
-      toolInput: { codexCollabKind: "spawn_agent", prompt: "Review security" },
+      toolInput: { description: "Review security" },
+    });
+    expect((events[0]!).extension).toMatchObject({
+      collaboration: { kind: "spawn_agent", prompt: "Review security" },
     });
   });
 
@@ -3044,7 +3113,7 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(events[0]).toMatchObject({
+    expect(events[0]!.event).toMatchObject({
       type: "toolUse",
       toolCallId: "cmd-after-legacy",
       parentToolCallId: "collab-legacy",
@@ -3074,18 +3143,18 @@ describe("CodexEventMapper", () => {
     });
 
     expect(events).toHaveLength(3);
-    expect(events[0]).toEqual({
+    expect(events[0]!.event).toEqual({
       type: "assistantMessageBoundary",
       threadId: "test-thread",
       isFinalResponse: true,
     });
-    expect(events[1]).toEqual({
+    expect(events[1]!.event).toEqual({
       type: "message",
       threadId: "test-thread",
       content: "Hello world",
       tokens: null,
     });
-    expect(events[2]).toEqual({
+    expect(events[2]!.event).toEqual({
       type: "turnComplete",
       threadId: "test-thread",
       reason: "end_turn",
@@ -3106,8 +3175,8 @@ describe("CodexEventMapper", () => {
       params: { turn: { status: "completed", usage: { input_tokens: 5, output_tokens: 3 } } },
     });
 
-    expect(events.some((e) => e.type === "message")).toBe(false);
-    expect(events.some((e) => e.type === "turnComplete")).toBe(true);
+    expect(events.some((e) => e.event.type === "message")).toBe(false);
+    expect(events.some((e) => e.event.type === "turnComplete")).toBe(true);
   });
 
   it("resets text accumulator after turn/completed", () => {
@@ -3126,7 +3195,7 @@ describe("CodexEventMapper", () => {
       method: "turn/completed",
       params: { turn: { status: "completed" } },
     });
-    expect(events.some((e) => e.type === "message")).toBe(false);
+    expect(events.some((e) => e.event.type === "message")).toBe(false);
   });
 
   it("emits error event for turn/completed with status failed", () => {
@@ -3143,7 +3212,7 @@ describe("CodexEventMapper", () => {
     });
 
     expect(events).toHaveLength(1);
-    expect(events[0]).toEqual({
+    expect(events[0]!.event).toEqual({
       type: "error",
       threadId: "test-thread",
       error: "You've hit your usage limit",
@@ -3158,7 +3227,7 @@ describe("CodexEventMapper", () => {
     });
 
     expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({ type: "error" });
+    expect(events[0]!.event).toMatchObject({ type: "error" });
   });
 
   // ---------------------------------------------------------------------------
@@ -3172,7 +3241,7 @@ describe("CodexEventMapper", () => {
       params: { error: { message: "rate limit exceeded" } },
     });
 
-    expect(events).toEqual([
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       { type: "error", threadId: "test-thread", error: "rate limit exceeded" },
     ]);
   });
@@ -3185,7 +3254,7 @@ describe("CodexEventMapper", () => {
     });
 
     expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({ type: "error", threadId: "test-thread" });
+    expect(events[0]!.event).toMatchObject({ type: "error", threadId: "test-thread" });
   });
 
   // ---------------------------------------------------------------------------
@@ -3212,7 +3281,7 @@ describe("CodexEventMapper", () => {
     });
 
     // After reset the accumulator is empty, so "Hello" is emitted as a full delta
-    expect(events).toEqual([
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       { type: "textDelta", threadId: "test-thread", delta: "Hello", isFinalResponse: false },
     ]);
   });
@@ -3223,7 +3292,7 @@ describe("CodexEventMapper", () => {
       method: "item/plan/delta",
       params: { threadId: "t1", turnId: "u1", itemId: "p1", delta: "Checking repo layout…" },
     } as never);
-    expect(events).toEqual([
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       {
         type: "textDelta",
         threadId: "test-thread",
@@ -3244,10 +3313,10 @@ describe("CodexEventMapper", () => {
       method: "item/reasoning/textDelta",
       params: { text: "step 1" },
     } as never);
-    expect(eSummary).toEqual([
+    expect(eSummary.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       { type: "textDelta", threadId: "test-thread", delta: "Plan: ", isFinalResponse: false },
     ]);
-    expect(eText).toEqual([
+    expect(eText.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       { type: "textDelta", threadId: "test-thread", delta: "step 1", isFinalResponse: false },
     ]);
     expect(mapper.mapNotification({
@@ -3265,7 +3334,7 @@ describe("CodexEventMapper", () => {
         item: { type: "reasoning", id: "r1", summary: ["Plan step 1", "Plan step 2"], reasoningContent: ["Raw detail"] },
       },
     });
-    expect(events).toEqual([
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       {
         type: "textDelta",
         threadId: "test-thread",
@@ -3288,7 +3357,7 @@ describe("CodexEventMapper", () => {
         item: { type: "reasoning", summary: ["Hello world"], content: [] },
       },
     } as never);
-    expect(rest).toEqual([
+    expect(rest.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       { type: "textDelta", threadId: "test-thread", delta: " world", isFinalResponse: false },
     ]);
   });
@@ -3311,9 +3380,9 @@ describe("CodexEventMapper", () => {
       params: { turn: { status: "completed" } },
     });
 
-    expect(delta).toEqual([{ type: "textDelta", threadId: "test-thread", delta: "main text", isFinalResponse: false }]);
-    expect(completed[0]).toMatchObject({ type: "assistantMessageBoundary", isFinalResponse: true });
-    expect(completed.some((event) => event.type === "turnComplete")).toBe(true);
+    expect(delta.map((runtimeEvent) => runtimeEvent.event)).toEqual([{ type: "textDelta", threadId: "test-thread", delta: "main text", isFinalResponse: false }]);
+    expect(completed[0]!.event).toMatchObject({ type: "assistantMessageBoundary", isFinalResponse: true });
+    expect(completed.some((event) => event.event.type === "turnComplete")).toBe(true);
   });
 
   it("drops unknown-thread notifications before they mutate main turn state", async () => {
@@ -3334,9 +3403,9 @@ describe("CodexEventMapper", () => {
       params: { threadId: "main-codex-thread", turn: { status: "completed" } },
     });
 
-    expect(unknown).toEqual([]);
+    expect(unknown.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
     expect(main).toHaveLength(1);
-    expect(main[0]).toMatchObject({ type: "turnComplete" });
+    expect(main[0]!.event).toMatchObject({ type: "turnComplete" });
     expect(logger.warn).toHaveBeenCalledWith(
       "CodexEventMapper: dropping unknown-thread notification",
       expect.objectContaining({ method: "item/completed", notificationThreadId: "stray-thread" }),
@@ -3389,13 +3458,13 @@ describe("CodexEventMapper", () => {
       params: { threadId: "main-codex-thread", turn: { status: "completed" } },
     });
 
-    expect(childText).toEqual([]);
-    expect(childReasoning).toEqual([]);
-    expect(mainText).toEqual([
+    expect(childText.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
+    expect(childReasoning.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
+    expect(mainText.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       { type: "textDelta", threadId: "test-thread", delta: "main final", isFinalResponse: false },
     ]);
-    expect(completed[0]).toMatchObject({ type: "assistantMessageBoundary", isFinalResponse: true });
-    expect(completed.find((event) => event.type === "message")).toMatchObject({
+    expect(completed[0]!.event).toMatchObject({ type: "assistantMessageBoundary", isFinalResponse: true });
+    expect(completed.find((event) => event.event.type === "message")?.event).toMatchObject({
       type: "message",
       content: "main final",
     });
@@ -3442,21 +3511,23 @@ describe("CodexEventMapper", () => {
       params: { threadId: "main-codex-thread", turn: { status: "completed" } },
     });
 
-    expect(childCompleted).toEqual([
+    expect(childCompleted.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       {
         type: "toolResult",
         threadId: "test-thread",
         toolCallId: "collab-a",
         output: "",
         isError: false,
-        toolInput: { codexCollabKind: "spawnAgent", receiverThreadIds: ["child-thread"] },
       },
     ]);
-    expect(mainText).toEqual([
+    expect((childCompleted[0]!).extension).toMatchObject({
+      collaboration: { kind: "spawnAgent", receiverThreadIds: ["child-thread"] },
+    });
+    expect(mainText.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       { type: "textDelta", threadId: "test-thread", delta: "still streaming", isFinalResponse: false },
     ]);
-    expect(mainCompleted[0]).toMatchObject({ type: "assistantMessageBoundary", isFinalResponse: true });
-    expect(mainCompleted.filter((event) => event.type === "turnComplete")).toHaveLength(1);
+    expect(mainCompleted[0]!.event).toMatchObject({ type: "assistantMessageBoundary", isFinalResponse: true });
+    expect(mainCompleted.filter((event) => event.event.type === "turnComplete")).toHaveLength(1);
   });
 
   it("attributes nested spawn completion to its emitting child thread", () => {
@@ -3492,32 +3563,37 @@ describe("CodexEventMapper", () => {
         },
       },
     });
-    expect(nestedSpawn).toContainEqual(expect.objectContaining({
+    expect(nestedSpawn.map((runtimeEvent) => runtimeEvent.event)).toContainEqual(expect.objectContaining({
       type: "toolUse",
       toolCallId: "nested-spawn",
-      codexChild: expect.objectContaining({
+    }));
+    expect((nestedSpawn[0]!).extension).toMatchObject({
+      child: expect.objectContaining({
         nativeThreadId: "direct-child",
         nativeTurnId: "direct-turn",
         parentCollaborationItemId: "root-spawn",
         nativeItemId: "nested-spawn",
         itemEventKey: "started",
       }),
-    }));
-    expect(mapper.applyChildThreadMetadata("nested-child", {
+    });
+    const metadataStarted = mapper.applyChildThreadMetadata("nested-child", {
       model: "gpt-5.6-sol",
       reasoningEffort: "medium",
-    })).toContainEqual(expect.objectContaining({
+    });
+    expect(metadataStarted.map((runtimeEvent) => runtimeEvent.event)).toContainEqual(expect.objectContaining({
       type: "toolUse",
       toolCallId: "nested-spawn",
-      toolInput: expect.objectContaining({ model: "gpt-5.6-sol", reasoningEffort: "medium" }),
-      codexChild: expect.objectContaining({
+    }));
+    expect((metadataStarted[0]!).extension).toMatchObject({
+      child: expect.objectContaining({
         nativeThreadId: "direct-child",
         nativeTurnId: "direct-turn",
         parentCollaborationItemId: "root-spawn",
         nativeItemId: "nested-spawn",
         itemEventKey: "started",
       }),
-    }));
+      collaboration: { model: "gpt-5.6-sol", reasoningEffort: "medium" },
+    });
     mapper.mapNotification({
       jsonrpc: "2.0",
       method: "turn/started",
@@ -3530,39 +3606,40 @@ describe("CodexEventMapper", () => {
       params: { threadId: "nested-child", turn: { id: "nested-turn", status: "completed" } },
     });
 
-    expect(completion).toContainEqual(expect.objectContaining({
+    expect(completion.map((runtimeEvent) => runtimeEvent.event)).toContainEqual(expect.objectContaining({
       type: "toolResult",
       toolCallId: "nested-spawn",
-      toolInput: expect.objectContaining({
-        codexCollabKind: "spawnAgent",
-        receiverThreadIds: ["nested-child"],
-      }),
-      codexChild: expect.objectContaining({
+    }));
+    expect((completion.find((event) => event.event.type === "toolResult")!).extension).toMatchObject({
+      child: expect.objectContaining({
         nativeThreadId: "direct-child",
         nativeTurnId: "direct-turn",
         parentCollaborationItemId: "root-spawn",
         nativeItemId: "nested-spawn",
         itemEventKey: "completed",
       }),
-    }));
+      collaboration: { kind: "spawnAgent", receiverThreadIds: ["nested-child"] },
+    });
 
     const metadataReplay = mapper.applyChildThreadMetadata("nested-child", {
       model: "gpt-5.6-sol",
       reasoningEffort: "medium",
     });
 
-    expect(metadataReplay).toContainEqual(expect.objectContaining({
+    expect(metadataReplay.map((runtimeEvent) => runtimeEvent.event)).toContainEqual(expect.objectContaining({
       type: "toolResult",
       toolCallId: "nested-spawn",
-      toolInput: expect.objectContaining({ model: "gpt-5.6-sol", reasoningEffort: "medium" }),
-      codexChild: expect.objectContaining({
+    }));
+    expect((metadataReplay[0]!).extension).toMatchObject({
+      child: expect.objectContaining({
         nativeThreadId: "direct-child",
         nativeTurnId: "direct-turn",
         parentCollaborationItemId: "root-spawn",
         nativeItemId: "nested-spawn",
         itemEventKey: "completed",
       }),
-    }));
+      collaboration: { model: "gpt-5.6-sol", reasoningEffort: "medium" },
+    });
   });
 
   it("attributes buffered nested completion and cached replays to the emitting child", () => {
@@ -3608,20 +3685,27 @@ describe("CodexEventMapper", () => {
     const directChildCompletion = expect.objectContaining({
       type: "toolResult",
       toolCallId: "nested-spawn",
-      codexChild: expect.objectContaining({
+    });
+    const directChildEvidence = {
+      child: expect.objectContaining({
         nativeThreadId: "direct-child",
         nativeTurnId: "direct-turn",
         parentCollaborationItemId: "root-spawn",
         nativeItemId: "nested-spawn",
         itemEventKey: "completed",
       }),
-    });
-    expect(nestedSpawn).toContainEqual(directChildCompletion);
+    };
+    expect(nestedSpawn.map((runtimeEvent) => runtimeEvent.event)).toContainEqual(directChildCompletion);
+    expect((nestedSpawn.find((event) => event.event.type === "toolResult")!).extension)
+      .toMatchObject(directChildEvidence);
 
-    expect(mapper.applyChildThreadMetadata("nested-child", {
+    const metadataReplay = mapper.applyChildThreadMetadata("nested-child", {
       model: "gpt-5.6-sol",
       reasoningEffort: "medium",
-    })).toContainEqual(directChildCompletion);
+    });
+    expect(metadataReplay.map((runtimeEvent) => runtimeEvent.event)).toContainEqual(directChildCompletion);
+    expect((metadataReplay.find((event) => event.event.type === "toolResult")!).extension)
+      .toMatchObject(directChildEvidence);
     expect(mapper.mapNotification({
       jsonrpc: "2.0",
       method: "item/completed",
@@ -3679,7 +3763,7 @@ describe("CodexEventMapper", () => {
       },
     });
 
-    expect(events).toEqual([
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([
       expect.objectContaining({
         type: "toolUse",
         toolCallId: "cmd-child",
@@ -3733,17 +3817,17 @@ describe("CodexEventMapper", () => {
       method: "turn/completed",
       params: { threadId: "child-thread", turn: { status: "completed" } },
     });
-    const result = events.find((event) => event.type === "toolResult");
+    const result = events.find((event) => event.event.type === "toolResult");
 
-    expect(result).toMatchObject({
+    expect(result?.event).toMatchObject({
       type: "toolResult",
       toolCallId: "collab-a",
       outputTruncated: true,
       outputTotalBytes: Buffer.byteLength(fullOutput, "utf8"),
     });
-    expect(result?.type === "toolResult" ? Buffer.byteLength(result.output, "utf8") : 0).toBe(256 * 1024);
-    expect(result?.type === "toolResult" ? existsSync(result.outputArtifactPath ?? "") : false).toBe(true);
-    expect(result?.type === "toolResult" ? readFileSync(result.outputArtifactPath!, "utf8") : "").toBe(fullOutput);
+    expect(result?.event.type === "toolResult" ? Buffer.byteLength(result.event.output, "utf8") : 0).toBe(256 * 1024);
+    expect(result?.event.type === "toolResult" ? existsSync(result.event.outputArtifactPath ?? "") : false).toBe(true);
+    expect(result?.event.type === "toolResult" ? readFileSync(result.event.outputArtifactPath!, "utf8") : "").toBe(fullOutput);
   });
 
   // ---------------------------------------------------------------------------
@@ -3758,7 +3842,7 @@ describe("CodexEventMapper", () => {
       params: {},
     } as never);
 
-    expect(events).toEqual([]);
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
     expect(logger.warn).toHaveBeenCalledWith(
       "CodexEventMapper: unrecognized notification",
       expect.objectContaining({ method: "unknown/method" }),
@@ -3773,7 +3857,7 @@ describe("CodexEventMapper", () => {
       params: { message: "configuration degraded", code: "config" },
     });
 
-    expect(events).toEqual([]);
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
     expect(logger.warn).toHaveBeenCalledWith(
       "Codex warning notification",
       expect.objectContaining({

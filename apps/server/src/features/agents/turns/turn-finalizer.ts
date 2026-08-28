@@ -30,7 +30,7 @@ import type { NarrativeStore } from "../conversation/narrative/narrative-store.j
 import type { TurnOutcome } from "./turn-outcome.js";
 import type { TurnFileTracker } from "./turn-file-tracker.js";
 import type { TurnFileEffectSummary } from "@mcode/contracts";
-import type { CanonicalAgentBoundary } from "../canonical/canonical-agent-boundary.js";
+import type { ParentTurnDurability } from "./parent-turn-durability.js";
 import type { ParentAssistantTextCheckpointService } from "./parent-assistant-text-checkpoint-service.js";
 import { deriveTurnAssistantMessageId } from "./turn-assistant-message-id.js";
 
@@ -47,6 +47,12 @@ interface BufferedBody {
   model: string | null;
   attachments: StoredAttachment[];
 }
+
+/** Durable snapshot operations required by terminal materialization. */
+export type TurnSnapshotPersistence = Pick<TurnSnapshotRepo, "create" | "getByMessage">;
+
+/** Injection token for the composed terminal materialization seam. */
+export const TURN_FINALIZER = "TurnFinalizer";
 
 /** Owns the single fixed end-of-turn order shared by the completion, error, and cancellation paths. */
 export class TurnFinalizer {
@@ -74,10 +80,10 @@ export class TurnFinalizer {
     private readonly threadRepo: ThreadRepo,
     private readonly narrativeStore: NarrativeStore,
     private readonly snapshotService: SnapshotService,
-    private readonly turnSnapshotRepo: TurnSnapshotRepo,
+    private readonly turnSnapshotRepo: TurnSnapshotPersistence,
     private readonly db: Database.Database,
     private readonly turnFileTracker?: TurnFileTracker,
-  private readonly canonicalSink?: CanonicalAgentBoundary,
+    private readonly canonicalSink?: ParentTurnDurability,
     private readonly parentAssistantTextCheckpoints?: ParentAssistantTextCheckpointService,
   ) {}
 

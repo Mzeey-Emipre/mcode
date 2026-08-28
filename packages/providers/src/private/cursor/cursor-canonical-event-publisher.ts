@@ -1,5 +1,5 @@
 import { AgentEventType } from "@mcode/contracts";
-import type { AgentEvent } from "@mcode/contracts";
+import type { ProviderRuntimeEvent } from "@mcode/contracts";
 import type { ProviderIdentity } from "@mcode/agent-model";
 import type { ProviderEventDraft, ProviderEventSinkPort } from "../../host-ports.js";
 
@@ -26,10 +26,10 @@ export class CursorCanonicalEventPublisher {
 
   constructor(private readonly sink: ProviderEventSinkPort) {}
 
-  /** Queues one Cursor event without exposing a legacy EventEmitter path. */
+  /** Queues one Cursor runtime event for durable canonical delivery. */
   publish(
     routing: CursorCanonicalEventRouting,
-    event: AgentEvent,
+    runtimeEvent: ProviderRuntimeEvent,
     sourceIdentities: readonly ProviderIdentity[],
   ): void {
     const queue = this.queueFor(routing);
@@ -42,7 +42,7 @@ export class CursorCanonicalEventPublisher {
     const sourceSequence = queue.nextSourceSequence;
     queue.nextSourceSequence += 1;
     queue.pendingEventCount += 1;
-    const draft = this.createDraft(routing, event, sourceIdentities, sourceSequence);
+    const draft = this.createDraft(routing, runtimeEvent, sourceIdentities, sourceSequence);
     queue.tail = queue.tail
       .then(async () => {
         if (queue.failure) return;
@@ -92,7 +92,7 @@ export class CursorCanonicalEventPublisher {
 
   private createDraft(
     routing: CursorCanonicalEventRouting,
-    event: AgentEvent,
+    runtimeEvent: ProviderRuntimeEvent,
     sourceIdentities: readonly ProviderIdentity[],
     sourceSequence: number,
   ): ProviderEventDraft {
@@ -111,7 +111,7 @@ export class CursorCanonicalEventPublisher {
       sourceIdentities,
       sourceSequence,
       providerTimestamp: timestamp,
-      ...(event.type === AgentEventType.TextDelta ? { ingestClass: "volatile" as const } : {}),
+      ...(runtimeEvent.event.type === AgentEventType.TextDelta ? { ingestClass: "volatile" as const } : {}),
       payload: {
         type: "item.recorded",
         item: {
@@ -120,7 +120,7 @@ export class CursorCanonicalEventPublisher {
           turnId: routing.turnId,
           kind: "system",
           providerIdentities: [...sourceIdentities],
-          payload: { projection: "agentLiveEvent", event },
+          payload: { projection: "providerRuntimeEvent", runtimeEvent },
           createdAt: timestamp,
           updatedAt: timestamp,
         },

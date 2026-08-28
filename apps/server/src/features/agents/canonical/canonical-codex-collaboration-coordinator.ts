@@ -15,9 +15,6 @@ import type {
   ProviderIdentity,
 } from "@mcode/contracts";
 import type {
-  CanonicalAgentCommitInput,
-  CanonicalAgentCommitResult,
-  CanonicalAgentEventDraft,
   CanonicalChildTurnFinishInput,
   CodexChildDeliveryInput,
   CodexChildDelegation,
@@ -25,8 +22,14 @@ import type {
   CodexChildIdentityInput,
   CodexChildItemInput,
   CodexChildRetryInput,
+  CodexChildRoutingDiagnosticInput,
   CodexChildTurnStartInput,
   CodexChildTurnFinishInput,
+} from "../collaboration/codex-collaboration-durability.js";
+import type {
+  CanonicalAgentCommitInput,
+  CanonicalAgentCommitResult,
+  CanonicalAgentEventDraft,
 } from "./canonical-agent-event-sink.js";
 
 /** Generic persistence operations required by the Codex child-thread protocol. */
@@ -57,15 +60,6 @@ export interface CanonicalCodexCollaborationOperations {
   loadAction(actionId: string): CollaborationAction | null;
   cacheTurnExecution(executionId: string, turnId: string): void;
   recordProviderDiagnostic(input: { turnId: string; executionId: string; event: unknown }): void;
-}
-
-/** Input for a recoverable Codex child-routing diagnostic. */
-export interface CodexChildRoutingDiagnosticInput {
-  threadId: string;
-  parentItemId?: string;
-  executionId?: string;
-  event: unknown;
-  reason: string;
 }
 
 interface ResolvedDiagnosticTurn {

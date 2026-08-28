@@ -10,7 +10,7 @@ import { readFile } from "fs/promises";
 import { query as sdkQuery } from "@anthropic-ai/claude-agent-sdk";
 import type { Query, SDKUserMessage, PostCompactHookInput, StopHookInput, CanUseTool } from "@anthropic-ai/claude-agent-sdk";
 import { logger } from "@mcode/shared";
-import { AgentEventType, isVirtualBrowserContextAttachment } from "@mcode/contracts";
+import { AgentEventType, isVirtualBrowserContextAttachment, providerRuntimeEvent } from "@mcode/contracts";
 import type {
   IAgentProvider,
   IGoalCapable,
@@ -373,8 +373,6 @@ interface PendingBrowserAccess {
 @injectable()
 export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoalCapable, ISessionEvictable, ProtocolAdapter<ClaudeSessionState> {
   readonly id: ProviderId = "claude";
-  /** Selects canonical host delivery when the server composition supplies the host port. */
-  readonly eventDelivery: "canonical-sink" | "legacy-emitter";
   /** Claude supports one-shot text completion via sdkQuery with maxTurns: 1. */
   readonly supportsCompletion = true;
   readonly sessionForkOnResume = "clean" as const;
@@ -472,7 +470,6 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
     host?: ProviderHostPorts,
   ) {
     super();
-    this.eventDelivery = host ? "canonical-sink" : "legacy-emitter";
     this.canonicalEventPublisher = host
       ? new ClaudeCanonicalEventPublisher(host.events)
       : undefined;
@@ -2512,14 +2509,14 @@ export class ClaudeProvider extends EventEmitter implements IAgentProvider, IGoa
     sessionId: string,
     event: AgentEvent,
   ): void {
-    const eventWithExecution = { ...event, turnExecutionId: routing.executionId };
+    const runtimeEvent = providerRuntimeEvent({ ...event, turnExecutionId: routing.executionId });
     if (!this.canonicalEventPublisher) {
-      this.emit("event", eventWithExecution);
+      this.emit("event", runtimeEvent);
       return;
     }
     this.canonicalEventPublisher.publish(
       routing,
-      eventWithExecution,
+      runtimeEvent,
       this.claudeSessionIdentities(sessionId),
     );
   }

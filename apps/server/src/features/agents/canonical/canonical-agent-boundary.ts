@@ -48,6 +48,33 @@ import {
   CanonicalAgentDiagnostics,
   type CanonicalDiagnosticExport,
 } from "../observability/canonical-agent-diagnostics.js";
+import type {
+  CanonicalChildTurnFinishInput,
+  CodexChildDeliveryInput,
+  CodexChildDelegation,
+  CodexChildDelegationInput,
+  CodexChildIdentityInput,
+  CodexChildItemInput,
+  CodexChildRetryInput,
+  CodexChildRoutingDiagnosticInput,
+  CodexChildTurnFinishInput,
+  CodexChildTurnStartInput,
+  CodexCollaborationActionInput,
+  CodexCollaborationDurability,
+  CodexProviderContinuationInput,
+} from "../collaboration/codex-collaboration-durability.js";
+import type {
+  ParentNarrativeRecoveryCommit,
+  ParentTurnCommitResult,
+  ParentTurnDurability,
+  ParentTurnFinishInput,
+  ParentTurnInterruptionInput,
+  ParentTurnProjection,
+} from "../turns/parent-turn-durability.js";
+import type {
+  SubagentLifecycleDurability,
+  SubagentStopTarget,
+} from "../collaboration/subagent-lifecycle-durability.js";
 import {
   CanonicalAgentEventStore,
   type CanonicalAgentEventStoreCheckpoint,
@@ -55,7 +82,6 @@ import {
 } from "./canonical-agent-event-store.js";
 import {
   CanonicalParentTurnLifecycle,
-  type CanonicalParentTurnInterruptionInput,
   type CanonicalParentTurnStartInput,
 } from "./canonical-parent-turn-lifecycle.js";
 import {
@@ -118,7 +144,7 @@ export interface CanonicalAgentCommitInput {
 }
 
 /** Observable result after one canonical batch commits. */
-export interface CanonicalAgentCommitResult {
+export interface CanonicalAgentCommitResult extends ParentTurnCommitResult {
   outcome: "committed" | "duplicate" | "conflict" | "terminal-outcome-confirmed" | "ingest-overflow";
   /** Canonical publication runs after the durable transaction and can be retried through reconnect. */
   canonicalDelivery?: "published" | "deferred" | "not-required";
@@ -129,60 +155,33 @@ export interface CanonicalAgentCommitResult {
   events: readonly CanonicalAgentEventEnvelope[];
 }
 
-/** Legacy projection captured inside the canonical terminal transaction. */
-export interface CanonicalParentTurnProjection {
-  message: Message | null;
-  narrative: readonly NarrativeEntry[];
-}
-
 /** Canonical terminal result plus the physical transaction work used to commit it. */
 export type CanonicalAgentBatchedCommitResult = Omit<CanonicalAgentCommitResult, "outcome"> & {
   outcome: Exclude<CanonicalAgentCommitResult["outcome"], "ingest-overflow">;
   writeBatches: WriteBatchResult;
 };
 
-/** Inputs for terminal parent-turn projection and canonical persistence. */
-export interface CanonicalParentTurnFinishInput {
-  threadId: string;
-  turnId: string;
-  executionId: string;
-  providerId: string;
-  providerIdentities: readonly ProviderIdentity[];
-  outcome: TurnOutcome;
-  error?: string;
-  projectTurn: () => CanonicalParentTurnProjection;
-  finalizeCompatibility?: () => void;
-}
+/** Canonical alias for the parent-turn terminal projection contract. */
+export type CanonicalParentTurnProjection = ParentTurnProjection;
 
-/** One checked structured narrative snapshot accepted before its visible event. */
-export interface ParentNarrativeRecoveryCommitInput {
-  executionId: string;
-  items: readonly ParentNarrativeRecoveryItem[];
-  discardedItemIds?: readonly string[];
-}
+/** Canonical alias for the parent-turn terminal durability input. */
+export type CanonicalParentTurnFinishInput = ParentTurnFinishInput;
 
-/** Input used to provision one Codex provider-native child thread. */
-export interface CodexChildDelegationInput {
-  parentThreadId: string;
-  parentTurnId: string;
-  parentExecutionId: string;
-  parentItemId: string;
-  receiverThreadIds?: readonly string[];
-  description?: string;
-  prompt?: string;
-  identity?: string;
-  model?: string;
-  reasoningEffort?: string;
-  replacementForActionId?: string;
-  providerIdentities: readonly ProviderIdentity[];
-}
+/** Canonical alias for the structured parent recovery durability input. */
+export type ParentNarrativeRecoveryCommitInput = ParentNarrativeRecoveryCommit;
 
-/** Durable canonical records created for one Codex child delegation. */
-export interface CodexChildDelegation {
-  childThread: AgentThread;
-  parentItem: AgentItem;
-  collaborationAction: CollaborationAction;
-}
+export type {
+  CanonicalChildTurnFinishInput,
+  CodexChildDeliveryInput,
+  CodexChildDelegation,
+  CodexChildDelegationInput,
+  CodexChildIdentityInput,
+  CodexChildItemInput,
+  CodexChildRetryInput,
+  CodexChildRoutingDiagnosticInput,
+  CodexChildTurnFinishInput,
+  CodexChildTurnStartInput,
+} from "../collaboration/codex-collaboration-durability.js";
 
 /** Canonical identity resolution used by the child interruption action. */
 export interface CanonicalChildStopTarget {
@@ -192,81 +191,13 @@ export interface CanonicalChildStopTarget {
   nativeTurnId: string | null;
 }
 
-/** Input used to attach exact Codex receiver and child-native identities. */
-export interface CodexChildIdentityInput {
-  parentThreadId: string;
-  parentTurnId: string;
-  parentExecutionId: string;
-  parentItemId: string;
-  nativeThreadId: string;
-}
-
-/** Input used to persist one exact Codex child turn start. */
-export interface CodexChildTurnStartInput extends CodexChildIdentityInput {
-  nativeTurnId: string;
-  prompt?: string;
-  triggerActionId?: string;
-}
-
 /** Input used to persist one directional action without creating a Provider turn. */
-export interface CollaborationActionInput {
-  actionId: string;
-  kind: CollaborationAction["kind"];
-  sourceThreadId: string;
-  sourceTurnId: string;
-  sourceExecutionId: string;
-  sourceItemId: string;
-  targetThreadId: string;
-  targetTurnId?: string;
-  status: CollaborationAction["status"];
-  providerIdentities: readonly ProviderIdentity[];
-  payload: Record<string, unknown>;
-}
+/** Canonical alias for the Codex collaboration action durability input. */
+export type CollaborationActionInput = CodexCollaborationActionInput;
 
 /** Input used to start a parent turn only after explicit provider continuation evidence. */
-export interface CanonicalProviderContinuationInput {
-  parentThreadId: string;
-  turnId: string;
-  executionId: string;
-  permissionMode: "supervised" | "full";
-  providerIdentities: readonly ProviderIdentity[];
-  triggerActionId: string;
-}
-
-/** Input used to persist one child semantic item under its canonical turn. */
-export interface CodexChildItemInput {
-  childThreadId: string;
-  nativeTurnId: string;
-  nativeItemId: string;
-  eventKey: string;
-  kind: AgentItem["kind"];
-  payload: Record<string, unknown>;
-  parentItemId?: string;
-}
-
-/** Input used to persist one exact Codex child terminal outcome. */
-export interface CodexChildTurnFinishInput {
-  childThreadId: string;
-  nativeTurnId: string;
-  outcome: TurnOutcome;
-  error?: string;
-}
-
-/** Input used to terminalize the latest running canonical child turn by thread identity. */
-export interface CanonicalChildTurnFinishInput {
-  childThreadId: string;
-  outcome: TurnOutcome;
-  error?: string;
-}
-
-/** Input used to classify a child delegation whose delivery was rejected or uncertain. */
-export interface CodexChildDeliveryInput extends CodexChildIdentityInput {
-}
-
-/** Input used to create a linked replacement for a failed or uncertain child delivery. */
-export interface CodexChildRetryInput extends Omit<CodexChildDelegationInput, "replacementForActionId"> {
-  previousActionId: string;
-}
+/** Canonical alias for the Codex provider continuation durability input. */
+export type CanonicalProviderContinuationInput = CodexProviderContinuationInput;
 
 /** Durable canonical context included with one bounded diagnostic export. */
 export interface CanonicalTurnDiagnosticContext {
@@ -356,7 +287,7 @@ export const publishCanonicalAgentEvents: CanonicalAgentEventPublisher = (events
 
 /** Owns validation, semantic reduction, atomic canonical persistence, and post-commit publication. */
 @injectable()
-export class CanonicalAgentBoundary {
+export class CanonicalAgentBoundary implements ParentTurnDurability, CodexCollaborationDurability, SubagentLifecycleDurability {
   private readonly persistThreadStatement: Database.Statement;
   private readonly persistTurnStatement: Database.Statement;
   private readonly persistItemStatement: Database.Statement;
@@ -589,13 +520,7 @@ export class CanonicalAgentBoundary {
   }
 
   /** Record a bounded diagnostic when structurally attributed Codex child routing fails. */
-  recordCodexChildRoutingDiagnostic(input: {
-    threadId: string;
-    parentItemId?: string;
-    executionId?: string;
-    event: unknown;
-    reason: string;
-  }): boolean {
+  recordCodexChildRoutingDiagnostic(input: CodexChildRoutingDiagnosticInput): boolean {
     return this.codexCollaboration.recordRoutingDiagnostic(input);
   }
 
@@ -720,6 +645,30 @@ export class CanonicalAgentBoundary {
     return rows[0] ? this.turnFromRow(rows[0]) : null;
   }
 
+  /** Load the newest canonical turn for one thread. */
+  loadLatestTurn(threadId: string): AgentTurn | null {
+    const row = this.db.prepare(`
+      SELECT *
+      FROM canonical_agent_turns
+      WHERE thread_id = ?
+      ORDER BY updated_at DESC, id DESC
+      LIMIT 1
+    `).get(threadId) as Record<string, unknown> | undefined;
+    return row ? this.turnFromRow(row) : null;
+  }
+
+  /** Load the latest canonical permission mode retained for a thread. */
+  loadLatestPermissionMode(threadId: string): AgentTurn["permissionMode"] | null {
+    const row = this.db.prepare(`
+      SELECT permission_mode
+      FROM canonical_agent_turns
+      WHERE thread_id = ?
+      ORDER BY updated_at DESC, id DESC
+      LIMIT 1
+    `).get(threadId) as { permission_mode: AgentTurn["permissionMode"] } | undefined;
+    return row?.permission_mode ?? null;
+  }
+
   /** Load one durable ingest checkpoint. */
   loadCheckpoint(executionId: string): CanonicalAgentCheckpoint | null {
     return this.reads.loadCheckpoint(executionId);
@@ -836,6 +785,15 @@ export class CanonicalAgentBoundary {
   /** Start an ordinary parent turn from a provider-proven child action. */
   startProviderContinuation(input: CanonicalProviderContinuationInput): AgentTurn {
     return this.parentLifecycle.continue(input);
+  }
+
+  /** Mark the legacy thread projection active when a provider resumes its parent turn. */
+  activateProviderContinuation(threadId: string): void {
+    this.db.prepare("UPDATE threads SET status = ?, updated_at = ? WHERE id = ?").run(
+      "active",
+      new Date().toISOString(),
+      threadId,
+    );
   }
 
   /** Commit continuation acknowledgement and parent turn creation before publishing either side. */
@@ -1356,6 +1314,33 @@ export class CanonicalAgentBoundary {
     });
   }
 
+  /** Load one sub-agent stop target through the generic lifecycle durability port. */
+  loadSubagentStopTarget(request: CanonicalSubagentStopRequest): SubagentStopTarget | null {
+    return this.loadCanonicalChildStopTarget(request);
+  }
+
+  /** Load active sub-agent stop targets through the generic lifecycle durability port. */
+  loadActiveSubagentStopTargets(owningParentThreadId: string): SubagentStopTarget[] {
+    return this.loadCanonicalChildStopTargets(owningParentThreadId);
+  }
+
+  /** Record interrupted state for every still-running sub-agent after a parent stop. */
+  interruptSubagentTurns(childThreadIds: readonly string[], reason: string): void {
+    for (const childThreadId of childThreadIds) {
+      this.finishCanonicalChildTurn({ childThreadId, outcome: "interrupted", error: reason });
+    }
+  }
+
+  /** Persist a generic sub-agent interruption through the durable child-turn owner. */
+  finishSubagentTurn(input: {
+    childThreadId: string;
+    nativeTurnId: string;
+    outcome: "interrupted";
+    error: string;
+  }): AgentTurn {
+    return this.finishCodexChildTurn(input);
+  }
+
   /** Provision one Starting child and one directional Dispatched action exactly once. */
   startCodexChildDelegation(input: CodexChildDelegationInput): CodexChildDelegation {
     return this.codexCollaboration.startDelegation(input);
@@ -1548,7 +1533,7 @@ export class CanonicalAgentBoundary {
       stagedAssistant,
       finalizeCompatibility,
       recoveredNarrative,
-    } satisfies CanonicalParentTurnInterruptionInput);
+    } satisfies ParentTurnInterruptionInput);
   }
 
   /** Replace recovery items with canonical terminal narrative records in the interruption transaction. */

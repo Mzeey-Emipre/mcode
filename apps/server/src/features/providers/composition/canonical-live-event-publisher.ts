@@ -1,4 +1,9 @@
-import { AgentEventType, type AgentEvent, type ProviderIdentity, type ProviderId } from "@mcode/contracts";
+import {
+  AgentEventType,
+  type ProviderIdentity,
+  type ProviderId,
+  type ProviderRuntimeEvent,
+} from "@mcode/contracts";
 import type { ProviderEventBatch, ProviderEventSinkPort } from "@mcode/providers";
 
 const MAX_PENDING_EVENTS_PER_EXECUTION = 1_024;
@@ -27,10 +32,10 @@ export class CanonicalLiveEventPublisher {
     private readonly sink: ProviderEventSinkPort,
   ) {}
 
-  /** Queues one provider event without exposing a direct legacy EventEmitter path. */
+  /** Queues one provider runtime event for durable canonical delivery. */
   publish(
     routing: CanonicalLiveEventRouting,
-    event: AgentEvent,
+    runtimeEvent: ProviderRuntimeEvent,
     sourceIdentities: readonly ProviderIdentity[],
   ): void {
     const queue = this.queueFor(routing);
@@ -42,7 +47,7 @@ export class CanonicalLiveEventPublisher {
     const sourceSequence = queue.nextSourceSequence;
     queue.nextSourceSequence += 1;
     queue.pendingEventCount += 1;
-    const draft = this.createDraft(routing, event, sourceIdentities, sourceSequence);
+    const draft = this.createDraft(routing, runtimeEvent, sourceIdentities, sourceSequence);
     queue.tail = queue.tail
       .then(async () => {
         if (queue.failure) return;
@@ -92,7 +97,7 @@ export class CanonicalLiveEventPublisher {
 
   private createDraft(
     routing: CanonicalLiveEventRouting,
-    event: AgentEvent,
+    runtimeEvent: ProviderRuntimeEvent,
     sourceIdentities: readonly ProviderIdentity[],
     sourceSequence: number,
   ): ProviderEventBatch["events"][number] {
@@ -111,7 +116,7 @@ export class CanonicalLiveEventPublisher {
       sourceIdentities,
       sourceSequence,
       providerTimestamp: timestamp,
-      ...(event.type === AgentEventType.TextDelta ? { ingestClass: "volatile" as const } : {}),
+      ...(runtimeEvent.event.type === AgentEventType.TextDelta ? { ingestClass: "volatile" as const } : {}),
       payload: {
         type: "item.recorded",
         item: {
@@ -120,7 +125,7 @@ export class CanonicalLiveEventPublisher {
           turnId: routing.turnId,
           kind: "system",
           providerIdentities: [...sourceIdentities],
-          payload: { projection: "agentLiveEvent", event },
+          payload: { projection: "providerRuntimeEvent", runtimeEvent },
           createdAt: timestamp,
           updatedAt: timestamp,
         },

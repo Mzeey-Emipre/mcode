@@ -56,8 +56,9 @@ describe("internal thread-control MCP workflow", () => {
       })),
       cleanupInterruptedProvisioning: vi.fn().mockResolvedValue(true),
     };
+    const activeThreadIds = vi.fn().mockReturnValue([]);
     const agentService = {
-      activeThreadIds: vi.fn().mockReturnValue([]),
+      runtimeAccess: () => ({ activeThreadIds }),
       sendMessage: vi.fn().mockImplementation(async (input: {
         threadId: string;
         content: string;

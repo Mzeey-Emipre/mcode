@@ -11,17 +11,21 @@ export interface CommandContext {
   readonly provider: IAgentProvider;
 }
 
+/** A feature-owned effect request created while routing a command. */
+export interface GoalCommandEffectIntent {
+  readonly kind: "goal";
+  readonly objective: string;
+  readonly delivery: "native" | "provider";
+}
+
 /**
  * Result of routing a message through the {@link CommandRouter}:
  * - `passthrough` — no command claimed the message (or the resolved provider
  *   lacks the matched command's required capability); forward the original
  *   content to the model unchanged.
  * - `handled` — a command fully serviced the message; short-circuit the send.
- * - `rewrite` — a command rewrote the wire payload; the caller sends `content`
- *   instead of the original text, runs `onDispatch` just before dispatch, and
- *   runs `onRollback` if the send fails. The lifecycle closures keep
- *   command-specific side effects (e.g. installing a goal gate) out of the
- *   router and the orchestrator.
+ * - `rewrite` — a command rewrote the wire payload and may attach a typed
+ *   feature-owned effect request for the turn lifecycle.
  */
 export type CommandOutcome =
   | { readonly kind: "passthrough" }
@@ -29,8 +33,7 @@ export type CommandOutcome =
   | {
       readonly kind: "rewrite";
       readonly content: string;
-      readonly onDispatch?: () => void | Promise<void>;
-      readonly onRollback?: () => void | Promise<void>;
+      readonly effect?: GoalCommandEffectIntent;
     };
 
 /**
