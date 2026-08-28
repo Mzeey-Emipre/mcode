@@ -60,6 +60,9 @@ docs/superpowers/
 .superpowers/
 .ai/
 
+# Local task specifications and ticket drafts
+.scratch/
+
 # Build cache artifacts
 *.timestamp-*.mjs
 *.tsbuildinfo
