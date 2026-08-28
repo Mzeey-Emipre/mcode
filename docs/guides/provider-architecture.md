@@ -37,3 +37,34 @@ When adding a new provider:
 - Guarantee `ended` event emission in every exit path (clean completion, error, crash, timeout)
 - Filter stderr: classify lines as benign (debug log) or fatal (session teardown), never
   surface raw stderr as user-facing error messages
+
+## Event boundary
+
+A provider emits a `ProviderRuntimeEvent`. Its `event` is provider-neutral data
+that may reach the renderer. Its optional extension contains provider-native
+evidence that must not reach the renderer.
+
+The server accepts runtime events in this order:
+
+```text
+Provider runtime event → provider ingress → provider adapter → turn event pipeline → AgentEvent
+```
+
+Ingress validates the provider identity, queues the event, and preserves its
+receipt when it came from a canonical commit. An adapter may forward a generic
+event, consume private provider work, or reject malformed native evidence with
+a diagnostic. Only a forwarded `AgentEvent` enters narration, lifecycle, and
+renderer publication.
+
+Codex collaboration evidence uses a Codex adapter. Claude, Cursor, and Copilot
+send generic runtime events and do not invoke that adapter. A new provider adds
+an adapter only when it has private native evidence that requires server-side
+projection.
+
+Canonical commits hand their committed runtime envelopes directly to ingress.
+The resulting receipt means durable acceptance or queueing. It never means that
+the event was published to the renderer.
+
+`AgentService` owns provider selection and narrow parent-turn durability. It
+does not import a concrete provider, a provider adapter, or a canonical
+implementation.

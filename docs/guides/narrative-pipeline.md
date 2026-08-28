@@ -7,13 +7,13 @@ the specific traps we hit so the next person doesn't trip on them.
 
 If you are about to touch any of these files, **read this first**:
 
-- `apps/server/src/features/providers/adapters/claude/claude-provider.ts` (event source)
+- `apps/server/src/features/providers/` (runtime event source and provider projection)
 - `apps/server/src/features/agents/conversation/narrative/narrative-store.ts` (write seam: enrichment +
   classification + persistence; owns the per-turn buffers and the
   `agentCallStack`. Also owns the read seam, `load`.)
-- `apps/server/src/features/agents/orchestration/agent-service.ts` (event dispatch; delegates the
-  write seam to NarrativeStore and retains turn-level concerns — turn snapshots,
-  `turn.persisted` broadcast, late-hook flushing)
+- `apps/server/src/features/agents/orchestration/agent-service.ts` (turn orchestration; delegates
+  the write seam to NarrativeStore and retains turn-level concerns: turn snapshots,
+  `turn.persisted` broadcast, and late-hook flushing)
 - `apps/server/src/index.ts` (broadcast layer)
 - `apps/web/src/stores/threadStore.ts` (validated AgentEvent projection and
   client volatile state lifecycle)
@@ -27,17 +27,23 @@ If you are about to touch any of these files, **read this first**:
 ## End-to-end data flow
 
 ```
-SDK message (parent_tool_use_id on top level)
+Provider-native event
     │
     ▼
-claude-provider.ts emits AgentEvent { type: "toolUse", parentToolCallId? }
+Provider runtime event keeps native evidence separate from AgentEvent data
     │
     ▼
-agent-service.ts ToolUse handler → narrative-store.ts bufferToolCall
+Provider ingress validates, queues, and selects a provider adapter
+    │
+    ▼
+Adapter forwards a provider-neutral AgentEvent or consumes private provider work
+    │
+    ▼
+Turn event pipeline ToolUse handler → narrative-store.ts bufferToolCall
   (writes to the per-turn tool-call buffer for later persist)
     │
     ▼
-index.ts on("event") enriches missing parentToolCallId via
+Turn event pipeline enriches missing parentToolCallId via
   narrativeStore.getCurrentParentToolCallId (agentCallStack fallback)
     │
     ▼
@@ -65,6 +71,11 @@ PersistedTurnFooter appears after narrative.list RPC resolves
 ```
 
 Every step has at least one trap. Read on.
+
+Provider-native identity and child evidence stay before the adapter boundary.
+The narrative pipeline, WebSocket payload, and renderer receive only
+provider-neutral `AgentEvent` data. This keeps child lifecycle persistence
+private while preserving normal sub-agent rows in the parent timeline.
 
 ### Renderer ownership
 

@@ -59,6 +59,15 @@ reuse). Each Provider *is* its own Protocol adapter (the Provider class
 implements the interface); composition with the Session runtime, not
 inheritance.
 
+### Provider runtime event
+A provider-to-server event that can include provider-native evidence needed for
+server-side interpretation. It is not a renderer event.
+
+### Agent event
+A provider-neutral event used by the server and renderer to represent a turn's
+visible progress, such as text, tools, lifecycle, and errors. It excludes
+provider-native identity and private child evidence.
+
 ## Workspaces and worktrees
 
 ### Platform command
@@ -298,6 +307,11 @@ intermediate steps occurred. Costs, token counts, and tool-call sequences are
 attributed per-turn, and several pieces of client-side state are scoped to the
 current turn.
 
+### Turn attempt
+One provider dispatch within a Turn. A transient retry starts another attempt
+but keeps the same Turn identity.
+_Avoid_: Retry turn
+
 ### Tool call
 A single tool invocation the agent makes during a turn (e.g. `Read`,
 `Bash`, `Grep`, `Edit`). Each tool call has an input, a result, and a
@@ -318,6 +332,9 @@ It remains part of the parent Turn. Each sub-agent call's events are attributed
 to its parent via `parentToolCallId` so the narrative timeline can nest them
 correctly. The phrase “use a sub-agent” means this provider-native behavior;
 it never authorizes [[Thread control]].
+
+Provider-native identity evidence links a sub-agent thread to its sub-agent
+call. A name or a heuristic alone does not establish that relationship.
 
 Sub-agent calls are **always shown** in the user's timeline; the user
 should be able to tell when the agent has handed work to a sub-agent. From
@@ -457,6 +474,11 @@ provider or turn failure).
 > **Codebase mismatch.** Canonical persistence currently stores
 > `Completed|Interrupted|Errored`, so it lacks the distinct `Cancelled`
 > outcome.
+
+### Terminal proof
+Authoritative provider or system evidence that confirms one [[Turn outcome]].
+A final-looking assistant response is not terminal proof.
+_Avoid_: Final response
 
 ### Empty turn (recordable activity)
 A turn that produced nothing worth keeping: no tool call, no assistant body,
