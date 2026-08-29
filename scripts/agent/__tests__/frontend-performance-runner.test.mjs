@@ -232,6 +232,50 @@ function createExpectedVListLifecycleFacts() {
       portalHostTokenAfter: "portal-host-4",
       visibleRowIdsAfter: VLIST_SCROLL_ROWS.slice(4, 8).map(([rowId]) => rowId),
     },
+    behavior: {
+      dynamicHeight: {
+        rowId: "permission-request:dynamic:3",
+        anchorRowId: "message:dynamic:5",
+        renderedHeightBefore: 84,
+        renderedHeightAfter: 480,
+        poolHeightBefore: 84,
+        poolHeightAfter: 480,
+        anchorTopBefore: 24,
+        anchorTopAfter: 24,
+        measurementSettled: true,
+      },
+      tailFollow: {
+        tailFollowed: true,
+        userAwayPreserved: true,
+      },
+      stickyJump: {
+        rowId: "message:sticky:0",
+        targetWasUnmounted: true,
+        targetVisible: true,
+        activatedByStickyUserControl: true,
+      },
+      selection: {
+        expectedText: "selection selectable row 0.",
+        selectedText: "selection selectable row 0.",
+      },
+      scrollToMessage: {
+        rowId: "permission-request:scroll-to-message:8",
+        targetWasUnmounted: true,
+        targetVisible: true,
+      },
+      threadSwitchRestore: {
+        anchorRowId: "turn-changes:thread-a:4",
+        anchorTopBefore: 24,
+        anchorTopAfter: 24,
+        restoreSource: "automatic",
+      },
+      offscreenRetainedState: {
+        rowId: "message:retained-state:0",
+        draftBefore: "retained-state-draft",
+        draftAfter: "retained-state-draft",
+        rowWasUnmounted: true,
+      },
+    },
     events: [
       ...rowEvents(VLIST_A_ROW_ID, 2, 1),
       ...rowEvents(VLIST_B_ROW_ID, 1, 1),
@@ -367,6 +411,130 @@ describe("frontend performance runner", () => {
     assert.ok(validateVListLifecycleFacts(remountedDuringPrepend).includes(
       "vlist lifecycle assertion failed: prependPreservesAnchorAndIdentity",
     ));
+
+    const dynamicHeightDidNotGrowAfterTheBaseline = {
+      ...expectedFacts,
+      behavior: {
+        ...expectedFacts.behavior,
+        dynamicHeight: {
+          ...expectedFacts.behavior.dynamicHeight,
+          renderedHeightAfter: expectedFacts.behavior.dynamicHeight.renderedHeightBefore,
+          poolHeightAfter: expectedFacts.behavior.dynamicHeight.poolHeightBefore,
+        },
+      },
+    };
+    assert.equal(
+      deriveVListLifecycleGate(dynamicHeightDidNotGrowAfterTheBaseline).checks.dynamicHeightSettles,
+      false,
+    );
+    assert.ok(validateVListLifecycleFacts(dynamicHeightDidNotGrowAfterTheBaseline).includes(
+      "vlist lifecycle assertion failed: dynamicHeightSettles",
+    ));
+
+    const measuredHeightMovedTheReadingAnchor = {
+      ...expectedFacts,
+      behavior: {
+        ...expectedFacts.behavior,
+        dynamicHeight: {
+          ...expectedFacts.behavior.dynamicHeight,
+          anchorTopAfter: expectedFacts.behavior.dynamicHeight.anchorTopBefore + 20,
+        },
+      },
+    };
+    assert.equal(
+      deriveVListLifecycleGate(measuredHeightMovedTheReadingAnchor).checks.dynamicHeightSettles,
+      false,
+    );
+
+    const appendMovedTheReader = {
+      ...expectedFacts,
+      behavior: {
+        ...expectedFacts.behavior,
+        tailFollow: { tailFollowed: true, userAwayPreserved: false },
+      },
+    };
+    assert.equal(deriveVListLifecycleGate(appendMovedTheReader).checks.tailFollowAndUserAway, false);
+
+    const stickyJumpLeftTheTargetUnmounted = {
+      ...expectedFacts,
+      behavior: {
+        ...expectedFacts.behavior,
+        stickyJump: { ...expectedFacts.behavior.stickyJump, targetVisible: false },
+      },
+    };
+    assert.equal(deriveVListLifecycleGate(stickyJumpLeftTheTargetUnmounted).checks.stickyMessageJump, false);
+
+    const stickyJumpBypassedTheUserControl = {
+      ...expectedFacts,
+      behavior: {
+        ...expectedFacts.behavior,
+        stickyJump: {
+          ...expectedFacts.behavior.stickyJump,
+          activatedByStickyUserControl: false,
+        },
+      },
+    };
+    assert.equal(deriveVListLifecycleGate(stickyJumpBypassedTheUserControl).checks.stickyMessageJump, false);
+
+    const recycledTextSelection = {
+      ...expectedFacts,
+      behavior: {
+        ...expectedFacts.behavior,
+        selection: { ...expectedFacts.behavior.selection, selectedText: "" },
+      },
+    };
+    assert.equal(deriveVListLifecycleGate(recycledTextSelection).checks.messageTextSelection, false);
+
+    const unmountedMessageDidNotScrollIntoView = {
+      ...expectedFacts,
+      behavior: {
+        ...expectedFacts.behavior,
+        scrollToMessage: { ...expectedFacts.behavior.scrollToMessage, targetVisible: false },
+      },
+    };
+    assert.equal(
+      deriveVListLifecycleGate(unmountedMessageDidNotScrollIntoView).checks.scrollToMessage,
+      false,
+    );
+
+    const threadSwitchLostItsAnchor = {
+      ...expectedFacts,
+      behavior: {
+        ...expectedFacts.behavior,
+        threadSwitchRestore: {
+          ...expectedFacts.behavior.threadSwitchRestore,
+          anchorTopAfter: expectedFacts.behavior.threadSwitchRestore.anchorTopBefore + 20,
+        },
+      },
+    };
+    assert.equal(deriveVListLifecycleGate(threadSwitchLostItsAnchor).checks.threadSwitchRestoresAnchor, false);
+
+    const threadSwitchRepairedTheRestoreManually = {
+      ...expectedFacts,
+      behavior: {
+        ...expectedFacts.behavior,
+        threadSwitchRestore: {
+          ...expectedFacts.behavior.threadSwitchRestore,
+          restoreSource: "manual",
+        },
+      },
+    };
+    assert.equal(
+      deriveVListLifecycleGate(threadSwitchRepairedTheRestoreManually).checks.threadSwitchRestoresAnchor,
+      false,
+    );
+
+    const recycledRowLostItsDraft = {
+      ...expectedFacts,
+      behavior: {
+        ...expectedFacts.behavior,
+        offscreenRetainedState: {
+          ...expectedFacts.behavior.offscreenRetainedState,
+          draftAfter: "retained-state-draft-lost",
+        },
+      },
+    };
+    assert.equal(deriveVListLifecycleGate(recycledRowLostItsDraft).checks.offscreenStateIsRetained, false);
 
     assert.equal(getFrontendPerformanceExitCode({
       correctness: { passed: true },

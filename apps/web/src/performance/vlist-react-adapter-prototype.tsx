@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
-import { createVList, type VList, type VListPlugin } from "vlist";
+import { autosize, createVList, type VList, type VListPlugin } from "vlist";
 import "vlist/styles";
 
 type ProbeRowKind = "message" | "narrative-flow" | "narrative-indicator" | "permission-request" | "turn-changes";
@@ -11,6 +11,7 @@ type ProbeRow = {
   readonly kind: ProbeRowKind;
   readonly title: string;
   readonly initialDraft: string;
+  readonly detail: string;
 };
 
 type LifecycleEvent = {
@@ -103,6 +104,61 @@ type LifecycleProbeResult = {
     readonly portalHostTokenAfter: string | null;
     readonly visibleRowIdsAfter: readonly string[];
   };
+  readonly behavior: {
+    readonly dynamicHeight: DynamicHeightObservation;
+    readonly tailFollow: TailFollowObservation;
+    readonly stickyJump: StickyJumpObservation;
+    readonly selection: SelectionObservation;
+    readonly scrollToMessage: JumpObservation;
+    readonly threadSwitchRestore: ThreadSwitchRestoreObservation;
+    readonly offscreenRetainedState: RetainedStateObservation;
+  };
+};
+
+type DynamicHeightObservation = AnchorObservation & {
+  readonly rowId: string;
+  readonly renderedHeightBefore: number;
+  readonly renderedHeightAfter: number;
+  readonly poolHeightBefore: number;
+  readonly poolHeightAfter: number;
+  readonly measurementSettled: boolean;
+};
+
+type TailFollowObservation = {
+  readonly tailFollowed: boolean;
+  readonly userAwayPreserved: boolean;
+};
+
+type JumpObservation = {
+  readonly rowId: string;
+  readonly targetWasUnmounted: boolean;
+  readonly targetVisible: boolean;
+};
+
+type StickyJumpObservation = JumpObservation & {
+  readonly activatedByStickyUserControl: boolean;
+};
+
+type SelectionObservation = {
+  readonly expectedText: string;
+  readonly selectedText: string;
+};
+
+type AnchorObservation = {
+  readonly anchorRowId: string;
+  readonly anchorTopBefore: number;
+  readonly anchorTopAfter: number;
+};
+
+type ThreadSwitchRestoreObservation = AnchorObservation & {
+  readonly restoreSource: "automatic" | "manual" | "none";
+};
+
+type RetainedStateObservation = {
+  readonly rowId: string;
+  readonly draftBefore: string;
+  readonly draftAfter: string;
+  readonly rowWasUnmounted: boolean;
 };
 
 type PortalEntry = {
@@ -137,6 +193,7 @@ const A_ROW: ProbeRow = {
   kind: "message",
   title: "Assistant message A",
   initialDraft: "draft-A",
+  detail: "Assistant message content A.",
 };
 
 const B_ROW: ProbeRow = {
@@ -144,6 +201,7 @@ const B_ROW: ProbeRow = {
   kind: "narrative-flow",
   title: "Narrative flow B",
   initialDraft: "draft-B",
+  detail: "Narrative flow content B.",
 };
 
 const STATIC_ROWS: readonly ProbeRow[] = [
@@ -152,18 +210,21 @@ const STATIC_ROWS: readonly ProbeRow[] = [
     kind: "narrative-indicator",
     title: "Narrative indicator",
     initialDraft: "indicator-draft",
+    detail: "Narrative progress indicator.",
   },
   {
     id: "permission-request:permission-vlist-probe",
     kind: "permission-request",
     title: "Permission request",
     initialDraft: "permission-draft",
+    detail: "Permission request details.",
   },
   {
     id: "turn-changes:message-vlist-probe",
     kind: "turn-changes",
     title: "Turn changes",
     initialDraft: "changes-draft",
+    detail: "Changed files for this turn.",
   },
 ];
 
@@ -172,6 +233,7 @@ const SCROLL_ROWS: readonly ProbeRow[] = Array.from({ length: 12 }, (_, index) =
   kind: "message" as const,
   title: `Scroll message ${index}`,
   initialDraft: `scroll-draft-${index}`,
+  detail: `Scroll message body ${index}.`,
 }));
 
 const PREPEND_ROWS: readonly ProbeRow[] = Array.from({ length: 2 }, (_, index) => ({
@@ -179,12 +241,38 @@ const PREPEND_ROWS: readonly ProbeRow[] = Array.from({ length: 2 }, (_, index) =
   kind: "message" as const,
   title: `Prepended message ${index}`,
   initialDraft: `prepend-draft-${index}`,
+  detail: `Prepended message body ${index}.`,
 }));
+
+const BEHAVIOR_ROW_KINDS: readonly ProbeRowKind[] = [
+  "message",
+  "narrative-flow",
+  "narrative-indicator",
+  "permission-request",
+  "turn-changes",
+];
 
 const BODY_PORTAL_ROW_IDS = [A_ROW.id, B_ROW.id, ...STATIC_ROWS.map((row) => row.id), ...SCROLL_ROWS.map((row) => row.id)];
 
 function rowsWithPrimary(primary: ProbeRow): ProbeRow[] {
   return [primary, ...STATIC_ROWS];
+}
+
+function createBehaviorRows(scope: string, count: number): ProbeRow[] {
+  return Array.from({ length: count }, (_, index) => {
+    const kind = BEHAVIOR_ROW_KINDS[index % BEHAVIOR_ROW_KINDS.length] ?? "message";
+    return {
+      id: `${kind}:${scope}:${index}`,
+      kind,
+      title: `${kind} ${index}`,
+      initialDraft: `${scope}-draft-${index}`,
+      detail: `${scope} selectable row ${index}.`,
+    };
+  });
+}
+
+function createLongBehaviorDetail(scope: string, index: number): string {
+  return `${scope} dynamic row ${index}. ${"measured height ".repeat(32)}`;
 }
 
 function waitForFrames(count = 2): Promise<void> {
@@ -297,7 +385,9 @@ function ProbeRowView({
         style={{ border: "1px solid #5b6475", borderRadius: 6, margin: 6, padding: 8, background: "#171d29", color: "#edf2f7" }}
       >
         <strong>{row.title}</strong>
-        <p style={{ margin: "6px 0" }}>{row.kind}</p>
+        <p data-vlist-probe-content={row.id} style={{ margin: "6px 0", overflowWrap: "anywhere", whiteSpace: "pre-wrap" }}>
+          {row.detail}
+        </p>
         <label>
           Draft
           <input
@@ -333,6 +423,11 @@ function ProbePortals({ entries, record }: { readonly entries: readonly PortalEn
   ));
 }
 
+type VListReactAdapterProbeOptions = {
+  readonly dynamicHeights?: boolean;
+  readonly viewportHeight?: number;
+};
+
 class VListReactAdapterProbe {
   private readonly container: HTMLElement;
   private readonly reactContainer: HTMLElement;
@@ -346,6 +441,10 @@ class VListReactAdapterProbe {
   private readonly events: LifecycleEvent[] = [];
   private readonly transitions: TransitionObservation[] = [];
   private readonly list: VList<ProbeRow>;
+  private readonly dynamicHeights: boolean;
+  private readonly viewportHeight: number;
+  private readonly stickyUserMessageControl: HTMLButtonElement;
+  private readonly threadAnchors = new Map<string, string>();
   private nextPoolHostToken = 0;
   private nextPortalHostToken = 0;
   private rows: readonly ProbeRow[] = [];
@@ -354,11 +453,14 @@ class VListReactAdapterProbe {
   private pendingRelocatedRows: readonly PendingRelocatedRow[] = [];
   private pendingPrependCount = 0;
   private nextTransitionCause: TransitionObservation["cause"] = "native-scroll";
+  private stickyUserControlActivationCount = 0;
 
-  constructor() {
+  constructor(options: VListReactAdapterProbeOptions = {}) {
+    this.dynamicHeights = options.dynamicHeights === true;
+    this.viewportHeight = options.viewportHeight ?? 180;
     this.container = document.createElement("div");
     this.container.dataset.vlistProbe = "container";
-    this.container.style.cssText = "height:180px;width:620px;overflow:hidden;padding:8px;background:#0f1720";
+    this.container.style.cssText = `height:${this.viewportHeight}px;width:620px;overflow:hidden;padding:8px;background:#0f1720`;
     document.body.appendChild(this.container);
 
     this.reactContainer = document.createElement("div");
@@ -371,6 +473,20 @@ class VListReactAdapterProbe {
     this.parkingContainer.dataset.vlistProbe = "parking";
     document.body.appendChild(this.parkingContainer);
 
+    this.stickyUserMessageControl = document.createElement("button");
+    this.stickyUserMessageControl.type = "button";
+    this.stickyUserMessageControl.dataset.vlistProbeStickyUserControl = "";
+    this.stickyUserMessageControl.textContent = "Jump to sticky user message";
+    this.stickyUserMessageControl.addEventListener("click", () => {
+      const rowId = this.stickyUserMessageControl.dataset.vlistProbeStickyUserControl;
+      if (!rowId) return;
+      const index = this.rows.findIndex((row) => row.id === rowId);
+      if (index === -1) return;
+      this.stickyUserControlActivationCount += 1;
+      this.list.scrollToIndex(index, "center");
+    });
+    document.body.appendChild(this.stickyUserMessageControl);
+
     const reactLifecyclePlugin: VListPlugin<ProbeRow> = {
       name: "react-lifecycle-probe",
       priority: 100,
@@ -380,22 +496,27 @@ class VListReactAdapterProbe {
       },
     };
 
-    this.list = createVList<ProbeRow>({
-      container: this.container,
-      classPrefix: "vlist-prototype",
-      overscan: 0,
-      item: {
-        height: 84,
-        template: (row) => {
-          const portalHost = document.createElement("div");
-          portalHost.dataset.vlistProbeHost = row.id;
-          this.portalHostsByRowId.set(row.id, portalHost);
-          return portalHost;
-        },
-      },
-    }, [reactLifecyclePlugin]);
-    this.list.element.style.height = "180px";
-    this.getViewport().style.cssText = "height:180px;overflow:auto";
+    const template = (row: ProbeRow): HTMLElement => {
+      const portalHost = document.createElement("div");
+      portalHost.dataset.vlistProbeHost = row.id;
+      this.portalHostsByRowId.set(row.id, portalHost);
+      return portalHost;
+    };
+    this.list = this.dynamicHeights
+      ? createVList<ProbeRow>({
+          container: this.container,
+          classPrefix: "vlist-prototype",
+          overscan: 0,
+          item: { estimatedHeight: 84, template },
+        }, [autosize<ProbeRow>(), reactLifecyclePlugin])
+      : createVList<ProbeRow>({
+          container: this.container,
+          classPrefix: "vlist-prototype",
+          overscan: 0,
+          item: { height: 84, template },
+        }, [reactLifecyclePlugin]);
+    this.list.element.style.height = `${this.viewportHeight}px`;
+    this.getViewport().style.cssText = `height:${this.viewportHeight}px;overflow:auto`;
   }
 
   private record = (event: LifecycleEvent): void => {
@@ -605,6 +726,21 @@ class VListReactAdapterProbe {
     await waitForFrames();
   }
 
+  updateRowDetail(rowId: string, detail: string): void {
+    const row = this.rowsById.get(rowId);
+    if (!row) throw new Error(`The updated row ${rowId} is outside the current rows.`);
+    const updatedRow = { ...row, detail };
+    this.rows = this.rows.map((currentRow) => currentRow.id === rowId ? updatedRow : currentRow);
+    this.rowsById.set(rowId, updatedRow);
+    this.list.updateItem(rowId, { detail });
+    const renderedRows = [...this.reactRowsById.keys()].map((renderedRowId) => {
+      const renderedRow = this.rowsById.get(renderedRowId);
+      if (!renderedRow) throw new Error(`The rendered row ${renderedRowId} is outside the current rows.`);
+      return renderedRow;
+    });
+    this.renderRows(renderedRows);
+  }
+
   async scrollNativelyTo(index: number): Promise<void> {
     const expectedRow = this.rows[index];
     if (!expectedRow) throw new Error(`The native scroll target ${index} is outside the row range.`);
@@ -616,6 +752,9 @@ class VListReactAdapterProbe {
   }
 
   async prependWithAnchor(rows: readonly ProbeRow[], anchorRow: ProbeRow): Promise<void> {
+    if (this.dynamicHeights) {
+      throw new Error("The fixed-height prepend probe cannot run with autosize.");
+    }
     this.rows = [...rows, ...this.rows];
     for (const row of rows) this.rowsById.set(row.id, row);
     this.pendingPrependCount = rows.length;
@@ -623,6 +762,121 @@ class VListReactAdapterProbe {
     this.list.prependItems([...rows]);
     await this.waitForCommittedRows([anchorRow]);
     await waitForFrames();
+  }
+
+  async appendRows(rows: readonly ProbeRow[]): Promise<void> {
+    this.rows = [...this.rows, ...rows];
+    for (const row of rows) this.rowsById.set(row.id, row);
+    this.nextTransitionCause = "set-items";
+    this.list.appendItems([...rows]);
+    await waitForFrames(3);
+  }
+
+  async scrollToRow(rowId: string, align: "start" | "center" | "end" = "center"): Promise<void> {
+    const index = this.rows.findIndex((row) => row.id === rowId);
+    const row = this.rows[index];
+    if (!row) throw new Error(`The scroll target ${rowId} is outside the row range.`);
+    this.list.scrollToIndex(index, align);
+    await this.waitForCommittedRows([row]);
+    await waitForFrames(3);
+  }
+
+  async showThread(threadId: string, rows: readonly ProbeRow[]): Promise<"automatic" | "none"> {
+    await this.show(rows);
+    const anchorRowId = this.threadAnchors.get(threadId);
+    if (!anchorRowId) return "none";
+    const index = this.rows.findIndex((row) => row.id === anchorRowId);
+    const anchorRow = this.rows[index];
+    if (!anchorRow) return "none";
+    this.list.scrollToIndex(index, "start");
+    await this.waitForCommittedRows([anchorRow]);
+    await waitForFrames(3);
+    return "automatic";
+  }
+
+  rememberThreadAnchor(threadId: string, rowId: string): void {
+    if (!this.rowsById.has(rowId)) {
+      throw new Error(`The thread anchor ${rowId} is outside the current rows.`);
+    }
+    this.threadAnchors.set(threadId, rowId);
+  }
+
+  setScrollTop(scrollTop: number): void {
+    const viewport = this.getViewport();
+    viewport.scrollTop = scrollTop;
+    viewport.dispatchEvent(new Event("scroll"));
+  }
+
+  isAtTail(): boolean {
+    const viewport = this.getViewport();
+    return Math.abs(viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight) <= 2;
+  }
+
+  isRowRendered(rowId: string): boolean {
+    return document.querySelector(`[data-vlist-probe-row="${rowId}"]`) !== null;
+  }
+
+  isRowVisible(rowId: string): boolean {
+    const row = document.querySelector<HTMLElement>(`[data-vlist-probe-row="${rowId}"]`);
+    if (!row) return false;
+    const rowRect = row.getBoundingClientRect();
+    const viewportRect = this.getViewport().getBoundingClientRect();
+    return rowRect.bottom > viewportRect.top && rowRect.top < viewportRect.bottom;
+  }
+
+  getRenderedRowHeight(rowId: string): number {
+    const row = document.querySelector<HTMLElement>(`[data-vlist-probe-row="${rowId}"]`);
+    if (!row) throw new Error(`The probe row for ${rowId} was not rendered.`);
+    return row.getBoundingClientRect().height;
+  }
+
+  getPoolRowHeight(rowId: string): number {
+    const row = document.querySelector<HTMLElement>(`[data-vlist-probe-row="${rowId}"]`);
+    const poolRow = row?.closest<HTMLElement>(".vlist-prototype-item");
+    if (!poolRow) throw new Error(`vlist did not keep a pool item for ${rowId}.`);
+    return poolRow.getBoundingClientRect().height;
+  }
+
+  async waitForMeasurementSettlement(rowId: string, minimumPoolHeight: number): Promise<void> {
+    for (let frame = 0; frame < 20; frame += 1) {
+      await waitForFrames(1);
+      const poolHeight = this.getPoolRowHeight(rowId);
+      if (poolHeight < minimumPoolHeight) continue;
+      await waitForFrames(2);
+      const settledPoolHeight = this.getPoolRowHeight(rowId);
+      if (Math.abs(settledPoolHeight - poolHeight) <= 1) return;
+    }
+    throw new Error(`vlist did not settle the measured height for ${rowId}.`);
+  }
+
+  async activateStickyUserMessageControl(rowId: string): Promise<boolean> {
+    const row = this.rowsById.get(rowId);
+    if (!row) throw new Error(`The sticky user-message target ${rowId} is outside the current rows.`);
+    const activationCountBefore = this.stickyUserControlActivationCount;
+    this.stickyUserMessageControl.dataset.vlistProbeStickyUserControl = rowId;
+    this.stickyUserMessageControl.click();
+    await this.waitForCommittedRows([row]);
+    await waitForFrames(3);
+    return this.stickyUserControlActivationCount === activationCountBefore + 1;
+  }
+
+  setDraft(rowId: string, value: string): void {
+    setInputValue(getInput(rowId), value);
+  }
+
+  getDraft(rowId: string): string {
+    return getInput(rowId).value;
+  }
+
+  selectContent(rowId: string): string {
+    const content = document.querySelector(`[data-vlist-probe-content="${rowId}"]`);
+    if (!content) throw new Error(`The probe content for ${rowId} was not rendered.`);
+    const range = document.createRange();
+    range.selectNodeContents(content);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    return selection?.toString() ?? "";
   }
 
   getRowTop(rowId: string): number {
@@ -650,10 +904,158 @@ class VListReactAdapterProbe {
     this.container.remove();
     this.reactContainer.remove();
     this.parkingContainer.remove();
+    this.stickyUserMessageControl.remove();
     for (const bodyPortalHost of this.bodyPortalHosts.values()) {
       bodyPortalHost.remove();
     }
   }
+}
+
+async function withProbe<T>(
+  operation: (adapter: VListReactAdapterProbe) => Promise<T>,
+  options?: VListReactAdapterProbeOptions,
+): Promise<T> {
+  const adapter = new VListReactAdapterProbe(options);
+  try {
+    return await operation(adapter);
+  } finally {
+    await adapter.dispose();
+  }
+}
+
+async function runVListBehaviorProbe(): Promise<LifecycleProbeResult["behavior"]> {
+  const dynamicHeight = await withProbe(async (adapter) => {
+    const rows = createBehaviorRows("dynamic", 12);
+    const resizedRow = rows[3];
+    const anchorRow = rows[5];
+    if (!resizedRow || !anchorRow) throw new Error("The dynamic-height probe rows are missing.");
+
+    await adapter.show(rows);
+    await adapter.scrollNativelyTo(3);
+    const renderedHeightBefore = adapter.getRenderedRowHeight(resizedRow.id);
+    const poolHeightBefore = adapter.getPoolRowHeight(resizedRow.id);
+    const anchorTopBefore = adapter.getRowTop(anchorRow.id);
+    adapter.updateRowDetail(resizedRow.id, createLongBehaviorDetail("dynamic", 3));
+    await adapter.waitForMeasurementSettlement(resizedRow.id, 148);
+    const anchorTopAfter = adapter.getRowTop(anchorRow.id);
+    return {
+      rowId: resizedRow.id,
+      anchorRowId: anchorRow.id,
+      renderedHeightBefore,
+      renderedHeightAfter: adapter.getRenderedRowHeight(resizedRow.id),
+      poolHeightBefore,
+      poolHeightAfter: adapter.getPoolRowHeight(resizedRow.id),
+      anchorTopBefore,
+      anchorTopAfter,
+      measurementSettled: true,
+    };
+  }, { dynamicHeights: true, viewportHeight: 480 });
+
+  const tailFollow = await withProbe(async (adapter) => {
+    const rows = createBehaviorRows("tail", 12);
+    await adapter.show(rows);
+    const tailRow = rows.at(-1);
+    if (!tailRow) throw new Error("The tail-follow probe rows are missing.");
+    await adapter.scrollToRow(tailRow.id, "end");
+    await adapter.appendRows(createBehaviorRows("tail-append", 1));
+    const tailFollowed = adapter.isAtTail();
+    adapter.setScrollTop(0);
+    await waitForFrames(2);
+    await adapter.appendRows(createBehaviorRows("tail-away", 1));
+    return {
+      tailFollowed,
+      userAwayPreserved: adapter.isAtTail() === false,
+    };
+  });
+
+  const stickyJump = await withProbe(async (adapter) => {
+    const rows = createBehaviorRows("sticky", 12);
+    const userRow = rows[0];
+    if (!userRow) throw new Error("The sticky-jump probe row is missing.");
+    await adapter.show(rows);
+    await adapter.scrollNativelyTo(8);
+    const targetWasUnmounted = adapter.isRowRendered(userRow.id) === false;
+    const activatedByStickyUserControl = await adapter.activateStickyUserMessageControl(userRow.id);
+    return {
+      rowId: userRow.id,
+      targetWasUnmounted,
+      targetVisible: adapter.isRowVisible(userRow.id),
+      activatedByStickyUserControl,
+    };
+  });
+
+  const selection = await withProbe(async (adapter) => {
+    const rows = createBehaviorRows("selection", 12);
+    const selectedRow = rows[0];
+    if (!selectedRow) throw new Error("The selection probe row is missing.");
+    await adapter.show(rows);
+    return {
+      expectedText: selectedRow.detail,
+      selectedText: adapter.selectContent(selectedRow.id).trim(),
+    };
+  });
+
+  const scrollToMessage = await withProbe(async (adapter) => {
+    const rows = createBehaviorRows("scroll-to-message", 12);
+    const targetRow = rows[8];
+    if (!targetRow) throw new Error("The scroll-to-message probe row is missing.");
+    await adapter.show(rows);
+    const targetWasUnmounted = adapter.isRowRendered(targetRow.id) === false;
+    await adapter.scrollToRow(targetRow.id, "center");
+    return {
+      rowId: targetRow.id,
+      targetWasUnmounted,
+      targetVisible: adapter.isRowVisible(targetRow.id),
+    };
+  });
+
+  const threadSwitchRestore = await withProbe(async (adapter) => {
+    const firstThreadRows = createBehaviorRows("thread-a", 12);
+    const secondThreadRows = createBehaviorRows("thread-b", 12);
+    const anchorRow = firstThreadRows[4];
+    if (!anchorRow) throw new Error("The thread-switch probe anchor row is missing.");
+    await adapter.showThread("thread-a", firstThreadRows);
+    await adapter.scrollNativelyTo(4);
+    const anchorTopBefore = adapter.getRowTop(anchorRow.id);
+    adapter.rememberThreadAnchor("thread-a", anchorRow.id);
+    await adapter.showThread("thread-b", secondThreadRows);
+    const restoreSource = await adapter.showThread("thread-a", firstThreadRows);
+    return {
+      anchorRowId: anchorRow.id,
+      anchorTopBefore,
+      anchorTopAfter: adapter.getRowTop(anchorRow.id),
+      restoreSource,
+    };
+  });
+
+  const offscreenRetainedState = await withProbe(async (adapter) => {
+    const rows = createBehaviorRows("retained-state", 12);
+    const retainedRow = rows[0];
+    if (!retainedRow) throw new Error("The retained-state probe row is missing.");
+    await adapter.show(rows);
+    const draftBefore = "retained-state-draft";
+    adapter.setDraft(retainedRow.id, draftBefore);
+    await waitForFrames();
+    await adapter.scrollNativelyTo(4);
+    const rowWasUnmounted = adapter.isRowRendered(retainedRow.id) === false;
+    await adapter.scrollToRow(retainedRow.id, "start");
+    return {
+      rowId: retainedRow.id,
+      draftBefore,
+      draftAfter: adapter.getDraft(retainedRow.id),
+      rowWasUnmounted,
+    };
+  });
+
+  return {
+    dynamicHeight,
+    tailFollow,
+    stickyJump,
+    selection,
+    scrollToMessage,
+    threadSwitchRestore,
+    offscreenRetainedState,
+  };
 }
 
 /** Runs the vlist React portal lifecycle probe. */
@@ -775,6 +1177,7 @@ export async function runVListReactAdapterLifecycleProbe(): Promise<LifecyclePro
       transitions: adapter.getTransitions(),
       events: adapter.getEvents(),
       prepend,
+      behavior: await runVListBehaviorProbe(),
     };
   } catch (error) {
     if (!adapterDisposed) await adapter.dispose();

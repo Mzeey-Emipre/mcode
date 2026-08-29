@@ -124,6 +124,13 @@ const VLIST_LIFECYCLE_CHECK_NAMES = Object.freeze([
   "staticRowsStableAcrossTransitions",
   "nativeScrollRecyclesHosts",
   "prependPreservesAnchorAndIdentity",
+  "dynamicHeightSettles",
+  "tailFollowAndUserAway",
+  "stickyMessageJump",
+  "messageTextSelection",
+  "scrollToMessage",
+  "threadSwitchRestoresAnchor",
+  "offscreenStateIsRetained",
 ]);
 const VLIST_LIFECYCLE_ROWS = Object.freeze([
   { rowId: "message:thread-vlist-probe:A", kind: "message" },
@@ -204,6 +211,15 @@ const VLIST_LIFECYCLE_TRANSITION_ROW_KEYS = Object.freeze([
   "portalHostConnected",
   "effectCleanupCount",
   "refDetachCount",
+]);
+const VLIST_BEHAVIOR_KEYS = Object.freeze([
+  "dynamicHeight",
+  "tailFollow",
+  "stickyJump",
+  "selection",
+  "scrollToMessage",
+  "threadSwitchRestore",
+  "offscreenRetainedState",
 ]);
 
 function isPlainObject(value) {
@@ -389,6 +405,103 @@ function hasExpectedPrependBehavior(prepend) {
     && JSON.stringify(prepend.visibleRowIdsAfter) === JSON.stringify(expectedVisibleRowIds);
 }
 
+function hasExpectedVListBehaviorShape(behavior) {
+  return isPlainObject(behavior)
+    && hasExactKeys(behavior, VLIST_BEHAVIOR_KEYS)
+    && isPlainObject(behavior.dynamicHeight)
+    && hasExactKeys(behavior.dynamicHeight, [
+      "anchorRowId",
+      "anchorTopAfter",
+      "anchorTopBefore",
+      "poolHeightAfter",
+      "poolHeightBefore",
+      "measurementSettled",
+      "renderedHeightAfter",
+      "renderedHeightBefore",
+      "rowId",
+    ])
+    && isPlainObject(behavior.tailFollow)
+    && hasExactKeys(behavior.tailFollow, ["tailFollowed", "userAwayPreserved"])
+    && isPlainObject(behavior.stickyJump)
+    && hasExactKeys(behavior.stickyJump, [
+      "activatedByStickyUserControl",
+      "rowId",
+      "targetVisible",
+      "targetWasUnmounted",
+    ])
+    && isPlainObject(behavior.selection)
+    && hasExactKeys(behavior.selection, ["expectedText", "selectedText"])
+    && isPlainObject(behavior.scrollToMessage)
+    && hasExactKeys(behavior.scrollToMessage, ["rowId", "targetVisible", "targetWasUnmounted"])
+    && isPlainObject(behavior.threadSwitchRestore)
+    && hasExactKeys(behavior.threadSwitchRestore, [
+      "anchorRowId",
+      "anchorTopAfter",
+      "anchorTopBefore",
+      "restoreSource",
+    ])
+    && isPlainObject(behavior.offscreenRetainedState)
+    && hasExactKeys(behavior.offscreenRetainedState, ["draftAfter", "draftBefore", "rowId", "rowWasUnmounted"]);
+}
+
+function hasExpectedDynamicHeightBehavior(behavior) {
+  const dynamicHeight = behavior.dynamicHeight;
+  return dynamicHeight.rowId === "permission-request:dynamic:3"
+    && dynamicHeight.anchorRowId === "message:dynamic:5"
+    && [
+      dynamicHeight.renderedHeightBefore,
+      dynamicHeight.renderedHeightAfter,
+      dynamicHeight.poolHeightBefore,
+      dynamicHeight.poolHeightAfter,
+      dynamicHeight.anchorTopBefore,
+      dynamicHeight.anchorTopAfter,
+    ].every(Number.isFinite)
+    && dynamicHeight.measurementSettled === true
+    && dynamicHeight.renderedHeightAfter > dynamicHeight.renderedHeightBefore
+    && dynamicHeight.poolHeightAfter > dynamicHeight.poolHeightBefore
+    && dynamicHeight.renderedHeightAfter > 148
+    && dynamicHeight.poolHeightAfter > 148
+    && Math.abs(dynamicHeight.anchorTopAfter - dynamicHeight.anchorTopBefore) <= 1;
+}
+
+function hasExpectedTailFollowBehavior(behavior) {
+  return behavior.tailFollow.tailFollowed === true
+    && behavior.tailFollow.userAwayPreserved === true;
+}
+
+function hasExpectedJumpBehavior(jump, rowId) {
+  return jump.rowId === rowId
+    && jump.targetWasUnmounted === true
+    && jump.targetVisible === true;
+}
+
+function hasExpectedStickyUserMessageBehavior(behavior) {
+  return behavior.stickyJump.activatedByStickyUserControl === true
+    && hasExpectedJumpBehavior(behavior.stickyJump, "message:sticky:0");
+}
+
+function hasExpectedSelectionBehavior(behavior) {
+  return behavior.selection.expectedText === "selection selectable row 0."
+    && behavior.selection.selectedText === behavior.selection.expectedText;
+}
+
+function hasExpectedThreadSwitchBehavior(behavior) {
+  const restore = behavior.threadSwitchRestore;
+  return restore.anchorRowId === "turn-changes:thread-a:4"
+    && Number.isFinite(restore.anchorTopBefore)
+    && Number.isFinite(restore.anchorTopAfter)
+    && restore.restoreSource === "automatic"
+    && Math.abs(restore.anchorTopAfter - restore.anchorTopBefore) <= 1;
+}
+
+function hasExpectedOffscreenRetainedState(behavior) {
+  const retainedState = behavior.offscreenRetainedState;
+  return retainedState.rowId === "message:retained-state:0"
+    && retainedState.draftBefore === "retained-state-draft"
+    && retainedState.rowWasUnmounted === true
+    && retainedState.draftAfter === retainedState.draftBefore;
+}
+
 /** Derives the lifecycle gate from raw browser facts returned by the vlist probe. */
 export function deriveVListLifecycleGate(facts) {
   const rawFactsPresent = isPlainObject(facts)
@@ -399,6 +512,7 @@ export function deriveVListLifecycleGate(facts) {
     && isPlainObject(facts.focus)
     && isPlainObject(facts.bodyPortals)
     && isPlainObject(facts.prepend)
+    && hasExpectedVListBehaviorShape(facts.behavior)
     && Array.isArray(facts.transitions)
     && hasVListEventTrace(facts.events);
   const events = rawFactsPresent ? facts.events : [];
@@ -407,6 +521,7 @@ export function deriveVListLifecycleGate(facts) {
   const focus = rawFactsPresent ? facts.focus : {};
   const bodyPortals = rawFactsPresent ? facts.bodyPortals : {};
   const transitions = rawFactsPresent ? facts.transitions : [];
+  const behavior = rawFactsPresent ? facts.behavior : {};
   const checks = {
     heterogeneousRows: rawFactsPresent
       && hasExpectedRenderedRows(renderedRows.afterA, VLIST_LIFECYCLE_RENDERED_ROWS.afterA)
@@ -450,6 +565,14 @@ export function deriveVListLifecycleGate(facts) {
       && hasExpectedTransitions(transitions)
       && transitions.filter(({ cause }) => cause === "native-scroll").length === 2,
     prependPreservesAnchorAndIdentity: rawFactsPresent && hasExpectedPrependBehavior(facts.prepend),
+    dynamicHeightSettles: rawFactsPresent && hasExpectedDynamicHeightBehavior(behavior),
+    tailFollowAndUserAway: rawFactsPresent && hasExpectedTailFollowBehavior(behavior),
+    stickyMessageJump: rawFactsPresent && hasExpectedStickyUserMessageBehavior(behavior),
+    messageTextSelection: rawFactsPresent && hasExpectedSelectionBehavior(behavior),
+    scrollToMessage: rawFactsPresent
+      && hasExpectedJumpBehavior(behavior.scrollToMessage, "permission-request:scroll-to-message:8"),
+    threadSwitchRestoresAnchor: rawFactsPresent && hasExpectedThreadSwitchBehavior(behavior),
+    offscreenStateIsRetained: rawFactsPresent && hasExpectedOffscreenRetainedState(behavior),
   };
   const failures = rawFactsPresent ? [] : ["expected raw vlist lifecycle facts and event trace"];
   for (const [name, passed] of Object.entries(checks)) {
