@@ -8,6 +8,7 @@ import { container } from "tsyringe";
 
 import { setupContainer } from "../../../../application/composition/container.js";
 import { AgentService } from "../../orchestration/agent-service.js";
+import { ThreadCreationCoordinator } from "../../turns/thread-creation-coordinator.js";
 import { TURN_FEATURE_EFFECTS, TurnFeatureEffects } from "../../turns/turn-feature-effects.js";
 
 describe("AgentService container composition", () => {
@@ -36,5 +37,19 @@ describe("AgentService container composition", () => {
   it("resolves AgentService through the production container with explicit feature effects", () => {
     expect(container.resolve<TurnFeatureEffects>(TURN_FEATURE_EFFECTS)).toBeInstanceOf(TurnFeatureEffects);
     expect(container.resolve(AgentService)).toBeInstanceOf(AgentService);
+  });
+
+  it("resolves ThreadService when a worktree thread reaches branch validation", async () => {
+    const coordinator = container.resolve(ThreadCreationCoordinator);
+
+    await expect(coordinator.create({
+      workspaceId: "missing-workspace",
+      title: "Invalid worktree branch",
+      mode: "worktree",
+      branch: "invalid branch",
+      provider: "claude",
+      model: "claude-sonnet-4-6",
+      permissionMode: "default",
+    })).rejects.toThrow("Branch name contains invalid characters: invalid branch");
   });
 });
