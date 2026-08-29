@@ -42,6 +42,7 @@ import {
 } from "../orchestration/agent-runtime-internal-ports.js";
 import { TURN_FEATURE_EFFECTS, TurnFeatureEffects } from "../turns/turn-feature-effects.js";
 import { ThreadBranchingService } from "../../projects/worktrees/thread-branching-service.js";
+import { ThreadService } from "../../thread-control/index.js";
 import { ThreadRepo } from "../../thread-control/persistence/thread-repo.js";
 import { WorkspaceRepo } from "../../projects/persistence/workspace-repo.js";
 import { MessageRepo } from "../conversation/persistence/message-repo.js";
@@ -210,7 +211,7 @@ export function registerAgentServices(container: DependencyContainer): void {
   container.register(ThreadCreationCoordinator, {
     useFactory: instanceCachingFactory((c) => new ThreadCreationCoordinator(
       c.resolve(ThreadRepo),
-      () => c.resolve("ThreadService"),
+      () => c.resolve(ThreadService),
       c.resolve(TURN_ADMISSION_DISPATCH_COORDINATOR),
       () => c.resolve(ThreadBranchingService),
       () => c.resolve(PlanTurnService),
