@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { Client, ClientSideConnection, SessionNotification } from "@agentclientprotocol/sdk";
 import { AgentEventType } from "@mcode/contracts";
 import { AcpSessionRuntime } from "../../../protocols/acp/acp-session-runtime.js";
+import { CursorAcpClientBridge } from "../cursor-acp-client-bridge.js";
 import {
   createCursorAcpTurnState,
   mapCursorAcpSessionNotification,
@@ -473,10 +474,18 @@ describe("mapCursorAcpSessionNotification", () => {
 });
 
 describe("Cursor ACP client-factory session-update seam", () => {
-  it("suppresses load replay and maps matching live updates after the response barrier", async () => {
+  it("projects matching load replay without contaminating the continuation accumulator", async () => {
     const child = fakeChild();
     const state = createCursorAcpTurnState();
     const events: unknown[] = [];
+    const bridge = new CursorAcpClientBridge({
+      settings: { get: () => ({ provider: { cursor: { traceSessionUpdates: false } } }) } as any,
+      publishEvent: (_entry, event) => { events.push(event); },
+      emitPermissionRequest: () => {},
+      emitPermissionResolved: () => {},
+      emitExitPlanMode: () => {},
+    });
+    let entry: any;
     let client!: Client;
     let finishLoad!: () => void;
     const connection = {
@@ -500,7 +509,7 @@ describe("Cursor ACP client-factory session-update seam", () => {
       callbacks: {
         onPermissionRequest: async () => ({ outcome: { outcome: "cancelled" } }),
         onSessionUpdate: async (update) => {
-          events.push(...mapCursorAcpSessionNotification(update, "cursor-thread", state));
+          await bridge.deliverSessionUpdate(entry, update as SessionNotification);
         },
       },
       clientFactory: (callbacks) => {
@@ -519,15 +528,27 @@ describe("Cursor ACP client-factory session-update seam", () => {
       transportFactory: async () => ({ child, connection }),
       sessionLoadTimeoutMs: 100,
     });
+    entry = {
+      acpRuntime: runtime,
+      acpSessionId: "cursor-resume",
+      activeTurnState: state,
+      replayTurnState: null,
+      threadId: "cursor-thread",
+      todoSnapshot: undefined,
+    };
 
     await runtime.initialize();
     const opening = runtime.openSession({ resumeFrom: "cursor-resume", cwd: ".", mcpServers: [] });
-    await Promise.resolve();
+    await vi.waitFor(() => expect(connection.loadSession).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(finishLoad).toEqual(expect.any(Function)));
     await client.sessionUpdate({
       sessionId: "other",
       update: { sessionUpdate: "session_info_update" },
     } as SessionNotification);
-    expect(events).toEqual([]);
+    expect(events).toEqual([
+      { type: AgentEventType.TextDelta, threadId: "cursor-thread", delta: "historical" },
+    ]);
+    expect(resolveCursorAssistantMessageContent(state.accumulator)).toBe("");
 
     finishLoad();
     await expect(opening).resolves.toEqual({ sessionId: "cursor-resume", reloaded: true });
@@ -538,7 +559,51 @@ describe("Cursor ACP client-factory session-update seam", () => {
         content: { type: "text", text: "live" },
       },
     } as SessionNotification);
-    expect(events).toEqual([{ type: AgentEventType.TextDelta, threadId: "cursor-thread", delta: "live" }]);
+    expect(events).toEqual([
+      { type: AgentEventType.TextDelta, threadId: "cursor-thread", delta: "historical" },
+      { type: AgentEventType.TextDelta, threadId: "cursor-thread", delta: "live" },
+    ]);
+    expect(resolveCursorAssistantMessageContent(state.accumulator)).toBe("live");
+  });
+
+  it("drops updates after the active Cursor turn closes", async () => {
+    const state = createCursorAcpTurnState();
+    const events: unknown[] = [];
+    const bridge = new CursorAcpClientBridge({
+      settings: { get: () => ({ provider: { cursor: { traceSessionUpdates: false } } }) } as any,
+      publishEvent: (_entry, event) => { events.push(event); },
+      emitPermissionRequest: () => {},
+      emitPermissionResolved: () => {},
+      emitExitPlanMode: () => {},
+    });
+    const entry = {
+      acpSessionId: "cursor-session",
+      acpRuntime: { state: { sessionId: "cursor-session" } },
+      activeTurnState: state,
+      replayTurnState: null,
+      threadId: "cursor-thread",
+      todoSnapshot: undefined,
+    } as any;
+
+    await bridge.deliverSessionUpdate(entry, {
+      sessionId: "cursor-session",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "accepted" },
+      },
+    } as SessionNotification);
+    entry.activeTurnState = null;
+    await bridge.deliverSessionUpdate(entry, {
+      sessionId: "cursor-session",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "stale" },
+      },
+    } as SessionNotification);
+
+    expect(events).toEqual([
+      { type: AgentEventType.TextDelta, threadId: "cursor-thread", delta: "accepted" },
+    ]);
   });
 
   it("keeps late callbacks bound to their ACP generation", async () => {

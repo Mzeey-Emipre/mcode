@@ -4,6 +4,7 @@ import { getCatalogEntry, type Settings } from "@mcode/contracts";
 import type { ProviderHostPorts } from "../../../host-ports.js";
 import { AcpSessionRuntime } from "../../protocols/acp/acp-session-runtime.js";
 import { buildCursorAcpArgs } from "../acp/cursor-acp-spawn-args.js";
+import { cursorAcpProcessIdentity } from "../acp/cursor-acp-process-identity.js";
 import { cursorSupportsHttpMcp } from "../acp/cursor-acp-capabilities.js";
 import { createCursorTodoSnapshot } from "../events/cursor-todo-snapshot.js";
 import type { CursorAcpClientBridge } from "../acp/cursor-acp-client-bridge.js";
@@ -36,9 +37,10 @@ export class CursorAcpProcessSpawner {
     settings: Settings,
   ): Promise<CursorSessionState> {
     let lastError: unknown = null;
+    const processIdentity = cursorAcpProcessIdentity(settings, permissionMode);
     for (const cliPath of cursorCliProbeBinaries(settings)) {
       try {
-        return await this.spawnOneCli(cliPath, sessionId, threadId, cwd, permissionMode);
+        return await this.spawnOneCli(cliPath, sessionId, threadId, cwd, permissionMode, processIdentity);
       } catch (error) {
         this.deps.clearOpening(sessionId);
         lastError = error;
@@ -58,6 +60,7 @@ export class CursorAcpProcessSpawner {
     threadId: string,
     cwd: string,
     permissionMode: "full" | "default",
+    processIdentity: string,
   ): Promise<CursorSessionState> {
     let entry: CursorSessionState | undefined;
     const runtime = await AcpSessionRuntime.start({
@@ -106,6 +109,16 @@ export class CursorAcpProcessSpawner {
       }),
       selectAuthMethod: (methods) => methods.find((method) => method.id === "cursor_login")?.id ?? methods[0]?.id,
       ignoreAuthenticationErrors: true,
+      recoveryFailurePolicy: "fail-without-replacement",
+      recoveryInactivityTimeoutMs: 20_000,
+      onSessionOperation: ({ operation, sessionId }) => {
+        if (!this.deps.getSettings().provider.cursor.traceSessionUpdates) return;
+        logger.info("Cursor ACP session operation", {
+          operation,
+          threadId,
+          logicalSessionId: sessionId,
+        });
+      },
       processes: this.deps.host.processes,
     });
     this.deps.registerOpening(mcodeSessionId, runtime);
@@ -121,12 +134,14 @@ export class CursorAcpProcessSpawner {
       connection: runtime.state.connection,
       acpRuntime: runtime,
       acpSessionId: "",
+      processIdentity,
       cwd,
       permissionMode,
       lastUsedAt: Date.now(),
       todoSnapshot: createCursorTodoSnapshot(),
       turnChain: Promise.resolve(),
       activeTurnState: null,
+      replayTurnState: null,
       stickyHeavyInstructionsSent: false,
       cursorPromptOrdinal: 0,
       stderrTailLines: [],

@@ -20,6 +20,7 @@ import {
   shouldSuppressCursorPromptError,
 } from "../acp/cursor-acp-transient-retry.js";
 import { createCursorAcpTurnState } from "../acp/cursor-acp-event-mapper.js";
+import { cursorSessionRecoveryErrorMessage } from "../acp/cursor-session-recovery-error.js";
 import { resolveCursorAssistantMessageContent } from "../stream-json/cursor-stream-event-mapper.js";
 import type { CursorSessionState } from "../cursor-session-state.js";
 import type { CursorCanonicalEventRouting } from "../cursor-canonical-event-publisher.js";
@@ -32,7 +33,7 @@ export interface CursorTurnExecutorDeps {
   bindTurnRouting: (entry: CursorSessionState, routing: CursorCanonicalEventRouting) => void;
   openLogicalSession: (entry: CursorSessionState, resume: boolean) => Promise<boolean>;
   applyModel: (entry: CursorSessionState, model: string) => Promise<void>;
-  respawnAfterDisconnect: (entry: CursorSessionState) => Promise<CursorSessionState>;
+  replaceAfterTransientFailure: (entry: CursorSessionState) => Promise<CursorSessionState | undefined>;
 }
 
 /** Describes one serialized Cursor ACP turn. */
@@ -142,17 +143,16 @@ export class CursorTurnExecutor {
     const maxAttempts = cursorCfg.retryTransientFailuresOnce ? 2 : 1;
     let attempt = 0;
     for (;;) {
+      this.bindActiveTurnState(execution.currentEntry, {
+        threadId: execution.currentEntry.threadId,
+        turnId,
+        executionId: turnExecutionId,
+        deliveryAttempt,
+      }, attempt === 0);
       await this.preparePromptAttempt(execution.currentEntry, resume, model);
       const promptAttempt = this.buildPromptAttempt(execution, cursorCfg);
       try {
         attempt += 1;
-        execution.currentEntry.activeTurnState = createCursorAcpTurnState();
-        this.deps.bindTurnRouting(execution.currentEntry, {
-          threadId: execution.currentEntry.threadId,
-          turnId,
-          executionId: turnExecutionId,
-          deliveryAttempt,
-        });
         const promptResponse = await execution.currentEntry.acpRuntime.prompt<CursorPromptResponse>({
           sessionId: execution.currentEntry.acpSessionId,
           prompt: promptAttempt.blocks,
@@ -163,6 +163,17 @@ export class CursorTurnExecutor {
         await this.retryPromptAfterFailure(error, execution, cursorCfg, attempt, maxAttempts);
       }
     }
+  }
+
+  private bindActiveTurnState(
+    entry: CursorSessionState,
+    routing: CursorCanonicalEventRouting,
+    preserveOpeningState: boolean,
+  ): void {
+    if (!preserveOpeningState || !entry.activeTurnState) {
+      entry.activeTurnState = createCursorAcpTurnState();
+    }
+    this.deps.bindTurnRouting(entry, routing);
   }
 
   private async preparePromptAttempt(
@@ -267,11 +278,16 @@ export class CursorTurnExecutor {
     attempt: number,
     maxAttempts: number,
   ): Promise<void> {
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorMessage = cursorSessionRecoveryErrorMessage(error);
     this.throwIfUserStopRequested(execution.currentEntry, error);
     this.throwIfPromptIsNotRetryable(error, errorMessage, cursorCfg, attempt, maxAttempts);
+    const retryOnNewConnection = await this.deps.replaceAfterTransientFailure(
+      execution.currentEntry,
+    );
+    if (!retryOnNewConnection) throw error;
+    execution.currentEntry = retryOnNewConnection;
     if (looksLikeAcpConnectionClosed(errorMessage)) {
-      await this.retryAfterDisconnect(execution);
+      this.prepareDisconnectRetry(execution);
       return;
     }
     if (looksLikeCursorRateLimit(errorMessage)) {
@@ -302,8 +318,7 @@ export class CursorTurnExecutor {
     if (!isLikelyTransientCursorPromptFailure(errorMessage)) throw error;
   }
 
-  private async retryAfterDisconnect(execution: CursorTurnExecutionState): Promise<void> {
-    execution.currentEntry = await this.deps.respawnAfterDisconnect(execution.currentEntry);
+  private prepareDisconnectRetry(execution: CursorTurnExecutionState): void {
     execution.promptMessage = buildCursorAcpContinueAfterDisconnectPrompt(execution.originalUserMessage);
     execution.promptAttachments = execution.originalAttachments;
     execution.isContinueRetry = true;
@@ -359,7 +374,7 @@ export class CursorTurnExecutor {
     turnExecutionId: string,
     emitTurnEvent: CursorTurnEventEmitter,
   ): void {
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorMessage = cursorSessionRecoveryErrorMessage(error);
     const userStopped = shouldSuppressCursorPromptError(errorMessage, {
       pendingUserStopAbort: entry.pendingUserStopAbort,
     });
@@ -442,6 +457,7 @@ export class CursorTurnExecutor {
 
   private resetTurnState(entry: CursorSessionState): void {
     entry.activeTurnState = null;
+    entry.replayTurnState = null;
     entry.pendingUserStopAbort = false;
   }
 }

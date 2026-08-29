@@ -25,7 +25,7 @@ import {
 } from "./cursor-acp-session-trace.js";
 import { cursorTaskExtToAgentEvents } from "./cursor-acp-task.js";
 import { extractCursorCreatePlanMarkdown } from "./cursor-create-plan.js";
-import { mapCursorAcpSessionNotification } from "./cursor-acp-event-mapper.js";
+import { createCursorAcpTurnState, mapCursorAcpSessionNotification } from "./cursor-acp-event-mapper.js";
 import { cursorUpdateTodosExtNotificationToAgentEvents } from "../events/cursor-todo-snapshot.js";
 import type { CursorAcpSessionEntry } from "../cursor-session-state.js";
 
@@ -256,10 +256,13 @@ export class CursorAcpClientBridge {
     params: SessionNotification,
   ): Promise<void> {
     if (!entry.acpSessionId || params.sessionId !== entry.acpSessionId || !entry.activeTurnState) return;
+    const turnState = entry.acpRuntime.state.sessionId
+      ? entry.activeTurnState
+      : (entry.replayTurnState ??= createCursorAcpTurnState());
     const mapped = mapCursorAcpSessionNotification(
       params,
       entry.threadId,
-      entry.activeTurnState,
+      turnState,
       entry.todoSnapshot,
     );
     const cursorCfg = this.deps.settings.get().provider.cursor;
