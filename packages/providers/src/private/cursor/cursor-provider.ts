@@ -3,8 +3,7 @@
  * Cursor CLI provider via long-lived `cursor-agent acp` (Agent Client Protocol).
  *
  * One subprocess per Mcode thread keeps JSON-RPC on stdio stable across turns.
- * When `session/load` fails (known Cursor limitations), we fall back to `session/new`
- * and emit `sdk_session_id` so the DB tracks the active session id.
+ * Cursor recovers persisted sessions only through advertised ACP capabilities.
  */
 
 import { EventEmitter } from "node:events";
@@ -38,8 +37,11 @@ import type {
 } from "@mcode/contracts";
 import { fetchCursorCliModels } from "./models/cursor-cli-models.js";
 import { buildMcodeInstructionPlan, renderMcodeInstructions } from "@mcode/thread-orchestration";
-import { AcpSessionRuntime } from "../protocols/acp/acp-session-runtime.js";
+import { AcpSessionRuntime, SessionRecoveryFailedError } from "../protocols/acp/acp-session-runtime.js";
 import { CursorAcpClientBridge } from "./acp/cursor-acp-client-bridge.js";
+import { createCursorAcpTurnState } from "./acp/cursor-acp-event-mapper.js";
+import { cursorAcpProcessIdentity } from "./acp/cursor-acp-process-identity.js";
+import { cursorSessionRecoveryErrorMessage } from "./acp/cursor-session-recovery-error.js";
 import { CursorAcpProcessSpawner } from "./runtime/cursor-acp-process-spawner.js";
 import { CursorTurnExecutor } from "./runtime/cursor-turn-executor.js";
 import {
@@ -302,7 +304,7 @@ export class CursorProvider
         },
         openLogicalSession: (entry, resume) => this.openLogicalSession(entry, resume),
         applyModel: (entry, model) => this.applyModel(entry, model),
-        respawnAfterDisconnect: (entry) => this.respawnCursorSessionAfterAcpClose(entry),
+        replaceAfterTransientFailure: (entry) => this.replaceCursorSessionAfterTransientFailure(entry),
       });
     }
     return this.turnExecutor;
@@ -341,11 +343,12 @@ export class CursorProvider
     const { sessionId } = context;
     // `resumeFrom` defined ⇒ resume the stored ACP session; undefined ⇒ fresh.
     this.releaseMismatchedPendingBrowserGrant(context);
-    const existing = await this.rotateCompletedSession(sessionId);
+    const existing = await this.replaceCompletedSessionForFreshRequest(context);
     const browserStage = await this.prepareBrowserLeaseForTurn(context, existing);
 
     const entry = await this.acquireTurnSession(context, browserStage);
     if (!entry) return;
+    if (entry === existing && context.resume) this.traceSessionOperation("reuse", entry);
     this.clearBrowserStageAfterAcquire(sessionId, browserStage, entry, existing);
     if (await this.consumePendingStop(context)) return;
 
@@ -434,14 +437,27 @@ export class CursorProvider
     this.pendingBrowserGrantContext.delete(context.sessionId);
   }
 
-  private async rotateCompletedSession(sessionId: string): Promise<CursorSessionState | undefined> {
-    const entry = this.runtime.get(sessionId);
+  private async replaceCompletedSessionForFreshRequest(
+    context: CursorTurnContext,
+  ): Promise<CursorSessionState | undefined> {
+    const entry = this.runtime.get(context.sessionId);
     if (!entry) return undefined;
-    if (entry.activeTurnState !== null) return entry;
-    if (entry.cursorPromptOrdinal <= 0) return entry;
+    if (context.resume || entry.activeTurnState !== null) return entry;
 
-    await this.runtime.stop(sessionId);
+    await this.runtime.stop(context.sessionId);
     return undefined;
+  }
+
+  private traceSessionOperation(
+    operation: "reuse",
+    entry: CursorSessionState,
+  ): void {
+    if (!this.settingsService.get().provider.cursor.traceSessionUpdates) return;
+    logger.info("Cursor ACP session operation", {
+      operation,
+      threadId: entry.threadId,
+      logicalSessionId: entry.acpSessionId,
+    });
   }
 
   private async prepareBrowserLeaseForTurn(
@@ -536,7 +552,10 @@ export class CursorProvider
 
     const retainedStage = this.pendingBrowserLeases.get(context.sessionId);
     if (retainedStage) return retainedStage;
-    if (!this.browserAutomationLease.isConfigured()) return undefined;
+    if (!this.browserAutomationLease.isConfigured()) {
+      this.pendingBrowserContext.set(context.sessionId, context.browserContext);
+      return undefined;
+    }
 
     const browserStage = this.browserAutomationLease.stage({
       providerId: this.id,
@@ -592,7 +611,7 @@ export class CursorProvider
     this.releaseBrowserLeases(this.pendingBrowserGrants.get(context.sessionId));
     this.pendingBrowserGrants.delete(context.sessionId);
     this.pendingBrowserGrantContext.delete(context.sessionId);
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorMessage = cursorSessionRecoveryErrorMessage(error);
     logger.error("Cursor ACP spawn failed", { sessionId: context.sessionId, error: errorMessage });
     this.publishCursorEvent(context.routing, {
       type: AgentEventType.Error,
@@ -781,7 +800,7 @@ export class CursorProvider
    * Spawns a fresh Cursor ACP session for the runtime: launches the
    * `cursor-agent acp` subprocess (probing CLI candidates), runs the ACP
    * `initialize`/`authenticate` handshake, then opens the logical ACP session
-   * (`session/load` on resume, falling back to `session/new`). Returns the
+   * (`session/resume` or `session/load` on resume). Returns the
    * child PID in `pids` so the runtime routes cleanup through the server process
    * port. The provider does not manage process trees inline.
    */
@@ -795,6 +814,7 @@ export class CursorProvider
     let state: CursorAcpSessionEntry | undefined;
     try {
       state = await this.spawnChild(sessionId, threadId, cwd, pm, settings);
+      this.bindOpeningTurnState(state);
       this.throwIfPendingStop(sessionId);
       browserGrant = this.resolveBrowserGrantForSpawn(
         sessionId,
@@ -893,6 +913,12 @@ export class CursorProvider
     };
   }
 
+  private bindOpeningTurnState(state: CursorAcpSessionEntry): void {
+    state.activeTurnState = createCursorAcpTurnState();
+    const routing = this.pendingTurnRoutings.get(state.mcodeSessionId);
+    if (routing) this.turnRoutingByState.set(state.activeTurnState, routing);
+  }
+
   private async clearFailedSpawn(sessionId: string): Promise<void> {
     this.pendingStops.delete(sessionId);
     this.pendingAcpRuntimes.delete(sessionId);
@@ -968,12 +994,14 @@ export class CursorProvider
     await state?.acpRuntime?.close();
   }
 
-  /** A pooled session must be discarded before reuse if the child died or the cwd/permission mode changed. */
+  /** A pooled session must be discarded before reuse if its process identity or launch context changed. */
   isStale(state: CursorSessionState, args: { cwd: string; permissionMode: string }): boolean {
     const dead = state.child.exitCode != null || state.child.signalCode != null;
     if (dead) return true;
     const pm: "full" | "default" = args.permissionMode === "full" ? "full" : "default";
-    return state.permissionMode !== pm || state.cwd !== args.cwd;
+    return state.permissionMode !== pm ||
+      state.cwd !== args.cwd ||
+      state.processIdentity !== cursorAcpProcessIdentity(this.settingsService.get(), pm);
   }
 
   private async spawnChild(
@@ -1008,7 +1036,9 @@ export class CursorProvider
         reloaded: await this.openLogicalSession(initialState, resume, mcpServers),
       };
     } catch (error) {
-      if (!this.isThreadControlMcpEnabled(initialState)) throw error;
+      if (error instanceof SessionRecoveryFailedError || !this.isThreadControlMcpEnabled(initialState)) {
+        throw error;
+      }
 
       logger.warn("Cursor thread-control MCP prevented session startup; retrying without it", {
         threadId: initialState.threadId,
@@ -1022,6 +1052,12 @@ export class CursorProvider
         initialState.permissionMode,
         settings,
       );
+      fallbackState.activeTurnState = initialState.activeTurnState;
+      if (fallbackState.activeTurnState) {
+        const routing = this.turnRoutingByState.get(fallbackState.activeTurnState)
+          ?? this.pendingTurnRoutings.get(fallbackState.mcodeSessionId);
+        if (routing) this.turnRoutingByState.set(fallbackState.activeTurnState, routing);
+      }
       fallbackState.threadControlMcpEnabled = false;
       try {
         return {
@@ -1069,13 +1105,13 @@ export class CursorProvider
     return undefined;
   }
 
-  /** Ensures `entry.acpSessionId` is ready (new or load). */
+  /** Ensures `entry.acpSessionId` is ready through a new, resumed, or loaded session. */
   private async openLogicalSession(
     entry: CursorAcpSessionEntry,
     resume: boolean,
     mcpServers: McpServer[] = [],
   ): Promise<boolean> {
-    if (entry.acpSessionId) return true;
+    if (entry.acpSessionId && entry.acpRuntime.state.sessionId) return true;
 
     const stored = this.sdkSessionIds.get(entry.mcodeSessionId);
     const internalMcp = await this.openThreadControlMcp(entry);
@@ -1083,11 +1119,13 @@ export class CursorProvider
       ...(internalMcp ? buildCursorInternalMcpServers(internalMcp) : []),
       ...mcpServers,
     ];
+    if (resume && stored) entry.acpSessionId = stored;
     const opened = await entry.acpRuntime.openSession({
       resumeFrom: resume ? stored : undefined,
       cwd: entry.cwd,
       mcpServers: effectiveMcpServers,
     });
+    entry.replayTurnState = null;
     entry.acpSessionId = opened.sessionId;
     this.sdkSessionIds.set(entry.mcodeSessionId, opened.sessionId);
     this.publishCursorEvent(this.turnRoutingForEntry(entry), {
@@ -1126,17 +1164,23 @@ export class CursorProvider
     }
   }
 
-  /** Respawns `cursor-agent acp` after an unexpected disconnect and preserves turn pacing state. */
-  private async respawnCursorSessionAfterAcpClose(
+  /** Replaces a failed ACP connection only when its logical session can be recovered. */
+  private async replaceCursorSessionAfterTransientFailure(
     dead: CursorAcpSessionEntry,
-  ): Promise<CursorAcpSessionEntry> {
+  ): Promise<CursorAcpSessionEntry | undefined> {
     const sessionId = dead.mcodeSessionId;
-    this.logAcpChildDisconnect(dead, "ACP connection closed");
+    const logicalSessionId = this.sdkSessionIds.get(sessionId);
+    // ACP session updates identify only the logical session, so a failed stream
+    // cannot safely share callbacks with a retry for that same session.
+    dead.activeTurnState = null;
+    dead.replayTurnState = null;
+    this.logAcpChildFailure(dead, "Transient ACP prompt failure");
     await this.runtime.stop(sessionId);
+    if (!logicalSessionId) return undefined;
     const browserStage = this.browserAutomationLease.isConfigured() && dead.browserHttpMcpSupported
       ? this.browserAutomationLease.stage({
         providerId: this.id,
-        providerSessionId: this.sdkSessionIds.get(sessionId) ?? sessionId,
+        providerSessionId: logicalSessionId,
         mcodeSessionId: sessionId,
         threadId: dead.threadId,
         workspaceId: dead.workspaceId,
@@ -1157,7 +1201,7 @@ export class CursorProvider
         threadId: dead.threadId,
         cwd: dead.cwd,
         permissionMode: dead.permissionMode,
-        resumeFrom: this.sdkSessionIds.get(sessionId),
+        resumeFrom: logicalSessionId,
       });
     } catch (error) {
       if (browserStage) this.browserAutomationLease.release(browserStage.leaseId);
@@ -1182,14 +1226,14 @@ export class CursorProvider
     return fresh;
   }
 
-  /** Logs child exit metadata when the ACP stdio stream closes mid-turn. */
-  private logAcpChildDisconnect(entry: CursorAcpSessionEntry, error: string): void {
+  /** Logs bounded child metadata after a transient ACP prompt failure. */
+  private logAcpChildFailure(entry: CursorAcpSessionEntry, error: string): void {
     const cursorCfg = this.settingsService.get().provider.cursor;
     const stderrTail =
       cursorCfg.verboseFailureLogs && entry.stderrTailLines.length > 0
         ? entry.stderrTailLines.slice(-16)
         : undefined;
-    logger.warn("Cursor ACP connection closed mid-turn", {
+    logger.warn("Cursor ACP prompt failed on connection", {
       threadId: entry.threadId,
       acpSessionId: entry.acpSessionId,
       promptOrdinal: entry.cursorPromptOrdinal,

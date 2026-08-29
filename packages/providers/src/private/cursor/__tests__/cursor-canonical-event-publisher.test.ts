@@ -73,6 +73,36 @@ describe("CursorCanonicalEventPublisher", () => {
     });
   });
 
+  it("binds an SDK session identity to the canonical execution", async () => {
+    const submit = vi.fn<(batch: ProviderEventBatch) => Promise<void>>().mockResolvedValue(undefined);
+    const publisher = new CursorCanonicalEventPublisher(createSink(submit));
+
+    publisher.publish(routing, providerRuntimeEvent({
+      type: AgentEventType.System,
+      threadId: routing.threadId,
+      subtype: "sdk_session_id:cursor-session-1",
+    }), []);
+
+    await publisher.waitForExecution(routing);
+
+    expect(submit.mock.calls[0]?.[0].events[0]?.payload).toMatchObject({
+      type: "item.recorded",
+      item: {
+        payload: {
+          projection: "providerRuntimeEvent",
+          runtimeEvent: {
+            event: {
+              type: AgentEventType.System,
+              threadId: routing.threadId,
+              turnExecutionId: routing.executionId,
+              subtype: "sdk_session_id:cursor-session-1",
+            },
+          },
+        },
+      },
+    });
+  });
+
   it("fails closed after a sink submission fails", async () => {
     const submit = vi.fn<(batch: ProviderEventBatch) => Promise<void>>()
       .mockRejectedValueOnce(new Error("canonical sink unavailable"));

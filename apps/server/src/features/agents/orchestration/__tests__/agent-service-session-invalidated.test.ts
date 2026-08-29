@@ -5,9 +5,11 @@ import type Database from "better-sqlite3";
 import { AgentEventType } from "@mcode/contracts";
 import type {
   AgentEvent,
+  CanonicalAgentEventEnvelope,
   IAgentProvider,
   IProviderRegistry,
   ProviderId,
+  TurnRequest,
 } from "@mcode/contracts";
 import { openMemoryDatabase } from "../../../../runtime/persistence/sqlite/database.js";
 import { ThreadRepo } from "../../../thread-control/persistence/thread-repo.js";
@@ -30,6 +32,57 @@ import type { MemoryPressureService } from "../../../../runtime/memory/memory-pr
 import type { ThreadService } from "../../../thread-control/index.js";
 import type { SettingsService } from "../../../settings/settings-service.js";
 import type { ProviderAvailabilityService } from "../../../providers/availability/provider-availability-service.js";
+import { ProviderEventIngress } from "../../../providers/composition/provider-event-ingress.js";
+
+const CANONICAL_TIMESTAMP = "2026-08-29T15:00:00.000Z";
+
+/** Creates a committed Cursor SDK-session identity event for the provider ingress boundary. */
+function cursorSessionIdentityEnvelope(
+  threadId: string,
+  turnId: string,
+  executionId: string,
+): CanonicalAgentEventEnvelope {
+  const eventId = `cursor:${executionId}:session-identity`;
+  const itemId = `cursor:${executionId}:session-identity-item`;
+  return {
+    eventId,
+    routing: { threadId, turnId, executionId, itemId },
+    sourceProviderId: "cursor",
+    sourceIdentities: [],
+    sourceSequence: 1,
+    acceptedSequence: 1,
+    durableRevision: 1,
+    serverTimestamps: { acceptedAt: CANONICAL_TIMESTAMP },
+    payload: {
+      type: "item.recorded",
+      item: {
+        id: itemId,
+        threadId,
+        turnId,
+        kind: "system",
+        providerIdentities: [],
+        payload: {
+          projection: "providerRuntimeEvent",
+          runtimeEvent: {
+            event: {
+              type: AgentEventType.System,
+              threadId,
+              turnExecutionId: executionId,
+              subtype: "sdk_session_id:cursor-session-1",
+            },
+          },
+        },
+        createdAt: CANONICAL_TIMESTAMP,
+        updatedAt: CANONICAL_TIMESTAMP,
+      },
+    },
+  };
+}
+
+/** Lets the asynchronous committed-event queue apply one canonical event batch. */
+async function flushCommittedEvents(): Promise<void> {
+  await new Promise<void>((resolve) => queueMicrotask(resolve));
+}
 
 /**
  * Verifies the poison-pill recovery wiring: when the Claude provider abandons an
@@ -47,6 +100,7 @@ describe("AgentService clears sdk_session_id on session invalidation", () => {
   let taskRepo: TaskRepo;
   let svc: AgentService;
   let providerStub: EventEmitter & Partial<IAgentProvider>;
+  let providerEventIngress: ProviderEventIngress;
 
   beforeEach(() => {
     db = openMemoryDatabase();
@@ -98,6 +152,9 @@ describe("AgentService clears sdk_session_id on session invalidation", () => {
     const availabilityStub = {
       assertUsable: vi.fn(),
     } as unknown as ProviderAvailabilityService;
+    providerEventIngress = new ProviderEventIngress();
+    const canonicalSink = createCanonicalAgentEventSinkStub(db);
+    Object.assign(canonicalSink, { recordNativeCursor: vi.fn(() => true) });
 
     svc = createAgentServiceForTest(
       threadRepo,
@@ -127,7 +184,9 @@ describe("AgentService clears sdk_session_id on session invalidation", () => {
       undefined,
       undefined,
       undefined,
-      createCanonicalAgentEventSinkStub(db),
+      canonicalSink,
+      undefined,
+      providerEventIngress,
     );
     startAgentServiceIngressForTest(svc, );
   });
@@ -159,5 +218,49 @@ describe("AgentService clears sdk_session_id on session invalidation", () => {
     } satisfies AgentEvent);
 
     expect(threadRepo.findById(thread.id)?.sdk_session_id).toBe("keep-sid");
+  });
+
+  it("accepts a committed Cursor SDK session identity and resumes the next turn", async () => {
+    Object.assign(providerStub, { id: "cursor" as ProviderId });
+    vi.mocked(providerStub.sendTurn).mockResolvedValue(undefined);
+    const workspace = workspaceRepo.create("test-ws", process.cwd());
+    const thread = threadRepo.create(workspace.id, "Test Thread", "direct", "main", true, "cursor");
+
+    await svc.sendMessage({
+      threadId: thread.id,
+      content: "first prompt",
+      permissionMode: "default",
+      model: "cursor-model",
+      attachments: [],
+    });
+    const firstRequest = vi.mocked(providerStub.sendTurn).mock.calls[0]?.[0] as TurnRequest;
+    providerEventIngress.acceptCommitted([
+      cursorSessionIdentityEnvelope(thread.id, firstRequest.turnId, firstRequest.turnExecutionId),
+    ]);
+    await flushCommittedEvents();
+
+    expect(threadRepo.findById(thread.id)?.sdk_session_id).toBe("cursor-session-1");
+
+    providerStub.emit("event", {
+      type: AgentEventType.TurnComplete,
+      threadId: thread.id,
+      turnExecutionId: firstRequest.turnExecutionId,
+      reason: "end_turn",
+      costUsd: null,
+      tokensIn: 0,
+      tokensOut: 0,
+    } satisfies AgentEvent);
+
+    await svc.sendMessage({
+      threadId: thread.id,
+      content: "second prompt",
+      permissionMode: "default",
+      model: "cursor-model",
+      attachments: [],
+    });
+
+    expect(providerStub.sendTurn).toHaveBeenCalledTimes(2);
+    expect((vi.mocked(providerStub.sendTurn).mock.calls[1]?.[0] as TurnRequest).resumeFrom)
+      .toBe("cursor-session-1");
   });
 });

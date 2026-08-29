@@ -36,17 +36,36 @@ export type AcpSessionRuntimeOptions = {
   sessionLoadTimeoutMs?: number;
   /** Alias for sessionLoadTimeoutMs used by replay-gate callers. */
   replayGateTimeoutMs?: number;
+  /** Maximum idle time during one ACP recovery attempt. */
+  recoveryInactivityTimeoutMs?: number;
+  /** Controls whether a failed persisted-session recovery may create a replacement session. */
+  recoveryFailurePolicy?: "fallback-to-new" | "fail-without-replacement";
+  /** Records one sanitized ACP logical-session operation. */
+  onSessionOperation?: (operation: AcpSessionOperation) => void;
   /** Server-owned authority for terminating an ACP child before session ownership begins. */
   processes: ProviderProcessPort;
   transportFactory?: (spec: AcpSpawnSpec, client: Client) => Promise<AcpTransport>;
 };
 
+/** One ACP logical-session operation that completed without exposing provider payloads. */
+export type AcpSessionOperation = {
+  operation: "new" | "reuse" | "resume" | "load";
+  sessionId: string;
+};
+
+/** Signals that a persisted ACP session could not be recovered without replacing it. */
+export class SessionRecoveryFailedError extends Error {
+  constructor() {
+    super("ACP session recovery failed");
+    this.name = "SessionRecoveryFailedError";
+  }
+}
+
 type ReplayGate = {
   attemptId: number;
   targetSessionId: string;
   phase: "loading";
-  lastReplayAt: number;
-  hardDeadline: number;
+  settle: (outcome: "timeout" | "closed") => void;
   timer: ReturnType<typeof setTimeout>;
 };
 
@@ -60,6 +79,8 @@ export class AcpSessionRuntime {
   private readonly clientInfo: { name: string; title: string; version: string };
   private readonly ignoreAuthenticationErrors: boolean;
   private readonly sessionLoadTimeoutMs: number;
+  private readonly recoveryFailurePolicy: "fallback-to-new" | "fail-without-replacement";
+  private readonly onSessionOperation: ((operation: AcpSessionOperation) => void) | undefined;
   private readonly processes: ProviderProcessPort;
   private promptChain: Promise<void> = Promise.resolve();
   private closed = false;
@@ -85,11 +106,15 @@ export class AcpSessionRuntime {
     this.clientInfo = options.clientInfo ?? { name: "mcode", title: "Mcode", version: "0.0.1" };
     this.ignoreAuthenticationErrors = options.ignoreAuthenticationErrors ?? false;
     this.processes = options.processes;
-    const configuredTimeout = options.replayGateTimeoutMs ?? options.sessionLoadTimeoutMs;
+    const configuredTimeout = options.recoveryInactivityTimeoutMs
+      ?? options.replayGateTimeoutMs
+      ?? options.sessionLoadTimeoutMs;
     this.sessionLoadTimeoutMs =
       typeof configuredTimeout === "number" && Number.isFinite(configuredTimeout) && configuredTimeout > 0
         ? configuredTimeout
         : DEFAULT_SESSION_LOAD_TIMEOUT_MS;
+    this.recoveryFailurePolicy = options.recoveryFailurePolicy ?? "fallback-to-new";
+    this.onSessionOperation = options.onSessionOperation;
   }
 
   /** Spawns an ACP child and creates its JSON-lines transport. */
@@ -102,7 +127,8 @@ export class AcpSessionRuntime {
         if (!runtime) return;
         const parsedUpdate = validateAcpSessionUpdate(update);
         if (runtime.replayGate?.phase === "loading" && parsedUpdate.sessionId === runtime.replayGate.targetSessionId) {
-          runtime.replayGate.lastReplayAt = Date.now();
+          runtime.resetReplayInactivityTimer(runtime.replayGate);
+          await options.callbacks.onSessionUpdate(parsedUpdate);
           return;
         }
         if (!runtime.state.sessionId || parsedUpdate.sessionId !== runtime.state.sessionId) return;
@@ -166,7 +192,10 @@ export class AcpSessionRuntime {
 
   /** Opens a logical session, loading a persisted id only when requested. */
   async openSession(input: AcpSessionOpenInput): Promise<{ sessionId: string; reloaded: boolean }> {
-    if (this.state.sessionId) return { sessionId: this.state.sessionId, reloaded: true };
+    if (this.state.sessionId) {
+      this.recordSessionOperation("reuse", this.state.sessionId);
+      return { sessionId: this.state.sessionId, reloaded: true };
+    }
     if (this.openingSession) return this.openingSession;
     const opening = this.openSessionAttempt(input);
     this.openingSession = opening;
@@ -179,54 +208,25 @@ export class AcpSessionRuntime {
 
   private async openSessionAttempt(input: AcpSessionOpenInput): Promise<{ sessionId: string; reloaded: boolean }> {
     try {
-      const loadSessionSupported =
-        typeof this.state.agentCapabilities === "object" &&
-        this.state.agentCapabilities !== null &&
-        (this.state.agentCapabilities as { loadSession?: boolean }).loadSession === true;
       const resumeFrom = input.resumeFrom ? parseAcpIdentifier(input.resumeFrom, "ACP resume session") : undefined;
-      if (resumeFrom && loadSessionSupported) {
-        const attemptId = ++this.openAttemptId;
-        const hardDeadline = Date.now() + this.sessionLoadTimeoutMs;
-        let timer!: ReturnType<typeof setTimeout>;
-        const timeout = new Promise<"timeout">((resolve) => {
-          timer = setTimeout(() => {
-            this.clearReplayGate(attemptId);
-            resolve("timeout");
-          }, Math.max(0, hardDeadline - Date.now()));
-        });
-        this.replayGate = {
-          attemptId,
-          targetSessionId: resumeFrom,
-          phase: "loading",
-          lastReplayAt: Date.now(),
-          hardDeadline,
-          timer,
-        };
-
-        const load = this.state.connection.loadSession({
-          cwd: input.cwd,
-          mcpServers: [...input.mcpServers],
-          sessionId: resumeFrom,
-        }).then(
-          () => "loaded" as const,
-          (error) => ({ error } as const),
-        );
-        const outcome = await Promise.race([load, timeout]);
-        clearTimeout(timer);
-
-        if (outcome === "loaded" && this.replayGate?.attemptId === attemptId) {
+      const recoveryMethod = resumeFrom ? this.selectRecoveryMethod() : undefined;
+      if (resumeFrom && recoveryMethod) {
+        const recovered = await this.recoverSession(recoveryMethod, resumeFrom, input);
+        if (recovered) {
           this.state.sessionId = resumeFrom;
-          this.clearReplayGate(attemptId);
+          this.recordSessionOperation(recoveryMethod, resumeFrom);
           return { sessionId: this.state.sessionId, reloaded: true };
         }
-        if (this.openAttemptId !== attemptId) throw new Error("ACP session open superseded");
-        this.clearReplayGate(attemptId);
+      }
+      if (resumeFrom && this.recoveryFailurePolicy === "fail-without-replacement") {
+        throw new SessionRecoveryFailedError();
       }
       const created = await this.state.connection.newSession({
         cwd: input.cwd,
         mcpServers: [...input.mcpServers],
       });
       this.state.sessionId = parseAcpIdentifier(created.sessionId, "ACP new session");
+      this.recordSessionOperation("new", this.state.sessionId);
       return { sessionId: this.state.sessionId, reloaded: false };
     } catch (error) {
       await this.close();
@@ -261,15 +261,78 @@ export class AcpSessionRuntime {
     if (this.closed) return;
     this.closed = true;
     this.openAttemptId += 1;
-    this.clearReplayGate();
+    this.clearReplayGate(undefined, "closed");
     await terminateAcpChild(this.processes, this.state.child);
   }
 
-  private clearReplayGate(attemptId?: number): void {
+  private clearReplayGate(attemptId?: number, outcome?: "closed"): void {
     const gate = this.replayGate;
     if (!gate || (attemptId !== undefined && gate.attemptId !== attemptId)) return;
     clearTimeout(gate.timer);
     this.replayGate = null;
+    if (outcome) gate.settle(outcome);
+  }
+
+  private selectRecoveryMethod(): "resume" | "load" | undefined {
+    const capabilities = this.state.agentCapabilities;
+    if (!isRecord(capabilities)) return undefined;
+    const sessionCapabilities = capabilities.sessionCapabilities;
+    if (isRecord(sessionCapabilities) && sessionCapabilities.resume !== undefined && sessionCapabilities.resume !== null) {
+      return "resume";
+    }
+    return capabilities.loadSession === true ? "load" : undefined;
+  }
+
+  private async recoverSession(
+    method: "resume" | "load",
+    resumeFrom: string,
+    input: AcpSessionOpenInput,
+  ): Promise<boolean> {
+    const attemptId = ++this.openAttemptId;
+    let settleGate!: (outcome: "timeout" | "closed") => void;
+    const gateWait = new Promise<"timeout" | "closed">((resolve) => { settleGate = resolve; });
+    this.replayGate = {
+      attemptId,
+      targetSessionId: resumeFrom,
+      phase: "loading",
+      settle: settleGate,
+      timer: undefined as unknown as ReturnType<typeof setTimeout>,
+    };
+    this.resetReplayInactivityTimer(this.replayGate);
+
+    const recovery = (method === "resume"
+      ? this.state.connection.resumeSession({
+        cwd: input.cwd,
+        mcpServers: [...input.mcpServers],
+        sessionId: resumeFrom,
+      })
+      : this.state.connection.loadSession({
+        cwd: input.cwd,
+        mcpServers: [...input.mcpServers],
+        sessionId: resumeFrom,
+      }))
+      .then(() => true, () => false);
+    const outcome = await Promise.race([recovery, gateWait]);
+    this.clearReplayGate(attemptId);
+    if (outcome === true && this.openAttemptId === attemptId) return true;
+    if (outcome === "timeout") {
+      if (this.recoveryFailurePolicy === "fail-without-replacement") {
+        await this.close();
+        throw new SessionRecoveryFailedError();
+      }
+      return false;
+    }
+    if (outcome === "closed") throw new SessionRecoveryFailedError();
+    return false;
+  }
+
+  private resetReplayInactivityTimer(gate: ReplayGate): void {
+    clearTimeout(gate.timer);
+    gate.timer = setTimeout(() => gate.settle("timeout"), this.sessionLoadTimeoutMs);
+  }
+
+  private recordSessionOperation(operation: AcpSessionOperation["operation"], sessionId: string): void {
+    this.onSessionOperation?.({ operation, sessionId });
   }
 }
 
@@ -307,6 +370,16 @@ export function validateAcpSessionUpdate(value: unknown): AcpSessionUpdate {
 function validateAgentCapabilities(capabilities: Record<string, unknown>): void {
   if (capabilities.loadSession !== undefined && typeof capabilities.loadSession !== "boolean") {
     throw invalidAcpPayload("ACP initialize agent capabilities are invalid");
+  }
+  const sessionCapabilities = capabilities.sessionCapabilities;
+  if (sessionCapabilities !== undefined) {
+    if (!isRecord(sessionCapabilities)) {
+      throw invalidAcpPayload("ACP initialize agent capabilities are invalid");
+    }
+    const resume = sessionCapabilities.resume;
+    if (resume !== undefined && resume !== null && !isRecord(resume)) {
+      throw invalidAcpPayload("ACP initialize agent capabilities are invalid");
+    }
   }
   const mcpCapabilities = capabilities.mcpCapabilities;
   if (mcpCapabilities === undefined) return;

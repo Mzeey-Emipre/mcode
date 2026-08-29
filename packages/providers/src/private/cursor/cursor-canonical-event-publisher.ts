@@ -99,6 +99,13 @@ export class CursorCanonicalEventPublisher {
     const eventId = `cursor:${routing.executionId}:attempt:${routing.deliveryAttempt}:event:${sourceSequence}`;
     const itemId = `cursor:${routing.executionId}:attempt:${routing.deliveryAttempt}:item:${sourceSequence}`;
     const timestamp = new Date().toISOString();
+    const canonicalRuntimeEvent: ProviderRuntimeEvent = {
+      ...runtimeEvent,
+      event: {
+        ...runtimeEvent.event,
+        turnExecutionId: routing.executionId,
+      },
+    };
     return {
       eventId,
       routing: {
@@ -120,7 +127,7 @@ export class CursorCanonicalEventPublisher {
           turnId: routing.turnId,
           kind: "system",
           providerIdentities: [...sourceIdentities],
-          payload: { projection: "providerRuntimeEvent", runtimeEvent },
+          payload: { projection: "providerRuntimeEvent", runtimeEvent: canonicalRuntimeEvent },
           createdAt: timestamp,
           updatedAt: timestamp,
         },

@@ -8,6 +8,16 @@ describe("TurnErrorPolicy.classify", () => {
     expect(policy.classify(new Error("model refused: invalid request"))).toBe("fatal");
   });
 
+  it("keeps a Cursor session recovery failure fatal", () => {
+    expect(
+      policy.classify(
+        new Error(
+          "SessionRecoveryFailed: Cursor could not recover the saved session. Retry starts a new Cursor session.",
+        ),
+      ),
+    ).toBe("fatal");
+  });
+
   it("classifies a stale pooled session as transient", () => {
     expect(policy.classify(new Error("ACP connection closed"))).toBe("transient");
     expect(policy.classify(new Error("session invalidated"))).toBe("transient");

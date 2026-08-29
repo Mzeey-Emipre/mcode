@@ -26,12 +26,14 @@ export interface CursorAcpSessionEntry {
   connection: ClientSideConnection;
   acpRuntime: AcpSessionRuntime;
   acpSessionId: string;
+  processIdentity: string;
   cwd: string;
   permissionMode: "full" | "default";
   lastUsedAt: number;
   todoSnapshot: CursorTodoSnapshot;
   turnChain: Promise<void>;
   activeTurnState: CursorAcpTurnState | null;
+  replayTurnState: CursorAcpTurnState | null;
   stickyHeavyInstructionsSent: boolean;
   cursorPromptOrdinal: number;
   stderrTailLines: string[];
