@@ -483,7 +483,11 @@ function createCursorTraceSessionEntry(trace: ProviderFixtureManifest["input"]["
     threadId: "CURSOR_TRACE_THREAD",
     acpSessionId: firstSessionUpdate.sessionId,
     permissionMode: "full",
+    acpRuntime: {
+      state: { sessionId: firstSessionUpdate.sessionId },
+    } as CursorAcpSessionEntry["acpRuntime"],
     activeTurnState: createCursorAcpTurnState(),
+    replayTurnState: null,
     todoSnapshot: { todos: new Map() },
   } as CursorAcpSessionEntry;
 }
