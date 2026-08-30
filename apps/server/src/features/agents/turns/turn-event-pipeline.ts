@@ -4,13 +4,13 @@ import type {
   ProviderEventIngressConsumer,
   ProviderEventIngressEvent,
 } from "../../providers/composition/provider-event-ingress.js";
-import {
-  PARENT_ASSISTANT_TEXT_QUEUE_POLICY,
-  PARENT_ASSISTANT_TEXT_RETAINED_LIMITS,
-} from "./parent-assistant-text-checkpoint-service.js";
+import { ACTIVE_TURN_RECOVERY_RETAINED_LIMITS } from "./active-turn-recovery-retention-policy.js";
 
-const MAX_QUEUED_EVENTS_PER_TURN = PARENT_ASSISTANT_TEXT_QUEUE_POLICY.maxQueuedEvents;
-const MAX_QUEUED_EVENT_BYTES_PER_TURN = PARENT_ASSISTANT_TEXT_RETAINED_LIMITS.maxBytes;
+/** Retention limits for ingress events that wait for assistant-text durability. */
+export const TURN_EVENT_QUEUE_RETAINED_LIMITS = {
+  maxEvents: ACTIVE_TURN_RECOVERY_RETAINED_LIMITS.maxRecords,
+  maxBytes: ACTIVE_TURN_RECOVERY_RETAINED_LIMITS.maxBytes,
+} as const;
 
 /** The terminal sources that must pass through the per-turn finalization fence. */
 export type TurnTerminalSource = "provider" | "user-stop" | "checkpoint-failure" | "shutdown";
@@ -131,9 +131,10 @@ export class TurnEventPipeline implements ProviderEventIngressConsumer {
 
   private enqueue(input: ProviderEventIngressEvent, event: AgentEvent, publish: boolean): boolean {
     const queue = this.queues.get(event.threadId) ?? [];
-    const byteLength = eventByteLength(event, MAX_QUEUED_EVENT_BYTES_PER_TURN);
+    const byteLength = eventByteLength(event, TURN_EVENT_QUEUE_RETAINED_LIMITS.maxBytes);
     const queuedBytes = this.queuedBytesByThread.get(event.threadId) ?? 0;
-    if (queue.length >= MAX_QUEUED_EVENTS_PER_TURN || queuedBytes + byteLength > MAX_QUEUED_EVENT_BYTES_PER_TURN) {
+    if (queue.length >= TURN_EVENT_QUEUE_RETAINED_LIMITS.maxEvents
+      || queuedBytes + byteLength > TURN_EVENT_QUEUE_RETAINED_LIMITS.maxBytes) {
       this.application.rejectForQueueCapacity(event);
       this.discard(event.threadId);
       return false;

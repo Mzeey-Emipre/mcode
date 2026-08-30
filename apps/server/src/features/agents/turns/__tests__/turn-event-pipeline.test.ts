@@ -12,6 +12,7 @@ import {
   type TurnEventEffects,
 } from "../turn-event-application.js";
 import type { ProviderEventIngressEvent } from "../../../providers/composition/provider-event-ingress.js";
+import { PARENT_ASSISTANT_TEXT_RETAINED_LIMITS } from "../parent-assistant-text-checkpoint-service.js";
 
 const EXECUTION_ID = "00000000-0000-4000-8000-000000000001";
 
@@ -38,7 +39,12 @@ function createPipeline(
   apply: TurnEventApplication["apply"],
   finalize = vi.fn(async () => true),
   previousFileFinalization: TurnEventApplication["previousFileFinalization"] = () => undefined,
-): { pipeline: TurnEventPipeline; finalize: ReturnType<typeof vi.fn> } {
+  rejectForQueueCapacity = vi.fn(),
+): {
+  pipeline: TurnEventPipeline;
+  finalize: ReturnType<typeof vi.fn>;
+  rejectForQueueCapacity: ReturnType<typeof vi.fn>;
+} {
   const lifecycle: TurnLifecycleControl = {
     normalize: (event) => event,
     finalize,
@@ -46,13 +52,13 @@ function createPipeline(
   const application: TurnEventApplication = {
     apply,
     observeFileMutation: vi.fn(),
-    rejectForQueueCapacity: vi.fn(),
+    rejectForQueueCapacity,
     previousFileFinalization,
     beginResumedFileTracking: vi.fn(),
     observeToolUse: vi.fn(),
     observeToolResult: vi.fn(),
   };
-  return { pipeline: new TurnEventPipeline(lifecycle, application), finalize };
+  return { pipeline: new TurnEventPipeline(lifecycle, application), finalize, rejectForQueueCapacity };
 }
 
 describe("TurnEventPipeline", () => {
@@ -104,6 +110,38 @@ describe("TurnEventPipeline", () => {
     await expect(finalization).resolves.toBe(true);
 
     expect(finalize).toHaveBeenCalledOnce();
+  });
+
+  it("keeps more than one text write batch ordered while checkpoint recovery delays the turn", () => {
+    let checkpointReady = false;
+    const applied: string[] = [];
+    const { pipeline, rejectForQueueCapacity } = createPipeline((_input, event) => {
+      applied.push((event as Extract<AgentEvent, { type: "textDelta" }>).delta);
+      return checkpointReady;
+    });
+    const deltas = Array.from(
+      { length: 64 },
+      (_, index) => `durable response event ${index + 1}`,
+    );
+
+    for (const delta of deltas) pipeline.handleProviderEvent(textDelta(delta));
+
+    expect(rejectForQueueCapacity).not.toHaveBeenCalled();
+
+    checkpointReady = true;
+    pipeline.resume("thread-1");
+
+    expect(applied.slice(-deltas.length)).toEqual(deltas);
+  });
+
+  it("interrupts only when one event exceeds the retained queue bytes", () => {
+    const apply = vi.fn(() => true);
+    const { pipeline, rejectForQueueCapacity } = createPipeline(apply);
+
+    pipeline.handleProviderEvent(textDelta("x".repeat(PARENT_ASSISTANT_TEXT_RETAINED_LIMITS.maxBytes)));
+
+    expect(apply).not.toHaveBeenCalled();
+    expect(rejectForQueueCapacity).toHaveBeenCalledOnce();
   });
 
   it("replays a file-barrier-deferred event with its original publication intent and provenance", async () => {

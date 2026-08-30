@@ -8,6 +8,7 @@ import { ThoughtSegmentRepo } from "../persistence/thought-segment-repo.js";
 import { HookExecutionRepo } from "../../../events/persistence/hook-execution-repo.js";
 import { NarrativeStore } from "../narrative-store.js";
 import { ACTIVE_TURN_WRITE_BATCH_LIMITS } from "../../../../../runtime/persistence/sqlite/bounded-write-batches.js";
+import { PARENT_ASSISTANT_TEXT_RETAINED_LIMITS } from "../../../turns/parent-assistant-text-checkpoint-service.js";
 
 /** Seed a workspace + thread so message/record foreign keys are satisfied. */
 function seedThread(db: Database.Database): string {
@@ -409,22 +410,48 @@ describe("NarrativeStore write seam (server-side traps)", () => {
     );
   });
 
-  it("rejects oversized recovery snapshots before building a complete projection", () => {
+  it("keeps recovery records above one write batch in source order", () => {
     store.beginTurn(THREAD);
     store.resetTurnCounters(THREAD);
-    for (let index = 0; index < ACTIVE_TURN_WRITE_BATCH_LIMITS.maxRows - 1; index += 1) {
-      store.bufferToolCall(THREAD, toolUse(`tool-${index}`, "Read"));
+    const expectedToolIds = Array.from(
+      { length: ACTIVE_TURN_WRITE_BATCH_LIMITS.maxRows },
+      (_, index) => `tool-${index}`,
+    );
+    for (const toolCallId of expectedToolIds) {
+      store.bufferToolCall(THREAD, toolUse(toolCallId, "Read"));
     }
 
-    expect(store.recoverySnapshot(THREAD)).toHaveLength(ACTIVE_TURN_WRITE_BATCH_LIMITS.maxRows - 1);
-    store.bufferToolCall(THREAD, toolUse("overflow", "Read"));
-    expect(() => store.recoverySnapshot(THREAD)).toThrow("active-turn row limit");
+    expect(store.recoverySnapshot(THREAD).map((item) => item.record.id)).toEqual(expectedToolIds);
 
     store.beginTurn(THREAD);
     store.resetTurnCounters(THREAD);
     store.openOrExtendThought(THREAD, "x".repeat(ACTIVE_TURN_WRITE_BATCH_LIMITS.maxBytes));
 
     expect(() => store.recoverySnapshot(THREAD)).toThrow("active-turn byte limit");
+  });
+
+  it("rejects individually valid recovery records that exceed the retained byte budget together", () => {
+    store.beginTurn(THREAD);
+    store.resetTurnCounters(THREAD);
+    store.bufferToolCall(THREAD, {
+      toolCallId: "browser-0",
+      toolName: "mcp__mcode-browser__browser_act",
+      toolInput: { payload: "x".repeat(4_000) },
+    });
+
+    expect(Buffer.byteLength(JSON.stringify(store.recoverySnapshot(THREAD)[0]), "utf8"))
+      .toBeLessThan(ACTIVE_TURN_WRITE_BATCH_LIMITS.maxBytes);
+
+    const recordCount = Math.floor(PARENT_ASSISTANT_TEXT_RETAINED_LIMITS.maxBytes / 4_000) + 2;
+    for (let index = 1; index < recordCount; index += 1) {
+      store.bufferToolCall(THREAD, {
+        toolCallId: `browser-${index}`,
+        toolName: "mcp__mcode-browser__browser_act",
+        toolInput: { payload: "x".repeat(4_000) },
+      });
+    }
+
+    expect(() => store.recoverySnapshot(THREAD)).toThrow("retained byte capacity");
   });
 
   it("drains a hook that arrives while a bounded narrative write yields", async () => {
@@ -828,7 +855,7 @@ describe("NarrativeStore write seam (server-side traps)", () => {
     });
 
     it("persists Codex commands beyond the old 200-character JSON summary", () => {
-      const command = `pwsh -Command \"${"Write-Output long-command;".repeat(20)}\"`;
+      const command = `pwsh -Command "${"Write-Output long-command;".repeat(20)}"`;
       seedAssistantMessage("m1", "done", 1);
       store.beginTurn(THREAD);
       store.resetTurnCounters(THREAD);

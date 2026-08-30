@@ -42,8 +42,10 @@ import { broadcast } from "../../../application/transport/push.js";
 import {
   ACTIVE_TURN_WRITE_BATCH_LIMITS,
   runBoundedWriteBatches,
+  runBoundedWriteBatchesSync,
   type WriteBatchResult,
 } from "../../../runtime/persistence/sqlite/bounded-write-batches.js";
+import { assertActiveTurnRecoveryRetention } from "../turns/active-turn-recovery-retention-policy.js";
 import {
   CanonicalAgentDiagnostics,
   type CanonicalDiagnosticExport,
@@ -231,6 +233,48 @@ type CanonicalParentTerminalEventInput = {
   outcome: TurnOutcome;
   error?: string;
 };
+
+interface SubagentRosterActivity {
+  latestTurns: Map<string, AgentTurn | null>;
+  activeIds: Set<string>;
+}
+
+interface SubagentRosterLookup extends SubagentRosterActivity {
+  threads: AgentThread[];
+  turnsByThread: Map<string, AgentTurn[]>;
+  itemRows: Array<Record<string, unknown>>;
+  actionsByThread: Map<string, CollaborationAction>;
+  sourceItemsById: Map<string, AgentItem>;
+}
+
+type SubagentRosterMetadata = Pick<
+  CanonicalSubagentRosterRow,
+  "task" | "identity" | "model" | "reasoning"
+>;
+
+interface ParentTerminalBatchState {
+  latest: Omit<CanonicalAgentBatchedCommitResult, "writeBatches"> | null;
+  published: CanonicalAgentEventEnvelope[];
+  pendingPublication: CanonicalAgentEventEnvelope[];
+  modelState: AgentModelState | null;
+  checkpoint: CanonicalAgentCheckpoint | null;
+  acceptedAt: string;
+  acceptedSequence: number;
+  changed: boolean;
+  wrote: boolean;
+  terminal: boolean;
+  ignoredTerminal: boolean;
+}
+
+interface ParentTerminalBatchEvent {
+  event: CanonicalAgentEventEnvelope;
+  application: EventApplication | undefined;
+}
+
+interface RetainedVolatileIngestEvents {
+  events: readonly CanonicalAgentEventDraft[];
+  droppedEventCount: number;
+}
 
 function hashCodexKey(value: string): string {
   return createHash("sha256").update(value).digest("hex").slice(0, 32);
@@ -876,42 +920,81 @@ export class CanonicalAgentBoundary implements ParentTurnDurability, CodexCollab
 
   /** Persist one directional action and its source item without inventing a Provider turn. */
   recordCollaborationAction(input: CollaborationActionInput): CollaborationAction {
+    const source = this.collaborationSource(input);
+    const target = this.collaborationTarget(input);
+    const now = new Date().toISOString();
+    const existing = this.loadCollaborationAction(input.actionId);
+    const action = this.collaborationAction(input, source, target, existing, now);
+    this.assertCollaborationActionIdentity(existing, action);
+    const existingItem = this.collaborationSourceItem(input, source);
+    const sourceItem = existingItem ?? this.newCollaborationSourceItem(input, source, now);
+    this.commitCollaborationAction(input, source, action, sourceItem, existingItem);
+    return action;
+  }
+
+  private collaborationSource(
+    input: CollaborationActionInput,
+  ): { sourceThread: AgentThread; sourceTurn: AgentTurn } {
     const sourceThread = this.loadThread(input.sourceThreadId);
     const sourceTurn = this.loadTurn(input.sourceTurnId);
-    const targetThread = this.loadThread(input.targetThreadId);
     if (!sourceThread || !sourceTurn || sourceTurn.threadId !== sourceThread.id) {
       throw new Error(`Collaboration source turn is not canonical: ${input.sourceTurnId}`);
     }
     if (this.executionIdForTurn(sourceTurn.id) !== input.sourceExecutionId) {
       throw new Error(`Collaboration source execution does not own turn: ${input.sourceTurnId}`);
     }
+    return { sourceThread, sourceTurn };
+  }
+
+  private collaborationTarget(
+    input: CollaborationActionInput,
+  ): { targetThread: AgentThread; targetTurnId?: string } {
+    const targetThread = this.loadThread(input.targetThreadId);
     if (!targetThread) {
       throw new Error(`Collaboration target thread is not canonical: ${input.targetThreadId}`);
     }
-
-    const now = new Date().toISOString();
     const activeTargetTurn = this.loadActiveTurn(targetThread.id);
     const targetTurn = input.targetTurnId ? this.loadTurn(input.targetTurnId) : null;
+    this.assertCollaborationTargetTurn(input, targetThread, targetTurn);
+    return {
+      targetThread,
+      ...(input.targetTurnId
+        ? { targetTurnId: input.targetTurnId }
+        : activeTargetTurn ? { targetTurnId: activeTargetTurn.id } : {}),
+    };
+  }
+
+  private assertCollaborationTargetTurn(
+    input: CollaborationActionInput,
+    targetThread: AgentThread,
+    targetTurn: AgentTurn | null,
+  ): void {
     if (targetTurn && targetTurn.threadId !== targetThread.id) {
       throw new Error(`Collaboration target turn is not owned by target thread: ${input.targetTurnId}`);
     }
     if (input.targetTurnId && !targetTurn) {
       throw new Error(`Collaboration target turn is not canonical: ${input.targetTurnId}`);
     }
-    const existing = this.loadCollaborationAction(input.actionId);
-    const action: CollaborationAction = {
+  }
+
+  private collaborationAction(
+    input: CollaborationActionInput,
+    source: { sourceThread: AgentThread; sourceTurn: AgentTurn },
+    target: { targetThread: AgentThread; targetTurnId?: string },
+    existing: CollaborationAction | null,
+    now: string,
+  ): CollaborationAction {
+    return {
       id: input.actionId,
       kind: input.kind,
       source: {
-        threadId: sourceThread.id,
-        turnId: sourceTurn.id,
+        threadId: source.sourceThread.id,
+        turnId: source.sourceTurn.id,
         itemId: input.sourceItemId,
       },
       target: {
-        threadId: targetThread.id,
-        ...(input.targetTurnId
-          ? { turnId: input.targetTurnId }
-          : activeTargetTurn ? { turnId: activeTargetTurn.id } : {}),
+        threadId: target.targetThread.id,
+        ...(target.targetTurnId ? { turnId: target.targetTurnId } : {}),
       },
       status: input.status,
       deliveryUnknown: false,
@@ -919,48 +1002,82 @@ export class CanonicalAgentBoundary implements ParentTurnDurability, CodexCollab
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };
-    if (existing && (
+  }
+
+  private assertCollaborationActionIdentity(
+    existing: CollaborationAction | null,
+    action: CollaborationAction,
+  ): void {
+    if (!existing) return;
+    if (
       existing.kind !== action.kind
       || existing.source.threadId !== action.source.threadId
       || existing.source.turnId !== action.source.turnId
       || existing.source.itemId !== action.source.itemId
       || existing.target.threadId !== action.target.threadId
-    )) {
-      throw new Error(`Collaboration action identity conflict: ${input.actionId}`);
+    ) {
+      throw new Error(`Collaboration action identity conflict: ${action.id}`);
     }
+  }
+
+  private collaborationSourceItem(
+    input: CollaborationActionInput,
+    source: { sourceThread: AgentThread; sourceTurn: AgentTurn },
+  ): AgentItem | null {
     const existingItem = this.loadItem(input.sourceItemId);
     if (existingItem && (
-      existingItem.threadId !== sourceThread.id || existingItem.turnId !== sourceTurn.id
+      existingItem.threadId !== source.sourceThread.id || existingItem.turnId !== source.sourceTurn.id
     )) {
       throw new Error(`Collaboration source item identity conflict: ${input.sourceItemId}`);
     }
-    const sourceItem: AgentItem = existingItem ?? {
+    return existingItem;
+  }
+
+  private newCollaborationSourceItem(
+    input: CollaborationActionInput,
+    source: { sourceThread: AgentThread; sourceTurn: AgentTurn },
+    now: string,
+  ): AgentItem {
+    return {
       id: input.sourceItemId,
-      threadId: sourceThread.id,
-      turnId: sourceTurn.id,
+      threadId: source.sourceThread.id,
+      turnId: source.sourceTurn.id,
       kind: "tool-call",
       providerIdentities: [...input.providerIdentities],
       payload: input.payload,
       createdAt: now,
       updatedAt: now,
     };
+  }
+
+  private commitCollaborationAction(
+    input: CollaborationActionInput,
+    source: { sourceThread: AgentThread; sourceTurn: AgentTurn },
+    action: CollaborationAction,
+    sourceItem: AgentItem,
+    existingItem: AgentItem | null,
+  ): void {
     const eventSuffix = hashCodexKey(`${input.actionId}:${input.status}:${action.target.turnId ?? "pending"}`);
     this.commit({
-      threadId: sourceThread.id,
-      turnId: sourceTurn.id,
+      threadId: source.sourceThread.id,
+      turnId: source.sourceTurn.id,
       executionId: input.sourceExecutionId,
       phase: "running",
       events: [
-        ...(existingItem ? [] : [this.itemDraft(input.sourceExecutionId, sourceThread, sourceTurn, sourceItem)]),
+        ...(existingItem ? [] : [this.itemDraft(
+          input.sourceExecutionId,
+          source.sourceThread,
+          source.sourceTurn,
+          sourceItem,
+        )]),
         this.actionDraft(
           input.sourceExecutionId,
-          sourceThread,
+          source.sourceThread,
           action,
           `${input.sourceExecutionId}:collaboration:${eventSuffix}`,
         ),
       ],
     });
-    return action;
   }
 
   /** Read one owning parent's unique canonical descendant roster. */
@@ -1050,15 +1167,59 @@ export class CanonicalAgentBoundary implements ParentTurnDurability, CodexCollab
       parsedRequest.limit,
     ) as Array<Record<string, unknown>>;
     if (rows.length === 0) {
-      return CanonicalSubagentRosterSchema().parse({
-        owningParentThreadId: parsedRequest.owningParentThreadId,
-        rosterRevision: parent.rosterRevision,
-        active: [],
-        done: [],
-      });
+      return this.emptySubagentRoster(parsedRequest.owningParentThreadId, parent.rosterRevision);
     }
+    return this.projectSubagentRoster(parsedRequest, parent, rows);
+  }
 
+  private emptySubagentRoster(owningParentThreadId: string, rosterRevision: number): CanonicalSubagentRoster {
+    return CanonicalSubagentRosterSchema().parse({
+      owningParentThreadId,
+      rosterRevision,
+      active: [],
+      done: [],
+    });
+  }
+
+  private projectSubagentRoster(
+    request: CanonicalSubagentRosterRequest,
+    parent: AgentThread,
+    rows: Array<Record<string, unknown>>,
+  ): CanonicalSubagentRoster {
+    const lookup = this.loadSubagentRosterLookup(rows);
+    const rosterRows = lookup.threads.map((thread) => this.projectSubagentRosterRow(
+      request,
+      thread,
+      lookup,
+    ));
+    const { active, done } = this.partitionSubagentRosterRows(rosterRows, lookup.activeIds);
+    const retainedActive = active.slice(0, request.limit);
+    const retainedDone = done.slice(0, Math.max(0, request.limit - retainedActive.length));
+    return CanonicalSubagentRosterSchema().parse({
+      owningParentThreadId: request.owningParentThreadId,
+      rosterRevision: parent.rosterRevision,
+      active: retainedActive,
+      done: retainedDone,
+    });
+  }
+
+  private loadSubagentRosterLookup(rows: Array<Record<string, unknown>>): SubagentRosterLookup {
     const threads = rows.map((row) => this.threadFromRow(row));
+    const turnsByThread = this.loadSubagentRosterTurns(threads);
+    const itemRows = this.loadSubagentRosterItemRows(threads);
+    const { actionsByThread, actionRows } = this.loadSubagentRosterActions(threads);
+    const sourceItemsById = this.loadSubagentRosterSourceItems(actionRows);
+    return {
+      threads,
+      turnsByThread,
+      itemRows,
+      actionsByThread,
+      sourceItemsById,
+      ...this.classifySubagentRosterThreads(threads, turnsByThread),
+    };
+  }
+
+  private loadSubagentRosterTurns(threads: readonly AgentThread[]): Map<string, AgentTurn[]> {
     const threadIds = threads.map((thread) => thread.id);
     const placeholders = threadIds.map(() => "?").join(", ");
     const turnsByThread = new Map<string, AgentTurn[]>();
@@ -1074,11 +1235,25 @@ export class CanonicalAgentBoundary implements ParentTurnDurability, CodexCollab
       turns.push(turn);
       turnsByThread.set(turn.threadId, turns);
     }
-    const itemRows = this.db.prepare(`
+    return turnsByThread;
+  }
+
+  private loadSubagentRosterItemRows(threads: readonly AgentThread[]): Array<Record<string, unknown>> {
+    const threadIds = threads.map((thread) => thread.id);
+    const placeholders = threadIds.map(() => "?").join(", ");
+    return this.db.prepare(`
       SELECT *
       FROM canonical_agent_items
       WHERE thread_id IN (${placeholders})
     `).all(...threadIds) as Array<Record<string, unknown>>;
+  }
+
+  private loadSubagentRosterActions(threads: readonly AgentThread[]): {
+    actionsByThread: Map<string, CollaborationAction>;
+    actionRows: Array<Record<string, unknown>>;
+  } {
+    const threadIds = threads.map((thread) => thread.id);
+    const placeholders = threadIds.map(() => "?").join(", ");
     const actionsByThread = new Map<string, CollaborationAction>();
     const actionRows = this.db.prepare(`
       SELECT *
@@ -1090,23 +1265,34 @@ export class CanonicalAgentBoundary implements ParentTurnDurability, CodexCollab
       const action = this.actionFromRow(row);
       actionsByThread.set(action.target.threadId, action);
     }
+    return { actionsByThread, actionRows };
+  }
+
+  private loadSubagentRosterSourceItems(
+    actionRows: readonly Record<string, unknown>[],
+  ): Map<string, AgentItem> {
     const sourceItemIds = [...new Set(actionRows
       .map((row) => row.source_item_id)
       .filter((value): value is string => typeof value === "string" && value.length > 0))];
     const sourceItemsById = new Map<string, AgentItem>();
-    if (sourceItemIds.length > 0) {
-      const sourcePlaceholders = sourceItemIds.map(() => "?").join(", ");
-      const sourceRows = this.db.prepare(`
-        SELECT *
-        FROM canonical_agent_items
-        WHERE id IN (${sourcePlaceholders})
-      `).all(...sourceItemIds) as Array<Record<string, unknown>>;
-      for (const row of sourceRows) {
-        const item = this.itemFromRow(row);
-        sourceItemsById.set(item.id, item);
-      }
+    if (sourceItemIds.length === 0) return sourceItemsById;
+    const sourcePlaceholders = sourceItemIds.map(() => "?").join(", ");
+    const sourceRows = this.db.prepare(`
+      SELECT *
+      FROM canonical_agent_items
+      WHERE id IN (${sourcePlaceholders})
+    `).all(...sourceItemIds) as Array<Record<string, unknown>>;
+    for (const row of sourceRows) {
+      const item = this.itemFromRow(row);
+      sourceItemsById.set(item.id, item);
     }
+    return sourceItemsById;
+  }
 
+  private classifySubagentRosterThreads(
+    threads: readonly AgentThread[],
+    turnsByThread: ReadonlyMap<string, readonly AgentTurn[]>,
+  ): SubagentRosterActivity {
     const activeIds = new Set<string>();
     const latestTurns = new Map<string, AgentTurn | null>();
     for (const thread of threads) {
@@ -1121,92 +1307,211 @@ export class CanonicalAgentBoundary implements ParentTurnDurability, CodexCollab
         || latest?.status === "Running"
       ) activeIds.add(thread.id);
     }
+    return { latestTurns, activeIds };
+  }
 
-    const ancestorChain = (thread: AgentThread): string[] => {
-      const chain = [thread.id];
-      const seen = new Set(chain);
-      let current = thread.parentThreadId;
-      while (current && !seen.has(current) && chain.length < CANONICAL_SUBAGENT_LINEAGE_MAX_DEPTH) {
-        chain.push(current);
-        seen.add(current);
-        current = threads.find((candidate) => candidate.id === current)?.parentThreadId
-          ?? (current === parsedRequest.owningParentThreadId ? undefined : undefined);
-      }
-      if (!chain.includes(parsedRequest.owningParentThreadId)) chain.push(parsedRequest.owningParentThreadId);
-      const lineage = chain.reverse();
-      return lineage.length <= CANONICAL_SUBAGENT_LINEAGE_MAX_DEPTH
-        ? lineage
-        : [lineage[0]!, ...lineage.slice(-(CANONICAL_SUBAGENT_LINEAGE_MAX_DEPTH - 1))];
+  private projectSubagentRosterRow(
+    request: CanonicalSubagentRosterRequest,
+    thread: AgentThread,
+    lookup: SubagentRosterLookup,
+  ): CanonicalSubagentRosterRow {
+    const turns = lookup.turnsByThread.get(thread.id) ?? [];
+    const latestTurn = lookup.latestTurns.get(thread.id) ?? null;
+    const source = this.subagentRosterSource(thread.id, lookup);
+    const timestamps = this.subagentRosterTimestamps(thread, turns, source.action, lookup.itemRows);
+    return {
+      ...this.subagentRosterRowBase(
+        request,
+        thread,
+        latestTurn,
+        timestamps.startedAt,
+        timestamps.updatedAt,
+        lookup.threads,
+      ),
+      ...this.subagentRosterSourceFields(source.action, source.sourceItem?.payload ?? {}),
+      ...this.subagentRosterIdentities(thread, source),
+      ...this.subagentRosterActivityFields(thread.id, lookup),
     };
-    const descendantHasActiveChild = (threadId: string): boolean => threads.some((candidate) => {
-      if (!activeIds.has(candidate.id) || candidate.id === threadId) return false;
-      let current = candidate.parentThreadId;
-      const seen = new Set<string>();
-      while (current && !seen.has(current)) {
-        if (current === threadId) return true;
-        seen.add(current);
-        current = threads.find((thread) => thread.id === current)?.parentThreadId;
-      }
-      return false;
-    });
-    const maxTimestamp = (values: readonly (string | null | undefined)[], fallback: string): string =>
-      values.filter((value): value is string => typeof value === "string")
-        .sort((left, right) => right.localeCompare(left))[0] ?? fallback;
+  }
 
-    const rosterRows: CanonicalSubagentRosterRow[] = threads.map((thread) => {
-      const turns = turnsByThread.get(thread.id) ?? [];
-      const latestTurn = latestTurns.get(thread.id) ?? null;
-      const action = actionsByThread.get(thread.id);
-      const sourceItem = action ? sourceItemsById.get(action.source.itemId) : undefined;
-      const sourcePayload = sourceItem?.payload ?? {};
-      const itemTimes = itemRows
-        .filter((row) => row.thread_id === thread.id)
-        .flatMap((row) => [String(row.created_at), String(row.updated_at)]);
-      const startedAt = turns
-        .map((turn) => turn.startedAt)
-        .filter((value): value is string => value !== null)
-        .sort()[0] ?? thread.createdAt;
-      const updatedAt = maxTimestamp([
+  private subagentRosterTimestamps(
+    thread: AgentThread,
+    turns: readonly AgentTurn[],
+    action: CollaborationAction | undefined,
+    itemRows: readonly Record<string, unknown>[],
+  ): { startedAt: string; updatedAt: string } {
+    return {
+      startedAt: this.subagentRosterStartedAt(turns, thread.createdAt),
+      updatedAt: this.maxSubagentTimestamp([
         thread.updatedAt,
         ...turns.map((turn) => turn.updatedAt),
-        ...itemTimes,
+        ...this.subagentRosterItemTimes(thread.id, itemRows),
         action?.updatedAt,
-      ], thread.updatedAt);
-      const endedAt = latestTurn?.endedAt ?? null;
-      const providerIdentities = this.uniqueProviderIdentities([
+      ], thread.updatedAt),
+    };
+  }
+
+  private subagentRosterIdentities(
+    thread: AgentThread,
+    source: { action: CollaborationAction | undefined; sourceItem: AgentItem | undefined },
+  ): Pick<CanonicalSubagentRosterRow, "providerIdentities" | "sourceProviderIdentities"> {
+    return {
+      providerIdentities: this.uniqueProviderIdentities([
         ...thread.providerIdentities,
-        ...(action?.providerIdentities ?? []),
-        ...(sourceItem?.providerIdentities ?? []),
-      ]);
-      const sourceProviderIdentities = this.uniqueProviderIdentities(sourceItem?.providerIdentities ?? []);
-      const optionalText = (value: unknown): string | undefined =>
-        typeof value === "string" && value.trim().length > 0 ? value : undefined;
-      const active = activeIds.has(thread.id);
-      return {
-        id: thread.id,
-        parentThreadId: thread.parentThreadId ?? parsedRequest.owningParentThreadId,
-        rootThreadId: thread.rootThreadId,
-        owningParentThreadId: thread.owningParentThreadId ?? parsedRequest.owningParentThreadId,
-        lineage: ancestorChain(thread),
-        activityState: thread.activityState,
-        latestTurnStatus: latestTurn?.status ?? null,
-        startedAt,
-        updatedAt,
-        endedAt,
-        terminalOutcome: canonicalSubagentTerminalOutcome(latestTurn?.status ?? null),
-        ...(action?.source.itemId ? { sourceItemId: action.source.itemId } : {}),
-        ...(optionalText(sourcePayload.description) ? { task: sourcePayload.description as string } : {}),
-        ...(optionalText(sourcePayload.identity) ? { identity: sourcePayload.identity as string } : {}),
-        ...(optionalText(sourcePayload.model) ? { model: sourcePayload.model as string } : {}),
-        ...(optionalText(sourcePayload.reasoningEffort)
-          ? { reasoning: sourcePayload.reasoningEffort as string }
-          : {}),
-        providerIdentities,
-        sourceProviderIdentities,
-        hasActiveDescendant: !active && descendantHasActiveChild(thread.id),
-        canStop: false,
-      };
-    });
+        ...(source.action?.providerIdentities ?? []),
+        ...(source.sourceItem?.providerIdentities ?? []),
+      ]),
+      sourceProviderIdentities: this.uniqueProviderIdentities(source.sourceItem?.providerIdentities ?? []),
+    };
+  }
+
+  private subagentRosterActivityFields(
+    threadId: string,
+    lookup: SubagentRosterLookup,
+  ): Pick<CanonicalSubagentRosterRow, "hasActiveDescendant" | "canStop"> {
+    const active = lookup.activeIds.has(threadId);
+    return {
+      hasActiveDescendant: !active && this.subagentHasActiveDescendant(threadId, lookup),
+      canStop: false,
+    };
+  }
+
+  private subagentRosterSource(
+    threadId: string,
+    lookup: SubagentRosterLookup,
+  ): { action: CollaborationAction | undefined; sourceItem: AgentItem | undefined } {
+    const action = lookup.actionsByThread.get(threadId);
+    return {
+      action,
+      sourceItem: action ? lookup.sourceItemsById.get(action.source.itemId) : undefined,
+    };
+  }
+
+  private subagentRosterStartedAt(turns: readonly AgentTurn[], fallback: string): string {
+    return turns
+      .map((turn) => turn.startedAt)
+      .filter((value): value is string => value !== null)
+      .sort()[0] ?? fallback;
+  }
+
+  private subagentRosterItemTimes(
+    threadId: string,
+    itemRows: readonly Record<string, unknown>[],
+  ): string[] {
+    return itemRows
+      .filter((row) => row.thread_id === threadId)
+      .flatMap((row) => [String(row.created_at), String(row.updated_at)]);
+  }
+
+  private maxSubagentTimestamp(
+    values: readonly (string | null | undefined)[],
+    fallback: string,
+  ): string {
+    return values.filter((value): value is string => typeof value === "string")
+      .sort((left, right) => right.localeCompare(left))[0] ?? fallback;
+  }
+
+  private subagentRosterRowBase(
+    request: CanonicalSubagentRosterRequest,
+    thread: AgentThread,
+    latestTurn: AgentTurn | null,
+    startedAt: string,
+    updatedAt: string,
+    threads: readonly AgentThread[],
+  ): Omit<CanonicalSubagentRosterRow, "sourceItemId" | "task" | "identity" | "model" | "reasoning" | "providerIdentities" | "sourceProviderIdentities" | "hasActiveDescendant" | "canStop"> {
+    const latestTurnStatus = latestTurn?.status ?? null;
+    return {
+      id: thread.id,
+      parentThreadId: thread.parentThreadId ?? request.owningParentThreadId,
+      rootThreadId: thread.rootThreadId,
+      owningParentThreadId: thread.owningParentThreadId ?? request.owningParentThreadId,
+      lineage: this.subagentLineage(request.owningParentThreadId, thread, threads),
+      activityState: thread.activityState,
+      latestTurnStatus,
+      startedAt,
+      updatedAt,
+      endedAt: latestTurn?.endedAt ?? null,
+      terminalOutcome: canonicalSubagentTerminalOutcome(latestTurnStatus),
+    };
+  }
+
+  private subagentRosterSourceFields(
+    action: CollaborationAction | undefined,
+    payload: Record<string, unknown>,
+  ): Pick<CanonicalSubagentRosterRow, "sourceItemId"> & SubagentRosterMetadata {
+    const sourceItemId = action?.source.itemId;
+    return {
+      ...(sourceItemId ? { sourceItemId } : {}),
+      ...this.subagentRosterMetadata(payload),
+    };
+  }
+
+  private subagentRosterMetadata(payload: Record<string, unknown>): SubagentRosterMetadata {
+    const metadata: SubagentRosterMetadata = {};
+    this.setSubagentRosterText(metadata, "task", payload.description);
+    this.setSubagentRosterText(metadata, "identity", payload.identity);
+    this.setSubagentRosterText(metadata, "model", payload.model);
+    this.setSubagentRosterText(metadata, "reasoning", payload.reasoningEffort);
+    return metadata;
+  }
+
+  private setSubagentRosterText(
+    metadata: SubagentRosterMetadata,
+    key: keyof SubagentRosterMetadata,
+    value: unknown,
+  ): void {
+    const text = this.subagentRosterText(value);
+    if (text) metadata[key] = text;
+  }
+
+  private subagentRosterText(value: unknown): string | undefined {
+    return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+  }
+
+  private subagentLineage(
+    owningParentThreadId: string,
+    thread: AgentThread,
+    threads: readonly AgentThread[],
+  ): string[] {
+    const chain = [thread.id];
+    const seen = new Set(chain);
+    let current = thread.parentThreadId;
+    while (current && !seen.has(current) && chain.length < CANONICAL_SUBAGENT_LINEAGE_MAX_DEPTH) {
+      chain.push(current);
+      seen.add(current);
+      current = threads.find((candidate) => candidate.id === current)?.parentThreadId;
+    }
+    if (!chain.includes(owningParentThreadId)) chain.push(owningParentThreadId);
+    const lineage = chain.reverse();
+    return lineage.length <= CANONICAL_SUBAGENT_LINEAGE_MAX_DEPTH
+      ? lineage
+      : [lineage[0]!, ...lineage.slice(-(CANONICAL_SUBAGENT_LINEAGE_MAX_DEPTH - 1))];
+  }
+
+  private subagentHasActiveDescendant(threadId: string, lookup: SubagentRosterLookup): boolean {
+    return lookup.threads.some((candidate) => this.isActiveSubagentDescendant(threadId, candidate, lookup));
+  }
+
+  private isActiveSubagentDescendant(
+    threadId: string,
+    candidate: AgentThread,
+    lookup: SubagentRosterLookup,
+  ): boolean {
+    if (!lookup.activeIds.has(candidate.id) || candidate.id === threadId) return false;
+    let current = candidate.parentThreadId;
+    const seen = new Set<string>();
+    while (current && !seen.has(current)) {
+      if (current === threadId) return true;
+      seen.add(current);
+      current = lookup.threads.find((thread) => thread.id === current)?.parentThreadId;
+    }
+    return false;
+  }
+
+  private partitionSubagentRosterRows(
+    rosterRows: readonly CanonicalSubagentRosterRow[],
+    activeIds: ReadonlySet<string>,
+  ): { active: CanonicalSubagentRosterRow[]; done: CanonicalSubagentRosterRow[] } {
     const active = rosterRows
       .filter((row) => activeIds.has(row.id))
       .sort((left, right) => left.startedAt.localeCompare(right.startedAt) || left.id.localeCompare(right.id));
@@ -1216,14 +1521,7 @@ export class CanonicalAgentBoundary implements ParentTurnDurability, CodexCollab
         (right.endedAt ?? right.updatedAt).localeCompare(left.endedAt ?? left.updatedAt)
         || right.id.localeCompare(left.id)
       ));
-    const retainedActive = active.slice(0, parsedRequest.limit);
-    const retainedDone = done.slice(0, Math.max(0, parsedRequest.limit - retainedActive.length));
-    return CanonicalSubagentRosterSchema().parse({
-      owningParentThreadId: parsedRequest.owningParentThreadId,
-      rosterRevision: parent.rosterRevision,
-      active: retainedActive,
-      done: retainedDone,
-    });
+    return { active, done };
   }
 
   /** Resolve one owned child and its latest native identities without mutating canonical state. */
@@ -1399,71 +1697,134 @@ export class CanonicalAgentBoundary implements ParentTurnDurability, CodexCollab
     if (!turn) return false;
     const thread = this.loadThread(turn.threadId);
     if (!thread) throw new Error(`Canonical parent thread not found: ${turn.threadId}`);
-    const items = input.items;
-    if (items.length === 0 && (input.discardedItemIds?.length ?? 0) === 0) return true;
+    if (input.items.length === 0 && (input.discardedItemIds?.length ?? 0) === 0) return true;
     const now = new Date().toISOString();
-    const transaction = this.db.transaction(() => {
-      const checkpoint = this.loadCheckpoint(input.executionId);
-      if (!checkpoint) throw new Error(`Canonical parent checkpoint was not found: ${input.executionId}`);
-      if (checkpoint.terminalOutcome) return;
-      for (const item of items) {
-        const itemId = item.kind === "toolCall"
-          ? `toolCall:${item.record.id}`
-          : `${item.kind}:${item.record.id}`;
-        const parentItemId = item.kind === "toolCall" && item.record.parent_tool_call_id
-          ? `toolCall:${item.record.parent_tool_call_id}`
-          : undefined;
-        const existingPayload = this.loadItem(itemId)?.payload ?? {};
-        const subagentMetadata = item.kind === "toolCall" ? {
-          ...(typeof existingPayload.description === "string"
-            ? { description: existingPayload.description }
-            : {}),
-          ...(typeof existingPayload.identity === "string"
-            ? { identity: existingPayload.identity }
-            : {}),
-          ...(typeof existingPayload.model === "string"
-            ? { model: existingPayload.model }
-            : {}),
-          ...(typeof existingPayload.reasoningEffort === "string"
-            ? { reasoningEffort: existingPayload.reasoningEffort }
-            : {}),
-        } : {};
-        const itemPayload = {
-          projection: "narrativeRecovery",
-          narrative: item,
-          ...subagentMetadata,
-        };
-        this.persistItem({
-          id: itemId,
-          threadId: thread.id,
-          turnId: turn.id,
-          ...(parentItemId ? { parentItemId } : {}),
-          kind: item.kind === "toolCall"
-            ? "tool-call"
-            : item.kind === "narrationSegment"
-              ? "reasoning"
-              : "system",
-          providerIdentities: turn.providerIdentities,
-          payload: itemPayload,
-          createdAt: item.record.started_at,
-          updatedAt: now,
-        });
-      }
-      for (const itemId of input.discardedItemIds ?? []) {
-        const existing = this.loadItem(itemId);
-        if (!existing || existing.threadId !== thread.id || existing.turnId !== turn.id) {
-          throw new Error(`Canonical narrative recovery item was not found: ${itemId}`);
-        }
-        const projection = typeof existing.payload.projection === "string"
-          ? existing.payload.projection
-          : null;
-        if (projection === "narrativeRecovery" || projection === "narrativeRecoveryDiscarded") {
-          this.db.prepare("DELETE FROM canonical_agent_items WHERE id = ?").run(itemId);
-        }
-      }
-    });
-    transaction();
+    this.persistParentNarrativeRecoveryBatched(input, thread, turn, now);
     return true;
+  }
+
+  private persistParentNarrativeRecoveryBatched(
+    input: ParentNarrativeRecoveryCommitInput,
+    thread: AgentThread,
+    turn: AgentTurn,
+    now: string,
+  ): void {
+    const checkpoint = this.loadCheckpoint(input.executionId);
+    if (!checkpoint) throw new Error(`Canonical parent checkpoint was not found: ${input.executionId}`);
+    if (checkpoint.terminalOutcome) return;
+    const operations = [
+      ...input.items.map((item) => ({ kind: "persist" as const, item })),
+      ...(input.discardedItemIds ?? []).map((itemId) => ({ kind: "discard" as const, itemId })),
+    ];
+    const byteLength = (operation: (typeof operations)[number]) => operation.kind === "persist"
+      ? Buffer.byteLength(JSON.stringify(operation.item), "utf8")
+      : Buffer.byteLength(operation.itemId, "utf8");
+    assertActiveTurnRecoveryRetention(
+      operations.length,
+      operations.reduce((total, operation) => total + byteLength(operation), 0),
+    );
+    runBoundedWriteBatchesSync({
+      db: this.db,
+      items: operations,
+      limits: ACTIVE_TURN_WRITE_BATCH_LIMITS,
+      byteLength,
+      write: (operation) => {
+        if (operation.kind === "persist") {
+          this.persistParentNarrativeRecoveryItem(operation.item, thread, turn, now);
+          return;
+        }
+        this.discardParentNarrativeRecoveryItem(operation.itemId, thread, turn);
+      },
+    });
+  }
+
+  private persistParentNarrativeRecoveryItem(
+    item: ParentNarrativeRecoveryItem,
+    thread: AgentThread,
+    turn: AgentTurn,
+    now: string,
+  ): void {
+    const itemId = this.parentNarrativeRecoveryItemId(item);
+    this.persistItem({
+      id: itemId,
+      threadId: thread.id,
+      turnId: turn.id,
+      ...this.parentNarrativeRecoveryParent(item),
+      kind: this.parentNarrativeRecoveryItemKind(item),
+      providerIdentities: turn.providerIdentities,
+      payload: this.parentNarrativeRecoveryPayload(item, itemId),
+      createdAt: item.record.started_at,
+      updatedAt: now,
+    });
+  }
+
+  private parentNarrativeRecoveryItemId(item: ParentNarrativeRecoveryItem): string {
+    return item.kind === "toolCall"
+      ? `toolCall:${item.record.id}`
+      : `${item.kind}:${item.record.id}`;
+  }
+
+  private parentNarrativeRecoveryParent(
+    item: ParentNarrativeRecoveryItem,
+  ): { parentItemId?: string } {
+    if (item.kind !== "toolCall") return {};
+    const parentToolCallId = item.record.parent_tool_call_id;
+    return parentToolCallId ? { parentItemId: `toolCall:${parentToolCallId}` } : {};
+  }
+
+  private parentNarrativeRecoveryItemKind(item: ParentNarrativeRecoveryItem): AgentItem["kind"] {
+    if (item.kind === "toolCall") return "tool-call";
+    return item.kind === "narrationSegment" ? "reasoning" : "system";
+  }
+
+  private parentNarrativeRecoveryPayload(
+    item: ParentNarrativeRecoveryItem,
+    itemId: string,
+  ): Record<string, unknown> {
+    const existingPayload = this.loadItem(itemId)?.payload ?? {};
+    return {
+      projection: "narrativeRecovery",
+      narrative: item,
+      ...this.parentNarrativeRecoveryMetadata(item, existingPayload),
+    };
+  }
+
+  private parentNarrativeRecoveryMetadata(
+    item: ParentNarrativeRecoveryItem,
+    existingPayload: Record<string, unknown>,
+  ): Record<string, string> {
+    if (item.kind !== "toolCall") return {};
+    const metadata: Record<string, string> = {};
+    this.copyRecoveryMetadata(metadata, "description", existingPayload.description);
+    this.copyRecoveryMetadata(metadata, "identity", existingPayload.identity);
+    this.copyRecoveryMetadata(metadata, "model", existingPayload.model);
+    this.copyRecoveryMetadata(metadata, "reasoningEffort", existingPayload.reasoningEffort);
+    return metadata;
+  }
+
+  private copyRecoveryMetadata(
+    metadata: Record<string, string>,
+    key: string,
+    value: unknown,
+  ): void {
+    if (typeof value === "string") metadata[key] = value;
+  }
+
+  private discardParentNarrativeRecoveryItem(
+    itemId: string,
+    thread: AgentThread,
+    turn: AgentTurn,
+  ): void {
+    const existing = this.loadItem(itemId);
+    if (!existing || existing.threadId !== thread.id || existing.turnId !== turn.id) {
+      throw new Error(`Canonical narrative recovery item was not found: ${itemId}`);
+    }
+    const projection = typeof existing.payload.projection === "string"
+      ? existing.payload.projection
+      : null;
+    if (projection === "narrativeRecovery" || projection === "narrativeRecoveryDiscarded") {
+      this.db.prepare("DELETE FROM canonical_agent_items WHERE id = ?").run(itemId);
+    }
   }
 
   /** Load the newest durable structured narrative snapshot for an unfinished parent turn. */
@@ -1582,46 +1943,39 @@ export class CanonicalAgentBoundary implements ParentTurnDurability, CodexCollab
   ): Promise<CanonicalAgentBatchedCommitResult> {
     const checkpoint = this.loadCheckpoint(input.executionId);
     if (checkpoint?.terminalOutcome) {
-      const retire = this.db.transaction(() => this.retireParentNarrativeRecovery(checkpoint.turnId));
-      retire();
-      const thread = this.loadThread(input.threadId);
-      return {
-        outcome: "terminal-outcome-confirmed",
-        conversationRevision: thread?.conversationRevision ?? 0,
-        rosterRevision: thread?.rosterRevision ?? 0,
-        acceptedThrough: checkpoint.lastAcceptedSequence,
-        durableThrough: checkpoint.lastDurableSequence,
-        events: [],
-        writeBatches: { batches: 0, rows: 0, bytes: 0 },
-      };
+      return this.confirmedParentTerminalBatch(checkpoint, input.threadId);
     }
+    return this.writeParentTerminalBatches(input, checkpoint);
+  }
 
+  private confirmedParentTerminalBatch(
+    checkpoint: CanonicalAgentCheckpoint,
+    threadId: string,
+  ): CanonicalAgentBatchedCommitResult {
+    this.db.transaction(() => this.retireParentNarrativeRecovery(checkpoint.turnId))();
+    const thread = this.loadThread(threadId);
+    return {
+      outcome: "terminal-outcome-confirmed",
+      conversationRevision: thread?.conversationRevision ?? 0,
+      rosterRevision: thread?.rosterRevision ?? 0,
+      acceptedThrough: checkpoint.lastAcceptedSequence,
+      durableThrough: checkpoint.lastDurableSequence,
+      events: [],
+      writeBatches: { batches: 0, rows: 0, bytes: 0 },
+    };
+  }
+
+  private async writeParentTerminalBatches(
+    input: CanonicalParentTurnFinishInput,
+    checkpoint: CanonicalAgentCheckpoint | null,
+  ): Promise<CanonicalAgentBatchedCommitResult> {
     const projection = input.projectTurn();
     const endedAt = new Date().toISOString();
     const drafts = this.parentTurnTerminalEvents(input, projection, endedAt);
-    const partialRevision = this.db
-      .prepare("SELECT durable_revision FROM canonical_agent_events WHERE event_id = ?")
-      .get(drafts[0]!.eventId) as { durable_revision: number } | undefined;
-    const terminalRevision = partialRevision?.durable_revision
-      ?? (this.loadThread(input.threadId)?.conversationRevision ?? 0) + 1;
-    const batchOverheadBytes = Buffer.byteLength(JSON.stringify({
-      thread: this.loadThread(input.threadId),
-      turn: this.loadTurn(input.turnId),
-      checkpoint,
-    }), "utf8");
+    const terminalRevision = this.parentTerminalRevision(input.threadId, drafts);
+    const batchOverheadBytes = this.parentTerminalBatchOverhead(input, checkpoint);
     const terminalEventId = `${input.executionId}:turn.${input.outcome}`;
-    let latest: Omit<CanonicalAgentBatchedCommitResult, "writeBatches"> | null = null;
-    const published: CanonicalAgentEventEnvelope[] = [];
-    const pendingPublication: CanonicalAgentEventEnvelope[] = [];
-    let batchState: AgentModelState | null = null;
-    let batchCheckpoint: CanonicalAgentCheckpoint | null = null;
-    let batchAcceptedAt = "";
-    let batchAcceptedSequence = 0;
-    let batchChanged = false;
-    let batchWrote = false;
-    let batchTerminal = false;
-    let batchIgnoredTerminal = false;
-
+    const state = this.newParentTerminalBatchState();
     const writeBatches = await runBoundedWriteBatches({
       db: this.db,
       items: drafts,
@@ -1633,140 +1987,282 @@ export class CanonicalAgentBoundary implements ParentTurnDurability, CodexCollab
         ? 2
         : 1,
       byteLength: (draft) => Buffer.byteLength(JSON.stringify(draft), "utf8"),
-      onBatchStarted: () => {
-        batchState = this.loadState(input.threadId, input.executionId);
-        batchCheckpoint = this.loadCheckpoint(input.executionId);
-        batchAcceptedAt = new Date().toISOString();
-        batchAcceptedSequence = batchCheckpoint?.lastAcceptedSequence ?? 0;
-        batchChanged = false;
-        batchWrote = false;
-        batchTerminal = false;
-        batchIgnoredTerminal = false;
-      },
-      write: (draft) => {
-        const terminal = draft.eventId === terminalEventId;
-        if (terminal) input.finalizeCompatibility?.();
-        const existingRow = this.db
-          .prepare("SELECT envelope_json FROM canonical_agent_events WHERE event_id = ?")
-          .get(draft.eventId) as { envelope_json: string } | undefined;
-        if (existingRow) {
-          this.assertDuplicateMatches(
-            draft,
-            CanonicalAgentEventEnvelopeSchema.parse(JSON.parse(existingRow.envelope_json)),
-          );
-          return;
-        }
-        if (!batchState) throw new Error("Canonical batch state was not initialized");
-        batchAcceptedSequence += 1;
-        const event = this.createEnvelope(
-          draft,
-          batchAcceptedSequence,
-          terminalRevision,
-          batchAcceptedAt,
-        );
-        const reduction = reduceAgentEventBatch(batchState, [event]);
-        if (reduction.outcome === "rejected") {
-          throw new Error(`Canonical event ${reduction.eventId} rejected: ${reduction.reason}`);
-        }
-        const [application] = this.applyIndividually(batchState, [event]);
-        batchIgnoredTerminal ||= application?.outcome === "terminal-outcome-confirmed";
-        batchState = reduction.state;
-        if (reduction.appliedCount > 0) {
-          const thread = batchState.threads[input.threadId];
-          if (thread) {
-            batchState = {
-              ...batchState,
-              threads: {
-                ...batchState.threads,
-                [thread.id]: {
-                  ...thread,
-                  conversationRevision: terminalRevision,
-                  updatedAt: batchAcceptedAt,
-                },
-              },
-            };
-          }
-          batchChanged = true;
-        }
-        if (event.payload.type === "item.recorded") {
-          const item = batchState.items[event.payload.item.id];
-          if (item) this.persistItem(item);
-        } else if (event.payload.type === "collaboration-action.recorded") {
-          const action = batchState.collaborationActions[event.payload.collaborationAction.id];
-          if (action) this.persistAction(action);
-        }
-        this.insertEvent(event);
-        if (application?.outcome === "applied") {
-          pendingPublication.push(event);
-          published.push(event);
-        }
-        batchWrote = true;
-        batchTerminal ||= terminal;
-      },
-      onBatchFinishing: () => {
-        if (!batchState) throw new Error("Canonical batch state was not initialized");
-        if (!batchWrote) {
-          const thread = batchState.threads[input.threadId];
-          latest = {
-            outcome: "duplicate",
-            conversationRevision: thread?.conversationRevision ?? 0,
-            rosterRevision: thread?.rosterRevision ?? 0,
-            acceptedThrough: batchAcceptedSequence,
-            durableThrough: batchAcceptedSequence,
-            events: [],
-          };
-          return;
-        }
-        if (batchChanged) {
-          const thread = batchState.threads[input.threadId];
-          if (thread) this.persistThread(thread);
-          const turn = batchState.turns[input.turnId];
-          if (turn?.threadId === input.threadId) this.persistTurn(turn, input.executionId);
-        }
-        this.persistCheckpoint({
-          executionId: input.executionId,
-          threadId: input.threadId,
-          turnId: input.turnId,
-          lastAcceptedSequence: batchAcceptedSequence,
-          lastDurableSequence: batchAcceptedSequence,
-          nativeCursor: batchCheckpoint?.nativeCursor ?? null,
-          phase: batchTerminal ? input.outcome : "running",
-          terminalOutcome: batchTerminal ? input.outcome : null,
-          error: batchTerminal ? input.error ?? null : null,
-          updatedAt: batchAcceptedAt,
-        });
-        if (batchTerminal) this.retireParentNarrativeRecovery(input.turnId);
-        const thread = batchState.threads[input.threadId];
-        latest = {
-          outcome: !batchChanged && batchIgnoredTerminal
-            ? "terminal-outcome-confirmed"
-            : "committed",
-          conversationRevision: thread?.conversationRevision ?? terminalRevision,
-          rosterRevision: thread?.rosterRevision ?? 0,
-          acceptedThrough: batchAcceptedSequence,
-          durableThrough: batchAcceptedSequence,
-          events: [],
-        };
-      },
-      onBatchCommitted: () => {
-        if (pendingPublication.length === 0) return;
-        const events = pendingPublication.splice(0);
-        this.recordCanonicalDiagnostics(events);
-        this.publish(events);
-      },
+      onBatchStarted: () => this.startParentTerminalBatch(state, input),
+      write: (draft) => this.writeParentTerminalBatchDraft(
+        state,
+        input,
+        draft,
+        terminalRevision,
+        terminalEventId,
+      ),
+      onBatchFinishing: () => this.finishParentTerminalBatch(state, input, terminalRevision),
+      onBatchCommitted: () => this.publishParentTerminalBatch(state),
     });
+    return this.parentTerminalBatchResult(state, writeBatches);
+  }
 
-    const committed = latest as Omit<CanonicalAgentBatchedCommitResult, "writeBatches"> | null;
-    if (!committed) throw new Error("Canonical terminal batch did not contain an event");
+  private parentTerminalRevision(
+    threadId: string,
+    drafts: readonly CanonicalAgentEventDraft[],
+  ): number {
+    const partialRevision = this.db
+      .prepare("SELECT durable_revision FROM canonical_agent_events WHERE event_id = ?")
+      .get(drafts[0]!.eventId) as { durable_revision: number } | undefined;
+    return partialRevision?.durable_revision ?? (this.loadThread(threadId)?.conversationRevision ?? 0) + 1;
+  }
+
+  private parentTerminalBatchOverhead(
+    input: CanonicalParentTurnFinishInput,
+    checkpoint: CanonicalAgentCheckpoint | null,
+  ): number {
+    return Buffer.byteLength(JSON.stringify({
+      thread: this.loadThread(input.threadId),
+      turn: this.loadTurn(input.turnId),
+      checkpoint,
+    }), "utf8");
+  }
+
+  private newParentTerminalBatchState(): ParentTerminalBatchState {
     return {
-      outcome: committed.outcome,
-      conversationRevision: committed.conversationRevision,
-      rosterRevision: committed.rosterRevision,
-      acceptedThrough: committed.acceptedThrough,
-      durableThrough: committed.durableThrough,
-      events: published,
-      writeBatches,
+      latest: null,
+      published: [],
+      pendingPublication: [],
+      modelState: null,
+      checkpoint: null,
+      acceptedAt: "",
+      acceptedSequence: 0,
+      changed: false,
+      wrote: false,
+      terminal: false,
+      ignoredTerminal: false,
     };
+  }
+
+  private startParentTerminalBatch(
+    state: ParentTerminalBatchState,
+    input: CanonicalParentTurnFinishInput,
+  ): void {
+    state.modelState = this.loadState(input.threadId, input.executionId);
+    state.checkpoint = this.loadCheckpoint(input.executionId);
+    state.acceptedAt = new Date().toISOString();
+    state.acceptedSequence = state.checkpoint?.lastAcceptedSequence ?? 0;
+    state.changed = false;
+    state.wrote = false;
+    state.terminal = false;
+    state.ignoredTerminal = false;
+  }
+
+  private writeParentTerminalBatchDraft(
+    state: ParentTerminalBatchState,
+    input: CanonicalParentTurnFinishInput,
+    draft: CanonicalAgentEventDraft,
+    terminalRevision: number,
+    terminalEventId: string,
+  ): void {
+    const terminal = draft.eventId === terminalEventId;
+    if (terminal) input.finalizeCompatibility?.();
+    if (this.parentTerminalBatchContains(draft)) return;
+    const accepted = this.acceptParentTerminalBatchEvent(state, draft, terminalRevision);
+    this.persistParentTerminalBatchEvent(state, accepted.event);
+    this.trackParentTerminalBatchEvent(state, accepted, terminal);
+  }
+
+  private parentTerminalBatchContains(draft: CanonicalAgentEventDraft): boolean {
+    const existingRow = this.db
+      .prepare("SELECT envelope_json FROM canonical_agent_events WHERE event_id = ?")
+      .get(draft.eventId) as { envelope_json: string } | undefined;
+    if (!existingRow) return false;
+    this.assertDuplicateMatches(
+      draft,
+      CanonicalAgentEventEnvelopeSchema.parse(JSON.parse(existingRow.envelope_json)),
+    );
+    return true;
+  }
+
+  private acceptParentTerminalBatchEvent(
+    state: ParentTerminalBatchState,
+    draft: CanonicalAgentEventDraft,
+    terminalRevision: number,
+  ): ParentTerminalBatchEvent {
+    const modelState = state.modelState;
+    if (!modelState) throw new Error("Canonical batch state was not initialized");
+    state.acceptedSequence += 1;
+    const event = this.createEnvelope(draft, state.acceptedSequence, terminalRevision, state.acceptedAt);
+    const reduction = reduceAgentEventBatch(modelState, [event]);
+    if (reduction.outcome === "rejected") {
+      throw new Error(`Canonical event ${reduction.eventId} rejected: ${reduction.reason}`);
+    }
+    const [application] = this.applyIndividually(modelState, [event]);
+    state.ignoredTerminal ||= application?.outcome === "terminal-outcome-confirmed";
+    state.modelState = reduction.state;
+    this.updateParentTerminalBatchRevision(
+      state,
+      reduction.appliedCount,
+      terminalRevision,
+      draft.routing.threadId,
+    );
+    return { event, application };
+  }
+
+  private updateParentTerminalBatchRevision(
+    state: ParentTerminalBatchState,
+    appliedCount: number,
+    terminalRevision: number,
+    threadId: string,
+  ): void {
+    if (appliedCount === 0) return;
+    const modelState = this.parentTerminalBatchModelState(state);
+    const thread = modelState.threads[threadId];
+    if (thread) {
+      state.modelState = {
+        ...modelState,
+        threads: {
+          ...modelState.threads,
+          [thread.id]: {
+            ...thread,
+            conversationRevision: terminalRevision,
+            updatedAt: state.acceptedAt,
+          },
+        },
+      };
+    }
+    state.changed = true;
+  }
+
+  private persistParentTerminalBatchEvent(
+    state: ParentTerminalBatchState,
+    event: CanonicalAgentEventEnvelope,
+  ): void {
+    const modelState = this.parentTerminalBatchModelState(state);
+    if (event.payload.type === "item.recorded") {
+      const item = modelState.items[event.payload.item.id];
+      if (item) this.persistItem(item);
+    } else if (event.payload.type === "collaboration-action.recorded") {
+      const action = modelState.collaborationActions[event.payload.collaborationAction.id];
+      if (action) this.persistAction(action);
+    }
+    this.insertEvent(event);
+  }
+
+  private trackParentTerminalBatchEvent(
+    state: ParentTerminalBatchState,
+    accepted: ParentTerminalBatchEvent,
+    terminal: boolean,
+  ): void {
+    if (accepted.application?.outcome === "applied") {
+      state.pendingPublication.push(accepted.event);
+      state.published.push(accepted.event);
+    }
+    state.wrote = true;
+    state.terminal ||= terminal;
+  }
+
+  private finishParentTerminalBatch(
+    state: ParentTerminalBatchState,
+    input: CanonicalParentTurnFinishInput,
+    terminalRevision: number,
+  ): void {
+    const modelState = this.parentTerminalBatchModelState(state);
+    if (!state.wrote) {
+      state.latest = this.duplicateParentTerminalBatchResult(modelState, input.threadId, state.acceptedSequence);
+      return;
+    }
+    this.persistParentTerminalBatchState(state, input);
+    this.persistParentTerminalBatchCheckpoint(state, input);
+    if (state.terminal) this.retireParentNarrativeRecovery(input.turnId);
+    state.latest = this.committedParentTerminalBatchResult(state, input.threadId, terminalRevision);
+  }
+
+  private parentTerminalBatchModelState(state: ParentTerminalBatchState): AgentModelState {
+    if (!state.modelState) throw new Error("Canonical batch state was not initialized");
+    return state.modelState;
+  }
+
+  private duplicateParentTerminalBatchResult(
+    modelState: AgentModelState,
+    threadId: string,
+    acceptedSequence: number,
+  ): Omit<CanonicalAgentBatchedCommitResult, "writeBatches"> {
+    const thread = modelState.threads[threadId];
+    return {
+      outcome: "duplicate",
+      conversationRevision: thread?.conversationRevision ?? 0,
+      rosterRevision: thread?.rosterRevision ?? 0,
+      acceptedThrough: acceptedSequence,
+      durableThrough: acceptedSequence,
+      events: [],
+    };
+  }
+
+  private persistParentTerminalBatchState(
+    state: ParentTerminalBatchState,
+    input: CanonicalParentTurnFinishInput,
+  ): void {
+    if (!state.changed) return;
+    const modelState = this.parentTerminalBatchModelState(state);
+    const thread = modelState.threads[input.threadId];
+    if (thread) this.persistThread(thread);
+    this.persistParentTerminalBatchTurn(modelState, input);
+  }
+
+  private persistParentTerminalBatchTurn(
+    modelState: AgentModelState,
+    input: CanonicalParentTurnFinishInput,
+  ): void {
+    const turn = modelState.turns[input.turnId];
+    if (turn?.threadId === input.threadId) this.persistTurn(turn, input.executionId);
+  }
+
+  private persistParentTerminalBatchCheckpoint(
+    state: ParentTerminalBatchState,
+    input: CanonicalParentTurnFinishInput,
+  ): void {
+    this.persistCheckpoint({
+      executionId: input.executionId,
+      threadId: input.threadId,
+      turnId: input.turnId,
+      lastAcceptedSequence: state.acceptedSequence,
+      lastDurableSequence: state.acceptedSequence,
+      nativeCursor: state.checkpoint?.nativeCursor ?? null,
+      phase: state.terminal ? input.outcome : "running",
+      terminalOutcome: state.terminal ? input.outcome : null,
+      error: state.terminal ? input.error ?? null : null,
+      updatedAt: state.acceptedAt,
+    });
+  }
+
+  private committedParentTerminalBatchResult(
+    state: ParentTerminalBatchState,
+    threadId: string,
+    terminalRevision: number,
+  ): Omit<CanonicalAgentBatchedCommitResult, "writeBatches"> {
+    const thread = this.parentTerminalBatchModelState(state).threads[threadId];
+    return {
+      outcome: !state.changed && state.ignoredTerminal
+        ? "terminal-outcome-confirmed"
+        : "committed",
+      conversationRevision: thread?.conversationRevision ?? terminalRevision,
+      rosterRevision: thread?.rosterRevision ?? 0,
+      acceptedThrough: state.acceptedSequence,
+      durableThrough: state.acceptedSequence,
+      events: [],
+    };
+  }
+
+  private publishParentTerminalBatch(state: ParentTerminalBatchState): void {
+    if (state.pendingPublication.length === 0) return;
+    const events = state.pendingPublication.splice(0);
+    this.recordCanonicalDiagnostics(events);
+    this.publish(events);
+  }
+
+  private parentTerminalBatchResult(
+    state: ParentTerminalBatchState,
+    writeBatches: WriteBatchResult,
+  ): CanonicalAgentBatchedCommitResult {
+    const committed = state.latest;
+    if (!committed) throw new Error("Canonical terminal batch did not contain an event");
+    return { ...committed, events: state.published, writeBatches };
   }
 
   /** Remove the unfinished-turn recovery representation once a terminal projection is durable. */
@@ -2079,22 +2575,46 @@ export class CanonicalAgentBoundary implements ParentTurnDurability, CodexCollab
   ): readonly CanonicalAgentEventDraft[] {
     const structural = events.filter((event) => event.ingestClass !== "volatile");
     const volatile = events.filter((event) => event.ingestClass === "volatile");
-    if (structural.length > CANONICAL_AGENT_EVENT_BATCH_MAX
-      || (structural.length === CANONICAL_AGENT_EVENT_BATCH_MAX && volatile.length > 0)) {
+    if (this.structuralIngestBatchOverflows(structural.length, volatile.length)) {
       throw new StructuralIngestOverflow(
         input,
         checkpoint?.lastAcceptedSequence ?? 0,
         checkpoint?.lastDurableSequence ?? 0,
       );
     }
+    return this.boundVolatileIngestEvents(input, events, structural.length, volatile);
+  }
 
+  private structuralIngestBatchOverflows(structuralCount: number, volatileCount: number): boolean {
+    return structuralCount > CANONICAL_AGENT_EVENT_BATCH_MAX
+      || (structuralCount === CANONICAL_AGENT_EVENT_BATCH_MAX && volatileCount > 0);
+  }
+
+  private boundVolatileIngestEvents(
+    input: CanonicalAgentCommitInput,
+    events: readonly CanonicalAgentEventDraft[],
+    structuralCount: number,
+    volatile: readonly CanonicalAgentEventDraft[],
+  ): readonly CanonicalAgentEventDraft[] {
     const volatileCapacity = Math.min(
       CANONICAL_AGENT_EVENT_BATCH_MAX - CANONICAL_AGENT_CONTROL_EVENT_RESERVE,
-      CANONICAL_AGENT_EVENT_BATCH_MAX - structural.length,
+      CANONICAL_AGENT_EVENT_BATCH_MAX - structuralCount,
     );
     if (volatile.length <= volatileCapacity) return events;
+    const retained = this.retainedVolatileIngestEvents(events, volatile, volatileCapacity, structuralCount);
+    const source = volatile[0];
+    if (!source) return retained.events;
+    const marker = this.volatileTruncationMarker(input, source, retained.droppedEventCount);
+    return this.insertVolatileTruncationMarker(retained.events, marker);
+  }
 
-    const markerCapacity = CANONICAL_AGENT_EVENT_BATCH_MAX - structural.length - 1;
+  private retainedVolatileIngestEvents(
+    events: readonly CanonicalAgentEventDraft[],
+    volatile: readonly CanonicalAgentEventDraft[],
+    volatileCapacity: number,
+    structuralCount: number,
+  ): RetainedVolatileIngestEvents {
+    const markerCapacity = CANONICAL_AGENT_EVENT_BATCH_MAX - structuralCount - 1;
     const retainedVolatile = new Set(volatile.slice(
       0,
       Math.max(0, Math.min(volatileCapacity, markerCapacity)),
@@ -2102,10 +2622,18 @@ export class CanonicalAgentBoundary implements ParentTurnDurability, CodexCollab
     const retained = events.filter(
       (event) => event.ingestClass !== "volatile" || retainedVolatile.has(event),
     );
-    const droppedEventCount = volatile.length - retainedVolatile.size;
-    const source = volatile[0];
-    if (!source) return retained;
-    const marker: CanonicalAgentEventDraft = {
+    return {
+      events: retained,
+      droppedEventCount: volatile.length - retainedVolatile.size,
+    };
+  }
+
+  private volatileTruncationMarker(
+    input: CanonicalAgentCommitInput,
+    source: CanonicalAgentEventDraft,
+    droppedEventCount: number,
+  ): CanonicalAgentEventDraft {
+    return {
       eventId: `${input.executionId}:volatile-truncated:${source.eventId.slice(-96)}`,
       routing: {
         threadId: input.threadId,
@@ -2116,6 +2644,12 @@ export class CanonicalAgentBoundary implements ParentTurnDurability, CodexCollab
       sourceIdentities: source.sourceIdentities,
       payload: { type: "ingest.volatile-truncated", droppedEventCount },
     };
+  }
+
+  private insertVolatileTruncationMarker(
+    retained: readonly CanonicalAgentEventDraft[],
+    marker: CanonicalAgentEventDraft,
+  ): readonly CanonicalAgentEventDraft[] {
     const terminalIndex = retained.findIndex((event) => this.isTerminalDraft(event));
     if (terminalIndex < 0) return [...retained, marker];
     return [

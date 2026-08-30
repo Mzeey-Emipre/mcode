@@ -15,12 +15,9 @@ import { basename, dirname, join } from "node:path";
 import type Database from "better-sqlite3";
 import { inject, injectable } from "tsyringe";
 import { ACTIVE_TURN_WRITE_BATCH_LIMITS } from "../../../runtime/persistence/sqlite/bounded-write-batches.js";
+import { PARENT_ASSISTANT_TEXT_RETAINED_LIMITS } from "./active-turn-recovery-retention-policy.js";
 
-/** Default retained recovery limits for one unfinished assistant response. */
-export const PARENT_ASSISTANT_TEXT_RETAINED_LIMITS = {
-  maxBytes: ACTIVE_TURN_WRITE_BATCH_LIMITS.maxBytes,
-  maxChunks: 16_384,
-} as const;
+export { PARENT_ASSISTANT_TEXT_RETAINED_LIMITS } from "./active-turn-recovery-retention-policy.js";
 
 /** Measured production policy for durable assistant-text publication. */
 export const PARENT_ASSISTANT_TEXT_QUEUE_POLICY = {
@@ -82,6 +79,14 @@ interface PreparedParentAssistantTextCheckpointChunk {
   itemCount: number;
 }
 
+interface DurableParentAssistantTextCheckpoint {
+  thread_id: string;
+  turn_id: string;
+  last_sequence: number;
+  retained_bytes: number;
+  retained_chunks: number;
+}
+
 /** Persists bounded chunks for unfinished ordinary parent assistant responses. */
 @injectable()
 export class ParentAssistantTextCheckpointService {
@@ -134,100 +139,111 @@ export class ParentAssistantTextCheckpointService {
   private appendPreparedChunk(
     prepared: PreparedParentAssistantTextCheckpointChunk,
   ): ParentAssistantTextCheckpointResult {
+    return this.db.transaction(() => this.appendPreparedChunkInTransaction(prepared))();
+  }
 
-    return this.db.transaction(() => {
-      const checkpoint = this.db.prepare(`
-        SELECT thread_id, turn_id, last_sequence, retained_bytes, retained_chunks
-        FROM parent_assistant_text_checkpoints
-        WHERE execution_id = ?
-      `).get(prepared.executionId) as {
-        thread_id: string;
-        turn_id: string;
-        last_sequence: number;
-        retained_bytes: number;
-        retained_chunks: number;
-      } | undefined;
+  private appendPreparedChunkInTransaction(
+    prepared: PreparedParentAssistantTextCheckpointChunk,
+  ): ParentAssistantTextCheckpointResult {
+    const checkpoint = this.loadCheckpoint(prepared.executionId);
+    this.verifyCheckpointRouting(checkpoint, prepared);
+    const durableThrough = checkpoint?.last_sequence ?? 0;
+    const duplicate = this.duplicateCheckpointResult(prepared, durableThrough);
+    if (duplicate) return duplicate;
+    this.verifyNextSequence(prepared, durableThrough);
+    const overflow = this.overflowCheckpointResult(prepared, checkpoint, durableThrough);
+    if (overflow) return overflow;
+    return this.insertPreparedChunk(prepared, checkpoint);
+  }
 
-      if (checkpoint && (checkpoint.thread_id !== prepared.threadId || checkpoint.turn_id !== prepared.turnId)) {
-        throw new Error("Assistant text checkpoint routing conflicts with its execution");
-      }
+  private loadCheckpoint(executionId: string): DurableParentAssistantTextCheckpoint | undefined {
+    return this.db.prepare(`
+      SELECT thread_id, turn_id, last_sequence, retained_bytes, retained_chunks
+      FROM parent_assistant_text_checkpoints
+      WHERE execution_id = ?
+    `).get(executionId) as DurableParentAssistantTextCheckpoint | undefined;
+  }
 
-      const durableThrough = checkpoint?.last_sequence ?? 0;
-      if (prepared.firstSequence <= durableThrough) {
-        if (prepared.lastSequence > durableThrough) {
-          throw new Error("Assistant text checkpoint retry overlaps durable and new text");
-        }
-        const duplicate = this.db.prepare(`
-          SELECT text, byte_length
-          FROM parent_assistant_text_checkpoint_chunks
-          WHERE execution_id = ? AND first_sequence = ? AND last_sequence = ?
-        `).get(prepared.executionId, prepared.firstSequence, prepared.lastSequence) as {
-          text: string;
-          byte_length: number;
-        } | undefined;
-        if (!duplicate || duplicate.text !== prepared.text || duplicate.byte_length !== prepared.byteLength) {
-          throw new Error("Assistant text checkpoint duplicate conflicts with durable text");
-        }
-        return {
-          outcome: "duplicate" as const,
-          durableThrough,
-          committedItems: 0,
-          committedBytes: 0,
-        };
-      }
-      if (prepared.firstSequence !== durableThrough + 1) {
-        throw new Error(`Assistant text checkpoint sequence gap: expected ${durableThrough + 1}, received ${prepared.firstSequence}`);
-      }
+  private verifyCheckpointRouting(
+    checkpoint: DurableParentAssistantTextCheckpoint | undefined,
+    prepared: PreparedParentAssistantTextCheckpointChunk,
+  ): void {
+    if (checkpoint && (checkpoint.thread_id !== prepared.threadId || checkpoint.turn_id !== prepared.turnId)) {
+      throw new Error("Assistant text checkpoint routing conflicts with its execution");
+    }
+  }
 
-      const retainedBytes = (checkpoint?.retained_bytes ?? 0) + prepared.byteLength;
-      const retainedChunks = (checkpoint?.retained_chunks ?? 0) + 1;
-      if (retainedBytes > this.limits.maxBytes || retainedChunks > this.limits.maxChunks) {
-        return {
-          outcome: "overflow" as const,
-          durableThrough,
-          committedItems: 0,
-          committedBytes: 0,
-        };
-      }
+  private duplicateCheckpointResult(
+    prepared: PreparedParentAssistantTextCheckpointChunk,
+    durableThrough: number,
+  ): ParentAssistantTextCheckpointResult | undefined {
+    if (prepared.firstSequence > durableThrough) return undefined;
+    if (prepared.lastSequence > durableThrough) {
+      throw new Error("Assistant text checkpoint retry overlaps durable and new text");
+    }
+    const duplicate = this.db.prepare(`
+      SELECT text, byte_length
+      FROM parent_assistant_text_checkpoint_chunks
+      WHERE execution_id = ? AND first_sequence = ? AND last_sequence = ?
+    `).get(prepared.executionId, prepared.firstSequence, prepared.lastSequence) as {
+      text: string;
+      byte_length: number;
+    } | undefined;
+    if (!duplicate || duplicate.text !== prepared.text || duplicate.byte_length !== prepared.byteLength) {
+      throw new Error("Assistant text checkpoint duplicate conflicts with durable text");
+    }
+    return { outcome: "duplicate", durableThrough, committedItems: 0, committedBytes: 0 };
+  }
 
-      const updatedAt = new Date().toISOString();
-      this.db.prepare(`
-        INSERT INTO parent_assistant_text_checkpoints (
-          execution_id, thread_id, turn_id, last_sequence, retained_bytes, retained_chunks, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(execution_id) DO UPDATE SET
-          last_sequence = excluded.last_sequence,
-          retained_bytes = excluded.retained_bytes,
-          retained_chunks = excluded.retained_chunks,
-          updated_at = excluded.updated_at
-      `).run(
-        prepared.executionId,
-        prepared.threadId,
-        prepared.turnId,
-        prepared.lastSequence,
-        retainedBytes,
-        retainedChunks,
-        updatedAt,
-      );
-      this.db.prepare(`
-        INSERT INTO parent_assistant_text_checkpoint_chunks (
-          execution_id, first_sequence, last_sequence, text, byte_length
-        ) VALUES (?, ?, ?, ?, ?)
-      `).run(
-        prepared.executionId,
-        prepared.firstSequence,
-        prepared.lastSequence,
-        prepared.text,
-        prepared.byteLength,
-      );
+  private verifyNextSequence(prepared: PreparedParentAssistantTextCheckpointChunk, durableThrough: number): void {
+    if (prepared.firstSequence !== durableThrough + 1) {
+      throw new Error(`Assistant text checkpoint sequence gap: expected ${durableThrough + 1}, received ${prepared.firstSequence}`);
+    }
+  }
 
-      return {
-        outcome: "committed" as const,
-        durableThrough: prepared.lastSequence,
-        committedItems: prepared.itemCount,
-        committedBytes: prepared.byteLength,
-      };
-    })();
+  private overflowCheckpointResult(
+    prepared: PreparedParentAssistantTextCheckpointChunk,
+    checkpoint: DurableParentAssistantTextCheckpoint | undefined,
+    durableThrough: number,
+  ): ParentAssistantTextCheckpointResult | undefined {
+    const retainedBytes = (checkpoint?.retained_bytes ?? 0) + prepared.byteLength;
+    const retainedChunks = (checkpoint?.retained_chunks ?? 0) + 1;
+    if (retainedBytes <= this.limits.maxBytes && retainedChunks <= this.limits.maxChunks) return undefined;
+    return { outcome: "overflow", durableThrough, committedItems: 0, committedBytes: 0 };
+  }
+
+  private insertPreparedChunk(
+    prepared: PreparedParentAssistantTextCheckpointChunk,
+    checkpoint: DurableParentAssistantTextCheckpoint | undefined,
+  ): ParentAssistantTextCheckpointResult {
+    const retainedBytes = (checkpoint?.retained_bytes ?? 0) + prepared.byteLength;
+    const retainedChunks = (checkpoint?.retained_chunks ?? 0) + 1;
+    this.db.prepare(`
+      INSERT INTO parent_assistant_text_checkpoints (
+        execution_id, thread_id, turn_id, last_sequence, retained_bytes, retained_chunks, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(execution_id) DO UPDATE SET
+        last_sequence = excluded.last_sequence,
+        retained_bytes = excluded.retained_bytes,
+        retained_chunks = excluded.retained_chunks,
+        updated_at = excluded.updated_at
+    `).run(
+      prepared.executionId, prepared.threadId, prepared.turnId, prepared.lastSequence,
+      retainedBytes, retainedChunks, new Date().toISOString(),
+    );
+    this.db.prepare(`
+      INSERT INTO parent_assistant_text_checkpoint_chunks (
+        execution_id, first_sequence, last_sequence, text, byte_length
+      ) VALUES (?, ?, ?, ?, ?)
+    `).run(
+      prepared.executionId, prepared.firstSequence, prepared.lastSequence, prepared.text, prepared.byteLength,
+    );
+    return {
+      outcome: "committed",
+      durableThrough: prepared.lastSequence,
+      committedItems: prepared.itemCount,
+      committedBytes: prepared.byteLength,
+    };
   }
 
   /** Restore the exact durable text prefix in accepted order. */
@@ -335,20 +351,42 @@ export class ParentAssistantTextCheckpointService {
       throw new Error("Assistant text checkpoint chunk exceeds the active-turn row limit");
     }
     const first = inputs[0]!;
+    this.verifyCheckpointChunkInputs(inputs, first);
+    return this.preparedCheckpointChunk(inputs, first);
+  }
+
+  private verifyCheckpointChunkInputs(
+    inputs: readonly ParentAssistantTextCheckpointInput[],
+    first: ParentAssistantTextCheckpointInput,
+  ): void {
     for (const [index, input] of inputs.entries()) {
-      if (input.executionId !== first.executionId || input.threadId !== first.threadId || input.turnId !== first.turnId) {
-        throw new Error("Assistant text checkpoint chunk mixes execution routing");
-      }
-      if (!Number.isSafeInteger(input.sequence) || input.sequence < 1) {
-        throw new Error("Assistant text checkpoint sequence must be a positive safe integer");
-      }
-      if (input.sequence !== first.sequence + index) {
-        throw new Error("Assistant text checkpoint chunk sequences must be consecutive");
-      }
-      if (Buffer.byteLength(input.text, "utf8") === 0) {
-        throw new Error("Assistant text checkpoint delta must contain text");
-      }
+      this.verifyCheckpointChunkInput(input, first, index);
     }
+  }
+
+  private verifyCheckpointChunkInput(
+    input: ParentAssistantTextCheckpointInput,
+    first: ParentAssistantTextCheckpointInput,
+    index: number,
+  ): void {
+    if (input.executionId !== first.executionId || input.threadId !== first.threadId || input.turnId !== first.turnId) {
+      throw new Error("Assistant text checkpoint chunk mixes execution routing");
+    }
+    if (!Number.isSafeInteger(input.sequence) || input.sequence < 1) {
+      throw new Error("Assistant text checkpoint sequence must be a positive safe integer");
+    }
+    if (input.sequence !== first.sequence + index) {
+      throw new Error("Assistant text checkpoint chunk sequences must be consecutive");
+    }
+    if (Buffer.byteLength(input.text, "utf8") === 0) {
+      throw new Error("Assistant text checkpoint delta must contain text");
+    }
+  }
+
+  private preparedCheckpointChunk(
+    inputs: readonly ParentAssistantTextCheckpointInput[],
+    first: ParentAssistantTextCheckpointInput,
+  ): PreparedParentAssistantTextCheckpointChunk {
     const text = inputs.map((input) => input.text).join("");
     const byteLength = Buffer.byteLength(text, "utf8");
     if (byteLength > ACTIVE_TURN_WRITE_BATCH_LIMITS.maxBytes) {
@@ -504,20 +542,46 @@ function createRecoveryJournalRecord(
 ): ParentAssistantTextRecoveryJournalRecord {
   if (inputs.length === 0) throw new Error("Assistant text recovery journal chunk must not be empty");
   const first = inputs[0]!;
-  if (!isSafeExecutionId(first.executionId)) {
+  verifyJournalExecutionId(first.executionId);
+  verifyRecoveryJournalInputs(inputs, first);
+  return journalRecordFromInputs(inputs, first);
+}
+
+function verifyJournalExecutionId(executionId: string): void {
+  if (!isSafeExecutionId(executionId)) {
     throw new Error("Assistant text recovery journal execution identity is invalid");
   }
+}
+
+function verifyRecoveryJournalInputs(
+  inputs: readonly ParentAssistantTextCheckpointInput[],
+  first: ParentAssistantTextCheckpointInput,
+): void {
   for (const [index, input] of inputs.entries()) {
-    if (input.executionId !== first.executionId || input.threadId !== first.threadId || input.turnId !== first.turnId) {
-      throw new Error("Assistant text recovery journal chunk mixes execution routing");
-    }
-    if (!Number.isSafeInteger(input.sequence) || input.sequence !== first.sequence + index) {
-      throw new Error("Assistant text recovery journal chunk sequences must be consecutive");
-    }
-    if (Buffer.byteLength(input.text, "utf8") === 0) {
-      throw new Error("Assistant text recovery journal delta must contain text");
-    }
+    verifyRecoveryJournalInput(input, first, index);
   }
+}
+
+function verifyRecoveryJournalInput(
+  input: ParentAssistantTextCheckpointInput,
+  first: ParentAssistantTextCheckpointInput,
+  index: number,
+): void {
+  if (input.executionId !== first.executionId || input.threadId !== first.threadId || input.turnId !== first.turnId) {
+    throw new Error("Assistant text recovery journal chunk mixes execution routing");
+  }
+  if (!Number.isSafeInteger(input.sequence) || input.sequence !== first.sequence + index) {
+    throw new Error("Assistant text recovery journal chunk sequences must be consecutive");
+  }
+  if (Buffer.byteLength(input.text, "utf8") === 0) {
+    throw new Error("Assistant text recovery journal delta must contain text");
+  }
+}
+
+function journalRecordFromInputs(
+  inputs: readonly ParentAssistantTextCheckpointInput[],
+  first: ParentAssistantTextCheckpointInput,
+): ParentAssistantTextRecoveryJournalRecord {
   const text = inputs.map((input) => input.text).join("");
   const byteLength = Buffer.byteLength(text, "utf8");
   if (byteLength > ACTIVE_TURN_WRITE_BATCH_LIMITS.maxBytes) {
@@ -544,24 +608,8 @@ function validateRecoveryJournalRecord(
   value: unknown,
   executionId: string,
 ): ParentAssistantTextRecoveryJournalRecord {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("Assistant text recovery journal record is invalid");
-  }
-  const record = value as Partial<ParentAssistantTextRecoveryJournalRecord>;
-  if (record.version !== 1
-    || record.executionId !== executionId
-    || typeof record.threadId !== "string"
-    || typeof record.turnId !== "string"
-    || !Number.isSafeInteger(record.firstSequence)
-    || !Number.isSafeInteger(record.lastSequence)
-    || record.firstSequence! < 1
-    || record.lastSequence! < record.firstSequence!
-    || !Number.isSafeInteger(record.byteLength)
-    || record.byteLength! < 1
-    || record.byteLength! > ACTIVE_TURN_WRITE_BATCH_LIMITS.maxBytes
-    || record.lastSequence! - record.firstSequence! + 1 > ACTIVE_TURN_WRITE_BATCH_LIMITS.maxRows - 1
-    || typeof record.textBase64 !== "string"
-    || typeof record.checksum !== "string") {
+  const record = recoveryJournalRecordValue(value);
+  if (!isValidRecoveryJournalRecord(record, executionId)) {
     throw new Error("Assistant text recovery journal record is invalid");
   }
   const verified: Omit<ParentAssistantTextRecoveryJournalRecord, "checksum"> = {
@@ -582,6 +630,48 @@ function validateRecoveryJournalRecord(
     throw new Error("Assistant text recovery journal byte length conflicts");
   }
   return { ...verified, checksum: record.checksum };
+}
+
+function recoveryJournalRecordValue(value: unknown): Partial<ParentAssistantTextRecoveryJournalRecord> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Partial<ParentAssistantTextRecoveryJournalRecord>;
+}
+
+function isValidRecoveryJournalRecord(
+  record: Partial<ParentAssistantTextRecoveryJournalRecord> | null,
+  executionId: string,
+): record is ParentAssistantTextRecoveryJournalRecord {
+  return record !== null
+    && hasValidRecordIdentity(record, executionId)
+    && hasValidRecordBounds(record)
+    && hasValidRecordPayload(record);
+}
+
+function hasValidRecordIdentity(
+  record: Partial<ParentAssistantTextRecoveryJournalRecord>,
+  executionId: string,
+): boolean {
+  return record.version === 1
+    && record.executionId === executionId
+    && typeof record.threadId === "string"
+    && typeof record.turnId === "string";
+}
+
+function hasValidRecordBounds(record: Partial<ParentAssistantTextRecoveryJournalRecord>): boolean {
+  const firstSequence = positiveSafeInteger(record.firstSequence);
+  const lastSequence = positiveSafeInteger(record.lastSequence);
+  const byteLength = positiveSafeInteger(record.byteLength);
+  if (firstSequence === null || lastSequence === null || byteLength === null) return false;
+  if (lastSequence < firstSequence || byteLength > ACTIVE_TURN_WRITE_BATCH_LIMITS.maxBytes) return false;
+  return lastSequence - firstSequence + 1 <= ACTIVE_TURN_WRITE_BATCH_LIMITS.maxRows - 1;
+}
+
+function positiveSafeInteger(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 ? value : null;
+}
+
+function hasValidRecordPayload(record: Partial<ParentAssistantTextRecoveryJournalRecord>): boolean {
+  return typeof record.textBase64 === "string" && typeof record.checksum === "string";
 }
 
 function recoveryJournalChunk(
@@ -615,6 +705,30 @@ function recoveryJournalChecksum(
 
 function isSafeExecutionId(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
+function validateQueuePolicy(policy: ParentAssistantTextCheckpointQueuePolicy): void {
+  validateChunkByteLimit(policy.maxChunkBytes);
+  validateQueuedEventLimit(policy.maxQueuedEvents);
+  validateQueueAge(policy.maxAgeMs);
+}
+
+function validateChunkByteLimit(value: number): void {
+  if (!Number.isSafeInteger(value) || value < 1 || value > ACTIVE_TURN_WRITE_BATCH_LIMITS.maxBytes) {
+    throw new Error("Assistant text checkpoint maxChunkBytes is outside the active-turn limit");
+  }
+}
+
+function validateQueuedEventLimit(value: number): void {
+  if (!Number.isSafeInteger(value) || value < 1 || value > ACTIVE_TURN_WRITE_BATCH_LIMITS.maxRows - 1) {
+    throw new Error("Assistant text checkpoint maxQueuedEvents is outside the active-turn limit");
+  }
+}
+
+function validateQueueAge(value: number): void {
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error("Assistant text checkpoint maxAgeMs must be positive");
+  }
 }
 
 /** Policy controlling durable chunk size, queue growth, and display delay. */
@@ -705,17 +819,7 @@ export class ParentAssistantTextCheckpointQueue {
     private readonly scheduler: ParentAssistantTextCheckpointQueueScheduler = defaultQueueScheduler,
     private readonly options: ParentAssistantTextCheckpointQueueOptions = {},
   ) {
-    if (!Number.isSafeInteger(policy.maxChunkBytes) || policy.maxChunkBytes < 1
-      || policy.maxChunkBytes > ACTIVE_TURN_WRITE_BATCH_LIMITS.maxBytes) {
-      throw new Error("Assistant text checkpoint maxChunkBytes is outside the active-turn limit");
-    }
-    if (!Number.isSafeInteger(policy.maxQueuedEvents) || policy.maxQueuedEvents < 1
-      || policy.maxQueuedEvents > ACTIVE_TURN_WRITE_BATCH_LIMITS.maxRows - 1) {
-      throw new Error("Assistant text checkpoint maxQueuedEvents is outside the active-turn limit");
-    }
-    if (!Number.isFinite(policy.maxAgeMs) || policy.maxAgeMs <= 0) {
-      throw new Error("Assistant text checkpoint maxAgeMs must be positive");
-    }
+    validateQueuePolicy(policy);
   }
 
   /** Queue one delta and publish it only after a successful durable commit. */
@@ -880,20 +984,55 @@ export class ParentAssistantTextCheckpointQueue {
     const state = this.stateFor(executionId, threadId);
     if (state.mode === "stopping") return false;
     state.fail = chunk.entries[0]?.fail;
+    return this.persistChunkForMode(executionId, threadId, chunk, startedAt, state);
+  }
+
+  private persistChunkForMode(
+    executionId: string,
+    threadId: string,
+    chunk: QueuedParentAssistantTextChunk,
+    startedAt: number,
+    state: ParentAssistantTextDurabilityState,
+  ): boolean {
     if (state.mode === "unsaved") {
       this.publishChunk(chunk);
       return true;
     }
     if (state.mode === "saving-delayed") {
-      if (this.recoverMemory(executionId, state)) {
-        return this.persistChunk(executionId, threadId, chunk, startedAt);
-      }
-      return this.retainInMemory(executionId, state, chunk);
+      return this.persistAfterMemoryRecovery(executionId, threadId, chunk, startedAt, state);
     }
     if (state.journalActive && !this.drainJournal(executionId, state)) {
-      if (this.hasStoppedForStorageFailure(executionId)) return false;
-      return this.retainInJournalOrMemory(executionId, state, chunk);
+      return this.retainAfterJournalDrainFailure(executionId, state, chunk);
     }
+    return this.persistDurableChunk(executionId, state, chunk, startedAt);
+  }
+
+  private persistAfterMemoryRecovery(
+    executionId: string,
+    threadId: string,
+    chunk: QueuedParentAssistantTextChunk,
+    startedAt: number,
+    state: ParentAssistantTextDurabilityState,
+  ): boolean {
+    if (!this.recoverMemory(executionId, state)) return this.retainInMemory(executionId, state, chunk);
+    return this.persistChunk(executionId, threadId, chunk, startedAt);
+  }
+
+  private retainAfterJournalDrainFailure(
+    executionId: string,
+    state: ParentAssistantTextDurabilityState,
+    chunk: QueuedParentAssistantTextChunk,
+  ): boolean {
+    if (this.hasStoppedForStorageFailure(executionId)) return false;
+    return this.retainInJournalOrMemory(executionId, state, chunk);
+  }
+
+  private persistDurableChunk(
+    executionId: string,
+    state: ParentAssistantTextDurabilityState,
+    chunk: QueuedParentAssistantTextChunk,
+    startedAt: number,
+  ): boolean {
     if (this.wouldExceedRetention(state, chunk)) {
       this.rejectChunk(executionId, state, chunk, "Parent assistant text recovery capacity reached");
       return false;
@@ -904,8 +1043,7 @@ export class ParentAssistantTextCheckpointQueue {
         this.rejectChunk(executionId, state, chunk, "Parent assistant text recovery capacity reached");
         return false;
       }
-      if (result.outcome === "committed") this.metrics.committedChunks += 1;
-      if (result.outcome === "committed") this.acceptRetainedChunk(state, chunk);
+      this.acceptAppendResult(result, state, chunk);
       this.recordWindow(this.scheduler.now() - startedAt);
       this.publishChunk(chunk);
       return true;
@@ -916,6 +1054,16 @@ export class ParentAssistantTextCheckpointQueue {
       this.rejectChunk(executionId, state, chunk, failureReason(error));
       return false;
     }
+  }
+
+  private acceptAppendResult(
+    result: ParentAssistantTextCheckpointResult,
+    state: ParentAssistantTextDurabilityState,
+    chunk: QueuedParentAssistantTextChunk,
+  ): void {
+    if (result.outcome !== "committed") return;
+    this.metrics.committedChunks += 1;
+    this.acceptRetainedChunk(state, chunk);
   }
 
   /** Discard in-memory state before the canonical retry path resets durable provisional text. */
@@ -1020,19 +1168,32 @@ export class ParentAssistantTextCheckpointQueue {
   }
 
   private recoverMemory(executionId: string, state: ParentAssistantTextDurabilityState): boolean {
-    if (!state.baselineReady && !this.recoverBaseline(executionId, state)) return false;
-    if (state.journalActive && !this.drainJournal(executionId, state)) {
-      if (state.mode === "stopping") return false;
-      this.promoteMemoryToJournal(executionId, state);
-      if (!this.hasStoppedForStorageFailure(executionId)) this.scheduleRetry(executionId, state);
-      return false;
-    }
-    if (state.memory.length === 0) {
-      state.mode = "durable";
-      this.cancelRetry(state);
-      this.emitDurabilityChange(executionId, state);
-      return true;
-    }
+    if (!this.recoverMemoryBaseline(executionId, state)) return false;
+    if (!this.recoverActiveJournal(executionId, state)) return false;
+    if (state.memory.length === 0) return this.completeMemoryRecovery(executionId, state);
+    return this.persistMemoryChunks(executionId, state);
+  }
+
+  private recoverMemoryBaseline(executionId: string, state: ParentAssistantTextDurabilityState): boolean {
+    return state.baselineReady || this.recoverBaseline(executionId, state);
+  }
+
+  private recoverActiveJournal(executionId: string, state: ParentAssistantTextDurabilityState): boolean {
+    if (!state.journalActive || this.drainJournal(executionId, state)) return true;
+    if (state.mode === "stopping") return false;
+    this.promoteMemoryToJournal(executionId, state);
+    if (!this.hasStoppedForStorageFailure(executionId)) this.scheduleRetry(executionId, state);
+    return false;
+  }
+
+  private completeMemoryRecovery(executionId: string, state: ParentAssistantTextDurabilityState): true {
+    state.mode = "durable";
+    this.cancelRetry(state);
+    this.emitDurabilityChange(executionId, state);
+    return true;
+  }
+
+  private persistMemoryChunks(executionId: string, state: ParentAssistantTextDurabilityState): boolean {
     try {
       while (state.memory.length > 0) {
         const chunk = state.memory[0]!;
@@ -1045,19 +1206,24 @@ export class ParentAssistantTextCheckpointQueue {
         this.publishChunk(chunk);
         state.memory.shift();
       }
-      state.mode = "durable";
-      this.cancelRetry(state);
-      this.emitDurabilityChange(executionId, state);
-      return true;
+      return this.completeMemoryRecovery(executionId, state);
     } catch (error) {
-      if (isRecoverableSqliteFailure(error)) {
-        this.promoteMemoryToJournal(executionId, state);
-        if (state.mode !== "stopping") this.scheduleRetry(executionId, state);
-        return false;
-      }
-      this.rejectMemory(executionId, state, failureReason(error));
+      return this.handleMemoryRecoveryFailure(executionId, state, error);
+    }
+  }
+
+  private handleMemoryRecoveryFailure(
+    executionId: string,
+    state: ParentAssistantTextDurabilityState,
+    error: unknown,
+  ): false {
+    if (isRecoverableSqliteFailure(error)) {
+      this.promoteMemoryToJournal(executionId, state);
+      if (state.mode !== "stopping") this.scheduleRetry(executionId, state);
       return false;
     }
+    this.rejectMemory(executionId, state, failureReason(error));
+    return false;
   }
 
   private recoverBaseline(executionId: string, state: ParentAssistantTextDurabilityState): boolean {

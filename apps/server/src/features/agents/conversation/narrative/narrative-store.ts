@@ -66,6 +66,7 @@ import {
 } from "../../events/persistence/hook-execution-repo.js";
 import type { TurnOutcome } from "../../turns/turn-outcome.js";
 import { ACTIVE_TURN_WRITE_BATCH_LIMITS } from "../../../../runtime/persistence/sqlite/bounded-write-batches.js";
+import { assertActiveTurnRecoveryRetention } from "../../turns/active-turn-recovery-retention-policy.js";
 
 /** Default number of recent messages hydrated when no range is supplied. */
 const DEFAULT_LOAD_LIMIT = 200;
@@ -135,8 +136,33 @@ interface PreparedNarrativePersistence {
   hooks: CreateHookExecutionInput[];
 }
 
+interface PendingNarrativePersistence extends PreparedNarrativePersistence {}
+
+interface PersistedNarrativeRows {
+  toolCalls: Set<string>;
+  thoughts: Set<string>;
+  hooks: Set<string>;
+}
+
+type RecoveredToolCallItem = Extract<ParentNarrativeRecoveryItem, { kind: "toolCall" }>;
+
 /** Bounds persisted shell commands while retaining enough text for readable expansion. */
 const MAX_PERSISTED_COMMAND_CHARS = 4096;
+
+const NARRATIVE_INPUT_SUMMARIZERS: Record<string, (input: Record<string, unknown>) => string> = {
+  read: fileInputSummary,
+  edit: fileInputSummary,
+  write: fileInputSummary,
+  move: renameInputSummary,
+  rename: renameInputSummary,
+  bash: commandInputSummary,
+  shell: commandInputSummary,
+  terminal: commandInputSummary,
+  command_execution: commandInputSummary,
+  grep: patternInputSummary,
+  glob: patternInputSummary,
+  agent: agentInputSummary,
+};
 
 @injectable()
 export class NarrativeStore {
@@ -196,44 +222,67 @@ export class NarrativeStore {
     const thoughtsByMessage = this.thoughtSegmentRepo.listByMessages(assistantMessageIds);
     const hooksByMessage = this.hookExecutionRepo.listByMessages(assistantMessageIds);
 
-    for (const m of assistantMessages) {
-      if (m.role !== "assistant") continue;
-
-      const tools = toolsByMessage.get(m.id) ?? [];
-      const thoughts = thoughtsByMessage.get(m.id) ?? [];
-      const hooks = hooksByMessage.get(m.id) ?? [];
-
-      const finalSeg = thoughts.find((t) => (t.is_final_response ?? 0) !== 0);
-      entries.push({
-        kind: "assistantMessage",
-        messageId: m.id,
-        sequence: m.sequence,
-        body: m.content,
-        // Body sorts where its final-response segment sat; absent (tool-free
-        // or older rows) it sorts after this message's other entries.
-        sortOrder: finalSeg?.sort_order ?? Number.MAX_SAFE_INTEGER,
+    for (const message of assistantMessages) {
+      this.appendAssistantNarrativeEntries(entries, message, {
+        tools: toolsByMessage.get(message.id) ?? [],
+        thoughts: thoughtsByMessage.get(message.id) ?? [],
+        hooks: hooksByMessage.get(message.id) ?? [],
       });
-
-      for (const t of tools) {
-        entries.push({ kind: "toolCall", sequence: m.sequence, sortOrder: t.sort_order, record: t });
-      }
-      for (const seg of thoughts) {
-        if ((seg.is_final_response ?? 0) !== 0) continue; // already the assistantMessage body
-        entries.push({
-          kind: "narrationSegment",
-          sequence: m.sequence,
-          sortOrder: seg.sort_order,
-          record: seg,
-        });
-      }
-      for (const h of hooks) {
-        entries.push({ kind: "hook", sequence: m.sequence, sortOrder: h.sort_order, record: h });
-      }
     }
 
     return entries.sort(
       (a, b) => a.sequence - b.sequence || a.sortOrder - b.sortOrder,
     );
+  }
+
+  private appendAssistantNarrativeEntries(
+    entries: NarrativeEntry[],
+    message: Message,
+    records: {
+      tools: ReturnType<ToolCallRecordRepo["listByMessages"]> extends Map<string, infer T> ? T : never;
+      thoughts: ReturnType<ThoughtSegmentRepo["listByMessages"]> extends Map<string, infer T> ? T : never;
+      hooks: ReturnType<HookExecutionRepo["listByMessages"]> extends Map<string, infer T> ? T : never;
+    },
+  ): void {
+    const finalSegment = records.thoughts.find((thought) => (thought.is_final_response ?? 0) !== 0);
+    entries.push({
+      kind: "assistantMessage",
+      messageId: message.id,
+      sequence: message.sequence,
+      body: message.content,
+      sortOrder: finalSegment?.sort_order ?? Number.MAX_SAFE_INTEGER,
+    });
+    this.appendToolCallEntries(entries, message.sequence, records.tools);
+    this.appendThoughtEntries(entries, message.sequence, records.thoughts);
+    this.appendHookEntries(entries, message.sequence, records.hooks);
+  }
+
+  private appendToolCallEntries(
+    entries: NarrativeEntry[],
+    sequence: number,
+    tools: ReturnType<ToolCallRecordRepo["listByMessages"]> extends Map<string, infer T> ? T : never,
+  ): void {
+    for (const tool of tools) entries.push({ kind: "toolCall", sequence, sortOrder: tool.sort_order, record: tool });
+  }
+
+  private appendThoughtEntries(
+    entries: NarrativeEntry[],
+    sequence: number,
+    thoughts: ReturnType<ThoughtSegmentRepo["listByMessages"]> extends Map<string, infer T> ? T : never,
+  ): void {
+    for (const thought of thoughts) {
+      if ((thought.is_final_response ?? 0) === 0) {
+        entries.push({ kind: "narrationSegment", sequence, sortOrder: thought.sort_order, record: thought });
+      }
+    }
+  }
+
+  private appendHookEntries(
+    entries: NarrativeEntry[],
+    sequence: number,
+    hooks: ReturnType<HookExecutionRepo["listByMessages"]> extends Map<string, infer T> ? T : never,
+  ): void {
+    for (const hook of hooks) entries.push({ kind: "hook", sequence, sortOrder: hook.sort_order, record: hook });
   }
 
   // ----------------------------------------------------------------------
@@ -457,7 +506,7 @@ export class NarrativeStore {
   private mergeDuplicateToolCall(existing: BufferedToolCall, event: BufferToolCallEvent): void {
     existing.toolName = event.toolName;
     const mergedToolInput = {
-      ...(existing._rawToolInput ?? {}),
+      ...existing._rawToolInput,
       ...event.toolInput,
     };
     existing._rawToolInput = mergedToolInput;
@@ -576,47 +625,75 @@ export class NarrativeStore {
       exitCode?: number;
     },
   ): void {
-    const stack = this.agentCallStack.get(threadId) ?? [];
-    const stackIdx = stack.indexOf(toolCallId);
-    if (stackIdx >= 0) {
-      stack.splice(stackIdx, 1);
-      this.agentCallStack.set(threadId, stack);
-      logger.debug("updateBufferedToolCallOutput: popped Agent from stack", {
-        threadId,
-        toolCallId,
-        remainingDepth: stack.length,
-      });
-    }
+    this.removeAgentFromStack(threadId, toolCallId);
+    const toolCall = this.latestBufferedToolCall(threadId, toolCallId);
+    if (!toolCall) return;
+    this.applyToolCallOutput(toolCall, output, isError, outputMeta);
+    this.mergeToolCallInput(toolCall, toolInput);
+  }
 
+  private removeAgentFromStack(threadId: string, toolCallId: string): void {
+    const stack = this.agentCallStack.get(threadId) ?? [];
+    const stackIndex = stack.indexOf(toolCallId);
+    if (stackIndex < 0) return;
+    stack.splice(stackIndex, 1);
+    this.agentCallStack.set(threadId, stack);
+    logger.debug("updateBufferedToolCallOutput: popped Agent from stack", {
+      threadId,
+      toolCallId,
+      remainingDepth: stack.length,
+    });
+  }
+
+  private latestBufferedToolCall(threadId: string, toolCallId: string): BufferedToolCall | undefined {
     const buffer = this.turnToolCalls.get(threadId) ?? [];
-    for (let i = buffer.length - 1; i >= 0; i--) {
-      if (buffer[i].toolCallId === toolCallId) {
-        const outputLimit = resolveBrowserNarrativeTool(buffer[i].toolName) ? 4_000 : 500;
-        buffer[i].outputSummary = output.slice(0, outputLimit);
-        buffer[i].outputTruncated = outputMeta?.outputTruncated === true;
-        delete buffer[i].outputTotalBytes;
-        delete buffer[i].outputArtifactPath;
-        delete buffer[i].exitCode;
-        if (outputMeta?.outputTotalBytes != null) {
-          buffer[i].outputTotalBytes = outputMeta.outputTotalBytes;
-        }
-        if (outputMeta?.outputArtifactPath) {
-          buffer[i].outputArtifactPath = outputMeta.outputArtifactPath;
-        }
-        if (outputMeta?.exitCode !== undefined) {
-          buffer[i].exitCode = outputMeta.exitCode;
-        }
-        buffer[i].status = isError ? "failed" : "completed";
-        buffer[i].completedAt = new Date().toISOString();
-        if (toolInput && Object.keys(toolInput).length > 0) {
-          buffer[i]._rawToolInput = {
-            ...(buffer[i]._rawToolInput ?? {}),
-            ...toolInput,
-          };
-        }
-        break;
-      }
+    for (let index = buffer.length - 1; index >= 0; index -= 1) {
+      if (buffer[index].toolCallId === toolCallId) return buffer[index];
     }
+    return undefined;
+  }
+
+  private applyToolCallOutput(
+    toolCall: BufferedToolCall,
+    output: string,
+    isError: boolean,
+    outputMeta: {
+      outputTruncated?: boolean;
+      outputTotalBytes?: number;
+      outputArtifactPath?: string;
+      exitCode?: number;
+    } | undefined,
+  ): void {
+    const outputLimit = resolveBrowserNarrativeTool(toolCall.toolName) ? 4_000 : 500;
+    toolCall.outputSummary = output.slice(0, outputLimit);
+    toolCall.outputTruncated = outputMeta?.outputTruncated === true;
+    this.applyOutputMetadata(toolCall, outputMeta);
+    toolCall.status = isError ? "failed" : "completed";
+    toolCall.completedAt = new Date().toISOString();
+  }
+
+  private applyOutputMetadata(
+    toolCall: BufferedToolCall,
+    outputMeta: {
+      outputTotalBytes?: number;
+      outputArtifactPath?: string;
+      exitCode?: number;
+    } | undefined,
+  ): void {
+    delete toolCall.outputTotalBytes;
+    delete toolCall.outputArtifactPath;
+    delete toolCall.exitCode;
+    if (outputMeta?.outputTotalBytes != null) toolCall.outputTotalBytes = outputMeta.outputTotalBytes;
+    if (outputMeta?.outputArtifactPath) toolCall.outputArtifactPath = outputMeta.outputArtifactPath;
+    if (outputMeta?.exitCode !== undefined) toolCall.exitCode = outputMeta.exitCode;
+  }
+
+  private mergeToolCallInput(toolCall: BufferedToolCall, toolInput: Record<string, unknown> | undefined): void {
+    if (!toolInput || Object.keys(toolInput).length === 0) return;
+    toolCall._rawToolInput = {
+      ...toolCall._rawToolInput,
+      ...toolInput,
+    };
   }
 
   /**
@@ -702,15 +779,12 @@ export class NarrativeStore {
     item: ParentNarrativeRecoveryItem,
     threadId: string,
   ): number {
-    if (snapshot.length >= ACTIVE_TURN_WRITE_BATCH_LIMITS.maxRows - 1) {
-      throw new Error(`Parent narrative recovery exceeds the active-turn row limit: ${threadId}`);
-    }
     const nextBytes = Buffer.byteLength(JSON.stringify(item), "utf8");
-    if (bytes + nextBytes > ACTIVE_TURN_WRITE_BATCH_LIMITS.maxBytes) {
-      throw new Error(`Parent narrative recovery exceeds the active-turn byte limit: ${threadId}`);
-    }
+    this.assertRecoveryItemFitsWriteBatch(nextBytes, threadId);
+    const retainedBytes = bytes + nextBytes;
+    assertActiveTurnRecoveryRetention(snapshot.length + 1, retainedBytes);
     snapshot.push(item);
-    return bytes + nextBytes;
+    return retainedBytes;
   }
 
   private toolCallRecoveryItem(toolCall: BufferedToolCall): ParentNarrativeRecoveryItem {
@@ -893,14 +967,11 @@ export class NarrativeStore {
       },
     });
     let bytes = 0;
-    for (const item of snapshot) {
-      if (bytes > ACTIVE_TURN_WRITE_BATCH_LIMITS.maxBytes - Buffer.byteLength(JSON.stringify(item), "utf8")) {
-        throw new Error(`Parent narrative recovery exceeds the active-turn byte limit: ${threadId}`);
-      }
-      bytes += Buffer.byteLength(JSON.stringify(item), "utf8");
-    }
-    if (snapshot.length > ACTIVE_TURN_WRITE_BATCH_LIMITS.maxRows - 1) {
-      throw new Error(`Parent narrative recovery exceeds the active-turn row limit: ${threadId}`);
+    for (const [index, item] of snapshot.entries()) {
+      const itemBytes = Buffer.byteLength(JSON.stringify(item), "utf8");
+      this.assertRecoveryItemFitsWriteBatch(itemBytes, threadId);
+      bytes += itemBytes;
+      assertActiveTurnRecoveryRetention(index + 1, bytes);
     }
     return snapshot.sort((left, right) => (
       left.record.sort_order - right.record.sort_order || left.record.id.localeCompare(right.record.id)
@@ -943,33 +1014,101 @@ export class NarrativeStore {
     messageId: string,
     items: readonly ParentNarrativeRecoveryItem[],
   ): void {
-    const tools: CreateToolCallRecordInput[] = items.flatMap((item) => item.kind === "toolCall" ? [{
-      toolCallId: item.record.id,
+    const tools: CreateToolCallRecordInput[] = [];
+    const thoughts: CreateThoughtSegmentInput[] = [];
+    const hooks: CreateHookExecutionInput[] = [];
+    for (const item of items) {
+      if (item.kind === "toolCall") tools.push(this.recoveredToolCall(messageId, item));
+      if (item.kind === "narrationSegment") thoughts.push(this.recoveredThought(messageId, item));
+      if (item.kind === "hook") hooks.push(this.recoveredHook(messageId, item));
+    }
+    if (tools.length > 0) this.toolCallRecordRepo.bulkCreate(tools);
+    if (thoughts.length > 0) this.thoughtSegmentRepo.bulkCreate(thoughts);
+    if (hooks.length > 0) this.hookExecutionRepo.bulkCreate(hooks);
+  }
+
+  private assertRecoveryItemFitsWriteBatch(byteLength: number, threadId: string): void {
+    if (byteLength > ACTIVE_TURN_WRITE_BATCH_LIMITS.maxBytes) {
+      throw new Error(`Parent narrative recovery item exceeds the active-turn byte limit: ${threadId}`);
+    }
+  }
+
+  private recoveredToolCall(
+    messageId: string,
+    item: RecoveredToolCallItem,
+  ): CreateToolCallRecordInput {
+    return {
+      ...this.recoveredToolCallIdentity(messageId, item),
+      ...this.recoveredToolCallPresentation(item),
+      ...this.recoveredToolCallOutput(item),
+      ...this.recoveredToolCallState(item),
+    };
+  }
+
+  private recoveredToolCallIdentity(messageId: string, item: RecoveredToolCallItem) {
+    const record = item.record;
+    return {
+      toolCallId: record.id,
       messageId,
-      toolName: item.record.tool_name,
-      displayName: item.record.display_name ?? undefined,
-      providerAgentKey: item.record.provider_agent_key ?? undefined,
-      subagentIdentityKey: item.record.subagent_identity_key ?? undefined,
-      subagentProviderName: item.record.subagent_provider_name ?? undefined,
-      subagentPrompt: item.record.subagent_prompt ?? undefined,
-      subagentType: item.record.subagent_type ?? undefined,
-      subagentAgentId: item.record.subagent_agent_id ?? undefined,
-      subagentDurationMs: item.record.subagent_duration_ms ?? undefined,
-      model: item.record.model ?? undefined,
-      reasoningEffort: item.record.reasoning_effort ?? undefined,
-      inputSummary: item.record.input_summary,
-      outputSummary: item.record.output_summary,
-      ...(item.record.output_truncated ? { outputTruncated: true } : {}),
-      ...(item.record.output_total_bytes != null ? { outputTotalBytes: item.record.output_total_bytes } : {}),
-      ...(item.record.output_artifact_path ? { outputArtifactPath: item.record.output_artifact_path } : {}),
-      ...(item.record.exit_code != null ? { exitCode: item.record.exit_code } : {}),
-      status: item.record.status,
-      startedAt: item.record.started_at,
-      completedAt: item.record.completed_at ?? undefined,
-      sortOrder: item.record.sort_order,
-      parentToolCallId: item.record.parent_tool_call_id ?? undefined,
-    }] : []);
-    const thoughts: CreateThoughtSegmentInput[] = items.flatMap((item) => item.kind === "narrationSegment" ? [{
+      toolName: record.tool_name,
+      displayName: this.optionalRecoveryValue(record.display_name),
+      providerAgentKey: this.optionalRecoveryValue(record.provider_agent_key),
+      subagentIdentityKey: this.optionalRecoveryValue(record.subagent_identity_key),
+      subagentProviderName: this.optionalRecoveryValue(record.subagent_provider_name),
+      parentToolCallId: this.optionalRecoveryValue(record.parent_tool_call_id),
+    };
+  }
+
+  private recoveredToolCallPresentation(item: RecoveredToolCallItem) {
+    const record = item.record;
+    return {
+      subagentPrompt: this.optionalRecoveryValue(record.subagent_prompt),
+      subagentType: this.optionalRecoveryValue(record.subagent_type),
+      subagentAgentId: this.optionalRecoveryValue(record.subagent_agent_id),
+      subagentDurationMs: this.optionalRecoveryValue(record.subagent_duration_ms),
+      model: this.optionalRecoveryValue(record.model),
+      reasoningEffort: this.optionalRecoveryValue(record.reasoning_effort),
+    };
+  }
+
+  private recoveredToolCallOutput(item: RecoveredToolCallItem) {
+    const record = item.record;
+    const optionalOutput = this.recoveredOptionalToolCallOutput(record);
+    return {
+      inputSummary: record.input_summary,
+      outputSummary: record.output_summary,
+      ...optionalOutput,
+    };
+  }
+
+  private recoveredOptionalToolCallOutput(item: RecoveredToolCallItem["record"]) {
+    const output: Partial<CreateToolCallRecordInput> = {};
+    if (item.output_truncated) output.outputTruncated = true;
+    if (item.output_total_bytes != null) output.outputTotalBytes = item.output_total_bytes;
+    if (item.output_artifact_path) output.outputArtifactPath = item.output_artifact_path;
+    if (item.exit_code != null) output.exitCode = item.exit_code;
+    return output;
+  }
+
+  private recoveredToolCallState(item: RecoveredToolCallItem) {
+    const record = item.record;
+    return {
+      status: record.status,
+      startedAt: record.started_at,
+      completedAt: this.optionalRecoveryValue(record.completed_at),
+      sortOrder: record.sort_order,
+    };
+  }
+
+  private optionalRecoveryValue<T>(value: T | null | undefined): T | undefined {
+    return value ?? undefined;
+  }
+
+  private recoveredThought(
+    messageId: string,
+    item: Extract<ParentNarrativeRecoveryItem, { kind: "narrationSegment" }>,
+  ): CreateThoughtSegmentInput {
+    return {
       id: item.record.id,
       messageId,
       text: item.record.text,
@@ -977,8 +1116,14 @@ export class NarrativeStore {
       endedAt: item.record.ended_at,
       sortOrder: item.record.sort_order,
       ...(item.record.is_final_response ? { isFinalResponse: item.record.is_final_response } : {}),
-    }] : []);
-    const hooks: CreateHookExecutionInput[] = items.flatMap((item) => item.kind === "hook" ? [{
+    };
+  }
+
+  private recoveredHook(
+    messageId: string,
+    item: Extract<ParentNarrativeRecoveryItem, { kind: "hook" }>,
+  ): CreateHookExecutionInput {
+    return {
       id: item.record.id,
       messageId,
       hookName: item.record.hook_name,
@@ -990,11 +1135,7 @@ export class NarrativeStore {
       startedAt: item.record.started_at,
       endedAt: item.record.ended_at,
       sortOrder: item.record.sort_order,
-    }] : []);
-
-    if (tools.length > 0) this.toolCallRecordRepo.bulkCreate(tools);
-    if (thoughts.length > 0) this.thoughtSegmentRepo.bulkCreate(thoughts);
-    if (hooks.length > 0) this.hookExecutionRepo.bulkCreate(hooks);
+    };
   }
 
   /**
@@ -1004,12 +1145,17 @@ export class NarrativeStore {
    * a turn with narrative but no assistant body still earns a persisted row.
    */
   hasBufferedNarrative(threadId: string): boolean {
-    if ((this.turnToolCalls.get(threadId)?.length ?? 0) > 0) return true;
-    if (this.turnOpenThought.get(threadId)) return true;
-    if ((this.turnThoughts.get(threadId)?.length ?? 0) > 0) return true;
-    if ((this.turnOpenHooks.get(threadId)?.size ?? 0) > 0) return true;
-    if ((this.turnHooks.get(threadId)?.length ?? 0) > 0) return true;
-    return false;
+    return this.narrativeBufferStates(threadId).some(Boolean);
+  }
+
+  private narrativeBufferStates(threadId: string): boolean[] {
+    return [
+      (this.turnToolCalls.get(threadId)?.length ?? 0) > 0,
+      Boolean(this.turnOpenThought.get(threadId)),
+      (this.turnThoughts.get(threadId)?.length ?? 0) > 0,
+      (this.turnOpenHooks.get(threadId)?.size ?? 0) > 0,
+      (this.turnHooks.get(threadId)?.length ?? 0) > 0,
+    ];
   }
 
   /**
@@ -1077,44 +1223,35 @@ export class NarrativeStore {
       messageContent,
       outcome,
     );
-
-    if (prepared.toolCalls.length > 0) {
-      try {
-        this.toolCallRecordRepo.bulkCreate(prepared.toolCalls);
-      } catch (err) {
-        if (options.strict) throw err;
-        logger.error("Failed to persist tool call records", {
-          threadId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-
-    if (prepared.thoughts.length > 0) {
-      try {
-        this.thoughtSegmentRepo.bulkCreate(prepared.thoughts);
-      } catch (err) {
-        if (options.strict) throw err;
-        logger.error("Failed to persist thought segments", {
-          threadId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-
-    if (prepared.hooks.length > 0) {
-      try {
-        this.hookExecutionRepo.bulkCreate(prepared.hooks);
-      } catch (err) {
-        if (options.strict) throw err;
-        logger.error("Failed to persist hook executions", {
-          threadId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
-
+    this.persistNarrativeRows(prepared.toolCalls, options.strict, threadId, "tool call records", (items) => {
+      this.toolCallRecordRepo.bulkCreate(items);
+    });
+    this.persistNarrativeRows(prepared.thoughts, options.strict, threadId, "thought segments", (items) => {
+      this.thoughtSegmentRepo.bulkCreate(items);
+    });
+    this.persistNarrativeRows(prepared.hooks, options.strict, threadId, "hook executions", (items) => {
+      this.hookExecutionRepo.bulkCreate(items);
+    });
     return { toolCallCount: prepared.toolCalls.length };
+  }
+
+  private persistNarrativeRows<T>(
+    items: T[],
+    strict: boolean | undefined,
+    threadId: string,
+    rowDescription: string,
+    persist: (items: T[]) => void,
+  ): void {
+    if (items.length === 0) return;
+    try {
+      persist(items);
+    } catch (err) {
+      if (strict) throw err;
+      logger.error(`Failed to persist ${rowDescription}`, {
+        threadId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   /** Persist one active turn through bounded transactions that yield between commits. */
@@ -1125,9 +1262,11 @@ export class NarrativeStore {
     outcome: TurnOutcome,
     options: { strict?: boolean } = {},
   ): Promise<PersistNarrativeResult> {
-    const persistedToolCalls = new Set<string>();
-    const persistedThoughts = new Set<string>();
-    const persistedHooks = new Set<string>();
+    const persisted: PersistedNarrativeRows = {
+      toolCalls: new Set<string>(),
+      thoughts: new Set<string>(),
+      hooks: new Set<string>(),
+    };
 
     for (let pass = 0; pass < 16; pass += 1) {
       const prepared = this.prepareNarrativePersistence(
@@ -1136,10 +1275,8 @@ export class NarrativeStore {
         messageContent,
         outcome,
       );
-      const toolCalls = prepared.toolCalls.filter((item) => !persistedToolCalls.has(item.toolCallId!));
-      const thoughts = prepared.thoughts.filter((item) => !persistedThoughts.has(item.id!));
-      const hooks = prepared.hooks.filter((item) => !persistedHooks.has(item.id!));
-      if (toolCalls.length === 0 && thoughts.length === 0 && hooks.length === 0) {
+      const pending = this.pendingNarrativeRows(prepared, persisted);
+      if (this.narrativeRowsAreEmpty(pending)) {
         await new Promise<void>((resolve) => setImmediate(resolve));
         const afterYield = this.prepareNarrativePersistence(
           threadId,
@@ -1147,55 +1284,73 @@ export class NarrativeStore {
           messageContent,
           outcome,
         );
-        const hasLateRows = afterYield.toolCalls.some((item) => !persistedToolCalls.has(item.toolCallId!))
-          || afterYield.thoughts.some((item) => !persistedThoughts.has(item.id!))
-          || afterYield.hooks.some((item) => !persistedHooks.has(item.id!));
-        if (!hasLateRows) return { toolCallCount: persistedToolCalls.size };
+        if (this.narrativeRowsAreEmpty(this.pendingNarrativeRows(afterYield, persisted))) {
+          return { toolCallCount: persisted.toolCalls.size };
+        }
         continue;
       }
-
-      if (toolCalls.length > 0) {
-        try {
-          await this.toolCallRecordRepo.bulkCreateBatched(toolCalls);
-          for (const item of toolCalls) persistedToolCalls.add(item.toolCallId!);
-        } catch (err) {
-          if (options.strict) throw err;
-          for (const item of toolCalls) persistedToolCalls.add(item.toolCallId!);
-          logger.error("Failed to persist tool call records", {
-            threadId,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }
-      if (thoughts.length > 0) {
-        try {
-          await this.thoughtSegmentRepo.bulkCreateBatched(thoughts);
-          for (const item of thoughts) persistedThoughts.add(item.id!);
-        } catch (err) {
-          if (options.strict) throw err;
-          for (const item of thoughts) persistedThoughts.add(item.id!);
-          logger.error("Failed to persist thought segments", {
-            threadId,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }
-      if (hooks.length > 0) {
-        try {
-          await this.hookExecutionRepo.bulkCreateBatched(hooks);
-          for (const item of hooks) persistedHooks.add(item.id!);
-        } catch (err) {
-          if (options.strict) throw err;
-          for (const item of hooks) persistedHooks.add(item.id!);
-          logger.error("Failed to persist hook executions", {
-            threadId,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }
+      await this.persistBatchedNarrativeRows(
+        pending.toolCalls, persisted.toolCalls, (item) => item.toolCallId!,
+        (items) => this.toolCallRecordRepo.bulkCreateBatched(items), options.strict, threadId, "tool call records",
+      );
+      await this.persistBatchedNarrativeRows(
+        pending.thoughts, persisted.thoughts, (item) => item.id!,
+        (items) => this.thoughtSegmentRepo.bulkCreateBatched(items), options.strict, threadId, "thought segments",
+      );
+      await this.persistBatchedNarrativeRows(
+        pending.hooks, persisted.hooks, (item) => item.id!,
+        (items) => this.hookExecutionRepo.bulkCreateBatched(items), options.strict, threadId, "hook executions",
+      );
     }
 
     throw new Error(`Narrative persistence did not quiesce for ${threadId}`);
+  }
+
+  private pendingNarrativeRows(
+    prepared: PreparedNarrativePersistence,
+    persisted: PersistedNarrativeRows,
+  ): PendingNarrativePersistence {
+    return {
+      toolCalls: prepared.toolCalls.filter((item) => !persisted.toolCalls.has(item.toolCallId!)),
+      thoughts: prepared.thoughts.filter((item) => !persisted.thoughts.has(item.id!)),
+      hooks: prepared.hooks.filter((item) => !persisted.hooks.has(item.id!)),
+    };
+  }
+
+  private narrativeRowsAreEmpty(rows: PendingNarrativePersistence): boolean {
+    return rows.toolCalls.length === 0 && rows.thoughts.length === 0 && rows.hooks.length === 0;
+  }
+
+  private async persistBatchedNarrativeRows<T>(
+    items: T[],
+    persisted: Set<string>,
+    identifier: (item: T) => string,
+    persist: (items: T[]) => Promise<unknown>,
+    strict: boolean | undefined,
+    threadId: string,
+    rowDescription: string,
+  ): Promise<void> {
+    if (items.length === 0) return;
+    try {
+      await persist(items);
+    } catch (err) {
+      if (strict) throw err;
+      this.recordPersistedNarrativeRows(items, persisted, identifier);
+      logger.error(`Failed to persist ${rowDescription}`, {
+        threadId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return;
+    }
+    this.recordPersistedNarrativeRows(items, persisted, identifier);
+  }
+
+  private recordPersistedNarrativeRows<T>(
+    items: readonly T[],
+    persisted: Set<string>,
+    identifier: (item: T) => string,
+  ): void {
+    for (const item of items) persisted.add(identifier(item));
   }
 
   private prepareNarrativePersistence(
@@ -1356,38 +1511,49 @@ export class NarrativeStore {
 
   /** Generate a human-readable summary of tool input. */
   private summarizeInput(toolName: string, input: Record<string, unknown>): string {
-    if (resolveBrowserNarrativeTool(toolName)) {
-      return JSON.stringify(input).slice(0, 4_000);
-    }
-    switch (toolName.toLowerCase()) {
-      case "read":
-      case "edit":
-      case "write":
-        return String(input.file_path ?? input.filePath ?? "");
-      case "move":
-      case "rename": {
-        const source = input.oldPath ?? input.old_path ?? input.oldFilePath
-          ?? input.sourcePath ?? input.source_path ?? input.source ?? input.from;
-        const destination = input.newPath ?? input.new_path ?? input.destinationPath
-          ?? input.destination_path ?? input.destination ?? input.to ?? input.path
-          ?? input.file_path ?? input.filePath ?? input.target_file ?? input.targetFile;
-        return [source, destination]
-          .filter((value): value is string => typeof value === "string")
-          .join(" -> ")
-          .slice(0, 200);
-      }
-      case "bash":
-      case "shell":
-      case "terminal":
-      case "command_execution":
-        return String(input.command ?? "").slice(0, MAX_PERSISTED_COMMAND_CHARS);
-      case "grep":
-      case "glob":
-        return String(input.pattern ?? "");
-      case "agent":
-        return String(input.description ?? "").slice(0, 100);
-      default:
-        return JSON.stringify(input).slice(0, 200);
-    }
+    if (resolveBrowserNarrativeTool(toolName)) return JSON.stringify(input).slice(0, 4_000);
+    return (NARRATIVE_INPUT_SUMMARIZERS[toolName.toLowerCase()] ?? genericInputSummary)(input);
   }
+}
+
+function fileInputSummary(input: Record<string, unknown>): string {
+  return String(firstProvidedInputValue(input, ["file_path", "filePath"]) ?? "");
+}
+
+function renameInputSummary(input: Record<string, unknown>): string {
+  const source = firstProvidedInputValue(input, [
+    "oldPath", "old_path", "oldFilePath", "sourcePath", "source_path", "source", "from",
+  ]);
+  const destination = firstProvidedInputValue(input, [
+    "newPath", "new_path", "destinationPath", "destination_path", "destination", "to", "path",
+    "file_path", "filePath", "target_file", "targetFile",
+  ]);
+  return [source, destination]
+    .filter((value): value is string => typeof value === "string")
+    .join(" -> ")
+    .slice(0, 200);
+}
+
+function commandInputSummary(input: Record<string, unknown>): string {
+  return String(firstProvidedInputValue(input, ["command"]) ?? "").slice(0, MAX_PERSISTED_COMMAND_CHARS);
+}
+
+function patternInputSummary(input: Record<string, unknown>): string {
+  return String(firstProvidedInputValue(input, ["pattern"]) ?? "");
+}
+
+function agentInputSummary(input: Record<string, unknown>): string {
+  return String(firstProvidedInputValue(input, ["description"]) ?? "").slice(0, 100);
+}
+
+function genericInputSummary(input: Record<string, unknown>): string {
+  return JSON.stringify(input).slice(0, 200);
+}
+
+function firstProvidedInputValue(input: Record<string, unknown>, keys: readonly string[]): unknown {
+  for (const key of keys) {
+    const value = input[key];
+    if (value !== null && value !== undefined) return value;
+  }
+  return undefined;
 }

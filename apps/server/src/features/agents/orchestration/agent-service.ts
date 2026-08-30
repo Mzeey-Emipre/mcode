@@ -1293,31 +1293,37 @@ export class AgentService {
     if (this.preparedProviderEvents.has(event as object)) {
       return this.preparedProviderEvents.get(event as object);
     }
-    const normalizedEvent = this.turnRuntime.normalizeEvent(event);
-    const sanitized = normalizedEvent
-      ? this.browserNarrativeEventSanitizer.sanitize(normalizedEvent)
-      : undefined;
-    let normalized = sanitized;
-    if (sanitized?.type === AgentEventType.ToolUse && sanitized.toolName === "Agent") {
-      normalized = {
+    const normalized = this.prepareNormalizedProviderEvent(
+      this.turnRuntime.normalizeEvent(event),
+    );
+    this.preparedProviderEvents.set(event as object, normalized);
+    return normalized;
+  }
+
+  private prepareNormalizedProviderEvent(event: AgentEvent | undefined): AgentEvent | undefined {
+    if (!event) return undefined;
+    const sanitized = this.browserNarrativeEventSanitizer.sanitize(event);
+    if (sanitized.type === AgentEventType.ToolUse && sanitized.toolName === "Agent") {
+      return {
         ...sanitized,
         subagentPresentation: createSubagentPresentation(sanitized.toolInput, sanitized.toolCallId),
       };
-    } else if (sanitized?.type === AgentEventType.ToolResult && sanitized.toolInput) {
-      const bufferedAgent = this.narrativeStore.getBufferedToolCalls(sanitized.threadId)
-        .find((toolCall) => toolCall.toolCallId === sanitized.toolCallId && toolCall.toolName === "Agent");
-      if (bufferedAgent) {
-        normalized = {
-          ...sanitized,
-          subagentPresentation: createSubagentPresentation({
-            ...(bufferedAgent._rawToolInput ?? {}),
-            ...sanitized.toolInput,
-          }, sanitized.toolCallId),
-        };
-      }
     }
-    this.preparedProviderEvents.set(event as object, normalized);
-    return normalized;
+    if (sanitized.type !== AgentEventType.ToolResult || !sanitized.toolInput) return sanitized;
+    return this.prepareAgentToolResult(sanitized);
+  }
+
+  private prepareAgentToolResult(event: Extract<AgentEvent, { type: typeof AgentEventType.ToolResult }>): AgentEvent {
+    const bufferedAgent = this.narrativeStore.getBufferedToolCalls(event.threadId)
+      .find((toolCall) => toolCall.toolCallId === event.toolCallId && toolCall.toolName === "Agent");
+    if (!bufferedAgent) return event;
+    return {
+      ...event,
+      subagentPresentation: createSubagentPresentation({
+        ...bufferedAgent._rawToolInput,
+        ...event.toolInput,
+      }, event.toolCallId),
+    };
   }
 
   /**
@@ -1773,7 +1779,7 @@ export class AgentService {
       },
       rejectForQueueCapacity: (event) => this.interruptForParentAssistantTextCheckpointFailure(
         event,
-        "Assistant text event ordering capacity reached",
+        "Assistant text event retention capacity reached",
       ),
       previousFileFinalization: (threadId) => this.turnFileEffects.previousFinalization(threadId),
       beginResumedFileTracking: (threadId) => this.turnFileEffects.beginResumed(threadId),
