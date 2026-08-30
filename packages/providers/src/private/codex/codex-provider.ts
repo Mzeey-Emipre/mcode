@@ -2230,8 +2230,8 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     nativeTurnId: string | undefined,
     turnExecutionId: string,
   ): boolean {
-    if (!isMainThreadNotification(server, params)) return false;
-    return this.nativeTurnBelongsToCodexExecution(entry, nativeTurnId, turnExecutionId);
+    return this.nativeTurnBelongsToCodexExecution(entry, nativeTurnId, turnExecutionId)
+      || isMainThreadNotification(server, params);
   }
 
   private nativeTurnBelongsToCodexExecution(entry: CodexSessionState, nativeTurnId: string | undefined, turnExecutionId: string): boolean {

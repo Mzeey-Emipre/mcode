@@ -451,7 +451,7 @@ export class CodexEventMapper {
     if (this.mainCodexThreadId) {
       return notifThread === this.mainCodexThreadId ? "main" : "unknown";
     }
-    return "unknown";
+    return "main";
   }
 
   /** Retains only bounded notifications that can establish or report explicit child mutations. */
