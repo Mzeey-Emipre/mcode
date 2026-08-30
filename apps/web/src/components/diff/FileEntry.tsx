@@ -509,7 +509,7 @@ function FileEntryDiffBody({
 }
 
 /** Props for an already loaded file diff. */
-interface LoadedFileDiffProps extends Omit<FileEntryDiffBodyProps, "contentId" | "isLoaded"> {}
+type LoadedFileDiffProps = Omit<FileEntryDiffBodyProps, "contentId" | "isLoaded">;
 
 /** Renders preview, populated diff, or empty state after a file diff loads. */
 function LoadedFileDiff({
