@@ -127,7 +127,8 @@ export class SessionRuntime<TState> {
   async evictNonBusy(reason: string): Promise<{ before: number; after: number; evicted: string[] }> {
     const before = this.sessions.size;
     const evicted: string[] = [];
-    for (const [sessionId, entry] of [...this.sessions]) {
+    const sessions = Array.from(this.sessions);
+    for (const [sessionId, entry] of sessions) {
       if (this.adapter.isBusy(entry.state)) continue;
       evicted.push(sessionId);
       this.deps.logger?.info("SessionRuntime evicting non-busy session", { sessionId, reason });
@@ -198,7 +199,8 @@ export class SessionRuntime<TState> {
 
   private async evictIdle(): Promise<void> {
     const now = Date.now();
-    for (const [sessionId, entry] of [...this.sessions]) {
+    const sessions = Array.from(this.sessions);
+    for (const [sessionId, entry] of sessions) {
       if (now - entry.lastUsedAt > this.idleTtlMs && !this.adapter.isBusy(entry.state)) {
         this.deps.logger?.info("SessionRuntime evicting idle session", { sessionId });
         await this.stop(sessionId);

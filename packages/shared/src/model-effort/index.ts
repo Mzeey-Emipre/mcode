@@ -109,35 +109,37 @@ function isCodexCatalogModelId(modelId: string): boolean {
  */
 function normalizeCodexReasoningLevel(modelId: string, level: ReasoningLevel): ReasoningLevel {
   const id = normalizeModelId(modelId);
-  if (id.startsWith("gpt-5.6-")) {
-    const allowed = new Set<ReasoningLevel>(["low", "medium", "high", "xhigh", "max"]);
-    if (allowed.has(level)) return level;
+  return normalizeToAllowedTier(level, allowedCodexTiers(id), codexFallbackTier(id));
+}
 
-    const idx = TIER_LADDER.indexOf(level);
-    for (let i = idx - 1; i >= 0; i--) {
-      const tier = TIER_LADDER[i];
-      if (allowed.has(tier)) return tier;
-    }
-    return id === "gpt-5.6-sol" ? "low" : "medium";
+function allowedCodexTiers(modelId: string): ReadonlySet<ReasoningLevel> {
+  if (modelId.startsWith("gpt-5.6-")) {
+    return new Set<ReasoningLevel>(["low", "medium", "high", "xhigh", "max"]);
   }
-
   const base = new Set<ReasoningLevel>(["none", "minimal", "low", "medium", "high"]);
-  const withXhigh = new Set<ReasoningLevel>([...base, "xhigh", "max"]);
-  const isMini =
-    (id.includes("mini") && id.includes("codex"))
-    || id === "gpt-5.4-mini";
-  const allowed = isMini ? base : withXhigh;
+  return isMiniCodexModel(modelId) ? base : new Set<ReasoningLevel>([...base, "xhigh", "max"]);
+}
 
+function isMiniCodexModel(modelId: string): boolean {
+  return (modelId.includes("mini") && modelId.includes("codex")) || modelId === "gpt-5.4-mini";
+}
+
+function codexFallbackTier(modelId: string): ReasoningLevel {
+  return modelId === "gpt-5.6-sol" ? "low" : "medium";
+}
+
+function normalizeToAllowedTier(
+  level: ReasoningLevel,
+  allowed: ReadonlySet<ReasoningLevel>,
+  fallback: ReasoningLevel,
+): ReasoningLevel {
   if (allowed.has(level)) return level;
-
-  const idx = TIER_LADDER.indexOf(level);
-  if (idx === -1) return "medium";
-
-  for (let i = idx - 1; i >= 0; i--) {
-    const t = TIER_LADDER[i];
-    if (allowed.has(t)) return t;
+  const index = TIER_LADDER.indexOf(level);
+  for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+    const tier = TIER_LADDER[cursor];
+    if (tier && allowed.has(tier)) return tier;
   }
-  return "medium";
+  return fallback;
 }
 
 /**

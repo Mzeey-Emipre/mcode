@@ -40,30 +40,27 @@ export function parseCursorCliModelsOutput(stdout: string): ProviderModelInfo[] 
   const out: ProviderModelInfo[] = [];
   for (const raw of lines) {
     const line = raw.trim();
-    if (!line || line === "Available models") continue;
     if (line.startsWith("Tip:")) break;
-    const idx = line.indexOf(MODEL_LINE_SEP);
-    if (idx === -1) continue;
-    const id = line.slice(0, idx).trim();
-    let name = line.slice(idx + MODEL_LINE_SEP.length).trim();
-    if (!id || !name) continue;
-
-    const isMaxMode = id.endsWith(MAX_MODE_SUFFIX);
-
-    // Cursor's Max mode variants have a 1M-token context window; ensure the
-    // display label reflects that so users can distinguish them in the picker.
-    if (isMaxMode && !name.includes("(Max)")) {
-      name = `${name} (Max)`;
-    }
-
-    out.push({
-      id,
-      name,
-      group: inferCursorModelGroup(id),
-      ...(isMaxMode && { contextWindow: MAX_MODE_CONTEXT_WINDOW }),
-    });
+    const model = parseCursorCliModelLine(line);
+    if (model) out.push(model);
   }
   return out;
+}
+
+function parseCursorCliModelLine(line: string): ProviderModelInfo | undefined {
+  const index = line.indexOf(MODEL_LINE_SEP);
+  if (index === -1) return undefined;
+  const id = line.slice(0, index).trim();
+  const label = line.slice(index + MODEL_LINE_SEP.length).trim();
+  if (!id || !label) return undefined;
+  const isMaxMode = id.endsWith(MAX_MODE_SUFFIX);
+  const name = isMaxMode && !label.includes("(Max)") ? `${label} (Max)` : label;
+  return {
+    id,
+    name,
+    group: inferCursorModelGroup(id),
+    ...(isMaxMode ? { contextWindow: MAX_MODE_CONTEXT_WINDOW } : {}),
+  };
 }
 
 /**

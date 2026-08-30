@@ -274,7 +274,7 @@ describe("Codex protocol coverage", () => {
     });
     if (!hasMainCompletion) return;
 
-    const { events, runtimeEvents } = replay(subagentNotifications);
+    const { events } = replay(subagentNotifications);
     const turnCompletes = events.filter((event) => event.type === AgentEventType.TurnComplete);
     expect(turnCompletes).toHaveLength(1);
   });
@@ -285,10 +285,6 @@ describe("Codex protocol coverage", () => {
     if (subagentNotifications.length === 0) return;
 
     const { events, runtimeEvents } = replay(subagentNotifications);
-    const toolUses = events.filter(
-      (event): event is Extract<AgentEvent, { type: "toolUse" }> =>
-        event.type === AgentEventType.ToolUse,
-    );
     const spawnUses = runtimeEvents.filter(
       (runtimeEvent) => runtimeEvent.event.type === AgentEventType.ToolUse
         && runtimeEvent.event.toolName === "Agent"

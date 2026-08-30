@@ -104,7 +104,12 @@ describe("ConversationTailSchema", () => {
 
     expect(result.success).toBe(true);
     if (result.success) {
-      const { tool_calls, files_changed, legacyProvenance, ...expected } = renderCompleteMessage;
+      const {
+        tool_calls: _toolCalls,
+        files_changed: _filesChanged,
+        legacyProvenance: _legacyProvenance,
+        ...expected
+      } = renderCompleteMessage;
       expect(result.data).toEqual(expected);
       expect(result.data).not.toHaveProperty("tool_calls");
       expect(result.data).not.toHaveProperty("files_changed");

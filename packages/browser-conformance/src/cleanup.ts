@@ -41,23 +41,25 @@ export function createBrowserConformanceResourceSnapshot(
   const identities = Object.fromEntries(
     BROWSER_CONFORMANCE_RESOURCE_KEYS.map((key) => [key, input.identities?.[key] ?? []]),
   ) as Record<BrowserConformanceResourceKey, readonly BrowserConformanceResourceIdentity[]>;
-  for (const key of BROWSER_CONFORMANCE_RESOURCE_KEYS) {
-    validateIdentities(key, identities[key], input.counts?.[key]);
-  }
+  validateSnapshotInput(input, identities);
+  const counts = Object.fromEntries(BROWSER_CONFORMANCE_RESOURCE_KEYS.map((key) => [
+    key,
+    input.counts?.[key] ?? identities[key].length,
+  ])) as Record<BrowserConformanceResourceKey, number>;
   return {
-    requests: input.counts?.requests ?? identities.requests.length,
-    queues: input.counts?.queues ?? identities.queues.length,
-    timers: input.counts?.timers ?? identities.timers.length,
-    listeners: input.counts?.listeners ?? identities.listeners.length,
-    heldInput: input.counts?.heldInput ?? identities.heldInput.length,
-    controllerLeases: input.counts?.controllerLeases ?? identities.controllerLeases.length,
-    targets: input.counts?.targets ?? identities.targets.length,
-    replayEntries: input.counts?.replayEntries ?? identities.replayEntries.length,
-    registries: input.counts?.registries ?? identities.registries.length,
-    buffers: input.counts?.buffers ?? identities.buffers.length,
+    ...counts,
     identities,
     revisions: createBrowserConformanceRevisionVector(input.revisions),
   };
+}
+
+function validateSnapshotInput(
+  input: BrowserConformanceResourceSnapshotInput,
+  identities: Record<BrowserConformanceResourceKey, readonly BrowserConformanceResourceIdentity[]>,
+): void {
+  for (const key of BROWSER_CONFORMANCE_RESOURCE_KEYS) {
+    validateIdentities(key, identities[key], input.counts?.[key]);
+  }
 }
 
 /** Compares terminal resources with a baseline and declared growth bounds. */
@@ -75,19 +77,38 @@ export function compareBrowserConformanceCleanup(
     const after = final[resource];
     const growth = allowedGrowth[resource] ?? 0;
     delta[resource] = after - before;
-    if (!Number.isSafeInteger(before) || !Number.isSafeInteger(after) || before < 0 || after < 0) {
-      violations.push({ resource, reason: "invalid-count", baseline: before, final: after, allowedGrowth: growth });
-      continue;
-    }
-    if (!Number.isSafeInteger(growth) || growth < 0 || after > before + growth) {
-      violations.push({ resource, reason: "growth", baseline: before, final: after, allowedGrowth: growth });
-      continue;
-    }
-    if (!hasBaselineIdentities(baseline.identities[resource], final.identities[resource])) {
-      violations.push({ resource, reason: "identity", baseline: before, final: after, allowedGrowth: growth });
-    }
+    const violation = compareResource(resource, before, after, growth, baseline, final);
+    if (violation) violations.push(violation);
   }
   return { ok: violations.length === 0, violations, delta };
+}
+
+function compareResource(
+  resource: BrowserConformanceResourceKey,
+  baseline: number,
+  final: number,
+  allowedGrowth: number,
+  baselineSnapshot: BrowserConformanceResourceSnapshot,
+  finalSnapshot: BrowserConformanceResourceSnapshot,
+): BrowserConformanceCleanupViolation | null {
+  if (hasInvalidResourceCount(baseline, final)) {
+    return { resource, reason: "invalid-count", baseline, final, allowedGrowth };
+  }
+  if (exceedsAllowedGrowth(baseline, final, allowedGrowth)) {
+    return { resource, reason: "growth", baseline, final, allowedGrowth };
+  }
+  if (!hasBaselineIdentities(baselineSnapshot.identities[resource], finalSnapshot.identities[resource])) {
+    return { resource, reason: "identity", baseline, final, allowedGrowth };
+  }
+  return null;
+}
+
+function hasInvalidResourceCount(baseline: number, final: number): boolean {
+  return !Number.isSafeInteger(baseline) || !Number.isSafeInteger(final) || baseline < 0 || final < 0;
+}
+
+function exceedsAllowedGrowth(baseline: number, final: number, allowedGrowth: number): boolean {
+  return !Number.isSafeInteger(allowedGrowth) || allowedGrowth < 0 || final > baseline + allowedGrowth;
 }
 
 function validateSnapshot(snapshot: BrowserConformanceResourceSnapshot, label: string): void {

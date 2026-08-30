@@ -184,44 +184,39 @@ function mapAssistantEvent(
   const blocks = Array.isArray(event.message?.content) ? event.message.content : [];
   const text = concatTextBlocks(blocks);
   if (!text) return [];
+  const isFinalResponse = acc.pendingToolCalls.size === 0 && acc.hasFiredToolThisTurn;
+  if (typeof event.timestamp_ms === "number") return mapCursorAssistantDelta(text, threadId, acc, isFinalResponse);
+  return mapCursorAssistantEcho(text, threadId, acc, isFinalResponse);
+}
 
-  // Determine whether this text is the final user-facing response. All pending
-  // tool calls must have resolved AND at least one tool must have fired this
-  // turn (to distinguish post-tool final-response from pre-tool preamble).
-  const isFinalResponse =
-    acc.pendingToolCalls.size === 0 && acc.hasFiredToolThisTurn;
+function mapCursorAssistantDelta(
+  text: string,
+  threadId: string,
+  acc: CursorStreamAccumulator,
+  isFinalResponse: boolean,
+): AgentEvent[] {
+  acc.assistantText += text;
+  if (isFinalResponse) acc.assistantFinalText += text;
+  return [cursorAssistantTextDelta(threadId, text, isFinalResponse)];
+}
 
-  // Per-token delta: emit immediately and remember the running total.
-  if (typeof event.timestamp_ms === "number") {
-    acc.assistantText += text;
-    if (isFinalResponse) acc.assistantFinalText += text;
-    return [{
-      type: AgentEventType.TextDelta,
-      threadId,
-      delta: text,
-      ...(isFinalResponse && { isFinalResponse: true }),
-    }];
-  }
-
-  // Terminal full-message echo. If we already accumulated deltas this turn,
-  // suppress to avoid duplicating text in the assistant message body. If we
-  // have no prior text (caller didn't pass --stream-partial-output, or this
-  // is a single-shot tool turn) emit it as a one-shot delta so nothing is
-  // lost.
+function mapCursorAssistantEcho(
+  text: string,
+  threadId: string,
+  acc: CursorStreamAccumulator,
+  isFinalResponse: boolean,
+): AgentEvent[] {
   if (acc.assistantText.length > 0) {
     acc.assistantText = text;
-    // Do not append to assistantFinalText: streaming should already have
-    // captured final-response slices; the echo is the full transcript.
     return [];
   }
   acc.assistantText = text;
   if (isFinalResponse) acc.assistantFinalText += text;
-  return [{
-    type: AgentEventType.TextDelta,
-    threadId,
-    delta: text,
-    ...(isFinalResponse && { isFinalResponse: true }),
-  }];
+  return [cursorAssistantTextDelta(threadId, text, isFinalResponse)];
+}
+
+function cursorAssistantTextDelta(threadId: string, text: string, isFinalResponse: boolean): AgentEvent {
+  return { type: AgentEventType.TextDelta, threadId, delta: text, ...(isFinalResponse ? { isFinalResponse: true } : {}) };
 }
 
 function concatTextBlocks(blocks: CursorStreamContentBlock[]): string {
@@ -354,56 +349,39 @@ function mapToolCallCompleted(
   const result = extractResult(payload);
   const isError = result?.rejected != null || result?.failure != null;
   const output = formatResultOutput(result);
-
   const events: AgentEvent[] = [];
   const parentToolCallId = extractCursorParentToolCallId(streamEvent as unknown as Record<string, unknown>);
-
-  // Synthesize a ToolUse if completed arrives without a prior started
-  // (orphan recovery — better to render the result against a placeholder
-  // ToolUse than to drop it entirely).
-  if (!acc.toolStartTimes.has(callId)) {
-    if (discriminator !== "updateTodosToolCall") {
-      let toolName = TOOL_NAME_BY_DISCRIMINATOR[discriminator] ?? discriminator;
-      toolName = resolveCursorSubagentToolName(toolName, discriminator, undefined);
-      const orphanArgs = extractArgs(payload) ?? {};
-      const toolInput =
-        toolName === "Edit" || toolName === "Write"
-          ? normalizeMcodeCursorToolInput(toolName, orphanArgs)
-          : orphanArgs;
-      events.push({
-        type: AgentEventType.ToolUse,
-        threadId,
-        toolCallId: callId,
-        toolName,
-        toolInput,
-        ...(parentToolCallId ? { parentToolCallId } : {}),
-      });
-    }
-  }
-
+  const orphanToolUse = mapOrphanCursorToolUse(callId, discriminator, payload, threadId, acc, parentToolCallId);
+  if (orphanToolUse) events.push(orphanToolUse);
   acc.toolStartTimes.delete(callId);
   acc.pendingToolCalls.delete(callId);
-
-  if (discriminator === "updateTodosToolCall") {
-    // Reuse the same one-line result format as ACP for parity.
-    events.push({
-      type: AgentEventType.ToolResult,
-      threadId,
-      toolCallId: callId,
-      output: output || "Updated todos",
-      isError,
-    });
-    return events;
-  }
-
-  events.push({
-    type: AgentEventType.ToolResult,
-    threadId,
-    toolCallId: callId,
-    output,
-    isError,
-  });
+  events.push(cursorToolResult(threadId, callId, discriminator, output, isError));
   return events;
+}
+
+function mapOrphanCursorToolUse(
+  callId: string,
+  discriminator: string,
+  payload: Record<string, unknown> | undefined,
+  threadId: string,
+  acc: CursorStreamAccumulator,
+  parentToolCallId: string | undefined,
+): AgentEvent | undefined {
+  if (acc.toolStartTimes.has(callId) || discriminator === "updateTodosToolCall") return undefined;
+  const toolName = resolveCursorSubagentToolName(TOOL_NAME_BY_DISCRIMINATOR[discriminator] ?? discriminator, discriminator, undefined);
+  const args = extractArgs(payload) ?? {};
+  const toolInput = toolName === "Edit" || toolName === "Write" ? normalizeMcodeCursorToolInput(toolName, args) : args;
+  return { type: AgentEventType.ToolUse, threadId, toolCallId: callId, toolName, toolInput, ...(parentToolCallId ? { parentToolCallId } : {}) };
+}
+
+function cursorToolResult(
+  threadId: string,
+  callId: string,
+  discriminator: string,
+  output: string,
+  isError: boolean,
+): AgentEvent {
+  return { type: AgentEventType.ToolResult, threadId, toolCallId: callId, output: discriminator === "updateTodosToolCall" ? output || "Updated todos" : output, isError };
 }
 
 /** Extract the `args` sub-object from a tool payload, tolerating absence. */

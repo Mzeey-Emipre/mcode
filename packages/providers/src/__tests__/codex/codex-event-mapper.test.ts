@@ -8,6 +8,29 @@ vi.mock("@mcode/shared", () => ({
 
 import { CodexEventMapper } from "../../private/codex/codex-event-mapper.js";
 
+function requireToolResult(events: ReturnType<CodexEventMapper["mapNotification"]>) {
+  const result = events.find((runtimeEvent) => runtimeEvent.event.type === "toolResult");
+  if (!result || result.event.type !== "toolResult") throw new Error("Expected a mapped tool result");
+  return result;
+}
+
+function requireOutputArtifactPath(result: ReturnType<typeof requireToolResult>): string {
+  const path = result.event.outputArtifactPath;
+  if (!path) throw new Error("Expected a tool-output artifact path");
+  return path;
+}
+
+function expectChildToolResultIdentity(
+  result: ReturnType<typeof requireToolResult>,
+  itemId: string,
+): string | undefined {
+  const child = result.extension?.child;
+  if (!child) throw new Error("Expected child evidence on mapped tool result");
+  expect(child.nativeItemId).toBe(itemId);
+  expect(child.itemEventKey).toBe("completed");
+  return child.nativeEventId;
+}
+
 describe("CodexEventMapper", () => {
   let mapper: CodexEventMapper;
 
@@ -529,18 +552,10 @@ describe("CodexEventMapper", () => {
         },
       },
     });
-    const firstId = first.find((event) => event.event.type === "toolResult");
-    const secondId = second.find((event) => event.event.type === "toolResult");
-    const firstNativeEventId = firstId ? (firstId).extension?.child?.nativeEventId : undefined;
-    const secondNativeEventId = secondId ? (secondId).extension?.child?.nativeEventId : undefined;
-    expect(firstId ? (firstId).extension?.child?.nativeItemId : undefined)
-      .toBe("native-item-prefix-a");
-    expect(firstId ? (firstId).extension?.child?.itemEventKey : undefined)
-      .toBe("completed");
-    expect(secondId ? (secondId).extension?.child?.nativeItemId : undefined)
-      .toBe("native-item-prefix-b");
-    expect(secondId ? (secondId).extension?.child?.itemEventKey : undefined)
-      .toBe("completed");
+    const firstResult = requireToolResult(first);
+    const secondResult = requireToolResult(second);
+    const firstNativeEventId = expectChildToolResultIdentity(firstResult, "native-item-prefix-a");
+    const secondNativeEventId = expectChildToolResultIdentity(secondResult, "native-item-prefix-b");
     expect(typeof firstNativeEventId).toBe("string");
     expect(typeof secondNativeEventId).toBe("string");
     expect(firstNativeEventId).not.toBe(secondNativeEventId);
@@ -650,19 +665,19 @@ describe("CodexEventMapper", () => {
         },
       },
     });
-    const result = events.find((event) => event.event.type === "toolResult");
+    const result = requireToolResult(events);
 
-    expect(result?.event).toMatchObject({
+    expect(result.event).toMatchObject({
       type: "toolResult",
       toolCallId: "cmd-big",
       outputTruncated: true,
       outputTotalBytes: Buffer.byteLength(fullOutput, "utf8"),
     });
-    expect(result?.event.type === "toolResult" ? Buffer.byteLength(result.event.output, "utf8") : 0).toBe(256 * 1024);
-    expect(result?.event.type === "toolResult" ? result.event.output.startsWith("A".repeat(1024)) : false).toBe(true);
-    expect(result?.event.type === "toolResult" ? result.event.output.endsWith("Z".repeat(1024)) : false).toBe(true);
-    expect(result?.event.type === "toolResult" ? existsSync(result.event.outputArtifactPath ?? "") : false).toBe(true);
-    expect(result?.event.type === "toolResult" ? readFileSync(result.event.outputArtifactPath!, "utf8") : "").toBe(fullOutput);
+    expect(Buffer.byteLength(result.event.output, "utf8")).toBe(256 * 1024);
+    expect(result.event.output.startsWith("A".repeat(1024))).toBe(true);
+    expect(result.event.output.endsWith("Z".repeat(1024))).toBe(true);
+    expect(existsSync(requireOutputArtifactPath(result))).toBe(true);
+    expect(readFileSync(requireOutputArtifactPath(result), "utf8")).toBe(fullOutput);
   });
 
   it("emits only toolResult at completion when command start already had full details", () => {
@@ -1154,6 +1169,32 @@ describe("CodexEventMapper", () => {
     expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
   });
 
+  it("drains a malformed item completion before turn completion can promote pending text", () => {
+    mapper = new CodexEventMapper("test-thread", "main-thread");
+    const delta = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/agentMessage/delta",
+      params: { threadId: "main-thread", itemId: "late-text", delta: "Late text" },
+    });
+    const malformed = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: { threadId: "main-thread" },
+    });
+    const terminal = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/completed",
+      params: { threadId: "main-thread", turn: { status: "completed" } },
+    });
+
+    expect(delta.map((runtimeEvent) => runtimeEvent.event.type)).toEqual(["textDelta"]);
+    expect(malformed.map((runtimeEvent) => runtimeEvent.event)).toEqual([
+      { type: "assistantMessageBoundary", threadId: "test-thread", isFinalResponse: false },
+    ]);
+    expect(terminal.map((runtimeEvent) => runtimeEvent.event.type)).toEqual(["turnComplete"]);
+    expect(terminal.some((runtimeEvent) => runtimeEvent.event.type === "message")).toBe(false);
+  });
+
   it("returns empty array for item/completed userMessage (echo of user input)", () => {
     const events = mapper.mapNotification({
       jsonrpc: "2.0",
@@ -1175,6 +1216,16 @@ describe("CodexEventMapper", () => {
       method: "item/completed",
       params: { item: { type: "unknown_item_type" } },
     });
+    expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
+  });
+
+  it.each(["__proto__", "constructor", "toString"])("treats prototype item type %s as unknown", (type) => {
+    const events = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/completed",
+      params: { item: { type } },
+    } as never);
+
     expect(events.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
   });
 
@@ -1476,6 +1527,40 @@ describe("CodexEventMapper", () => {
         model: "gpt-5.5",
         reasoningEffort: "high",
         receiverThreadIds: ["child-metadata"],
+      },
+    });
+  });
+
+  it("normalizes receiver thread IDs before applying single-child metadata", () => {
+    mapper = new CodexEventMapper("test-thread", "main-thread");
+    mapper.applyChildThreadMetadata("child-metadata", {
+      identity: "metadata_worker",
+      model: "gpt-5.5",
+      reasoningEffort: "high",
+    });
+
+    const started = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "item/started",
+      params: {
+        threadId: "main-thread",
+        item: {
+          type: "collabAgentToolCall",
+          id: "spawn-normalized-child",
+          tool: "spawnAgent",
+          prompt: "Inspect normalized receiver metadata.",
+          receiverThreadIds: ["  child-metadata  ", "   "],
+        },
+      },
+    });
+
+    expect((started[0]!).extension).toMatchObject({
+      collaboration: {
+        kind: "spawnAgent",
+        receiverThreadIds: ["child-metadata"],
+        agentName: "metadata_worker",
+        model: "gpt-5.5",
+        reasoningEffort: "high",
       },
     });
   });
@@ -3847,6 +3932,23 @@ describe("CodexEventMapper", () => {
       "CodexEventMapper: unrecognized notification",
       expect.objectContaining({ method: "unknown/method" }),
     );
+  });
+
+  it.each(["__proto__", "constructor", "toString"])("treats prototype method %s as unknown without blocking the terminal event", (method) => {
+    mapper = new CodexEventMapper("test-thread", "main-thread");
+    const unknown = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method,
+      params: { threadId: "main-thread" },
+    } as never);
+    const terminal = mapper.mapNotification({
+      jsonrpc: "2.0",
+      method: "turn/completed",
+      params: { threadId: "main-thread", turn: { status: "completed" } },
+    });
+
+    expect(unknown.map((runtimeEvent) => runtimeEvent.event)).toEqual([]);
+    expect(terminal.map((runtimeEvent) => runtimeEvent.event.type)).toEqual(["turnComplete"]);
   });
 
   it("logs warning notifications without treating them as unrecognized", async () => {

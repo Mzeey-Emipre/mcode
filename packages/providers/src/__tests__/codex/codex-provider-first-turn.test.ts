@@ -70,7 +70,7 @@ vi.mock("../../private/codex/codex-app-server.js", async () => {
 
 import { BrowserAutomationSessionLease, CodexProvider, stubEnvService } from "./codex-provider-test-fixture.js";
 import { AgentEventSchema, AgentEventType } from "@mcode/contracts";
-import type { AgentEvent, ProviderRuntimeEvent } from "@mcode/contracts";
+import type { ProviderRuntimeEvent } from "@mcode/contracts";
 
 const schemaValidExecutionId = "00000000-0000-4000-8000-000000000001";
 

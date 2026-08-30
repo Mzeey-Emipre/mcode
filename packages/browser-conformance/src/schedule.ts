@@ -82,22 +82,11 @@ export function createBrowserConformanceRandom(seed: BrowserConformanceSeed): Br
 export function createBrowserConformanceSchedule(
   options: BrowserConformanceScheduleOptions,
 ): BrowserConformanceSchedule {
-  const seed = typeof options.seed === "string" ? hashBrowserConformanceSeed(options.seed) : normalizeSeed(options.seed);
-  const bounds: BrowserConformanceScheduleBounds = {
-    maxCommands: boundedCount(options.maxCommands ?? BROWSER_CONFORMANCE_DEFAULT_MAX_COMMANDS),
-    maxEvents: boundedCount(options.maxEvents ?? BROWSER_CONFORMANCE_DEFAULT_MAX_EVENTS),
-    maxCheckpoints: boundedCount(options.maxCheckpoints ?? BROWSER_CONFORMANCE_DEFAULT_MAX_CHECKPOINTS),
-    maxTick: boundedTick(options.maxTick ?? BROWSER_CONFORMANCE_DEFAULT_MAX_TICK),
-  };
+  const seed = normalizeScheduleSeed(options.seed);
+  const bounds = createScheduleBounds(options);
   const random = createBrowserConformanceRandom(seed);
-  const eventCount = Math.min(
-    boundedCount(options.eventCount ?? Math.min(bounds.maxEvents, bounds.maxCommands * 2)),
-    bounds.maxEvents,
-  );
-  const checkpointCount = Math.min(
-    boundedCount(options.checkpointCount ?? Math.min(bounds.maxCheckpoints, bounds.maxCommands)),
-    bounds.maxCheckpoints,
-  );
+  const eventCount = resolveEventCount(options, bounds);
+  const checkpointCount = resolveCheckpointCount(options, bounds);
   let ordinal = 0;
   const events: BrowserConformanceScheduledEvent[] = [];
   for (let index = 0; index < eventCount; index += 1) {
@@ -129,6 +118,29 @@ export function createBrowserConformanceSchedule(
     events,
     checkpoints,
   };
+}
+
+function normalizeScheduleSeed(seed: BrowserConformanceSeed): number {
+  return typeof seed === "string" ? hashBrowserConformanceSeed(seed) : normalizeSeed(seed);
+}
+
+function createScheduleBounds(options: BrowserConformanceScheduleOptions): BrowserConformanceScheduleBounds {
+  return {
+    maxCommands: boundedCount(options.maxCommands ?? BROWSER_CONFORMANCE_DEFAULT_MAX_COMMANDS),
+    maxEvents: boundedCount(options.maxEvents ?? BROWSER_CONFORMANCE_DEFAULT_MAX_EVENTS),
+    maxCheckpoints: boundedCount(options.maxCheckpoints ?? BROWSER_CONFORMANCE_DEFAULT_MAX_CHECKPOINTS),
+    maxTick: boundedTick(options.maxTick ?? BROWSER_CONFORMANCE_DEFAULT_MAX_TICK),
+  };
+}
+
+function resolveEventCount(options: BrowserConformanceScheduleOptions, bounds: BrowserConformanceScheduleBounds): number {
+  const requested = options.eventCount ?? Math.min(bounds.maxEvents, bounds.maxCommands * 2);
+  return Math.min(boundedCount(requested), bounds.maxEvents);
+}
+
+function resolveCheckpointCount(options: BrowserConformanceScheduleOptions, bounds: BrowserConformanceScheduleBounds): number {
+  const requested = options.checkpointCount ?? Math.min(bounds.maxCheckpoints, bounds.maxCommands);
+  return Math.min(boundedCount(requested), bounds.maxCheckpoints);
 }
 
 function boundedCount(value: number): number {

@@ -57,6 +57,115 @@ function flattenProcessEnvironment(environment: NodeJS.ProcessEnv): Record<strin
   );
 }
 
+type CodexAppServerCommand = { cliPath: string; needsShell: boolean };
+
+async function resolveCodexAppServerCommand(cliPath: string): Promise<CodexAppServerCommand> {
+  const resolvedCliPath = await resolveCodexAppServerPath(cliPath);
+  return {
+    cliPath: resolvedCliPath,
+    needsShell: process.platform === "win32" && resolvedCliPath.toLowerCase().endsWith(".cmd"),
+  };
+}
+
+async function resolveCodexAppServerPath(cliPath: string): Promise<string> {
+  if (isAbsolute(cliPath)) return cliPath;
+  try {
+    return await which(cliPath);
+  } catch {
+    return cliPath;
+  }
+}
+
+function waitForCodexAppServerSpawn(child: ChildProcess): Promise<Error | null> {
+  return new Promise<Error | null>((resolve) => {
+    child.once("error", (error) => resolve(error));
+    child.once("spawn", () => resolve(null));
+  });
+}
+
+function shouldRotateCodexThreadId(
+  currentThreadId: string | null,
+  parentThreadId: string | undefined,
+  nextThreadId: string,
+): boolean {
+  return (!currentThreadId || !parentThreadId) && nextThreadId !== currentThreadId;
+}
+
+function createCodexTurnStartParams(
+  threadId: string,
+  input: string | TurnInputPart[],
+  turnOptions: CodexTurnOptions | undefined,
+): TurnStartParams {
+  const params: TurnStartParams = {
+    threadId,
+    input: typeof input === "string" ? [{ type: "text", text: input }] : input,
+  };
+  if (turnOptions?.model) params.model = turnOptions.model;
+  if (turnOptions?.effort) params.effort = turnOptions.effort;
+  if (turnOptions?.serviceTier) params.serviceTier = turnOptions.serviceTier;
+  return params;
+}
+
+function fulfilledCodexResult<T>(result: PromiseSettledResult<T>): T | undefined {
+  return result.status === "fulfilled" ? result.value : undefined;
+}
+
+function createCodexChildThreadMetadata(
+  identity: string | undefined,
+  model: string | undefined,
+  reasoningEffort: ReasoningEffort | undefined,
+  parentMessage: string | undefined,
+): CodexChildThreadMetadata | null {
+  if (!identity && !model && !reasoningEffort && !parentMessage) return null;
+  return {
+    ...(identity ? { identity } : {}),
+    ...(model ? { model } : {}),
+    ...(reasoningEffort ? { reasoningEffort } : {}),
+    ...(parentMessage ? { parentMessage } : {}),
+  };
+}
+
+type CodexThreadStartedNotification = {
+  threadId: string | undefined;
+  parentThreadId: string | undefined;
+};
+
+function codexThreadStartedNotification(
+  params: Record<string, unknown> | undefined,
+): CodexThreadStartedNotification {
+  const thread = params?.thread as { id?: string; parentThreadId?: string } | undefined;
+  return {
+    threadId: thread?.id ?? (typeof params?.threadId === "string" ? params.threadId : undefined),
+    parentThreadId: thread?.parentThreadId ?? (typeof params?.parentThreadId === "string" ? params.parentThreadId : undefined),
+  };
+}
+
+function codexThreadIdFromStartedNotification(params: Record<string, unknown> | undefined): string | null {
+  return codexThreadStartedNotification(params).threadId ?? null;
+}
+
+function codexThreadIdFromResponse(
+  result: ThreadResumeResult | ThreadStartResult | null,
+): string | undefined {
+  const response = result as { threadId?: string; thread?: { id?: string } } | null;
+  return response?.threadId ?? response?.thread?.id;
+}
+
+function createMetadataFromChildThreadResults(
+  resumed: ThreadResumeResult | undefined,
+  listedItems: ThreadItemsListResult | undefined,
+): CodexChildThreadMetadata | null {
+  const thread = resumed?.thread;
+  const identity = resolveSubagentDisplayName({
+    agentName: thread?.name,
+    subagentName: thread?.agentNickname,
+    subagentType: thread?.agentRole,
+  });
+  const parentMessage = listedItems ? parentMessageFromChildItems(listedItems.data) : undefined;
+  const model = typeof resumed?.model === "string" ? resumed.model : undefined;
+  return createCodexChildThreadMetadata(identity, model, resumed?.reasoningEffort ?? undefined, parentMessage);
+}
+
 /** Incoming approval request from the codex app-server, passed to approvalHandler. */
 export interface CodexApprovalRequest {
   /** JSON-RPC id to use in the eventual sendResponse call. */
@@ -823,51 +932,10 @@ export class CodexAppServer extends EventEmitter {
    * @throws When spawn fails or a required handshake RPC returns an error.
    */
   async start(): Promise<void> {
-    const { cliPath, workingDirectory } = this.options;
     this._lastTransportBreadcrumb = null;
-
-    // Resolve bare command names to absolute paths so spawn works without shell.
-    // On Windows, which() respects PATHEXT (.EXE before .CMD), so native binaries
-    // are preferred over cmd shims. If we end up with a .cmd path, we fall back to
-    // shell:true — Node's CreateProcess can't execute .cmd files directly.
-    let resolvedCliPath = cliPath;
-    let needsShell = false;
-    if (!isAbsolute(cliPath)) {
-      try {
-        resolvedCliPath = await which(cliPath);
-      } catch {
-        // which() failed — bare name will be passed to spawn as-is.
-        // spawn will fail with a clear ENOENT if the binary is not on PATH.
-        resolvedCliPath = cliPath;
-      }
-    }
-    // Check for .cmd extension after resolving — applies to both absolute
-    // and which()-resolved paths. Node's CreateProcess cannot execute .cmd
-    // files directly; they require cmd.exe as the interpreter.
-    if (process.platform === "win32" && resolvedCliPath.toLowerCase().endsWith(".cmd")) {
-      needsShell = true;
-    }
-
-    const configArgs = (this.options.configOverrides ?? []).flatMap((override) => [
-      "-c",
-      override,
-    ]);
-    const child = spawn(resolvedCliPath, ["app-server", ...configArgs], {
-      stdio: ["pipe", "pipe", "pipe"],
-      shell: needsShell,
-      cwd: workingDirectory,
-      env: this.options.getSpawnEnv ? this.options.getSpawnEnv() : flattenProcessEnvironment(process.env),
-      windowsHide: true,
-    });
-
-    // Attach error listener immediately to catch spawn failures (ENOENT, EACCES)
-    // before assigning state or creating the RPC client.
-    const spawnError = await new Promise<Error | null>((resolve) => {
-      child.once("error", (err) => resolve(err));
-      // If the process spawns successfully, the "spawn" event fires first.
-      // Use setImmediate to yield one tick - if no error by then, spawn succeeded.
-      child.once("spawn", () => resolve(null));
-    });
+    const command = await resolveCodexAppServerCommand(this.options.cliPath);
+    const child = this.spawnAppServer(command);
+    const spawnError = await waitForCodexAppServerSpawn(child);
     if (spawnError) {
       this._isAlive = false;
       const msg = `Failed to spawn codex app-server: ${spawnError.message}`;
@@ -875,98 +943,13 @@ export class CodexAppServer extends EventEmitter {
       throw new Error(msg);
     }
 
-    // Attach to the server's Job Object for crash cleanup.
-    // Must happen after spawn succeeds but before any async handshake steps.
     if (this.options.processAttachment && child.pid) {
       this.options.processAttachment.attach(child.pid, "Mcode Agent: Codex");
     }
-
     this.child = child;
     this._isAlive = true;
     this.rpc = new CodexRpcClient(child.stdin!, child.stdout!);
-
-    this.rpc.on("notification", (notification) => {
-      const method = (notification as { method?: string }).method ?? "";
-      const diagnosticMethod = boundProtocolIdentifier(method);
-      this.lastActivity = { method: diagnosticMethod, timestamp: Date.now() };
-      if (method === "account/rateLimits/updated" || method === "account/updated") {
-        this.emit("activity");
-        this.emit("notification", notification);
-        return;
-      }
-
-      // Capture thread/started notifications to update the thread ID if it changes
-      // mid-session (e.g. context compaction). Without this, subsequent turns would
-      // use a stale thread ID and lose context.
-      if (method === "thread/started") {
-        const params = (notification as { params?: Record<string, unknown> }).params;
-        // Accept both nested `thread.id` and flat `threadId` shapes
-        const thread = params?.thread as { id?: string; parentThreadId?: string } | undefined;
-        const newThreadId = thread?.id ?? (typeof params?.threadId === "string" ? params.threadId : undefined);
-        const parentThreadId = thread?.parentThreadId
-          ?? (typeof params?.parentThreadId === "string" ? params.parentThreadId : undefined);
-        if (newThreadId && (!this._threadId || !parentThreadId) && newThreadId !== this._threadId) {
-          logger.info("Codex thread ID rotated via thread/started", {
-            old: this._threadId,
-            new: newThreadId,
-          });
-          this._threadId = newThreadId;
-          // Notify consumers so the new thread ID is persisted (e.g. to the DB).
-          // Without this, app restarts would try to resume the stale thread ID.
-          this.emit("threadIdChanged", newThreadId);
-        }
-        this.emit("activity");
-        logger.debug("Codex lifecycle notification", { method: diagnosticMethod });
-        return;
-      }
-
-      if (method === "turn/started") {
-        const params = (notification as { params?: Record<string, unknown> }).params;
-        const turn = params?.turn as { id?: string } | undefined;
-        const turnId = turn?.id ?? (typeof params?.turnId === "string" ? params.turnId : undefined);
-        if (turnId) this.activeTurnId = boundProtocolIdentifier(turnId);
-      } else if (method === "turn/completed") {
-        this.activeTurnId = null;
-      }
-
-      if (
-        method !== "thread/settings/updated"
-        && !method.startsWith("thread/goal/")
-        && LIFECYCLE_NOTIFICATION_PREFIXES.some((p) => method.startsWith(p))
-      ) {
-        // Swallowed from the mapper, but still proof of life: thread/status
-        // and similar lifecycle traffic must reset turn-level watchdogs.
-        this.emit("activity");
-        logger.debug("Codex lifecycle notification", { method: diagnosticMethod });
-        return;
-      }
-      this.emit("notification", notification);
-    });
-
-    // Handle server-initiated approval requests via the shared router. Without
-    // a response the codex process blocks forever, causing the session to
-    // appear stale. The router implements the full decision table (auto-approve
-    // for policy="never", handler-driven supervised mode, silent-deny fallback).
-    this.rpc.on("serverRequest", (msg: unknown) => {
-      const request = msg as { id?: number; method?: string; params?: Record<string, unknown> };
-      this.lastActivity = {
-        method: typeof request.method === "string" ? boundProtocolIdentifier(request.method) : "",
-        timestamp: Date.now(),
-      };
-      this.activeRequestId = typeof request.id === "number" ? request.id : null;
-      // Let turn-level watchdogs treat an inbound approval request as liveness:
-      // the server is healthy, it is just waiting on a user decision.
-      this.emit("activity");
-      void routeCodexServerRequest({
-        msg: request,
-        approvalPolicy: this.options.approvalPolicy,
-        approvalHandler: this.options.approvalHandler,
-        sendResponse: (id, result) => this.rpc.sendResponse(id, result),
-      }).finally(() => {
-        if (this.activeRequestId === request.id) this.activeRequestId = null;
-      });
-    });
-
+    this.wireRpc();
     this.wireStderr();
     this.wireExit();
 
@@ -976,6 +959,94 @@ export class CodexAppServer extends EventEmitter {
       await this.kill();
       throw enrichHandshakeError(err, this.stderrTail.latest());
     }
+  }
+
+  private spawnAppServer(command: CodexAppServerCommand): ChildProcess {
+    const configArgs = (this.options.configOverrides ?? []).flatMap((override) => ["-c", override]);
+    return spawn(command.cliPath, ["app-server", ...configArgs], {
+      stdio: ["pipe", "pipe", "pipe"],
+      shell: command.needsShell,
+      cwd: this.options.workingDirectory,
+      env: this.options.getSpawnEnv ? this.options.getSpawnEnv() : flattenProcessEnvironment(process.env),
+      windowsHide: true,
+    });
+  }
+
+  private wireRpc(): void {
+    this.rpc.on("notification", (notification) => this.handleNotification(notification));
+    this.rpc.on("serverRequest", (request) => this.handleServerRequest(request));
+  }
+
+  private handleNotification(notification: unknown): void {
+    const message = notification as { method?: string; params?: Record<string, unknown> };
+    const method = message.method ?? "";
+    const diagnosticMethod = boundProtocolIdentifier(method);
+    this.lastActivity = { method: diagnosticMethod, timestamp: Date.now() };
+    if (method === "account/rateLimits/updated" || method === "account/updated") {
+      this.emit("activity");
+      this.emit("notification", notification);
+      return;
+    }
+    if (this.handleThreadStartedNotification(message.params, method, diagnosticMethod)) return;
+    this.trackTurnNotification(message.params, method);
+    if (this.isSilencedLifecycleNotification(method)) {
+      this.emit("activity");
+      logger.debug("Codex lifecycle notification", { method: diagnosticMethod });
+      return;
+    }
+    this.emit("notification", notification);
+  }
+
+  private handleThreadStartedNotification(
+    params: Record<string, unknown> | undefined,
+    method: string,
+    diagnosticMethod: string,
+  ): boolean {
+    if (method !== "thread/started") return false;
+    const threadStarted = codexThreadStartedNotification(params);
+    this.rotateThreadIdFromNotification(threadStarted);
+    this.emit("activity");
+    logger.debug("Codex lifecycle notification", { method: diagnosticMethod });
+    return true;
+  }
+
+  private rotateThreadIdFromNotification(threadStarted: CodexThreadStartedNotification): void {
+    if (!threadStarted.threadId || !shouldRotateCodexThreadId(this._threadId, threadStarted.parentThreadId, threadStarted.threadId)) return;
+    logger.info("Codex thread ID rotated via thread/started", { old: this._threadId, new: threadStarted.threadId });
+    this._threadId = threadStarted.threadId;
+    this.emit("threadIdChanged", threadStarted.threadId);
+  }
+
+  private trackTurnNotification(params: Record<string, unknown> | undefined, method: string): void {
+    if (method === "turn/completed") {
+      this.activeTurnId = null;
+      return;
+    }
+    if (method !== "turn/started") return;
+    const turn = params?.turn as { id?: string } | undefined;
+    const turnId = turn?.id ?? (typeof params?.turnId === "string" ? params.turnId : undefined);
+    if (turnId) this.activeTurnId = boundProtocolIdentifier(turnId);
+  }
+
+  private isSilencedLifecycleNotification(method: string): boolean {
+    return method !== "thread/settings/updated"
+      && !method.startsWith("thread/goal/")
+      && LIFECYCLE_NOTIFICATION_PREFIXES.some((prefix) => method.startsWith(prefix));
+  }
+
+  private handleServerRequest(msg: unknown): void {
+    const request = msg as { id?: number; method?: string; params?: Record<string, unknown> };
+    this.lastActivity = { method: typeof request.method === "string" ? boundProtocolIdentifier(request.method) : "", timestamp: Date.now() };
+    this.activeRequestId = typeof request.id === "number" ? request.id : null;
+    this.emit("activity");
+    void routeCodexServerRequest({
+      msg: request,
+      approvalPolicy: this.options.approvalPolicy,
+      approvalHandler: this.options.approvalHandler,
+      sendResponse: (id, result) => this.rpc.sendResponse(id, result),
+    }).finally(() => {
+      if (this.activeRequestId === request.id) this.activeRequestId = null;
+    });
   }
 
   /**
@@ -998,46 +1069,52 @@ export class CodexAppServer extends EventEmitter {
 
   /** Runs interrupt, RPC dispose, and process termination once per server instance. */
   private async performKill(): Promise<void> {
-    if (this.rpc && this.threadId) {
-      try {
-        await this.rpc.sendRequest("turn/interrupt", { threadId: this.threadId }, 3000);
-      } catch {
-        // best effort - ignore
-      }
-    }
-    if (this.rpc) {
-      this.rpc.dispose();
-    }
-
-    if (this.child) {
-      if (process.platform === "win32") {
-        const { execFile } = await import("child_process");
-        const { promisify } = await import("util");
-        const execFileAsync = promisify(execFile);
-        if (this.child.pid == null) {
-          logger.warn("CodexAppServer: child process has no PID, cannot taskkill", { cliPath: this.cliPath });
-          this._isAlive = false;
-          return;
-        }
-        try {
-          await execFileAsync("taskkill", ["/T", "/F", "/PID", String(this.child.pid)]);
-        } catch {
-          // process may already be gone
-        }
-      } else {
-        this.child.kill("SIGTERM");
-        // Wait up to 3s for graceful exit before escalating to SIGKILL
-        const exited = await Promise.race([
-          new Promise<boolean>((resolve) => this.child.once("exit", () => resolve(true))),
-          new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 3000)),
-        ]);
-        if (!exited && this.isAlive) {
-          this.child.kill("SIGKILL");
-        }
-      }
-    }
-
+    await this.interruptActiveThread();
+    this.rpc?.dispose();
+    await this.terminateChild();
     this._isAlive = false;
+  }
+
+  private async interruptActiveThread(): Promise<void> {
+    const threadId = this.threadId;
+    if (!this.rpc || !threadId) return;
+    try {
+      await this.rpc.sendRequest("turn/interrupt", { threadId }, 3000);
+    } catch {
+      // The process may have already stopped before the best-effort interrupt arrives.
+    }
+  }
+
+  private async terminateChild(): Promise<void> {
+    if (!this.child) return;
+    if (process.platform === "win32") {
+      await this.terminateWindowsChild(this.child);
+      return;
+    }
+    await this.terminatePosixChild(this.child);
+  }
+
+  private async terminateWindowsChild(child: ChildProcess): Promise<void> {
+    if (child.pid == null) {
+      logger.warn("CodexAppServer: child process has no PID, cannot taskkill", { cliPath: this.cliPath });
+      return;
+    }
+    const { execFile } = await import("child_process");
+    const { promisify } = await import("util");
+    try {
+      await promisify(execFile)("taskkill", ["/T", "/F", "/PID", String(child.pid)]);
+    } catch {
+      // taskkill fails when the child already exited.
+    }
+  }
+
+  private async terminatePosixChild(child: ChildProcess): Promise<void> {
+    child.kill("SIGTERM");
+    const exited = await Promise.race([
+      new Promise<boolean>((resolve) => child.once("exit", () => resolve(true))),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 3000)),
+    ]);
+    if (!exited && this.isAlive) child.kill("SIGKILL");
   }
 
   /**
@@ -1053,40 +1130,26 @@ export class CodexAppServer extends EventEmitter {
     input: string | TurnInputPart[],
     turnOptions?: CodexTurnOptions,
   ): Promise<string | null> {
-    if (!this.threadId) {
-      throw new Error("sendTurn called before thread was established");
-    }
-    // The codex app-server requires input to be a sequence, never a bare string.
-    const parts: TurnInputPart[] = typeof input === "string"
-      ? [{ type: "text", text: input }]
-      : input;
-    logger.debug("Codex turn/start sent", { threadId: this.threadId, model: turnOptions?.model });
-    // 60s on the RPC ack lets the codex CLI handle cold spin-up after long
-    // idle periods (auth refresh, sandbox setup) without surfacing a spurious
-    // timeout to the user. Long-running turn work is governed separately by
-    // TURN_TIMEOUT_MS in codex-provider.ts (resets on every notification).
-    const result = await this.rpc.sendRequest<TurnStartParams, TurnStartResult>("turn/start", {
-      threadId: this.threadId,
-      input: parts,
-      ...(turnOptions?.model && { model: turnOptions.model }),
-      ...(turnOptions?.effort && { effort: turnOptions.effort }),
-      ...(turnOptions?.serviceTier && { serviceTier: turnOptions.serviceTier }),
-    }, 60000);
+    const threadId = this.threadId;
+    if (!threadId) throw new Error("sendTurn called before thread was established");
+    logger.debug("Codex turn/start sent", { threadId, model: turnOptions?.model });
+    const params = createCodexTurnStartParams(threadId, input, turnOptions);
+    const result = await this.rpc.sendRequest<TurnStartParams, TurnStartResult>("turn/start", params, 60000);
     const turnId = result?.turnId ?? result?.turn?.id ?? null;
-    if (turnId) {
-      this.activeTurnId = boundProtocolIdentifier(turnId);
-      logger.debug("Codex turn/start acknowledged", {
-        threadId: this.threadId,
-        turnId: boundProtocolIdentifier(turnId),
-      });
-    }
+    this.recordStartedTurn(threadId, turnId);
     return turnId;
+  }
+
+  private recordStartedTurn(threadId: string, turnId: string | null): void {
+    if (!turnId) return;
+    const diagnosticTurnId = boundProtocolIdentifier(turnId);
+    this.activeTurnId = diagnosticTurnId;
+    logger.debug("Codex turn/start acknowledged", { threadId, turnId: diagnosticTurnId });
   }
 
   /** Reads authoritative child settings and its persisted parent message. */
   async getChildThreadMetadata(childThreadId: string): Promise<CodexChildThreadMetadata | null> {
     if (!CHILD_THREAD_ID_PATTERN.test(childThreadId)) return null;
-
     const [resume, items] = await Promise.allSettled([
       this.rpc.sendRequest<ThreadResumeParams, ThreadResumeResult>(
         "thread/resume",
@@ -1099,32 +1162,15 @@ export class CodexAppServer extends EventEmitter {
         10_000,
       ),
     ]);
-    if (resume.status === "rejected" && items.status === "rejected") {
-      throw resume.reason;
-    }
+    return this.childThreadMetadataFromResults(resume, items);
+  }
 
-    const resumedThread = resume.status === "fulfilled" ? resume.value.thread : undefined;
-    const identity = resolveSubagentDisplayName({
-      agentName: resumedThread?.name,
-      subagentName: resumedThread?.agentNickname,
-      subagentType: resumedThread?.agentRole,
-    });
-    const parentMessage = items.status === "fulfilled"
-      ? parentMessageFromChildItems(items.value.data)
-      : undefined;
-    const model = resume.status === "fulfilled" && typeof resume.value.model === "string"
-      ? resume.value.model
-      : undefined;
-    const reasoningEffort = resume.status === "fulfilled" ? resume.value.reasoningEffort ?? undefined : undefined;
-
-    return identity || model || reasoningEffort || parentMessage
-      ? {
-          ...(identity ? { identity } : {}),
-          ...(model ? { model } : {}),
-          ...(reasoningEffort ? { reasoningEffort } : {}),
-          ...(parentMessage ? { parentMessage } : {}),
-        }
-      : null;
+  private childThreadMetadataFromResults(
+    resume: PromiseSettledResult<ThreadResumeResult>,
+    items: PromiseSettledResult<ThreadItemsListResult>,
+  ): CodexChildThreadMetadata | null {
+    if (resume.status === "rejected" && items.status === "rejected") throw resume.reason;
+    return createMetadataFromChildThreadResults(fulfilledCodexResult(resume), fulfilledCodexResult(items));
   }
 
   /** Set or update the native Codex thread goal. */
@@ -1226,9 +1272,7 @@ export class CodexAppServer extends EventEmitter {
     if (!this._isAlive || !this.rpc) {
       throw new Error("listPlugins called before codex app-server was ready");
     }
-    const params: PluginListParams = {
-      ...(cwds && cwds.length > 0 ? { cwds } : {}),
-    };
+    const params: PluginListParams = cwds && cwds.length > 0 ? { cwds } : {};
     return this.rpc.sendRequest<PluginListParams, PluginListResult>("plugin/list", params, 10000);
   }
 
@@ -1381,10 +1425,6 @@ export class CodexAppServer extends EventEmitter {
 
   /** Runs the JSON-RPC handshake sequence in order. */
   private async runHandshake(): Promise<void> {
-    const { workingDirectory, model, sandbox, approvalPolicy, resumeThreadId, developerInstructions } =
-      this.options;
-
-    // Step 1: initialize (cold-start tolerant: raised budget + one retry)
     await performInitialize({
       rpc: this.rpc,
       timeoutMs: INITIALIZE_HANDSHAKE.timeoutMs,
@@ -1392,138 +1432,101 @@ export class CodexAppServer extends EventEmitter {
       backoffMs: INITIALIZE_HANDSHAKE.backoffMs,
       getLastStderr: () => this.stderrTail.latest(),
     });
-
-    // Step 2: initialized notification (no response expected)
     this.rpc.sendNotification("initialized", {});
-
     if (this.options.catalogOnly) return;
+    await this.requestCodexModelList();
+    const instructions = await this.resolveDeveloperInstructions(
+      this.options.workingDirectory,
+      this.options.developerInstructions,
+    );
+    await this.resumeCodexThread(instructions);
+    if (!this.threadId) await this.startCodexThread(instructions);
+  }
 
-    // Step 3: model/list (best-effort)
+  private async requestCodexModelList(): Promise<void> {
     try {
       await this.rpc.sendRequest("model/list", {}, 10000);
-    } catch (err) {
-      logger.warn("Codex model/list failed", { error: String(err) });
+    } catch (error) {
+      logger.warn("Codex model/list failed", { error: String(error) });
     }
+  }
 
-    const requestDeveloperInstructions = await this.resolveDeveloperInstructions(
-      workingDirectory,
-      developerInstructions,
-    );
-
-    // Step 4: thread/resume or thread/start
-    if (resumeThreadId) {
-      logger.info("Codex thread/resume attempted", { resumeThreadId });
-      try {
-        // thread/resume supports model + sandbox + approvalPolicy overrides so the
-        // resumed thread picks up the current user settings.
-        const resumeResult = await this.rpc.sendRequest<ThreadResumeParams, ThreadResumeResult>(
-          "thread/resume",
-          addCodexDeveloperInstructions({
-            threadId: resumeThreadId,
-            ...(model && { model }),
-            ...(sandbox && { sandbox }),
-            ...(approvalPolicy && { approvalPolicy }),
-            ...(workingDirectory && { cwd: workingDirectory }),
-          }, requestDeveloperInstructions),
-          THREAD_HANDSHAKE_TIMEOUT_MS,
-        );
-        // Accept both flat `threadId` and nested `thread.id` shapes,
-        // same as the thread/start path. The codex app-server returns the
-        // thread ID at result.thread.id, not result.threadId.
-        const r = resumeResult as { threadId?: string; thread?: { id?: string } };
-        this._threadId = r.threadId ?? r.thread?.id ?? null;
-        logger.info("Codex thread resumed", { resumeThreadId, assignedThreadId: this.threadId });
-      } catch (err) {
-        const errorStr = String(err);
-        const recoverable = isRecoverableCodexResumeError(err);
-        logger.warn("Codex thread/resume failed", { resumeThreadId, error: errorStr, recoverable });
-        if (recoverable) {
-          this._resumeFailed = true;
-          // fall through to thread/start below
-        } else {
-          throw err; // non-recoverable
-        }
-      }
+  private async resumeCodexThread(instructions: string | undefined): Promise<void> {
+    const resumeThreadId = this.options.resumeThreadId;
+    if (!resumeThreadId) return;
+    logger.info("Codex thread/resume attempted", { resumeThreadId });
+    try {
+      const result = await this.rpc.sendRequest<ThreadResumeParams, ThreadResumeResult>(
+        "thread/resume",
+        this.resumeThreadParams(resumeThreadId, instructions),
+        THREAD_HANDSHAKE_TIMEOUT_MS,
+      );
+      this._threadId = codexThreadIdFromResponse(result) ?? null;
+      logger.info("Codex thread resumed", { resumeThreadId, assignedThreadId: this.threadId });
+    } catch (error) {
+      const recoverable = isRecoverableCodexResumeError(error);
+      logger.warn("Codex thread/resume failed", { resumeThreadId, error: String(error), recoverable });
+      if (!recoverable) throw error;
+      this._resumeFailed = true;
     }
+  }
 
-    if (!this.threadId) {
-      const startParams: ThreadStartParams = {
-        ...(workingDirectory && { cwd: workingDirectory }),
-        ...(model && { model }),
-        ...(sandbox && { sandbox }),
-        ...(approvalPolicy && { approvalPolicy }),
-      };
+  private resumeThreadParams(resumeThreadId: string, instructions: string | undefined): ThreadResumeParams {
+    const params: ThreadResumeParams = { threadId: resumeThreadId };
+    if (this.options.model) params.model = this.options.model;
+    if (this.options.sandbox) params.sandbox = this.options.sandbox;
+    if (this.options.approvalPolicy) params.approvalPolicy = this.options.approvalPolicy;
+    if (this.options.workingDirectory) params.cwd = this.options.workingDirectory;
+    return addCodexDeveloperInstructions(params, instructions);
+  }
 
-      // Some codex app-server versions carry the threadId in the `thread/started`
-      // notification rather than in the RPC response result. The notification may
-      // arrive in a separate I/O chunk AFTER the response, so we keep the promise
-      // alive beyond the sendRequest await rather than using a simple variable.
-      let resolveThreadStarted!: (id: string | null) => void;
-      const threadStartedPromise = new Promise<string | null>((resolve) => {
-        resolveThreadStarted = resolve;
-      });
-      const startedTimeout = setTimeout(() => resolveThreadStarted(null), 3000);
-
-      const captureStarted = (n: unknown) => {
-        const notification = n as { method?: string; params?: Record<string, unknown> };
-        if (notification.method === "thread/started") {
-          logger.debug("Codex thread/started notification", { params: notification.params });
-          // Accept both flat `threadId` and nested `thread.id` shapes
-          const p = notification.params;
-          const thread = p?.thread as { id?: string } | undefined;
-          const id = (typeof p?.threadId === "string" ? p.threadId : undefined) ?? thread?.id;
-          resolveThreadStarted(typeof id === "string" ? id : null);
-        }
-      };
-      this.rpc.on("notification", captureStarted);
-
-      let startResult: ThreadStartResult | null = null;
-      let startError: unknown;
-      try {
-        startResult = await this.rpc.sendRequest<ThreadStartParams, ThreadStartResult>(
-          "thread/start",
-          addCodexDeveloperInstructions(startParams, requestDeveloperInstructions),
-          THREAD_HANDSHAKE_TIMEOUT_MS,
-        );
-        logger.debug("Codex thread/start response", { result: startResult });
-      } catch (err) {
-        startError = err;
-      } finally {
-        const cleanup = () => {
-          clearTimeout(startedTimeout);
-          this.rpc.off("notification", captureStarted);
-        };
-        if (startError) {
-          cleanup();
-        } else {
-          // Prefer the RPC response; if missing, wait for the notification.
-          // The codex app-server returns the threadId at result.thread.id,
-          // not result.threadId. Accept both shapes for forward compatibility.
-          const r = startResult as { threadId?: string; thread?: { id?: string } } | null;
-          const responseThreadId = r?.threadId ?? r?.thread?.id;
-          if (responseThreadId) {
-            this._threadId = responseThreadId;
-            cleanup();
-          } else {
-            this._threadId = await threadStartedPromise;
-            cleanup();
-          }
-        }
-      }
-
-      if (startError) {
-        throw startError;
-      }
-
+  private async startCodexThread(instructions: string | undefined): Promise<void> {
+    const tracker = this.trackStartedCodexThread();
+    let startResult: ThreadStartResult | null = null;
+    try {
+      startResult = await this.rpc.sendRequest<ThreadStartParams, ThreadStartResult>(
+        "thread/start",
+        addCodexDeveloperInstructions(this.startThreadParams(), instructions),
+        THREAD_HANDSHAKE_TIMEOUT_MS,
+      );
+      logger.debug("Codex thread/start response", { result: startResult });
+      this._threadId = codexThreadIdFromResponse(startResult) || await tracker.threadStarted;
       if (!this._threadId) {
-        throw new Error(
-          "thread/start completed but no threadId received (response: "
-          + JSON.stringify(startResult) + ")",
-        );
+        throw new Error("thread/start completed but no threadId received (response: " + JSON.stringify(startResult) + ")");
       }
-
       logger.info("Started Codex thread", { threadId: this.threadId });
+    } finally {
+      tracker.stop();
     }
+  }
+
+  private startThreadParams(): ThreadStartParams {
+    const params: ThreadStartParams = {};
+    if (this.options.workingDirectory) params.cwd = this.options.workingDirectory;
+    if (this.options.model) params.model = this.options.model;
+    if (this.options.sandbox) params.sandbox = this.options.sandbox;
+    if (this.options.approvalPolicy) params.approvalPolicy = this.options.approvalPolicy;
+    return params;
+  }
+
+  private trackStartedCodexThread(): { threadStarted: Promise<string | null>; stop: () => void } {
+    let resolveThreadStarted!: (threadId: string | null) => void;
+    const threadStarted = new Promise<string | null>((resolve) => { resolveThreadStarted = resolve; });
+    const timeout = setTimeout(() => resolveThreadStarted(null), 3000);
+    const capture = (notification: unknown): void => {
+      const message = notification as { method?: string; params?: Record<string, unknown> };
+      if (message.method !== "thread/started") return;
+      logger.debug("Codex thread/started notification", { params: message.params });
+      resolveThreadStarted(codexThreadIdFromStartedNotification(message.params));
+    };
+    this.rpc.on("notification", capture);
+    return {
+      threadStarted,
+      stop: () => {
+        clearTimeout(timeout);
+        this.rpc.off("notification", capture);
+      },
+    };
   }
 
   /** Resolves configured instructions before adding request-level runtime guidance. */

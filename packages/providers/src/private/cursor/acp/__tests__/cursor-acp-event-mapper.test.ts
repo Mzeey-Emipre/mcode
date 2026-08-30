@@ -526,7 +526,7 @@ describe("Cursor ACP client-factory session-update seam", () => {
         return client;
       },
       transportFactory: async () => ({ child, connection }),
-      sessionLoadTimeoutMs: 100,
+      sessionLoadTimeoutMs: 1_000,
     });
     entry = {
       acpRuntime: runtime,

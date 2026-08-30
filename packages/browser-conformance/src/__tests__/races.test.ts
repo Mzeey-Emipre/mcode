@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   BROWSER_CONFORMANCE_EVENT_KINDS,
   BROWSER_CONFORMANCE_FAULT_CONTROL_KINDS,
@@ -187,6 +187,19 @@ describe("Browser conformance named races", () => {
     const replay = JSON.parse(await readFile(replayPath, "utf8")) as { scenarioId: string; failingInvariant: string };
     expect(replay.scenarioId).toBe(parity.scenario.id);
     expect(replay.failingInvariant).toBe("shared executor invariant");
+  });
+
+  it("preserves the scenario failure when observational failure reporting rejects", async () => {
+    const parity = createBrowserExecutorParityScenario();
+    const subject = new RecordingSubject(true);
+    const onFailure = vi.fn(async () => {
+      throw new Error("evidence sink unavailable");
+    });
+
+    await expect(runBrowserConformanceExecutorScenario(parity.scenario, subject, { onFailure }))
+      .rejects.toThrow("race invariant failed");
+    expect(onFailure).toHaveBeenCalledWith(expect.objectContaining({ error: expect.any(Error) }));
+    expect(subject.disposeCount).toBe(1);
   });
 
   it("injects each scheduled event once and validates checkpoints in the shared runner", async () => {

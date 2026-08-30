@@ -92,27 +92,13 @@ export class AcpSessionRuntime {
     transport: AcpTransport,
     options: AcpSessionRuntimeOptions,
   ) {
-    this.state = {
-      child: transport.child,
-      connection: transport.connection,
-      sessionId: "",
-      agentCapabilities: undefined,
-      activePrompt: null,
-    };
+    this.state = createAcpSessionState(transport);
     this.selectAuthMethod = options.selectAuthMethod ?? ((methods) => methods[0]?.id);
-    this.clientCapabilities = options.clientCapabilities ?? {
-      fs: { readTextFile: true, writeTextFile: true },
-    };
+    this.clientCapabilities = options.clientCapabilities ?? defaultAcpClientCapabilities();
     this.clientInfo = options.clientInfo ?? { name: "mcode", title: "Mcode", version: "0.0.1" };
     this.ignoreAuthenticationErrors = options.ignoreAuthenticationErrors ?? false;
     this.processes = options.processes;
-    const configuredTimeout = options.recoveryInactivityTimeoutMs
-      ?? options.replayGateTimeoutMs
-      ?? options.sessionLoadTimeoutMs;
-    this.sessionLoadTimeoutMs =
-      typeof configuredTimeout === "number" && Number.isFinite(configuredTimeout) && configuredTimeout > 0
-        ? configuredTimeout
-        : DEFAULT_SESSION_LOAD_TIMEOUT_MS;
+    this.sessionLoadTimeoutMs = resolveAcpSessionLoadTimeout(options);
     this.recoveryFailurePolicy = options.recoveryFailurePolicy ?? "fallback-to-new";
     this.onSessionOperation = options.onSessionOperation;
   }
@@ -368,28 +354,44 @@ export function validateAcpSessionUpdate(value: unknown): AcpSessionUpdate {
 }
 
 function validateAgentCapabilities(capabilities: Record<string, unknown>): void {
-  if (capabilities.loadSession !== undefined && typeof capabilities.loadSession !== "boolean") {
+  validateOptionalAcpBoolean(capabilities.loadSession);
+  validateAcpSessionCapabilities(capabilities.sessionCapabilities);
+  validateAcpMcpCapabilities(capabilities.mcpCapabilities);
+}
+
+function createAcpSessionState(transport: AcpTransport): AcpSessionState {
+  return { child: transport.child, connection: transport.connection, sessionId: "", agentCapabilities: undefined, activePrompt: null };
+}
+
+function defaultAcpClientCapabilities(): Record<string, unknown> {
+  return { fs: { readTextFile: true, writeTextFile: true } };
+}
+
+function resolveAcpSessionLoadTimeout(options: AcpSessionRuntimeOptions): number {
+  const configuredTimeout = options.recoveryInactivityTimeoutMs ?? options.replayGateTimeoutMs ?? options.sessionLoadTimeoutMs;
+  return typeof configuredTimeout === "number" && Number.isFinite(configuredTimeout) && configuredTimeout > 0
+    ? configuredTimeout
+    : DEFAULT_SESSION_LOAD_TIMEOUT_MS;
+}
+
+function validateOptionalAcpBoolean(value: unknown): void {
+  if (value !== undefined && typeof value !== "boolean") throw invalidAcpPayload("ACP initialize agent capabilities are invalid");
+}
+
+function validateAcpSessionCapabilities(value: unknown): void {
+  if (value === undefined) return;
+  if (!isRecord(value)) throw invalidAcpPayload("ACP initialize agent capabilities are invalid");
+  const resume = value.resume;
+  if (resume !== undefined && resume !== null && !isRecord(resume)) {
     throw invalidAcpPayload("ACP initialize agent capabilities are invalid");
   }
-  const sessionCapabilities = capabilities.sessionCapabilities;
-  if (sessionCapabilities !== undefined) {
-    if (!isRecord(sessionCapabilities)) {
-      throw invalidAcpPayload("ACP initialize agent capabilities are invalid");
-    }
-    const resume = sessionCapabilities.resume;
-    if (resume !== undefined && resume !== null && !isRecord(resume)) {
-      throw invalidAcpPayload("ACP initialize agent capabilities are invalid");
-    }
-  }
-  const mcpCapabilities = capabilities.mcpCapabilities;
-  if (mcpCapabilities === undefined) return;
-  if (!isRecord(mcpCapabilities)) throw invalidAcpPayload("ACP initialize agent capabilities are invalid");
-  if (mcpCapabilities.http !== undefined && typeof mcpCapabilities.http !== "boolean") {
-    throw invalidAcpPayload("ACP initialize agent capabilities are invalid");
-  }
-  if (mcpCapabilities.sse !== undefined && typeof mcpCapabilities.sse !== "boolean") {
-    throw invalidAcpPayload("ACP initialize agent capabilities are invalid");
-  }
+}
+
+function validateAcpMcpCapabilities(value: unknown): void {
+  if (value === undefined) return;
+  if (!isRecord(value)) throw invalidAcpPayload("ACP initialize agent capabilities are invalid");
+  validateOptionalAcpBoolean(value.http);
+  validateOptionalAcpBoolean(value.sse);
 }
 
 function validateSessionUpdate(update: Record<string, unknown>): void {

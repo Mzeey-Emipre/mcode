@@ -69,7 +69,7 @@ function nestedDelegationBlock(model: string | undefined): string | undefined {
   if (!candidate) return undefined;
   return [
     "When an explicitly requested provider-native child must spawn its own provider-native child, pass the nested-capable model",
-    `\"${candidate}\"`,
+    `"${candidate}"`,
     "in the parent spawn_agent call. Do not replace provider-native collaboration with shell commands or Mcode thread tools.",
   ].join(" ");
 }

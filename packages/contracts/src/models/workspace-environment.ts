@@ -200,70 +200,76 @@ export const WorkspaceEnvironmentSetupAttemptSchema = lazySchema(() =>
     output: setupOutputSchema,
     outputTruncated: z.boolean(),
     cleanupPending: z.boolean(),
-  }).strict().superRefine((attempt, ctx) => {
-    if ((attempt.status === "running" || attempt.status === "awaiting-approval") && attempt.outcome !== null) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["outcome"], message: "Running Setup attempts cannot have an outcome" });
-    }
-    if (attempt.status !== "running" && attempt.status !== "awaiting-approval" && attempt.outcome === null) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["outcome"], message: "Completed Setup attempts require an outcome" });
-    }
-    if (attempt.status === "passed" && attempt.outcome !== "success") {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["outcome"], message: "Passed Setup attempts require a success outcome" });
-    }
-    if (
-      attempt.status === "failed" &&
-      attempt.outcome !== "command_failure" &&
-      attempt.outcome !== "launch_failure" &&
-      attempt.outcome !== "configuration_failure" &&
-      attempt.outcome !== "timeout" &&
-      attempt.outcome !== "containment_failure"
-    ) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["outcome"], message: "Failed Setup attempts require a failure outcome" });
-    }
-    if (attempt.status === "unavailable" && attempt.outcome !== "unavailable") {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["outcome"], message: "Unavailable Setup attempts require an unavailable outcome" });
-    }
-    if (attempt.status === "running" && (attempt.startedAt === null || attempt.finishedAt !== null || attempt.exitCode !== null || attempt.cleanupPending)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Running Setup attempts require an active lifecycle" });
-    }
-    if (attempt.status === "awaiting-approval" &&
-      (attempt.startedAt !== null || attempt.finishedAt !== null || attempt.exitCode !== null || attempt.cleanupPending || attempt.snapshot.approval === null || attempt.snapshot.approval === undefined)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Approval-waiting Setup attempts require an approved command snapshot" });
-    }
-    if (attempt.status !== "running" && attempt.status !== "awaiting-approval" && attempt.finishedAt === null) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["finishedAt"], message: "Completed Setup attempts require a finish time" });
-    }
-    if (
-      (attempt.status === "passed" ||
-        attempt.outcome === "command_failure" ||
-        attempt.outcome === "launch_failure" ||
-        attempt.outcome === "timeout" ||
-        attempt.outcome === "containment_failure") &&
-      attempt.startedAt === null
-    ) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["startedAt"], message: "This Setup outcome requires a start time" });
-    }
-    if (attempt.outcome === "success" && attempt.exitCode !== 0) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["exitCode"], message: "Successful Setup attempts require exit code zero" });
-    }
-    if (
-      (attempt.outcome === "launch_failure" ||
-        attempt.outcome === "configuration_failure" ||
-        attempt.outcome === "timeout" ||
-        attempt.outcome === "containment_failure" ||
-        attempt.outcome === "unavailable") &&
-      attempt.exitCode !== null
-    ) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["exitCode"], message: "This Setup outcome cannot include an exit code" });
-    }
-    if (attempt.cleanupPending && attempt.outcome !== "containment_failure") {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["cleanupPending"], message: "Only containment failures can require cleanup" });
-    }
-  }),
+  }).strict().superRefine(validateManualSetupAttempt),
 );
 export type WorkspaceEnvironmentSetupAttempt = z.infer<
   ReturnType<typeof WorkspaceEnvironmentSetupAttemptSchema>
 >;
+
+type ManualSetupAttemptValidationInput = {
+  readonly status: WorkspaceEnvironmentSetupStatus;
+  readonly outcome: WorkspaceEnvironmentSetupOutcome | null;
+  readonly snapshot: { readonly approval?: unknown | null };
+  readonly startedAt: string | null;
+  readonly finishedAt: string | null;
+  readonly exitCode: number | null;
+  readonly cleanupPending: boolean;
+};
+
+function validateManualSetupAttempt(attempt: ManualSetupAttemptValidationInput, context: z.RefinementCtx): void {
+  reportValidation(activeSetupHasOutcome(attempt), context, ["outcome"], "Running Setup attempts cannot have an outcome");
+  reportValidation(completedSetupLacksOutcome(attempt), context, ["outcome"], "Completed Setup attempts require an outcome");
+  reportValidation(attempt.status === "passed" && attempt.outcome !== "success", context, ["outcome"], "Passed Setup attempts require a success outcome");
+  reportValidation(attempt.status === "failed" && !isManualSetupFailureOutcome(attempt.outcome), context, ["outcome"], "Failed Setup attempts require a failure outcome");
+  reportValidation(attempt.status === "unavailable" && attempt.outcome !== "unavailable", context, ["outcome"], "Unavailable Setup attempts require an unavailable outcome");
+  reportValidation(attempt.status === "running" && hasInvalidRunningSetupLifecycle(attempt), context, [], "Running Setup attempts require an active lifecycle");
+  reportValidation(attempt.status === "awaiting-approval" && hasInvalidApprovalSetupLifecycle(attempt), context, [], "Approval-waiting Setup attempts require an approved command snapshot");
+  reportValidation(completedSetupLacksFinishTime(attempt), context, ["finishedAt"], "Completed Setup attempts require a finish time");
+  reportValidation(manualSetupRequiresStartTime(attempt) && attempt.startedAt === null, context, ["startedAt"], "This Setup outcome requires a start time");
+  reportValidation(attempt.outcome === "success" && attempt.exitCode !== 0, context, ["exitCode"], "Successful Setup attempts require exit code zero");
+  reportValidation(manualSetupForbidsExitCode(attempt) && attempt.exitCode !== null, context, ["exitCode"], "This Setup outcome cannot include an exit code");
+  reportValidation(attempt.cleanupPending && attempt.outcome !== "containment_failure", context, ["cleanupPending"], "Only containment failures can require cleanup");
+}
+
+function reportValidation(condition: boolean, context: z.RefinementCtx, path: (string | number)[], message: string): void {
+  if (condition) context.addIssue({ code: z.ZodIssueCode.custom, path, message });
+}
+
+function isActiveSetup(status: WorkspaceEnvironmentSetupStatus): boolean {
+  return ["running", "awaiting-approval"].includes(status);
+}
+
+function activeSetupHasOutcome(attempt: ManualSetupAttemptValidationInput): boolean {
+  return isActiveSetup(attempt.status) && attempt.outcome !== null;
+}
+
+function completedSetupLacksOutcome(attempt: ManualSetupAttemptValidationInput): boolean {
+  return !isActiveSetup(attempt.status) && attempt.outcome === null;
+}
+
+function isManualSetupFailureOutcome(outcome: WorkspaceEnvironmentSetupOutcome | null): boolean {
+  return ["command_failure", "launch_failure", "configuration_failure", "timeout", "containment_failure"].includes(outcome ?? "");
+}
+
+function hasInvalidRunningSetupLifecycle(attempt: ManualSetupAttemptValidationInput): boolean {
+  return attempt.startedAt === null || attempt.finishedAt !== null || attempt.exitCode !== null || attempt.cleanupPending;
+}
+
+function hasInvalidApprovalSetupLifecycle(attempt: ManualSetupAttemptValidationInput): boolean {
+  return attempt.startedAt !== null || attempt.finishedAt !== null || attempt.exitCode !== null || attempt.cleanupPending || attempt.snapshot.approval == null;
+}
+
+function completedSetupLacksFinishTime(attempt: ManualSetupAttemptValidationInput): boolean {
+  return !isActiveSetup(attempt.status) && attempt.finishedAt === null;
+}
+
+function manualSetupRequiresStartTime(attempt: ManualSetupAttemptValidationInput): boolean {
+  return attempt.status === "passed" || ["command_failure", "launch_failure", "timeout", "containment_failure"].includes(attempt.outcome ?? "");
+}
+
+function manualSetupForbidsExitCode(attempt: ManualSetupAttemptValidationInput): boolean {
+  return ["launch_failure", "configuration_failure", "timeout", "containment_failure", "unavailable"].includes(attempt.outcome ?? "");
+}
 
 /** Request to start a manual Setup attempt for a Thread. */
 export const WorkspaceEnvironmentSetupStartInputSchema = lazySchema(() =>
@@ -340,32 +346,41 @@ export const WorkspaceEnvironmentActionRunSchema = lazySchema(() =>
     exitCode: z.number().int().nullable(),
     transcript: actionTranscriptSchema,
     transcriptTruncated: z.boolean(),
-  }).strict().superRefine((run, ctx) => {
-    if (run.status === "running" && (run.startedAt === null || run.finishedAt !== null || run.exitCode !== null)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Running Action runs require an active lifecycle" });
-    }
-    if (run.status === "awaiting-approval" &&
-      (run.startedAt !== null || run.finishedAt !== null || run.exitCode !== null || run.snapshot.approval === null || run.snapshot.approval === undefined)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Approval-waiting Action runs require an approved command snapshot" });
-    }
-    if (run.status !== "running" && run.status !== "awaiting-approval" && run.finishedAt === null) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["finishedAt"], message: "Completed Action runs require a finish time" });
-    }
-    if (run.status === "completed" && run.exitCode !== 0) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["exitCode"], message: "Completed Action runs require exit code zero" });
-    }
-    if ((run.status === "interrupted" || run.status === "unavailable") && run.exitCode !== null) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["exitCode"], message: "Interrupted and unavailable Action runs cannot include an exit code" });
-    }
-    if ((run.status === "failed" || run.status === "completed") && run.startedAt === null) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["startedAt"], message: "Exited Action runs require a start time" });
-    }
-  }),
+  }).strict().superRefine(validateWorkspaceActionRun),
 );
 /** Latest retained result for one stable Project Action slot. */
 export type WorkspaceEnvironmentActionRun = z.infer<
   ReturnType<typeof WorkspaceEnvironmentActionRunSchema>
 >;
+
+type WorkspaceActionRunValidationInput = {
+  readonly status: WorkspaceEnvironmentActionRunStatus;
+  readonly snapshot: { readonly approval?: unknown | null };
+  readonly startedAt: string | null;
+  readonly finishedAt: string | null;
+  readonly exitCode: number | null;
+};
+
+function validateWorkspaceActionRun(run: WorkspaceActionRunValidationInput, context: z.RefinementCtx): void {
+  reportValidation(run.status === "running" && hasInvalidRunningActionLifecycle(run), context, [], "Running Action runs require an active lifecycle");
+  reportValidation(run.status === "awaiting-approval" && hasInvalidApprovalActionLifecycle(run), context, [], "Approval-waiting Action runs require an approved command snapshot");
+  reportValidation(!isActiveActionRun(run.status) && run.finishedAt === null, context, ["finishedAt"], "Completed Action runs require a finish time");
+  reportValidation(run.status === "completed" && run.exitCode !== 0, context, ["exitCode"], "Completed Action runs require exit code zero");
+  reportValidation(["interrupted", "unavailable"].includes(run.status) && run.exitCode !== null, context, ["exitCode"], "Interrupted and unavailable Action runs cannot include an exit code");
+  reportValidation(["failed", "completed"].includes(run.status) && run.startedAt === null, context, ["startedAt"], "Exited Action runs require a start time");
+}
+
+function hasInvalidRunningActionLifecycle(run: WorkspaceActionRunValidationInput): boolean {
+  return run.startedAt === null || run.finishedAt !== null || run.exitCode !== null;
+}
+
+function hasInvalidApprovalActionLifecycle(run: WorkspaceActionRunValidationInput): boolean {
+  return run.startedAt !== null || run.finishedAt !== null || run.exitCode !== null || run.snapshot.approval == null;
+}
+
+function isActiveActionRun(status: WorkspaceEnvironmentActionRunStatus): boolean {
+  return status === "running" || status === "awaiting-approval";
+}
 
 /** Request to list the retained Project Action results for one Thread. */
 export const WorkspaceEnvironmentActionListInputSchema = lazySchema(() =>
@@ -466,45 +481,69 @@ export const WorkspaceEnvironmentAutomaticSetupAttemptSchema = lazySchema(() =>
     exitCode: z.number().int().nullable(),
     output: setupOutputSchema,
     outputTruncated: z.boolean(),
-  }).strict().superRefine((attempt, ctx) => {
-    if (attempt.state === "queued" &&
-      (attempt.startedAt !== null || attempt.finishedAt !== null || attempt.reason !== null ||
-        attempt.snapshot !== null || attempt.outcome !== null || attempt.exitCode !== null ||
-        attempt.output !== "" || attempt.outputTruncated)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Pending automatic Setup attempts cannot have a result" });
-    }
-    if (attempt.state === "awaiting-approval" &&
-      (attempt.startedAt !== null || attempt.finishedAt !== null || attempt.reason !== "setup_approval_required" ||
-        attempt.snapshot === null || attempt.snapshot.approval === null || attempt.snapshot.approval === undefined ||
-        attempt.outcome !== null || attempt.exitCode !== null || attempt.output !== "" || attempt.outputTruncated)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Approval-waiting automatic Setup attempts require the exact shared command snapshot" });
-    }
-    if (attempt.state === "running" &&
-      (attempt.startedAt === null || attempt.finishedAt !== null || attempt.reason !== null ||
-        attempt.snapshot === null || attempt.outcome !== null || attempt.exitCode !== null ||
-        attempt.output !== "" || attempt.outputTruncated)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Running automatic Setup attempts require an active lifecycle" });
-    }
-    if (attempt.state === "passed" &&
-      (attempt.startedAt === null || attempt.finishedAt === null || attempt.reason !== null ||
-        attempt.snapshot === null || attempt.outcome !== "success" || attempt.exitCode !== 0)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Passed automatic Setup attempts require start and finish times" });
-    }
-    if ((attempt.state === "failed" || attempt.state === "interrupted") &&
-      (attempt.finishedAt === null || attempt.reason === null)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Failed or interrupted automatic Setup attempts require a safe reason" });
-    }
-    if (attempt.state === "failed" && (attempt.snapshot === null || attempt.outcome === null || attempt.outcome === "success")) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Failed automatic Setup attempts require a launch snapshot and failure outcome" });
-    }
-    if (attempt.state === "interrupted" && (attempt.outcome !== null || attempt.exitCode !== null || attempt.output !== "" || attempt.outputTruncated)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Interrupted automatic Setup attempts cannot claim a terminal command result" });
-    }
-  }),
+  }).strict().superRefine(validateAutomaticSetupAttempt),
 );
 export type WorkspaceEnvironmentAutomaticSetupAttempt = z.infer<
   ReturnType<typeof WorkspaceEnvironmentAutomaticSetupAttemptSchema>
 >;
+
+type AutomaticSetupAttemptValidationInput = {
+  readonly state: WorkspaceEnvironmentAutomaticSetupAttemptState;
+  readonly reason: WorkspaceEnvironmentAutomaticSetupReason | null;
+  readonly snapshot: { readonly approval?: unknown | null } | null;
+  readonly outcome: WorkspaceEnvironmentSetupOutcome | null;
+  readonly startedAt: string | null;
+  readonly finishedAt: string | null;
+  readonly exitCode: number | null;
+  readonly output: string;
+  readonly outputTruncated: boolean;
+};
+
+function validateAutomaticSetupAttempt(attempt: AutomaticSetupAttemptValidationInput, context: z.RefinementCtx): void {
+  reportValidation(attempt.state === "queued" && hasQueuedSetupResult(attempt), context, [], "Pending automatic Setup attempts cannot have a result");
+  reportValidation(attempt.state === "awaiting-approval" && hasInvalidAutomaticApprovalSetup(attempt), context, [], "Approval-waiting automatic Setup attempts require the exact shared command snapshot");
+  reportValidation(attempt.state === "running" && hasInvalidAutomaticRunningSetup(attempt), context, [], "Running automatic Setup attempts require an active lifecycle");
+  reportValidation(attempt.state === "passed" && hasInvalidPassedAutomaticSetup(attempt), context, [], "Passed automatic Setup attempts require start and finish times");
+  reportValidation(["failed", "interrupted"].includes(attempt.state) && (attempt.finishedAt === null || attempt.reason === null), context, [], "Failed or interrupted automatic Setup attempts require a safe reason");
+  reportValidation(attempt.state === "failed" && hasInvalidFailedAutomaticSetup(attempt), context, [], "Failed automatic Setup attempts require a launch snapshot and failure outcome");
+  reportValidation(attempt.state === "interrupted" && hasInterruptedSetupResult(attempt), context, [], "Interrupted automatic Setup attempts cannot claim a terminal command result");
+}
+
+function hasQueuedSetupResult(attempt: AutomaticSetupAttemptValidationInput): boolean {
+  return attempt.startedAt !== null || attempt.finishedAt !== null || attempt.reason !== null || attempt.snapshot !== null || attempt.outcome !== null || attempt.exitCode !== null || hasAutomaticSetupOutput(attempt);
+}
+
+function hasInvalidAutomaticApprovalSetup(attempt: AutomaticSetupAttemptValidationInput): boolean {
+  return hasUnexpectedApprovalSetupState(attempt) || !hasAutomaticSetupApproval(attempt.snapshot);
+}
+
+function hasUnexpectedApprovalSetupState(attempt: AutomaticSetupAttemptValidationInput): boolean {
+  return attempt.startedAt !== null || attempt.finishedAt !== null || attempt.reason !== "setup_approval_required" || attempt.outcome !== null || attempt.exitCode !== null || hasAutomaticSetupOutput(attempt);
+}
+
+function hasAutomaticSetupApproval(snapshot: AutomaticSetupAttemptValidationInput["snapshot"]): boolean {
+  return snapshot?.approval != null;
+}
+
+function hasInvalidAutomaticRunningSetup(attempt: AutomaticSetupAttemptValidationInput): boolean {
+  return attempt.startedAt === null || attempt.finishedAt !== null || attempt.reason !== null || attempt.snapshot === null || attempt.outcome !== null || attempt.exitCode !== null || hasAutomaticSetupOutput(attempt);
+}
+
+function hasInvalidPassedAutomaticSetup(attempt: AutomaticSetupAttemptValidationInput): boolean {
+  return attempt.startedAt === null || attempt.finishedAt === null || attempt.reason !== null || attempt.snapshot === null || attempt.outcome !== "success" || attempt.exitCode !== 0;
+}
+
+function hasInvalidFailedAutomaticSetup(attempt: AutomaticSetupAttemptValidationInput): boolean {
+  return attempt.snapshot === null || attempt.outcome === null || attempt.outcome === "success";
+}
+
+function hasInterruptedSetupResult(attempt: AutomaticSetupAttemptValidationInput): boolean {
+  return attempt.outcome !== null || attempt.exitCode !== null || hasAutomaticSetupOutput(attempt);
+}
+
+function hasAutomaticSetupOutput(attempt: AutomaticSetupAttemptValidationInput): boolean {
+  return attempt.output !== "" || attempt.outputTruncated;
+}
 
 /** Public lifecycle record for one Turn held behind automatic Setup. */
 export const WorkspaceEnvironmentQueuedTurnSchema = lazySchema(() =>

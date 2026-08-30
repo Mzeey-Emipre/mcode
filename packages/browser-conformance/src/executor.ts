@@ -47,6 +47,29 @@ export interface BrowserConformanceExecutionOptions {
   readonly faultController?: BrowserConformanceFaultController;
 }
 
+type StageAttempt<TValue> =
+  | { readonly value: TValue; readonly error: undefined }
+  | { readonly value: undefined; readonly error: unknown };
+
+type TimelineEntry = BrowserConformanceScheduledEvent | BrowserConformanceCheckpoint;
+
+type TimelineState = {
+  readonly events: readonly BrowserConformanceScheduledEvent[];
+  readonly checkpoints: readonly BrowserConformanceCheckpoint[];
+  eventIndex: number;
+  checkpointIndex: number;
+  currentTick: number;
+};
+
+const EVENT_FAULT_STAGES: Partial<
+  Record<BrowserConformanceScheduledEvent["kind"], "host-transport" | "target-registration" | "capability-revision">
+> = {
+  "host-disconnect": "host-transport",
+  "host-reconnect": "host-transport",
+  "target-register": "target-registration",
+  "capability-revision": "capability-revision",
+};
+
 /** Executes one scenario on the canonical ordered timeline and enforces its cleanup contract. */
 export async function runBrowserConformanceScenarioCore(
   scenario: BrowserConformanceScenario,
@@ -54,60 +77,87 @@ export async function runBrowserConformanceScenarioCore(
   options: BrowserConformanceExecutionOptions = {},
 ): Promise<BrowserConformanceNormalizedRun> {
   const baseline = subject.snapshotResources();
-  let run: BrowserConformanceNormalizedRun | undefined;
-  let failure: unknown;
   let final = baseline;
   let cleanup: BrowserConformanceCleanupComparison = checkBrowserConformanceCleanup({ baseline }, baseline);
-
-  try {
-    run = await executeBrowserConformanceTimeline(scenario, subject, options.faultController);
-  } catch (error) {
-    failure = error;
-  }
-
-  try {
-    await subject.drainToQuiescence();
-  } catch (error) {
-    if (failure === undefined) failure = error;
-  }
-
-  try {
-    await subject.dispose();
-  } catch (error) {
-    if (failure === undefined) failure = error;
-  }
-
-  try {
-    final = subject.snapshotResources();
-    options.faultController?.hit("cleanup");
-    cleanup = checkBrowserConformanceCleanup(scenario.cleanup, final);
-    if (!cleanup.ok && failure === undefined) {
-      const resources = cleanup.violations.map((violation) => violation.resource).join(", ");
-      failure = new Error(`Browser conformance cleanup failed: ${resources}`);
-    }
-  } catch (error) {
-    if (failure === undefined) failure = error;
+  const timeline = await attemptStage(() => executeBrowserConformanceTimeline(scenario, subject, options.faultController));
+  const drained = await attemptStage(() => subject.drainToQuiescence());
+  const disposed = await attemptStage(() => subject.dispose());
+  const cleanupCapture = await attemptStage(() => captureCleanup(scenario, subject, options.faultController));
+  if (cleanupCapture.value) {
+    final = cleanupCapture.value.final;
+    cleanup = cleanupCapture.value.cleanup;
   }
   options.faultController?.dispose();
-
+  const failure = firstFailure(
+    timeline.error,
+    drained.error,
+    disposed.error,
+    cleanupCapture.error,
+    cleanupCapture.value?.error,
+  );
   if (failure !== undefined) {
-    if (!run) {
-      try {
-        run = subject.snapshotOutcome();
-      } catch {
-        // A subject that cannot snapshot still preserves the original failure.
-      }
-    }
-    try {
-      await options.onFailure?.({ error: failure, ...(run ? { run } : {}), baseline, final, cleanup });
-    } catch {
-      // Failure reporting is observational and must never replace the scenario failure.
-    }
-    throw failure;
+    return reportAndThrowFailure(failure, timeline.value, subject, options.onFailure, baseline, final, cleanup);
   }
+  return timeline.value ?? subject.snapshotOutcome();
+}
 
-  if (!run) run = subject.snapshotOutcome();
-  return run;
+async function attemptStage<TValue>(operation: () => Promise<TValue> | TValue): Promise<StageAttempt<TValue>> {
+  try {
+    return { value: await operation(), error: undefined };
+  } catch (error) {
+    return { value: undefined, error };
+  }
+}
+
+function captureCleanup(
+  scenario: BrowserConformanceScenario,
+  subject: BrowserConformanceSubject,
+  faultController: BrowserConformanceFaultController | undefined,
+): { readonly final: ReturnType<BrowserConformanceSubject["snapshotResources"]>; readonly cleanup: BrowserConformanceCleanupComparison; readonly error: Error | undefined } {
+  const final = subject.snapshotResources();
+  faultController?.hit("cleanup");
+  const cleanup = checkBrowserConformanceCleanup(scenario.cleanup, final);
+  const error = cleanup.ok
+    ? undefined
+    : new Error(`Browser conformance cleanup failed: ${cleanup.violations.map((violation) => violation.resource).join(", ")}`);
+  return { final, cleanup, error };
+}
+
+function firstFailure(...failures: readonly unknown[]): unknown {
+  return failures.find((failure) => failure !== undefined);
+}
+
+async function reportAndThrowFailure(
+  error: unknown,
+  run: BrowserConformanceNormalizedRun | undefined,
+  subject: BrowserConformanceSubject,
+  onFailure: BrowserConformanceExecutionOptions["onFailure"],
+  baseline: ReturnType<BrowserConformanceSubject["snapshotResources"]>,
+  final: ReturnType<BrowserConformanceSubject["snapshotResources"]>,
+  cleanup: BrowserConformanceCleanupComparison,
+): Promise<never> {
+  const observedRun = run ?? snapshotOutcome(subject);
+  await reportFailure(onFailure, { error, ...(observedRun ? { run: observedRun } : {}), baseline, final, cleanup });
+  throw error;
+}
+
+function snapshotOutcome(subject: BrowserConformanceSubject): BrowserConformanceNormalizedRun | undefined {
+  try {
+    return subject.snapshotOutcome();
+  } catch {
+    return undefined;
+  }
+}
+
+async function reportFailure(
+  onFailure: BrowserConformanceExecutionOptions["onFailure"],
+  failure: BrowserConformanceExecutionFailure,
+): Promise<void> {
+  try {
+    await onFailure?.(failure);
+  } catch {
+    // Failure reporting is observational and must not replace the scenario failure.
+  }
 }
 
 /** Runs one adapter-neutral scenario through a real runtime subject. */
@@ -126,55 +176,91 @@ async function executeBrowserConformanceTimeline(
 ): Promise<BrowserConformanceNormalizedRun> {
   // Command N runs before scheduled work at tick N (ordinal >= 0).
   // That work therefore occurs after command N and before command N+1.
-  const events = [...scenario.schedule.events].sort(compareScheduledOrder);
-  const checkpoints = [...scenario.schedule.checkpoints].sort(compareScheduledOrder);
-  let eventIndex = 0;
-  let checkpointIndex = 0;
-  let currentTick = -1;
+  const timeline = createTimelineState(scenario);
   for (const event of scenario.schedule.events) {
     faultController?.hit("scheduling");
     subject.schedule(event);
   }
   for (let index = 0; index < scenario.commands.length; index += 1) {
-    await flushTimeline({ tick: index, ordinal: -1 });
+    await flushTimeline(subject, timeline, { tick: index, ordinal: -1 }, faultController);
     faultController?.hit("executor-dispatch");
     await subject.dispatch(scenario.commands[index]!);
     faultController?.hit("receipt-delivery");
   }
-  await flushTimeline({ tick: Math.max(currentTick, scenario.schedule.bounds.maxTick), ordinal: Number.MAX_SAFE_INTEGER });
+  await flushTimeline(
+    subject,
+    timeline,
+    { tick: Math.max(timeline.currentTick, scenario.schedule.bounds.maxTick), ordinal: Number.MAX_SAFE_INTEGER },
+    faultController,
+  );
   return subject.snapshotOutcome();
+}
 
-  async function flushTimeline(limit: { readonly tick: number; readonly ordinal: number }): Promise<void> {
-    while (eventIndex < events.length || checkpointIndex < checkpoints.length) {
-      const nextEvent = events[eventIndex];
-      const nextCheckpoint = checkpoints[checkpointIndex];
-      const next = !nextCheckpoint || (nextEvent && compareScheduledOrder(nextEvent, nextCheckpoint) <= 0)
-        ? nextEvent
-        : nextCheckpoint;
-      if (!next || compareOrders(next.order, limit) > 0) break;
-      if (next.order.tick > currentTick) {
-        faultController?.hit("clock");
-        await subject.advanceClock(next.order.tick);
-        currentTick = next.order.tick;
-      }
-      if (next === nextEvent) {
-        if (nextEvent?.kind === "host-disconnect" || nextEvent?.kind === "host-reconnect") faultController?.hit("host-transport");
-        if (nextEvent?.kind === "target-register") faultController?.hit("target-registration");
-        if (nextEvent?.kind === "capability-revision") faultController?.hit("capability-revision");
-        await subject.injectExternalEvent(nextEvent!);
-        eventIndex += 1;
-      } else {
-        faultController?.hit("checkpoint");
-        assertCheckpoint(subject, nextCheckpoint!);
-        checkpointIndex += 1;
-      }
-    }
-    if (limit.tick > currentTick) {
-      faultController?.hit("clock");
-      await subject.advanceClock(limit.tick);
-      currentTick = limit.tick;
-    }
+function createTimelineState(scenario: BrowserConformanceScenario): TimelineState {
+  return {
+    events: [...scenario.schedule.events].sort(compareScheduledOrder),
+    checkpoints: [...scenario.schedule.checkpoints].sort(compareScheduledOrder),
+    eventIndex: 0,
+    checkpointIndex: 0,
+    currentTick: -1,
+  };
+}
+
+async function flushTimeline(
+  subject: BrowserConformanceSubject,
+  timeline: TimelineState,
+  limit: { readonly tick: number; readonly ordinal: number },
+  faultController: BrowserConformanceFaultController | undefined,
+): Promise<void> {
+  while (hasPendingTimelineEntries(timeline)) {
+    const entry = nextTimelineEntry(timeline);
+    if (!entry || compareOrders(entry.order, limit) > 0) break;
+    await advanceTimelineClock(subject, timeline, entry.order.tick, faultController);
+    await processTimelineEntry(subject, timeline, entry, faultController);
   }
+  await advanceTimelineClock(subject, timeline, limit.tick, faultController);
+}
+
+function hasPendingTimelineEntries(timeline: TimelineState): boolean {
+  return timeline.eventIndex < timeline.events.length || timeline.checkpointIndex < timeline.checkpoints.length;
+}
+
+function nextTimelineEntry(timeline: TimelineState): TimelineEntry | undefined {
+  const event = timeline.events[timeline.eventIndex];
+  const checkpoint = timeline.checkpoints[timeline.checkpointIndex];
+  if (!checkpoint) return event;
+  if (!event) return checkpoint;
+  return compareScheduledOrder(event, checkpoint) <= 0 ? event : checkpoint;
+}
+
+async function advanceTimelineClock(
+  subject: BrowserConformanceSubject,
+  timeline: TimelineState,
+  tick: number,
+  faultController: BrowserConformanceFaultController | undefined,
+): Promise<void> {
+  if (tick <= timeline.currentTick) return;
+  faultController?.hit("clock");
+  await subject.advanceClock(tick);
+  timeline.currentTick = tick;
+}
+
+async function processTimelineEntry(
+  subject: BrowserConformanceSubject,
+  timeline: TimelineState,
+  entry: TimelineEntry,
+  faultController: BrowserConformanceFaultController | undefined,
+): Promise<void> {
+  if ("kind" in entry) {
+    const stage = EVENT_FAULT_STAGES[entry.kind];
+    if (stage) faultController?.hit(stage);
+    await subject.injectExternalEvent(entry);
+    timeline.eventIndex += 1;
+    return;
+  }
+  faultController?.hit("checkpoint");
+  assertCheckpoint(subject, entry);
+  timeline.checkpointIndex += 1;
 }
 
 function compareScheduledOrder(

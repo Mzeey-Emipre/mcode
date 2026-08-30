@@ -16,6 +16,7 @@ import { buildMcodeInstructionPlan, renderMcodeInstructions } from "@mcode/threa
 import {
   providerBrowserPermissionCapability,
   type ProviderBrowserCredentialMetadata,
+  type ProviderBrowserLeaseGrant,
   type ProviderBrowserLeaseHandle,
   type ProviderHostPorts,
 } from "../../host-ports.js";
@@ -32,25 +33,19 @@ import type {
   HandoffMeta,
   TurnRequest,
   AgentEvent,
-  AttachmentMeta,
   GoalState,
   GoalLookupResult,
-  MessageMention,
   PermissionDecision,
   PermissionRequest,
   ProviderModelInfo,
   ProviderUsageInfo,
   ProviderRuntimeEvent,
   ProviderCapabilityName,
-  ProviderCapabilityIdentity,
-  QuotaCategory,
-  SkillInfo,
 } from "@mcode/contracts";
 import {
   AgentEventType,
   CODEX_STATIC_MODELS,
   isGoalOpen,
-  isVirtualBrowserContextAttachment,
   providerRuntimeEvent,
   supportsCodexUltraOrchestration,
 } from "@mcode/contracts";
@@ -58,14 +53,21 @@ import { checkCodexVersion, meetsMinVersion } from "./codex-version.js";
 import { CodexAppServer, warmCodexAppServer } from "./codex-app-server.js";
 import type { CodexApprovalRequest } from "./codex-app-server.js";
 import { CodexEventMapper } from "./codex-event-mapper.js";
+import {
+  buildCodexInput,
+  hasCodexInternalThreadControlMcp,
+  mapCodexRateLimitsToUsage,
+  mergeCodexUsageInfo,
+  nativeCollabSpawnThreadIds,
+  nativeSubAgentThreadId,
+} from "./codex-input-mapper.js";
 import { traceCodexIngest } from "./codex-trace.js";
 import type {
   TurnInputPart,
   CodexNotification,
-  CodexRateLimitWindow,
-  CodexRateLimitsPayload,
   CodexTurnOptions,
   CompletedItem,
+  SandboxMode,
   ThreadGoal,
 } from "./codex-types.js";
 import { toCodexEffort } from "./codex-types.js";
@@ -73,12 +75,13 @@ import {
   mapDecisionToCodexResponse,
   synthesizeCodexPermissionRequest,
 } from "./codex-permission-mapper.js";
-import {
-  CodexPromptResolutionError,
-  expandCodexPromptCommand,
-  isCodexPromptCommand,
-  parseCodexSlashInvocation,
-} from "./codex-prompt.js";
+import { CodexPromptResolutionError, parseCodexSlashInvocation } from "./codex-prompt.js";
+
+export {
+  hasCodexInternalThreadControlMcp,
+  mapCodexRateLimitsToUsage,
+  mergeCodexUsageInfo,
+} from "./codex-input-mapper.js";
 
 /**
  * Liveness-probe interval for a silent turn, not a turn deadline. The timer
@@ -98,7 +101,6 @@ const USAGE_WARMUP_RETRY_MS = 60_000;
 const CODEX_MIN_VERSION = "0.37.0";
 const MAX_PENDING_CHILD_EVENTS = 128;
 const MAX_CHILD_EVENT_DELIVERY_KEYS = 512;
-const MAX_CHILD_THREADS_PER_NOTIFICATION = 128;
 
 type BrowserAutomationCredentialMetadata = ProviderBrowserCredentialMetadata;
 type BrowserAutomationSessionLeaseStage = ProviderBrowserLeaseHandle;
@@ -183,126 +185,15 @@ type CodexCliPreflightResult =
   | { ok: false; reason: "unavailable"; error: string }
   | { ok: false; reason: "unsupported"; version: string };
 
-function codexRateLimitLabel(windowDurationMins: number | undefined, fallback: string): string {
-  if (windowDurationMins === 300) return "5-hour limit";
-  if (windowDurationMins === 10_080) return "Weekly limit";
-  return fallback;
-}
-
-/** Maps Codex app-server account rate limits into shared usage categories. */
-export function mapCodexRateLimitsToUsage(payload: unknown): ProviderUsageInfo {
-  const categories: QuotaCategory[] = [];
-  const rateLimits = readCodexRateLimits(payload);
-  const windows = [
-    { label: "Primary limit", limit: rateLimits?.primary ?? null },
-    { label: "Secondary limit", limit: rateLimits?.secondary ?? null },
-  ];
-
-  for (const { label, limit } of windows) {
-    const usedPercent = limit?.usedPercent;
-    if (typeof usedPercent !== "number" || !Number.isFinite(usedPercent)) {
-      continue;
-    }
-    const windowDurationMins = limit?.windowDurationMins;
-    const resetsAt = limit?.resetsAt;
-    const used = Math.max(0, Math.min(100, usedPercent));
-    const resetDate = codexResetDate(resetsAt);
-    categories.push({
-      label: codexRateLimitLabel(windowDurationMins, label),
-      used,
-      total: 100,
-      remainingPercent: Math.max(0, Math.min(1, (100 - used) / 100)),
-      resetDate,
-      isUnlimited: false,
-    });
-  }
-
-  return { providerId: "codex", quotaCategories: categories };
-}
-
-function codexUsageCategoryOrder(category: QuotaCategory): number {
-  const label = category.label.trim();
-  if (/^5[- ]hour/i.test(label)) return 0;
-  if (/^weekly/i.test(label)) return 1;
-  return 2;
-}
-
-/**
- * Merges Codex account usage snapshots, preserving existing buckets when the
- * app-server sends sparse rolling updates.
- */
-export function mergeCodexUsageInfo(
-  current: ProviderUsageInfo,
-  next: ProviderUsageInfo,
-): ProviderUsageInfo {
-  if (next.quotaCategories.length === 0) return current;
-
-  const byLabel = new Map<string, QuotaCategory>();
-  for (const category of current.quotaCategories) {
-    byLabel.set(category.label, category);
-  }
-  for (const category of next.quotaCategories) {
-    byLabel.set(category.label, category);
-  }
-
-  return {
-    providerId: "codex",
-    quotaCategories: [...byLabel.values()].sort((a, b) => (
-      codexUsageCategoryOrder(a) - codexUsageCategoryOrder(b)
-      || a.label.localeCompare(b.label)
-    )),
-  };
-}
-
 /** Returns true when two provider usage snapshots are equivalent. */
 export function isSameProviderUsageInfo(a: ProviderUsageInfo, b: ProviderUsageInfo): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
-}
-
-function readCodexRateLimits(payload: unknown): CodexRateLimitsPayload["rateLimits"] {
-  if (!isRecord(payload)) return undefined;
-  const rateLimits = payload.rateLimits;
-  if (!isRecord(rateLimits)) return undefined;
-  return {
-    primary: readCodexRateLimitWindow(rateLimits.primary),
-    secondary: readCodexRateLimitWindow(rateLimits.secondary),
-  };
-}
-
-function readCodexRateLimitWindow(value: unknown): CodexRateLimitWindow | null {
-  if (!isRecord(value)) return null;
-  const usedPercent = typeof value.usedPercent === "number" ? value.usedPercent : undefined;
-  const windowDurationMins =
-    typeof value.windowDurationMins === "number" && Number.isFinite(value.windowDurationMins)
-      ? value.windowDurationMins
-      : undefined;
-  const resetsAt =
-    typeof value.resetsAt === "number" && Number.isFinite(value.resetsAt)
-      ? value.resetsAt
-      : undefined;
-  return { usedPercent, windowDurationMins, resetsAt };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Reports whether Codex effective configuration registered the internal MCP server. */
-export function hasCodexInternalThreadControlMcp(effectiveConfig: unknown): boolean {
-  if (!isRecord(effectiveConfig) || !isRecord(effectiveConfig.config)) return false;
-  const mcpServers = effectiveConfig.config.mcp_servers;
-  return (
-    mcpServers !== null &&
-    typeof mcpServers === "object" &&
-    Object.prototype.hasOwnProperty.call(mcpServers, "mcode_internal_thread_control")
-  );
-}
-
-function codexResetDate(resetsAt: number | undefined): string | undefined {
-  if (typeof resetsAt !== "number" || !Number.isFinite(resetsAt)) return undefined;
-  const resetDate = new Date(resetsAt * 1000);
-  return Number.isFinite(resetDate.getTime()) ? resetDate.toISOString() : undefined;
-}
 
 /** Internal: a newer `sendMessage` aborted this turn wait (not user-facing). */
 class CodexTurnSupersededError extends Error {
@@ -352,20 +243,8 @@ function observeCodexInternalMcpStartup(server: CodexAppServer): {
     resolvePromise(outcome);
   };
   const onNotification = (notification: unknown): void => {
-    const value = notification as { method?: unknown; params?: Record<string, unknown> };
-    if (value.method !== "mcpServer/startupStatus/updated") return;
-    if (value.params?.name !== "mcode_internal_thread_control") return;
-    const status = typeof value.params.status === "string" ? value.params.status : "";
-    if (status === "ready") finish({ status: "ready" });
-    else if (status === "failed" || status === "error") {
-      // Codex keeps the thread usable when one MCP is unavailable.
-      const error = typeof value.params.error === "string"
-        ? value.params.error
-        : typeof value.params.failureReason === "string"
-          ? value.params.failureReason
-          : undefined;
-      finish({ status: "failed", source: "native", ...(error ? { error } : {}) });
-    } else if (status === "cancelled") finish({ status: "cancelled" });
+    const outcome = codexInternalMcpStartupOutcome(notification);
+    if (outcome) finish(outcome);
   };
   server.on("notification", onNotification);
   timer = setTimeout(
@@ -373,6 +252,22 @@ function observeCodexInternalMcpStartup(server: CodexAppServer): {
     CODEX_MCP_STARTUP_TIMEOUT_MS,
   );
   return { promise, cancel: () => finish({ status: "cancelled" }) };
+}
+
+function codexInternalMcpStartupOutcome(notification: unknown): CodexInternalMcpStartupOutcome | undefined {
+  const value = notification as { method?: unknown; params?: Record<string, unknown> };
+  if (value.method !== "mcpServer/startupStatus/updated") return undefined;
+  if (value.params?.name !== "mcode_internal_thread_control") return undefined;
+  const status = typeof value.params.status === "string" ? value.params.status : "";
+  if (status === "ready") return { status: "ready" };
+  if (status === "cancelled") return { status: "cancelled" };
+  if (status !== "failed" && status !== "error") return undefined;
+  return failedCodexInternalMcpStartup(value.params);
+}
+
+function failedCodexInternalMcpStartup(params: Record<string, unknown>): CodexInternalMcpStartupOutcome {
+  const error = typeof params.error === "string" ? params.error : typeof params.failureReason === "string" ? params.failureReason : undefined;
+  return error ? { status: "failed", source: "native", error } : { status: "failed", source: "native" };
 }
 
 /**
@@ -453,148 +348,56 @@ interface PendingPermissionEntry {
   resolve: (response: unknown) => void;
 }
 
-/**
- * Builds the Codex turn input from a message string and optional attachments.
- * Images become `localImage` parts; non-image files become sanitised text notes
- * that omit internal filesystem paths to prevent prompt injection.
- */
-async function buildCodexInput(
-  message: string,
-  attachments?: AttachmentMeta[],
-  skills: readonly SkillInfo[] = [],
-  mentions: readonly MessageMention[] = [],
-): Promise<TurnInputPart[]> {
-  const inputs: TurnInputPart[] = [];
-
-  for (const att of attachments ?? []) {
-    if (isVirtualBrowserContextAttachment(att.mimeType)) continue;
-    if (att.mimeType.startsWith("image/")) {
-      inputs.push({ type: "localImage", path: att.sourcePath });
-    } else {
-      // Strip control characters (including newlines) from user-supplied strings
-      // to prevent prompt injection. Do not expose internal filesystem paths.
-      const safeName = att.name.replace(/[\x00-\x1f\x7f]/g, "");
-      const safeMime = att.mimeType.replace(/[\x00-\x1f\x7f]/g, "");
-      inputs.push({ type: "text", text: `[Attached file: ${safeName} (${safeMime})]` });
-    }
-  }
-
-  for (const mention of mentions) {
-    if (mention.kind !== "file" && mention.kind !== "plugin") continue;
-    inputs.push({
-      type: "mention",
-      name: mention.label,
-      path: mention.path,
-    });
-  }
-
-  const wireMessage = rewriteAgentMentionsAsSubagentUris(message, mentions);
-  const invocation = await resolveCodexSlashInvocation(wireMessage, skills, mentions);
-  if (invocation.skillItem) inputs.push(invocation.skillItem);
-  inputs.push({ type: "text", text: invocation.text });
-  return inputs;
+interface PreparedCodexTurn {
+  request: TurnRequest<"codex">;
+  cliPath: string;
+  threadId: string;
+  sandbox: SandboxMode;
+  browserPermissionCapability: "observe" | "interact" | "privileged";
+  input: TurnInputPart[];
+  turnOptions: CodexTurnOptions;
+  threadControlEligible: boolean;
 }
 
-function rewriteAgentMentionsAsSubagentUris(
-  message: string,
-  mentions: readonly MessageMention[],
-): string {
-  let text = message;
-  const agentMentions = mentions
-    .filter((mention) => mention.kind === "agent")
-    .sort((a, b) => b.range.start - a.range.start);
+type CodexInternalMcp = { configOverrides: string[]; env: Record<string, string> };
 
-  for (const mention of agentMentions) {
-    const displayText = `@${mention.label}`;
-    if (
-      mention.range.start < 0 ||
-      mention.range.end > text.length ||
-      text.slice(mention.range.start, mention.range.end) !== displayText
-    ) {
-      continue;
-    }
-    text =
-      text.slice(0, mention.range.start) +
-      `subagent://${mention.name}` +
-      text.slice(mention.range.end);
-  }
-
-  return text;
+interface CodexInternalMcpSetup {
+  internalMcp: CodexInternalMcp | undefined;
+  setupError: string | undefined;
+  close: () => Promise<void>;
 }
 
-/** Translates Mcode slash invocations into Codex-native skill or prompt input. */
-async function resolveCodexSlashInvocation(
-  message: string,
-  skills: readonly SkillInfo[],
-  mentions: readonly MessageMention[],
-): Promise<{ text: string; skillItem?: TurnInputPart }> {
-  const slash = parseCodexSlashInvocation(message);
-  if (!slash) return { text: message };
-
-  const leadingSpace = message.length - message.trimStart().length;
-  const commandEnd = leadingSpace + slash.requestedName.length + 1;
-  const selectedMention = mentions.find((mention): mention is Extract<
-    MessageMention,
-    { kind: "command" }
-  > => (
-    mention.kind === "command"
-    && mention.label === slash.requestedName
-    && mention.range.start === leadingSpace
-    && mention.range.end === commandEnd
-    && mention.capabilityIdentity?.providerId === "codex"
-  ));
-  const selectedIdentity = selectedMention?.capabilityIdentity;
-  const candidates = skills.filter((item) => (
-    item.name === slash.requestedName || item.nativeName === slash.requestedName
-  ));
-  const selected = selectedIdentity
-    ? candidates.find((item) => matchesCodexCapabilityIdentity(item, selectedIdentity))
-    : undefined;
-  const promptCommand = selectedIdentity?.kind === "customPrompt"
-    ? selected && isCodexPromptCommand(selected, slash.requestedName) ? selected : undefined
-    : selectedIdentity
-      ? undefined
-      : candidates.find((item) => isCodexPromptCommand(item, slash.requestedName));
-
-  if (promptCommand) {
-    return { text: await expandCodexPromptCommand(promptCommand, slash.args) };
-  }
-
-  const skill = selectedIdentity?.kind === "skill"
-    ? selected?.kind === "skill" ? selected : undefined
-    : selectedIdentity
-      ? undefined
-      : candidates.find((item) => item.kind === "skill");
-  if (skill) {
-    const nativeName = skill.nativeName ?? skill.name.split(":").pop() ?? skill.name;
-    const args = slash.args.trimStart();
-    const text = `$${nativeName}${args ? ` ${args}` : ""}`;
-    return {
-      text,
-      ...(skill.path
-        ? { skillItem: { type: "skill" as const, name: nativeName, path: skill.path } }
-        : {}),
-    };
-  }
-
-  return { text: message };
+interface CodexSpawnContext {
+  args: SpawnArgs;
+  cliPath: string;
+  sessionId: string;
+  threadId: string;
+  cwd: string;
+  resumeFrom: string | undefined;
+  sandbox: SandboxMode;
+  approvalPolicy: "never" | "on-request";
+  pendingSpawn: { input: string | TurnInputPart[]; turnOptions: CodexTurnOptions; turnExecutionId: string; threadControlEligible: boolean } | undefined;
+  stagedExecutionId: string | undefined;
+  threadControlEligible: boolean;
+  browserAccess: { stage: BrowserAutomationSessionLeaseStage; workspaceId: string; permissionCapability: "observe" | "interact" | "privileged" } | undefined;
+  internalMcp: CodexInternalMcp | undefined;
+  internalMcpSetupError: string | undefined;
+  closeInternalMcpAuthority: () => Promise<void>;
+  browserGrant: ProviderBrowserLeaseGrant | null;
+  spawnEnv: Record<string, string>;
 }
 
-function matchesCodexCapabilityIdentity(
-  item: SkillInfo,
-  identity: ProviderCapabilityIdentity,
-): boolean {
-  if (identity.kind === "skill") {
-    return item.kind === "skill"
-      && (item.path ?? item.nativeName ?? item.name) === identity.nativeId;
-  }
-  if (identity.kind === "customPrompt") {
-    return isCodexPromptCommand(item, item.name)
-      && (item.nativeName ?? item.name) === identity.nativeId;
-  }
-  return item.kind === "command"
-    && !isCodexPromptCommand(item, item.name)
-    && (item.nativeName ?? item.name) === identity.nativeId;
+interface CodexTurnRun {
+  entry: CodexSessionState;
+  seq: number;
+  hadInflightTurn: boolean;
+}
+
+interface CodexTurnCompletionState {
+  serverDied: boolean;
+  endedOutcome: CodexEndedOutcome | undefined;
+  deferredEnded: AgentEvent | undefined;
+  earlyCompletionTurnId: string | undefined;
 }
 
 /** Return the generated image path from an app-server imageGeneration item. */
@@ -745,39 +548,6 @@ function rememberChildEventKey(state: CodexSessionState, eventKey: string): void
     if (!oldest) return;
     state.deliveredChildEventKeys.delete(oldest);
   }
-}
-
-/** Returns the child thread id when a native sub-agent activity starts. */
-function nativeSubAgentThreadId(notification: { method?: string; params?: Record<string, unknown> }): string | undefined {
-  if (notification.method !== "item/started" && notification.method !== "item/completed") return undefined;
-  const item = notification.params?.item;
-  if (!isRecord(item) || item.type !== "subAgentActivity" || item.kind !== "started") return undefined;
-  const childThreadId = item.agentThreadId;
-  return typeof childThreadId === "string" && childThreadId.length > 0 ? childThreadId : undefined;
-}
-
-/** Returns child thread ids exposed directly by a native collab spawn notification. */
-function nativeCollabSpawnThreadIds(notification: { method?: string; params?: Record<string, unknown> }): string[] {
-  if (notification.method !== "item/started" && notification.method !== "item/completed") return [];
-  const item = notification.params?.item;
-  if (!isRecord(item)) return [];
-  const collabKind = item.tool ?? item.kind;
-  if (item.type !== "collabAgentToolCall" || (collabKind !== "spawnAgent" && collabKind !== "spawn_agent")) {
-    return [];
-  }
-
-  const childThreadIds = new Set<string>();
-  if (Array.isArray(item.receiverThreadIds)) {
-    for (const childThreadId of item.receiverThreadIds.slice(0, MAX_CHILD_THREADS_PER_NOTIFICATION)) {
-      if (typeof childThreadId === "string" && childThreadId.length > 0) childThreadIds.add(childThreadId);
-    }
-  }
-  if (isRecord(item.agentsStates)) {
-    for (const childThreadId of Object.keys(item.agentsStates).slice(0, MAX_CHILD_THREADS_PER_NOTIFICATION)) {
-      if (childThreadId.length > 0) childThreadIds.add(childThreadId);
-    }
-  }
-  return [...childThreadIds].slice(0, MAX_CHILD_THREADS_PER_NOTIFICATION);
 }
 
 function completedAssistantText(item: CompletedItem | undefined): string {
@@ -1224,207 +994,172 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
    * The method returns immediately; events stream via the `event` EventEmitter channel.
    */
   async sendTurn(req: TurnRequest<"codex">): Promise<void> {
+    const turn = await this.prepareCodexTurn(req);
+    if (!turn) return;
+    const existing = await this.reconcileCodexSession(turn);
+    const reusable = this.isReusableCodexSession(existing, turn.sandbox);
+    if (!this.canStartCodexTurn(turn, reusable)) return;
+    this.stageCodexTurn(turn);
+    const state = await this.acquireCodexTurn(turn);
+    if (!state) return;
+    this.finishAcquiredCodexTurn(turn, state, existing, reusable);
+  }
+
+  private async prepareCodexTurn(request: TurnRequest<"codex">): Promise<PreparedCodexTurn | undefined> {
     const settings = await this.codexPorts.settings.get();
-    const cliPath = settings.cliPath;
+    if (request.resumeFrom !== undefined) this.sdkSessionIds.set(request.sessionId, request.resumeFrom);
+    const threadId = this.threadIdForSession(request.sessionId);
+    const input = await this.resolveCodexTurnInput(request, threadId);
+    if (!input) return undefined;
+    return {
+      request,
+      threadId,
+      input,
+      cliPath: settings.cliPath,
+      sandbox: request.permissionMode === "full" ? "danger-full-access" : "workspace-write",
+      browserPermissionCapability: providerBrowserPermissionCapability(request.permissionMode, request.interactionMode),
+      turnOptions: this.codexTurnOptions(request, settings.fastMode),
+      threadControlEligible: request.threadControlEligible === true,
+    };
+  }
 
-    // `resumeFrom` defined ⇒ resume that Codex thread; undefined ⇒ fresh.
-    if (req.resumeFrom !== undefined) {
-      this.sdkSessionIds.set(req.sessionId, req.resumeFrom);
+  private threadIdForSession(sessionId: string): string {
+    return sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
+  }
+
+  private async resolveCodexTurnInput(request: TurnRequest<"codex">, threadId: string): Promise<TurnInputPart[] | undefined> {
+    const skillCatalog = await this.codexSkillCatalog(request.message, request.cwd);
+    try {
+      return await buildCodexInput(request.message, request.attachments, skillCatalog, request.mentions ?? []);
+    } catch (error) {
+      if (!(error instanceof CodexPromptResolutionError)) throw error;
+      logger.debug("Codex prompt expansion failed", { promptName: error.promptName, cause: error.cause instanceof Error ? error.cause.message : String(error.cause) });
+      this.emitTurnFailure(threadId, error.message, undefined, true, request.turnExecutionId);
+      return undefined;
     }
-    const {
-      sessionId, message, cwd, model, permissionMode,
-      reasoningLevel, attachments, mentions,
-    } = req;
-    const threadControlEligible = req.threadControlEligible === true;
-    const codexFastMode = req.providerOptions.fastMode;
+  }
 
+  private async codexSkillCatalog(message: string, cwd: string) {
     const nativeSkills = this.codexPorts.catalog.currentSkills(cwd);
-    const slashInvocation = parseCodexSlashInvocation(message);
-    const customPrompts = slashInvocation?.requestedName.startsWith("prompts:")
+    const invocation = parseCodexSlashInvocation(message);
+    const prompts = invocation?.requestedName.startsWith("prompts:")
       ? (await this.codexPorts.catalog.refreshCustomPrompts()).prompts
       : this.codexPorts.catalog.currentPrompts();
-    const skillCatalog = [...nativeSkills, ...customPrompts];
-    const threadId = sessionId.startsWith("mcode-") ? sessionId.slice(6) : sessionId;
-    let input: TurnInputPart[];
-    try {
-      input = await buildCodexInput(message, attachments, skillCatalog, mentions);
-    } catch (err) {
-      if (!(err instanceof CodexPromptResolutionError)) throw err;
-      logger.debug("Codex prompt expansion failed", {
-        promptName: err.promptName,
-        cause: err.cause instanceof Error ? err.cause.message : String(err.cause),
-      });
-      this.emitTurnFailure(threadId, err.message, undefined, true, req.turnExecutionId);
-      return;
+    return [...nativeSkills, ...prompts];
+  }
+
+  private codexTurnOptions(request: TurnRequest<"codex">, defaultFastMode: boolean): CodexTurnOptions {
+    const fastMode = request.providerOptions.fastMode ?? defaultFastMode;
+    const orchestrationMode = request.orchestrationMode === "proactive" && supportsCodexUltraOrchestration(request.model)
+      ? "proactive"
+      : "standard";
+    return { model: request.model || undefined, effort: toCodexEffort(request.reasoningLevel, orchestrationMode), ...(fastMode ? { serviceTier: "priority" } : {}) };
+  }
+
+  private async reconcileCodexSession(turn: PreparedCodexTurn): Promise<CodexSessionState | undefined> {
+    const existing = this.runtime.get(turn.request.sessionId);
+    if (this.requiresBrowserSessionRestart(existing, turn)) {
+      await this.runtime.stop(turn.request.sessionId);
+      return undefined;
     }
+    if (existing && existing.server.isAlive && existing.sandboxMode !== turn.sandbox) this.restartCodexSessionForSandbox(existing, turn);
+    if (this.requiresThreadControlSessionRestart(existing, turn)) return this.restartCodexSessionForThreadControl(existing, turn);
+    return existing;
+  }
 
-    const sandbox = permissionMode === "full" ? "danger-full-access" : "workspace-write";
-    const browserPermissionCapability = providerBrowserPermissionCapability(
-      permissionMode,
-      req.interactionMode,
-    );
+  private requiresBrowserSessionRestart(existing: CodexSessionState | undefined, turn: PreparedCodexTurn): boolean {
+    return Boolean(existing && this.host.browser.isConfigured() && (existing.workspaceId !== turn.request.workspaceId || existing.browserPermissionCapability !== turn.browserPermissionCapability || (existing.browserCredential && existing.browserCredential.expiresAt <= Date.now())));
+  }
 
-    const useFastTier =
-      codexFastMode !== undefined
-        ? codexFastMode
-        : settings.fastMode;
-    // The app-server's model/list advertises the fast tier with id "priority"
-    // (display name "Fast"). Sending "fast" is silently ignored upstream, so
-    // fast mode had no effect. Only some models (e.g. gpt-5.4 / gpt-5.5)
-    // expose the tier; the server falls back to standard for the rest.
-    const fastServiceTier = useFastTier ? "priority" : undefined;
-
-    const turnOptions = {
-      model: model || undefined,
-      effort: toCodexEffort(
-        reasoningLevel,
-        req.orchestrationMode === "proactive" && supportsCodexUltraOrchestration(model)
-          ? "proactive"
-          : "standard",
-      ),
-      ...(fastServiceTier && { serviceTier: fastServiceTier }),
-    };
-
-    // Permission-mode change requires a fresh thread, not just a respawn: the
-    // resumed thread would inherit the old sandbox. Clearing the stored SDK
-    // thread ID and draining the stale session is Codex-specific bookkeeping
-    // the runtime cannot do, so handle it here before acquiring.
-    let existing = this.runtime.get(sessionId);
-    if (
-      existing &&
-      this.host.browser.isConfigured() &&
-      (existing.workspaceId !== req.workspaceId ||
-        existing.browserPermissionCapability !== browserPermissionCapability ||
-        (existing.browserCredential && existing.browserCredential.expiresAt <= Date.now()))
-    ) {
-      await this.runtime.stop(sessionId);
-      existing = undefined;
-    }
-    if (existing && existing.server.isAlive && existing.sandboxMode !== sandbox) {
-      logger.info("Codex session restarted due to permission mode change", {
-        sessionId,
-        from: existing.sandboxMode,
-        to: sandbox,
-      });
-      // Drain synchronously here (not only via close()) so approval cards
-      // clear deterministically even if the version check below aborts before
-      // `acquire` discards the stale session. The app-server's graceful exit
-      // suppresses the "fatal" emit, so the fatal-drain listener will not fire.
-      this.drainPending((e) => e.sessionId === sessionId);
-      // Clear the stored SDK thread id so the respawn starts a fresh thread
-      // rather than resuming the old one (which would inherit the old sandbox).
-      this.sdkSessionIds.delete(sessionId);
-      // Eagerly tear the stale session down so a later abort (e.g. a failed
-      // version check below) cannot leave a wrong-sandbox process alive.
-      // `acquire` then spawns fresh. Fire-and-forget: permissions are already
-      // drained above, so the async close has nothing left to resolve.
-      void this.runtime.stop(sessionId).catch((err: unknown) => {
-        logger.warn("Codex session kill on permission change failed", { error: String(err) });
-      });
-    }
-
-    if (existing && existing.server.isAlive && existing.threadControlEligible !== threadControlEligible) {
-      logger.info("Codex session restarted due to Mcode thread-control eligibility change", {
-        sessionId,
-        from: existing.threadControlEligible,
-        to: threadControlEligible,
-      });
-      this.drainPending((e) => e.sessionId === sessionId);
-      await this.runtime.stop(sessionId);
-      existing = undefined;
-    }
-
-    // Version check only when starting a new session (cached in codex-version
-    // per CLI path). Reusing a live, mode-matched session skips this. Emit
-    // user-facing errors and abort before touching the runtime so a bad CLI
-    // never spawns a child.
-    const reusable = existing && existing.server.isAlive && existing.sandboxMode === sandbox;
-    if (!reusable) {
-      const preflight = this.checkCodexCliPreflight(cliPath);
-      if (!preflight.ok) {
-        const errorMessage = preflight.reason === "unavailable"
-          ? preflight.error
-          : `Codex CLI version ${preflight.version} is not supported. Minimum required: ${CODEX_MIN_VERSION}. Update with: npm install -g @openai/codex`;
-        this.emitTurnFailure(threadId, errorMessage, undefined, true, req.turnExecutionId);
-        return;
-      }
-    }
-
-    // Stage the per-turn payload so `spawn` can run the first turn of a fresh
-    // session; reuse reads it directly below. Keyed by sessionId.
-    this.pendingSpawnTurns.set(sessionId, {
-      input,
-      turnOptions,
-      turnExecutionId: req.turnExecutionId,
-      threadControlEligible,
+  private restartCodexSessionForSandbox(existing: CodexSessionState, turn: PreparedCodexTurn): void {
+    const sessionId = turn.request.sessionId;
+    logger.info("Codex session restarted due to permission mode change", { sessionId, from: existing.sandboxMode, to: turn.sandbox });
+    this.drainPending((entry) => entry.sessionId === sessionId);
+    this.sdkSessionIds.delete(sessionId);
+    void this.runtime.stop(sessionId).catch((error: unknown) => {
+      logger.warn("Codex session kill on permission change failed", { error: String(error) });
     });
-    const browserStage = this.host.browser.isConfigured()
-      ? this.host.browser.stage({
-      providerId: this.id,
-      providerSessionId: req.resumeFrom ?? sessionId,
-      mcodeSessionId: sessionId,
-      threadId: req.threadId,
-      workspaceId: req.workspaceId,
-      permissionCapability: browserPermissionCapability,
-      })
-      : undefined;
-    if (browserStage) {
-      const previousBrowserAccess = this.pendingBrowserAccess.get(sessionId);
-      if (previousBrowserAccess) {
-        this.host.browser.release(previousBrowserAccess.stage.leaseId);
-      }
-      this.pendingBrowserAccess.set(sessionId, {
-        stage: browserStage,
-        workspaceId: req.workspaceId,
-        permissionCapability: browserPermissionCapability,
-      });
-    }
+  }
 
-    let state: CodexSessionState;
+  private requiresThreadControlSessionRestart(existing: CodexSessionState | undefined, turn: PreparedCodexTurn): existing is CodexSessionState {
+    return Boolean(existing && existing.server.isAlive && existing.threadControlEligible !== turn.threadControlEligible);
+  }
+
+  private async restartCodexSessionForThreadControl(existing: CodexSessionState, turn: PreparedCodexTurn): Promise<undefined> {
+    const sessionId = turn.request.sessionId;
+    logger.info("Codex session restarted due to Mcode thread-control eligibility change", { sessionId, from: existing.threadControlEligible, to: turn.threadControlEligible });
+    this.drainPending((entry) => entry.sessionId === sessionId);
+    await this.runtime.stop(sessionId);
+    return undefined;
+  }
+
+  private isReusableCodexSession(existing: CodexSessionState | undefined, sandbox: string): existing is CodexSessionState {
+    return Boolean(existing && existing.server.isAlive && existing.sandboxMode === sandbox);
+  }
+
+  private canStartCodexTurn(turn: PreparedCodexTurn, reusable: boolean): boolean {
+    if (reusable) return true;
+    const preflight = this.checkCodexCliPreflight(turn.cliPath);
+    if (preflight.ok) return true;
+    const error = preflight.reason === "unavailable" ? preflight.error : `Codex CLI version ${preflight.version} is not supported. Minimum required: ${CODEX_MIN_VERSION}. Update with: npm install -g @openai/codex`;
+    this.emitTurnFailure(turn.threadId, error, undefined, true, turn.request.turnExecutionId);
+    return false;
+  }
+
+  private stageCodexTurn(turn: PreparedCodexTurn): void {
+    const { request } = turn;
+    const sessionId = request.sessionId;
+    this.pendingSpawnTurns.set(sessionId, { input: turn.input, turnOptions: turn.turnOptions, turnExecutionId: request.turnExecutionId, threadControlEligible: turn.threadControlEligible });
+    if (!this.host.browser.isConfigured()) return;
+    const stage = this.host.browser.stage({ providerId: this.id, providerSessionId: request.resumeFrom ?? sessionId, mcodeSessionId: sessionId, threadId: request.threadId, workspaceId: request.workspaceId, permissionCapability: turn.browserPermissionCapability });
+    const previous = this.pendingBrowserAccess.get(sessionId);
+    if (previous) this.host.browser.release(previous.stage.leaseId);
+    this.pendingBrowserAccess.set(sessionId, { stage, workspaceId: request.workspaceId, permissionCapability: turn.browserPermissionCapability });
+  }
+
+  private async acquireCodexTurn(turn: PreparedCodexTurn): Promise<CodexSessionState | undefined> {
+    const { request, threadId } = turn;
     try {
-      state = await this.runtime.acquire({
-        sessionId,
-        threadId,
-        cwd,
-        permissionMode,
-        resumeFrom:
-          req.resumeFrom !== undefined ? this.sdkSessionIds.get(sessionId) : undefined,
-      });
-    } catch (e: unknown) {
-      this.pendingSpawnTurns.delete(sessionId);
-      const stagedBrowser = this.pendingBrowserAccess.get(sessionId);
-      this.pendingBrowserAccess.delete(sessionId);
-      if (stagedBrowser) this.host.browser.release(stagedBrowser.stage.leaseId);
-      const errorMessage = e instanceof Error ? e.message : String(e);
-      logger.error("CodexAppServer start failed", { sessionId, error: errorMessage });
-      this.emitTurnFailure(threadId, errorMessage, undefined, true, req.turnExecutionId);
-      return;
+      return await this.runtime.acquire({ sessionId: request.sessionId, threadId, cwd: request.cwd, permissionMode: request.permissionMode, resumeFrom: request.resumeFrom !== undefined ? this.sdkSessionIds.get(request.sessionId) : undefined });
+    } catch (error) {
+      this.releaseStagedCodexTurn(request.sessionId);
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error("CodexAppServer start failed", { sessionId: request.sessionId, error: message });
+      this.emitTurnFailure(threadId, message, undefined, true, request.turnExecutionId);
+      return undefined;
     }
+  }
+
+  private releaseStagedCodexTurn(sessionId: string): void {
+    this.pendingSpawnTurns.delete(sessionId);
+    const stagedBrowser = this.pendingBrowserAccess.get(sessionId);
+    this.pendingBrowserAccess.delete(sessionId);
+    if (stagedBrowser) this.host.browser.release(stagedBrowser.stage.leaseId);
+  }
+
+  private finishAcquiredCodexTurn(turn: PreparedCodexTurn, state: CodexSessionState, existing: CodexSessionState | undefined, reusable: boolean): void {
+    const sessionId = turn.request.sessionId;
     this.runtime.recordUsage(sessionId);
     const stagedBrowser = this.pendingBrowserAccess.get(sessionId);
     this.pendingBrowserAccess.delete(sessionId);
     if (state === existing && stagedBrowser) this.host.browser.release(stagedBrowser.stage.leaseId);
+    if (this.consumePendingCodexStop(turn)) return;
+    if (reusable && this.pendingSpawnTurns.delete(sessionId)) this.runReusedCodexTurn(turn, state);
+  }
 
-    // A stop requested before the session finished spawning: tear it down now.
-    if (this.pendingStops.delete(sessionId)) {
-      logger.info("Pending stop consumed, tearing down new Codex session", { sessionId });
-      this.pendingSpawnTurns.delete(sessionId);
-      void this.runtime.stop(sessionId);
-      this.emitRuntimeEvent(providerRuntimeEvent({
-        type: AgentEventType.Ended,
-        threadId,
-        turnExecutionId: req.turnExecutionId,
-      } satisfies AgentEvent));
-      return;
-    }
+  private consumePendingCodexStop(turn: PreparedCodexTurn): boolean {
+    const sessionId = turn.request.sessionId;
+    if (!this.pendingStops.delete(sessionId)) return false;
+    logger.info("Pending stop consumed, tearing down new Codex session", { sessionId });
+    this.pendingSpawnTurns.delete(sessionId);
+    void this.runtime.stop(sessionId);
+    this.emitRuntimeEvent(providerRuntimeEvent({ type: AgentEventType.Ended, threadId: turn.threadId, turnExecutionId: turn.request.turnExecutionId } satisfies AgentEvent));
+    return true;
+  }
 
-    // Reuse path: `spawn` did not run because the session already existed, so
-    // the staged turn is still pending. Reset the mapper and run it here.
-    if (reusable && this.pendingSpawnTurns.delete(sessionId)) {
-      state.lastUsedAt = Date.now();
-      void this.runTurnAfterGoal(sessionId, threadId, state.server, input, turnOptions, req.turnExecutionId);
-      return;
-    }
+  private runReusedCodexTurn(turn: PreparedCodexTurn, state: CodexSessionState): void {
+    state.lastUsedAt = Date.now();
+    void this.runTurnAfterGoal(turn.request.sessionId, turn.threadId, state.server, turn.input, turn.turnOptions, turn.request.turnExecutionId);
   }
 
   /**
@@ -1436,423 +1171,552 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
    * for Codex and teardown is delegated to `server.kill()` in {@link close}.
    */
   async spawn(args: SpawnArgs): Promise<SpawnResult<CodexSessionState>> {
+    const context = await this.prepareCodexSpawn(args);
+    const { internalMcp, threadId } = context;
+    const browserTokenEnvName = "MCODE_BROWSER_MCP_TOKEN";
+    const mcodeInstructions = this.codexSpawnInstructions(context);
+
+    const server = this.createCodexAppServer(context, mcodeInstructions, browserTokenEnvName);
+    const mapper = this.createCodexEventMapper(threadId);
+
+    this.attachCodexServerEvents(context, server, mapper);
+    const internalMcpStartup = internalMcp ? observeCodexInternalMcpStartup(server) : undefined;
+    const internalMcpStartupOutcome = await this.startCodexAppServer(context, server, internalMcpStartup, browserTokenEnvName);
+    this.reportCodexInternalMcpSetupFailure(context, server, internalMcpStartupOutcome);
+    await this.verifyCodexInternalMcpSetup(context, server, internalMcpStartup, internalMcpStartupOutcome);
+    this.refreshUsageFromServer(server, threadId);
+
+    this.attachCodexThreadIdentity(context, server, mapper);
+    const state = this.createCodexSessionState(context, server, mapper);
+    this.scheduleStagedCodexTurn(context, server);
+
+    return { state, pids: [] };
+  }
+
+  private async prepareCodexSpawn(args: SpawnArgs): Promise<CodexSpawnContext> {
     const settings = await this.codexPorts.settings.get();
-    const cliPath = settings.cliPath;
-    const { sessionId, threadId, cwd, permissionMode, resumeFrom } = args;
-    const pendingSpawn = this.pendingSpawnTurns.get(sessionId);
-    const stagedExecutionId = pendingSpawn?.turnExecutionId;
+    const pendingSpawn = this.pendingSpawnTurns.get(args.sessionId);
     const threadControlEligible = pendingSpawn?.threadControlEligible === true;
+    const internalMcpSetup = await this.bootstrapCodexInternalMcp(args, threadControlEligible, pendingSpawn?.turnExecutionId);
+    const browserAccess = this.pendingBrowserAccess.get(args.sessionId);
+    const browserGrant = browserAccess ? this.host.browser.issue(browserAccess.stage) : null;
+    const spawnEnv = { ...args.env };
+    if (browserGrant) spawnEnv.MCODE_BROWSER_MCP_TOKEN = browserGrant.token;
+    return {
+      args,
+      cliPath: settings.cliPath,
+      sessionId: args.sessionId,
+      threadId: args.threadId,
+      cwd: args.cwd,
+      resumeFrom: args.resumeFrom,
+      sandbox: args.permissionMode === "full" ? "danger-full-access" : "workspace-write",
+      approvalPolicy: args.permissionMode === "full" ? "never" : "on-request",
+      pendingSpawn,
+      stagedExecutionId: pendingSpawn?.turnExecutionId,
+      threadControlEligible,
+      browserAccess,
+      internalMcp: internalMcpSetup.internalMcp,
+      internalMcpSetupError: internalMcpSetup.setupError,
+      closeInternalMcpAuthority: internalMcpSetup.close,
+      browserGrant,
+      spawnEnv,
+    };
+  }
 
-    const sandbox = permissionMode === "full" ? "danger-full-access" : "workspace-write";
-    const approvalPolicy = permissionMode === "full" ? "never" : "on-request";
+  private async bootstrapCodexInternalMcp(
+    args: SpawnArgs,
+    threadControlEligible: boolean,
+    turnExecutionId: string | undefined,
+  ): Promise<CodexInternalMcpSetup> {
+    const close = this.codexInternalMcpAuthorityCloser(args.sessionId);
+    if (!threadControlEligible) return { internalMcp: undefined, setupError: undefined, close };
+    try {
+      const internalMcp = await this.host.threadControl.bootstrap({ providerId: this.id, sessionId: args.sessionId, threadId: args.threadId, turnId: turnExecutionId ?? args.threadId, protocol: "codex" }) as CodexInternalMcp | undefined;
+      return { internalMcp, setupError: undefined, close };
+    } catch (error) {
+      await close();
+      return { internalMcp: undefined, setupError: error instanceof Error ? error.message : String(error), close };
+    }
+  }
 
-    const attemptResume = !!resumeFrom;
-
-    // Only register the handler in supervised mode. The CodexAppServer
-    // ignores approvalHandler when approvalPolicy === "never" (auto-approve
-    // still runs locally), so this guard is defensive and keeps the wiring
-    // obvious in logs.
-    const supervised = approvalPolicy === "on-request";
-    const browserAccess = this.pendingBrowserAccess.get(sessionId);
-    let internalMcp: { configOverrides: string[]; env: Record<string, string> } | undefined;
-    let internalMcpSetupError: string | undefined;
-    let internalMcpAuthorityClosed = false;
-    const closeInternalMcpAuthority = async (): Promise<void> => {
-      if (internalMcpAuthorityClosed) return;
-      internalMcpAuthorityClosed = true;
+  private codexInternalMcpAuthorityCloser(sessionId: string): () => Promise<void> {
+    let closed = false;
+    return async () => {
+      if (closed) return;
+      closed = true;
       try {
         await this.host.threadControl.close(sessionId);
       } catch (error) {
-        logger.warn("Codex internal MCP authority close failed", {
-          sessionId,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        logger.warn("Codex internal MCP authority close failed", { sessionId, error: error instanceof Error ? error.message : String(error) });
       }
     };
-    if (threadControlEligible) {
-      try {
-        internalMcp = await this.host.threadControl.bootstrap({
-          providerId: this.id,
-          sessionId,
-          threadId,
-          turnId: stagedExecutionId ?? threadId,
-          protocol: "codex",
-        }) as { configOverrides: string[]; env: Record<string, string> } | undefined;
-      } catch (error) {
-        internalMcpSetupError = error instanceof Error ? error.message : String(error);
-        await closeInternalMcpAuthority();
-      }
-    }
-    const browserGrant = browserAccess ? this.host.browser.issue(browserAccess.stage) : null;
-    const nestedDelegationModel = pendingSpawn?.turnOptions.model === "gpt-5.6-luna"
-      ? "gpt-5.6-sol"
-      : undefined;
-    const mcodeInstructions = renderMcodeInstructions(buildMcodeInstructionPlan({
-      sourceThreadId: threadId,
-      threadControlGranted: Boolean(internalMcp),
-      browserAutomationGranted: Boolean(browserGrant),
+  }
+
+  private codexSpawnInstructions(context: CodexSpawnContext): string {
+    const nestedDelegationModel = context.pendingSpawn?.turnOptions.model === "gpt-5.6-luna" ? "gpt-5.6-sol" : undefined;
+    return renderMcodeInstructions(buildMcodeInstructionPlan({
+      sourceThreadId: context.threadId,
+      threadControlGranted: Boolean(context.internalMcp),
+      browserAutomationGranted: Boolean(context.browserGrant),
       nestedDelegationModel,
     }));
-    const spawnEnv = { ...args.env };
-    const browserTokenEnvName = "MCODE_BROWSER_MCP_TOKEN";
-    if (browserGrant) spawnEnv[browserTokenEnvName] = browserGrant.token;
+  }
 
-    const server = new CodexAppServer({
-      cliPath,
-      workingDirectory: cwd,
-      // The model passed at thread/start is carried on the turn payload too;
-      // settings drive it indirectly via the staged turnOptions.
+  private createCodexAppServer(
+    context: CodexSpawnContext,
+    developerInstructions: string,
+    browserTokenEnvName: string,
+  ): CodexAppServer {
+    return new CodexAppServer({
+      cliPath: context.cliPath,
+      workingDirectory: context.cwd,
       model: undefined,
-      sandbox,
-      approvalPolicy,
-      resumeThreadId: attemptResume ? resumeFrom : undefined,
-      developerInstructions: mcodeInstructions,
-      approvalHandler: supervised
-        ? (req) => this.handleApprovalRequest(sessionId, threadId, req)
+      sandbox: context.sandbox,
+      approvalPolicy: context.approvalPolicy,
+      resumeThreadId: context.resumeFrom || undefined,
+      developerInstructions,
+      approvalHandler: context.approvalPolicy === "on-request"
+        ? (request) => this.handleApprovalRequest(context.sessionId, context.threadId, request)
         : undefined,
       processAttachment: this.host.processes,
-      getSpawnEnv: () => ({ ...spawnEnv, ...internalMcp?.env }),
-      configOverrides: [
-        ...(internalMcp?.configOverrides ?? []),
-        ...(browserGrant
-          ? [
-              `mcp_servers.mcode-browser.url=${JSON.stringify(browserGrant.mcpUrl)}`,
-              `mcp_servers.mcode-browser.bearer_token_env_var=${JSON.stringify(browserTokenEnvName)}`,
-            ]
-          : []),
-        ...(browserGrant ? ['plugins."browser@openai-bundled".enabled=false'] : []),
-      ],
+      getSpawnEnv: () => ({ ...context.spawnEnv, ...context.internalMcp?.env }),
+      configOverrides: this.codexAppServerConfigOverrides(context, browserTokenEnvName),
     });
+  }
 
-    const mapper = new CodexEventMapper(threadId, undefined, (event) => {
-      this.emit("file_mutation_start", event);
-    });
+  private codexAppServerConfigOverrides(context: CodexSpawnContext, browserTokenEnvName: string): string[] {
+    const browserOverrides = context.browserGrant
+      ? [
+          `mcp_servers.mcode-browser.url=${JSON.stringify(context.browserGrant.mcpUrl)}`,
+          `mcp_servers.mcode-browser.bearer_token_env_var=${JSON.stringify(browserTokenEnvName)}`,
+          'plugins."browser@openai-bundled".enabled=false',
+        ]
+      : [];
+    return [...(context.internalMcp?.configOverrides ?? []), ...browserOverrides];
+  }
+
+  private createCodexEventMapper(threadId: string): CodexEventMapper {
+    const mapper = new CodexEventMapper(threadId, undefined, (event) => this.emit("file_mutation_start", event));
     mapper.setOutputTruncationMode(this.outputTruncationMode);
+    return mapper;
+  }
 
-    server.on("notification", (notification) => {
-      const n = notification as { method?: string; params?: Record<string, unknown> };
-      if (n.method === "account/rateLimits/updated") {
-        this.applyUsageSnapshot(n.params, threadId);
-      }
-      if (n.method === "account/updated") {
-        this.clearUsageCache();
-        this.refreshUsageFromServer(server, threadId);
-      }
-      const entry = this.runtime.get(sessionId);
-      const mainNotification = isMainThreadNotification(server, n.params);
-      const nativeThreadId = nativeThreadIdFromParams(n.params);
-      const nativeTurnId = nativeTurnIdFromParams(n.params);
-      let childThreadToReplay: string | undefined;
-      if (entry && n.method === "turn/started") {
-        const executionId = entry.nextTurnExecutionId ?? entry.currentTurnExecutionId ?? entry.activeParentTurnExecutionId;
-        if (mainNotification) {
-          if (executionId) entry.activeParentTurnExecutionId = executionId;
-          if (nativeTurnId && executionId && entry.currentTurnExecutionId === executionId) {
-            if (entry.turnStartResponsePending) {
-              entry.pendingTurnStartNotification = { nativeTurnId, executionId };
-            } else if (entry.currentNativeTurnId === nativeTurnId) {
-              entry.pendingTurnId = nativeTurnId;
-              entry.turnBindingPhase = "bound";
-            } else if (entry.turnExecutionIdsByNativeTurn.get(nativeTurnId) === executionId) {
-              entry.currentNativeTurnId = nativeTurnId;
-              entry.pendingTurnId = nativeTurnId;
-              entry.turnBindingPhase = "bound";
-            } else if (entry.turnExecutionIdsByNativeTurn.has(nativeTurnId)) {
-              assignNativeExecution(
-                entry.turnExecutionIdsByNativeTurn,
-                nativeTurnId,
-                executionId,
-                entry.nativeExecutionConflictKeys,
-              );
-            }
-          }
-          entry.nextTurnExecutionId = undefined;
-          entry.childMetadataFetches.clear();
-        } else if (entry.activeParentTurnExecutionId) {
-          const childExecutionId = nativeThreadId
-            ? entry.childExecutionGenerations.get(nativeThreadId)?.executionId
-            : undefined;
-          if (nativeTurnId && childExecutionId) {
-            const assignment = assignNativeExecution(
-              entry.turnExecutionIdsByNativeTurn,
-              nativeTurnId,
-              childExecutionId,
-              entry.nativeExecutionConflictKeys,
-            );
-            if (assignment !== "conflict" && nativeThreadId) {
-              childThreadToReplay = nativeThreadId;
-            }
-          }
-          pruneExecutionMap(entry.nativeThreadExecutionIds);
-          pruneExecutionMap(entry.turnExecutionIdsByNativeTurn);
-        }
-      }
-      const generatedImageEvents = this.mapGeneratedImageEvents(threadId, notification as CodexNotification)
-        .map(providerRuntimeEvent);
-      const events = mapper.mapNotification(notification as CodexNotification);
-      traceCodexIngest(threadId, n.method, n.params, [...generatedImageEvents, ...events].map((event) => event.event));
-      if (
-        entry
-        && nativeThreadId
-        && !mainNotification
-        && mapper.hasReceiverThread(nativeThreadId)
-        && entry.activeParentTurnExecutionId
-      ) {
-        entry.nativeThreadExecutionIds.set(nativeThreadId, entry.activeParentTurnExecutionId);
-        if (nativeTurnId && n.method === "turn/started") {
-          entry.turnExecutionIdsByNativeTurn.set(nativeTurnId, entry.activeParentTurnExecutionId);
-        }
-      }
-      const eventExecutionId = entry
-        ? (nativeTurnId && entry.turnExecutionIdsByNativeTurn.get(nativeTurnId))
-          ?? (!nativeTurnId && !mainNotification
-            ? (nativeThreadId ? entry.nativeThreadExecutionIds.get(nativeThreadId) : undefined)
-            : undefined)
-          ?? (mainNotification && entry.currentTurnExecutionId && entry.turnBindingPhase !== "idle" && (
-            !nativeTurnId
-            || entry.turnStartResponsePending
-            || nativeTurnId === entry.currentNativeTurnId
-          )
-            ? entry.currentTurnExecutionId
-            : undefined)
-        : undefined;
-      const startupEventExecutionId = n.method === "mcpServer/startupStatus/updated"
-        ? stagedExecutionId
-        : undefined;
-      const mappedEvents = [...generatedImageEvents, ...events];
-      for (const event of mappedEvents) {
-        const eventKey = childEventIdentity(event);
-        if (eventKey && entry?.deliveredChildEventKeys.has(eventKey)) continue;
-        if (eventKey && entry?.pendingChildEvents.some((pendingEvent) => pendingEvent.eventKey === eventKey)) continue;
-        const childEventNeedsTurnBinding = Boolean(
-          entry
-          && !mainNotification
-          && nativeThreadId
-          && mapper.hasReceiverThread(nativeThreadId)
-          && !nativeTurnId
-          && event.extension?.child,
-        );
-        if (
-          !childEventNeedsTurnBinding
-          && (!entry || eventExecutionId || !isTurnScopedEvent(event.event) || mainNotification || !nativeThreadId)
-        ) {
-          if (eventKey && entry) rememberChildEventKey(entry, eventKey);
-          this.recordGoalEvent(sessionId, event.event);
-          const resolvedEventExecutionId = eventExecutionId ?? startupEventExecutionId;
-          this.emitRuntimeEvent(withTurnExecutionId(event, resolvedEventExecutionId));
-        } else {
-          if (!entry || !nativeThreadId) continue;
-          bufferPendingChildEvent(entry, event, nativeThreadId, nativeTurnId, eventKey);
-        }
-      }
-      if (entry && childThreadToReplay) {
-        this.replayPendingChildEvents(entry, sessionId, childThreadToReplay);
-      }
-      if (
-        nativeThreadId
-        && n.method === "turn/completed"
-        && mapper.hasReceiverThread(nativeThreadId)
-      ) {
-        this.fetchChildThreadMetadata(
-          sessionId,
-          threadId,
-          server,
-          mapper,
-          nativeThreadId,
-          eventExecutionId,
-          true,
-        );
-      }
-      const childThreadId = nativeSubAgentThreadId(n);
-      if (childThreadId) {
-        const currentExecutionId = entry?.currentTurnExecutionId;
-        const knownMainThreadNotification = Boolean(
-          entry
-          && server.threadId
-          && nativeThreadId === server.threadId,
-        );
-        const currentParentNotification = Boolean(
-          entry
-          && currentExecutionId
-          && eventExecutionId === currentExecutionId
-          && (
-            knownMainThreadNotification
-            || (nativeThreadId && entry.nativeThreadExecutionIds.get(nativeThreadId) === currentExecutionId)
-          ),
-        );
-        if (currentParentNotification && currentExecutionId) {
-          entry.nextChildGeneration += 1;
-          entry.childExecutionGenerations.set(childThreadId, {
-            executionId: currentExecutionId,
-            generation: entry.nextChildGeneration,
-          });
-          pruneChildGenerationMap(entry.childExecutionGenerations);
-          entry.nativeThreadExecutionIds.set(childThreadId, currentExecutionId);
-          pruneExecutionMap(entry.nativeThreadExecutionIds);
-          this.replayPendingChildEvents(entry, sessionId, childThreadId);
-        }
-        this.fetchChildThreadMetadata(sessionId, threadId, server, mapper, childThreadId, eventExecutionId, true);
-      }
-      for (const collabChildThreadId of nativeCollabSpawnThreadIds(n)) {
-        this.fetchChildThreadMetadata(sessionId, threadId, server, mapper, collabChildThreadId, eventExecutionId);
-      }
-    });
-
-    server.on("fatal", (error: string) => {
-      logger.error("CodexAppServer fatal", { sessionId, error, breadcrumb: server.lastTransportBreadcrumb });
-      const activeExecutionId = this.runtime.get(sessionId)?.activeParentTurnExecutionId ?? stagedExecutionId;
-      for (const event of mapper.drainPendingAssistantBoundary(false)) {
-        this.emitRuntimeEvent(providerRuntimeEvent(
-          activeExecutionId ? { ...event, turnExecutionId: activeExecutionId } : event,
-        ));
-      }
-      this.emitTurnFailure(threadId, error, undefined, true, activeExecutionId);
-      void this.runtime.stop(sessionId);
-    });
-
-    this.attachFatalDrain(sessionId, server);
-    const internalMcpStartup = internalMcp ? observeCodexInternalMcpStartup(server) : undefined;
-
+  private attachCodexServerEvents(context: CodexSpawnContext, server: CodexAppServer, mapper: CodexEventMapper): void {
+    server.on("notification", (notification) => this.handleCodexServerNotification(context, server, mapper, notification as CodexNotification));
+    server.on("fatal", (error: string) => this.handleCodexServerFatal(context, server, mapper, error));
+    this.attachFatalDrain(context.sessionId, server);
     server.on("exit", () => {
-      if (!server.isAlive) {
-        void this.runtime.stop(sessionId);
-      }
+      if (!server.isAlive) void this.runtime.stop(context.sessionId);
     });
+  }
 
-    let internalMcpStartupOutcome: CodexInternalMcpStartupOutcome | undefined;
+  private handleCodexServerNotification(
+    context: CodexSpawnContext,
+    server: CodexAppServer,
+    mapper: CodexEventMapper,
+    notification: CodexNotification,
+  ): void {
+    const rawNotification = notification as { method?: string; params?: Record<string, unknown> };
+    const entry = this.runtime.get(context.sessionId);
+    const mainNotification = isMainThreadNotification(server, rawNotification.params);
+    const nativeThreadId = nativeThreadIdFromParams(rawNotification.params);
+    const nativeTurnId = nativeTurnIdFromParams(rawNotification.params);
+    this.handleCodexUsageNotification(rawNotification, server, context.threadId);
+    const replayThreadId = this.bindCodexTurnStarted(entry, rawNotification.method, mainNotification, nativeThreadId, nativeTurnId);
+    const events = this.mapCodexNotificationEvents(context.threadId, notification, mapper, rawNotification);
+    this.bindReceiverThreadExecution(entry, mapper, rawNotification.method, mainNotification, nativeThreadId, nativeTurnId);
+    const executionId = this.codexNotificationExecutionId(entry, mainNotification, nativeThreadId, nativeTurnId);
+    const startupExecutionId = rawNotification.method === "mcpServer/startupStatus/updated" ? context.stagedExecutionId : undefined;
+    this.deliverCodexNotificationEvents({ entry, sessionId: context.sessionId, mapper, mappedEvents: events, mainNotification, nativeThreadId, nativeTurnId, eventExecutionId: executionId, startupEventExecutionId: startupExecutionId });
+    if (entry && replayThreadId) this.replayPendingChildEvents(entry, context.sessionId, replayThreadId);
+    this.fetchCompletedChildMetadata(context.sessionId, context.threadId, server, mapper, rawNotification.method, nativeThreadId, executionId);
+    this.handleDiscoveredCodexChildren({ entry, sessionId: context.sessionId, threadId: context.threadId, server, mapper, notification: rawNotification, nativeThreadId, eventExecutionId: executionId });
+  }
 
-    // Only app-server startup failures reject acquisition. Internal MCP
-    // failures resolve as degraded capability so the turn can continue.
+  private handleCodexServerFatal(
+    context: CodexSpawnContext,
+    server: CodexAppServer,
+    mapper: CodexEventMapper,
+    error: string,
+  ): void {
+    logger.error("CodexAppServer fatal", { sessionId: context.sessionId, error, breadcrumb: server.lastTransportBreadcrumb });
+    const executionId = this.runtime.get(context.sessionId)?.activeParentTurnExecutionId ?? context.stagedExecutionId;
+    for (const event of mapper.drainPendingAssistantBoundary(false)) {
+      this.emitRuntimeEvent(providerRuntimeEvent(executionId ? { ...event, turnExecutionId: executionId } : event));
+    }
+    this.emitTurnFailure(context.threadId, error, undefined, true, executionId);
+    void this.runtime.stop(context.sessionId);
+  }
+
+  private async startCodexAppServer(
+    context: CodexSpawnContext,
+    server: CodexAppServer,
+    startup: ReturnType<typeof observeCodexInternalMcpStartup> | undefined,
+    browserTokenEnvName: string,
+  ): Promise<CodexInternalMcpStartupOutcome | undefined> {
     try {
-      if (internalMcpStartup) {
-        const [, startupOutcome] = await Promise.all([server.start(), internalMcpStartup.promise]);
-        internalMcpStartupOutcome = startupOutcome;
-      } else {
-        await server.start();
-      }
+      return await this.startCodexAppServerWithMcp(server, startup);
     } catch (error) {
-      if (browserGrant) this.host.browser.release(browserGrant.leaseId);
-      internalMcpStartup?.cancel();
-      await closeInternalMcpAuthority();
-      if (internalMcpStartup) await server.kill().catch(() => undefined);
+      if (context.browserGrant) this.host.browser.release(context.browserGrant.leaseId);
+      startup?.cancel();
+      await context.closeInternalMcpAuthority();
+      if (startup) await server.kill().catch(() => undefined);
       throw error;
     } finally {
-      delete spawnEnv[browserTokenEnvName];
-      this.pendingBrowserAccess.delete(sessionId);
+      delete context.spawnEnv[browserTokenEnvName];
+      this.pendingBrowserAccess.delete(context.sessionId);
     }
-    if (internalMcpSetupError) {
-      this.emitInternalMcpStartupFailure(threadId, server.threadId ?? threadId, internalMcpSetupError, stagedExecutionId);
-    } else if (internalMcpStartupOutcome?.status === "timeout") {
-      this.emitInternalMcpStartupFailure(
-        threadId,
-        server.threadId ?? threadId,
-        internalMcpStartupOutcome.error,
-        stagedExecutionId,
-      );
-    }
-    if (internalMcp) {
-      if (internalMcpStartupOutcome?.status === "ready") {
-        try {
-          const effectiveConfig = await server.readConfig(cwd);
-          if (!hasCodexInternalThreadControlMcp(effectiveConfig)) {
-            throw new Error("Codex app-server did not register mcode_internal_thread_control in effective configuration");
-          }
-        } catch (error) {
-          internalMcpStartup?.cancel();
-          await closeInternalMcpAuthority();
-          this.emitInternalMcpStartupFailure(
-            threadId,
-            server.threadId ?? threadId,
-            error instanceof Error ? error.message : String(error),
-            stagedExecutionId,
-          );
-        }
-      }
-    }
-    this.refreshUsageFromServer(server, threadId);
+  }
 
-    // Register after a successful handshake so a mid-handshake thread/started
-    // notification cannot persist a stale SDK thread id when init later fails.
-    server.on("threadIdChanged", (newThreadId: string) => {
-      mapper.setMainCodexThreadId(newThreadId);
-      this.sdkSessionIds.set(sessionId, newThreadId);
-      this.emitRuntimeEvent(providerRuntimeEvent({
-        type: AgentEventType.System,
-        threadId,
-        subtype: "sdk_session_id:" + newThreadId,
-      } satisfies AgentEvent));
-    });
+  private async startCodexAppServerWithMcp(
+    server: CodexAppServer,
+    startup: ReturnType<typeof observeCodexInternalMcpStartup> | undefined,
+  ): Promise<CodexInternalMcpStartupOutcome | undefined> {
+    if (!startup) {
+      await server.start();
+      return undefined;
+    }
+    const [, outcome] = await Promise.all([server.start(), startup.promise]);
+    return outcome;
+  }
 
+  private reportCodexInternalMcpSetupFailure(
+    context: CodexSpawnContext,
+    server: CodexAppServer,
+    outcome: CodexInternalMcpStartupOutcome | undefined,
+  ): void {
+    if (context.internalMcpSetupError) {
+      this.emitInternalMcpStartupFailure(context.threadId, server.threadId ?? context.threadId, context.internalMcpSetupError, context.stagedExecutionId);
+      return;
+    }
+    if (outcome?.status === "timeout") {
+      this.emitInternalMcpStartupFailure(context.threadId, server.threadId ?? context.threadId, outcome.error, context.stagedExecutionId);
+    }
+  }
+
+  private async verifyCodexInternalMcpSetup(
+    context: CodexSpawnContext,
+    server: CodexAppServer,
+    startup: ReturnType<typeof observeCodexInternalMcpStartup> | undefined,
+    outcome: CodexInternalMcpStartupOutcome | undefined,
+  ): Promise<void> {
+    if (!context.internalMcp || outcome?.status !== "ready") return;
+    try {
+      const effectiveConfig = await server.readConfig(context.cwd);
+      if (!hasCodexInternalThreadControlMcp(effectiveConfig)) throw new Error("Codex app-server did not register mcode_internal_thread_control in effective configuration");
+    } catch (error) {
+      startup?.cancel();
+      await context.closeInternalMcpAuthority();
+      this.emitInternalMcpStartupFailure(context.threadId, server.threadId ?? context.threadId, error instanceof Error ? error.message : String(error), context.stagedExecutionId);
+    }
+  }
+
+  private attachCodexThreadIdentity(context: CodexSpawnContext, server: CodexAppServer, mapper: CodexEventMapper): void {
+    server.on("threadIdChanged", (newThreadId: string) => this.recordCodexThreadIdentity(context, mapper, newThreadId));
     if (server.resumeFailed) {
-      logger.warn("Codex session context lost; resume failed, started fresh thread", { sessionId });
-      this.emitRuntimeEvent(providerRuntimeEvent({
-        type: AgentEventType.System,
-        threadId,
-        subtype: "context_lost",
-      } satisfies AgentEvent));
+      logger.warn("Codex session context lost; resume failed, started fresh thread", { sessionId: context.sessionId });
+      this.emitRuntimeEvent(providerRuntimeEvent({ type: AgentEventType.System, threadId: context.threadId, subtype: "context_lost" } satisfies AgentEvent));
     }
+    if (server.threadId) this.recordCodexThreadIdentity(context, mapper, server.threadId);
+  }
 
-    if (server.threadId) {
-      mapper.setMainCodexThreadId(server.threadId);
-      this.sdkSessionIds.set(sessionId, server.threadId);
-      this.emitRuntimeEvent(providerRuntimeEvent({
-        type: AgentEventType.System,
-        threadId,
-        subtype: "sdk_session_id:" + server.threadId,
-      } satisfies AgentEvent));
-    }
+  private recordCodexThreadIdentity(context: CodexSpawnContext, mapper: CodexEventMapper, nativeThreadId: string): void {
+    mapper.setMainCodexThreadId(nativeThreadId);
+    this.sdkSessionIds.set(context.sessionId, nativeThreadId);
+    this.emitRuntimeEvent(providerRuntimeEvent({ type: AgentEventType.System, threadId: context.threadId, subtype: "sdk_session_id:" + nativeThreadId } satisfies AgentEvent));
+  }
 
+  private createCodexSessionState(context: CodexSpawnContext, server: CodexAppServer, mapper: CodexEventMapper): CodexSessionState {
     const state: CodexSessionState = {
-      sessionId,
-      threadId,
-      cwd,
-      server,
-      mapper,
-      lastUsedAt: Date.now(),
-      sandboxMode: sandbox,
-      runTurnSeq: 0,
-      pendingTurnId: null,
-      turnBindingPhase: "idle",
-      turnStartResponsePending: false,
-      turnExecutionIdsByNativeTurn: new Map(),
-      nativeThreadExecutionIds: new Map(),
-      nativeExecutionConflictKeys: new Set(),
-      childExecutionGenerations: new Map(),
-      nextChildGeneration: 0,
-      pendingChildEvents: [],
-      deliveredChildEventKeys: new Set(),
-      workspaceId: browserAccess?.workspaceId ?? "unknown-workspace",
-      browserPermissionCapability: browserAccess?.permissionCapability ?? "interact",
-      threadControlEligible,
-      ...(browserGrant && {
-        browserCredential: {
-          credentialId: browserGrant.credentialId,
-          expiresAt: browserGrant.expiresAt,
-        },
-        browserLeaseId: browserGrant.leaseId,
-      }),
-      childMetadataFetches: new Set(),
+      sessionId: context.sessionId, threadId: context.threadId, cwd: context.cwd, server, mapper,
+      lastUsedAt: Date.now(), sandboxMode: context.sandbox, runTurnSeq: 0, pendingTurnId: null,
+      turnBindingPhase: "idle", turnStartResponsePending: false, turnExecutionIdsByNativeTurn: new Map(),
+      nativeThreadExecutionIds: new Map(), nativeExecutionConflictKeys: new Set(), childExecutionGenerations: new Map(),
+      nextChildGeneration: 0, pendingChildEvents: [], deliveredChildEventKeys: new Set(),
+      workspaceId: context.browserAccess?.workspaceId ?? "unknown-workspace",
+      browserPermissionCapability: context.browserAccess?.permissionCapability ?? "interact",
+      threadControlEligible: context.threadControlEligible, childMetadataFetches: new Set(),
     };
-    this.liveSessionIds.add(sessionId);
-
-    // Run the first turn for the staged payload. `sendTurn` consults
-    // `pendingStops` after `acquire` returns; only fire the turn if no stop
-    // raced in. The runtime stores the state before this resolves, so
-    // `runTurn`'s `this.runtime.get(sessionId)` sees it.
-    const staged = this.pendingSpawnTurns.get(sessionId);
-    if (staged && !this.pendingStops.has(sessionId)) {
-      const { input, turnOptions, turnExecutionId } = staged;
-      this.pendingSpawnTurns.delete(sessionId);
-      // SessionRuntime inserts `state` into the pool only after `spawn` resolves.
-      // queueMicrotask runs before that continuation, so a pool identity check drops
-      // the first turn on every new session (UI: Thinking forever, turn/start never sent).
-      setImmediate(() => {
-        if (!this.runtime.get(sessionId)) return;
-        void this.runTurnAfterGoal(sessionId, threadId, server, input, turnOptions, turnExecutionId);
-      });
+    if (context.browserGrant) {
+      state.browserCredential = { credentialId: context.browserGrant.credentialId, expiresAt: context.browserGrant.expiresAt };
+      state.browserLeaseId = context.browserGrant.leaseId;
     }
+    this.liveSessionIds.add(context.sessionId);
+    return state;
+  }
 
-    return { state, pids: [] };
+  private scheduleStagedCodexTurn(context: CodexSpawnContext, server: CodexAppServer): void {
+    const staged = this.pendingSpawnTurns.get(context.sessionId);
+    if (!staged || this.pendingStops.has(context.sessionId)) return;
+    this.pendingSpawnTurns.delete(context.sessionId);
+    setImmediate(() => this.startStagedCodexTurn(context, server, staged));
+  }
+
+  private startStagedCodexTurn(
+    context: CodexSpawnContext,
+    server: CodexAppServer,
+    staged: { input: string | TurnInputPart[]; turnOptions: CodexTurnOptions; turnExecutionId: string },
+  ): void {
+    if (!this.runtime.get(context.sessionId)) return;
+    void this.runTurnAfterGoal(context.sessionId, context.threadId, server, staged.input, staged.turnOptions, staged.turnExecutionId);
+  }
+
+  private handleCodexUsageNotification(
+    notification: { method?: string; params?: Record<string, unknown> },
+    server: CodexAppServer,
+    threadId: string,
+  ): void {
+    if (notification.method === "account/rateLimits/updated") this.applyUsageSnapshot(notification.params, threadId);
+    if (notification.method === "account/updated") {
+      this.clearUsageCache();
+      this.refreshUsageFromServer(server, threadId);
+    }
+  }
+
+  private bindCodexTurnStarted(
+    state: CodexSessionState | undefined,
+    method: string | undefined,
+    mainNotification: boolean,
+    nativeThreadId: string | undefined,
+    nativeTurnId: string | undefined,
+  ): string | undefined {
+    if (!state || method !== "turn/started") return undefined;
+    if (mainNotification) {
+      this.bindMainCodexTurnStarted(state, nativeTurnId);
+      return undefined;
+    }
+    return this.bindChildCodexTurnStarted(state, nativeThreadId, nativeTurnId);
+  }
+
+  private bindMainCodexTurnStarted(state: CodexSessionState, nativeTurnId: string | undefined): void {
+    const executionId = state.nextTurnExecutionId ?? state.currentTurnExecutionId ?? state.activeParentTurnExecutionId;
+    if (executionId) state.activeParentTurnExecutionId = executionId;
+    if (nativeTurnId && executionId && state.currentTurnExecutionId === executionId) {
+      this.bindMainNativeTurnStart(state, nativeTurnId, executionId);
+    }
+    state.nextTurnExecutionId = undefined;
+    state.childMetadataFetches.clear();
+  }
+
+  private bindMainNativeTurnStart(state: CodexSessionState, nativeTurnId: string, executionId: string): void {
+    if (state.turnStartResponsePending) {
+      state.pendingTurnStartNotification = { nativeTurnId, executionId };
+      return;
+    }
+    if (state.currentNativeTurnId === nativeTurnId) {
+      state.pendingTurnId = nativeTurnId;
+      state.turnBindingPhase = "bound";
+      return;
+    }
+    if (state.turnExecutionIdsByNativeTurn.get(nativeTurnId) === executionId) {
+      state.currentNativeTurnId = nativeTurnId;
+      state.pendingTurnId = nativeTurnId;
+      state.turnBindingPhase = "bound";
+      return;
+    }
+    if (state.turnExecutionIdsByNativeTurn.has(nativeTurnId)) {
+      assignNativeExecution(state.turnExecutionIdsByNativeTurn, nativeTurnId, executionId, state.nativeExecutionConflictKeys);
+    }
+  }
+
+  private bindChildCodexTurnStarted(
+    state: CodexSessionState,
+    nativeThreadId: string | undefined,
+    nativeTurnId: string | undefined,
+  ): string | undefined {
+    if (!state.activeParentTurnExecutionId) return undefined;
+    const executionId = nativeThreadId ? state.childExecutionGenerations.get(nativeThreadId)?.executionId : undefined;
+    const replayThreadId = nativeTurnId && executionId && nativeThreadId
+      ? this.bindChildNativeTurnStart(state, nativeThreadId, nativeTurnId, executionId)
+      : undefined;
+    pruneExecutionMap(state.nativeThreadExecutionIds);
+    pruneExecutionMap(state.turnExecutionIdsByNativeTurn);
+    return replayThreadId;
+  }
+
+  private bindChildNativeTurnStart(state: CodexSessionState, nativeThreadId: string, nativeTurnId: string, executionId: string): string | undefined {
+    const assignment = assignNativeExecution(state.turnExecutionIdsByNativeTurn, nativeTurnId, executionId, state.nativeExecutionConflictKeys);
+    return assignment === "conflict" ? undefined : nativeThreadId;
+  }
+
+  private mapCodexNotificationEvents(
+    threadId: string,
+    notification: CodexNotification,
+    mapper: CodexEventMapper,
+    rawNotification: { method?: string; params?: Record<string, unknown> },
+  ): ProviderRuntimeEvent[] {
+    const generatedImageEvents = this.mapGeneratedImageEvents(threadId, notification).map(providerRuntimeEvent);
+    const mapperEvents = mapper.mapNotification(notification);
+    const events = [...generatedImageEvents, ...mapperEvents];
+    traceCodexIngest(threadId, rawNotification.method, rawNotification.params, events.map((event) => event.event));
+    return events;
+  }
+
+  private bindReceiverThreadExecution(
+    state: CodexSessionState | undefined,
+    mapper: CodexEventMapper,
+    method: string | undefined,
+    mainNotification: boolean,
+    nativeThreadId: string | undefined,
+    nativeTurnId: string | undefined,
+  ): void {
+    if (!state || !nativeThreadId || mainNotification || !mapper.hasReceiverThread(nativeThreadId) || !state.activeParentTurnExecutionId) return;
+    state.nativeThreadExecutionIds.set(nativeThreadId, state.activeParentTurnExecutionId);
+    if (nativeTurnId && method === "turn/started") state.turnExecutionIdsByNativeTurn.set(nativeTurnId, state.activeParentTurnExecutionId);
+  }
+
+  private codexNotificationExecutionId(
+    state: CodexSessionState | undefined,
+    mainNotification: boolean,
+    nativeThreadId: string | undefined,
+    nativeTurnId: string | undefined,
+  ): string | undefined {
+    if (!state) return undefined;
+    return this.executionForCodexNativeTurn(state, nativeTurnId)
+      ?? this.executionForCodexReceiverThread(state, mainNotification, nativeThreadId, nativeTurnId)
+      ?? this.executionForCodexMainThread(state, mainNotification, nativeTurnId);
+  }
+
+  private executionForCodexNativeTurn(state: CodexSessionState, nativeTurnId: string | undefined): string | undefined {
+    return nativeTurnId ? state.turnExecutionIdsByNativeTurn.get(nativeTurnId) : undefined;
+  }
+
+  private executionForCodexReceiverThread(
+    state: CodexSessionState,
+    mainNotification: boolean,
+    nativeThreadId: string | undefined,
+    nativeTurnId: string | undefined,
+  ): string | undefined {
+    if (nativeTurnId || mainNotification || !nativeThreadId) return undefined;
+    return state.nativeThreadExecutionIds.get(nativeThreadId);
+  }
+
+  private executionForCodexMainThread(state: CodexSessionState, mainNotification: boolean, nativeTurnId: string | undefined): string | undefined {
+    if (!mainNotification || !state.currentTurnExecutionId || state.turnBindingPhase === "idle") return undefined;
+    if (!nativeTurnId || state.turnStartResponsePending || nativeTurnId === state.currentNativeTurnId) return state.currentTurnExecutionId;
+    return undefined;
+  }
+
+  private deliverCodexNotificationEvents(args: {
+    entry: CodexSessionState | undefined;
+    sessionId: string;
+    mapper: CodexEventMapper;
+    mappedEvents: ProviderRuntimeEvent[];
+    mainNotification: boolean;
+    nativeThreadId: string | undefined;
+    nativeTurnId: string | undefined;
+    eventExecutionId: string | undefined;
+    startupEventExecutionId: string | undefined;
+  }): void {
+    for (const event of args.mappedEvents) this.deliverCodexNotificationEvent(args, event);
+  }
+
+  private deliverCodexNotificationEvent(
+    args: Omit<Parameters<CodexProvider["deliverCodexNotificationEvents"]>[0], "mappedEvents">,
+    event: ProviderRuntimeEvent,
+  ): void {
+    const eventKey = childEventIdentity(event);
+    if (this.isDuplicateCodexChildEvent(args.entry, eventKey)) return;
+    if (this.shouldBufferCodexChildEvent(args, event)) {
+      if (args.entry && args.nativeThreadId) bufferPendingChildEvent(args.entry, event, args.nativeThreadId, args.nativeTurnId, eventKey);
+      return;
+    }
+    this.emitCodexNotificationEvent(args, event, eventKey);
+  }
+
+  private isDuplicateCodexChildEvent(state: CodexSessionState | undefined, eventKey: string | undefined): boolean {
+    if (!eventKey || !state) return false;
+    return state.deliveredChildEventKeys.has(eventKey) || state.pendingChildEvents.some((item) => item.eventKey === eventKey);
+  }
+
+  private shouldBufferCodexChildEvent(
+    args: Omit<Parameters<CodexProvider["deliverCodexNotificationEvents"]>[0], "mappedEvents">,
+    event: ProviderRuntimeEvent,
+  ): boolean {
+    if (this.requiresCodexChildTurnBinding(args, event)) return true;
+    return !this.canEmitCodexNotificationEvent(args, event);
+  }
+
+  private requiresCodexChildTurnBinding(
+    args: Omit<Parameters<CodexProvider["deliverCodexNotificationEvents"]>[0], "mappedEvents">,
+    event: ProviderRuntimeEvent,
+  ): boolean {
+    if (!args.entry || args.mainNotification || !args.nativeThreadId || args.nativeTurnId) return false;
+    return args.mapper.hasReceiverThread(args.nativeThreadId) && Boolean(event.extension?.child);
+  }
+
+  private canEmitCodexNotificationEvent(
+    args: Omit<Parameters<CodexProvider["deliverCodexNotificationEvents"]>[0], "mappedEvents">,
+    event: ProviderRuntimeEvent,
+  ): boolean {
+    if (!args.entry || args.eventExecutionId || !isTurnScopedEvent(event.event)) return true;
+    return args.mainNotification || !args.nativeThreadId;
+  }
+
+  private emitCodexNotificationEvent(
+    args: Omit<Parameters<CodexProvider["deliverCodexNotificationEvents"]>[0], "mappedEvents">,
+    event: ProviderRuntimeEvent,
+    eventKey: string | undefined,
+  ): void {
+    if (eventKey && args.entry) rememberChildEventKey(args.entry, eventKey);
+    this.recordGoalEvent(args.sessionId, event.event);
+    this.emitRuntimeEvent(withTurnExecutionId(event, args.eventExecutionId ?? args.startupEventExecutionId));
+  }
+
+  private fetchCompletedChildMetadata(
+    sessionId: string,
+    threadId: string,
+    server: CodexAppServer,
+    mapper: CodexEventMapper,
+    method: string | undefined,
+    nativeThreadId: string | undefined,
+    turnExecutionId: string | undefined,
+  ): void {
+    if (!nativeThreadId || method !== "turn/completed" || !mapper.hasReceiverThread(nativeThreadId)) return;
+    this.fetchChildThreadMetadata(sessionId, threadId, server, mapper, nativeThreadId, turnExecutionId, true);
+  }
+
+  private handleDiscoveredCodexChildren(args: {
+    entry: CodexSessionState | undefined;
+    sessionId: string;
+    threadId: string;
+    server: CodexAppServer;
+    mapper: CodexEventMapper;
+    notification: { method?: string; params?: Record<string, unknown> };
+    nativeThreadId: string | undefined;
+    eventExecutionId: string | undefined;
+  }): void {
+    const childThreadId = nativeSubAgentThreadId(args.notification);
+    if (childThreadId) this.handleCodexSubAgentThread(args, childThreadId);
+    for (const childThreadId of nativeCollabSpawnThreadIds(args.notification)) {
+      this.fetchChildThreadMetadata(args.sessionId, args.threadId, args.server, args.mapper, childThreadId, args.eventExecutionId);
+    }
+  }
+
+  private handleCodexSubAgentThread(
+    args: Parameters<CodexProvider["handleDiscoveredCodexChildren"]>[0],
+    childThreadId: string,
+  ): void {
+    if (this.isCurrentCodexParentNotification(args)) this.registerCodexChildGeneration(args.entry as CodexSessionState, args.sessionId, childThreadId);
+    this.fetchChildThreadMetadata(args.sessionId, args.threadId, args.server, args.mapper, childThreadId, args.eventExecutionId, true);
+  }
+
+  private isCurrentCodexParentNotification(args: Parameters<CodexProvider["handleDiscoveredCodexChildren"]>[0]): boolean {
+    const executionId = args.entry?.currentTurnExecutionId;
+    if (!args.entry || !executionId || args.eventExecutionId !== executionId) return false;
+    if (args.server.threadId && args.nativeThreadId === args.server.threadId) return true;
+    return Boolean(args.nativeThreadId && args.entry.nativeThreadExecutionIds.get(args.nativeThreadId) === executionId);
+  }
+
+  private registerCodexChildGeneration(state: CodexSessionState, sessionId: string, childThreadId: string): void {
+    const executionId = state.currentTurnExecutionId;
+    if (!executionId) return;
+    state.nextChildGeneration += 1;
+    state.childExecutionGenerations.set(childThreadId, { executionId, generation: state.nextChildGeneration });
+    pruneChildGenerationMap(state.childExecutionGenerations);
+    state.nativeThreadExecutionIds.set(childThreadId, executionId);
+    pruneExecutionMap(state.nativeThreadExecutionIds);
+    this.replayPendingChildEvents(state, sessionId, childThreadId);
   }
 
   /** Replays buffered child events once the parent activity links the child generation. */
@@ -1865,26 +1729,32 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     const executionId = childMapping?.executionId;
     if (!executionId) return;
 
-    const pending = state.pendingChildEvents;
-    if (pending.length === 0) return;
-    const remaining: PendingChildEvent[] = [];
-    for (const item of pending) {
-      if (item.nativeThreadId !== childThreadId) {
-        remaining.push(item);
-        continue;
-      }
-      if (item.childGeneration !== undefined && item.childGeneration !== childMapping.generation) {
-        continue;
-      }
-      if (item.executionIdAtBuffer && item.childGeneration === undefined && item.executionIdAtBuffer !== executionId) {
-        continue;
-      }
-      if (item.eventKey && state.deliveredChildEventKeys.has(item.eventKey)) continue;
-      if (item.eventKey) rememberChildEventKey(state, item.eventKey);
-      this.recordGoalEvent(sessionId, item.event.event);
-      this.emitRuntimeEvent(withTurnExecutionId(item.event, executionId));
-    }
-    state.pendingChildEvents = remaining;
+    const replayable = state.pendingChildEvents.filter((item) => item.nativeThreadId === childThreadId);
+    state.pendingChildEvents = state.pendingChildEvents.filter((item) => item.nativeThreadId !== childThreadId);
+    for (const item of replayable) this.replayPendingChildEvent(state, sessionId, item, childMapping, executionId);
+  }
+
+  private replayPendingChildEvent(
+    state: CodexSessionState,
+    sessionId: string,
+    item: PendingChildEvent,
+    childMapping: { executionId: string; generation: number },
+    executionId: string,
+  ): void {
+    if (!this.matchesChildEventGeneration(item, childMapping, executionId)) return;
+    if (item.eventKey && state.deliveredChildEventKeys.has(item.eventKey)) return;
+    if (item.eventKey) rememberChildEventKey(state, item.eventKey);
+    this.recordGoalEvent(sessionId, item.event.event);
+    this.emitRuntimeEvent(withTurnExecutionId(item.event, executionId));
+  }
+
+  private matchesChildEventGeneration(
+    item: PendingChildEvent,
+    childMapping: { executionId: string; generation: number },
+    executionId: string,
+  ): boolean {
+    if (item.childGeneration !== undefined) return item.childGeneration === childMapping.generation;
+    return !item.executionIdAtBuffer || item.executionIdAtBuffer === executionId;
   }
 
   /** Fetches one native child thread's authoritative identity and model settings without affecting the parent turn. */
@@ -1902,36 +1772,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     state.childMetadataFetches.add(childThreadId);
     const runTurnSeq = state.runTurnSeq;
 
-    void (async () => {
-      const retryDelaysMs = [0, 100, 300, 1_000] as const;
-      for (const retryDelayMs of retryDelaysMs) {
-        if (retryDelayMs > 0) {
-          await new Promise<void>((resolve) => setTimeout(resolve, retryDelayMs));
-        }
-
-        const activeState = this.runtime.get(sessionId);
-        if (!activeState || activeState.mapper !== mapper || activeState.runTurnSeq !== runTurnSeq) return;
-        let metadata: Awaited<ReturnType<CodexAppServer["getChildThreadMetadata"]>>;
-        try {
-          metadata = await server.getChildThreadMetadata(childThreadId);
-        } catch {
-          continue;
-        }
-        const currentState = this.runtime.get(sessionId);
-        if (!currentState || currentState.mapper !== mapper || currentState.runTurnSeq !== runTurnSeq) return;
-        if (!metadata) continue;
-
-        const events = mapper.applyChildThreadMetadata(childThreadId, metadata);
-        traceCodexIngest(threadId, "child/thread-read", { childThreadId }, events.map((event) => event.event));
-        const resolvedExecutionId = turnExecutionId
-          ?? currentState.nativeThreadExecutionIds.get(childThreadId);
-        for (const event of events) {
-          this.recordGoalEvent(sessionId, event.event);
-          this.emitRuntimeEvent(withTurnExecutionId(event, resolvedExecutionId));
-        }
-        if (metadata.identity && (!captureParentMessage || metadata.parentMessage)) return;
-      }
-    })()
+    void this.lookupChildThreadMetadata({ sessionId, threadId, server, mapper, childThreadId, turnExecutionId, captureParentMessage, runTurnSeq })
       .catch((error: unknown) => {
         logger.debug("Codex child metadata lookup failed", {
           sessionId,
@@ -1945,6 +1786,58 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
           currentState.childMetadataFetches.delete(childThreadId);
         }
       });
+  }
+
+  private async lookupChildThreadMetadata(args: {
+    sessionId: string;
+    threadId: string;
+    server: CodexAppServer;
+    mapper: CodexEventMapper;
+    childThreadId: string;
+    turnExecutionId: string | undefined;
+    captureParentMessage: boolean;
+    runTurnSeq: number;
+  }): Promise<void> {
+    for (const delayMs of [0, 100, 300, 1_000] as const) {
+      await this.waitForChildMetadataRetry(delayMs);
+      const state = this.activeChildMetadataState(args.sessionId, args.mapper, args.runTurnSeq);
+      if (!state) return;
+      const metadata = await this.readChildThreadMetadata(args.server, args.childThreadId);
+      if (!metadata) continue;
+      const currentState = this.activeChildMetadataState(args.sessionId, args.mapper, args.runTurnSeq);
+      if (!currentState) return;
+      this.emitChildThreadMetadata(args, currentState, metadata);
+      if (this.isCompleteChildMetadata(metadata, args.captureParentMessage)) return;
+    }
+  }
+
+  private async waitForChildMetadataRetry(delayMs: number): Promise<void> {
+    if (delayMs > 0) await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+  }
+
+  private activeChildMetadataState(sessionId: string, mapper: CodexEventMapper, runTurnSeq: number): CodexSessionState | undefined {
+    const state = this.runtime.get(sessionId);
+    return state?.mapper === mapper && state.runTurnSeq === runTurnSeq ? state : undefined;
+  }
+
+  private async readChildThreadMetadata(server: CodexAppServer, childThreadId: string): Promise<Awaited<ReturnType<CodexAppServer["getChildThreadMetadata"]>> | undefined> {
+    try { return await server.getChildThreadMetadata(childThreadId); }
+    catch { return undefined; }
+  }
+
+  private emitChildThreadMetadata(
+    args: { sessionId: string; threadId: string; mapper: CodexEventMapper; childThreadId: string; turnExecutionId: string | undefined },
+    state: CodexSessionState,
+    metadata: NonNullable<Awaited<ReturnType<CodexAppServer["getChildThreadMetadata"]>>>,
+  ): void {
+    const events = args.mapper.applyChildThreadMetadata(args.childThreadId, metadata);
+    traceCodexIngest(args.threadId, "child/thread-read", { childThreadId: args.childThreadId }, events.map((event) => event.event));
+    const executionId = args.turnExecutionId ?? state.nativeThreadExecutionIds.get(args.childThreadId);
+    for (const event of events) { this.recordGoalEvent(args.sessionId, event.event); this.emitRuntimeEvent(withTurnExecutionId(event, executionId)); }
+  }
+
+  private isCompleteChildMetadata(metadata: { identity?: string; parentMessage?: string }, captureParentMessage: boolean): boolean {
+    return Boolean(metadata.identity && (!captureParentMessage || metadata.parentMessage));
   }
 
   /** Eviction guard: a turn is in flight while sendTurn is awaiting completion. */
@@ -2047,8 +1940,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     });
 
     let settled = false;
-    let deltaText = "";
-    let completedText = "";
+    const output = { deltaText: "", completedText: "" };
     let timeout: ReturnType<typeof setTimeout> | undefined;
 
     const cleanup = async (): Promise<void> => {
@@ -2095,29 +1987,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
         );
 
         const onNotification = (notification: unknown): void => {
-          const n = notification as CodexNotification;
-          if (n.method === "item/agentMessage/delta") {
-            deltaText += n.params.delta ?? "";
-            return;
-          }
-          if (n.method === "item/completed") {
-            const text = completedAssistantText(n.params.item);
-            if (text) completedText = text;
-            return;
-          }
-          if (n.method === "turn/completed") {
-            const turn = n.params.turn;
-            if (turn?.status === "failed") {
-              rejectTransient(turn.error?.message ?? "Codex side-channel query failed");
-              return;
-            }
-            const text = (completedText || deltaText).trim();
-            if (!text) {
-              rejectTransient("Codex side-channel query returned empty output");
-              return;
-            }
-            finish(text);
-          }
+          this.handleSideChannelNotification(notification as CodexNotification, output, finish, rejectTransient);
         };
 
         const onFatal = (error: string): void => rejectTransient(error);
@@ -2140,6 +2010,35 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     } finally {
       await cleanup();
     }
+  }
+
+  private handleSideChannelNotification(
+    notification: CodexNotification,
+    output: { deltaText: string; completedText: string },
+    finish: (value: string) => void,
+    reject: (message: string) => void,
+  ): void {
+    if (notification.method === "item/agentMessage/delta") { output.deltaText += notification.params.delta ?? ""; return; }
+    if (notification.method === "item/completed") { this.recordSideChannelCompletedText(notification, output); return; }
+    if (notification.method === "turn/completed") this.finishSideChannelTurn(notification, output, finish, reject);
+  }
+
+  private recordSideChannelCompletedText(notification: CodexNotification, output: { completedText: string }): void {
+    const text = completedAssistantText((notification.params as { item?: CompletedItem }).item);
+    if (text) output.completedText = text;
+  }
+
+  private finishSideChannelTurn(
+    notification: CodexNotification,
+    output: { deltaText: string; completedText: string },
+    finish: (value: string) => void,
+    reject: (message: string) => void,
+  ): void {
+    const turn = (notification.params as { turn?: { status?: string; error?: { message?: string } } }).turn;
+    if (turn?.status === "failed") { reject(turn.error?.message ?? "Codex side-channel query failed"); return; }
+    const text = (output.completedText || output.deltaText).trim();
+    if (!text) { reject("Codex side-channel query returned empty output"); return; }
+    finish(text);
   }
 
   /** Apply a queued native goal to the app-server before dispatching a turn. */
@@ -2186,22 +2085,30 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     turnOptions: CodexTurnOptions | undefined,
     turnExecutionId: string,
   ): Promise<void> {
-    const entry = this.runtime.get(sessionId);
-    if (!entry) return;
-    const emitTurnEvent = (event: AgentEvent): void => {
-      this.emitRuntimeEvent(providerRuntimeEvent({ ...event, turnExecutionId }));
+    const run = this.prepareCodexTurnRun(sessionId, turnExecutionId);
+    if (!run) return;
+    if (run.hadInflightTurn) await server.interruptTurn();
+    const completion: CodexTurnCompletionState = {
+      serverDied: false,
+      endedOutcome: undefined,
+      deferredEnded: undefined,
+      earlyCompletionTurnId: undefined,
     };
-
-    for (const event of entry.mapper.drainPendingAssistantBoundary(false)) {
-      emitTurnEvent(event);
+    try {
+      await this.waitForCodexTurn(run, server, input, turnOptions, sessionId, turnExecutionId, completion);
+    } catch (error) {
+      if (this.handleCodexTurnWaitError(error, run, server, sessionId, threadId, turnExecutionId, completion)) return;
+    } finally {
+      this.finalizeCodexTurnRun(run, completion, threadId, turnExecutionId);
     }
-    entry.mapper.prepareForTurn();
+  }
 
-    // Only pay the turn/interrupt round-trip when a previous turn is actually
-    // in flight. Interrupting an idle session added a needless RPC (up to its
-    // 5s timeout) of latency to every message.
-    const hadInflightTurn =
-      entry.pendingTurnId !== null || entry.abortPendingTurnWait !== undefined;
+  private prepareCodexTurnRun(sessionId: string, turnExecutionId: string): CodexTurnRun | undefined {
+    const entry = this.runtime.get(sessionId);
+    if (!entry) return undefined;
+    this.emitCodexPendingAssistantBoundary(entry, turnExecutionId);
+    entry.mapper.prepareForTurn();
+    const hadInflightTurn = entry.pendingTurnId !== null || entry.abortPendingTurnWait !== undefined;
     entry.currentTurnExecutionId = turnExecutionId;
     entry.currentNativeTurnId = undefined;
     entry.turnBindingPhase = "awaiting";
@@ -2211,237 +2118,253 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
     entry.nextTurnExecutionId = turnExecutionId;
     entry.childExecutionGenerations.clear();
     entry.pendingChildEvents = [];
-
     entry.abortPendingTurnWait?.();
     entry.abortPendingTurnWait = undefined;
-
     entry.runTurnSeq += 1;
-    const seq = entry.runTurnSeq;
     entry.pendingTurnId = null;
+    return { entry, seq: entry.runTurnSeq, hadInflightTurn };
+  }
 
-    if (hadInflightTurn) {
-      await server.interruptTurn();
-    }
+  private emitCodexPendingAssistantBoundary(entry: CodexSessionState, turnExecutionId: string): void {
+    for (const event of entry.mapper.drainPendingAssistantBoundary(false)) this.emitCodexTurnEvent(event, turnExecutionId);
+  }
 
-    let serverDied = false;
-    let endedEmitted = false;
-    let endedOutcome: CodexEndedOutcome | undefined;
-    let deferredEnded: AgentEvent | undefined;
-    let earlyCompletionTurnId: string | undefined;
+  private emitCodexTurnEvent(event: AgentEvent, turnExecutionId: string): void {
+    this.emitRuntimeEvent(providerRuntimeEvent({ ...event, turnExecutionId }));
+  }
 
-    try {
-      await new Promise<void>((resolve, reject) => {
-        let activityTimer: ReturnType<typeof setTimeout>;
-        let settled = false;
-
-        const cleanup = () => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(activityTimer);
-          server.removeListener("notification", onNotification);
-          server.removeListener("activity", onActivity);
-          server.removeListener("fatal", onFatal);
-          if (entry.abortPendingTurnWait === abortThis) entry.abortPendingTurnWait = undefined;
-        };
-
-        const armTimer = () => {
-          clearTimeout(activityTimer);
-          activityTimer = setTimeout(() => {
-            // Silence while an approval card waits on the user is the user's
-            // silence, not the server's: keep the turn alive until they decide.
-            if (this.hasPendingApprovalFor(sessionId)) {
-              armTimer();
-              return;
-            }
-            // Probe before giving up: a turn is only abandoned when the
-            // app-server stops answering RPCs, never just for being slow.
-            // A healthy-but-silent turn (long tool, deep reasoning) re-arms
-            // and can run indefinitely.
-            void server.ping().then((alive) => {
-              if (settled) return;
-              if (alive) {
-                logger.debug("Codex turn silent but server responsive; watchdog re-armed", {
-                  sessionId,
-                  silenceMs: TURN_TIMEOUT_MS,
-                });
-                armTimer();
-                return;
-              }
-              cleanup();
-              reject(new CodexTurnIdleTimeoutError());
-            });
-          }, TURN_TIMEOUT_MS);
-        };
-
-        // Server-initiated approval requests count as liveness too.
-        const onActivity = () => armTimer();
-
-        const abortThis = () => {
-          cleanup();
-          reject(new CodexTurnSupersededError());
-        };
-        entry.abortPendingTurnWait = abortThis;
-
-        const onNotification = (notification: unknown) => {
-          armTimer();
-          const n = notification as { method?: string; params?: Record<string, unknown> };
-          if (n.method === "turn/completed") {
-            const tid = nativeTurnIdFromParams(n.params);
-            const currentNativeTurnId = entry.currentNativeTurnId;
-            const pendingNativeTurnId = entry.pendingTurnStartNotification?.nativeTurnId;
-            const nativeTurnBelongsToCurrentExecution = Boolean(
-              tid
-              && (
-                tid === currentNativeTurnId
-                || tid === pendingNativeTurnId
-                || entry.turnExecutionIdsByNativeTurn.get(tid) === turnExecutionId
-              ),
-            );
-            // Sub-agent receiver threads complete their own turns mid-run;
-            // only the main thread's completion settles this wait. Native turn
-            // identity is authoritative when a child thread/started notification
-            // has temporarily changed the app-server's mutable thread id.
-            if (!nativeTurnBelongsToCurrentExecution && !isMainThreadNotification(server, n.params)) return;
-            const turn = n.params?.turn as { id?: string; status?: string } | undefined;
-            endedOutcome =
-              turn?.status === "failed"
-                ? "errored"
-                : turn?.status === "interrupted"
-                  ? "cancelled"
-                  : "completed";
-            const currentExecutionId = entry.currentTurnExecutionId;
-            const provenCurrentTurn = Boolean(
-              currentExecutionId === turnExecutionId
-              && currentNativeTurnId
-              && tid
-              && tid === currentNativeTurnId,
-            );
-            const completionBeforeBinding = Boolean(
-              entry.turnStartResponsePending
-              && currentExecutionId === turnExecutionId
-              && tid
-              && (!entry.pendingTurnStartNotification
-                || entry.pendingTurnStartNotification.nativeTurnId === tid),
-            );
-            if (completionBeforeBinding) {
-              earlyCompletionTurnId = tid;
-              return;
-            }
-            if (!provenCurrentTurn) {
-              logger.debug("Codex turn/completed ignored (stale or unmatched)", {
-                tid,
-                pending: entry.pendingTurnId,
-                currentNativeTurnId,
-                currentExecutionId,
-                seq,
-                liveSeq: entry.runTurnSeq,
-              });
-              return;
-            }
-            if (seq !== entry.runTurnSeq) return;
-            cleanup();
-            resolve();
-          }
-        };
-
-        const onFatal = () => {
-          cleanup();
-          serverDied = true;
-          reject(new Error("Codex app-server died during turn"));
-        };
-
+  private async waitForCodexTurn(
+    run: CodexTurnRun,
+    server: CodexAppServer,
+    input: string | TurnInputPart[],
+    turnOptions: CodexTurnOptions | undefined,
+    sessionId: string,
+    turnExecutionId: string,
+    completion: CodexTurnCompletionState,
+  ): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      let activityTimer: ReturnType<typeof setTimeout> | undefined;
+      let settled = false;
+      const cleanup = () => {
+        if (settled) return;
+        settled = true;
+        if (activityTimer) clearTimeout(activityTimer);
+        server.removeListener("notification", onNotification);
+        server.removeListener("activity", onActivity);
+        server.removeListener("fatal", onFatal);
+        if (run.entry.abortPendingTurnWait === abortThis) run.entry.abortPendingTurnWait = undefined;
+      };
+      const armTimer = () => {
+        if (activityTimer) clearTimeout(activityTimer);
+        activityTimer = setTimeout(() => this.watchCodexTurnSilence(sessionId, server, () => settled, armTimer, cleanup, reject), TURN_TIMEOUT_MS);
+      };
+      const onActivity = () => armTimer();
+      const abortThis = () => { cleanup(); reject(new CodexTurnSupersededError()); };
+      const onNotification = (notification: unknown) => {
         armTimer();
-        server.on("notification", onNotification);
-        server.on("activity", onActivity);
-        server.once("fatal", onFatal);
-
-        void (async () => {
-          try {
-            const turnId = await server.sendTurn(input, turnOptions);
-            if (seq !== entry.runTurnSeq) return;
-            entry.turnStartResponsePending = false;
-            entry.pendingTurnStartNotification = undefined;
-            if (!turnId) {
-              entry.turnBindingPhase = "idle";
-              throw new Error("Codex turn/start response missing turn id");
-            }
-            const assignment = assignNativeExecution(
-              entry.turnExecutionIdsByNativeTurn,
-              turnId,
-              turnExecutionId,
-              entry.nativeExecutionConflictKeys,
-            );
-            if (assignment === "conflict") {
-              throw new Error("Codex turn/start response reused native turn id");
-            }
-            entry.currentNativeTurnId = turnId;
-            entry.pendingTurnId = turnId;
-            entry.turnBindingPhase = "bound";
-            pruneExecutionMap(entry.turnExecutionIdsByNativeTurn);
-            if (earlyCompletionTurnId === turnId) {
-              cleanup();
-              resolve();
-            }
-          } catch (err) {
-            cleanup();
-            reject(err);
-          }
-        })();
-      });
-    } catch (e: unknown) {
-      if (e instanceof CodexTurnSupersededError) return;
-      if (e instanceof CodexTurnIdleTimeoutError) {
-        endedOutcome = "errored";
-        logger.warn("Codex turn idle timeout (suppressed from UI)", {
-          sessionId,
-          timeoutMs: TURN_TIMEOUT_MS,
-        });
-        for (const event of entry.mapper.drainPendingAssistantBoundary(false)) {
-          emitTurnEvent(event);
+        if (this.handleCodexTurnCompletionNotification(notification, server, run, turnExecutionId, completion)) {
+          cleanup();
+          resolve();
         }
-        // Interrupt the upstream turn so the app-server state matches the UI
-        // ("ended") instead of silently chewing in the background.
-        entry.pendingTurnStartNotification = undefined;
-        entry.turnStartResponsePending = false;
-        entry.turnBindingPhase = "idle";
-        entry.currentNativeTurnId = undefined;
-        entry.pendingTurnId = null;
-        entry.childExecutionGenerations.clear();
-        entry.nativeThreadExecutionIds.clear();
-        entry.pendingChildEvents = [];
-        void server.interruptTurn();
+      };
+      const onFatal = () => { cleanup(); completion.serverDied = true; reject(new Error("Codex app-server died during turn")); };
+      run.entry.abortPendingTurnWait = abortThis;
+      armTimer();
+      server.on("notification", onNotification);
+      server.on("activity", onActivity);
+      server.once("fatal", onFatal);
+      void this.sendCodexTurnStart(run, server, input, turnOptions, turnExecutionId, completion, cleanup, resolve, reject);
+    });
+  }
+
+  private watchCodexTurnSilence(
+    sessionId: string,
+    server: CodexAppServer,
+    isSettled: () => boolean,
+    rearm: () => void,
+    cleanup: () => void,
+    reject: (error: Error) => void,
+  ): void {
+    if (this.hasPendingApprovalFor(sessionId)) { rearm(); return; }
+    void server.ping().then((alive) => {
+      if (isSettled()) return;
+      if (alive) {
+        logger.debug("Codex turn silent but server responsive; watchdog re-armed", { sessionId, silenceMs: TURN_TIMEOUT_MS });
+        rearm();
         return;
       }
-      if (!serverDied && seq === entry.runTurnSeq) {
-        endedOutcome = "errored";
-        const errorMessage = e instanceof Error ? e.message : String(e);
-        logger.error("Codex turn failed", { sessionId, error: errorMessage });
-        for (const event of entry.mapper.drainPendingAssistantBoundary(false)) {
-          emitTurnEvent(event);
-        }
-        deferredEnded = this.emitTurnFailure(threadId, errorMessage, endedOutcome, false, turnExecutionId);
-      }
-    } finally {
-      if (seq === entry.runTurnSeq) {
-        // The turn for this seq has settled: clear the in-flight marker so the
-        // runtime's busy guard (`isBusy` reads `pendingTurnId`) stops sparing
-        // the session from idle eviction. A superseding turn owns its own id.
-        entry.pendingTurnId = null;
-        entry.turnBindingPhase = "idle";
-        entry.turnStartResponsePending = false;
-        entry.pendingTurnStartNotification = undefined;
-        entry.pendingChildEvents = [];
-      }
-      if (!serverDied && seq === entry.runTurnSeq && !endedEmitted) {
-        endedEmitted = true;
-        emitTurnEvent(deferredEnded ?? {
-          type: AgentEventType.Ended,
-          threadId,
-          turnExecutionId,
-          ...(endedOutcome ? { outcome: endedOutcome } : {}),
-        } satisfies AgentEvent);
-      }
+      cleanup();
+      reject(new CodexTurnIdleTimeoutError());
+    });
+  }
+
+  private handleCodexTurnCompletionNotification(
+    notification: unknown,
+    server: CodexAppServer,
+    run: CodexTurnRun,
+    turnExecutionId: string,
+    completion: CodexTurnCompletionState,
+  ): boolean {
+    const rawNotification = notification as { method?: string; params?: Record<string, unknown> };
+    if (rawNotification.method !== "turn/completed") return false;
+    const nativeTurnId = nativeTurnIdFromParams(rawNotification.params);
+    if (!this.isCodexCurrentTurnCompletion(server, run.entry, rawNotification.params, nativeTurnId, turnExecutionId)) return false;
+    const turn = rawNotification.params?.turn as { status?: string } | undefined;
+    if (this.codexCompletionBeforeBinding(run.entry, nativeTurnId, turnExecutionId)) {
+      completion.endedOutcome = this.codexTurnCompletionOutcome(turn?.status);
+      completion.earlyCompletionTurnId = nativeTurnId;
+      return false;
     }
+    if (!this.isProvenCodexTurnCompletion(run.entry, nativeTurnId, turnExecutionId)) {
+      this.logIgnoredCodexTurnCompletion(run, nativeTurnId);
+      return false;
+    }
+    completion.endedOutcome = this.codexTurnCompletionOutcome(turn?.status);
+    return run.seq === run.entry.runTurnSeq;
+  }
+
+  private isCodexCurrentTurnCompletion(
+    server: CodexAppServer,
+    entry: CodexSessionState,
+    params: Record<string, unknown> | undefined,
+    nativeTurnId: string | undefined,
+    turnExecutionId: string,
+  ): boolean {
+    if (!isMainThreadNotification(server, params)) return false;
+    return this.nativeTurnBelongsToCodexExecution(entry, nativeTurnId, turnExecutionId);
+  }
+
+  private nativeTurnBelongsToCodexExecution(entry: CodexSessionState, nativeTurnId: string | undefined, turnExecutionId: string): boolean {
+    if (!nativeTurnId) return true;
+    return nativeTurnId === entry.currentNativeTurnId
+      || nativeTurnId === entry.pendingTurnStartNotification?.nativeTurnId
+      || entry.turnExecutionIdsByNativeTurn.get(nativeTurnId) === turnExecutionId;
+  }
+
+  private codexTurnCompletionOutcome(status: string | undefined): CodexEndedOutcome {
+    if (status === "failed") return "errored";
+    return status === "interrupted" ? "cancelled" : "completed";
+  }
+
+  private codexCompletionBeforeBinding(entry: CodexSessionState, nativeTurnId: string | undefined, turnExecutionId: string): boolean {
+    if (!entry.turnStartResponsePending || entry.currentTurnExecutionId !== turnExecutionId || !nativeTurnId) return false;
+    return !entry.pendingTurnStartNotification || entry.pendingTurnStartNotification.nativeTurnId === nativeTurnId;
+  }
+
+  private isProvenCodexTurnCompletion(entry: CodexSessionState, nativeTurnId: string | undefined, turnExecutionId: string): boolean {
+    return entry.currentTurnExecutionId === turnExecutionId && Boolean(entry.currentNativeTurnId) && nativeTurnId === entry.currentNativeTurnId;
+  }
+
+  private logIgnoredCodexTurnCompletion(run: CodexTurnRun, nativeTurnId: string | undefined): void {
+    logger.debug("Codex turn/completed ignored (stale or unmatched)", {
+      tid: nativeTurnId,
+      pending: run.entry.pendingTurnId,
+      currentNativeTurnId: run.entry.currentNativeTurnId,
+      currentExecutionId: run.entry.currentTurnExecutionId,
+      seq: run.seq,
+      liveSeq: run.entry.runTurnSeq,
+    });
+  }
+
+  private async sendCodexTurnStart(
+    run: CodexTurnRun,
+    server: CodexAppServer,
+    input: string | TurnInputPart[],
+    turnOptions: CodexTurnOptions | undefined,
+    turnExecutionId: string,
+    completion: CodexTurnCompletionState,
+    cleanup: () => void,
+    resolve: () => void,
+    reject: (error: unknown) => void,
+  ): Promise<void> {
+    try {
+      const turnId = await server.sendTurn(input, turnOptions);
+      if (run.seq !== run.entry.runTurnSeq) return;
+      run.entry.turnStartResponsePending = false;
+      run.entry.pendingTurnStartNotification = undefined;
+      this.bindCodexTurnStartResponse(run.entry, turnId, turnExecutionId);
+      if (completion.earlyCompletionTurnId === turnId) { cleanup(); resolve(); }
+    } catch (error) {
+      cleanup();
+      reject(error);
+    }
+  }
+
+  private bindCodexTurnStartResponse(entry: CodexSessionState, turnId: string | null | undefined, turnExecutionId: string): void {
+    if (!turnId) {
+      entry.turnBindingPhase = "idle";
+      throw new Error("Codex turn/start response missing turn id");
+    }
+    const assignment = assignNativeExecution(entry.turnExecutionIdsByNativeTurn, turnId, turnExecutionId, entry.nativeExecutionConflictKeys);
+    if (assignment === "conflict") throw new Error("Codex turn/start response reused native turn id");
+    entry.currentNativeTurnId = turnId;
+    entry.pendingTurnId = turnId;
+    entry.turnBindingPhase = "bound";
+    pruneExecutionMap(entry.turnExecutionIdsByNativeTurn);
+  }
+
+  private handleCodexTurnWaitError(
+    error: unknown,
+    run: CodexTurnRun,
+    server: CodexAppServer,
+    sessionId: string,
+    threadId: string,
+    turnExecutionId: string,
+    completion: CodexTurnCompletionState,
+  ): boolean {
+    if (error instanceof CodexTurnSupersededError) return true;
+    if (error instanceof CodexTurnIdleTimeoutError) {
+      completion.endedOutcome = "errored";
+      logger.warn("Codex turn idle timeout (suppressed from UI)", { sessionId, timeoutMs: TURN_TIMEOUT_MS });
+      this.emitCodexPendingAssistantBoundary(run.entry, turnExecutionId);
+      this.resetIdleCodexTurn(run.entry);
+      void server.interruptTurn();
+      return true;
+    }
+    if (!completion.serverDied && run.seq === run.entry.runTurnSeq) {
+      completion.endedOutcome = "errored";
+      const message = error instanceof Error ? error.message : String(error);
+      logger.error("Codex turn failed", { sessionId, error: message });
+      this.emitCodexPendingAssistantBoundary(run.entry, turnExecutionId);
+      completion.deferredEnded = this.emitTurnFailure(threadId, message, completion.endedOutcome, false, turnExecutionId);
+    }
+    return false;
+  }
+
+  private resetIdleCodexTurn(entry: CodexSessionState): void {
+    entry.pendingTurnStartNotification = undefined;
+    entry.turnStartResponsePending = false;
+    entry.turnBindingPhase = "idle";
+    entry.currentNativeTurnId = undefined;
+    entry.pendingTurnId = null;
+    entry.childExecutionGenerations.clear();
+    entry.nativeThreadExecutionIds.clear();
+    entry.pendingChildEvents = [];
+  }
+
+  private finalizeCodexTurnRun(
+    run: CodexTurnRun,
+    completion: CodexTurnCompletionState,
+    threadId: string,
+    turnExecutionId: string,
+  ): void {
+    if (run.seq === run.entry.runTurnSeq) this.clearCodexTurnRunState(run.entry);
+    if (!completion.serverDied && run.seq === run.entry.runTurnSeq) {
+      this.emitCodexTurnEvent(completion.deferredEnded ?? {
+        type: AgentEventType.Ended,
+        threadId,
+        turnExecutionId,
+        ...(completion.endedOutcome ? { outcome: completion.endedOutcome } : {}),
+      } satisfies AgentEvent, turnExecutionId);
+    }
+  }
+
+  private clearCodexTurnRunState(entry: CodexSessionState): void {
+    entry.pendingTurnId = null;
+    entry.turnBindingPhase = "idle";
+    entry.turnStartResponsePending = false;
+    entry.pendingTurnStartNotification = undefined;
+    entry.pendingChildEvents = [];
   }
 
   /** Persist Codex-generated image output files before the turn finalizes. */
@@ -2572,7 +2495,7 @@ export class CodexProvider extends EventEmitter implements IAgentProvider, IGoal
    * codex turn can tear down cleanly.
    */
   private drainPending(predicate: (entry: PendingPermissionEntry) => boolean): void {
-    for (const [requestId, entry] of [...this.pendingPermissions]) {
+    for (const [requestId, entry] of Array.from(this.pendingPermissions)) {
       if (!predicate(entry)) continue;
       this.pendingPermissions.delete(requestId);
       const response = mapDecisionToCodexResponse(entry.method, "cancelled", entry.params);

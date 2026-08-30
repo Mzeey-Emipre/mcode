@@ -163,26 +163,48 @@ function sanitizeValue(
   seen: WeakSet<object>,
   key: string | undefined,
 ): BrowserConformanceJsonValue {
+  const marker = sanitizerMarker(depth, key);
+  if (marker) return marker;
+  const primitive = sanitizePrimitive(value, key);
+  if (primitive !== undefined) return primitive;
+  if (typeof value !== "object" || value === null) return null;
+  return sanitizeObjectValue(value, depth, seen);
+}
+
+function sanitizerMarker(depth: number, key: string | undefined): string | undefined {
   if (depth > BROWSER_CONFORMANCE_REPLAY_MAX_DEPTH) return "[DEPTH_LIMIT]";
-  if (key && isSensitiveKey(key)) return "[REDACTED]";
-  if (value === null || typeof value === "string" || typeof value === "boolean") {
-    return typeof value === "string" ? sanitizeString(value, key) : value;
-  }
+  return key && isSensitiveKey(key) ? "[REDACTED]" : undefined;
+}
+
+function sanitizePrimitive(value: unknown, key: string | undefined): BrowserConformanceJsonValue | undefined {
+  if (value === null || typeof value === "boolean") return value;
+  if (typeof value === "string") return sanitizeString(value, key);
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
-  if (typeof value !== "object") return null;
+  return undefined;
+}
+
+function sanitizeObjectValue(value: object, depth: number, seen: WeakSet<object>): BrowserConformanceJsonValue {
   if (seen.has(value)) return "[CIRCULAR]";
   seen.add(value);
-  if (Array.isArray(value)) {
-    const result = value.slice(0, BROWSER_CONFORMANCE_REPLAY_MAX_ITEMS).map((item) => sanitizeValue(item, depth + 1, seen, undefined));
-    seen.delete(value);
-    return result;
-  }
+  const sanitized = Array.isArray(value)
+    ? sanitizeArray(value, depth, seen)
+    : sanitizeObject(value, depth, seen);
+  seen.delete(value);
+  return sanitized;
+}
+
+function sanitizeArray(value: readonly unknown[], depth: number, seen: WeakSet<object>): readonly BrowserConformanceJsonValue[] {
+  return value
+    .slice(0, BROWSER_CONFORMANCE_REPLAY_MAX_ITEMS)
+    .map((item) => sanitizeValue(item, depth + 1, seen, undefined));
+}
+
+function sanitizeObject(value: object, depth: number, seen: WeakSet<object>): Record<string, BrowserConformanceJsonValue> {
   const result: Record<string, BrowserConformanceJsonValue> = {};
   for (const objectKey of Object.keys(value).sort().slice(0, BROWSER_CONFORMANCE_REPLAY_MAX_ITEMS)) {
     if (isSensitiveKey(objectKey)) continue;
     result[objectKey] = sanitizeValue((value as Record<string, unknown>)[objectKey], depth + 1, seen, objectKey);
   }
-  seen.delete(value);
   return result;
 }
 
